@@ -2,8 +2,8 @@ const settings = {
   maxPlayerServers: 25,
   gbRamCost: 55000,
   maxGbRam: 1048576,
-  minGbRam: 32,
-  totalMoneyAllocation: 0.5,
+  minGbRam: 64,
+  totalMoneyAllocation: 0.75,
   actions: {
     BUY: 'buy',
     UPGRADE: 'upgrade',
@@ -104,7 +104,7 @@ export async function main(ns) {
 
     if (action == settings.actions.BUY) {
       let smallestCurrentServer = purchasedServers.length ? ns.getServerRam(purchasedServers[0]).shift() : 0
-      let targetRam = Math.max(settings.minGbRam, smallestCurrentServer)
+      let targetRam = Math.max(settings.minGbRam, smallestCurrentServer, ns.getServerRam('home')[0]/8)
 
       if (targetRam === settings.minGbRam) {
         while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost * settings.maxPlayerServers) {
@@ -118,11 +118,16 @@ export async function main(ns) {
       targetRam = Math.min(targetRam, settings.maxGbRam)
 
       if (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost) {
-        let hostname = `pserv-${targetRam}-${createUUID()}`
-        hostname = ns.purchaseServer(hostname, targetRam)
+        let tempTargetRam = targetRam
+        while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= tempTargetRam * settings.gbRamCost && tempTargetRam <= settings.maxGbRam) {
+          tempTargetRam *= 2
+        }
+        tempTargetRam /= 2
+        let hostname = `pserv-${tempTargetRam}-${createUUID()}`
+        hostname = ns.purchaseServer(hostname, tempTargetRam)
 
         if (hostname) {
-          ns.tprint(`[${localeHHMMSS()}] Bought new server: ${hostname} (${targetRam} GB)`)
+          ns.tprint(`[${localeHHMMSS()}] Bought new server: ${hostname} (${tempTargetRam} GB)`)
 
           updateServer(ns, serverMap, hostname)
           didChange = true
@@ -158,16 +163,21 @@ export async function main(ns) {
 
           if (targetRam > ns.getServerRam(purchasedServers[0]).shift()) {
             if (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost) {
-              let hostname = `pserv-${targetRam}-${createUUID()}`
+              let tempTargetRam = targetRam
+              while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= tempTargetRam * settings.gbRamCost && tempTargetRam <= settings.maxGbRam) {
+                tempTargetRam *= 2
+              }
+              tempTargetRam /= 2
+              let hostname = `pserv-${tempTargetRam}-${createUUID()}`
 
               await ns.killall(purchasedServers[0])
               await ns.sleep(10)
               const serverDeleted = await ns.deleteServer(purchasedServers[0])
               if (serverDeleted) {
-                hostname = await ns.purchaseServer(hostname, targetRam)
+                hostname = await ns.purchaseServer(hostname, tempTargetRam)
 
                 if (hostname) {
-                  ns.tprint(`[${localeHHMMSS()}] Upgraded: ${purchasedServers[0]} into server: ${hostname} (${targetRam} GB)`)
+                  ns.tprint(`[${localeHHMMSS()}] Upgraded: ${purchasedServers[0]} into server: ${hostname} (${tempTargetRam} GB)`)
 
                   updateServer(ns, serverMap, hostname)
                   didChange = true

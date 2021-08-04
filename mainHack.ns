@@ -8,7 +8,7 @@ const settings = {
   minSecurityWeight: 100,
   mapRefreshInterval: 24 * 60 * 60 * 1000,
   maxWeakenTime: 30 * 60,
-  trainUntilHackingLevel: 300,
+  trainUntilHackingLevel: 400,
   pureTraining: false,
   keys: {
     serverMap: 'BB_SERVER_MAP',
@@ -48,6 +48,7 @@ function getPlayerDetails(ns) {
 
   return {
     hackingLevel: ns.getHackingLevel(),
+    hackingMultipliers: ns.getHackingMultipliers(),
     portHacks,
   }
 }
@@ -86,7 +87,7 @@ function createUUID() {
   return uuid
 }
 
-function getMoneyAfterGrowthCycles(ns, hostName, growCycles) {
+function getMoneyAfterGrowCycles(ns, hostName, growCycles) {
 	let factorForMax = Math.max(1, ns.getServerMaxMoney(hostName) / (ns.getServerMoneyAvailable(hostName)+0.000001))
 	let upperCycles = ns.growthAnalyze(hostName, factorForMax);
 	let upperFactor = factorForMax;
@@ -112,6 +113,12 @@ function getMoneyAfterGrowthCycles(ns, hostName, growCycles) {
 		}
 	}
 	return ns.getServerMoneyAvailable(hostName) * nextFactor;
+}
+
+function getExpectedHackMoney(ns, hostName, hackCycles) {
+  let hackPercent = ns.hackAnalyzePercent(hostName);
+  let serverMoney = ns.getServerMoneyAvailable(hostName);
+  return serverMoney * hackCycles * hackPercent / 100;
 }
 
 function weakenCyclesForGrow(growCycles) {
@@ -160,32 +167,53 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
     .filter((hostname) => hostname !== 'home')
     .filter((hostname) => ns.getWeakenTime(hostname) < settings.maxWeakenTime)
 
-  //let growthNormalization = serversList
+  let growths = serversList.map((hostname) => servers[hostname].growth)
+  let avgMoneyHacks = serversList.map((hostname) => Math.max(servers[hostname].maxMoney * ((100 - servers[hostname].minSecurityLevel / 100)*((playerDetails.hackingLevel - (servers[hostname].hackingLevel - 1)) / playerDetails.hackingLevel) * (playerDetails.hackingMultipliers.money) / 24000)))
+  let levelRatios = serversList.map((hostname) => (playerDetails.hackingLevel - servers[hostname].hackingLevel) / playerDetails.hackingLevel)
+
+  let growthMin = Math.min(...growths);
+  let growthMax = Math.max(...growths);
+
+  let avgMoneyHackMin = Math.min(...avgMoneyHacks);
+  let avgMoneyHackMax = Math.max(...avgMoneyHacks);
+
+  let levelRatioMin = Math.min(...levelRatios);
+  let levelRatioMax = Math.max(...levelRatios);
 
   let weightedServers = serversList.map((hostname) => {
     const fullHackCycles = Math.ceil(100 / Math.max(0.00000001, ns.hackAnalyzePercent(hostname)))
+
+    let normalizedGrowth = (servers[hostname].growth - growthMin) / (growthMax - growthMin)
+
+    let avgMoneyHack = Math.max(servers[hostname].maxMoney * ((100 - servers[hostname].minSecurityLevel / 100)*((playerDetails.hackingLevel - (servers[hostname].hackingLevel - 1)) / playerDetails.hackingLevel) * (playerDetails.hackingMultipliers.money) / 24000))
+    let normalizedAvgMoneyHack = (avgMoneyHack - avgMoneyHackMin) / (avgMoneyHackMax - avgMoneyHackMin)
+
+    let levelRatio = (playerDetails.hackingLevel - servers[hostname].hackingLevel) / playerDetails.hackingLevel
+    let normalizedLevelRatio = (levelRatio - levelRatioMin) / (levelRatioMax - levelRatioMin)
 
     serverExtraData[hostname] = {
       fullHackCycles,
     }
 
-	var serverValue;
-	switch (heuristic) {
-		case settings.heuristics.TRAINING:
-			serverValue = (ns.getHackingLevel() - ns.getServerRequiredHackingLevel(hostname)) / ns.getHackingLevel()
-			break;
-		default:
-			serverValue = servers[hostname].maxMoney * (settings.minSecurityWeight / (servers[hostname].minSecurityLevel + ns.getServerSecurityLevel(hostname)))
-	}
+    ns.print(`hostname:${hostname}, normalizedGrowth: ${normalizedGrowth}, normalizedAvgMoneyHack: ${normalizedAvgMoneyHack}, normalizedlevelRatio ${normalizedLevelRatio}`)
 
-    return {
-      hostname,
-      serverValue,
-      minSecurityLevel: servers[hostname].minSecurityLevel,
-      securityLevel: ns.getServerSecurityLevel(hostname),
-      maxMoney: servers[hostname].maxMoney,
-    }
-  })
+  	var serverValue;
+  	switch (heuristic) {
+  		case settings.heuristics.TRAINING:
+  			serverValue = normalizedGrowth + normalizedAvgMoneyHack + 3 * normalizedLevelRatio
+  			break;
+  		default:
+  			serverValue = 0.5 * normalizedGrowth + 5 * normalizedAvgMoneyHack + 0.1 * normalizedLevelRatio
+  	}
+
+      return {
+        hostname,
+        serverValue,
+        minSecurityLevel: servers[hostname].minSecurityLevel,
+        securityLevel: ns.getServerSecurityLevel(hostname),
+        maxMoney: servers[hostname].maxMoney,
+      }
+    })
 
   weightedServers.sort((a, b) => b.serverValue - a.serverValue)
   ns.print(JSON.stringify(weightedServers, null, 2))
@@ -311,8 +339,8 @@ export async function main(ns) {
         }`
       )
 	  ns.tprint(
-        `[${localeHHMMSS()}] expected money after growth cycles: $${
-          numberWithCommas(Math.floor(getMoneyAfterGrowthCycles(ns, bestTarget, growCycles) * 1000) / 1000)
+        `[${localeHHMMSS()}] Expected money after grow cycles: $${
+          numberWithCommas(Math.floor(getMoneyAfterGrowCycles(ns, bestTarget, growCycles) * 1000) / 1000)
         }`
       )
 
@@ -338,8 +366,8 @@ export async function main(ns) {
 
       ns.tprint(`[${localeHHMMSS()}] Cycles ratio: ${growCycles} grow cycles; ${weakenCycles} weaken cycles`)
 	  ns.tprint(
-        `[${localeHHMMSS()}] expected money after growth cycles: $${
-          numberWithCommas(Math.floor(getMoneyAfterGrowthCycles(ns, bestTarget, growCycles) * 1000) / 1000)
+        `[${localeHHMMSS()}] Expected money after grow cycles: $${
+          numberWithCommas(Math.floor(getMoneyAfterGrowCycles(ns, bestTarget, growCycles) * 1000) / 1000)
         }`
       )
 
@@ -381,6 +409,11 @@ export async function main(ns) {
       }
 
       ns.tprint(`[${localeHHMMSS()}] Cycles ratio: ${hackCycles} hack cycles; ${growCycles} grow cycles; ${weakenCycles} weaken cycles`)
+      ns.tprint(
+          `[${localeHHMMSS()}] Expected hack money: $${
+            numberWithCommas(Math.floor(getExpectedHackMoney(ns, bestTarget, hackCycles) * 1000) / 1000)
+          }`
+        )
 
       for (let i = 0; i < hackableServers.length; i++) {
         const server = serverMap.servers[hackableServers[i]]
