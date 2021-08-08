@@ -7,9 +7,10 @@ const settings = {
   maxMoneyMultiplayer: 0.9,
   minSecurityWeight: 100,
   mapRefreshInterval: 24 * 60 * 60 * 1000,
-  maxWeakenTime: 30 * 60,
-  trainUntilHackingLevel: 400,
+  maxWeakenTime: 30 * 60 * 1000,
+  trainHackingFor: 1000 * 60 * 10,
   pureTraining: false,
+  targetOverride: "",
   keys: {
     serverMap: 'BB_SERVER_MAP',
   },
@@ -118,7 +119,7 @@ function getMoneyAfterGrowCycles(ns, hostName, growCycles) {
 function getExpectedHackMoney(ns, hostName, hackCycles) {
   let hackPercent = ns.hackAnalyzePercent(hostName);
   let serverMoney = ns.getServerMoneyAvailable(hostName);
-  return serverMoney * hackCycles * hackPercent / 100;
+  return Math.min(serverMoney * hackCycles * hackPercent / 100, serverMoney);
 }
 
 function weakenCyclesForGrow(growCycles) {
@@ -165,11 +166,19 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
     .filter((hostname) => servers[hostname].hackingLevel <= playerDetails.hackingLevel)
     .filter((hostname) => servers[hostname].maxMoney)
     .filter((hostname) => hostname !== 'home')
-    .filter((hostname) => ns.getWeakenTime(hostname) < settings.maxWeakenTime)
+    //.filter((hostname) => ns.getWeakenTime(hostname) < settings.maxWeakenTime)
 
+  let avgMoneyRateLambda = (hostname) => (Math.min(Math.max((((1.75 * playerDetails.hackingLevel) - servers[hostname].hackingLevel)/(1.75 * playerDetails.hackingLevel))*((100 - servers[hostname].minSecurityLevel)/100)*(playerDetails.hackingMultipliers.chance),0),1)) *
+  (Math.max(servers[hostname].maxMoney * ((100 - servers[hostname].minSecurityLevel / 100)*((playerDetails.hackingLevel - (servers[hostname].hackingLevel - 1)) / playerDetails.hackingLevel) * (playerDetails.hackingMultipliers.money) / 24000))) /
+  (((2.5 * servers[hostname].hackingLevel * servers[hostname].minSecurityLevel + 500) / (playerDetails.hackingLevel + 50)) / playerDetails.hackingMultipliers.speed)
+  let avgMoneyRates = serversList.map(avgMoneyRateLambda)
   let growths = serversList.map((hostname) => servers[hostname].growth)
   let avgMoneyHacks = serversList.map((hostname) => Math.max(servers[hostname].maxMoney * ((100 - servers[hostname].minSecurityLevel / 100)*((playerDetails.hackingLevel - (servers[hostname].hackingLevel - 1)) / playerDetails.hackingLevel) * (playerDetails.hackingMultipliers.money) / 24000)))
   let levelRatios = serversList.map((hostname) => (playerDetails.hackingLevel - servers[hostname].hackingLevel) / playerDetails.hackingLevel)
+  let baseTimes = serversList.map((hostname) => ((2.5 * servers[hostname].hackingLevel * servers[hostname].minSecurityLevel + 500) / (playerDetails.hackingLevel + 50)) / playerDetails.hackingMultipliers.speed)
+
+  let avgMoneyRateMin = Math.min(...avgMoneyRates);
+  let avgMoneyRateMax = Math.max(...avgMoneyRates);
 
   let growthMin = Math.min(...growths);
   let growthMax = Math.max(...growths);
@@ -180,8 +189,13 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
   let levelRatioMin = Math.min(...levelRatios);
   let levelRatioMax = Math.max(...levelRatios);
 
+  let baseTimeMin = Math.min(...baseTimes);
+  let baseTimeMax = Math.max(...baseTimes);
+
   let weightedServers = serversList.map((hostname) => {
     const fullHackCycles = Math.ceil(100 / Math.max(0.00000001, ns.hackAnalyzePercent(hostname)))
+
+    let normalizedAvgMoneyRate = (avgMoneyRateLambda(hostname) - avgMoneyRateMin) / (avgMoneyRateMax - avgMoneyRateMin);
 
     let normalizedGrowth = (servers[hostname].growth - growthMin) / (growthMax - growthMin)
 
@@ -190,6 +204,9 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
 
     let levelRatio = (playerDetails.hackingLevel - servers[hostname].hackingLevel) / playerDetails.hackingLevel
     let normalizedLevelRatio = (levelRatio - levelRatioMin) / (levelRatioMax - levelRatioMin)
+
+    let baseTime = ((2.5 * servers[hostname].hackingLevel * servers[hostname].minSecurityLevel + 500) / (playerDetails.hackingLevel + 50)) / playerDetails.speed
+    let normalizedBaseTime = 1 - ((baseTime - baseTimeMin) / (baseTimeMax - baseTimeMin))
 
     serverExtraData[hostname] = {
       fullHackCycles,
@@ -200,10 +217,10 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
   	var serverValue;
   	switch (heuristic) {
   		case settings.heuristics.TRAINING:
-  			serverValue = normalizedGrowth + normalizedAvgMoneyHack + 3 * normalizedLevelRatio
+  			serverValue = normalizedLevelRatio
   			break;
   		default:
-  			serverValue = 0.5 * normalizedGrowth + 5 * normalizedAvgMoneyHack + 0.1 * normalizedLevelRatio
+  			serverValue = normalizedAvgMoneyRate
   	}
 
       return {
@@ -249,8 +266,8 @@ export async function main(ns) {
 
     const hackableServers = getHackableServers(ns, serverMap.servers)
 
-	if (!doneWithTraining && ns.getHackingLevel() > settings.trainUntilHackingLevel) {
-		ns.tprint("done training after reaching hacking level " + settings.trainUntilHackingLevel)
+	if (!doneWithTraining && ns.getTimeSinceLastAug() > settings.trainHackingFor) {
+		ns.tprint("Done training after since it's been more than " + (settings.trainHackingFor/(1000 * 60)) + " min since aug.")
 		doneWithTraining = true
 		for (let i = 0; i < hackableServers.length; i++) {
 			const server = serverMap.servers[hackableServers[i]]
@@ -269,9 +286,9 @@ export async function main(ns) {
     }
     weakenCycles = growCycles
 
-	const heuristic = settings.trainUntilHackingLevel > ns.getHackingLevel() ? settings.heuristics.TRAINING : settings.heuristics.MONEY
+	const heuristic = !doneWithTraining ? settings.heuristics.TRAINING : settings.heuristics.MONEY
     const targetServers = findTargetServer(ns, hackableServers, serverMap.servers, serverExtraData, heuristic)
-    const bestTarget = targetServers.shift()
+    const bestTarget = settings.targetOverride || targetServers.shift()
 
     const hackTime = ns.getHackTime(bestTarget) * 1000
     const growTime = ns.getGrowTime(bestTarget) * 1000
