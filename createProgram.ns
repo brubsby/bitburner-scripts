@@ -12,7 +12,7 @@ const milliseconds_per_quarter_hour = 900000
 const milliseconds_per_five_minutes = 300000
 
 export const programs = {
-    "BruteSSH.exe": {
+    "NUKE.exe": {
         hacking_level_required: 1,
         intelligence_exp: 1 / intelligence_exp_divisor,
         time: milliseconds_per_five_minutes,
@@ -22,55 +22,69 @@ export const programs = {
         hacking_level_required: 50,
         intelligence_exp: 50 / intelligence_exp_divisor,
         time: milliseconds_per_five_minutes * 2,
-        intelligence_exp_per_millisecond: 50 / intelligence_exp_divisor / (milliseconds_per_five_minutes * 2)
+        intelligence_exp_per_millisecond: 50 / intelligence_exp_divisor / (milliseconds_per_five_minutes * 2),
+        price: 500e3,
+        port_program: true
     },
     "FTPCrack.exe": {
         hacking_level_required: 100,
         intelligence_exp: 100 / intelligence_exp_divisor,
         time: milliseconds_per_half_hour,
-        intelligence_exp_per_millisecond: 100 / intelligence_exp_divisor / milliseconds_per_half_hour
+        intelligence_exp_per_millisecond: 100 / intelligence_exp_divisor / milliseconds_per_half_hour,
+        price: 1500e3,
+        port_program: true
     },
     "relaySMTP.exe": {
         hacking_level_required: 250,
         intelligence_exp: 250 / intelligence_exp_divisor,
         time: milliseconds_per_two_hours,
-        intelligence_exp_per_millisecond: 250 / intelligence_exp_divisor / milliseconds_per_two_hours
+        intelligence_exp_per_millisecond: 250 / intelligence_exp_divisor / milliseconds_per_two_hours,
+        price: 5e6,
+        port_program: true
     },
     "HTTPWorm.exe": {
         hacking_level_required: 500,
         intelligence_exp: 500 / intelligence_exp_divisor,
         time: milliseconds_per_four_hours,
-        intelligence_exp_per_millisecond: 500 / intelligence_exp_divisor / milliseconds_per_four_hours
+        intelligence_exp_per_millisecond: 500 / intelligence_exp_divisor / milliseconds_per_four_hours,
+        price: 30e6,
+        port_program: true
     },
     "SQLInject.exe": {
         hacking_level_required: 750,
         intelligence_exp: 750 / intelligence_exp_divisor,
         time: milliseconds_per_eight_hours,
-        intelligence_exp_per_millisecond: 750 / intelligence_exp_divisor / milliseconds_per_eight_hours
+        intelligence_exp_per_millisecond: 750 / intelligence_exp_divisor / milliseconds_per_eight_hours,
+        price: 250e6,
+        port_program: true
     },
     "DeepscanV1.exe": {
         hacking_level_required: 75,
         intelligence_exp: 75 / intelligence_exp_divisor,
         time: milliseconds_per_quarter_hour,
-        intelligence_exp_per_millisecond: 75 / intelligence_exp_divisor / milliseconds_per_quarter_hour
+        intelligence_exp_per_millisecond: 75 / intelligence_exp_divisor / milliseconds_per_quarter_hour,
+        price: 500000
     },
     "DeepscanV2.exe": {
         hacking_level_required: 400,
         intelligence_exp: 400 / intelligence_exp_divisor,
         time: milliseconds_per_two_hours,
-        intelligence_exp_per_millisecond: 400 / intelligence_exp_divisor / milliseconds_per_two_hours
+        intelligence_exp_per_millisecond: 400 / intelligence_exp_divisor / milliseconds_per_two_hours,
+        price: 25e6
     },
     "ServerProfiler.exe": {
         hacking_level_required: 75,
         intelligence_exp: 75 / intelligence_exp_divisor,
         time: milliseconds_per_half_hour,
-        intelligence_exp_per_millisecond: 75 / intelligence_exp_divisor / milliseconds_per_half_hour
+        intelligence_exp_per_millisecond: 75 / intelligence_exp_divisor / milliseconds_per_half_hour,
+        price: 1e6
     },
     "AutoLink.exe": {
         hacking_level_required: 25,
         intelligence_exp: 25 / intelligence_exp_divisor,
         time: milliseconds_per_quarter_hour,
-        intelligence_exp_per_millisecond: 25 / intelligence_exp_divisor / milliseconds_per_quarter_hour
+        intelligence_exp_per_millisecond: 25 / intelligence_exp_divisor / milliseconds_per_quarter_hour,
+        price: 1e6
     },
     "b1t_flum3.exe": {
         hacking_level_required: 1,
@@ -105,7 +119,7 @@ export async function main(ns) {
     let player = ns.getPlayer()
     let all = flag_data.all || program == "all"
 
-    if (!program || flag.data_help) {
+    if (!program || flag_data.help) {
         usage(ns)
         runCallbackExit(ns, callback)
     }

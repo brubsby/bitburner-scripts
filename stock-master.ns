@@ -61,6 +61,22 @@ function format(num){
 export async function main(ns) {
     //Initialise
     ns.disableLog("ALL");
+    try {
+        if (!ns.purchase4SMarketData()) {
+            throw new Exception()
+        }
+    } catch (error) {
+        ns.tprint("Exiting stock script, market data not purchased and not enough money.")
+        ns.exit()
+    }
+    try {
+        if (!ns.purchase4SMarketDataTixApi()) {
+            throw new Exception()
+        }
+    } catch (error) {
+        ns.tprint("Exiting stock script, market data tix api not purchased and not enough money.")
+        ns.exit()
+    }
     let stocks = [];
     let myStocks = [];
     let unpurchasedStocks = [];

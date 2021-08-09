@@ -1,3 +1,21 @@
+
+export function getServerNames() {
+  let s=["home"];
+  for(let i=0;i<s.length;i++)for(let j of ns.scan(s[i]))if(!s.includes(j))s.push(j);
+  return s;
+}
+
+export function runCallbackExit(ns, callback) {
+  if (callback) {
+    if (ns.fileExists(callback, ns.getHostname())) {
+      ns.spawn(callback)
+    } else {
+      ns.tprint(`callback script: ${callback} does not exist on this host (${ns.getHostname()})`)
+    }
+  }
+  ns.exit()
+}
+
 export function settings() {
   return {
     minSecurityLevelOffset: 2,

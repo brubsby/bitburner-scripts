@@ -35,32 +35,32 @@ main=async ns=>{
         catch(e){return null;}
     },
     styleToColorMap=(style)=>{
-      if(style.includes("red")) return "red"
-      if(style.includes("blue")) return "blue"
-      if(style.includes("white")) return "white"
-      if(style.includes("rgb(255, 193, 7)")) return "yellow"
+      if(style.includes("red")) return "red";
+      if(style.includes("blue")) return "blue";
+      if(style.includes("white")) return "white";
+      if(style.includes("rgb(255, 193, 7)")) return "yellow";
     },
     all1IndexOf=(array,value)=> {
-      return array.reduce((a, e, i) => (e === value) ? a.concat(i+1) : a, [])
+      return array.reduce((a, e, i) => (e === value) ? a.concat(i+1) : a, []);
     },
     wireColors=["red","blue","white","yellow"],
     wirePositions=[0,1,2,3,4,5,6,7,8,9],
     questionsToWireMap=(questions,currentWireColors)=>{
-      let result = []
+      let result = [];
       questions.forEach(question=>{
         wireColors.forEach(color=>{
             if(question.includes(`${color}.`)) {
               result = result.concat(all1IndexOf(currentWireColors[0],color)
-                .concat(all1IndexOf(currentWireColors[1],color)))
+                .concat(all1IndexOf(currentWireColors[1],color)));
               }
-        })
+        });
         wirePositions.forEach(position=>{
           if(question.includes(position.toString())) {
-            result.push(position)
+            result.push(position);
           }
-        })
-      })
-      return [...new Set(result)].sort((a,b)=>a-b)
+        });
+      });
+      return [...new Set(result)].sort((a,b)=>a-b);
     };
 // --- Main Loop --- //
 
@@ -97,8 +97,6 @@ main=async ns=>{
                     let wires1 = Array.from(infilContainer.children[0].children[1].children[0].children[1].querySelectorAll("pre")[1].querySelectorAll("span")).map(span => styleToColorMap(span.style.cssText));
                     let wires2 = Array.from(infilContainer.children[0].children[1].children[0].children[1].querySelectorAll("pre")[2].querySelectorAll("span")).map(span => styleToColorMap(span.style.cssText));
                     let questions = Array.from(infilContainer.children[0].children[1].children[0].children[1].querySelectorAll("h3")).map(h3 => h3.innerText);
-                    ns.tprint(`questions: ${questions}`)
-                    ns.tprint(`wires: ${[wires1, wires2]}`)
                     let toCut = questionsToWireMap(questions,[wires1,wires2])
                     changeContent(`Game: Wire Cutting<br>${toCut.join(" ")}`);
                     while(getGameText() == "Cut the wires with the following properties!") await ns.sleep(100);

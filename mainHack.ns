@@ -6,8 +6,8 @@ const settings = {
   minSecurityLevelOffset: 1,
   maxMoneyMultiplayer: 0.9,
   minSecurityWeight: 100,
-  mapRefreshInterval: 24 * 60 * 60 * 1000,
-  maxWeakenTime: 30 * 60 * 1000,
+  mapRefreshInterval: 5 * 60 * 1000,
+  maxWeakenTime: 25 * 60 * 1000,
   trainHackingFor: 1000 * 60 * 10,
   pureTraining: false,
   targetOverride: "",
@@ -166,7 +166,7 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
     .filter((hostname) => servers[hostname].hackingLevel <= playerDetails.hackingLevel)
     .filter((hostname) => servers[hostname].maxMoney)
     .filter((hostname) => hostname !== 'home')
-    //.filter((hostname) => ns.getWeakenTime(hostname) < settings.maxWeakenTime)
+    .filter((hostname) => (1000 * ns.getWeakenTime(hostname)) < settings.maxWeakenTime)
 
   let avgMoneyRateLambda = (hostname) => (Math.min(Math.max((((1.75 * playerDetails.hackingLevel) - servers[hostname].hackingLevel)/(1.75 * playerDetails.hackingLevel))*((100 - servers[hostname].minSecurityLevel)/100)*(playerDetails.hackingMultipliers.chance),0),1)) *
   (Math.max(servers[hostname].maxMoney * ((100 - servers[hostname].minSecurityLevel / 100)*((playerDetails.hackingLevel - (servers[hostname].hackingLevel - 1)) / playerDetails.hackingLevel) * (playerDetails.hackingMultipliers.money) / 24000))) /
@@ -207,6 +207,8 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
 
     let baseTime = ((2.5 * servers[hostname].hackingLevel * servers[hostname].minSecurityLevel + 500) / (playerDetails.hackingLevel + 50)) / playerDetails.speed
     let normalizedBaseTime = 1 - ((baseTime - baseTimeMin) / (baseTimeMax - baseTimeMin))
+
+    ns.tprint(`hostname: ${hostname}, weakenTime: ${ns.getWeakenTime(hostname)}`)
 
     serverExtraData[hostname] = {
       fullHackCycles,
