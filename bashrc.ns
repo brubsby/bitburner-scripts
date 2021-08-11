@@ -1,0 +1,36 @@
+let doc=eval("document")
+
+let terminalInput = (input) => {
+  doc.getElementById('terminal-input-text-box').value=input;
+  doc.dispatchEvent(new KeyboardEvent('keydown',{keyCode:13}));
+};
+
+const scripts_to_alias = [
+  "spider.ns",
+  "training.ns",
+  "find.ns",
+  "hacknet.ns",
+  "stock.ns",
+  "crime.ns",
+  "eval.ns",
+  "bashrc.ns",
+  "brain.ns"
+];
+
+const terminal_block = `
+${scripts_to_alias.map(scriptName => `alias ${scriptName.replace(/\.[^/.]+$/, "")}="run ${scriptName}"`).join("\n")}
+alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relaySMTP.exe; buy HTTPWorm.exe; buy SQLInject.exe; buy ServerProfiler.exe; buy AutoLink.exe; buy DeepscanV1.exe; buy DeepscanV2.exe; home;"
+alias contracts="run contracter.ns"
+alias servers="run playerServers.ns"
+alias rank="home;run serverrank.ns"
+alias start="home; run spider.ns; run hack.ns; run playerServers.ns; run hacknet.ns; run stock.ns; run buyProgram.ns all --wait;"
+alias deepscan="home; run deepestScan.ns"
+alias trainall="home; run training.ns --skill all --switch-time 300000 --tail"
+alias traincombat="home; run training.ns --skill combat --tail"
+alias infil="home; run infilHelperLite.ns; run healer.ns; run infiltration.ns"
+alias programs="home; run buyProgram.ns all --wait;"
+`;
+
+export async function main(ns) {
+  terminalInput(terminal_block.split("\n").filter(string => string).join(";"));
+}
