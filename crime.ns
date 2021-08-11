@@ -77,7 +77,6 @@ function getExpectedCrimeReturns(ns) {
 function getBestReturnCrimeFor(ns, stat) {
     let expectedCrimeReturns = getExpectedCrimeReturns(ns)
     let reducer = (result, currentValue) => {
-        ns.tprint(`stat: ${stat}, ${currentValue[1][stat]} vs ${result[1][stat]}`)
         return currentValue[1][stat] > result[1][stat] ? currentValue : result
     }
     let bestEntry = Object.entries(expectedCrimeReturns).reduce(reducer)
@@ -95,11 +94,10 @@ function booleanFlagsToStat(ns, flag_data) {
     if (trueFlag == "training") {
         let player = ns.getPlayer()
         let skills = ['hacking', 'strength', 'defense', 'dexterity', 'agility', 'charisma']
-        let lowestSkill = skills.reduce((resultSkill, skill) => {
-            ns.tprint(`${skill}`)
-            return player[skill] > player[resultSkill] ? resultSkill : skill
-        })
-        ns.tprint(`lowestSkill: ${lowestSkill}`)
+        let lowestSkill = skills.reduce((resultSkill, skill) =>
+            player[skill] > player[resultSkill] ? resultSkill : skill
+        )
+        ns.print(`lowestSkill: ${lowestSkill}`)
         return FLAG_STAT_MAP[lowestSkill];
     }
     return undefined;
@@ -112,14 +110,20 @@ function usage(ns) {
 
 export async function main(ns) {
     let flag_data = ns.flags(
-        BOOLEAN_FLAG_NAMES.map((flag) => [flag, false])
+        BOOLEAN_FLAG_NAMES.map((flag) => [flag, false]).concat([
+            ["tail", false]
+        ])
     )
+
+    if (flag_data.tail) {
+        ns.tail()
+    }
 
     while(true) {
         let statToMax = booleanFlagsToStat(ns, flag_data)
-        ns.tprint(`statToMax: ${statToMax}`)
+        ns.print(`statToMax: ${statToMax}`)
         let [bestCrime, crimeReturns] = getBestReturnCrimeFor(ns, statToMax)
-        ns.tprint(`${bestCrime} is the best crime for ${statToMax} with ${JSON.stringify(crimeReturns,null,2)}`)
+        ns.print(`${bestCrime} is the best crime for ${statToMax} with ${JSON.stringify(crimeReturns,null,2)}`)
         ns.commitCrime(bestCrime)
         //ns.exit()
         await ns.sleep(crimeReturns.time)

@@ -208,8 +208,6 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
     let baseTime = ((2.5 * servers[hostname].hackingLevel * servers[hostname].minSecurityLevel + 500) / (playerDetails.hackingLevel + 50)) / playerDetails.speed
     let normalizedBaseTime = 1 - ((baseTime - baseTimeMin) / (baseTimeMax - baseTimeMin))
 
-    ns.tprint(`hostname: ${hostname}, weakenTime: ${ns.getWeakenTime(hostname)}`)
-
     serverExtraData[hostname] = {
       fullHackCycles,
     }
