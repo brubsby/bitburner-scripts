@@ -91,22 +91,35 @@ main=async ns=>{
                     break;
                 case "Match the symbols!":
                     while(getGameText() == "Match the symbols!") {
-                      let targetValue = infilContainer.children[0].children[1].children[0].children[1].children[1]
-                        .querySelector("span[style='font-size: 1em; color: blue;']").innerText.trim()
-                      let cursorValue = infilContainer.children[0].children[1].children[0].children[1]
-                        .querySelector("div span[style='font-size: 2em; color: blue;']").innerText.trim()
+                      let targetElement = infilContainer.children[0].children[1].children[0].children[1].children[1]
+                        .querySelector("span[style='font-size: 1em; color: blue;']");
+                      let targetValue = targetElement.innerText.trim();
+                      let nextTargetValue = ((targetElement.parentElement.children[
+                        [...targetElement.parentElement.children]
+                          .indexOf(targetElement)+1]||{}).innerText||"").trim();
+                      let cursorElement = infilContainer.children[0].children[1].children[0].children[1]
+                        .querySelector("div span[style='font-size: 2em; color: blue;']");
+                      let cursorRowElement = cursorElement.parentElement.parentElement;
+                      let cursorValue = cursorElement.innerText.trim();
+                      let cursorCoords = [
+                        [...cursorRowElement.parentElement.children].indexOf(cursorRowElement)-3,
+                        [...cursorElement.parentElement.children].indexOf(cursorElement),
+                      ];
                       let symbolsGrid = [...infilContainer.children[0].children[1].children[0].children[1]
                         .querySelectorAll("div")]
                         .slice(0,-1).map(rowhtml =>
                           [...rowhtml.querySelectorAll("span")]
                         .map(cellhtml => cellhtml.textContent.trim()));
-                      let gridString = symbolsGrid.map(symbolRow => symbolRow.map(symbol => {
+                      let gridString = symbolsGrid.map((symbolRow, rowIndex) => symbolRow.map((symbol, colIndex) => {
                         let cell = symbol;
+                        if (symbol == nextTargetValue) cell = `<span style='color:orange'>${symbol}</span>`;
                         if (symbol == targetValue) cell = `<span style='color:red'>${symbol}</span>`;
-                        if (symbol == cursorValue) cell = `<span style='color:blue'>${symbol}</span>`;
+                        if (symbol == targetValue && symbol == nextTargetValue) cell = `<span style='color:pink'>${symbol}</span>`;
+                        if (cursorCoords.toString() == [rowIndex, colIndex].toString()) cell = `<span style='color:blue'>${symbol}</span>`;
+                        if (symbol == targetValue && cursorCoords.toString() == [rowIndex, colIndex].toString()) cell = `<span style='color:purple'>${symbol}</span>`;
                         return cell;
-                      }).join(' ')).join('<br>');
-                      changeContent(`Game: Hexcode Match<br>${gridString}`);
+                      }).join('&nbsp;')).join('<br>');
+                      changeContent(`Game: Hexcode Match<br><br>${gridString}`);
                       await ns.sleep(50);
                     }
                     break;
@@ -126,8 +139,8 @@ main=async ns=>{
                 case "Close the brackets":
                     let bracketDict = {"(":")","{":"}","[":"<span style='color:red'>]</span>","<":">",};
                     let brackets = infilContainer.children[0].children[1].children[0].children[1].children[1].textContent
-                      .trim().split('').reverse().map(bracket => bracketDict[bracket]).join(' ')
-                    changeContent(`Game: Close Brackets<br> ${brackets}`);
+                      .trim().split('').reverse().map(bracket => bracketDict[bracket]).join('')
+                    changeContent(`Game: Close Brackets<br> <span style="font-size: 2em;>${brackets}</span>`);
                     while(getGameText() == "Close the brackets") await ns.sleep(100);
                     break;
                 case "Slash when his guard is down!":

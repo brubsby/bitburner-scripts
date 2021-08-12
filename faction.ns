@@ -1,5 +1,6 @@
 export const factions = {
   "Illuminati": {
+    short_name: "Illuminati",
     requirements: {
       augmentations: 30,
       money: 150000000000,
@@ -11,6 +12,7 @@ export const factions = {
     },
   },
   "Daedalus": {
+    short_name: "Daedalus",
     requirements: {
       augmentations: 30, // multiply by BitNodeMultipliers.DaedalusAugsRequirement
       money: 100000000000,
@@ -23,6 +25,7 @@ export const factions = {
     },
   },
   "The Covenant": {
+    short_name: "Covenant",
     requirements: {
       augmentations: 20,
       money: 75000000000,
@@ -35,60 +38,70 @@ export const factions = {
   },
   // also needs to be employed in the corps
   "ECorp": {
+    short_name: "ECorp",
     requirements: {
       company_name: "ECorp",
       company_rep: 200e3,
     },
   },
   "MegaCorp": {
+    short_name: "MegaCorp",
     requirements: {
       company_name: "MegaCorp",
       company_rep: 200e3,
     },
   },
   "Bachman & Associates": {
+    short_name: "B&A",
     requirements: {
       company_name: "Bachman & Associates",
       company_rep: 200e3,
     },
   },
   "Blade Industries": {
+    short_name: "Blade",
     requirements: {
       company_name: "Blade Industries",
       company_rep: 200e3,
     },
   },
   "NWO": {
+    short_name: "NWO",
     requirements: {
       company_name: "NWO",
       company_rep: 200e3,
     },
   },
   "Clarke Incorporated": {
+    short_name: "Clarke",
     requirements: {
       company_name: "Clarke Incorporated",
       company_rep: 200e3,
     },
   },
   "OmniTek Incorporated": {
+    short_name: "OmniTek",
     requirements: {
       company_name: "OmniTek Incorporated",
       company_rep: 200e3,
     },
   },
   "Four Sigma": {
+    short_name: "4Sigma",
     requirements: {
       company_name: "Four Sigma",
       company_rep: 200e3,
     },
   },
   "KuaiGong International": {
+    short_name: "KuaiGong",
     requirements: {
       company_name: "KuaiGong International",
       company_rep: 200e3,
     },
   },
   "Fulcrum Secret Technologies": {
+    short_name: "Fulcrum",
     requirements: {
       company_name: "Fulcrum Technologies",
       company_rep: 250e3,
@@ -96,18 +109,21 @@ export const factions = {
     },
   },
   "BitRunners": {
+    short_name: "BitRunners",
     requirements: {
       hack_target: "run4theh111z",
       home_ram: 128,
     },
   },
   "The Black Hand": {
+    short_name: "BlackHand",
     requirements: {
       hack_target: "I.I.I.I",
       home_ram: 64,
     },
   },
   "NiteSec": {
+    short_name: "NiteSec",
     requirements: {
       hack_target: "avmnite-02h",
       home_ram: 32,
@@ -115,6 +131,7 @@ export const factions = {
   },
   //TODO add banned city factions
   "Aevum": {
+    short_name: "Aevum",
     requirements: {
       money: 40000000,
       cities: ["Aevum"],
@@ -122,6 +139,7 @@ export const factions = {
     },
   },
   "Chongqing": {
+    short_name: "Chongqing",
     requirements: {
       money: 20000000,
       cities: ["Chongqing"],
@@ -129,6 +147,7 @@ export const factions = {
     },
   },
   "Ishima": {
+    short_name: "Ishima",
     requirements: {
       money: 30000000,
       cities: ["Ishima"],
@@ -136,6 +155,7 @@ export const factions = {
     },
   },
   "New Tokyo": {
+    short_name: "Tokyo",
     requirements: {
       money: 20000000,
       cities: ["New Tokyo"],
@@ -143,6 +163,7 @@ export const factions = {
     },
   },
   "Sector-12": {
+    short_name: "Sector12",
     requirements: {
       money: 15000000,
       cities: ["Sector-12"],
@@ -150,6 +171,7 @@ export const factions = {
     },
   },
   "Volhaven": {
+    short_name: "Volhaven",
     requirements: {
       money: 50000000,
       cities: ["Volhaven"],
@@ -157,6 +179,7 @@ export const factions = {
     },
   },
   "Speakers for the Dead": {
+    short_name: "Speakers4Dead",
     requirements: {
       hacking: 100,
       strength: 300,
@@ -169,6 +192,7 @@ export const factions = {
     },
   },
   "The Dark Army": {
+    short_name: "DarkArmy",
     requirements: {
       hacking: 300,
       strength: 300,
@@ -182,6 +206,7 @@ export const factions = {
     },
   },
   "The Syndicate": {
+    short_name: "Syndicate",
     requirements: {
       money: 10000000,
       hacking: 200,
@@ -195,6 +220,7 @@ export const factions = {
     },
   },
   "Silhouette": {
+    short_name: "Silhouette",
     requirements: {
       money: 15000000,
       karma: 22,
@@ -202,6 +228,7 @@ export const factions = {
     },
   },
   "Tetrads": {
+    short_name: "Tetrads",
     requirements: {
       strength: 75,
       defense: 75,
@@ -212,6 +239,7 @@ export const factions = {
     },
   },
   "Slum Snakes": {
+    short_name: "Snakes",
     requirements: {
       money: 1000000,
       strength: 30,
@@ -222,6 +250,7 @@ export const factions = {
     },
   },
   "Netburners": {
+    short_name: "Netburners",
     requirements: {
       hacking: 80,
       hacknet_ram: 8,
@@ -230,6 +259,7 @@ export const factions = {
     },
   },
   "Tian Di Hui": {
+    short_name: "TianDiHui",
     requirements: {
       money: 1000000,
       hacking: 50,
@@ -237,6 +267,7 @@ export const factions = {
     },
   },
   "CyberSec": {
+    short_name: "CSEC",
     requirements: {
       hack_target: "CSEC",
     },
@@ -246,7 +277,9 @@ export const factions = {
 
 export const faction_names = Object.keys(factions);
 
-const getAllAugmentations = (ns) => [
+const toShortName = (factionName) => factions[factionName].short_name || factionName;
+
+const getAllAugmentationNames = (ns) => [
   ...new Set(faction_names.map(faction_name =>
     ns.getAugmentationsFromFaction(faction_name)).flat())
   ];
@@ -392,35 +425,69 @@ const getUnmetRequirements = (ns, factionName) => {
   return requirements;
 }
 
-export async function main(ns) {
-  let flag_data = ns.flags([
-    ["print-factions", false],
-    ["print-json", false],
-  ]);
+const getUnownedAugmentationsFromFaction = (ns, factionName) =>
+  ns.getAugmentationsFromFaction(factionName)
+    .filter(augmentation => !ns.getOwnedAugmentations(true).includes(augmentation))
 
-  let player = ns.getPlayer();
-  let allOwnedAugmentations = ns.getOwnedAugmentations(true);
-  let remainingFactions = getNonBannedFactionsWithAugmentsForSale(ns, player);
-  let unknownedAugmentationsFromNonBannedFactions = remainingFactions
+const getUnownedFactionAugmentationsDictFromNonBannedFactions = (ns, player) =>
+  getNonBannedFactionsWithAugmentsForSale(ns, player)
     .map(factionName => {
       return { [factionName]:
         {
           unmet_requirements: getUnmetRequirements(ns, factionName),
-          augmentations: ns.getAugmentationsFromFaction(factionName)
-            .filter(augmentation => !allOwnedAugmentations.includes(augmentation))
+          augmentations: getUnownedAugmentationsFromFaction(ns, factionName)
             .map(augmentationName => {
               let augCost = ns.getAugmentationCost(augmentationName);
               return { [augmentationName]:
                 {
-                  reputation_cost: ns.nFormat(augCost[0], "0.000a"),
-                  money_cost: ns.nFormat(augCost[1], "$0.000a"),
+                  reputation_cost: augCost[0],
+                  money_cost: augCost[1],
                   stats: ns.getAugmentationStats(augmentationName),
                 }};
-            })
-      }}});
+            }),
+        }
+      }
+    });
+
+const getAnnotatedBuyableAugmentationDict = (ns, player) => {
+  let augDict = {}
+  getNonBannedFactionsWithAugmentsForSale(ns, player).forEach(factionName => {
+    getUnownedAugmentationsFromFaction(ns, factionName).forEach(augmentationName => {
+      if (!augDict[augmentationName]) {
+        let augCost = ns.getAugmentationCost(augmentationName);
+        augDict[augmentationName] = {
+          reputation_cost: augCost[0],
+          money_cost: augCost[1],
+          stats: ns.getAugmentationStats(augmentationName),
+          factions: [factionName],
+        }
+      } else {
+        if (!augDict[augmentationName].factions.includes(factionName)) {
+          augDict[augmentationName].factions.push(factionName)
+        }
+      }
+    });
+  });
+  return augDict;
+}
+
+const getAnnotatedAugsSortedByPrice = (ns, player, keyWord) =>
+  Object.entries(getAnnotatedBuyableAugmentationDict(ns, player)).filter(augEntry =>
+    Object.keys(augEntry[1].stats).some(key => key.includes(keyWord))
+  ).sort((a,b) => b[1].money_cost - a[1].money_cost);
+
+export async function main(ns) {
+  let flag_data = ns.flags([
+    ["print-factions", false],
+    ["print-json", false],
+    ["print-all-augs", false],
+    ["print-augs", ""],
+  ]);
+
+  let player = ns.getPlayer();
   if (flag_data["print-factions"]) {
     ns.tprint(`Factions with augs to buy: \n${
-      remainingFactions.map(factionName => `\n\n\n${factionName.padStart(15)}:\n${[...Array(75).keys()].map((index)=>'-').join("")}${
+      getNonBannedFactionsWithAugmentsForSale(ns, player).map(factionName => `\n\n\n${factionName.padStart(15)}:\n${[...Array(75).keys()].map((index)=>'-').join("")}${
         Object.entries(getUnmetRequirements(ns, factionName)).map(requirementEntry =>
           `\n${requirementEntry[0].padStart(15)}: ${
             typeof(requirementEntry[1]) == "object" ?
@@ -432,7 +499,21 @@ export async function main(ns) {
       }`).join("")
     }\n\n`);
   }
+  if (flag_data["print-augs"] || flag_data["print-all-augs"]) {
+    let annotatedAugsSortedByPrice = getAnnotatedAugsSortedByPrice(ns, player, flag_data["print-augs"]);
+    let maxAugNameLength = Math.max(...annotatedAugsSortedByPrice.map(augEntry => augEntry[0].length));
+    ns.tprint(`augname length: ${maxAugNameLength}`);
+    ns.tprint(`Remaining ${flag_data["print-augs"]} augs by price:\n[\n${
+      annotatedAugsSortedByPrice.map(augEntry =>
+        `  [${augEntry[0].padStart(maxAugNameLength + 1)}, rep: ${
+          ns.nFormat(augEntry[1].reputation_cost, "0.000a").padStart(8)}, price: ${
+            ns.nFormat(augEntry[1].money_cost, "$0.000a").padStart(9)}, factions:\n    ${
+              `[${augEntry[1].factions.map(toShortName).join(',')}]`.padStart(100)
+            }],`).join('\n')
+    }\n]`);
+  }
   if (flag_data["print-json"]) {
-    ns.tprint(JSON.stringify(unknownedAugmentationsFromNonBannedFactions, null, 2));
+    ns.tprint(JSON.stringify(
+      getUnownedFactionAugmentationsDictFromNonBannedFactions(ns, player), null, 2));
   }
 }
