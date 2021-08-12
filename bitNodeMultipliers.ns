@@ -56,7 +56,7 @@ const defaultBitNodeMultipliers = {
   GangKarmaRequirement:       1,
 };
 
-export const getBitNodeMultipliers = () => getItem(bit_node_multipliers_key) || defaultBitNodeMultipliers
+export const getBitNodeMultipliers = () => getItem(bit_node_multipliers_key) || defaultBitNodeMultipliers;
 
 function getItem(key) {
   let item = localStorage.getItem(key)
@@ -65,20 +65,28 @@ function getItem(key) {
 }
 
 function setItem(key, value) {
-  localStorage.setItem(key, JSON.stringify(value))
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 export async function main(ns) {
+  let flag_data = ns.flags([
+    ["print", false],
+  ])
+
   let bitNodeMultipliers;
   try {
     bitNodeMultipliers = ns.getBitNodeMultipliers();
   } catch (error) {
-    ns.tprint("Unable to access ns.getBitNodeMultipliers(...), please acquire SF-5.")
+    ns.tprint("Unable to access ns.getBitNodeMultipliers(...), please acquire SF-5.");
   }
   if (!bitNodeMultipliers) {
     bitNodeMultipliers = defaultBitNodeMultipliers;
-      ns.tprint("Default BitNode multipliers used, some calculations may be off")
+      ns.tprint("Default BitNode multipliers used, some calculations may be off");
   }
   setItem(bit_node_multipliers_key, bitNodeMultipliers);
-  ns.tprint("Saved BitNode multipliers to localstorage")
+  ns.tprint("Saved BitNode multipliers to localstorage");
+
+  if (flag_data.print) {
+    ns.tprint(`\n{\n${Object.entries(getBitNodeMultipliers()).map(entry => `${entry[0].padStart(26)}: ${ns.nFormat(entry[1],"0.00").padStart(4)}`).join("\n")}\n}`);
+  }
 }
