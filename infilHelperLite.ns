@@ -25,7 +25,7 @@ main=async ns=>{
     let
 // --- Declarations --- //
     infilContainer = doc.querySelector("#infiltration-container"),
-    mainContent = `<p style="font-size:11px">Assistance:<input type=checkbox class=checkbox id="infil-assistance-toggle" /></p><p id="infil-helper-content"></p>`,
+    mainContent = `<p style="font-size:1em">Assistance:<input type=checkbox class=checkbox id="infil-assistance-toggle" /></p><p id="infil-helper-content"></p>`,
     infilWin = createWindow("infil","Infiltration Helper Lite",mainContent),
     helperContent = infilWin.querySelector("#infil-helper-content"),
     assistanceToggle = infilWin.querySelector("#infil-assistance-toggle"),
@@ -86,19 +86,37 @@ main=async ns=>{
                     while(getGameText() == "Say something nice about the guard."){
                         let isNice = niceWords.includes(infilContainer.querySelectorAll(`h2[style="font-size: 2em;"]`)[1].innerText);
                         changeContent(`Game: Say Something Nice<br>${isNice ? "<strong>A NICE word is selected</strong>" : "<span style='color:red'>A MEAN word is selected</span>"}`);
-                        await ns.sleep(100);
+                        await ns.sleep(50);
                     }
                     break;
                 case "Match the symbols!":
-                    changeContent("Game: Hexcode Match<br>No assistance to provide.");
-                    while(getGameText() == "Match the symbols!") await ns.sleep(100);
+                    while(getGameText() == "Match the symbols!") {
+                      let targetValue = infilContainer.children[0].children[1].children[0].children[1].children[1]
+                        .querySelector("span[style='font-size: 1em; color: blue;']").innerText.trim()
+                      let cursorValue = infilContainer.children[0].children[1].children[0].children[1]
+                        .querySelector("div span[style='font-size: 2em; color: blue;']").innerText.trim()
+                      let symbolsGrid = [...infilContainer.children[0].children[1].children[0].children[1]
+                        .querySelectorAll("div")]
+                        .slice(0,-1).map(rowhtml =>
+                          [...rowhtml.querySelectorAll("span")]
+                        .map(cellhtml => cellhtml.textContent.trim()));
+                      let gridString = symbolsGrid.map(symbolRow => symbolRow.map(symbol => {
+                        let cell = symbol;
+                        if (symbol == targetValue) cell = `<span style='color:red'>${symbol}</span>`;
+                        if (symbol == cursorValue) cell = `<span style='color:blue'>${symbol}</span>`;
+                        return cell;
+                      }).join(' ')).join('<br>');
+                      changeContent(`Game: Hexcode Match<br>${gridString}`);
+                      await ns.sleep(50);
+                    }
                     break;
                 case "Cut the wires with the following properties!":
                     let wires1 = Array.from(infilContainer.children[0].children[1].children[0].children[1].querySelectorAll("pre")[1].querySelectorAll("span")).map(span => styleToColorMap(span.style.cssText));
                     let wires2 = Array.from(infilContainer.children[0].children[1].children[0].children[1].querySelectorAll("pre")[2].querySelectorAll("span")).map(span => styleToColorMap(span.style.cssText));
                     let questions = Array.from(infilContainer.children[0].children[1].children[0].children[1].querySelectorAll("h3")).map(h3 => h3.innerText);
-                    let toCut = questionsToWireMap(questions,[wires1,wires2])
-                    changeContent(`Game: Wire Cutting<br>${toCut.join(" ")}`);
+                    let toCut = questionsToWireMap(questions,[wires1,wires2]);
+                    let toCutString = [...Array(wires1.length).keys()].map(index => toCut.includes(index + 1) ? index + 1 : '_').join(' ');
+                    changeContent(`Game: Wire Cutting<br>${toCutString}`);
                     while(getGameText() == "Cut the wires with the following properties!") await ns.sleep(100);
                     break;
                 case "Enter the Code!":
@@ -106,7 +124,10 @@ main=async ns=>{
                     while(getGameText() == "Enter the Code!") await ns.sleep(100);
                     break;
                 case "Close the brackets":
-                    changeContent("Game: Close Brackets<br>No assistance to provide.");
+                    let bracketDict = {"(":")","{":"}","[":"<span style='color:red'>]</span>","<":">",};
+                    let brackets = infilContainer.children[0].children[1].children[0].children[1].children[1].textContent
+                      .trim().split('').reverse().map(bracket => bracketDict[bracket]).join(' ')
+                    changeContent(`Game: Close Brackets<br> ${brackets}`);
                     while(getGameText() == "Close the brackets") await ns.sleep(100);
                     break;
                 case "Slash when his guard is down!":
