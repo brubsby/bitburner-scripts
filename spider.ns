@@ -142,7 +142,7 @@ export async function main(ns) {
   setItem(settings().keys.serverMap, serverMap)
 
   if (!scriptToRunAfter) {
-    ns.tprint(`[${localeHHMMSS()}] Spawning mainHack.ns`)
+    ns.tprint(`[${localeHHMMSS()}] Spawning hack.ns`)
     ns.spawn('hack.ns', 1)
   } else {
     ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)

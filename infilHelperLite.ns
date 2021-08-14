@@ -25,7 +25,7 @@ main=async ns=>{
     let
 // --- Declarations --- //
     infilContainer = doc.querySelector("#infiltration-container"),
-    mainContent = `<p style="font-size:1em">Assistance:<input type=checkbox class=checkbox id="infil-assistance-toggle" /></p><p id="infil-helper-content"></p>`,
+    mainContent = `<p style="font-size:1em">Assistance:<input type=checkbox class=checkbox id="infil-assistance-toggle"/></p><p id="infil-helper-content"></p>`,
     infilWin = createWindow("infil","Infiltration Helper Lite",mainContent),
     helperContent = infilWin.querySelector("#infil-helper-content"),
     assistanceToggle = infilWin.querySelector("#infil-assistance-toggle"),
@@ -137,10 +137,10 @@ main=async ns=>{
                     while(getGameText() == "Enter the Code!") await ns.sleep(100);
                     break;
                 case "Close the brackets":
-                    let bracketDict = {"(":")","{":"}","[":"<span style='color:red'>]</span>","<":">",};
+                    let bracketDict = {"(":")","{":"}","[":"<span style='color: red; font-size: 1em;'>]</span>","<":">",};
                     let brackets = infilContainer.children[0].children[1].children[0].children[1].children[1].textContent
                       .trim().split('').reverse().map(bracket => bracketDict[bracket]).join('')
-                    changeContent(`Game: Close Brackets<br> <span style="font-size: 2em;>${brackets}</span>`);
+                    changeContent(`Game: Close Brackets<br> <span style='font-size: 3em;'>${brackets}</span>`);
                     while(getGameText() == "Close the brackets") await ns.sleep(100);
                     break;
                 case "Slash when his guard is down!":

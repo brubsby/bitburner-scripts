@@ -2,3 +2,12 @@
 //import {  } from "common.ns"
 //import {  } from "crime.ns"
 //import {  } from "training.ns"
+
+export async function main(ns) {
+  while (true) {
+    while (ns.hacknet.numHashes() >= ns.hacknet.hashCost("Sell for Money")) {
+      ns.hacknet.spendHashes("Sell for Money")
+    }
+    await ns.sleep(2500);
+  }
+}

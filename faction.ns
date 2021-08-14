@@ -309,8 +309,8 @@ const getFactionRequirements = (ns, faction_names) =>
 const getAugmentedPlayerData = (ns) => {
   let player = ns.getPlayer();
   // change crimes.ns to write calculated karma and kills to a file to be read here
-  player.karma = 999;
-  player.kills = 999;
+  player.karma = ns.heart.break();
+  player.kills = 0;
 
   let hacknetNodes = [...Array(ns.hacknet.numNodes()).keys()]
     .map(ns.hacknet.getNodeStats)
@@ -333,7 +333,7 @@ const areFactionRequirementsMet = (ns, factionEntry) => {
     (requirements.banned_companies && requirements.banned_companies.find(company => Object.keys(player.jobs).includes(company))) ||
     (requirements.banned_factions && requirements.banned_factions.find(faction => player.factions.includes(faction))) ||
     (requirements.home_ram && requirements.home_ram > ns.getServerMaxRam("home")) ||
-    (requirements.augmentations && requirements.augmentations > ns.getOwnedAugmentations()) ||
+    (requirements.augmentations && requirements.augmentations > ns.getOwnedAugmentations().length) ||
     (requirements.company_rep && requirements.company_rep > ns.getCompanyRep(requirements.company_name)) ||
     (requirements.karma && requirements.karma > player.karma) ||
     (requirements.kills && requirements.kills > player.kills) ||
@@ -382,7 +382,7 @@ const getUnmetRequirements = (ns, factionName) => {
     delete requirements.banned_factions;
   if (requirements.home_ram && requirements.home_ram <= ns.getServerMaxRam("home"))
     delete requirements.home_ram;
-  if (requirements.augmentations && requirements.augmentations <= ns.getOwnedAugmentations())
+  if (requirements.augmentations && requirements.augmentations <= ns.getOwnedAugmentations().length)
     delete requirements.augmentations;
   if (requirements.company_rep && requirements.company_rep <= ns.getCompanyRep(requirements.company_name)) {
     delete requirements.company_name;

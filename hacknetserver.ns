@@ -1,0 +1,203 @@
+const serverOptimalGainRate = (ns, server, player) =>
+  ns.formulas.hacknetServers.hashGainRate(
+    server.level,
+    0,
+    server.ram,
+    server.cores,
+    player.hacknet_node_money_mult);
+
+const newServerGainRate = (ns, player) =>
+  ns.formulas.hacknetServers.hashGainRate(
+    1,
+    0,
+    1,
+    1,
+    player.hacknet_node_money_mult);
+
+const serverOptimalGainRateLevelUpgrade = (ns, server, player) =>
+  server.level < ns.formulas.hacknetServers.constants().MaxLevel ?
+  ns.formulas.hacknetServers.hashGainRate(
+    server.level + 1,
+    0,
+    server.ram,
+    server.cores,
+    player.hacknet_node_money_mult) : 0;
+
+const serverOptimalGainRateRamUpgrade = (ns, server, player) =>
+  server.ram < ns.formulas.hacknetServers.constants().MaxRam ?
+  ns.formulas.hacknetServers.hashGainRate(
+    server.level,
+    0,
+    server.ram * 2,
+    server.cores,
+    player.hacknet_node_money_mult) : 0;
+
+const serverOptimalGainRateCoreUpgrade = (ns, server, player) =>
+  server.cores < ns.formulas.hacknetServers.constants().MaxCores ?
+  ns.formulas.hacknetServers.hashGainRate(
+    server.level,
+    0,
+    server.ram,
+    server.cores + 1,
+    player.hacknet_node_money_mult) : 0;
+
+const serverOptimalGainRateLevelUpgradeDelta = (ns, server, player) =>
+  server.level < ns.formulas.hacknetServers.constants().MaxLevel ?
+  serverOptimalGainRateLevelUpgrade(ns, server, player) -
+    serverOptimalGainRate(ns, server, player) : 0;
+
+const serverOptimalGainRateRamUpgradeDelta = (ns, server, player) =>
+  server.ram < ns.formulas.hacknetServers.constants().MaxRam ?
+  serverOptimalGainRateRamUpgrade(ns, server, player) -
+    serverOptimalGainRate(ns, server, player) : 0;
+
+const serverOptimalGainRateCoreUpgradeDelta = (ns, server, player) =>
+  server.cores < ns.formulas.hacknetServers.constants().MaxCores ?
+  serverOptimalGainRateCoreUpgrade(ns, server, player) -
+    serverOptimalGainRate(ns, server, player) : 0;
+
+const serverLevelUpgradeCost = (ns, server, player, levels=1) =>
+  ns.formulas.hacknetServers.levelUpgradeCost(
+    server.level,
+    levels,
+    player.hacknet_node_level_cost_mult
+  );
+
+const serverRamUpgradeCost = (ns, server, player, levels=1) =>
+  ns.formulas.hacknetServers.ramUpgradeCost(
+    server.ram,
+    levels,
+    player.hacknet_node_ram_cost_mult
+  );
+
+const serverCoreUpgradeCost = (ns, server, player, levels=1) =>
+  ns.formulas.hacknetServers.coreUpgradeCost(
+    server.cores,
+    levels,
+    player.hacknet_node_core_cost_mult
+  );
+
+const newServerCost = (ns, numNodes, player) =>
+  numNodes < ns.formulas.hacknetServers.constants().MaxServers ?
+  ns.formulas.hacknetServers.hacknetServerCost(numNodes + 1,
+    player.hacknet_node_purchase_cost_mult) :
+    Infinity;
+
+function usage(ns) {
+  ns.tprint(`Usage: run hacknetserver.ns [--loop] [--wait-time &ltmilliseconds&gt]`);
+}
+
+export async function main(ns) {
+
+  let flag_data = ns.flags([
+    ["loop", false],
+    ["wait-time", 5000],
+    ["debug", false],
+  ])
+
+  let player = ns.getPlayer();
+
+  do {
+    player = ns.getPlayer();
+    let hypotheticalServers = [...Array(ns.hacknet.numNodes()).keys()]
+      .map(index => ({...ns.hacknet.getNodeStats(index)}));
+    let upgradesToBuy = [];
+    let moneyToSpend = player.money;
+
+    let hypotheticalUpgradeLambdas = {
+      level_gains: (index) => hypotheticalServers[index].level += 1,
+      ram_gains: (index) => hypotheticalServers[index].ram *= 2,
+      core_gains: (index) => hypotheticalServers[index].cores += 1,
+      new_gains: (index) => hypotheticalServers[index] = {
+        level: 1,
+        ram: 1,
+        cores: 1,
+        cache: 1,
+      }
+    };
+
+    let upgradeCostLambdas = {
+      level_gains: (index) => serverLevelUpgradeCost(ns, hypotheticalServers[index], player),
+      ram_gains: (index) => serverRamUpgradeCost(ns, hypotheticalServers[index], player),
+      core_gains: (index) => serverCoreUpgradeCost(ns, hypotheticalServers[index], player),
+      new_gains: (index) => newServerCost(ns, index, player),
+    };
+
+    // greedy hash rate return optimization
+    do {
+      let hypotheticalGains = {
+        level_gains: hypotheticalServers.map(server =>
+          serverLevelUpgradeCost(ns, server, player) < moneyToSpend ?
+          serverOptimalGainRateLevelUpgradeDelta(ns, server, player) /
+          serverLevelUpgradeCost(ns, server, player) : 0),
+        ram_gains: hypotheticalServers.map(server =>
+          serverRamUpgradeCost(ns, server, player) < moneyToSpend ?
+          serverOptimalGainRateRamUpgradeDelta(ns, server, player) /
+          serverRamUpgradeCost(ns, server, player) : 0),
+        core_gains: hypotheticalServers.map(server =>
+          serverCoreUpgradeCost(ns, server, player) < moneyToSpend ?
+          serverOptimalGainRateCoreUpgradeDelta(ns, server, player) /
+          serverCoreUpgradeCost(ns, server, player) : 0),
+        new_gains: [
+          ...[...Array(hypotheticalServers.length)].map(x=>0),
+          newServerCost(ns, hypotheticalServers.length, player) < moneyToSpend ?
+            newServerGainRate(ns, player) /
+            newServerCost(ns, hypotheticalServers.length, player) : 0
+          ]
+      };
+      if (flag_data.debug) ns.tprint(JSON.stringify(hypotheticalGains));
+      let maxGain = Math.max(...Object.values(hypotheticalGains).flat());
+      if (maxGain <= 0) break;
+      let cost;
+      if (!Object.entries(hypotheticalGains).some(hypotheticalGainsEntry =>
+        hypotheticalGainsEntry[1].some((gain, nodeIndex) => {
+          if (gain >= maxGain) {
+            cost = upgradeCostLambdas[hypotheticalGainsEntry[0]](nodeIndex);
+            hypotheticalUpgradeLambdas[hypotheticalGainsEntry[0]](nodeIndex);
+            return true;
+          }
+        })
+      )) {
+        throw new Error('Failed to hypothetically upgrade a server when hypothetical max gain was > 0');
+      }
+      moneyToSpend -= cost;
+      if (moneyToSpend <= 0) break;
+    }
+    while (true);
+
+    let levelUpgrades = 0;
+    let ramUpgrades = 0;
+    let coreUpgrades = 0;
+    let cacheUpgrades = 0;
+    [...Array(ns.hacknet.numNodes()).keys()].map(index => ns.hacknet.getNodeStats(index))
+      .map((server, index) => {
+        if (hypotheticalServers[index].level > server.level) {
+          let timesToUpgrade = hypotheticalServers[index].level - server.level;
+          levelUpgrades += levelUpgrades;
+          ns.hacknet.upgradeLevel(index, timesToUpgrade);
+          ns.print(`Upgraded hacknet server ${server.name}'s level ${
+            timesToUpgrade} times, to ${hypotheticalServers[index].level}`);
+        }
+        if (hypotheticalServers[index].ram > server.ram) {
+          let timesToUpgrade = Math.log2(hypotheticalServers[index].ram) -
+            Math.log2(server.ram);
+          ramUpgrades += timesToUpgrade;
+          ns.hacknet.upgradeRam(index, timesToUpgrade);
+          ns.print(`Upgraded hacknet server ${server.name}'s ram ${
+            timesToUpgrade} times, to ${hypotheticalServers[index].ram}`);
+        }
+        if (hypotheticalServers[index].cores > server.cores) {
+          let timesToUpgrade = hypotheticalServers[index].cores - server.cores;
+          coreUpgrades += timesToUpgrade;
+          ns.hacknet.upgradeCore(index, timesToUpgrade);
+          ns.print(`Upgraded hacknet server ${server.name}'s cores ${
+            timesToUpgrade} times, to ${hypotheticalServers[index].cores}`);
+        }
+      });
+    if (levelUpgrades || ramUpgrades || coreUpgrades) {
+      ns.tprint(`Upgraded hacknet servers a total of: ${levelUpgrades} levels, ${ramUpgrades} ram upgrades, ${coreUpgrades} cores, ${cacheUpgrades} cache upgrades`);
+    }
+
+    await ns.sleep(flag_data['wait-time']);
+  } while (flag_data.loop);
+}

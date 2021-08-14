@@ -90,6 +90,12 @@ export async function main(ns) {
   settings.maxPlayerServers = ns.getPurchasedServerLimit()
   let hostname = ns.getHostname()
 
+  if (settings.maxPlayerServers == 0) {
+    ns.tprint(`[${localeHHMMSS()}] Player server limit is 0, exiting...`)
+    ns.exit()
+    return;
+  }
+
   if (hostname !== 'home') {
     throw new Exception('Run the script from home')
   }
