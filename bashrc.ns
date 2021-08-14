@@ -9,7 +9,6 @@ const scripts_to_alias = [
   "spider.ns",
   "training.ns",
   "find.ns",
-  "hacknet.ns",
   "stock.ns",
   "crime.ns",
   "eval.ns",
@@ -23,12 +22,24 @@ alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relay
 alias contracts="run contracter.ns"
 alias servers="run playerServers.ns"
 alias rank="home;run serverrank.ns"
-alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknet.ns; run stock.ns; run buyProgram.ns all --wait;"
+alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknetserver.ns --loop; run stock.ns; run buyProgram.ns all --wait;"
 alias deepscan="home; run deepestScan.ns"
-alias trainall="home; run training.ns --skill all --switch-time 300000 --tail"
+alias trainall="home; run training.ns --skill all --switch-time 150000 --tail"
+alias trainhacking="home; run training.ns --skill hacking"
+alias traindefense="home; run training.ns --skill defense"
 alias traincombat="home; run training.ns --skill combat --tail"
+alias trainhackdef="home; runtraining.ns --skill hackdef --tail --switch-time 60000"
+alias crimetrain="home; run crime.ns --training --tail"
+alias crimemoney="home; run crime.ns --money --tail"
+alias crimekarma="home; run crime.ns --karma --tail"
+alias crimekills="home; run crime.ns --kills --tail"
 alias infil="home; run infilHelperLite.ns; run healer.ns; run infiltration.ns"
 alias programs="home; run buyProgram.ns all --wait;"
+alias augs="home; run faction.ns --print-all-augs"
+alias hackingaugs="home; run faction.ns --print-augs hack"
+alias defenseaugs="home; run faction.ns --print-augs defense"
+alias factions="home; run faction.ns --print-factions"
+alias hacknet="home; run hacknetserver.ns --loop"
 `;
 
 export async function main(ns) {

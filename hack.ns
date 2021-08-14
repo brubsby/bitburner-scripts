@@ -347,7 +347,7 @@ export async function main(ns) {
   			const server = serverMap.servers[hackableServersWithRam[i]];
   			let cyclesFittable = Math.max(0, Math.floor(server.ram / 1.75));
 
-  			if (cyclesFittable) {
+  			if (cyclesFittable && ns.ps(server.host).every(ps => ps.filename != 'w.ns')) {
   			  await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID(), true);
   			  weakenCycles -= cyclesFittable;
   			}

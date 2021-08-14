@@ -309,7 +309,7 @@ const getFactionRequirements = (ns, faction_names) =>
 const getAugmentedPlayerData = (ns) => {
   let player = ns.getPlayer();
   // change crimes.ns to write calculated karma and kills to a file to be read here
-  player.karma = ns.heart.break();
+  player.karma = Math.abs(ns.heart.break());
   player.kills = 0;
 
   let hacknetNodes = [...Array(ns.hacknet.numNodes()).keys()]

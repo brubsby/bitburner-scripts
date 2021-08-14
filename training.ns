@@ -7,6 +7,7 @@ let skill_options = {
   all: ["hacking", "strength", "defense", "dexterity", "agility", "charisma"],
   combat: ["strength", "defense", "dexterity", "agility"],
   uni: ["hacking", "charisma"],
+  hackdef: ["hacking", "defense"],
   hacking: ["hacking"],
   strength: ["strength"],
   defense: ["defense"],
@@ -256,6 +257,7 @@ export async function main(ns) {
   while (true) {
     player = ns.getPlayer();
     let pertinentPlayerSkillEntries = skills.map(skill => [skill, player[player_skill_name_lambda(skill)]]);
+    ns.tprint(JSON.stringify(pertinentPlayerSkillEntries));
     // remove skills who have been sufficiently leveled
     if (targetLevel) {
       pertinentPlayerSkillEntries = pertinentPlayerSkillEntries.filter(skillEntry => skillEntry[1] < targetLevel);
