@@ -169,6 +169,9 @@ export async function main(ns) {
     let ramUpgrades = 0;
     let coreUpgrades = 0;
     let cacheUpgrades = 0;
+    let nodePurchases = hypotheticalServers.length - ns.hacknet.numNodes();
+    [...Array(nodePurchases).keys()]
+      .forEach(index => ns.hacknet.purchaseNode());
     [...Array(ns.hacknet.numNodes()).keys()].map(index => ns.hacknet.getNodeStats(index))
       .map((server, index) => {
         if (hypotheticalServers[index].level > server.level) {
@@ -194,8 +197,14 @@ export async function main(ns) {
             timesToUpgrade} times, to ${hypotheticalServers[index].cores}`);
         }
       });
-    if (levelUpgrades || ramUpgrades || coreUpgrades) {
-      ns.tprint(`Upgraded hacknet servers a total of: ${levelUpgrades} levels, ${ramUpgrades} ram upgrades, ${coreUpgrades} cores, ${cacheUpgrades} cache upgrades`);
+    if (levelUpgrades || ramUpgrades || coreUpgrades || cacheUpgrades || nodePurchases) {
+      let statusStrings = []
+      if (levelUpgrades) statusStrings.push(`${levelUpgrades} levels`);
+      if (ramUpgrades) statusStrings.push(`${ramUpgrades} ram upgrades`);
+      if (coreUpgrades) statusStrings.push(`${coreUpgrades} cores`);
+      if (cacheUpgrades) statusStrings.push(`${cacheUpgrades} cores`);
+      if (nodePurchases) statusStrings.push(`${nodePurchases} new servers`);
+      ns.tprint(`Upgraded hacknet servers a total of: ${statusStrings.join(`, `)}`);
     }
 
     await ns.sleep(flag_data['wait-time']);

@@ -10,6 +10,8 @@ const settings = {
   maxWeakenTime: 25 * 60 * 1000,
   trainHackingFor: 1000 * 60 * 10,
   pureTraining: true,
+  silent: true,
+  ignoreHacknet: true,
   targetOverride: "",
   keys: {
     serverMap: 'BB_SERVER_MAP',
@@ -242,7 +244,7 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting hack.ns`);
+  if (!settings.silent) ns.tprint(`[${localeHHMMSS()}] Starting hack.ns`);
 
   let hostname = ns.getHostname();
 
@@ -267,12 +269,19 @@ export async function main(ns) {
     }
     serverMap.servers.home.ram = Math.max(0, serverMap.servers.home.ram - settings.homeRamReserved);
 
-    const hackableServersWithRam = getHackableServersWithRam(ns, serverMap.servers);
+    let hackableServersWithRam = getHackableServersWithRam(ns, serverMap.servers);
+    //remove hacknet servers to not dampen hash production
+    if (settings.ignoreHacknet) {
+      hackableServersWithRam = hackableServersWithRam.filter(serverName =>
+        !serverName.includes("hacknet"));
+    }
     const hackableServers = getHackableServers(ns, serverMap.servers);
 
-  	if (!doneWithTraining && ns.getTimeSinceLastAug() > settings.trainHackingFor) {
-  		ns.tprint("Done training after since it's been more than " + (settings.trainHackingFor/(1000 * 60)) + " min since aug.");
-  		doneWithTraining = true;
+  	if (!settings.pureTraining && !doneWithTraining && ns.getTimeSinceLastAug() > settings.trainHackingFor) {
+      if(!doneWithTraining) {
+    		ns.tprint("Done training after since it's been more than " + (settings.trainHackingFor/(1000 * 60)) + " min since aug.");
+    		doneWithTraining = true;
+      }
   		for (let i = 0; i < hackableServersWithRam.length; i++) {
   			const server = serverMap.servers[hackableServersWithRam[i]];
   			ns.scriptKill("w.ns", server.host);
@@ -290,7 +299,7 @@ export async function main(ns) {
     }
     weakenCycles = growCycles;
 
-	  const heuristic = !doneWithTraining ? settings.heuristics.TRAINING : settings.heuristics.MONEY;
+	  const heuristic = (!doneWithTraining || settings.pureTraining) ? settings.heuristics.TRAINING : settings.heuristics.MONEY;
     const targetServers = findTargetServer(ns, hackableServers, serverMap.servers, serverExtraData, heuristic);
     const bestTarget = settings.targetOverride || targetServers.shift();
 
@@ -307,7 +316,7 @@ export async function main(ns) {
     let action = 'training';
     if (settings.pureTraining) {
       action = 'puretraining';
-	} else if (securityLevel > serverMap.servers[bestTarget].minSecurityLevel + settings.minSecurityLevelOffset) {
+	  } else if (securityLevel > serverMap.servers[bestTarget].minSecurityLevel + settings.minSecurityLevelOffset) {
       action = 'weaken';
     } else if (money < serverMap.servers[bestTarget].maxMoney * settings.maxMoneyMultiplayer) {
       action = 'grow';
@@ -315,32 +324,34 @@ export async function main(ns) {
       action = 'hack';
     }
 
-    ns.tprint(
-      `[${localeHHMMSS()}] Selected ${bestTarget} for a target. Planning to ${action} the server. Will wake up around ${localeHHMMSS(
-        new Date().getTime() + weakenTime + 300
-      )}`
-    );
-    ns.tprint(
-      `[${localeHHMMSS()}] Stock values: baseSecurity: ${serverMap.servers[bestTarget].baseSecurityLevel}; minSecurity: ${
-        serverMap.servers[bestTarget].minSecurityLevel
-      }; maxMoney: $${numberWithCommas(parseInt(serverMap.servers[bestTarget].maxMoney, 10))}`
-    );
-    ns.tprint(`[${localeHHMMSS()}] Current values: security: ${Math.floor(securityLevel * 1000) / 1000}; money: $${numberWithCommas(parseInt(money, 10))}`);
-    ns.tprint(
-      `[${localeHHMMSS()}] Time to: hack: ${convertMSToHHMMSS(hackTime)}; grow: ${convertMSToHHMMSS(growTime)}; weaken: ${convertMSToHHMMSS(weakenTime)}`
-    );
-    ns.tprint(`[${localeHHMMSS()}] Delays: ${convertMSToHHMMSS(hackDelay)} for hacks, ${convertMSToHHMMSS(growDelay)} for grows`);
+    if (!settings.silent) {
+      ns.tprint(
+        `[${localeHHMMSS()}] Selected ${bestTarget} for a target. Planning to ${action} the server. Will wake up around ${localeHHMMSS(
+          new Date().getTime() + weakenTime + 300
+        )}`
+      );
+      ns.tprint(
+        `[${localeHHMMSS()}] Stock values: baseSecurity: ${serverMap.servers[bestTarget].baseSecurityLevel}; minSecurity: ${
+          serverMap.servers[bestTarget].minSecurityLevel
+        }; maxMoney: $${numberWithCommas(parseInt(serverMap.servers[bestTarget].maxMoney, 10))}`
+      );
+      ns.tprint(`[${localeHHMMSS()}] Current values: security: ${Math.floor(securityLevel * 1000) / 1000}; money: $${numberWithCommas(parseInt(money, 10))}`);
+      ns.tprint(
+        `[${localeHHMMSS()}] Time to: hack: ${convertMSToHHMMSS(hackTime)}; grow: ${convertMSToHHMMSS(growTime)}; weaken: ${convertMSToHHMMSS(weakenTime)}`
+      );
+      ns.tprint(`[${localeHHMMSS()}] Delays: ${convertMSToHHMMSS(hackDelay)} for hacks, ${convertMSToHHMMSS(growDelay)} for grows`);
+    }
 
-	if (action === 'puretraining') {
-		for (let i = 0; i < hackableServersWithRam.length; i++) {
-			const server = serverMap.servers[hackableServersWithRam[i]];
-			let cyclesFittable = Math.max(0, Math.floor(server.ram / 1.75));
+  	if (action === 'puretraining') {
+  		for (let i = 0; i < hackableServersWithRam.length; i++) {
+  			const server = serverMap.servers[hackableServersWithRam[i]];
+  			let cyclesFittable = Math.max(0, Math.floor(server.ram / 1.75));
 
-			if (cyclesFittable) {
-			  await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID(), true);
-			  weakenCycles -= cyclesFittable;
-			}
-		}
+  			if (cyclesFittable) {
+  			  await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID(), true);
+  			  weakenCycles -= cyclesFittable;
+  			}
+  		}
     } else if (action === 'weaken') {
       if (settings.changes.weaken * weakenCycles > securityLevel - serverMap.servers[bestTarget].minSecurityLevel) {
         weakenCycles = Math.ceil((securityLevel - serverMap.servers[bestTarget].minSecurityLevel) / settings.changes.weaken);
