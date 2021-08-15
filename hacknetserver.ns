@@ -1,3 +1,7 @@
+const getHacknetServers = (ns) =>
+  [...Array(ns.hacknet.numNodes()).keys()]
+    .map(index => ns.hacknet.getNodeStats(index))
+
 const serverOptimalGainRate = (ns, server, player) =>
   ns.formulas.hacknetServers.hashGainRate(
     server.level,
@@ -13,6 +17,9 @@ const newServerGainRate = (ns, player) =>
     1,
     1,
     player.hacknet_node_money_mult);
+
+const lowestServerGainRate = (ns, player) =>
+  Math.min(...getHacknetServers(ns).map(server => server.production))
 
 const serverOptimalGainRateLevelUpgrade = (ns, server, player) =>
   server.level < ns.formulas.hacknetServers.constants().MaxLevel ?
@@ -141,7 +148,7 @@ export async function main(ns) {
         new_gains: [
           ...[...Array(hypotheticalServers.length)].map(x=>0),
           newServerCost(ns, hypotheticalServers.length, player) < moneyToSpend ?
-            newServerGainRate(ns, player) /
+            lowestServerGainRate(ns) /
             newServerCost(ns, hypotheticalServers.length, player) : 0
           ]
       };

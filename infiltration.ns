@@ -220,7 +220,18 @@ const locationEntriesToString = (ns, locationEntries) =>
             }]`).join(',\n')}\n]`
 
 export async function main(ns) {
+  let flag_data = ns.flags([
+    ["money", 0],
+    ["rep", 0],
+  ])
+
+
   let metricToOptimize = "rep_gain_per_floor";
+  let optimizationDirection = 1;
+  if (flag_data.rep || flag_data.money) {
+    metricToOptimize = "max_clearance_level";
+    optimizationDirection = -1;
+  }
   let player = ns.getPlayer();
   let sortedInfiltrationsByRep = Object.entries(infiltration_locations)
     .map(infiltrationLocationEntry =>
@@ -237,10 +248,34 @@ export async function main(ns) {
           ...{defense_required: minDefenseToSurviveDamage(infiltrationDamage(infiltrationLocationEntry))}
         },
       ]
-    ).sort((a,b) => b[1][metricToOptimize]-a[1][metricToOptimize]);
+    ).sort((a,b) => optimizationDirection *
+      (b[1][metricToOptimize]-a[1][metricToOptimize]));
   let sortedSurvivableInfiltrationsByRep = sortedInfiltrationsByRep
     .filter(infiltrationLocationEntry =>
       infiltrationLocationEntry[1].damage < ns.getPlayer().max_hp);
+
+  if (flag_data.money) {
+    sortedSurvivableInfiltrationsByRep = sortedSurvivableInfiltrationsByRep
+      .filter(infiltrationLocationEntry =>
+        infiltrationLocationEntry[1].money_gain >= flag_data.money)
+    if (!sortedSurvivableInfiltrationsByRep.length) {
+      ns.tprint(`No survivable infiltrations found that give over ${ns.nFormat(flag_data.money, "$0.000a")}. Exiting...`);
+      ns.exit();
+      return;
+    }
+  }
+  if (flag_data.rep) {
+    sortedSurvivableInfiltrationsByRep = sortedSurvivableInfiltrationsByRep
+      .filter(infiltrationLocationEntry =>
+        infiltrationLocationEntry[1].rep_gain >= flag_data.rep)
+    if (!sortedSurvivableInfiltrationsByRep.length) {
+      ns.tprint(`No survivable infiltrations found that give over ${ns.nFormat(flag_data.rep, "0.000a")} rep. Exiting...`);
+      ns.exit();
+      return;
+    }
+  }
+
+
   let bestCurrentLocationEntry = sortedSurvivableInfiltrationsByRep[0];
 
 
