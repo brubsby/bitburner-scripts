@@ -1,6 +1,6 @@
 const settings = {
-  homeRamReserved: 20,
-  homeRamReservedBase: 20,
+  homeRamReserved: 32,
+  homeRamReservedBase: 32,
   homeRamExtraRamReserved: 64,
   homeRamBigMode: 64,
   minSecurityLevelOffset: 1,
@@ -9,10 +9,10 @@ const settings = {
   mapRefreshInterval: 5 * 60 * 1000,
   maxWeakenTime: 25 * 60 * 1000,
   trainHackingFor: 1000 * 60 * 10,
-  pureTraining: true,
-  silent: true,
+  pureTraining: false,
+  silent: false,
   ignoreHacknet: true,
-  targetOverride: "",
+  targetOverride: "phantasy",
   keys: {
     serverMap: 'BB_SERVER_MAP',
   },

@@ -1,0 +1,98 @@
+//import {  } from "constants.ns"
+//import {  } from "common.ns"
+//import {  } from "crime.ns"
+//import {  } from "training.ns"
+
+const max_buffer = 100;
+const travel_cost = 200e3;
+
+const handleSecondaryMoney = (ns) => {
+  while ((ns.hacknet.numHashes() > ns.hacknet.hashCapacity() - max_buffer) ||
+    (ns.hacknet.numHashes() > ns.hacknet.hashCost("Sell for Money") &&
+      ns.getPlayer().money < travel_cost)) {
+    if(!ns.hacknet.spendHashes("Sell for Money")) {
+      break;
+    }
+  }
+}
+
+const hash_goals = {
+  MONEY: "money",
+  POOL: "pool",
+  MAXUNI: "maxuni",
+  MAXGYM: "maxgym",
+  MAXTRAINING: "maxtraining",
+  SERVER: "server",
+};
+
+let hash_goal = hash_goals.MONEY;
+let target;
+
+export async function main(ns) {
+  let flag_data = ns.flags([
+    ["goal", ""],
+    ["target", ""],
+    ["debug", false],
+  ]);
+
+  const goalArg = (flag_data.goal || flag_data._[0] || "").toUpperCase();
+  const targetArg = flag_data.target || flag_data._[1];
+
+  if (goalArg) {
+    if (!hash_goals[goalArg]) {
+      ns.tprint(`invalid goal specified: ${goalArg}`);
+      ns.exit();
+      return;
+    }
+    hash_goal = hash_goals[goalArg];
+    if (flag_data.debug) ns.tprint(`hash_goal: ${hash_goal}`);
+
+  }
+
+  if (target) {
+    if (hash_goal == hash_goals.SERVER && !ns.serverExists(targetArg)) {
+      ns.tprint(`"${targetArg}" is not a valid server to target`);
+    } else {
+      target = targetArg;
+    }
+  }
+
+  if (ns.ps(ns.getHostname()).some(server => server.filename == "brain.ns")) {
+    ns.exit();
+    return;
+  }
+
+  while (true) {
+    switch (hash_goal) {
+      case hash_goals.MAXUNI:
+      case hash_goals.MAXGYM:
+      case hash_goals.MAXTRAINING:
+        if (flag_data.debug) ns.tprint(`Executing max loop`);
+        handleSecondaryMoney(ns);
+        while ([hash_goals.MAXUNI, hash_goals.MAXTRAINING].includes(hash_goal)
+          && ns.hacknet.spendHashes("Improve Studying"));
+        while ([hash_goals.MAXGYM, hash_goals.MAXTRAINING].includes(hash_goal)
+          && ns.hacknet.spendHashes("Improve Gym Training"));
+        break;
+      case hash_goals.POOL:
+        if (flag_data.debug) ns.tprint(`Executing pool loop`);
+        handleSecondaryMoney(ns);
+        break;
+      case hash_goals.MONEY:
+        if (flag_data.debug) ns.tprint(`Executing money loop`);
+        while (ns.hacknet.spendHashes("Sell for Money"));
+        break;
+
+      case hash_goals.SERVER:
+        if (flag_data.debug) ns.tprint(`Executing server loop`);
+        handleSecondaryMoney(ns);
+        while (hash_goals.SERVER == hash_goal
+          && ns.hacknet.spendHashes("Reduce Minimum Security", target));
+        while (hash_goals.SERVER == hash_goal
+          && ns.hacknet.spendHashes("Increase Maximum Money", target));
+        break;
+    }
+
+    await ns.sleep(1000);
+  }
+}

@@ -1,3 +1,5 @@
+import { getBitNodeMultipliers } from "bitNodeMultipliers.ns"
+
 export const factions = {
   "Illuminati": {
     short_name: "Illuminati",
@@ -14,7 +16,7 @@ export const factions = {
   "Daedalus": {
     short_name: "Daedalus",
     requirements: {
-      augmentations: 30, // multiply by BitNodeMultipliers.DaedalusAugsRequirement
+      augmentations: 30 * getBitNodeMultipliers().DaedalusAugsRequirement,
       money: 100000000000,
       hacking: 2500,
       strength: 1500,
@@ -129,7 +131,6 @@ export const factions = {
       home_ram: 32,
     },
   },
-  //TODO add banned city factions
   "Aevum": {
     short_name: "Aevum",
     requirements: {
@@ -293,6 +294,14 @@ const getNonBannedFactionsWithAugmentsForSale = (ns, player, excludedFactions) =
   let allOwnedAugmentations = ns.getOwnedAugmentations(true);
   return getNonBannedFactionNames(ns, player)
     .filter(factionName => !excludedFactions.includes(factionName))
+    .filter(factionName => ns.getAugmentationsFromFaction(factionName)
+      .filter(augmentation => !allOwnedAugmentations.includes(augmentation))
+      .filter(augmentation => augmentation != "NeuroFlux Governor").length);
+};
+
+const getFactionsWithAugmentsForSale = (ns) => {
+  let allOwnedAugmentations = ns.getOwnedAugmentations(true);
+  return faction_names
     .filter(factionName => ns.getAugmentationsFromFaction(factionName)
       .filter(augmentation => !allOwnedAugmentations.includes(augmentation))
       .filter(augmentation => augmentation != "NeuroFlux Governor").length);
@@ -488,9 +497,16 @@ export async function main(ns) {
 
   let player = ns.getPlayer();
   let excludedFactions = [];
+
+  // exclude factions with no augs for sale
+  excludedFactions = faction_names.filter(factionName =>
+    !getFactionsWithAugmentsForSale(ns).includes(factionName))
+
   if (flag_data["no-companies"]) {
-    excludedFactions = faction_names.filter(factionName =>
-      factions[factionName].requirements.company_name);
+    excludedFactions = [...new Set(excludedFactions.concat(
+      faction_names.filter(factionName =>
+      factions[factionName].requirements.company_name ||
+      factions[factionName].requirements.jobs)))];
   }
 
   if (flag_data["print-factions"]) {

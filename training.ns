@@ -277,17 +277,19 @@ export async function main(ns) {
         if (performance.now() - startTime > switchTime) {
           break;
         }
+        if (time && performance.now() - scriptStartTime > time) {
+          runCallbackExit(ns, callback);
+        }
       }
     } else {
-      if(time) {
-        while (ns.isBusy()) {
-          await ns.sleep(EPSILON_SLEEP);
-          if (performance.now() - scriptStartTime > time) {
-            runCallbackExit(ns, callback);
-          }
+      while (ns.isBusy()) {
+        await ns.sleep(EPSILON_SLEEP);
+        if (performance.now() - startTime > switchTime) {
+          break;
         }
-      } else {
-        runCallbackExit(ns, callback);
+        if (time && performance.now() - scriptStartTime > time) {
+          runCallbackExit(ns, callback);
+        }
       }
     }
   }

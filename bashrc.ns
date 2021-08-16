@@ -13,7 +13,7 @@ const scripts_to_alias = [
   "crime.ns",
   "eval.ns",
   "bashrc.ns",
-  "brain.ns"
+  "hash.ns",
 ];
 
 const terminal_block = `
@@ -22,13 +22,16 @@ alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relay
 alias contracts="run contracter.ns"
 alias servers="run playerServers.ns"
 alias rank="home;run serverrank.ns"
-alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknetserver.ns --loop; run stock.ns; run buyProgram.ns all --wait;"
+alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknetserver.ns --loop; run stock.ns; run buyProgram.ns all --wait; run brain.ns;"
 alias deepscan="home; run deepestScan.ns"
-alias trainall="home; run training.ns --skill all --switch-time 150000 --tail"
-alias trainhacking="home; run training.ns --skill hacking"
-alias traindefense="home; run training.ns --skill defense"
+alias trainallcheap="home; run training.ns --skill all --switch-time 150000 --tail"
+alias trainall="home; run training.ns --skill all --tail"
+alias trainhacking="home; run training.ns --skill hacking --tail"
+alias traindefense="home; run training.ns --skill defense --tail"
 alias traincombat="home; run training.ns --skill combat --tail"
-alias trainhackdef="home; runtraining.ns --skill hackdef --tail --switch-time 60000"
+alias trainuni="home; run training.ns --skill uni --tail"
+alias traincharisma="home; run training.ns --skill charisma --tail"
+alias trainhackdef="home; run training.ns --skill hackdef --tail --switch-time 60000"
 alias crimetrain="home; run crime.ns --training --tail"
 alias crimemoney="home; run crime.ns --money --tail"
 alias crimekarma="home; run crime.ns --karma --tail"
@@ -39,7 +42,9 @@ alias augs="home; run faction.ns --print-all-augs"
 alias hackingaugs="home; run faction.ns --print-augs hack"
 alias defenseaugs="home; run faction.ns --print-augs defense"
 alias factions="home; run faction.ns --print-factions"
-alias hacknet="home; run hacknetserver.ns --loop"
+alias hacknet="home; run hacknet.ns --loop"
+alias restart="run process.ns --restart"
+alias kill="run process.ns --kill"
 `;
 
 export async function main(ns) {

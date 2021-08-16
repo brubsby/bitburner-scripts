@@ -315,7 +315,12 @@ export async function main(ns) {
       return result;
     }, []);
   ns.tprint(`Top Locations where you can survive a failure: ${locationEntriesToString(ns, sortedSurvivableInfiltrationsByRep)}`);
-  ns.tprint(`Best location to infiltrate: ${bestCurrentLocationEntry[0]} for ${bestCurrentLocationEntry[1].rep_gain} total rep, ${bestCurrentLocationEntry[1].rep_gain} rep per floor and ${bestCurrentLocationEntry[1].damage} damage.`)
+  ns.tprint(`Best location to infiltrate: ${bestCurrentLocationEntry[0]} for ${
+    ns.nFormat(bestCurrentLocationEntry[1].rep_gain, "0.000a")} total rep, ${
+      ns.nFormat(bestCurrentLocationEntry[1].rep_gain_per_floor, "0.000a")} rep per floor, ${
+        ns.nFormat(bestCurrentLocationEntry[1].money_gain, "$0.000a")}, ${
+          ns.nFormat(bestCurrentLocationEntry[1].money_gain_per_floor, "$0.000a")} per floor, and ${
+        bestCurrentLocationEntry[1].damage} damage per hit.`)
   ns.tprint(`Better locations and their defense levels: ${locationEntriesToString(ns, locationMilestonesForDefenseLevels)}`)
 
 
