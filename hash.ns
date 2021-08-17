@@ -23,6 +23,7 @@ const hash_goals = {
   MAXGYM: "maxgym",
   MAXTRAINING: "maxtraining",
   SERVER: "server",
+  CONTRACTS: "contracts"
 };
 
 let hash_goal = hash_goals.MONEY;
@@ -57,7 +58,7 @@ export async function main(ns) {
     }
   }
 
-  if (ns.ps(ns.getHostname()).some(server => server.filename == "brain.ns")) {
+  if (ns.ps(ns.getHostname()).filter(server => server.filename == "hash.ns").length > 1) {
     ns.exit();
     return;
   }
@@ -90,6 +91,12 @@ export async function main(ns) {
           && ns.hacknet.spendHashes("Reduce Minimum Security", target));
         while (hash_goals.SERVER == hash_goal
           && ns.hacknet.spendHashes("Increase Maximum Money", target));
+        break;
+      case hash_goals.CONTRACTS:
+        if (flag_data.debug) ns.tprint(`Executing contracts loop`);
+        handleSecondaryMoney(ns);
+        while (hash_goals.CONTRACTS == hash_goal
+          && ns.hacknet.spendHashes("Generate Coding Contract"));
         break;
     }
 

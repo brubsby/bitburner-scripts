@@ -1,4 +1,10 @@
 // Based on https://github.com/danielyxie/bitburner/blob/master/src/data/codingcontracttypes.ts
+import {getBitNodeMultipliers} from "bitNodeMultipliers.ns"
+
+const contract_base_faction_rep_gain = 2500;
+const contract_base_company_rep_gain = 4000;
+const contract_base_money_gain = 4000;
+
 const settings = {
   keys: {
     serverMap: 'BB_SERVER_MAP',
@@ -29,6 +35,74 @@ function convert2DArrayToString(arr) {
   return components.join(',').replace(/\s/g, '')
 }
 
+const moneyFromContract = (difficulty, bitNodeMultipliers) =>
+  contract_base_money_gain * difficulty * bitNodeMultipliers.CodingContractMoney;
+
+const factionRepFromContract = (difficulty, bitNodeMultipliers) =>
+  contract_base_faction_rep_gain * difficulty;
+
+const companyRepFromContract = (difficulty, bitNodeMultipliers) =>
+  contract_base_company_rep_gain * difficulty;
+
+const expectedMoneyFromRandomMoneyContract = (bitNodeMultipliers) => {
+  let contractRewards = codingContractTypesMetadata.map(codingContract =>
+    moneyFromContract(codingContract.difficulty, bitNodeMultipliers));
+  return contractRewards.reduce((a, b) => a + b, 0) /
+    contractRewards.length;
+};
+
+const expectedRepFromRandomFactionContract = (bitNodeMultipliers) => {
+  let contractRewards = codingContractTypesMetadata.map(codingContract =>
+    factionRepFromContract(codingContract.difficulty, bitNodeMultipliers));
+  return contractRewards.reduce((a, b) => a + b, 0) /
+    contractRewards.length;
+};
+
+const expectedRepFromRandomCompanyontract = (bitNodeMultipliers) => {
+  let contractRewards = codingContractTypesMetadata.map(codingContract =>
+    companyRepFromContract(codingContract.difficulty, bitNodeMultipliers));
+  return contractRewards.reduce((a, b) => a + b, 0) /
+    contractRewards.length;
+};
+
+const expectedReturnFromRandomContract = (ns, player) => {
+  let numPlayerFactions = player.factions.length;
+  let numPlayerJobs = Object.keys(player.jobs).length;
+  let bitNodeMultipliers = getBitNodeMultipliers();
+  let moneyProbability = 1;
+  let companyProbability = 0;
+  let factionProbability = 0;
+  let factionAllProbability = 0;
+  if (numPlayerFactions) {
+    moneyProbability = 1/4;
+    companyProbability = 0;
+    factionAllProbability = 1/2;
+    factionProbability = 1/4;
+    if (numPlayerJobs) {
+      moneyProbability = 1/4;
+      companyProbability = 1/4;
+      factionAllProbability = 1/4;
+      factionProbability = 1/4;
+    }
+  } else if (numPlayerJobs){
+    moneyProbability = 3/4;
+    companyProbability = 1/4;
+    factionAllProbability = 0;
+    factionProbability = 0;
+  }
+  let expectedReturns = {
+    money: moneyProbability *
+      expectedMoneyFromRandomMoneyContract(bitNodeMultipliers),
+    every_company_rep: companyProbability *
+      expectedRepFromRandomCompanyContract(bitNodeMultipliers) /
+      numPlayerJobs,
+    every_faction_rep: (factionAllProbability + factionProbability) *
+      expectedRepFromRandomFactionContract(bitNodeMultipliers) /
+      numPlayerFactions,
+  }
+  return expectedReturns;
+};
+
 const codingContractTypesMetadata = [
   {
     name: 'Find Largest Prime Factor',
@@ -43,6 +117,7 @@ const codingContractTypesMetadata = [
       }
       return n === 1 ? fac - 1 : n
     },
+    difficulty: 1,
   },
   {
     name: 'Subarray with Maximum Sum',
@@ -53,6 +128,7 @@ const codingContractTypesMetadata = [
       }
       return Math.max.apply(Math, nums)
     },
+    difficulty: 1,
   },
   {
     name: 'Total Ways to Sum',
@@ -67,6 +143,7 @@ const codingContractTypesMetadata = [
       }
       return ways[data]
     },
+    difficulty: 1.5,
   },
   {
     name: 'Spiralize Matrix',
@@ -116,6 +193,7 @@ const codingContractTypesMetadata = [
 
       return spiral
     },
+    difficulty: 2,
   },
   {
     name: 'Array Jumping Game',
@@ -128,6 +206,7 @@ const codingContractTypesMetadata = [
       var solution = i === n
       return solution ? 1 : 0
     },
+    difficulty: 2.5,
   },
   {
     name: 'Merge Overlapping Intervals',
@@ -153,6 +232,7 @@ const codingContractTypesMetadata = [
       var sanitizedResult = convert2DArrayToString(result)
       return sanitizedResult
     },
+    difficulty: 3,
   },
   {
     name: 'Generate IP Addresses',
@@ -192,6 +272,7 @@ const codingContractTypesMetadata = [
       }
       return maxSoFar.toString()
     },
+    difficulty: 1,
   },
   {
     name: 'Algorithmic Stock Trader II',
@@ -202,6 +283,7 @@ const codingContractTypesMetadata = [
       }
       return profit.toString()
     },
+    difficulty: 2,
   },
   {
     name: 'Algorithmic Stock Trader III',
@@ -219,6 +301,7 @@ const codingContractTypesMetadata = [
       }
       return release2.toString()
     },
+    difficulty: 5,
   },
   {
     name: 'Algorithmic Stock Trader IV',
@@ -254,6 +337,7 @@ const codingContractTypesMetadata = [
       }
       return rele[k]
     },
+    difficulty: 8,
   },
   {
     name: 'Minimum Path Sum in a Triangle',
@@ -267,6 +351,7 @@ const codingContractTypesMetadata = [
       }
       return dp[0]
     },
+    difficulty: 5,
   },
   {
     name: 'Unique Paths in a Grid I',
@@ -285,6 +370,7 @@ const codingContractTypesMetadata = [
       }
       return currentRow[n - 1]
     },
+    difficulty: 3,
   },
   {
     name: 'Unique Paths in a Grid II',
@@ -307,6 +393,7 @@ const codingContractTypesMetadata = [
       }
       return obstacleGrid[obstacleGrid.length - 1][obstacleGrid[0].length - 1]
     },
+    difficulty: 5,
   },
   {
     name: 'Sanitize Parentheses in Expression',
@@ -349,6 +436,7 @@ const codingContractTypesMetadata = [
 
       return res
     },
+    difficulty: 10,
   },
   {
     name: 'Find All Valid Math Expressions',
@@ -384,6 +472,7 @@ const codingContractTypesMetadata = [
       helper(result, '', num, target, 0, 0, 0)
       return result
     },
+    difficulty: 10,
   },
 ]
 
@@ -402,7 +491,7 @@ function findAnswer(contract) {
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting contracter.ns`)
+
 
   let hostname = ns.getHostname()
 
