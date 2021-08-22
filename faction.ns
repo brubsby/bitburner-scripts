@@ -1,4 +1,5 @@
 import { getBitNodeMultipliers } from "bitNodeMultipliers.ns"
+import { getDetailedPlayerData } from "common.ns"
 
 export const factions = {
   "Illuminati": {
@@ -315,26 +316,10 @@ const getFactionRequirements = (ns, faction_names) =>
   ]
 );
 
-//add kills and kamra to the player object
-const getAugmentedPlayerData = (ns) => {
-  let player = ns.getPlayer();
-  // change crimes.ns to write calculated karma and kills to a file to be read here
-  player.karma = Math.abs(ns.heart.break());
-  player.kills = 0;
-
-  let hacknetNodes = [...Array(ns.hacknet.numNodes()).keys()]
-    .map(ns.hacknet.getNodeStats);
-  player.hacknet_levels = hacknetNodes.reduce((result, next) => result + next.level, 0);
-  player.hacknet_ram = hacknetNodes.reduce((result, next) => result + next.ram, 0);
-  player.hacknet_cores = hacknetNodes.reduce((result, next) => result + next.cores, 0);
-
-  return player;
-};
-
 const areFactionRequirementsMet = (ns, factionEntry) => {
   let factionName = factionEntry[0];
   let requirements = factionEntry[1];
-  let player = getAugmentedPlayerData(ns);
+  let player = getDetailedPlayerData(ns);
   if (
     (requirements.hack_target && !ns.hasRootAccess(requirements.hack_target)) ||
     (requirements.cities && !requirements.cities.includes(player.city)) ||
@@ -377,7 +362,7 @@ const getFactionsWithMetRequirements = (ns) => Object.entries(factions)
 
 const getUnmetRequirements = (ns, factionName) => {
   let requirements = {...factions[factionName].requirements};
-  let player = getAugmentedPlayerData(ns);
+  let player = getDetailedPlayerData(ns);
   if (requirements.hack_target && ns.hasRootAccess(requirements.hack_target))
     delete requirements.hack_target;
   if (requirements.cities && requirements.cities.includes(player.city))
@@ -495,7 +480,7 @@ export async function main(ns) {
     ["no-companies", false]
   ]);
 
-  let player = ns.getPlayer();
+  let player = getDetailedPlayerData(ns);
   let excludedFactions = [];
 
   // exclude factions with no augs for sale

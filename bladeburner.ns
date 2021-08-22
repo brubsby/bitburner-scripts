@@ -1,0 +1,46 @@
+
+//TODO NOT DONE
+// actionTimeWithBonus = (ns, action) => {
+//   let bonusTime = ns.bladeburner.getBonusTime();
+//   let baseTime = ns.bladeburner.getActionTime(currentAction.type, currentAction.name);
+//   return base;
+// }
+
+
+export async function main(ns) {
+  while (true) {
+    let [stamina, maxStamina] = ns.bladeburner.getStamina();
+    if (stamina < maxStamina / 2) {
+      if (ns.bladeburner.getCityChaos(ns.bladeburner.getCity()) > 50) {
+        ns.bladeburner.startAction("General", "Diplomacy");
+      } else {
+        if (Math.random() < 0.25) {
+          ns.bladeburner.startAction("General", "Field Analysis");
+        } else {
+          ns.bladeburner.startAction("General", "Hyperbolic Regeneration Chamber");
+        }
+      }
+    } else if (true) {
+      let contractNames = ns.bladeburner.getContractNames();
+      let contractActions = contractNames.filter(contractName =>
+        ns.bladeburner.getActionCountRemaining("Contracts", contractName))
+        .map(contractName => ({
+          type: "Contracts",
+          name: contractName,
+          rep_gain: ns.bladeburner.getActionRepGain("Contracts", contractName),
+          success_chance: ns.bladeburner.getActionEstimatedSuccessChance("Contracts", contractName),
+          time: ns.bladeburner.getActionTime("Contracts", contractName),
+        })).map(action => {...action, {expected_rep_per_second: action.rep_gain * action.success_chance / action.time}});
+      if (!contractActions.length) {
+        ns.bladeburner.startAction("General", "Training");
+      } else {
+        let highestExpectedRepAction = contractActions.reduce((result, next) =>
+          result.expected_rep_per_second > next.expected_rep_per_second ?
+            result : next);
+      }
+    }
+    let currentAction = ns.bladeburner.getCurrentAction();
+    await ns.sleep(ns.bladeburner.getActionTime(currentAction.type, currentAction.name) * 1000 + 250);
+
+  }
+}

@@ -33,7 +33,7 @@ function ServerTable(ns){
             Math.round(ns.getServerSecurityLevel(hostname)*10)/10,
             srvMinSec,
             Math.round(ns.getServerMoneyAvailable(hostname)),
-            srvMaxMoney,
+            Math.round(srvMaxMoney),
             ns.getServerGrowth(hostname),
             Math.round(srvBaseTime),
             Math.round(srvHackSuccessChance * 100),

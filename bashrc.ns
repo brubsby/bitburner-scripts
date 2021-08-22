@@ -14,6 +14,9 @@ const scripts_to_alias = [
   "eval.ns",
   "bashrc.ns",
   "hash.ns",
+  "killhack.ns",
+  "steve.ns",
+  "gang.ns",
 ];
 
 const terminal_block = `
@@ -22,7 +25,7 @@ alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relay
 alias contracts="run contract.ns"
 alias servers="run playerServers.ns"
 alias rank="home;run serverrank.ns"
-alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknetserver.ns --loop; run stock.ns; run buyProgram.ns all --wait; run brain.ns;"
+alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknet.ns --budget Infinity --payoff-time 8; run stock.ns; run buyProgram.ns all --wait; run gang.ns; run hash.ns money;"
 alias deepscan="home; run deepscan.ns"
 alias trainallcheap="home; run training.ns --skill all --switch-time 150000 --tail"
 alias trainall="home; run training.ns --skill all --tail"

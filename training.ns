@@ -204,6 +204,7 @@ export async function main(ns) {
     ["time", 0],
     ["help", false],
     ["switch-time", 30000],
+    ["equal-time", false],
     ["tail", false],
   ]);
 
@@ -215,6 +216,7 @@ export async function main(ns) {
   let time = flag_data.time;
   let switchTime = flag_data["switch-time"];
   let targetLevel = flag_data["target-level"];
+  let equalTime = flag_data["equal-time"];
 
   if (!skillOption || flag_data.help) {
     usage(ns);
@@ -253,6 +255,7 @@ export async function main(ns) {
   let skills = skill_options[skillOption];
   let skill;
   let scriptStartTime = performance.now();
+  let counter = 0;
 
   while (true) {
     player = ns.getPlayer();
@@ -266,8 +269,15 @@ export async function main(ns) {
         break;
       }
     }
-    // select lowest
-    let skill = pertinentPlayerSkillEntries.reduce((result, next) => next[1] < result[1] ? next : result)[0];
+
+    let skill;
+    if (equalTime) {
+      // round robin
+      skill = pertinentPlayerSkillEntries[counter % pertinentPlayerSkillEntries.length][0];
+    } else {
+      // select lowest
+      skill = pertinentPlayerSkillEntries.reduce((result, next) => next[1] < result[1] ? next : result)[0];
+    }
     ns.print(`skill to train; ${skill}`);
     let startTime = performance.now();
     startClassFromClassEntry(ns, getFastestClassForSkill(ns, skill, noTravel, city));
@@ -292,5 +302,6 @@ export async function main(ns) {
         }
       }
     }
+    counter++;
   }
 }

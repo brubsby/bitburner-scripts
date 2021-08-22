@@ -1,3 +1,5 @@
+import { parseLargeNumberString } from "common.ns";
+
 const upgrade_types = {
   "Sell for Money": {},
   "Sell for Corporation Funds": {},
@@ -14,7 +16,8 @@ const upgrade_types = {
 const upgrade_names = Object.keys(upgrade_types);
 
 const max_upgrade_cost = (ns) =>
-  Math.max(...upgrade_names.map(upgradeName => ns.hacknet.hashCost(upgradeName)));
+  Math.max(...upgrade_names.map(upgradeName =>
+    ns.hacknet.hashCost(upgradeName)));
 
 const getHacknetServers = (ns) =>
   [...Array(ns.hacknet.numNodes()).keys()]
@@ -67,6 +70,25 @@ const serverOptimalGainRateCoreUpgrade = (ns, server, player) =>
     server.ram,
     server.cores + 1,
     player.hacknet_node_money_mult) : 0;
+
+const hashesToMoneyConversion = (hashes) => 1e6 * hashes / 4;
+
+const moneyToHashesConversion = (money) => 4 * money / 1e6;
+
+const isLevelUpgradeWorth = (ns, server, player, payoffTime) =>
+  hashesToMoneyConversion(
+    serverOptimalGainRateLevelUpgradeDelta(ns, server, player)) *
+    payoffTime >= serverLevelUpgradeCost(ns, server, player);
+
+const isRamUpgradeWorth = (ns, server, player, payoffTime) =>
+  hashesToMoneyConversion(
+    serverOptimalGainRateRamUpgradeDelta(ns, server, player)) *
+    payoffTime >= serverRamUpgradeCost(ns, server, player);
+
+const isCoreUpgradeWorth = (ns, server, player, payoffTime) =>
+  hashesToMoneyConversion(
+    serverOptimalGainRateCoreUpgradeDelta(ns, server, player)) *
+    payoffTime >= serverCoreUpgradeCost(ns, server, player);
 
 const serverHashCapacityAfterUpgrade = (ns, server, player) =>
   server.cache < ns.formulas.hacknetServers.constants().MaxCache ?
@@ -127,27 +149,69 @@ const newServerCost = (ns, numNodes, player) =>
     Infinity;
 
 function usage(ns) {
-  ns.tprint(`Usage: run hacknetserver.ns [--loop] [--wait-time &ltmilliseconds&gt]`);
+  ns.tprint(`Usage: run ${ns.getScriptName()} [--help] [--print] [--wait-time &ltmilliseconds&gt] [--payoff-time &lthours&gt] [--budget &ltdollars&gt] [--add-budget &ltdollars&gt]`);
 }
+
+//current unspent budget, can be greater than player money
+let budget = 0;
+let payoffTime;
+let printStatus = true;
 
 export async function main(ns) {
 
-  let flag_data = ns.flags([
-    ["loop", false],
+  let flags = ns.flags([
     ["wait-time", 5000],
-    ["payoff-time", 1000 * 60 * 60 * 8],
+    ["payoff-time", 0],
+    ["budget", ""], //sets budget
+    ["add-budget", ""], //adds money to budget
     ["debug", false],
+    ["help", false],
+    ["print", false],
   ])
 
   let player = ns.getPlayer();
-  let payoffTime = flag_data["payoff-time"];
+
+  if (flags['payoff-time']) {
+    payoffTime = flags["payoff-time"] * 60 * 60;
+  }
+
+  if (flags["add-budget"]) {
+    budget += parseLargeNumberString(flags["add-budget"]);
+  }
+
+  if (flags.budget) {
+    budget = parseLargeNumberString(flags.budget);
+  }
+
+  if (flags.help) {
+    usage(ns);
+  }
+
+  if (flags.print) {
+    printStatus = true;
+  }
+
+  if (ns.ps(ns.getHostname()).filter(server =>
+      server.filename == ns.getScriptName()).length > 1) {
+    printStatus = true;
+    ns.exit();
+    return;
+  }
 
   do {
     player = ns.getPlayer();
     let hypotheticalServers = [...Array(ns.hacknet.numNodes()).keys()]
       .map(index => ({...ns.hacknet.getNodeStats(index)}));
     let upgradesToBuy = [];
-    let moneyToSpend = player.money;
+    let moneyToSpend = Math.min(player.money, budget);
+    let currentCost = 0;
+
+    if (printStatus) {
+      ns.tprint(`Current Spend: ${
+        ns.nFormat(moneyToSpend, "$0.000a")}, Total Budget: ${
+          ns.nFormat(budget, "$0.000a")}${payoffTime ? `, Payoff Time: ${payoffTime}` : ``}`);
+      printStatus = false;
+    }
 
     let hypotheticalUpgradeLambdas = {
       level_gains: (index) => hypotheticalServers[index].level += 1,
@@ -174,20 +238,23 @@ export async function main(ns) {
     do {
       let hypotheticalGains = {
         level_gains: hypotheticalServers.map(server =>
-          serverLevelUpgradeCost(ns, server, player) < moneyToSpend ?
+          serverLevelUpgradeCost(ns, server, player) < moneyToSpend &&
+          isLevelUpgradeWorth(ns, server, player, payoffTime ? payoffTime : Infinity) ?
           serverOptimalGainRateLevelUpgradeDelta(ns, server, player) /
           serverLevelUpgradeCost(ns, server, player) : 0),
         ram_gains: hypotheticalServers.map(server =>
-          serverRamUpgradeCost(ns, server, player) < moneyToSpend ?
+          serverRamUpgradeCost(ns, server, player) < moneyToSpend &&
+          isRamUpgradeWorth(ns, server, player, payoffTime ? payoffTime : Infinity)  ?
           serverOptimalGainRateRamUpgradeDelta(ns, server, player) /
           serverRamUpgradeCost(ns, server, player) : 0),
         core_gains: hypotheticalServers.map(server =>
-          serverCoreUpgradeCost(ns, server, player) < moneyToSpend ?
+          serverCoreUpgradeCost(ns, server, player) < moneyToSpend &&
+          isCoreUpgradeWorth(ns, server, player, payoffTime ? payoffTime : Infinity)  ?
           serverOptimalGainRateCoreUpgradeDelta(ns, server, player) /
           serverCoreUpgradeCost(ns, server, player) : 0),
         cache_gains: hypotheticalServers.map(server =>
           serverCacheUpgradeCost(ns, server, player) < moneyToSpend &&
-          max_upgrade_cost(ns) * 2 < moneyToSpend ?
+          max_upgrade_cost(ns) * 2 < ns.hacknet.hashCapacity() ?
           Number.EPSILON * serverCacheUpgradeSizeDelta(ns, server, player) /
           serverCacheUpgradeCost(ns, server, player) : 0),
         new_gains: [
@@ -197,7 +264,7 @@ export async function main(ns) {
             newServerCost(ns, hypotheticalServers.length, player) : 0
           ],
       };
-      if (flag_data.debug) ns.tprint(JSON.stringify(hypotheticalGains));
+      if (flags.debug) ns.tprint(JSON.stringify(hypotheticalGains));
       let maxGain = Math.max(...Object.values(hypotheticalGains).flat());
       if (maxGain <= 0) break;
       let cost;
@@ -213,9 +280,12 @@ export async function main(ns) {
         throw new Error('Failed to hypothetically upgrade a server when hypothetical max gain was > 0');
       }
       moneyToSpend -= cost;
+      currentCost += cost;
       if (moneyToSpend <= 0) break;
     }
     while (true);
+
+    budget -= currentCost;
 
     let levelUpgrades = 0;
     let ramUpgrades = 0;
@@ -266,6 +336,6 @@ export async function main(ns) {
       ns.tprint(`Upgraded hacknet servers a total of: ${statusStrings.join(`, `)}`);
     }
 
-    await ns.sleep(flag_data['wait-time']);
-  } while (flag_data.loop);
+    await ns.sleep(flags['wait-time']);
+  } while (true);
 }

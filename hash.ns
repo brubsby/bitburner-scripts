@@ -1,8 +1,3 @@
-//import {  } from "constants.ns"
-//import {  } from "common.ns"
-//import {  } from "crime.ns"
-//import {  } from "training.ns"
-
 const max_buffer = 100;
 const travel_cost = 200e3;
 
@@ -23,21 +18,26 @@ const hash_goals = {
   MAXGYM: "maxgym",
   MAXTRAINING: "maxtraining",
   SERVER: "server",
-  CONTRACTS: "contracts"
+  CONTRACTS: "contracts",
+  BLADEBURNER: "bladeburner",
+  SKILLPOINTS: "skillpoints",
+  RANK: "rank",
 };
 
-let hash_goal = hash_goals.MONEY;
+let hash_goal;
 let target;
+let print_goal;
 
 export async function main(ns) {
-  let flag_data = ns.flags([
+  let flags = ns.flags([
     ["goal", ""],
     ["target", ""],
     ["debug", false],
+    ["print", false],
   ]);
 
-  const goalArg = (flag_data.goal || flag_data._[0] || "").toUpperCase();
-  const targetArg = flag_data.target || flag_data._[1];
+  const goalArg = (flags.goal || flags._[0] || "").toUpperCase();
+  const targetArg = flags.target || flags._[1];
 
   if (goalArg) {
     if (!hash_goals[goalArg]) {
@@ -46,11 +46,11 @@ export async function main(ns) {
       return;
     }
     hash_goal = hash_goals[goalArg];
-    if (flag_data.debug) ns.tprint(`hash_goal: ${hash_goal}`);
+    if (flags.debug) ns.tprint(`hash_goal: ${hash_goal}`);
 
   }
 
-  if (target) {
+  if (targetArg) {
     if (hash_goal == hash_goals.SERVER && !ns.serverExists(targetArg)) {
       ns.tprint(`"${targetArg}" is not a valid server to target`);
     } else {
@@ -58,43 +58,59 @@ export async function main(ns) {
     }
   }
 
-  if (ns.ps(ns.getHostname()).filter(server => server.filename == "hash.ns").length > 1) {
+  if (flags.print) {
+    print_goal = true;
+  }
+
+  if (ns.ps(ns.getHostname()).filter(server =>
+      server.filename == ns.getScriptName()).length > 1) {
+    print_goal = true;
     ns.exit();
     return;
   }
 
+  if (!hash_goal) hash_goal = hash_goals.POOL;
+
   while (true) {
+    if (print_goal) {
+      ns.tprint(`hash goal: ${hash_goal}, hash target: ${target}`);
+      print_goal = false;
+    }
+
+    handleSecondaryMoney(ns);
     switch (hash_goal) {
+      case hash_goals.POOL:
+        break;
       case hash_goals.MAXUNI:
       case hash_goals.MAXGYM:
       case hash_goals.MAXTRAINING:
-        if (flag_data.debug) ns.tprint(`Executing max loop`);
-        handleSecondaryMoney(ns);
         while ([hash_goals.MAXUNI, hash_goals.MAXTRAINING].includes(hash_goal)
           && ns.hacknet.spendHashes("Improve Studying"));
         while ([hash_goals.MAXGYM, hash_goals.MAXTRAINING].includes(hash_goal)
           && ns.hacknet.spendHashes("Improve Gym Training"));
         break;
-      case hash_goals.POOL:
-        if (flag_data.debug) ns.tprint(`Executing pool loop`);
-        handleSecondaryMoney(ns);
+      case hash_goals.BLADEBURNER:
+      case hash_goals.SKILLPOINTS:
+      case hash_goals.RANK:
+        while ([hash_goals.BLADEBURNER, hash_goals.SKILLPOINTS].includes(hash_goal)
+          && ns.hacknet.spendHashes("Exchange for Bladeburner SP"));
+        while ([hash_goals.BLADEBURNER, hash_goals.RANK].includes(hash_goal)
+          && ns.hacknet.spendHashes("Exchange for Bladeburner Rank"));
         break;
       case hash_goals.MONEY:
-        if (flag_data.debug) ns.tprint(`Executing money loop`);
+        if (flags.debug) ns.print(`Executing money loop`);
         while (ns.hacknet.spendHashes("Sell for Money"));
         break;
 
       case hash_goals.SERVER:
-        if (flag_data.debug) ns.tprint(`Executing server loop`);
-        handleSecondaryMoney(ns);
-        while (hash_goals.SERVER == hash_goal
-          && ns.hacknet.spendHashes("Reduce Minimum Security", target));
-        while (hash_goals.SERVER == hash_goal
-          && ns.hacknet.spendHashes("Increase Maximum Money", target));
+        while (hash_goals.SERVER == hash_goal &&
+          ns.serverExists(target) &&
+          ns.hacknet.spendHashes("Reduce Minimum Security", target));
+        while (hash_goals.SERVER == hash_goal &&
+          ns.serverExists(target) &&
+          ns.hacknet.spendHashes("Increase Maximum Money", target));
         break;
       case hash_goals.CONTRACTS:
-        if (flag_data.debug) ns.tprint(`Executing contracts loop`);
-        handleSecondaryMoney(ns);
         while (hash_goals.CONTRACTS == hash_goal
           && ns.hacknet.spendHashes("Generate Coding Contract"));
         break;

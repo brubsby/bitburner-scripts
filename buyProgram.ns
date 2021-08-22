@@ -41,7 +41,7 @@ function getCurrentNumPortAbility(ns) {
 }
 
 function usage(ns) {
-  ns.tprint(`Usage: run buyProgram.ns [--program] &lt${Object.keys(programs).concat(["all"]).join('|')}&gt [[--callback] &ltscript&gt] [--wait]`)
+  ns.tprint(`Usage: run ${ns.getScriptName()} [--program] &lt${Object.keys(programs).concat(["all"]).join('|')}&gt [[--callback] &ltscript&gt] [--wait]`)
 }
 
 export async function main(ns) {

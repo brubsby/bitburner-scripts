@@ -35,74 +35,6 @@ function convert2DArrayToString(arr) {
   return components.join(',').replace(/\s/g, '')
 }
 
-const moneyFromContract = (difficulty, bitNodeMultipliers) =>
-  contract_base_money_gain * difficulty * bitNodeMultipliers.CodingContractMoney;
-
-const factionRepFromContract = (difficulty, bitNodeMultipliers) =>
-  contract_base_faction_rep_gain * difficulty;
-
-const companyRepFromContract = (difficulty, bitNodeMultipliers) =>
-  contract_base_company_rep_gain * difficulty;
-
-const expectedMoneyFromRandomMoneyContract = (bitNodeMultipliers) => {
-  let contractRewards = codingContractTypesMetadata.map(codingContract =>
-    moneyFromContract(codingContract.difficulty, bitNodeMultipliers));
-  return contractRewards.reduce((a, b) => a + b, 0) /
-    contractRewards.length;
-};
-
-const expectedRepFromRandomFactionContract = (bitNodeMultipliers) => {
-  let contractRewards = codingContractTypesMetadata.map(codingContract =>
-    factionRepFromContract(codingContract.difficulty, bitNodeMultipliers));
-  return contractRewards.reduce((a, b) => a + b, 0) /
-    contractRewards.length;
-};
-
-const expectedRepFromRandomCompanyontract = (bitNodeMultipliers) => {
-  let contractRewards = codingContractTypesMetadata.map(codingContract =>
-    companyRepFromContract(codingContract.difficulty, bitNodeMultipliers));
-  return contractRewards.reduce((a, b) => a + b, 0) /
-    contractRewards.length;
-};
-
-const expectedReturnFromRandomContract = (ns, player) => {
-  let numPlayerFactions = player.factions.length;
-  let numPlayerJobs = Object.keys(player.jobs).length;
-  let bitNodeMultipliers = getBitNodeMultipliers();
-  let moneyProbability = 1;
-  let companyProbability = 0;
-  let factionProbability = 0;
-  let factionAllProbability = 0;
-  if (numPlayerFactions) {
-    moneyProbability = 1/4;
-    companyProbability = 0;
-    factionAllProbability = 1/2;
-    factionProbability = 1/4;
-    if (numPlayerJobs) {
-      moneyProbability = 1/4;
-      companyProbability = 1/4;
-      factionAllProbability = 1/4;
-      factionProbability = 1/4;
-    }
-  } else if (numPlayerJobs){
-    moneyProbability = 3/4;
-    companyProbability = 1/4;
-    factionAllProbability = 0;
-    factionProbability = 0;
-  }
-  let expectedReturns = {
-    money: moneyProbability *
-      expectedMoneyFromRandomMoneyContract(bitNodeMultipliers),
-    every_company_rep: companyProbability *
-      expectedRepFromRandomCompanyContract(bitNodeMultipliers) /
-      numPlayerJobs,
-    every_faction_rep: (factionAllProbability + factionProbability) *
-      expectedRepFromRandomFactionContract(bitNodeMultipliers) /
-      numPlayerFactions,
-  }
-  return expectedReturns;
-};
-
 const codingContractTypesMetadata = [
   {
     name: 'Find Largest Prime Factor',
@@ -490,13 +422,90 @@ function findAnswer(contract) {
   return answer
 }
 
+
+
+const moneyFromContract = (difficulty, bitNodeMultipliers) =>
+  contract_base_money_gain * difficulty * bitNodeMultipliers.CodingContractMoney;
+
+const factionRepFromContract = (difficulty, bitNodeMultipliers) =>
+  contract_base_faction_rep_gain * difficulty;
+
+const companyRepFromContract = (difficulty, bitNodeMultipliers) =>
+  contract_base_company_rep_gain * difficulty;
+
+const expectedMoneyFromRandomMoneyContract = (bitNodeMultipliers) => {
+  let contractRewards = codingContractTypesMetadata.map(codingContract =>
+    moneyFromContract(codingContract.difficulty, bitNodeMultipliers));
+  return contractRewards.reduce((a, b) => a + b, 0) /
+    contractRewards.length;
+};
+
+const expectedRepFromRandomFactionContract = (bitNodeMultipliers) => {
+  let contractRewards = codingContractTypesMetadata.map(codingContract =>
+    factionRepFromContract(codingContract.difficulty, bitNodeMultipliers));
+  return contractRewards.reduce((a, b) => a + b, 0) /
+    contractRewards.length;
+};
+
+const expectedRepFromRandomCompanyContract = (bitNodeMultipliers) => {
+  let contractRewards = codingContractTypesMetadata.map(codingContract =>
+    companyRepFromContract(codingContract.difficulty, bitNodeMultipliers));
+  return contractRewards.reduce((a, b) => a + b, 0) /
+    contractRewards.length;
+};
+
+const expectedReturnFromRandomContract = (ns, player) => {
+  let numPlayerFactions = player.factions.length;
+  let numPlayerJobs = Object.keys(player.jobs).length;
+  let bitNodeMultipliers = getBitNodeMultipliers();
+  let moneyProbability = 1;
+  let companyProbability = 0;
+  let factionProbability = 0;
+  let factionAllProbability = 0;
+  if (numPlayerFactions) {
+    moneyProbability = 1/4;
+    companyProbability = 0;
+    factionAllProbability = 1/2;
+    factionProbability = 1/4;
+    if (numPlayerJobs) {
+      moneyProbability = 1/4;
+      companyProbability = 1/4;
+      factionAllProbability = 1/4;
+      factionProbability = 1/4;
+    }
+  } else if (numPlayerJobs){
+    moneyProbability = 3/4;
+    companyProbability = 1/4;
+    factionAllProbability = 0;
+    factionProbability = 0;
+  }
+  let expectedReturns = {
+    money: moneyProbability *
+      expectedMoneyFromRandomMoneyContract(bitNodeMultipliers),
+    every_company_rep: companyProbability *
+      expectedRepFromRandomCompanyContract(bitNodeMultipliers) /
+      numPlayerJobs,
+    every_faction_rep: (factionAllProbability + factionProbability) *
+      expectedRepFromRandomFactionContract(bitNodeMultipliers) /
+      numPlayerFactions,
+  }
+  return expectedReturns;
+};
+
 export async function main(ns) {
 
+  let flags = ns.flags([
+    ["print-expected", false],
+  ]);
 
-  let hostname = ns.getHostname()
+  if (flags["print-expected"]) {
+    ns.tprint(JSON.stringify(expectedReturnFromRandomContract(ns, ns.getPlayer())));
+  }
+
+  let hostname = ns.getHostname();
 
   if (hostname !== 'home') {
-    throw new Exception('Run the script from home')
+    throw new Exception('Run the script from home');
   }
 
   const serverMap = getItem(settings.keys.serverMap)
