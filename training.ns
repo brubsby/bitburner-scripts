@@ -265,6 +265,7 @@ export async function main(ns) {
       pertinentPlayerSkillEntries = pertinentPlayerSkillEntries.filter(skillEntry => skillEntry[1] < targetLevel);
       if (!pertinentPlayerSkillEntries.length) {
         ns.tprint(`Finished training ${skillOption}: [${skill_options[skillOption]}] to ${targetLevel}`);
+        ns.stopAction();
         runCallbackExit(ns, callback);
         break;
       }
@@ -288,6 +289,7 @@ export async function main(ns) {
           break;
         }
         if (time && performance.now() - scriptStartTime > time) {
+          ns.stopAction();
           runCallbackExit(ns, callback);
         }
       }
@@ -298,6 +300,7 @@ export async function main(ns) {
           break;
         }
         if (time && performance.now() - scriptStartTime > time) {
+          ns.stopAction();
           runCallbackExit(ns, callback);
         }
       }

@@ -139,15 +139,16 @@ export async function main(ns) {
   while(true) {
     let statToMax = booleanFlagsToStat(ns, flags);
     let player = getDetailedPlayerData(ns);
+    ns.print(`${statToMax}: ${player[statToMax]}`);
     if (!statToMax || (flags.target && flags.target <= player[statToMax])) {
       ns.print(`Done committing crimes, ${statToMax} has reached ${flags.target}.`)
       ns.exit();
       return;
     }
     let statRateToMax = FLAG_STAT_MAP[statToMax];
-    ns.print(`statToMax: ${statToMax}`);
-    let [bestCrime, crimeReturns] = getBestReturnCrimeFor(ns, statToMax)
-    ns.print(`${bestCrime} is the best crime for ${statToMax} with ${JSON.stringify(crimeReturns,null,2)}`)
+    ns.print(`statRateToMax: ${statRateToMax}`);
+    let [bestCrime, crimeReturns] = getBestReturnCrimeFor(ns, statRateToMax)
+    ns.print(`${bestCrime} is the best crime for ${statRateToMax} with ${JSON.stringify(crimeReturns,null,2)}`)
     let karmaBefore = ns.heart.break();
     ns.commitCrime(bestCrime);
     await ns.sleep(crimeReturns.time);

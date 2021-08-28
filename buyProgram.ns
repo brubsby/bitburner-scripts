@@ -87,6 +87,7 @@ export async function main(ns) {
   }
 
   while(!ns.scan("home").includes("darkweb")) {
+    player = ns.getPlayer();
     if (player.money > tor_cost) {
       if(ns.purchaseTor()) {
         ns.tprint("Successfully purchased tor router.")

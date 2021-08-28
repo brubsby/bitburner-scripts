@@ -84,7 +84,7 @@ function getPurchasedServers(ns) {
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting playerServers.ns`)
+  ns.tprint(`[${localeHHMMSS()}] Starting ${ns.getScriptName()}}`)
 
   settings.maxGbRam = ns.getPurchasedServerMaxRam()
   settings.maxPlayerServers = ns.getPurchasedServerLimit()
@@ -196,7 +196,7 @@ export async function main(ns) {
     }
 
     if (!didChange) {
-      await ns.sleep(5123)
+      await ns.sleep(30000)
     }
   }
 }

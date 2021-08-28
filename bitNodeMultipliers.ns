@@ -87,6 +87,6 @@ export async function main(ns) {
   ns.tprint("Saved BitNode multipliers to localstorage");
 
   if (flag_data.print) {
-    ns.tprint(`\n{\n${Object.entries(getBitNodeMultipliers()).map(entry => `${entry[0].padStart(26)}: ${ns.nFormat(entry[1],"0.00").padStart(4)}`).join("\n")}\n}`);
+    ns.tprint(`\n{\n${Object.entries(getBitNodeMultipliers()).sort((a,b)=>b[1]-a[1]).map(entry => `${entry[0].padStart(26)}: ${ns.nFormat(entry[1],"0.00").padStart(4)}`).join("\n")}\n}`);
   }
 }

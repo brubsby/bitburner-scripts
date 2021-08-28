@@ -19,6 +19,10 @@ const max_upgrade_cost = (ns) =>
   Math.max(...upgrade_names.map(upgradeName =>
     ns.hacknet.hashCost(upgradeName)));
 
+const hypotheticalHashCapacity = (hypotheticalServers) =>
+  hypotheticalServers.map(server => 32 * Math.pow(2, server.cache))
+    .reduce((result, next) => result + next);
+
 const getHacknetServers = (ns) =>
   [...Array(ns.hacknet.numNodes()).keys()]
     .map(index => ns.hacknet.getNodeStats(index));
@@ -254,7 +258,7 @@ export async function main(ns) {
           serverCoreUpgradeCost(ns, server, player) : 0),
         cache_gains: hypotheticalServers.map(server =>
           serverCacheUpgradeCost(ns, server, player) < moneyToSpend &&
-          max_upgrade_cost(ns) * 2 < ns.hacknet.hashCapacity() ?
+          max_upgrade_cost(ns) * 2 > hypotheticalHashCapacity(hypotheticalServers) ?
           Number.EPSILON * serverCacheUpgradeSizeDelta(ns, server, player) /
           serverCacheUpgradeCost(ns, server, player) : 0),
         new_gains: [

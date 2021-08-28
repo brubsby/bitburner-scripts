@@ -17,6 +17,7 @@ const scripts_to_alias = [
   "killhack.ns",
   "steve.ns",
   "gang.ns",
+  "pserv.ns",
 ];
 
 const terminal_block = `
@@ -25,7 +26,7 @@ alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relay
 alias contracts="run contract.ns"
 alias servers="run playerServers.ns"
 alias rank="home;run serverrank.ns"
-alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run playerServers.ns; run hacknet.ns --budget Infinity --payoff-time 8; run stock.ns; run buyProgram.ns all --wait; run gang.ns; run hash.ns money;"
+alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run pserv.ns; run hacknet.ns --budget Infinity --payoff-time 8; run stock.ns; run buyProgram.ns all --wait; run gang.ns; run hash.ns money;"
 alias deepscan="home; run deepscan.ns"
 alias trainallcheap="home; run training.ns --skill all --switch-time 150000 --tail"
 alias trainall="home; run training.ns --skill all --tail"
@@ -47,8 +48,8 @@ alias defenseaugs="home; run faction.ns --print-augs defense"
 alias factions="home; run faction.ns --print-factions"
 alias hacknet="home; run hacknet.ns"
 alias restart="run process.ns --restart"
-alias kill="run process.ns --kill"
 `;
+//alias kill="run process.ns --kill"
 
 export async function main(ns) {
   terminalInput(terminal_block.split("\n").filter(string => string).join(";"));
