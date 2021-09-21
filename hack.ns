@@ -1,7 +1,7 @@
 const settings = {
   homeRamReserved: 32,
   homeRamReservedBase: 32,
-  homeRamExtraRamReserved: 100,
+  homeRamExtraRamReserved: 256,
   homeRamBigMode: 64,
   minSecurityLevelOffset: 1,
   maxMoneyMultiplayer: 0.9,
@@ -12,7 +12,7 @@ const settings = {
   pureTraining: false,
   silent: false,
   ignoreHacknet: true,
-  targetOverride: "phantasy",
+  targetOverride: "",
   keys: {
     serverMap: 'BB_SERVER_MAP',
   },

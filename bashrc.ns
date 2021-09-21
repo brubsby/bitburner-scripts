@@ -18,15 +18,16 @@ const scripts_to_alias = [
   "steve.ns",
   "gang.ns",
   "pserv.ns",
+  "sleeve.ns",
 ];
 
 const terminal_block = `
 ${scripts_to_alias.map(scriptName => `alias ${scriptName.replace(/\.[^/.]+$/, "")}="run ${scriptName}"`).join("\n")}
 alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relaySMTP.exe; buy HTTPWorm.exe; buy SQLInject.exe; buy ServerProfiler.exe; buy AutoLink.exe; buy DeepscanV1.exe; buy DeepscanV2.exe; home;"
 alias contracts="run contract.ns"
-alias servers="run playerServers.ns"
+alias servers="run pserv.ns"
 alias rank="home;run serverrank.ns"
-alias start="home; run bashrc.ns; run spider.ns; run hack.ns; run pserv.ns; run hacknet.ns --budget Infinity --payoff-time 8; run stock.ns; run buyProgram.ns all --wait; run gang.ns; run hash.ns money;"
+alias begin="home; run bashrc.ns; run spider.ns; run hacknet.ns --budget Infinity --payoff-time 8; run sleeve.ns; run pserv.ns; run stock.ns; run buyProgram.ns all --wait; run brain.ns; run hash.ns money;"
 alias deepscan="home; run deepscan.ns"
 alias trainallcheap="home; run training.ns --skill all --switch-time 150000 --tail"
 alias trainall="home; run training.ns --skill all --tail"
@@ -48,8 +49,9 @@ alias defenseaugs="home; run faction.ns --print-augs defense"
 alias factions="home; run faction.ns --print-factions"
 alias hacknet="home; run hacknet.ns"
 alias restart="run process.ns --restart"
+alias start="run process.ns --run"
+alias stop="run process.ns --kill"
 `;
-//alias kill="run process.ns --kill"
 
 export async function main(ns) {
   terminalInput(terminal_block.split("\n").filter(string => string).join(";"));

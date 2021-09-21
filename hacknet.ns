@@ -209,6 +209,8 @@ export async function main(ns) {
     let upgradesToBuy = [];
     let moneyToSpend = Math.min(player.money, budget);
     let currentCost = 0;
+    let oldTotalGainRate = hypotheticalServers.map(server =>
+      serverOptimalGainRate(ns, server, player)).reduce((a,b)=>a+b,0);
 
     if (printStatus) {
       ns.tprint(`Current Spend: ${
@@ -290,6 +292,8 @@ export async function main(ns) {
     while (true);
 
     budget -= currentCost;
+    let newTotalGainRate = hypotheticalServers.map(server =>
+      serverOptimalGainRate(ns, server, player)).reduce((a,b)=>a+b,0);
 
     let levelUpgrades = 0;
     let ramUpgrades = 0;
@@ -330,14 +334,17 @@ export async function main(ns) {
             timesToUpgrade} times, to ${hypotheticalServers[index].cache}`);
         }
       });
-    if (levelUpgrades + ramUpgrades + coreUpgrades + cacheUpgrades + nodePurchases > 1) {
+    if (levelUpgrades + ramUpgrades + coreUpgrades + cacheUpgrades + nodePurchases > 0) {
       let statusStrings = []
       if (levelUpgrades) statusStrings.push(`${levelUpgrades} level(s)`);
       if (ramUpgrades) statusStrings.push(`${ramUpgrades} ram upgrade(s)`);
       if (coreUpgrades) statusStrings.push(`${coreUpgrades} core(s)`);
       if (cacheUpgrades) statusStrings.push(`${cacheUpgrades} cache upgrade(s)`);
       if (nodePurchases) statusStrings.push(`${nodePurchases} new server(s)`);
-      ns.tprint(`Upgraded hacknet servers a total of: ${statusStrings.join(`, `)}`);
+      ns.tprint(`upgrades: ${statusStrings.join(`, `)}`);
+      ns.tprint(`cost: ${ns.nFormat(currentCost, "$0.000a")
+        }, Δhash/s: ${ns.nFormat(newTotalGainRate - oldTotalGainRate, "0.000")
+        }, Δ%: ${ns.nFormat(((newTotalGainRate/oldTotalGainRate)-1)*100, "0.00")}%`);
     }
 
     await ns.sleep(flags['wait-time']);

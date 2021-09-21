@@ -79,6 +79,12 @@ export const getDetailedPlayerData = (ns) => {
   return player;
 };
 
+export const killOtherInstances = (ns) =>
+  ns.ps(ns.getRunningScript().server).filter(process =>
+    process.filename == ns.getRunningScript().filename &&
+    process.pid != ns.getRunningScript().pid)
+    .forEach(process => ns.kill(process.pid));
+
 export async function main(ns) {
   return {
     settings,

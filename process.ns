@@ -30,6 +30,9 @@ export async function main(ns) {
         }
         let matchingProcess = matchingProcesses.shift();
         if (ns.kill(matchingProcess.pid)) {
+          if (!(args && args.length)) {
+            args = matchingProcess.args;
+          }
           ns.tprint(`Killed the only script starting with ${
             scriptWithNoExtension}: ${JSON.stringify(matchingProcess)}`);
         } else {
@@ -37,11 +40,13 @@ export async function main(ns) {
               scriptWithNoExtension}: ${JSON.stringify(matchingProcess)}`);
         }
       } else if (matchingProcesses.length > 1) {
-        ns.tprint(`Must specify exact arguments for script as multiple copies are running on ${host}`);
-        ns.exit();
-        return;
+        if (!(args && args.length)) {
+          args = matchingProcesses[0].args;
+        }
+        let numKilled = matchingProcesses.filter(matchingProcess => ns.kill(matchingProcess.pid)).length;
+        ns.tprint(`Killed ${numKilled}/${matchingProcesses.length} ${scriptWithNoExtension} processes on ${host}`);
       } else {
-        ns.tprint(`No scripts found with the filename (without extension) of ${
+        ns.tprint(`No scripts found with the filename of ${
           scriptWithNoExtension}.`);
       }
     } else {

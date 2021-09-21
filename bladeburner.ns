@@ -1,3 +1,4 @@
+import { killOtherInstances } from "common.ns"
 import { getBitNodeMultipliers } from "bitNodeMultipliers.ns";
 
 const actionTimeWithBonus = (ns, action) => {
@@ -20,6 +21,30 @@ const stamina_free_actions = [
   "Field Analysis",
   "Recruitment",
   "Diplomacy",
+];
+
+const s_skills = [
+  "Reaper",
+  "Evasive System",
+  "Overclock",
+];
+
+const a_skills = [
+  "Blade's Intuition",
+  "Short-Circuit",
+  "Digital Observer",
+  "Datamancer",
+];
+
+const b_skills = [
+  "Cyber's Edge",
+  "Cloak",
+];
+
+const c_skills = [
+  "Tracer",
+  "Hands of Midas",
+  "Hyperdrive",
 ];
 
 const actionConstants = {
@@ -296,6 +321,14 @@ const estimate_threshold = .2;
 
 let wake_timestamp;
 
+const skillWeight = (skillName) => {
+  if (s_skills.includes(skillName)) return 1;
+  if (a_skills.includes(skillName)) return 2;
+  if (b_skills.includes(skillName)) return 3;
+  if (c_skills.includes(skillName)) return 4;
+  return 5;
+}
+
 const upgradeSkills = async (ns) => {
   let skillNames = ns.bladeburner.getSkillNames();
   while (true) {
@@ -303,10 +336,13 @@ const upgradeSkills = async (ns) => {
       name: skillName,
       level: ns.bladeburner.getSkillLevel(skillName),
       cost: ns.bladeburner.getSkillUpgradeCost(skillName),
+      weighted_cost: skillWeight(skillName) *
+        ns.bladeburner.getSkillUpgradeCost(skillName),
     }));
     skillStats = skillStats.filter(skill =>
       !(skill.name == "Overclock" && skill.level >= 90));
-    let lowestSkill = skillStats.reduce((result, next) => result.cost < next.cost ? result : next);
+
+    let lowestSkill = skillStats.reduce((result, next) => result.weighted_cost < next.weighted_cost ? result : next);
     if (ns.bladeburner.getSkillPoints() >= lowestSkill.cost) {
       if (!ns.bladeburner.upgradeSkill(lowestSkill.name)) {
         break;
@@ -547,11 +583,7 @@ export async function main(ns) {
     ["top-actions", 20],
   ]);
 
-  let runningScript = ns.getRunningScript();
-  ns.ps(runningScript.server).filter(process =>
-      process.filename == runningScript.filename &&
-      process.pid != runningScript.pid)
-      .forEach(process => ns.kill(process.pid));
+  killOtherInstances(ns);
 
   while (true) {
     let [stamina, maxStamina] = ns.bladeburner.getStamina();
@@ -564,6 +596,7 @@ export async function main(ns) {
     let chaosCity = bladeburner_city_names.find(city =>
         ns.bladeburner.getCityChaos(city) > 50 &&
         actions.filter(action => action.city == city)
+          .filter(action => action.type != "black operation")
           .find(action => action.high_success_chance < 1
             && !action.low_success_chance == 0)
     );
@@ -662,9 +695,15 @@ export async function main(ns) {
     }
 
     switchCityAndLevelToAction(ns, nextAction);
-    ns.bladeburner.startAction(nextAction.type, nextAction.name);
-    let timeToSleep = actionTimeWithBonus(ns, nextAction) * 1000;
-    await ns.sleep(Math.max(100, timeToSleep));
+    let currentAction = ns.bladeburner.getCurrentAction();
+    if (!ns.isBusy() && !(currentAction.type == nextAction.type
+        && currantAction.name == nextAction.name)) {
+      ns.bladeburner.startAction(nextAction.type, nextAction.name);
+      let timeToSleep = actionTimeWithBonus(ns, nextAction) * 1000;
+      await ns.sleep(Math.max(100, timeToSleep));
+    } else {
+      await ns.sleep(10 * 1000);
+    }
     await upgradeSkills(ns);
   }
 }
