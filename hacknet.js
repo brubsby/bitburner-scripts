@@ -1,4 +1,4 @@
-import { parseLargeNumberString } from "common.ns";
+import { parseLargeNumberString } from "common.js";
 
 const upgrade_types = {
   "Sell for Money": {},
@@ -205,7 +205,7 @@ export async function main(ns) {
   do {
     player = ns.getPlayer();
     let hypotheticalServers = [...Array(ns.hacknet.numNodes()).keys()]
-      .map(index => ({...ns.hacknet.getNodeStats(index)}));
+      .map(index => ({...js.hacknet.getNodeStats(index)}));
     let upgradesToBuy = [];
     let moneyToSpend = Math.min(player.money, budget);
     let currentCost = 0;

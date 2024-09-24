@@ -38,7 +38,7 @@ function setItem(key, value) {
 }
 
 const hackPrograms = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe'];
-const hackScripts = ['h.ns', 'g.ns', 'w.ns'];
+const hackScripts = ['h.js', 'g.js', 'w.js'];
 
 function getPlayerDetails(ns) {
   let portHacks = 0;
@@ -257,7 +257,7 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
 }
 
 export async function main(ns) {
-  if (!settings.silent) ns.tprint(`[${localeHHMMSS()}] Starting hack.ns`);
+  if (!settings.silent) ns.tprint(`[${localeHHMMSS()}] Starting hack.js`);
 
   let hostname = ns.getHostname();
 
@@ -275,8 +275,8 @@ export async function main(ns) {
     }
 
     if (!serverMap || serverMap.lastUpdate < new Date().getTime() - settings.mapRefreshInterval) {
-      ns.tprint(`[${localeHHMMSS()}] Spawning spider.ns`);
-      ns.spawn('spider.ns', 1, 'hack.ns');
+      ns.tprint(`[${localeHHMMSS()}] Spawning spider.js`);
+      ns.spawn('spider.js', 1, 'hack.js');
       ns.exit();
       return;
     }
@@ -298,7 +298,7 @@ export async function main(ns) {
       }
   		for (let i = 0; i < hackableServersWithRam.length; i++) {
   			const server = serverMap.servers[hackableServersWithRam[i]];
-  			ns.scriptKill("w.ns", server.host);
+  			ns.scriptKill("w.js", server.host);
   		}
   	}
 
@@ -376,8 +376,8 @@ export async function main(ns) {
   			const server = serverMap.servers[hackableServersWithRam[i]];
   			let cyclesFittable = Math.max(0, Math.floor(server.ram / 1.75));
 
-  			if (cyclesFittable && ns.ps(server.host).every(ps => ps.filename != 'w.ns')) {
-  			  await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID(), true);
+  			if (cyclesFittable && ns.ps(server.host).every(ps => ps.filename != 'w.js')) {
+  			  await ns.exec('w.js', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID(), true);
   			  weakenCycles -= cyclesFittable;
   			}
   		}
@@ -411,13 +411,13 @@ export async function main(ns) {
         const cyclesToRun = Math.max(0, Math.min(cyclesFittable, growCycles));
 
         if (growCycles) {
-          await ns.exec('g.ns', server.host, cyclesToRun, bestTarget, cyclesToRun, growDelay, createUUID());
+          await ns.exec('g.js', server.host, cyclesToRun, bestTarget, cyclesToRun, growDelay, createUUID());
           growCycles -= cyclesToRun;
           cyclesFittable -= cyclesToRun;
         }
 
         if (cyclesFittable) {
-          await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID());
+          await ns.exec('w.js', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID());
           weakenCycles -= cyclesFittable;
         }
       }
@@ -438,13 +438,13 @@ export async function main(ns) {
         const cyclesToRun = Math.max(0, Math.min(cyclesFittable, growCycles));
 
         if (growCycles) {
-          await ns.exec('g.ns', server.host, cyclesToRun, bestTarget, cyclesToRun, growDelay, createUUID());
+          await ns.exec('g.js', server.host, cyclesToRun, bestTarget, cyclesToRun, growDelay, createUUID());
           growCycles -= cyclesToRun;
           cyclesFittable -= cyclesToRun;
         }
 
         if (cyclesFittable) {
-          await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID());
+          await ns.exec('w.js', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID());
           weakenCycles -= cyclesFittable;
         }
       }
@@ -482,7 +482,7 @@ export async function main(ns) {
         const cyclesToRun = Math.max(0, Math.min(cyclesFittable, hackCycles));
 
         if (hackCycles) {
-          await ns.exec('h.ns', server.host, cyclesToRun, bestTarget, cyclesToRun, hackDelay, createUUID());
+          await ns.exec('h.js', server.host, cyclesToRun, bestTarget, cyclesToRun, hackDelay, createUUID());
           hackCycles -= cyclesToRun;
           cyclesFittable -= cyclesToRun;
         }
@@ -493,13 +493,13 @@ export async function main(ns) {
         if (cyclesFittable && growCycles) {
           const growCyclesToRun = Math.min(growCycles, cyclesFittable);
 
-          await ns.exec('g.ns', server.host, growCyclesToRun, bestTarget, growCyclesToRun, growDelay, createUUID());
+          await ns.exec('g.js', server.host, growCyclesToRun, bestTarget, growCyclesToRun, growDelay, createUUID());
           growCycles -= growCyclesToRun;
           cyclesFittable -= growCyclesToRun;
         }
 
         if (cyclesFittable) {
-          await ns.exec('w.ns', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID());
+          await ns.exec('w.js', server.host, cyclesFittable, bestTarget, cyclesFittable, 0, createUUID());
           weakenCycles -= cyclesFittable;
         }
       }

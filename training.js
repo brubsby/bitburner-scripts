@@ -1,5 +1,5 @@
-import { runCallbackExit } from "common.ns"
-import { exp_types, travel_cost, city_names } from "constants.ns"
+import { runCallbackExit } from "common.js"
+import { exp_types, travel_cost, city_names } from "constants.js"
 
 const game_cycles_per_second = 5;
 
@@ -191,7 +191,7 @@ function startClassFromClassEntry(ns, classEntry) {
 }
 
 function usage(ns) {
-  ns.tprint(`Usage: run training.ns [--skill] &lt${Object.keys(skill_options)}&gt [--city &ltcity&gt] [--no-travel] [--target-level &ltlevel&gt] [--time &ltmilliseconds&gt]`);
+  ns.tprint(`Usage: run training.js [--skill] &lt${Object.keys(skill_options)}&gt [--city &ltcity&gt] [--no-travel] [--target-level &ltlevel&gt] [--time &ltmilliseconds&gt]`);
 }
 
 export async function main(ns) {

@@ -5,10 +5,10 @@ const settings = {
   },
 }
 const scriptsToKill = [
-  'hack.ns',
-  'g.ns',
-  'h.ns',
-  'w.ns',
+  'hack.js',
+  'g.js',
+  'h.js',
+  'w.js',
 ]
 
 function getItem(key) {
@@ -26,7 +26,7 @@ function localeHHMMSS(ms = 0) {
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting killhack.ns`)
+  ns.tprint(`[${localeHHMMSS()}] Starting killhack.js`)
 
   const scriptToRunAfter = ns.args[0]
 

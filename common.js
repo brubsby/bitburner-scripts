@@ -64,7 +64,7 @@ export function setItem(key, value) {
 
 export const getDetailedPlayerData = (ns) => {
   let player = ns.getPlayer();
-  // change crimes.ns to write calculated kills to a file to be read here
+  // change crimes.js to write calculated kills to a file to be read here
   player.karma = Math.abs(ns.heart.break());
   player.kills = getItem(local_storage_keys.kills).kills || 0;
 

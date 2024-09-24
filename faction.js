@@ -1,5 +1,5 @@
-import { getBitNodeMultipliers } from "bitNodeMultipliers.ns"
-import { getDetailedPlayerData } from "common.ns"
+import { getBitNodeMultipliers } from "bitNodeMultipliers.js"
+import { getDetailedPlayerData } from "common.js"
 
 export const factions = {
   "Illuminati": {

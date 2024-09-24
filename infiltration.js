@@ -1,5 +1,5 @@
-import { getBitNodeMultipliers } from "bitNodeMultipliers.ns";
-import { parseLargeNumberString } from "common.ns";
+import { getBitNodeMultipliers } from "bitNodeMultipliers.js";
+import { parseLargeNumberString } from "common.js";
 
 export const infiltration_locations = {
   "AevumAeroCorp" : {

@@ -1,5 +1,5 @@
 // Based on https://github.com/danielyxie/bitburner/blob/master/src/data/codingcontracttypes.ts
-import {getBitNodeMultipliers} from "bitNodeMultipliers.ns"
+import {getBitNodeMultipliers} from "bitNodeMultipliers.js"
 
 const contract_base_faction_rep_gain = 2500;
 const contract_base_company_rep_gain = 4000;

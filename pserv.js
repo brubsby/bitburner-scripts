@@ -1,4 +1,4 @@
-import { getBitNodeMultipliers } from "bitNodeMultipliers.ns"
+import { getBitNodeMultipliers } from "bitNodeMultipliers.js"
 
 const settings = {
   maxPlayerServers: 25,

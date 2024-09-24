@@ -1,4 +1,4 @@
-import { killOtherInstances, getServerNames, getItem, setItem } from 'common.ns'
+import { killOtherInstances, getServerNames, getItem, setItem } from 'common.js'
 
 const max_buffer = 100;
 const travel_cost = 200e3;

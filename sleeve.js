@@ -1,6 +1,6 @@
-import { killOtherInstances, getItem, setItem } from 'common.ns'
-import { travel_cost } from 'constants.ns'
-import { factions, companies_with_factions } from 'factions.ns'
+import { killOtherInstances, getItem, setItem } from 'common.js'
+import { travel_cost } from 'constants.js'
+import { factions, companies_with_factions } from 'factions.js'
 
 export const sleeve_keys = {
 	SLEEVE_TASKS: "BB_SLEEVE_TASKS",
@@ -42,8 +42,8 @@ const lowestPlayerUniSkill = (player) => [
 
 const getSleeves = (ns) =>
 	[...Array(ns.sleeve.getNumSleeves()).keys()].map(index => ({
-		...ns.sleeve.getSleeveStats(index),
-		...ns.sleeve.getInformation(index),
+		...js.sleeve.getSleeveStats(index),
+		...js.sleeve.getInformation(index),
 		...{task: ns.sleeve.getTask()},
 		...{index: index},
 	}));

@@ -1,4 +1,4 @@
-import { local_storage_keys, getItem, setItem, getDetailedPlayerData } from "common.ns";
+import { local_storage_keys, getItem, setItem, getDetailedPlayerData } from "common.js";
 
 let CRIME_NAMES = [
   "shoplift",
@@ -108,7 +108,7 @@ function booleanFlagsToStat(ns, flags) {
 }
 
 function usage(ns) {
-  ns.tprint(`Usage: run crime.ns --[${BOOLEAN_FLAG_NAMES.join('|')}]`)
+  ns.tprint(`Usage: run crime.js --[${BOOLEAN_FLAG_NAMES.join('|')}]`)
   ns.exit()
 }
 

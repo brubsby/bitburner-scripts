@@ -1,4 +1,4 @@
-import { settings, setItem } from 'common.ns'
+import { settings, setItem } from 'common.js'
 
 const hackPrograms = ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe']
 
@@ -34,7 +34,7 @@ function localeHHMMSS(ms = 0) {
 }
 
 export async function main(ns) {
-  ns.tprint(`[${localeHHMMSS()}] Starting spider.ns`)
+  ns.tprint(`[${localeHHMMSS()}] Starting spider.js`)
 
   const scriptToRunAfter = ns.args[0]
 
@@ -142,8 +142,8 @@ export async function main(ns) {
   setItem(settings().keys.serverMap, serverMap)
 
   if (!scriptToRunAfter) {
-    ns.tprint(`[${localeHHMMSS()}] Spawning hack.ns`)
-    ns.spawn('hack.ns', 1)
+    ns.tprint(`[${localeHHMMSS()}] Spawning hack.js`)
+    ns.spawn('hack.js', 1)
   } else {
     ns.tprint(`[${localeHHMMSS()}] Spawning ${scriptToRunAfter}`)
     ns.spawn(scriptToRunAfter, 1)

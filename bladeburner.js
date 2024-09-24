@@ -1,5 +1,5 @@
-import { killOtherInstances } from "common.ns"
-import { getBitNodeMultipliers } from "bitNodeMultipliers.ns";
+import { killOtherInstances } from "common.js"
+import { getBitNodeMultipliers } from "bitNodeMultipliers.js";
 
 const actionTimeWithBonus = (ns, action) => {
   let bonusTime = ns.bladeburner.getBonusTime();

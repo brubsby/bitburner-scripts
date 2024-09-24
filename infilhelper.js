@@ -1,4 +1,4 @@
-import {doc, win} from "/cw/exports.ns";
+import {doc, win} from "/cw/exports.js";
 export let
 // --- Functions used in window creation - usually in exports file --- //
 pxToNum=input=>Number(input.replaceAll("px","")),

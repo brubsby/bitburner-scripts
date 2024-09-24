@@ -1,5 +1,5 @@
-import { runCallbackExit, getServerNames } from "common.ns"
-import { programs } from "createProgram.ns"
+import { runCallbackExit, getServerNames } from "common.js"
+import { programs } from "createProgram.js"
 
 const tor_cost = 200e3
 

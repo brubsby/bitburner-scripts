@@ -1,4 +1,4 @@
-import { steve } from "steve.ns"
+import { steve } from "steve.js"
 
 export async function main(ns) {
 

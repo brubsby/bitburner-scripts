@@ -6,51 +6,51 @@ let terminalInput = (input) => {
 };
 
 const scripts_to_alias = [
-  "spider.ns",
-  "training.ns",
-  "find.ns",
-  "stock.ns",
-  "crime.ns",
-  "eval.ns",
-  "bashrc.ns",
-  "hash.ns",
-  "killhack.ns",
-  "steve.ns",
-  "gang.ns",
-  "pserv.ns",
-  "sleeve.ns",
+  "spider.js",
+  "training.js",
+  "find.js",
+  "stock.js",
+  "crime.js",
+  "eval.js",
+  "bashrc.js",
+  "hash.js",
+  "killhack.js",
+  "steve.js",
+  "gang.js",
+  "pserv.js",
+  "sleeve.js",
 ];
 
 const terminal_block = `
 ${scripts_to_alias.map(scriptName => `alias ${scriptName.replace(/\.[^/.]+$/, "")}="run ${scriptName}"`).join("\n")}
 alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relaySMTP.exe; buy HTTPWorm.exe; buy SQLInject.exe; buy ServerProfiler.exe; buy AutoLink.exe; buy DeepscanV1.exe; buy DeepscanV2.exe; home;"
-alias contracts="run contract.ns"
-alias servers="run pserv.ns"
-alias rank="home;run serverrank.ns"
-alias begin="home; run bashrc.ns; run spider.ns; run hacknet.ns --budget Infinity --payoff-time 8; run sleeve.ns; run pserv.ns; run stock.ns; run buyProgram.ns all --wait; run brain.ns; run hash.ns money;"
-alias deepscan="home; run deepscan.ns"
-alias trainallcheap="home; run training.ns --skill all --switch-time 150000 --tail"
-alias trainall="home; run training.ns --skill all --tail"
-alias trainhacking="home; run training.ns --skill hacking --tail"
-alias traindefense="home; run training.ns --skill defense --tail"
-alias traincombat="home; run training.ns --skill combat --tail"
-alias trainuni="home; run training.ns --skill uni --tail"
-alias traincharisma="home; run training.ns --skill charisma --tail"
-alias trainhackdef="home; run training.ns --skill hackdef --tail --switch-time 60000"
-alias crimetrain="home; run crime.ns --training --tail"
-alias crimemoney="home; run crime.ns --money --tail"
-alias crimekarma="home; run crime.ns --karma --tail"
-alias crimekills="home; run crime.ns --kills --tail"
-alias infil="home; run infilhelper.ns; run healer.ns; run infiltration.ns"
-alias programs="home; run buyProgram.ns all --wait;"
-alias augs="home; run faction.ns --print-all-augs"
-alias hackingaugs="home; run faction.ns --print-augs hack"
-alias defenseaugs="home; run faction.ns --print-augs defense"
-alias factions="home; run faction.ns --print-factions"
-alias hacknet="home; run hacknet.ns"
-alias restart="run process.ns --restart"
-alias start="run process.ns --run"
-alias stop="run process.ns --kill"
+alias contracts="run contract.js"
+alias servers="run pserv.js"
+alias rank="home;run serverrank.js"
+alias begin="home; run bashrc.js; run spider.js; run hacknet.js --budget Infinity --payoff-time 8; run sleeve.js; run pserv.js; run stock.js; run buyProgram.js all --wait; run brain.js; run hash.js money;"
+alias deepscan="home; run deepscan.js"
+alias trainallcheap="home; run training.js --skill all --switch-time 150000 --tail"
+alias trainall="home; run training.js --skill all --tail"
+alias trainhacking="home; run training.js --skill hacking --tail"
+alias traindefense="home; run training.js --skill defense --tail"
+alias traincombat="home; run training.js --skill combat --tail"
+alias trainuni="home; run training.js --skill uni --tail"
+alias traincharisma="home; run training.js --skill charisma --tail"
+alias trainhackdef="home; run training.js --skill hackdef --tail --switch-time 60000"
+alias crimetrain="home; run crime.js --training --tail"
+alias crimemoney="home; run crime.js --money --tail"
+alias crimekarma="home; run crime.js --karma --tail"
+alias crimekills="home; run crime.js --kills --tail"
+alias infil="home; run infilhelper.js; run healer.js; run infiltration.js"
+alias programs="home; run buyProgram.js all --wait;"
+alias augs="home; run faction.js --print-all-augs"
+alias hackingaugs="home; run faction.js --print-augs hack"
+alias defenseaugs="home; run faction.js --print-augs defense"
+alias factions="home; run faction.js --print-factions"
+alias hacknet="home; run hacknet.js"
+alias restart="run process.js --restart"
+alias start="run process.js --run"
+alias stop="run process.js --kill"
 `;
 
 export async function main(ns) {

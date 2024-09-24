@@ -1,4 +1,4 @@
-import { runCallbackExit } from "common.ns"
+import { runCallbackExit } from "common.js"
 
 const intelligence_exp_divisor = 200
 const milliseconds_per_twenty_hours = 72000000
@@ -97,7 +97,7 @@ export const programs = {
 const EPSILON_WAIT_TIME = 1000
 
 function usage(ns) {
-    ns.tprint(`Usage: run createProgram.ns [--program] &lt${Object.keys(programs).concat(["all"]).join('|')}&gt [[--callback] &ltscript&gt]`)
+    ns.tprint(`Usage: run createProgram.js [--program] &lt${Object.keys(programs).concat(["all"]).join('|')}&gt [[--callback] &ltscript&gt]`)
 }
 
 export function getCreateProgramTasks(ns) {

@@ -1,5 +1,5 @@
 async function readDirectory(ns, url, noClobber) {
-    let extensions = [".ns", ".js", ".txt"];
+    let extensions = [".js", ".js", ".txt"];
     let index = await fetch(url).then(res => { return res.json(); });
     let localCounter = 0;
     await Promise.all(index.map(async file => {

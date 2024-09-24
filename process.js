@@ -13,7 +13,7 @@ export async function main(ns) {
   ]);
   if (flag_data.debug) ns.tprint(flag_data);
   let firstArg = flag_data._[0];
-  let scriptname = firstArg.includes('.') ? firstArg : `${firstArg}.ns`;
+  let scriptname = firstArg.includes('.') ? firstArg : `${firstArg}.js`;
   let scriptWithNoExtension = scriptname.substr(0, scriptname.lastIndexOf('.'))
   let host = flag_data.host;
   let threads = flag_data.threads;
