@@ -279,6 +279,11 @@ export const factions = {
 
 export const faction_names = Object.keys(factions);
 
+export const companies_with_factions = Object.entries(factions)
+  .filter(factionEntry => factionEntry.requirements
+    && factionEntry.requirements.company_name)
+  .map(factionEntry => factionEntry.requirements.company_name);
+
 const toShortName = (factionName) => factions[factionName].short_name || factionName;
 
 const getAllAugmentationNames = (ns) => [

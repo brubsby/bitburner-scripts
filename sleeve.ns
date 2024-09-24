@@ -1,6 +1,6 @@
 import { killOtherInstances, getItem, setItem } from 'common.ns'
 import { travel_cost } from 'constants.ns'
-import { factions } from 'factions.ns'
+import { factions, companies_with_factions } from 'factions.ns'
 
 export const sleeve_keys = {
 	SLEEVE_TASKS: "BB_SLEEVE_TASKS",
@@ -150,20 +150,20 @@ export async function main(ns) {
 						}
 					} break;
 
-					case:
-
-
 					default:
-						ns.tprint(`unknown task: ${sleeveTask}`);
-						if (sleeve.sync < 100) {
-							ns.sleeve.setToSynchronize(sleeve.index);
-						} else if (sleeve.shock > 0) {
-							ns.sleeve.setToShockRecovery(sleeve.index);
-						} else {
-							if (!sleeve.task.crime || !sleeve.task.crime == "Homicide")
-								ns.sleeve.setToCommitCrime(sleeve.index, "Homicide");
-						}
+						if (companies_with_factions.includes()) {
 
+						} else {
+							ns.tprint(`unknown task: ${sleeveTask}`);
+							if (sleeve.sync < 100) {
+								ns.sleeve.setToSynchronize(sleeve.index);
+							} else if (sleeve.shock > 0) {
+								ns.sleeve.setToShockRecovery(sleeve.index);
+							} else {
+								if (!sleeve.task.crime || !sleeve.task.crime == "Homicide")
+									ns.sleeve.setToCommitCrime(sleeve.index, "Homicide");
+							}
+						}
 				}
 			}
 		});
