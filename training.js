@@ -178,7 +178,7 @@ function startClassFromClassEntry(ns, classEntry) {
   if (classData.city != player.city) {
     correctLocation = ns.travelToCity(classData.city)
     if (!correctLocation) {
-      throw new Exception(`unable to get to ${classData.city}, currently in ${player.city}`);
+      throw new Error(`unable to get to ${classData.city}, currently in ${player.city}`);
     }
   }
   if (classType == "uni") {
@@ -186,7 +186,7 @@ function startClassFromClassEntry(ns, classEntry) {
   } else if (classType == "gym") {
     ns.gymWorkout(classData.location_name, classData.class_name);
   } else {
-    throw new Exception("Internal error, class type not determined");
+    throw new Error("Internal error, class type not determined");
   }
 }
 

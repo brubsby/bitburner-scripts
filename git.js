@@ -36,6 +36,6 @@ export async function main (ns) {
     ]);
 
     let counter = await readDirectory(ns, `https://api.github.com/repos/${
-      flags.username}/${flags.repo}/contents`, flags["no-clobber"]);
+      flags.username}/${flags.repo}/contents`/*, flags["no-clobber"]*/);
     ns.tprint(`${counter} files updated`);
 }

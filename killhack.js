@@ -39,7 +39,7 @@ export async function main(ns) {
   const serverMap = getItem(settings.keys.serverMap)
 
   if (!serverMap) {
-    throw new Exception("Couldn't find server map, exiting...");
+    throw new Error("Couldn't find server map, exiting...");
     ns.exit();
     return;
   }

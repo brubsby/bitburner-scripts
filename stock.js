@@ -63,7 +63,7 @@ export async function main(ns) {
     ns.disableLog("ALL");
     try {
         if (!ns.purchase4SMarketData()) {
-            throw new Exception()
+            throw new Error()
         }
     } catch (error) {
         ns.tprint("Exiting stock script, market data not purchased and not enough money.")
@@ -71,7 +71,7 @@ export async function main(ns) {
     }
     try {
         if (!ns.purchase4SMarketDataTixApi()) {
-            throw new Exception()
+            throw new Error()
         }
     } catch (error) {
         ns.tprint("Exiting stock script, market data tix api not purchased and not enough money.")

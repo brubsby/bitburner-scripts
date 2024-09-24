@@ -105,7 +105,7 @@ export async function main(ns) {
   }
 
   if (hostname !== 'home') {
-    throw new Exception('Run the script from home');
+    throw new Error('Run the script from home');
   }
 
   while (true) {
