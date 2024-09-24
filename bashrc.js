@@ -1,0 +1,58 @@
+let doc=eval("document")
+
+let terminalInput = (input) => {
+  doc.getElementById('terminal-input-text-box').value=input;
+  doc.dispatchEvent(new KeyboardEvent('keydown',{keyCode:13}));
+};
+
+const scripts_to_alias = [
+  "spider.ns",
+  "training.ns",
+  "find.ns",
+  "stock.ns",
+  "crime.ns",
+  "eval.ns",
+  "bashrc.ns",
+  "hash.ns",
+  "killhack.ns",
+  "steve.ns",
+  "gang.ns",
+  "pserv.ns",
+  "sleeve.ns",
+];
+
+const terminal_block = `
+${scripts_to_alias.map(scriptName => `alias ${scriptName.replace(/\.[^/.]+$/, "")}="run ${scriptName}"`).join("\n")}
+alias dbuy="home; connect darkweb; buy BruteSSH.exe; buy FTPCrack.exe; buy relaySMTP.exe; buy HTTPWorm.exe; buy SQLInject.exe; buy ServerProfiler.exe; buy AutoLink.exe; buy DeepscanV1.exe; buy DeepscanV2.exe; home;"
+alias contracts="run contract.ns"
+alias servers="run pserv.ns"
+alias rank="home;run serverrank.ns"
+alias begin="home; run bashrc.ns; run spider.ns; run hacknet.ns --budget Infinity --payoff-time 8; run sleeve.ns; run pserv.ns; run stock.ns; run buyProgram.ns all --wait; run brain.ns; run hash.ns money;"
+alias deepscan="home; run deepscan.ns"
+alias trainallcheap="home; run training.ns --skill all --switch-time 150000 --tail"
+alias trainall="home; run training.ns --skill all --tail"
+alias trainhacking="home; run training.ns --skill hacking --tail"
+alias traindefense="home; run training.ns --skill defense --tail"
+alias traincombat="home; run training.ns --skill combat --tail"
+alias trainuni="home; run training.ns --skill uni --tail"
+alias traincharisma="home; run training.ns --skill charisma --tail"
+alias trainhackdef="home; run training.ns --skill hackdef --tail --switch-time 60000"
+alias crimetrain="home; run crime.ns --training --tail"
+alias crimemoney="home; run crime.ns --money --tail"
+alias crimekarma="home; run crime.ns --karma --tail"
+alias crimekills="home; run crime.ns --kills --tail"
+alias infil="home; run infilhelper.ns; run healer.ns; run infiltration.ns"
+alias programs="home; run buyProgram.ns all --wait;"
+alias augs="home; run faction.ns --print-all-augs"
+alias hackingaugs="home; run faction.ns --print-augs hack"
+alias defenseaugs="home; run faction.ns --print-augs defense"
+alias factions="home; run faction.ns --print-factions"
+alias hacknet="home; run hacknet.ns"
+alias restart="run process.ns --restart"
+alias start="run process.ns --run"
+alias stop="run process.ns --kill"
+`;
+
+export async function main(ns) {
+  terminalInput(terminal_block.split("\n").filter(string => string).join(";"));
+}
