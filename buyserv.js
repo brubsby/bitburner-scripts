@@ -141,6 +141,12 @@ export async function main(ns) {
         ),
         'w',
       )
+      // The daemon only mirrors /tel/* off home, so ship the status there when
+      // this runs anywhere else — otherwise it is invisible outside the game.
+      if (ns.getHostname() !== 'home') {
+        ns.scp(SETTINGS.statusFile, 'home', ns.getHostname())
+      }
+
       if (log.length) ns.print(log.join('; '))
     } catch (err) {
       ns.print(`error: ${err}`)
