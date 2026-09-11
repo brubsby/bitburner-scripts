@@ -102,4 +102,38 @@ flight at all.
 | M7 | oversubscription → negative marginal return | absent | |
 | M8 | restart cost = one full prep cycle | absent | |
 
-(Filled in as the work proceeds.)
+## 3. What was built
+
+Three new files, all mine:
+
+| file | what it is |
+| --- | --- |
+| `tools/sim/fidelity/supervisor.mjs` | a line-for-line replica of `auto.js` + `early.js` on the engine's new process model, including the parts that are wrong. Four variants: naive retarget with kills ignored (= the old sim), naive retarget with kills modelled, the shipped guard, and an EV retarget. |
+| `tools/sim/fidelity/backtest.mjs` | replays a telemetry window and reports the error against what really happened |
+| `tools/sim/fidelity/ev.mjs` | the expected-value functions, section 6 below |
+
+and additions to `tools/sim/engine.mjs` (nothing removed, nothing renamed — the
+optimizer's `exec`/`execAt`/`execPad` behave exactly as before):
+
+- `spawn(host, {script, threads, ramPerThread, args, onLand, state})` → pid or
+  **0**. A long-lived worker process that holds its RAM until killed. Returns 0
+  silently when RAM is short and bumps `stats.execFails`, which is what
+  `runScriptFromScript` does (`NetscriptWorker.ts:314-353`). **[src]**
+- `procOp(pid, op, target)` — start an op from inside a process. RAM already
+  held; duration read from the world *now*.
+- `killProc(pid)` — releases the RAM and **removes the pending landing event
+  from the queue**, so it never fires. Charges `stats.killedOps`,
+  `killedThreadSeconds`, `killedMoneyForgone`.
+- `psOn(host)`, `killProcsOn(host, pred)` — the sim's `ns.ps` / `ns.kill`.
+- `opSeconds(op, target)` — the duration, exposed, because it is the quantity
+  both desync mechanisms act on.
+- `complete()` split into lifecycle + `applyOp()`. A pid'd event whose process
+  is gone is **dropped without applying anything** — no money, no exp, no
+  security. That one line is mechanism M1.
+
+The worker loop is `onLand`: when a process's op lands, the engine calls it in
+the same step, and it picks the next op from the world that landing just
+changed. That is the real Netscript semantics — the `netscriptDelay` promise
+resolves and the script's next statement runs in a microtask of the same task
+(prior-art 9c) — and it is why `early.js` workers on different hosts drift out
+of phase with each other and all pile onto whatever the threshold says *now*.

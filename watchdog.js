@@ -13,10 +13,18 @@
 // knows nothing about strategy — it only answers "is this running, and if not,
 // start it".
 
+// script, the host it belongs on, and the args to restart it with.
+//
+// Those args matter more than they look. A restart here is not a resume — it is
+// a fresh launch, and anything the operator passed on the command line is gone
+// unless it is written down. `buyserv.js --reserve 700e6` was restarted from
+// this list with no arguments, reverted to its default of spending everything,
+// and converted $197.2m of augmentation money into RAM that had already passed
+// the point of negative return. buyserv now also persists its own reserve, so
+// the two mechanisms cover each other; keep this list correct anyway.
 const WATCHED = [
-  // script, host it belongs on, args
   { script: 'auto.js', host: 'home', args: [] },
-  { script: 'buyserv.js', host: 'joesguns', args: [] },
+  { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 700e6] },
 ]
 
 const INTERVAL = 30000

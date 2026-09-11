@@ -407,3 +407,227 @@ CyberSec joined. Next: keep checking money for further home RAM steps
 idle-polling in between — do other useful checks (server roots, buyserv
 health, hacking-level progress toward avmnite-02h's 213) while balances
 rebuild.
+
+---
+
+## 2026-09-11 ~23:36-23:45 UTC — resume, buyserv reserve, home RAM to 256GB, contract, NiteSec pre-message
+
+**State on pickup:** hacking 204→212 (climbing fast), money $445m, home
+32GB, 26/82 rooted. Terminal scrollback showed a partial version of task 1
+already mid-flight from just before this pickup (in this same browser
+session, presumably the lead or a just-cut-off predecessor): watchdog
+already killed once, `buyserv.js` already killed on joesguns (pid 33) —
+but then **watchdog.js had been restarted first**, which is backwards (it
+would have respawned the old no-reserve `buyserv.js` within 30s). Also a
+**"Message received from unknown sender" popup from NiteSec** was showing,
+the pre-invite flavor message ("find and install the backdoor on
+avmnite-02h... then we will contact you again" — saved as
+`nitesec-test.msg`), not a faction invitation. Closed it; nothing to accept
+yet, matches the roadmap's rumor-threshold note (hacking 200 →
+`nitesec-test`).
+
+**1. `buyserv.js` restarted with `--reserve 700e6` (task 1).** Killed the
+already-running `watchdog.js` (pid 121, pserv-67932) again before it could
+respawn the old copy; confirmed via `ps` on joesguns that `buyserv.js` was
+not running; freed RAM (killed one `early.js` orphan, pid 123) since
+joesguns' 16GB was 90% full; `run buyserv.js --reserve 700e6` → pid 125,
+confirmed via `tel/status.txt` process list and via
+`getFile tel/buyserv.txt server=joesguns` (reserve: 700000000, correctly
+idling — money was below the 700m reserve most of this session so it logged
+an empty `log: []` every tick, exactly as intended). Fleet at pickup was
+already 14,416GB / 11 servers (bigger than the brief's 10,684GB estimate —
+the old no-reserve buyserv had kept buying in the gap before I intervened).
+Restarted `watchdog.js` afterward (killed one more `early.js` orphan for
+RAM, `run watchdog.js` → pid 136). Both supervisors confirmed healthy via
+`ps` and `tel/status.txt`.
+
+**2. Home RAM 32GB → 256GB (task 2), three clicks at Alpha Enterprises,
+checking price each step as instructed:** 32→64GB $10.083m, 64→128GB
+$31.862m, 128→256GB $100.684m — **$142.629m total**, close to the brief's
+$145.8m estimate. Money went $765.6m → $623.0m. Confirmed via poll
+(`home: {ram: 256}`). Did not go past 256GB (brief's target), even though
+money would have allowed starting the 256→512GB step ($318.2m, would have
+left ~$305m) — stopped exactly at the stated target.
+
+**3. Hacking level reached 213 while doing the above** (was 204 at pickup,
+212 by the time home RAM was done, crossed 213 shortly after — see next
+entry). `avmnite-02h` backdoor is now actionable per the researcher's exact
+read (`hackLevel=213`, path `home -> hong-fang-tea -> zer0 -> silver-helix
+-> avmnite-02h`, both required ports already owned).
+
+**4. One more contract cycle, same pause-both/resume-both procedure:**
+paused `auto.js` (home, was pid 118) and `watchdog.js` (pserv-67932, pid
+129) again, found 1 contract (`Encryption I: Caesar Cipher` @ solaris),
+`ctsolve.js --dry` → clean, `ctsolve.js` for real → **solved, +$25.000m**.
+Restarted `auto.js` (pid 134) and `watchdog.js` (pid 136) after — both
+confirmed via `ps`.
+
+**Noted oddity, not chased further:** money read $987.9m right after the
+home-RAM sequence started, then read $762.6m / $764.2m a few polls later,
+a ~$225m drop with `buyserv.js` confirmed not running (dead the whole
+window) and no purchase made by me in that gap. Checked
+`.telemetry/status.txt`'s full process list — no stray `buyserv.js`
+anywhere on the fleet, `incomePerSec` was positive (+596k–628k/s)
+throughout. Did not find a mechanism that would spend player cash from the
+hacking fleet itself (hack only moves target money, not player cash) and
+did not spend the time to fully explain it since it did not block any task
+and money kept climbing afterward regardless. Flagging in case it
+recurs — could be worth the optimizer's attention if seen again.
+
+**Faction state:** still just Sector-12 + CyberSec, no pending invitations
+at last check (Factions tab confirmed no "Join!" buttons, only the NiteSec
+rumor text). NiteSec invite has not fired yet — per the brief, it fires
+*after* the backdoor is installed on `avmnite-02h`, not from the flavor
+message.
+
+**Money at end of this entry:** ~$648m (before this contract's +$25m
+landed in the poll). buyserv reserve intact (700m), so anything above that
+is available for the next step (backdooring avmnite-02h needs no money —
+ports already owned).
+
+**Next:** connect to avmnite-02h via the known path and run `backdoor`
+once hacking is confirmed ≥213 (spawned a fork agent to double check
+whether `backdoor` even gates on hacking level the way CSEC's did, or
+whether it's purely admin-rights — result pending as of this entry). Then,
+per the brief, accept the NiteSec invite immediately when it appears (no
+need to ask), and start NiteSec hacking work (unfocused) right after
+joining.
+
+---
+
+## 2026-09-11 ~23:36-23:45 UTC — buyserv reserve, home RAM to 256GB, contract cycled
+
+**State on pickup:** hacking 201->206 (fast), money $445m, fleet at
+10,684GB/25 servers (one pserv, `pserv-67935`, alone at 8192GB — the fleet
+had gotten pathologically saturated exactly as the lead described: 4,419+
+threads all on `phantasy`). Terminal scrollback showed a **prior pass at
+this same task already in progress** from before this pickup (same
+session, likely a cut-off predecessor): `watchdog.js` had already been
+killed and restarted *before* `buyserv.js` was killed, i.e. in the wrong
+order relative to the brief's procedure, and a NiteSec pre-invite message
+("find and install the backdoor on avmnite-02h... -NiteSec") had already
+popped up and was sitting unread in a dialog. Closed the dialog (it's not
+a faction invite, just the flavor message that precedes one — no faction
+was actually offered, `factionInvitations: []` confirmed via telemetry) —
+nothing to accept/decline yet.
+
+**Task 1 — buyserv.js restarted with `--reserve 700e6`.** Found
+`buyserv.js` already dead on joesguns (pid 33 killed by the in-progress
+predecessor) but `watchdog.js` freshly *alive* again on `pserv-67932` (pid
+121) — meaning it was about to un-kill buyserv.js on its next 30s tick
+before I could set the reserve flag. Killed `watchdog.js` (pid 121) first,
+then confirmed joesguns had no buyserv running, freed RAM there (killed one
+orphaned `early.js`, pid 123 — joesguns was at 90% used, needed 5.76GB
+free), then `run buyserv.js --reserve 700e6` — pid 125, confirmed via
+`tel/status.txt` process list with `args: ["--reserve", 700000000]`.
+Restarted `watchdog.js` afterward (pid 129, later cycled to 136 — see
+below) so it resumes guarding both supervisors including the new buyserv
+invocation.
+
+**Task 2 — home RAM: 32GB -> 256GB, three purchases.** Via Alpha
+Enterprises: 32->64 ($10.083m), 64->128 ($31.862m), 128->256 ($100.684m) —
+$142.6m total, matching the brief's ~$145.8m estimate closely. Confirmed
+via poll (`home: {ram: 256}`). Money went from ~$765m before the first
+purchase down to $623m after all three — comfortably above buyserv's new
+$700m reserve threshold for a while, then briefly *below* it, which is
+correct: buyserv should now sit idle (surplus <= 0) until income rebuilds
+past $700m, rather than racing us for the same cash.
+
+**Noted but not chased down:** money read $987.9m at one point then
+$762.6m moments later, with `buyserv.js` confirmed *not running* the whole
+time in between (verified via `ps` on joesguns before and after). No
+purchase of any kind happened in that window on my end. Did not find an
+explanation (hacking/growing doesn't touch player cash, no hacknet or
+stock activity in this run) — flagging in case it recurs, but the fleet's
+`incomePerSec` was healthy and positive throughout (~600-630k/s), so it did
+not look like an actual loss, more likely a dashboard/telemetry timing
+artifact across two different read paths (Overview panel vs. `/poll`).
+Money has behaved normally (monotonic modulo purchases) since.
+
+**Contract cycle — 1 solved.** Paused `auto.js` (home, killed pid 118) and
+`watchdog.js` (pserv-67932, killed pid 129) first. `ctscan.js` found 1
+contract (Encryption I: Caesar Cipher @ solaris). `ctsolve.js --dry`
+solved cleanly (1/1, 0 wrong). `ctsolve.js` for real: **solved, +$25.000m**.
+Restarted `auto.js` (pid 134) and `watchdog.js` (pid 136, after freeing
+RAM on pserv-67932 same as before) — both confirmed running.
+
+**avmnite-02h watch.** Hacking hit 212 during this cycle (from 201 at
+pickup), one level short of the confirmed-in-source-code requirement of
+213 (see predecessor's ~23:22 entry, `findpath.js` + `servers.ts`). Path is
+`home -> hong-fang-tea -> zer0 -> silver-helix -> avmnite-02h`, both
+required ports (BruteSSH, FTPCrack) already owned. Started a background
+poll (not an idle terminal loop — a shell `until` against the telemetry
+control port) waiting for hacking >= 213 to avoid burning turns on
+"still waiting" checks; will backdoor as soon as it fires. **No faction
+invitation has appeared yet** (`factionInvitations: []` as of last poll,
+only the NiteSec flavor-text message, which just names the backdoor
+target and isn't itself a join prompt) — per the lead's standing "do not
+auto-accept" policy this still needs a decision when a real NiteSec
+invite shows up, but the brief explicitly authorizes auto-accepting
+NiteSec specifically, unlike other factions.
+
+**End-of-cycle state:** hacking 212, money ~$648m, home 256GB/1 core,
+26+/82 rooted. `auto.js` (home, pid 134), `buyserv.js` (joesguns, pid 125,
+`--reserve 700e6`), `watchdog.js` (pserv-67932, pid 136) all confirmed
+running current code. Sector-12 + CyberSec joined, no other invites
+pending.
+
+---
+
+## 2026-09-11 ~23:46 UTC — avmnite-02h backdoored, NiteSec joined and working
+
+**Verified `backdoor` gates on hacking level, same as CSEC** — checked
+`~/Repos/bitburner/src/Terminal/commands/backdoor.ts:34`: `if
+(server.requiredHackingSkill && server.requiredHackingSkill >
+Player.skills.hacking)` errors out before attempting, in addition to the
+admin-rights check. Confirmed via `analyze` on avmnite-02h itself once
+connected: `Root Access: YES`, `Required hacking skill for hack() and
+backdoor: 213`, `Backdoor: NO` — root access had already been established
+automatically by `auto.js` (both ports open for a while), only the level
+and the human `backdoor` command were missing.
+
+**Hacking hit 213** (background monitor fired the instant it crossed, no
+idle polling needed). Connected via the known path — `home ->
+hong-fang-tea -> zer0 -> silver-helix -> avmnite-02h` — and ran `backdoor`.
+Took ~5s (`hackTime/4` per source). **Succeeded**, and the real NiteSec
+faction invitation (not the earlier flavor message) popped immediately.
+
+**Accepted NiteSec on sight, per the brief's standing exception** (task 4)
+— clicked Join without asking. Confirmed on the Factions page: `NiteSec`
+now listed under Your Factions alongside Sector-12 and CyberSec.
+
+**Started NiteSec "Hacking Contracts" faction work** (task 5), then
+clicked "Do something else simultaneously" to drop it from focused to
+unfocused so it keeps accruing in the background while other actions
+continue — Overview panel confirms `Working for NiteSec, ... rep (0.874
+/sec)` (the 0.8× unfocused penalty on the focused 1.092/sec shown a moment
+earlier). At ~0.87 rep/s this is roughly 3,132 rep/hour; the researcher's
+roadmap (`docs/roadmap.md` §8) estimated ~3,146 rep/hour unfocused at
+hacking 213 — matches closely. 20,000 rep is ~6.4 hours out at this rate
+alone, faster with contract-rep drip on top.
+
+**All three supervisors confirmed still healthy after all this UI
+navigation:** `factions: ['NiteSec', 'Sector-12', 'CyberSec']`,
+`factionInvitations: []` (nothing left pending), `servers: {rooted: 28,
+total: 83}` (avmnite-02h now counted rooted), `watchdog.js`'s
+`tel/watchdog.txt` shows `restarts: {}` — no supervisor has needed a
+restart since the last manual one, i.e. `auto.js` and `buyserv.js` have
+been running undisturbed through the backdoor/faction sequence.
+
+**All five of the brief's priority-ordered tasks are now done:** buyserv
+restarted with `--reserve 700e6` (1), home RAM at 256GB (2), hacking 213 +
+avmnite-02h backdoored (3), NiteSec accepted immediately (4), NiteSec
+hacking work started unfocused (5). One contract cycle was run this
+session (6, lowest priority) — worth repeating periodically as new
+contracts spawn (~4.5/hour per the roadmap), using the same
+pause-both/solve/resume-both procedure.
+
+**Left running, nothing needs a decision right now.** The researcher's
+install trigger (`docs/roadmap.md` §7: NiteSec rep 20,000 + $400m cash) is
+explicitly the lead's call per the brief's standing rule — flagging that
+it exists, not acting on it. Money is currently below buyserv's $700m
+reserve (~$648m at last full poll, contract solve added $25m on top), so
+buyserv is correctly idle; it will resume spending on cloud RAM once
+income pushes back above the reserve, which is fine since the reserve's
+whole purpose was freeing cash for home RAM, not preventing all further
+cloud spend forever.

@@ -54,6 +54,7 @@ const SETTINGS = {
   floorReserve: 0,
   interval: 15000,
   statusFile: '/tel/buyserv.txt',
+  configFile: '/tel/buyserv-config.txt',
 }
 
 /** Price of the cheapest port opener not yet owned, or the floor. */
@@ -64,6 +65,31 @@ function reserveFor(ns) {
   return SETTINGS.floorReserve
 }
 
+/**
+ * An explicit --reserve is remembered on disk and reused if this restarts
+ * without one.
+ *
+ * watchdog.js restarts a dead script with no arguments, so before this existed
+ * a watchdog restart silently reverted the reserve to the default and the next
+ * tick spent everything. That is not hypothetical: it cost $197.2m of
+ * augmentation money in one tick, on a fleet where marginal RAM had already
+ * turned negative. A supervisor whose policy evaporates when it is restarted is
+ * worse than one that does not restart.
+ */
+function rememberedReserve(ns) {
+  try {
+    const raw = ns.read(SETTINGS.configFile)
+    const value = Number(JSON.parse(raw || '{}').reserve)
+    return Number.isFinite(value) && value >= 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+function rememberReserve(ns, reserve) {
+  ns.write(SETTINGS.configFile, JSON.stringify({ reserve, at: new Date().toISOString() }), 'w')
+}
+
 export async function main(ns) {
   const flags = ns.flags([
     ['reserve', -1],
@@ -72,7 +98,17 @@ export async function main(ns) {
   const interval = flags.interval * 1000
 
   ns.disableLog('ALL')
-  ns.print('buyserv.js running')
+
+  // An explicit flag wins and is remembered; otherwise reuse whatever was last
+  // set explicitly, so a watchdog restart does not quietly drop the policy.
+  let stickyReserve = null
+  if (flags.reserve >= 0) {
+    stickyReserve = flags.reserve
+    rememberReserve(ns, stickyReserve)
+  } else {
+    stickyReserve = rememberedReserve(ns)
+  }
+  ns.print(`buyserv.js running — reserve ${stickyReserve === null ? 'auto' : '$' + stickyReserve}`)
 
   while (true) {
     const log = []
@@ -81,7 +117,7 @@ export async function main(ns) {
       const owned = ns.cloud.getServerNames()
       const limit = ns.cloud.getServerLimit()
       const maxRam = ns.cloud.getRamLimit()
-      const reserve = flags.reserve >= 0 ? flags.reserve : reserveFor(ns)
+      const reserve = stickyReserve !== null ? stickyReserve : reserveFor(ns)
 
       // Keep buying until the surplus can no longer afford the smallest useful
       // server. Each pass takes the largest affordable chunk, so the money goes
