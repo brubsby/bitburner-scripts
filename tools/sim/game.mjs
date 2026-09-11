@@ -46,4 +46,11 @@ export const {
   currentNodeMults,
   getUpgradeHomeRamCost,
   getUpgradeHomeCoresCost,
+  // src/Server/ServerPurchases.ts
+  getCloudServerCost,
+  getCloudServerLimit,
+  getCloudServerMaxRam,
+  // src/Constants.ts, src/DarkWeb/DarkWebItems.ts
+  CONSTANTS,
+  DarkWebItems,
 } = game;

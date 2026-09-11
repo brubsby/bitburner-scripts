@@ -29,6 +29,9 @@ export { ServerConstants } from "${GAME}/src/Server/data/Constants";
 export { currentNodeMults } from "${GAME}/src/BitNode/BitNodeMultipliers";
 export { getUpgradeHomeRamCost, getUpgradeHomeCoresCost } from "${GAME}/src/PersonObjects/Player/PlayerObjectServerMethods";
 export { calculateIntelligenceBonus } from "${GAME}/src/PersonObjects/formulas/intelligence";
+export { getCloudServerCost, getCloudServerLimit, getCloudServerMaxRam } from "${GAME}/src/Server/ServerPurchases";
+export { CONSTANTS } from "${GAME}/src/Constants";
+export { DarkWebItems } from "${GAME}/src/DarkWeb/DarkWebItems";
 `;
 
 const rawPlugin = {

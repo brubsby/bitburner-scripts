@@ -40,6 +40,15 @@ if (has("snapshot")) {
 const minutes = Number(flag("minutes", 60));
 const seeds = Number(flag("seeds", 5));
 const only = flag("only");
+const homeReserve = Number(flag("reserve", 0));
+// The sim defaults to the dedicated workers h.js/g.js/w.js, which cost
+// 1.7/1.75/1.75GB per thread. auto.js currently deploys early.js instead,
+// which self-decides and so costs 2.4GB per thread for every op. --workerram
+// prices that difference.
+const workerRam = flag("workerram", null);
+const scriptRam = workerRam
+  ? { hack: Number(workerRam), grow: Number(workerRam), weaken: Number(workerRam) }
+  : undefined;
 const names = only ? String(only).split(",").map((s) => s.trim()) : Object.keys(REGISTRY);
 
 const snapshot = loadSnapshot();
@@ -54,12 +63,26 @@ for (const name of names) {
   }
   const runs = [];
   for (let seed = 1; seed <= seeds; seed++) {
-    runs.push(new Sim(world, { seed }).run(make(), minutes * 60_000));
+    runs.push(new Sim(world, { seed, homeReserve, ...(scriptRam ? { scriptRam } : {}) }).run(make(), minutes * 60_000));
   }
+  // Income over the closing tenth of the run: where a strategy has *got to*,
+  // as opposed to what it banked on the way. A strategy that spends everything
+  // on RAM looks poor by cash-in-hand and rich by this.
+  const tailRate = (r) => {
+    const c = r.curve;
+    const from = c[Math.max(0, c.length - 1 - Math.ceil(c.length / 10))];
+    const to = c[c.length - 1];
+    return (to.earned - from.earned) / ((to.minute - from.minute) * 60);
+  };
+
   results.push({
     name,
     label: runs[0].strategy,
     money: median(runs.map((r) => r.money)),
+    earned: median(runs.map((r) => r.moneyStolen)),
+    netWorth: median(runs.map((r) => r.money + r.ramSpend + r.programSpend)),
+    rate: median(runs.map(tailRate)),
+    util: median(runs.map((r) => r.util)),
     moneyMin: Math.min(...runs.map((r) => r.money)),
     moneyMax: Math.max(...runs.map((r) => r.money)),
     hacking: median(runs.map((r) => r.hacking)),
@@ -69,11 +92,15 @@ for (const name of names) {
     grows: median(runs.map((r) => r.grows)),
     weakens: median(runs.map((r) => r.weakens)),
     rooted: median(runs.map((r) => r.rooted)),
+    totalRam: median(runs.map((r) => r.totalRam)),
+    homeRam: median(runs.map((r) => r.homeRam)),
+    ramSpend: median(runs.map((r) => r.ramSpend)),
     curve: runs[0].curve,
   });
 }
 
-results.sort((a, b) => b.money - a.money);
+const sortKey = flag("sort", "earned");
+results.sort((a, b) => (b[sortKey] ?? 0) - (a[sortKey] ?? 0));
 
 if (has("json")) {
   console.log(JSON.stringify({ minutes, seeds, results }, null, 2));
@@ -81,22 +108,34 @@ if (has("json")) {
 }
 
 console.log(`\n${minutes} minutes from a fresh BN1 start, median of ${seeds} seeds\n`);
-console.log("  " + "strategy".padEnd(34) + "money".padStart(10) + "hack".padStart(6) + "exp".padStart(9) + "  hacks   range");
-console.log("  " + "-".repeat(86));
+console.log(
+  "  " +
+    "strategy".padEnd(34) +
+    "earned".padStart(10) +
+    "cash".padStart(10) +
+    "$/s end".padStart(10) +
+    "hack".padStart(6) +
+    "ram".padStart(8) +
+    "util".padStart(7) +
+    "  spent".padStart(10),
+);
+console.log("  " + "-".repeat(90));
 for (const r of results) {
   console.log(
     "  " +
       r.label.slice(0, 33).padEnd(34) +
+      fmtMoney(r.earned).padStart(10) +
       fmtMoney(r.money).padStart(10) +
+      fmtMoney(r.rate).padStart(10) +
       String(r.hacking).padStart(6) +
-      String(r.exp).padStart(9) +
-      `   ${r.hacks}/${r.hacks + r.hackFails}`.padEnd(9) +
-      `${fmtMoney(r.moneyMin)}–${fmtMoney(r.moneyMax)}`,
+      String(r.totalRam).padStart(8) +
+      `${(r.util * 100).toFixed(0)}%`.padStart(7) +
+      fmtMoney(r.ramSpend).padStart(10),
   );
 }
 console.log();
 
 const best = results[0];
-console.log(`best: ${best.label} — ${fmtMoney(best.money)}, hacking ${best.hacking}`);
-console.log(`curve: ${best.curve.map((p) => `${p.minute}m ${fmtMoney(p.money)}/lvl${p.hacking}`).join("  ")}`);
+console.log(`best by ${sortKey}: ${best.label} — earned ${fmtMoney(best.earned)}, hacking ${best.hacking}`);
+console.log(`curve: ${best.curve.map((p) => `${p.minute}m ${fmtMoney(p.earned)}/lvl${p.hacking}/${p.ram}GB`).join("  ")}`);
 process.exit(0);

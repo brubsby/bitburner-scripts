@@ -83,8 +83,7 @@ function tryRoot(ns, host) {
  * security — we want the rate the server sustains once prepped, since that is
  * the state we intend to keep it in.
  */
-function hackFractionAtMinSecurity(ns, host) {
-  const minSecurity = ns.getServerMinSecurityLevel(host)
+function hackFractionAtMinSecurity(ns, host, minSecurity) {
   if (minSecurity >= 100) return 0
 
   const hacking = ns.getHackingLevel()
@@ -95,7 +94,41 @@ function hackFractionAtMinSecurity(ns, host) {
   return Math.min(1, Math.max(0, (difficultyMult * skillMult) / 240))
 }
 
-/** Rank targets by money per second once prepped to minimum security. */
+/**
+ * Chance a hack lands, at minimum security. calculateHackingChance from
+ * src/Hacking.ts, inlined — a failed hack returns nothing, and for a server
+ * freshly in reach the chance is well under half. Those are exactly the
+ * servers a level-driven retarget keeps picking.
+ */
+function hackChanceAtMinSecurity(ns, host, minSecurity) {
+  if (minSecurity >= 100) return 0
+  const skillMult = Math.max(1.75 * ns.getHackingLevel(), 1)
+  const skillChance = (skillMult - ns.getServerRequiredHackingLevel(host)) / skillMult
+  return Math.min(1, Math.max(0, skillChance * ((100 - minSecurity) / 100)))
+}
+
+/**
+ * Rank targets by money per RAM-second of a full prep-and-hack cycle, at
+ * minimum security and in the limit of a small hack fraction:
+ *
+ *   score = chance * M / ( T * (1.98/phi + 6.16/k) )
+ *
+ *   phi   fraction one hack thread takes        (inlined above)
+ *   k     per-thread growth log constant        (calculateServerGrowthLog)
+ *   1.98  1.7GB per hack thread held 1*T, plus the weaken threads it forces
+ *   6.16  1.75GB per grow thread held 3.2*T, plus the weaken threads it forces
+ *
+ * This used to be M*phi/T, which prices the hack threads and ignores the cost
+ * of putting the money back. That parked the fleet on foodnstuff
+ * (serverGrowth 5) and sigma-cosmetics (10) — the two slowest-regrowing money
+ * servers on the network — for the whole early game. Simulated over 60 minutes
+ * at the RAM this save has, the correction is worth ~3.8x on its own; see
+ * docs/optimizer-log.md section 6 and docs/prior-art.md section 5.
+ *
+ * The uniform factors in k (player hacking_grow multiplier, the BitNode
+ * ServerGrowthRate) are both exactly 1 in BN1 with no augmentations. They do
+ * not cancel out of the ranking, so revisit this after the first install.
+ */
 function bestTarget(ns, hosts) {
   let best = null
   let bestRate = -1
@@ -105,11 +138,21 @@ function bestTarget(ns, hosts) {
     if (maxMoney <= 0) continue
     if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) continue
 
-    const fraction = hackFractionAtMinSecurity(ns, host)
+    const minSecurity = ns.getServerMinSecurityLevel(host)
+    const phi = hackFractionAtMinSecurity(ns, host, minSecurity)
     const time = ns.getHackTime(host)
-    if (fraction <= 0 || !isFinite(time) || time <= 0) continue
+    if (phi <= 0 || !isFinite(time) || time <= 0) continue
 
-    const rate = (maxMoney * fraction) / (time / 1000)
+    // calculateServerGrowthLog(server, 1, player) from src/Server/formulas/grow.ts.
+    const growth = ns.getServerGrowth(host)
+    const adjGrowthLog = Math.min(Math.log1p(0.03 / minSecurity), 0.00349388925425578)
+    const k = adjGrowthLog * (growth / 100)
+    if (!(k > 0)) continue
+
+    const chance = hackChanceAtMinSecurity(ns, host, minSecurity)
+    const ramSeconds = (time / 1000) * (1.98 / phi + 6.16 / k)
+    const rate = (chance * maxMoney) / ramSeconds
+
     if (rate > bestRate) {
       bestRate = rate
       best = host
@@ -155,7 +198,7 @@ export async function main(ns) {
   SETTINGS.interval = flags.interval * 1000
 
   ns.disableLog('ALL')
-  ns.print(`auto.js supervising — reserve $${SETTINGS.reserve}, buy servers: ${SETTINGS.buyServers}`)
+  ns.print(`auto.js supervising — worker ${SETTINGS.worker}, every ${SETTINGS.interval / 1000}s`)
 
   const workerRam = ns.getScriptRam(SETTINGS.worker, 'home')
   if (!workerRam) {

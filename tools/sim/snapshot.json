@@ -1,17 +1,23 @@
 {
-  "capturedAt": "2026-09-11T18:46:12.934Z",
+  "capturedAt": "2026-09-11T20:36:49.600Z",
   "bitNode": 1,
   "player": {
-    "money": 1262,
-    "hackExp": 279,
-    "hacking": 14,
-    "homeRam": 8,
-    "homeCores": 1
+    "money": 487820.2860107053,
+    "hackExp": 17324.925000000003,
+    "hacking": 113,
+    "homeRam": 16,
+    "homeCores": 1,
+    "programs": [
+      "NUKE.exe",
+      "fl1ght.exe",
+      "BruteSSH.exe"
+    ],
+    "hasTor": true
   },
   "servers": [
     {
       "hostname": "home",
-      "maxRam": 8,
+      "maxRam": 16,
       "moneyAvailable": 0,
       "moneyMax": 0,
       "hackDifficulty": 1,
@@ -30,7 +36,13 @@
         "joesguns",
         "hong-fang-tea",
         "harakiri-sushi",
-        "iron-gym"
+        "iron-gym",
+        "darkweb"
+      ],
+      "programs": [
+        "NUKE.exe",
+        "fl1ght.exe",
+        "BruteSSH.exe"
       ]
     },
     {
@@ -49,7 +61,8 @@
       "cpuCores": 14,
       "serversOnNetwork": [
         "blade"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "megacorp",
@@ -67,7 +80,8 @@
       "cpuCores": 9,
       "serversOnNetwork": [
         "clarkinc"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "b-and-a",
@@ -85,7 +99,8 @@
       "cpuCores": 12,
       "serversOnNetwork": [
         "omnitek"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "blade",
@@ -105,7 +120,8 @@
         ".",
         "ecorp",
         "The-Cave"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "nwo",
@@ -123,7 +139,8 @@
       "cpuCores": 13,
       "serversOnNetwork": [
         "."
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "clarkinc",
@@ -143,7 +160,8 @@
         ".",
         "megacorp",
         "fulcrumassets"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "omnitek",
@@ -162,7 +180,8 @@
       "serversOnNetwork": [
         "fulcrumtech",
         "b-and-a"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "4sigma",
@@ -180,7 +199,8 @@
       "cpuCores": 11,
       "serversOnNetwork": [
         "fulcrumtech"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "kuai-gong",
@@ -199,7 +219,8 @@
       "serversOnNetwork": [
         "fulcrumtech",
         "powerhouse-fitness"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "fulcrumtech",
@@ -220,7 +241,8 @@
         "omnitek",
         "4sigma",
         "kuai-gong"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "fulcrumassets",
@@ -238,7 +260,8 @@
       "cpuCores": 15,
       "serversOnNetwork": [
         "clarkinc"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "stormtech",
@@ -256,7 +279,8 @@
       "cpuCores": 8,
       "serversOnNetwork": [
         "applied-energetics"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "defcomm",
@@ -274,7 +298,8 @@
       "cpuCores": 8,
       "serversOnNetwork": [
         "deltaone"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "infocomm",
@@ -292,7 +317,8 @@
       "cpuCores": 6,
       "serversOnNetwork": [
         "univ-energy"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "helios",
@@ -311,7 +337,8 @@
       "serversOnNetwork": [
         "microdyne",
         "."
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "vitalife",
@@ -329,7 +356,8 @@
       "cpuCores": 6,
       "serversOnNetwork": [
         "applied-energetics"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "icarus",
@@ -347,7 +375,8 @@
       "cpuCores": 8,
       "serversOnNetwork": [
         "omnia"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "univ-energy",
@@ -366,7 +395,8 @@
       "serversOnNetwork": [
         "deltaone",
         "infocomm"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "titan-labs",
@@ -385,7 +415,8 @@
       "serversOnNetwork": [
         "nova-med",
         "fulcrumtech"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "microdyne",
@@ -404,7 +435,8 @@
       "serversOnNetwork": [
         "zb-def",
         "helios"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "taiyang-digital",
@@ -423,7 +455,8 @@
       "serversOnNetwork": [
         "zeus-med",
         "applied-energetics"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "galactic-cyber",
@@ -441,7 +474,8 @@
       "cpuCores": 4,
       "serversOnNetwork": [
         "aevum-police"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "aerocorp",
@@ -460,7 +494,8 @@
       "serversOnNetwork": [
         "millenium-fitness",
         "deltaone"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "omnia",
@@ -479,7 +514,8 @@
       "serversOnNetwork": [
         "global-pharm",
         "icarus"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "zb-def",
@@ -499,7 +535,8 @@
         "zeus-med",
         "microdyne",
         "run4theh111z"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "applied-energetics",
@@ -519,7 +556,8 @@
         "taiyang-digital",
         "stormtech",
         "vitalife"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "solaris",
@@ -537,7 +575,8 @@
       "cpuCores": 7,
       "serversOnNetwork": [
         "unitalife"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "deltaone",
@@ -557,7 +596,8 @@
         "aerocorp",
         "defcomm",
         "univ-energy"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "global-pharm",
@@ -577,7 +617,8 @@
         "rho-construction",
         "omnia",
         "unitalife"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "nova-med",
@@ -596,7 +637,8 @@
       "serversOnNetwork": [
         "zeus-med",
         "titan-labs"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "zeus-med",
@@ -617,7 +659,8 @@
         "taiyang-digital",
         "zb-def",
         "nova-med"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "unitalife",
@@ -637,7 +680,8 @@
         "global-pharm",
         "solaris",
         "zeus-med"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "lexo-corp",
@@ -655,7 +699,8 @@
       "cpuCores": 4,
       "serversOnNetwork": [
         "I.I.I.I"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "rho-construction",
@@ -674,7 +719,8 @@
       "serversOnNetwork": [
         "zb-institute",
         "global-pharm"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "alpha-ent",
@@ -693,7 +739,8 @@
       "serversOnNetwork": [
         "zb-institute",
         "snap-fitness"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "aevum-police",
@@ -712,7 +759,8 @@
       "serversOnNetwork": [
         "catalyst",
         "galactic-cyber"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "rothman-uni",
@@ -730,7 +778,8 @@
       "cpuCores": 3,
       "serversOnNetwork": [
         "netlink"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "zb-institute",
@@ -751,7 +800,8 @@
         "rho-construction",
         "alpha-ent",
         "millenium-fitness"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "summit-uni",
@@ -769,7 +819,8 @@
       "cpuCores": 5,
       "serversOnNetwork": [
         "crush-fitness"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "syscore",
@@ -787,7 +838,8 @@
       "cpuCores": 3,
       "serversOnNetwork": [
         "netlink"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "catalyst",
@@ -806,7 +858,8 @@
       "serversOnNetwork": [
         "avmnite-02h",
         "aevum-police"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "the-hub",
@@ -824,7 +877,8 @@
       "cpuCores": 4,
       "serversOnNetwork": [
         "silver-helix"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "computek",
@@ -842,7 +896,8 @@
       "cpuCores": 2,
       "serversOnNetwork": [
         "phantasy"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "netlink",
@@ -862,7 +917,8 @@
         "silver-helix",
         "rothman-uni",
         "syscore"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "johnson-ortho",
@@ -881,14 +937,15 @@
       "serversOnNetwork": [
         "neo-net",
         "I.I.I.I"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "n00dles",
       "maxRam": 4,
-      "moneyAvailable": 1624812.2623155767,
+      "moneyAvailable": 1693401.4031188083,
       "moneyMax": 1750000,
-      "hackDifficulty": 1.12,
+      "hackDifficulty": 1.8860000000000008,
       "minDifficulty": 1,
       "baseDifficulty": 1,
       "requiredHackingSkill": 1,
@@ -899,14 +956,15 @@
       "cpuCores": 1,
       "serversOnNetwork": [
         "home"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "foodnstuff",
       "maxRam": 16,
-      "moneyAvailable": 2000000,
+      "moneyAvailable": 2774206.0393970124,
       "moneyMax": 50000000,
-      "hackDifficulty": 8.5,
+      "hackDifficulty": 6.464749999999927,
       "minDifficulty": 3,
       "baseDifficulty": 10,
       "requiredHackingSkill": 1,
@@ -917,44 +975,47 @@
       "cpuCores": 1,
       "serversOnNetwork": [
         "home"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "sigma-cosmetics",
       "maxRam": 16,
-      "moneyAvailable": 2300000,
+      "moneyAvailable": 2449478.284810586,
       "moneyMax": 57500000,
-      "hackDifficulty": 10,
+      "hackDifficulty": 7.719999999999996,
       "minDifficulty": 3,
       "baseDifficulty": 10,
       "requiredHackingSkill": 5,
       "serverGrowth": 10,
       "numOpenPortsRequired": 0,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
         "home"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "joesguns",
       "maxRam": 16,
-      "moneyAvailable": 2500000,
+      "moneyAvailable": 2621430.505214879,
       "moneyMax": 62500000,
-      "hackDifficulty": 15,
+      "hackDifficulty": 9.911999999999976,
       "minDifficulty": 5,
       "baseDifficulty": 15,
       "requiredHackingSkill": 10,
       "serverGrowth": 20,
       "numOpenPortsRequired": 0,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
         "home",
         "nectar-net"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "zer0",
@@ -967,26 +1028,27 @@
       "requiredHackingSkill": 75,
       "serverGrowth": 40,
       "numOpenPortsRequired": 1,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 2,
       "serversOnNetwork": [
         "hong-fang-tea",
         "silver-helix"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "nectar-net",
       "maxRam": 16,
       "moneyAvailable": 2750000,
       "moneyMax": 68750000,
-      "hackDifficulty": 20,
+      "hackDifficulty": 14.899999999999988,
       "minDifficulty": 7,
       "baseDifficulty": 20,
       "requiredHackingSkill": 20,
       "serverGrowth": 25,
       "numOpenPortsRequired": 0,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
@@ -994,7 +1056,8 @@
         "neo-net",
         "phantasy",
         "omega-net"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "neo-net",
@@ -1007,14 +1070,15 @@
       "requiredHackingSkill": 50,
       "serverGrowth": 25,
       "numOpenPortsRequired": 1,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
         "nectar-net",
         "johnson-ortho",
         "crush-fitness"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "silver-helix",
@@ -1035,7 +1099,8 @@
         "the-hub",
         "netlink",
         "avmnite-02h"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "hong-fang-tea",
@@ -1048,14 +1113,15 @@
       "requiredHackingSkill": 30,
       "serverGrowth": 20,
       "numOpenPortsRequired": 0,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
         "home",
         "zer0",
         "max-hardware"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "harakiri-sushi",
@@ -1068,12 +1134,13 @@
       "requiredHackingSkill": 40,
       "serverGrowth": 40,
       "numOpenPortsRequired": 0,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
         "home"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "phantasy",
@@ -1092,7 +1159,8 @@
       "serversOnNetwork": [
         "nectar-net",
         "computek"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "max-hardware",
@@ -1105,12 +1173,13 @@
       "requiredHackingSkill": 80,
       "serverGrowth": 30,
       "numOpenPortsRequired": 1,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
         "hong-fang-tea"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "omega-net",
@@ -1128,7 +1197,8 @@
       "cpuCores": 2,
       "serversOnNetwork": [
         "nectar-net"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "crush-fitness",
@@ -1147,7 +1217,8 @@
       "serversOnNetwork": [
         "neo-net",
         "summit-uni"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "iron-gym",
@@ -1160,13 +1231,14 @@
       "requiredHackingSkill": 100,
       "serverGrowth": 20,
       "numOpenPortsRequired": 1,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [
         "home",
         "CSEC"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "millenium-fitness",
@@ -1185,7 +1257,8 @@
       "serversOnNetwork": [
         "zb-institute",
         "aerocorp"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "powerhouse-fitness",
@@ -1203,7 +1276,8 @@
       "cpuCores": 9,
       "serversOnNetwork": [
         "kuai-gong"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "snap-fitness",
@@ -1221,7 +1295,8 @@
       "cpuCores": 7,
       "serversOnNetwork": [
         "alpha-ent"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "run4theh111z",
@@ -1239,7 +1314,8 @@
       "cpuCores": 8,
       "serversOnNetwork": [
         "zb-def"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "I.I.I.I",
@@ -1258,7 +1334,8 @@
       "serversOnNetwork": [
         "johnson-ortho",
         "lexo-corp"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "avmnite-02h",
@@ -1278,7 +1355,8 @@
         "silver-helix",
         "zb-institute",
         "catalyst"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": ".",
@@ -1299,7 +1377,8 @@
         "blade",
         "nwo",
         "clarkinc"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "CSEC",
@@ -1312,12 +1391,13 @@
       "requiredHackingSkill": 59,
       "serverGrowth": 1,
       "numOpenPortsRequired": 1,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 2,
       "serversOnNetwork": [
         "iron-gym"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "The-Cave",
@@ -1335,7 +1415,8 @@
       "cpuCores": 11,
       "serversOnNetwork": [
         "blade"
-      ]
+      ],
+      "programs": []
     },
     {
       "hostname": "w0r1d_d43m0n",
@@ -1351,7 +1432,8 @@
       "hasAdminRights": false,
       "purchasedByPlayer": false,
       "cpuCores": 1,
-      "serversOnNetwork": []
+      "serversOnNetwork": [],
+      "programs": []
     },
     {
       "hostname": "darkweb",
@@ -1361,7 +1443,10 @@
       "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 1,
-      "serversOnNetwork": []
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": []
     }
   ]
 }

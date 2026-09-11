@@ -26,6 +26,7 @@ const SERVER_FIELDS = [
   "purchasedByPlayer",
   "cpuCores",
   "serversOnNetwork",
+  "programs",
 ];
 
 /** Pull a fresh snapshot from the running game via the daemon's control port. */
@@ -68,6 +69,11 @@ export function snapshotFromSave(save) {
       hacking: player.skills?.hacking ?? 1,
       homeRam: home?.maxRam ?? 8,
       homeCores: home?.cpuCores ?? 1,
+      // Owned programs live on the home *server* record, not on the player.
+      // Without them a --live run cannot root anything new, because
+      // portsOpenable would read as zero however many openers are owned.
+      programs: home?.programs ?? [],
+      hasTor: servers.some((s) => s.hostname === "darkweb"),
     },
     servers,
   };
@@ -81,6 +87,8 @@ export function snapshotFromSave(save) {
 export function freshStart(snapshot) {
   const world = structuredClone(snapshot);
   world.player = { money: 1000, hackExp: 0, hacking: 1, homeRam: 8, homeCores: 1 };
+  world.player.programs = [];
+  world.player.hasTor = false;
   for (const s of world.servers) {
     if (s.hostname === "home") {
       s.maxRam = 8;
