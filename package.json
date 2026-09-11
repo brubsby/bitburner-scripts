@@ -1,0 +1,24 @@
+{
+  "name": "bitburner-scripts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bashrc.js",
+  "scripts": {
+    "daemon": "node tools/rfa-daemon.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brubsby/bitburner-scripts.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/brubsby/bitburner-scripts/issues"
+  },
+  "homepage": "https://github.com/brubsby/bitburner-scripts#readme",
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}
