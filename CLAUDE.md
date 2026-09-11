@@ -59,6 +59,50 @@ curl -X POST localhost:12526/rpc -d '{"method":"getFileNames","params":{"server"
 `deleteFile`, `getFileNames`, `getAllFiles`, `calculateRam`,
 `getDefinitionFile`, `getSaveFile`.
 
+## Driving the game without the browser
+
+`cmd.js` is a terminal bridge. It runs in-game, watches a file, and types
+whatever it finds into the real terminal — so **any terminal command can be run
+over the Remote File API, with no browser at all**.
+
+```bash
+# queue commands
+curl -s -X POST localhost:12526/rpc -d '{"method":"pushFile","params":{
+  "filename":"/cmd/in.txt","server":"home",
+  "content":"connect n00dles\nbackdoor\nhome"}}'
+
+# read what the terminal printed
+curl -s -X POST localhost:12526/rpc -d '{"method":"getFile","params":{
+  "filename":"/cmd/out.txt","server":"home"}}'
+```
+
+- `/cmd/in.txt` — one command per line; consumed and deleted.
+- `/cmd/out.txt` — JSON, each command with the terminal output it produced.
+- `/cmd/busy.txt` — present while a batch is running; poll for its absence.
+
+**Prefer this over browser automation for anything the terminal can do** —
+`connect`, `backdoor`, `buy`, `run`, `kill`, `scp`, `analyze`, `ps`, `free`.
+It is faster, it is scriptable, and it cannot mistype. Two browser sessions
+typing into the same terminal input *will* interleave into corrupt commands;
+that has already happened.
+
+The browser is still required for things with no terminal equivalent: the
+Factions UI (accepting invites, starting faction work), the City/company UI
+(buying home RAM at Alpha Enterprises, augmentations), Create Program, and
+reading the character overview.
+
+Refuses `softreset`, `b1tflum3` and `wd`. Not a security boundary — anything
+with file access could do it anyway — just a guard against a typo in a queued
+batch costing hours.
+
+How it works, since it is non-obvious: `Terminal.executeCommands` is not
+reachable from Netscript, and the input is a React controlled component, so
+setting `.value` updates the element but not React's state — and Enter reads
+React's state (`TerminalInput.tsx:244`). The bridge goes through the native
+value setter, fires the `input` event React listens for, then sends Enter.
+`document`/`window` are reached via `eval` so the RAM checker does not see
+them, the same trick `infilhelper.js` uses.
+
 ## Telemetry
 
 In `.telemetry/` (gitignored). Run `curl -s localhost:12526/poll` first — the
@@ -145,15 +189,18 @@ it that way; three agents editing one repo is how work gets clobbered.
 
 | Agent | Owns | Job |
 | --- | --- | --- |
-| **game-player** | the browser, in-game actions | Continuously look for something to optimize with the tools on hand: watch telemetry, find idle RAM and newly rootable servers, run and retarget scripts, click the UI, suggest features. |
+| **game-player** | the browser, `/cmd/in.txt`, in-game actions | Continuously look for something to optimize with the tools on hand: watch telemetry, find idle RAM and newly rootable servers, run and retarget scripts, suggest features. **Use the `cmd.js` bridge for anything the terminal can do; reach for the browser only for the Factions, City and Create Program UIs.** |
 | **optimizer** | `tools/sim/**` | Use the simulator to find measurably better strategies, then turn winners into real scripts. Medians over seeds, never single runs. |
 | **researcher** | `docs/roadmap.md` | One level up: the critical path to the first aug install, what to rush, which faction first, backdoor order, what ends BN1. |
 | **prior-art** | `docs/prior-art.md` | State our problems abstractly, then find what is actually known about them — academic and community both. |
 
 Standing rules for all of them:
 
-- Only the game-player touches the browser. The game is open in a specific tab;
-  opening a new one would start a *different* save.
+- Only the game-player touches the browser **or the `cmd.js` bridge**. The game
+  is open in a specific tab; opening a new one would start a *different* save.
+  Two writers on the terminal input interleave into corrupt commands — this has
+  happened, producing `kill 154run cmd.js`. The bridge serialises through a file
+  and is the safer of the two, but it is still one queue with one owner.
 - Nothing resets progress (soft reset, install augs, delete save) without
   asking the lead first.
 - Nobody restarts the RFA daemon.
