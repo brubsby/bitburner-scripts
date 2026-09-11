@@ -1,0 +1,1367 @@
+{
+  "capturedAt": "2026-09-11T18:46:12.934Z",
+  "bitNode": 1,
+  "player": {
+    "money": 1262,
+    "hackExp": 279,
+    "hacking": 14,
+    "homeRam": 8,
+    "homeCores": 1
+  },
+  "servers": [
+    {
+      "hostname": "home",
+      "maxRam": 8,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "n00dles",
+        "foodnstuff",
+        "sigma-cosmetics",
+        "joesguns",
+        "hong-fang-tea",
+        "harakiri-sushi",
+        "iron-gym"
+      ]
+    },
+    {
+      "hostname": "ecorp",
+      "maxRam": 0,
+      "moneyAvailable": 47668675819,
+      "moneyMax": 1191716895475,
+      "hackDifficulty": 99,
+      "minDifficulty": 33,
+      "baseDifficulty": 99,
+      "requiredHackingSkill": 1169,
+      "serverGrowth": 99,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 14,
+      "serversOnNetwork": [
+        "blade"
+      ]
+    },
+    {
+      "hostname": "megacorp",
+      "maxRam": 0,
+      "moneyAvailable": 49405510951,
+      "moneyMax": 1235137773775,
+      "hackDifficulty": 99,
+      "minDifficulty": 33,
+      "baseDifficulty": 99,
+      "requiredHackingSkill": 1112,
+      "serverGrowth": 99,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 9,
+      "serversOnNetwork": [
+        "clarkinc"
+      ]
+    },
+    {
+      "hostname": "b-and-a",
+      "maxRam": 0,
+      "moneyAvailable": 16650972812,
+      "moneyMax": 416274320300,
+      "hackDifficulty": 72,
+      "minDifficulty": 24,
+      "baseDifficulty": 72,
+      "requiredHackingSkill": 915,
+      "serverGrowth": 68,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 12,
+      "serversOnNetwork": [
+        "omnitek"
+      ]
+    },
+    {
+      "hostname": "blade",
+      "maxRam": 512,
+      "moneyAvailable": 19090296287,
+      "moneyMax": 477257407175,
+      "hackDifficulty": 91,
+      "minDifficulty": 30,
+      "baseDifficulty": 91,
+      "requiredHackingSkill": 1083,
+      "serverGrowth": 84,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 10,
+      "serversOnNetwork": [
+        ".",
+        "ecorp",
+        "The-Cave"
+      ]
+    },
+    {
+      "hostname": "nwo",
+      "maxRam": 0,
+      "moneyAvailable": 33570566386,
+      "moneyMax": 839264159650,
+      "hackDifficulty": 99,
+      "minDifficulty": 33,
+      "baseDifficulty": 99,
+      "requiredHackingSkill": 1288,
+      "serverGrowth": 73,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 13,
+      "serversOnNetwork": [
+        "."
+      ]
+    },
+    {
+      "hostname": "clarkinc",
+      "maxRam": 0,
+      "moneyAvailable": 22514187594,
+      "moneyMax": 562854689850,
+      "hackDifficulty": 58,
+      "minDifficulty": 19,
+      "baseDifficulty": 58,
+      "requiredHackingSkill": 1067,
+      "serverGrowth": 47,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 13,
+      "serversOnNetwork": [
+        ".",
+        "megacorp",
+        "fulcrumassets"
+      ]
+    },
+    {
+      "hostname": "omnitek",
+      "maxRam": 512,
+      "moneyAvailable": 13833374480,
+      "moneyMax": 345834362000,
+      "hackDifficulty": 97,
+      "minDifficulty": 32,
+      "baseDifficulty": 97,
+      "requiredHackingSkill": 1028,
+      "serverGrowth": 97,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 12,
+      "serversOnNetwork": [
+        "fulcrumtech",
+        "b-and-a"
+      ]
+    },
+    {
+      "hostname": "4sigma",
+      "maxRam": 0,
+      "moneyAvailable": 20116734298,
+      "moneyMax": 502918357450,
+      "hackDifficulty": 73,
+      "minDifficulty": 24,
+      "baseDifficulty": 73,
+      "requiredHackingSkill": 958,
+      "serverGrowth": 88,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 11,
+      "serversOnNetwork": [
+        "fulcrumtech"
+      ]
+    },
+    {
+      "hostname": "kuai-gong",
+      "maxRam": 0,
+      "moneyAvailable": 24588949563,
+      "moneyMax": 614723739075,
+      "hackDifficulty": 95,
+      "minDifficulty": 32,
+      "baseDifficulty": 95,
+      "requiredHackingSkill": 987,
+      "serverGrowth": 98,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "fulcrumtech",
+        "powerhouse-fitness"
+      ]
+    },
+    {
+      "hostname": "fulcrumtech",
+      "maxRam": 1024,
+      "moneyAvailable": 1728081109,
+      "moneyMax": 43202027725,
+      "hackDifficulty": 89,
+      "minDifficulty": 30,
+      "baseDifficulty": 89,
+      "requiredHackingSkill": 958,
+      "serverGrowth": 93,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "titan-labs",
+        "omnitek",
+        "4sigma",
+        "kuai-gong"
+      ]
+    },
+    {
+      "hostname": "fulcrumassets",
+      "maxRam": 0,
+      "moneyAvailable": 1000000,
+      "moneyMax": 25000000,
+      "hackDifficulty": 99,
+      "minDifficulty": 33,
+      "baseDifficulty": 99,
+      "requiredHackingSkill": 1233,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 15,
+      "serversOnNetwork": [
+        "clarkinc"
+      ]
+    },
+    {
+      "hostname": "stormtech",
+      "maxRam": 0,
+      "moneyAvailable": 1001684964,
+      "moneyMax": 25042124100,
+      "hackDifficulty": 88,
+      "minDifficulty": 29,
+      "baseDifficulty": 88,
+      "requiredHackingSkill": 1031,
+      "serverGrowth": 75,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "applied-energetics"
+      ]
+    },
+    {
+      "hostname": "defcomm",
+      "maxRam": 0,
+      "moneyAvailable": 852021849,
+      "moneyMax": 21300546225,
+      "hackDifficulty": 96,
+      "minDifficulty": 32,
+      "baseDifficulty": 96,
+      "requiredHackingSkill": 1038,
+      "serverGrowth": 68,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "deltaone"
+      ]
+    },
+    {
+      "hostname": "infocomm",
+      "maxRam": 0,
+      "moneyAvailable": 692742319,
+      "moneyMax": 17318557975,
+      "hackDifficulty": 72,
+      "minDifficulty": 24,
+      "baseDifficulty": 72,
+      "requiredHackingSkill": 907,
+      "serverGrowth": 48,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 6,
+      "serversOnNetwork": [
+        "univ-energy"
+      ]
+    },
+    {
+      "hostname": "helios",
+      "maxRam": 32,
+      "moneyAvailable": 579055349,
+      "moneyMax": 14476383725,
+      "hackDifficulty": 86,
+      "minDifficulty": 29,
+      "baseDifficulty": 86,
+      "requiredHackingSkill": 835,
+      "serverGrowth": 79,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 11,
+      "serversOnNetwork": [
+        "microdyne",
+        "."
+      ]
+    },
+    {
+      "hostname": "vitalife",
+      "maxRam": 128,
+      "moneyAvailable": 749007292,
+      "moneyMax": 18725182300,
+      "hackDifficulty": 85,
+      "minDifficulty": 28,
+      "baseDifficulty": 85,
+      "requiredHackingSkill": 897,
+      "serverGrowth": 78,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 6,
+      "serversOnNetwork": [
+        "applied-energetics"
+      ]
+    },
+    {
+      "hostname": "icarus",
+      "maxRam": 0,
+      "moneyAvailable": 926642221,
+      "moneyMax": 23166055525,
+      "hackDifficulty": 90,
+      "minDifficulty": 30,
+      "baseDifficulty": 90,
+      "requiredHackingSkill": 923,
+      "serverGrowth": 86,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "omnia"
+      ]
+    },
+    {
+      "hostname": "univ-energy",
+      "maxRam": 128,
+      "moneyAvailable": 1148974998,
+      "moneyMax": 28724374950,
+      "hackDifficulty": 90,
+      "minDifficulty": 30,
+      "baseDifficulty": 90,
+      "requiredHackingSkill": 844,
+      "serverGrowth": 85,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 5,
+      "serversOnNetwork": [
+        "deltaone",
+        "infocomm"
+      ]
+    },
+    {
+      "hostname": "titan-labs",
+      "maxRam": 16,
+      "moneyAvailable": 848361520,
+      "moneyMax": 21209038000,
+      "hackDifficulty": 80,
+      "minDifficulty": 27,
+      "baseDifficulty": 80,
+      "requiredHackingSkill": 843,
+      "serverGrowth": 60,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 11,
+      "serversOnNetwork": [
+        "nova-med",
+        "fulcrumtech"
+      ]
+    },
+    {
+      "hostname": "microdyne",
+      "maxRam": 64,
+      "moneyAvailable": 627681389,
+      "moneyMax": 15692034725,
+      "hackDifficulty": 66,
+      "minDifficulty": 22,
+      "baseDifficulty": 66,
+      "requiredHackingSkill": 873,
+      "serverGrowth": 90,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "zb-def",
+        "helios"
+      ]
+    },
+    {
+      "hostname": "taiyang-digital",
+      "maxRam": 0,
+      "moneyAvailable": 834875976,
+      "moneyMax": 20871899400,
+      "hackDifficulty": 75,
+      "minDifficulty": 25,
+      "baseDifficulty": 75,
+      "requiredHackingSkill": 922,
+      "serverGrowth": 73,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "zeus-med",
+        "applied-energetics"
+      ]
+    },
+    {
+      "hostname": "galactic-cyber",
+      "maxRam": 0,
+      "moneyAvailable": 797975202,
+      "moneyMax": 19949380050,
+      "hackDifficulty": 56,
+      "minDifficulty": 19,
+      "baseDifficulty": 56,
+      "requiredHackingSkill": 851,
+      "serverGrowth": 78,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "aevum-police"
+      ]
+    },
+    {
+      "hostname": "aerocorp",
+      "maxRam": 0,
+      "moneyAvailable": 1165328628,
+      "moneyMax": 29133215700,
+      "hackDifficulty": 87,
+      "minDifficulty": 29,
+      "baseDifficulty": 87,
+      "requiredHackingSkill": 895,
+      "serverGrowth": 60,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "millenium-fitness",
+        "deltaone"
+      ]
+    },
+    {
+      "hostname": "omnia",
+      "maxRam": 64,
+      "moneyAvailable": 951488422,
+      "moneyMax": 23787210550,
+      "hackDifficulty": 86,
+      "minDifficulty": 29,
+      "baseDifficulty": 86,
+      "requiredHackingSkill": 915,
+      "serverGrowth": 60,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "global-pharm",
+        "icarus"
+      ]
+    },
+    {
+      "hostname": "zb-def",
+      "maxRam": 0,
+      "moneyAvailable": 917943762,
+      "moneyMax": 22948594050,
+      "hackDifficulty": 55,
+      "minDifficulty": 18,
+      "baseDifficulty": 55,
+      "requiredHackingSkill": 781,
+      "serverGrowth": 66,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "zeus-med",
+        "microdyne",
+        "run4theh111z"
+      ]
+    },
+    {
+      "hostname": "applied-energetics",
+      "maxRam": 0,
+      "moneyAvailable": 751984004,
+      "moneyMax": 18799600100,
+      "hackDifficulty": 61,
+      "minDifficulty": 20,
+      "baseDifficulty": 61,
+      "requiredHackingSkill": 805,
+      "serverGrowth": 71,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 7,
+      "serversOnNetwork": [
+        "taiyang-digital",
+        "stormtech",
+        "vitalife"
+      ]
+    },
+    {
+      "hostname": "solaris",
+      "maxRam": 32,
+      "moneyAvailable": 848500290,
+      "moneyMax": 21212507250,
+      "hackDifficulty": 73,
+      "minDifficulty": 24,
+      "baseDifficulty": 73,
+      "requiredHackingSkill": 827,
+      "serverGrowth": 80,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 7,
+      "serversOnNetwork": [
+        "unitalife"
+      ]
+    },
+    {
+      "hostname": "deltaone",
+      "maxRam": 0,
+      "moneyAvailable": 1653898481,
+      "moneyMax": 41347462025,
+      "hackDifficulty": 85,
+      "minDifficulty": 28,
+      "baseDifficulty": 85,
+      "requiredHackingSkill": 899,
+      "serverGrowth": 53,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 7,
+      "serversOnNetwork": [
+        "aerocorp",
+        "defcomm",
+        "univ-energy"
+      ]
+    },
+    {
+      "hostname": "global-pharm",
+      "maxRam": 64,
+      "moneyAvailable": 1724697983,
+      "moneyMax": 43117449575,
+      "hackDifficulty": 75,
+      "minDifficulty": 25,
+      "baseDifficulty": 75,
+      "requiredHackingSkill": 793,
+      "serverGrowth": 85,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 5,
+      "serversOnNetwork": [
+        "rho-construction",
+        "omnia",
+        "unitalife"
+      ]
+    },
+    {
+      "hostname": "nova-med",
+      "maxRam": 0,
+      "moneyAvailable": 1173969653,
+      "moneyMax": 29349241325,
+      "hackDifficulty": 78,
+      "minDifficulty": 26,
+      "baseDifficulty": 78,
+      "requiredHackingSkill": 809,
+      "serverGrowth": 81,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 5,
+      "serversOnNetwork": [
+        "zeus-med",
+        "titan-labs"
+      ]
+    },
+    {
+      "hostname": "zeus-med",
+      "maxRam": 0,
+      "moneyAvailable": 1390064192,
+      "moneyMax": 34751604800,
+      "hackDifficulty": 70,
+      "minDifficulty": 23,
+      "baseDifficulty": 70,
+      "requiredHackingSkill": 834,
+      "serverGrowth": 72,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 9,
+      "serversOnNetwork": [
+        "unitalife",
+        "taiyang-digital",
+        "zb-def",
+        "nova-med"
+      ]
+    },
+    {
+      "hostname": "unitalife",
+      "maxRam": 16,
+      "moneyAvailable": 1092453938,
+      "moneyMax": 27311348450,
+      "hackDifficulty": 75,
+      "minDifficulty": 25,
+      "baseDifficulty": 75,
+      "requiredHackingSkill": 810,
+      "serverGrowth": 72,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 7,
+      "serversOnNetwork": [
+        "global-pharm",
+        "solaris",
+        "zeus-med"
+      ]
+    },
+    {
+      "hostname": "lexo-corp",
+      "maxRam": 128,
+      "moneyAvailable": 720312866,
+      "moneyMax": 18007821650,
+      "hackDifficulty": 80,
+      "minDifficulty": 27,
+      "baseDifficulty": 80,
+      "requiredHackingSkill": 745,
+      "serverGrowth": 65,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "I.I.I.I"
+      ]
+    },
+    {
+      "hostname": "rho-construction",
+      "maxRam": 16,
+      "moneyAvailable": 522919093,
+      "moneyMax": 13072977325,
+      "hackDifficulty": 51,
+      "minDifficulty": 17,
+      "baseDifficulty": 51,
+      "requiredHackingSkill": 521,
+      "serverGrowth": 47,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "zb-institute",
+        "global-pharm"
+      ]
+    },
+    {
+      "hostname": "alpha-ent",
+      "maxRam": 64,
+      "moneyAvailable": 672403447,
+      "moneyMax": 16810086175,
+      "hackDifficulty": 56,
+      "minDifficulty": 19,
+      "baseDifficulty": 56,
+      "requiredHackingSkill": 564,
+      "serverGrowth": 60,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 5,
+      "serversOnNetwork": [
+        "zb-institute",
+        "snap-fitness"
+      ]
+    },
+    {
+      "hostname": "aevum-police",
+      "maxRam": 32,
+      "moneyAvailable": 337967641,
+      "moneyMax": 8449191025,
+      "hackDifficulty": 74,
+      "minDifficulty": 25,
+      "baseDifficulty": 74,
+      "requiredHackingSkill": 408,
+      "serverGrowth": 42,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "catalyst",
+        "galactic-cyber"
+      ]
+    },
+    {
+      "hostname": "rothman-uni",
+      "maxRam": 64,
+      "moneyAvailable": 240485951,
+      "moneyMax": 6012148775,
+      "hackDifficulty": 55,
+      "minDifficulty": 18,
+      "baseDifficulty": 55,
+      "requiredHackingSkill": 413,
+      "serverGrowth": 39,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "netlink"
+      ]
+    },
+    {
+      "hostname": "zb-institute",
+      "maxRam": 32,
+      "moneyAvailable": 928013122,
+      "moneyMax": 23200328050,
+      "hackDifficulty": 75,
+      "minDifficulty": 25,
+      "baseDifficulty": 75,
+      "requiredHackingSkill": 727,
+      "serverGrowth": 84,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "avmnite-02h",
+        "rho-construction",
+        "alpha-ent",
+        "millenium-fitness"
+      ]
+    },
+    {
+      "hostname": "summit-uni",
+      "maxRam": 64,
+      "moneyAvailable": 260163681,
+      "moneyMax": 6504092025,
+      "hackDifficulty": 53,
+      "minDifficulty": 18,
+      "baseDifficulty": 53,
+      "requiredHackingSkill": 464,
+      "serverGrowth": 59,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 5,
+      "serversOnNetwork": [
+        "crush-fitness"
+      ]
+    },
+    {
+      "hostname": "syscore",
+      "maxRam": 0,
+      "moneyAvailable": 483471541,
+      "moneyMax": 12086788525,
+      "hackDifficulty": 60,
+      "minDifficulty": 20,
+      "baseDifficulty": 60,
+      "requiredHackingSkill": 627,
+      "serverGrowth": 61,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "netlink"
+      ]
+    },
+    {
+      "hostname": "catalyst",
+      "maxRam": 16,
+      "moneyAvailable": 424140196,
+      "moneyMax": 10603504900,
+      "hackDifficulty": 65,
+      "minDifficulty": 22,
+      "baseDifficulty": 65,
+      "requiredHackingSkill": 438,
+      "serverGrowth": 25,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "avmnite-02h",
+        "aevum-police"
+      ]
+    },
+    {
+      "hostname": "the-hub",
+      "maxRam": 8,
+      "moneyAvailable": 178017151,
+      "moneyMax": 4450428775,
+      "hackDifficulty": 35,
+      "minDifficulty": 12,
+      "baseDifficulty": 35,
+      "requiredHackingSkill": 318,
+      "serverGrowth": 48,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "silver-helix"
+      ]
+    },
+    {
+      "hostname": "computek",
+      "maxRam": 0,
+      "moneyAvailable": 226660048,
+      "moneyMax": 5666501200,
+      "hackDifficulty": 65,
+      "minDifficulty": 22,
+      "baseDifficulty": 65,
+      "requiredHackingSkill": 308,
+      "serverGrowth": 53,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 2,
+      "serversOnNetwork": [
+        "phantasy"
+      ]
+    },
+    {
+      "hostname": "netlink",
+      "maxRam": 16,
+      "moneyAvailable": 275000000,
+      "moneyMax": 6875000000,
+      "hackDifficulty": 62,
+      "minDifficulty": 21,
+      "baseDifficulty": 62,
+      "requiredHackingSkill": 394,
+      "serverGrowth": 66,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "silver-helix",
+        "rothman-uni",
+        "syscore"
+      ]
+    },
+    {
+      "hostname": "johnson-ortho",
+      "maxRam": 0,
+      "moneyAvailable": 79470981,
+      "moneyMax": 1986774525,
+      "hackDifficulty": 35,
+      "minDifficulty": 12,
+      "baseDifficulty": 35,
+      "requiredHackingSkill": 275,
+      "serverGrowth": 41,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 2,
+      "serversOnNetwork": [
+        "neo-net",
+        "I.I.I.I"
+      ]
+    },
+    {
+      "hostname": "n00dles",
+      "maxRam": 4,
+      "moneyAvailable": 1624812.2623155767,
+      "moneyMax": 1750000,
+      "hackDifficulty": 1.12,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 3000,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": true,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ]
+    },
+    {
+      "hostname": "foodnstuff",
+      "maxRam": 16,
+      "moneyAvailable": 2000000,
+      "moneyMax": 50000000,
+      "hackDifficulty": 8.5,
+      "minDifficulty": 3,
+      "baseDifficulty": 10,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 5,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": true,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ]
+    },
+    {
+      "hostname": "sigma-cosmetics",
+      "maxRam": 16,
+      "moneyAvailable": 2300000,
+      "moneyMax": 57500000,
+      "hackDifficulty": 10,
+      "minDifficulty": 3,
+      "baseDifficulty": 10,
+      "requiredHackingSkill": 5,
+      "serverGrowth": 10,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ]
+    },
+    {
+      "hostname": "joesguns",
+      "maxRam": 16,
+      "moneyAvailable": 2500000,
+      "moneyMax": 62500000,
+      "hackDifficulty": 15,
+      "minDifficulty": 5,
+      "baseDifficulty": 15,
+      "requiredHackingSkill": 10,
+      "serverGrowth": 20,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home",
+        "nectar-net"
+      ]
+    },
+    {
+      "hostname": "zer0",
+      "maxRam": 32,
+      "moneyAvailable": 7500000,
+      "moneyMax": 187500000,
+      "hackDifficulty": 25,
+      "minDifficulty": 8,
+      "baseDifficulty": 25,
+      "requiredHackingSkill": 75,
+      "serverGrowth": 40,
+      "numOpenPortsRequired": 1,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 2,
+      "serversOnNetwork": [
+        "hong-fang-tea",
+        "silver-helix"
+      ]
+    },
+    {
+      "hostname": "nectar-net",
+      "maxRam": 16,
+      "moneyAvailable": 2750000,
+      "moneyMax": 68750000,
+      "hackDifficulty": 20,
+      "minDifficulty": 7,
+      "baseDifficulty": 20,
+      "requiredHackingSkill": 20,
+      "serverGrowth": 25,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "joesguns",
+        "neo-net",
+        "phantasy",
+        "omega-net"
+      ]
+    },
+    {
+      "hostname": "neo-net",
+      "maxRam": 32,
+      "moneyAvailable": 5000000,
+      "moneyMax": 125000000,
+      "hackDifficulty": 25,
+      "minDifficulty": 8,
+      "baseDifficulty": 25,
+      "requiredHackingSkill": 50,
+      "serverGrowth": 25,
+      "numOpenPortsRequired": 1,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "nectar-net",
+        "johnson-ortho",
+        "crush-fitness"
+      ]
+    },
+    {
+      "hostname": "silver-helix",
+      "maxRam": 64,
+      "moneyAvailable": 45000000,
+      "moneyMax": 1125000000,
+      "hackDifficulty": 30,
+      "minDifficulty": 10,
+      "baseDifficulty": 30,
+      "requiredHackingSkill": 150,
+      "serverGrowth": 30,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "zer0",
+        "the-hub",
+        "netlink",
+        "avmnite-02h"
+      ]
+    },
+    {
+      "hostname": "hong-fang-tea",
+      "maxRam": 16,
+      "moneyAvailable": 3000000,
+      "moneyMax": 75000000,
+      "hackDifficulty": 15,
+      "minDifficulty": 5,
+      "baseDifficulty": 15,
+      "requiredHackingSkill": 30,
+      "serverGrowth": 20,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home",
+        "zer0",
+        "max-hardware"
+      ]
+    },
+    {
+      "hostname": "harakiri-sushi",
+      "maxRam": 16,
+      "moneyAvailable": 4000000,
+      "moneyMax": 100000000,
+      "hackDifficulty": 15,
+      "minDifficulty": 5,
+      "baseDifficulty": 15,
+      "requiredHackingSkill": 40,
+      "serverGrowth": 40,
+      "numOpenPortsRequired": 0,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ]
+    },
+    {
+      "hostname": "phantasy",
+      "maxRam": 32,
+      "moneyAvailable": 24000000,
+      "moneyMax": 600000000,
+      "hackDifficulty": 20,
+      "minDifficulty": 7,
+      "baseDifficulty": 20,
+      "requiredHackingSkill": 100,
+      "serverGrowth": 35,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "nectar-net",
+        "computek"
+      ]
+    },
+    {
+      "hostname": "max-hardware",
+      "maxRam": 32,
+      "moneyAvailable": 10000000,
+      "moneyMax": 250000000,
+      "hackDifficulty": 15,
+      "minDifficulty": 5,
+      "baseDifficulty": 15,
+      "requiredHackingSkill": 80,
+      "serverGrowth": 30,
+      "numOpenPortsRequired": 1,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "hong-fang-tea"
+      ]
+    },
+    {
+      "hostname": "omega-net",
+      "maxRam": 32,
+      "moneyAvailable": 68256396,
+      "moneyMax": 1706409900,
+      "hackDifficulty": 25,
+      "minDifficulty": 8,
+      "baseDifficulty": 25,
+      "requiredHackingSkill": 215,
+      "serverGrowth": 39,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 2,
+      "serversOnNetwork": [
+        "nectar-net"
+      ]
+    },
+    {
+      "hostname": "crush-fitness",
+      "maxRam": 0,
+      "moneyAvailable": 52640885,
+      "moneyMax": 1316022125,
+      "hackDifficulty": 38,
+      "minDifficulty": 13,
+      "baseDifficulty": 38,
+      "requiredHackingSkill": 235,
+      "serverGrowth": 27,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 4,
+      "serversOnNetwork": [
+        "neo-net",
+        "summit-uni"
+      ]
+    },
+    {
+      "hostname": "iron-gym",
+      "maxRam": 32,
+      "moneyAvailable": 20000000,
+      "moneyMax": 500000000,
+      "hackDifficulty": 30,
+      "minDifficulty": 10,
+      "baseDifficulty": 30,
+      "requiredHackingSkill": 100,
+      "serverGrowth": 20,
+      "numOpenPortsRequired": 1,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home",
+        "CSEC"
+      ]
+    },
+    {
+      "hostname": "millenium-fitness",
+      "maxRam": 256,
+      "moneyAvailable": 250000000,
+      "moneyMax": 6250000000,
+      "hackDifficulty": 50,
+      "minDifficulty": 17,
+      "baseDifficulty": 50,
+      "requiredHackingSkill": 481,
+      "serverGrowth": 39,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 6,
+      "serversOnNetwork": [
+        "zb-institute",
+        "aerocorp"
+      ]
+    },
+    {
+      "hostname": "powerhouse-fitness",
+      "maxRam": 64,
+      "moneyAvailable": 900000000,
+      "moneyMax": 22500000000,
+      "hackDifficulty": 64,
+      "minDifficulty": 21,
+      "baseDifficulty": 64,
+      "requiredHackingSkill": 1042,
+      "serverGrowth": 51,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 9,
+      "serversOnNetwork": [
+        "kuai-gong"
+      ]
+    },
+    {
+      "hostname": "snap-fitness",
+      "maxRam": 0,
+      "moneyAvailable": 450000000,
+      "moneyMax": 11250000000,
+      "hackDifficulty": 50,
+      "minDifficulty": 17,
+      "baseDifficulty": 50,
+      "requiredHackingSkill": 711,
+      "serverGrowth": 51,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 7,
+      "serversOnNetwork": [
+        "alpha-ent"
+      ]
+    },
+    {
+      "hostname": "run4theh111z",
+      "maxRam": 256,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 539,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 8,
+      "serversOnNetwork": [
+        "zb-def"
+      ]
+    },
+    {
+      "hostname": "I.I.I.I",
+      "maxRam": 256,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 348,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 3,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 5,
+      "serversOnNetwork": [
+        "johnson-ortho",
+        "lexo-corp"
+      ]
+    },
+    {
+      "hostname": "avmnite-02h",
+      "maxRam": 32,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 213,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 2,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 3,
+      "serversOnNetwork": [
+        "silver-helix",
+        "zb-institute",
+        "catalyst"
+      ]
+    },
+    {
+      "hostname": ".",
+      "maxRam": 16,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 523,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 4,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 11,
+      "serversOnNetwork": [
+        "helios",
+        "blade",
+        "nwo",
+        "clarkinc"
+      ]
+    },
+    {
+      "hostname": "CSEC",
+      "maxRam": 8,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 59,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 1,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 2,
+      "serversOnNetwork": [
+        "iron-gym"
+      ]
+    },
+    {
+      "hostname": "The-Cave",
+      "maxRam": 0,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 925,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 11,
+      "serversOnNetwork": [
+        "blade"
+      ]
+    },
+    {
+      "hostname": "w0r1d_d43m0n",
+      "maxRam": 0,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 3000,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": false,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": []
+    },
+    {
+      "hostname": "darkweb",
+      "maxRam": 16,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hasAdminRights": true,
+      "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": []
+    }
+  ]
+}

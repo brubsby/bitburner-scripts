@@ -2,3 +2,5 @@
 node_modules/
 .telemetry/
 NetscriptDefinitions.d.ts
+tools/sim/game.bundle.mjs
+tools/sim/.entry.generated.ts

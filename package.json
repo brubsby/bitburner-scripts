@@ -20,5 +20,13 @@
   "homepage": "https://github.com/brubsby/bitburner-scripts#readme",
   "dependencies": {
     "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "jsdom@30.0.1": true
   }
 }
