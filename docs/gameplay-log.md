@@ -141,3 +141,102 @@ refill first.
 **Open decision for the lead:** CyberSec faction invite is pending (badge on
 Factions nav, "Decide later" was clicked). Awaiting roadmap.md guidance on
 faction order before joining.
+
+---
+
+## 2026-09-11 ~22:52 UTC — resume after 2nd context cutoff, contracts harvested
+
+**State on pickup:** hacking 176, money $8.526m, 15/73 rooted, home 16GB/1
+core. `auto.js` (pid 34) and `buyserv.js` (pid 33) were already running the
+current-revision code — screen scrollback showed the lead's own prior restart
+of both (killall on joesguns, run buyserv.js; kill/run auto.js on home)
+already done in this same session before the cutoff. Did not restart either
+again.
+
+**Coding contracts — the main event.**
+1. `kill auto.js` on home.
+2. `run ctscan.js` — failed first try ("requires 12.00GB", home didn't have
+   enough free with orphaned `early.js` (pid 49, 3 threads, target
+   harakiri-sushi) still running after auto.js died. `kill early.js` (by
+   script name) said "No such script is running" — this version apparently
+   needs args to match or doesn't do fuzzy match; `kill 49` (by PID) worked.
+   Re-ran `run ctscan.js` — succeeded: **21 contracts found** across the
+   network: 7x Total Ways to Sum, 4x Encryption I: Caesar Cipher, 4x
+   Algorithmic Stock Trader I, 3x Subarray with Maximum Sum, 3x Find Largest
+   Prime Factor. Written to `/tmp/contracts.json` (in-game path).
+3. `run ctsolve.js --dry` — **21 solved, 0 wrong, 0 skipped**. Printed every
+   answer (Caesar cipher strings, stock trader profits, prime factors, etc.)
+   without submitting. Looked sane on inspection — answers matched contract
+   type constraints, no obvious garbage.
+4. `run ctsolve.js` for real — **21 solved, 0 wrong, 0 skipped**, exact match
+   with the dry run. Rewards: 4 contracts paid **$25.000m each** (foodnstuff,
+   unitalife, blade, ecorp = $100m total), the rest paid CyberSec faction
+   reputation (833.3 or 277.7 rep each, ~15 contracts).
+5. **Money: $5.006m -> $105.006m** in one shot (started ~$8.5m, buyserv had
+   spent it down to ~$5m on server RAM by the time contracts ran).
+6. `run auto.js` again on home — pid 66, redeployed fine.
+
+**No decisions needed here** — ctsolve.js only solves types it has a solver
+for and reported 0 skipped, meaning either it has solvers for every type
+present or got lucky; either way 0 wrong is the number that mattered and
+that's clean.
+
+**Faction check pending** — telemetry poll before this cycle showed
+`factions: ["CyberSec"]` (already joined, presumably by the lead earlier this
+session — the open decision noted in the prior log entry about "should I join
+CyberSec" appears resolved) and `factionInvitations: ["Sector-12"]` pending.
+Contract-solving just added ~833 rep x ~15 contracts to CyberSec on top of
+whatever it had. Have not yet opened the Factions tab to confirm/act on the
+Sector-12 invite — next step.
+
+**Next:** buy FTPCrack.exe ($1.5m, plenty of money now), check Factions tab
+and report available factions, then watch for new contracts periodically.
+
+**FTPCrack.exe bought** ($1.5m via darkweb terminal, `connect darkweb` / `buy
+FTPCrack.exe`) — achievement popup confirmed purchase. auto.js already
+picking up newly-reachable 2-port servers: rooted climbed 18 -> 20 within a
+couple minutes of purchase (76 total reachable now).
+
+**auto.js died once after the post-contract restart** — pid 66 (started right
+after `run auto.js`) was gone from the process list ~90s later with no error
+printed anywhere (checked `tail auto.js`: "No script named auto.js ... is
+running", so no crash log survived; checked the script source — the main loop
+is a `while(true)` wrapped in try/catch that only returns early if
+`ns.getScriptRam(worker)` fails, which can't be it since it had already
+completed at least one deploy cycle, confirmed by an orphaned `early.js` pid
+67 on home targeting harakiri-sushi). Cause unknown — possibly transient
+during the FTPCrack purchase / navigate-to-darkweb sequence, possibly
+unrelated. **Restarted it once** (`run auto.js`, now pid 69) per the "restart
+if it dies" rule; confirmed stable through cycle 2 and beyond via
+`tel/auto.txt`, and it is still running as of this checkpoint. Flagging in
+case it recurs — if auto.js keeps dying, that's a real bug worth the
+optimizer's attention, not a one-off.
+
+**Faction check:** CyberSec already joined (visible under "Your Factions" on
+the Factions tab, 6 augmentations available there). No pending CyberSec
+invite to accept — already resolved before this session, nothing to do.
+**Sector-12 invitation is pending** ("Join!" button showing) — left
+un-clicked since the brief only asked me to resolve CyberSec; this is a
+separate city faction, not blocking anything. Rumor panel mentions NiteSec
+may recruit once hacking skills impress them (i.e. once avmnite-02h is
+backdoored) — not yet reachable, needs 2 open ports and hacking ~202-220;
+now have 2 ports (BruteSSH + FTPCrack) but level is 176, still short.
+
+**buyserv.js is spending fast and well:** since the contract windfall it
+bought a 1024GB and a 512GB purchased server in quick succession (fleet now
+4 servers, 1728GB total), money down from $105m to ~$19m, reserve ($2m)
+intact. Working as designed.
+
+**State at end of this cycle:** hacking 176, money ~$19m, 20/76 servers
+rooted, auto.js pid 69 (home) and buyserv.js pid 33 (joesguns) both running
+current code. CyberSec joined, Sector-12 invite pending (unresolved,
+low-priority). FTPCrack.exe owned. No contracts currently outstanding (just
+harvested all 21); worth re-running `ctscan.js`/`ctsolve.js` periodically as
+new ones spawn.
+
+**Suggested next steps for whoever picks this up:** (1) periodically re-run
+ctscan/ctsolve — contracts regenerate over time; (2) decide on Sector-12
+invite (low stakes, can wait for researcher's faction-order guidance); (3)
+keep an eye on auto.js liveness given the unexplained death this cycle; (4)
+NiteSec/avmnite-02h becomes reachable once hacking level clears ~202-220,
+which should happen soon given current income.

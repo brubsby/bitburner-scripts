@@ -420,3 +420,504 @@ to the faction whose augs you actually want. Join a faction when you intend to b
   to go into cloud RAM in one lump, someone should check `buyserv.js`'s buying rule first.
 - The actual number of contracts currently on the map — needs an in-game `ns.ls` sweep.
 - Exact live roll of `avmnite-02h`'s `requiredHackingSkill` (202–220) — `analyze` it in game.
+
+---
+---
+
+# Part II — revision, 2026-09-11 23:00Z
+
+Written ~2.5 hours after Part I. **Part I's headline projection was wrong by more than an
+order of magnitude** and several of its rankings invert once money stops being scarce.
+Everything below supersedes Part I where they conflict. Same citation rules.
+
+## TL;DR — the next three moves, and the trigger
+
+1. **Retarget the exp fleet off `phantasy` onto `joesguns` or `foodnstuff`.** Free, instant,
+   **~6× on experience** (28.3 exp/s measured → ~200 projected, model validated to 1.3% on
+   two independent samples). Turns "NiteSec in ~2 hours" into "NiteSec in 20 minutes". §6.
+2. **Upgrade home RAM 16 → 128GB for $45.1m.** Home RAM is the *only* purchase that survives
+   an install, and it is the only lever on the two-hour dead zone that every future install
+   pays. This **reverses Part I's cloud-over-home ranking** for money held near a reset. §7.
+3. **Backdoor `avmnite-02h` at hacking 213** (exact, read from the save — not the 202–220
+   range) → NiteSec invite → the human starts NiteSec hacking work immediately. Reputation,
+   not experience and not money, is now the constraint. §8.
+
+**Install trigger: NiteSec reputation 20,000 and $400m in the bank.** Buy, in this order,
+NeuralRetentionEnhancement → Neurotrainer II → Neurotrainer I → NeuroFluxGovernor ×3.
+**$390m, `hacking_exp` ×1.63, 6 of the 30 augs Daedalus wants.** Do not install before
+NiteSec (the best CyberSec-only batch is ×1.14 exp for $144m, for the same reset cost); do not wait past
+it (CRTX42-AA at 45,000 rep is 4–6 more hours of clicking, and is cheaper next life anyway
+once favor kicks in). §7.
+
+⚠️ **`buyserv.js` spends every dollar every 15 seconds** now that both port openers are
+owned. The aug money cannot be accumulated until someone restarts it as
+`run buyserv.js --reserve 400e6`. This is the most likely way the install slips by hours. §9.
+
+**Do not accept the pending Sector-12 invite** — it halves the contract reputation reaching
+NiteSec, and this reverses Part I's advice on CashRoot Starter Kit. §8.
+
+**State at 22:56Z** (decoded from the live save via `POST /rpc {"method":"getSaveFile"}` —
+this is a read-only telemetry path, no browser involved, and it carries far more than
+`state.json` does):
+
+| | Part I (20:27Z) | now (22:56Z) |
+| --- | --- | --- |
+| hacking | 100 | **176** (127,812 exp) |
+| money | $488k | **$47m**, and `buyserv.js` is converting it to RAM as fast as it lands |
+| purchased-server RAM | 0 | **1,232GB** → 2,016GB by 23:02 |
+| total rooted RAM | ~236GB | **1,580GB** |
+| CyberSec rep | 0 | **11,209** |
+| programs | BruteSSH | BruteSSH + **FTPCrack** |
+| contracts on the map | ~10 | **0 — the backlog is fully harvested** |
+| factions | CyberSec | CyberSec (+ Sector-12 **invite pending, not accepted**) |
+
+---
+
+## 6. The exp projection was wrong by ~40×. Re-derivation.
+
+Part I measured **3.6 exp/s** at ~108GB of fleet and projected NiteSec at 38 hours. Two
+things were true and one inference was missing:
+
+1. `calculateHackingExpGain = (3 + 0.3·baseDifficulty) · mults.hacking_exp · HackExpGain`
+   (`src/Hacking.ts:30-38`), and **`grow` and `weaken` award exactly the same amount as
+   `hack`** — `const expGain = calculateHackingExpGain(server, Player) * threads` appears
+   identically in the `hack`, `grow` and `weaken` bodies
+   (`src/NetscriptFunctions.ts:291`, `:365`, and the weaken block at `:365+`). The award does
+   **not** depend on whether the op accomplished anything. So exp is *exactly* linear in
+   threads, with no saturation as a target gets over-grown or drained.
+2. Fleet RAM is linear in money (`$55k/GB` flat, Part I §1) and money arrives in $25m lumps.
+
+⇒ **exp/s is linear in cumulative money spent on RAM.** Part I extrapolated a rate measured
+at $0 of fleet spend across 38 hours during which the fleet grew 15×. That is the error.
+
+Measured since: hacking 117→176 between 20:40 and 22:52 is 106,700 exp in 7,888s = **13.5
+exp/s average**; the last half hour of that window (168→176) ran at **14.7 exp/s** on a
+~236GB fleet. The fleet is now ~2,400GB.
+
+### Measure exp from the save, not from level crossings
+
+Level crossings are useless as an instrument here: the telemetry poll interval has drifted to
+~4 minutes and, more importantly, **exp arrives in lumps**. With ~1,000 threads all running
+the same op against the same target, every thread lands at once; on a target with a 480s
+weaken time the player's exp counter is flat for eight minutes and then jumps by thousands.
+`PlayerSave.exp.hacking` from `POST /rpc {"method":"getSaveFile"}` is exact and free:
+
+```
+23:06:22  exp=139,361.9  hk=179   (flat)
+23:07:08  exp=139,361.9  hk=179   (flat)
+23:07:53  exp=147,956.9  hk=181   +8,595 in one tick
+```
+
+Averaged over the 713s from 22:56 to 23:07:53: **28.3 exp/s on a 2,396GB fleet.** A later
+sample (23:07:53 → 23:10:58, +7,605 exp) gives **41.1 exp/s** as hacking climbed 179→182 and
+`phantasy`'s security fell toward minimum; over the whole 22:56–23:11 window it is
+**30.8 exp/s**. Use ~30–40 exp/s as the current figure. The fleet was still ~2,400GB
+throughout, and `auto.js` was still on `phantasy` at 23:11.
+
+### That is ~6× worse than it should be, because of the target
+
+A predictive model, validated twice: measured exp/s = `(3 + 0.3·baseDifficulty) / hackTime ×
+threads × F`, with `hackTime = 5·(2.5·reqHack·hackDifficulty)/(hacking + 50)` and `F` the
+fraction of ops that are hack-equivalent-speed (grow is 3.2× slower, weaken 4×).
+
+| sample | target | threads | predicted (F=1) | measured | implied F |
+| --- | --- | --- | --- | --- | --- |
+| 22:53, hacking 176 | harakiri-sushi | 142 | 37.6 | 14.7 | **0.391** |
+| 23:07, hacking 179 | phantasy | 977 | 73.2 | 28.3 | **0.386** |
+
+Two independent samples, 7× apart in thread count, agree on `F` to **1.3%**. The model is
+sound. Applying it at the current 977 threads and hacking 179:
+
+| target | projected exp/s | time to hacking 213 |
+| --- | --- | --- |
+| **joesguns at min security** | **209** | **20 min** |
+| **foodnstuff** | **202** | 21 min |
+| sigma-cosmetics | 175 | 24 min |
+| **joesguns at current security** | **171** | 25 min |
+| harakiri-sushi | 102 | 42 min |
+| **`phantasy` — what `auto.js` is targeting now** | **28.5** | **149 min** |
+| silver-helix | 17.8 | 239 min |
+
+`auto.js` picks its target by money rate (`.telemetry/auto.txt`: `"target": "phantasy",
+"targetRatePerSec": 512`) and retargeted upward as hacking rose. **That is the right rule
+when money binds and the wrong rule now** — it has spent the entire 10× fleet expansion
+buying back a 4× worse target, netting only 2×. The fleet grew from 236GB to 2,396GB and the
+exp rate went from 14.7/s to 28.3/s.
+
+**Retargeting to `joesguns` or `foodnstuff` is worth ~6× on exp and turns "NiteSec in 2.5
+hours" into "NiteSec in 20 minutes."** It costs nothing. This is the highest-value action
+available right now, and it belongs to whoever owns `auto.js`/`early.js` — not to me.
+
+### What that means for NiteSec
+
+**`avmnite-02h` requires hacking `213`** — exact, read from `AllServersSave`, not the
+202–220 range. (Also read out of the same save, so no one needs to `analyze` them:
+`I.I.I.I` = **348**, `.` = **523**, `run4theh111z` = **539**, `The-Cave` = 925,
+`fulcrumassets` = 1233, `w0r1d_d43m0n` = 3000.)
+
+`exp(213) = e^(413/32) − 534.6 = 402,287`. From 147,957 (measured 23:07:53) that is
+**254,330 exp** — **~2 hours at the rate actually being achieved, or ~20 minutes at the rate
+the same fleet would achieve on a sensible target** (see below).
+
+**FTPCrack.exe is already on home**, so `avmnite-02h` needs no purchase and no program — only
+the level, then `connect` + `backdoor`. **NiteSec is tens of minutes away, not 38 hours.**
+
+### Why the cheap targets win — the per-thread table
+
+Exp per op is `3 + 0.3·baseDifficulty`; op time is
+`5·(2.5·reqHack·hackDifficulty + 500)/(hacking + 50)` (`src/Hacking.ts:58-79`), with grow at
+3.2× and weaken at 4× that. **The exp award is identical for all three ops**, so the only
+thing that matters is ops-per-second: **low `requiredHackingSkill` and low current security
+win**, and `baseDifficulty` helps only through the numerator. Hack-time basis, live server
+stats, hacking 176:
+
+| target | exp/s/thread at *current* security | at min security |
+| --- | --- | --- |
+| **joesguns** (req 10) | 0.445 | **0.542** |
+| **foodnstuff** (req 1) | **0.524** | 0.534 |
+| sigma-cosmetics (req 5) | 0.455 | 0.505 |
+| nectar-net (req 20) | 0.327 | 0.479 |
+| harakiri-sushi (req 40) | 0.265 | 0.339 |
+| neo-net (req 50) | 0.131 | 0.316 |
+| iron-gym (req 100) | 0.068 | 0.181 |
+| `phantasy` (req 100) — **current target** | **0.074** | 0.181 |
+| silver-helix (req 150) | 0.046 | 0.128 |
+
+The counter-intuitive part: **`phantasy` and `silver-helix` are the *worst* exp targets
+precisely because they are the *best* money targets.** High `requiredHackingSkill` is what
+makes a server rich and it is also what makes every op on it slow. Money and exp want
+opposite targets, and with 2,400GB there is room to split the fleet: exp-farm `joesguns` /
+`foodnstuff`, money-batch `silver-helix` ($1.125b max) and `phantasy` ($600m) — both already
+rooted.
+
+Prepping helps too but less than retargeting: `joesguns` at min security (5.0) is 22% better
+than at its current 10.5, whereas moving off `phantasy` is worth 600%.
+
+### Where the exp curve stops paying
+
+`skill = floor(32·ln(exp + 534.6) − 200)` is logarithmic, so exp *cost* is exponential in
+level. From the current 127,812:
+
+| target level | exp needed | Δ from now | at 150 exp/s |
+| --- | --- | --- | --- |
+| 213 (`avmnite-02h`) | 402,287 | 274,475 | 30 min |
+| 250 | 1,279,631 | 1.15m | 2.1 h |
+| 300 | 6,106,794 | 5.98m | 11 h |
+| 348 (`I.I.I.I`) | 27.5m | 27.4m | 51 h |
+| 400 | 139.0m | 138.9m | 257 h |
+| 539 (`run4theh111z`) | 3.0b | — | forever |
+
+**Hacking 213–250 is the natural plateau for this life.** `I.I.I.I` (348) is 51 hours away at
+a constant 150 exp/s and only reachable by growing the fleet another order of magnitude —
+which is a *money* problem, i.e. a post-install problem. Past ~250 the binding constraint
+stops being exp and becomes **reputation**, which is bounded by human clicking, not by RAM.
+That flip is the whole reason to install.
+
+---
+
+## 7. The first install — the actual call
+
+### What an install costs, precisely
+
+`installAugmentations` → `prestigeAugmentation` (`src/Prestige.ts:60-110`):
+
+- `prestigeAllServers()` deletes every server but home, then **`initForeignServers()`
+  re-creates the world from scratch** — so **every coding contract on the map is destroyed**,
+  and so is every purchased server, every root, and every backdoor.
+- `prestigeHomeComputer(homeComp)` clears home's **programs** (keeping `NUKE`/`fl1ght`) but
+  **not `maxRam`** — home RAM is the only purchasable thing that survives.
+- Money resets; then `for (const ownedAug of Player.augmentations) Player.gainMoney(aug.startingMoney)`
+  and `homeComp.pushProgram(program)` — this is the CashRoot hook.
+- `faction.prestigeAugmentation()` banks rep as favor and zeroes rep
+  (`src/Faction/Faction.ts:77-84`). `repToFavor(r) = ln(1 + r/25000)/0.019802627`
+  (`src/Faction/formulas/favor.ts`). **Current CyberSec 11,209 rep → 18.7 favor → +18.7% rep
+  rate forever.**
+- Faction *invites* survive only for factions with `keep: true` in `FactionInfo.tsx`;
+  Sector-12 has no such flag, so its invite is lost and must be re-earned (trivial — it
+  re-fires at $15m).
+
+So the real cost of an install is **the dead zone**: hacking 1, $1,000, no port programs, no
+roots, and a 16GB home. This run's dead zone (18:16 → 20:14, hacking 1 → first $700k → TOR +
+BruteSSH) took **two hours**.
+
+### Therefore: buy home RAM. This reverses Part I's ranking.
+
+Part I said "cloud RAM over home RAM over hacknet" and that is right *within a life*, on
+$/GB. It is wrong *across* an install, because during the dead zone **cloud RAM cannot be
+bought at any price — there is no money.** Home RAM is the only thing that shortens the dead
+zone, and you pay for it once instead of every cycle.
+
+`getUpgradeHomeRamCost = currentRam × 32,000 × 1.58^log2(currentRam)`
+(`src/PersonObjects/Player/PlayerObjectServerMethods.ts:30-40`, verified again):
+
+| step | cost | cumulative from 16GB |
+| --- | --- | --- |
+| 16 → 32GB | $3.19m | $3.19m |
+| 32 → 64GB | $10.08m | $13.3m |
+| 64 → 128GB | $31.86m | **$45.1m** |
+| 128 → 256GB | $100.7m | $145.8m |
+| 256 → 512GB | $318.2m | $464.0m |
+
+**Buy to 128GB now ($45.1m total).** 128GB of home RAM is ~53 `early.js` threads from the
+first second of every future life — more than the entire fleet had at 22:20 when it was
+producing 14.7 exp/s. It should cut a two-hour dead zone to roughly fifteen minutes, and it
+does that on every install for the rest of the BitNode. 128→256GB ($100.7m) is worth it once
+you are committed to ≥4 more installs. 256→512GB ($318m) is not, yet. **Home cores are a
+trap: `1e9 × 7.5^cores` — the first extra core is $1 billion**
+(`getUpgradeHomeCoresCost`, same file).
+
+### The 1.9^n batch multiplier is much more punishing than Part I implied
+
+`getAugCost`: `moneyCost = baseCost × 1.9^(queued non-SoA augs) × AugmentationMoneyCost`
+(`src/Augmentation/AugmentationHelpers.ts:120-163`, `getGenericAugmentationPriceMultiplier`
+at `:32-36`; BN1 leaves `AugmentationMoneyCost = 1`). Rep cost is **not** multiplied.
+Buying most-expensive-first minimises the total — but the total still explodes:
+
+| batch | exp mult | cost |
+| --- | --- | --- |
+| NeuralRetEnh + Neurotrainer2 + Neurotrainer1 | **×1.581** | **$350m** |
+| + ArtificialSynapticPotentiation | ×1.693 | $592m |
+| + CSPG1 + SynapticEnhancement + CSPG2 + ENM + BitWire (all 9) | ×1.74 | **$5.57b** |
+
+The nine-aug batch costs 16× the three-aug batch for **+10% more exp**. Part I's "buy every
+aug you can afford before installing" is wrong. The correct rule is:
+
+> **Buy the three or four augs with the best effect-per-base-dollar and install. Everything
+> past ~4 augs in one batch is priced out by 1.9^n. Short cycles beat big batches, because
+> rep resets but favor compounds.**
+
+### Which augs, ranked by what actually binds (`hacking_exp × hacking_speed`)
+
+Extracted from `src/Augmentation/Augmentations.ts` (each entry's `factions:` array):
+
+| aug | faction | rep | base $ | exp-rate mult | hacking mult | $ per 1% exp |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Neurotrainer I** | CyberSec | 1,000 | $4m | ×1.10 | — | **$0.40m** ← best in the game |
+| **Neurotrainer II** | NiteSec | 10,000 | $45m | ×1.15 | — | **$3.0m** |
+| **NeuralRetentionEnhancement** | NiteSec | 20,000 | $250m | **×1.25** | — | $10.0m |
+| SynapticEnhancement | CyberSec | 2,000 | $7.5m | ×1.03 | — | $2.5m |
+| ArtificialSynapticPotentiation | NiteSec | 6,250 | $80m | ×1.071 | — | $11.3m |
+| CRTX42-AA | NiteSec | 45,000 | $225m | ×1.15 | ×1.08 | $15.0m |
+| CranialSignalProcessors G2 | CyberSec/NiteSec | 18,750 | $125m | ×1.02 | ×1.07 | $62.5m |
+| CranialSignalProcessors G1 | CyberSec/NiteSec | 10,000 | $70m | ×1.01 | ×1.05 | $70m |
+| CranialSignalProcessors G3 | NiteSec | 50,000 | $550m | ×1.02 | ×1.09 | $275m |
+| **BitWire** | CyberSec/NiteSec | 3,750 | $10m | ×1.00 | ×1.05 | — |
+| **ENM** | NiteSec | 15,000 | $250m | ×1.00 | ×1.08 | — |
+| DataJack | NiteSec | 112,500 | $450m | — | `hacking_money` ×1.25 | — |
+
+**`NeuroFluxGovernor` is sold by CyberSec** — and by every faction except SoA, Bladeburners
+and the Church; its `factions:` field is `Object.values(FactionName).filter(...)`
+(`Augmentations.ts:1197-1202`). Base **500 rep / $750k**, both ×`1.14^level`
+(`CONSTANTS.NeuroFluxGovernorLevelMult = 1.14`), and the money side *also* takes the 1.9^n
+batch multiplier. It gives **+1% to essentially every multiplier** including `hacking_exp`,
+and **each level counts toward Daedalus's 30-augmentation requirement**. Bought as the last
+items of a batch that already has 3 augs queued: level 1 = $5.1m, level 2 = $11.1m,
+level 3 = $24.1m, level 4 = $52.2m, level 5 = $113m. **Take three levels (~$40m for +3%
+everything and +3 toward the Daedalus counter); stop there.**
+
+### The recommended install-#1 batch
+
+| order | aug | rep | multiplier applied | cost |
+| --- | --- | --- | --- | --- |
+| 1 | NeuralRetentionEnhancement (NiteSec) | 20,000 | ×1.9⁰ | $250.0m |
+| 2 | Neurotrainer II (NiteSec) | 10,000 | ×1.9¹ | $85.5m |
+| 3 | Neurotrainer I (CyberSec) | 1,000 | ×1.9² | $14.4m |
+| 4 | NeuroFluxGovernor lvl 1 | 500 | ×1.9³ | $5.1m |
+| 5 | NeuroFluxGovernor lvl 2 | 570 | ×1.9⁴ | $11.1m |
+| 6 | NeuroFluxGovernor lvl 3 | 650 | ×1.9⁵ | $24.1m |
+| | **total** | | | **$390.4m** |
+
+Result: `hacking_exp` **×1.63**, and +3% to hacking, hacking_speed, hacking_chance,
+hacking_money and everything else. **6 of the 30 augs Daedalus wants.** Rep required:
+**NiteSec 20,000** and **CyberSec 1,000** (already have 11,209). NFG must be bought last and
+in ascending level — `getLevel()` increments per purchase, so you cannot buy level 3 first.
+
+### ⇒ The trigger
+
+> **Install when NiteSec reputation reaches 20,000 and cash is ≥ $400m. Do not install
+> before NiteSec; do not wait past it.**
+
+Both halves matter:
+
+- **Not before.** The whole CyberSec-only batch reachable today (Neurotrainer I +
+  SynapticEnhancement + BitWire + CSPG1, $144m at 11,209 rep) is worth only `hacking_exp`
+  ×1.10 / `hacking_speed` ×1.04. NiteSec quadruples the value of the same reset for the same
+  reset cost. NiteSec is ~30 minutes of exp away. There is no version of "install now" that
+  wins.
+- **Not past it.** CRTX42-AA (45,000 rep) and CSPG3 (50,000 rep) are 4–6 more hours of human
+  faction-work clicking for +15% exp and +17% hacking. Those same hours spent *after* the
+  install compound against a 1.63× exp multiplier instead of a 1.0× one — and because rep
+  resets to favor while favor is permanent, CRTX42-AA is *cheaper* to reach on install #2
+  (NiteSec favor ≈ `repToFavor(20000)` = **29.7**, i.e. **+29.7% rep rate** next life).
+- **The fleet is not the thing to protect.** It is worth ~$110m of purchased RAM today and
+  will be worth more tomorrow, but it is rebuilt from income, and income after a 2,000GB-era
+  install comes back in under an hour (see §9). What the reset actually costs is the dead
+  zone, and §7's home-RAM purchase is the lever on that — not delay.
+
+**The binding constraint on that trigger is NiteSec rep, not money** (§8). Plan accordingly:
+the human should start NiteSec faction work the minute the invite lands.
+
+---
+
+## 8. Reputation is the new bottleneck — the numbers
+
+`getHackingWorkRepGain(p, favor) = (hacking + int/3)/975 × mults.faction_rep ×
+(1 + favor/100) × shareBonus` **per cycle**, at 5 cycles/s
+(`src/PersonObjects/formulas/reputation.ts:16-25`, `CONSTANTS.MaxSkillLevel = 975`,
+`gameCPS = 5`). Unfocused work is ×0.8 (`Player.focusPenalty()`,
+`PlayerObjectGeneralMethods.ts:622-626`, `CONSTANTS.BaseFocusBonus`).
+
+| source | rep/hour at hacking 213 | notes |
+| --- | --- | --- |
+| faction hacking work, **focused** | **3,932** | human must not use the UI |
+| faction hacking work, **unfocused** | **3,146** | ×0.8; **scripts keep running either way** |
+| coding contracts | ~2,200 | 4.5 contracts/h × ~490 rep, **split across all hacking factions** |
+| `ns.share()` on 500 threads (2TB) | ×1.249 on the work rows only | `1 + ln(effectiveThreads)/25`, `src/NetworkShare/Share.ts:43-48` |
+
+Faction hacking work also grants hacking exp — but only `hackExp: 2` per cycle scaled by
+`1/gameCPS`, i.e. **2 exp/s** (`FactionWorkStats`, `src/Work/Formulas.ts:39-41`). Against a
+fleet doing 100+ exp/s that is noise. **So faction work and script grinding are not a
+trade-off — they run in parallel.** The human clicking "Hacking Contracts" for NiteSec costs
+the run nothing but their attention.
+
+**NiteSec 0 → 20,000 rep ≈ 4–5 hours** of unfocused faction work plus contract drip. That,
+not money and not exp, is the length of the runway to install #1.
+
+Three consequences:
+
+1. **Do not accept the Sector-12 invite yet.** `Sector12` has `offerHackingWork: true`
+   (`FactionInfo.tsx:541-545`), and contract rep rewards either pick one hacking faction at
+   random or split evenly across all of them (`gainCodingContractReward`,
+   `PlayerObjectGeneralMethods.ts:514-536`). Joining Sector-12 **halves the contract rep
+   reaching NiteSec** for a faction whose only hacking aug, Neuralstimulator, costs 50,000
+   rep and **$3b**. This reverses Part I's "worth taking before install #1 or #2". The invite
+   costs nothing to leave pending; take it *after* NiteSec rep is banked, or never. Same
+   argument, more strongly, for Netburners and Tian Di Hui.
+2. **CashRoot Starter Kit is a trap at this stage** — not because the effect is bad
+   (`startingMoney: 1e6` + `BruteSSH.exe` every install is genuinely good) but because it
+   costs **12,500 Sector-12 rep** you can only earn by joining Sector-12 and diluting NiteSec,
+   plus **$125m** competing directly with NeuralRetentionEnhancement. And $45m of home RAM
+   buys down the same dead zone far harder than $1m of starting cash does. Revisit around
+   install #3, once NiteSec rep is favor-accelerated.
+3. Once hacking is past ~250 and rep is the only thing left to earn, **`ns.share()` on the
+   idle fleet is finally worth running** (+25% on faction work at 500 threads, 2.4GB each,
+   `RamCostGenerator.ts:575`). Not before — while exp still pays, share is a bad trade.
+
+**`NeuroreceptorManager`** (Tian Di Hui, 75,000 rep, $550m) removes the focus penalty
+entirely — `focusPenalty()` returns 1 unconditionally if you own it. That is the classic
+"human attention" aug and it is worth remembering, but 75,000 Tian Di Hui rep is many lives
+away.
+
+---
+
+## 9. What the contract windfall should buy — revised ranking
+
+The backlog paid out: **CyberSec went 0 → 11,209 rep and $488k → $105m between 22:35 and
+22:53.** Both facts come from the decoded save. Reward distribution confirmed:
+`getRandomReward` picks uniformly from 4 types when `CodingContractMoney > 0`
+(`ContractGenerator.ts:179-190`), so with exactly one faction joined the EV is
+**$6.25m + ~486 rep per contract**, and with **zero** factions it is **$11.1m** (all three rep
+types fall back through `Money` with the scaling already divided). **There are now 0 contracts
+on the map**; they respawn at ~4.5/hour, so contracts are a ~$28m/h + ~2,200 rep/h drip, not
+a windfall, until the next reset.
+
+Spend order, revised:
+
+1. **Home RAM to 128GB — $45.1m.** New at #1. It is the only purchase that survives an
+   install, and it is the only lever on the dead zone. Manual UI purchase (no SF4).
+2. **Reserve $400m for the install-#1 aug batch.** ⚠️ **`buyserv.js` spends the entire
+   surplus every 15 seconds** — `floorReserve: 0` once BruteSSH and FTPCrack are owned, which
+   they now both are, and it loops `while surplus > 0` buying the largest affordable server
+   (`buyserv.js`, SETTINGS + the `for (let pass = 0; pass < 12; pass++)` loop). **Money
+   cannot be accumulated for augs while it runs at default settings.** Restart it as
+   `run buyserv.js --reserve 400e6` when the aug batch becomes the goal. This is the single
+   most likely way the install gets accidentally delayed by hours.
+3. **Cloud RAM — everything else, immediately.** Still correct within a life: flat $55k/GB,
+   no volume discount, exp exactly linear in threads. `buyserv.js`'s own reasoning holds.
+4. **Not more port programs.** `relaySMTP` ($5m / hacking 250) opens `I.I.I.I` at hacking
+   **348** — 51 hours of exp away, i.e. a later-life purchase. The 2-port world
+   (BruteSSH + FTPCrack, both owned) already reaches everything relevant: `avmnite-02h` (213),
+   `omega-net` (215, $1.7b), `crush-fitness` (235, $1.3b), `johnson-ortho` (275, $2.0b),
+   `the-hub` (318, $4.45b). There is nothing to buy access to.
+5. **Not hacknet.** Unchanged from Part I §1.
+6. **Not the stock market.** Resolved below.
+
+### Stock market — Part I's UNVERIFIED, resolved
+
+`src/StockMarket/data/Constants.ts`, with BN1 leaving `FourSigmaMarketDataCost` and
+`FourSigmaMarketDataApiCost` at 1 (`BitNodeMultipliers.ts:85,88`):
+
+| unlock | cost |
+| --- | --- |
+| WSE account (manual trading in the UI) | **$200,000,000** |
+| **TIX API** (required for any `ns.stock.*` call, i.e. for `stock.js`) | **$5,000,000,000** |
+| 4S Market Data | $1,000,000,000 |
+| 4S Market Data TIX API | $25,000,000,000 |
+| commission per trade | $100,000 |
+
+**`stock.js` cannot run for $5.2b — that is off the table for this BitNode's early lives.**
+Manual WSE at $200m is affordable but is a coin flip without 4S data and needs constant human
+clicking. **Verdict: ignore the stock market entirely until well after multiple installs.**
+Part I's open question is closed.
+
+---
+
+## 10. Revised milestone list
+
+| # | Milestone | Trigger | Status |
+| --- | --- | --- | --- |
+| 1 | Harvest the contract backlog | — | ✅ done 22:35–22:53, $105m + 11,209 rep |
+| 2 | Accept CyberSec | — | ✅ |
+| 3 | Create/own FTPCrack | — | ✅ on home |
+| 4 | **Retarget the exp fleet off `phantasy` → `joesguns`/`foodnstuff`** | **now** | **~6× exp for free**; 2.5 h → 20 min to NiteSec (§6) |
+| 5 | **Home RAM 16 → 128GB, $45.1m** | **now** | survives every install (§7) |
+| 6 | **Backdoor `avmnite-02h` → NiteSec** | **hacking 213** | 20 min retargeted / 2.5 h as-is |
+| 7 | **Human works NiteSec hacking contracts** | on invite | 4–5 h to 20,000 rep — the runway (§8) |
+| 8 | **`run buyserv.js --reserve 400e6`** | when NiteSec rep > ~12k | otherwise the aug money is spent (§9) |
+| 9 | **Install: NRE + NT2 + NT1 + NFG×3, $390m** | **NiteSec rep 20,000 + $400m** | exp ×1.63, 6/30 Daedalus augs |
+| 10 | Post-install: **do not join any faction** until the fleet is rebuilt | — | zero-faction contracts pay $11.1m vs $6.25m (§9) |
+| 11 | Rejoin CyberSec/NiteSec, repeat on a ~4 h cycle | — | favor compounds: +18.7% / +29.7% rep rate |
+| 12 | `relaySMTP` → `I.I.I.I` (hacking 348) | several lives out | 27m exp; needs ~10× the fleet |
+
+### The post-install opening, worth planning now
+
+Because rep rewards fall back to money with **no faction joined**, and because the map
+respawns empty, the optimal first hour after an install is:
+
+1. Do **not** accept any faction invite. Contracts pay **$11.1m** EV each instead of $6.25m.
+2. Run `contract.js` from minute one on 128GB of home RAM — it needs ~21.8GB structurally
+   (Part I §5) and home will finally fit it without the reader/solver split.
+3. Buy cloud RAM with everything; re-root; re-level.
+4. Join CyberSec and NiteSec only once hacking income dominates contract income — at that
+   point the contract stream is worth more as rep than as money.
+
+⚠️ **`contract.js` still cannot solve `Encryption I: Caesar Cipher`** (Part I §5, defect 1),
+which is 1 of the only 5 contract types that can spawn at `maxDif = 1`. That is ~20% of all
+contract value — ~$5.5m/hour — being left on the map. Unowned by me; still unfixed as of
+22:56.
+
+---
+
+## Open questions after Part II
+
+- ~~Actual sustained exp/s at ~2,000GB~~ — **resolved: 28.3 exp/s measured on a 2,396GB
+  fleet**, against ~200 predicted for the same fleet on a sensible target. The instrument to
+  use is `PlayerSave.exp.hacking` from `POST /rpc {"method":"getSaveFile"}`, sampled over
+  ≥10 minutes; level crossings and `status.txt`'s `expPerSec` are both too coarse because exp
+  arrives in multi-thousand lumps every weaken-cycle.
+- **Hacking income is ~0.** `status.txt` reports `incomePerSec: 0`, and money sat at exactly
+  $487,820 from 20:20 to 22:35 — every dollar since has come from contracts. Every rooted
+  server except `foodnstuff` and `n00dles` is sitting at 4% of max money with security well
+  above minimum. The fleet is generating exp but no money. Rebuilding after an install
+  assumes income recovers; **that assumption is currently unverified and belongs to whoever
+  owns `hack.js`.**
+- ~~New purchased servers may be idling~~ — **resolved**: by 23:05 `auto.txt` reports
+  `ramUsed: 2353 / ramTotal: 2380` and no server in `status.txt` has `usedRam: 0`. `auto.js`
+  picks up mid-run purchases within a cycle. The 22:53 snapshot was just caught between
+  `buyserv.js` buying and `auto.js`'s next cycle.
+- **Home's 16GB is idle** (`status.txt`, `home: usedRam 0`). Small, but it is 6 more
+  `early.js` threads and it is free.
+- The `F ≈ 0.389` hack-equivalent-op fraction is an empirical fit from two samples of the
+  *same* script (`early.js`) on *unprepped* targets. A real batcher that holds a target at
+  min security should push `F` toward 1.0 — i.e. there may be another ~2.5× in exp on top of
+  the retargeting, but that is the optimizer's number to establish, not mine.

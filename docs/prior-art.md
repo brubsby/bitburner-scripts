@@ -16,39 +16,63 @@ Ranked by expected payoff ÷ effort.
 
 | # | Finding | Where | Effort | Act now? |
 | --- | --- | --- | --- | --- |
-| 1 | **Contract rewards are $75M base, not $4,000** — `contract.js` is off by 18,750x and is a one-shot script sitting on ~$50M/hr of standing EV. Put it on a loop. | §1a | trivial | **yes** |
-| 2 | **`Encryption I: Caesar Cipher` is the only unsolved contract type that can spawn in our run** (no Source-Files ⇒ `maxDif = 1` ⇒ 5 types only). ~20% of spawns, 5 lines of code. | §1b | trivial | **yes** |
-| 3 | **Target ranking is missing the grow cost.** `auto.js` scores `M·φ/T`; the derivation says `M / (T·(1.98/φ + 6.16/k))`. It systematically over-ranks high-money / low-growth servers. Also missing the hack-chance factor. | §5 | small | **yes** |
+| 1 | **Contract rewards are $75M base, not $4,000** — `contract.js` was off by 18,750x and one-shot, sitting on ~$50M/hr of standing EV. | §1a | trivial | **done** |
+| 2 | **`Encryption I: Caesar Cipher` is the only unsolved contract type that can spawn in our run** (no Source-Files ⇒ `maxDif = 1` ⇒ 5 types only). ~20% of spawns, 5 lines of code. | §1b, §1e | trivial | **done** |
+| 3 | **Target ranking is missing the grow cost.** `auto.js` scores `M·φ/T`; the derivation says `M / (T·(1.98/φ + 6.16/k))`. It systematically over-ranks high-money / low-growth servers. Also missing the hack-chance factor. | §5 | small | **done** (~4x in sim) |
 | 4 | **`hack.js` is not a batcher** — it is a one-action-at-a-time wave loop that sleeps a full weaken duration each cycle, so RAM duty cycle is ~25% on its best cycles. The premise in the brief is wrong. | §3 | — | know it |
 | 5 | **The HWGW schedule is not a decision.** Throughput = `(money per RAM-second) × total RAM`; the batch period cancels out. Greedy just-in-time is optimal, and the real free variable — hack fraction — has a closed-form answer: **make it as small as integrality allows**. Gives the optimizer a hard ceiling to measure against. | §3 | derivation done | **hand to optimizer** |
 | 6 | **Server cost is exactly linear ($55,000/GB) in BN1 and upgrades cost the difference**, so there is provably nothing to optimize in *when* to buy — spend immediately, always. `buyserv.js`'s policy is right; it just buys at most one server per 120s tick and leaves cash idle. | §2 | small | yes, small |
 | 7 | **`hacknet.js` has a `js.` → `ns.` typo at line 208** (instant ReferenceError) and is written for Hacknet *Servers*, which need SF9. Dormant either way. | §7 | trivial | no (dead code) |
 | 8 | **Grow-thread inversion is already solved optimally inside the game** — and the game's own source explains why the popular Lambert-W approach is *wrong* (floating-point range). `ns.growthAnalyze` is the uncorrected version and overestimates; `hack.js` bisects on it where a two-op closed form exists. | §4 | small | yes, small |
 | 9 | **The growth-rate constant is clamped below security 8.571**, so "weaken to exactly min for cheaper grows" is false on low-security targets. Corrects a natural but wrong tuning instinct. | §8b | — | know it |
-| 10 | **Multi-target thread allocation is not our problem.** Return per target is *linear*, not concave, up to a saturation point around 1TB of RAM. Greedy all-on-one is exactly optimal at our scale. `auto.js` is already right. | §6 | — | leave alone |
+| 10 | ~~**Multi-target thread allocation is not our problem.**~~ **Wrong above ~2TB** — the saturation point is real and we are past it. Greedy is right *with a capacity cap*; past the cap marginal return is **negative**, not zero. | §6, §9h | — | **corrected** |
 | 11 | Stock tick draws its move *magnitude* once per tick for all stocks (`const v = Math.random()` outside the loop) — a correlation nobody seems to have documented. Irrelevant until we can afford $30B of API access. | §8a | — | park |
+
+### Second pass — for the batcher build (§9)
+
+| # | Finding | Where | Act now? |
+| --- | --- | --- | --- |
+| B1 | **Op landings use a bare `window.setTimeout`, not the 200ms engine tick.** Resolution is ~1ms. Every "separations below 200ms are pointless" claim in community material is a non-sequitur. | §9a | know it |
+| B2 | **An op's duration is fixed at the `ns.hack/grow/weaken` call and its landing is then immutable.** You cannot desync an op in flight, and you cannot correct one either. This is the fact the whole design hangs on. | §9a | know it |
+| B3 | **Two desync sources, pushing opposite ways.** Level-ups make everything launched *after* them **shorter** (382ms per level at our state, levels every few seconds under a real batcher). Security elevation during a batch's own 2ε unsafe windows makes anything launched *inside* them **longer** — by 10-60x the separation constant, from the first batch onward. The second is the bigger one and is what the community calls a "task collision". | §9b, §9b′ | **design around both** |
+| B3a | Because the remedies are opposite (launch late vs launch at min security), **`additionalMsec` is the thing that makes both satisfiable** — it decouples launch time from landing time. It is also why a JIT batcher without safe-window scheduling is *worse* than a shotgun. | §9b′, §9e | know it |
+| B3b | **Phase-lock the batch launch to the middle of a safe window** (phase `3.5ε` in the repeating `4ε` landing cycle). One line of arithmetic; removes the dominant desync mechanism outright for a periodic batcher. Probably the highest value-per-line item in §9. | §9e | **yes** |
+| B4 | **A failed `ns.exec` returns 0 silently**, producing a *partial* batch — the worst possible state. Highest-probability real failure; two-line guard. | §9d(1) | **yes** |
+| B5 | **In-flight ops do not survive a reload**; workers restart `main()` from the top. A "sleep until timestamp" worker will fire instantly on every one of them at once. And the reload *also* replays offline grow/weaken onto the live servers and jumps the hacking level, so every cached figure is stale. Fix: `{ temporary: true }` (excluded from the save) + a deadline sanity check + re-measure on startup. | §9d(3) | **yes** |
+| B6 | **Over-provisioning grow and weaken is free** — excess grow threads add *zero* security (fortify is capped at threads actually used) and security floors at min. Over-provisioning hack is not. Prep generously; guard only the hack. | §9f | **yes** |
+| B7 | **No passive server growth or security decay exists in v3.** Money and security are pure integrators of your own ops, so any systematic bias accumulates without bound. This is why open-loop batchers rot over hours. | §9f | know it |
+| B8 | **Separation ε is a capacity parameter, not a safety parameter.** Per-target RAM capacity is `6.725·T/ε` GB. Recommend **50ms**, recomputed rather than hardcoded; the game's own v3 docs say 5-50ms, and every source quoting 200-1000ms predates `additionalMsec`. | §9g, §9j | **yes** |
+| B8a | **Build the padded periodic batcher, not a JIT one.** JIT's whole theoretical prize is the 29-45% of RAM-seconds that padding wastes; the one published head-to-head measured a real JIT at **25-40%** of a simpler cycling batcher. Measure against §3's ceiling and only chase JIT if the gap exceeds ~1.4x. | §9e, §9j | **yes** |
+| B8b | **Recovery: cancel the next hack, don't re-prep.** Community-converged, self-correcting, and near-free given B6. A late op should be **abandoned, not fired late** — firing late converts a timing error into a state error. | §9f, §9j | **yes** |
+| B9 | **Keep workers dumb.** RAM is `cost × threads`, so one `getServerSecurityLevel` in a 400-thread grow worker costs 40GB. All sensing belongs in the controller. | §9d(6) | **yes** |
+| B10 | v3 no longer needs unique args to run duplicate scripts (`preventDuplicates` defaults false). The v1/v2 random-batch-id idiom is obsolete. | §9c | know it |
 
 ### The two or three worth doing this week
 
-1. **§1 — contracts.** Add `Encryption I`, fix the reward constant, and run
-   `contract.js` on a timer. Highest money-per-line in the whole document, and
-   it is money we are currently letting expire on the network.
-2. **§5 — fix the target ranking in `auto.js`.** One formula, derived not
-   guessed, with `ns.getServerGrowth` (0.1GB) as the only new call.
+1. ~~**§1 — contracts.**~~ **Done** — `ctscan.js`/`ctsolve.js`/`ctsolvers.js`
+   ship all five reachable types. §1e closes the audit.
+2. ~~**§5 — fix the target ranking in `auto.js`.**~~ **Done** — the index
+   `M/(T·(1.98/φ + 6.16/k))` validated at ~4x in simulation and shipped.
 3. **§3 — give the optimizer the throughput ceiling.** Not a code change:
    `money/sec ≤ (m/R)·Ω` evaluated at `f → 0` is the number any batcher can be
    scored against, which turns "is candidate A better than candidate B" into
    "how close is A to the bound".
+4. **§9 — de-risk the batcher before it ships.** B4 (check every `exec` pid),
+   B5 (`{temporary: true}` + deadline check, so a reload cannot fire every
+   pending hack at once) and B6 (prep generously, guard only the hack) are each
+   a handful of lines and each prevent a class of unattended failure.
 
 ### Where the literature says we are already right
 
 - **`buyserv.js`'s "buy the largest affordable"** — with a linear cost curve
   and no lumps there is no optimal-stopping problem to solve. Do not go looking
   for one. (§2)
-- **`auto.js` pointing everything at one target** — exactly optimal, not an
-  approximation, until the fleet reaches ~1TB. (§6)
+- ~~**`auto.js` pointing everything at one target**~~ — **retracted above
+  ~2TB**, see §9h. Optimal only up to the per-target capacity `batchRAM·T/ε`.
 - **The just-in-time batch schedule** everyone uses — optimal, because the
-  period cancels out of the throughput expression. (§3)
+  period cancels out of the throughput expression. (§3) And, separately from
+  the throughput argument, JIT *launching* is the only design that is immune to
+  level-up drift (§9e).
 - **`hacknet.js`'s payoff-time gate** — the economically correct criterion,
   already present. (§7)
 - **Not building a bandit for target selection** — the problem is fully
@@ -223,6 +247,38 @@ Worth acting on **now**: (1) add Encryption I, (2) run `contract.js` on a
 order of $50M/hr in the current game state. The other 13 solvers are
 **not** worth writing until we have Source-Files, because those contracts
 cannot spawn.
+
+### 1e. Audit closed [verified, re-checked against the shipped code]
+
+The work landed as `ctscan.js` / `ctsolve.js` / `ctsolvers.js`, split that way
+because `attempt` (10GB) plus `getContractType` and `getData` (5GB each) will
+not fit in one script at our RAM. Re-audited against
+`src/CodingContract/Enums.ts`:
+
+- **17 of 30 types implemented**, up from 16. The addition is
+  `Encryption I: Caesar Cipher` (`ctsolvers.js:399-406`), which was the entire
+  §1b gap.
+- **All five difficulty-1 types are now covered.** With zero Source-Files
+  `maxDif = 1`, so the 13 remaining types **cannot spawn in this run**. The
+  audit is closed until the first aug install grants an SF.
+- The 13 still missing are exactly the §1c table:
+  `Total Ways to Sum II`, `Array Jumping Game II`, `Shortest Path in a Grid`,
+  `HammingCodes` (both directions), `Proper 2-Coloring of a Graph`,
+  `Compression I/II/III`, `Encryption II: Vigenère`, `Square Root`,
+  `Total Number of Primes`, `Largest Rectangle in a Matrix`. §1c has the optimal
+  algorithm and the specific trap for each; that is the implementation brief for
+  the day SFs arrive. Write them in difficulty order — `Encryption II`,
+  `Total Ways to Sum II`, `Compression I: RLE` and `Total Number of Primes` are
+  difficulty 2 and become reachable at the *first* SF level, so they are the
+  only four worth pre-writing.
+- `ctsolve.js` correctly **skips** unknown types rather than guessing.
+  Contracts self-destruct after a bounded `numTriesRemaining`, so a guess is
+  strictly negative EV against a solver we will write later. Keep that
+  behaviour.
+- Stale but harmless: `ctsolve.js` still passes `{ returnReward: true }` as the
+  4th argument to `ns.codingcontract.attempt`, which v3 ignores (§1d) — the
+  reward string is returned unconditionally now, so the code works by accident.
+  If the signature ever tightens its argument validation this breaks silently.
 
 ## 2. Reinvestment timing (server purchasing)
 
@@ -655,6 +711,11 @@ subtle.
 
 ## 6. Thread allocation across targets
 
+> **Superseded in part — read §9h first.** The saturation formula below is
+> right and matches what the optimizer measured, but the verdict I drew from it
+> ("put everything on one target") dropped the capacity constraint and is wrong
+> above ~2TB. §9h has the reconciliation.
+
 ### The return per target is linear, not concave — so greedy is exactly optimal
 
 The brief guesses "concave-ish return per target, so resource
@@ -706,10 +767,16 @@ economic one.
 
 ### Verdict
 
-Nothing to act on. `auto.js`'s single-target concentration is optimal for our
-RAM scale, and will stay optimal until the fleet is on the order of 1TB. Record
-the saturation formula `φ·M/(4ε)` so we notice when that stops being true. The
-effort belongs in §3 (build a pipeline) and §5 (rank correctly), not here.
+~~Nothing to act on. `auto.js`'s single-target concentration is optimal for our
+RAM scale, and will stay optimal until the fleet is on the order of 1TB.~~
+
+**Revised.** Single-target concentration is optimal only *up to* the per-target
+capacity `batchRAM · T/ε`, which the optimizer measured at 2.5-4.5TB and which
+we passed some time ago. Greedy fractional-knapsack-with-capacities is still the
+right algorithm — it just has a cap in it, and I dropped the cap. Past the cap
+the marginal return on RAM is **negative**, not zero, because oversubscribed
+batches collide and the damage compounds. See §9h for the full reconciliation
+and §9g for how ε sets the cap.
 
 ## 7. Hacknet upgrade ordering
 
@@ -904,8 +971,12 @@ audit is low value right now.
 
 ### 8d. Things I looked for and did not find
 
-- **No published, version-current (v3.x) reference batcher** that I could verify
-  against source. The community material I found — the Steam
+- ~~**No published, version-current (v3.x) reference batcher**~~ — **found on
+  the second pass, and it was in the repo the whole time**: the game ships its
+  own batcher documentation at
+  `src/Documentation/doc/en/programming/hackingalgorithms.md`. See §9i. The rest
+  of this bullet stands for the *external* material:
+  The community material I found — the Steam
   [batching](https://steamcommunity.com/app/1812820/discussions/4/4731597528368392803/)
   and [RAM](https://steamcommunity.com/app/1812820/discussions/4/4633736485039828636/)
   threads and [Kupo's HWGW manager](https://steamcommunity.com/sharedfiles/filedetails/?id=2825770722) —
@@ -922,6 +993,773 @@ audit is low value right now.
 
 ---
 
+
+## 9. What actually breaks a batcher (second pass, for the build)
+
+This section exists because the optimizer is building a real HWGW batcher and
+the failure modes are not in §3. §3 asked "what schedule maximises throughput"
+and answered "the schedule is not the decision variable". That is still true.
+**But it assumed the schedule is executed as planned**, and the whole difficulty
+of a batcher is that it is not. Everything below is about the gap between the
+plan and what the runtime does with it.
+
+Game source re-read for this section at the same tree (`b5b09b8a8`,
+`v3.0.1-190`, package `3.0.2`).
+
+### 9a. How ops are actually scheduled — and the one fact that matters most
+
+The netscript runtime does **not** schedule hack/grow/weaken on the 200ms game
+tick. `src/Netscript/NetscriptHelpers.tsx:468-482`:
+
+```ts
+function netscriptDelay(ctx: NetscriptContext, time: number): Promise<void> {
+  const ws = ctx.workerScript;
+  return new Promise(function (resolve, reject) {
+    ws.delay = window.setTimeout(() => { … resolve(); }, time);
+```
+
+**It is a bare `window.setTimeout`.** [verified] So:
+
+- **Landing resolution is browser timer resolution, not 200ms.** The 200ms
+  `CONSTANTS.MilliPerCycle` engine loop (`src/engine.tsx:415-441`) drives
+  hacknet, stocks, faction rep, contract generation and autosave; it has nothing
+  to do with op landings. Any community guide that tells you separations below
+  200ms are pointless "because the game ticks at 200ms" is wrong about v3, and
+  as far as I can tell was already wrong about v2.
+- The effective floor is 1ms, because the WebIDL `long` conversion on
+  `setTimeout` truncates the fractional part. A batch whose ideal landings are
+  0.4ms apart will have *identical* `setTimeout` delays. [inferred from the
+  WHATWG spec, not from Bitburner source]
+
+And the single most important structural fact, from the same function plus the
+call sites (`NetscriptFunctions.ts:262,282,354`, `NetscriptHelpers.tsx:591-615`):
+
+> **An op's duration is computed once, at the instant `ns.hack/grow/weaken` is
+> called, and the landing time is then immutable.** Nothing that happens during
+> the flight — level-ups, security changes, other landings — moves it. The only
+> thing that can cancel it is `killWorkerScript`, which does
+> `clearTimeout(ws.delay)` and rejects with `ScriptDeath`
+> (`killWorkerScript.ts:56-60`).
+
+That cuts both ways and is the key to the whole design:
+
+- **Good:** you cannot desync an op that is already in flight. There is no
+  accumulating error inside a flight.
+- **Bad:** you cannot correct one either. Every correction has to happen
+  *before* the call, which means the batcher's control authority ends
+  `opDuration` before each landing.
+
+### 9b. Desync mechanism #1: level-ups. Quantified
+
+All three durations are `∝ 1/(hackingLevel + 50)` (`src/Hacking.ts:58-93`):
+
+```
+hackTime = 5 · (2.5·requiredHackingSkill·hackDifficulty + 500) / (skills.hacking + 50)
+growTime = 3.2 · hackTime      weakenTime = 4 · hackTime
+```
+
+and **the hacking level is recomputed synchronously inside every op's landing
+handler** — `Player.gainHackingExp(expGain)` → `Person.gainHackingExp`
+(`src/PersonObjects/Person.ts:49-63`) assigns `this.skills.hacking =
+calculateSkill(...)` immediately. There is no deferral to the game tick.
+[verified]
+
+So a level-up can happen at *any* landing, and from that instant every
+*subsequently launched* op is shorter by a factor `(L+50)/(L+51)`:
+
+```
+Δ(weakenTime) per level  =  weakenTime / (L + 50)
+```
+
+Numbers for our actual state (telemetry: `hackingLevel` 179, target
+`harakiri-sushi`, `requiredHackingSkill` 40, `weakenTime` ≈ 87s at min
+security, 60 exp/sec with only 106 threads running):
+
+| | value |
+| --- | --- |
+| level-up every | ~74s at 60 exp/s (Δexp per level = 3.17% of total exp; `calculateSkill = floor(32·ln(exp+534.6) − 200)`) |
+| schedule shift per level-up | **382ms** |
+| shift accumulated during one batch's 87s flight | ~450ms now, and **scales with thread count** |
+
+Put a real batcher on the current 2.3TB fleet and exp/sec goes up by roughly the
+thread ratio — ~1300 op-threads instead of 106 — so a level every 5-10 seconds,
+i.e. **several seconds of cumulative schedule shift inside a single batch's
+flight window.** Against a 50-200ms separation constant that is not a
+perturbation, it is a rout.
+
+Three consequences worth stating precisely:
+
+1. **The drift is one-directional.** Levels only go up, so durations only go
+   down, so *later* batches always catch up on *earlier* ones. The failure is
+   always "a young batch's hack overtakes an old batch's grow", never the
+   reverse. That makes the failure mode predictable and the guard one-sided.
+2. **Intra-batch drift is avoidable exactly.** If all four ops of a batch read
+   `calculateHackingTime` at the same instant, their relative offsets are exact
+   forever. Two ways to get that: (a) launch all four in one synchronous burst
+   and pad with `additionalMsec`; (b) launch each op just-in-time from an
+   absolute landing timestamp. Both are analysed in §9e.
+3. **Cross-batch drift is the residual**, and its size is `4T·ΔL/(L+50)` over
+   whatever window separates two batches. The batcher must either keep that
+   window short, re-plan on level change, or make collisions harmless.
+
+A corollary that kills one obvious idea: you cannot "predict" the level-up and
+pre-compensate, because exp arrives in lumps at landings whose success is
+random (`hack` grants full exp on success, exp/4 on failure —
+`NetscriptHelpers.tsx:614-690`). The level is a jump process you observe, not a
+schedule you know.
+
+### 9b′. Desync mechanism #2: the unsafe window. Bigger than level-ups, and it points the other way
+
+I originally wrote that level-ups were the only real desync source. **That was
+wrong**, and the mechanism I missed is the one the community actually names.
+From [bitburner-src issue #274](https://github.com/bitburner-official/bitburner-src/issues/274)
+(v2.2.0, 59 parallel batches at 200ms spacing, reporter insisting no level-up
+occurred), @Caldwell-74's diagnosis — which closed the issue:
+
+> *"thats most likely just a task collision issue — after hack or grow security
+> is increased; if a task starts in the timeframe between them and the following
+> weaken, the time of that task is longer than what you would expect /
+> calculated"*
+>
+> *"for the task time calculation the moment they **start** their task is
+> important, not when the script is launched. even if you stop launching scripts
+> before the first task is finished with that sleep, they might sleep into an
+> unsafe window"*
+
+Verified against source. `calculateHackingTime` is linear in `hackDifficulty`
+(`src/Hacking.ts:58-79`), so an op **launched** while security is above minimum
+runs **longer** than planned:
+
+```
+ΔT/T  =  2.5·R·ΔD / (2.5·R·D + 500)         R = requiredHackingSkill, D = hackDifficulty
+```
+
+And a correct batch *deliberately* raises security twice per batch: from the
+hack landing until W1 lands (`+0.002·h`), and from the grow landing until W2
+lands (`+0.004·g`). Those are unsafe windows of width ε each, so in a
+steady-state stream **security is elevated roughly half the time.**
+
+Magnitude on our target (`harakiri-sushi`, R=40, D=5, `weakenTime` 87s):
+
+| elevation | source | ΔT on a weaken |
+| --- | --- | --- |
+| +0.002 | 1 hack thread | 17ms |
+| +0.008 | 2 grow threads | 70ms |
+| +0.12 | 30 grow threads | 1.05s |
+
+So on a realistic batch the unsafe-window inflation is **10-60x the separation
+constant**, and unlike level-up drift it is present from the very first batch,
+has nothing to do with experience, and does not go away as the game matures.
+This is the dominant desync source, and it is what every community "safe
+window" scheduler exists to dodge (jjclark1982's `scheduleForSafeWindows`,
+xxxsinx's *"keeps a list of all active batches and avoids all unsafe windows"*).
+
+**The two mechanisms push in opposite directions and have opposite remedies.**
+That is the key structural fact for choosing a design:
+
+| | makes ops… | remedy |
+| --- | --- | --- |
+| **Level-up** (§9b) | **shorter**, for everything launched after the level-up | launch **late**, reading the duration fresh — i.e. JIT |
+| **Unsafe window** (§9b′) | **longer**, for anything launched during the 2ε per batch when security is up | launch at a **known-min-security instant** — i.e. all-at-once, or only in safe windows |
+
+A design that only defends against one of them is exposed to the other, and
+that — not sleep jitter — is what the "shotgun vs JIT" argument is really about.
+`additionalMsec` is what makes both satisfiable at once, because it decouples
+*when you launch* from *when you land*: launch inside a safe window, read the
+duration there, and pad the remainder. The pad itself is immune to both
+mechanisms, since it is added after `calculateHackingTime`
+(`NetscriptFunctions.ts:272,336`; `NetscriptHelpers.tsx:598`).
+
+A third, cheaper defence that the community uses and that follows directly from
+§9f: **over-provision grow**. DarkTechnomancer's guide overestimates grow
+threads by 1% (*"This helps prevent level ups from causing desyncs"*), Tamagosci
+uses `GROW_THREADS_MULTIPLIER = 1.05`, alainbryden has a
+`--recovery-thread-padding` that **auto-escalates up to 10x when RAM utilisation
+is low**. §9f's result — excess grow threads add *zero* security — is the reason
+this is nearly free, and none of those three sources states that reason.
+
+### 9c. The mechanisms that turn out **not** to matter
+
+I expected these to be the story and they are not. Recording the negatives
+because each one is a trap someone will otherwise spend a day on.
+
+- **`ns.sleep` jitter / event-loop congestion does not reorder landings.**
+  Timer tasks fire in expiry order (and for equal delays, in the order the
+  timers were created — that ordering is an explicit WHATWG HTML spec
+  requirement for `setTimeout`). [claim, HTML spec; not Bitburner source] If the
+  main thread stalls — a React render, the 60s autosave serialising the whole
+  save — every timer that expired during the stall fires afterwards *in order*.
+  So a stall **collapses separations to zero but preserves the order**, and
+  since H/W/G/W only care about order, a collapsed batch still works.
+- **Background-tab throttling likewise preserves order** — but it is far worse
+  than "throttling". Chrome throttles hidden-tab timers to ~1/s and to ~1/min
+  after 5 minutes hidden, and Bitburner has no `visibilitychange` handling at
+  all (nothing in `engine.tsx` or `ui/GameRoot.tsx`) [verified by absence]. The
+  game's own docs put it bluntly
+  (`src/Documentation/doc/en/programming/offlineandbonustime.md`): *"it is not
+  possible for Bitburner scripts to run when … the browser tab is inactive."*
+  Ordering is still preserved, so this is not a *reordering* problem — but see
+  §9d(3), because coming back from a backgrounded period is much nastier than
+  being in one. **A batcher is a foreground-tab-only construct.** If unattended
+  throughput matters, the community answer is to run it headless under VNC
+  rather than to defend against it in script.
+- **Launch latency is sub-millisecond once warm.** `ns.exec` →
+  `runScriptFromScript` → `startWorkerScript` → `createAndAddWorkerScript`
+  (`NetscriptWorker.ts:100-165`) calls `startNetscript2Script`, which does
+  `await compile(script, scripts)`. `compile` returns the **cached**
+  `script.mod.module` promise if the module was ever loaded
+  (`NetscriptJSEvaluator.ts:43-47`, plus a `moduleCache` keyed on transformed
+  code). So after the first launch of a worker on a host, the child's `main()`
+  runs in a microtask of the launching task. **Four `ns.exec` calls with no
+  `await` between them therefore all see the same `Date.now()` and the same
+  `skills.hacking`.** The first launch of a given script on a given server is a
+  real dynamic `import()` of a blob URL and is much slower — warm every worker
+  once at startup.
+- **v3 does not require unique args to run duplicate scripts.**
+  `parseRunOptions` sets `preventDuplicates: false` by default
+  (`NetscriptHelpers.tsx:254-272`) and `runScriptFromScript` only checks for
+  duplicates when it is set (`NetscriptWorker.ts:329-340`). The v1/early-v2
+  idiom of passing a random batch id purely to dodge the duplicate check is
+  obsolete — keep the id if you want it for identification, but it is not load
+  bearing. [verified]
+
+### 9d. Runtime hazards that *do* bite, read out of the source
+
+These are all read out of the game, and none of them appear in the community
+material I have seen.
+
+**(1) A failed `ns.exec` is silent and returns 0.** `runScriptFromScript`
+(`NetscriptWorker.ts:314-353`) logs and returns `0` when the RAM check fails
+(`createAndAddWorkerScript` "Not enough RAM…") or when the file is missing.
+A batcher that does not check the returned pid will happily launch a **partial
+batch** — H and W1 placed, G rejected — and a partial batch is exactly the
+worst case: the hack lands, nothing regrows it, and one weaken repairs half the
+security. This is the highest-probability real failure in the whole design and
+it is a two-line guard. **Check every pid; if any op of a batch fails to
+launch, kill the ones that did.**
+
+**(2) RAM is released at landing, not at plan time.** `killWorkerScript` →
+`removeWorkerScript` runs when the worker's `main()` resolves, i.e. one
+microtask after its op lands. The last weaken of a batch holds its RAM until
+`4T + 3ε`. A scheduler that computes free RAM from its own model rather than
+from `ns.getServerMaxRam − ns.getServerUsedRam` will drift into (1) above.
+
+**(3) In-flight ops do not survive a page reload — and the reload *also moves
+the world*.** `loadAllRunningScripts`
+(`NetscriptWorker.ts:218-263`) restarts every saved `RunningScript` by calling
+`startWorkerScript`, which runs `main()` **from the top**. Nothing about the
+pending `setTimeout` is saved. So a refresh, a crash, or a save import
+instantaneously converts every in-flight batch into a cohort of workers that all
+restart at once — and a worker written as "sleep until absolute timestamp X,
+then hack" will find X in the past and hack **immediately, all of them at
+once**. That strips the target and spikes security in one frame. Two
+mitigations, both verified in source:
+   - Launch workers with `{ temporary: true }`. `BaseServer.toJSONBase`
+     (`src/Server/BaseServer.ts:305-313`) filters `rs.temporary` out of
+     `runningScripts` before serialising, so temporary workers are simply absent
+     after a reload. This *also* shrinks the save — with a dense batcher there
+     are thousands of `RunningScript` objects, and they are serialised on every
+     60s autosave, which is a main-thread stall (see 9c).
+   - Have each worker sanity-check its deadline on start: if
+     `landAt − Date.now()` is less than its own op duration, exit instead of
+     firing.
+
+   And the world is not where you left it either. `loadAllRunningScripts` calls
+   `scriptCalculateOfflineProduction` per saved script
+   (`src/Script/ScriptHelpers.ts:14-91`), which **replays grow and weaken at 50%
+   of the script's recorded rate** for the elapsed wall time —
+   `processSingleServerGrowth(server, timesGrown, …)` and
+   `serv.weaken(weakenAmount * timesWeakened)`, both applied to the live server
+   — and grants `confidence · (onlineExpGained/onlineRunningTime) · timePassed`
+   of hacking exp, so **the hacking level jumps too**. Hack is *not* replayed;
+   money is granted directly. So after any gap, every cached figure a batcher
+   holds — server money, server security, `T` — is stale at once. A batcher must
+   re-measure from scratch on startup and never trust a persisted plan.
+   (`{temporary: true}` workers are not saved, so they contribute no offline
+   production at all — which is the behaviour you want here, not a loss.)
+
+**(4) A negative `additionalMsec` throws and kills the worker.**
+`validateHGWOptions` (`NetscriptHelpers.tsx:396-418`) throws on `< 0` and on
+`> 1e9`. A batcher computing `pad = landAt − now − opTime` will produce
+negatives whenever it is late. Clamp to 0 — or better, treat "pad would be
+negative" as "this op is unschedulable, abandon the batch" (§9j: the community
+consensus is that a late op should be abandoned, not fired late). The `1e9`
+ceiling is not arbitrary: it was added in v2.5.2 after
+[issue #940](https://github.com/bitburner-official/bitburner-src/issues/940),
+because `setTimeout` uses signed 32-bit math and a delay ≥ 2³¹ ms **fires
+immediately**. Maintainer @d0sboots: *"It's not `additionalMsec` itself that is
+overflowing, but rather the underlying call to `setTimeout`, which uses signed
+32-bit integer math for historical reasons that are now set in stone."* Our
+`weakenTime` plus a pad cannot reach 2³¹ under the 1e9 cap, so this is guarded —
+but it confirms §9a's reading that the whole mechanism is one bare
+`setTimeout`.
+
+**(5) `checkEnvFlags` kills a worker that calls a second ns function while one
+is in flight** ("Concurrent calls to Netscript functions are not allowed",
+`NetscriptHelpers.tsx:455-467`). Only relevant if a worker tries to be clever
+with un-awaited promises.
+
+**(6) Worker RAM is multiplied by threads**, `roundToTwo(ramUsage * threads)`
+(`NetscriptWorker.ts:110`). Base cost 1.6GB; `hack` +0.1, `grow`/`weaken` +0.15
+(`RamCostGenerator.ts:11-20`). So a hack worker is 1.70GB and a grow/weaken
+worker 1.75GB — **per thread**. Adding one `ns.getServerSecurityLevel` guard to
+a worker costs +0.1GB/thread, which on a 400-thread grow is +40GB. **Keep
+workers dumb; put every sensing call in the controller, where it is paid once.**
+This is a quantitative argument for the controller/worker split, not a stylistic
+one.
+
+### 9e. The two honest designs, and what each is exposed to
+
+**Design A — single-burst launch with `additionalMsec`** (the game's own docs
+call this the *shotgun*, §9i). Read `T` once, exec all four workers with no
+`await` between the execs, each carrying a pad so that the landings are
+`4T, 4T+ε, 4T+2ε, 4T+3ε`:
+
+```
+pad(hack)    = 3T                pad(weaken1) = ε
+pad(grow)    = 0.8T + 2ε         pad(weaken2) = 3ε
+```
+
+All four durations derive from one reading of `skills.hacking`, so the batch is
+internally exact **by construction** — ε can be 1ms and the order still holds.
+Two costs:
+
+- Cross-batch drift remains: batch `n+1` launched `p` later has a smaller `T`,
+  and collides with batch `n` when `p < 4·ΔT + 3ε`, i.e. roughly when the period
+  is shorter than the drift accumulated over it.
+- **Padding costs RAM-seconds**, and §3's ratio bound silently assumed it away.
+  A padded op holds its RAM for the *whole* `4T`, not for its own duration. For
+  a minimal batch (1 hack, 2 grow, 2 weaken) the RAM-seconds go from
+  `T·(1.7·1 + 5.6·2 + 7·2) = 26.9T` unpadded to `4T·8.7 = 34.8T` padded —
+  **+29%**, and worse for hack-heavy batches, since a padded hack holds RAM 4x
+  longer than it needs to. Since §3 showed throughput is exactly
+  `(money per RAM-second) × Ω`, that 29% is 29% of income.
+
+Design A's compensating virtue, which I missed on the first pass: all four ops
+read the server at **one** instant, so if that instant is at minimum security,
+all four durations are correct and §9b′ cannot touch the batch. And because a
+periodic Design A launches exactly once per period on a schedule it controls
+entirely, it can *choose* that instant.
+
+Worth being precise, because this is the actionable form. In steady state the
+landings repeat with period `4ε` at phases `0, ε, 2ε, 3ε` = H, W1, G, W2.
+Security is elevated on `[0, ε)` (hack landed, W1 pending) and on `[2ε, 3ε)`
+(grow landed, W2 pending), and at minimum on `[ε, 2ε)` and `[3ε, 4ε)`. So:
+
+> **Phase-lock the batch launch to the middle of a safe window** — e.g. phase
+> `3.5ε` — and Design A is structurally immune to unsafe-window inflation. That
+> is one line of arithmetic and it removes the dominant desync mechanism
+> entirely.
+
+This is the real reason the padded design survives in practice despite being
+open-loop, and it is also why Design B cannot borrow the trick: B launches four
+times per period at phases set by `landAt − opDuration(now)`, and `opDuration`
+is not a multiple of ε, so its launch phases are effectively arbitrary. B has to
+compute the safe windows and schedule into them; A only has to pick a constant.
+
+**Design B — just-in-time launch against an absolute landing time.** The
+controller decides `landAt` for each op and launches each op at
+`landAt − opDuration(now)`, reading the duration at that moment. Because the
+duration is read at the launch instant, the landing is at `landAt` **exactly**,
+regardless of how many level-ups happened since the batch was planned. This is
+drift-free *across* batches as well as within them, which Design A is not. It is
+a closed-loop controller on landing time; Design A is open-loop.
+
+Design B's exposure is the mirror image: it launches continuously, so roughly
+half its launch instants fall inside an unsafe window (§9b′) and those ops land
+late by 10-60x the separation constant. **A JIT batcher that does not do
+safe-window scheduling is worse than a shotgun, not better.** This is the
+single most important thing the community material adds to my source reading,
+and it explains an otherwise baffling empirical result (§9j): xxxsinx measured
+his own JIT batcher at *25-40%* of the income of his simpler cycling batcher.
+
+The cost of B is that the controller (or worker) must wake four times per batch
+instead of once, and must re-read a duration each time — `ns.getHackTime` /
+`getGrowTime` / `getWeakenTime` are 0.05GB each (`GetHackTime`,
+`RamCostGenerator.ts:48`), paid once in the controller.
+
+A units trap that will bite exactly once: `ns.getHackTime` and friends return
+**milliseconds** (`NetscriptFunctions.ts:1225-1239` multiply the internal
+seconds-valued `calculateHackingTime` by 1000), `additionalMsec` is
+milliseconds, and the internal formulas are seconds. `hack.js:325-338` already
+carries a migration shim that divides by 1000 and multiplies by 1000 again for
+no reason — don't copy it.
+
+**Recommendation, revised after reading the community material: build A first.**
+Specifically a *periodic* batcher — batches deployed at a fixed interval `p`,
+each batch launched as one padded burst — not a shotgun that fires everything at
+once. Reasons, in order of weight:
+
+1. **It is immune to the dominant desync mechanism** (§9b′) by construction,
+   and only exposed to the weaker one (§9b), which thread over-provisioning and
+   a cancel-next-hack rule largely absorb (§9f).
+2. **Its theoretical headroom is only ~1.4x.** Padding costs 29-45% of
+   RAM-seconds versus a perfect JIT, and by §3 that is exactly 29-45% of income.
+   That is the entire prize for the much harder design.
+3. **The one published head-to-head goes the other way.** xxxsinx, who wrote
+   both, measured his JIT at 25-40% of his cycling batcher's income (§9j). And
+   DarkTechnomancer — whose guide the maintainers point to — says JIT is
+   *"marginal"* over periodic and *"extremely fragile to user error"*.
+4. It is far less code, which matters because it will run unattended.
+
+Build it, measure it against §3's `(m/R)·Ω` ceiling, and **only** chase JIT if
+the measured gap exceeds ~1.4x — because below that, JIT cannot be the
+explanation.
+
+The distinction worth holding onto if JIT is ever attempted: the official docs'
+"shotgun vs JIT" framing conflates two independent choices — *when you launch*
+(all at once vs just-in-time) and *how you place the landing* (`additionalMsec`
+pad vs raw duration). A JIT batcher still wants the pad; what it additionally
+needs is a **projected security timeline** so it only launches in safe windows.
+The controller owns the entire landing schedule, so it knows that timeline
+exactly — there is nothing to estimate. That is the piece to get right, and it
+is the piece both published JIT implementations spend most of their code on.
+
+The thing **not** to build is the true **shotgun** — plan N batches into the
+future from one reading of `T` and exec them all right now with escalating pads.
+"Periodic" and "shotgun" differ in exactly one respect and it is the one that
+matters: a periodic batcher re-reads `T` and the server state once per period,
+so each batch is planned against a fresh world; a shotgun reads once and then
+commits N batches to a plan it can no longer revise. That makes the shotgun
+maximally exposed to §9b — every batch in the wave inherits the same stale `T`,
+and the first level-up invalidates all of them at once — and its failure is
+unbounded, because nothing in the wave re-reads anything. It is the most
+tempting shape because it needs no timer management at all. The official docs
+list it as the easy build and name its own risks (§9i); take the extra loop.
+
+### 9f. Recovery discipline, derived rather than borrowed
+
+The community answer is "detect desync, kill everything, re-prep". The source
+says something sharper, and it is the most useful thing in this section:
+
+> **Over-provisioning grow and weaken is free. Over-provisioning hack is not.**
+
+Three verified asymmetries:
+
+| op | overshoot behaviour | cost of overshooting |
+| --- | --- | --- |
+| `weaken` | `Server.capDifficulty()` floors `hackDifficulty` at `minDifficulty` (`src/Server/Server.ts:92-105`) | none — extra weaken threads are wasted RAM and **still earn full exp** |
+| `grow` | money clamps at `moneyMax`; and `processSingleServerGrowth` fortifies by `2·0.002·min(ceil(usedCycles), threads)` where `usedCycles` is the threads *actually needed* (`ServerHelpers.ts:204-214`) | none — **excess grow threads add no security at all** |
+| `hack` | `moneyDrained = moneyAvailable · percentHacked · threads`, clamped to `moneyAvailable` (`NetscriptHelpers.tsx:628-645`) | **strips the server to 0**; fortify is capped at `min(threads, ceil(1/percentHacked))` but the money is gone |
+
+So the correct discipline is not symmetric error-handling, it is:
+
+1. **Prep generously.** Weaken-to-min and grow-to-max with a margin; the margin
+   costs RAM-seconds and nothing else. There is no reason to compute prep
+   threads tightly.
+2. **Guard only the hack.** It is the only op that can damage state. The guard
+   is one-sided because the drift is one-sided (§9b): the danger is always a
+   hack arriving *early*, onto a server that the previous batch has not yet
+   regrown.
+3. **Recovery is always possible.** `netscriptCanGrow`/`netscriptCanWeaken`
+   (`src/Hacking/netscriptCanHack.ts:49-55`) only check root access — no hacking
+   level requirement, no security ceiling. And `calculateGrowMoney`'s additive
+   `+threads` term means a server at $0 can always be regrown. So there is no
+   absorbing state; the only question is how much RAM-time recovery costs.
+
+There **is** a near-absorbing state worth naming, though. Security has positive
+feedback: `hackDifficulty` raises all three durations linearly
+(`2.5·requiredHackingSkill·hackDifficulty + 500`), so a security spike makes the
+weaken that repairs it slower, during which more hacks land. At
+`hackDifficulty ≥ 100` both `calculatePercentMoneyHacked` and
+`calculateHackingChance` return **0** (`src/Hacking.ts:13,45`) and the target
+earns literally nothing until weakened back. This is the "death spiral" and it
+is real — but note it is a *spiral*, not a trap: weaken still works at
+difficulty 100 and security is floored at `minDifficulty`, so it always
+terminates.
+
+The other integrator is money, and this is the one that silently eats income:
+**there is no passive server growth or security decay while the game is
+running.** I checked the engine loop for it (`engine.tsx:81-140` — it processes
+work, stocks, gang, Stanek, corporation, bladeburner, sleeves, hacknet,
+counters; it never touches `GetAllServers`) [verified by absence]. So
+`moneyAvailable` and `hackDifficulty` are **pure integrators of your own ops**,
+with no restoring force. (The one exception is the offline replay in §9d(3),
+which fires exactly once per load and moves both.) Any systematic bias in a batcher's thread
+arithmetic — an off-by-one in grow threads, `growthAnalyze`'s known
+overestimate (§4), a hack that occasionally lands early — accumulates without
+bound. **This is the structural reason an open-loop batcher degrades over hours
+and a closed-loop one does not**, and it is the single best argument for
+re-measuring the server every batch instead of trusting the plan.
+
+Practical form of the guard, in decreasing order of value:
+
+- **Controller-side, per batch:** before launching, read `moneyAvailable` and
+  `hackDifficulty`. If money < ~99% of max or security > min + tolerance,
+  **launch a prep batch (weaken/grow only) instead of an HWGW batch.** Costs
+  0.2GB in the controller, total. This alone converts a divergent system into a
+  convergent one.
+- **On level change:** `ns.getHackingLevel()` is 0.05GB. Compare it to the value
+  the in-flight batches were planned against; if it moved, stop launching new
+  batches until the in-flight window drains. Expensive early (levels move every
+  few seconds) which is why Design B, which does not care about level changes,
+  is worth the extra timer wakeups.
+- **Hard reset:** kill all workers on the target, wait `weakenTime`, re-prep.
+  Correct but slow — it costs a full `4T` of the fleet. Keep it as the
+  last-resort path triggered by "security > min + 5 for N consecutive
+  observations", not as the routine mechanism.
+
+### 9g. The separation constant
+
+What it has to be bigger than, in order:
+
+| Constraint | Value | Source |
+| --- | --- | --- |
+| `setTimeout` integer truncation | 1ms | WHATWG spec [claim] |
+| Landing handler work (`gainMoney`, `recordHack`, log) | sub-ms | [inferred] |
+| Intra-batch duration error, Design A or B | **0** | §9e [verified mechanism] |
+| Intra-batch duration error, naive sequential launch | `4T·ΔL/(L+50)`, ~380ms/level for us | §9b [verified] |
+
+and what it has to be smaller than:
+
+> **Per-target RAM capacity is `R_batch / (4ε)`**, where `R_batch` is the
+> batch's RAM-*seconds*. Each batch produces four landings and no two landings
+> on one target may be closer than ε, so the period floor is `p = 4ε` and the
+> in-use RAM is `R_batch/p`. **Halving ε doubles a target's capacity.**
+
+For a JIT batch with 1 hack, 2 grow, 2 weaken:
+`R_batch = T·(1.7·1 + 1.75·3.2·2 + 1.75·4·2) = 26.9·T` GB·s, so
+
+```
+Ω_cap(one target)  =  6.725 · T / ε        [GB, with T and ε in the same units]
+```
+
+With `T = 21.8s` (`harakiri-sushi` at min security, hacking level 179):
+
+| ε | period 4ε | batches in flight | RAM absorbed by one target |
+| --- | --- | --- | --- |
+| 20ms | 80ms | 1090 | 7.3TB |
+| 50ms | 200ms | 436 | 2.9TB |
+| 100ms | 400ms | 218 | 1.5TB |
+| 200ms | 800ms | 109 | 0.73TB |
+| 500ms | 2.0s | 44 | 0.29TB |
+
+That is the entire trade-off, and it says the constant is **not** a magic
+number — it is the knob that sets how much RAM one target can absorb.
+
+**Recommendation: ε = 50ms, treated as a variable rather than a constant, with
+a hard floor of ~20ms and a ceiling of ~200ms.** Justification:
+
+1. **It does not have to cover jitter, and cannot cover the real drift
+   anyway.** A single-burst launch (Design A) makes intra-batch duration error
+   exactly zero (§9e), and §9c shows landing *order* survives stalls and
+   background throttling regardless. Meanwhile the two drift sources that *do*
+   exist are 380ms (§9b) and 0.1-3s (§9b′) — no sane ε covers those, so raising
+   ε to "be safe" buys nothing while costing capacity linearly. The "separation
+   must exceed the worst-case sleep jitter" framing that most pre-2023 guides
+   use is simply the wrong framing for v3: separation is a **capacity**
+   parameter, not a **safety** parameter.
+2. **It agrees with the version-current sources.** The game's own v3
+   documentation recommends **5-50ms** between batch steps for a JIT batcher
+   (§9i), justified as the time the controller needs to do its own work, and the
+   reference guide the maintainers point to ships `spacer = 5` (§9j). 50ms is
+   the conservative end of that range.
+3. **It matches the RAM we actually have.** At 50ms one target absorbs ~2.9TB,
+   just above our current 2.3TB fleet — so a single well-chosen target still
+   absorbs everything, and we have headroom before §9h's spill rule binds.
+4. **It leaves 200ms of batch period**, i.e. ~12 animation frames for the main
+   thread to do 4 script launches, 4 landings and a React pass. Going below
+   ~20ms puts the controller's own work inside the separation and is where the
+   official docs stop recommending it.
+
+**What it depends on**, so it can be recomputed rather than re-guessed:
+
+```
+ε  =  clamp( 6.725 · T / Ω_target ,  20ms ,  200ms )
+```
+
+`T` shrinks continuously as the hacking level rises, and `Ω` grows as servers
+are bought, so this wants recomputing every retarget, not hardcoding. When the
+clamp binds at 20ms, that is the signal to open a second target (§9h) rather
+than to push ε lower.
+
+For contrast, our `hack.js`'s hardcoded `15 * 1000` ms offsets
+(`hack.js:339-340`) are **300x** too large by this analysis and, as recorded in
+§3, clamp to zero below `weakenTime = 30s` anyway — they are wrong in both
+directions at once.
+
+**Do not use 200ms "because the game ticks at 200ms".** That is the most common
+justification in community material and §9a shows it is a non-sequitur: op
+landings never touch the engine tick. 200ms may still be a defensible value —
+it is the top of the sane range — but not for that reason, and at our fleet
+size it caps one target at 0.73TB, which would force a three-way split we do
+not otherwise need.
+
+### 9h. Reconciliation: target saturation (correcting §6)
+
+The optimizer measured single-target as correct at 108GB and catastrophic above
+~3TB, with a 2.5-4.5TB crossover; §6 said greedy all-on-one is exactly optimal
+up to ~1TB. **These are the same phenomenon and the same formula**, and the
+disagreement is in two places, only one of which is my error.
+
+*Where we agree.* §6's saturation point was
+`RAM ≈ 6.95GB · T/ε` — literally `batchRAM × batches-in-flight`, which is the
+optimizer's "analytical bound on batches-in-flight per target". Plugging in
+their conditions rather than mine closes most of the gap: I used
+`batchRAM = 6.95GB` (the absolute integrality floor: 1 hack, 1 grow, 2 weaken)
+and `T = 30s`; a realistic minimal batch is 8.7GB (grow rounds to 2 threads on
+most targets) and the targets in question have `T` of 40-60s. `8.7 × 50/0.2 =
+2.2TB`, and at ε slightly above 200ms you land inside their measured 2.5-4.5TB
+band. So the *mechanism* was right and the *constant* was under-estimated by
+roughly 2-3x. Both numbers move with ε, which §9g now makes explicit.
+
+*Where I was wrong, and it is not the saturation point.* §6 modelled the problem
+as a **fractional knapsack with capacities** — `max Σ rate_i·Ω_i` s.t.
+`Ω_i ≤ cap_i` — and greedy on that gives "fill the best target to its cap, then
+the next", which is exactly the optimizer's measured answer. The model was
+fine. **The verdict I wrote on top of it was not**: I compressed it to "put
+everything on the single best target, exactly optimal", dropped the cap from the
+ranked-findings table entry (#10), and told the reader to leave `auto.js` alone.
+That is the error. The correct statement was always "greedy *up to the cap*,
+then spill to the next target".
+
+*Where the model was genuinely incomplete.* I assumed excess RAM beyond `cap_i`
+is simply **unusable** — that utility is linear then flat. A real batcher does
+not refuse the RAM; it launches batches at a period below `4ε` and they collide.
+And §9f shows collisions are not neutral: an early hack steals `f` of a
+*depleted* pool (revenue lost) and fortifies security (every subsequent op
+slowed), while the grow that was sized for a `f·M` deficit now undershoots,
+compounding. Because §9f's "no passive regrowth, pure integrator" result holds,
+that compounding has no restoring force. So past the cap the marginal return on
+RAM is **negative, not zero**, and the utility is linear-then-*decreasing*. That
+explains why the optimizer measured 8.6TB single-target earning a *quarter* of
+the three-way split rather than merely a third: a third would be the flat-cap
+prediction, and the extra factor is the collision damage.
+
+The practical upshot, and it is a design requirement not a tuning note:
+
+> **A batcher must refuse to oversubscribe a target.** Cap batches-in-flight at
+> `T/ε` per target and spill the surplus RAM to the next target (or to prep, or
+> to `ns.share`). Without that cap the allocation problem is not just
+> mis-solved, it is actively self-harming — and a scheduler that "uses all
+> available RAM" is the natural way to build exactly that bug.
+
+### 9i. What the game's own v3 documentation says [verified — it ships with the game]
+
+`~/Repos/bitburner/src/Documentation/doc/en/programming/hackingalgorithms.md`
+is in the v3.0.2 tree and is the **only batcher reference I found that is
+version-current by construction**. It should outrank every Steam guide and
+Reddit thread in this document. Its taxonomy, verbatim:
+
+| Design | Doc's framing | Failure mode it names |
+| --- | --- | --- |
+| **EHT** (early-hack-template) | the `if security > min weaken / elif money < max grow / else hack` loop | "tends to make all your scripts on every server do the same thing"; "risk of over-hacking… to \$0, or maximum security"; RAM cost multiplied by threads |
+| **Controller** | central script, dumb workers (`await ns.hack(target)` and nothing else) | — (this is the recommended base) |
+| **Proto-batcher** | `\|=Batch=\|\|=Batch=\|…` — next batch only starts when the previous finishes | no pipelining; implicitly the 25%-duty-cycle problem §3 found in `hack.js` |
+| **Shotgun** | pad every op with `additionalMsec` to a common length, launch as many batches in parallel as possible | "not very RAM efficient because the scripts take up RAM during their delay timer"; "intensive on real-life hardware"; recommends capping parallel batches at ~100,000 "to reduce the risk of the game soft-crashing (also called a 'black screen')" |
+| **JIT** | weave batches into each other so each op holds RAM only for its own duration | "much more complex"; "very precise timing constraints"; needs "good communication between worker scripts and the controller" |
+
+Four things in it are worth quoting because they settle questions in this
+document:
+
+1. **On `sleep` vs `additionalMsec`** — "due to JavaScript limitations, the
+   delay duration is not millisecond-precise and can cause the functions to
+   finish out of order. Instead, the hack, grow and weaken functions have a
+   special option called `additionalMsec` that allows more precise delays."
+   This is the official endorsement of §9e's mechanism.
+2. **On the separation constant** — "it's important to leave a space between
+   each batch step to allow for any calculations or launching of future
+   batches - **typically between 5-50ms**." Note the justification is
+   *controller work*, not timer jitter, which is exactly §9g's reading.
+3. **On adaptive workers** — "at this precision of timing, it becomes important
+   to consider how much the situation has changed between launching the script
+   and the hack, grow or weaken function starting to run. The **worker scripts
+   may need to adaptively change their delay value** to compensate for other
+   factors and complete on time." That is Design B (closed-loop on an absolute
+   landing time) recommended by the game's own docs, and the "situation has
+   changed" it is gesturing at is §9b's level-up drift.
+4. **On RAM and worker weight** — "analysis functions such as
+   `getServerSecurityLevel` and `getServerMoneyAvailable` can be kept on the
+   central controller, making the 'worker' scripts much lighter in RAM cost."
+   Same conclusion as §9d(6), reached from the same `cost × threads` fact.
+
+**Consensus answer to "which design for an unattended long-running setup": JIT,
+with a controller and dumb workers.** The docs are unambiguous that shotgun is
+the easier build and JIT is the better one ("maximises RAM efficiency",
+"maximises income, especially in low RAM"), and shotgun's named risk —
+soft-crashing the browser by holding tens of thousands of parallel scripts — is
+precisely an *unattended-run* risk. Our §9e analysis adds the reason the docs
+do not give: shotgun's full-length padding also freezes each batch's plan at
+launch, which is what makes it maximally exposed to level-up drift.
+
+One number from the docs that is *not* a constraint for us: the ~100,000
+parallel batch soft-crash ceiling. At ε=50ms and T=22s a single target holds
+~436 batches. We are three orders of magnitude away from that limit, so it
+should not shape the design.
+
+### 9j. Published batchers: what they actually use, and the version each assumed
+
+Read from source where a repo exists. The version column is the important one —
+the February 2023 introduction of `additionalMsec` (v2.2.2,
+[PR #371](https://github.com/bitburner-official/bitburner-src/pull/371)) splits
+this material cleanly in two, and **everything written before it is answering a
+different question**.
+
+| Source | Separation | Version | Rationale given |
+| --- | --- | --- | --- |
+| **Official docs, original** ([hackingalgorithms.rst @ v1.6.4](https://github.com/danielyxie/bitburner/blob/v1.6.4/doc/source/advancedgameplay/hackingalgorithms.rst), Jan 2022) | **20-200ms** | v1.x | *"may range between 20ms and 200ms … Anything lower than 20ms will not work due to javascript limitations."* |
+| **Official docs, current** (§9i, rewritten Aug 2025, [PR #2288](https://github.com/bitburner-official/bitburner-src/pull/2288)) | **5-50ms** JIT; ~0 between shotgun batches | v2.8+/v3 | controller work, not jitter |
+| [DarkTechnomancer's batching guide](https://darktechnomancer.github.io/) — the one the maintainers point to | **`spacer = 5`** | v2.5+ | *"Have your tasks ending within 1-2ms of when they are supposed to"*; auto-increments when RAM can't support the depth |
+| [Tamagosci `hacking/JIT.js`](https://github.com/Tamagosci/bitburner/blob/main/hacking/JIT.js) | 10ms intra-batch, 70ms inter-batch | v2.6-2.8 | comment: *"Keep below BATCH_SPACER and above 4ms"* — an explicit nod to the HTML nested-timer clamp |
+| [xxxsinx `scheduler.js`](https://github.com/xxxsinx/bitburner/blob/main/scheduler.js) | 25-30ms; abort tolerance `SPACER/1.5` | v2.x | — |
+| [alainbryden `daemon.js`](https://github.com/alainbryden/bitburner-scripts/blob/main/daemon.js) (the most-installed community script) | **1000ms** (`cycle-timing-delay 4000` / 4) | v2.x | *"The smaller this is, the more batches we can schedule … but the greater the chance of a misfire"* |
+| [Kupo's HWGW Manager](https://steamcommunity.com/sharedfiles/filedetails/?id=2825770722) (Jun 2022) | 100ms | v1.6/v2.0 | none stated |
+| Steam threads, 2022 | 200ms → 500ms → 1000ms | v1.x/v2.0 | raised **in response to desyncs** |
+
+The shape of that table is the finding: **pre-`additionalMsec` sources cluster
+at 100-1000ms and got there by raising the number until desyncs stopped;
+post-`additionalMsec` sources cluster at 5-30ms.** Anyone copying a number from
+the first group into a v3 batcher is importing a workaround for a problem that
+no longer exists, and paying for it in per-target capacity (§9g). Our
+`hack.js`'s 15,000ms is off the bottom of even the old table.
+
+Two things I take from the community that source reading would not have given
+me:
+
+- **The empirical head-to-head.** xxxsinx wrote both a cycling (re-prepping)
+  batcher and a JIT one and measured the JIT at **25-40% of the cycling
+  batcher's $/sec**. That is the strongest available evidence that JIT's
+  theoretical RAM advantage does not survive implementation, and it is why §9e
+  recommends building the padded periodic design first.
+- **Recovery patterns, named.** Four recur across every working long-running
+  batcher, and all four are cheap:
+  1. **Cancel the next hack** when the target is found unprepped, rather than
+     re-prepping. DarkTechnomancer: *"if the server isn't prepped, then we
+     cancel the next hack to let the server fix itself … the program is
+     self-correcting."* Tamagosci cancels hack+weaken1 if money is low and
+     hack+grow if security is high. This is the modern default and it is
+     strictly better than (2).
+  2. **Kill-all-and-re-prep at a cycle boundary.** xxxsinx's `manager.js`
+     ("cycling batcher") — simplest and most robust, but pays a full prep.
+     Mitigated by keeping a second target prepped and ping-ponging, which is
+     also DarkTechnomancer's suggested answer to level-ups.
+  3. **Per-op abort guard evaluated at op start**, not at plan time.
+     jjclark1982: if `actualServer.hackDifficulty > job.startDifficulty`, do not
+     start. This is the direct defence against §9b′.
+  4. **Thread over-provisioning** as passive insurance (1%, 5%, 20% and
+     auto-escalating-to-10x in the four sources surveyed). §9f explains why it
+     is nearly free and none of them do.
+- **Drift tolerance as a cancel criterion**, not a correction: xxxsinx drops a
+  task whose start has drifted past `SPACER/1.5`; alainbryden toasts
+  `Misfire: Hack started N ms too late`; DarkTechnomancer's workers report their
+  own lateness back over a port and the controller absorbs it globally. The
+  common principle: **a late op should be abandoned, not fired late.** Firing
+  late is what turns a timing error into a state error.
+
+Also worth carrying: `port.nextWrite()` is the modern replacement for
+`ns.sleep` in a controller loop, because it guarantees the listener runs
+immediately after the writer with nothing interleaved. Three of the surveyed
+batchers drive their main loop off it.
+
+**What the research could not reach.** Reddit is not fetchable by our tooling,
+and the Bitburner Discord — which multiple maintainer comments identify as
+where the live consensus actually is — is not web-indexed. Several primary
+sources (issue #940, PR #2288, abesto's gitbook) point there explicitly. Treat
+§9j as a survey of what is *published*, not of what is *known*.
+
+
+---
+
 ## Sources
 
 Academic / general:
@@ -935,11 +1773,19 @@ Academic / general:
 - Dantzig 1957 (fractional knapsack greedy) and Dósa 2007 (tight 11/9·OPT+6/9 bound for First-Fit-Decreasing). (§6)
 - Katajainen & Raita / zopfli-style shortest-path optimal parsing for LZ77 — the standard framing of the game's own `comprLZEncode` DP. (§1c)
 
-Community (all **v2-era**; none contradicted the v3 source I read, but their numeric details are stale):
+Batcher references, ordered by how much they should be trusted for v3 (§9i, §9j):
 
-- [Batch HWGW — Steam discussions](https://steamcommunity.com/app/1812820/discussions/4/4731597528368392803/)
-- [HWGW RAM usage — Steam discussions](https://steamcommunity.com/app/1812820/discussions/4/4633736485039828636/)
-- [Kupo's automated HWGW Manager guide](https://steamcommunity.com/sharedfiles/filedetails/?id=2825770722)
+1. **`~/Repos/bitburner/src/Documentation/doc/en/programming/hackingalgorithms.md`** — ships *inside* v3.0.2, so it is version-current by construction. Taxonomy (EHT / controller / proto / shotgun / JIT), the 5-50ms separation figure, the `additionalMsec`-over-`sleep` argument, and the adaptive-worker recommendation all come from here. Rewritten Aug 2025 in [PR #2288](https://github.com/bitburner-official/bitburner-src/pull/2288). Companion: `.../offlineandbonustime.md` on inactive tabs and script restart.
+2. [DarkTechnomancer, *A Beginner's Guide to Batching*](https://darktechnomancer.github.io/) ([repo](https://github.com/DarkTechnomancer/darktechnomancer.github.io)) — v2.5+, post-`additionalMsec`. The glossary the official docs adopted; `spacer = 5`; the cancel-next-hack self-healing rule.
+3. [bitburner-src issue #274](https://github.com/bitburner-official/bitburner-src/issues/274) — v2.2.0. The definitive account of **task collisions** (§9b′), and the reason `sleep`-then-`hack` is structurally broken.
+4. [PR #371](https://github.com/bitburner-official/bitburner-src/pull/371) (d0sboots, Feb 2023) — introduces `additionalMsec`; the design rationale for "launch all four at one instant" in the author's own words. [Issue #940](https://github.com/bitburner-official/bitburner-src/issues/940) — the `setTimeout` signed-32-bit overflow that produced the 1e9 cap.
+5. Published batchers read for their constants: [Tamagosci](https://github.com/Tamagosci/bitburner/blob/main/hacking/JIT.js), [xxxsinx](https://github.com/xxxsinx/bitburner), [jjclark1982](https://github.com/jjclark1982/bitburner-scripts), [alainbryden `daemon.js`](https://github.com/alainbryden/bitburner-scripts/blob/main/daemon.js), [Nolshine](https://github.com/Nolshine/bitburner-scripts), [JasonGoemaat](https://github.com/JasonGoemaat/bitburner-batcher).
+6. **v1/early-v2, numerically stale — cited for how the consensus moved, not for values:** [hackingalgorithms.rst @ v1.6.4](https://github.com/danielyxie/bitburner/blob/v1.6.4/doc/source/advancedgameplay/hackingalgorithms.rst) (20-200ms), [Kupo's HWGW Manager](https://steamcommunity.com/sharedfiles/filedetails/?id=2825770722) (100ms), [Batch HWGW](https://steamcommunity.com/app/1812820/discussions/4/4731597528368392803/) and [HWGW RAM usage](https://steamcommunity.com/app/1812820/discussions/4/4633736485039828636/) Steam threads (200-1000ms).
+
+**Not reached:** r/Bitburner (not fetchable by our tooling) and the Bitburner
+Discord (not web-indexed), which maintainer comments repeatedly identify as
+where the live consensus actually lives. §9j is a survey of the published
+record, not of the state of the art.
 
 Game source (authoritative, all paths relative to `~/Repos/bitburner`):
 `src/Hacking.ts`, `src/Server/formulas/grow.ts`, `src/Server/ServerHelpers.ts`,
@@ -950,4 +1796,9 @@ Game source (authoritative, all paths relative to `~/Repos/bitburner`):
 `src/Hacknet/formulas/HacknetNodes.ts`, `src/Hacknet/data/Constants.ts`,
 `src/StockMarket/StockMarket.ts`, `src/StockMarket/data/Constants.ts`,
 `src/Netscript/RamCostGenerator.ts`, `src/Prestige.ts`, `src/engine.tsx`,
-`src/BitNode/BitNode.tsx`, `src/BitNode/BitNodeMultipliers.ts`.
+`src/BitNode/BitNode.tsx`, `src/BitNode/BitNodeMultipliers.ts`,
+`src/Netscript/NetscriptHelpers.tsx`, `src/NetscriptWorker.ts`,
+`src/NetscriptJSEvaluator.ts`, `src/Netscript/killWorkerScript.ts`,
+`src/Server/Server.ts`, `src/Server/BaseServer.ts`,
+`src/PersonObjects/Person.ts`, `src/PersonObjects/formulas/skill.ts`,
+`src/Hacking/netscriptCanHack.ts`.
