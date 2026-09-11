@@ -1,13 +1,10 @@
+// Dumb grow worker. Does exactly one grow and exits.
+//
+//   run g.js <target> <additionalMsec> [id]
+//
+// See h.js for why the delay is passed as `additionalMsec` rather than slept
+// off first, and why this file has no guards in it.
+
 export async function main(ns) {
-  const target = ns.args[0]
-  const threads = ns.args[1]
-  const delay = ns.args[2]
-
-  if (delay && delay > 0) {
-    await ns.sleep(delay)
-  }
-
-  ns.print(`Starting operation: grow on ${target} in ${threads} threads`)
-  await ns.grow(target, { threads, stock: true })
-  ns.exit()
+  await ns.grow(ns.args[0], { additionalMsec: ns.args[1] || 0 })
 }
