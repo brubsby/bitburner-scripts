@@ -23,6 +23,10 @@ const SETTINGS = {
   // Leave home a little headroom for manual commands and one-off scripts.
   homeReserveRam: 2,
   statusFile: '/tel/auto.txt',
+  // A new target must beat the current one by this much to be worth switching
+  // to. See the comment on shouldSwitch below — without a margin the fleet
+  // never earns anything at all.
+  switchMargin: 1.5,
 }
 
 const PORT_PROGRAMS = [
@@ -129,30 +133,33 @@ function hackChanceAtMinSecurity(ns, host, minSecurity) {
  * ServerGrowthRate) are both exactly 1 in BN1 with no augmentations. They do
  * not cancel out of the ranking, so revisit this after the first install.
  */
+function rateOf(ns, host) {
+  const maxMoney = ns.getServerMaxMoney(host)
+  if (maxMoney <= 0) return 0
+  if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) return 0
+
+  const minSecurity = ns.getServerMinSecurityLevel(host)
+  const phi = hackFractionAtMinSecurity(ns, host, minSecurity)
+  const time = ns.getHackTime(host)
+  if (phi <= 0 || !isFinite(time) || time <= 0) return 0
+
+  // calculateServerGrowthLog(server, 1, player) from src/Server/formulas/grow.ts.
+  const growth = ns.getServerGrowth(host)
+  const adjGrowthLog = Math.min(Math.log1p(0.03 / minSecurity), 0.00349388925425578)
+  const k = adjGrowthLog * (growth / 100)
+  if (!(k > 0)) return 0
+
+  const chance = hackChanceAtMinSecurity(ns, host, minSecurity)
+  const ramSeconds = (time / 1000) * (1.98 / phi + 6.16 / k)
+  return (chance * maxMoney) / ramSeconds
+}
+
 function bestTarget(ns, hosts) {
   let best = null
   let bestRate = -1
 
   for (const host of hosts) {
-    const maxMoney = ns.getServerMaxMoney(host)
-    if (maxMoney <= 0) continue
-    if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) continue
-
-    const minSecurity = ns.getServerMinSecurityLevel(host)
-    const phi = hackFractionAtMinSecurity(ns, host, minSecurity)
-    const time = ns.getHackTime(host)
-    if (phi <= 0 || !isFinite(time) || time <= 0) continue
-
-    // calculateServerGrowthLog(server, 1, player) from src/Server/formulas/grow.ts.
-    const growth = ns.getServerGrowth(host)
-    const adjGrowthLog = Math.min(Math.log1p(0.03 / minSecurity), 0.00349388925425578)
-    const k = adjGrowthLog * (growth / 100)
-    if (!(k > 0)) continue
-
-    const chance = hackChanceAtMinSecurity(ns, host, minSecurity)
-    const ramSeconds = (time / 1000) * (1.98 / phi + 6.16 / k)
-    const rate = (chance * maxMoney) / ramSeconds
-
+    const rate = rateOf(ns, host)
     if (rate > bestRate) {
       bestRate = rate
       best = host
@@ -160,6 +167,36 @@ function bestTarget(ns, hosts) {
   }
 
   return { host: best, rate: bestRate }
+}
+
+/**
+ * Whether to abandon the current target for a better-scoring one.
+ *
+ * Switching is not free: deploy() kills every worker pointed at the old target,
+ * and an operation killed in flight is wasted entirely — no money, no
+ * experience, nothing. Grow is 3.2x hack time and weaken 4x, which on a
+ * mid-level server is minutes.
+ *
+ * The ranking depends on hacking level, and under a large fleet the level
+ * rises every 20-30 seconds. So a supervisor that simply takes the best target
+ * every cycle re-preps forever: money never reaches the floor where the worker
+ * starts hacking, and the fleet earns exactly nothing while still gaining
+ * experience. That is not hypothetical — it is what this script did for over
+ * two hours, with 2.3TB fully utilised and player money frozen to the dollar.
+ *
+ * Two guards. A candidate must beat the incumbent by a clear margin, not merely
+ * tie; and having switched, we hold for one weaken time — the longest operation
+ * in flight — so whatever is already running can land.
+ */
+function shouldSwitch(ns, current, candidate, candidateRate, currentRate, heldForMs) {
+  if (!current) return true
+  if (candidate === current) return false
+
+  // The incumbent stopped being usable at all.
+  if (!ns.hasRootAccess(current) || ns.getServerRequiredHackingLevel(current) > ns.getHackingLevel()) return true
+
+  if (heldForMs < 4 * ns.getHackTime(current)) return false
+  return candidateRate > currentRate * SETTINGS.switchMargin
 }
 
 function usableRam(ns, host) {
@@ -207,6 +244,8 @@ export async function main(ns) {
   }
 
   let cycle = 0
+  let target = null
+  let targetSince = 0
 
   while (true) {
     cycle++
@@ -227,13 +266,22 @@ export async function main(ns) {
 
       const rooted = all.filter((h) => ns.hasRootAccess(h))
 
-      // 2. Choose what to attack.
-      const { host: target, rate } = bestTarget(ns, rooted)
-      if (!target) {
+      // 2. Choose what to attack, but stay put unless the change earns its
+      //    cost — see shouldSwitch.
+      const { host: candidate, rate: candidateRate } = bestTarget(ns, rooted)
+      if (!candidate) {
         ns.print('no viable target yet')
         await ns.sleep(SETTINGS.interval)
         continue
       }
+
+      const currentRate = target ? rateOf(ns, target) : 0
+      if (shouldSwitch(ns, target, candidate, candidateRate, currentRate, Date.now() - targetSince)) {
+        if (target) log.push(`retarget ${target} -> ${candidate}`)
+        target = candidate
+        targetSince = Date.now()
+      }
+      const rate = target === candidate ? candidateRate : currentRate
 
       // 3. Keep every scrap of rooted RAM working on it.
       let threadsStarted = 0
