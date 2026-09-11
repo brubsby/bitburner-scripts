@@ -210,13 +210,13 @@ const minDefenseToSurviveDamage = (damage) => Math.max(0, Math.ceil(damage + 0.0
 
 const locationEntriesToString = (ns, locationEntries) =>
   `[\n${locationEntries.map(locationEntry => ` [def:${
-        ns.nFormat(locationEntry[1].defense_required,'0').padStart(4)}, rep/f:${
-          ns.nFormat(locationEntry[1].rep_gain_per_floor,'0').padStart(5)}, rep:${
-            ns.nFormat(locationEntry[1].rep_gain,'0.00a').padStart(7)}, $/f:${
-              ns.nFormat(locationEntry[1].money_gain_per_floor,'0.00a').padStart(7)}, ${
-                ns.nFormat(locationEntry[1].money_gain,'$0.00a').padStart(8)}, flrs:${
-              ns.nFormat(locationEntry[1].max_clearance_level,'0').padStart(3)}, d:${
-                ns.nFormat(locationEntry[1].difficulty, "0.0")}, ${
+        (locationEntry[1].defense_required).toFixed(0).padStart(4)}, rep/f:${
+          (locationEntry[1].rep_gain_per_floor).toFixed(0).padStart(5)}, rep:${
+            ns.format.number(locationEntry[1].rep_gain, 2).padStart(7)}, $/f:${
+              ns.format.number(locationEntry[1].money_gain_per_floor, 2).padStart(7)}, ${
+                ns.format.money(locationEntry[1].money_gain).padStart(8)}, flrs:${
+              (locationEntry[1].max_clearance_level).toFixed(0).padStart(3)}, d:${
+                (locationEntry[1].difficulty).toFixed(1)}, ${
               locationEntry[0]
             }]`).join(',\n')}\n]`
 
@@ -263,7 +263,7 @@ export async function main(ns) {
       .filter(infiltrationLocationEntry =>
         infiltrationLocationEntry[1].money_gain >= money)
     if (!sortedSurvivableInfiltrationsByRep.length) {
-      ns.tprint(`No survivable infiltrations found that give over ${ns.nFormat(money, "$0.000a")}. Exiting...`);
+      ns.tprint(`No survivable infiltrations found that give over ${ns.format.money(money)}. Exiting...`);
       ns.exit();
       return;
     }
@@ -273,7 +273,7 @@ export async function main(ns) {
       .filter(infiltrationLocationEntry =>
         infiltrationLocationEntry[1].rep_gain >= rep)
     if (!sortedSurvivableInfiltrationsByRep.length) {
-      ns.tprint(`No survivable infiltrations found that give over ${ns.nFormat(rep, "0.000a")} rep. Exiting...`);
+      ns.tprint(`No survivable infiltrations found that give over ${ns.format.number(rep, 3)} rep. Exiting...`);
       ns.exit();
       return;
     }
@@ -320,10 +320,10 @@ export async function main(ns) {
     }, []);
   ns.tprint(`Top Locations where you can survive a failure: ${locationEntriesToString(ns, sortedSurvivableInfiltrationsByRep)}`);
   ns.tprint(`Best location to infiltrate: ${bestCurrentLocationEntry[0]} for ${
-    ns.nFormat(bestCurrentLocationEntry[1].rep_gain, "0.000a")} total rep, ${
-      ns.nFormat(bestCurrentLocationEntry[1].rep_gain_per_floor, "0.000a")} rep per floor, ${
-        ns.nFormat(bestCurrentLocationEntry[1].money_gain, "$0.000a")}, ${
-          ns.nFormat(bestCurrentLocationEntry[1].money_gain_per_floor, "$0.000a")} per floor, and ${
+    ns.format.number(bestCurrentLocationEntry[1].rep_gain, 3)} total rep, ${
+      ns.format.number(bestCurrentLocationEntry[1].rep_gain_per_floor, 3)} rep per floor, ${
+        ns.format.money(bestCurrentLocationEntry[1].money_gain)}, ${
+          ns.format.money(bestCurrentLocationEntry[1].money_gain_per_floor)} per floor, and ${
         bestCurrentLocationEntry[1].damage} damage per hit.`)
   ns.tprint(`Better locations and their defense levels: ${locationEntriesToString(ns, locationMilestonesForDefenseLevels)}`)
 

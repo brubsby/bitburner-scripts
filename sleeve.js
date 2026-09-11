@@ -1,6 +1,6 @@
 import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
-import { factions, companies_with_factions } from 'factions.js'
+import { factions, companies_with_factions } from 'faction.js'
 
 export const sleeve_keys = {
 	SLEEVE_TASKS: "BB_SLEEVE_TASKS",

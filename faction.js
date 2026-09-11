@@ -288,7 +288,7 @@ const toShortName = (factionName) => factions[factionName].short_name || faction
 
 const getAllAugmentationNames = (ns) => [
   ...new Set(faction_names.map(faction_name =>
-    ns.getAugmentationsFromFaction(faction_name)).flat())
+    ns.singularity.getAugmentationsFromFaction(faction_name)).flat())
   ];
 
 const getNonBannedFactionNames = (ns, player) => Object.entries(factions).filter(factionEntry =>
@@ -297,18 +297,18 @@ const getNonBannedFactionNames = (ns, player) => Object.entries(factions).filter
   .map(factionEntry => factionEntry[0]);
 
 const getNonBannedFactionsWithAugmentsForSale = (ns, player, excludedFactions) => {
-  let allOwnedAugmentations = ns.getOwnedAugmentations(true);
+  let allOwnedAugmentations = ns.singularity.getOwnedAugmentations(true);
   return getNonBannedFactionNames(ns, player)
     .filter(factionName => !excludedFactions.includes(factionName))
-    .filter(factionName => ns.getAugmentationsFromFaction(factionName)
+    .filter(factionName => ns.singularity.getAugmentationsFromFaction(factionName)
       .filter(augmentation => !allOwnedAugmentations.includes(augmentation))
       .filter(augmentation => augmentation != "NeuroFlux Governor").length);
 };
 
 const getFactionsWithAugmentsForSale = (ns) => {
-  let allOwnedAugmentations = ns.getOwnedAugmentations(true);
+  let allOwnedAugmentations = ns.singularity.getOwnedAugmentations(true);
   return faction_names
-    .filter(factionName => ns.getAugmentationsFromFaction(factionName)
+    .filter(factionName => ns.singularity.getAugmentationsFromFaction(factionName)
       .filter(augmentation => !allOwnedAugmentations.includes(augmentation))
       .filter(augmentation => augmentation != "NeuroFlux Governor").length);
 };
@@ -333,8 +333,8 @@ const areFactionRequirementsMet = (ns, factionEntry) => {
     (requirements.banned_companies && requirements.banned_companies.find(company => Object.keys(player.jobs).includes(company))) ||
     (requirements.banned_factions && requirements.banned_factions.find(faction => player.factions.includes(faction))) ||
     (requirements.home_ram && requirements.home_ram > ns.getServerMaxRam("home")) ||
-    (requirements.augmentations && requirements.augmentations > ns.getOwnedAugmentations().length) ||
-    (requirements.company_rep && requirements.company_rep > ns.getCompanyRep(requirements.company_name)) ||
+    (requirements.augmentations && requirements.augmentations > ns.singularity.getOwnedAugmentations().length) ||
+    (requirements.company_rep && requirements.company_rep > ns.singularity.getCompanyRep(requirements.company_name)) ||
     (requirements.karma && requirements.karma > player.karma) ||
     (requirements.kills && requirements.kills > player.kills) ||
     (requirements.hacknet_levels && requirements.hacknet_levels > player.hacknet_levels) ||
@@ -382,9 +382,9 @@ const getUnmetRequirements = (ns, factionName) => {
     delete requirements.banned_factions;
   if (requirements.home_ram && requirements.home_ram <= ns.getServerMaxRam("home"))
     delete requirements.home_ram;
-  if (requirements.augmentations && requirements.augmentations <= ns.getOwnedAugmentations().length)
+  if (requirements.augmentations && requirements.augmentations <= ns.singularity.getOwnedAugmentations().length)
     delete requirements.augmentations;
-  if (requirements.company_rep && requirements.company_rep <= ns.getCompanyRep(requirements.company_name)) {
+  if (requirements.company_rep && requirements.company_rep <= ns.singularity.getCompanyRep(requirements.company_name)) {
     delete requirements.company_name;
     delete requirements.company_rep;
   }
@@ -426,8 +426,8 @@ const getUnmetRequirements = (ns, factionName) => {
 };
 
 const getUnownedAugmentationsFromFaction = (ns, factionName) =>
-  ns.getAugmentationsFromFaction(factionName)
-    .filter(augmentation => !ns.getOwnedAugmentations(true).includes(augmentation));
+  ns.singularity.getAugmentationsFromFaction(factionName)
+    .filter(augmentation => !ns.singularity.getOwnedAugmentations(true).includes(augmentation));
 
 const getUnownedFactionAugmentationsDictFromNonBannedFactions = (ns, player, excludedFactions) =>
   getNonBannedFactionsWithAugmentsForSale(ns, player, excludedFactions)
@@ -437,12 +437,12 @@ const getUnownedFactionAugmentationsDictFromNonBannedFactions = (ns, player, exc
           unmet_requirements: getUnmetRequirements(ns, factionName),
           augmentations: getUnownedAugmentationsFromFaction(ns, factionName)
             .map(augmentationName => {
-              let augCost = ns.getAugmentationCost(augmentationName);
+              let augCost = [ns.singularity.getAugmentationRepReq(augmentationName), ns.singularity.getAugmentationPrice(augmentationName)];
               return { [augmentationName]:
                 {
                   reputation_cost: augCost[0],
                   money_cost: augCost[1],
-                  stats: ns.getAugmentationStats(augmentationName),
+                  stats: ns.singularity.getAugmentationStats(augmentationName),
                 }};
             }),
         }
@@ -454,11 +454,11 @@ const getAnnotatedBuyableAugmentationDict = (ns, player, excludedFactions) => {
   getNonBannedFactionsWithAugmentsForSale(ns, player, excludedFactions).forEach(factionName => {
     getUnownedAugmentationsFromFaction(ns, factionName).forEach(augmentationName => {
       if (!augDict[augmentationName]) {
-        let augCost = ns.getAugmentationCost(augmentationName);
+        let augCost = [ns.singularity.getAugmentationRepReq(augmentationName), ns.singularity.getAugmentationPrice(augmentationName)];
         augDict[augmentationName] = {
           reputation_cost: augCost[0],
           money_cost: augCost[1],
-          stats: ns.getAugmentationStats(augmentationName),
+          stats: ns.singularity.getAugmentationStats(augmentationName),
           factions: [factionName],
         };
       } else {
@@ -509,7 +509,7 @@ export async function main(ns) {
               JSON.stringify(requirementEntry[1]) :
               typeof(requirementEntry[1]) == "string" ?
                 requirementEntry[1] :
-                ns.nFormat(requirementEntry[1], "0.000a").padStart(8)}`
+                ns.format.number(requirementEntry[1], 3).padStart(8)}`
         ).join("")
       }`).join("")
     }\n\n`);
@@ -521,8 +521,8 @@ export async function main(ns) {
     ns.tprint(`Remaining ${flag_data["print-augs"]} augs by price:\n[\n${
       annotatedAugsSortedByPrice.map(augEntry =>
         `  [${augEntry[0].padStart(maxAugNameLength + 1)}, rep: ${
-          ns.nFormat(augEntry[1].reputation_cost, "0.000a").padStart(8)}, price: ${
-            ns.nFormat(augEntry[1].money_cost, "$0.000a").padStart(9)}, factions:\n    ${
+          ns.format.number(augEntry[1].reputation_cost, 3).padStart(8)}, price: ${
+            ns.format.money(augEntry[1].money_cost).padStart(9)}, factions:\n    ${
               `[${augEntry[1].factions.map(toShortName).join(',')}]`.padStart(100)
             }],`).join('\n')
     }\n]`);

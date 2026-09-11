@@ -83,13 +83,13 @@ export async function main(ns) {
   }
 
   if (flag_data.tail) {
-    ns.tail()
+    ns.ui.openTail()
   }
 
   while(!ns.scan("home").includes("darkweb")) {
     player = ns.getPlayer();
     if (player.money > tor_cost) {
-      if(ns.purchaseTor()) {
+      if(ns.singularity.purchaseTor()) {
         ns.tprint("Successfully purchased tor router.")
       } else {
         ns.tprint("Failed to purchase tor router for unknown reason.")
@@ -137,7 +137,7 @@ export async function main(ns) {
           ns.print(`Hacking level has not met the required hack level of the minimum ${currentNumPortAbility+1} port server: ${minHackingForPorts[currentNumPortAbility]}, sleeping...`)
           await ns.sleep(5000)
         }
-        let success = ns.purchaseProgram(programToPurchase)
+        let success = ns.singularity.purchaseProgram(programToPurchase)
         if (success) {
           ns.tprint(`Purchased ${programToPurchase} successfully, continuing...`)
           break;
@@ -147,7 +147,7 @@ export async function main(ns) {
       }
     }
   } else {
-    if(ns.purchaseProgram(program)) {
+    if(ns.singularity.purchaseProgram(program)) {
       ns.tprint(`Purchased ${program} successfully, exiting...`)
     } else {
       ns.tprint(`Failed to buy ${program}, exiting...`)

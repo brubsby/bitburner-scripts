@@ -214,8 +214,8 @@ export async function main(ns) {
 
     if (printStatus) {
       ns.tprint(`Current Spend: ${
-        ns.nFormat(moneyToSpend, "$0.000a")}, Total Budget: ${
-          ns.nFormat(budget, "$0.000a")}${payoffTime ? `, Payoff Time: ${payoffTime}` : ``}`);
+        ns.format.money(moneyToSpend)}, Total Budget: ${
+          ns.format.money(budget)}${payoffTime ? `, Payoff Time: ${payoffTime}` : ``}`);
       printStatus = false;
     }
 
@@ -342,9 +342,9 @@ export async function main(ns) {
       if (cacheUpgrades) statusStrings.push(`${cacheUpgrades} cache upgrade(s)`);
       if (nodePurchases) statusStrings.push(`${nodePurchases} new server(s)`);
       ns.tprint(`upgrades: ${statusStrings.join(`, `)}`);
-      ns.tprint(`cost: ${ns.nFormat(currentCost, "$0.000a")
-        }, Δhash/s: ${ns.nFormat(newTotalGainRate - oldTotalGainRate, "0.000")
-        }, Δ%: ${ns.nFormat(((newTotalGainRate/oldTotalGainRate)-1)*100, "0.00")}%`);
+      ns.tprint(`cost: ${ns.format.money(currentCost)
+        }, Δhash/s: ${(newTotalGainRate - oldTotalGainRate).toFixed(3)
+        }, Δ%: ${(((newTotalGainRate/oldTotalGainRate)-1)*100).toFixed(2)}%`);
     }
 
     await ns.sleep(flags['wait-time']);

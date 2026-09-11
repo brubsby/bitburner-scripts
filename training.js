@@ -176,15 +176,15 @@ function startClassFromClassEntry(ns, classEntry) {
   let player = ns.getPlayer();
   let correctLocation = true;
   if (classData.city != player.city) {
-    correctLocation = ns.travelToCity(classData.city)
+    correctLocation = ns.singularity.travelToCity(classData.city)
     if (!correctLocation) {
       throw new Error(`unable to get to ${classData.city}, currently in ${player.city}`);
     }
   }
   if (classType == "uni") {
-    ns.universityCourse(classData.location_name, classData.class_name);
+    ns.singularity.universityCourse(classData.location_name, classData.class_name);
   } else if (classType == "gym") {
-    ns.gymWorkout(classData.location_name, classData.class_name);
+    ns.singularity.gymWorkout(classData.location_name, classData.class_name);
   } else {
     throw new Error("Internal error, class type not determined");
   }
@@ -249,7 +249,7 @@ export async function main(ns) {
   }
 
   if (flag_data.tail) {
-    ns.tail();
+    ns.ui.openTail();
   }
 
   let skills = skill_options[skillOption];
@@ -265,7 +265,7 @@ export async function main(ns) {
       pertinentPlayerSkillEntries = pertinentPlayerSkillEntries.filter(skillEntry => skillEntry[1] < targetLevel);
       if (!pertinentPlayerSkillEntries.length) {
         ns.tprint(`Finished training ${skillOption}: [${skill_options[skillOption]}] to ${targetLevel}`);
-        ns.stopAction();
+        ns.singularity.stopAction();
         runCallbackExit(ns, callback);
         break;
       }
@@ -283,24 +283,24 @@ export async function main(ns) {
     let startTime = performance.now();
     startClassFromClassEntry(ns, getFastestClassForSkill(ns, skill, noTravel, city));
     if (switchTime && pertinentPlayerSkillEntries.length > 1) {
-      while (ns.isBusy()) {
+      while (ns.singularity.isBusy()) {
         await ns.sleep(EPSILON_SLEEP);
         if (performance.now() - startTime > switchTime) {
           break;
         }
         if (time && performance.now() - scriptStartTime > time) {
-          ns.stopAction();
+          ns.singularity.stopAction();
           runCallbackExit(ns, callback);
         }
       }
     } else {
-      while (ns.isBusy()) {
+      while (ns.singularity.isBusy()) {
         await ns.sleep(EPSILON_SLEEP);
         if (performance.now() - startTime > switchTime) {
           break;
         }
         if (time && performance.now() - scriptStartTime > time) {
-          ns.stopAction();
+          ns.singularity.stopAction();
           runCallbackExit(ns, callback);
         }
       }

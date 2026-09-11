@@ -3,7 +3,7 @@ let doc=eval("document"),f=["CSEC","avmnite-02h","I.I.I.I","run4theh111z","w0r1d
 export let main=async ns=>{
 	let s=["home"],p=[""],r={home:s[0]};
     for(let i=0;i<s.length;i++)for(let j of ns.scan(s[i]))if(!s.includes(j))s.push(j),p.push(s[i]),r[j]=r[s[i]]+";connect "+j;
-    let fName=x=>`<a class="tooltip${f.includes(x)?" f":""}${ns.hasRootAccess(x)?" r":""}${(ns.ls(x,".cct").length>0)?" c":""}${(ns.getPurchasedServers().includes(x)||x=="home"||x.includes("hacknet")?" o":"")}">${x}<span class="tooltiptext">${x}\n\nHack Level Req: ${ns.getServerRequiredHackingLevel(x)}\nMoney: ${ns.nFormat(ns.getServerMoneyAvailable(x),'$0.000a')} / ${ns.nFormat(ns.getServerMaxMoney(x),'$0.000a')}\nSecurity: ${ns.getServerSecurityLevel(x)} / Min ${Math.round(ns.getServerMinSecurityLevel(x)*100)/100}\nGrowth: ${ns.getServerGrowth(x)}</span></a>`;
+    let fName=x=>`<a class="tooltip${f.includes(x)?" f":""}${ns.hasRootAccess(x)?" r":""}${(ns.ls(x,".cct").length>0)?" c":""}${(ns.cloud.getServerNames().includes(x)||x=="home"||x.includes("hacknet")?" o":"")}">${x}<span class="tooltiptext">${x}\n\nHack Level Req: ${ns.getServerRequiredHackingLevel(x)}\nMoney: ${ns.format.money(ns.getServerMoneyAvailable(x))} / ${ns.format.money(ns.getServerMaxMoney(x))}\nSecurity: ${ns.getServerSecurityLevel(x)} / Min ${Math.round(ns.getServerMinSecurityLevel(x)*100)/100}\nGrowth: ${ns.getServerGrowth(x)}</span></a>`;
     let connectToServer=x=>{
         doc.getElementById('terminal-input-text-box').value=r[x];
         doc.dispatchEvent(new KeyboardEvent('keydown',{keyCode:13}));

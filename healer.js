@@ -1,9 +1,9 @@
 export async function main(ns) {
     try {
-        ns.hospitalize();
+        ns.singularity.hospitalize();
         while (true) {
             if (ns.getPlayer().hp < ns.getPlayer().max_hp) {
-                ns.hospitalize();
+                ns.singularity.hospitalize();
             }
             await ns.sleep(1000);
         }

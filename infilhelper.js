@@ -147,7 +147,7 @@ main=async ns=>{
                     let startTime = performance.now()
                     while(getGameText() == "Slash when his guard is down!") {
                       let ellapsed = performance.now() - startTime;
-                      changeContent(`Game: Slash the Guard<br> Window time left: ${ns.nFormat(4750 - ellapsed, "0.00").padStart(8)}`);
+                      changeContent(`Game: Slash the Guard<br> Window time left: ${(4750 - ellapsed).toFixed(2).padStart(8)}`);
                       await ns.sleep(50);
                     }
                     break;

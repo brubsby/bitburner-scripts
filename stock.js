@@ -10,12 +10,12 @@ function refresh(ns, stocks, myStocks, unpurchasedStocks){
     myStocks.length = 0;
     for(let i = 0; i < stocks.length; i++){
         let sym = stocks[i].sym;
-        stocks[i].price = ns.getStockPrice(sym);
-        stocks[i].shares = ns.getStockPosition(sym)[0];
-        stocks[i].maxShares = ns.getStockMaxShares(sym);
-        stocks[i].buyPrice = ns.getStockPosition(sym)[1];
-        stocks[i].vol = ns.getStockVolatility(sym);
-        stocks[i].prob = 2 * (ns.getStockForecast(sym) - 0.5);
+        stocks[i].price = ns.stock.getPrice(sym);
+        stocks[i].shares = ns.stock.getPosition(sym)[0];
+        stocks[i].maxShares = ns.stock.getMaxShares(sym);
+        stocks[i].buyPrice = ns.stock.getPosition(sym)[1];
+        stocks[i].vol = ns.stock.getVolatility(sym);
+        stocks[i].prob = 2 * (ns.stock.getForecast(sym) - 0.5);
         stocks[i].expRet = stocks[i].vol * stocks[i].prob / 2;
         corpus += stocks[i].price * stocks[i].shares;
     }
@@ -28,7 +28,7 @@ function refresh(ns, stocks, myStocks, unpurchasedStocks){
 }
 
 function buy(ns, stock, numShares){
-    let result = ns.buyStock(stock.sym, numShares);
+    let result = ns.stock.buyStock(stock.sym, numShares);
     if (result) {
       ns.print(`Bought ${stock.sym} for $${format(numShares * stock.price)}`);
     } else {
@@ -38,7 +38,7 @@ function buy(ns, stock, numShares){
 
 function sell(ns, stock, numShares){
     let profit = numShares * (stock.price - stock.buyPrice) - 2 * commission;
-    let result = ns.sellStock(stock.sym, numShares);
+    let result = ns.stock.sellStock(stock.sym, numShares);
     if (result) {
       ns.print(`Sold ${stock.sym} for profit of $${format(profit)}`);
     } else {
@@ -62,7 +62,7 @@ export async function main(ns) {
     //Initialise
     ns.disableLog("ALL");
     try {
-        if (!ns.purchase4SMarketData()) {
+        if (!ns.stock.purchase4SMarketData()) {
             throw new Error()
         }
     } catch (error) {
@@ -70,7 +70,7 @@ export async function main(ns) {
         ns.exit()
     }
     try {
-        if (!ns.purchase4SMarketDataTixApi()) {
+        if (!ns.stock.purchase4SMarketDataTixApi()) {
             throw new Error()
         }
     } catch (error) {
@@ -81,8 +81,8 @@ export async function main(ns) {
     let myStocks = [];
     let unpurchasedStocks = [];
     let corpus = 0;
-    for(let i = 0; i < ns.getStockSymbols().length; i++)
-        stocks.push({sym:ns.getStockSymbols()[i]});
+    for(let i = 0; i < ns.stock.getSymbols().length; i++)
+        stocks.push({sym:ns.stock.getSymbols()[i]});
 
     while(true){
         corpus = refresh(ns, stocks, myStocks, unpurchasedStocks);

@@ -244,13 +244,13 @@ const goals = {
     name: "RANK",
     valueToMaxFunction: action => action.low_expected_rank_gain_per_second,
     debugStringFunction: (ns, action) =>
-      `-:${ns.nFormat(action.rank_loss, "0.000").padStart(6)
-      } +:${ns.nFormat(action.rank_gain,"0.000").padStart(7)
+      `-:${(action.rank_loss).toFixed(3).padStart(6)
+      } +:${(action.rank_gain).toFixed(3).padStart(7)
       } r/s:${[
         action.low_expected_rank_gain_per_second,
         action.avg_expected_rank_gain_per_second,
         action.high_expected_rank_gain_per_second,
-      ].map(rps => ns.nFormat(rps, "0.000")).join('/')}`,
+      ].map(rps => (rps).toFixed(3)).join('/')}`,
   },
   MONEY: {
     name: "MONEY",
@@ -263,7 +263,7 @@ const goals = {
     valueToMaxFunction: action => 1 / action.chaos_mult,
     filter: (action, city) => action.city == city,
     debugStringFunction: (ns, action) =>
-      `*chaos:${ns.nFormat(action.chaos_mult, "0.000").padStart(6)}`,
+      `*chaos:${(action.chaos_mult).toFixed(3).padStart(6)}`,
   },
   STAMINALOW: {
     name: "STAMINALOW",
@@ -274,8 +274,8 @@ const goals = {
       secondaryGoal.valueToMaxFunction(action) :
       action.net_stamina_per_second,
       debugStringFunction: (ns, action, secondaryGoal) =>
-        `+stam:${ns.nFormat(action.net_stamina, "0.000").padStart(6)
-        } +stam/s:${ns.nFormat(action.net_stamina_per_second, "0.000").padStart(6)
+        `+stam:${(action.net_stamina).toFixed(3).padStart(6)
+        } +stam/s:${(action.net_stamina_per_second).toFixed(3).padStart(6)
         } ${secondaryGoal.debugStringFunction(ns, action)}`,
   },
   STAMINA: {
@@ -285,11 +285,11 @@ const goals = {
       secondaryGoal.valueToMaxFunction(action) +
       action.net_stamina_per_second,
       debugStringFunction: (ns, action, secondaryGoal) =>
-        `+stam:${ns.nFormat(action.net_stamina, "0.000").padStart(6)
-        } +stam/s:${ns.nFormat(action.net_stamina_per_second, "0.000").padStart(6)
+        `+stam:${(action.net_stamina).toFixed(3).padStart(6)
+        } +stam/s:${(action.net_stamina_per_second).toFixed(3).padStart(6)
         } ${secondaryGoal.name.toLowerCase().substring(0,3)
-        }/s+stam/s:${ns.nFormat(secondaryGoal.valueToMaxFunction(action) +
-          action.net_stamina_per_second, "0.000").padStart(7)
+        }/s+stam/s:${(secondaryGoal.valueToMaxFunction(action) +
+          action.net_stamina_per_second).toFixed(3).padStart(7)
         }`,
   },
   ESTIMATE: {
@@ -297,12 +297,12 @@ const goals = {
     valueToMaxFunction: action => action.low_expected_pop_est_percent_per_second,
     filter: (action, city) => action.city == city,
     debugStringFunction: (ns, action) =>
-      `+:${ns.nFormat(action.expected_comm_est, "0.000").padStart(5)
+      `+:${(action.expected_comm_est).toFixed(3).padStart(5)
       } pepps:${[
         action.low_expected_pop_est_percent_per_second,
         action.avg_expected_pop_est_percent_per_second,
         action.high_expected_pop_est_percent_per_second,
-      ].map(rps => ns.nFormat(rps, ".00000")).join('/')}`,
+      ].map(rps => (rps).toFixed(5)).join('/')}`,
   },
   RECRUITMENT: {
     name: "RECRUITMENT",
@@ -565,7 +565,7 @@ const printActions = (ns, actions, attributeFn, secondaryGoal) => {
       action.low_success_chance,
       action.avg_success_chance,
       action.high_success_chance,
-      ].map(chance => ns.nFormat(chance, ".000")).join('/')
+      ].map(chance => (chance).toFixed(3)).join('/')
     } ${attributeFn(ns, action, secondaryGoal)}`).join(''));
 };
 
@@ -670,7 +670,7 @@ export async function main(ns) {
     // remove raids for cities with no communities
     let noRaidCities = bladeburner_city_names.map(cityName => ({
         city: cityName,
-        estimated_communities: ns.bladeburner.getCityEstimatedCommunities(cityName)
+        estimated_communities: ns.bladeburner.getCityCommunities(cityName)
       })).filter(cityDict => cityDict.estimated_communities <= 0)
       .map(cityDict => cityDict.city);
     filteredActions = filteredActions.filter(action =>
@@ -696,7 +696,7 @@ export async function main(ns) {
 
     switchCityAndLevelToAction(ns, nextAction);
     let currentAction = ns.bladeburner.getCurrentAction();
-    if (!ns.isBusy() && !(currentAction.type == nextAction.type
+    if (!ns.singularity.isBusy() && !(currentAction.type == nextAction.type
         && currantAction.name == nextAction.name)) {
       ns.bladeburner.startAction(nextAction.type, nextAction.name);
       let timeToSleep = actionTimeWithBonus(ns, nextAction) * 1000;

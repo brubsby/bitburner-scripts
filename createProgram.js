@@ -143,10 +143,10 @@ export async function main(ns) {
 
     while(true) {
         if (all) program = Object.keys(getCreateProgramTasks(ns)).shift()
-        let startSuccess = ns.createProgram(program)
+        let startSuccess = ns.singularity.createProgram(program)
         if (startSuccess) {
             //await ns.sleep(programs[program].time)
-            while (ns.isBusy()) await ns.sleep(EPSILON_WAIT_TIME)
+            while (ns.singularity.isBusy()) await ns.sleep(EPSILON_WAIT_TIME)
         } else {
             ns.tprint(`Failed to start creating ${program} for an unknown reason.`)
             runCallbackExit(ns, flag_data.callback)

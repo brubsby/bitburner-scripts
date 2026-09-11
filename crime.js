@@ -45,8 +45,8 @@ let EPSILON_SLEEP = 100
 function getExpectedCrimeReturns(ns) {
   //let ns.bitnode
   return CRIME_NAMES.reduce((result, crimeName) => {
-    let crimeChance = ns.getCrimeChance(crimeName)
-    let crimeStats = ns.getCrimeStats(crimeName)
+    let crimeChance = ns.singularity.getCrimeChance(crimeName)
+    let crimeStats = ns.singularity.getCrimeStats(crimeName)
     let failXpFactor = (3 * crimeChance + 1) / 4
     let expectedReturns = {
       money: crimeStats.money * crimeChance,
@@ -121,12 +121,12 @@ export async function main(ns) {
   )
 
   if (flags.tail) {
-    ns.tail();
+    ns.ui.openTail();
   }
 
   let augTimestampEpsilon = 10000;
   let killsDict = getItem(local_storage_keys.kills);
-  let lastAugTimestamp = Date.now() - ns.getTimeSinceLastAug();
+  let lastAugTimestamp = Date.now() - (Date.now() - ns.getResetInfo().lastAugReset);
   // can't find kills or last augmentation didn't occur when we expected it
   if (!killsDict || Math.abs(killsDict.lastAugTimestamp - lastAugTimestamp) >
       augTimestampEpsilon) {
@@ -150,9 +150,9 @@ export async function main(ns) {
     let [bestCrime, crimeReturns] = getBestReturnCrimeFor(ns, statRateToMax)
     ns.print(`${bestCrime} is the best crime for ${statRateToMax} with ${JSON.stringify(crimeReturns,null,2)}`)
     let karmaBefore = ns.heart.break();
-    ns.commitCrime(bestCrime);
+    ns.singularity.commitCrime(bestCrime);
     await ns.sleep(crimeReturns.time);
-    while(ns.isBusy()) {
+    while(ns.singularity.isBusy()) {
       await ns.sleep(EPSILON_SLEEP);
     }
     if (ns.heart.break() != karmaBefore && crimeReturns.kills) {

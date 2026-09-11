@@ -121,7 +121,7 @@ function getMoneyAfterGrowCycles(ns, hostName, growCycles) {
 function getExpectedHackMoney(ns, hostName, hackCycles) {
 // =============================== original line ===============================
 /**
- *   let hackPercent = ns.hackAnalyzePercent(hostName);
+ *   let hackPercent = (ns.hackAnalyze(hostName) * 100);
  */
 // =============================================================================
   let hackPercent = ((...a)=>ns.hackAnalyze(...a)*100)(hostName);
@@ -208,7 +208,7 @@ function findTargetServer(ns, serversList, servers, serverExtraData, heuristic) 
   let weightedServers = serversList.map((hostname) => {
 // =============================== original line ===============================
 /**
- *     const fullHackCycles = Math.ceil(100 / Math.max(0.00000001, ns.hackAnalyzePercent(hostname)));
+ *     const fullHackCycles = Math.ceil(100 / Math.max(0.00000001, (ns.hackAnalyze(hostname) * 100)));
  */
 // =============================================================================
     const fullHackCycles = Math.ceil(100 / Math.max(0.00000001, ((...a)=>ns.hackAnalyze(...a)*100)(hostname)));
@@ -291,7 +291,7 @@ export async function main(ns) {
     }
     const hackableServers = getHackableServers(ns, serverMap.servers);
 
-  	if (!settings.pureTraining && !doneWithTraining && ns.getTimeSinceLastAug() > settings.trainHackingFor) {
+  	if (!settings.pureTraining && !doneWithTraining && (Date.now() - ns.getResetInfo().lastAugReset) > settings.trainHackingFor) {
       if(!doneWithTraining) {
     		ns.tprint("Done training after since it's been more than " + (settings.trainHackingFor/(1000 * 60)) + " min since aug.");
     		doneWithTraining = true;

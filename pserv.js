@@ -52,7 +52,7 @@ function updateServer(ns, serverMap, host) {
     growth: ns.getServerGrowth(host),
     minSecurityLevel: ns.getServerMinSecurityLevel(host),
     baseSecurityLevel: ns.getServerBaseSecurityLevel(host),
-    ram: ns.getServerRam(host)[0],
+    ram: ns.getServerMaxRam(host),
     connections: ['home'],
     parent: 'home',
     children: [],
@@ -68,14 +68,14 @@ function updateServer(ns, serverMap, host) {
 }
 
 function getPurchasedServers(ns) {
-  let purchasedServers = ns.getPurchasedServers();
+  let purchasedServers = ns.cloud.getServerNames();
   if (purchasedServers.length) {
     purchasedServers.sort((a, b) => {
-      const totalRamA = ns.getServerRam(a).shift();
-      const totalRamB = ns.getServerRam(b).shift();
+      const totalRamA = ns.getServerMaxRam(a);
+      const totalRamB = ns.getServerMaxRam(b);
 
       if (totalRamA === totalRamB) {
-        return ns.getServerRam(a).shift() - ns.getServerRam(b).shift();
+        return ns.getServerMaxRam(a) - ns.getServerMaxRam(b);
       } else {
         return totalRamA - totalRamB;
       }
@@ -93,8 +93,8 @@ export async function main(ns) {
 
   ns.tprint(`[${localeHHMMSS()}] Starting ${ns.getScriptName()}}`);
 
-  settings.maxGbRam = ns.getPurchasedServerMaxRam();
-  settings.maxPlayerServers = ns.getPurchasedServerLimit();
+  settings.maxGbRam = ns.cloud.getRamLimit();
+  settings.maxPlayerServers = ns.cloud.getServerLimit();
   settings.gbRamCost *= getBitNodeMultipliers().PurchasedServerCost;
   let hostname = ns.getHostname();
 
@@ -117,8 +117,8 @@ export async function main(ns) {
     let action = purchasedServers.length < settings.maxPlayerServers ? settings.actions.BUY : settings.actions.UPGRADE
 
     if (action == settings.actions.BUY) {
-      let smallestCurrentServer = purchasedServers.length ? ns.getServerRam(purchasedServers[0]).shift() : 0;
-      let targetRam = Math.max(settings.minGbRam, smallestCurrentServer, ns.getServerRam('home')[0]/8);
+      let smallestCurrentServer = purchasedServers.length ? ns.getServerMaxRam(purchasedServers[0]) : 0;
+      let targetRam = Math.max(settings.minGbRam, smallestCurrentServer, ns.getServerMaxRam('home')/8);
 
       if (targetRam === settings.minGbRam) {
         while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost * settings.maxPlayerServers) {
@@ -140,7 +140,7 @@ export async function main(ns) {
         }
         tempTargetRam /= 2;
         let hostname = `pserv-${tempTargetRam}-${createUUID()}`;
-        hostname = ns.purchaseServer(hostname, tempTargetRam);
+        hostname = ns.cloud.purchaseServer(hostname, tempTargetRam);
 
         if (hostname) {
           ns.tprint(`[${localeHHMMSS()}] Bought new server: ${hostname} (${tempTargetRam} GB)`);
@@ -150,8 +150,8 @@ export async function main(ns) {
         }
       }
     } else {
-      let smallestCurrentServer = Math.max(ns.getServerRam(purchasedServers[0]).shift(), settings.minGbRam);
-      let biggestCurrentServer = ns.getServerRam(purchasedServers[purchasedServers.length - 1]).shift();
+      let smallestCurrentServer = Math.max(ns.getServerMaxRam(purchasedServers[0]), settings.minGbRam);
+      let biggestCurrentServer = ns.getServerMaxRam(purchasedServers[purchasedServers.length - 1]);
       let targetRam = biggestCurrentServer;
 
       if (smallestCurrentServer === settings.maxGbRam) {
@@ -171,13 +171,13 @@ export async function main(ns) {
       targetRam = Math.min(targetRam, settings.maxGbRam);
 
       purchasedServers = getPurchasedServers(ns);
-      if (targetRam > ns.getServerRam(purchasedServers[0]).shift()) {
+      if (targetRam > ns.getServerMaxRam(purchasedServers[0])) {
         didChange = true;
         while (didChange) {
           didChange = false;
           purchasedServers = getPurchasedServers(ns);
 
-          if (targetRam > ns.getServerRam(purchasedServers[0]).shift()) {
+          if (targetRam > ns.getServerMaxRam(purchasedServers[0])) {
             if (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= targetRam * settings.gbRamCost) {
               let tempTargetRam = targetRam;
               while (ns.getServerMoneyAvailable('home') * settings.totalMoneyAllocation >= tempTargetRam * settings.gbRamCost && tempTargetRam <= settings.maxGbRam) {
@@ -188,9 +188,9 @@ export async function main(ns) {
 
               await ns.killall(purchasedServers[0]);
               await ns.sleep(10);
-              const serverDeleted = await ns.deleteServer(purchasedServers[0]);
+              const serverDeleted = await ns.cloud.deleteServer(purchasedServers[0]);
               if (serverDeleted) {
-                hostname = await ns.purchaseServer(hostname, tempTargetRam);
+                hostname = await ns.cloud.purchaseServer(hostname, tempTargetRam);
 
                 if (hostname) {
                   ns.tprint(`[${localeHHMMSS()}] Upgraded: ${purchasedServers[0]} into server: ${hostname} (${tempTargetRam} GB)`);
