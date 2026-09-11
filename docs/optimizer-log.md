@@ -539,3 +539,143 @@ New knobs added to the harness this run:
 | `atFixedRam(inner, gb, {ports})` | grant a free fleet and forbid buying, so two policies meet at identical RAM |
 | `INDEX.{live,liveChance,batch,batchChance}` | the four target-ranking indices, and the throughput ceiling |
 | `util` column | time-weighted RAM occupancy, so "idle capacity" can be ruled in or out |
+
+---
+
+# Second run — the batcher, multi-target, and a false alarm
+
+Everything below was measured after the contract harvest, from a snapshot of the
+live world at **hacking 177, 2,092GB, 20 rooted**. The world changed a lot from
+the one sections 1-10 were measured on — silver-helix ($1.125b) and phantasy
+($600m) are now rooted — so the older RAM-crossover numbers do **not** transfer.
+Re-measured below.
+
+## 11. The "$0 income" alarm was a sampling artefact. Income is lumpy, not zero.
+
+Reported: player money frozen at $487,820 for 2h15m and again at $2,305,577,
+with RAM 2354/2380GB busy and exp accruing. Hypothesis offered: `deploy()` in
+`auto.js` kills every worker whose `args[0] !== target`, the ranking moves with
+hacking level, so the fleet perpetually re-preps.
+
+**Both halves are wrong, and the evidence is direct.**
+
+1. *The target does not move.* Scoring the live world with `auto.js`'s shipped
+   `batchChance` index at every hacking level from 150 to 300 gives **phantasy at
+   every single level** (`tools/sim/probe-rank.mjs`). Second place, max-hardware,
+   never gets above 68% of it. There is no retarget to churn on, and the live
+   `early.js` pids confirm it — 23 processes spanning pid 76 to 112, i.e. hours
+   old, never killed.
+2. *The income is not zero.* Polling `/tel/status.txt` every 18 seconds:
+
+```
+23:22:15  money $321.7m   phantasy 49.8%   inc/s $233k
+23:22:35  money $452.9m   phantasy 29.3%   inc/s $325k     <- the payout
+23:22:50  money  $10.7m   phantasy 29.4%   inc/s $328k     <- buyserv.js spent it
+23:25:00  money   $4.9m   phantasy 29.2%   inc/s $302k
+```
+
+The threshold loop on a 2.4TB fleet against a $600m target has a **cycle time of
+15-20 minutes**: the whole fleet grows phantasy from ~29% to the 50% money floor,
+then every worker hacks at once and takes ~$450m in one frame. Any sampler whose
+window is shorter than the cycle sees a flat line. `getTotalScriptIncome()` is a
+*cumulative average since the last aug install*, so it reads near zero for hours
+after a slow start and lags badly — it is the wrong instrument for this.
+
+**This is not a bug to fix; it is the disease sections 4 and 10 describe, in its
+most extreme form.** One fleet-wide operation at a time, serialised on the
+slowest phase. It does not lose money, it just converts almost all of the fleet's
+thread-seconds into grow and weaken. The cure is the batcher, not a patch.
+
+Two real defects in `deploy()` found while checking, neither of them the cause:
+`onTarget` is computed and never used, and the RAM for a fresh `exec` is measured
+after `ns.kill` in the same tick.
+
+## 12. Multi-target: the crossover moved, and host-partitioning is the wrong fix
+
+Re-measured from the live world, fleet pinned to an exact total with
+`atTotalRam`, early.js priced honestly at 2.4GB/thread, 60 minutes, median of 7
+seeds. `1u` is exactly what `auto.js` runs today.
+
+```
+total RAM   1u (live)   1c demand-capped   split 3   flow 5   partition 2/3/5
+  2,092GB     $488m*         $124m*          $152m*    ---      $339m/$152m/$12m*
+  4,096GB      $2.27b        $1.49b          $1.85b    ---       $2.11b/$1.82b/$1.44b
+  8,192GB      $1.99b        $3.55b          $4.47b    $5.00b    $1.10b/$0.88b/$0.97b
+ 16,384GB      $1.80b        $6.44b          $5.80b    $5.00b    $2.15b/$2.28b/$2.59b
+ 32,768GB      $2.42b        $6.75b         $10.94b    $9.23b    $2.55b/$2.56b/$4.21b
+```
+\* 30 minutes, 3 seeds.
+
+**The crossover in the current world is between 4TB and 8TB**, not the 2.5-4.5TB
+section 4 measured — richer targets are rooted now, so one target absorbs more.
+The live fleet passed it at ~10.7TB, so the change is due.
+
+But the obvious contained edit to `auto.js` — give each target a slice of the
+fleet — is **the one arm that does not work**. "Partition" assigns whole hosts to
+the top *k* targets, which is the only shape `auto.js` can express, because it
+launches one `early.js` per host and `early.js` takes its target as an argument
+and then loops forever deciding its own operation. That arm is **worse than
+single-target at every RAM level tested**, by up to 2x at 8TB.
+
+The arms that win are `1c`, `split` and `flow`, and all three share one property
+that has nothing to do with the number of targets: **they only ever launch as
+many threads as the target's current step actually needs, and relaunch when
+those land.** `1c` is *single-target* and beats live by +78% at 8TB and +258% at
+16TB. Splitting across targets adds to that; it does not cause it.
+
+So the finding is:
+
+> The lever is demand-sized dispatch, not target count. Target count is what you
+> do with the RAM that is left over once the first target's pipeline is full.
+
+And demand-sized dispatch is not something `early.js` can do — a worker that
+loops forever on its own thread allocation cannot be told "you are 40 threads too
+many for this step". It requires a controller that sizes each operation centrally
+and re-dispatches on every landing, with short-lived dedicated workers. That is
+the batcher. **There is no contained `auto.js` edit here worth shipping**; a
+partitioned `auto.js` would be a measured regression.
+
+## 13. The batcher — built, and what it is worth
+
+`tools/sim/batcher.mjs`. Design A ("periodic padded burst") from
+`docs/prior-art.md` §9, not the just-in-time design:
+
+- **All four ops of a batch launch in one burst with `additionalMsec` pads**, so
+  all four read the same hacking level and the same security and their relative
+  landing offsets are exact by construction. `engine.mjs` grew `execPad` to model
+  this; the pre-existing `execAt` models the *other* thing (sleep, then read the
+  world at wake time) and is the wrong primitive for a batcher.
+- **Launches are gated on measured minimum security.** prior-art §9b′ identifies
+  the unsafe window — security is elevated for ε after the hack lands and ε after
+  the grow lands, and an op *launched* then runs 10-60x the separation constant
+  longer — as the dominant desync mechanism. Checking
+  `hackDifficulty <= minDifficulty` before launching is the closed-loop form of
+  its "phase-lock to 3.5ε", and unlike the open-loop version it does not assume
+  the schedule is running as planned.
+- **Batch size is chosen, not fixed.** `batchPlan` sweeps hack threads and
+  maximises money per GB of batch. Grow and weaken carry a 10% margin, which is
+  nearly free (§9f: excess grow threads add *no* security and excess weaken is
+  clamped at the floor) and absorbs the level-ups that happen mid-flight.
+- **Target count falls out of the arithmetic.** A target's pipeline saturates at
+  `ceil(weakenTime / 4ε) · batchRam`; targets are added down the ranked list
+  until their saturation RAM covers the fleet. This derives section 4's crossover
+  rather than tuning to it.
+- **Three states per target: prep / batch / drain.** Nothing tries to rescue a
+  desynced pipeline in place — if security climbs past a tolerance or money falls
+  below one, it stops launching, lets everything in flight land, and re-preps.
+  That always terminates.
+
+First measurements, live world, RAM pinned, 20 minutes, seed 1:
+
+```
+                                  earned    $/s at end   util
+3,072GB  threshold loop (shipped) $48.4m      $119k      99%
+3,072GB  batcher, 1 target       $292.7m     $1.63m      68%
+8,192GB  threshold loop (shipped) $478.7m         $0     100%
+8,192GB  batcher                   $1.09b     $6.04m      68%
+```
+
+**2.3x to 6x, and the end-of-run rate — the honest number for a pipeline that
+takes a few minutes to fill — is 14x to 50x.** Utilisation is only 68%, so there
+is more in it; that is the next thing to chase.
+

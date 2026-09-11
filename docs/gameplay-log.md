@@ -367,3 +367,43 @@ run) — confirmed by our own harvest: 4 of 21 contracts paid money, the rest
 paid reputation. **NiteSec's invite (expected once avmnite-02h is
 backdoored) must NOT be auto-accepted** — ask first. No further action
 needed on my end beyond not clicking Join.
+
+**Coordinator confirmed the fix independently** ($2.3m -> $452m in 40s,
+$325k/s) and flagged that my "still waiting" monitor updates were costing
+tokens for no information — noted, stopped holding an idle monitor open,
+switched to interleaving useful checks with actual work instead.
+
+---
+
+## 2026-09-11 ~23:30 UTC — home RAM upgrade (persists across aug resets), another contract cycle
+
+**Home RAM: 16GB -> 32GB, one step only.** Price curve (confirmed against
+the in-game Alpha Enterprises panel, matches the lead's formula using
+*current* ram as the base): 16->32 = $3.191m, 32->64 = $10.083m, 64->128 =
+$31.86m (~$45.1m total for all three). Money had dropped from the
+coordinator's observed $452m to $11.6m by the time I could act — `buyserv.js`
+had already spent most of the windfall on cloud servers in the interim (its
+own reserve logic, not touched). Bought only the affordable step (16->32,
+$3.191m) via Alpha Enterprises > "Upgrade 'home' RAM" button; confirmed via
+poll (`home: {ram: 32}`, money dropped to $4.92m — the gap between $11.6m
+and $4.92m minus the $3.19m purchase is `buyserv.js` continuing to spend in
+parallel). **Did not attempt 32->64 or 64->128 this cycle** — insufficient
+money each time I checked; will resume as balance allows, one step per
+check, never more than to 128GB total per the lead's instruction.
+
+**Contract cycle #2 — nothing to solve.** Paused both `auto.js` (home) and
+`watchdog.js` (pserv-67932) per the now-standard pause-both procedure,
+cleared two orphaned `early.js` PIDs left on home to free RAM for
+`ctscan.js` (12GB) — same pattern as before, `kill <pid>` by PID since
+`kill early.js` by name doesn't match orphans. Result: `ctscan.js: ctscan:
+no contracts on the network right now`. Nothing to solve; not an error.
+Restarted `auto.js` (home, pid 118) and `watchdog.js` (pserv-67932, pid 121)
+afterward, both confirmed via `.telemetry/status.txt`.
+
+**State at end of this cycle:** hacking 189, money ~$4.9m (climbing again
+now auto.js is back up), home 32GB/1 core, 23+/79 rooted. Sector-12 +
+CyberSec joined. Next: keep checking money for further home RAM steps
+(32->64 needs $10.08m) and re-run the contract cycle periodically without
+idle-polling in between — do other useful checks (server roots, buyserv
+health, hacking-level progress toward avmnite-02h's 213) while balances
+rebuild.

@@ -921,3 +921,459 @@ contract value — ~$5.5m/hour — being left on the map. Unowned by me; still u
   *same* script (`early.js`) on *unprepped* targets. A real batcher that holds a target at
   min security should push `F` toward 1.0 — i.e. there may be another ~2.5× in exp on top of
   the retargeting, but that is the optimizer's number to establish, not mine.
+
+---
+---
+
+# Part III — the contract-dilution question, priced. 2026-09-11 23:40Z
+
+Written ~40 minutes after Part II, to answer one question the lead posed: *does joining a
+faction cost us contract money, and if so is NiteSec still worth joining?* The answer turned
+out to be short, and checking it surfaced two larger things — hacking income came alive and is
+now enormous, and the fleet is in a pathological saturation state. Part III supersedes
+Part II where they conflict.
+
+## TL;DR
+
+1. **Joining NiteSec costs exactly $0 of contract income. Accept the invite the second it
+   appears.** The money cliff is entirely between *zero* factions and *one*; it does not
+   deepen with the second, third or tenth. We crossed it at 20:27 and cannot uncross it. §11.
+2. **The Sector-12 mistake is real but small, and an install erases it.** It halved contract
+   rep (already observed live: a contract at 23:16 paid `833.3 rep for Sector-12`), but cost
+   no money. `Player.factions = []` on prestige, so it is gone at install #1. §11.
+3. **Never take a job.** With ≥1 faction, a job converts the 25% `CompanyReputation` roll from
+   faction rep into *company* rep and adds no money. Strictly negative. §11.
+4. **Money is no longer a constraint at all.** Measured after the `auto.js` fix:
+   `moneySourceA.hacking` went **$0 → $772.9m between 23:20 and 23:45 = $1.86b/hour**. The
+   $400m aug budget is ~13 minutes of income. §12.
+5. **⚠️ The fleet is badly saturated and is now losing more than it gains.** 10,352GB, 4,419
+   `early.js` threads, all on `phantasy`, all in lockstep. At 23:38 the *entire fleet* had
+   been blocked on a single 423-second `weaken` for seven minutes, earning 3.5 exp/s and $0.
+   More RAM now makes this **worse**, not better. §13.
+6. **Revised install trigger: NiteSec rep 20,000 + $700m** (up from $400m — money is free now,
+   so buy `ArtificialSynapticPotentiation` too). §14.
+
+---
+
+## 11. Contract reward dilution — the actual arithmetic
+
+### The distribution is uniform over four types
+
+`getRandomReward()` (`src/CodingContract/ContractGenerator.ts:179-190`) builds
+`[FactionReputation, FactionReputationAll, CompanyReputation]` and pushes `Money` when
+`currentNodeMults.CodingContractMoney > 0` (it is 1 in BN1), then returns
+`{ type: getRandomIntInclusive(0, validRewardTypes.length - 1) }`. Note it returns the **index**
+as the type — which is correct only because `CodingContractRewardType` is a numeric enum
+declared in exactly that order (`src/CodingContract/Contract.ts:13-18`:
+`FactionReputation=0, FactionReputationAll=1, CompanyReputation=2, Money=3`).
+
+⇒ **Uniform 25% per type.** No weighting, no scaling by faction count.
+
+### The fallback chain, read precisely
+
+`gainCodingContractReward` (`src/PersonObjects/Player/PlayerObjectGeneralMethods.ts:501-570`).
+`adjustedScaling = rewardScaling / 3`, and **each recursion passes `adjustedScaling` in as the
+next call's `rewardScaling`**, so every hop divides by 3 again:
+
+- `FactionReputation` → if `factionsThatAllowHacking.length === 0`, recurse into **`Money`**
+  (line 517). Otherwise **one faction chosen at random** gets `2500 × difficulty × scaling/3`.
+- `FactionReputationAll` → same zero-faction fallback (line 527). Otherwise
+  `floor(total / n)` to **each** of the n factions.
+- `CompanyReputation` → if `Object.keys(Player.jobs).length === 0`, recurse into
+  **`FactionReputation` or `FactionReputationAll`, 50/50** (lines 540-548) — **not** into
+  `Money`. It only reaches money if you also have zero factions, two hops later.
+- `Money` → `75e6 × difficulty × CodingContractMoney × scaling/3`.
+
+**The lead's framing was one step off:** no-job pushes rewards toward *faction rep*, not toward
+money. Money only appears when the faction list is empty.
+
+### The priced table (difficulty 1, `rewardScaling` 1, BN1)
+
+| situation | money EV / contract | rep EV / contract **to one named faction** |
+| --- | --- | --- |
+| **0 factions, no job** | **$11.111m** | — |
+| 0 factions, **with a job** | $10.417m | — |
+| 1 faction (CyberSec, 20:27–23:12) | **$6.250m** | 485.9 |
+| **2 factions (CyberSec + Sector-12 — now)** | **$6.250m** | **242.8** |
+| 2 factions **+ a job** | $6.250m | 208.2 |
+| **3 factions (+ NiteSec)** | **$6.250m** | **161.8** |
+| 4 factions | $6.250m | 121.4 |
+
+> **The money column is flat at $6.250m for every n ≥ 1.** Faction count changes *only* the rep
+> split. There is no per-faction money tax.
+
+At the ~4.5 contracts/hour spawn rate (`tryGeneratingRandomContract`, 3 tries/10min at
+p ≈ 0.25 when the map is near-empty — `ContractGenerator.ts:16-70`):
+
+| | contract $/hour | rep/hour to the faction you care about |
+| --- | --- | --- |
+| 0 factions | **$50.0m** | 0 |
+| 1 faction | $28.1m | 2,187 |
+| 2 factions (now) | $28.1m | 1,092 |
+| 3 factions (+NiteSec) | $28.1m | **728** |
+
+### Answers to the four questions
+
+**1. Distribution.** Uniform 25%. Money EV per contract is $11.111m with zero factions and no
+job, $6.250m with one or more factions. The cliff is 1.78× and it is a *step*, not a slope.
+
+**2. Join NiteSec?** **Yes, immediately on invite.** It costs $0. NiteSec reputation is
+obtainable no other way, and it is the sole source of `NeuralRetentionEnhancement`
+(exp ×1.25) and `Neurotrainer II` (exp ×1.15) — the difference between an install worth
+exp ×1.13 and one worth exp ×1.63. Declining to join would forfeit that to save nothing.
+Acceptance also switches on **+150 rep/hour of passive gain** that starts the moment you
+join and is *not* split across factions (see Open Questions: `processPassiveFactionRepGain`,
+`src/Faction/FactionHelpers.tsx:132-170`) — so every minute of delay is a minute of NiteSec
+rep burned, against the one quantity that actually gates the install.
+
+**3. Sequencing trick?** **Worth exactly $0 — do not do it.** Delaying NiteSec acceptance
+cannot raise contract money above $6.250m/contract, because CyberSec and Sector-12 are already
+joined and one faction is enough to switch off the money fallback. Every minute of delay
+instead *loses* 728 rep/h of contract drip plus the entire ~3,146 rep/h faction-work stream,
+against the constraint that actually binds. The only window where the trick ever existed was
+before the *first* faction, i.e. before 20:27, and it recurs post-install (§15).
+
+**4. Does a job matter?** **Take no job.** With ≥1 faction a job costs `0.25 × 2500/9 / n`
+faction rep per contract (69.4/n) and returns 1,333 company reputation, which is worth nothing
+on a pure-hacking route. With *zero* factions a job is worse still — $10.417m vs $11.111m EV.
+There is no configuration in which a job helps.
+
+### Live confirmation, and the Sector-12 post-mortem
+
+`.telemetry/contracts.txt` at 23:16:30 — the first contract solved after joining Sector-12:
+
+```
+"rewards": [ "Gained 833.3333333333333 faction reputation for Sector-12" ]
+```
+
+That is `FactionReputation` picking Sector-12 out of two, exactly as modelled. Save at 23:23:
+CyberSec **11,275** rep, Sector-12 **859.6**.
+
+**How much did the mistake cost?** Only rep, and only on contracts solved while both are
+joined. At ~4.5 contracts/h the loss is ~1,092 rep/h that would otherwise reach CyberSec (and
+later NiteSec). Over a 5-hour runway to install #1 that is ~5,500 NiteSec rep — roughly
+1.4 hours of extra unfocused faction clicking. Annoying; not structural.
+
+**And it is erased by the install.** `Player.prestigeAugmentation()` sets
+`this.factions = []` and `this.factionInvitations = []`
+(`src/PersonObjects/Player/PlayerObjectGeneralMethods.ts:109-113`), and
+`Faction.prestigeAugmentation()` sets `isMember = false` after banking favor
+(`src/Faction/Faction.ts:77-85`). No faction in `FactionInfo.tsx` carries the `keep` flag in
+this version — `grep "keep: true"` returns nothing — so **no invites survive either**. Post
+install you are factionless, and §15's zero-faction opening applies in full.
+
+**Corollary — the rule to carry forward:** faction count is a *rep* decision only. The
+question "should I join X" reduces to "will X's share of the rep split cost me more than X's
+augs are worth", and money never enters it. Joining CyberSec + NiteSec and nothing else is
+right; Sector-12 was wrong on rep grounds alone, at roughly the cost stated above.
+
+---
+
+## 12. Hacking income came alive — and money stopped being the constraint
+
+The `auto.js` retarget bug is fixed and the effect is dramatic. From the decoded save
+(`moneySourceA`, which is cumulative since the last install):
+
+| source | lifetime this install |
+| --- | --- |
+| **hacking (scripts)** | **$477.2m** |
+| coding contracts | $100.0m |
+| purchased servers | **−$571.8m** |
+| cash in hand at 23:31 | $3.2m |
+
+Money sat at exactly $2,305,577.31 from 23:07 to 23:20 — hacking income was still $0 for that
+whole window, because `early.js`'s `MONEY_FLOOR = 0.5` had the fleet growing `phantasy` and it
+had not yet crossed 50% of its $600m cap. It crossed, and **$477m arrived in roughly eleven
+minutes.** `buyserv.js` converted all of it: purchased-server RAM went **2,032GB → 10,352GB**
+in the same window.
+
+**Measured, not extrapolated** (`POST /rpc {"method":"getSaveFile"}`, 20s sampling,
+23:24–23:38): the phantasy cycle is `grow → weaken → hack → weaken`, drains the server to zero
+and refills it to its $600m cap each time.
+
+**Two complete cycles measured**, `moneySourceA.hacking` sampled from the save:
+
+| clock | hacking income, cumulative | Δ |
+| --- | --- | --- |
+| 23:20 | $0 | — |
+| 23:31 | $477.2m | +$477.2m |
+| 23:45 | **$772.9m** | +$295.7m |
+
+⇒ **$772.9m in 25 minutes = $515k/s = $1.86b/hour**, lumpy at ~500s granularity (per-cycle
+revenue is pinned at the target's `moneyMax`). `auto.txt` reported `incomePerSec: 289,361` at
+23:25, which is the script-lifetime average and understates the steady state because it
+includes the dead opening. Cash in hand at 23:45 was **$298.9m and climbing** —
+purchased-server RAM has been flat at 10,352GB since 23:29, so `buyserv.js` has stopped
+spending and the aug budget is accumulating unaided.
+
+**This inverts Part II's priorities.** Part II treated $400m as a target to be defended from
+`buyserv.js` over hours. It is now ~20 minutes of income. Consequences:
+
+- **`run buyserv.js --reserve 700e6` costs almost nothing** (§13 explains why: the fleet is
+  already past the point where more RAM raises income). Part II called this "the single most
+  likely way the install slips by hours" — it is still the right command, but the reason is now
+  *the fleet is oversized*, not *the money is scarce*.
+- **Home RAM is affordable well past 128GB.** Part II's $45.1m ladder to 128GB is ~3 minutes of
+  income. 256GB is $145.8m cumulative; 512GB is $464m cumulative. At $1.5b/h even 512GB is
+  ~20 minutes. Home RAM is the *only* purchase that survives an install
+  (`prestigeHomeComputer` clears programs, not `maxRam` — `src/Server/ServerHelpers.ts:226-240`),
+  and home is **still 16GB** — the Part II recommendation was never actioned. **This is now the
+  single best use of money on the board.**
+- **The 1.9^n aug batch multiplier is much less binding than Part II claimed.** See §14.
+
+---
+
+## 13. ⚠️ The fleet is saturated, and more RAM now makes it worse
+
+At 23:26: `ramUsed 10,625 / ramTotal 10,652`, **4,419 `early.js` threads, all 26 processes
+targeting `phantasy`** (`.telemetry/status.txt`). That is the failure mode.
+
+Security changes are **linear in threads** (`src/Server/data/Constants.ts:9-10`:
+`ServerFortifyAmount 0.002`, `ServerWeakenAmount 0.05`; grow fortifies at 2×). So at 4,419
+threads a single full-fleet `grow` raises `phantasy` security by **+17.7**, and a single full
+fleet `hack` by **+8.8** — against a `minDifficulty` of 7. And op time is linear in security:
+
+> `hackTime = 5 × (2.5 · requiredHackingSkill · hackDifficulty + 500) / (hacking + 50)`
+> (`src/Hacking.ts:58-79`), grow ×3.2, weaken ×4.
+
+`phantasy` has `requiredHackingSkill = 100`, so each point of security costs
+`2.5 × 100 = 250` in the numerator. The observed cycle:
+
+| clock | state | what the whole fleet is doing |
+| --- | --- | --- |
+| 23:26 | sec 11.8, $175m | growing (230s) |
+| 23:29 | sec **18.25**, $600m (capped) | grow landed, +6.5 security |
+| 23:29–23:38 | sec 18.25, $600m | **one 423-second `weaken`. 3.5 exp/s. $0 income.** |
+
+Measured exp across the full 342s sample window: **117 exp/s**; across the last 160s of it,
+while blocked on that weaken: **3.5 exp/s**. (`status.txt`'s `expPerSec: 33.04` is a lagging
+average and should not be used — Part II's instrument note stands: sample
+`PlayerSave.exp.hacking` from the save.)
+
+**Three separate defects compound here:**
+
+1. **Single target.** Income per cycle is capped at the target's `moneyMax`. `phantasy` is
+   $600m. Threads beyond the ~1,000 needed to drain and refill it in one op each buy **zero**
+   extra income.
+2. **More threads lengthen the cycle.** Bigger security spikes ⇒ longer weakens ⇒ fewer
+   cycles/hour ⇒ **less** money and less exp. The fleet is past the peak of its own curve.
+3. **Lockstep.** Every process runs the same `if security > min+5 … elif money < 50% … else`
+   ladder against the same target, so they all choose the same op and all block together.
+   There is no pipelining at all.
+
+### Per-thread exp rates, live, hacking 189
+
+Recomputed from the decoded save (`requiredHackingSkill`, `hackDifficulty`, `minDifficulty`,
+`baseDifficulty` all read from `AllServersSave`), on a hack-time basis:
+
+| target | req | cur sec | min sec | exp/s/thread @cur | @min | maxMoney |
+| --- | --- | --- | --- | --- | --- | --- |
+| **joesguns** | 10 | 10.5 | 5 | 0.4703 | **0.5736** | $62.5m |
+| **foodnstuff** | 1 | 7.1 | 3 | **0.5539** | 0.5651 | $50m |
+| sigma-cosmetics | 5 | 7.7 | 3 | 0.4808 | 0.5336 | $58m |
+| nectar-net | 20 | 14.9 | 7 | 0.3455 | 0.5061 | $69m |
+| hong-fang-tea | 30 | 15.0 | 5 | 0.2206 | 0.4097 | $75m |
+| harakiri-sushi | 40 | 9.7 | 5 | 0.2434 | 0.3585 | $100m |
+| n00dles | 1 | 1.9 | 1 | 0.3125 | 0.3139 | $2m |
+| max-hardware | 80 | 15.0 | 5 | 0.1024 | 0.2390 | $250m |
+| **`phantasy` — current target** | 100 | 11.8 | 7 | **0.1251** | 0.1912 | **$600m** |
+| iron-gym | 100 | 30.0 | 10 | 0.0717 | 0.1912 | $500m |
+| silver-helix | 150 | 30.0 | 10 | 0.0488 | 0.1350 | **$1,125m** |
+
+**The key structural fact — and it is why low-`requiredHackingSkill` targets are so much more
+robust:** security enters op time multiplied by `requiredHackingSkill`. A +17.7 security spike
+costs `phantasy` (req 100) **ten times** more seconds than it costs `joesguns` (req 10). So
+`joesguns` tolerates an oversized fleet gracefully and `phantasy` does not. Even *saturated* —
+4,419 threads, security spiked to 22.7 — `joesguns` ops run 22–89s against `phantasy`'s
+141–565s.
+
+### Revised recommendation on the Part II retarget
+
+Part II's milestone #4 ("retarget the fleet off `phantasy` → `joesguns`/`foodnstuff`, ~6× exp,
+free") was **never actioned**, and it is **still directionally right but no longer the top
+item**, because the fleet grew 4.3× in the meantime and dragged exp up with it anyway.
+Restated for current conditions:
+
+- **It is no longer worth a whole-fleet switch.** Hacking is 189 and `avmnite-02h` needs 213 =
+  171,800 more exp. At the ~117 exp/s actually measured that is **~25 minutes**. Retargeting
+  might make it ~6, and would cost ~10× income for the window ($62m/cycle vs $600m/cycle).
+  Saving 19 minutes is not worth giving up the money engine.
+- **What it wants instead is a split, and the split is worth more than the retarget ever was.**
+  There is 10,352GB available and `phantasy` saturates at ~1,000 threads (4GB each ≈ 4TB, and
+  honestly less). Suggested allocation, for whoever owns `auto.js`:
+
+  | slice | target | why |
+  | --- | --- | --- |
+  | ~1,000 threads | `phantasy` | saturates the $600m cap; more threads *lengthen* the cycle |
+  | ~1,000 threads | `silver-helix` | $1,125m cap, already rooted, currently untouched |
+  | remainder (~2,400) | `joesguns` + `foodnstuff`, split | 4.6× the exp/thread of `phantasy` |
+
+  This should raise **both** income (two money targets instead of one, each with a shorter
+  cycle) and exp (most threads on cheap targets) simultaneously. The lockstep problem argues
+  for splitting across targets even at equal exp/thread.
+- **`buyserv.js` should stop buying.** Past saturation, marginal RAM on a single target has
+  negative return. `run buyserv.js --reserve 700e6` both funds the install and stops the bleed.
+  Revisit once the fleet is split across ≥4 targets.
+
+---
+
+## 14. Revised install trigger
+
+Batch costs recomputed with `getAugCost`'s `baseCost × 1.9^(queued)`
+(`src/Augmentation/AugmentationHelpers.ts:120-163`), most-expensive-first, NFG levels last and
+ascending. Aug stats re-extracted from `src/Augmentation/Augmentations.ts`:
+
+| batch | augs | exp | speed | hacking | cost |
+| --- | --- | --- | --- | --- | --- |
+| *CyberSec-only (11,275 rep) — no NiteSec* | | | | | |
+| NT1 + NFG×3 | 4 | ×1.133 | ×1.030 | ×1.030 | **$15.2m** |
+| NT1 + SynEnh + BitWire + CSPG1 + NFG×3 | 7 | ×1.133 | ×1.072 | ×1.136 | $220.3m |
+| *with NiteSec 20,000 rep* | | | | | |
+| NRE + NT2 + NT1 + NFG×3 *(Part II's batch)* | 6 | ×1.629 | ×1.051 | ×1.030 | $390.4m |
+| **NRE + NT2 + NT1 + ASP + NFG×3** | **7** | **×1.711** | ×1.072 | ×1.030 | **$668.7m** |
+| + CSPG2 + CSPG1 + BitWire + SynEnh | 11 | ×1.711 | ×1.137 | ×1.215 | $3,801.7m |
+| *with NiteSec 45,000 rep* | | | | | |
+| all 9 + NFG×3 (adds CRTX42-AA) | 12 | ×1.967 | ×1.137 | ×1.313 | $7,425.8m |
+
+> ### ⇒ **Install when NiteSec reputation reaches 20,000 and cash is ≥ $700m.**
+> Buy, in this order: **NeuralRetentionEnhancement → ArtificialSynapticPotentiation →
+> Neurotrainer II → Neurotrainer I → NeuroFluxGovernor ×3.**
+> **$668.7m, 7 augs, `hacking_exp` ×1.711, `hacking_speed` ×1.072, +3% to everything else.**
+
+Changes from Part II's trigger, and why:
+
+- **$400m → $700m.** `ArtificialSynapticPotentiation` (NiteSec, 6,250 rep, $80m base,
+  exp ×1.05 / speed ×1.02 / chance ×1.05) was excluded by Part II purely on the $242m its
+  1.9^n slot cost. At $1.5b/h that is ~10 minutes of income for +5% exp forever. It is in.
+- **Still stop at 7 augs.** The next step up — adding CSPG2/CSPG1/BitWire/SynEnh — costs
+  **$3.13b more for zero extra exp** (they are hacking/speed/money augs) and only
+  +6% speed / +18% hacking. At ~$1.5b/h that is 2 hours of income for a rounding error against
+  exp ×1.711. **The Part II rule survives: short cycles beat big batches.**
+- **Still do not wait for CRTX42-AA (45,000 rep).** 25,000 more rep is ~6 more hours of human
+  clicking, and it is *cheaper next life* — `repToFavor(20000)` = **29.7 favor** ⇒ +29.7% rep
+  rate on NiteSec after install #1 (`src/Faction/formulas/favor.ts`).
+- **Buy home RAM before the install, not after.** It is the only survivor. At current income,
+  take home to **256GB ($145.8m cumulative from 16GB)** — Part II's 128GB target was priced
+  when $45m was two hours of income; it is now three minutes. Do not buy cores:
+  `1e9 × 7.5^cores`, the first is $1b.
+
+### Is a CyberSec-only install now, skipping NiteSec, better?
+
+No, and the margin is wide. The case *for* it is real — `NT1 + NFG×3` costs **$15.2m** for
+exp ×1.133 and 4 Daedalus augs, banks CyberSec 11,275 rep as **20.6 favor**, and erases the
+Sector-12 membership. But:
+
+- NiteSec is ~25 minutes of exp away (hacking 189 → 213), not hours.
+- The NiteSec batch is worth **exp ×1.711 vs ×1.133** — 51% more exp rate, forever, for the
+  same single reset cost.
+- The binding cost of the NiteSec path is **~5 hours of human faction clicking**, not money and
+  not exp. Those 5 hours can be spent while the fleet keeps earning, so their true cost is only
+  the human's attention.
+- A CyberSec-only install now would throw away the 11,275 CyberSec rep's *usefulness* (it is
+  banked as favor either way) and re-enter the dead zone with a 16GB home, for a multiplier
+  one-third the size.
+
+**Verdict: unchanged from Part II — do not install before NiteSec.** But the reason has shifted:
+Part II said "NiteSec quadruples the value of the same reset"; the correct statement is
+"NiteSec is the only source of exp ×1.25 and ×1.15 augs, it costs no money to join, and it is
+25 minutes of exp away."
+
+### The runway, re-timed
+
+| gate | quantity | rate | time |
+| --- | --- | --- | --- |
+| hacking 196 → 213 (23:45) | 161,000 exp | **88 exp/s measured** over 8.7 min | **~30 min** |
+| NiteSec 0 → 20,000 rep | 20,000 | 3,146/h unfocused + 728/h contracts + **150/h passive** | **~5.0 h** |
+| cash $299m → $700m | $401m | **$1.86b/h measured** | **~13 min** |
+
+**Money is the *shortest* pole now, not the longest.** Reputation is ~10× everything else.
+
+**Reputation is the runway and nothing else is close.** The human should start NiteSec hacking
+work the minute the invite lands; unfocused is fine (×0.8, `Player.focusPenalty()`,
+`PlayerObjectGeneralMethods.ts:622-626`) and scripts run either way.
+
+---
+
+## 14b. Revised milestone list (supersedes Part II §10)
+
+| # | Milestone | Trigger | Owner | Status @23:45 |
+| --- | --- | --- | --- | --- |
+| 1 | Harvest contract backlog | — | — | done, $100m + 11,275 CyberSec rep |
+| 2 | CyberSec joined | — | — | done |
+| 3 | FTPCrack on home | — | — | done |
+| 4 | ~~Retarget whole fleet to joesguns~~ | — | auto.js | **withdrawn** — replaced by #5 (§13) |
+| 5 | **Split the fleet: ~1k threads `phantasy`, ~1k `silver-helix`, rest `joesguns`/`foodnstuff`** | **now** | auto.js | 10,352GB all on one target, lockstep-blocked (§13) |
+| 6 | **`run buyserv.js --reserve 700e6`** | **now** | game-player | appears already stopped; confirm |
+| 7 | **Home RAM 16 → 256GB, $145.8m** | **now** — 5 min of income | game-player (UI) | still 16GB; only purchase that survives an install |
+| 8 | **Backdoor `avmnite-02h`** | **hacking 213** (exact, from save) | game-player | ~30 min away at 88 exp/s |
+| 9 | **Accept NiteSec the instant it is offered** | on invite | game-player | costs $0, +150 rep/h passive immediately (§11) |
+| 10 | **Human works NiteSec hacking contracts, unfocused** | on invite | game-player | **~5 h — this is the whole runway** (§14) |
+| 11 | **Install: NRE + ASP + NT2 + NT1 + NFG×3, $668.7m** | **NiteSec 20,000 rep + $700m** | game-player | exp ×1.711, 7/30 Daedalus augs |
+| 12 | Post-install: **join nothing, take no job** until fleet rebuilt | — | all | contracts pay $11.111m vs $6.250m (§15) |
+| 13 | Fix `contract.js` Caesar cipher solver | anytime | whoever owns it | ~20% of contract value, ~$10m/h post-install |
+
+**Do not** join Netburners, Tian Di Hui, or any further faction: they cost no money but each
+one cuts the contract-rep share reaching NiteSec by another slice (§11), and their augs are
+hacknet/charisma traps (Part I §2).
+
+---
+
+## 15. The post-install opening — unchanged, and now the *only* place sequencing pays
+
+Because faction membership is wiped (§11) and the map respawns empty, install #1 lands you at
+zero factions, where contracts pay **$11.111m** EV instead of $6.250m — a **1.78×** multiplier
+on the only income that exists during the dead zone.
+
+1. **Accept no faction invite, and take no job,** until the fleet is rebuilt. CyberSec's invite
+   will not survive the install anyway (no `keep` flag), so it costs nothing to leave `CSEC`
+   un-backdoored for the first hour.
+2. **Run `contract.js` from minute one.** At 256GB of home RAM its structural 21.8GB fits
+   trivially and the Part I reader/solver split is unnecessary.
+3. ⚠️ **`contract.js` still cannot solve `Encryption I: Caesar Cipher`** — 1 of only 5 types
+   that can spawn at `maxDif = 1`, so ~20% of contract value, now worth **~$10m/hour** at the
+   zero-faction rate. Flagged in Part I §5 and Part II §10; still unfixed at 23:40. Not my file.
+4. Buy cloud RAM with everything, **split across ≥4 targets from the start** (§13).
+5. Join CyberSec, then NiteSec, only once hacking income dominates contract income — which,
+   given §12, will now be within the first hour, not several.
+
+---
+
+## Open questions after Part III
+
+- ~~Sustained income is measured over one cycle~~ — **resolved, two full cycles measured.**
+  `moneySourceA.hacking` went **$0 (23:20) → $477.2m (23:31) → $772.9m (23:45)**. That is
+  **$772.9m in 25 minutes = $515k/s = $1.86b/hour**, across two complete drain cycles of
+  ~500s each yielding $477m and $296m. Cash in hand at 23:45 is **$298.9m and rising** —
+  `buyserv.js` has stopped buying (purchased RAM flat at 10,352GB since 23:29), so the
+  install budget is now accumulating on its own. **$700m is ~15 minutes away.**
+- ~~CyberSec and Sector-12 rep both rising at 0.042 rep/s with no work in progress~~ —
+  **resolved: it is passive faction reputation gain**, which neither Part I nor Part II
+  accounted for. `processPassiveFactionRepGain` (`src/Faction/FactionHelpers.tsx:132-170`,
+  called from `src/engine.tsx:181` at 5 cycles/s, `FactionPassiveRepGain = 1` in BN1):
+
+  > `favorMult = min(0.1, favor/1000 + 0.01)`;
+  > `rate = max(hRep·favorMult, sRep·favorMult, fRep·favorMult, **1/120**)` per cycle.
+
+  At favor 0 and hacking 189, `hRep × favorMult = 0.00194`, which is below the `1/120`
+  floor — so **every joined faction earns a flat `5/120` = 0.04167 rep/s = 150 rep/hour**,
+  passively, forever. Measured CyberSec gain over 523s: **0.0417 rep/s**, matching the floor
+  to four digits.
+
+  **Two consequences, both favouring joining NiteSec sooner:**
+  1. Passive rep is granted **per faction, independently — it does not split.** Unlike
+     contract rep, joining more factions does not dilute it. Joining NiteSec is worth
+     **+150 rep/hour from the moment of acceptance**, on top of everything else.
+  2. It only escapes the `1/120` floor once `favor` is high enough that
+     `hacking/975 × (favor/1000 + 0.01) > 1/120`, i.e. `favor > ~33` at hacking 213. After
+     install #1 banks NiteSec 20,000 rep as **29.7 favor**, passive rep roughly doubles to
+     ~280 rep/h and keeps scaling. Small, but it compounds in the right direction and is
+     another reason short install cycles beat long ones.
+- **`ArtificialSynapticPotentiation`'s exp multiplier is ×1.05, not the ×1.071 Part II
+  listed** (re-read from `Augmentations.ts:62`). Part II's §7 table also listed
+  **`EnhancedMyelinSheathing` as a NiteSec aug at 15,000 rep / $250m — that is wrong.** It is
+  **100,000 rep / $1.375b** and sold by Fulcrum Secret Technologies, BitRunners and
+  The Black Hand only. Corrected here; it is not reachable this life.
+- The `F ≈ 0.389` fit from Part II §6 no longer holds at this thread count — the implied `F`
+  during the saturated weaken is ~0.06. `F` is not a constant; it is a function of
+  threads-per-target. Whoever models this should treat the security spike as the state
+  variable, not fit a scalar.
