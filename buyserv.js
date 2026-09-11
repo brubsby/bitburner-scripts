@@ -88,6 +88,12 @@ export async function main(ns) {
         ),
         'w',
       )
+      // The daemon only mirrors /tel/* off home, so ship it there when this
+      // is running anywhere else.
+      if (ns.getHostname() !== 'home') {
+        ns.scp(SETTINGS.statusFile, 'home', ns.getHostname())
+      }
+
       if (log.length) ns.print(log.join('; '))
     } catch (err) {
       ns.print(`error: ${err}`)
