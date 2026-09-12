@@ -18,6 +18,8 @@
 //      redeployed, so RAM freed by a kill sits idle until the next cycle and a
 //      worker that finishes an op picks its own next op with no supervision.
 //   4. ns.exec returns 0 when RAM is short, silently.
+//   5. auto.js refuses to root a server above its hacking level, which the game
+//      does not require. See autoJsRoot() below.
 
 import {
   calculateHackingTime,
@@ -53,6 +55,39 @@ export const AUTO_DEFAULTS = {
   /** "live" = M*phi/T (pre-23:17 UTC), "batch" = the shipped ratio. */
   index: "batch",
 };
+
+/**
+ * `auto.js` tryRoot, transcribed — **including its bug**.
+ *
+ * auto.js:59 (and batch.js:107, and spider.js:67) does
+ *
+ *     if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) return false
+ *
+ * before attempting to nuke. The game requires no such thing: NUKE.exe and
+ * ns.nuke both test only `openPortCount >= numOpenPortsRequired`
+ * (src/Programs/Programs.ts:68, src/NetscriptFunctions.ts:504-519), and only
+ * *hack* is level-gated (src/Hacking/netscriptCanHack.ts:39). `sim.nuke()` was
+ * corrected to match the game, so the replica has to re-impose the gate here or
+ * it would give the as-run supervisor a fleet the as-run supervisor never had —
+ * on the burst window, 268GB against the 220GB the save records, which is how
+ * this was caught.
+ *
+ * Reproducing a program's bugs is the entire job of this file.
+ */
+export function autoJsRoot(sim) {
+  const ports = sim.portsOpenable;
+  let rooted = 0;
+  for (const s of sim.servers.values()) {
+    // darkweb is a DarknetServer with no ports/level fields; ns.nuke throws on
+    // it. See Sim.nuke.
+    if (typeof s.numOpenPortsRequired !== "number") continue;
+    if (s.hasAdminRights || s.numOpenPortsRequired > ports) continue;
+    if (!(s.requiredHackingSkill <= sim.hacking)) continue; // <- the bug, deliberately
+    s.hasAdminRights = true;
+    rooted++;
+  }
+  return rooted;
+}
 
 // ---------------------------------------------------------------------------
 // auto.js's ranking, transcribed. Note two details that matter and that a
@@ -218,7 +253,7 @@ export function autoJs(overrides = {}) {
       this.cycles++;
 
       // 1. root what is in reach
-      sim.nuke();
+      autoJsRoot(sim);
 
       const rooted = [...sim.servers.values()].filter((s) => s.hasAdminRights);
 
@@ -306,7 +341,7 @@ export function autoJsEv(overrides = {}) {
       if (sim.t < this.nextPoll) return;
       this.nextPoll = sim.t + opts.intervalMs;
       this.cycles++;
-      sim.nuke();
+      autoJsRoot(sim);
 
       const rooted = [...sim.servers.values()].filter((s) => s.hasAdminRights);
       let candidate = null;

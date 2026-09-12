@@ -27,6 +27,13 @@ const SERVER_FIELDS = [
   "cpuCores",
   "serversOnNetwork",
   "programs",
+  // The game's actual rooting criterion is `openPortCount >=
+  // numOpenPortsRequired` (src/Programs/Programs.ts:68), not "how many openers
+  // do I own" — ports stay open once opened. The engine re-derives it from
+  // owned programs, which is exact from a fresh start and an approximation
+  // from --live; carrying the real count lets a caller tell the difference.
+  "openPortCount",
+  "backdoorInstalled",
 ];
 
 /** Pull a fresh snapshot from the running game via the daemon's control port. */
@@ -67,6 +74,18 @@ export function snapshotFromSave(save) {
       money: player.money,
       hackExp: player.exp?.hacking ?? 0,
       hacking: player.skills?.hacking ?? 1,
+      // Every game formula that takes a Person reads person.mults.* and
+      // person.skills.intelligence: calculateHackingChance and
+      // calculateHackingTime both apply calculateIntelligenceBonus, and
+      // calculatePercentMoneyHacked / calculateServerGrowthLog /
+      // calculateHackingExpGain each apply a different mult
+      // (src/Hacking.ts, src/Server/formulas/grow.ts). The engine used to
+      // hardcode all of them to 1, which is exactly right for BN1 with no
+      // augmentations and silently wrong the instant the first install lands —
+      // a hacking_money aug alone would make every dollar figure in the
+      // simulator low. Carry the real values so that day is not a surprise.
+      mults: player.mults ?? null,
+      intelligence: player.skills?.intelligence ?? 0,
       homeRam: home?.maxRam ?? 8,
       homeCores: home?.cpuCores ?? 1,
       // Owned programs live on the home *server* record, not on the player.
@@ -86,9 +105,27 @@ export function snapshotFromSave(save) {
  */
 export function freshStart(snapshot) {
   const world = structuredClone(snapshot);
-  world.player = { money: 1000, hackExp: 0, hacking: 1, homeRam: 8, homeCores: 1 };
+  // No augmentations installed, so every multiplier is 1 and intelligence is 0
+  // — the engine's defaults. Stated rather than omitted so a reader does not
+  // have to know that leaving `mults` off means "all ones".
+  world.player = {
+    money: 1000, hackExp: 0, hacking: 1, homeRam: 8, homeCores: 1,
+    mults: null, intelligence: 0,
+  };
   world.player.programs = [];
   world.player.hasTor = false;
+  // A pristine BitNode has no cloud servers and no darkweb. The save does, and
+  // leaving them in handed every "fresh" run this playthrough's purchased fleet
+  // for nothing: 1,728GB across four servers on the current snapshot. They came
+  // back as soon as the run owned enough port openers to clear their
+  // numOpenPortsRequired, and they did not count against getCloudServerLimit(),
+  // so a strategy could end a run with 29 cloud servers where the game caps at
+  // 25 (src/Server/data/Constants.ts CloudServerLimit). darkweb is created only
+  // when TOR is bought (src/DarkWeb), and the engine infers hasTor from its
+  // presence, so it has to go too.
+  world.servers = world.servers.filter(
+    (s) => s.hostname === "home" || (!s.purchasedByPlayer && s.hostname !== "darkweb"),
+  );
   for (const s of world.servers) {
     if (s.hostname === "home") {
       s.maxRam = 8;

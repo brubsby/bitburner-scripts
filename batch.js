@@ -104,7 +104,16 @@ function scanAll(ns) {
 
 function tryRoot(ns, host) {
   if (ns.hasRootAccess(host)) return true
-  if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) return false
+  // Deliberately no hacking-level check. Rooting is gated on open ports alone
+  // (ns.nuke, src/NetscriptFunctions.ts:504-520, and NUKE.exe itself at
+  // src/Programs/Programs.ts:68); only *hacking* a server is level-gated
+  // (netscriptCanHack.ts). A server far above our level is therefore still
+  // rootable, and its RAM is still ours to run workers on — which is all we
+  // want from most of the network.
+  //
+  // auto.js, spider.js and an earlier version of this function all tested the
+  // level here and so refused RAM they were entitled to: 384GB of 404GB
+  // withheld at level 1, and 688GB withheld on the live save.
   let opened = 0
   for (const { file, fn } of PORT_PROGRAMS) {
     if (!ns.fileExists(file, 'home')) continue
@@ -325,25 +334,32 @@ export async function main(ns) {
     return
   }
 
-  // A previous instance's workers are killed rather than adopted. Adopting them
-  // means starting with the fleet's RAM full of operations this controller did
-  // not plan and cannot see the schedule of, which can stall prep for a whole
-  // weakenTime. Killing costs at most one batch in flight and makes the restart
-  // deterministic — and a half-killed batch simply looks like a desync, which
+  // Clear the fleet before starting.
+  //
+  // Two things get killed. `early.js` is the threshold loop this replaces: it
+  // fills every host it is given and never exits, so leaving even one running
+  // means the batcher cannot place a batch — observed live, 7.5 minutes up,
+  // 99.9% RAM used, 248 placement failures and zero batches launched. And a
+  // previous instance's own workers are killed rather than adopted, because
+  // adopting them means starting with the fleet full of operations this
+  // controller did not plan and cannot see the schedule of, which can stall prep
+  // for a whole weakenTime. Killing costs at most one batch in flight and makes
+  // a restart deterministic; a half-killed batch just looks like a desync, which
   // the prep path already handles.
+  const MINE = [SETTINGS.workers.hack, SETTINGS.workers.grow, SETTINGS.workers.weaken]
+  const CLEAR = flags.adopt ? ['early.js'] : [...MINE, 'early.js']
   let killed = 0
-  if (!flags.adopt) {
-    for (const host of scanAll(ns)) {
-      if (!ns.hasRootAccess(host)) continue
-      for (const p of ns.ps(host)) {
-        if (p.filename === SETTINGS.workers.hack || p.filename === SETTINGS.workers.grow || p.filename === SETTINGS.workers.weaken) {
-          ns.kill(p.pid)
-          killed++
-        }
+  for (const host of scanAll(ns)) {
+    if (!ns.hasRootAccess(host)) continue
+    if (only.length && !only.includes(host)) continue
+    for (const p of ns.ps(host)) {
+      if (CLEAR.includes(p.filename)) {
+        ns.kill(p.pid)
+        killed++
       }
     }
   }
-  ns.tprint(`batch.js on ${self}: workers ${ram.hack}/${ram.grow}/${ram.weaken}GB, killed ${killed} stale`)
+  ns.tprint(`batch.js on ${self}: workers ${ram.hack}/${ram.grow}/${ram.weaken}GB, cleared ${killed} process(es)`)
 
   /** Per-target state. phase is one of prep | batch | drain. */
   const S = new Map()
@@ -434,23 +450,25 @@ export async function main(ns) {
         if (Number(flags.targets) > 0) {
           want = ranked.slice(0, Number(flags.targets)).map((r) => r.t.host)
         } else {
-          // The count falls out of the arithmetic rather than being tuned: a
-          // target's pipeline saturates at ceil(weakenTime / 4*spacing) batches,
-          // and past that extra RAM on the same target buys nothing because the
-          // batches would have to land closer than one separation. Keep adding
-          // targets down the ranked list until their saturation RAM covers the
-          // fleet. This is the same crossover section 4 of the optimizer log
-          // measured empirically — one target saturates in the low TB.
-          want = []
-          let covered = 0
-          for (const { t } of ranked) {
-            if (want.length >= SETTINGS.maxTargets) break
-            want.push(t.host)
-            const p = planBatch(t, ram, totalRam / want.length / 4)
-            const depth = Math.ceil((t.hackTime * 4) / (4 * SETTINGS.spacing))
-            covered += p ? depth * p.gb : totalRam
-            if (covered >= totalRam) break
-          }
+          // Measured, not derived. The analytic saturation point — a target
+          // holds ceil(weakenTime / 4*spacing) batches in flight — is a bound
+          // the launch loop never reaches in practice (placement fails, safe
+          // windows close, the controller ticks at a finite rate), and trusting
+          // it left 42% of a 12TB fleet idle in simulation. A closed-loop "add a
+          // target while utilisation is low" rule was worse still: it ratchets,
+          // and each addition halves the leading target's share and costs a
+          // fresh prep.
+          //
+          // Simulated at 40 minutes, 3 seeds, from the live world with RAM
+          // pinned, two targets measured best or within 0.3% of best at every
+          // fleet size tested; three only catches up past ~24TB:
+          //
+          //       fleet    1 target   2 targets   3 targets   threshold loop
+          //     4,096GB      $2.07b      $2.61b           -                -
+          //     8,192GB      $5.55b      $6.75b           -           $1.08b
+          //    12,288GB      $7.51b     $10.91b      $5.95b           $1.68b
+          //    32,768GB     $19.75b     $24.67b     $24.59b         $973.0m
+          want = ranked.slice(0, totalRam >= 24576 ? 3 : 2).map((r) => r.t.host)
         }
         // Never abandon a pipeline mid-flight: keep any dropped target that
         // still has operations in the air, and let it drain on its own.

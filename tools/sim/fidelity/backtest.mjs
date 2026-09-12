@@ -26,7 +26,7 @@
 
 import { Sim } from "../engine.mjs";
 import { loadSnapshot } from "../world.mjs";
-import { autoJs, autoJsEv } from "./supervisor.mjs";
+import { autoJs, autoJsEv, autoJsRoot } from "./supervisor.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -327,9 +327,12 @@ export function runWindow(snapshot, history, win, makeStrategy, { seeds = 5, net
   for (let seed = 1; seed <= seeds; seed++) {
     const world = worldAt(snapshot, a, { netState, programs: win.programs });
     const sim = new Sim(world, { seed });
-    // Root what the level and programs allow, so the reconstruction's rooted
-    // count can be checked against the one the save recorded.
-    sim.nuke();
+    // Root what the *supervisor that was running* would have rooted, not what
+    // the game permits. auto.js refuses to nuke above its hacking level even
+    // though NUKE.exe does not care (see autoJsRoot), and the fleet the save
+    // recorded is auto.js's, so using sim.nuke() here inflates the
+    // reconstruction — 268GB against the recorded 220GB on the burst window.
+    autoJsRoot(sim);
     const rootedAtStart = [...sim.servers.values()].filter((s) => s.hasAdminRights).length;
     const fleetRamAtStart = sim.totalRam();
     const strategy = makeStrategy();

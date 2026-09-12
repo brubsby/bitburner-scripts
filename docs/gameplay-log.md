@@ -733,3 +733,58 @@ currently reads `0` — that may be the intended knob.
 — the fleet transition and collision cleanup ate the whole session.
 Worth a pass next cycle once `batch.js` is confirmed stable and out of
 `prepping`.
+
+## 2026-09-12 ~00:29 UTC — contract cycle run, batcher confirmed healthy
+
+**Picked up mid-run** with `batch.js` already cut over and running (health
+`ok` this time, not `prepping` as the previous session left it — the
+cutover held). NiteSec unfocused faction work was active in the browser
+at pickup: 2.491k rep, 1.272 rep/sec.
+
+**Contract cycle:** `run ctscan.js` first failed with "Error: terminal
+input not found — is the Terminal tab open?" — the browser was sitting on
+the Faction-work full-screen view, which has no Terminal tab open
+underneath. Clicked "Do something else simultaneously" then Terminal in
+the sidebar; faction work kept running in the background throughout (this
+is exactly the split the game supports — worth remembering `cmd.js`
+needs the Terminal tab actually open, not just the game window active).
+
+Once the terminal was open, `ctscan.js` still couldn't start: home had
+only 11.45GB free against its 12GB requirement (batch.js at 95.5% util).
+Per the brief, ran `run killall.js h.js g.js w.js` to clear batcher
+*workers* only (killed 300 processes across 42 hosts), then `ctscan.js`
+started immediately after. Found 2 contracts. `ctsolve.js --dry` checked
+sane (Find Largest Prime Factor @ syscore -> 213334073, Subarray with
+Maximum Sum @ The-Cave -> 23), then `ctsolve.js` for real: **both solved,
+$25.000m each ($50m total), 0 wrong, 0 skipped**. A follow-up `ctscan.js`
+a minute later found nothing further ("no contracts on the network right
+now") — expected, cycle exhausted for now at the ~4-5/hr respawn rate the
+brief describes.
+
+**Batcher recovery confirmed:** RAM util dropped to 43.6% right after the
+killall, climbed back to 60.2% within about a minute as `batch.js`
+re-dispatched workers on its own — no manual restart needed, matching the
+brief's description exactly. `batches` climbed 15 -> 48 -> 85 and `earned`
+rose 96.7m -> 208.5m over the same window. `health` stayed `ok` the whole
+time, never `stalled`.
+
+**NiteSec rep, confirmed via browser (no terminal/telemetry path to it —
+there's no terminal command for faction rep and `state.json` doesn't carry
+it):** 2.491k at pickup -> 2.613k at end of session, rate steady at
+~1.02-1.27 rep/sec throughout, unaffected by the terminal work, the
+killall, or the tab switch. Noticed but did not touch: the Factions ->
+NiteSec page now shows a "Special Campaign" section with an "Execute the
+formation plan" button that wasn't mentioned in the brief — flagging
+since it's new UI, not clicking it without knowing what it does.
+
+**Rooted/servers:** 44/97 now (was 42/95) — 2 more servers rooted and 2
+more discovered since the last log entry, no action taken, batch.js is
+using 42 of the 44 rooted hosts (the 2 unused are almost certainly `CSEC`
+and `avmnite-02h`, both 0 max-money, so nothing to flag there).
+
+**End state:** `batch.js` health `ok`, 3 targets (`phantasy` batch @ 100%
+money, `max-hardware` batch @ 100% money, `omega-net` still in prep @ 4%
+money / sec 25 vs min 8). Money $702.9m (parked just above the $700m
+reserve line — correct). Hacking level 248. Factions unchanged: NiteSec,
+Sector-12, CyberSec. No soft reset, no aug install, no browser tab other
+than 413952705 used.

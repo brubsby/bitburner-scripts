@@ -678,3 +678,650 @@ before the first line of output) and slower when several runs are in flight at
 once. Redirect to a file and read it rather than piping through `tail` — a bare
 `node -e 'import(...)'` never exits, because jsdom holds the event loop open,
 so a pipe will appear to hang forever.
+
+---
+
+# Part II — the systematic audit (2026-09-11, second fidelity agent)
+
+The `freshStart()` fix from Part I has been applied by the lead. Everything
+below is new work: re-validation, re-measurement of the optimizer's conclusions
+on the corrected world, and an audit of the rest of `tools/sim/` and of the
+root scripts.
+
+## 9. Re-validation: the backtest is unchanged, and that is the expected result
+
+```
+$ node tools/sim/fidelity/backtest.mjs --seeds 5
+burst  actual $4.30m   fixed $6.01m   err +$1.71m (+40%)   lvl +83 vs +83
+flat   actual $0       fixed $6.01m
+payout actual ≥$442.6m fixed $36.22m
+earning actual $2.18m  fixed $0
+```
+
+Identical to Part I to the cent. This is **correct, not a null result**:
+`backtest.mjs` never called `freshStart()` — it builds its own world with
+`worldAt(..., {netState:"fresh"})` and applied the 4%-of-max rule locally from
+the day it was written. The lead's edit to `world.mjs` moved the *optimizer's*
+world to where the backtest already was. So the 40% figure is reproducible and
+the two code paths now agree on the same starting state, which is the thing
+worth having.
+
+## 10. The optimizer's measurements, re-run on the corrected world
+
+`docs/optimizer-log.md` §5 and §6 were both taken through `run.mjs`, which does
+call `freshStart()`. Both were therefore measured on the 25x-rich world. Re-run
+verbatim, same flags, same seed counts:
+
+### §6 target ranking index — **the conclusion survives, the magnitude was wrong by 10x, and the 60-minute window it was measured in is no longer long enough to measure it**
+
+| index | §6 as published, 108GB | **re-run, 108GB, 60m** | **re-run, 108GB, 180m** |
+| --- | ---: | ---: | ---: |
+| `live` (`M·φ/T`) | $62.4m | **$0** | $20.00m |
+| `liveChance` | $54.2m | $0 | — |
+| `batch` | $72.7m | $171.6k | $82.52m |
+| **`batchChance`** (shipped) | **$83.8m** | **$523.2k** | **$88.91m** |
+
+| index | §6 as published, 1,364GB | **re-run, 60m** | **re-run, 180m, 9 seeds** |
+| --- | ---: | ---: | ---: |
+| `live` | $652m | **$649.72m** | $1.31b |
+| `liveChance` | $154m | $100.93m | — |
+| `batch` | $1.42b | $491.05m | **$2.26b** |
+| `batchChance` | $1.42b | $535.44m | $2.09b |
+
+At 8,192GB, 120 minutes, the three are within 1.2% of each other
+(`batchChance` $2.63b, `live` $2.61b, `batch` $2.60b) — the saturated regime,
+where the target choice stops mattering because one fleet-wide op serialises
+everything whatever it is pointed at.
+
+Three things follow.
+
+1. **The shipped index is still the right one.** At the fleet size the live
+   game had, the ranking fix is now worth **4.4x** (`$88.91m` vs `$20.00m`),
+   not the +34% §6 reports. The old world's 25x head start let `live` coast on
+   money that was already there; take that away and picking `foodnstuff`
+   (`serverGrowth 5`) costs almost everything. **The conclusion strengthened
+   substantially.**
+2. **The 60-minute measurement window is now invalid at 1TB+.** At 1,364GB the
+   60-minute table says `live` **wins** by 32%. Look at its curve: `$0` until
+   minute 21, one step to $49.72m, flat for 35 minutes, then a single step to
+   $649.72m at minute 56. That is one prep-and-drain cycle, and whether its
+   second drain falls inside the window is a coin flip. Income on the corrected
+   world is the step function §0 describes; a cumulative total over a window
+   shorter than one cycle measures window alignment, not rate. **Every
+   60-minute number in `optimizer-log.md` §3-§7 taken at ≥1TB has this
+   problem**, and it is a *separate* defect from the 25x world.
+3. `liveChance` remains worst, as §6 said.
+
+### §5 money floor — **inverted at small fleets, confirmed at large ones, and the shipped value is now the worst possible choice at 108GB**
+
+| money floor | §5 as published, 108GB | **re-run, 108GB** | §5 as published, 1.4TB | **re-run, 1.4TB** |
+| ---: | ---: | ---: | ---: | ---: |
+| 1% | $92.5m | **$3.54m** | $657m | $28.52m |
+| 5% | $91.7m | $1.26m | $708m | $62.32m |
+| 10% | $90.8m | **$0** | **$752m** | $134.15m |
+| 25% | $88.1m | $0 | $697m | $341.71m |
+| **50% (shipped)** | $79.1m | **$0** | $652m | **$666.04m** |
+| 75% (old live) | $62.4m | $0 | $652m | $649.72m |
+| 90% | $49.8m | $0 | $685m | $657.50m |
+| 99% | $43.6m | $0 | $649m | $657.50m |
+
+- **At 108GB the direction survives (lower is better) but the cliff moved.**
+  Published: a smooth 2.1x spread from 99% to 1%. Actual: **everything at 10%
+  and above earns exactly $0 in an hour**, because a fresh server starts at 4%
+  of max and the fleet cannot climb to a 10% floor inside 60 minutes. The
+  shipped `MONEY_FLOOR = 0.5` earns nothing at all at this fleet size — which
+  is precisely the $0-for-two-hours the live game saw, reproduced from first
+  principles.
+- **At 1.4TB the ranking inverts outright.** Published: 10% best, 50% mid-table,
+  1% competitive. Actual: **50% best and 1% worst by 23x.** The published table
+  had a 1.15x spread top to bottom; the real one has 23x. §5's "the optimum is
+  the smallest f integrality allows" was an artefact of starting every server
+  full: with the money already there, a tiny floor cycles fast and loses
+  nothing, and the regrowth cost the prior-art model prices never had to be
+  paid.
+- **The shipped 0.5 is vindicated at 1TB+ and indefensible below it.** §7's
+  "50% is within a few percent of the best at both ends" is false on the
+  corrected world: it is the best at 1.4TB and it is $0 at 108GB.
+
+### §5 security slack — **no longer measurable; the published conclusion has no support**
+
+Re-run at 108GB, 60 minutes, 7 seeds: `+0`, `+1`, `+2`, `+3`, `+5`, `+10`,
+`+20` **all earn exactly $0**. The spread §5 reports ($46.6m → $62.4m, with +5
+the optimum) was entirely a property of the 25x world. The slack is not
+necessarily wrong — it is simply unmeasured. Anyone re-deriving it needs a
+fleet ≥1TB or a window ≥3 hours.
+
+### What survives, in one line each
+
+| §  | claim | verdict |
+| --- | --- | --- |
+| §5 | money floor: lower is better at small fleets | **survives**, and the cliff is far sharper than published |
+| §5 | money floor: 50% is near-best at both ends | **falsified** — $0 at 108GB, best at 1.4TB |
+| §5 | security slack +5 is optimal | **unsupported** — every value now measures $0 |
+| §6 | `M·φ/T` over-ranks rich slow-growing servers | **survives, strengthened** — 4.4x, not 1.34x |
+| §6 | hack chance only pays with the grow term | **survives** — `liveChance` still worst |
+| §6 | ordering reverses above saturation | **survives** — at 8.2TB all three are within 1.2% |
+| §3/§7 | absolute dollar figures | **all void**, twice over: 25x world *and* a window shorter than one cycle |
+| §13/§14 | batcher beats threshold loop | not re-run; both arms shared the same world, so the *ranking* is safe, and the batcher's advantage should grow because prep is exactly what it pipelines |
+
+
+## 11. New divergence: **rooting is not gated on hacking level** — and three files believe it is
+
+This is the same shape as M9: a plausible simplification, never checked, deciding everything downstream.
+
+**What the game does** — three independent places, all agreeing:
+
+- `src/Programs/Programs.ts:68` — NUKE.exe's `run()` is
+  `if (server.openPortCount >= server.numOpenPortsRequired) { server.hasAdminRights = true; ... }`.
+  There is no hacking-level test.
+- `src/NetscriptFunctions.ts:504-519` — `ns.nuke` checks `hasAdminRights`,
+  owning NUKE.exe, and `openPortCount < numOpenPortsRequired`. Nothing else.
+- `src/Hacking/netscriptCanHack.ts` — `netscriptCanHack` (`:39`) is the *only*
+  one of the three that tests `requiredHackingSkill > Player.skills.hacking`.
+  `netscriptCanGrow` and `netscriptCanWeaken` (`:49-55`) call `baseCheck`
+  alone, which tests root.
+
+So **a level-1 player who owns BruteSSH.exe owns every one-port server's RAM
+immediately.** They cannot *hack* those servers, but they can run grow, weaken
+and any worker script on them. Hacking level gates the *target* list, never the
+*host* list.
+
+**Where we get it wrong**, in order of cost:
+
+| file | line | what it does |
+| --- | --- | --- |
+| `tools/sim/engine.mjs` | `nuke()` | **fixed by me, see below** |
+| `batch.js` | `tryRoot`, line 107 | `if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) return false` — the live controller |
+| `auto.js` | `tryRoot`, line 59 | identical (retired, but `watchdog.js` could still bring it back) |
+| `spider.js` | line 67 | `ports <= portHacks && hackingLevel <= playerDetails.hackingLevel` |
+| `buyserv.js` | lines 43-45 | the *reserve policy* rests on the belief. See §13. |
+
+`hack.js` — the oldest, never-run script — **has it right** (line 149 filters on
+`ports <= playerDetails.portHacks || hasRootAccess` and nothing else). The
+newer scripts regressed against it.
+
+### Cost, measured on this save's network
+
+Rootable RAM the level gate withholds, `tools/sim/snapshot.json`, non-purchased servers:
+
+| openers owned | game rootable | sim/`batch.js` rootable at lvl 1 | at lvl 50 | at lvl 100 | at lvl 200 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| none | 100GB | 20GB | 100GB | 100GB | 100GB |
+| BruteSSH | 236GB | 20GB | 132GB | 236GB | 236GB |
+| +FTPCrack (live) | 404GB | 20GB | 132GB | 268GB | 332GB |
+
+At level 1 with the two openers the live game owns, the sim saw **20GB of
+404GB**. Even at level 200 it withheld 18%.
+
+**And on the live fleet right now** (`.telemetry/status.txt`, 00:18Z, level 246,
+41 rooted): the `numOpenPortsRequired = 3` group is **8 servers holding 688GB**
+with required levels 308-521. `relaySMTP.exe` costs **$5m** and the player is
+holding **$700m**. Under the real rule those 688GB become worker RAM the moment
+the program is bought — **$7.3k/GB against the cloud's flat $55k/GB**, a 7.5x
+better deal than the purchase `buyserv.js` is making with the same money.
+`HTTPWorm.exe` at $30m adds a further 704GB at $43k/GB, still cheaper than the
+cloud. `batch.js`'s `tryRoot` will refuse all of it until hacking 308/408.
+
+### Fixed in `engine.mjs` (mine)
+
+`nuke()` no longer tests `requiredHackingSkill`; `targets()` still does, because
+that test is real. Effect on the §10 tables, same flags, 180 minutes, 9 seeds:
+
+| arm | before the fix | after |
+| --- | ---: | ---: |
+| `batchChance` @ 108GB | $88.91m | **$109.01m** (+23%) |
+| `batch` @ 108GB | $82.52m | $101.97m |
+| `live` @ 108GB | $20.00m | $24.02m |
+| `batchChance` @ 1,364GB | $2.09b | **$2.35b** |
+| `batch` @ 1,364GB | $2.26b | $2.26b |
+| `live` @ 1,364GB | $1.31b | $1.27b |
+
+Fleet at the "+2p" arms goes 1,364GB → 1,436GB, and the 108GB arms reach their
+full 108GB in the first minute instead of climbing to it over twenty. Note this
+**restores §6's published ordering at 1TB** (`batchChance` > `batch` > `live`),
+which the pre-fix run had scrambled — the level gate was suppressing exactly the
+servers the grow-aware index wants to move to.
+
+## 12. New divergence: `freshStart()` handed every run this playthrough's purchased fleet
+
+Second bug in `world.mjs`, found and fixed. `freshStart()` set
+`hasAdminRights = false` on the save's cloud servers but **left them in the
+world**. On the current snapshot that is **1,728GB across four servers**
+(`pserv-87930` 1024GB, `pserv-7931` 512GB, `pserv-47920` 128GB, `pserv-67930`
+64GB). Their `numOpenPortsRequired` is 5 and `requiredHackingSkill` is 1, so
+`nuke()` handed them back free the moment a run owned all five port openers —
+which the `infra-*`, `ship-*` and `spread-*` families are designed to reach.
+They also did not count against `getCloudServerLimit()` (25,
+`src/Server/data/Constants.ts`), so a strategy could finish a run holding 29
+cloud servers.
+
+`darkweb` had the same problem in miniature: `freshStart` set
+`player.hasTor = false` but left the `darkweb` server present, and
+`snapshotFromSave` infers `hasTor` from its presence — an inconsistency waiting
+for a caller who reads the server list instead of the flag.
+
+`freshStart()` now drops every `purchasedByPlayer` server except `home`, and
+drops `darkweb`. `atTotalRam` in `strategies.mjs` already did this locally,
+which is direct evidence the optimizer hit the problem and patched around it in
+one strategy rather than at the source.
+
+## 13. `batch.js` — audit of the live controller
+
+Read at 2026-09-11 20:0x. **Not edited.** Constants first, since those are what
+bite.
+
+### Verified correct against source
+
+| `batch.js` | value | source |
+| --- | --- | --- |
+| `FORTIFY` | 0.002 | `ServerConstants.ServerFortifyAmount`, `src/Server/data/Constants.ts:9` |
+| `WEAKEN_PER_THREAD` | 0.05 | `ServerConstants.ServerWeakenAmount`, `:10` |
+| `MAX_GROWTH_LOG` | 0.00349388925425578 | `ServerConstants.ServerMaxGrowthLog`, `:7` |
+| `BASE_GROWTH_INCR` | 0.03 | `ServerConstants.ServerBaseGrowthIncr`, `:6` |
+| `hackFraction` | `((100−D)/100)·((L−(R−1))/L)/240` | `calculatePercentMoneyHacked`, `src/Hacking.ts:44-58` — exact with all mults 1 |
+| `hackChance` | `((max(1.75L,1)−R)/max(1.75L,1))·((100−D)/100)` | `calculateHackingChance`, `src/Hacking.ts:9-24` — exact, including the `clampNumber(…,1)` floor |
+| `growthK` | `min(log1p(0.03/D), MAX)·(g/100)` | `calculateServerGrowthLog`, `src/Server/formulas/grow.ts:8-28` — exact at `cores=1` |
+| `weakenTime = 4·hackTime`, `growTime = 3.2·hackTime` | | `src/Hacking.ts:83-94` |
+| hack security bump `FORTIFY·min(h, ceil(1/φ))` | | `NetscriptHelpers.tsx:672` |
+| grow security bump `2·FORTIFY·usedCycles`, `usedCycles ≤ threads` | | `processSingleServerGrowth`, `ServerHelpers.ts:209-214` |
+
+**`readTarget`'s hackTime rescaling is a genuinely good piece of fidelity** and
+deserves naming: `ns.getHackTime` reports the server *as it is now*, but a batch
+lands on a server held at minimum security. `calculateHackingTime` is affine in
+`hackDifficulty` through `(2.5·R·D + 500)`, so batch.js rescales by that ratio
+(`batch.js:201-203`) rather than sampling at the wrong security. Exactly right.
+
+**`additionalMsec` and the single burst are right** — all four `ns.exec` calls
+happen with no `await` between them and no `ns` call that yields, so all four
+read the same level and the same security, and the pads are computed from the
+same `readTarget`. This is the mechanism `h.js`'s header describes and it holds.
+
+### Bug 1 — `moneyTol` and `secTol` are not coupled to the plan, and both are reachable
+
+`SETTINGS.secTol = 1.0` and `SETTINGS.moneyTol = 0.6` abandon a pipeline when
+the target drifts past them. But **the batch's own H operation moves the target
+by an amount the plan chooses, and nothing checks that against the tolerance.**
+The health check runs *before* the safe-window gate and reads the same
+`readTarget`, so it sees the post-H, pre-G window directly; that window is
+`2·spacing = 400ms` long and the loop ticks every 200ms, so it is sampled
+essentially every batch.
+
+Reproducing `planBatch` exactly (same sweep, same `margin`, `share/4` cap at the
+live 35,940GB fleet over 3 targets):
+
+| level | target | plan `f` | plan `h` | money after H | H's security bump | trips |
+| ---: | --- | ---: | ---: | ---: | ---: | --- |
+| any | `n00dles` | **54.4%** | 132 | **45.6% of max** | +0.264 | **`moneyTol` 0.6** |
+| 50 | `neo-net` | 6.4% | 836 | 93.6% | **+1.672** | **`secTol` 1.0** |
+| 100 | `phantasy` | 3.2% | 836 | 96.8% | **+1.672** | **`secTol` 1.0** |
+| 100 | `iron-gym` | 4.1% | 1087 | 95.9% | **+2.174** | **`secTol` 1.0** |
+| 400 | `netlink` | 6.3% | 1087 | 93.7% | **+2.174** | **`secTol` 1.0** |
+
+The failure is a **permanent prep/drain oscillation**: prep to 100%, launch one
+batch, H lands, the next tick declares desync, drain, wait, re-prep. One batch
+per `weakenTime` forever, on a controller whose whole value is many batches per
+`weakenTime`.
+
+Not currently firing — the three live targets (`phantasy`, `max-hardware`,
+`omega-net` at level 246) plan `f` of 3-12% and `h` of 20-224, comfortably
+inside both tolerances, and the status file shows `drains: 0`. But `n00dles`
+trips it at **every** level tested, and `n00dles` is exactly what a small fleet
+should be batching in the opening — so this is a trap laid for the next run more
+than a bug in this one. `h` scales with the RAM cap `share/4`, so the `secTol`
+cases get worse as the fleet grows.
+
+The fix needs no new constant, only the coupling: the tolerance for a target in
+`batch` phase should be derived from the plan in flight —
+`money ≥ maxMoney·(1 − plan.f) − slack` and `sec ≤ minSec + FORTIFY·plan.h + slack`
+— since those are precisely the excursions the controller itself commissioned.
+A tolerance that does not know what the pipeline is doing cannot tell a desync
+from a working batch.
+
+### Bug 2 — `tryRoot` gates on hacking level
+
+See §11. **Not a RAM trade**: `getServerRequiredHackingLevel` is already paid for
+by the retarget block at line 433, so deleting line 107 costs nothing and is
+worth 688GB at the next $5m the player spends. Highest-value one-line change in
+the repo.
+
+### Smaller notes, none urgent
+
+- **`getWeakenEffect` core bonus is not modelled.** Real weaken is
+  `0.05·threads·(1 + (cores−1)/16)·ServerWeakenRate` (`ServerHelpers.ts:320-323`)
+  and `calculateServerGrowthLog` carries the same `coreBonus`
+  (`grow.ts:26-28`). `batch.js` assumes 1 core everywhere. Home is 1 core today
+  (`.telemetry/state.json`), so it is latent; when home cores rise, weaken and
+  grow launched from home over-deliver, which is the **safe** direction (excess
+  weaken clamps at the floor, excess grow caps at `moneyMax`). Worth a comment
+  saying so rather than a fix.
+- **`growThreads` drops the game's post-Newton correction.**
+  `numCycleForGrowthCorrected` does not simply `ceil(x)`; it has three
+  correction branches for rounding (`ServerHelpers.ts:178-200`). `batch.js`
+  returns `Math.ceil(x)`. The error is at most one thread and `margin: 1.1`
+  swamps it — but **this one costs no RAM to fix**, since it is pure arithmetic
+  with no NS call, so under the CLAUDE.md rule there is no excuse for the
+  divergence. (The added `guard++ < 64` is an improvement on the source, which
+  has an unbounded `do/while`; keep it.)
+- **`period` is computed from `totalRam`, not free RAM.** `share = totalRam /
+  targets.length` counts RAM occupied by the controller, `tel.js` and spill, so
+  `maxInFlight` is optimistic and the launch rate overshoots what `place()` can
+  satisfy. The design absorbs this (a skipped launch is free, `placeFails`
+  counts it), but the counter will read high for a reason that is not a fault.
+- `ops.some(o => o.pad < 0)` is dead: `hack` pad is `3T`, `grow` pad is
+  `0.8T + 2·spacing`, both always positive. Harmless.
+
+## 14. `tel.js` — `incomePerSec` is structurally zero under `batch.js`, and this is not a sampling artefact
+
+`tel.js:66` reports `ns.getTotalScriptIncome()[0]`. From
+`src/NetscriptFunctions.ts:1240-1252`:
+
+```ts
+getTotalScriptIncome: () => {
+  let total = 0;
+  for (const script of workerScripts.values())          // LIVE scripts only
+    total += script.scriptRef.onlineMoneyMade / script.scriptRef.onlineRunningTime;
+  ...
+  return [total, incomeFromScriptsSinceLastAug];
+}
+```
+
+Element `[0]` sums over **currently running** worker scripts. `batch.js`
+dispatches one-shot `h.js`/`g.js`/`w.js` with `temporary: true`; each accrues
+`onlineMoneyMade = 0` for its entire flight and only credits itself in the
+microtask between its landing and its exit. So at any sampled instant every live
+worker contributes `0 / T`, and **`[0]` reads 0 no matter how much the fleet is
+earning.** Under the retired `early.js` — one long-lived looping worker per host
+— the same script accumulated over its whole life and `[0]` was meaningful. The
+metric did not break; the worker lifecycle changed underneath it.
+
+Confirmed live: `.telemetry/status.txt` at 00:18:41Z reports `incomePerSec: 0`
+with `hackingLevel: 246`, `expPerSec: 349.2` and 41,763 threads dispatched.
+
+This has two consequences beyond the display.
+
+1. **`docs/optimizer-log.md` §11 — "the $0 income alarm was a sampling
+   artefact, income is lumpy not zero" — is half right.** Income *is* lumpy
+   (§0 of this log). But with `batch.js` live the alarm will now read exactly
+   zero permanently, for a second and completely different reason, and the §11
+   diagnosis will make it look explained when it is not.
+2. **My predecessor's §6e recommendation is wrong for the shipped design.** It
+   proposed `ns.getTotalScriptIncome()[0] / totalFleetRamGb` as the achieved
+   rate `buyserv.js` should price RAM against. Under `batch.js` that expression
+   is identically 0 and `evBuyRam` would refuse every purchase forever.
+
+**The correct measurements**, in preference order:
+`ns.getTotalScriptIncome()[1]` (`scriptProdSinceLastAug / playtimeSinceLastAug`
+— cumulative, lifecycle-independent, but averaged over the whole run so it lags
+badly); or `batch.js`'s own `totals.earned` / `uptimeSec` in `/tel/batch.txt`,
+which is attribution by watching the target's money fall and is the only
+*current* rate anything in the repo actually knows.
+
+## 15. Other root scripts
+
+| file | finding |
+| --- | --- |
+| `h.js` / `g.js` / `w.js` | **Correct and correctly justified.** `additionalMsec` rather than sleep-then-act; no guards, which is the documented RAM trade (one sensing call in a 400-thread worker is 40GB). Nothing to change. |
+| `early.js` | Formula-free; its two constants are empirical, and §10 shows both are now unmeasured or inverted. Retired. |
+| `buyserv.js` | Prices verified: BruteSSH $500e3, FTPCrack $1500e3 (`src/DarkWeb/DarkWebItems.ts:6-7`). The linear-cost argument is verified: `getCloudServerCost` is `ram · 55000 · CloudServerCost · CloudServerSoftcap^max(0,log2(ram)−6)` (`src/Server/ServerPurchases.ts:22-41`) and BN1 leaves `CloudServerSoftcap = 1` (`src/BitNode/BitNodeMultipliers.ts:134`), so the "no volume discount, never wait" conclusion holds exactly. **But the comment at lines 43-45 — "relaySMTP ($5m) and beyond are deliberately absent: the servers behind them need hacking level 300+, so reserving for one this early would idle cash for an hour to buy RAM that cannot be rooted" — is false**, per §11. Those servers can be rooted at any level; only hacking them needs 308. It is 688GB for $5m. |
+| `watchdog.js` | Sound. The "always `scp` before relaunch" note is a real hazard correctly handled. No numeric constants to verify. |
+| `tel.js` | See §14. Otherwise sound. |
+| `cmd.js`, `ctscan.js`, `ctsolve.js`, `ctsolvers.js`, `killall.js` | No game constants — `ctsolve.js` takes the reward from `ns.codingcontract.attempt(..., {returnReward:true})` rather than computing it, which is the right design. |
+| `contract.js` (never run) | `contract_base_money_gain = 4000` against the real **`CONSTANTS.CodingContractBaseMoneyGain = 75e6`** (`src/Constants.ts:93`) — **18,750x low**, and it also predates `adjustedScaling = rewardScaling / 3` (`PlayerObjectGeneralMethods.ts:511`). Its sibling constants *are* right: `contract_base_faction_rep_gain = 2500` matches `CodingContractBaseFactionRepGain` (`:91`) and `contract_base_company_rep_gain = 4000` matches `CodingContractBaseCompanyRepGain` (`:92`) — which is how the wrong one hid for so long. |
+| `stock.js` (never run) | `commission = 100000` ✓ `StockMarketCommission: 100e3`, `src/StockMarket/data/Constants.ts:11`. |
+| `hacknet.js` (never run) | `hashesToMoneyConversion = 1e6·hashes/4` ✓ — `SellForMoney` is `cost: 4, value: 1e6` (`src/Hacknet/data/HashUpgradesMetadata.tsx:9-23`). `serverHashCapacity = 32·2^cache` ✓ `HacknetServer.ts:123`. |
+| `pserv.js` (never run) | `gbRamCost: 55000` ✓, `maxPlayerServers: 25` ✓ `CloudServerLimit`, `maxGbRam: 1048576` ✓ `CloudServerMaxRam = 2^20`. |
+| `spider.js` (never run) | §11 rooting gate. |
+| `hack.js` (never run) | Roots on ports alone — **correct**, and the only script that is. Thread RAM constants 1.7/1.75 match `h.js`/`g.js`/`w.js`. |
+| `contract.js`, `pserv.js`, `hack.js`, `find.js`, `common.js`, `killhack.js` | All read/write raw `localStorage`. Not charged RAM (only `document` and `window` are, `src/Script/RamCalculations.ts:185-191`) and it does work, but it is out-of-band state nothing in `tools/` can see. Worth knowing before trusting a `BB_SERVER_MAP` any of them wrote. |
+
+
+## 16. The rest of `tools/sim/` — audit
+
+### `world.mjs` (mine) — what a snapshot omits, now that I have checked the save
+
+Decoded the live save directly to see what is there rather than what
+`SERVER_FIELDS` takes. Fixed in this pass:
+
+- **`player.mults` was never captured, and `engine.mjs` hardcoded every
+  multiplier to 1.** Six different game formulas read a different one of them —
+  `hacking_chance` in `calculateHackingChance`, `hacking_speed` in
+  `calculateHackingTime`, `hacking_money` in `calculatePercentMoneyHacked`,
+  `hacking_grow` in `calculateServerGrowthLog`, `hacking_exp` in
+  `calculateHackingExpGain`, `hacking` in `Person.updateSkillLevels`. All are
+  1 today (verified in the save), so nothing is wrong *yet* — and that is
+  exactly the condition under which this becomes an expensive surprise on the
+  first augmentation install, which `docs/roadmap.md` is driving towards.
+  `snapshotFromSave` now carries them and the engine merges them over the
+  defaults.
+- **`player.skills.intelligence` was hardcoded to 0.**
+  `calculateIntelligenceBonus(int, 1)` divides hacking time and multiplies hack
+  chance (`src/Hacking.ts:21, 76`). It is 0 in this save and stays 0 without
+  SF5, but it is now read rather than assumed.
+- **The skill multiplier also carries a BitNode factor.**
+  `Person.updateSkillLevels` uses `mults.hacking * HackingLevelMultiplier`
+  (`src/PersonObjects/Person.ts:221-224`); the engine passed no mult at all.
+  Now `sim.skillMult`.
+- `openPortCount` and `backdoorInstalled` are now captured. The engine
+  re-derives open ports from owned programs, which is exact from a fresh start
+  and an approximation from `--live`; carrying the real count lets a caller see
+  the difference rather than assume it away.
+
+Still absent, deliberately, with reasons:
+
+- **`ramUsed` is not in the save at all** — verified, the field is `undefined`
+  on every server record. So `usedRam: 0` is the only thing the engine can do,
+  and a `--live` run necessarily answers *"what if the fleet were emptied and
+  restarted"*, not *"what should it do next"*. Right now the live fleet is at
+  **99.9% utilisation** (`/tel/batch.txt`), so that is not a small difference in
+  framing. `tel.js` does report per-host `usedRam`; a snapshot that merged
+  `/tel/status.txt` over the save would close this.
+- **BitNode multipliers are never applied from the snapshot.** `world.mjs`
+  captures `bitNode` and nothing consumes it; `currentNodeMults` stays at the
+  module defaults, which I verified are exactly the BN1 values
+  (`ScriptHackMoney`, `ServerGrowthRate`, `ServerWeakenRate`, `HackExpGain`,
+  `CloudServerSoftcap` all 1; only `DaedalusAugsRequirement` and
+  `StaneksGiftExtraSize` differ, neither of which any formula here touches). So
+  it is right today by coincidence. `replaceCurrentNodeMults` is exported from
+  `src/BitNode/BitNodeMultipliers.ts:190` and is **not** in `build.mjs`'s
+  `ENTRY` — adding it there and calling it from the snapshot is the one-line
+  fix. `build.mjs` is not mine.
+- Hacknet nodes/servers: present in the save, not modelled anywhere.
+
+### `engine.mjs` (mine) — the physics is faithful; the hack/grow/weaken handlers check out line by line
+
+`applyOp` was diffed against `NetscriptHelpers.tsx hack()` (`:615-690`),
+`NetscriptFunctions.ts grow` (`:262-306`) and `weaken` (`:334-374`), plus
+`processSingleServerGrowth` (`ServerHelpers.ts:204-224`). Every branch matches,
+including the three that are easy to get wrong and that the engine already had
+right:
+
+- exp is computed **before** the server is mutated and multiplied by threads,
+  and demoted to a quarter both on failure *and* when `moneyDrained === 0`
+  (`NetscriptHelpers.tsx:638-640`);
+- hack's security bump is `FORTIFY · min(threads, ceil(1/φ))`, so
+  over-subscription adds no extra security;
+- grow's bump is `2·FORTIFY·usedCycles` with `usedCycles` recomputed by
+  `numCycleForGrowthCorrected` and capped at `threads` — the engine passes its
+  own `player` where the game defaults to the global `Player`, which is more
+  correct, not less.
+
+`capDifficulty` matches `Server.capDifficulty` (`Server.ts:92-104`). Thread RAM
+1.7/1.75/1.75 matches `h.js`/`g.js`/`w.js`. Grow/weaken time multipliers 3.2/4
+match `src/Hacking.ts:83-94`.
+
+### Scoring honesty — the metric is right, the window and one column are not
+
+- **`earned` (= `stats.moneyStolen`, cumulative) is the correct thing to sort
+  by** and `run.mjs` does. No complaint.
+- **`$/s end` is broken on the corrected world.** `tailRate` differences the
+  `earned` curve over its last tenth. Income is now a step function, so a
+  strategy that banked $1.27b reports `$0/s` if no step happened to fall in the
+  last 18 minutes — which is literally what `rank by live @ 1024GB` does in
+  §10's 180-minute table. The column is not noisy, it is *systematically*
+  reporting zero for exactly the strategies with the longest cycles. Either
+  delete it or replace it with `earned / minutes` over the second half.
+- **`netWorth = money + ramSpend + programSpend`** treats every dollar spent as
+  still held at cost. Cloud servers cannot be sold, so this is not net worth; it
+  is gross outlay plus cash. Not the default sort, so low priority, but it will
+  mislead anyone who sorts by it.
+- **`util` reads 97-99% for every arm**, because `early.js` workers hold their
+  RAM whether or not the op is useful. It is a measure of allocation, not of
+  work, and cannot distinguish a saturated fleet from a stalled one.
+- **Medians over 7-9 seeds are the right method but no longer a summary.** With
+  a step function the per-seed distribution is multimodal (did the third drain
+  land inside the window?), and a median of 7 draws from a bimodal distribution
+  is not a central tendency. The 60-minute §6 table flipping its top two arms
+  and then flipping back at 180 minutes is this effect, not noise in the usual
+  sense. **The window has to be long compared with `prepSeconds + weakenTime`
+  of the slowest target the arm might pick**, which on a 1TB fleet is tens of
+  minutes.
+
+### `strategies.mjs` / `batcher.mjs` (the optimizer's) — constants sourced
+
+Spot-checked: both import their formulas from `game.mjs`
+(`calculateHackingTime`, `calculatePercentMoneyHacked`,
+`calculateServerGrowthLog`, `numCycleForGrowthCorrected`, `getWeakenEffect`),
+and `batcher.mjs` takes `FORTIFY` from `ServerConstants.ServerFortifyAmount` and
+`WEAKEN_1` from `getWeakenEffect(1, 1)` rather than typing 0.002/0.05. That is
+the rule being followed. The only bare numbers are `1.98` and `6.16` in the
+ranking index, which are the loaded RAM-second costs derived in §5 of this log
+and are a *ranking* weight rather than a physical constant — but `ev.mjs`
+already produces them from `(server, player, cores)`, so the honest move is for
+the index to call that instead of transcribing.
+
+`atTotalRam` (`strategies.mjs:567-579`) deletes the save's purchased servers,
+which was a local patch for the `freshStart` bug fixed in §12. It is now
+redundant for `freshStart` worlds but still needed for `--live`; harmless
+either way.
+
+## 17. A bug I introduced and caught, worth recording because of how it surfaced
+
+Correcting `Sim.nuke()` in §11 broke the backtest, and the way it broke is the
+lesson.
+
+**First failure — the replica must keep the program's bugs.** With `nuke()`
+fixed, the burst-window reconstruction rooted more servers than the real run
+had, the fleet went 220GB → 268GB and the error went from +40% to +224%. That
+is correct engine behaviour and wrong backtest behaviour: the *game* does not
+gate rooting on level, but `auto.js` did, and the backtest's job is to replay
+`auto.js`. Fixed by adding `autoJsRoot()` to `supervisor.mjs` — a deliberate
+transcription of `auto.js:59`, commented as such — and using it in both the
+supervisor's poll and `backtest.mjs`'s `rootedAtStart`. **When a primitive is
+corrected, every replica of a program that relied on the incorrect behaviour has
+to re-impose it locally.**
+
+**Second failure — inverting a comparison changes what `undefined` does.** The
+old test was `if (s.requiredHackingSkill <= this.hacking) { root }`; I wrote
+`if (s.requiredHackingSkill > this.hacking) continue;`. For `darkweb` both
+fields are `undefined`, and `undefined <= 89` is `false` while `undefined > 89`
+is *also* `false` — so the server that the old code excluded by accident, the
+new code included by accident. That handed every reconstruction a 13th "server"
+worth 16GB (rooted 12 → 13, fleet 220 → 236GB) and moved the burst error from
++40% to +224% a second time, for a completely different reason.
+
+`darkweb` is a `DarknetServer`, not a `Server` (`src/Server/DarknetServer.ts`);
+it has no `numOpenPortsRequired`, no `requiredHackingSkill` and no
+`hackDifficulty`, and `ns.nuke`/`ns.hack`/`ns.grow`/`ns.weaken` all route
+through `getNormalServer` (`NetscriptHelpers.tsx:575-578`), which rejects it.
+Both `nuke()` and `autoJsRoot()` now skip anything whose
+`numOpenPortsRequired` is not a number, on purpose rather than by accident.
+
+**The backtest is the regression test that caught both**, within one run each
+time, because it compares against a recorded rooted count and a recorded fleet
+size as well as against money. Post-fix it reproduces Part I to the cent:
+burst `$6.01m` against `$4.30m` actual, **+40%**, rooted 12, fleet 220GB, level
++83 against +83. That invariant — *engine corrections must not move the
+backtest* — is the thing to keep.
+
+**Still open, not changed because I am not certain:** `darkweb` is
+`hasAdminRights: true` with `maxRam: 16` in the save, so a `--live` run counts
+16GB of it as fleet through `hosts()`. `DarknetServer` extends `BaseServer` and
+carries `cpuCores` with a comment saying it exists "to make sure that grow etc
+on the server work as expected", so it may genuinely be script-hostable. This
+predates my changes and I have not guessed at it; someone should check whether
+`ns.exec` on `darkweb` succeeds in the running game before anyone relies on
+that 16GB either way.
+
+## 18. Ranked list of what still needs fixing, in files I do not own
+
+Ordered by expected value, with the owner named.
+
+| # | file | change | why now |
+| --- | --- | --- | --- |
+| **1** | `batch.js` (game-player) | delete the hacking-level test in `tryRoot` (line 107) | One line. Frees **688GB for the $5m `relaySMTP.exe`** the player can already afford ten times over — RAM at $7.3k/GB against the cloud's $55k/GB. `getServerRequiredHackingLevel` is already paid for at line 433, so the change costs nothing. §11. |
+| **2** | `buyserv.js` (game-player) | reinstate `relaySMTP.exe` ($5m) and `HTTPWorm.exe` ($30m) in `SETTINGS.programs`, and correct the comment at lines 43-45 | Depends on #1. The comment's premise — "the servers behind them need hacking level 300+" — is true of *hacking* them and false of *rooting* them, which is what buys RAM. §11, §15. |
+| **3** | `batch.js` (game-player) | couple `secTol` / `moneyTol` to the plan in flight instead of fixed 1.0 / 0.6 | Latent but total: on `n00dles` the plan takes 54.4% of the money and the 0.6 tolerance declares desync on the batcher's own correct behaviour, giving one batch per `weakenTime` forever. Four more targets trip `secTol` on H's own fortification. Needs no new constant — the excursion is `plan.f` and `FORTIFY·plan.h`, both already computed. §13. |
+| **4** | `tel.js` (game-player) | report `ns.getTotalScriptIncome()[1]`, or `/tel/batch.txt`'s `earned/uptimeSec`, not `[0]` | `[0]` sums over *live* worker scripts, and `batch.js`'s one-shot workers credit themselves only in the instant before they exit, so it reads **exactly 0 whatever the fleet earns**. Confirmed live at level 246 with 41,763 threads dispatched. It is the number everyone looks at first. §14. |
+| **5** | `tools/sim/run.mjs` (optimizer) | measurement windows of ≥3 hours at ≥1TB, and fix or delete the `$/s end` column | On the corrected world a 60-minute total at 1TB measures where the window edge falls relative to one prep-and-drain cycle, not rate — it flipped §6's top two arms and 180 minutes flipped them back. `$/s end` reports `$0` for a strategy that banked $1.27b. §10, §16. |
+| **6** | `docs/optimizer-log.md` (optimizer) | mark §3, §5, §6, §7 absolute figures as superseded; re-derive §5's security slack | Every number there was taken on the 25x-rich world, and §5's slack sweep now measures $0 at every value, so that conclusion has no support at all. The *rankings* mostly survive — see the table in §10. |
+| **7** | `tools/sim/build.mjs` (optimizer) | export `replaceCurrentNodeMults` and apply `snapshot.bitNode` | The sim is using BN1 multipliers because the module defaults happen to be BN1, not because anything read the save. `world.mjs` already captures `bitNode` and nothing consumes it. Free correctness before the first BitNode change. §16. |
+| **8** | `batch.js` (game-player) | port `numCycleForGrowthCorrected`'s three post-Newton correction branches | Costs **zero RAM** — pure arithmetic, no NS call — so under the CLAUDE.md rule there is no licence for the divergence. Practical effect is ±1 thread, swamped by `margin: 1.1`. §13. |
+| **9** | `batch.js` (game-player) | comment that `getWeakenEffect`/`calculateServerGrowthLog` carry a `coreBonus` of `1 + (cores−1)/16` that the inlined versions assume is 1 | Latent: home is 1 core today. The error direction is safe (over-provision), which is exactly why it needs saying rather than fixing. §13. |
+| **10** | `auto.js`, `spider.js` (game-player) | same rooting fix as #1, or delete the scripts | `auto.js` is retired but `watchdog.js` can still bring it back; `spider.js` has never run. §11. |
+| **11** | `contract.js` (game-player) | `contract_base_money_gain` 4000 → `75e6`, and add `adjustedScaling = rewardScaling/3` | Never run, so no live cost, but it is the canonical example in CLAUDE.md and it is still wrong in the file. §15. |
+| **12** | `tools/sim/strategies.mjs`, `batcher.mjs` (optimizer) | have the ranking index call `ev.loadedHackRamSeconds` / `loadedGrowRamSeconds` instead of the literals `1.98` / `6.16` | They are correct at `cores = 1` with no augs and wrong otherwise; `ev.mjs` already derives them from `(server, player, cores)`. §16. |
+
+### Things I checked and found correct, so nobody re-checks them
+
+`h.js`/`g.js`/`w.js` (all three, including the no-guards RAM trade);
+`watchdog.js`; `buyserv.js`'s cloud-cost linearity argument and both program
+prices; `batch.js`'s four `ServerConstants`, its `hackFraction`, `hackChance`,
+`growthK`, its min-security rescaling of `ns.getHackTime`, its single-burst
+`additionalMsec` launch, and its hack/grow security arithmetic; `stock.js`'s
+commission; `hacknet.js`'s hash-to-money rate and cache capacity; `pserv.js`'s
+three cloud constants; `hack.js`'s rooting rule (the only script that has it
+right); `engine.mjs`'s `applyOp` against all three Netscript handlers;
+`strategies.mjs` and `batcher.mjs` sourcing their formulas from `game.mjs`.
+
+## 19. Reproducing Part II
+
+```bash
+# §9 / §17 — the backtest, which must still report burst +40%, rooted 12, 220GB
+node tools/sim/fidelity/backtest.mjs --seeds 5
+
+# §10 — the optimizer's §6 index sweep, re-run. 60 minutes is the published
+# window and is the one that gives the wrong answer at 1TB; 180 is honest.
+node tools/sim/run.mjs --only ix0-live,ix0-batch,ix0-batchChance --minutes 180 --seeds 9
+node tools/sim/run.mjs --only ix1024-live,ix1024-batch,ix1024-batchChance --minutes 180 --seeds 9
+node tools/sim/run.mjs --only ix8192-live,ix8192-batch,ix8192-batchChance --minutes 120 --seeds 7
+
+# §10 — the §5 money-floor sweep, re-run
+node tools/sim/run.mjs --only th0-money1,th0-money5,th0-money10,th0-money25,th0-money50,th0-money75,th0-money90,th0-money99 --minutes 60 --seeds 7
+node tools/sim/run.mjs --only th1024-money1,th1024-money5,th1024-money10,th1024-money25,th1024-money50,th1024-money75,th1024-money90,th1024-money99 --minutes 60 --seeds 7
+
+# §10 — the security-slack sweep, which now measures $0 at every value
+node tools/sim/run.mjs --only th-sec0,th-sec1,th-sec2,th-sec3,th-sec5,th-sec10,th-sec20 --minutes 60 --seeds 7
+
+# §11 — how much RAM the hacking-level rooting gate withholds
+node -e 'const s=JSON.parse(require("fs").readFileSync("tools/sim/snapshot.json","utf8"));
+  for (const ports of [0,1,2]) { const r=s.servers.filter(x=>!x.purchasedByPlayer && x.numOpenPortsRequired<=ports);
+    for (const lvl of [1,50,100,200]) console.log(`ports<=${ports} lvl=${lvl}:`,
+      r.reduce((a,x)=>a+x.maxRam,0), "GB in game,",
+      r.filter(x=>x.requiredHackingSkill<=lvl).reduce((a,x)=>a+x.maxRam,0), "GB under the gate"); }'
+
+# §11 — what relaySMTP.exe is actually worth right now
+node -e 'const t=JSON.parse(require("fs").readFileSync(".telemetry/status.txt","utf8"));
+  const s=JSON.parse(require("fs").readFileSync("tools/sim/snapshot.json","utf8"));
+  const rooted=new Set(t.servers.map(x=>x.host)); const g={};
+  for(const x of s.servers){ if(x.purchasedByPlayer||rooted.has(x.hostname))continue; (g[x.numOpenPortsRequired]??=[]).push(x); }
+  for(const p of Object.keys(g).sort()) console.log(`ports=${p}:`, g[p].reduce((a,x)=>a+x.maxRam,0), "GB idle");'
+
+# §13 — batch.js planBatch reproduced, to see which targets trip secTol/moneyTol
+#   (the script is in the scratchpad note; it re-implements planBatch verbatim
+#    and prints plan.f and FORTIFY*plan.h per target per level)
+
+# §14 — the income metric, live
+grep -m1 incomePerSec .telemetry/status.txt   # 0, at level 246 and 41,763 threads
+grep -m1 threadsDispatched .telemetry/batch.txt
+```
+
+### Invariants to keep
+
+1. **Engine corrections must not move the backtest.** The backtest replays
+   `auto.js` as it was; if fixing a `Sim` primitive changes the burst window's
+   $6.01m / rooted 12 / 220GB, the replica in `supervisor.mjs` needs the old
+   behaviour re-imposed locally, not the fix reverted. §17.
+2. **Do not compare strategies over a window shorter than one prep-and-drain
+   cycle.** At 1TB that is tens of minutes and the answer inverts. §10.
+3. **`freshStart()` must produce a world that can actually occur**: 4% money,
+   3x min security, no cloud servers, no darkweb, no programs. §12.

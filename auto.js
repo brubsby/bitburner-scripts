@@ -56,7 +56,10 @@ function scanAll(ns) {
 /** Open what ports we have programs for, then nuke. Returns true if we now have root. */
 function tryRoot(ns, host) {
   if (ns.hasRootAccess(host)) return true
-  if (ns.getServerRequiredHackingLevel(host) > ns.getHackingLevel()) return false
+  // No hacking-level check: rooting is gated on open ports alone (ns.nuke,
+  // src/NetscriptFunctions.ts:504-520). Only *hacking* a server is level-gated,
+  // and that test belongs in rateOf, where it already is. Testing it here
+  // refused RAM we were entitled to.
 
   let opened = 0
   for (const { file, fn } of PORT_PROGRAMS) {

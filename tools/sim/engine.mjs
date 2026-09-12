@@ -57,7 +57,16 @@ export function makeRng(seed) {
   };
 }
 
-/** No augmentations installed, so every multiplier is 1. */
+/**
+ * Fallback when the world carries no multipliers: no augmentations installed,
+ * so every multiplier is 1. A real snapshot supplies `world.player.mults`
+ * straight out of the save, because each of these is read by a different game
+ * formula — `hacking_chance` by calculateHackingChance, `hacking_speed` by
+ * calculateHackingTime, `hacking_money` by calculatePercentMoneyHacked,
+ * `hacking_grow` by calculateServerGrowthLog, `hacking_exp` by
+ * calculateHackingExpGain, `hacking` by calculateSkill — and hardcoding them
+ * would go quietly wrong on the first augmentation install.
+ */
 const BASE_MULTS = {
   hacking: 1,
   hacking_chance: 1,
@@ -120,11 +129,22 @@ export class Sim {
     this.purchased = [];
 
     // Shaped like the game's Person so the real formulas accept it directly.
+    this.mults = { ...BASE_MULTS, ...(world.player.mults ?? {}) };
+    // Person.updateSkillLevels (src/PersonObjects/Person.ts:221-224) computes
+    // the level as calculateSkill(exp, mults.hacking * HackingLevelMultiplier),
+    // so the BitNode factor belongs here rather than in mults. Both are 1 in
+    // BN1 with no augmentations, which is why passing no mult at all worked.
+    this.skillMult = this.mults.hacking * currentNodeMults.HackingLevelMultiplier;
     this.player = {
       money: world.player.money,
       hackExp: world.player.hackExp,
-      skills: { hacking: calculateSkill(world.player.hackExp), intelligence: 0 },
-      mults: { ...BASE_MULTS },
+      skills: {
+        hacking: calculateSkill(world.player.hackExp, this.skillMult),
+        // calculateIntelligenceBonus divides hacking time and multiplies hack
+        // chance, so it is not cosmetic once intelligence is non-zero.
+        intelligence: world.player.intelligence ?? 0,
+      },
+      mults: this.mults,
     };
 
     this.servers = new Map();
@@ -419,7 +439,7 @@ export class Sim {
 
   gainExp(amount) {
     this.player.hackExp += amount;
-    this.player.skills.hacking = calculateSkill(this.player.hackExp);
+    this.player.skills.hacking = calculateSkill(this.player.hackExp, this.skillMult);
   }
 
   /** Apply a completed operation, as the game does on landing. */
@@ -559,16 +579,39 @@ export class Sim {
     return spent;
   }
 
-  /** Root everything now in reach given hacking level and owned port openers. */
+  /**
+   * Root everything the owned port openers reach.
+   *
+   * **Rooting is not gated on hacking level.** NUKE.exe checks only
+   * `server.openPortCount >= server.numOpenPortsRequired`
+   * (`src/Programs/Programs.ts:68`), and `ns.nuke` checks exactly the same
+   * thing and nothing else (`src/NetscriptFunctions.ts:504-519`). Only *hack*
+   * is level-gated, in `netscriptCanHack` (`src/Hacking/netscriptCanHack.ts:39`);
+   * `netscriptCanGrow` and `netscriptCanWeaken` check root alone (`:49-55`).
+   *
+   * So a level-1 player with BruteSSH owns every 1-port server's RAM
+   * immediately — they simply cannot hack it yet. This method used to require
+   * `requiredHackingSkill <= hacking` as well, which withheld 384GB of 404GB
+   * rootable at level 1 with two openers on this save's network, and 18% of it
+   * even at level 200. Every fleet-size-dependent result was measured on a
+   * fleet that was too small for the early part of the run.
+   *
+   * `targets()` still applies the level test, because that one is real.
+   */
   nuke() {
     const ports = this.portsOpenable;
     let rooted = 0;
     for (const s of this.servers.values()) {
+      // `darkweb` is a DarknetServer, not a Server: it has no
+      // numOpenPortsRequired and no requiredHackingSkill, and ns.nuke on it
+      // throws because getNormalServer rejects it. The old level-gated test
+      // excluded it by accident (`undefined <= level` is false); the corrected
+      // test would have let it in (`undefined > ports` is also false) and
+      // handed every run 16GB of un-runnable fleet. Exclude it on purpose.
+      if (typeof s.numOpenPortsRequired !== "number") continue;
       if (s.hasAdminRights || s.numOpenPortsRequired > ports) continue;
-      if (s.requiredHackingSkill <= this.hacking) {
-        s.hasAdminRights = true;
-        rooted++;
-      }
+      s.hasAdminRights = true;
+      rooted++;
     }
     return rooted;
   }
