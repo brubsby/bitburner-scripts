@@ -154,3 +154,41 @@ first.
 **Also deferred:** fidelity items 7 and 12 (`build.mjs` BitNode multipliers,
 routing the ranking index through derived EV functions) — flagged by the
 optimizer as not done.
+
+---
+
+## CORRECTION: NeuroFlux levels do NOT count toward Daedalus
+
+Every plan in this session assumed "every NeuroFlux level counts toward
+Daedalus's 30 augmentations". **That is wrong**, and it misdirected several
+install cycles.
+
+`haveAugmentations(n)` tests `p.augmentations.length >= n`
+(`src/Faction/FactionJoinCondition.ts:116-130`). `p.augmentations` holds one
+entry per *distinct* augmentation, and NeuroFlux Governor is a single entry
+carrying a `level` field — confirmed by decoding the save, where 12 purchased
+levels appeared as `NeuroFlux Governor level 12`, one array element.
+
+So NeuroFlux at level 38 counts as **one** augmentation, not 38. Actual
+progress toward Daedalus is the count of distinct augs owned: **10**, not 47.
+
+### What follows
+
+- **Distinct augmentations are the constraint, not reputation-per-faction.**
+  Grinding one faction for NeuroFlux levels stops helping almost immediately —
+  its reputation cost rises 14% per level while giving nothing countable.
+- **Join every faction that offers augs we do not own**, including the city
+  factions previously skipped. Sector-12 alone lists 6. The earlier reasoning
+  for declining it — that extra factions dilute contract reputation — was
+  optimising the wrong quantity.
+- NiteSec has 1 left (DataJack, 112.5k rep); CyberSec has 0. Those two are
+  nearly exhausted as sources of *new* augmentations.
+- NeuroFlux is still worth buying when cheap: every level gives +1% to all
+  multipliers, which compounds. It just is not progress toward the gate.
+
+### The gate, restated
+
+Daedalus needs **30 distinct augmentations installed**, **$100b**, and
+**hacking 2500** (or 1500 combat). Money is a non-issue. Hacking is ~1000 and
+climbing. The binding constraint is distinct augmentations, which means
+breadth across factions rather than depth in one.
