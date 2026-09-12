@@ -75,28 +75,27 @@ function reserveFor(ns) {
 }
 
 /**
- * An explicit --reserve is remembered on disk and reused if this restarts
- * without one.
+ * How much cash to hold back.
  *
- * watchdog.js restarts a dead script with no arguments, so before this existed
- * a watchdog restart silently reverted the reserve to the default and the next
- * tick spent everything. That is not hypothetical: it cost $197.2m of
- * augmentation money in one tick, on a fleet where marginal RAM had already
- * turned negative. A supervisor whose policy evaporates when it is restarted is
- * worse than one that does not restart.
+ * This used to be an explicit figure remembered on disk, which was wrong in a
+ * way that only showed up after an augmentation install: the file survives the
+ * install, so a reserve set to park spending in a rich life came back in a
+ * life that owned nothing and needed to rebuild, and quietly held everything
+ * back. A watchdog restarting the script with the old hardcoded argument had
+ * the same effect from the other direction.
+ *
+ * So nothing is remembered. The reserve is derived from the game state every
+ * tick and is therefore always right for the life it is in: hold back exactly
+ * enough for the cheapest port opener not yet owned, because those are
+ * singularity-gated purchases only a human can make and each one unlocks a
+ * whole tier of servers to root. Once they are all owned there is nothing left
+ * to save for and it drops to zero.
  */
-function rememberedReserve(ns) {
-  try {
-    const raw = ns.read(SETTINGS.configFile)
-    const value = Number(JSON.parse(raw || '{}').reserve)
-    return Number.isFinite(value) && value >= 0 ? value : null
-  } catch {
-    return null
+function reserveNow(ns) {
+  for (const p of SETTINGS.programs) {
+    if (!ns.fileExists(p.file, 'home')) return p.price
   }
-}
-
-function rememberReserve(ns, reserve) {
-  ns.write(SETTINGS.configFile, JSON.stringify({ reserve, at: new Date().toISOString() }), 'w')
+  return 0
 }
 
 export async function main(ns) {
@@ -108,16 +107,7 @@ export async function main(ns) {
 
   ns.disableLog('ALL')
 
-  // An explicit flag wins and is remembered; otherwise reuse whatever was last
-  // set explicitly, so a watchdog restart does not quietly drop the policy.
-  let stickyReserve = null
-  if (flags.reserve >= 0) {
-    stickyReserve = flags.reserve
-    rememberReserve(ns, stickyReserve)
-  } else {
-    stickyReserve = rememberedReserve(ns)
-  }
-  ns.print(`buyserv.js running — reserve ${stickyReserve === null ? 'auto' : '$' + stickyReserve}`)
+  ns.print(`buyserv.js running — reserve ${flags.reserve >= 0 ? '$' + flags.reserve : 'auto'}`)
 
   while (true) {
     const log = []
@@ -126,17 +116,51 @@ export async function main(ns) {
       const owned = ns.cloud.getServerNames()
       const limit = ns.cloud.getServerLimit()
       const maxRam = ns.cloud.getRamLimit()
-      const reserve = stickyReserve !== null ? stickyReserve : reserveFor(ns)
+      const reserve = flags.reserve >= 0 ? flags.reserve : reserveNow(ns)
 
-      // Keep buying until the surplus can no longer afford the smallest useful
-      // server. Each pass takes the largest affordable chunk, so the money goes
-      // out in a few big pieces rather than a hundred tiny ones, but none of it
-      // is left stranded until the next tick. The bound is a guard against a
-      // pricing surprise turning this into an infinite loop, not a policy.
+      // ----------------------------------------------------------------
+      // Concentrate, do not level.
+      //
+      // Cloud RAM costs a flat $55k/GB at every size in BN1 and an upgrade
+      // costs exactly the difference, so *total* RAM for a given spend is the
+      // same however it is distributed. Placement is not: a batch has to fit
+      // on one host, so 25 small servers and one big server holding the same
+      // total RAM are not interchangeable — the small fleet fragments and the
+      // batcher reports placement failures while RAM sits free.
+      //
+      // The old policy upgraded the *smallest* server each tick, which keeps
+      // the fleet level and is exactly the wrong shape. This upgrades the
+      // largest one that is not yet at the cap, so RAM piles into the biggest
+      // contiguous blocks the game allows, and only buys a new server when
+      // every existing one is maxed.
+      // ----------------------------------------------------------------
       for (let pass = 0; pass < 12; pass++) {
         const surplus = ns.getServerMoneyAvailable('home') - reserve
         if (surplus <= 0) break
 
+        // Biggest server we own that still has room to grow.
+        let grow = null
+        for (const host of owned) {
+          const ram = ns.getServerMaxRam(host)
+          if (ram >= maxRam) continue
+          if (!grow || ram > grow.ram) grow = { host, ram }
+        }
+
+        if (grow) {
+          // Largest affordable doubling, not just one step — fewer, bigger
+          // jumps beat many small ones for the same money.
+          let next = 0
+          for (let r = grow.ram * 2; r <= maxRam; r *= 2) {
+            if (ns.cloud.getServerUpgradeCost(grow.host, r) <= surplus) next = r
+          }
+          if (next) {
+            if (!ns.cloud.upgradeServer(grow.host, next)) break
+            log.push(`upgraded ${grow.host} ${grow.ram} -> ${next}GB`)
+            continue
+          }
+        }
+
+        // Nothing upgradable within budget: add a server if there is a slot.
         if (owned.length < limit) {
           let ram = 0
           for (let r = 8; r <= maxRam; r *= 2) {
@@ -149,22 +173,7 @@ export async function main(ns) {
           log.push(`bought ${name} (${ram}GB)`)
           continue
         }
-
-        // Fleet is full: raise the floor by doubling the smallest server. That
-        // is the same $/GB as any other purchase, so it is not a compromise —
-        // it is simply the only shape left once all 25 slots are taken.
-        let smallest = null
-        for (const host of owned) {
-          const ram = ns.getServerMaxRam(host)
-          if (!smallest || ram < smallest.ram) smallest = { host, ram }
-        }
-        if (!smallest || smallest.ram >= maxRam) break
-
-        const next = smallest.ram * 2
-        const cost = ns.cloud.getServerUpgradeCost(smallest.host, next)
-        if (!(cost > 0) || cost > surplus) break
-        if (!ns.cloud.upgradeServer(smallest.host, next)) break
-        log.push(`upgraded ${smallest.host} to ${next}GB`)
+        break
       }
 
       const fleet = owned.map((h) => ({ host: h, ram: ns.getServerMaxRam(h) }))

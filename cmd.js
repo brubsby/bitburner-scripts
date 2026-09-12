@@ -54,10 +54,48 @@ function terminalLines() {
   return el ? Array.from(el.children).map((li) => li.innerText) : []
 }
 
+/**
+ * Bring the Terminal tab up if it is not the one rendered.
+ *
+ * The terminal input only exists in the DOM while the Terminal tab is mounted,
+ * so every DOM-path command failed whenever the game happened to be showing
+ * the faction-work screen, the City, or Create Program — which is most of the
+ * time, and exactly when an agent wants to run something without disturbing
+ * what is on screen. Clicking the nav item is what a person would do.
+ */
+function showTerminal() {
+  if (doc.getElementById('terminal-input')) return true
+  for (const el of doc.querySelectorAll('div,span,p,button')) {
+    if (el.textContent && el.textContent.trim() === 'Terminal' && el.offsetParent !== null) {
+      el.click()
+      if (doc.getElementById('terminal-input')) return true
+    }
+  }
+  return !!doc.getElementById('terminal-input')
+}
+
+/**
+ * Re-focus faction work if it is running unfocused.
+ *
+ * Navigating to the Terminal drops focus, and unfocused work earns 20% less
+ * (CONSTANTS.BaseFocusBonus). Leaving it that way would make the bridge quietly
+ * expensive every time it was used.
+ */
+function restoreFocus() {
+  for (const el of doc.querySelectorAll('button')) {
+    if (el.textContent && el.textContent.trim() === 'Focus' && el.offsetParent !== null) {
+      el.click()
+      return true
+    }
+  }
+  return false
+}
+
 /** Type a command into the terminal the way a person would, and press Enter. */
 function submit(command) {
+  showTerminal()
   const input = doc.getElementById('terminal-input')
-  if (!input) throw new Error('terminal input not found — is the Terminal tab open?')
+  if (!input) throw new Error('terminal input not found and the Terminal tab could not be opened')
 
   const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set
   setter.call(input, command)
@@ -190,6 +228,13 @@ export async function main(ns) {
         .trim()
 
       results.push({ command: line, output: output.slice(0, 4000), error: null })
+    }
+
+    // The DOM path steals focus from faction work; give it back.
+    try {
+      if (results.some((r) => r.via !== 'ns')) restoreFocus()
+    } catch {
+      /* nothing focusable */
     }
 
     ns.write(

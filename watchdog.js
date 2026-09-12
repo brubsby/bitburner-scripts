@@ -39,15 +39,54 @@ const WATCHED = [
   // purpose: the curve is steeply concave and the rest of the fleet is worth
   // more hacking. Restarted here because batch.js will reclaim the RAM if the
   // share ever dies.
-  { script: 'share.js', host: 'pserv-67930', args: [], threads: 2040 },
+  { script: 'share.js', host: 'anywhere', args: [], threads: 2040 },
   // Lowered from the pre-install park of 1e15 back to a small reserve: the
   // 2026-09-11 prestige destroyed the purchased-server fleet and money along
   // with it, so cloud RAM is the only RAM there is again and needs rebuilding
   // from nothing. Home RAM (16,384GB) survived and is not what this guards.
-  { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 1e6] },
+  // No args, and home rather than a purchased server. buyserv derives its own
+  // reserve from game state every tick, so there is nothing here to go stale
+  // across an install — a hardcoded figure here once spent $197.2m of
+  // augmentation money, and a later one held back everything in a life that
+  // owned nothing. Purchased servers are destroyed by an install, so naming one
+  // as a host guarantees a dead entry on the next life.
+  { script: 'buyserv.js', host: 'home', args: [] },
+  { script: 'autobuy.js', host: 'home', args: [] },
 ]
 
 const INTERVAL = 30000
+
+function scanAll(ns) {
+  const seen = new Set(['home'])
+  const queue = ['home']
+  while (queue.length) {
+    for (const h of ns.scan(queue.shift())) {
+      if (!seen.has(h)) {
+        seen.add(h)
+        queue.push(h)
+      }
+    }
+  }
+  return [...seen]
+}
+
+/** Is this script running anywhere at all? */
+function running(ns, script) {
+  return scanAll(ns).some((h) => ns.hasRootAccess(h) && ns.ps(h).some((p) => p.filename === script))
+}
+
+/** Tightest-fitting rooted host with room, so big hosts stay whole for the batcher. */
+function placeFor(ns, script, threads) {
+  const need = ns.getScriptRam(script, 'home') * threads
+  let best = null
+  for (const h of scanAll(ns)) {
+    if (!ns.hasRootAccess(h) || h === 'home') continue
+    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h)
+    if (free >= need && (!best || free < best.free)) best = { host: h, free }
+  }
+  if (best) return best.host
+  return ns.getServerMaxRam('home') - ns.getServerUsedRam('home') >= need ? 'home' : null
+}
 
 export async function main(ns) {
   ns.disableLog('ALL')
@@ -58,25 +97,30 @@ export async function main(ns) {
   while (true) {
     for (const { script, host, args, threads } of WATCHED) {
       try {
-        if (ns.ps(host).some((p) => p.filename === script)) continue
+        // Resolve 'anywhere' to a host with room. Naming a purchased server
+        // here is a bug waiting for the next install to destroy it, which is
+        // exactly how share.js stayed dead for hours after the last one.
+        const target = host === 'anywhere' ? placeFor(ns, script, threads ?? 1) : host
+        if (!target) continue
+        if (running(ns, script)) continue
 
         // Always copy from home before relaunching, not just when the file is
         // missing. A copy on another server does not track the original, so a
         // script fixed on home can be restarted here from a stale copy and come
         // back running the old code — silently, and looking like success. That
         // is how a corrected watchdog kept resurrecting a retired auto.js.
-        if (host !== 'home') ns.scp(script, host, 'home')
+        if (target !== 'home') ns.scp(script, target, 'home')
 
         // Threads matter for share.js, whose whole effect scales with them.
-        const pid = ns.exec(script, host, threads ?? 1, ...args)
+        const pid = ns.exec(script, target, threads ?? 1, ...args)
         if (pid) {
           restarts[script] = (restarts[script] ?? 0) + 1
-          ns.tprint(`watchdog: restarted ${script} on ${host} (pid ${pid}, restart #${restarts[script]})`)
+          ns.tprint(`watchdog: restarted ${script} on ${target} (pid ${pid}, restart #${restarts[script]})`)
         } else {
           // Almost always means no free RAM, which is normal right after the
           // supervisor filled the host with workers. Say so once per cycle and
           // try again next time rather than forcing anything.
-          ns.print(`watchdog: ${script} not running on ${host}, exec failed (no RAM?)`)
+          ns.print(`watchdog: ${script} not running, no host with room`)
         }
       } catch (err) {
         ns.print(`watchdog: ${script} check failed: ${err}`)
