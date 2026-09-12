@@ -40,7 +40,7 @@ console.log(`  util ${(res.util * 100).toFixed(1)}%  hacking ${res.hacking}`);
 for (const [name, s] of strat._state) {
   const t = sim.servers.get(name);
   console.log(
-    `  ${name.padEnd(18)} phase=${s.phase.padEnd(5)} batches=${String(s.batches).padStart(6)} resyncs=${String(s.resyncs).padStart(5)} drains=${String(s.drains).padStart(4)} placeFails=${String(s.placeFails).padStart(6)} prepWaves=${String(s.prepWaves).padStart(3)} batchingFrom=${((s.batchingSince ?? 0) / 60000).toFixed(1)}m` +
+    `  ${name.padEnd(18)} phase=${s.phase.padEnd(5)} batches=${String(s.batches).padStart(6)} unsafe=${String(s.skipsUnsafe).padStart(6)} drains=${String(s.drains).padStart(4)} placeFails=${String(s.placeFails).padStart(6)} prepWaves=${String(s.prepWaves).padStart(3)} batchingFrom=${((s.batchingSince ?? 0) / 60000).toFixed(1)}m` +
       `  money=${((t.moneyAvailable / t.moneyMax) * 100).toFixed(1)}%  sec=${t.hackDifficulty.toFixed(2)}/${t.minDifficulty}`,
   );
 }

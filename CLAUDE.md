@@ -156,6 +156,46 @@ read:
    running before the DOM exists. `game.mjs` pulls the bundle in with a dynamic
    `await import` for the same reason.
 
+## Fidelity: model the real game, except where RAM says otherwise
+
+Every piece of tooling should model the game as it actually behaves. There is
+exactly one licensed reason to diverge, and it applies to one side of the line.
+
+**Off-line tooling (`tools/sim/**`, analysis, docs) has no RAM budget, so it has
+no excuse.** Use the game's own source, its own constants, its own starting
+conditions. Where the real formula is exported by `game.mjs`, call it rather
+than reimplementing it. An approximation here is a bug, and it will be an
+expensive one, because everything downstream is a decision made on its output.
+
+**In-game scripts pay RAM per NS function referenced anywhere in their import
+graph, multiplied by thread count.** There, an approximation that saves RAM can
+be correct engineering — but it has to be a *deliberate, documented* trade with
+the real behaviour named. `auto.js` inlining `calculatePercentMoneyHacked`
+rather than calling `ns.hackAnalyze` saves 0.9GB *and* is more accurate for its
+purpose; `h.js`/`g.js`/`w.js` carry no guards at all because one stray call in a
+400-thread worker costs 40GB. Both are fine. Silently using a wrong constant to
+avoid a lookup is not.
+
+Failures of this rule have been the most expensive bugs in this project:
+
+- `freshStart()` set servers to full money; real ones start at 4% of max
+  (`Server.ts:75-77`). Every simulated world was 25x too rich, the opening grow
+  phase did not exist, and the simulator scored a configuration in the billions
+  that earned $0 for two hours in the real game.
+- The simulator priced threads at 1.7/1.75GB while the supervisor actually
+  deployed a 2.4GB worker — 30% too cheap.
+- `contract.js` carried a v1-era reward constant of 4000 against the real
+  `75e6`, so contracts looked worthless for years of play.
+- `h.js`/`g.js`/`w.js` slept and then acted, so ops read the world at wake time
+  rather than launch time — the dominant desync mechanism.
+- The simulator scored end-of-run cash, which punishes every strategy that
+  reinvests. Scoring cumulative earnings reversed the ranking outright.
+
+The pattern is the same each time: a plausible-looking simplification, never
+checked against source, silently deciding every measurement built on top of it.
+**When a number matters, read it out of `~/Repos/bitburner` and cite the file and
+line in a comment.**
+
 ## Netscript v3 notes
 
 The scripts were migrated from the 2021 API; 117 call sites moved. What bit:
