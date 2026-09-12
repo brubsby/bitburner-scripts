@@ -1,24 +1,61 @@
 {
-  "capturedAt": "2026-09-11T22:58:08.685Z",
+  "capturedAt": "2026-09-12T00:50:23.374Z",
   "bitNode": 1,
   "player": {
-    "money": 19025577.311148524,
-    "hackExp": 133039.425,
-    "hacking": 177,
-    "homeRam": 16,
+    "money": 10951383933.944548,
+    "hackExp": 5258386.634999916,
+    "hacking": 295,
+    "mults": {
+      "hacking_chance": 1,
+      "hacking_speed": 1,
+      "hacking_money": 1,
+      "hacking_grow": 1,
+      "hacking": 1,
+      "hacking_exp": 1,
+      "strength": 1,
+      "strength_exp": 1,
+      "defense": 1,
+      "defense_exp": 1,
+      "dexterity": 1,
+      "dexterity_exp": 1,
+      "agility": 1,
+      "agility_exp": 1,
+      "charisma": 1,
+      "charisma_exp": 1,
+      "hacknet_node_money": 1,
+      "hacknet_node_purchase_cost": 1,
+      "hacknet_node_ram_cost": 1,
+      "hacknet_node_core_cost": 1,
+      "hacknet_node_level_cost": 1,
+      "company_rep": 1,
+      "faction_rep": 1,
+      "work_money": 1,
+      "crime_success": 1,
+      "crime_money": 1,
+      "dnet_money": 1,
+      "bladeburner_max_stamina": 1,
+      "bladeburner_stamina_gain": 1,
+      "bladeburner_analysis": 1,
+      "bladeburner_success_chance": 1
+    },
+    "intelligence": 0,
+    "homeRam": 2048,
     "homeCores": 1,
     "programs": [
       "NUKE.exe",
       "fl1ght.exe",
       "BruteSSH.exe",
-      "FTPCrack.exe"
+      "FTPCrack.exe",
+      "HTTPWorm.exe",
+      "SQLInject.exe",
+      "relaySMTP.exe"
     ],
     "hasTor": true
   },
   "servers": [
     {
       "hostname": "home",
-      "maxRam": 16,
+      "maxRam": 2048,
       "moneyAvailable": 0,
       "moneyMax": 0,
       "hackDifficulty": 1,
@@ -42,14 +79,40 @@
         "pserv-47920",
         "pserv-67930",
         "pserv-87930",
-        "pserv-7931"
+        "pserv-7931",
+        "pserv-27931",
+        "pserv-47932",
+        "pserv-67932",
+        "pserv-67935",
+        "pserv-87937",
+        "pserv-7941",
+        "pserv-56078",
+        "pserv-56080",
+        "pserv-76081",
+        "pserv-89490",
+        "pserv-9491",
+        "pserv-92376-0",
+        "pserv-92376-1",
+        "pserv-92376-2",
+        "pserv-72383-0",
+        "pserv-72383-1",
+        "pserv-72384-2",
+        "pserv-72384-3",
+        "pserv-72384-4",
+        "pserv-77424-0",
+        "pserv-77426-1"
       ],
       "programs": [
         "NUKE.exe",
         "fl1ght.exe",
         "BruteSSH.exe",
-        "FTPCrack.exe"
-      ]
+        "FTPCrack.exe",
+        "HTTPWorm.exe",
+        "SQLInject.exe",
+        "relaySMTP.exe"
+      ],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "ecorp",
@@ -62,13 +125,15 @@
       "requiredHackingSkill": 1169,
       "serverGrowth": 99,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 14,
       "serversOnNetwork": [
         "blade"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "megacorp",
@@ -81,13 +146,15 @@
       "requiredHackingSkill": 1112,
       "serverGrowth": 99,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 9,
       "serversOnNetwork": [
         "clarkinc"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "b-and-a",
@@ -100,13 +167,15 @@
       "requiredHackingSkill": 915,
       "serverGrowth": 68,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 12,
       "serversOnNetwork": [
         "omnitek"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "blade",
@@ -119,7 +188,7 @@
       "requiredHackingSkill": 1083,
       "serverGrowth": 84,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 10,
       "serversOnNetwork": [
@@ -127,7 +196,9 @@
         "ecorp",
         "The-Cave"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "nwo",
@@ -140,13 +211,15 @@
       "requiredHackingSkill": 1288,
       "serverGrowth": 73,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 13,
       "serversOnNetwork": [
         "."
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "clarkinc",
@@ -159,7 +232,7 @@
       "requiredHackingSkill": 1067,
       "serverGrowth": 47,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 13,
       "serversOnNetwork": [
@@ -167,7 +240,9 @@
         "megacorp",
         "fulcrumassets"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "omnitek",
@@ -180,14 +255,16 @@
       "requiredHackingSkill": 1028,
       "serverGrowth": 97,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 12,
       "serversOnNetwork": [
         "fulcrumtech",
         "b-and-a"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "4sigma",
@@ -200,13 +277,15 @@
       "requiredHackingSkill": 958,
       "serverGrowth": 88,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 11,
       "serversOnNetwork": [
         "fulcrumtech"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "kuai-gong",
@@ -219,14 +298,16 @@
       "requiredHackingSkill": 987,
       "serverGrowth": 98,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "fulcrumtech",
         "powerhouse-fitness"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "fulcrumtech",
@@ -239,7 +320,7 @@
       "requiredHackingSkill": 958,
       "serverGrowth": 93,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
@@ -248,7 +329,9 @@
         "4sigma",
         "kuai-gong"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "fulcrumassets",
@@ -261,13 +344,15 @@
       "requiredHackingSkill": 1233,
       "serverGrowth": 1,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 15,
       "serversOnNetwork": [
         "clarkinc"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "stormtech",
@@ -280,13 +365,15 @@
       "requiredHackingSkill": 1031,
       "serverGrowth": 75,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "applied-energetics"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "defcomm",
@@ -299,13 +386,15 @@
       "requiredHackingSkill": 1038,
       "serverGrowth": 68,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "deltaone"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "infocomm",
@@ -318,13 +407,15 @@
       "requiredHackingSkill": 907,
       "serverGrowth": 48,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 6,
       "serversOnNetwork": [
         "univ-energy"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "helios",
@@ -337,14 +428,16 @@
       "requiredHackingSkill": 835,
       "serverGrowth": 79,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 11,
       "serversOnNetwork": [
         "microdyne",
         "."
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "vitalife",
@@ -357,13 +450,15 @@
       "requiredHackingSkill": 897,
       "serverGrowth": 78,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 6,
       "serversOnNetwork": [
         "applied-energetics"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "icarus",
@@ -376,13 +471,15 @@
       "requiredHackingSkill": 923,
       "serverGrowth": 86,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "omnia"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "univ-energy",
@@ -395,14 +492,16 @@
       "requiredHackingSkill": 844,
       "serverGrowth": 85,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 5,
       "serversOnNetwork": [
         "deltaone",
         "infocomm"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "titan-labs",
@@ -415,14 +514,16 @@
       "requiredHackingSkill": 843,
       "serverGrowth": 60,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 11,
       "serversOnNetwork": [
         "nova-med",
         "fulcrumtech"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "microdyne",
@@ -435,14 +536,16 @@
       "requiredHackingSkill": 873,
       "serverGrowth": 90,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "zb-def",
         "helios"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "taiyang-digital",
@@ -455,14 +558,16 @@
       "requiredHackingSkill": 922,
       "serverGrowth": 73,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "zeus-med",
         "applied-energetics"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "galactic-cyber",
@@ -475,13 +580,15 @@
       "requiredHackingSkill": 851,
       "serverGrowth": 78,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "aevum-police"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "aerocorp",
@@ -494,14 +601,16 @@
       "requiredHackingSkill": 895,
       "serverGrowth": 60,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "millenium-fitness",
         "deltaone"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "omnia",
@@ -514,14 +623,16 @@
       "requiredHackingSkill": 915,
       "serverGrowth": 60,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "global-pharm",
         "icarus"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "zb-def",
@@ -534,7 +645,7 @@
       "requiredHackingSkill": 781,
       "serverGrowth": 66,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
@@ -542,7 +653,9 @@
         "microdyne",
         "run4theh111z"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "applied-energetics",
@@ -555,7 +668,7 @@
       "requiredHackingSkill": 805,
       "serverGrowth": 71,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 7,
       "serversOnNetwork": [
@@ -563,7 +676,9 @@
         "stormtech",
         "vitalife"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "solaris",
@@ -576,13 +691,15 @@
       "requiredHackingSkill": 827,
       "serverGrowth": 80,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 7,
       "serversOnNetwork": [
         "unitalife"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "deltaone",
@@ -595,7 +712,7 @@
       "requiredHackingSkill": 899,
       "serverGrowth": 53,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 7,
       "serversOnNetwork": [
@@ -603,7 +720,9 @@
         "defcomm",
         "univ-energy"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "global-pharm",
@@ -616,7 +735,7 @@
       "requiredHackingSkill": 793,
       "serverGrowth": 85,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 5,
       "serversOnNetwork": [
@@ -624,7 +743,9 @@
         "omnia",
         "unitalife"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "nova-med",
@@ -637,14 +758,16 @@
       "requiredHackingSkill": 809,
       "serverGrowth": 81,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 5,
       "serversOnNetwork": [
         "zeus-med",
         "titan-labs"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "zeus-med",
@@ -657,7 +780,7 @@
       "requiredHackingSkill": 834,
       "serverGrowth": 72,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 9,
       "serversOnNetwork": [
@@ -666,7 +789,9 @@
         "zb-def",
         "nova-med"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "unitalife",
@@ -679,7 +804,7 @@
       "requiredHackingSkill": 810,
       "serverGrowth": 72,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 7,
       "serversOnNetwork": [
@@ -687,7 +812,9 @@
         "solaris",
         "zeus-med"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "lexo-corp",
@@ -700,13 +827,15 @@
       "requiredHackingSkill": 745,
       "serverGrowth": 65,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "I.I.I.I"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "rho-construction",
@@ -719,14 +848,16 @@
       "requiredHackingSkill": 521,
       "serverGrowth": 47,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "zb-institute",
         "global-pharm"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "alpha-ent",
@@ -739,14 +870,16 @@
       "requiredHackingSkill": 564,
       "serverGrowth": 60,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 5,
       "serversOnNetwork": [
         "zb-institute",
         "snap-fitness"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "aevum-police",
@@ -759,14 +892,16 @@
       "requiredHackingSkill": 408,
       "serverGrowth": 42,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "catalyst",
         "galactic-cyber"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "rothman-uni",
@@ -779,13 +914,15 @@
       "requiredHackingSkill": 413,
       "serverGrowth": 39,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
         "netlink"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "zb-institute",
@@ -798,7 +935,7 @@
       "requiredHackingSkill": 727,
       "serverGrowth": 84,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
@@ -807,7 +944,9 @@
         "alpha-ent",
         "millenium-fitness"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "summit-uni",
@@ -820,13 +959,15 @@
       "requiredHackingSkill": 464,
       "serverGrowth": 59,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 5,
       "serversOnNetwork": [
         "crush-fitness"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "syscore",
@@ -839,13 +980,15 @@
       "requiredHackingSkill": 627,
       "serverGrowth": 61,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
         "netlink"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "catalyst",
@@ -858,14 +1001,16 @@
       "requiredHackingSkill": 438,
       "serverGrowth": 25,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "avmnite-02h",
         "aevum-police"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "the-hub",
@@ -878,13 +1023,15 @@
       "requiredHackingSkill": 318,
       "serverGrowth": 48,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "silver-helix"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "computek",
@@ -897,13 +1044,15 @@
       "requiredHackingSkill": 308,
       "serverGrowth": 53,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 2,
       "serversOnNetwork": [
         "phantasy"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "netlink",
@@ -916,7 +1065,7 @@
       "requiredHackingSkill": 394,
       "serverGrowth": 66,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
@@ -924,7 +1073,9 @@
         "rothman-uni",
         "syscore"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "johnson-ortho",
@@ -937,14 +1088,16 @@
       "requiredHackingSkill": 275,
       "serverGrowth": 41,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 2,
       "serversOnNetwork": [
         "neo-net",
         "I.I.I.I"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "n00dles",
@@ -963,7 +1116,9 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "foodnstuff",
@@ -982,7 +1137,9 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "sigma-cosmetics",
@@ -1001,7 +1158,9 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "joesguns",
@@ -1021,7 +1180,9 @@
         "home",
         "nectar-net"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "zer0",
@@ -1041,7 +1202,9 @@
         "hong-fang-tea",
         "silver-helix"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 1,
+      "backdoorInstalled": false
     },
     {
       "hostname": "nectar-net",
@@ -1063,7 +1226,9 @@
         "phantasy",
         "omega-net"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "neo-net",
@@ -1084,14 +1249,16 @@
         "johnson-ortho",
         "crush-fitness"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 1,
+      "backdoorInstalled": false
     },
     {
       "hostname": "silver-helix",
       "maxRam": 64,
-      "moneyAvailable": 45000000,
+      "moneyAvailable": 603938069.738161,
       "moneyMax": 1125000000,
-      "hackDifficulty": 30,
+      "hackDifficulty": 61.204499999999996,
       "minDifficulty": 10,
       "baseDifficulty": 30,
       "requiredHackingSkill": 150,
@@ -1106,7 +1273,9 @@
         "netlink",
         "avmnite-02h"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 2,
+      "backdoorInstalled": false
     },
     {
       "hostname": "hong-fang-tea",
@@ -1127,14 +1296,16 @@
         "zer0",
         "max-hardware"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "harakiri-sushi",
       "maxRam": 16,
-      "moneyAvailable": 9215936.498645507,
+      "moneyAvailable": 100000000,
       "moneyMax": 100000000,
-      "hackDifficulty": 6.355999999999998,
+      "hackDifficulty": 14.33999999999999,
       "minDifficulty": 5,
       "baseDifficulty": 15,
       "requiredHackingSkill": 40,
@@ -1146,14 +1317,16 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "phantasy",
       "maxRam": 32,
-      "moneyAvailable": 24000000,
+      "moneyAvailable": 600000000,
       "moneyMax": 600000000,
-      "hackDifficulty": 20,
+      "hackDifficulty": 7,
       "minDifficulty": 7,
       "baseDifficulty": 20,
       "requiredHackingSkill": 100,
@@ -1166,14 +1339,16 @@
         "nectar-net",
         "computek"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 2,
+      "backdoorInstalled": false
     },
     {
       "hostname": "max-hardware",
       "maxRam": 32,
-      "moneyAvailable": 10000000,
+      "moneyAvailable": 239773006.88976377,
       "moneyMax": 250000000,
-      "hackDifficulty": 15,
+      "hackDifficulty": 5.03,
       "minDifficulty": 5,
       "baseDifficulty": 15,
       "requiredHackingSkill": 80,
@@ -1185,26 +1360,30 @@
       "serversOnNetwork": [
         "hong-fang-tea"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 1,
+      "backdoorInstalled": false
     },
     {
       "hostname": "omega-net",
       "maxRam": 32,
-      "moneyAvailable": 68256396,
+      "moneyAvailable": 201783701.22442597,
       "moneyMax": 1706409900,
-      "hackDifficulty": 25,
+      "hackDifficulty": 34.452,
       "minDifficulty": 8,
       "baseDifficulty": 25,
       "requiredHackingSkill": 215,
       "serverGrowth": 39,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 2,
       "serversOnNetwork": [
         "nectar-net"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 2,
+      "backdoorInstalled": false
     },
     {
       "hostname": "crush-fitness",
@@ -1217,14 +1396,16 @@
       "requiredHackingSkill": 235,
       "serverGrowth": 27,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 4,
       "serversOnNetwork": [
         "neo-net",
         "summit-uni"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 2,
+      "backdoorInstalled": false
     },
     {
       "hostname": "iron-gym",
@@ -1244,7 +1425,9 @@
         "home",
         "CSEC"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 1,
+      "backdoorInstalled": false
     },
     {
       "hostname": "millenium-fitness",
@@ -1257,14 +1440,16 @@
       "requiredHackingSkill": 481,
       "serverGrowth": 39,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 6,
       "serversOnNetwork": [
         "zb-institute",
         "aerocorp"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "powerhouse-fitness",
@@ -1277,13 +1462,15 @@
       "requiredHackingSkill": 1042,
       "serverGrowth": 51,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 9,
       "serversOnNetwork": [
         "kuai-gong"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "snap-fitness",
@@ -1296,13 +1483,15 @@
       "requiredHackingSkill": 711,
       "serverGrowth": 51,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 7,
       "serversOnNetwork": [
         "alpha-ent"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "run4theh111z",
@@ -1315,13 +1504,15 @@
       "requiredHackingSkill": 539,
       "serverGrowth": 1,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 8,
       "serversOnNetwork": [
         "zb-def"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "I.I.I.I",
@@ -1334,14 +1525,16 @@
       "requiredHackingSkill": 348,
       "serverGrowth": 1,
       "numOpenPortsRequired": 3,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 5,
       "serversOnNetwork": [
         "johnson-ortho",
         "lexo-corp"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "avmnite-02h",
@@ -1354,7 +1547,7 @@
       "requiredHackingSkill": 213,
       "serverGrowth": 1,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
@@ -1362,7 +1555,9 @@
         "zb-institute",
         "catalyst"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 2,
+      "backdoorInstalled": true
     },
     {
       "hostname": ".",
@@ -1375,7 +1570,7 @@
       "requiredHackingSkill": 523,
       "serverGrowth": 1,
       "numOpenPortsRequired": 4,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 11,
       "serversOnNetwork": [
@@ -1384,7 +1579,9 @@
         "nwo",
         "clarkinc"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "CSEC",
@@ -1403,7 +1600,9 @@
       "serversOnNetwork": [
         "iron-gym"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 1,
+      "backdoorInstalled": true
     },
     {
       "hostname": "The-Cave",
@@ -1416,13 +1615,15 @@
       "requiredHackingSkill": 925,
       "serverGrowth": 1,
       "numOpenPortsRequired": 5,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 11,
       "serversOnNetwork": [
         "blade"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 5,
+      "backdoorInstalled": false
     },
     {
       "hostname": "w0r1d_d43m0n",
@@ -1439,7 +1640,9 @@
       "purchasedByPlayer": false,
       "cpuCores": 1,
       "serversOnNetwork": [],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "darkweb",
@@ -1452,11 +1655,12 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "backdoorInstalled": false
     },
     {
       "hostname": "pserv-47920",
-      "maxRam": 128,
+      "maxRam": 32768,
       "moneyAvailable": 0,
       "moneyMax": 0,
       "hackDifficulty": 1,
@@ -1471,11 +1675,13 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "pserv-67930",
-      "maxRam": 64,
+      "maxRam": 32768,
       "moneyAvailable": 0,
       "moneyMax": 0,
       "hackDifficulty": 1,
@@ -1490,11 +1696,13 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "pserv-87930",
-      "maxRam": 1024,
+      "maxRam": 16384,
       "moneyAvailable": 0,
       "moneyMax": 0,
       "hackDifficulty": 1,
@@ -1509,11 +1717,13 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     },
     {
       "hostname": "pserv-7931",
-      "maxRam": 512,
+      "maxRam": 16384,
       "moneyAvailable": 0,
       "moneyMax": 0,
       "hackDifficulty": 1,
@@ -1528,7 +1738,450 @@
       "serversOnNetwork": [
         "home"
       ],
-      "programs": []
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-27931",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-47932",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-67932",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-67935",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-87937",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-7941",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-56078",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-56080",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-76081",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-89490",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-9491",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-92376-0",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-92376-1",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-92376-2",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-72383-0",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-72383-1",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-72384-2",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-72384-3",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-72384-4",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-77424-0",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
+    },
+    {
+      "hostname": "pserv-77426-1",
+      "maxRam": 16384,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": [],
+      "openPortCount": 0,
+      "backdoorInstalled": false
     }
   ]
 }

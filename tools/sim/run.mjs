@@ -70,14 +70,21 @@ for (const name of names) {
     const ram = scriptRam ?? strategy.scriptRam ?? undefined;
     runs.push(new Sim(world, { seed, homeReserve, ...(ram ? { scriptRam: ram } : {}) }).run(strategy, minutes * 60_000));
   }
-  // Income over the closing tenth of the run: where a strategy has *got to*,
-  // as opposed to what it banked on the way. A strategy that spends everything
-  // on RAM looks poor by cash-in-hand and rich by this.
+  // Rate over the SECOND HALF of the run.
+  //
+  // This was the closing *tenth*, and that is not a rate — it is a measurement
+  // of where the window edge happens to fall relative to one prep-and-drain
+  // cycle. Income from a threshold loop is a step function with a cycle of tens
+  // of minutes at TB scale, so a short tail window reports $0 for a strategy
+  // that banked billions, which it did for three arms in section 14. Half the
+  // run is longer than any cycle observed and averages over the steps.
   const tailRate = (r) => {
     const c = r.curve;
-    const from = c[Math.max(0, c.length - 1 - Math.ceil(c.length / 10))];
+    if (c.length < 4) return 0;
+    const from = c[Math.floor(c.length / 2)];
     const to = c[c.length - 1];
-    return (to.earned - from.earned) / ((to.minute - from.minute) * 60);
+    const dt = (to.minute - from.minute) * 60;
+    return dt > 0 ? (to.earned - from.earned) / dt : 0;
   };
 
   results.push({
@@ -112,13 +119,18 @@ if (has("json")) {
   process.exit(0);
 }
 
-console.log(`\n${minutes} minutes from a fresh BN1 start, median of ${seeds} seeds\n`);
+console.log(`\n${minutes} minutes from ${has("live") ? "the live save" : "a fresh BN1 start"}, median of ${seeds} seeds\n`);
+// A window shorter than one prep-and-drain cycle measures window alignment, not
+// rate, and at TB scale that cycle is tens of minutes. See docs/fidelity-log.md
+// section 10: at 1TB a 60-minute window ranked two arms one way and 180 minutes
+// ranked them the other.
+if (minutes < 180) console.log(`  WARNING: ${minutes}-minute window. Use >=180 minutes above ~1TB — shorter windows measure window alignment, not rate.\n`);
 console.log(
   "  " +
     "strategy".padEnd(34) +
     "earned".padStart(10) +
     "cash".padStart(10) +
-    "$/s end".padStart(10) +
+    "$/s 2nd half".padStart(13) +
     "hack".padStart(6) +
     "ram".padStart(8) +
     "util".padStart(7) +
@@ -131,7 +143,7 @@ for (const r of results) {
       r.label.slice(0, 33).padEnd(34) +
       fmtMoney(r.earned).padStart(10) +
       fmtMoney(r.money).padStart(10) +
-      fmtMoney(r.rate).padStart(10) +
+      fmtMoney(r.rate).padStart(13) +
       String(r.hacking).padStart(6) +
       String(r.totalRam).padStart(8) +
       `${(r.util * 100).toFixed(0)}%`.padStart(7) +

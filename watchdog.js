@@ -29,6 +29,17 @@ const WATCHED = [
   // place batches into.
   { script: 'batch.js', host: 'home', args: [] },
   { script: 'cmd.js', host: 'home', args: [] },
+  // Contracts pay ~$25m and, more importantly once money is not the
+  // constraint, faction reputation — which cannot be bought at any price
+  // without 150 favor. Running unattended it is the only thing besides the
+  // batcher that still makes progress on the critical path.
+  { script: 'ctauto.js', host: 'home', args: [] },
+  { script: 'tel.js', host: 'home', args: [] },
+  // Multiplies faction reputation gain by 1 + ln(threads)/25. Sized small on
+  // purpose: the curve is steeply concave and the rest of the fleet is worth
+  // more hacking. Restarted here because batch.js will reclaim the RAM if the
+  // share ever dies.
+  { script: 'share.js', host: 'pserv-67930', args: [], threads: 2040 },
   // Parked deliberately, not disabled. The fleet is at the 25-server cap and
   // the batcher is running ~3 targets on 432TB with placement failures to
   // spare, so marginal cloud RAM buys nothing — and it is destroyed by an
@@ -47,7 +58,7 @@ export async function main(ns) {
   const restarts = {}
 
   while (true) {
-    for (const { script, host, args } of WATCHED) {
+    for (const { script, host, args, threads } of WATCHED) {
       try {
         if (ns.ps(host).some((p) => p.filename === script)) continue
 
@@ -58,7 +69,8 @@ export async function main(ns) {
         // is how a corrected watchdog kept resurrecting a retired auto.js.
         if (host !== 'home') ns.scp(script, host, 'home')
 
-        const pid = ns.exec(script, host, 1, ...args)
+        // Threads matter for share.js, whose whole effect scales with them.
+        const pid = ns.exec(script, host, threads ?? 1, ...args)
         if (pid) {
           restarts[script] = (restarts[script] ?? 0) + 1
           ns.tprint(`watchdog: restarted ${script} on ${host} (pid ${pid}, restart #${restarts[script]})`)

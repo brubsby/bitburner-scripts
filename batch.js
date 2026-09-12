@@ -206,10 +206,14 @@ function readTarget(ns, host) {
     growth: ns.getServerGrowth(host),
     // getHackTime reports the *current* security. The batch cares about the
     // prepped server, so scale back to minimum: duration is linear in
-    // (2.5*required*difficulty + 500).
+    // (2.5*required*difficulty + 500). Both are needed and they are NOT
+    // interchangeable — prep runs on a server that is by definition not at
+    // minimum, and using the prepped figure there under-estimates every
+    // duration by the security ratio, which on a degraded target is 3-6x.
     hackTime:
       (ns.getHackTime(host) * (2.5 * required * minSec + 500)) /
       (2.5 * required * Math.max(ns.getServerSecurityLevel(host), minSec) + 500),
+    hackTimeNow: ns.getHackTime(host),
   }
 }
 
@@ -513,12 +517,26 @@ export async function main(ns) {
             continue
           }
 
-          // Continuous prep: keep a ledger of what is already in flight, project
-          // the server forward to where those landings leave it, and launch only
-          // the shortfall. The obvious alternative — launch, sleep a whole
-          // weakenTime, re-measure — costs a full 4T per round and measured at
-          // 11 of 20 minutes on a large target. Over-provisioning is free here,
-          // so an imperfect projection costs threads and never correctness.
+          // Prep, in two strict phases: security to the floor first, money
+          // second. Never both at once.
+          //
+          // Growing a server whose security is above minimum is a trap twice
+          // over. The growth constant k falls as security rises, so the same
+          // money costs 3-6x the threads; and a big grow fortifies by
+          // 2*0.002 per used thread, so if the matching weaken does not fit in
+          // what is left of the budget, security ratchets *up* and the next
+          // round is more expensive still. Observed live: silver-helix reached
+          // security 61.2 against a minimum of 10 and never recovered, while
+          // the grow threads it demanded starved the one target that was
+          // actually batching.
+          //
+          // The ledger of in-flight work is timed with the CURRENT-security
+          // durations. Timing it with the prepped figures — as this did — expires
+          // entries several times too early, so prep re-launches on top of work
+          // still in the air and compounds the same ratchet.
+          const weakenTimeNow = t.hackTimeNow * 4
+          const growTimeNow = t.hackTimeNow * 3.2
+
           s.pending = s.pending.filter((p) => p.at > now)
           let pendW = 0
           let pendG = 0
@@ -528,31 +546,46 @@ export async function main(ns) {
           }
           // A grow fortifies only by the threads it actually *used*
           // (processSingleServerGrowth caps usedCycles at the threads needed),
-          // so projecting the fortification from the raw in-flight thread count
-          // is an unbounded overestimate. Left uncapped it makes prep believe
-          // security is about to explode and launch weakens forever, filling the
-          // fleet with work that does nothing. Cap it at the real need.
+          // so projecting from the raw in-flight thread count is an unbounded
+          // overestimate that makes prep launch weakens forever.
           const kNow = growthK(Math.max(t.sec, t.minSec), t.growth)
           const needNow = t.money >= t.maxMoney ? 0 : growThreads(t.maxMoney, Math.max(t.money, 1), kNow, t.maxMoney)
           const usedG = Math.min(pendG, isFinite(needNow) ? needNow : pendG)
-
           const projSec = Math.max(t.minSec, t.sec - pendW + 2 * FORTIFY * usedG)
-          const k = growthK(projSec, t.growth)
-          const projMoney = pendG > 0 ? Math.min(t.maxMoney, (t.money + pendG) * Math.exp(k * pendG)) : t.money
 
-          const gNeed = projMoney >= t.maxMoney ? 0 : growThreads(t.maxMoney, Math.max(projMoney, 1), k, t.maxMoney)
+          // --- phase 1: security to the floor, and nothing else -------------
+          if (projSec > t.minSec + 0.01) {
+            const wNeed = Math.ceil((projSec - t.minSec) / WEAKEN_PER_THREAD)
+            const w = spread(ns, free, ram, 'weaken', host, wNeed, batchId++)
+            if (w) {
+              s.pending.push({ at: now + weakenTimeNow, weaken: w * WEAKEN_PER_THREAD })
+              opsDispatched++
+              threadsDispatched += w
+            }
+            continue
+          }
+
+          // --- phase 2: money, at minimum security --------------------------
+          // Sized with k at the minimum, which is where these threads will
+          // land. Weaken is launched BEFORE grow and sized to cover it, so the
+          // cover always exists even if the grow only partly fits — the failure
+          // direction is then over-weakening, which is free.
+          const kMin = growthK(t.minSec, t.growth)
+          const projMoney = pendG > 0 ? Math.min(t.maxMoney, (t.money + pendG) * Math.exp(kMin * pendG)) : t.money
+          const gNeed = projMoney >= t.maxMoney ? 0 : growThreads(t.maxMoney, Math.max(projMoney, 1), kMin, t.maxMoney)
           const budget = [...free.values()].reduce((a, b) => a + b, 0)
-          let gWant = Math.min(gNeed, Math.floor((budget * 0.75) / ram.grow))
+          // One weaken thread cancels 0.05 of security; one grow thread adds
+          // 2*0.002. So a grow needs 0.08 weaken threads alongside it.
+          const perGrow = ram.grow + 0.08 * ram.weaken
+          let gWant = Math.min(gNeed, Math.floor(budget / perGrow))
           if (!isFinite(gWant) || gWant < 0) gWant = 0
 
+          const wCover = gWant >= 1 ? Math.ceil(0.08 * gWant) + 1 : 0
+          const wLaunched = wCover >= 1 ? spread(ns, free, ram, 'weaken', host, wCover, batchId++) : 0
           const gLaunched = gWant >= 1 ? spread(ns, free, ram, 'grow', host, gWant, batchId++) : 0
-          const wNeed =
-            Math.ceil((projSec - t.minSec) / WEAKEN_PER_THREAD) +
-            Math.ceil((2 * FORTIFY * gLaunched) / WEAKEN_PER_THREAD)
-          const wLaunched = wNeed >= 1 ? spread(ns, free, ram, 'weaken', host, wNeed, batchId++) : 0
 
-          if (gLaunched) s.pending.push({ at: now + growTime, grow: gLaunched })
-          if (wLaunched) s.pending.push({ at: now + weakenTime, weaken: wLaunched * WEAKEN_PER_THREAD })
+          if (gLaunched) s.pending.push({ at: now + growTimeNow, grow: gLaunched })
+          if (wLaunched) s.pending.push({ at: now + weakenTimeNow, weaken: wLaunched * WEAKEN_PER_THREAD })
           opsDispatched += (gLaunched ? 1 : 0) + (wLaunched ? 1 : 0)
           threadsDispatched += gLaunched + wLaunched
           continue

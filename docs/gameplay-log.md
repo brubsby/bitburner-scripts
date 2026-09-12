@@ -839,10 +839,16 @@ before and after. One more wrinkle: `--reserve` passed through the new
 with no `--reserve` flag token, and the process fell back to the
 *remembered* config value instead of the fresh one) — worked around by
 writing `/tel/buyserv-config.txt` directly on `joesguns` and restarting
-with no flag, so it picked up the sticky value from disk. Left `buyserv.js`
-running normally afterward (`--reserve 700000000`, confirmed via
-`/tel/buyserv.txt` on `joesguns`), `watchdog.js`'s table reverted to
-`700e6` to match.
+with no flag, so it picked up the sticky value from disk. Reverted both
+`watchdog.js` and the running instance to the $700m floor once the RAM
+ladder hit target — then the lead independently edited `watchdog.js`'s
+table again, this time to `--reserve 1e15` (effectively parking
+`buyserv.js` indefinitely), reasoning that with 25/25 purchased-server
+slots full and everything destroyed on install anyway, no further cloud
+RAM is worth buying before then, to be lowered again afterward when the
+fleet needs rebuilding. Re-synced the live `joesguns` instance to match
+(same config-file trick), confirmed via `/tel/buyserv.txt`:
+`reserve: 1e15`, money now free-accumulating uncontested.
 
 **Home RAM ladder (task 3) — target reached.** All three purchases made
 at Alpha Enterprises as the reserve-protected surplus allowed:
@@ -910,11 +916,104 @@ future/meta content, currently a no-op in this run. Did not click it per
 instructions, though source review says it would be harmless if clicked.
 
 **End state:** `batch.js` health `ok`, 96/97 rooted, hacking level 281,
-home RAM 2048GB/1 core, money $1.838b (buyserv back to its normal $700m
-floor and already reinvesting surplus into purchased-server upgrades).
-NiteSec rep 4.028k at 1.880/sec, focused — roughly **2.4 hours** to the
-20,000 threshold at the current rate, down from the ~5 hours estimated
-at pickup. Factions unchanged: NiteSec, Sector-12, CyberSec. No soft
-reset, no aug install, no browser tab other than 413952705 used. Root
-`.js` edits this session: `watchdog.js` (buyserv reserve, raised then
-reverted — net no change from session start).
+home RAM 2048GB/1 core (target reached, not exceeded), money $7.6b+ and
+climbing freely (buyserv parked at the lead's `--reserve 1e15`, not
+spending). NiteSec rep 4.028k at 1.880/sec, focused — roughly **2.4
+hours** to the 20,000 threshold at the current rate, down from the ~5
+hours estimated at pickup. Factions unchanged: NiteSec, Sector-12,
+CyberSec. No soft reset, no aug install, no browser tab other than
+413952705 used. Root `.js` edits this session: `watchdog.js` (buyserv
+reserve — I raised it 700e6→5.3e9 then back to 700e6 around the RAM
+ladder; the lead then set it to 1e15 independently, which is the value
+live at session end). Money is now piling up unused past the RAM target
+with buyserv parked — worth a call from the lead on whether to push the
+ladder to 4096GB ($10.039b) or just let it hoard until install.
+
+## 2026-09-12 ~00:51 UTC — new target 16384GB, ladder push resumes
+
+Picked up per the lead's updated brief: push the home RAM ladder to
+**16384GB** (raised from the prior 2048GB target), stop there — the next
+step past it (32768GB, $316.8b) is out of runway. At pickup: home
+2048GB, money $13.03b, NiteSec 4.432k rep at 2.007/sec focused, hacking
+297, 96/97 rooted. `batch.js` health confirmed `ok` via `cmd.js`
+(`ps home` showed live `h.js`/`g.js`/`w.js` batcher workers cycling on
+`phantasy`); `share.js` confirmed still alive on `pserv-67930` at the
+full 2040 threads (`ps pserv-67930` → `5427 share.js 2040t`), just
+sharing the box now with some `batch.js` weaken/grow overflow workers
+(32766.75/32768GB used total, no conflict). `ctscan.js` run once: zero
+contracts, matching the last several sessions.
+
+**Purchase 1 — 2048GB → 4096GB, done.** Went "Do something else
+simultaneously" (confirmed this drops the 1.25x focus multiplier but
+does *not* stop the work — rate fell from 2.007 to 1.611/sec while
+navigating, rep kept climbing throughout), checked Alpha Enterprises'
+live price (**$10.039b**, matching the brief's table), bought at money
+$17.485b → $7.712b. Confirmed home now reads 4096GB (4.10TB) in the UI.
+Clicked the Overview panel's own `Focus` button (no need to revisit the
+Factions page) to re-focus immediately — rate back to 2.034/sec within
+the same screenshot. Total UI trip: two navigations, under a minute.
+
+**Purchase 2 — 4096GB → 8192GB ($31.725b), pending.** Not affordable at
+$7.712b post-purchase-1. `incomePerSec` from telemetry reads **$35.17m/s
+≈ $126.6b/hour**, notably faster than the brief's $87b/hour estimate, so
+the ladder should clear faster than planned. Started a backgrounded bash
+poll (`wait_money.sh`, scratchpad) hitting `localhost:12526/poll` every
+20s, watching for money ≥ $33b (the $31.725b price plus the $700m
+reserve plus a small buffer), rather than holding this session open on a
+foreground loop. Will buy purchase 2 and, if money is already past the
+$100.2b + $700m mark for purchase 3 (8192→16384GB) by then, batch that
+one into the same UI trip.
+
+NiteSec rep at last check: 4.531k at 2.034/sec (focused, confirmed
+running). At the current rate, 20,000 is roughly (20000-4531)/2.034 ≈
+7,604s ≈ **2.1 hours** out.
+
+## 2026-09-12 ~00:55 UTC — new session, picks up mid-wait
+
+New game-player session. The prior one's `wait_money.sh` background poll
+(scratchpad `/tmp/.../scratchpad/wait_money.sh`, watching for money ≥
+$33b for purchase 2) was **still running as a live orphan process**
+(pid 185173) when this session started — same scratchpad path, so it
+was recoverable. Rather than duplicate it, attached a `Monitor` to its
+existing task output file
+(`tasks/b8393wvfd.output`) tailing for `THRESHOLD REACHED`/`TIMED OUT`,
+so the poll it already had running is what triggers purchase 2, and
+this session does other useful work meanwhile instead of re-polling.
+
+**Found a terminal/telemetry-free path to faction reputation**, closing
+the gap noted earlier ("no terminal/telemetry path to it"): the
+`getSaveFile` RPC returns the gzipped save; decoding
+`data.FactionsSave` (JSON, keyed by faction name, `.playerReputation`)
+and `data.PlayerSave` (`.money`, `.focus`, `.currentWork`) gives rep,
+money, and focus state directly, no browser trip needed. (A predecessor
+had already sketched this in scratchpad `s2.sh`/`sample.sh` but they
+weren't left running.) Two samples ~62s apart (by `cyclesWorked` delta,
+310 cycles @ 0.2s/cycle): NiteSec rep 4939.84 → 5071.24, **+131.4 in
+62s ≈ 2.12/sec**, `focus: true`, `currentWork` confirms `FactionWork`
+on NiteSec, hacking work type — the faction work is running and
+focused, no action needed.
+
+Health checks via `cmd.js` bridge (all via NS API, no terminal tab
+needed for these): `ps home` shows `watchdog.js`, `batch.js`, `cmd.js`
+alive plus live `g.js`/`w.js` batcher workers cycling on `phantasy`.
+`ps pserv-67930` confirms `share.js` still running at the full **2040
+threads**, sharing the box with some `batch.js` grow/weaken overflow
+workers — no conflict, nothing to restart. `free home`: 1799.80/4096GB
+used.
+
+Contract cycle: `run ctscan.js` failed with "terminal input not found"
+— unlike `exec`/`ps`/`free`, `run` still goes through the DOM-typing
+path and needs the Terminal tab open, so it is not available while
+parked on the faction-work screen. Used `exec ctscan.js home` instead
+(pure NS API, works fine unfocused) and read its output file directly
+via RPC (`getFile /tmp/contracts.json`) rather than the terminal:
+`[]`, zero contracts, consistent with every check for the last several
+sessions.
+
+State at this check: money $21.5b (climbing, `wait_money.sh` polling
+toward $33b for purchase 2, 4096→8192GB at $31.725b), home RAM still
+4096GB, hacking 315, NiteSec rep 5.071k at ~2.12/sec focused. Estimated
+time to 20,000: (20000-5071)/2.12 ≈ 7,040s ≈ **2.0 hours**. No browser
+UI trips made yet this session (all checks above went through the
+`cmd.js`/RPC bridge); the only upcoming UI trip is purchase 2 itself
+once the money threshold fires.

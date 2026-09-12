@@ -214,6 +214,28 @@ function digest(save) {
     servers: { rooted, total: totalServers },
     factions: p.factions,
     factionInvitations: p.factionInvitations,
+    // Reputation and favor per faction, and what the player is currently
+    // working on. There is no NS call for faction reputation without
+    // Source-File 4, so this was being read off the Factions screen by an agent
+    // with a browser — which made the one number on the critical path the most
+    // expensive number to observe, and meant nothing was tracking its rate.
+    // The save has it: FactionsSave, plus PlayerSave.currentWork for whether
+    // the work is actually running and whether it is focused (worth 25%).
+    factionRep: sect("FactionsSave")
+      ? Object.fromEntries(
+          Object.entries(sect("FactionsSave"))
+            .map(([name, f]) => [name, f?.data ?? f])
+            .filter(([, f]) => f && (f.playerReputation > 0 || f.favor > 0))
+            .map(([name, f]) => [
+              name,
+              { rep: Math.round(f.playerReputation ?? 0), favor: Math.round(f.favor ?? 0) },
+            ]),
+        )
+      : {},
+    currentWork: p.currentWork
+      ? { type: p.currentWork.ctor ?? null, faction: p.currentWork.data?.factionName ?? null }
+      : null,
+    focused: p.focus ?? null,
     jobs: p.jobs,
     augmentations: (p.augmentations ?? []).map((a) => a?.data?.name ?? a?.name ?? a),
     queuedAugmentations: (p.queuedAugmentations ?? []).map((a) => a?.data?.name ?? a?.name ?? a),

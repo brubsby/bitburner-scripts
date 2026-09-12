@@ -809,6 +809,17 @@ export const REGISTRY = {
     ]),
   ),
 
+  // --- the batcher on the live fleet, unpinned: how many targets? ---
+  // The fleet is at the 25-server cloud cap and buyserv.js is parked, so RAM is
+  // fixed; the only free variable left is how many targets to spread it over.
+  ...Object.fromEntries(
+    [1, 2, 3, 4, 6, 8, 10, 12, 16].map((k) => [
+      `liveN${k}`,
+      () => hwgwBatcher({ nTargets: k, maxTargets: 16, label: `hwgw ${k} target${k > 1 ? "s" : ""}` }),
+    ]),
+  ),
+  "liveThr": () => shippedLoop(),
+
   // --- the same question with RAM pinned, so nothing compounds ---
   ...Object.fromEntries(
     [0, 1024, 2048, 4096, 8192, 16384, 65536].flatMap((gb) => [

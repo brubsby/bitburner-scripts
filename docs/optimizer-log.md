@@ -1,5 +1,21 @@
 # Optimizer log
 
+> **Superseded figures — read this first.** Sections 1-10 were measured on a
+> world the simulator got wrong. `docs/fidelity-log.md` re-ran them against the
+> corrected world: the *rankings* mostly survive, but **every absolute dollar
+> figure in sections 3, 5, 6 and 7 is void**, section 5's "50% money floor is
+> near-best" is falsified (it earns $0 at 108GB), and section 5's security-slack
+> sweep now measures $0 at every value, so that conclusion has no support at
+> all. Sections 1-2 (prices, methodology) and the mechanism explanations stand.
+>
+> Separately, **no comparison in sections 1-13 used a long enough window.**
+> Above ~1TB income is a step function with a cycle of tens of minutes, so a
+> 60-minute total measures where the window edge fell, not a rate — fidelity
+> section 10 found two arms that rank one way at 60 minutes and the other way at
+> 180. `run.mjs` now warns below 180 minutes and reports the rate over the
+> second half of the run rather than the closing tenth. Section 17 is the first
+> measurement taken under the corrected rules.
+
 Findings from `tools/sim/`, appended as they land. Every number is a median
 over seeds unless it says otherwise. The formulas come from the game's own
 source via `tools/sim/game.mjs`, not from memory.
