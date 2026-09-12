@@ -134,9 +134,14 @@ What a proper model needs:
 - The rebuild cost is not a constant — it falls every life as home RAM and
   `hacking`/`hacking_exp` multipliers accumulate. Model it as a function of
   what carries over.
-- `NeuroFluxGovernor` is the interesting term: cost scales `1.14^level x
-  1.9^queued` but every level counts toward Daedalus's 30 and gives +1% to
-  everything. There is a sweet spot per life and it moves.
+- `NeuroFluxGovernor` is the interesting term, and it is steeper than it
+  looks. Measured live across 12 levels: each level pays *both* the `1.14x`
+  level scaling *and* a fresh `1.9x` on the shared queue multiplier, so the
+  real step is **~2.166x per level**. 12 levels cost $169.8b, with the 13th
+  priced at $198b on its own — i.e. the last level costs more than all twelve
+  before it. Every level still counts toward Daedalus's 30 and gives +1% to
+  every multiplier, so the sweet spot is wherever that curve crosses the value
+  of installing sooner. That crossing is the whole question.
 - Favor's only use below 150 is the rep multiplier; at 150 it unlocks
   donations, which converts money (abundant) into reputation (the constraint).
   **Reaching 150 favor on one faction is probably the real objective**, and

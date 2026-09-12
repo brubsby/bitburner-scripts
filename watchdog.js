@@ -40,13 +40,11 @@ const WATCHED = [
   // more hacking. Restarted here because batch.js will reclaim the RAM if the
   // share ever dies.
   { script: 'share.js', host: 'pserv-67930', args: [], threads: 2040 },
-  // Parked deliberately, not disabled. The fleet is at the 25-server cap and
-  // the batcher is running ~3 targets on 432TB with placement failures to
-  // spare, so marginal cloud RAM buys nothing — and it is destroyed by an
-  // augmentation install, while home RAM survives. Everything goes into home
-  // RAM until the install. Lower this afterwards, when the fleet has to be
-  // rebuilt from nothing and cloud RAM is the only RAM there is.
-  { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 1e15] },
+  // Lowered from the pre-install park of 1e15 back to a small reserve: the
+  // 2026-09-11 prestige destroyed the purchased-server fleet and money along
+  // with it, so cloud RAM is the only RAM there is again and needs rebuilding
+  // from nothing. Home RAM (16,384GB) survived and is not what this guards.
+  { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 1e6] },
 ]
 
 const INTERVAL = 30000

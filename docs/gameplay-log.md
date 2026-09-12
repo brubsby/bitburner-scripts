@@ -1117,3 +1117,180 @@ passes 20,000, tell me and stop") with a background poll on the
 `getSaveFile` reputation field; will report and halt when it fires
 rather than touch the soft-reset/install decision, which is the lead's
 call.
+
+---
+
+## Prestige — early install, user-authorised this session
+
+The user explicitly authorised an aug install this session, reversing
+the standing "never install without asking" rule for this task only.
+Rationale (from the brief): home RAM (16,384GB) survives an install, so
+the post-install rebuild starts from 16TB rather than nothing; favor
+compounds across lives while reputation does not; `repToFavor` is
+logarithmic, so short cycles beat waiting for NiteSec 20,000.
+
+**Step 1 — Export Game.** Clicked in Options before buying anything.
+Confirmed via telemetry: favor went from 0 → 1 on all three joined
+factions (NiteSec, CyberSec, Sector-12) immediately after the click —
+`giveExportBonus()` fired as expected.
+
+**Step 2 — five augmentations, most expensive first.** Bought, in this
+order:
+
+| # | Augmentation | Faction | Price paid |
+| - | --- | --- | --- |
+| 1 | Artificial Synaptic Potentiation | NiteSec | $80.000m |
+| 2 | BitWire | NiteSec | $19.000m |
+| 3 | Cranial Signal Processors - Gen I | CyberSec | $252.700m |
+| 4 | Synaptic Enhancement Implant | CyberSec | $51.442m |
+| 5 | Neurotrainer I | CyberSec | $52.128m |
+
+**Deviation from the planned order, and why:** the brief's descending-cost
+order (ArtificialSynaptic → CranialG1 → BitWire → Synaptic → Neurotrainer)
+assumed all five were affordable *and buyable* at the current reputation.
+They weren't — NiteSec's own Cranial Signal Processors - Gen I needs
+10.000k rep and NiteSec was at 9.6k when I got there, so its Buy button
+was silently `disabled` (no dialog, no error, just nothing happening on
+click — cost me several failed clicks to diagnose via
+`javascript_tool`, since a screenshot alone doesn't distinguish a
+disabled button from an enabled one at this font size). BitWire (3.75k
+rep) was already clear, so I bought that instead and picked up Cranial
+Gen I from **CyberSec** instead, whose reputation (11.5k+) already
+cleared the same 10k requirement. That saved the wait but cost more
+money: BitWire landed at queue-position 2 (×1.9) instead of 3 (×3.61),
+and Cranial Gen I landed at position 3 (×3.61) instead of 2 (×1.9). Total
+paid for the five: **$455.27m**, against the brief's ~$356m estimate for
+the ideal order — a ~$100m difference, trivial against the ~$120b+ on
+hand at the time.
+
+**A second automation gotcha, same root cause:** even once a Buy button
+*is* enabled, clicking it does not reliably open the confirmation
+dialog on the first try when fired back-to-back with no pause —
+roughly 1 in 3 clicks silently no-op'd (no dialog, price unchanged,
+money unchanged). A fixed 1-second wait after each click, with a
+screenshot to confirm the dialog is actually open before clicking
+Purchase, made every subsequent purchase land. Blind-batching
+click/confirm pairs without that wait is what produced the "5 cycles
+queued, only 1 purchase happened" result earlier in this session, and
+one of those misfires briefly collapsed the sidebar's Help section
+(clicking through to whatever was underneath a non-existent dialog).
+
+**Step 3 — NeuroFlux Governor, until unaffordable.** Bought 12 levels
+from CyberSec, one at a time with the verified click pattern above.
+Confirmed empirically that NFG's price multiplier compounds **both**
+`1.14^level` **and** a fresh `1.9×` on the shared queue multiplier per
+level — i.e. each level costs roughly `1.14 × 1.9 ≈ 2.166×` the last,
+not just `1.14×`. Prices actually paid:
+
+| Level | Price | Level | Price |
+| - | - | - | - |
+| 1 | $18.571m | 7 | $1.918b |
+| 2 | $40.224m | 8 | $4.154b |
+| 3 | $87.126m | 9 | $8.997b |
+| 4 | $188.714m | 10 | $19.487b |
+| 5 | $408.674m | 11 | $42.210b |
+| 6 | $885.363m | 12 | $91.427b |
+
+Level 13 priced at **$198.030b**, disabled — money on hand was $92–100b
+and climbing only slowly relative to that gap (~$2–3m/s batcher income
+vs. a $100b+ shortfall), so this is the real affordability ceiling, not
+a transient one. Total spent on NFG: **≈$169.8b**.
+
+**Step 4 — verify before installing.** Confirmed via the Augmentations
+page (`Purchased Augmentations` list):
+
+- Artificial Synaptic Potentiation
+- BitWire
+- Cranial Signal Processors - Gen I
+- Synaptic Enhancement Implant
+- Neurotrainer I
+- NeuroFlux Governor — Level 12 (i.e. 12 stacked levels)
+
+**Count: 17 augmentations queued** (5 + 12 NFG levels — matches the
+sidebar's "17" badge). Preview multipliers shown on that page: Hacking
+Chance 118.32%, Hacking Speed 119.57%, Hacking Exp 130.15%, Hacking
+Level 124.24%, most other stats/exp 112.69–123.95%, Hacknet costs down
+to 88.74%. **Remaining money at report time: $107.88b** (NiteSec rep
+10,661/favor 1, CyberSec 11,614/favor 1, Sector-12 1,198/favor 1). No
+further NFG level or other faction augmentation was affordable, so this
+is the natural stopping point per the brief ("keep buying until the
+next level's price exceeds your remaining balance") — the $107.88b left
+over gets destroyed by the install regardless.
+
+Proceeding to Step 5 (install) now — logging first per the standing
+rule to have the queued list on record before it happens.
+
+**Step 5 — installed.** Confirmed via the in-game message and
+telemetry: money reset to $1,262, hacking (and all other skills) reset
+to 1, all three factions gone, `queuedAugmentations: []`. Installed
+augmentations list: Artificial Synaptic Potentiation, BitWire, Cranial
+Signal Processors - Gen I, Synaptic Enhancement Implant, Neurotrainer
+I, NeuroFlux Governor (12 levels folded into one entry). **Favor
+carried over from reputation as expected: NiteSec 1 → 19, CyberSec 1 →
+20, Sector-12 1 → 4** — confirms `repToFavor` ran at prestige and the
+Export Game +1 wasn't wasted. **Home RAM survived at 16,384GB, cores
+1.** Purchased-server fleet destroyed (`purchasedServers: []`), as
+expected.
+
+One correction to the brief: the in-game confirmation dialog explicitly
+states "You will keep: All scripts on home" — and indeed every `.js`
+file was still present on `home` after reload (`getFileNames`
+confirmed all of them). What does *not* survive is the **running
+process list** — `ps home` after reload showed nothing, `/cmd/busy.txt`
+and `/cmd/in.txt` were both absent, and a queued `ps` command sat
+unconsumed until `cmd.js` was manually restarted. So: files persist,
+running instances don't — consistent with any other soft reset, just
+worth being precise about since the dialog's wording could be
+misread as "the stack keeps running."
+
+**Stack restart**, via the browser terminal once to relaunch `cmd.js`
+(pid 1), then the `cmd.js` bridge for everything else:
+
+- `run batch.js`, `run ctauto.js`, `run watchdog.js`,
+  `run buyserv.js --reserve 1e6` — all launched clean.
+- **Did not** run `auto.js` or `early.js`.
+
+**A duplicate-buyserv snarl, self-inflicted, worth recording:**
+`watchdog.js`'s `WATCHED` list still hardcoded
+`{ script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 1e15] }`
+from the pre-install park (`watchdog.js:49`, the same line the file's
+own comment said to revisit "when the fleet has to be rebuilt from
+nothing" — which is now). Restarting `watchdog.js` after my manual
+`buyserv.js --reserve 1e6` on home meant two competing instances: mine
+on `home`, watchdog's on `joesguns` with the stale 1e15 reserve, which
+would have silently parked the fleet again. Editing `watchdog.js` to
+`1e6` (with a comment explaining why, replacing the now-stale one)
+looked like it should fix it on the next restart, but **the edit did
+not take effect until I forced `curl localhost:12526/sync`** — the
+in-game copy of the file (checked via `getFile`) still read `1e15`
+several seconds after the edit and after a `run watchdog.js`, i.e. the
+hot-reload push silently did not happen on its own that time. After
+`/sync`, `getFile` confirmed `1e6` in-game, and a clean
+kill-old-instances-then-`run watchdog.js` produced exactly one
+`buyserv.js` on `joesguns` at `--reserve 1000000`. Also worth noting for
+next time: a `run <script>` issued in the same `cmd.js` batch as an
+unrelated `connect <host>` runs on whatever host the bridge is
+currently connected to, not `home` — one `run watchdog.js` silently
+failed with "does not exist on n00dles" for exactly this reason before
+I added an explicit `home` command first.
+
+**Verified stack, ~5 minutes post-install:** `cmd.js`, `batch.js`,
+`ctauto.js`, `tel.js`, `watchdog.js` all running on home;
+`buyserv.js --reserve 1e6` running on `joesguns` (its only rootable
+seed target at hacking level 1); `batch.js` had already spun up 12
+groups of h/g/w workers against `n00dles`, using 10,536.1/16,384GB of
+home RAM. Hacking level rose 1 → 11 and rooted-server count 2 → 9 within
+about two minutes of the restart, so the fleet is rebuilding as
+expected.
+
+**CSEC and avmnite-02h are not yet reachable.** `findpath.js` (path
+`home → sigma-cosmetics → CSEC`, and `→ omega-net → avmnite-02h`)
+confirms the required-hacking-level reroll the brief called out:
+**CSEC now needs hacking 52** (was 213), **avmnite-02h needs 206** (was
+348) — both far above the current level of 11, so no faction invites
+are available yet and none of "backdoor both, accept invites, start
+focused faction work" can happen this session. That is the one open
+item from the brief's post-install checklist; everything else (stack
+restart, no `auto.js`/`early.js`, `buyserv.js` reserve, no job) is
+done. Leaving this for the next check-in once hacking level climbs
+past 52.
