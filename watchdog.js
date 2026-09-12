@@ -45,11 +45,12 @@ export async function main(ns) {
       try {
         if (ns.ps(host).some((p) => p.filename === script)) continue
 
-        // Make sure the file is actually there before trying — a host can be
-        // reformatted out from under us, and scp is cheap.
-        if (host !== 'home' && !ns.fileExists(script, host)) {
-          ns.scp(script, host, 'home')
-        }
+        // Always copy from home before relaunching, not just when the file is
+        // missing. A copy on another server does not track the original, so a
+        // script fixed on home can be restarted here from a stale copy and come
+        // back running the old code — silently, and looking like success. That
+        // is how a corrected watchdog kept resurrecting a retired auto.js.
+        if (host !== 'home') ns.scp(script, host, 'home')
 
         const pid = ns.exec(script, host, 1, ...args)
         if (pid) {

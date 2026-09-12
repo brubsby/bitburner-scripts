@@ -64,6 +64,43 @@ function rpc(method, params) {
   });
 }
 
+/**
+ * Hostnames we have seen, from the last decoded save. Used to find stale copies
+ * of a script sitting on other servers.
+ */
+const knownHosts = new Set(["home"]);
+
+/**
+ * Push to home, then overwrite any copy of the same file living on another
+ * server.
+ *
+ * Scripts get spread around in-game with `scp`, and those copies do not track
+ * the original. Editing a file here updated home and left every copy stale, so
+ * a supervisor restarted on another host silently came back running old code —
+ * which is how a fixed `watchdog.js` kept resurrecting a retired `auto.js`, and
+ * cost a debugging session to find. `/sync` had the same blind spot, so the
+ * obvious way to check made the problem look absent.
+ */
+async function propagate(remote, content) {
+  const targets = [];
+  for (const host of knownHosts) {
+    if (host === "home") continue;
+    try {
+      const names = await rpc("getFileNames", { server: host });
+      if (names.includes(remote)) targets.push(host);
+    } catch {
+      // Server may have been deleted since the last save; skip it.
+    }
+  }
+  for (const host of targets) {
+    await rpc("pushFile", { filename: remote, content, server: host }).catch((e) =>
+      log(`propagate ${remote} -> ${host} failed: ${e.message ?? e}`),
+    );
+  }
+  if (targets.length) log(`  propagated ${remote} to ${targets.length} other server(s): ${targets.join(", ")}`);
+  return targets.length;
+}
+
 async function pushFile({ local, remote }) {
   const content = fs.readFileSync(local, "utf8");
   await rpc("pushFile", { filename: remote, content, server: "home" });
@@ -75,6 +112,9 @@ async function pushFile({ local, remote }) {
   ramCache.set(remote, ram);
   const delta = typeof ram === "number" && typeof prev === "number" && ram !== prev ? ` (was ${prev}GB)` : "";
   log(`push ${remote}${typeof ram === "number" ? ` — ${ram}GB${delta}` : ram ? ` — RAM: ${ram}` : ""}`);
+  // Only scripts get copied around in-game, and only worth doing once we have
+  // seen the server list at least once.
+  if (/\.(js|jsx|ts|tsx)$/.test(remote) && knownHosts.size > 1) await propagate(remote, content);
   return ram;
 }
 
@@ -140,6 +180,9 @@ function digest(save) {
     const s = servers[key]?.data ?? servers[key];
     if (!s || typeof s !== "object") continue;
     totalServers++;
+    // Remember rooted hosts so an edited script can be propagated to any copy
+    // of it living out there — see propagate().
+    if (s.hasAdminRights && s.hostname) knownHosts.add(s.hostname);
     if (s.hasAdminRights) rooted++;
     if (s.hostname === "home") {
       homeRam = s.maxRam;

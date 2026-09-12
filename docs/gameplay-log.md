@@ -631,3 +631,105 @@ buyserv is correctly idle; it will resume spending on cloud RAM once
 income pushes back above the reserve, which is fine since the reserve's
 whole purpose was freeing cash for home RAM, not preventing all further
 cloud spend forever.
+
+---
+
+## 2026-09-12 ~00:12 UTC — buyserv/watchdog restart, discovered stale in-game
+copies, then the batch.js handover happened live mid-task
+
+**Task 1 as briefed:** killed `watchdog.js` on `pserv-67932` first, then
+`buyserv.js` on `joesguns` and relaunched with `--reserve 700e6`, then
+restarted `watchdog.js`. All three steps succeeded on the first pass —
+but verification caught something the brief didn't anticipate.
+
+**Real finding: the RFA daemon only auto-pushes edited root `.js` files to
+`home`.** Cross-server copies (`joesguns`, `pserv-67932`) keep whatever was
+last `scp`'d to them, indefinitely. `getFile` on `joesguns` for
+`buyserv.js` showed the *old* code (no `rememberedReserve`, no config
+persistence) even after the freshly-launched process reported the right
+`--reserve 700000000` args — because the fix only ever reached `home`.
+Same for `watchdog.js` on `pserv-67932`: old `WATCHED` list, no
+persisted-args carry-over. A `curl localhost:12526/sync` forced re-push
+did **not** fix the cross-server copies either — sync only re-pushes to
+`home` too. The only fix was manual: `scp buyserv.js joesguns` and `scp
+watchdog.js pserv-67932` from `home` (both reported "already existed ...
+and was overwritten"), then kill and relaunch both processes again on top
+of the corrected files. Confirmed after: `/tel/buyserv-config.txt` exists
+on `joesguns` with `{"reserve":700000000,...}`, both files' in-game
+content now byte-identical to disk. **Worth remembering: `getFileNames`
+existing is not evidence a cross-server file is current — always diff
+content after an `scp`, or after any fix that's supposed to reach a
+non-home server.**
+
+**Mid-verification, the lead cut over the fleet controller from `auto.js`
++ `early.js` to `batch.js` (the HWGW batcher) live, directly through the
+same browser terminal I was using.** This produced two real collisions
+(a `kill 154` of mine landed on top of their typing, producing the
+garbled `kill 154run cmd.js`; later two `/cmd/in.txt` pushes stepped on
+each other). Not something to replicate — flagging so whoever reads this
+next knows shared-terminal collisions are a real failure mode, not a
+one-off.
+
+**New capability: `cmd.js`, a terminal bridge (write `/cmd/in.txt`, poll
+`/cmd/busy.txt`, read `/cmd/out.txt`).** Confirmed working after the lead's
+initial version had broken output capture (executed commands fine,
+returned empty `output` for everything) — the lead pushed a fix to disk,
+I killed the stale process (pid 161) and let `watchdog.js` restart it
+(pid 373), then confirmed a `ps` round-trip captured full multi-line
+output correctly. This is now the preferred channel over browser typing
+per the lead's instruction, specifically to avoid further collisions.
+
+**Fleet transition cleanup, in order:** `auto.js` kept getting resurrected
+by the *old* running copy of `watchdog.js` (on `pserv-67932`), whose
+`WATCHED` list still included `auto.js` even though the on-disk file had
+already been updated to watch `batch.js` + `cmd.js` + `buyserv.js`
+instead — same stale-cross-server-copy problem as above, this time on the
+supervisor that's supposed to prevent exactly this. Killed the stale
+`watchdog.js`, `scp`'d the current file from `home`, relaunched — it
+still kept losing the race against auto.js respawns for a few cycles
+(auto.js's own `early.js` workers filling every host's RAM before
+`batch.js` could place batches). Ended up killing `auto.js`'s PID directly
+a few times as the stale watchdog kept reviving it, until the corrected
+watchdog copy was actually running and stopped restarting it.
+
+**`watchdog.js` could not get a stable home on `pserv-67932` once
+`batch.js` was placing its own `w.js`/`g.js` workers there** — the batcher
+wants the whole fleet's RAM including this box, leaving `watchdog.js`'s
+3.8GB request failing repeatedly (`free` showed 0.256GB available on a
+16GB host). Moved it to run on `home` instead, where `run watchdog.js`
+succeeded immediately. **Flagging for whoever owns `batch.js`:** if it's
+meant to run unattended, the batcher's RAM allocator may need to leave a
+small reserved slice on whichever host is supposed to carry `watchdog.js`,
+or `watchdog.js` needs to always live on `home` going forward rather than
+a purchased server. `batch.txt`'s `reservedForPipelines` field exists and
+currently reads `0` — that may be the intended knob.
+
+**End state, fully verified:**
+- `buyserv.js` — `joesguns`, pid 162, `--reserve 700000000`, config
+  persisted to `/tel/buyserv-config.txt`.
+- `watchdog.js` — **now on `home`** (not `pserv-67932`), pid 372, watching
+  `batch.js` + `cmd.js` + `buyserv.js` only. `restarts: {"cmd.js": 1}` —
+  the one deliberate cmd.js restart, nothing unplanned since.
+- `batch.js` — `home`, pid 321, health `prepping` across 3 targets
+  (`phantasy`, `max-hardware`, `silver-helix`), 99.9% fleet RAM
+  utilization, 40 hosts in use, weakening security toward each target's
+  minimum before batching starts. This was the lead's call to start, not
+  mine — I did not initiate it, per the brief's standing instruction not
+  to touch `batch.js` on my own initiative.
+- `cmd.js` — `home`, pid 373, output capture confirmed fixed.
+- No `auto.js` or `early.js` processes remain anywhere in the fleet.
+- NiteSec unfocused faction work confirmed still running throughout every
+  navigation and terminal detour: 1,571 rep at 0.985 rep/sec at last
+  check (was 239k... no — rep counter reset at some point between
+  sessions, currently reads low four digits, climbing steadily,
+  unaffected by any of the above).
+- Money ~$700.0m (right at the buyserv reserve line — expected, and
+  correct behavior, not a bug).
+- Hacking level 240 (was 218 at pickup — batch.js's prep-phase weaken/grow
+  ops are granting hacking exp fast). Rooted 42/95.
+- Factions unchanged: NiteSec, Sector-12, CyberSec.
+
+**Not done this session:** no contract cycling (`ctscan.js`/`ctsolve.js`)
+— the fleet transition and collision cleanup ate the whole session.
+Worth a pass next cycle once `batch.js` is confirmed stable and out of
+`prepping`.

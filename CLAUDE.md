@@ -41,6 +41,15 @@ fastest signal that an edit got expensive.
 Not synced: `tools/`, `docs/`, `archive/`, `min/`, `node_modules/`,
 `.telemetry/`, and `NetscriptDefinitions.d.ts`. Put experiments there.
 
+**Copies on other servers.** A script `scp`'d to another host does not track the
+original, so editing a file used to update home and leave every copy stale — and
+a supervisor restarted on another host would silently come back running old
+code. `/sync` had the same blind spot, so the obvious way to check made the
+problem look absent. The daemon now overwrites every copy it can find on a
+push, and `watchdog.js` re-copies from home before relaunching anything. If you
+are ever debugging "the fix didn't take", check the file on the *target* server,
+not home.
+
 Scripts are pushed alphabetically, so a file can land before a module it
 imports and fail to compile; the daemon rechecks those once everything is
 present.
