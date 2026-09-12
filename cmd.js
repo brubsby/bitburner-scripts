@@ -65,6 +65,56 @@ function submit(command) {
   input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }))
 }
 
+/**
+ * Commands handled directly through the NS API, with no DOM involved.
+ *
+ * The terminal path only works while the Terminal tab is actually rendered, so
+ * it fails whenever the game is showing the faction-work screen, the City, or
+ * Create Program — which is exactly when an agent most wants to run something
+ * without disturbing what is on screen. Focused faction work is worth 25% more
+ * reputation than unfocused, so "go look at the Terminal first" is not free.
+ *
+ * Everything here has an NS equivalent and therefore needs no terminal at all.
+ * Anything else — connect, backdoor, buy — genuinely has no NS equivalent
+ * without Source-File 4 and still goes through the DOM.
+ *
+ * Returns a string result, or null if this is not a native command.
+ */
+async function runNative(ns, line) {
+  const [verb, ...args] = line.split(/\s+/)
+
+  switch (verb) {
+    case 'exec': {
+      // exec <script> <host> [threads] [args...]
+      const [script, host, threadsRaw, ...rest] = args
+      const threads = Number(threadsRaw) || 1
+      if (host !== 'home' && !ns.scp(script, host, 'home')) return `exec: could not copy ${script} to ${host}`
+      const pid = ns.exec(script, host, threads, ...rest)
+      return pid ? `started ${script} on ${host} (pid ${pid}, ${threads} threads)` : `exec failed — not enough RAM on ${host}?`
+    }
+    case 'scp':
+      return ns.scp(args[0], args[1], args[2] ?? 'home') ? `copied ${args[0]} to ${args[1]}` : `scp failed`
+    case 'killall':
+      // killall <host> — the terminal's version only hits the connected server.
+      return `killed ${ns.killall(args[0] ?? ns.getHostname())} process(es) on ${args[0] ?? ns.getHostname()}`
+    case 'killscript':
+      // killscript <script> <host>
+      return ns.scriptKill(args[0], args[1]) ? `killed ${args[0]} on ${args[1]}` : `nothing killed`
+    case 'ps':
+      return ns
+        .ps(args[0] ?? ns.getHostname())
+        .map((p) => `${p.pid} ${p.filename} ${p.threads}t ${p.args.join(' ')}`)
+        .join('\n')
+    case 'free': {
+      const host = args[0] ?? ns.getHostname()
+      const max = ns.getServerMaxRam(host)
+      return `${host}: ${ns.getServerUsedRam(host).toFixed(2)} / ${max} GB used`
+    }
+    default:
+      return null
+  }
+}
+
 export async function main(ns) {
   ns.disableLog('ALL')
   ns.tprint('cmd.js: terminal bridge up — write commands to /cmd/in.txt')
@@ -87,6 +137,18 @@ export async function main(ns) {
     for (const line of script.split('\n').map((l) => l.trim()).filter(Boolean)) {
       if (FORBIDDEN.some((re) => re.test(line))) {
         results.push({ command: line, output: null, error: 'refused: destructive command' })
+        continue
+      }
+
+      // Prefer the NS path — it works whatever the game is displaying.
+      try {
+        const native = await runNative(ns, line)
+        if (native !== null) {
+          results.push({ command: line, output: native, error: null, via: 'ns' })
+          continue
+        }
+      } catch (err) {
+        results.push({ command: line, output: null, error: String(err), via: 'ns' })
         continue
       }
 
