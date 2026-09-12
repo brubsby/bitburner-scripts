@@ -6,10 +6,19 @@
 //
 // Installing augmentations kills every running script and destroys every
 // purchased server. Home files survive, so the scripts are all still there —
-// but nothing restarts them, and after the last install the fleet sat with no
-// controller, no share, and no faction work for a long stretch before anyone
-// noticed. Reputation earned zero the whole time. That is the failure this
-// exists to make impossible.
+// but nothing restarts them, and after one install the fleet sat with no
+// controller, no share, and no faction work for a long stretch. Reputation
+// earned zero the whole time.
+//
+// IMPORTANT: setting this as Options -> System -> Autoexec Script does NOT
+// cover the post-install case, which is the one that matters most. The game
+// only creates the autoexec entry for a server that has *saved running
+// scripts* (`if (skipScriptLoad || !rsList) continue` —
+// src/NetscriptWorker.ts:247), and an install kills every script, so the list
+// is empty and the autoexec is skipped. It fires on an ordinary page reload
+// and not on a prestige. Whoever performs an install must run this afterwards
+// by hand — the install procedure is not complete until `run boot.js` has been
+// executed and its TODO lines have been read.
 //
 // Idempotent: safe to run at any time, and starting it twice does nothing.
 //
