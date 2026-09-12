@@ -106,3 +106,46 @@ Faction membership is wiped and the map respawns, so:
   `1e15` only because marginal cloud RAM is worthless *right now*.
 - Story-server required hacking levels **re-roll at prestige**, so the recorded
   213/348/539 do not carry over.
+
+---
+
+## Future tasks (deferred, want tokens to do properly)
+
+**Model the prestige decision analytically.** The user's read — from a lot of
+play — is that the cost of prestiging is much lower than this session assumed,
+and that we should have installed well before now. That is almost certainly
+right, and the reason is structural: home RAM survives, so the post-install
+"dead zone" starts from 16TB rather than from nothing, and the fleet rebuilds
+in minutes at current income.
+
+Every estimate this session treated the install as expensive and the batch size
+as the thing to optimise. The opposite framing is probably correct: **install
+early and often, because favor compounds across lives and reputation does
+not.** `repToFavor` is logarithmic (`favor = ln(1 + rep/25000)/ln(1.02)`), so
+the first few thousand reputation in each life are worth far more favor than
+the last few thousand — which argues for short cycles, exactly as the user
+said.
+
+What a proper model needs:
+
+- Value of a life = augmentation multipliers gained x time to the next install,
+  against the fixed rebuild cost. Solve for the cycle length that maximises
+  long-run growth rate, not per-cycle gain.
+- The rebuild cost is not a constant — it falls every life as home RAM and
+  `hacking`/`hacking_exp` multipliers accumulate. Model it as a function of
+  what carries over.
+- `NeuroFluxGovernor` is the interesting term: cost scales `1.14^level x
+  1.9^queued` but every level counts toward Daedalus's 30 and gives +1% to
+  everything. There is a sweet spot per life and it moves.
+- Favor's only use below 150 is the rep multiplier; at 150 it unlocks
+  donations, which converts money (abundant) into reputation (the constraint).
+  **Reaching 150 favor on one faction is probably the real objective**, and
+  nothing this session was optimising for it.
+
+The simulator cannot answer this today: it models one life, and
+`tools/sim/world.mjs` has no notion of prestige. That is the gap to close
+first.
+
+**Also deferred:** fidelity items 7 and 12 (`build.mjs` BitNode multipliers,
+routing the ranking index through derived EV functions) — flagged by the
+optimizer as not done.
