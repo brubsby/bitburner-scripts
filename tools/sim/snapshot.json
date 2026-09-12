@@ -1,16 +1,17 @@
 {
-  "capturedAt": "2026-09-11T20:36:49.600Z",
+  "capturedAt": "2026-09-11T22:58:08.685Z",
   "bitNode": 1,
   "player": {
-    "money": 487820.2860107053,
-    "hackExp": 17324.925000000003,
-    "hacking": 113,
+    "money": 19025577.311148524,
+    "hackExp": 133039.425,
+    "hacking": 177,
     "homeRam": 16,
     "homeCores": 1,
     "programs": [
       "NUKE.exe",
       "fl1ght.exe",
-      "BruteSSH.exe"
+      "BruteSSH.exe",
+      "FTPCrack.exe"
     ],
     "hasTor": true
   },
@@ -37,12 +38,17 @@
         "hong-fang-tea",
         "harakiri-sushi",
         "iron-gym",
-        "darkweb"
+        "darkweb",
+        "pserv-47920",
+        "pserv-67930",
+        "pserv-87930",
+        "pserv-7931"
       ],
       "programs": [
         "NUKE.exe",
         "fl1ght.exe",
-        "BruteSSH.exe"
+        "BruteSSH.exe",
+        "FTPCrack.exe"
       ]
     },
     {
@@ -962,9 +968,9 @@
     {
       "hostname": "foodnstuff",
       "maxRam": 16,
-      "moneyAvailable": 2774206.0393970124,
+      "moneyAvailable": 36219117.451537676,
       "moneyMax": 50000000,
-      "hackDifficulty": 6.464749999999927,
+      "hackDifficulty": 7.123249999999444,
       "minDifficulty": 3,
       "baseDifficulty": 10,
       "requiredHackingSkill": 1,
@@ -1000,9 +1006,9 @@
     {
       "hostname": "joesguns",
       "maxRam": 16,
-      "moneyAvailable": 2621430.505214879,
+      "moneyAvailable": 2860254.0347931613,
       "moneyMax": 62500000,
-      "hackDifficulty": 9.911999999999976,
+      "hackDifficulty": 10.49199999999997,
       "minDifficulty": 5,
       "baseDifficulty": 15,
       "requiredHackingSkill": 10,
@@ -1091,7 +1097,7 @@
       "requiredHackingSkill": 150,
       "serverGrowth": 30,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
@@ -1126,9 +1132,9 @@
     {
       "hostname": "harakiri-sushi",
       "maxRam": 16,
-      "moneyAvailable": 4000000,
+      "moneyAvailable": 9215936.498645507,
       "moneyMax": 100000000,
-      "hackDifficulty": 15,
+      "hackDifficulty": 6.355999999999998,
       "minDifficulty": 5,
       "baseDifficulty": 15,
       "requiredHackingSkill": 40,
@@ -1153,7 +1159,7 @@
       "requiredHackingSkill": 100,
       "serverGrowth": 35,
       "numOpenPortsRequired": 2,
-      "hasAdminRights": false,
+      "hasAdminRights": true,
       "purchasedByPlayer": false,
       "cpuCores": 3,
       "serversOnNetwork": [
@@ -1442,6 +1448,82 @@
       "moneyMax": 0,
       "hasAdminRights": true,
       "purchasedByPlayer": false,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": []
+    },
+    {
+      "hostname": "pserv-47920",
+      "maxRam": 128,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": []
+    },
+    {
+      "hostname": "pserv-67930",
+      "maxRam": 64,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": []
+    },
+    {
+      "hostname": "pserv-87930",
+      "maxRam": 1024,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
+      "cpuCores": 1,
+      "serversOnNetwork": [
+        "home"
+      ],
+      "programs": []
+    },
+    {
+      "hostname": "pserv-7931",
+      "maxRam": 512,
+      "moneyAvailable": 0,
+      "moneyMax": 0,
+      "hackDifficulty": 1,
+      "minDifficulty": 1,
+      "baseDifficulty": 1,
+      "requiredHackingSkill": 1,
+      "serverGrowth": 1,
+      "numOpenPortsRequired": 5,
+      "hasAdminRights": true,
+      "purchasedByPlayer": true,
       "cpuCores": 1,
       "serversOnNetwork": [
         "home"

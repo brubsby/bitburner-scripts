@@ -23,7 +23,12 @@
 // the point of negative return. buyserv now also persists its own reserve, so
 // the two mechanisms cover each other; keep this list correct anyway.
 const WATCHED = [
-  { script: 'auto.js', host: 'home', args: [] },
+  // batch.js replaced auto.js + early.js as the hacking controller. Do not add
+  // auto.js back alongside it — both want the whole fleet's RAM, and auto.js
+  // would fill every host with early.js workers that the batcher then cannot
+  // place batches into.
+  { script: 'batch.js', host: 'home', args: [] },
+  { script: 'cmd.js', host: 'home', args: [] },
   { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 700e6] },
 ]
 

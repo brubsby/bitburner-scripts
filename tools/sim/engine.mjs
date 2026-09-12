@@ -96,7 +96,23 @@ export class Sim {
       /** Time-weighted RAM occupancy, so idle capacity is visible. */
       ramGbMs: 0,
       capacityGbMs: 0,
+      /**
+       * Fidelity counters. `ns.exec` returns 0 silently when RAM is short
+       * (NetscriptWorker.ts runScriptFromScript) and a killed worker's
+       * in-flight op is destroyed outright — clearTimeout + ScriptDeath in
+       * killWorkerScript.ts. Both are invisible in the real game unless you
+       * count them, which is exactly why the sim missed them.
+       */
+      execFails: 0,
+      killedProcs: 0,
+      killedOps: 0,
+      killedThreadSeconds: 0,
+      killedMoneyForgone: 0,
     };
+
+    /** Live worker processes, keyed by pid. See spawn(). */
+    this.procs = new Map();
+    this.nextPid = 1;
 
     /** Darkweb state. Programs are bought, not written — writing costs wall time. */
     this.hasTor = world.player?.hasTor ?? false;
@@ -203,17 +219,196 @@ export class Sim {
     return true;
   }
 
-  /** Compute duration from the state at this instant and schedule the landing. */
-  begin({ op, host, target, threads, ram }) {
-    const t = this.servers.get(target);
+  /**
+   * ns.hack/grow/weaken's `additionalMsec`: the duration is computed **now**,
+   * from the state now, and `padMs` is added afterwards
+   * (NetscriptHelpers.tsx validateHGWOptions / NetscriptFunctions.ts). That is
+   * the difference that matters for batching — execAt above sleeps first and so
+   * reads the world at wake time, which is a different (and worse) exposure.
+   * With a pad, four ops launched in one synchronous burst all read the same
+   * hacking level and the same security, so their relative landing offsets are
+   * exact by construction.
+   */
+  execPad(hostname, op, targetName, threads, padMs = 0) {
+    threads = Math.floor(threads);
+    if (threads < 1 || !(padMs >= 0)) return false;
+    const host = this.servers.get(hostname);
+    const target = this.servers.get(targetName);
+    if (!host || !target || !host.hasAdminRights || !target.hasAdminRights) return false;
+    const ram = this.scriptRam[op] * threads;
+    if (ram > this.avail(host) + 1e-9) return false;
+    if (op === "hack" && target.requiredHackingSkill > this.hacking) return false;
+
+    host.usedRam += ram;
     const seconds =
       op === "hack"
-        ? calculateHackingTime(t, this.player)
+        ? calculateHackingTime(target, this.player)
         : op === "grow"
-          ? calculateGrowTime(t, this.player)
-          : calculateWeakenTime(t, this.player);
-    this.push({ at: this.t + seconds * 1000, op, host, target, threads, ram });
+          ? calculateGrowTime(target, this.player)
+          : calculateWeakenTime(target, this.player);
+    this.push({ at: this.t + seconds * 1000 + padMs, op, host: hostname, target: targetName, threads, ram });
     this.stats.threadSeconds += threads * seconds;
+    return true;
+  }
+
+  /** Compute duration from the state at this instant and schedule the landing. */
+  begin({ op, host, target, threads, ram, pid = 0 }) {
+    const t = this.servers.get(target);
+    const seconds = this.opSeconds(op, t);
+    this.push({ at: this.t + seconds * 1000, op, host, target, threads, ram, pid });
+    this.stats.threadSeconds += threads * seconds;
+  }
+
+  /**
+   * Duration in seconds of one op against `target`, from the state *now*.
+   *
+   * Exposed because it is the quantity both desync mechanisms act on: it is
+   * linear in hackDifficulty (so an op launched during another batch's
+   * security elevation runs longer — prior-art 9b') and inversely proportional
+   * to hackingLevel + 50 (so a level-up shortens everything launched after it —
+   * prior-art 9b). Both already fall out of computing this at launch, which is
+   * what the game does.
+   */
+  opSeconds(op, target) {
+    const t = typeof target === "string" ? this.servers.get(target) : target;
+    return op === "hack"
+      ? calculateHackingTime(t, this.player)
+      : op === "grow"
+        ? calculateGrowTime(t, this.player)
+        : calculateWeakenTime(t, this.player);
+  }
+
+  // -------------------------------------------------------------------------
+  // Worker processes.
+  //
+  // The ephemeral exec/execAt/execPad above model a *dispatcher* design, where
+  // the controller launches a one-shot worker per op and its RAM comes back at
+  // landing. That is h.js/g.js/w.js, and it is not what auto.js runs.
+  //
+  // auto.js runs early.js: **one ns.exec per host**, with every thread that
+  // host can hold, looping forever. So the RAM is held for the process's whole
+  // life, the host is a single decision-maker rather than a pool, and — the
+  // part the sim was missing entirely — the controller can *kill* it, which
+  // destroys whatever op is in flight. killWorkerScript does
+  // `clearTimeout(ws.delay)` then rejects with ScriptDeath, so the landing
+  // handler never runs: no money, no exp, no security change, nothing.
+  // (src/Netscript/killWorkerScript.ts stopAndCleanUpWorkerScript.)
+  //
+  // Everything below exists so a strategy can reproduce that.
+  // -------------------------------------------------------------------------
+
+  /**
+   * ns.exec of a long-lived worker. Claims `ramPerThread * threads` on the host
+   * and keeps it until the process is killed. Returns a pid, or **0** when it
+   * does not fit — silently, exactly as runScriptFromScript does
+   * (NetscriptWorker.ts:314-353). Callers that ignore the return value get a
+   * partially deployed fleet and no error, which is the real game's behaviour.
+   */
+  spawn(hostname, { script = "worker", threads, ramPerThread, args = [], onLand = null, state = null } = {}) {
+    threads = Math.floor(threads);
+    const host = this.servers.get(hostname);
+    if (!host || !host.hasAdminRights || !(threads >= 1)) {
+      this.stats.execFails++;
+      return 0;
+    }
+    const ram = ramPerThread * threads;
+    if (ram > this.avail(host) + 1e-9) {
+      this.stats.execFails++;
+      return 0;
+    }
+    host.usedRam += ram;
+    const pid = this.nextPid++;
+    const proc = {
+      pid,
+      host: hostname,
+      script,
+      threads,
+      ram,
+      args,
+      onLand,
+      state,
+      startedAt: this.t,
+      /** The landing event this process is currently waiting on, if any. */
+      pending: null,
+    };
+    this.procs.set(pid, proc);
+    return pid;
+  }
+
+  /** Processes running on a host. The sim's ns.ps. */
+  psOn(hostname) {
+    const out = [];
+    for (const p of this.procs.values()) if (p.host === hostname) out.push(p);
+    return out;
+  }
+
+  /**
+   * Start an op from inside a worker process. RAM is already held, so nothing
+   * is claimed here; the duration is read from the world *now*, which is what
+   * makes a worker that wakes into an elevated-security window run long.
+   */
+  procOp(pid, op, targetName) {
+    const proc = this.procs.get(pid);
+    if (!proc) return false;
+    const target = this.servers.get(targetName);
+    if (!target || !target.hasAdminRights) return false;
+    if (op === "hack" && target.requiredHackingSkill > this.hacking) return false;
+
+    const seconds = this.opSeconds(op, target);
+    const ev = {
+      at: this.t + seconds * 1000,
+      op,
+      host: proc.host,
+      target: targetName,
+      threads: proc.threads,
+      ram: 0, // held by the process, not the op
+      pid,
+      seconds,
+    };
+    proc.pending = ev;
+    this.push(ev);
+    this.stats.threadSeconds += proc.threads * seconds;
+    return true;
+  }
+
+  /**
+   * ns.kill. Releases the process's RAM and **destroys its in-flight op**.
+   * Returns the thread-seconds thrown away, which is the number a retarget
+   * decision has to be worth more than.
+   */
+  killProc(pid) {
+    const proc = this.procs.get(pid);
+    if (!proc) return 0;
+    const host = this.servers.get(proc.host);
+    host.usedRam -= proc.ram;
+    if (host.usedRam < 1e-9) host.usedRam = 0;
+
+    let wasted = 0;
+    const ev = proc.pending;
+    if (ev) {
+      const i = this.events.indexOf(ev);
+      if (i > -1) this.events.splice(i, 1);
+      // Only the part already flown is wasted; the rest was never going to be
+      // spent. But the *op* is a total loss either way — it yields nothing.
+      wasted = ev.threads * ev.seconds;
+      this.stats.killedOps++;
+      this.stats.killedThreadSeconds += wasted;
+      if (ev.op === "hack") {
+        const t = this.servers.get(ev.target);
+        this.stats.killedMoneyForgone +=
+          t.moneyAvailable * calculatePercentMoneyHacked(t, this.player) * ev.threads;
+      }
+    }
+    this.procs.delete(pid);
+    this.stats.killedProcs++;
+    return wasted;
+  }
+
+  /** Kill every process on `hostname` for which `pred(proc)` is true. */
+  killProcsOn(hostname, pred = () => true) {
+    let n = 0;
+    for (const p of this.psOn(hostname)) if (pred(p)) (this.killProc(p.pid), n++);
+    return n;
   }
 
   push(ev) {
@@ -234,10 +429,31 @@ export class Sim {
       this.begin(ev);
       return;
     }
+    const proc = ev.pid ? this.procs.get(ev.pid) : null;
+    // A pid'd event whose process is gone was killed in flight; the landing
+    // handler never runs in the real game either.
+    if (ev.pid && !proc) return;
+
+    if (!proc) {
+      // Ephemeral one-shot worker: its RAM comes back now.
+      const h = this.servers.get(ev.host);
+      h.usedRam -= ev.ram;
+      if (h.usedRam < 1e-9) h.usedRam = 0;
+    } else {
+      proc.pending = null;
+    }
+
+    this.applyOp(ev);
+
+    // The worker's promise resolved: it runs its next statement synchronously,
+    // in the same task, seeing the world this landing just changed.
+    if (proc && proc.onLand) proc.onLand(this, proc, ev);
+  }
+
+  /** The landing handlers themselves, split out so complete() owns lifecycle. */
+  applyOp(ev) {
     const host = this.servers.get(ev.host);
     const target = this.servers.get(ev.target);
-    host.usedRam -= ev.ram;
-    if (host.usedRam < 1e-9) host.usedRam = 0;
 
     const expPerThread = calculateHackingExpGain(target, this.player);
 

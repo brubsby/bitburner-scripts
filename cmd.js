@@ -41,9 +41,17 @@ const FORBIDDEN = [/^\s*softreset\b/i, /^\s*b1tflum3\b/i, /^\s*wd\b/i]
 const doc = eval('document')
 const win = eval('window')
 
-function terminalText() {
+/**
+ * The terminal's rendered lines, as an array.
+ *
+ * Diffing the container's innerText by string length does not work: the
+ * terminal keeps only a bounded number of entries, so once it is full the old
+ * lines fall off the front and the text shifts rather than growing. Counting
+ * <li> children and taking the ones past the old count is stable under that.
+ */
+function terminalLines() {
   const el = doc.getElementById('terminal')
-  return el ? el.innerText : ''
+  return el ? Array.from(el.children).map((li) => li.innerText) : []
 }
 
 /** Type a command into the terminal the way a person would, and press Enter. */
@@ -82,7 +90,7 @@ export async function main(ns) {
         continue
       }
 
-      const before = terminalText()
+      const before = terminalLines().length
       try {
         submit(line)
       } catch (err) {
@@ -91,24 +99,35 @@ export async function main(ns) {
       }
 
       // Let the command run. Most are instant, but backdoor and analyze take
-      // real time and print when they finish, so wait until the terminal stops
-      // growing rather than guessing a fixed delay.
-      let output = ''
+      // real time and print only when they finish, so wait until the terminal
+      // stops producing lines rather than guessing a fixed delay.
+      let lines = []
+      let count = before
       let stableFor = 0
       for (let waited = 0; waited < 120000; waited += 200) {
         await ns.sleep(200)
-        const now = terminalText()
-        const grown = now.length > before.length + output.length
-        output = now.slice(before.length)
-        if (grown) {
+        const now = terminalLines()
+        if (now.length !== count) {
+          count = now.length
           stableFor = 0
         } else {
           stableFor += 200
-          if (stableFor >= 600 && waited >= 600) break
+          if (stableFor >= 800) {
+            // The terminal is bounded, so once it is full the line count stops
+            // rising and the new output is simply the tail.
+            lines = now.length > before ? now.slice(before) : now.slice(-8)
+            break
+          }
         }
       }
 
-      results.push({ command: line, output: output.trim().slice(0, 4000), error: null })
+      // Drop the echoed prompt line the terminal prints for the command itself.
+      const output = lines
+        .filter((l) => !l.trimEnd().endsWith('> ' + line))
+        .join('\n')
+        .trim()
+
+      results.push({ command: line, output: output.slice(0, 4000), error: null })
     }
 
     ns.write(

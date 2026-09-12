@@ -63,7 +63,12 @@ for (const name of names) {
   }
   const runs = [];
   for (let seed = 1; seed <= seeds; seed++) {
-    runs.push(new Sim(world, { seed, homeReserve, ...(scriptRam ? { scriptRam } : {}) }).run(make(), minutes * 60_000));
+    const strategy = make();
+    // A strategy may declare what its workers cost, so a run can compare
+    // early.js (2.4GB/thread, self-deciding) against dispatched h/g/w.js
+    // (1.7/1.75GB) in one table. An explicit --workerram still wins.
+    const ram = scriptRam ?? strategy.scriptRam ?? undefined;
+    runs.push(new Sim(world, { seed, homeReserve, ...(ram ? { scriptRam: ram } : {}) }).run(strategy, minutes * 60_000));
   }
   // Income over the closing tenth of the run: where a strategy has *got to*,
   // as opposed to what it banked on the way. A strategy that spends everything

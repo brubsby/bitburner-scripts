@@ -18,6 +18,7 @@ import {
 } from "./game.mjs";
 import { THREAD_RAM, PORT_PROGRAMS, TOR_COST } from "./engine.mjs";
 import { getCloudServerLimit } from "./game.mjs";
+import { hwgwBatcher } from "./batcher.mjs";
 
 const CLOUD_LIMIT = getCloudServerLimit();
 
@@ -464,6 +465,66 @@ export function splitTargets(k, opts = {}) {
   };
 }
 
+/**
+ * Rank by an index from INDEX rather than the ad-hoc $/s in rankTargets.
+ * `batchChance` is what auto.js ships.
+ */
+export function rankBy(sim, indexName = "batchChance") {
+  const score = INDEX[indexName];
+  return sim
+    .targets()
+    .filter((t) => t.moneyMax > 0)
+    .map((t) => ({ t, s: score(t, sim) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.t);
+}
+
+/**
+ * What a *minimal* multi-target auto.js can actually do.
+ *
+ * auto.js runs one early.js process per host, and early.js takes its target as
+ * an argument — so the unit auto.js can hand out is a whole host, not a slice
+ * of the fleet's free RAM. This partitions hosts across the top k targets
+ * least-loaded-first (so a 1024GB purchased server and a 16GB rooted box end up
+ * balanced by GB, not by count) and then runs the ordinary threshold policy on
+ * each host against its assigned target.
+ *
+ * That distinction matters: splitTargets below divides the *global* free RAM
+ * every tick, which no per-host worker script can implement without a central
+ * dispatcher. This one is shippable as an argument change.
+ */
+export function partitionTargets(k, { moneyFloor = 0.5, securitySlack = 5, index = "batchChance" } = {}) {
+  return {
+    name: `partition over ${k} targets`,
+    tick(sim) {
+      keepRooting(sim);
+      const ranked = rankBy(sim, index).slice(0, k);
+      if (!ranked.length) return;
+
+      const load = ranked.map((t) => ({ t, gb: 0, hosts: [] }));
+      for (const h of [...sim.hosts()].sort((a, b) => b.maxRam - a.maxRam)) {
+        const slot = load.reduce((a, b) => (a.gb <= b.gb ? a : b));
+        slot.gb += h.maxRam;
+        slot.hosts.push(h);
+      }
+
+      for (const { t, hosts } of load) {
+        const op =
+          t.hackDifficulty > t.minDifficulty + securitySlack
+            ? "weaken"
+            : t.moneyAvailable < t.moneyMax * moneyFloor
+              ? "grow"
+              : "hack";
+        for (const h of hosts) {
+          const threads = Math.floor(sim.avail(h) / sim.scriptRam[op]);
+          if (threads >= 1) sim.exec(h.hostname, op, t.hostname, threads);
+        }
+      }
+    },
+  };
+}
+
 /** Single target, but capped at what it can actually absorb. Isolates the cap. */
 export function cappedSingle(opts = {}) {
   return flowTargets(1, opts, "early.js on best target, demand-capped");
@@ -495,6 +556,52 @@ export function atFixedRam(inner, gb, { ports = 0 } = {}) {
     },
     tick: (sim) => inner.tick(sim),
   };
+}
+
+/**
+ * Grant (or take away) cloud servers so the fleet starts at exactly `gb` in
+ * total, then forbid buying. atFixedRam adds to whatever the world already has,
+ * which is fine from a fresh start but not from --live, where the save already
+ * carries purchased servers. This pins the axis instead.
+ */
+export function atTotalRam(inner, gb, { ports = 0 } = {}) {
+  return {
+    name: `${inner.name} @ ${gb}GB`,
+    scriptRam: inner.scriptRam,
+    init(sim) {
+      for (let i = 0; i < ports; i++) sim.programs.add(PORT_PROGRAMS[i].name);
+      if (ports > 0) sim.hasTor = true;
+      sim.nuke();
+      // Drop anything the save already bought, so `gb` means the same thing in
+      // every arm. home is flagged purchasedByPlayer in the save and must stay.
+      for (const s of [...sim.servers.values()])
+        if (s.purchasedByPlayer && s.hostname !== "home") sim.servers.delete(s.hostname);
+      sim.purchased = [];
+      let left = gb - sim.totalRam();
+      while (left >= 2 && sim.purchased.length < CLOUD_LIMIT) {
+        const chunk = Math.min(left, 1 << Math.floor(Math.log2(left)));
+        sim.player.money += sim.cloudServerCost(chunk);
+        sim.buyServer(chunk);
+        sim.stats.ramSpend -= sim.cloudServerCost(chunk);
+        left -= chunk;
+      }
+      inner.init?.(sim);
+    },
+    tick: (sim) => inner.tick(sim),
+  };
+}
+
+/** Tag a strategy as running early.js workers, which cost 2.4GB per thread. */
+export function asEarlyJs(inner) {
+  return { ...inner, scriptRam: { hack: 2.4, grow: 2.4, weaken: 2.4 }, tick: (sim) => inner.tick(sim) };
+}
+
+/** The threshold loop exactly as shipped: batchChance ranking, 50% money floor. */
+export function shippedLoop() {
+  return asEarlyJs({
+    ...autoTargetBy("batchChance", (t) => earlyJs(t, { moneyFloor: 0.5 })),
+    name: "threshold loop (shipped)",
+  });
 }
 
 export const REGISTRY = {
@@ -646,6 +753,60 @@ export const REGISTRY = {
           ),
       ]),
     ),
+  ),
+
+  // --- multi-target for auto.js, at the real 2.4GB early.js worker cost,
+  // --- from the live world, with the fleet pinned to an exact total.
+  // mt<GB>-1u is exactly what runs live today.
+  ...Object.fromEntries(
+    [2048, 4096, 8192, 16384, 32768].flatMap((gb) => {
+      const arms = [
+        ["1u", () => autoTargetBy("batchChance", (t) => earlyJs(t, { moneyFloor: 0.5 }))],
+        ["1c", () => cappedSingle({ moneyFloor: 0.5 })],
+        ["p2", () => partitionTargets(2)],
+        ["p3", () => partitionTargets(3)],
+        ["p4", () => partitionTargets(4)],
+        ["p5", () => partitionTargets(5)],
+        ["p8", () => partitionTargets(8)],
+        ["f2", () => flowTargets(2, { moneyFloor: 0.5 })],
+        ["f3", () => flowTargets(3, { moneyFloor: 0.5 })],
+        ["f5", () => flowTargets(5, { moneyFloor: 0.5 })],
+        ["s2", () => splitTargets(2, { moneyFloor: 0.5 })],
+        ["s3", () => splitTargets(3, { moneyFloor: 0.5 })],
+        ["s5", () => splitTargets(5, { moneyFloor: 0.5 })],
+      ];
+      return arms.map(([tag, make]) => [`mt${gb}-${tag}`, () => atTotalRam(asEarlyJs(make()), gb)]);
+    }),
+  ),
+
+  // --- HWGW batching vs the shipped threshold loop, RAM pinned to a total ---
+  // bt<GB>-thr   the loop as it runs live (early.js workers, 2.4GB/thread)
+  // bt<GB>-ba    batcher, target count chosen by the saturation arithmetic
+  // bt<GB>-b1..5 batcher pinned to a fixed number of targets
+  ...Object.fromEntries(
+    [2048, 4096, 8192, 12288, 16384, 32768].flatMap((gb) => [
+      [`bt${gb}-thr`, () => atTotalRam(shippedLoop(), gb)],
+      [`bt${gb}-ba`, () => atTotalRam(hwgwBatcher({}), gb)],
+      [`bt${gb}-b1`, () => atTotalRam(hwgwBatcher({ nTargets: 1 }), gb)],
+      [`bt${gb}-b2`, () => atTotalRam(hwgwBatcher({ nTargets: 2 }), gb)],
+      [`bt${gb}-b3`, () => atTotalRam(hwgwBatcher({ nTargets: 3 }), gb)],
+      [`bt${gb}-b5`, () => atTotalRam(hwgwBatcher({ nTargets: 5 }), gb)],
+      [`bt${gb}-b8`, () => atTotalRam(hwgwBatcher({ nTargets: 8 }), gb)],
+      [`bt${gb}-bans`, () => atTotalRam(hwgwBatcher({ spill: "none" }), gb)],
+      [`bt${gb}-banog`, () => atTotalRam(hwgwBatcher({ secGate: false }), gb)],
+      [`bt${gb}-bah1`, () => atTotalRam(hwgwBatcher({ hackThreads: 1 }), gb)],
+      [`bt${gb}-bae50`, () => atTotalRam(hwgwBatcher({ spacing: 50 }), gb)],
+      [`bt${gb}-bae100`, () => atTotalRam(hwgwBatcher({ spacing: 100 }), gb)],
+      [`bt${gb}-bae500`, () => atTotalRam(hwgwBatcher({ spacing: 500 }), gb)],
+      [`bt${gb}-bam2`, () => atTotalRam(hwgwBatcher({ minInFlight: 2 }), gb)],
+      [`bt${gb}-bam8`, () => atTotalRam(hwgwBatcher({ minInFlight: 8 }), gb)],
+      [`bt${gb}-bam16`, () => atTotalRam(hwgwBatcher({ minInFlight: 16 }), gb)],
+      [`bt${gb}-bam32`, () => atTotalRam(hwgwBatcher({ minInFlight: 32 }), gb)],
+      // Deliberately under-provisioned grow, so the pipeline drifts into
+      // desync. Exercises the drain path, which otherwise never fires.
+      [`bt${gb}-badrain`, () => atTotalRam(hwgwBatcher({ margin: 0.85, label: "hwgw, grow under-provisioned 15%" }), gb)],
+      [`bt${gb}-badrain2`, () => atTotalRam(hwgwBatcher({ margin: 0.6, label: "hwgw, grow under-provisioned 40%" }), gb)],
+    ]),
   ),
 
   // --- the same question with RAM pinned, so nothing compounds ---
