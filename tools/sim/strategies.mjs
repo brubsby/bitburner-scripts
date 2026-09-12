@@ -818,7 +818,17 @@ export const REGISTRY = {
       () => hwgwBatcher({ nTargets: k, maxTargets: 16, label: `hwgw ${k} target${k > 1 ? "s" : ""}` }),
     ]),
   ),
+  "liveNauto": () => hwgwBatcher({ label: "hwgw auto (shipped rule)" }),
   "liveThr": () => shippedLoop(),
+  // A second RAM anchor for the target-count rule, on the corrected world.
+  ...Object.fromEntries(
+    [32768, 98304].flatMap((gb) =>
+      [1, 2, 3, 4, 6, 8, 12].map((k) => [
+        `pin${gb}N${k}`,
+        () => atTotalRam(hwgwBatcher({ nTargets: k, maxTargets: 16, label: `hwgw ${k}t @${gb}GB` }), gb),
+      ]),
+    ),
+  ),
 
   // --- the same question with RAM pinned, so nothing compounds ---
   ...Object.fromEntries(

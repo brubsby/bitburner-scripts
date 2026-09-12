@@ -71,6 +71,9 @@ const SETTINGS = {
   // Desync tolerances. Past these the pipeline is abandoned and re-prepped.
   secTol: 1.0,
   moneyTol: 0.6,
+  // Target count = totalRam / ramPerTarget, capped. See the block in main()
+  // where the count is chosen for the measurements these come from.
+  ramPerTarget: 32768,
   maxTargets: 8,
 }
 
@@ -454,25 +457,49 @@ export async function main(ns) {
         if (Number(flags.targets) > 0) {
           want = ranked.slice(0, Number(flags.targets)).map((r) => r.t.host)
         } else {
-          // Measured, not derived. The analytic saturation point — a target
-          // holds ceil(weakenTime / 4*spacing) batches in flight — is a bound
-          // the launch loop never reaches in practice (placement fails, safe
-          // windows close, the controller ticks at a finite rate), and trusting
-          // it left 42% of a 12TB fleet idle in simulation. A closed-loop "add a
-          // target while utilisation is low" rule was worse still: it ratchets,
-          // and each addition halves the leading target's share and costs a
-          // fresh prep.
+          // How many targets to run.
           //
-          // Simulated at 40 minutes, 3 seeds, from the live world with RAM
-          // pinned, two targets measured best or within 0.3% of best at every
-          // fleet size tested; three only catches up past ~24TB:
+          // Utilisation is a red herring here, and that is the whole finding.
+          // Measured on the live 448TB fleet over 180 minutes, 3 seeds, as the
+          // target count rises the fleet gets *less* busy and earns *more*:
           //
-          //       fleet    1 target   2 targets   3 targets   threshold loop
-          //     4,096GB      $2.07b      $2.61b           -                -
-          //     8,192GB      $5.55b      $6.75b           -           $1.08b
-          //    12,288GB      $7.51b     $10.91b      $5.95b           $1.68b
-          //    32,768GB     $19.75b     $24.67b     $24.59b         $973.0m
-          want = ranked.slice(0, totalRam >= 24576 ? 3 : 2).map((r) => r.t.host)
+          //     targets    earned      fleet utilisation
+          //           1   $1,151b            87%
+          //           2   $1,218b            85%
+          //           3   $1,957b            72%   <- what shipped
+          //           4   $2,467b            67%
+          //           6   $2,666b            61%
+          //           8   $2,795b            63%   <- best, +43% over 3
+          //          12   $2,569b            63%
+          //          16   $2,386b            64%
+          //
+          // So a target is limited by its own money throughput, not by the RAM
+          // pointed at it: one target will happily absorb 390TB and still earn
+          // a third of what eight targets earn on the same fleet. Idle RAM is
+          // the symptom of having run out of *targets*, and filling it by
+          // concentrating harder is exactly the wrong move.
+          //
+          // The count is NOT a constant — the same sweep at pinned fleet sizes
+          // on the corrected world inverts completely at the small end, where
+          // eight targets earn half what one does:
+          //
+          //      fleet     best count    1 target    best      8 targets
+          //    32,768GB         1          $422b     $422b        $225b
+          //    98,304GB         3          $503b   $1,049b        $773b
+          //   448,708GB         8        $1,151b   $2,795b      $2,795b
+          //
+          // 32,768 / 1, 98,304 / 3 and the 448TB cap all land on one rule:
+          // one target per ~32TB, never more than eight. The eight is not
+          // arbitrary either — only 16 servers are hackable at this level and
+          // the back half of that list is worth very little, which is why 12
+          // and 16 targets both measured *worse* than 8.
+          //
+          // Deliberately a simple ratio rather than anything derived: the
+          // analytic saturation bound (ceil(weakenTime / 4*spacing) batches per
+          // target) says one target covers the whole fleet, and that is exactly
+          // how this came to run three targets on 448TB.
+          const wanted = Math.round(totalRam / SETTINGS.ramPerTarget)
+          want = ranked.slice(0, Math.max(1, Math.min(SETTINGS.maxTargets, wanted))).map((r) => r.t.host)
         }
         // Never abandon a pipeline mid-flight: keep any dropped target that
         // still has operations in the air, and let it drain on its own.
@@ -555,7 +582,8 @@ export async function main(ns) {
 
           // --- phase 1: security to the floor, and nothing else -------------
           if (projSec > t.minSec + 0.01) {
-            const wNeed = Math.ceil((projSec - t.minSec) / WEAKEN_PER_THREAD)
+            const wShare = Math.floor(totalRam / Math.max(1, targets.length) / ram.weaken)
+            const wNeed = Math.min(Math.ceil((projSec - t.minSec) / WEAKEN_PER_THREAD), wShare)
             const w = spread(ns, free, ram, 'weaken', host, wNeed, batchId++)
             if (w) {
               s.pending.push({ at: now + weakenTimeNow, weaken: w * WEAKEN_PER_THREAD })
@@ -573,7 +601,14 @@ export async function main(ns) {
           const kMin = growthK(t.minSec, t.growth)
           const projMoney = pendG > 0 ? Math.min(t.maxMoney, (t.money + pendG) * Math.exp(kMin * pendG)) : t.money
           const gNeed = projMoney >= t.maxMoney ? 0 : growThreads(t.maxMoney, Math.max(projMoney, 1), kMin, t.maxMoney)
-          const budget = [...free.values()].reduce((a, b) => a + b, 0)
+          // Cap each target's prep at its share of the fleet. Without this the
+          // first target in the ranking takes every free byte and the rest prep
+          // strictly after it — with eight targets that serialises the whole
+          // startup into eight consecutive prep cycles.
+          const budget = Math.min(
+            [...free.values()].reduce((a, b) => a + b, 0),
+            totalRam / Math.max(1, targets.length),
+          )
           // One weaken thread cancels 0.05 of security; one grow thread adds
           // 2*0.002. So a grow needs 0.08 weaken threads alongside it.
           const perGrow = ram.grow + 0.08 * ram.weaken

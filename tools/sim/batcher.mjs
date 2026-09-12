@@ -283,16 +283,12 @@ export function hwgwBatcher(opts = {}) {
         .sort((a, b) => b.s - a.s);
       if (!ranked.length) return [];
       if (nTargets !== "auto") return ranked.slice(0, nTargets).map((x) => x.t.hostname);
-      // Measured, not derived. The analytic saturation point — a target holds
-      // ceil(weakenTime / 4*spacing) batches in flight — is a bound the launch
-      // loop never reaches (placement fails, safe windows close, the controller
-      // ticks at a finite rate), and trusting it left 42% of a 12TB fleet idle.
-      // A closed-loop "add a target while utilisation is low" rule was worse
-      // still: it ratchets, and each addition halves the leading target's share
-      // and costs a fresh prep. Two targets measured best or within 0.3% of best
-      // at every fleet size from 4TB to 32TB; three only catches up past ~24TB.
-      const want = sim.totalRam() >= 24576 ? 3 : 2;
-      return ranked.slice(0, Math.min(want, maxTargets)).map((x) => x.t.hostname);
+      // One target per ~32TB, capped at 8. Measured on the corrected world at
+      // three pinned fleet sizes over 180 minutes; see the same block in
+      // batch.js for the table. Utilisation moves the *opposite* way to
+      // earnings as the count rises, so it is not the signal it looks like.
+      const want = Math.max(1, Math.min(maxTargets, Math.round(sim.totalRam() / 32768)));
+      return ranked.slice(0, want).map((x) => x.t.hostname);
     },
 
     tick(sim) {

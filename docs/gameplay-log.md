@@ -1017,3 +1017,103 @@ time to 20,000: (20000-5071)/2.12 ≈ 7,040s ≈ **2.0 hours**. No browser
 UI trips made yet this session (all checks above went through the
 `cmd.js`/RPC bridge); the only upcoming UI trip is purchase 2 itself
 once the money threshold fires.
+
+**Purchase 2 — 4096GB → 8192GB ($31.725b), done.** The recovered
+`wait_money.sh` monitor fired at money $55.18b. Found the character
+screen already on Options (unfocused — the overview showed the "Focus"
+button and rep climbing at only 1.772/sec, the unfocused rate; not sure
+which prior action left it there, but it cost nothing extra since I
+was headed to the UI anyway). One browser trip: City → Sector-12 →
+Alpha Enterprises (`find` located the map link — clicking screen
+coordinates directly on the ASCII map missed, the element ref worked),
+clicked "Upgrade 'home' RAM (4.10TB → 8.19TB) — $31.725b" at money
+$60.392b → $29.474b, confirmed the panel now reads "8.19TB → 16.38TB) -
+$100.249b" for the next rung (matches the brief's $100.2b exactly).
+Clicked the Overview panel's Focus button once back — confirmed
+refocused via the work screen itself: "carrying out hacking contracts
+for NiteSec, Current Faction Reputation: 6.069k (2.228/sec)". Total UI
+trip: three navigations (City, Alpha Enterprises, Focus), well under a
+minute.
+
+**Found `ctauto.js` running** (`ps home` lists it, 1 thread) — not in
+the brief's list of running scripts, added at 21:02 today per its
+mtime, presumably by a prior session. It's the unattended
+scan+solve-forever successor to the old `ctscan.js`/`ctsolve.js -dry`
+manual cycle (docstring: home RAM is now far past the 21.8GB the split
+used to route around, so one resident script does both, checking every
+5 minutes by default). Status file `/tel/ctauto.txt` shows it already
+found and solved **1 contract**, `+$25.000m`, 0 wrong/skipped. This
+supersedes the brief's "run ctscan.js / ctsolve.js every 20-30 minutes"
+instruction — it's automatic now, so I'll just spot-check
+`/tel/ctauto.txt` occasionally instead of driving the cycle by hand.
+
+Also reconfirmed via `cmd.js` bridge: `batch.js` has many `h.js`/`g.js`/
+`w.js` workers live across `phantasy` and `omega-net` (both being
+worked now, not just `phantasy`), `watchdog.js` and `tel.js` present on
+`home` too. `share.js` still holds its full 2040 threads on
+`pserv-67930`. `free home`: 4065.25/8192GB used — comfortable headroom
+on the new rung.
+
+Rep sample right after refocus + a short delay: NiteSec 6131.57 at
+~2.228/sec focused, money $34.14b (climbing again). ETA to 20,000:
+(20000-6131.57)/2.228 ≈ 6,226s ≈ **1.73 hours**.
+
+Started a self-owned `Monitor` poll (no more scratchpad script; this
+one lives in the harness's task list) watching for money ≥ $101b — the
+$100.249b purchase-3 price plus the $700m reserve, with a small margin
+— to trigger the final rung, 8192GB → 16384GB. Will do the same
+unfocus → buy → refocus sequence and stop there per the brief (next
+step past 16384GB is $316.8b, out of runway).
+
+**Purchase 3 — 8192GB → 16384GB ($100.249b), done. Home RAM ladder
+target reached.** Monitor fired at money $105.67b. On the faction-work
+screen (fullscreen, no sidebar) this time, so had to click "Do
+something else simultaneously" first to reveal navigation — confirmed
+this is the unfocus action (rate dropped from 2.282 to 1.825/sec, work
+kept running). City → Alpha Enterprises, bought "Upgrade 'home' RAM
+(8.19TB → 16.38TB) — $100.249b" at money $110.04b → $10.463b. The panel
+now lists the next rung as "16.38TB → 32.77TB) - $316.788b", matching
+the brief's stop-here price exactly — **not purchased**, per
+instructions. `curl localhost:12526/poll` confirms `home: {ram: 16384,
+cores: 1}`. Money left $10.463b, well clear of the $700m reserve floor.
+
+Clicked Focus to return; got a full-screen confirmation ("carrying out
+hacking contracts for NiteSec... 7.143k (2.289/sec)") — but a `getSaveFile`
+check moments later (after a few `cmd.js` bridge calls, no browser
+actions) unexpectedly showed `focus:false` and a fresh screenshot really
+was back on the Alpha Enterprises page, unfocused (7.202k @ 1.831/sec).
+Cause unclear — no navigation was issued between the two checks — but
+re-clicking Focus fixed it immediately, and this time it held through a
+5-second wait and a follow-up `getSaveFile` sample (`focus:true`,
+consistent `cyclesWorked` progression). Flagging in case this recurs:
+**after clicking Focus, verify it stuck with a second check a few
+seconds later** rather than trusting the first confirmation — this
+session, the first one silently reverted.
+
+Post-purchase health check via `cmd.js` bridge: `batch.js` had
+restarted under a new pid (`watchdog.js`'s doing, presumably reacting
+to the RAM change) and is running much bigger threads now — e.g.
+`g.js` 2686t on a new target `the-hub`, `w.js` 14061t on `pserv-67930`
+alongside `share.js` still holding its full 2040 threads. `cmd.js`,
+`ctauto.js`, `watchdog.js`, `tel.js` all present on home. `free home`:
+4744.70/16384GB used — comfortable headroom for the batcher to keep
+scaling into.
+
+**End state this session:** home RAM **16384GB (target reached, ladder
+complete)**, money $10.46b, NiteSec rep **7,335.8 at 2.289/sec,
+focused and confirmed twice**. ETA to the 20,000-rep install threshold:
+(20000-7336)/2.289 ≈ 5,527s ≈ **1.5 hours**. No soft reset, no aug
+install, no browser tab other than 413952705 used, three UI trips total
+this session (purchase 2, purchase 3, plus the focus-recovery
+re-click), each under a minute. `ctauto.js` (found already running,
+not started by this session) has solved 1 contract for $25m so far;
+zero new contracts since. Root `.js` edits this session: none by
+me — `ctauto.js`'s appearance predates this session and wasn't
+modified here.
+
+The home-RAM-ladder task given at pickup is now complete. Continuing to
+watch for NiteSec rep ≥ 20,000 per standing instructions ("when NiteSec
+passes 20,000, tell me and stop") with a background poll on the
+`getSaveFile` reputation field; will report and halt when it fires
+rather than touch the soft-reset/install decision, which is the lead's
+call.

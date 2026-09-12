@@ -708,6 +708,9 @@ preps, batches and writes its own telemetry.
 total with `atTotalRam`. The threshold loop is priced at early.js's real
 2.4GB/thread; the batcher at the dedicated workers' 1.7/1.75.
 
+**Superseded by section 17**: measured on the void world, and the "two targets
+everywhere" conclusion is wrong — at 32TB the corrected answer is one target.
+
 | fleet | threshold loop (shipped) | `batch.js` | ratio | batcher $/s at end |
 | ---: | ---: | ---: | ---: | ---: |
 | 2,048GB | **$721m** | $598m | 0.83x | $937k/s |
@@ -887,3 +890,130 @@ $300-500k/s to a smooth **$5m/s or better** on the current fleet.
    measured on a world where the rooted target set was much poorer. Re-measured
    in section 12: the threshold loop's crossover moved to 4-8TB, and for the
    batcher the answer is simply two targets everywhere (section 14).
+
+---
+
+## 17. Target starvation on the 448TB fleet — utilisation was the wrong signal
+
+First measurement taken under the corrected rules: the fidelity agent's world,
+180-minute windows, rate reported over the second half of the run.
+
+### What was wrong
+
+`batch.js` chose its target count from a ladder — `totalRam >= 24576 ? 3 : 2` —
+calibrated in section 14 at fleet sizes between 4TB and 32TB. The fleet is now
+**448TB**. A constant fitted over one decade of RAM was being applied more than
+a decade outside it, and it pinned the fleet to three targets forever.
+`maxTargets: 8` was never reached because nothing ever asked for more than 3.
+
+### What the measurement says
+
+Live fleet, 448,708GB, hacking 295, 180 minutes, median of 3 seeds. Only the
+target count varies.
+
+| targets | earned | fleet utilisation |
+| ---: | ---: | ---: |
+| threshold loop | $34.00b | 100% |
+| 1 | $1,151b | 87% |
+| 2 | $1,218b | 85% |
+| 3 (what shipped) | $1,957b | 72% |
+| 4 | $2,467b | 67% |
+| 6 | $2,666b | 61% |
+| **8** | **$2,795b** | **63%** |
+| 12 | $2,569b | 63% |
+| 16 | $2,386b | 64% |
+
+**+43% from 3 targets to 8**, and the batcher is **82x** the threshold loop at
+this fleet size.
+
+The important part is the second column. **As the target count rises the fleet
+gets less busy and earns more.** Utilisation and income move in opposite
+directions across the whole sweep. So the 11% idle RAM was never the problem to
+solve, and every mechanism I built to solve it — the per-pipeline RAM
+reservation, the spill-into-weaken, `minInFlight` — was aimed at the wrong
+thing.
+
+The reason is that **a target is limited by its own money throughput, not by the
+RAM pointed at it.** A batch can only take `f` of one server's maximum money and
+must put it back before the next one lands; past that, more RAM on the same
+target buys a longer queue, not more income. One target will happily absorb
+390TB of a 448TB fleet and still earn a third of what eight targets earn on the
+same hardware. **Idle RAM at this scale is a symptom of having run out of
+targets**, and the fix is never to concentrate harder.
+
+### The count is not a constant either
+
+The same sweep at pinned fleet sizes on the corrected world inverts completely
+at the small end:
+
+| fleet | best count | 1 target | best | 8 targets |
+| ---: | ---: | ---: | ---: | ---: |
+| 32,768GB | **1** | $422b | $422b | $225b |
+| 98,304GB | **3** | $503b | $1,049b | $773b |
+| 448,708GB | **8** | $1,151b | $2,795b | $2,795b |
+
+At 32TB, eight targets earn **half** what one does. Note this also overturns
+section 14's "two targets everywhere", which was measured on the void world —
+at 32TB the corrected answer is one.
+
+`32,768 / 1`, `98,304 / 3` and the 448TB optimum all land on a single rule:
+
+> **one target per ~32TB of fleet, never more than eight.**
+
+Shipped as `SETTINGS.ramPerTarget = 32768`, `maxTargets = 8`. Running the
+batcher with that rule on the live fleet reproduces the pinned 8-target result
+to the dollar ($2,795.25b), which is the check that the rule selects what the
+sweep says it should.
+
+The cap of 8 is not arbitrary padding: **only 16 servers are hackable at level
+295**, and the back half of that list is worth so little that 12 and 16 targets
+both measure *worse* than 8. The cap is where the target list runs out of value,
+not where the RAM does. That also means the next real increment in income is
+`relaySMTP.exe` and `HTTPWorm.exe` — more *targets*, not more RAM — which is
+fidelity items 1 and 2 and now has a number attached to it.
+
+### The second bug: prep was ratcheting, not converging
+
+The coordinator's candidate (2) was right, and the mechanism is worse than
+"starved". Two targets sat in `prep` indefinitely with `silver-helix` at
+**security 61.2 against a minimum of 10** — climbing, not falling.
+
+`batch.js`'s prep grew and weakened simultaneously, giving grow 75% of the
+budget and weaken whatever was left. Growing a server above minimum security is
+a trap twice over:
+
+1. The growth constant `k = min(log1p(0.03/sec), 0.0035) · growth/100` falls as
+   security rises, so the same money costs 3-6x the threads. Prep therefore
+   *demanded* several times more RAM than it needed — which is what starved the
+   one target that was batching, producing the 224 placement failures.
+2. A grow fortifies by `2·0.002` per used thread. When the matching weaken did
+   not fit in the 25% left over, security ratcheted **up**, making the next round
+   more expensive again. That is a positive feedback loop with no fixed point
+   below the security cap.
+
+Compounding it, the in-flight ledger was timed with `hackTime` rescaled to
+*minimum* security — the right figure for planning a batch, the wrong one for
+prep, which by definition runs on a server that is not at minimum. On a target
+at 3-6x minimum security those entries expired that many times too early, so
+prep re-launched on top of work still in the air and fed the same ratchet.
+
+Fixed in three parts, all in the prep block:
+
+- **Two strict phases: security to the floor first, money second.** Never both.
+- **Weaken is launched before grow and sized to cover it** (`0.08` weaken
+  threads per grow thread, from `2·0.002 / 0.05`), so the cover exists even if
+  the grow only partly fits. The failure direction is then over-weakening, which
+  is free.
+- **The ledger is timed with current-security durations**, and prep phase 2 sizes
+  grow with `k` at the *minimum*, which is where those threads will actually
+  land.
+
+Prep is also now capped at `totalRam / targets` per target. Without that the
+top-ranked target takes every free byte and the others prep strictly after it —
+with eight targets that serialises startup into eight consecutive prep cycles.
+
+The simulator never reproduced any of this because `tools/sim/batcher.mjs`'s
+prep uses `calculateWeakenTime` at the server's *actual* security. The sim was
+right and the script was wrong; they have now been made to agree. Worth
+remembering as a class of bug the sim cannot catch: the two implementations are
+separate code, and only the sim's is checked against the game's formulas.
