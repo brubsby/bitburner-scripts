@@ -44,6 +44,7 @@ export async function main(ns) {
   ns.tprint('autobuy.js: watching for affordable port programs')
 
   const bought = []
+  let warnedTor = false
 
   while (true) {
     try {
@@ -64,7 +65,15 @@ export async function main(ns) {
           }
         }
         if (done) bought.push('TOR (singularity)')
-        else wanted.push('buy -l')
+        // Without Source-File 4 there is no way to buy TOR from a script at
+        // all: the terminal's `buy` command requires the darkweb, which
+        // requires TOR. Retrying just floods the terminal with the same error
+        // every tick — it did exactly that for half an hour. Say it once and
+        // leave it to a human.
+        else if (!warnedTor) {
+          warnedTor = true
+          ns.tprint('autobuy: TOR router is needed and cannot be bought by a script without Source-File 4 — buy it at Alpha Enterprises (Sector-12) for $200k. Every port program after that is automatic.')
+        }
       }
 
       if (hasTor) {
