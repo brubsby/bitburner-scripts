@@ -97,7 +97,22 @@ export function freshStart(snapshot) {
       continue;
     }
     s.hasAdminRights = false;
-    s.moneyAvailable = s.moneyMax;
+    // An untouched server holds a twenty-fifth of its maximum, not all of it.
+    // src/Server/Server.ts:75-77 sets moneyAvailable from the base figure in
+    // the server table and moneyMax to 25x that same figure, so every server
+    // in a fresh BitNode starts at 4%.
+    //
+    // Setting this to moneyMax made every simulated world 25x richer than a
+    // real one and deleted the opening grow phase entirely — which is the
+    // phase that dominates the early game. The live game spent 128 minutes
+    // climbing foodnstuff from 4% to the 50% floor where early.js will hack,
+    // earning nothing, while the simulator had it earning from the first
+    // minute. Every comparison measured before this was fixed started from a
+    // world that cannot occur.
+    s.moneyAvailable = s.moneyMax / 25;
+    // baseDifficulty is the starting difficulty, and minDifficulty is a third
+    // of it (Server.ts:80-84), so this line is already right — a fresh server
+    // sits at 3x its minimum security.
     s.hackDifficulty = s.baseDifficulty ?? s.hackDifficulty;
   }
   return world;

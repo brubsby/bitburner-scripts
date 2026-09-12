@@ -679,3 +679,195 @@ First measurements, live world, RAM pinned, 20 minutes, seed 1:
 takes a few minutes to fill — is 14x to 50x.** Utilisation is only 68%, so there
 is more in it; that is the next thing to chase.
 
+
+## 14. The batcher as shipped — `batch.js`
+
+`batch.js` (root, 8.45GB) plus the rewritten `h.js`/`g.js`/`w.js`
+(1.7/1.75/1.75GB). Replaces `auto.js` + `early.js` entirely; it roots, ranks,
+preps, batches and writes its own telemetry.
+
+### Measured, engine revision as of 2026-09-12 (before the fidelity agent's changes)
+
+40 minutes, median of 3 seeds, from the live world, fleet pinned to an exact
+total with `atTotalRam`. The threshold loop is priced at early.js's real
+2.4GB/thread; the batcher at the dedicated workers' 1.7/1.75.
+
+| fleet | threshold loop (shipped) | `batch.js` | ratio | batcher $/s at end |
+| ---: | ---: | ---: | ---: | ---: |
+| 2,048GB | **$721m** | $598m | 0.83x | $937k/s |
+| 8,192GB | $1.08b | **$6.75b** | **6.2x** | $6.06m/s |
+| 12,288GB | $1.68b | **$10.91b** | **6.5x** | $9.92m/s |
+| 32,768GB | $973m | **$24.59b** | **25x** | $18.42m/s |
+
+**The crossover is 2-4TB.** Below it the threshold loop genuinely wins, for the
+reason section 5 gives: at small RAM hacking level is the binding constraint and
+dumping every thread into one operation is an experience pump. Above it the loop
+stops scaling at all — it earns *less* at 32TB than at 12TB, because income is
+capped at roughly one target's max money per cycle no matter how many threads
+are pointed at it — while the batcher scales nearly linearly.
+
+The end-of-run rate is the honest steady-state number: a pipeline takes a few
+minutes to fill, and the threshold loop's rate reads `$0` at three of the four
+sizes simply because its payout lump fell outside the final tenth of the run.
+
+### Target count: measured, not derived
+
+The analytic saturation point (a target holds `ceil(weakenTime / 4ε)` batches)
+is a bound the launch loop never reaches — placement fails, safe windows close,
+the controller ticks at a finite rate. Trusting it left **42% of a 12TB fleet
+idle**. A closed-loop "add a target while utilisation is below 85%" rule was
+*worse*: it ratchets, and each addition halves the leading target's share and
+costs a fresh prep (8TB fell from $6.81b to $2.11b). So the count is a measured
+constant — **2, rising to 3 past 24TB**:
+
+| fleet | 1 target | 2 | 3 | 5 |
+| ---: | ---: | ---: | ---: | ---: |
+| 4,096GB | $2.07b | **$2.61b** | — | — |
+| 8,192GB | $5.55b | **$6.75b** | — | — |
+| 12,288GB | $7.51b | **$10.91b** | $5.95b | — |
+| 32,768GB | $19.75b | **$24.67b** | $24.59b | $19.92b |
+
+### The failure path, exercised
+
+`--drain` cannot be requested, so it was provoked: `bt8192-badrain2` runs the
+batcher with grow deliberately under-provisioned by 40%, which makes the
+pipeline drift into desync by construction.
+
+```
+grow margin  1.10 (shipped)   $6.81b   drains 0
+grow margin  0.85             $6.19b   drains 0-1
+grow margin  0.60             $2.26b   drains 1    <- still 2x the threshold loop
+```
+
+It degrades, it does not stall: the controller stops launching, lets everything
+in flight land, re-preps and resumes. At a 40% thread error it still earns
+**twice** what the threshold loop earns on the same fleet. That is the property
+that matters for running unattended.
+
+### Two bugs found in simulation that would have been ugly live
+
+1. **Prep flooded the fleet with useless weakens, forever.** The in-flight
+   ledger projected security forward using the raw in-flight grow thread count,
+   but `processSingleServerGrowth` fortifies by the threads it *actually used*,
+   capped at the threads needed. The projection was therefore an unbounded
+   overestimate: prep believed security was about to explode and launched weaken
+   after weaken, filling the fleet and never reaching the batch phase. Symptom
+   in sim: 1,501 prep rounds, 86% RAM used, zero operations landed. Capped at
+   the real need.
+2. **Idle-RAM spill starved the batcher.** Spare RAM goes into weaken for the
+   free experience, but a weaken holds its RAM for a full `weakenTime`, so
+   without reserving what the pipelines will claim over that same window the
+   spill takes everything and no batch can ever be placed. Symptom: $0 earned
+   with the spill on, $292m with it off. The reservation is now
+   `ceil(weakenTime / period) · batchRam` per target.
+
+Prep also no longer waits a whole `weakenTime` between rounds. It keeps a ledger
+of in-flight effects, projects the server forward, and launches only the
+shortfall each second. The wait-for-the-wave version spent **11 of 20 minutes**
+prepping a $600m target.
+
+### Engine note for the fidelity agent
+
+`engine.mjs` grew `execPad(host, op, target, threads, padMs)` for this work — the
+`additionalMsec` semantics, where the duration is computed at launch and the pad
+added afterwards. The pre-existing `execAt` models sleep-then-operate, which
+reads the world at *wake* time; that is a genuinely different exposure and the
+wrong primitive for a batcher. Please keep both. Every number in sections 13-14
+was measured before the fidelity changes land.
+
+## 15. Deploying `batch.js` — the handover
+
+`batch.js` and `auto.js` both fill every host they can see, so they cannot run
+together: observed live at 00:06, `batch.js` had been up 7.5 minutes with RAM at
+99.9%, 248 placement failures and **zero batches launched**, because `auto.js`
+owned all of it. `auto.js` must be stopped first, and `watchdog.js` will put it
+back within 30 seconds unless its watch list changes first.
+
+Order matters. From the game's terminal:
+
+```
+# 1. Stop the watchdog FIRST, or it restarts auto.js underneath you.
+kill watchdog.js pserv-67932
+
+# 2. Stop the old supervisor. Its early.js workers do not need killing by
+#    hand — batch.js clears every early.js (and any stale h/g/w.js) on the
+#    hosts it is about to use, as its first act.
+kill auto.js home
+
+# 3. Start the batcher on the whole fleet.
+run batch.js
+
+# 4. Point the watchdog at the new supervisor and restart it.
+#    watchdog.js WATCHED should become:
+#      { script: 'batch.js',   host: 'home',     args: [] }
+#      { script: 'buyserv.js', host: 'joesguns', args: [] }
+run watchdog.js
+```
+
+Rollback is `kill batch.js home`, restore the watchdog list, `run auto.js`.
+`batch.js --hosts a,b,c` restricts it to named hosts if a partial run is wanted
+instead.
+
+### What to watch, in the first five minutes
+
+`.telemetry/batch.txt` (mirrored from `/tel/batch.txt`; run
+`curl -s localhost:12526/poll` first). The single field to read is `health`:
+
+| `health` | meaning |
+| --- | --- |
+| `prepping` | normal for the first few minutes, and after any drain |
+| `ok` | a batch launched within the last 60 seconds — this is the working state |
+| `stalled` | in the batch phase but nothing launched for 60s — **the bad state** |
+| `idle` | no viable target |
+
+Expected progression from a cold start with the target drained (which is where
+`auto.js` leaves it):
+
+- **0-4 min** `health: prepping`, `targets[].moneyPct` climbing to 100 and `sec`
+  falling to `minSec`. `threadsDispatched` should be tens of thousands.
+- **~4 min** `phase` flips to `batch`, `health` becomes `ok`, `batches` starts
+  incrementing several times a minute, `periodSec` around 1-4s.
+- **5 min on** `ram.utilPct` in the 80-95% band, `earned` rising smoothly rather
+  than in 15-minute steps, `drains` staying at 0 or 1.
+
+Warning signs and what they mean:
+
+- `health: stalled` with `placeFails` climbing — something else is holding the
+  RAM. Check for surviving `early.js` processes.
+- `drains` climbing steadily (more than one every few minutes) — the pipeline is
+  desyncing faster than it recovers. Raise `margin` in `SETTINGS`, or run with
+  `--spacing 400`.
+- `partials` or `execFails` above zero — a batch could not be fully launched.
+  One or two is fine; a steady stream means the fleet is too fragmented.
+- `unsafeSkips` climbing without `batches` climbing — the target never returns
+  to minimum security, which means weaken is under-provisioned.
+
+The number that settles it is `totals.earnedPerSec`, which is measured from the
+target's own money drops rather than from `getTotalScriptIncome()` — the latter
+is a cumulative average since the last install and lags by hours (section 11).
+Against the threshold loop's recent behaviour it should go from lumpy
+$300-500k/s to a smooth **$5m/s or better** on the current fleet.
+
+## 16. Open / next, after this run
+
+1. **Watch the first hour live.** Every number in sections 13-15 is simulated,
+   and section 11 is the standing reminder that the sim and the game have
+   disagreed badly before. `totals.earnedPerSec` in `/tel/batch.txt` is the
+   measurement that settles it.
+2. **Utilisation sits at 83-87%, not 100%.** The gap is placement failures: a
+   batch's hack must land as one thread group, and on a fleet of mixed server
+   sizes there is not always a single free block big enough. Worth chasing next;
+   it is the difference between 6x and perhaps 7x.
+3. **Below ~2-4TB the threshold loop still wins** (section 14). If a future
+   BitNode restart drops the fleet back to hundreds of GB, run `auto.js`, not
+   `batch.js`. Nothing switches automatically, deliberately — an automatic
+   switch would flip back and forth across the crossover and pay a prep cycle
+   each time.
+4. **Revisit the inlined formulas after the first augmentation install.**
+   `batch.js` assumes every player multiplier is 1, which is exact in BN1 with
+   no augmentations and wrong immediately afterwards. `hacking_grow` and
+   `hacking_money` both enter the batch arithmetic and neither cancels.
+5. **Section 4's multi-target crossover no longer applies as written.** It was
+   measured on a world where the rooted target set was much poorer. Re-measured
+   in section 12: the threshold loop's crossover moved to 4-8TB, and for the
+   batcher the answer is simply two targets everywhere (section 14).
