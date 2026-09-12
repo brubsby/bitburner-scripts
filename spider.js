@@ -64,7 +64,11 @@ export async function main(ns) {
 
     const playerDetails = getPlayerDetails(ns)
     if (!ns.hasRootAccess(host)) {
-      if (serverMap.servers[host].ports <= playerDetails.portHacks && serverMap.servers[host].hackingLevel <= playerDetails.hackingLevel) {
+      // Ports only. ns.nuke tests openPortCount against numOpenPortsRequired
+      // and nothing else (src/NetscriptFunctions.ts:504-520); only *hacking* a
+      // server is level-gated. This used to require the hacking level too and
+      // so declined RAM it was entitled to.
+      if (serverMap.servers[host].ports <= playerDetails.portHacks) {
         hackPrograms.forEach((hackProgram) => {
           if (ns.fileExists(hackProgram, 'home')) {
             ns[hackProgram.split('.').shift().toLocaleLowerCase()](host)

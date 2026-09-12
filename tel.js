@@ -63,7 +63,14 @@ export async function main(ns) {
       at: new Date().toISOString(),
       hackingLevel: player.skills.hacking,
       money: Math.round(player.money),
-      incomePerSec: Math.round(ns.getTotalScriptIncome()[0] * 100) / 100,
+      // [1] is money earned per second since the last augmentation install.
+      // [0] sums the rate over *live* scripts, which reads exactly zero under a
+      // batcher however much it earns: its h/g/w workers are one-shot and
+      // credit themselves only in the instant before they exit. Confirmed live
+      // at hacking 246 with 41,763 threads dispatched and [0] reporting 0.
+      // This is the first number anyone looks at, so it being structurally
+      // dead was worse than it being absent.
+      incomePerSec: Math.round(ns.getTotalScriptIncome()[1] * 100) / 100,
       expPerSec: Math.round(ns.getTotalScriptExpGain() * 100) / 100,
       reachable: hosts.length,
       rooted: servers.length,

@@ -40,12 +40,21 @@
 const SETTINGS = {
   // Port openers in price order (src/DarkWeb/DarkWebItems.ts). The reserve is
   // the price of the cheapest one not yet owned, so it shrinks to nothing as
-  // the player buys them. relaySMTP ($5m) and beyond are deliberately absent:
-  // the servers behind them need hacking level 300+, so reserving for one this
-  // early would idle cash for an hour to buy RAM that cannot be rooted.
+  // they are bought.
+  //
+  // relaySMTP and beyond used to be omitted here on the grounds that the
+  // servers behind them need hacking level 300+. That is true of *hacking*
+  // them and false of *rooting* them — ns.nuke tests open ports alone
+  // (src/NetscriptFunctions.ts:504-520) — and rooting is what buys RAM. The
+  // servers are usable as worker capacity at any level, so a port opener is
+  // the cheapest RAM in the game: relaySMTP unlocked 688GB for $5m on this
+  // save, about $7.3k/GB against the cloud's flat $55k/GB.
   programs: [
     { file: 'BruteSSH.exe', price: 500000 },
     { file: 'FTPCrack.exe', price: 1500000 },
+    { file: 'relaySMTP.exe', price: 5000000 },
+    { file: 'HTTPWorm.exe', price: 30000000 },
+    { file: 'SQLInject.exe', price: 250000000 },
   ],
   // Once every program above is owned, hold nothing back. Home RAM is a manual
   // purchase too, but at $126k/GB and rising against the cloud's flat $55k/GB

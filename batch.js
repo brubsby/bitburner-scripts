@@ -563,7 +563,23 @@ export async function main(ns) {
         // regrowth and no security decay, so any systematic bias in the thread
         // arithmetic integrates without bound unless something re-measures and
         // intervenes.
-        if (t.sec > t.minSec + SETTINGS.secTol || t.money < t.maxMoney * SETTINGS.moneyTol) {
+        // The tolerances have to allow for the excursion this batcher itself
+        // plans, or it declares desync on its own correct behaviour. A batch
+        // deliberately takes `plan.f` of the money and fortifies security by
+        // FORTIFY*plan.h before W1 lands, so a fixed 0.6 money floor aborts
+        // every cycle on any target where the optimal bite exceeds 40% — on
+        // n00dles the plan takes 54.4% — and a fixed 1.0 security ceiling trips
+        // on H's own fortification once the hack is more than 500 threads. The
+        // result is one batch per weakenTime forever, which looks like the
+        // pipeline running rather than a fault.
+        //
+        // Derived from the plan in flight, so no new constant: allow the
+        // planned excursion plus the existing tolerance as slack. Falls back to
+        // the fixed values before a first plan exists.
+        const planned = s.plan
+        const secCeiling = t.minSec + (planned ? FORTIFY * planned.h : 0) + SETTINGS.secTol
+        const moneyFloor = t.maxMoney * (planned ? Math.max(0, 1 - planned.f) * SETTINGS.moneyTol : SETTINGS.moneyTol)
+        if (t.sec > secCeiling || t.money < moneyFloor) {
           s.phase = 'drain'
           s.drains++
           s.quietUntil = Math.max(now, s.lastLanding) + 4 * SETTINGS.spacing

@@ -1,9 +1,13 @@
 // Based on https://github.com/danielyxie/bitburner/blob/master/src/data/codingcontracttypes.ts
 import {getBitNodeMultipliers} from "bitNodeMultipliers.js"
 
+// src/Constants.ts:91-93. The money figure was 4000 here — an 18,750x
+// understatement carried over from Bitburner v1, which made contracts look
+// worthless for years of play. They are the single best-paying action in the
+// early game: a difficulty-1 contract pays $25m after the /3 reward scaling.
 const contract_base_faction_rep_gain = 2500;
 const contract_base_company_rep_gain = 4000;
-const contract_base_money_gain = 4000;
+const contract_base_money_gain = 75e6;
 
 const settings = {
   keys: {
