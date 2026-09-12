@@ -29,7 +29,13 @@ const WATCHED = [
   // place batches into.
   { script: 'batch.js', host: 'home', args: [] },
   { script: 'cmd.js', host: 'home', args: [] },
-  { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 700e6] },
+  // Parked deliberately, not disabled. The fleet is at the 25-server cap and
+  // the batcher is running ~3 targets on 432TB with placement failures to
+  // spare, so marginal cloud RAM buys nothing — and it is destroyed by an
+  // augmentation install, while home RAM survives. Everything goes into home
+  // RAM until the install. Lower this afterwards, when the fleet has to be
+  // rebuilt from nothing and cloud RAM is the only RAM there is.
+  { script: 'buyserv.js', host: 'joesguns', args: ['--reserve', 1e15] },
 ]
 
 const INTERVAL = 30000

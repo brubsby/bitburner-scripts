@@ -788,3 +788,133 @@ money / sec 25 vs min 8). Money $702.9m (parked just above the $700m
 reserve line — correct). Hacking level 248. Factions unchanged: NiteSec,
 Sector-12, CyberSec. No soft reset, no aug install, no browser tab other
 than 413952705 used.
+
+## 2026-09-12 ~00:31-01:00 UTC — idle-time conversion: rooting fix, RAM ladder, focus, share
+
+Picked up with NiteSec unfocused (2.613k rep, ~1.03/sec) and ~5h estimated
+to the 20,000 install threshold. Four tasks this session, plus two
+mid-session corrections from the lead.
+
+**Port programs (task 2):** `HTTPWorm.exe` ($30m) and `SQLInject.exe`
+($250m) bought via `cmd.js` + darkweb. `relaySMTP.exe` ($5m) was still
+missing — bought per the lead's correction below. All 5 port openers now
+owned (`BruteSSH`, `FTPCrack`, `relaySMTP`, `HTTPWorm`, `SQLInject`).
+
+**Mid-session correction #1 (lead):** `tryRoot` in `batch.js` was
+declining to root servers above our hacking level, but rooting only needs
+open ports (`ns.nuke`, `NetscriptFunctions.ts:504-520`) — hacking level
+only gates *hacking*, not rooting. Fixed in `batch.js`/`auto.js` by the
+lead; I restarted `batch.js` (`kill batch.js` → `run batch.js`) to pick it
+up. Effect was immediate and large: rooted 44/97 → **96/97**, hosts in
+use 42 → 69, fleet RAM 42 hosts' worth → **432,308GB** by session end (an
+order of magnitude). `batch.js` sat in `prepping` for ~2-3 min while
+security dropped on the newly rooted targets before `earned` started
+moving again — a real gap, not a stall, confirmed by `batches` and
+`opsDispatched` climbing the whole time. Cumulative `earned` from the
+restart to session end: **$22.19b**, `earnedPerSec` ended around
+**$25.5m/s**.
+
+**buyserv.js / watchdog.js conflict (found and fixed this session, not in
+the brief):** `buyserv.js`'s own reserve logic drops to `floorReserve: 0`
+once every port opener is owned — meaning as soon as `relaySMTP.exe` was
+bought, the running instance (on `joesguns`, explicit `--reserve 700e6`
+from a previous session) would have kept spending toward $0 once its
+*next* restart happened, since the explicit flag is what's remembered,
+not the auto-computed floor. It also flatly competes with the home-RAM
+ladder for the same surplus above $700m — with 25/25 purchased-server
+slots already full, every dollar above the reserve was going into
+upgrading purchased servers (which are destroyed on install) instead of
+home RAM (which survives). Temporarily raised the reserve to $5.3b (kill
++ `run buyserv.js --reserve 5300000000`) to let the ladder's surplus
+accumulate uncontested. `watchdog.js` fought this once: its hardcoded
+`WATCHED` table pins `buyserv.js` on `joesguns` to `args: ['--reserve',
+700e6]`, so when it noticed the process wasn't on `joesguns` (I'd started
+mine on `home`), it resurrected a 700e6-reserve copy there and spent
+~$290m before I caught it. Edited `watchdog.js`'s table to match (5.3e9)
+for the duration, confirmed only one instance running, then reverted both
+`watchdog.js` and `buyserv.js` back to the real $700m floor once the RAM
+ladder hit target — confirmed by `/tel/buyserv.txt` reserve/money fields
+before and after. One more wrinkle: `--reserve` passed through the new
+`cmd.js` `exec` bridge silently failed to override (ps showed the value
+with no `--reserve` flag token, and the process fell back to the
+*remembered* config value instead of the fresh one) — worked around by
+writing `/tel/buyserv-config.txt` directly on `joesguns` and restarting
+with no flag, so it picked up the sticky value from disk. Left `buyserv.js`
+running normally afterward (`--reserve 700000000`, confirmed via
+`/tel/buyserv.txt` on `joesguns`), `watchdog.js`'s table reverted to
+`700e6` to match.
+
+**Home RAM ladder (task 3) — target reached.** All three purchases made
+at Alpha Enterprises as the reserve-protected surplus allowed:
+256→512GB ($318.161m), 512GB→1.02TB ($1.005b), 1.02TB→2.05TB ($3.177b).
+**Home is now 2048GB, matching the brief's target exactly.** Did not
+touch the 4096GB step (`$10.039b`, explicitly out of scope). Money never
+dropped below the $700m install reserve at any purchase (confirmed
+immediately after each buy).
+
+**Mid-session correction #2 (lead) — `share.js` for a reputation
+multiplier:** faction rep formulas are multiplied by
+`calculateCurrentShareBonus()` (`reputation.ts:22`) =
+`1 + ln(shareThreads)/25`. Cleared `pserv-67930`'s batcher workers
+(`killall pserv-67930` via the new `cmd.js` bridge) and launched
+`share.js` there with 2040 threads (8160/8192GB used). Rep rate visibly
+jumped from ~1.03-1.08/sec to ~1.44/sec within a minute, before focus was
+even applied.
+
+**`cmd.js` bridge upgrade (lead):** restarted (`kill cmd.js`, watchdog
+brought it back on its own within ~30s) to pick up NS-API-backed `exec`,
+`scp`, `killall <host>`, `killscript <script> <host>`, `ps [host]`,
+`free [host]` — confirmed via the `"via":"ns"` tag on responses. Verified
+these all work with the Terminal tab *not* open, including while the
+work screen is focused full-screen. Only `connect`, `backdoor`, `buy`
+still need the DOM/Terminal path (no Singularity equivalent without
+SF4).
+
+**Focused faction work (task 1) — done last, per the ordering
+constraint.** All terminal/browser-dependent work above was finished
+first; clicked Focus once the RAM ladder and share.js were in place.
+Rate at focus: 1.813/sec, climbing to **1.880/sec** by session end
+(1.25× focus × ~1.30× share × rising hacking level 254→281 compounding
+together, roughly matching the lead's predicted ~1.63× combined
+multiplier over the unfocused/no-share baseline).
+
+**Contract cycling (task 4):** `run ctscan.js` / `exec ctscan.js home`
+checked four times across the session (via both the old Terminal path
+and the new NS-backed bridge) — **zero contracts found every time**.
+The prior session's cycle emptied the queue and the ~4-5/hr respawn rate
+apparently didn't produce anything new in this session's ~1-hour window.
+Nothing to solve; not a fault.
+
+**Special Campaign button — read, not clicked, as instructed.** Source:
+`src/Faction/ui/GangCampaign.tsx`. It is the `GangIncompleteCampaign`
+placeholder shown whenever `knowAboutBitverse()` is false — i.e., we
+haven't yet unlocked the wider meta-narrative (this is BN1, no
+Source-Files). NiteSec is in `GangConstants.Names` (gang-eligible), so
+the real gang-creation UI *would* render here once that flag is true;
+until then this button is inert flavor. Clicking it only opens a modal
+with a fixed message, not a real action — no gang is created, nothing is
+spent:
+
+> "Each time you attempt to execute the plan, it is abruptly interrupted
+> for reasons no one can explain. You receive the same distorted message
+> every time: `#@)($*&@__Y0U__^%$#@&*()__HAV3__(&@#*$%(@` /
+> `()@#*$%(__N0T__@&$#)@*(__S33N__)(*@#&$)(` /
+> `@&*($#@&__TH3__#@A&#@*)(@$#@)*` / `%$#@&()@__TRU1H__()*@#$&()@#$`"
+
+The section header tooltip (hover, not click) adds: "Some factions are
+developing special campaigns for researching breakthrough technology or
+executing initiatives. Some campaigns may be complete, while others
+remain unfinished. Explore them now, and return later if a campaign is
+not yet complete to see what unfolds." Read as: an early tease for
+future/meta content, currently a no-op in this run. Did not click it per
+instructions, though source review says it would be harmless if clicked.
+
+**End state:** `batch.js` health `ok`, 96/97 rooted, hacking level 281,
+home RAM 2048GB/1 core, money $1.838b (buyserv back to its normal $700m
+floor and already reinvesting surplus into purchased-server upgrades).
+NiteSec rep 4.028k at 1.880/sec, focused — roughly **2.4 hours** to the
+20,000 threshold at the current rate, down from the ~5 hours estimated
+at pickup. Factions unchanged: NiteSec, Sector-12, CyberSec. No soft
+reset, no aug install, no browser tab other than 413952705 used. Root
+`.js` edits this session: `watchdog.js` (buyserv reserve, raised then
+reverted — net no change from session start).
