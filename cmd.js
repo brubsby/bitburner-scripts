@@ -190,6 +190,18 @@ export async function main(ns) {
         continue
       }
 
+      // Opening the Terminal tab is a React state change, so the input is not
+      // in the DOM until the next render — clicking and checking in the same
+      // tick always failed. Give it a moment.
+      if (!doc.getElementById('terminal-input')) {
+        try {
+          showTerminal()
+        } catch {
+          /* nav not found */
+        }
+        await ns.sleep(600)
+      }
+
       const before = terminalLines().length
       try {
         submit(line)
