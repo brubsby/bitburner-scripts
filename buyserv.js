@@ -37,6 +37,17 @@
 // of idling forever. Measured cost of holding it: 1-2% of earnings.
 // ---------------------------------------------------------------------------
 
+// Free to import: status.js references only ns.write (0GB). See its header.
+import { reporter, describe, record } from 'status.js'
+// Pure modules, no ns surface, so importing them costs this script nothing.
+// aliased: this file already has a local reserveFor(ns) for per-host reserves.
+import { reserveFor as budgetHold, augClaim, joinClaim } from 'budget.js'
+import { nextHomeUpgrade } from 'homecost.js'
+import { fleetTarget } from 'fleetshape.js'
+
+// Where progress.js publishes the augmentation plan and its total cost.
+const GATE_FILE = '/tel/installgate.txt'
+
 const SETTINGS = {
   // Port openers in price order (src/DarkWeb/DarkWebItems.ts). The reserve is
   // the price of the cheapest one not yet owned, so it shrinks to nothing as
@@ -56,11 +67,21 @@ const SETTINGS = {
     { file: 'HTTPWorm.exe', price: 30000000 },
     { file: 'SQLInject.exe', price: 250000000 },
   ],
-  // Once every program above is owned, hold nothing back. Home RAM is a manual
-  // purchase too, but at $126k/GB and rising against the cloud's flat $55k/GB
-  // it is not worth hoarding for — buy it for what it enables (hack.js needs
-  // 11.2GB resident, home cores multiply grow and weaken), not for threads.
-  floorReserve: 0,
+  // Once every port program is owned there is nothing *cheap* left to save for,
+  // but "hold nothing back" is wrong at that point rather than right: this loop
+  // spends the entire surplus every 15s, so the balance sits near the reserve
+  // almost all the time. That is fine while money only buys RAM. It is not fine
+  // once augmentations are the goal — a purchase window that opens when rep
+  // crosses a threshold finds an empty account, and augmentations are the only
+  // thing that ends the BitNode.
+  //
+  // $2b covers a full 7-9 augmentation buy-out including the 1.9x-per-queued-aug
+  // money multiplier (measured: ~$1.06b for the seven cheapest-by-rep on
+  // 2026-09-12) with headroom. The cost of holding it is ~36TB of cloud RAM
+  // foregone at $55k/GB, which is real but bounded, and income here is ~$3b per
+  // ten minutes — the reserve refills far faster than reputation accrues, so it
+  // is never the binding constraint.
+  floorReserve: 2e9,
   interval: 15000,
   statusFile: '/tel/buyserv.txt',
   configFile: '/tel/buyserv-config.txt',
@@ -91,11 +112,124 @@ function reserveFor(ns) {
  * whole tier of servers to root. Once they are all owned there is nothing left
  * to save for and it drops to zero.
  */
+/**
+ * What buyserv must leave alone.
+ *
+ * Two independent holds, and the second is new:
+ *
+ *  1. the next unbought port program, because rooting more servers is worth
+ *     more than more RAM on the ones we have;
+ *  2. everything budget.js says a HIGHER-PRIORITY spender has claimed —
+ *     augmentations, which survive an install, and the next home upgrade,
+ *     which also survives one. Purchased servers do not survive at all
+ *     (ServerHelpers.ts:226-239), so they are last in line by construction.
+ *
+ * The second is the fix for a measured failure: this script spent every surplus
+ * dollar every 15 seconds, which pinned the balance a thousandfold below
+ * homeup.js's trigger for an entire life. Home was never upgraded while 77% of
+ * gross income went into servers the next install deleted.
+ *
+ * ns.read is 0GB (RamCostGenerator.ts:634) and returns '' for a missing file,
+ * so honouring the augmentation claim costs nothing and cannot throw. An
+ * UNREADABLE claim holds everything back rather than reading as zero — that
+ * direction is deliberate, and budget.js [BU2] asserts it.
+ */
 function reserveNow(ns) {
+  let base = SETTINGS.floorReserve
   for (const p of SETTINGS.programs) {
-    if (!ns.fileExists(p.file, 'home')) return p.price
+    if (!ns.fileExists(p.file, 'home')) {
+      base = p.price
+      break
+    }
   }
-  return 0
+  const claims = {
+    // THE JOIN GATE outranks every other spender, because it is the exit
+    // rather than a means to it. Daedalus admits on $100b IN HAND, and this
+    // file converts money into cloud servers — which do not even survive an
+    // install. Live in BitNode 1 with the augmentation count already met and
+    // income at $477b/h, the balance fell from $6.02b to $5.10b because
+    // nothing in the budget knew the join existed. Same no-`?? 0` rule.
+    join: joinClaim(ns.read(GATE_FILE), ns.getResetInfo().lastAugReset),
+    // NO `?? 0` HERE. augClaim returns null only when the claim could not be
+    // determined, and budget.js turns that into the `fallback` below — a
+    // coercion to 0 would convert every failure into permission to spend.
+    augmentations: augClaim(ns.read(GATE_FILE), ns.getResetInfo().lastAugReset),
+    // `?? 0` IS correct here, and the reason is worth stating so the next
+    // reader does not "fix" it into a block. nextHomeUpgrade is pure arithmetic
+    // over values we already hold (homecost.js) — it cannot fail to be read. It
+    // returns null for exactly one reason: home is at the 2^30 GB / 8 core cap,
+    // which is a genuine claim of zero, not an unknown.
+    //
+    // Both upgrade kinds publish the OBJECT form {amount, deltaGB} so
+    // budget.js can weigh the payback exception (its header has the
+    // economics). A RAM upgrade doubles, so deltaGB is the current size. A
+    // cores upgrade converts to a RAM-EQUIVALENT: +1 core adds 1/16 to the
+    // grow/weaken core bonus (ServerHelpers.ts:316, `1 + (cores-1)/16`),
+    // which at most behaves like homeRam/16 of extra capacity — an UPPER
+    // bound on its worth, which errs toward holding. The first version left
+    // cores as a numeric full-hold "to be conservative", and the very next
+    // upgrade was a $56.25b core — recreating, through the other door, the
+    // exact starvation this exception exists to end.
+    home: (() => {
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      if (!up) return 0
+      const ram = ns.getServerMaxRam('home')
+      return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
+    })(),
+  }
+  // The payback measurements, all live. fleetDollarPerGB is priced at 4TB —
+  // a representative mid-fleet size that already carries several softcap
+  // doublings, so the comparison errs toward holding. The horizon is half the
+  // measured install window (the fleet's average remaining lifetime); income
+  // falls back through the same two-element read the gate uses. Any of these
+  // failing to read leaves payback undefined and budget.js fails closed.
+  const payback = (() => {
+    try {
+      const inc0 = ns.getTotalScriptIncome()
+      const incomePerSec = (isFinite(inc0?.[0]) && inc0[0] > 0 ? inc0[0] : 0) || (isFinite(inc0?.[1]) && inc0[1] > 0 ? inc0[1] : 0)
+      const sched = JSON.parse(ns.read('/tel/factionplan.txt') || 'null')
+      const windowH = sched?.windowH > 0 ? sched.windowH : 1.72 // 2026-09-15 measured median, self-replacing
+      const fleetDollarPerGB = ns.cloud.getServerCost(4096) / 4096
+      if (!(incomePerSec > 0) || !(fleetDollarPerGB > 0)) return undefined
+      return { fleetDollarPerGB, incomePerSec, horizonSec: (windowH / 2) * 3600 }
+    } catch {
+      return undefined
+    }
+  })()
+  const held = budgetHold('servers', claims, { fallback: base, payback })
+  return base + (isFinite(held) ? held : 0)
+}
+
+/**
+ * The largest server size still priced at the floor rate per GB.
+ *
+ * getCloudServerCost applies `CloudServerSoftcap^max(0, log2(ram) - 6)`
+ * (Server/ServerPurchases.ts:33-41), so cost per GB is constant up to 64GB and
+ * then multiplies by the softcap every doubling. That knee is where cheap RAM
+ * stops, and it is exactly the size to level a fleet to.
+ *
+ * MEASURED through the game's own getServerCost rather than assuming the
+ * exponent, so a BitNode with a different softcap — or none, where the answer
+ * is simply the RAM limit — gets the right answer without this file knowing
+ * which BitNode it is in. That is the same mistake the old policy made: it
+ * hardcoded BitNode 1's flat pricing into a comment and acted on it in BN4.
+ *
+ * Ties go to the LARGER size (`<= best * 1.0001`), so a flat-priced node walks
+ * all the way to the cap instead of stopping at the first size.
+ */
+function softcapKnee(ns, maxRam) {
+  let best = Infinity
+  let knee = 8
+  for (let r = 8; r <= maxRam; r *= 2) {
+    const cost = ns.cloud.getServerCost(r)
+    if (!isFinite(cost) || cost <= 0) break
+    const perGb = cost / r
+    if (perGb <= best * 1.0001) {
+      best = Math.min(best, perGb)
+      knee = r
+    } else break
+  }
+  return knee
 }
 
 export async function main(ns) {
@@ -109,53 +243,126 @@ export async function main(ns) {
 
   ns.print(`buyserv.js running — reserve ${flags.reserve >= 0 ? '$' + flags.reserve : 'auto'}`)
 
+  // The daemon only mirrors /tel/* off home, so ship the status there when this
+  // runs anywhere else — otherwise it is invisible outside the game. This was
+  // already inline below; hoisting it lets the error and exit paths use it too.
+  // ns.scp (0.6GB) and ns.getHostname (0.05GB) were already referenced, so no
+  // RAM changes.
+  const self = ns.getHostname()
+  const mirror = () => {
+    if (self === 'home') return
+    try {
+      ns.scp(SETTINGS.statusFile, 'home', self)
+    } catch {
+      /* home unreachable; the local copy still stands */
+    }
+  }
+
+  const errors = []
+  const note = reporter(ns, SETTINGS.statusFile, () => ({ errors: errors.slice(-5) }))
+
+  // The path no try/finally can reach: killed by the watchdog, caught in a
+  // killall, or thrown past every handler. ns.atExit costs 0GB and runs before
+  // the worker is torn down, so this is the only way "buyserv stopped buying"
+  // ever becomes visible instead of just looking like a rich, idle account.
+  ns.atExit(() => {
+    note.exit('stopped', { detail: 'buyserv.js is no longer running — surplus cash is not being spent' })
+    mirror()
+  })
+
   while (true) {
     const log = []
+    // Hoisted so the catch can report what the tick was working with. A status
+    // that says only "it threw" costs another run to reproduce.
+    let reserve = null
 
     try {
       const owned = ns.cloud.getServerNames()
       const limit = ns.cloud.getServerLimit()
       const maxRam = ns.cloud.getRamLimit()
-      const reserve = flags.reserve >= 0 ? flags.reserve : reserveNow(ns)
+      reserve = flags.reserve >= 0 ? flags.reserve : reserveNow(ns)
 
       // ----------------------------------------------------------------
-      // Concentrate, do not level.
+      // LEVEL TO THE SOFTCAP KNEE, then stop. (Was: "concentrate, do not level".)
       //
-      // Cloud RAM costs a flat $55k/GB at every size in BN1 and an upgrade
-      // costs exactly the difference, so *total* RAM for a given spend is the
-      // same however it is distributed. Placement is not: a batch has to fit
-      // on one host, so 25 small servers and one big server holding the same
-      // total RAM are not interchangeable — the small fleet fragments and the
-      // batcher reports placement failures while RAM sits free.
+      // The old policy rested on a claim that is FALSE outside BitNode 1:
+      // "cloud RAM costs a flat $55k/GB at every size". The real formula is
+      // (Server/ServerPurchases.ts:33-41)
       //
-      // The old policy upgraded the *smallest* server each tick, which keeps
-      // the fleet level and is exactly the wrong shape. This upgrades the
-      // largest one that is not yet at the cap, so RAM piles into the biggest
-      // contiguous blocks the game allows, and only buys a new server when
-      // every existing one is maxed.
+      //   cost = ram * 55000 * CloudServerCost * CloudServerSoftcap^max(0, log2(ram)-6)
+      //
+      // and BitNode 4 sets CloudServerSoftcap = 1.2 (BitNode.tsx:632). So price
+      // per GB is flat up to 64GB and then rises 20% per doubling:
+      //
+      //   <=64GB  $55,000/GB      256GB  $79,200/GB  (+44%)
+      //    128GB  $66,000/GB      512GB  $95,040/GB  (+73%)
+      //
+      // Concentrating was therefore buying the most expensive RAM in the game.
+      // Measured on the live fleet: the same $46.3M spent evenly buys 832GB
+      // against the 704GB it actually bought, and the gap widens with budget.
+      // It also froze 22 of 25 slots at 8-16GB, because only the largest server
+      // was ever upgraded.
+      //
+      // THE TARGET IS $/PLACEABLE-BATCH, NOT $/GB. The knee reasoning above
+      // held only while the hack op fit a knee-sized host: it floored at
+      // SETTINGS.hackFloor threads (~34GB), and 64GB hosted it. But the hack
+      // op grows with the hacking multiplier, and by hacking 958 it was 59
+      // threads ~ 100GB against a 226GB full batch — so a 64GB host held ZERO
+      // batches (floor(64/226)=0), the whole fleet contributed nothing, and
+      // every hack op contended on home: 1,083 placement failures in one life.
+      //
+      // fleetshape.js picks the size that minimises serverCost / batches-held,
+      // reading the largest live batch from the batcher's OWN telemetry — so
+      // the target tracks the multiplier instead of freezing at a stale knee.
+      // It costs a softcap premium (256GB is $79k/GB vs $55k at the knee), and
+      // that premium is the whole point: a placeable block earns while a
+      // fragmented one does not. Below-knee batches still land at or under the
+      // knee, so nothing changes early; the install-destroys-cloud caution
+      // above still holds and is the reason the payback exception in budget.js
+      // gates this spend against home.
+      //
+      // batchGB unreadable -> the knee, exactly the old behaviour, degraded
+      // loudly via the status `fleetTarget` field. Never a guessed size: a
+      // fleet reshaped on a guess is real money spent on unplaceable RAM.
       // ----------------------------------------------------------------
+      const knee = softcapKnee(ns, maxRam)
+      let target = knee
+      let fleetTgt = null
+      try {
+        const bt = JSON.parse(ns.read('/tel/batch.txt') || 'null')
+        const batchGB = Math.max(0, ...((bt?.targets ?? []).map((t) => t?.plan?.gb).filter((g) => typeof g === 'number' && isFinite(g) && g > 0)))
+        if (batchGB > 0) {
+          fleetTgt = fleetTarget(batchGB, (r) => ns.cloud.getServerCost(r), { maxRam })
+          if (fleetTgt && fleetTgt.slots > 0) target = Math.max(knee, fleetTgt.targetRam)
+        }
+      } catch {
+        /* keep the knee — the status field records which target is in use */
+      }
       for (let pass = 0; pass < 12; pass++) {
         const surplus = ns.getServerMoneyAvailable('home') - reserve
         if (surplus <= 0) break
 
-        // Biggest server we own that still has room to grow.
-        let grow = null
+        // SMALLEST server still below the knee. Levelling is what buys the most
+        // RAM per dollar once price per GB is flat below the knee and rising
+        // above it, and it is what unfreezes the 8-16GB slots the old
+        // largest-first rule left behind.
+        let pick = null
         for (const host of owned) {
           const ram = ns.getServerMaxRam(host)
-          if (ram >= maxRam) continue
-          if (!grow || ram > grow.ram) grow = { host, ram }
+          if (ram >= target) continue
+          if (!pick || ram < pick.ram) pick = { host, ram }
         }
 
-        if (grow) {
+        if (pick) {
           // Largest affordable doubling, not just one step — fewer, bigger
           // jumps beat many small ones for the same money.
           let next = 0
-          for (let r = grow.ram * 2; r <= maxRam; r *= 2) {
-            if (ns.cloud.getServerUpgradeCost(grow.host, r) <= surplus) next = r
+          for (let r = pick.ram * 2; r <= target; r *= 2) {
+            if (ns.cloud.getServerUpgradeCost(pick.host, r) <= surplus) next = r
           }
           if (next) {
-            if (!ns.cloud.upgradeServer(grow.host, next)) break
-            log.push(`upgraded ${grow.host} ${grow.ram} -> ${next}GB`)
+            if (!ns.cloud.upgradeServer(pick.host, next)) break
+            log.push(`upgraded ${pick.host} ${pick.ram} -> ${next}GB`)
             continue
           }
         }
@@ -163,7 +370,7 @@ export async function main(ns) {
         // Nothing upgradable within budget: add a server if there is a slot.
         if (owned.length < limit) {
           let ram = 0
-          for (let r = 8; r <= maxRam; r *= 2) {
+          for (let r = 8; r <= target; r *= 2) {
             if (ns.cloud.getServerCost(r) <= surplus) ram = r
           }
           if (!ram) break
@@ -177,33 +384,42 @@ export async function main(ns) {
       }
 
       const fleet = owned.map((h) => ({ host: h, ram: ns.getServerMaxRam(h) }))
-      ns.write(
-        SETTINGS.statusFile,
-        JSON.stringify(
-          {
-            at: new Date().toISOString(),
-            money: Math.round(ns.getServerMoneyAvailable('home')),
-            reserve,
-            owned: fleet.length,
-            limit,
-            fleetRam: fleet.reduce((a, s) => a + s.ram, 0),
-            fleet,
-            log,
-          },
-          null,
-          2,
-        ),
-        'w',
-      )
-      // The daemon only mirrors /tel/* off home, so ship the status there when
-      // this runs anywhere else — otherwise it is invisible outside the game.
-      if (ns.getHostname() !== 'home') {
-        ns.scp(SETTINGS.statusFile, 'home', ns.getHostname())
-      }
+      note('ok', {
+        money: Math.round(ns.getServerMoneyAvailable('home')),
+        reserve,
+        owned: fleet.length,
+        limit,
+        fleetRam: fleet.reduce((a, s) => a + s.ram, 0),
+        // The block-aware target and why: 'measured' with the batch size and
+        // slots each host holds, or 'knee' when the batcher's size was
+        // unreadable. A fleet stuck at 0 slots is now a telemetry line.
+        target,
+        fleetTarget: fleetTgt ? { targetRam: fleetTgt.targetRam, slots: fleetTgt.slots, source: 'measured' } : { targetRam: knee, source: 'knee' },
+        fleet,
+        log,
+      })
+      mirror()
 
       if (log.length) ns.print(log.join('; '))
     } catch (err) {
-      ns.print(`error: ${err}`)
+      // ALWAYS surface the failure. The status write used to be the last
+      // statement of this try, so a throw anywhere above it — a v3 arity
+      // change in ns.cloud.*, a server upgraded out from under the loop, a bad
+      // edit — skipped the only record of what happened. The process stayed
+      // alive on its 15s sleep and the status file simply froze, which reads as
+      // "nothing worth buying" rather than "not buying".
+      //
+      // Nested try because the reporting must not be able to become the
+      // failure: nothing in here reads the game, and publish() swallows write
+      // errors, but the belt is cheap (batch.js does the same).
+      try {
+        const detail = record(errors, err)
+        ns.print(`error: ${detail}`)
+        note('error', { reserve, log, detail: describe(err) })
+        mirror()
+      } catch {
+        /* nothing left to try */
+      }
     }
 
     await ns.sleep(interval)

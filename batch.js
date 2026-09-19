@@ -3,6 +3,8 @@
 //   run batch.js                        whole fleet, targets chosen automatically
 //   run batch.js --hosts pserv-1,pserv-2   only those hosts (rollback / A-B)
 //   run batch.js --targets 1            pin the target count instead of deriving it
+//   run batch.js --nocal                plan with the raw model, no yield correction
+//   run batch.js --nocalrestore         ignore any persisted calibration
 //
 // Replaces the threshold loop (auto.js + early.js), which picks ONE operation
 // for the whole fleet at a time and so serialises everything on the slowest
@@ -43,11 +45,32 @@
 //     to 3.5 epsilon" and it needs no assumption that the schedule is running
 //     as planned.
 //
+// A third choice was added later, and it is the one that makes this file
+// correct in a BitNode it is not allowed to read:
+//
+//   * The hack fraction is MEASURED, not only computed. The game's own
+//     calculatePercentMoneyHacked carries `currentNodeMults.ScriptHackMoney`,
+//     which needs Source-File 5 to read and is 0.2 in BitNode 4. So the
+//     controller compares the money each of its hacks actually removed against
+//     what its model said that same hack would remove, and corrects by the
+//     ratio. `h` and the pre-hack balance both cancel out of that ratio, so it
+//     measures exactly the missing multiplier and nothing else — see
+//     yieldRatio() for the derivation and for why the loop settles. The check
+//     on the whole idea is that the same number must read 1.0 once
+//     Formulas.exe is owned, because attachMath then takes phi from the game's
+//     own formula with every multiplier already in it. /tel/batch.txt publishes
+//     which of the two it is seeing.
+//
 // And the failure path is the point, not an afterthought: if a target's
 // security climbs or its money falls past tolerance, the controller stops
 // launching, lets everything in flight land, and re-preps. Nothing tries to
 // rescue a desynced pipeline in place. That always terminates, and it is why
 // this can be left running unattended.
+
+// Free to import: status.js references only ns.write (0GB). See its header.
+import { reporter, describe, record } from 'status.js'
+// Pure arithmetic over getResetInfo's output; no ns surface of its own.
+import { singularityRamMultiplier } from 'sfgate.js'
 
 const SETTINGS = {
   workers: { hack: 'h.js', grow: 'g.js', weaken: 'w.js' },
@@ -61,8 +84,62 @@ const SETTINGS = {
   statusFile: '/tel/batch.txt',
   // GB left free on whichever host this script runs on, so the controller and
   // anything else resident there is never squeezed out by its own workers.
+  // Minimum hack threads to plan for. Below this the fixed w1/w2 overhead
+  // dominates and income collapses; above ~15 the $/GB curve is flat within 7%.
+  // See the limit-cycle note at the planBatch call site.
+  hackFloor: 20,
   selfReserve: 6,
-  homeReserve: 4,
+  // 4 -> 56. Home is where every SINGULARITY job has to run, and those are the
+  // most expensive scripts in the stack precisely because Singularity calls are
+  // priced per function: progress.js raises to 43.05GB on its acting path, and
+  // at a 4GB reserve the batcher had taken home down to 11.4GB free with the
+  // fleet's largest block at 32GB, so the raise was denied everywhere.
+  //
+  // A denied raise is the worst shape of failure available here: ns.ramOverride
+  // returns the OLD allocation rather than throwing (NetscriptFunctions.ts:
+  // 1210-1214), so without ramgrow.js's explicit check the script would have
+  // carried on at 2.6GB and died at the first Singularity call with no
+  // diagnosis. The batcher quietly eating the reputation loop is exactly the
+  // failure that left this run nine hours into BitNode 4 with zero factions.
+  //
+  // 56 = progress.js's 43.05GB ceiling plus headroom for the rest of the
+  // resident stack to keep its own margins. The cost is ~1.4% of a 512GB home
+  // and it buys the only channel that converts money into permanent progress.
+  //
+  // THAT CONSTANT WAS MEASURED INSIDE BITNODE 4, and Singularity RAM is priced
+  // per Source-File level: 1x inside BN4, but 16x at SF4.1, 4x at SF4.2
+  // (RamCostGenerator.ts:82-96, sfgate.js:71-77). progress.js's ceiling is
+  // therefore 43.05GB there and 1188.85GB here — 27x this reserve — so the
+  // number was silently wrong the moment the run left the node it was measured
+  // in, and the batcher took home to 62GB free of 2,097,152GB. progress.js
+  // then failed to raise for eight straight cycles.
+  //
+  // The comment above already predicted this exact outcome ("the batcher
+  // quietly eating the reputation loop is exactly the failure that left this
+  // run nine hours into BitNode 4 with zero factions") and it happened again
+  // one regime later, because the diagnosis was right and the FIX was a
+  // constant. A constant cannot be right in a quantity that moves by 16x.
+  //
+  // So it is a function of the multiplier now. The coefficients mirror
+  // progress.js's own RAISE_CEILING and [R6] asserts they still cover it in
+  // every regime — checked duplication rather than an import, because pulling
+  // progress.js in here would drag its entire Singularity import graph into
+  // the batcher's own price.
+  homeReserve: (mult) => 13 + 81.0 * mult,
+  // Fraction of total fleet RAM left unclaimed so ns.share() has somewhere to
+  // live. Not a courtesy: share multiplies *faction reputation*, and reputation
+  // — not money — is what gates leaving the BitNode. The bonus is
+  // 1 + ln(threads)/25, so this modest slice buys a large share of the maximum.
+  //
+  // Without it the batcher runs at ~98% utilisation and the largest free block
+  // on a 26.7PB fleet is under 3TB, so share falls back to its 600-thread floor
+  // (bonus 1.256) while 200,000 threads — 3% of the fleet — would give 1.488.
+  // That is ~18% more reputation on every stream for RAM whose marginal income
+  // we do not need.
+  //
+  // Applied only while faction work is actually running; with no faction joined
+  // share does nothing and the batcher should have everything.
+  shareFrac: 0.03,
   // Grow and weaken are over-provisioned by this factor. It is nearly free:
   // excess grow threads add no security at all and excess weaken is clamped at
   // the floor, while under-growing accumulates without bound because servers
@@ -71,15 +148,91 @@ const SETTINGS = {
   // Desync tolerances. Past these the pipeline is abandoned and re-prepped.
   secTol: 1.0,
   moneyTol: 0.6,
-  // Target count = totalRam / ramPerTarget, capped. See the block in main()
-  // where the count is chosen for the measurements these come from.
-  ramPerTarget: 32768,
+  // Upper bound on how many targets the income argmax in main() considers.
+  // Not a RAM knob — the count itself is derived per tick.
   maxTargets: 8,
+  // Ignore any target scoring below this fraction of the best one. Scale-free,
+  // Scale-free, so unlike an absolute RAM figure it cannot go stale.
+  minScoreFrac: 0.02,
+  // Also require a target to be worth something in absolute terms, as a
+  // fraction of the richest server available.
+  //
+  // targetScore is money per RAM-second, and small fast servers score well on
+  // it because they cycle quickly — n00dles ($1.75m max) ranked inside the top
+  // eight alongside ecorp ($1.5t) and took 34% of all batches. Two problems
+  // with that, and the second is the one that bites:
+  //
+  //   * the money is a rounding error either way;
+  //   * hacking EXPERIENCE scales with a server's difficulty, not its money
+  //     (calculateHackingExpGain, src/Hacking.ts:29-38 — baseDifficulty*0.3),
+  //     so farming trivial servers yields almost no exp. Measured: 10.3 exp/sec
+  //     with 95% of batches on n00dles/foodnstuff/omega-net, while six
+  //     megacorps sat starved in prep. Hacking level is the last Daedalus gate,
+  //     so that is the wrong thing to be optimising.
+  //
+  // A ratio against the best server keeps this scale-free: it excludes the same
+  // junk on a 10PB fleet as on a 100GB one.
+  minMoneyFrac: 0.01,
+  // --- self-calibration of the hack yield ----------------------------------
+  //
+  // See yieldRatio() below for the derivation. These are the knobs; every one
+  // of them is a measurement knob, not a control gain, because the estimator is
+  // open loop (the quantity it measures does not depend on the correction it
+  // produces).
+  cal: {
+    on: true,
+    // Samples retained. Each is an exact reading of the ratio, so this is a
+    // contamination window, not an averaging window.
+    keep: 128,
+    // Below this the estimate is not used at all and the plan is the
+    // uncorrected one, which is exactly today's behaviour.
+    minN: 12,
+    // Point estimate is an UPPER quantile, never the mean. Every way a sample
+    // can be corrupted biases it high, and high is the safe side (see below).
+    q: 0.75,
+    // Max fractional decrease per second. Upward moves are instant because
+    // upward is always safe. 0.01/s takes 161s to go 1.0 -> 0.2.
+    fallPerSec: 0.01,
+    // ScriptHackMoney is <= 1 in every BitNode in the table, and with
+    // Formulas.exe the true ratio is 1 by construction, so 1 is a hard ceiling
+    // and hitting it is itself a reportable event.
+    lo: 1e-4,
+    hi: 1,
+    // A landing that drained essentially the whole balance hit the game's
+    // `moneyDrained > moneyAvailable` clamp, so it reads LOW and must not be
+    // used as a sample. It also means the correction is too low; that is the
+    // one unsafe direction, so it forces an immediate step up.
+    fMax: 0.98,
+    // (p90-p10)/p50 past which the estimate is called unstable and published as
+    // such. A clean sample stream has spread 0 — see yieldRatio().
+    spreadWarn: 0.1,
+    // Disagreement with Formulas.exe past this fraction is an outright error:
+    // with Formulas present the measured ratio must be 1.
+    formulasTol: 0.05,
+    // Carry the learned value across a restart. Fenced by a server fingerprint
+    // that survives a restart and breaks across an install or a BitNode change
+    // (Prestige.ts:98 re-randomises every foreign server on both).
+    file: '/tel/batch-cal.txt',
+    restore: true,
+  },
 }
 
 // src/Server/data/Constants.ts
-const FORTIFY = 0.002
-const WEAKEN_PER_THREAD = 0.05
+export const FORTIFY = 0.002
+export const WEAKEN_PER_THREAD = 0.05
+
+/**
+ * Effectiveness multiplier for grow and weaken on a host with `cores` cores:
+ * 1 + (cores - 1)/16 (src/Server/ServerHelpers.ts:315-318). It scales
+ * getWeakenEffect (:320-323) and the grow log (src/Server/formulas/grow.ts:21)
+ * linearly, so a thread on a 6-core home does 1.3125x the work of one on a
+ * single-core purchased server.
+ *
+ * Only the *executing* host's cores count — the target's are irrelevant — which
+ * is why this is applied at placement time rather than in planBatch: the plan
+ * is built before anyone knows which host will run it.
+ */
+export const coreBonus = (cores) => 1 + (Math.max(1, cores) - 1) / 16
 const MAX_GROWTH_LOG = 0.00349388925425578
 const BASE_GROWTH_INCR = 0.03
 
@@ -141,28 +294,62 @@ function tryRoot(ns, host) {
 // These are ports of src/Hacking.ts and src/Server/formulas/grow.ts evaluated
 // at *minimum* security, which is the state a batched target is held in. The
 // ns equivalents would cost RAM and, worse, would report the server as it is
-// right now rather than as the batch will find it. Every player multiplier is
-// 1 in BN1 with no augmentations installed; revisit after the first install.
+// right now rather than as the batch will find it.
+//
+// Player multipliers are NOT constant and are folded in from
+// ns.getHackingMultipliers() (0.25GB), which the game derives from installed
+// augmentations. The original version hardcoded them to 1 with a "revisit
+// after the first install" note that nobody revisited — by the 29th installed
+// augmentation the real hacking_money multiplier had every batch draining
+// *more* than the fraction its grow threads were sized to put back, which is a
+// desync the tolerance machinery then has to absorb. hacking_grow ran the
+// other way, oversending grow threads. hackTime needs no term here because it
+// is read live from ns.getHackTime, which already includes the speed
+// multiplier. Intelligence is locked in BN1, so its bonus term is exactly 1.
+//
+// ONE TERM IS STILL MISSING, DELIBERATELY, AND IS MEASURED INSTEAD.
+// The game's own calculatePercentMoneyHacked also multiplies by
+// `currentNodeMults.ScriptHackMoney` (Hacking.ts:54), which is 0.2 in BitNode
+// 4 and ranges 0.1..1 across the table. Reading it needs
+// ns.getBitNodeMultipliers(), which throws without Source-File 5, so this file
+// cannot ask for it. Left uncorrected it made every plan take five times what
+// it could actually take and over-grow to replace money that was never
+// removed: $869k realised against $2.7m planned, for hours.
+//
+// It is not readable but it IS observable — the controller watches the target's
+// balance fall by exactly the amount its own hack removed. yieldRatio() below
+// turns that into a measurement of the missing factor. hackFraction therefore
+// stays the pure port of the formula this file CAN evaluate, and the node term
+// is applied on top of it in attachMath. Keeping them separate is what makes
+// the measurement meaningful: the sampler divides by this uncorrected value.
+//
+// The second node multiplier on the hack path, `ScriptHackMoneyGain`
+// (NetscriptHelpers.tsx:648), scales what the PLAYER receives from a drain
+// rather than what leaves the server. It is 1 in every BitNode except 8, where
+// it is 0. So `earned` below — which is accumulated from balance drops — is
+// server drain, and equals player income everywhere except BitNode 8, where
+// scripted hacking pays literally nothing and this whole controller is the
+// wrong tool. Not modelled; named here so it is not rediscovered.
 
-/** calculatePercentMoneyHacked: fraction one hack thread takes. */
-function hackFraction(level, required, minSec) {
+/** calculatePercentMoneyHacked (Hacking.ts:44-56) WITHOUT the node term: see above. */
+export function hackFraction(level, required, minSec, mults) {
   if (minSec >= 100) return 0
   const difficultyMult = (100 - minSec) / 100
   const skillMult = (level - (required - 1)) / level
-  return Math.min(1, Math.max(0, (difficultyMult * skillMult) / 240))
+  return Math.min(1, Math.max(0, (difficultyMult * skillMult * mults.money) / 240))
 }
 
-/** calculateHackingChance. */
-function hackChance(level, required, minSec) {
+/** calculateHackingChance (Hacking.ts:9-24). */
+export function hackChance(level, required, minSec, mults) {
   if (minSec >= 100) return 0
   const skillMult = Math.max(1.75 * level, 1)
-  return Math.min(1, Math.max(0, ((skillMult - required) / skillMult) * ((100 - minSec) / 100)))
+  return Math.min(1, Math.max(0, ((skillMult - required) / skillMult) * ((100 - minSec) / 100) * mults.chance))
 }
 
 /** calculateServerGrowthLog(server, 1, player, 1) — the per-thread growth constant. */
-function growthK(minSec, serverGrowth) {
+export function growthK(minSec, serverGrowth, mults) {
   if (!serverGrowth) return 0
-  return Math.min(Math.log1p(BASE_GROWTH_INCR / minSec), MAX_GROWTH_LOG) * (serverGrowth / 100)
+  return Math.min(Math.log1p(BASE_GROWTH_INCR / minSec), MAX_GROWTH_LOG) * (serverGrowth / 100) * mults.growth
 }
 
 /**
@@ -173,7 +360,7 @@ function growthK(minSec, serverGrowth) {
  * the additive `+threads` term and so overestimates — and it evaluates at the
  * server's current security rather than the minimum the batch will land at.
  */
-function growThreads(targetMoney, startMoney, k, moneyMax) {
+export function growThreads(targetMoney, startMoney, k, moneyMax) {
   if (!(k > 0)) return Infinity
   if (startMoney < 0) startMoney = 0
   if (targetMoney > moneyMax) targetMoney = moneyMax
@@ -192,15 +379,299 @@ function growThreads(targetMoney, startMoney, k, moneyMax) {
   return Math.ceil(x)
 }
 
+/**
+ * Robust estimator of the HACK YIELD RATIO, and the whole reason this file can
+ * be right in a BitNode whose multipliers it is not allowed to read.
+ *
+ * ---------------------------------------------------------------------------
+ * What is being measured, and why it is one number rather than a fudge factor.
+ *
+ * Let phi0 be what this file's model says one hack thread takes at minimum
+ * security, and phi* what the game actually takes. Define
+ *
+ *     Y = phi* / phi0
+ *
+ * Those two expressions (src/Hacking.ts:44-56 vs hackFraction above) are
+ * identical term for term — same difficultyMult, same skillMult, same
+ * `person.mults.hacking_money`, same /240, same clamp — EXCEPT that the game
+ * also multiplies by `currentNodeMults.ScriptHackMoney` and this file cannot.
+ * Every other factor is read live from the game each tick, so it cancels. So
+ *
+ *     Y == currentNodeMults.ScriptHackMoney     exactly, when the fallback
+ *                                               ports are in use, and
+ *     Y == 1                                    exactly, when Formulas.exe is
+ *                                               owned and attachMath takes phi
+ *                                               from ns.formulas.hacking.
+ *
+ * That second identity is the self-check: the same mechanism, unchanged, must
+ * read 1.0 the moment Formulas.exe is bought. If it does not, one of the
+ * assumptions below is false and the estimate is not what it claims to be.
+ *
+ * ---------------------------------------------------------------------------
+ * The sample, and what is deliberately NOT in it.
+ *
+ * When a hack lands the game does (NetscriptHelpers.tsx:628-645)
+ *
+ *     drain = moneyAvailable * phi* * threads      clamped to moneyAvailable
+ *
+ * — linear in threads, evaluated against the balance AT LANDING. So for a
+ * single landing that did not hit the clamp,
+ *
+ *     x = drain / (moneyBefore * phi0 * h) = phi* / phi0 = Y
+ *
+ * `h` cancels. `moneyBefore` cancels. `moneyMax` never appears. Which means:
+ *
+ *   * hack CHANCE is not in x. A failed hack produces no drain at all, so
+ *     conditioning on "money fell" conditions on success — the chance term
+ *     divides out instead of being counted twice. planBatch already models it
+ *     separately (`p.money = f * maxMoney * chance`) and still does. The
+ *     observed success rate is published alongside as an INDEPENDENT check of
+ *     that term, and is never folded into Y.
+ *   * placeFails / execFails / partials / unsafeSkips are not in x. A flight
+ *     record exists only for a batch every one of whose execs succeeded, so
+ *     those change how many samples arrive and nothing else.
+ *   * drains are not in x. Operations already in the air still land and are
+ *     still sampled; a drain only interrupts new launches.
+ *   * money below moneyMax is not in x. The denominator uses the measured
+ *     pre-landing balance, not maxMoney.
+ *   * a changing plan is not in x. The denominator uses the `h` THAT BATCH was
+ *     launched with, recorded at launch, not the plan in force now. (On the
+ *     live save the published plan said h=20 while a 34-thread hack from an
+ *     earlier, lower-level tick was still in flight.)
+ *
+ * x is therefore DETERMINISTIC, not noisy: every clean sample equals Y to
+ * floating-point. The statistic that matters is consequently the SPREAD — a
+ * non-zero spread means an identification assumption broke, and is published.
+ *
+ * ---------------------------------------------------------------------------
+ * Why it settles, and why there is no gain to tune.
+ *
+ * This looks like a feedback loop and is not one. The correction y sets the
+ * plan, the plan sets h, and h then cancels out of the measurement. Nothing the
+ * controller does changes the quantity being measured, so there is no loop gain
+ * and no oscillation mode; it is an open-loop estimator of a constant driving a
+ * rate-limited actuator.
+ *
+ * The one direction that matters is which side of Y you approach from:
+ *
+ *   y > Y  -> the plan under-hacks (realised fraction is (Y/y)*f), grow
+ *             over-delivers, the target stays pinned at max money. This is
+ *             exactly today's behaviour at y = 1, which has been running for
+ *             hours.
+ *   y < Y  -> the plan over-hacks, grow is under-sized, and the error
+ *             integrates: servers have no passive regrowth.
+ *
+ * So the estimator is built to approach Y from ABOVE and stay there:
+ *
+ *   1. it starts at hi = 1, and ScriptHackMoney <= 1 in every BitNode, so the
+ *      cold start is >= Y everywhere;
+ *   2. the point estimate is an upper quantile of the window, and every way a
+ *      sample can be corrupted (a read window that caught a grow as well as a
+ *      hack, an understated moneyBefore) biases it UP;
+ *   3. y may rise instantly and may fall only fallPerSec per second, so
+ *      y(t) = max(target, y0*exp(-r*t)) — monotone, no overshoot, arriving in
+ *      ln(y0/Y)/r seconds;
+ *   4. the only nonlinearity, the game's `drain > moneyAvailable` clamp, cannot
+ *      be reached from above: planBatch caps f = phi0*y*h <= 0.99 and the
+ *      realised fraction is (Y/y)*f <= f whenever y >= Y. If a clamped landing
+ *      is nonetheless seen, that is proof y < Y and `raise` steps it back up
+ *      immediately, which is the safe direction and so needs no damping.
+ *
+ * Pure: no ns, no clock, no globals. Exported so tools/sim can drive it with
+ * synthetic landings at a known multiplier.
+ */
+export function yieldRatio(cfg = {}) {
+  const c = { keep: 128, minN: 12, q: 0.75, fallPerSec: 0.01, lo: 1e-4, hi: 1, ...cfg }
+  const buf = []
+  let y = c.hi
+  let seen = 0
+  let src = 'cold'
+  const bound = (v) => Math.min(c.hi, Math.max(c.lo, v))
+  const quant = (p) => {
+    if (!buf.length) return null
+    const ord = [...buf].sort((u, v) => u - v)
+    return ord[Math.min(ord.length - 1, Math.max(0, Math.round(p * (ord.length - 1))))]
+  }
+  return {
+    /** Record one clean landing. Returns false for anything unusable. */
+    add(x) {
+      if (!(x > 0) || !isFinite(x)) return false
+      buf.push(x)
+      while (buf.length > c.keep) buf.shift()
+      seen++
+      return true
+    },
+    /** Force the estimate up. Always safe, so no rate limit and no quorum. */
+    raise(v) {
+      if (v > y) {
+        y = bound(v)
+        src = 'raised'
+      }
+      return y
+    },
+    /**
+     * Move y toward the current point estimate.
+     *
+     * Asymmetric on purpose, and the asymmetry is the safety argument rather
+     * than a tuning choice. RISING means planning to take LESS than the model
+     * says, which is what this controller has been doing all along and cannot
+     * desync anything — so it is allowed immediately and on any number of
+     * samples, which is what lets a restored-too-low value recover on its first
+     * landing instead of after a quorum. FALLING means planning to take more,
+     * which is the direction that integrates if it is wrong, so it needs both a
+     * quorum and a rate limit.
+     */
+    step(dtSec) {
+      if (!buf.length) return y
+      const tgt = bound(quant(c.q))
+      if (tgt >= y) {
+        y = tgt
+        src = 'measured'
+        return y
+      }
+      if (buf.length < c.minN) return y
+      y = Math.max(tgt, y * Math.exp(-c.fallPerSec * Math.max(0, dtSec)))
+      src = 'measured'
+      return y
+    },
+    /** Adopt a value from outside (a restored file). */
+    seed(v, why) {
+      y = bound(v)
+      src = why
+      return y
+    },
+    /** Throw the window away — the model underneath it changed. */
+    forget(why) {
+      buf.length = 0
+      y = c.hi
+      seen = 0
+      src = why
+      return y
+    },
+    val: () => y,
+    /** Everything a reader needs to decide whether to believe y. */
+    stat() {
+      const p10 = quant(0.1)
+      const p50 = quant(0.5)
+      const p90 = quant(0.9)
+      const r4 = (v) => (v === null ? null : Math.round(v * 1e4) / 1e4)
+      return {
+        y: r4(y),
+        src,
+        n: buf.length,
+        seen,
+        p10: r4(p10),
+        p50: r4(p50),
+        p90: r4(p90),
+        spread: p50 ? Math.round(((p90 - p10) / p50) * 1e4) / 1e4 : null,
+      }
+    },
+  }
+}
+
+/**
+ * Turn one tick's balance change on one target into a verdict about the yield.
+ *
+ * This is the attribution, and it is deliberately separate from both the ns I/O
+ * and the estimator so it can be driven offline with landings whose answer is
+ * known. It mutates only the per-target counters on `s` and returns what it
+ * decided; the caller applies that to the estimator.
+ *
+ * `s` carries:
+ *   flight[]  {at, h, m} per launched batch, captured AT LAUNCH
+ *   calPend   a landing given one extra tick to show its drop
+ *   lastMoney the balance read on the PREVIOUS tick, i.e. before this change
+ *
+ * Verdicts:
+ *   sample  x is a reading of phi_true/phi_model — see yieldRatio()
+ *   miss    a landing resolved with no drop: the hack rolled a failure
+ *   clamp   the drain hit the game's moneyAvailable ceiling, so the reading is
+ *           biased LOW and the correction in force is provably too small
+ *   skip    the window could not isolate one landing; nothing is inferred
+ *   none    nothing came due and nothing is waiting
+ */
+export function landingSample(s, phi0, at, dt, maxTickMs, dropped, fMax = 0.98, decay = 0.99) {
+  // End-to-end bookkeeping, kept separately from the sampling and deliberately
+  // NOT filtered by it: everything the plan promised for batches that have
+  // landed, against everything that actually fell. Selecting it with the same
+  // gate that selects the samples would make it agree with itself by
+  // construction. Both sides are forgotten geometrically, once per landing, so
+  // the published ratio is a recent one — a lifetime ratio would carry the
+  // uncorrected opening of the run forever and never reach 1.
+  if (dropped > 0) s.realLanded += dropped
+  let due = 0
+  let dueH = 0
+  let kept = 0
+  for (let i = 0; i < s.flight.length; i++) {
+    const r = s.flight[i]
+    if (r.at <= at) {
+      due++
+      dueH = r.h
+      s.planLanded = s.planLanded * decay + r.m
+      s.realLanded *= decay
+    } else s.flight[kept++] = r
+  }
+  s.flight.length = kept
+
+  // `at` is the controller's PREDICTION of the landing; the game's own timer
+  // resolves on its cycle, so the balance can move one tick after the record
+  // comes due. A landing therefore gets exactly one extra tick to show itself
+  // before it is written off as a failed hack. Without this the sampler can
+  // starve completely while publishing a plausible-looking success rate far
+  // below the model's — a silent zero, which is the failure shape this repo
+  // keeps producing.
+  const pend = s.calPend
+  s.calPend = null
+  const clean = dt > 0 && dt <= maxTickMs
+  if (due > 1 || (due === 1 && pend) || !clean) {
+    const lost = due + (pend ? 1 : 0)
+    s.calSkip += lost
+    return { kind: lost ? 'skip' : 'none' }
+  }
+  if (dropped > 0) {
+    const h = due === 1 ? dueH : pend ? pend.h : 0
+    if (h < 1 || !(s.lastMoney > 0) || !(phi0 > 0)) {
+      s.calSkip++
+      return { kind: 'skip' }
+    }
+    const fObs = dropped / s.lastMoney
+    if (fObs >= fMax) {
+      s.calClamp++
+      return { kind: 'clamp' }
+    }
+    const x = fObs / (phi0 * h)
+    if (!(x > 0) || !isFinite(x)) {
+      s.calSkip++
+      return { kind: 'skip' }
+    }
+    s.calHits++
+    s.calSum += x
+    s.calN++
+    s.calMin = s.calMin === null ? x : Math.min(s.calMin, x)
+    s.calMax = s.calMax === null ? x : Math.max(s.calMax, x)
+    return { kind: 'sample', x, h }
+  }
+  if (pend) s.calMiss++
+  if (due === 1) {
+    s.calPend = { h: dueH }
+    return { kind: 'none' }
+  }
+  return { kind: pend ? 'miss' : 'none' }
+}
+
 /** Everything about a target that the planner needs, read once per tick. */
-function readTarget(ns, host) {
+function readTarget(ns, host, y = 1) {
   const level = ns.getHackingLevel()
+  // {chance, speed, money, growth}, derived by the game from installed augs.
+  // Read fresh each tick: an install mid-run changes all four.
+  const mults = ns.getHackingMultipliers()
   const required = ns.getServerRequiredHackingLevel(host)
   const minSec = ns.getServerMinSecurityLevel(host)
   const maxMoney = ns.getServerMaxMoney(host)
-  return {
+  return attachMath(ns, {
     host,
     level,
+    mults,
     required,
     minSec,
     maxMoney,
@@ -217,18 +688,77 @@ function readTarget(ns, host) {
       (ns.getHackTime(host) * (2.5 * required * minSec + 500)) /
       (2.5 * required * Math.max(ns.getServerSecurityLevel(host), minSec) + 500),
     hackTimeNow: ns.getHackTime(host),
+  }, y)
+}
+
+/**
+ * Attach phi (hack fraction/thread), chance, and the growth constants to a
+ * target, asking the game itself when it can.
+ *
+ * With Formulas.exe present (a $5b darkweb item — money, not a Source-File),
+ * ns.formulas.hacking evaluates the game's OWN current formulas against a mock
+ * server pinned at the security we care about, every multiplier included, at
+ * 0 GB per call (RamCostGenerator.ts:695-706). That cannot drift, ever.
+ *
+ * Without it, the inlined ports above are used. They are checked against
+ * src/Hacking.ts and carry ns.getHackingMultipliers(), but they are still a
+ * port — which is why they are the fallback and not the primary. The one
+ * piece that stays local either way is the Newton grow-thread solver: it runs
+ * inside planBatch's sizing sweep, and its only formula input is k, which
+ * comes from the game here.
+ *
+ * `y` is the measured yield correction from yieldRatio() above. It is applied
+ * HERE, in the one place phi is defined, so targetScore, planBatch and the
+ * argmax all see the corrected value with no second application anywhere. The
+ * uncorrected model value is kept as `t.phi0` because that — not `t.phi` — is
+ * the denominator the sampler divides by; dividing by the corrected phi would
+ * make the estimator a fixed point at whatever it already believed.
+ *
+ * `t.formulas` says which branch produced phi0, because the expected value of
+ * y differs between them (1 with Formulas.exe, ScriptHackMoney without) and a
+ * reader cannot tell the two apart from the number alone.
+ */
+function attachMath(ns, t, y = 1) {
+  if ((t.formulas = ns.fileExists('Formulas.exe', 'home'))) {
+    const p = ns.getPlayer()
+    const f = ns.formulas.hacking
+    const srv = ns.formulas.mockServer()
+    srv.hostname = t.host
+    srv.hasAdminRights = true
+    srv.requiredHackingSkill = t.required
+    srv.baseDifficulty = t.minSec
+    srv.minDifficulty = t.minSec
+    srv.hackDifficulty = t.minSec
+    srv.moneyMax = t.maxMoney
+    srv.moneyAvailable = t.maxMoney
+    srv.serverGrowth = t.growth
+    t.phi0 = f.hackPercent(srv, p)
+    t.chance = f.hackChance(srv, p)
+    // cores = 1 deliberately: this k is the single-core per-thread constant,
+    // and place() scales thread counts by the executing host's core bonus.
+    // Baking a host's cores in here would be wrong for every other host.
+    t.k = Math.log(f.growPercent(srv, 1, p, 1))
+    srv.hackDifficulty = Math.max(t.sec, t.minSec)
+    t.kNow = Math.log(f.growPercent(srv, 1, p, 1))
+  } else {
+    t.phi0 = hackFraction(t.level, t.required, t.minSec, t.mults)
+    t.chance = hackChance(t.level, t.required, t.minSec, t.mults)
+    t.k = growthK(t.minSec, t.growth, t.mults)
+    t.kNow = growthK(Math.max(t.sec, t.minSec), t.growth, t.mults)
   }
+  t.phi = t.phi0 * (y > 0 ? y : 1)
+  return t
 }
 
 /**
  * Money per RAM-second of a whole batch as f -> 0, times the chance the hack
  * lands. The same index auto.js ranks with; see docs/optimizer-log.md section 6.
  */
-function targetScore(t) {
-  const phi = hackFraction(t.level, t.required, t.minSec)
-  const k = growthK(t.minSec, t.growth)
+export function targetScore(t) {
+  const phi = t.phi
+  const k = t.k
   if (!(phi > 0) || !(k > 0) || !(t.hackTime > 0)) return 0
-  const chance = hackChance(t.level, t.required, t.minSec)
+  const chance = t.chance
   return (chance * t.maxMoney) / ((t.hackTime / 1000) * (1.98 / phi + 6.16 / k))
 }
 
@@ -242,11 +772,27 @@ function targetScore(t) {
  * money per GB — the batch holds its RAM for one weakenTime whatever h is, so
  * that constant drops out of the comparison.
  */
-function planBatch(t, ram, maxRam) {
-  const phi = hackFraction(t.level, t.required, t.minSec)
-  const k = growthK(t.minSec, t.growth)
+/**
+ * @param maxRam      total RAM this batch may occupy across the whole fleet
+ * @param maxHackRam  RAM of the LARGEST SINGLE free block, because the hack op
+ *                    cannot be split (see place() below). Defaults to Infinity
+ *                    so offline callers that only care about the RAM/score
+ *                    tradeoff are unaffected.
+ *
+ * Without `maxHackRam` this function happily returns plans that `place()` can
+ * never satisfy: it sized against the fleet while placement is per-host, so on
+ * an 8-host fleet of <=16GB it chose h=11 (18.7GB of hack) and the batcher
+ * logged 7,274 consecutive placement failures and earned $0 for 27 minutes,
+ * reporting `health: stalled` with no error. A planner that emits unplaceable
+ * plans and lets the caller discover it by failing is the bug; capping here is
+ * the fix, and returning null when even h=1 cannot be placed is what lets the
+ * caller fall back to something that can run.
+ */
+export function planBatch(t, ram, maxRam, maxHackRam = Infinity) {
+  const phi = t.phi
+  const k = t.k
   if (!(phi > 0) || !(k > 0)) return null
-  const chance = hackChance(t.level, t.required, t.minSec)
+  const chance = t.chance
 
   const build = (h) => {
     const f = Math.min(0.99, phi * h)
@@ -260,14 +806,26 @@ function planBatch(t, ram, maxRam) {
   }
 
   let best = null
-  const hMax = Math.max(1, Math.ceil(0.99 / phi))
+  // Two ceilings now: the economic one (past 0.99 of the balance, more hack
+  // threads buy nothing) and the physical one (the hack op has to fit in one
+  // block). The physical ceiling is the one that bites on a small fleet.
+  const hFit = Math.floor(maxHackRam / ram.hack)
+  const hMax = Math.max(1, Math.min(Math.ceil(0.99 / phi), hFit))
   for (let h = 1; h <= hMax; h = h < 8 ? h + 1 : Math.ceil(h * 1.3)) {
     const p = build(h)
     if (!p) continue
     if (p.gb > maxRam) break
     if (!best || p.score > best.score) best = p
   }
-  return best ?? build(1)
+  if (best) return best
+  // The old fallback was `build(1)` unconditionally, which re-introduced the
+  // whole problem: it ignored both budgets, so an unplaceable single-thread
+  // plan escaped and the caller spun on it. Decline instead, and say so by
+  // returning null — the caller can then leave the target alone or hand the
+  // fleet to something that fits.
+  if (hFit < 1) return null
+  const one = build(1)
+  return one && one.gb <= maxRam ? one : null
 }
 
 /**
@@ -284,7 +842,7 @@ function planBatch(t, ram, maxRam) {
  * placed strips the target; that is the highest-probability real failure in the
  * whole design (docs/prior-art.md section 9d).
  */
-function place(free, ops, ram) {
+function place(free, ops, ram, cores = {}) {
   const blocks = [...free.entries()].map(([host, gb]) => ({ host, gb })).sort((a, b) => a.gb - b.gb)
   const out = []
   const order = [...ops].sort(
@@ -300,13 +858,20 @@ function place(free, ops, ram) {
       out.push({ ...o, host: pick.host })
       continue
     }
+    // `left` counts single-core-equivalent threads. A multi-core host retires
+    // more of them per thread actually launched, so without this the batch
+    // oversends grow and weaken by the core bonus — on a 6-core home that is
+    // 31% of those threads doing nothing, since both effects cap out (at
+    // moneyMax and minSecurity).
     let left = o.threads
     for (let i = blocks.length - 1; i >= 0 && left > 0; i--) {
-      const take = Math.min(left, Math.floor(blocks[i].gb / per))
+      const bonus = coreBonus(cores[blocks[i].host] ?? 1)
+      const wanted = Math.ceil(left / bonus)
+      const take = Math.min(wanted, Math.floor(blocks[i].gb / per))
       if (take < 1) continue
       blocks[i].gb -= take * per
       out.push({ ...o, threads: take, host: blocks[i].host })
-      left -= take
+      left -= Math.floor(take * bonus)
     }
     if (left > 0) return null
   }
@@ -314,12 +879,27 @@ function place(free, ops, ram) {
 }
 
 export async function main(ns) {
+  // Computed ONCE per process: the Source-File level cannot change without a
+  // BitNode change, and a BitNode change restarts everything anyway. ns.
+  // getResetInfo is 1.00GB against this file's 8.80GB, which buys a reserve
+  // that is right in every regime instead of one that was right in one.
+  const homeReserveGb = SETTINGS.homeReserve(singularityRamMultiplier(ns.getResetInfo()))
+
   const flags = ns.flags([
     ['hosts', ''],
     ['targets', 0], // 0 = derive the count from the saturation arithmetic
     ['spacing', SETTINGS.spacing],
     ['adopt', false], // leave workers from a previous instance running
     ['quiet', false],
+    // Turn the yield calibration off and plan with the raw model, which is what
+    // this file did before it could measure. A rollback switch, not a tuning
+    // knob: with it set the controller is 5x wrong on hack money in BitNode 4
+    // and says so in /tel/batch.txt rather than going quiet.
+    ['nocal', false],
+    // Ignore any persisted calibration and re-learn from zero. Costs one
+    // weakenTime of uncorrected planning; use it if the fingerprint fence is
+    // ever suspected of letting a stale value through.
+    ['nocalrestore', false],
   ])
   SETTINGS.spacing = Number(flags.spacing) || SETTINGS.spacing
 
@@ -331,6 +911,52 @@ export async function main(ns) {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  // Hoisted above the first `return` below so every exit path can publish.
+  // `errors` was declared further down with the rest of the loop state; only
+  // its scope moved, and it is still the same array read by the same two
+  // writes. No new ns surface: ns.write and ns.atExit are both 0GB
+  // (RamCostGenerator.ts:632,605), and ns.scp/ns.getHostname were already here.
+  const errors = []
+  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, errors: errors.slice(-5) }))
+  // The daemon only mirrors /tel/* off home, so a controller running anywhere
+  // else has to ship its status there. This was already inline at both write
+  // sites; hoisting it into a closure lets the exit path use it too, and
+  // hoisting a call site does not change the identifier set the RAM checker
+  // sees.
+  const mirror = () => {
+    if (self === 'home') return
+    try {
+      ns.scp(SETTINGS.statusFile, 'home', self)
+    } catch {
+      /* home unreachable; the local copy still stands */
+    }
+  }
+
+  // The path no try/catch can reach, and the most valuable one in the repo to
+  // have: this is the script that earns the money. It is killed routinely —
+  // the watchdog restarts it, `kill batch.js` is the standard way to reload it
+  // after an edit, and an augmentation install kills it along with everything
+  // else. Until now every one of those left /tel/batch.txt frozen mid-cycle
+  // showing `health: 'ok'`, which is indistinguishable from a running batcher
+  // whose last tick simply has not landed yet.
+  //
+  // ns.atExit costs 0GB and its callbacks run inside stopAndCleanUpWorkerScript
+  // BEFORE stopFlag is set and before the worker is removed
+  // (killWorkerScript.ts:56-84), so the synchronous ns.write and ns.scp here
+  // both still work. Explicit id 'status' so it can never collide with the
+  // 'ui-lock' callback lock.js registers (atExit keys by id and a second
+  // registration under the same id REPLACES the first,
+  // NetscriptFunctions.ts:1395-1398). batch.js takes no lock today; the id
+  // makes that independent of what it imports later.
+  //
+  // note.exit republishes the last body with `health: 'stopped'`, `exited:
+  // true` and `staleSince` on top, so `targets`, `totals` and `ram` survive for
+  // anything that reads them and no reader has to learn a new shape.
+  ns.atExit(() => {
+    note.exit('stopped', { detail: 'batch.js is no longer running — the fleet is idle and earning nothing' })
+    mirror()
+  }, 'status')
+
   const ram = {
     hack: ns.getScriptRam(SETTINGS.workers.hack, 'home'),
     grow: ns.getScriptRam(SETTINGS.workers.grow, 'home'),
@@ -338,6 +964,13 @@ export async function main(ns) {
   }
   if (!ram.hack || !ram.grow || !ram.weaken) {
     ns.tprint(`ERROR: workers missing on home (${JSON.stringify(SETTINGS.workers)})`)
+    // This return wrote nothing, so "the workers are not on home" — a real
+    // post-install state, since an install clears every server but home — was
+    // reported only to a terminal nobody is watching. The atExit above would
+    // now cover it, but 'stopped' with no reason is the wrong answer when the
+    // reason is known and is this specific.
+    note('error', { detail: `workers missing on home (${JSON.stringify(SETTINGS.workers)})` })
+    mirror()
     return
   }
 
@@ -387,9 +1020,107 @@ export async function main(ns) {
         partials: 0,
         earned: 0,
         lastMoney: null,
+        // --- calibration bookkeeping ------------------------------------
+        // One record per LAUNCHED batch: when its hack is due to land, how
+        // many threads it launched with, and what the plan expected it to
+        // earn. All three are captured at launch because all three change
+        // between launch and landing.
+        flight: [],
+        calHits: 0, // clean landings that dropped money -> one sample each
+        calMiss: 0, // clean landings that dropped nothing -> the hack failed
+        calClamp: 0, // landings that drained ~everything -> y is too low
+        calSkip: 0, // landings the read window could not isolate
+        calSum: 0, // per-target running mean of the samples, for the
+        calN: 0, //   cross-target agreement check
+        calMin: null,
+        calMax: null,
+        calPend: null, // a landing given one extra tick to show its drop
+        planLanded: 0, // decayed sum of plan.money over landed batches
+        realLanded: 0, //   ... and of what actually fell, same decay
       })
     }
     return S.get(host)
+  }
+
+  // --- the yield calibrator ------------------------------------------------
+  const CAL = SETTINGS.cal
+  const calOn = CAL.on && !flags.nocal
+  const cal = yieldRatio(CAL)
+  // A read window can only identify ONE landing if it is shorter than the
+  // smallest gap between two money-changing landings on a target. Within a
+  // batch the hack lands and the grow lands 2*spacing later; across batches the
+  // gap is period - 2*spacing >= 2*spacing. So 2*spacing is the floor and this
+  // sits comfortably under it. The controller sleeps loopMs, so if loopMs is
+  // ever raised above this nothing can be sampled — which is published rather
+  // than silently producing no data.
+  const calTickMs = 1.5 * SETTINGS.spacing
+  const calNotes = []
+  if (calOn && SETTINGS.loopMs >= calTickMs) {
+    calNotes.push(
+      `loopMs ${SETTINGS.loopMs} >= 1.5*spacing ${calTickMs}: no read window can isolate a single landing, so no sample will ever be taken`,
+    )
+  }
+  // Fingerprint of the world the calibration was learned in. moneyMax,
+  // requiredHackingSkill and minDifficulty are re-randomised by
+  // initForeignServers, which Prestige.ts:98 runs on every install and on every
+  // BitNode entry — and NOT on a mere restart of this script. So "the
+  // fingerprint still matches" is exactly "the same life, same node".
+  const fingerprint = (t) => `${t.host}:${Math.round(t.maxMoney)}:${t.required}:${t.minSec}`
+  let calRestore = null
+  if (calOn && CAL.restore && !flags.nocalrestore) {
+    try {
+      // ns.read is 0GB (RamCostGenerator.ts:634) and returns '' for a missing
+      // file, so this costs nothing and cannot throw on absence.
+      const saved = JSON.parse(ns.read(CAL.file) || 'null')
+      if (saved && saved.y > 0 && saved.fp) calRestore = saved
+    } catch {
+      calNotes.push(`${CAL.file} is present but unreadable; starting cold`)
+    }
+  }
+  let calRestored = false
+  let calWrote = 0
+  let calFormulas = null
+  let lastTickAt = 0
+  /** The correction the planner should use right now. 1 means "no correction". */
+  const yOf = () => (calOn ? cal.val() : 1)
+
+  /**
+   * Retire every hack landing now due on one target, and turn a clean one into
+   * a sample.
+   *
+   * "Clean" is three conditions, all of which are cheap to check and none of
+   * which is a guess:
+   *
+   *   * exactly one landing came due in this read window — otherwise the drop
+   *     is the composition of two hacks and reads as ~2x the true ratio;
+   *   * the window was shorter than 1.5*spacing, so the grow that lands
+   *     2*spacing behind the hack cannot also be inside it — otherwise the drop
+   *     is netted against a regrowth and reads LOW, which is the unsafe
+   *     direction;
+   *   * there is a previous balance to divide by.
+   *
+   * Declining a sample costs nothing: this is a constant being measured, and
+   * one clean landing per target per period is already far more data than the
+   * estimate needs. Guessing is how a measured correction turns into a fudge
+   * factor.
+   *
+   * Every landing, clean or not, contributes its planned money to
+   * `planLanded`, so the end-to-end `plan vs realised` ratio published in the
+   * status is computed over ALL landings and is not selected by the same
+   * filter that selects the samples.
+   */
+  const sample = (s, t, at, dt, dropped) => {
+    const v = landingSample(s, t.phi0, at, dt, calTickMs, dropped, CAL.fMax)
+    if (v.kind === 'sample') cal.add(v.x)
+    // A clamped drain proves the correction in force is too small — the one
+    // unsafe direction. Step up at once; upward moves are always safe and so
+    // need neither a quorum nor a rate limit.
+    else if (v.kind === 'clamp') cal.raise(Math.min(CAL.hi, cal.val() * 2))
+  }
+
+  const calNote = (text) => {
+    calNotes.push(`${new Date().toISOString()} ${text}`)
+    while (calNotes.length > 6) calNotes.shift()
   }
 
   let hosts = []
@@ -402,11 +1133,15 @@ export async function main(ns) {
   let loops = 0
   let batchId = 0
 
-  const errors = []
-
   while (true) {
     loops++
     const now = Date.now()
+    // How long this tick's read window is. The sampler refuses to attribute a
+    // money drop when it is too wide to contain exactly one landing, so it is
+    // measured rather than assumed to be loopMs — a stalled tab or a slow tick
+    // must degrade into "no sample", never into a wrong one.
+    const tickMs = lastTickAt ? now - lastTickAt : 0
+    lastTickAt = now
 
     try {
       // --- slow cycle: root, refresh the host list, ship the workers --------
@@ -425,8 +1160,71 @@ export async function main(ns) {
         }
       }
 
-      const reserveFor = (h) => (h === self ? SETTINGS.selfReserve : 0) + (h === 'home' ? SETTINGS.homeReserve : 0)
+      // Hold a share-sized block out of the largest host, so ns.share() has a
+      // contiguous home. Sized from the fleet, taken from one host, and only
+      // while a faction is joined.
+      const sharing = (ns.getPlayer().factions || []).length > 0
+      let shareHost = null
+      let shareGb = 0
+      if (sharing) {
+        let total = 0
+        let best = { host: null, ram: 0 }
+        for (const h of hosts) {
+          const max = ns.getServerMaxRam(h)
+          total += max
+          if (max > best.ram) best = { host: h, ram: max }
+        }
+        shareGb = Math.min(best.ram * 0.9, total * SETTINGS.shareFrac)
+        shareHost = best.host
+
+        // THE TWO HOME RESERVES MUST BE JOINTLY SATISFIABLE.
+        //
+        // reserveFor() adds these together, and when home is also the largest
+        // host in the fleet it was asking home to hold BOTH — homeReserveGb for
+        // progress.js's Singularity ramOverride AND shareGb for ns.share().
+        // Nothing checked the sum against home's actual size.
+        //
+        // Live in BitNode 5 at SF4.1: homeReserveGb = 13 + 74*16 = 1197GB and
+        // shareGb = 960GB, a 2157GB demand on a 2048GB home. share.js won the
+        // race, took 960GB as 240 threads, and progress.js — which needs
+        // 1192.85GB in one block — was denied on pass after pass with
+        // `ram-raise-denied`. Reputation earned nothing while the script whose
+        // whole purpose is reputation could not start, and share.js's own
+        // multiplier applies to faction work that was never running. The
+        // batcher's accounting was self-consistent throughout; it simply never
+        // asked whether home could honour both promises at once.
+        //
+        // progress.js outranks share: its bonus is 1 + ln(threads)/25, a modest
+        // multiplier on reputation, while progress.js is what CAUSES reputation
+        // to be earned at all. So share yields — to a non-home host if the
+        // fleet has one, otherwise to whatever home has left over.
+        if (shareHost === 'home') {
+          const alt = hosts
+            .filter((h) => h !== 'home')
+            .reduce((b, h) => (ns.getServerMaxRam(h) > b.ram ? { host: h, ram: ns.getServerMaxRam(h) } : b), {
+              host: null,
+              ram: 0,
+            })
+          const spare = Math.max(0, ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - homeReserveGb)
+          if (alt.host && alt.ram * 0.9 >= Math.min(shareGb, spare)) {
+            shareHost = alt.host
+            shareGb = Math.min(shareGb, alt.ram * 0.9)
+          } else {
+            shareGb = Math.min(shareGb, spare)
+            if (shareGb <= 0) shareHost = null
+          }
+        }
+      }
+      const reserveFor = (h) =>
+        (h === self ? SETTINGS.selfReserve : 0) +
+        (h === 'home' ? homeReserveGb : 0) +
+        (h === shareHost ? shareGb : 0)
       const free = new Map()
+      // Cores per host, read once per tick. Only home ever has more than one in
+      // BN1 (purchased servers are always single-core), but reading it rather
+      // than special-casing 'home' keeps this correct in BitNodes and
+      // Source-File levels where that is not true.
+      const cores = {}
       let totalRam = 0
       let usedRam = 0
       for (const h of hosts) {
@@ -434,6 +1232,7 @@ export async function main(ns) {
         const used = ns.getServerUsedRam(h)
         totalRam += max
         usedRam += used
+        cores[h] = ns.getServer(h).cpuCores
         const avail = Math.max(0, max - used - reserveFor(h))
         if (avail >= ram.hack) free.set(h, avail)
       }
@@ -447,11 +1246,31 @@ export async function main(ns) {
           if (!ns.hasRootAccess(h)) continue
           if (ns.getServerMaxMoney(h) <= 0) continue
           if (ns.getServerRequiredHackingLevel(h) > level) continue
-          const t = readTarget(ns, h)
+          const t = readTarget(ns, h, yOf())
           const s = targetScore(t)
           if (s > 0) ranked.push({ t, s })
         }
         ranked.sort((a, b) => b.s - a.s)
+
+        // Decide once, here, whether a persisted calibration belongs to this
+        // life. This is the only place every candidate server is read, so it is
+        // the only place the fingerprint can be checked against the whole
+        // world rather than against whichever target happens to be first.
+        if (calOn && calRestore && !calRestored) {
+          const here = new Set(ranked.map((r) => fingerprint(r.t)))
+          if ((calRestore.fp || []).some((f) => here.has(f))) {
+            cal.seed(calRestore.y, 'restored')
+            calRestored = true
+            calNote(
+              `restored y=${calRestore.y} (n=${calRestore.n ?? '?'}) from ${CAL.file}; the server fingerprint it was learned against is still present, so this is the same life and the same BitNode`,
+            )
+          } else {
+            calNote(
+              `IGNORED the persisted y=${calRestore.y} in ${CAL.file}: none of its server fingerprints exist any more, which means an install or a BitNode entry re-randomised the world. Re-learning from a cold start.`,
+            )
+          }
+          calRestore = null
+        }
 
         let want
         if (Number(flags.targets) > 0) {
@@ -476,33 +1295,89 @@ export async function main(ns) {
           // So a target is limited by its own money throughput, not by the RAM
           // pointed at it: one target will happily absorb 390TB and still earn
           // a third of what eight targets earn on the same fleet. Idle RAM is
-          // the symptom of having run out of *targets*, and filling it by
-          // concentrating harder is exactly the wrong move.
+          // Quality floors first, both scale-free ratios so neither goes stale
+          // as the fleet or hacking level grows.
+          const bestScore = ranked.length ? ranked[0].s : 0
+          const bestMoney = ranked.reduce((m, r) => Math.max(m, r.t.maxMoney), 0)
+          const worthwhile = ranked.filter(
+            (r) => r.s >= bestScore * SETTINGS.minScoreFrac && r.t.maxMoney >= bestMoney * SETTINGS.minMoneyFrac,
+          )
+
+          // How many to run: argmax of a derived income model, not a constant.
           //
-          // The count is NOT a constant — the same sweep at pinned fleet sizes
-          // on the corrected world inverts completely at the small end, where
-          // eight targets earn half what one does:
+          // A target earns `plan.money / period`, and the dispatcher below sets
+          // `period = max(4e, weakenTime / floor(share/plan.gb))` with
+          // `share = totalRam/n` — an EVEN split. Substituting gives income per
+          // target that is piecewise-linear in RAM:
           //
-          //      fleet     best count    1 target    best      8 targets
-          //    32,768GB         1          $422b     $422b        $225b
-          //    98,304GB         3          $503b   $1,049b        $773b
-          //   448,708GB         8        $1,151b   $2,795b      $2,795b
+          //   income_i(share) = min( money_i/(4e),
+          //                          share * money_i / (gb_i * 4*hackTime_i) )
           //
-          // 32,768 / 1, 98,304 / 3 and the 448TB cap all land on one rule:
-          // one target per ~32TB, never more than eight. The eight is not
-          // arbitrary either — only 16 servers are hackable at this level and
-          // the back half of that list is worth very little, which is why 12
-          // and 16 targets both measured *worse* than 8.
+          // linear until the pipeline is full at the tightest legal period,
+          // flat after. Two consequences, both measured in
+          // docs/target-count.md, which reproduces the recorded sweep exactly:
           //
-          // Deliberately a simple ratio rather than anything derived: the
-          // analytic saturation bound (ceil(weakenTime / 4*spacing) batches per
-          // target) says one target covers the whole fleet, and that is exactly
-          // how this came to run three targets on 448TB.
-          const wanted = Math.round(totalRam / SETTINGS.ramPerTarget)
-          want = ranked.slice(0, Math.max(1, Math.min(SETTINGS.maxTargets, wanted))).map((r) => r.t.host)
+          //   * while nothing is saturated, income(n) = totalRam *
+          //     mean(rate_1..rate_n), and that mean FALLS with each target
+          //     added — so one target is optimal and splitting is a pure loss.
+          //     At 32TB, eight targets earned half of one.
+          //   * once the head saturates its marginal share earns nothing, and
+          //     the next target — however much worse — beats it.
+          //
+          // A ratio cannot express that: saturation RAM spans 35x across the
+          // real target list, and a constant is also blind to spacing (worth
+          // ~10% at e=50), to hacking level, and to target quality.
+          //
+          // Cost is 28 planBatch calls and under 1ms per retarget, measured in
+          // tools/sim/verify-argmax.mjs against this file's own planBatch —
+          // including a target with phi ~ 1e-6 where hMax exceeds a million and
+          // the exponential h-sweep still finishes in ~50 steps.
+          const cand = (worthwhile.length ? worthwhile : ranked).slice(0, SETTINGS.maxTargets)
+          // Capacity-based, matching the dispatcher's floor: the argmax is a
+          // question about steady state, not about this instant's free list.
+          const scoreCapacity = Math.max(0, ...hosts.map((h) => ns.getServerMaxRam(h)))
+          const scoreHackRam = Math.max(
+            Math.min(SETTINGS.hackFloor * ram.hack, scoreCapacity),
+            scoreCapacity,
+          )
+          let bestN = 1
+          let bestInc = -1
+          for (let n = 1; n <= cand.length; n++) {
+            // `slice`, not `share`: a local named `share` is billed as
+            // ns.share() — 2.40GB of batch.js's 11.20GB, for a variable.
+            const slice = totalRam / n
+            let inc = 0
+            for (let i = 0; i < n; i++) {
+              // SAME hack ceiling the dispatcher applies. Omitting it let
+              // maxHackRam default to Infinity here, so the target-count argmax
+              // scored batches far larger than place() could ever land — it was
+              // choosing n against plans that do not exist. It does not change
+              // the answer on this fleet (n=1 holds either way), but the two
+              // call sites must agree or the choice is made on fiction.
+              const p = planBatch(cand[i].t, ram, slice / 4, scoreHackRam)
+              if (!p) continue
+              inc += Math.min(
+                p.money / (4 * SETTINGS.spacing),
+                (slice * p.money) / (p.gb * cand[i].t.hackTime * 4),
+              )
+            }
+            if (inc > bestInc) {
+              bestInc = inc
+              bestN = n
+            }
+          }
+          want = cand.slice(0, Math.max(1, bestN)).map((r) => r.t.host)
         }
         // Never abandon a pipeline mid-flight: keep any dropped target that
         // still has operations in the air, and let it drain on its own.
+        //
+        // "Drain" has to be enforced, not assumed. A kept target is still in
+        // `targets`, so the dispatcher below happily launches fresh batches for
+        // it, which renews lastLanding and keeps it alive indefinitely — a
+        // target can never actually be dropped. n00dles survived three
+        // consecutive retargets that excluded it and took 34% of all batches
+        // while six megacorps starved in prep. Marking the phase makes the
+        // retention mean what it says.
         const keep = targets.filter((h) => !want.includes(h) && now < (S.get(h)?.lastLanding ?? 0))
         if (want.length) targets = [...new Set([...keep, ...want])]
       }
@@ -512,13 +1387,20 @@ export async function main(ns) {
       let anyBatching = false
       let anyPrepping = false
 
+      let calSaw = null
       for (const host of targets) {
         const s = state(host)
-        const t = readTarget(ns, host)
+        const t = readTarget(ns, host, yOf())
+        calSaw = t.formulas
 
         // Attribution: money on a target only ever falls when one of our hacks
         // lands, so the drops sum to what this controller earned from it.
-        if (s.lastMoney !== null && t.money < s.lastMoney) s.earned += s.lastMoney - t.money
+        const dropped = s.lastMoney !== null && t.money < s.lastMoney ? s.lastMoney - t.money : 0
+        if (dropped > 0) s.earned += dropped
+        // Same drop, read as a measurement rather than as income. Must run
+        // BEFORE lastMoney is overwritten: the denominator is the balance the
+        // hack actually landed against.
+        if (calOn) sample(s, t, now, tickMs, dropped)
         s.lastMoney = t.money
 
         const weakenTime = t.hackTime * 4
@@ -575,7 +1457,7 @@ export async function main(ns) {
           // (processSingleServerGrowth caps usedCycles at the threads needed),
           // so projecting from the raw in-flight thread count is an unbounded
           // overestimate that makes prep launch weakens forever.
-          const kNow = growthK(Math.max(t.sec, t.minSec), t.growth)
+          const kNow = t.kNow
           const needNow = t.money >= t.maxMoney ? 0 : growThreads(t.maxMoney, Math.max(t.money, 1), kNow, t.maxMoney)
           const usedG = Math.min(pendG, isFinite(needNow) ? needNow : pendG)
           const projSec = Math.max(t.minSec, t.sec - pendW + 2 * FORTIFY * usedG)
@@ -598,7 +1480,7 @@ export async function main(ns) {
           // land. Weaken is launched BEFORE grow and sized to cover it, so the
           // cover always exists even if the grow only partly fits — the failure
           // direction is then over-weakening, which is free.
-          const kMin = growthK(t.minSec, t.growth)
+          const kMin = t.k
           const projMoney = pendG > 0 ? Math.min(t.maxMoney, (t.money + pendG) * Math.exp(kMin * pendG)) : t.money
           const gNeed = projMoney >= t.maxMoney ? 0 : growThreads(t.maxMoney, Math.max(projMoney, 1), kMin, t.maxMoney)
           // Cap each target's prep at its share of the fleet. Without this the
@@ -655,22 +1537,69 @@ export async function main(ns) {
         }
         anyBatching = true
 
-        const share = totalRam / Math.max(1, targets.length)
-        const plan = planBatch(t, ram, share / 4)
+        const slice = totalRam / Math.max(1, targets.length)
+        // The largest single free block, which is the real ceiling on the hack
+        // op — place() cannot split it. Recomputed every tick because blocks
+        // shrink as batches launch.
+        const largestBlock = free.size ? Math.max(...free.values()) : 0
+
+        // FLOOR THE HACK BUDGET. Planning from the INSTANTANEOUS free block is a
+        // positive feedback loop, and it was running as a limit cycle all session:
+        //
+        //   fleet fills -> largest free block shrinks -> hFit falls -> h falls
+        //   -> plan.gb falls -> maxInFlight rises -> period falls -> launches
+        //   accelerate -> fleet fills faster
+        //
+        // Measured live at 15s intervals, plan.h ran 132 -> 59 -> 45 -> 34 -> 26
+        // -> 20 -> 15 -> 7 -> 4 -> 3 -> 2 -> 1, at which point placeFails hit 75
+        // per 15s — every single 200ms tick — and NOTHING launched until the
+        // in-flight work drained over a weakenTime. Cycle period ~2.5 minutes.
+        //
+        // The loop closes because planBatch's score ($/GB) is monotonically
+        // increasing in h across the whole practical range — the +1 constants on
+        // w1/w2 are fixed overhead a small batch cannot amortise — so hFit is
+        // ALWAYS binding and the plan tracks fleet fill rather than fleet value.
+        // Steady-state income by h on this fleet: h=1 $22k/s, h=15 $98k/s,
+        // h=34 $107k/s, h=132 $113k/s. Collapsing to h<=4 costs about 5x, and
+        // the curve is flat within ~7% from h=15 upward.
+        //
+        // So: never plan a smaller hack op than H_FLOOR, and let place() WAIT for
+        // a block big enough. Waiting is cheap — a skipped launch costs one
+        // period — while shrinking the plan poisons the next launch too.
+        //
+        // The floor is itself capped by what the fleet can ever host, so a small
+        // or heavily-reserved fleet degrades to "as big as possible" instead of
+        // demanding a block that cannot exist and never launching at all.
+        const capacityBlock = Math.max(0, ...hosts.map((h) => ns.getServerMaxRam(h) - reserveFor(h)))
+        const maxHackRam = Math.max(largestBlock, Math.min(SETTINGS.hackFloor * ram.hack, capacityBlock))
+        const plan = planBatch(t, ram, slice / 4, maxHackRam)
         if (!plan) continue
-        const maxInFlight = Math.max(1, Math.floor(share / plan.gb))
+        const maxInFlight = Math.max(1, Math.floor(slice / plan.gb))
         const period = Math.max(4 * SETTINGS.spacing, weakenTime / maxInFlight)
         s.plan = plan
         s.period = period
         // What this pipeline will claim over the next weakenTime, which is how
         // long a spill weaken holds its RAM — so it is the right thing to hold
         // back from spill.
-        reserved += Math.min(share, Math.ceil(weakenTime / period) * plan.gb)
+        reserved += Math.min(slice, Math.ceil(weakenTime / period) * plan.gb)
 
         if (now < s.nextLaunch) continue
-        // Safe-window gate. Skipping a launch is free; launching into an
-        // elevated-security window is not.
-        if (t.sec > t.minSec + 1e-9) {
+        // Safe-window gate — with the pipeline's OWN transient tolerated.
+        //
+        // Requiring exact minimum security skipped ~25% of launch slots on the
+        // flagship target (713 unsafeSkips against 2,106 batches, 40.6/min
+        // achieved vs 53.8 theoretical), because the poll keeps catching the
+        // ~200ms windows where a landed hack (+0.002/thread) or grow
+        // (+0.004/thread, ServerHelpers.ts fortify constants) waits for its
+        // weaken. That bump is the pipeline breathing, not drift: the pads
+        // are computed from times ALREADY normalised to minimum security
+        // (readTarget's ratio), the workers read their real durations at call
+        // time after the pad, and the in-flight weakens restore minimum
+        // before those calls happen. So tolerate exactly one batch's own
+        // footprint — anything beyond it means a batch failed and security is
+        // genuinely drifting, and THAT is what this gate exists to catch.
+        const selfBump = 0.002 * plan.h + 0.004 * plan.g
+        if (t.sec > t.minSec + selfBump + 1e-9) {
           s.unsafeSkips++
           continue
         }
@@ -683,7 +1612,7 @@ export async function main(ns) {
         ]
         if (ops.some((o) => o.pad < 0)) continue
 
-        const placed = place(free, ops, ram)
+        const placed = place(free, ops, ram, cores)
         if (!placed) {
           s.placeFails++
           continue
@@ -714,9 +1643,44 @@ export async function main(ns) {
         opsDispatched += placed.length
         threadsDispatched += placed.reduce((a, o) => a + o.threads, 0)
         s.batches++
+        // The hack's pad is weakenTime - hackTime and its own duration is
+        // hackTime, so it lands at exactly now + weakenTime. h and plan.money
+        // are captured HERE because both move before it lands: the plan is
+        // rebuilt every tick and the hacking level climbs during the flight.
+        if (calOn) {
+          s.flight.push({ at: now + weakenTime, h: plan.h, m: plan.money })
+          while (s.flight.length > 4096) s.flight.shift()
+        }
         s.lastLaunch = now
         s.lastLanding = now + weakenTime + 3 * SETTINGS.spacing
         s.nextLaunch = now + period
+      }
+
+      // --- advance the calibration -----------------------------------------
+      if (calOn) {
+        // phi comes from a different source depending on whether Formulas.exe
+        // is owned, and the true ratio differs between them (1 with it,
+        // ScriptHackMoney without). A window collected against one model says
+        // nothing about the other, so buying Formulas.exe throws the window
+        // away rather than dragging a 0.2 into a place it would be a 5x error.
+        if (calSaw !== null && calSaw !== calFormulas) {
+          if (calFormulas !== null) {
+            cal.forget('formulas-changed')
+            for (const s2 of S.values()) {
+              s2.calSum = 0
+              s2.calN = 0
+              s2.calMin = null
+              s2.calMax = null
+            }
+            calNote(
+              calSaw
+                ? 'Formulas.exe appeared: phi now comes from ns.formulas.hacking, which already carries every multiplier. The measured ratio must now converge to 1.0 — if it does not, the decomposition is wrong. Window discarded.'
+                : 'Formulas.exe is gone: phi has fallen back to the inlined ports, so the measured ratio must converge to ScriptHackMoney again. Window discarded.',
+            )
+          }
+          calFormulas = calSaw
+        }
+        cal.step(tickMs / 1000)
       }
 
       // --- spill ------------------------------------------------------------
@@ -735,9 +1699,13 @@ export async function main(ns) {
       // --- status -----------------------------------------------------------
       if (now >= nextStatus) {
         nextStatus = now + SETTINGS.statusMs
+        const fps = []
         const perTarget = targets.map((h) => {
           const s = state(h)
-          const t = readTarget(ns, h)
+          const t = readTarget(ns, h, yOf())
+          fps.push(fingerprint(t))
+          const landed = s.calHits + s.calMiss + s.calClamp
+          const r4 = (v) => (v === null || v === undefined ? null : Math.round(v * 1e4) / 1e4)
           return {
             host: h,
             phase: s.phase,
@@ -756,6 +1724,36 @@ export async function main(ns) {
             unsafeSkips: s.unsafeSkips,
             execFails: s.execFails,
             partials: s.partials,
+            // --- calibration, per target ---------------------------------
+            // ScriptHackMoney is global, so these exist to DISAGREE. If the
+            // per-target means are not all the same number, the residual is
+            // not the single global constant this design claims it is, and the
+            // global estimate is measuring something else.
+            cal: !calOn
+              ? null
+              : {
+                  y: r4(s.calN ? s.calSum / s.calN : null),
+                  n: s.calN,
+                  min: r4(s.calMin),
+                  max: r4(s.calMax),
+                  // Hack chance, measured and modelled, side by side. This is
+                  // the term planBatch already carries and the estimator
+                  // deliberately does NOT absorb; publishing both is how a
+                  // double-count would be caught.
+                  landings: landed,
+                  chanceObs: landed ? Math.round(((s.calHits + s.calClamp) / landed) * 1e4) / 1e4 : null,
+                  chanceModel: r4(t.chance),
+                  // End to end: everything the plan promised for the batches
+                  // that have actually landed, against everything that was
+                  // actually taken. Converges to 1 when every term above is
+                  // attributed correctly; it is the raw number that started
+                  // this investigation (measured at 0.32), computed with the
+                  // right denominator.
+                  planVsReal: s.planLanded > 0 ? Math.round((s.realLanded / s.planLanded) * 1e4) / 1e4 : null,
+                  skipped: s.calSkip,
+                  clamped: s.calClamp,
+                  inFlight: s.flight.length,
+                },
           }
         })
         const uptime = (now - started) / 1000
@@ -766,6 +1764,65 @@ export async function main(ns) {
         // before, so it gets its own word rather than being inferred.
         const recentLaunch = perTarget.some((x) => x.sinceLaunchSec !== null && x.sinceLaunchSec < 60)
         const health = recentLaunch ? 'ok' : anyBatching ? 'stalled' : anyPrepping ? 'prepping' : 'idle'
+
+        // --- calibration report ---------------------------------------------
+        // Everything a reader needs to decide whether to believe the number the
+        // planner is using, through a path that does not depend on the
+        // calibration being right: the raw quantiles, the sample count, the
+        // spread, what the value is EXPECTED to be, and a verdict.
+        const st = cal.stat()
+        const yUsed = calOn ? st.y : 1
+        const perT = perTarget.map((x) => x.cal && x.cal.y).filter((v) => v > 0)
+        const agreeSpread = perT.length > 1 ? (Math.max(...perT) - Math.min(...perT)) / Math.max(...perT) : 0
+        let verdict = 'off'
+        let says = 'calibration disabled (--nocal): the planner is using the raw model, which is 5x high on hack money in any BitNode with ScriptHackMoney = 0.2'
+        if (calOn) {
+          if (st.n < CAL.minN) {
+            verdict = 'cold'
+            says = `${st.n}/${CAL.minN} samples — the planner is using y=1, which is exactly the uncorrected behaviour. No correction is applied until the evidence exists.`
+          } else if (calFormulas && Math.abs(st.p50 - 1) > CAL.formulasTol) {
+            // The self-check. With Formulas.exe the model phi IS the game's own
+            // formula with every multiplier included, so the measured ratio is
+            // 1 by construction. Anything else means this decomposition is
+            // wrong, and that outranks any correction it might produce.
+            verdict = 'DISAGREES-WITH-FORMULAS'
+            says = `Formulas.exe is owned, so phi comes from ns.formulas.hacking and the measured ratio MUST be 1.0. It reads ${st.p50}. The decomposition is wrong — do not trust y, and do not trust the same mechanism's answer without Formulas either.`
+          } else if (st.spread !== null && st.spread > CAL.spreadWarn) {
+            verdict = 'unstable'
+            says = `samples should be identical (the ratio is a constant and every term that varies is divided out), but p10..p90 spans ${st.p10}..${st.p90}. Something is contaminating the read window; y is pinned to the upper quantile, which is the safe side, but the number is not trustworthy.`
+          } else if (agreeSpread > CAL.spreadWarn) {
+            verdict = 'per-target-disagreement'
+            says = `per-target means span ${Math.min(...perT)}..${Math.max(...perT)}. ScriptHackMoney is global, so they should be one number; a spread means the residual is not the single global constant this correction assumes.`
+          } else {
+            verdict = 'ok'
+            says = calFormulas
+              ? `agrees with Formulas.exe: measured ${st.p50} against the expected 1.0`
+              : `measured ${st.p50}; Formulas.exe is not owned, so this is currentNodeMults.ScriptHackMoney and nothing live can confirm it independently. Buying Formulas.exe ($5e9) makes this same number read 1.0, which is the check.`
+          }
+        }
+        const calibration = {
+          verdict,
+          says,
+          enabled: calOn,
+          y: yUsed,
+          applied: `t.phi = phi_model * ${yUsed}`,
+          source: st.src,
+          samples: st.n,
+          sampleTotal: st.seen,
+          p10: st.p10,
+          p50: st.p50,
+          p90: st.p90,
+          spread: st.spread,
+          formulasExe: calFormulas,
+          expect: calFormulas === null ? null : calFormulas ? 1 : 'currentNodeMults.ScriptHackMoney',
+          perTargetSpread: Math.round(agreeSpread * 1e4) / 1e4,
+          skipped: perTarget.reduce((a, x) => a + ((x.cal && x.cal.skipped) || 0), 0),
+          clamped: perTarget.reduce((a, x) => a + ((x.cal && x.cal.clamped) || 0), 0),
+          missed: targets.reduce((a, h) => a + state(h).calMiss, 0),
+          tickMs,
+          maxTickMs: calTickMs,
+          notes: calNotes.slice(-4),
+        }
 
         const status = {
           at: new Date(now).toISOString(),
@@ -783,19 +1840,62 @@ export async function main(ns) {
             earnedPerSec: uptime > 0 ? Math.round(earned / uptime) : 0,
             loops,
           },
+          calibration,
           targets: perTarget,
           errors: errors.slice(-5),
         }
-        ns.write(SETTINGS.statusFile, JSON.stringify(status, null, 2), 'w')
-        // The daemon only mirrors /tel/* off home, so push a copy there when
-        // this controller is running anywhere else.
-        if (self !== 'home') ns.scp(SETTINGS.statusFile, 'home', self)
-        if (!flags.quiet) ns.print(`${health} | ${targets.join(',')} | ${batches} batches | ${Math.round(earned / 1e6)}m earned`)
+
+        // Persist, so a restart does not pay another weakenTime of uncorrected
+        // planning. ns.write is 0GB. Only written once the estimate is trusted,
+        // so a cold value can never be handed to the next run, and stamped with
+        // the server fingerprints that make it refuse itself after an install
+        // or a BitNode entry.
+        if (calOn && CAL.restore && st.n >= CAL.minN && now - calWrote > 30000) {
+          calWrote = now
+          try {
+            ns.write(
+              CAL.file,
+              // The value actually IN FORCE, not the raw quantile: if the ramp
+              // has not finished it is higher than the target, and higher is
+              // the safe side to hand to the next run.
+              JSON.stringify({ at: status.at, y: st.y, n: st.n, formulas: calFormulas, fp: fps }),
+              'w',
+            )
+          } catch {
+            /* the value is also in /tel/batch.txt; losing the cache is not a fault */
+          }
+        }
+        // Same bytes as before: `status` already carries `at`, `health`,
+        // `controller` and `errors`, and the reporter lets the caller's fields
+        // win, so this publishes the identical body and merely routes it
+        // through the one function the atExit above also uses.
+        note(health, status)
+        mirror()
+        if (!flags.quiet)
+          ns.print(
+            `${health} | ${targets.join(',')} | ${batches} batches | ${Math.round(earned / 1e6)}m earned | yield x${yUsed} (${verdict}, n=${st.n})`,
+          )
       }
     } catch (err) {
       // Never die. A bad tick is recoverable; a dead controller is not.
-      errors.push(`${new Date().toISOString()} ${err}`)
-      if (errors.length > 20) errors.shift()
+      //
+      // record() is the same bounded push this line always did (status.js:149,
+      // keep = 20), with one addition: describe(err) carries the first few
+      // stack frames, so the ReferenceError incident below would have named its
+      // site instead of only its type.
+      record(errors, err)
+      // ALWAYS surface the failure. The status write lives at the end of the
+      // try, so a throw anywhere earlier skipped it and the error log — the
+      // only record of what went wrong — was never written. A ReferenceError
+      // from a bad edit then looked exactly like a hang: process alive, no
+      // error, telemetry frozen at the last good tick for 23 minutes. The
+      // diagnostic must not share a failure path with the thing it diagnoses.
+      try {
+        note('error', { detail: describe(err) })
+        mirror()
+      } catch {
+        /* nothing left to try */
+      }
     }
 
     await ns.sleep(SETTINGS.loopMs)

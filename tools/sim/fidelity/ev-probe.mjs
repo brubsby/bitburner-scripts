@@ -5,6 +5,11 @@
 //
 //   node tools/sim/fidelity/ev-probe.mjs
 //   node tools/sim/fidelity/ev-probe.mjs --level 89 --ram 220
+//
+// NOT CALIBRATED. This prints ev.mjs's functions on a stored snapshot so the
+// docs can be reproduced; it compares nothing to the running game. The numbers
+// are exact evaluations of the game's formulas at whatever inputs the snapshot
+// happens to hold, which means they are only as current as that file.
 
 import { loadSnapshot } from "../world.mjs";
 import { calculateSkill } from "../game.mjs";

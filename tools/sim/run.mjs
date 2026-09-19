@@ -9,6 +9,21 @@
 //
 // Hacking succeeds probabilistically, so each strategy is run over several
 // seeds and reported by median — a single run says very little.
+//
+// CALIBRATION — what this harness's numbers are and are not worth.
+//
+// The simulator's only check against recorded reality is
+// `tools/sim/fidelity/backtest.mjs`, which replays two windows from
+// `.telemetry/history.jsonl`. Those windows are at 220GB and 2.4TB, hacking
+// level 89-188, and the sim over-predicts earnings on them substantially (the
+// flat window earned $0 in the real game and $6.01m in the sim). The live fleet
+// is now 30PB at level 2900+, three orders of magnitude outside anything ever
+// backtested.
+//
+// So: the RANKING this harness produces is the product, and the dollar totals
+// are not. Do not quote an absolute $/s from here, and do not compare one to a
+// live figure — for a live-calibrated income number use target-count.mjs, whose
+// CHECK block asserts against .telemetry/batch.txt and prints the error.
 
 import { Sim } from "./engine.mjs";
 import { REGISTRY } from "./strategies.mjs";

@@ -164,6 +164,7 @@ Reputation mechanics that govern everything here:
 - **Therefore: buy every aug you can afford from a faction *before* installing.** Unspent rep
   is not lost, but it is only worth its favor conversion.
 - Manual hacking-work rep rate (`getHackingWorkRepGain`, `CONSTANTS.MaxSkillLevel = 975`,
+  and `currentNodeMults.FactionWorkRepGain` — reputation.ts:13,
   5 cycles/s): **`rep/s = 5 × hacking / 975 × (1 + favor/100) × shareBonus`**.
   At hacking 100 that is **0.51 rep/s ≈ 1,850 rep/hour** of the human sitting there. Slow.
 - `ns.share()` multiplies faction rep gain by `1 + ln(effectiveThreads)/25`
@@ -762,6 +763,7 @@ the human should start NiteSec faction work the minute the invite lands.
 ## 8. Reputation is the new bottleneck — the numbers
 
 `getHackingWorkRepGain(p, favor) = (hacking + int/3)/975 × mults.faction_rep ×
+currentNodeMults.FactionWorkRepGain ×
 (1 + favor/100) × shareBonus` **per cycle**, at 5 cycles/s
 (`src/PersonObjects/formulas/reputation.ts:16-25`, `CONSTANTS.MaxSkillLevel = 975`,
 `gameCPS = 5`). Unfocused work is ×0.8 (`Player.focusPenalty()`,

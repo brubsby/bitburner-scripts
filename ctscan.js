@@ -12,7 +12,10 @@
 // This also drops the old contract.js dependency on a BB_SERVER_MAP blob in
 // localStorage left behind by spider.js — it scans the network itself.
 
+import { bigintReplacer } from 'ctbigint.js'
+
 const OUTPUT = '/tmp/contracts.json'
+
 
 function scanAll(ns) {
   const seen = new Set(['home'])
@@ -30,12 +33,39 @@ function scanAll(ns) {
   return [...seen]
 }
 
+const STATUS = '/tel/ctscan.txt'
+
 export async function main(ns) {
   ns.disableLog('ALL')
 
+  // C1: publish on every exit path. This script previously died with no trace
+  // at all -- no output file, no status, nothing but a modal on the player's
+  // screen that an agent driving over the RFA cannot see. An empty result and
+  // a crash looked identical from outside, and one was read as the other.
+  let state = { phase: 'start', scanned: 0, found: 0, error: null }
+  const publish = () => ns.write(STATUS, JSON.stringify(state), 'w')
+  ns.atExit(publish)
+
+  try {
+    await scan(ns, state)
+  } catch (err) {
+    state.phase = 'threw'
+    state.error = `${err?.stack ?? err}`
+    publish()
+    ns.tprint(`ERROR ctscan died in ${state.phase}: ${err}`)
+    throw err
+  }
+}
+
+async function scan(ns, state) {
   const found = []
 
-  for (const host of scanAll(ns)) {
+  state.phase = 'scanAll'
+  const hosts = scanAll(ns)
+  state.scanned = hosts.length
+
+  for (const host of hosts) {
+    state.phase = `ls ${host}`
     for (const file of ns.ls(host).filter((f) => f.endsWith('.cct'))) {
       try {
         found.push({
@@ -50,7 +80,14 @@ export async function main(ns) {
     }
   }
 
-  ns.write(OUTPUT, JSON.stringify(found), 'w')
+  state.phase = 'write'
+  state.found = found.length
+  // Some contract types (Find Largest Prime Factor and friends) hand back
+  // BigInt data, which JSON.stringify throws on rather than coercing. Tag it
+  // so ctsolve.js can revive a real BigInt -- a solver handed the string
+  // "123" instead of 123n would fail every arithmetic step silently.
+  ns.write(OUTPUT, JSON.stringify(found, bigintReplacer), 'w')
+  state.phase = 'done'
 
   if (!found.length) {
     ns.tprint('ctscan: no contracts on the network right now')

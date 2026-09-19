@@ -1,0 +1,52 @@
+[sim] physics: BitNode 4 (SF4.0)
+BitNode 4 ScriptHackMoney 0.2
+fleet blocks: 512,456,256,256,128,64,64,64,64,64,64,32,32,32,32,32,32,32,32,32,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,16,8,8,8,8,8,8,8,8,8,8,8,8,8,4 
+total 2788 GB over 59 hosts; largest 512
+phantasy level 186 weakenTime 153.3 s phi 4.508e-4 chance 0.8013
+
+=== concurrent batches: RAM-only bound vs true contiguity-aware bound ===
+  h     gb   hackGB    N_ram   N_fit   lost%   income_ram/s  income_fit/s
+  1     12       2      228     228      0%         36264         36264
+  2     14       3      200     200      0%         63620         63620
+  3     16       5      178     178      0%         84933         84933
+  4     19       7      146     146      0%         92886         92886
+  5     21       9      134     134      0%        106564        106564
+  6     22      10      124     124      0%        118334        118334
+  7     26      12      107     107      0%        119129        119129
+  8     28      14      101     101      0%        128513        128513
+ 11     34      19       80      80      0%        139965        139965
+ 15     43      26       64      64      0%        152689        152689
+ 20     53      34       52      51      2%        165413        162232
+ 26     69      44       40      39      3%        165413        161278
+ 34     91      58       30      30      0%        162232        162232
+ 45    115      77       24      18     25%        171775        128831
+ 59    148     100       18      14     22%        168912        131376
+ 77    194     131       14       8     43%        171457         97975
+101    252     172       11       6     45%        176706         96385
+132    328     224        8       6     25%        167958        125968
+172    425     292        6       2     67%        164141         54714
+224    549     381        5       2     60%        178137         71255
+292    720     496        3       1     67%        139329         46443
+380    942     646        2       0    100%        120879             0
+494   1232     840        2       0    100%        157142             0
+643   1622    1093        1       0    100%        102270             0
+836   2146    1421        1       0    100%        132967             0
+
+RAM-only optimum:        h=224 gb=549 N=5 -> $178137/s
+Contiguity-aware optimum: h=20 gb=53 N=51 -> $162232/s
+Fragmentation cost at the true optimum: 8.9%
+
+What batch.js's shipped loop does instead: h tracks floor(largestFREEblock/1.7),
+which decays as the fleet fills. Income at the h values observed live:
+  h=  1 -> N_fit= 228 income=$  36264/s  (22% of achievable)
+  h=  2 -> N_fit= 200 income=$  63620/s  (39% of achievable)
+  h=  3 -> N_fit= 178 income=$  84933/s  (52% of achievable)
+  h=  4 -> N_fit= 146 income=$  92886/s  (57% of achievable)
+  h=  7 -> N_fit= 107 income=$ 119129/s  (73% of achievable)
+  h= 15 -> N_fit=  64 income=$ 152689/s  (94% of achievable)
+  h= 20 -> N_fit=  51 income=$ 162232/s  (100% of achievable)
+  h= 26 -> N_fit=  39 income=$ 161278/s  (99% of achievable)
+  h= 34 -> N_fit=  30 income=$ 162232/s  (100% of achievable)
+  h= 45 -> N_fit=  18 income=$ 128831/s  (79% of achievable)
+  h= 59 -> N_fit=  14 income=$ 131376/s  (81% of achievable)
+  h=132 -> N_fit=   6 income=$ 125968/s  (78% of achievable)

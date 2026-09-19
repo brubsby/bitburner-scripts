@@ -1,0 +1,421 @@
+// STAGED ns.ramOverride REWRITE of sleeve.js, with the game-knowledge.md
+// §1/§10 defects FIXED.
+//
+// The ns.ramOverride scaffolding is unchanged in shape; only the body that was
+// preserved as `act(ns)` has been repaired, plus one import removed (see
+// "THE IMPORT THAT WENT AWAY" below). Every constant is cited against
+// ~/Repos/bitburner (v3.0.2, commit b5b09b8a8).
+//
+// THIS SCRIPT CANNOT RUN IN BITNODE 4. It needs Source-File 10 (or BitNode 10):
+// NetscriptFunctions/Sleeve.ts:51-58 throws "You do not have access to the
+// Sleeve API" otherwise. The refusal goes through sfgate.js's canUseSleeve,
+// never an open-coded check, and it is published to /tel/sleeve.txt rather than
+// merely returned.
+//
+// ---------------------------------------------------------------------------
+// RAMOVERRIDE 2.6GB — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
+//
+// Why this is sound: Netscript bills a script for every ns identifier in its
+// import graph whether or not the call is reachable (RamCalculations.ts:407
+// prices Identifier nodes, findFunc at :225-243 matches bare names), but only
+// CALLING a Source-File-gated function throws. So this file may carry the
+// references, declare 2.6GB, refuse to act when sfgate.js says it cannot, and be
+// correct — instead of being unloadable in every BitNode that cannot use it.
+//
+// 2.6 = RamCostConstants.Base (1.6) + ns.getResetInfo (1.0). That is everything
+// called before the capability decision: sfgate.js is pure, status.js touches
+// only ns.write (0GB), and atExit / tprint / print / flags are all 0GB.
+//
+// When the capability IS present the allocation is raised to the file's FULL
+// static price before anything expensive runs, because `dynamicRamUsage` only
+// rises and crossing the allocation kills the script
+// (NetscriptHelpers.tsx:498-520). A raise the host cannot afford is SILENTLY
+// DENIED (NetscriptFunctions.ts:1210-1214 returns the old value), which is why
+// it goes through ramgrow.js and why this file returns rather than continuing.
+//
+// Registered in tools/sim/bncheck.mjs STRUCTURAL. Asserted by
+// tools/test/ramoverride.test.mjs [R1..R5]: the game's own calculator prices
+// this file in four regimes and the suite fails if the override is ignored or
+// if RAISE_CEILING does not reach the full static price.
+//
+// ---------------------------------------------------------------------------
+// WHAT WAS BROKEN.
+//
+// 1. `js.sleeve` — a ReferenceError on the first loop iteration, before
+//    anything else could fail. Twice, in getSleeves.
+//
+// 2. getSleeveStats / getInformation were REMOVED in v2.2.0. The game says so
+//    itself: NetscriptFunctions/Sleeve.ts:337-339 registers them via
+//    setRemovedFunctions with `replacement: "sleeve.getSleeve"`. getSleeve
+//    (Sleeve.ts:193-212) returns
+//    `{hp, skills, exp, mults, city, shock, sync, memory, storedCycles}` —
+//    note `skills` is NESTED, the same shape change ns.getPlayer() made.
+//
+// 3. getTask() was called with no argument; the signature is
+//    getTask(sleeveNumber) (Sleeve.ts:184-192). It also returns **null** when
+//    the sleeve is idle, which every use site here dereferenced.
+//
+// 4. "RobStore" / "DealDrugs" are not CrimeType members — they are "Rob Store"
+//    and "Deal Drugs" (Crime/Enums.ts:3,6), and setToCommitCrime routes them
+//    through a strict nsGetMember (Sleeve.ts:93). Likewise the gym stats:
+//    GymType is "str"/"def"/"dex"/"agi" (Work/Enums.ts:17-22), checked at
+//    Sleeve.ts:178.
+//
+// 5. `!sleeve.task.crime == skill_crime_map[skill]` parses as
+//    `(!sleeve.task.crime) == skill_crime_map[skill]` — a boolean compared to a
+//    string, which is false for every non-empty crime name, in BOTH the
+//    "already doing it" and "doing something else" cases. The guard could never
+//    fire. The field is also `crimeType`, not `crime`
+//    (SleeveCrimeWork.ts:57-65), and it only exists when `task.type === "CRIME"`.
+//
+// 6. NOT in game-knowledge.md: "ZB Institute Of Technology" has a lowercase
+//    "of" in the game — `VolhavenZBInstituteOfTechnology = "ZB Institute of
+//    Technology"` (Locations/Enums.ts:59). setToUniversityCourse takes the
+//    university as a plain string (Sleeve.ts:102) and
+//    Sleeve.takeUniversityCourse returns false on a mismatch, which this script
+//    discarded. Every Volhaven study assignment was a silent no-op.
+//
+// 7. Every setTo* / travel call returns a boolean nobody read. They are now
+//    counted and published.
+//
+// ---------------------------------------------------------------------------
+// THE IMPORT THAT WENT AWAY.
+//
+// `import { factions, companies_with_factions } from 'faction.js'` is gone.
+// `factions` was never referenced, and `companies_with_factions` appeared in
+// exactly one place: `if (companies_with_factions.includes())` — called with no
+// argument, so always false, so the branch was dead and the `else` always ran.
+//
+// faction.js's augmentation helpers are ns.singularity.*, which cost this file
+// 21GB at base price and 336GB at SF4.1, and forced a second capability gate
+// (canUseSingularity) on a script whose only real requirement is Source-File 10.
+// Dropping it removes that gate and 21*mult GB. Invariant B4: a Source-File-
+// gated API belongs in its own script, not referenced from one that does not
+// use it.
+//
+// The feature that branch was a placeholder for — assigning a sleeve to company
+// work to earn a corporation faction's reputation — was never written. If it is
+// written, it belongs behind its own sfgate check, with ns.sleeve.setToCompanyWork
+// (Sleeve.ts:119-140) and ns.enums.CompanyName, and it does NOT need faction.js.
+// ---------------------------------------------------------------------------
+import { killOtherInstances, getItem, setItem } from 'common.js'
+import { travel_cost } from 'constants.js'
+import { canUseSleeve } from 'sfgate.js'
+import { reporter, describe, record } from 'status.js'
+import { raiseRam } from 'ramgrow.js'
+
+const RAMOVERRIDE_STATUS = '/tel/sleeve.txt'
+
+/** This file's FULL static price as a function of the Singularity RAM
+ *  multiplier (sfgate.js:71-77). The ns.singularity surface is now EMPTY — the
+ *  faction.js import that supplied it is gone — so the price no longer depends
+ *  on Source-File 4 level at all and the `* mult` term is 0. Kept in the
+ *  RAISE_CEILING(mult) shape because tools/test/ramoverride.test.mjs [R5]
+ *  evaluates it per regime; a constant that ignores `mult` is the honest answer
+ *  here, not a shortcut. Measured with the game's own calculator
+ *  (tools/staging/fix4/measure.mjs). */
+const RAISE_CEILING = (mult) => 41.15 + 0 * mult
+
+export async function main(ns) {
+  ns.ramOverride(2.6)
+
+  const rerrors = []
+  const note = reporter(ns, RAMOVERRIDE_STATUS, () => ({ errors: rerrors.slice(-5) }))
+  ns.atExit(() => note.exit('stopped', { detail: 'sleeve.js exited' }))
+
+  // Ask the GAME what this save can do, through the shared rules. Not a
+  // try/catch around the namespace: RAM is billed before a line executes, so
+  // such a guard can never fire (CLAUDE.md, "a guard that can never fire").
+  const info = ns.getResetInfo()
+  if (!canUseSleeve(info)) {
+    note('waiting', {
+      result: 'capability-absent',
+      gate: 'canUseSleeve',
+      needs: 'Source-File 10',
+      bitNode: info.currentNode,
+      detail:
+        'canUseSleeve() is false for this save, so sleeve.js cannot act. Staying at the 2.6GB floor ' +
+        'instead of reserving its full price. Sleeves need Source-File 10 or BitNode 10 (NetscriptFunctions/Sleeve.ts:51-58). Without it there are no sleeves to task.',
+    })
+    return
+  }
+
+  const want = RAISE_CEILING(1)
+  if (!raiseRam(ns, want, RAMOVERRIDE_STATUS, 'sleeve.js needs its full allocation before the first gated call')) return
+
+  try {
+    note('ok', { result: 'running', allocation: want, detail: 'allocation raised; running the original body' })
+    await act(ns, note)
+    note('ok', { result: 'finished', detail: 'sleeve.js returned normally' })
+  } catch (err) {
+    ns.print(record(rerrors, err))
+    note('error', { result: 'error', detail: describe(err) })
+    throw err
+  }
+}
+
+
+
+export const sleeve_keys = {
+	SLEEVE_TASKS: "BB_SLEEVE_TASKS",
+};
+
+/** Locations/Enums.ts — the gym and university in each city that has one. */
+const cityGymMap = (ns) => ({
+	[ns.enums.CityName.Sector12]: ns.enums.LocationName.Sector12PowerhouseGym,
+	[ns.enums.CityName.Volhaven]: ns.enums.LocationName.VolhavenMilleniumFitnessGym,
+	[ns.enums.CityName.Aevum]: ns.enums.LocationName.AevumSnapFitnessGym,
+})
+
+const cityUniMap = (ns) => ({
+	[ns.enums.CityName.Sector12]: ns.enums.LocationName.Sector12RothmanUniversity,
+	// "ZB Institute of Technology" — lowercase "of" (Locations/Enums.ts:59).
+	[ns.enums.CityName.Volhaven]: ns.enums.LocationName.VolhavenZBInstituteOfTechnology,
+	[ns.enums.CityName.Aevum]: ns.enums.LocationName.AevumSummitUniversity,
+})
+
+/** UniversityClassType members (Work/Enums.ts:7-14), strict at Sleeve.ts:103. */
+const skillCourseMap = (ns) => ({
+	hacking: ns.enums.UniversityClassType.algorithms,
+	charisma: ns.enums.UniversityClassType.leadership,
+})
+
+/** CrimeType members (Crime/Enums.ts:3,6), strict at Sleeve.ts:93.
+ *  Was "RobStore" / "DealDrugs" — neither is a member, with or without fuzzy
+ *  matching (EnumHelper.ts:65 strips spaces and hyphens, not case boundaries,
+ *  and fuzzy is not requested here anyway). */
+const skillCrimeMap = (ns) => ({
+	hacking: ns.enums.CrimeType.robStore,
+	charisma: ns.enums.CrimeType.dealDrugs,
+})
+
+/** GymType members — the SHORT codes (Work/Enums.ts:17-22), strict at
+ *  Sleeve.ts:178. Every one of the four long names this file used to pass threw. */
+const gymStatMap = (ns) => ({
+	strength: ns.enums.GymType.strength,
+	defense: ns.enums.GymType.defense,
+	dexterity: ns.enums.GymType.dexterity,
+	agility: ns.enums.GymType.agility,
+})
+
+/** ns.getPlayer() nests skills (NetscriptFunctions.ts:1371-1390); so does
+ *  ns.sleeve.getSleeve (Sleeve.ts:200-210). There is no flat `hacking_skill`. */
+const lowestPlayerCombatSkill = (player) => [
+	["strength", player.skills.strength],
+	["defense", player.skills.defense],
+	["dexterity", player.skills.dexterity],
+	["agility", player.skills.agility],
+].reduce((result, next) => next[1] < result[1] ? next : result)[0];
+
+const lowestPlayerUniSkill = (player) => [
+	["hacking", player.skills.hacking],
+	["charisma", player.skills.charisma],
+].reduce((result, next) => next[1] < result[1] ? next : result)[0];
+
+/**
+ * Is this sleeve already committing exactly this crime?
+ *
+ * getTask(n) returns null when idle (Sleeve.ts:190) and otherwise a task whose
+ * crime field is `crimeType`, present only on the CRIME variant
+ * (SleeveCrimeWork.ts:57-65, NetscriptDefinitions.d.ts:1164-1170).
+ *
+ * The shipped expression was `!sleeve.task.crime == skill_crime_map[skill]`,
+ * which JavaScript parses as `(!sleeve.task.crime) == skill_crime_map[skill]` —
+ * a boolean compared to a string, false whichever crime is running — on a field
+ * that does not exist, on an object that is often null.
+ */
+const isAlreadyCommitting = (task, crimeName) =>
+	!!task && task.type === "CRIME" && task.crimeType === crimeName;
+
+const getSleeves = (ns) =>
+	[...Array(ns.sleeve.getNumSleeves()).keys()].map(index => ({
+		...ns.sleeve.getSleeve(index),
+		task: ns.sleeve.getTask(index),
+		index: index,
+	}));
+
+// Module scope stays side-effect free: the shipped file read localStorage at
+// IMPORT time, which runs before main() has decided the script may act at all.
+let print_tasks = false;
+let sleeveTasks = [];
+
+async function act(ns, note) {
+	let flags = ns.flags([]);
+	sleeveTasks = getItem(sleeve_keys.SLEEVE_TASKS) || [];
+
+	if (ns.ps(ns.getHostname()).filter(server =>
+      server.filename == ns.getScriptName()).length > 1) {
+    print_tasks = true;
+    if (!flags._ || !flags._.length) {
+      note('waiting', { result: 'duplicate-instance', detail: 'another sleeve.js is already running and no task list was given' });
+      ns.exit();
+      return;
+    }
+  }
+
+  killOtherInstances(ns);
+
+	if (flags._ && flags._.length) {
+		sleeveTasks = flags._;
+		setItem(sleeve_keys.SLEEVE_TASKS, sleeveTasks);
+	}
+
+	const GYM_STAT = gymStatMap(ns);
+	const COURSE = skillCourseMap(ns);
+	const CRIME = skillCrimeMap(ns);
+	const CITY_GYM = cityGymMap(ns);
+	const CITY_UNI = cityUniMap(ns);
+	const SECTOR12 = ns.enums.CityName.Sector12;
+	const VOLHAVEN = ns.enums.CityName.Volhaven;
+	const POWERHOUSE = ns.enums.LocationName.Sector12PowerhouseGym;
+	const ZB = ns.enums.LocationName.VolhavenZBInstituteOfTechnology;
+	const MUG = ns.enums.CrimeType.mug;            // best combat xp per second
+	const HOMICIDE = ns.enums.CrimeType.homicide;  // karma + kills
+
+	// Every setTo*/travel call returns a boolean the shipped file threw away.
+	// Refusals are collected per tick and published, so "the sleeves are doing
+	// nothing" is distinguishable from "the sleeves are doing nothing and the
+	// game said why nine times".
+	let refusals = [];
+	const doTask = (label, fn) => {
+		let okResult = false;
+		try {
+			okResult = fn() !== false;
+		} catch (err) {
+			refusals.push(`${label}: threw ${describe(err)}`);
+			return false;
+		}
+		if (!okResult) refusals.push(`${label}: returned false`);
+		return okResult;
+	};
+
+	// Deduplicated: an unrecognised task name repeats every 30s forever, and a
+	// terminal full of the same line is how a real message gets missed.
+	const warned = new Set();
+
+	while (true) {
+		refusals = [];
+		let sleeves = getSleeves(ns);
+		sleeves.sort((a, b) => b.sync - a.sync || a.shock - b.shock);
+
+		//allow other scripts to control this one for no ram cost
+		let localStorageSleeveTasks = getItem(sleeve_keys.SLEEVE_TASKS);
+		if (localStorageSleeveTasks && localStorageSleeveTasks.length) {
+			sleeveTasks = localStorageSleeveTasks;
+		}
+
+		sleeves.forEach((sleeve, index) => {
+			let sleeveTask = sleeveTasks[index] ?
+				sleeveTasks[index].toLowerCase() : undefined;
+			if (!sleeveTask) return;
+			switch (sleeveTask) {
+				case 'strength':
+				case 'str':
+				case 'defense':
+				case 'def':
+				case 'dexterity':
+				case 'dex':
+				case 'agility':
+				case 'agi':
+				case 'combat':
+				case 'gym': {
+					let player = ns.getPlayer();
+					// The task word may be the long skill name or the short
+					// code; both map to the same GymType member.
+					let skill = sleeveTask === 'combat' || sleeveTask === 'gym'
+						? lowestPlayerCombatSkill(player)
+						: sleeveTask;
+					let stat = GYM_STAT[skill] ?? skill; // already a short code
+					if (sleeve.city == SECTOR12) {
+						doTask(`sleeve ${sleeve.index} gym ${POWERHOUSE}/${stat}`,
+							() => ns.sleeve.setToGymWorkout(sleeve.index, POWERHOUSE, stat));
+					} else if (player.money > travel_cost) {
+						if (doTask(`sleeve ${sleeve.index} travel ${SECTOR12}`,
+								() => ns.sleeve.travel(sleeve.index, SECTOR12))) {
+							doTask(`sleeve ${sleeve.index} gym ${POWERHOUSE}/${stat}`,
+								() => ns.sleeve.setToGymWorkout(sleeve.index, POWERHOUSE, stat));
+						}
+					} else if (CITY_GYM[sleeve.city]) {
+						// workout at current city if possible and poor
+						doTask(`sleeve ${sleeve.index} gym ${CITY_GYM[sleeve.city]}/${stat}`,
+							() => ns.sleeve.setToGymWorkout(sleeve.index, CITY_GYM[sleeve.city], stat));
+					} else if (!isAlreadyCommitting(sleeve.task, MUG)) {
+						// no gym in this city and too poor to move, mug until
+						// next time (best combat xp)
+						doTask(`sleeve ${sleeve.index} crime ${MUG}`,
+							() => ns.sleeve.setToCommitCrime(sleeve.index, MUG));
+					}
+				} break;
+
+				case 'hacking':
+				case 'hack':
+				case 'charisma':
+				case 'cha':
+				case 'university':
+				case 'uni': {
+					let player = ns.getPlayer();
+					let skill = sleeveTask;
+					if (skill == 'uni' || skill == 'university') {
+						skill = lowestPlayerUniSkill(player);
+					}
+					if (skill == 'hack') skill = 'hacking';
+					if (skill == 'cha') skill = 'charisma';
+					let course = COURSE[skill];
+					let crime = CRIME[skill];
+					if (sleeve.city == VOLHAVEN) {
+						doTask(`sleeve ${sleeve.index} uni ${ZB}/${course}`,
+							() => ns.sleeve.setToUniversityCourse(sleeve.index, ZB, course));
+					} else if (player.money > travel_cost) {
+						if (doTask(`sleeve ${sleeve.index} travel ${VOLHAVEN}`,
+								() => ns.sleeve.travel(sleeve.index, VOLHAVEN))) {
+							doTask(`sleeve ${sleeve.index} uni ${ZB}/${course}`,
+								() => ns.sleeve.setToUniversityCourse(sleeve.index, ZB, course));
+						}
+					} else if (CITY_UNI[sleeve.city]) {
+						// study at current city if possible and poor.
+						// (The shipped file tested city_gym_map here and indexed
+						// city_uni_map — same three keys, so harmless, but it
+						// only looked correct by coincidence.)
+						doTask(`sleeve ${sleeve.index} uni ${CITY_UNI[sleeve.city]}/${course}`,
+							() => ns.sleeve.setToUniversityCourse(sleeve.index, CITY_UNI[sleeve.city], course));
+					} else if (!isAlreadyCommitting(sleeve.task, crime)) {
+						//no uni in this city and too poor to move, crime until next time
+						doTask(`sleeve ${sleeve.index} crime ${crime}`,
+							() => ns.sleeve.setToCommitCrime(sleeve.index, crime));
+					}
+				} break;
+
+				default: {
+					if (!warned.has(sleeveTask)) {
+						warned.add(sleeveTask);
+						ns.tprint(`sleeve.js: unknown task "${sleeveTask}" for sleeve ${sleeve.index}; falling back to sync/shock/homicide.`);
+					}
+					if (sleeve.sync < 100) {
+						doTask(`sleeve ${sleeve.index} synchronize`,
+							() => ns.sleeve.setToSynchronize(sleeve.index));
+					} else if (sleeve.shock > 0) {
+						doTask(`sleeve ${sleeve.index} shock recovery`,
+							() => ns.sleeve.setToShockRecovery(sleeve.index));
+					} else if (!isAlreadyCommitting(sleeve.task, HOMICIDE)) {
+						doTask(`sleeve ${sleeve.index} crime ${HOMICIDE}`,
+							() => ns.sleeve.setToCommitCrime(sleeve.index, HOMICIDE));
+					}
+				}
+			}
+		});
+
+		if (print_tasks) ns.print(JSON.stringify(sleeves.map(s => ({ index: s.index, city: s.city, sync: s.sync, shock: s.shock, task: s.task })), null, 2));
+
+		note(refusals.length ? 'error' : 'ok', {
+			result: refusals.length ? 'refusals' : 'assigned',
+			sleeves: sleeves.length,
+			tasks: sleeveTasks,
+			unknownTasks: [...warned],
+			refusals,
+			detail: refusals.length
+				? `${refusals.length} sleeve assignment(s) were refused by the game this tick`
+				: `${sleeves.length} sleeve(s) assigned`,
+		});
+		await ns.sleep(30000);
+	}
+}

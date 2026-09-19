@@ -4,7 +4,16 @@
   "description": "",
   "main": "bashrc.js",
   "scripts": {
-    "daemon": "node tools/rfa-daemon.mjs"
+    "test": "node tools/test/run.mjs",
+    "test:warn-fatal": "node tools/test/run.mjs --warn-fatal",
+    "daemon": "node tools/rfa-daemon.mjs",
+    "gosolver": "nice -n 19 node tools/go-solver.mjs --maxms 800 --poll 150",
+    "verify": "node tools/verify-deploy.mjs",
+    "snapshot": "node tools/snapshot.mjs",
+    "snapshot:watch": "nice -n 19 node tools/snapshot.mjs --watch",
+    "verify:home": "node tools/verify-deploy.mjs --home-only",
+    "verify:json": "node tools/verify-deploy.mjs --json",
+    "test:contracts": "node tools/staging/contracts/build-contracts.mjs && node tools/staging/contracts/ctsolvers.test.mjs"
   },
   "repository": {
     "type": "git",
@@ -13,7 +22,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/brubsby/bitburner-scripts/issues"
   },

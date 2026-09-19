@@ -24,6 +24,20 @@
 //
 // All formulas come from the game's own source via game.mjs. Where a figure is
 // derived rather than read, the derivation is in the comment.
+//
+// CALIBRATION: partial, and the gap is named. Every formula is the game's own,
+// and `ev-probe.mjs` exercises them so the figures in docs/fidelity-log.md can
+// be reproduced — but that is a re-derivation, not a measurement. The one
+// output of this module that has ever driven a shipped decision is the pair of
+// constants 1.98 / 6.16 in auto.js's and batch.js's ranking index, and those
+// ARE checkable against the live game: batch.js's targetScore ranks the live
+// candidate list, and .telemetry/batch.txt records which targets the controller
+// actually chose. verify-alloc-shipped.mjs section 0 does that comparison.
+//
+// What is NOT checkable here is `blendedValue`'s price on experience. It
+// encodes a preference, not a game quantity, so there is nothing in the running
+// game to assert it against. Treat any conclusion that turns on it as an
+// argument rather than a measurement.
 
 import {
   ServerConstants,

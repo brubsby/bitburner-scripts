@@ -1,4 +1,4 @@
-import { getBitNodeMultipliers } from "bitNodeMultipliers.js";
+import { readBitNodeMults } from "bitNodeMultipliers.js";
 import { parseLargeNumberString } from "common.js";
 
 export const infiltration_locations = {
@@ -193,14 +193,14 @@ const infiltrationRepGain = (ns, infiltrationLocationEntry, player) =>
   Math.pow(infiltrationLocationEntry[1].starting_security_level, 1.2) * 30 *
   (infiltrationLocationEntry[1].max_clearance_level *
     Math.pow(1.01, infiltrationLocationEntry[1].max_clearance_level))
-  * getBitNodeMultipliers().InfiltrationRep;
+  * readBitNodeMults().InfiltrationRep;
 
 const infiltrationMoneyGain = (ns, infiltrationLocationEntry, player) =>
   Math.pow(infiltrationDifficulty(ns, infiltrationLocationEntry, player)+1, 2) *
   Math.pow(infiltrationLocationEntry[1].starting_security_level, 3) * 3e3 *
   (infiltrationLocationEntry[1].max_clearance_level *
     Math.pow(1.01, infiltrationLocationEntry[1].max_clearance_level))
-  * getBitNodeMultipliers().InfiltrationMoney;
+  * readBitNodeMults().InfiltrationMoney;
 
 const infiltrationDamage = (infiltrationLocationEntry) => infiltrationLocationEntry[1].starting_security_level * 3;
 

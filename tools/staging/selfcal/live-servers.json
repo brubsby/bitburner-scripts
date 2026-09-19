@@ -1,0 +1,545 @@
+{
+ "at": "2026-09-13T20:43:20.724Z",
+ "bitNode": 4,
+ "hacking": 254,
+ "intelligence": 0,
+ "mults": {
+  "hacking_chance": 1.16,
+  "hacking_speed": 1.16,
+  "hacking_money": 1.16,
+  "hacking_grow": 1.16,
+  "hacking": 1.16,
+  "hacking_exp": 1.16,
+  "strength": 1.16,
+  "strength_exp": 1.16,
+  "defense": 1.16,
+  "defense_exp": 1.16,
+  "dexterity": 1.16,
+  "dexterity_exp": 1.16,
+  "agility": 1.16,
+  "agility_exp": 1.16,
+  "charisma": 1.16,
+  "charisma_exp": 1.16,
+  "hacknet_node_money": 1.16,
+  "hacknet_node_purchase_cost": 0.8620689655172414,
+  "hacknet_node_ram_cost": 0.8620689655172414,
+  "hacknet_node_core_cost": 0.8620689655172414,
+  "hacknet_node_level_cost": 0.8620689655172414,
+  "company_rep": 1.4979707873820254,
+  "faction_rep": 1.4979707873820254,
+  "work_money": 1.16,
+  "crime_success": 1.16,
+  "crime_money": 1.16,
+  "dnet_money": 1,
+  "bladeburner_max_stamina": 1,
+  "bladeburner_stamina_gain": 1,
+  "bladeburner_analysis": 1,
+  "bladeburner_success_chance": 1
+ },
+ "servers": {
+  "ecorp": {
+   "hostname": "ecorp",
+   "moneyMax": 105842836150.3125,
+   "moneyAvailable": 28224756306.75,
+   "minDifficulty": 33,
+   "requiredHackingSkill": 1278,
+   "serverGrowth": 99
+  },
+  "megacorp": {
+   "hostname": "megacorp",
+   "moneyMax": 120874690051.875,
+   "moneyAvailable": 32233250680.5,
+   "minDifficulty": 33,
+   "requiredHackingSkill": 1210,
+   "serverGrowth": 99
+  },
+  "b-and-a": {
+   "hostname": "b-and-a",
+   "moneyMax": 53661621107.8125,
+   "moneyAvailable": 14309765628.75,
+   "minDifficulty": 27,
+   "requiredHackingSkill": 1139,
+   "serverGrowth": 61
+  },
+  "blade": {
+   "hostname": "blade",
+   "moneyMax": 88771581759.375,
+   "moneyAvailable": 23672421802.5,
+   "minDifficulty": 32,
+   "requiredHackingSkill": 1102,
+   "serverGrowth": 78
+  },
+  "nwo": {
+   "hostname": "nwo",
+   "moneyMax": 102778519792.5,
+   "moneyAvailable": 27407605278,
+   "minDifficulty": 33,
+   "requiredHackingSkill": 1144,
+   "serverGrowth": 65
+  },
+  "clarkinc": {
+   "hostname": "clarkinc",
+   "moneyMax": 49421983803.75,
+   "moneyAvailable": 13179195681,
+   "minDifficulty": 18,
+   "requiredHackingSkill": 972,
+   "serverGrowth": 50
+  },
+  "omnitek": {
+   "hostname": "omnitek",
+   "moneyMax": 48581191071.5625,
+   "moneyAvailable": 12954984285.75,
+   "minDifficulty": 32,
+   "requiredHackingSkill": 963,
+   "serverGrowth": 97
+  },
+  "4sigma": {
+   "hostname": "4sigma",
+   "moneyMax": 69522048770.625,
+   "moneyAvailable": 18539213005.5,
+   "minDifficulty": 19,
+   "requiredHackingSkill": 1007,
+   "serverGrowth": 77
+  },
+  "kuai-gong": {
+   "hostname": "kuai-gong",
+   "moneyMax": 64574931861.5625,
+   "moneyAvailable": 17219981829.75,
+   "minDifficulty": 33,
+   "requiredHackingSkill": 1162,
+   "serverGrowth": 99
+  },
+  "fulcrumtech": {
+   "hostname": "fulcrumtech",
+   "moneyMax": 4435336063.125,
+   "moneyAvailable": 1182756283.5,
+   "minDifficulty": 30,
+   "requiredHackingSkill": 1047,
+   "serverGrowth": 92
+  },
+  "fulcrumassets": {
+   "hostname": "fulcrumassets",
+   "moneyMax": 2812500,
+   "moneyAvailable": 750000,
+   "minDifficulty": 33,
+   "requiredHackingSkill": 1137,
+   "serverGrowth": 1
+  },
+  "stormtech": {
+   "hostname": "stormtech",
+   "moneyMax": 3193872426.5625,
+   "moneyAvailable": 851699313.75,
+   "minDifficulty": 26,
+   "requiredHackingSkill": 893,
+   "serverGrowth": 80
+  },
+  "defcomm": {
+   "hostname": "defcomm",
+   "moneyMax": 2661327036.5625,
+   "moneyAvailable": 709687209.75,
+   "minDifficulty": 29,
+   "requiredHackingSkill": 994,
+   "serverGrowth": 62
+  },
+  "infocomm": {
+   "hostname": "infocomm",
+   "moneyMax": 2231555152.5,
+   "moneyAvailable": 595081374,
+   "minDifficulty": 30,
+   "requiredHackingSkill": 926,
+   "serverGrowth": 63
+  },
+  "helios": {
+   "hostname": "helios",
+   "moneyMax": 1872235763.4375,
+   "moneyAvailable": 499262870.25,
+   "minDifficulty": 30,
+   "requiredHackingSkill": 861,
+   "serverGrowth": 79
+  },
+  "vitalife": {
+   "hostname": "vitalife",
+   "moneyMax": 1977273534.375,
+   "moneyAvailable": 527272942.5,
+   "minDifficulty": 28,
+   "requiredHackingSkill": 815,
+   "serverGrowth": 68
+  },
+  "icarus": {
+   "hostname": "icarus",
+   "moneyMax": 2610020562.1875,
+   "moneyAvailable": 696005483.25,
+   "minDifficulty": 31,
+   "requiredHackingSkill": 884,
+   "serverGrowth": 91
+  },
+  "univ-energy": {
+   "hostname": "univ-energy",
+   "moneyMax": 3256585219.6875,
+   "moneyAvailable": 868422725.25,
+   "minDifficulty": 29,
+   "requiredHackingSkill": 837,
+   "serverGrowth": 90
+  },
+  "titan-labs": {
+   "hostname": "titan-labs",
+   "moneyMax": 2280402075.9375,
+   "moneyAvailable": 608107220.25,
+   "minDifficulty": 25,
+   "requiredHackingSkill": 805,
+   "serverGrowth": 75
+  },
+  "microdyne": {
+   "hostname": "microdyne",
+   "moneyMax": 1953884818.125,
+   "moneyAvailable": 521035951.5,
+   "minDifficulty": 22,
+   "requiredHackingSkill": 867,
+   "serverGrowth": 81
+  },
+  "taiyang-digital": {
+   "hostname": "taiyang-digital",
+   "moneyMax": 2254643575.3125,
+   "moneyAvailable": 601238286.75,
+   "minDifficulty": 26,
+   "requiredHackingSkill": 860,
+   "serverGrowth": 72
+  },
+  "galactic-cyber": {
+   "hostname": "galactic-cyber",
+   "moneyMax": 2257672522.5,
+   "moneyAvailable": 602046006,
+   "minDifficulty": 19,
+   "requiredHackingSkill": 846,
+   "serverGrowth": 86
+  },
+  "aerocorp": {
+   "hostname": "aerocorp",
+   "moneyMax": 3206846998.125,
+   "moneyAvailable": 855159199.5,
+   "minDifficulty": 29,
+   "requiredHackingSkill": 881,
+   "serverGrowth": 59
+  },
+  "omnia": {
+   "hostname": "omnia",
+   "moneyMax": 2749656757.5,
+   "moneyAvailable": 733241802,
+   "minDifficulty": 30,
+   "requiredHackingSkill": 909,
+   "serverGrowth": 64
+  },
+  "zb-def": {
+   "hostname": "zb-def",
+   "moneyMax": 2880958106.25,
+   "moneyAvailable": 768255495,
+   "minDifficulty": 20,
+   "requiredHackingSkill": 797,
+   "serverGrowth": 72
+  },
+  "applied-energetics": {
+   "hostname": "applied-energetics",
+   "moneyMax": 2237797161.5625,
+   "moneyAvailable": 596745909.75,
+   "minDifficulty": 27,
+   "requiredHackingSkill": 782,
+   "serverGrowth": 73
+  },
+  "solaris": {
+   "hostname": "solaris",
+   "moneyMax": 2372336308.125,
+   "moneyAvailable": 632623015.5,
+   "minDifficulty": 26,
+   "requiredHackingSkill": 825,
+   "serverGrowth": 73
+  },
+  "deltaone": {
+   "hostname": "deltaone",
+   "moneyMax": 4756707225,
+   "moneyAvailable": 1268455260,
+   "minDifficulty": 27,
+   "requiredHackingSkill": 806,
+   "serverGrowth": 53
+  },
+  "global-pharm": {
+   "hostname": "global-pharm",
+   "moneyMax": 4237951775.625,
+   "moneyAvailable": 1130120473.5,
+   "minDifficulty": 25,
+   "requiredHackingSkill": 808,
+   "serverGrowth": 87
+  },
+  "nova-med": {
+   "hostname": "nova-med",
+   "moneyMax": 3452290045.3125,
+   "moneyAvailable": 920610678.75,
+   "minDifficulty": 23,
+   "requiredHackingSkill": 830,
+   "serverGrowth": 82
+  },
+  "zeus-med": {
+   "hostname": "zeus-med",
+   "moneyMax": 3816264706.875,
+   "moneyAvailable": 1017670588.5,
+   "minDifficulty": 28,
+   "requiredHackingSkill": 820,
+   "serverGrowth": 74
+  },
+  "unitalife": {
+   "hostname": "unitalife",
+   "moneyMax": 2872512396.5625,
+   "moneyAvailable": 766003305.75,
+   "minDifficulty": 26,
+   "requiredHackingSkill": 824,
+   "serverGrowth": 72
+  },
+  "lexo-corp": {
+   "hostname": "lexo-corp",
+   "moneyMax": 2181964038.75,
+   "moneyAvailable": 581857077,
+   "minDifficulty": 26,
+   "requiredHackingSkill": 680,
+   "serverGrowth": 65
+  },
+  "rho-construction": {
+   "hostname": "rho-construction",
+   "moneyMax": 1676307608.4375,
+   "moneyAvailable": 447015362.25,
+   "minDifficulty": 19,
+   "requiredHackingSkill": 509,
+   "serverGrowth": 45
+  },
+  "alpha-ent": {
+   "hostname": "alpha-ent",
+   "moneyMax": 1860099488.4375,
+   "moneyAvailable": 496026530.25,
+   "minDifficulty": 21,
+   "requiredHackingSkill": 508,
+   "serverGrowth": 60
+  },
+  "aevum-police": {
+   "hostname": "aevum-police",
+   "moneyMax": 749642259.375,
+   "moneyAvailable": 199904602.5,
+   "minDifficulty": 24,
+   "requiredHackingSkill": 425,
+   "serverGrowth": 40
+  },
+  "rothman-uni": {
+   "hostname": "rothman-uni",
+   "moneyMax": 689795004.375,
+   "moneyAvailable": 183945334.5,
+   "minDifficulty": 17,
+   "requiredHackingSkill": 399,
+   "serverGrowth": 41
+  },
+  "zb-institute": {
+   "hostname": "zb-institute",
+   "moneyMax": 2725179083.4375,
+   "moneyAvailable": 726714422.25,
+   "minDifficulty": 23,
+   "requiredHackingSkill": 758,
+   "serverGrowth": 76
+  },
+  "summit-uni": {
+   "hostname": "summit-uni",
+   "moneyMax": 869816337.1875,
+   "moneyAvailable": 231951023.25,
+   "minDifficulty": 21,
+   "requiredHackingSkill": 448,
+   "serverGrowth": 53
+  },
+  "syscore": {
+   "hostname": "syscore",
+   "moneyMax": 1186822867.5,
+   "moneyAvailable": 316486098,
+   "minDifficulty": 22,
+   "requiredHackingSkill": 560,
+   "serverGrowth": 67
+  },
+  "catalyst": {
+   "hostname": "catalyst",
+   "moneyMax": 1188438297.1875,
+   "moneyAvailable": 316916879.25,
+   "minDifficulty": 23,
+   "requiredHackingSkill": 431,
+   "serverGrowth": 48
+  },
+  "the-hub": {
+   "hostname": "the-hub",
+   "moneyMax": 496696862.8125,
+   "moneyAvailable": 132452496.75,
+   "minDifficulty": 12,
+   "requiredHackingSkill": 282,
+   "serverGrowth": 52
+  },
+  "computek": {
+   "hostname": "computek",
+   "moneyMax": 686130105.9375,
+   "moneyAvailable": 182968028.25,
+   "minDifficulty": 19,
+   "requiredHackingSkill": 346,
+   "serverGrowth": 45
+  },
+  "netlink": {
+   "hostname": "netlink",
+   "moneyMax": 773437500,
+   "moneyAvailable": 206250000,
+   "minDifficulty": 26,
+   "requiredHackingSkill": 401,
+   "serverGrowth": 67
+  },
+  "johnson-ortho": {
+   "hostname": "johnson-ortho",
+   "moneyMax": 217230958.125,
+   "moneyAvailable": 57928255.5,
+   "minDifficulty": 18,
+   "requiredHackingSkill": 299,
+   "serverGrowth": 64
+  },
+  "n00dles": {
+   "hostname": "n00dles",
+   "moneyMax": 196875,
+   "moneyAvailable": 20394.7673824337,
+   "minDifficulty": 1,
+   "requiredHackingSkill": 1,
+   "serverGrowth": 3000
+  },
+  "foodnstuff": {
+   "hostname": "foodnstuff",
+   "moneyMax": 5625000,
+   "moneyAvailable": 281273.26732948335,
+   "minDifficulty": 3,
+   "requiredHackingSkill": 1,
+   "serverGrowth": 5
+  },
+  "sigma-cosmetics": {
+   "hostname": "sigma-cosmetics",
+   "moneyMax": 6468750,
+   "moneyAvailable": 318700.8446305817,
+   "minDifficulty": 3,
+   "requiredHackingSkill": 5,
+   "serverGrowth": 10
+  },
+  "joesguns": {
+   "hostname": "joesguns",
+   "moneyMax": 7031250,
+   "moneyAvailable": 348501.8910291033,
+   "minDifficulty": 5,
+   "requiredHackingSkill": 10,
+   "serverGrowth": 20
+  },
+  "zer0": {
+   "hostname": "zer0",
+   "moneyMax": 21093750,
+   "moneyAvailable": 2300788.2813954107,
+   "minDifficulty": 8,
+   "requiredHackingSkill": 75,
+   "serverGrowth": 40
+  },
+  "nectar-net": {
+   "hostname": "nectar-net",
+   "moneyMax": 7734375,
+   "moneyAvailable": 375594.30434168683,
+   "minDifficulty": 7,
+   "requiredHackingSkill": 20,
+   "serverGrowth": 25
+  },
+  "neo-net": {
+   "hostname": "neo-net",
+   "moneyMax": 14062500,
+   "moneyAvailable": 875033.5852474702,
+   "minDifficulty": 8,
+   "requiredHackingSkill": 50,
+   "serverGrowth": 25
+  },
+  "silver-helix": {
+   "hostname": "silver-helix",
+   "moneyMax": 126562500,
+   "moneyAvailable": 33750000,
+   "minDifficulty": 10,
+   "requiredHackingSkill": 150,
+   "serverGrowth": 30
+  },
+  "hong-fang-tea": {
+   "hostname": "hong-fang-tea",
+   "moneyMax": 8437500,
+   "moneyAvailable": 424576.51239301765,
+   "minDifficulty": 5,
+   "requiredHackingSkill": 30,
+   "serverGrowth": 20
+  },
+  "harakiri-sushi": {
+   "hostname": "harakiri-sushi",
+   "moneyMax": 11250000,
+   "moneyAvailable": 545366.5427741901,
+   "minDifficulty": 5,
+   "requiredHackingSkill": 40,
+   "serverGrowth": 40
+  },
+  "phantasy": {
+   "hostname": "phantasy",
+   "moneyMax": 67500000,
+   "moneyAvailable": 67500000,
+   "minDifficulty": 7,
+   "requiredHackingSkill": 100,
+   "serverGrowth": 35
+  },
+  "max-hardware": {
+   "hostname": "max-hardware",
+   "moneyMax": 28125000,
+   "moneyAvailable": 1373156.9293994696,
+   "minDifficulty": 5,
+   "requiredHackingSkill": 80,
+   "serverGrowth": 30
+  },
+  "omega-net": {
+   "hostname": "omega-net",
+   "moneyMax": 183364000.3125,
+   "moneyAvailable": 45515278.22424117,
+   "minDifficulty": 10,
+   "requiredHackingSkill": 201,
+   "serverGrowth": 33
+  },
+  "crush-fitness": {
+   "hostname": "crush-fitness",
+   "moneyMax": 156070099.6875,
+   "moneyAvailable": 41618693.25,
+   "minDifficulty": 12,
+   "requiredHackingSkill": 227,
+   "serverGrowth": 28
+  },
+  "iron-gym": {
+   "hostname": "iron-gym",
+   "moneyMax": 56250000,
+   "moneyAvailable": 10180535.969014915,
+   "minDifficulty": 10,
+   "requiredHackingSkill": 100,
+   "serverGrowth": 20
+  },
+  "millenium-fitness": {
+   "hostname": "millenium-fitness",
+   "moneyMax": 703125000,
+   "moneyAvailable": 187500000,
+   "minDifficulty": 16,
+   "requiredHackingSkill": 508,
+   "serverGrowth": 37
+  },
+  "powerhouse-fitness": {
+   "hostname": "powerhouse-fitness",
+   "moneyMax": 2531250000,
+   "moneyAvailable": 675000000,
+   "minDifficulty": 21,
+   "requiredHackingSkill": 958,
+   "serverGrowth": 53
+  },
+  "snap-fitness": {
+   "hostname": "snap-fitness",
+   "moneyMax": 1265625000,
+   "moneyAvailable": 337500000,
+   "minDifficulty": 14,
+   "requiredHackingSkill": 757,
+   "serverGrowth": 40
+  }
+ }
+}

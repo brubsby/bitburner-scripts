@@ -1,0 +1,256 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>bitburner</title>
+<style>
+/*
+ * LAYOUT: two zones, and the page fills the viewport.
+ *
+ * The first version was a single auto-fit grid of content-height panels, which
+ * left most of the screen empty below them — the compact stat panels are only
+ * ten lines tall, and nothing grew to take the rest. The fix is not a taller
+ * panel but a different structure:
+ *
+ *   #top  compact scalar panels. Content-height, wrapping into as many columns
+ *         as the window allows. Capped so it can never crowd out the tables.
+ *   #bot  the long lists (hosts, scripts, contracts). flex:1, so they absorb
+ *         ALL remaining height, with each panel scrolling internally rather
+ *         than the page scrolling.
+ *
+ * `min-height:0` on the flex children is what actually makes internal scrolling
+ * work — without it a flex item refuses to shrink below its content and the
+ * page grows a scrollbar instead of the table getting one.
+ */
+:root{--bg:#0b0e13;--pan:#11151d;--ln:#1e2633;--fg:#c9d4e3;--dim:#6b7a8f;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--acc:#60a5fa;--mag:#c084fc}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:11px/1.3 ui-monospace,"SF Mono",Menlo,Consolas,monospace;display:flex;flex-direction:column;overflow:hidden}
+#err{flex:0 0 auto;padding:3px 8px;background:#3b1111;color:#fca5a5;display:none}
+#top{flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:5px;padding:5px;max-height:60vh;overflow:auto}
+#bot{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:5px;padding:0 5px 5px}
+.pan{background:var(--pan);border:1px solid var(--ln);border-radius:4px;padding:5px 7px;min-width:0;display:flex;flex-direction:column;min-height:0}
+.pan h2{margin:0 0 4px;font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between;font-weight:600;flex:0 0 auto}
+.age{font-weight:400;text-transform:none;letter-spacing:0}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+td{padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+tr.hd td{color:var(--dim);border-bottom:1px solid var(--ln);position:sticky;top:0;background:var(--pan)}
+tr:hover td{background:#161c27}
+.k{color:var(--dim)}
+.big{font-size:20px;font-variant-numeric:tabular-nums;line-height:1.1}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.acc{color:var(--acc)}.mag{color:var(--mag)}.dim{color:var(--dim)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:0 8px}
+.kv .v{text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:3px;background:var(--ln);border-radius:2px;overflow:hidden;margin-top:2px;flex:0 0 auto}
+.bar>i{display:block;height:100%;background:var(--acc)}
+/* Fills whatever height the panel was given, instead of a fixed cap. */
+.scroll{flex:1 1 auto;min-height:0;overflow:auto}
+#top .scroll{max-height:150px}
+svg{display:block}
+.stale{color:var(--bad)!important}
+.board{display:grid;gap:1px;margin-top:2px}
+.board i{aspect-ratio:1;border-radius:50%;background:#0d1117;font-style:normal}
+.board i.X{background:var(--acc)}.board i.O{background:#e5e7eb}.board i.D{background:#2a3341;border-radius:1px}
+</style>
+</head>
+<body>
+<div id="err"></div>
+<div id="top"></div>
+<div id="bot"></div>
+<script>
+const f2=(n)=>n==null||!isFinite(n)?'–':n.toFixed(2)
+const pct=(n)=>n==null||!isFinite(n)?'–':(n*100).toFixed(0)+'%'
+function money(n){if(n==null||!isFinite(n))return '–';const a=Math.abs(n);
+ for(const [d,s] of [[1e12,'t'],[1e9,'b'],[1e6,'m'],[1e3,'k']]) if(a>=d) return '$'+(n/d).toFixed(2)+s;
+ return '$'+n.toFixed(0)}
+function num(n){if(n==null||!isFinite(n))return '–';const a=Math.abs(n);
+ for(const [d,s] of [[1e12,'T'],[1e9,'B'],[1e6,'M'],[1e3,'k']]) if(a>=d) return (n/d).toFixed(2)+s;
+ return n.toFixed(0)}
+function gb(n){if(n==null)return '–';if(n>=1048576)return (n/1048576).toFixed(1)+'P';if(n>=1024)return (n/1024).toFixed(1)+'T';return n.toFixed(0)+'G'}
+function dur(ms){if(ms==null||!isFinite(ms))return '–';const s=ms/1000;
+ if(s<60)return s.toFixed(0)+'s';if(s<3600)return (s/60).toFixed(0)+'m';if(s<86400)return (s/3600).toFixed(1)+'h';return (s/86400).toFixed(1)+'d'}
+function age(ms,budget){const c=ms==null?'stale':(ms>budget?'stale':'dim');return `<span class="age ${c}">${ms==null?'no data':dur(ms)}</span>`}
+function spark(vals,w=104,h=16,col='#60a5fa'){
+  const v=vals.filter(x=>typeof x==='number'&&isFinite(x));
+  if(v.length<2)return '';
+  const mn=Math.min(...v),mx=Math.max(...v),r=(mx-mn)||1;
+  const pts=v.map((y,i)=>`${(i/(v.length-1)*w).toFixed(1)},${(h-((y-mn)/r)*h).toFixed(1)}`).join(' ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%"><polyline fill="none" stroke="${col}" stroke-width="1" points="${pts}"/></svg>`
+}
+const panel=(t,a,b)=>`<div class="pan"><h2><span>${t}</span>${a||''}</h2>${b}</div>`
+const rows=(p)=>`<div class="kv">${p.map(([k,v])=>`<span class="k">${k}</span><span class="v">${v}</span>`).join('')}</div>`
+
+function render(d){
+  const D=d.deep,F=d.fast,FI=d.files||{},H=d.history||[];
+  const top=[],bot=[];
+  const e=document.getElementById('err');
+  const errs=[d.deepError&&('save poll: '+d.deepError),d.fastError&&('fast lane: '+d.fastError)].filter(Boolean);
+  e.style.display=errs.length?'block':'none'; e.textContent=errs.join('   |   ');
+  const p=D?D.player:{};
+
+  // ---- headline -----------------------------------------------------------
+  const life=p.lastAugReset?Date.now()-p.lastAugReset:null, node=p.lastNodeReset?Date.now()-p.lastNodeReset:null;
+  top.push(panel(`BN${p.bitNode??'?'} · life ${dur(life)} · node ${dur(node)}`,age(d.fastAgeMs,6000),
+    `<div class="big ok">${money(F?F.money:p.money)}</div>${spark(H.map(h=>h.money),240,22,'#4ade80')}
+     ${rows([['income',`<span class="ok">${money(F&&F.scriptIncome)}/s</span>`],
+       ['hacking',`<span class="acc">${F?F.hacking:(p.skills&&p.skills.hacking)}</span>`],
+       ['exp/s',f2(F&&F.scriptExp)],
+       ['home',`${gb(F?F.homeUsed:0)}/${gb(F?F.homeMax:0)}`],
+       ['procs',F?F.procs:'–'],['city',(F&&F.city)||p.city||'–']])}
+     <div class="bar"><i style="width:${F&&F.homeMax?Math.min(100,F.homeUsed/F.homeMax*100):0}%"></i></div>`));
+
+  // ---- skills -------------------------------------------------------------
+  if(D&&p.skills) top.push(panel('skills',age(d.deepAgeMs,45000),
+    rows(Object.entries(p.skills).map(([k,v])=>[k,`${v} <span class="dim">${num((p.exp||{})[k])}</span>`]))));
+
+  // ---- multipliers (only the ones that are not 1) --------------------------
+  if(D&&p.mults){
+    const m=Object.entries(p.mults).filter(([,v])=>typeof v==='number'&&Math.abs(v-1)>1e-9)
+      .sort((a,b)=>Math.abs(b[1]-1)-Math.abs(a[1]-1));
+    top.push(panel(`multipliers (${m.length} ≠ 1)`,age(d.deepAgeMs,45000),
+      m.length?`<div class="scroll">${rows(m.map(([k,v])=>[k,`<span class="${v>1?'ok':'bad'}">${v.toFixed(3)}</span>`]))}</div>`
+      :'<span class="dim">all multipliers at 1 — no augmentations installed</span>'));
+  }
+
+  // ---- money sources ------------------------------------------------------
+  if(D&&p.moneySourceA){
+    const A=p.moneySourceA.data??p.moneySourceA;
+    const ent=Object.entries(A).filter(([,v])=>typeof v==='number'&&Math.abs(v)>0.5).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+    const tot=ent.reduce((s,[,v])=>s+Math.max(0,v),0)||1;
+    top.push(panel('money sources (life)',age(d.deepAgeMs,45000),
+      `<div class="scroll"><table>${ent.map(([k,v])=>`<tr><td>${k}</td><td class="n ${v<0?'bad':'ok'}">${money(v)}</td><td class="n dim">${v>0?pct(v/tot):''}</td></tr>`).join('')}</table></div>`));
+  }
+
+  // ---- fleet / progression ------------------------------------------------
+  if(D){
+    // FLEET UTILISATION COMES FROM batch.js, NOT FROM THE SAVE.
+    // The save omits temporary RunningScripts (BaseServer.ts:309) and the
+    // batcher execs every worker as temporary, so the save-derived figure sees
+    // only the resident stack and reported 3% while the fleet was at 89%.
+    // batch.js measures with ns.getServerUsedRam and is the authority; the
+    // save-derived number is still shown, labelled as resident-only.
+    const br=(FI.batch&&FI.batch.body&&FI.batch.body.ram)||null;
+    top.push(panel('fleet & progression',age(d.deepAgeMs,45000),
+    rows([['rooted',`<span class="acc">${D.fleet.rooted}</span>/${D.fleet.total}`],
+      ['fleet RAM <span class="dim">(batch)</span>',br?`${gb(br.used)}/${gb(br.total)}`:'<span class="dim">batch.js not reporting</span>'],
+      ['utilisation',br?`<span class="${br.utilPct>80?'ok':'warn'}">${br.utilPct.toFixed(1)}%</span>`:'–'],
+      ['reserved',br&&br.reservedForPipelines!=null?gb(br.reservedForPipelines):'–'],
+      ['resident <span class="dim">(save)</span>',`${gb(D.fleet.usedRam)}/${gb(D.fleet.maxRam)} <span class="dim">rooted only</span>`],
+      ['contracts',`<span class="${D.fleet.contracts?'warn':'dim'}">${D.fleet.contracts}</span>`],
+      ['augs',`${(p.augs||[]).length} <span class="${(p.queuedAugs||[]).length?'warn':'dim'}">+${(p.queuedAugs||[]).length} queued</span>`],
+      ['hacknet',p.hacknet??0],['sleeves',p.sleeves??0],['TOR',p.hasTor?'<span class="ok">yes</span>':'<span class="dim">no</span>'],
+      ['factions',(p.factions||[]).join(', ')||'<span class="bad">none</span>'],
+      ['invites',(p.invitations||[]).join(', ')||'<span class="dim">none</span>'],
+      ['work',p.currentWork?`${p.currentWork.type||'?'}${p.focus?'':' <span class="warn">unfocused</span>'}`:'<span class="bad">idle</span>']])
+    +`<div class="bar"><i style="width:${br?Math.min(100,br.utilPct):0}%"></i></div>`))
+  };
+
+  // ---- go board -----------------------------------------------------------
+  if(D&&D.go&&D.go.board){
+    const b=D.go.board,n=b.length;
+    const cells=[];
+    for(let y=n-1;y>=0;y--) for(let x=0;x<n;x++){const c=b[x][y];cells.push(`<i class="${c==='X'?'X':c==='O'?'O':c==='#'?'D':''}"></i>`)}
+    const g=FI.go&&FI.go.body||{};
+    top.push(panel(`go · ${D.go.ai||''}`,age(d.deepAgeMs,45000),
+      `<div class="board" style="grid-template-columns:repeat(${n},1fr)">${cells.join('')}</div>
+       ${rows([['record',`<span class="ok">${g.wins??0}</span>W/<span class="bad">${g.losses??0}</span>L`],
+         ['streak',g.winStreak??'–'],['rep bonus',g.factionRepBonusPct!=null?f2(g.factionRepBonusPct)+'%':'–']])}`));
+  }
+
+  // ---- telemetry panels ---------------------------------------------------
+  const known=[['batch','batch'],['go','go stats'],['watchdog','watchdog'],['installgate','install gate'],
+               ['progress','progress'],['buyserv','buyserv'],['autobuy','autobuy'],['backdoor','backdoor'],
+               ['ctauto','contracts'],['seed','seed'],['upkeep','upkeep'],['fast','fast lane']];
+  for(const [key,label] of known){
+    const f=FI[key]; if(!f) continue;
+    const b=f.body||{};
+    // AGE FROM THE PAYLOAD, NOT THE FILE.
+    //
+    // These files are mirrored out of the game by the daemon on its own timer,
+    // so the mtime is when the MIRROR last ran, not when the script last wrote.
+    // Using it made a five-minute-old decision render as "15s" — a stale number
+    // wearing a fresh timestamp, which is precisely the failure this dashboard
+    // is supposed to make impossible. Every reporter stamps its own `at`, so
+    // that is the authority; mtime is only the fallback for a file without one.
+    const stamped = b.at ? Date.parse(b.at) : NaN;
+    const a = isFinite(stamped) ? Date.now()-stamped : Date.now()-f.mtime;
+    let body='';
+    if(key==='batch'){
+      const t=(b.targets||[])[0]||{}, c=b.calibration||{};
+      body=rows([['health',`<span class="${b.health==='ok'?'ok':'warn'}">${b.health||'–'}</span>`],
+        ['target',t.host||'–'],['phase',t.phase||'–'],['money',t.moneyPct!=null?t.moneyPct+'%':'–'],
+        ['batches',num(t.batches)],['period',t.periodSec!=null?f2(t.periodSec)+'s':'–'],
+        ['place fails',`<span class="${t.placeFails?'bad':'dim'}">${t.placeFails??'–'}</span>`],
+        ['exec fails',`<span class="${t.execFails?'bad':'dim'}">${t.execFails??'–'}</span>`],
+        ['drains',`<span class="${t.drains?'bad':'dim'}">${t.drains??'–'}</span>`],
+        ['calibration',`${c.verdict||'–'} y=${c.y!=null?f2(c.y):'–'} n=${c.samples??0}`]]);
+    } else if(key==='go'){
+      body=rows([['record',`<span class="ok">${b.wins??0}</span>W/<span class="bad">${b.losses??0}</span>L`],
+        ['win rate',b.wins!=null&&(b.wins+b.losses)?pct(b.wins/(b.wins+b.losses)):'–'],
+        ['streak',b.winStreak??'–'],['games this run',b.games??'–'],
+        ['mirror passes',b.mirrorPasses??'–'],['behind at pass',b.passedBehind??'–'],
+        ['remote/local',`${b.remoteMoves??0}/${b.localMoves??0}`],
+        ['errors',`<span class="${(b.errors||[]).length?'bad':'dim'}">${(b.errors||[]).length}</span>`]]);
+    } else if(key==='watchdog'){
+      const all={...(b.daemons||{}),...(b.jobs||{})};
+      const odd=Object.entries(all).filter(([,v])=>v.state&&!/^running/.test(v.state));
+      body=rows([['health',`<span class="${b.health==='ok'?'ok':'bad'}">${b.health||'–'}</span>`],
+        ['cycles',b.cycles??'–'],['running',Object.values(all).filter(v=>v.state==='running').length],
+        ...odd.map(([k,v])=>[k,`<span class="${/blocked|error/.test(v.state)?'bad':'warn'}">${v.state}</span>`])]);
+    } else if(key==='installgate'){
+      body=rows([['decision',`<span class="${b.install?'warn':'ok'}">${b.install?'INSTALL':'hold'}</span>`],
+        ['M',b.M!=null?b.M.toFixed(4):'–'],['queued',b.queued??'–'],
+        ['payback',b.neverPaysBack?'<span class="bad">never</span>':dur(b.paybackMs)],['horizon',dur(b.horizonMs)],
+        ['ratio',b.ratio!=null&&isFinite(b.ratio)?f2(b.ratio)+'x':'–']]);
+    } else {
+      const flat=Object.entries(b).filter(([,v])=>typeof v!=='object'&&typeof v!=='undefined').slice(0,8);
+      const lists=Object.entries(b).filter(([,v])=>Array.isArray(v)&&v.length&&v.every(x=>typeof x==='string'));
+      body=rows(flat.map(([k,v])=>[k,typeof v==='number'?num(v):String(v).slice(0,30)]))
+        +lists.map(([k,v])=>`<div class="k" style="margin-top:3px">${k}</div><div class="scroll">`+
+          v.slice(0,8).map(s=>`<div style="white-space:normal;color:${k==='todo'?'var(--warn)':'var(--fg)'}">· ${s.slice(0,160)}</div>`).join('')+'</div>').join('');
+    }
+    top.push(panel(label,age(a,120000),body));
+  }
+
+  // ---- BOTTOM: the long lists, which take all remaining height -------------
+  if(D&&D.scripts.length) bot.push(panel(`scripts (${D.scripts.length})`,age(d.deepAgeMs,45000),
+    `<div class="scroll"><table>
+      <tr class="hd"><td>file</td><td>host</td><td class="n">t</td><td class="n">ram</td><td class="n">$/s</td><td class="n">xp/s</td><td class="n">up</td></tr>
+      ${D.scripts.map(s=>`<tr><td>${s.filename}</td><td class="dim">${s.server}</td>
+        <td class="n">${s.threads}</td><td class="n dim">${gb(s.ram)}</td>
+        <td class="n ${s.moneyPerSec>0?'ok':'dim'}">${s.moneyPerSec>0?money(s.moneyPerSec):'–'}</td>
+        <td class="n dim">${s.expPerSec>0?f2(s.expPerSec):'–'}</td>
+        <td class="n dim">${dur(s.uptime*1000)}</td></tr>`).join('')}
+    </table></div>`));
+
+  if(D&&D.hosts.length) bot.push(panel(`hosts (${D.fleet.rooted}/${D.hosts.length} rooted)`,age(d.deepAgeMs,45000),
+    `<div class="scroll"><table>
+      <tr class="hd"><td>host</td><td class="n">ram</td><td class="n" title="resident scripts only; temporary batch workers are not in the save">res</td><td class="n">$</td><td class="n">+sec</td><td class="n">lvl</td><td class="n">cc</td></tr>
+      ${D.hosts.map(h=>`<tr><td class="${h.root?(h.backdoor?'mag':'ok'):'dim'}">${h.host}</td>
+        <td class="n dim">${gb(h.maxRam)}</td>
+        <td class="n">${h.maxRam?pct(h.used/h.maxRam):'–'}</td>
+        <td class="n ${h.moneyMax?(h.money/h.moneyMax>0.9?'ok':'warn'):'dim'}">${h.moneyMax?pct(h.money/h.moneyMax):'–'}</td>
+        <td class="n dim">${h.minSec?f2(h.sec-h.minSec):'–'}</td>
+        <td class="n dim">${h.req||''}</td>
+        <td class="n ${h.contracts?'warn':'dim'}">${h.contracts||''}</td></tr>`).join('')}
+    </table></div>`));
+
+  if(D&&(p.augs||[]).length+(p.queuedAugs||[]).length) bot.push(panel(`augmentations (${(p.augs||[]).length} installed, ${(p.queuedAugs||[]).length} queued)`,age(d.deepAgeMs,45000),
+    `<div class="scroll"><table>
+      ${(p.queuedAugs||[]).map(a=>`<tr><td class="warn">${a.name||a}</td><td class="n warn">queued</td></tr>`).join('')}
+      ${(p.augs||[]).map(a=>`<tr><td>${a.name||a}</td><td class="n dim">${a.level!=null?'lvl '+a.level:''}</td></tr>`).join('')}
+    </table></div>`));
+
+  document.getElementById('top').innerHTML=top.join('');
+  document.getElementById('bot').innerHTML=bot.join('');
+}
+
+async function tick(){
+  try{ render(await (await fetch('/data.json',{cache:'no-store'})).json()) }
+  catch(e){ const el=document.getElementById('err'); el.style.display='block'; el.textContent='dashboard server unreachable: '+e.message }
+}
+tick(); setInterval(tick,1000);
+</script>
+</body>
+</html>

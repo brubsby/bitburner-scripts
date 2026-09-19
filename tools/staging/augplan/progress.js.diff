@@ -1,0 +1,410 @@
+# PROPOSED progress.js CHANGE — the integration spec, as an applicable patch
+#
+# NOT APPLIED. tools/ is in the daemon's SKIP_DIRS; the repo root is not. A .js
+# written there goes live in the running game within ~150ms, and this patch
+# changes what the run spends its money on and when it prestiges. The lead
+# deploys, not me.
+#
+#   cd ~/Repos/bitburner-scripts
+#   patch -p0 --dry-run < tools/staging/augplan/progress.js.diff   # check first
+#
+# The full working file is tools/staging/augplan/.progress.new.js.
+#
+# =============================================================================
+# BEFORE APPLYING — three things, in this order
+#
+# 1. augplan.js must exist at the REPO ROOT, because the patch imports it by the
+#    bare in-game name. There is already a DIFFERENT staged module claiming that
+#    name: tools/staging/augplan.js, which solves the cost half of this problem
+#    and is imported by tools/staging/sing-augbuy.js and sing-augsurvey.js.
+#    Deploying both under one name is a collision. See NOTES.md §2 and §6 — they
+#    should be merged, and the older one has two bugs this one does not (its
+#    SOA_AUGS list is missing the "SoA - " prefix so isSoa() matches nothing, and
+#    it prices SoA augmentations as order-independent when queued copies do in
+#    fact escalate each other 7x).
+#
+# 2. Re-run tools/test/ramoverride.test.mjs AND fix its subject. The RAISE_CEILING
+#    note in the patch explains why: the shipped constant is already 5GB short of
+#    the shipped file's real price, and R5 does not see it because it checks
+#    tools/staging/ramoverride/progress.js, which is a stale copy. That is a
+#    live latent failure independent of this change and should be fixed first.
+#
+# 3. npm run verify after pushing. CLAUDE.md: the auto-push is not reliable, and
+#    two edits have already reached nothing while reporting success.
+#
+# =============================================================================
+# WHAT THE PATCH DOES — the architecture, in three moves
+#
+# PASS N (every five minutes):
+#   1. COMPUTE THE PLAN. Gather every offer from every joined faction with its
+#      live price, rep requirement, multipliers and prerequisites, and hand the
+#      lot to planPurchases() with the current cash. Buy NOTHING.
+#   2. RUN THE GATE ON THE PLANNED M. installgate.js's marginal-versus-average
+#      rule is unchanged; only its input moves from the queued set to
+#      (already-queued set) x (planned set).
+#   3. WHEN THE GATE FIRES: execute the plan in order, re-pricing each purchase
+#      against the game and stopping loudly on drift, then install.
+#
+# WHY THE GATE HAD TO MOVE. If purchasing waits for the install, nothing is ever
+# queued, so the old gate's M is permanently 1 and shouldInstall permanently
+# returns "the queued augmentations give no gain". The gate would never fire
+# again. Evaluating the PLANNED set is not a workaround for that — it is
+# strictly better, because the gate then sees the value of what the money could
+# buy, including a threshold reputation has just crossed, before a dollar is
+# spent. The marginal rate still rises while purchases are still becoming
+# possible and still flattens when money and reputation stop unlocking anything,
+# which is the only property the rule depends on.
+#
+# THE NO-THRASH ARGUMENT SURVIVES, DIFFERENTLY. installgate.js's header argues
+# the gate cannot fire twice in a row because an install leaves $1,262 and M is
+# therefore 1. That argument now runs through the planner instead of the queue:
+# nothing is affordable at $1,262, so the plan is empty and M is 1. Same
+# conclusion, different mechanism — so it is asserted rather than assumed, in
+# augplan.test.mjs [AP9].
+#
+# WHAT IS DELIBERATELY NOT CHANGED
+#   - installgate.js itself. Its rule, its thresholds and its refusal messages
+#     are untouched; only progress.js's choice of what to feed it moves.
+#   - The advisory (no-SF4) path, which is what this save actually runs today.
+#   - homeup.js --reserve 0 before an install (CLAUDE.md's install procedure
+#     step 2). The planner spends money on augmentations; whatever it leaves
+#     still has to go into home RAM, which survives the prestige. That remains
+#     the caller's job and is NOT in this patch.
+#
+# =============================================================================
+--- progress.js
++++ progress.js (proposed)
+@@ -93,6 +93,7 @@
+ import { reporter } from 'status.js'
+ import { raiseRam } from 'ramgrow.js'
+ import { shouldInstall, progressFactor } from 'installgate.js'
++import { planPurchases, NFG, isSoa, BASE_PRICE_MULT } from 'augplan.js'
+ 
+ /** This file's static price as a function of the Singularity RAM multiplier.
+  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
+@@ -107,7 +108,37 @@
+ // denied (NetscriptFunctions.ts:1210-1214 returns the old allocation), so the
+ // test is the only thing standing between a wrong constant and a script that
+ // dies mid-run for no visible reason.
+-const RAISE_CEILING = (mult) => 3.35 + 39.7 * mult
++// 39.7 -> 49.7, and TWO separate reasons, only one of which is this change.
++//
++// (1) +5.0 for ns.singularity.getAugmentationPrereq (RamCostGenerator.ts:205,
++//     SingularityFn3 = 5GB base, scaled by the SF4 RAM multiplier). Without it
++//     the planner cannot see prerequisites, and descending PRICE order puts
++//     "Cranial Signal Processors - Gen V" before Gen I, so the purchase is
++//     rejected (FactionHelpers.tsx:88-95) and purchaseAugmentation returns false
++//     with nothing reporting it.
++//
++// (2) +5.0 THAT WAS ALREADY MISSING. The shipped constant is 39.7 and the
++//     shipped file's real static price is 44.7 per multiplier unit — measured
++//     at 48.05GB in BitNode 4 and 718.55GB at SF4.1 by BOTH tools/test/ram.mjs
++//     (priceOverlay, the game's own calculateRamUsage) and
++//     tools/staging/ramcheck.mjs, which agree exactly. So the deployed ceiling
++//     is 43.05 against a 48.05 requirement: 5GB short in BN4 and 80GB short at
++//     SF4.1. A short raise is SILENTLY denied (NetscriptFunctions.ts:1210-1214
++//     returns the old allocation) and the script then dies mid-run with no
++//     signal. It is dormant today only because this save has no Source-File 4,
++//     so canJoin is false and the advisory ceiling RAISE_CEILING(0) = 3.35 is
++//     the one used — and 3.35 is correct. It breaks the day SF4 arrives.
++//
++//     tools/test/ramoverride.test.mjs [R5] does not catch it because its subject
++//     is tools/staging/ramoverride/progress.js, which is stale: that copy still
++//     says 39.1 and lacks getAugmentationStats, getCurrentWork and isFocused —
++//     exactly the 5.6GB of calls the root file gained. R5 reports "progress.js
++//     BN4 full 42.45GB" and passes, while the file that actually runs costs
++//     48.05GB. A test checking a copy of the thing it guards.
++//
++// 49.7 is MEASURED, not arithmetic: priceOverlay puts this file at 53.05GB in
++// BN4 (= 3.35 + 49.7) and 798.55GB at SF4.1 (= 3.35 + 49.7*16).
++const RAISE_CEILING = (mult) => 3.35 + 49.7 * mult
+ 
+ export async function main(ns) {
+   ns.ramOverride(2.6)
+@@ -306,67 +337,142 @@
+     }
+   }
+ 
+-  // --- 4. augmentations ------------------------------------------------------
+-  // Reputation is not consumed by a purchase, only money is, and the money cost
+-  // multiplies by 1.9^(already queued) — so buy the most expensive first. Every
+-  // NeuroFlux level counts toward the 30 augmentations Daedalus requires, which
+-  // makes short install cycles the fast route rather than a compromise.
+-  let queued = 0
+-  if (canBuyAug && !flags.dry) {
+-    const owned = new Set(sing.getOwnedAugmentations(true))
++  // --- 4. PLAN the augmentations; do not buy yet -----------------------------
++  //
++  // THE CHANGE. The shipped loop sorted `offers` by price descending and bought
++  // whatever was affordable on THIS pass. Three defects, all of them silent:
++  //
++  //   (i)  it bought ACROSS TIME rather than planning a set. The k-th purchase
++  //        of an install cycle costs `intrinsic * 1.9^k`
++  //        (AugmentationHelpers.ts:32-37,157), so rank 0 is the most valuable
++  //        position there is — and a five-minute pass spent it on whatever
++  //        happened to be affordable at the time.
++  //   (ii) it ranked by PRICE, not by VALUE. On the real BitNode 4 catalogue
++  //        that buys Neuralstimulator at $3,000m — hacking_chance, hacking_speed
++  //        and hacking_grow, none of which appear in installgate.js's
++  //        RATE_CHANNELS — at rank 0, for a multiplier gain of exactly zero.
++  //        Measured: tools/staging/augplan/measure.mjs.
++  //   (iii) it ignored prerequisites. `purchaseAugmentation` returns false when
++  //        a prereq is unmet (FactionHelpers.tsx:88-95) and the loop moves on,
++  //        so an augmentation we have the reputation and the money for is simply
++  //        never bought and nothing says so.
++  //
++  // augplan.js owns the economics now, exactly as installgate.js owns the
++  // install decision. This section only gathers what it needs.
++  //
++  // PRICES ARE LIVE, NOT BASE. getAugmentationPrice has already applied
++  // 1.9^(queued non-SoA) and the BitNode multiplier. With the plan-now-buy-later
++  // architecture nothing is queued at plan time, so the live price IS the rank-0
++  // intrinsic — but not on the first pass after a deploy, or after a partially
++  // executed plan. So the queued count is measured and divided back out, and
++  // `nodeMoneyMult` is left at 1 because the live price already carries it.
++  let plan = null
++  if (canBuyAug) {
++    const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
++    const installedCount = count(sing.getOwnedAugmentations(false))
++    const allCount = count(sing.getOwnedAugmentations(true))
++    const held = []
++    for (const [name, n] of allCount) {
++      for (let i = 0; i < n - (installedCount.get(name) ?? 0); i++) held.push(name)
++    }
++    const r = BASE_PRICE_MULT // SF11 is not held; genericPriceMultiplier(lvl) when it is
++    const unqueue = Math.pow(r, held.filter((a) => !isSoa(a)).length)
++
+     const offers = []
+     for (const f of player.factions) {
++      const rep = sing.getFactionRep(f)
+       for (const aug of sing.getAugmentationsFromFaction(f)) {
+-        if (owned.has(aug) && aug !== 'NeuroFlux Governor') continue
+-        const rep = sing.getAugmentationRepReq(aug)
+-        if (sing.getFactionRep(f) < rep) continue
+-        offers.push({ faction: f, aug, price: sing.getAugmentationPrice(aug) })
+-      }
+-    }
+-    offers.sort((a, b) => b.price - a.price)
+-    for (const o of offers) {
+-      if (ns.getServerMoneyAvailable('home') < o.price) continue
+-      if (sing.purchaseAugmentation(o.faction, o.aug)) {
+-        queued++
+-        did.push(`queued ${o.aug} ($${(o.price / 1e6).toFixed(0)}m)`)
++        // NeuroFlux is the only repeatable augmentation (AugmentationHelpers.ts:117-120).
++        if (allCount.has(aug) && aug !== NFG) continue
++        offers.push({
++          name: aug,
++          faction: f,
++          baseCost: sing.getAugmentationPrice(aug) / (isSoa(aug) ? 1 : unqueue),
++          repReq: sing.getAugmentationRepReq(aug),
++          factionRep: rep,
++          mults: sing.getAugmentationStats(aug),
++          prereqs: sing.getAugmentationPrereq(aug),
++          // The live NFG price already carries 1.14^getLevel(), so the planner
++          // starts its own chain at 0 rather than double-counting the level.
++          nfgLevel: 0,
++        })
+       }
+     }
+-  } else if (!canBuyAug) {
+-    todo.push('Augmentation purchases need Source-File 4 — buy them in the Factions UI, MOST EXPENSIVE FIRST (money cost multiplies 1.9x per already-queued aug; reputation cost does not).')
++
++    plan = planPurchases({
++      offers,
++      money: ns.getServerMoneyAvailable('home'),
++      r,
++      nodeMoneyMult: 1, // already in the live price
++      owned: [...installedCount.keys()],
++      soaOwned: [...allCount.keys()].filter(isSoa).length,
++    })
++    // A planner that silently fell back to a heuristic must say so, every pass.
++    if (!plan.exact) did.push(`plan is APPROXIMATE: ${plan.approximation}`)
++    for (const rgroup of plan.restricted) did.push(`plan restricted: ${rgroup.why} (${rgroup.group.join(' -> ')})`)
++  } else {
++    todo.push('Augmentation purchases need Source-File 4 — buy them in the Factions UI, MOST EXPENSIVE FIRST (money cost multiplies 1.9x per already-queued aug; reputation cost does not), and buy a prerequisite BEFORE the augmentation that needs it.')
+   }
+ 
+-  // --- 5. install ------------------------------------------------------------
+-  // Money and purchased servers are destroyed by an install; home RAM and
+-  // augmentations survive. So there is never a reason to hold cash through one.
+-  // THE WHOLE PENDING QUEUE, not just what this run bought.
+-  //
+-  // `queued` counts purchases made in THIS pass. The decision is about
+-  // everything waiting to be installed, which includes anything bought on an
+-  // earlier pass and then held — so it is read from the game rather than
+-  // counted locally. getOwnedAugmentations(true) includes purchased-but-not-
+-  // installed; (false) is the installed set; the difference is the queue.
+-  //
+-  // MULTISET difference, not a Set difference. getOwnedAugmentations(true)
+-  // returns installed names CONCATENATED with queued names, duplicates included
+-  // (Singularity.ts:79-90). NeuroFlux Governor is stackable, so it is routinely
+-  // both installed AND queued several times over — with a Set, `!installed.has(a)`
+-  // discarded every queued NeuroFlux, and NFG is the aug most often queued.
+-  //
+-  // The effect was silent and exactly wrong: four queued NeuroFlux Governors
+-  // (M = 1.1268) reported as a single exp-only Neurotrainer (M = 1.0000), so the
+-  // gate held on evidence it should have counted and would have kept holding
+-  // while augmentations piled up unused.
++  // --- 5. the gate, then execute the plan and install ------------------------
++  //
++  // THE CHICKEN AND EGG, and its fix.
++  //
++  // installgate.js decides on `M` over the QUEUED augmentations. Move purchasing
++  // to "plan now, buy at install time" and nothing is ever queued, so M is always
++  // 1, `shouldInstall` returns "the queued augmentations give no gain", and the
++  // gate NEVER FIRES. The run would then accumulate money forever and never
++  // install — which in a node whose exit is multiplier-bound is the single worst
++  // failure mode available (installgate.js, "a gate that refuses to install is
++  // not conservative — it is the failure mode").
++  //
++  // The fix is to evaluate the PLANNED set rather than the queued set. That is
++  // strictly better than the old behaviour, not merely equivalent:
++  //
++  //   - it is forward-looking. The gate sees what the money COULD buy, including
++  //     a threshold reputation has just crossed, before a dollar is committed.
++  //   - the marginal-versus-average rule is unchanged. Planned M rises for
++  //     exactly the reasons queued M used to rise (money accumulating,
++  //     reputation crossing requirements) and flattens for exactly the reasons
++  //     it used to flatten — so `d ln(M)/dt < ln(M)/A` still means "accumulation
++  //     has stalled, cash in".
++  //   - it removes the reason the old loop was wrong. Nothing is bought
++  //     opportunistically at minute 5 and then repriced at 1.9x for everything
++  //     that follows.
++  //
++  // M IS THE PRODUCT OF BOTH SETS. Anything already queued from a previous pass
++  // (or from a partially executed plan) will also be installed, so it counts —
++  // planned M alone would under-report and the gate would hold on a queue it
++  // should be cashing in.
++  //
++  // THE THRASH GUARD STILL HOLDS, for a different reason than before.
++  // installgate.js's header argues the gate cannot fire twice in a row because
++  // an install sets money to $1,262 (PlayerObjectGeneralMethods.ts:102) and M is
++  // therefore 1. Under this change the argument becomes "nothing is affordable
++  // at $1,262, so the PLAN is empty and M is 1". That is still true, but it is
++  // now a property of the planner rather than of the queue — so it is asserted
++  // in tools/staging/augplan/augplan.test.mjs [AP9] instead of left as prose.
++  const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
+   let pending = []
+   if (canBuyAug) {
+-    const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
++    // MULTISET difference, not a Set difference. getOwnedAugmentations(true)
++    // returns installed names CONCATENATED with queued names, duplicates
++    // included (Singularity.ts:79-90). NeuroFlux Governor is stackable, so with
++    // a Set every queued NeuroFlux was discarded — four of them (M = 1.1268)
++    // reported as M = 1.0000, and the gate held on evidence it should have
++    // counted.
+     const installed = count(sing.getOwnedAugmentations(false))
+     for (const [name, n] of count(sing.getOwnedAugmentations(true))) {
+       for (let i = 0; i < n - (installed.get(name) ?? 0); i++) pending.push(name)
+     }
+   }
+ 
+-  if (pending.length > 0) {
+-    // installgate.js owns the economics. The rule is marginal-versus-average on
++  const heldM = progressFactor(pending.map((a) => sing.getAugmentationStats(a)))
++  const M = heldM * (plan ? plan.M : 1)
++  const total = pending.length + (plan ? plan.buy.length : 0)
++
++  if (total > 0) {
++    // installgate.js owns the decision. The rule is marginal-versus-average on
+     // ln(M)/A, so it needs the PREVIOUS sample — which means this file has to
+     // persist one between runs. progress.js is a job: it exits after every
+     // pass, so nothing survives in memory.
+@@ -383,28 +489,89 @@
+ 
+     const gate = shouldInstall({
+       ageMs: Date.now() - (info?.lastAugReset ?? 0),
+-      M: progressFactor(pending.map((a) => sing.getAugmentationStats(a))),
+-      queued: pending.length,
++      M,
++      queued: total,
+       prev,
+     })
+ 
+     // Persist BEFORE acting. An install never returns, so a write afterwards
+     // would never happen and the next life would start with no history — and
+     // the lastAugReset stamp is what stops that stale sample being reused.
+-    ns.write(GATE, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset, pending, ...gate }, null, 2), 'w')
++    // The plan goes in the file too: "what would we have bought, and what was
++    // one faction errand away" is the question this file is asked after the
++    // fact, and it cannot be reconstructed from the save.
++    ns.write(
++      GATE,
++      JSON.stringify(
++        {
++          at: new Date().toISOString(),
++          lastAugReset: info?.lastAugReset,
++          pending,
++          heldM,
++          plannedM: plan ? plan.M : 1,
++          plan: plan ? { buy: plan.buy, totalCost: plan.totalCost, exact: plan.exact, stats: plan.stats, skipped: plan.skipped.slice(0, 20) } : null,
++          ...gate,
++        },
++        null,
++        2,
++      ),
++      'w',
++    )
+ 
+     if (!canInstall || flags['no-install'] || flags.dry) {
+-      todo.push(`${pending.length} augmentation(s) queued — ${gate.why}`)
++      todo.push(`${pending.length} queued + ${plan ? plan.buy.length : 0} planned (M=${M.toFixed(4)}) — ${gate.why}`)
+     } else if (gate.install) {
+-      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, installing: pending.length, gate }, null, 2), 'w')
+-      did.push(`installing ${pending.length} augmentation(s) — ${gate.why}`)
+-      sing.installAugmentations('boot.js')
+-      return // the game reloads; boot.js brings the stack back up
++      // EXECUTE THE PLAN, IN ORDER, RE-PRICING AS WE GO.
++      //
++      // A plan is computed from a snapshot and money moves between the snapshot
++      // and the spend. Buying blind against a stale price is the "plan that
++      // cannot be executed, discovered by failing" shape in CLAUDE.md's table —
++      // planBatch's 7,274 placement failures reporting health: stalled. So each
++      // purchase re-reads the price the game will actually charge and stops if
++      // it has drifted, rather than silently buying something else at a rank the
++      // plan never priced.
++      const bought = []
++      if (plan) {
++        for (const item of plan.buy) {
++          const live = sing.getAugmentationPrice(item.name)
++          const drift = Math.abs(live - item.price) / Math.max(item.price, 1)
++          if (drift > 0.01) {
++            did.push(`STOPPED executing the plan at ${item.name}: planned $${item.price.toFixed(0)}, game says $${live.toFixed(0)} (${(drift * 100).toFixed(1)}% drift) — the plan is stale`)
++            break
++          }
++          if (ns.getServerMoneyAvailable('home') < live) {
++            did.push(`STOPPED executing the plan at ${item.name}: $${live.toFixed(0)} needed, $${ns.getServerMoneyAvailable('home').toFixed(0)} held — the plan over-spent`)
++            break
++          }
++          if (!sing.purchaseAugmentation(item.faction, item.name)) {
++            // The shipped file ignored this return value entirely, which is how
++            // a prerequisite failure stayed invisible.
++            did.push(`REFUSED by the game: ${item.name} from ${item.faction} — rep, money or an unmet prerequisite`)
++            break
++          }
++          bought.push(item.name)
++        }
++      }
++      const installing = pending.length + bought.length
++      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate }, null, 2), 'w')
++      did.push(`bought ${bought.length} of ${plan ? plan.buy.length : 0} planned; installing ${installing} augmentation(s) — ${gate.why}`)
++      if (installing === 0) {
++        // Nothing to install and nothing bought: do NOT call installAugmentations,
++        // which would prestige for no gain. Say so instead.
++        todo.push('the gate fired but no augmentation could be bought — check /tel/installgate.txt for the plan and why each purchase was refused')
++      } else {
++        sing.installAugmentations('boot.js')
++        return // the game reloads; boot.js brings the stack back up
++      }
+     } else {
+       // Holding is a decision, not silence: published every pass with the
+       // numbers behind it, so a gate that is stuck can be told from one that is
+       // correctly waiting.
+       did.push(gate.why)
++      if (plan && plan.skipped.length) {
++        const near = plan.skipped.filter((s) => s.why === 'reputation').sort((a, b) => a.short - b.short)[0]
++        if (near) todo.push(`${Math.round(near.short).toLocaleString()} more ${near.faction} reputation unlocks ${near.name}`)
++      }
+     }
+   }
+ 

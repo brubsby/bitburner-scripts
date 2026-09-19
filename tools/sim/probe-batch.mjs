@@ -3,6 +3,13 @@
 // state machine counters, which the summary table cannot show.
 //
 //   node tools/sim/probe-batch.mjs --gb 3072 --minutes 20 --opts '{"spill":"none"}'
+//
+// NOT CALIBRATED. This is a debugger, not a model: it exists to show which
+// internal counter is moving, and nothing it prints has been checked against
+// the live game. Counters (placement failures, drains, unsafe skips) are worth
+// reading; the dollar and rate columns are not evidence for anything. If you
+// want a number to act on, use target-count.mjs or verify-alloc-shipped.mjs,
+// both of which assert against .telemetry/batch.txt first.
 
 import { Sim } from "./engine.mjs";
 import { atTotalRam, shippedLoop } from "./strategies.mjs";

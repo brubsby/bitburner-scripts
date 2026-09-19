@@ -10,6 +10,7 @@
 
 import { WebSocketServer } from "ws";
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -20,9 +21,14 @@ const RFA_PORT = Number(process.env.RFA_PORT ?? 12525);
 const CTL_PORT = Number(process.env.CTL_PORT ?? 12526);
 const TEL_DIR = process.env.TEL_DIR ?? path.join(ROOT, ".telemetry");
 const SAVE_POLL_MS = Number(process.env.SAVE_POLL_MS ?? 30_000);
+// Deploy drift: a cheap metadata screen runs on every telemetry poll; every
+// DRIFT_FULL_EVERY polls it compares full content instead, and every
+// DRIFT_SWEEP_EVERY polls it also checks the copies on other servers.
+const DRIFT_FULL_EVERY = Number(process.env.DRIFT_FULL_EVERY ?? 10); // ~5 min
+const DRIFT_SWEEP_EVERY = Number(process.env.DRIFT_SWEEP_EVERY ?? 20); // ~10 min
 
 // Directories we never sync into the game.
-const SKIP_DIRS = new Set(["node_modules", "tools", "archive", "min", ".git", ".telemetry", ".idea"]);
+const SKIP_DIRS = new Set(["node_modules", "tools", "variants", "archive", "min", ".git", ".telemetry", ".idea"]);
 
 fs.mkdirSync(TEL_DIR, { recursive: true });
 
@@ -70,6 +76,49 @@ function rpc(method, params) {
  */
 const knownHosts = new Set(["home"]);
 
+/* ---------------------------------------------------------- verification */
+
+// The push is not reliable. On 2026-09-12 two consecutive edits (boot.js,
+// watchdog.js) never reached the game; nothing reported an error and the game
+// kept running the old code, so the fix looked applied and had no effect. Twice
+// that cost a debugging session. Everything below exists so that stops being
+// something a human has to remember to check.
+//
+// Two distinct failures are covered, because they need different mechanisms:
+//   1. the push ran but did not land  -> readback(), right after every push
+//   2. the watcher never fired at all -> driftCheck(), on the telemetry poll
+// Only (1) is visible from inside pushFile; (2) is invisible by construction,
+// since the code that would notice is the code that never ran.
+
+const sha = (s) => crypto.createHash("sha256").update(s, "utf8").digest("hex").slice(0, 8);
+
+function loud(lines) {
+  const width = Math.max(...lines.map((l) => l.length)) + 2;
+  log("!".repeat(width));
+  for (const l of lines) log("! " + l);
+  log("!".repeat(width));
+}
+
+/** Read a file straight back out of the game and confirm it is what we sent. */
+async function readback(remote, content, server) {
+  try {
+    const got = await rpc("getFile", { filename: remote, server });
+    if (got === content) return true;
+    loud([
+      `PUSH DID NOT LAND: ${remote} on ${server}`,
+      `  sent ${sha(content)} (${Buffer.byteLength(content)}B), game has ${sha(got)} (${Buffer.byteLength(got)}B)`,
+      `  the game is running OLD CODE for this file — curl -s localhost:12526/sync`,
+    ]);
+  } catch (e) {
+    loud([
+      `PUSH DID NOT LAND: ${remote} on ${server}`,
+      `  readback failed: ${e.message ?? e}`,
+      `  the game is running OLD CODE for this file — curl -s localhost:12526/sync`,
+    ]);
+  }
+  return false;
+}
+
 /**
  * Push to home, then overwrite any copy of the same file living on another
  * server.
@@ -93,15 +142,20 @@ async function propagate(remote, content) {
     }
   }
   for (const host of targets) {
-    await rpc("pushFile", { filename: remote, content, server: host }).catch((e) =>
-      log(`propagate ${remote} -> ${host} failed: ${e.message ?? e}`),
+    const sent = await rpc("pushFile", { filename: remote, content, server: host }).then(
+      () => true,
+      (e) => {
+        log(`propagate ${remote} -> ${host} failed: ${e.message ?? e}`);
+        return false;
+      },
     );
+    if (sent) await readback(remote, content, host);
   }
   if (targets.length) log(`  propagated ${remote} to ${targets.length} other server(s): ${targets.join(", ")}`);
   return targets.length;
 }
 
-async function pushFile({ local, remote }) {
+async function pushFile({ local, remote }, { verify = true } = {}) {
   const content = fs.readFileSync(local, "utf8");
   await rpc("pushFile", { filename: remote, content, server: "home" });
   let ram = null;
@@ -112,6 +166,12 @@ async function pushFile({ local, remote }) {
   ramCache.set(remote, ram);
   const delta = typeof ram === "number" && typeof prev === "number" && ram !== prev ? ` (was ${prev}GB)` : "";
   log(`push ${remote}${typeof ram === "number" ? ` — ${ram}GB${delta}` : ram ? ` — RAM: ${ram}` : ""}`);
+  // Read it straight back. A push that is ACKed and silently does nothing is
+  // the failure this daemon has actually produced, and one cheap round trip
+  // catches it at the moment it happens rather than two debugging sessions
+  // later. syncAll passes verify:false and checks the whole set once at the end
+  // instead, so a 66-file sync does not double its RPC count.
+  if (verify) await readback(remote, content, "home");
   // Only scripts get copied around in-game, and only worth doing once we have
   // seen the server list at least once.
   if (/\.(js|jsx|ts|tsx)$/.test(remote) && knownHosts.size > 1) await propagate(remote, content);
@@ -128,7 +188,7 @@ async function syncAll() {
   const invalid = [];
   for (const f of files) {
     try {
-      const ram = await pushFile(f);
+      const ram = await pushFile(f, { verify: false });
       ok++;
       if (typeof ram === "string") invalid.push(f);
     } catch (e) {
@@ -142,7 +202,101 @@ async function syncAll() {
   }
   log(`initial sync: ${ok}/${files.length} files`);
   if (errors.length) log("sync errors:\n  " + errors.join("\n  "));
-  return { ok, total: files.length, errors };
+  const drift = await driftCheck({ sweepOthers: true, full: true });
+  return { ok, total: files.length, errors, drift };
+}
+
+/**
+ * Compare every tracked file against the game and shout about anything that
+ * does not match.
+ *
+ * This is the half that catches a push which never happened. fs.watch can drop
+ * events — and when it does, no code in the push path runs, so the push path
+ * cannot notice. Only an independent periodic comparison can. It runs on the
+ * telemetry poll (one extra getAllFiles per 30s) and sweeps the other servers
+ * every DRIFT_SWEEP_EVERY polls, because a copy scp'd elsewhere goes stale on
+ * its own schedule and home looking correct proves nothing about it.
+ *
+ * It reports; it never repairs. A self-healing check would hide how often the
+ * push is broken, and silently rewriting files under a running game is exactly
+ * the class of surprise this project does not need.
+ */
+let lastDriftKey = "";
+
+async function driftCheck({ sweepOthers = false, full = false } = {}) {
+  if (!socket || socket.readyState !== socket.OPEN) return null;
+  const tracked = new Map(trackedFiles().map((f) => [f.remote, { local: f.local, mtime: fs.statSync(f.local).mtimeMs }]));
+  const problems = [];
+  const read = (remote) => fs.readFileSync(tracked.get(remote).local, "utf8");
+
+  /** Confirm a suspicion by exact content compare, so nothing is reported on a heuristic alone. */
+  const confirm = async (remote, host) => {
+    const disk = read(remote);
+    const got = await rpc("getFile", { filename: remote, server: host }).catch(() => null);
+    if (got === null) problems.push(`MISSING on ${host}: ${remote} (disk ${sha(disk)})`);
+    else if (got !== disk) problems.push(`STALE on ${host}: ${remote} — disk ${sha(disk)}, game ${sha(got)}`);
+  };
+
+  try {
+    if (full) {
+      const inGame = new Map((await rpc("getAllFiles", { server: "home" })).map((f) => [f.filename, f.content]));
+      for (const remote of tracked.keys()) {
+        const got = inGame.get(remote);
+        const disk = read(remote);
+        if (got === undefined) problems.push(`MISSING on home: ${remote} (disk ${sha(disk)})`);
+        else if (got !== disk) problems.push(`STALE on home: ${remote} — disk ${sha(disk)}, game ${sha(got)}`);
+      }
+    } else {
+      // getAllFiles on home moves ~2MB and costs the game's main thread
+      // 150-300ms; at poll frequency that is not free. getAllFileMetadata is
+      // ~34ms and is enough to *screen*: the game stamps mtime on every write
+      // (Paths/FileMetadata.ts:26, set via Script.ts:38), so a disk mtime newer
+      // than the game's means the game has not received the file since it was
+      // last saved — which is exactly the bug. Size catches an in-game
+      // overwrite. Only suspects get their content fetched and compared.
+      const meta = new Map((await rpc("getAllFileMetadata", { server: "home" })).map((m) => [m.filename, m]));
+      for (const [remote, f] of tracked) {
+        const m = meta.get(remote);
+        if (!m) problems.push(`MISSING on home: ${remote} (disk ${sha(read(remote))})`);
+        else if (f.mtime > m.mtime || m.size !== Buffer.byteLength(read(remote))) await confirm(remote, "home");
+      }
+    }
+  } catch (e) {
+    log(`drift check failed: ${e.message ?? e}`);
+    return null;
+  }
+
+  // Other servers only carry copies, and only a handful of files each, so the
+  // name list is enough to decide what is worth fetching. Home looking correct
+  // proves nothing about these — that is the second trap in CLAUDE.md.
+  if (sweepOthers) {
+    for (const host of knownHosts) {
+      if (host === "home") continue;
+      try {
+        for (const name of await rpc("getFileNames", { server: host })) {
+          if (tracked.has(name)) await confirm(name, host);
+        }
+      } catch {
+        // Server deleted since the last save, or not rooted any more.
+      }
+    }
+  }
+
+  const key = problems.join("\n");
+  if (problems.length && key !== lastDriftKey) {
+    loud([
+      `DEPLOY OUT OF SYNC — ${problems.length} file(s) in the game do not match disk`,
+      ...problems.map((p) => "  " + p),
+      `  the game is running OLD CODE — curl -s localhost:12526/sync`,
+      `  detail: node tools/verify-deploy.mjs`,
+    ]);
+  } else if (problems.length) {
+    log(`still out of sync: ${problems.length} file(s) — node tools/verify-deploy.mjs`);
+  } else if (lastDriftKey) {
+    log("deploy back in sync");
+  }
+  lastDriftKey = key;
+  return problems;
 }
 
 /* -------------------------------------------------------------- telemetry */
@@ -315,7 +469,19 @@ wss.on("connection", (ws) => {
   })();
 });
 
-setInterval(pollTelemetry, SAVE_POLL_MS);
+let pollCount = 0;
+setInterval(async () => {
+  await pollTelemetry();
+  // Piggy-backed on the existing poll rather than given its own timer, so the
+  // two never interleave RPCs on the same socket. The cheap metadata screen
+  // runs every poll; the exact full compare and the other-server sweep are
+  // rarer, because they cost the game's main thread real milliseconds.
+  pollCount++;
+  await driftCheck({
+    sweepOthers: pollCount % DRIFT_SWEEP_EVERY === 0,
+    full: pollCount % DRIFT_FULL_EVERY === 0,
+  }).catch((e) => log(`drift check error: ${e.message ?? e}`));
+}, SAVE_POLL_MS);
 
 /* ------------------------------------------------------------ file watcher */
 
@@ -364,6 +530,15 @@ http
             tracked: trackedFiles().length,
             lastTelemetry: lastDigest?.at ?? null,
           });
+        }
+        // Rooted hosts from the last decoded save. The RFA has no "list
+        // servers" method, so without this tools/verify-deploy.mjs has to pull
+        // and gunzip the whole save just to learn where to look.
+        if (url.pathname === "/hosts") return send(200, { hosts: [...knownHosts] });
+        if (url.pathname === "/verify") {
+          const problems = await driftCheck({ full: true, sweepOthers: !url.searchParams.has("home-only") });
+          if (problems === null) return send(503, { error: "game not connected" });
+          return send(problems.length ? 409 : 200, { ok: !problems.length, problems });
         }
         if (url.pathname === "/state") return send(200, lastDigest ?? {});
         if (url.pathname === "/poll") {

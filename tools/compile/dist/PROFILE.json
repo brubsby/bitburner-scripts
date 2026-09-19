@@ -1,0 +1,53 @@
+{
+  "bitNode": 4,
+  "sf": {
+    "1": 1
+  },
+  "homeRam": 32,
+  "homeStartRam": 32,
+  "homeRamMeasured": true,
+  "augs": [],
+  "bitNodeOptions": {
+    "sourceFileOverrides": {
+      "ctor": "JSONMap",
+      "data": []
+    },
+    "restrictHomePCUpgrade": false,
+    "disableGang": false,
+    "disableCorporation": false,
+    "disableBladeburner": false,
+    "disable4SData": false,
+    "disableHacknetServer": false,
+    "disableSleeveExpAndAugmentation": false
+  },
+  "source": "live save",
+  "caps": {
+    "CAP_SINGULARITY": true,
+    "SING_RAM_MULT": 1,
+    "CAP_GO_CHEAT": false,
+    "CAP_GANG": false,
+    "CAP_SLEEVE": false,
+    "CAP_CORPORATION": false,
+    "CAP_BLADEBURNER": false,
+    "CAP_GRAFTING": false,
+    "CAP_HACKNET_SERVERS": false,
+    "CAP_STANEK": false,
+    "CAP_STOCK_SHORT": false,
+    "CAP_STOCK_ORDERS": false,
+    "CAP_BN_MULTS": false
+  },
+  "stamp": "bn4/sf1.1",
+  "builtAt": "2026-09-13T18:00:40.856Z",
+  "files": [
+    "go.js",
+    "autobuy.js",
+    "autobuy-sing.js",
+    "profilecheck.js"
+  ],
+  "costs": {
+    "go.js": 17.8,
+    "autobuy.js": 3.15,
+    "autobuy-sing.js": 5.6,
+    "profilecheck.js": 2.7
+  }
+}

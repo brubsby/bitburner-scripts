@@ -12,8 +12,10 @@
 // so anything without a known solver is skipped rather than guessed at.
 
 import { findAnswer } from 'ctsolvers.js'
+import { bigintReviver } from 'ctbigint.js'
 
 const INPUT = '/tmp/contracts.json'
+
 
 export async function main(ns) {
   const flags = ns.flags([['dry', false]])
@@ -26,7 +28,7 @@ export async function main(ns) {
 
   let contracts
   try {
-    contracts = JSON.parse(ns.read(INPUT))
+    contracts = JSON.parse(ns.read(INPUT), bigintReviver)
   } catch (err) {
     ns.tprint(`ctsolve: cannot parse ${INPUT}: ${err}`)
     return

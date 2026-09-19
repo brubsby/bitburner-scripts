@@ -29,6 +29,13 @@
 const MONEY_FLOOR = 0.5
 const SECURITY_SLACK = 5
 
+// status.js references only ns.write (0GB) and ns.atExit is 0GB, so publishing
+// costs this script nothing — the same arithmetic that lets hgw.js publish and
+// still price at exactly 2.00GB. One write at startup and one on the way out,
+// never per cycle: this runs many-threaded on fleet hosts and every thread
+// shares the file.
+import { reporter } from 'status.js'
+
 export async function main(ns) {
   const target = ns.args[0] || 'n00dles'
   const floor = Number(ns.args[1]) > 0 ? Number(ns.args[1]) : MONEY_FLOOR
@@ -37,7 +44,13 @@ export async function main(ns) {
 
   ns.disableLog('ALL')
 
+  let cycles = 0
+  const note = reporter(ns, '/tel/early.txt', () => ({ target, floor, cycles }))
+  ns.atExit(() => note.exit('stopped', { detail: `early.js stopped on ${target}` }))
+  note('ok', { detail: `early.js working ${target} to a ${floor} money floor` })
+
   while (true) {
+    cycles++
     if (ns.getServerSecurityLevel(target) > securityThresh) {
       await ns.weaken(target)
     } else if (ns.getServerMoneyAvailable(target) < moneyThresh) {

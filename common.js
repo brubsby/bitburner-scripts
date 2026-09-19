@@ -66,9 +66,28 @@ export const getDetailedPlayerData = (ns) => {
   let player = ns.getPlayer();
   // change crimes.js to write calculated kills to a file to be read here
   player.karma = Math.abs(ns.heart.break());
-  player.kills = getItem(local_storage_keys.kills).kills || 0;
+  // TWO v1 LEFTOVERS, both fixed here after faction.js crashed the UI with
+  // `TypeError: Cannot read properties of undefined (reading 'kills')`.
+  //
+  // 1. getItem returns undefined for a key that was never written (it is a
+  //    localStorage read with no default), and nothing in the current stack
+  //    writes `kills` — the comment above says crimes.js was supposed to, and
+  //    crimes.js is not part of this run. So this threw on the FIRST call in a
+  //    fresh save. The throw raised a modal error dialog, and that modal blocked
+  //    the terminal, which wedged cmd.js mid-batch while it held the global UI
+  //    lock — one unguarded property access took out the command bridge and
+  //    everything downstream of it for fifteen minutes.
+  //
+  // 2. `player.hacking_skill` has not existed since v1; v3's getPlayer returns
+  //    skills under `player.skills` (NetscriptFunctions.ts:1371-1389). This
+  //    assigned `undefined` to `player.hacking`, which is the field faction.js
+  //    compares against every faction's hacking requirement — so it was not
+  //    merely crashing, it was silently mis-evaluating which factions are
+  //    reachable. `undefined >= n` is false, so every hacking-gated faction
+  //    looked permanently out of reach.
+  player.kills = getItem(local_storage_keys.kills)?.kills ?? ns.getPlayer().numPeopleKilled ?? 0;
 
-  player.hacking = player.hacking_skill;
+  player.hacking = player.skills?.hacking ?? 0;
 
   let hacknetNodes = [...Array(ns.hacknet.numNodes()).keys()]
     .map(ns.hacknet.getNodeStats);

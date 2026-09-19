@@ -1,0 +1,36 @@
+{
+  "name": "bitburner-scripts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bashrc.js",
+  "scripts": {
+    "daemon": "node tools/rfa-daemon.mjs",
+    "gosolver": "nice -n 19 node tools/go-solver.mjs --maxms 800 --poll 150",
+    "verify": "node tools/verify-deploy.mjs",
+    "verify:home": "node tools/verify-deploy.mjs --home-only",
+    "verify:json": "node tools/verify-deploy.mjs --json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brubsby/bitburner-scripts.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/brubsby/bitburner-scripts/issues"
+  },
+  "homepage": "https://github.com/brubsby/bitburner-scripts#readme",
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "jsdom@30.0.1": true
+  }
+}

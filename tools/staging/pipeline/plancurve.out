@@ -1,0 +1,117 @@
+[sim] physics: BitNode 4 (SF4.0)
+sim BitNode: 4  ScriptHackMoney = 0.2  ServerGrowthRate = 1  ServerWeakenRate = 1
+
+=== CHECK 0: batch.js inlined ports vs game source (BN4) ===
+batch.js:309-315 omits currentNodeMults.ScriptHackMoney (Hacking.ts:54) by design;
+the live calibration y is supposed to supply it. So expect phi0*0.2 == game phi.
+silver-helix       phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+phantasy           phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+iron-gym           phi0*SHM err -0.000% | chance err 0.000% | k err 0.000%
+max-hardware       phi0*SHM err -0.000% | chance err 0.000% | k err 0.000%
+zer0               phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+neo-net            phi0*SHM err -0.000% | chance err 0.000% | k err 0.000%
+harakiri-sushi     phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+hong-fang-tea      phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+nectar-net         phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+joesguns           phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+sigma-cosmetics    phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+foodnstuff         phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+n00dles            phi0*SHM err 0.000% | chance err 0.000% | k err 0.000%
+worst abs error: 0.0000% -> PORTS ARE EXACT
+
+=== CHECK 1: does planBatch score increase monotonically in h? ===
+If yes, hFit=floor(largestBlock/1.7) is ALWAYS binding and the plan tracks fleet fill.
+phantasy: hackTime 41.1s weakenTime 164.5s phi(cal) 4.026e-4 chance 0.7679 k 1.521e-3
+  h     g   w1   w2      gb     f%   $/batch     $/GB  blockNeeded  maxInFlight@2124  period
+  1     2    2    2     12.2    0.0      20.9k     1710      1.7GB        174     0.95s
+  2     2    2    2     13.9    0.1      41.7k     3002      3.4GB        152     1.08s
+  3     2    2    2     15.6    0.1      62.6k     4012      5.1GB        136     1.21s
+  4     3    2    2     19.1    0.2      83.5k     4381      6.8GB        111     1.48s
+  5     3    2    2     20.8    0.2     104.3k     5028      8.5GB        102     1.61s
+  6     3    2    2     22.4    0.2     125.2k     5576     10.2GB         94     1.75s
+  7     3    2    2     24.1    0.3     146.1k     6048     11.9GB         87     1.89s
+  8     4    2    2     27.6    0.3     166.9k     6048     13.6GB         76     2.16s
+ 11     4    2    2     32.7    0.4     229.5k     7019     18.7GB         64     2.57s
+ 15     5    2    2     41.3    0.6     313.0k     7587     25.5GB         51     3.22s
+ 20     7    2    2     53.3    0.8     417.3k     7836     34.0GB         39     4.22s
+ 26     8    3    2     66.9    1.0     542.5k     8103     44.2GB         31     5.31s
+ 34    11    3    2     85.8    1.4     709.4k     8268     57.8GB         24     6.85s
+ 45    15    3    3    113.3    1.8     938.9k     8291     76.5GB         18     9.14s
+ 59    18    4    3    144.1    2.4    1231.0k     8546    100.3GB         14    11.75s
+ 77    24    5    4    188.7    3.1    1606.6k     8516    130.9GB         11    14.95s
+101    31    6    4    243.4    4.1    2107.3k     8656    171.7GB          8    20.56s
+132    40    7    5    315.4    5.3    2754.1k     8732    224.4GB          6    27.41s
+172    53    9    6    411.4    6.9    3588.7k     8723    292.4GB          5    32.89s
+224    70   11    8    536.5    9.0    4673.7k     8711    380.8GB          3    54.82s
+292    92   14   10    699.4   11.8    6092.4k     8711    496.4GB          3    54.82s
+380   122   18   12    912.0   15.3    7928.5k     8694    646.0GB          2    82.23s
+494   161   23   16   1189.8   19.9   10307.1k     8663    839.8GB          1   164.47s
+643   217   30   21   1562.1   25.9   13415.9k     8588   1093.1GB          1   164.47s
+836   297   38   28   2056.4   33.7   17442.8k     8482   1421.2GB          1   164.47s
+1087   417   49   38   2729.9   43.8   22679.8k     8308   1847.9GB          1   164.47s
+1414   610   64   55   3679.5   56.9   29502.5k     8018   2403.8GB          1   164.47s
+1839   976   82   87   5130.0   74.0   38369.9k     7479   3126.3GB          1   164.47s
+2391  2375  107  210   8775.7   96.3   49887.1k     5685   4064.7GB          1   164.47s
+
+argmax of score(=$/GB, what planBatch maximises): h=132 gb=315.4 $/GB=8732 needs a 224.4GB contiguous block
+largest block on this fleet = 512GB (home) -> hFit = 301. Fleet blocks: 512,256,256,128,64x5,32x7,16x21,8x13,4
+
+=== CHECK 2: steady-state income vs h, at fleet 2124GB, n=1 ===
+income = (RAM/gb) batches in flight * $/batch / weakenTime  ==  RAM * $/GB / weakenTime
+(identical to $/GB up to a constant -> planBatch objective is CORRECT under RAM saturation)
+h=  1 gb=    12 inFlight= 174 period=  0.95s  income=$   22087/s  
+h=  2 gb=    14 inFlight= 152 period=  1.08s  income=$   38771/s  
+h=  3 gb=    16 inFlight= 136 period=  1.21s  income=$   51819/s  
+h=  4 gb=    19 inFlight= 111 period=  1.48s  income=$   56579/s  
+h=  5 gb=    21 inFlight= 102 period=  1.61s  income=$   64929/s  
+h=  6 gb=    22 inFlight=  94 period=  1.75s  income=$   72015/s  
+h=  7 gb=    24 inFlight=  87 period=  1.89s  income=$   78103/s  
+h=  8 gb=    28 inFlight=  76 period=  2.16s  income=$   78103/s  
+h= 11 gb=    33 inFlight=  64 period=  2.57s  income=$   90643/s  
+h= 15 gb=    41 inFlight=  51 period=  3.22s  income=$   97984/s  
+h= 20 gb=    53 inFlight=  39 period=  4.22s  income=$  101204/s  
+h= 26 gb=    67 inFlight=  31 period=  5.31s  income=$  104643/s  
+h= 34 gb=    86 inFlight=  24 period=  6.85s  income=$  106778/s  
+h= 45 gb=   113 inFlight=  18 period=  9.14s  income=$  107069/s  
+h= 59 gb=   144 inFlight=  14 period= 11.75s  income=$  110364/s  
+h= 77 gb=   189 inFlight=  11 period= 14.95s  income=$  109982/s  
+h=101 gb=   243 inFlight=   8 period= 20.56s  income=$  111789/s  
+h=132 gb=   315 inFlight=   6 period= 27.41s  income=$  112772/s  
+h=172 gb=   411 inFlight=   5 period= 32.89s  income=$  112656/s  
+h=224 gb=   537 inFlight=   3 period= 54.82s  income=$  112493/s  
+h=292 gb=   699 inFlight=   3 period= 54.82s  income=$  112498/s  
+h=380 gb=   912 inFlight=   2 period= 82.23s  income=$  112274/s  
+h=494 gb=  1190 inFlight=   1 period=164.47s  income=$  111877/s  
+h=643 gb=  1562 inFlight=   1 period=164.47s  income=$  110915/s  
+h=836 gb=  2056 inFlight=   1 period=164.47s  income=$  109541/s  
+h=1087 gb=  2730 inFlight=   1 period=164.47s  income=$  107293/s  
+h=1414 gb=  3680 inFlight=   1 period=164.47s  income=$  103549/s  
+h=1839 gb=  5130 inFlight=   1 period=164.47s  income=$   96594/s  
+h=2391 gb=  8776 inFlight=   1 period=164.47s  income=$   73415/s  
+
+=== CHECK 3: per-target economics, unconstrained h, all hackable targets ===
+host                maxM    wT(s)   bestH   gb    $/GB   income@2124GB/s   blockNeeded
+silver-helix         126.6m    311    643   1293    4026          27526       1093GB
+phantasy              67.5m    164    132    315    8732         112772        224GB
+iron-gym              56.3m    219    132    389    5527          53533        224GB
+max-hardware          28.1m    110    172    466    4730          91621        292GB
+zer0                  21.1m    146    172    429    3898          56630        292GB
+neo-net               14.1m    110    132    422    2841          55029        224GB
+harakiri-sushi        11.3m     73    132    368    3063          88990        224GB
+hong-fang-tea          8.4m     64     59    230    1769          58749        100GB
+nectar-net             7.7m     62     59    211    1856          63432        100GB
+joesguns               7.0m     46     77    323    1561          72577        131GB
+sigma-cosmetics        6.5m     39     45    304     940          50817         77GB
+foodnstuff             5.6m     37     34    401     480          27467         58GB
+n00dles                0.2m     37    494    896     111           6442        840GB
+
+If the fleet is split n ways, each target gets 2124/n and income scales linearly per target:
+ n   targets                                     total $/s   vs n=1
+ 1   phantasy                                      112772   1.000x
+ 2   phantasy,max-hardware                         102196   0.906x
+ 3   phantasy,max-hardware,harakiri-sushi           97794   0.867x
+ 4   phantasy,max-hardware,harakiri-sushi,joesg     91490   0.811x
+ 5   phantasy,max-hardware,harakiri-sushi,joesg     85878   0.762x
+ 6   phantasy,max-hardware,harakiri-sushi,joesg     81357   0.721x
+ 7   phantasy,max-hardware,harakiri-sushi,joesg     77824   0.690x
+ 8   phantasy,max-hardware,harakiri-sushi,joesg     74975   0.665x

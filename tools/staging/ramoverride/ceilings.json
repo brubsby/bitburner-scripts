@@ -1,0 +1,38 @@
+{
+  "bladeburner.js": {
+    "nonSing": 88.1,
+    "singBase": 0.5
+  },
+  "createProgram.js": {
+    "nonSing": 7.25,
+    "singBase": 5.5
+  },
+  "crime.js": {
+    "nonSing": 5.1,
+    "singBase": 15.5
+  },
+  "faction.js": {
+    "nonSing": 5.2,
+    "singBase": 21
+  },
+  "healer.js": {
+    "nonSing": 3.1,
+    "singBase": 0.5
+  },
+  "progress.js": {
+    "nonSing": 3.35,
+    "singBase": 39.1
+  },
+  "ramgrow.js": {
+    "nonSing": 1.6,
+    "singBase": 0
+  },
+  "sleeve.js": {
+    "nonSing": 37.25,
+    "singBase": 21
+  },
+  "training.js": {
+    "nonSing": 7.25,
+    "singBase": 7.5
+  }
+}

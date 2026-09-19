@@ -23,6 +23,19 @@
 //    earned whatever the servers started at. The level curve is the second
 //    observable and is nearly independent of it, since exp is paid per thread
 //    per op regardless of outcome.
+//
+// THIS IS THE SIMULATOR'S CALIBRATION, and it does not currently pass — read
+// the errors it prints rather than the fact that it ran. On the flat window the
+// real game earned $0 and the sim earns $6.01m; on the payout window the sim
+// over-predicts by $345-838m and the level gain by 14. The errors are printed
+// per variant in the `err` columns and are the point of the harness.
+//
+// It also has a coverage limit worth stating out loud: both windows are at
+// 220GB-2.4TB and hacking level 89-188. The live fleet is 30PB at level 2900+.
+// Nothing in this repo has ever backtested the simulator at the scale it is now
+// being asked about, so a passing backtest here would still not license an
+// absolute income figure from run.mjs at PB scale. For a figure at today's
+// scale, use target-count.mjs, which asserts against .telemetry/batch.txt.
 
 import { Sim } from "../engine.mjs";
 import { loadSnapshot } from "../world.mjs";

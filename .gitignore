@@ -4,3 +4,9 @@ node_modules/
 NetscriptDefinitions.d.ts
 tools/sim/game.bundle.mjs
 tools/sim/.entry.generated.ts
+
+# built by tools/staging/contracts/build-contracts.mjs, like tools/sim/game.bundle.mjs
+tools/staging/contracts/contracts.bundle.mjs
+
+# game-save snapshots (59MB, the whole save): local only
+backups/
