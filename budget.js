@@ -168,8 +168,11 @@ export function reserveFor(spender, claims = {}, o = {}) {
     if ((key === 'join' || key === 'augmentations') && o.lnCompete) {
       const lc = o.lnCompete
       const fin = (x) => typeof x === 'number' && isFinite(x)
+      // The spender's figure may be Infinity — "what could I contest at
+      // all?" (gang.js asks that to size its search) — a rival's may not.
+      const own = typeof lc.lnPerDollar === 'number' && !Number.isNaN(lc.lnPerDollar) && lc.lnPerDollar > 0
       const rival = lc.rivals?.[key]
-      if (fin(lc.lnPerDollar) && lc.lnPerDollar > 0 && fin(rival) && rival >= 0 && lc.lnPerDollar > rival) continue
+      if (own && fin(rival) && rival >= 0 && lc.lnPerDollar > rival) continue
     }
 
     // A claim nobody could read is not a claim of zero. This is the direction

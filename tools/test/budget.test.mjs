@@ -321,7 +321,7 @@ export function run() {
   // ---------------------------------------------------------------------
   const c13 = new Check("BU13", "the ln(M) competition: join and augmentation claims yield to a spend with strictly more ln per dollar; unreadable rivals and the home claim hold");
   {
-    const { marginalLnPerDollar } = await import("../../budget.js");
+    const { marginalLnPerDollar } = b;
     const claims = { join: 100e9, augmentations: 5e9, home: { amount: 1e9, deltaGB: 512 } };
     c13.examined(1);
     if (reserveFor("gang", claims) !== 106e9) c13.fail("no competition: every claim held");
