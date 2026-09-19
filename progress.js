@@ -1731,8 +1731,22 @@ async function act(ns, canJoin, info) {
     // than a per-faction one. They are priced here all the same: an unjoinable
     // faction fails on its requirements, which is a measured refusal and is
     // reported, where an omission is not.
+    // BANNED FACTIONS ARE NOT CANDIDATES. Joining a faction marks every one
+    // of its enemies banned (FactionHelpers.tsx:46), and a banned faction can
+    // never invite (:50). Live: the chosen city set joined Chongqing, New
+    // Tokyo and Ishima in one pass, then the planner travelled to Aevum for
+    // an invitation that could no longer come and ordered work for it.
+    const banned = new Set()
+    for (const f of player.factions) {
+      try {
+        for (const e of sing.factionEnemies(f)) banned.add(e)
+      } catch {
+        /* unreadable enemies: nothing excluded, the game refuses the join itself */
+      }
+    }
     for (const name of ALL_FACTIONS) {
       if (player.factions.includes(name)) continue
+      if (banned.has(name)) continue
       try {
         const augs = []
         for (const aug of sing.factionAugs(name)) {
