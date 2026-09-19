@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel } from 'sfgate.js'
-import { GANG_FACTIONS } from 'gangplan.js'
+import { GANG_FACTIONS, gangRepAt, hoursToGangRep } from 'gangplan.js'
 // The whole faction space as data — see factions.js and [BC9].
 import { ALL_FACTIONS } from 'factions.js'
 import { reporter } from 'status.js'
@@ -788,6 +788,60 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     /* the probe is additive — failure leaves charisma unpriced, as before */
   }
 
+  // THE GANG CHANNEL'S UNLOCK TABLE and its calibration. Each gang-faction
+  // offer still rep-gated gets the hour the trajectory reaches it (Infinity:
+  // not inside the forecast horizon — a known answer, reported as null in
+  // JSON with `why`). The calibration scores the PRIOR pass's projection at
+  // the hours that have actually elapsed against the reputation now read —
+  // the same prospective loop the income model runs, since gang reputation
+  // has no history series to check backward against.
+  let gangOut = null
+  if (joinCtx?.gang) {
+    const gc = joinCtx.gang
+    const repIn = joinCtx.gangRepIn
+    const unlocks = []
+    if (gc.forecast) {
+      const repNow = gc.repNow
+      for (const of of offers) {
+        if (of.faction !== gc.faction || !(of.repReq > repNow)) continue
+        const atH = hoursToGangRep(gc.forecast, of.repReq, repNow, { facRepMult: gc.facRepMult, favor: gc.favor })
+        const h = atH === null ? null : Math.max(0, atH - gc.ageH)
+        unlocks.push({ name: of.name, repReq: of.repReq, atH: h !== null && isFinite(h) ? Math.round(h * 100) / 100 : null, ...(h === Infinity ? { why: `beyond the ${gc.forecast.horizonH}h forecast horizon` } : {}) })
+      }
+      unlocks.sort((a, b) => (a.atH ?? Infinity) - (b.atH ?? Infinity))
+    }
+    let calibration = null
+    const pg = prior.gang
+    if (pg?.repNow != null && pg.projected?.length && prior.lastAugReset === info?.lastAugReset && gc.repNow != null) {
+      const overH = (now - Date.parse(prior.at)) / 3600000
+      if (overH > 0.05) {
+        // Interpolate the prior projection at the elapsed hours.
+        let pred = null
+        const P = pg.projected
+        if (overH >= P[P.length - 1].h) pred = P[P.length - 1].rep
+        else for (let i = 1; i < P.length; i++) if (P[i].h >= overH) { const a = P[i - 1], b = P[i]; pred = a.rep + ((overH - a.h) / (b.h - a.h)) * (b.rep - a.rep); break }
+        const predictedGain = pred === null ? null : pred - pg.repNow
+        const actualGain = gc.repNow - pg.repNow
+        calibration = { overHours: Math.round(overH * 100) / 100, predictedGain: predictedGain === null ? null : Math.round(predictedGain * 1000) / 1000, actualGain: Math.round(actualGain * 1000) / 1000, ratio: predictedGain > 0 ? Math.round((actualGain / predictedGain) * 1000) / 1000 : null }
+      }
+    }
+    gangOut = {
+      faction: gc.faction,
+      repNow: gc.repNow ?? null,
+      favor: gc.favor ?? null,
+      facRepMult: gc.facRepMult ?? null,
+      respectPerSec: gc.respectPerSec ?? null,
+      repPerSecNow: gc.forecast && gc.facRepMult ? (gc.respectPerSec * gc.facRepMult * (1 + (gc.favor ?? 0) / 100)) / 75 : null,
+      forecastAgeMin: gc.ageH != null ? Math.round(gc.ageH * 60) : null,
+      why: gc.why ?? null,
+      // The projection this pass makes, for the next pass to score: rep at
+      // 0.25h steps out to 4h, then hourly to the horizon.
+      projected: gc.forecast ? [...Array.from({ length: 16 }, (_, i) => (i + 1) * 0.25), ...Array.from({ length: Math.max(0, Math.floor(gc.forecast.horizonH) - 4) }, (_, i) => 5 + i)].map((h) => ({ h, rep: Math.round((repIn(h) ?? 0) * 100) / 100 })) : null,
+      unlocks: unlocks.slice(0, 30),
+      calibration,
+    }
+  }
+
   const out = {
     at: new Date(now).toISOString(),
     lastAugReset: info?.lastAugReset,
@@ -825,6 +879,7 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     chaWeights,
     joinForecasts,
     unpriceable,
+    gang: gangOut,
     ...plan,
   }
   ns.write(SCHEDULE, JSON.stringify(out, null, 2), 'w')
@@ -1309,6 +1364,26 @@ async function act(ns, canJoin, info) {
     return g?.faction ?? factions.find((f) => GANG_FACTIONS.includes(f)) ?? null
   })()
   const workable = gangFaction ? factions.filter((f) => f !== gangFaction) : factions
+  // THE GANG CHANNEL: the gang faction's reputation arrives passively as
+  // gross respect x faction_rep x (1 + favor/100) / 75 (Gang.ts:152-155),
+  // along the trajectory gang.js publishes from gangplan.simulateGang. This
+  // is what the schedule and the install gate read it through. Absent
+  // (no gang, no fresh same-life forecast) the channel is null and the
+  // catalogue stays rep-gated at today's reputation — never a guess.
+  const gangCtx = (() => {
+    if (!gangFaction) return null
+    const g = readJson(ns, '/tel/gang.txt')
+    const fc = g?.forecast
+    if (!fc || !Array.isArray(fc.samples) || g.lastAugReset !== info?.lastAugReset) return { faction: gangFaction, forecast: null, why: 'no same-life forecast in /tel/gang.txt' }
+    const ageMs = Date.now() - Date.parse(fc.at)
+    if (!(ageMs < 20 * 60 * 1000)) return { faction: gangFaction, forecast: null, why: `forecast is ${Math.round(ageMs / 60000)} min old` }
+    const facRepMult = player.mults?.faction_rep
+    if (!(facRepMult > 0)) return { faction: gangFaction, forecast: null, why: 'faction_rep multiplier unreadable' }
+    // The forecast is aged: what it says for hour h is now hour h - age.
+    return { faction: gangFaction, forecast: fc, ageH: ageMs / 3600000, repNow: sing.factionRep(gangFaction), favor: sing.factionFavor(gangFaction), facRepMult, respectPerSec: fc.respectPerSec }
+  })()
+  /** Gang faction reputation `h` hours from now, or null without a forecast. */
+  const gangRepIn = (h) => (gangCtx?.forecast ? gangRepAt(gangCtx.forecast, h + gangCtx.ageH, gangCtx.repNow, { facRepMult: gangCtx.facRepMult, favor: gangCtx.favor }) : null)
 
   // READ THE WORK STATE FROM SINGULARITY, NOT FROM getPlayer().
   //
@@ -1778,7 +1853,7 @@ async function act(ns, canJoin, info) {
   // working the wrong faction?") and the body ("which one should we start?")
   // need the same answer. Computing it twice would also write the telemetry
   // twice and could disagree with itself between the two reads.
-  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta }) : null
+  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta, gang: gangCtx, gangRepIn }) : null
   let scheduleTarget = schedule?.current?.faction ?? null
   // THE GANG FACTION FIRST, in a node that allows a gang. Its catalogue
   // grows to almost every augmentation in the game once the gang exists, so
@@ -2374,16 +2449,24 @@ async function act(ns, canJoin, info) {
       // Offering them here is what completes the separation of powers — the
       // schedule prices the options, the gate's marginal-rate rule chooses.
       const holds = holdCandidates(schedule?.segments)
+      // The GANG candidates: each hour the gang trajectory unlocks a
+      // gang-faction offer (schedule.gang.unlocks, within 12h like the
+      // holds) is a wait worth pricing — and EVERY candidate advances the
+      // gang faction's reputation along that trajectory below, since it
+      // accrues during any wait whatever the work slot is doing.
+      const gangUnlockWaits = (schedule?.gang?.unlocks ?? []).filter((u) => typeof u.atH === 'number' && u.atH > 0 && u.atH <= 12).map((u) => ({ waitH: u.atH, gangUnlock: u.name }))
       const candidates = [
         ...[0.25, 0.5, 1, 2, 4].map((waitH) => ({ waitH })),
         ...holds.map((h) => ({ waitH: h.holdH, hold: h })),
+        ...gangUnlockWaits,
       ]
       for (const cand of candidates) {
-        const { waitH, hold } = cand
+        const { waitH, hold, gangUnlock } = cand
         const waitMs = waitH * 3600000
         try {
           const repGain = ftraj ? ftraj.repBetween(0, waitH, favMult) : 0
           const moneyGain = itraj ? itraj.moneyBy(waitH) : incomePerSec * waitH * 3600
+          const gangRep = gangRepIn(waitH)
           const f = planPurchases({
             // Advance the worked faction along its trajectory; a hold
             // additionally lifts ITS faction to the target the continuous
@@ -2392,6 +2475,7 @@ async function act(ns, canJoin, info) {
               let rep = o.factionRep
               if (repGain > 0 && o.faction === workingF) rep += repGain
               if (hold && o.faction === hold.faction) rep = Math.max(rep, hold.repTarget)
+              if (gangRep !== null && gangCtx && o.faction === gangCtx.faction) rep = Math.max(rep, gangRep)
               return rep !== o.factionRep ? { ...o, factionRep: rep } : o
             }),
             money: ns.getServerMoneyAvailable('home') + moneyGain,
@@ -2408,6 +2492,8 @@ async function act(ns, canJoin, info) {
               M: heldM * f.M,
               ...(repGain > 0 ? { repProjected: Math.round(repGain) } : {}),
               ...(hold ? { holdFor: hold.faction, holdRepTarget: Math.round(hold.repTarget) } : {}),
+              ...(gangRep !== null ? { gangRepProjected: Math.round(gangRep) } : {}),
+              ...(gangUnlock ? { gangUnlock } : {}),
               moneyProjected: Math.round(moneyGain),
             })
         } catch {

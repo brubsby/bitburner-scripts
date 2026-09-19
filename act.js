@@ -36,7 +36,7 @@ import { nextHomeUpgrade } from 'homecost.js'
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
 const ORDERS = '/tel/orders.txt'
-const HISTORY = '/tel/act-history.jsonl'
+const HISTORY = '/tel/act-history.txt'
 const ORDERS_FRESH_MS = 15 * 60 * 1000
 const ACTORS = {
   join: 'act-join.js',

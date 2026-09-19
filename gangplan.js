@@ -311,3 +311,162 @@ export function bestEquipment(m, owned, budget, disc, isHacking) {
   }
   return best
 }
+
+// ---------------------------------------------------------------------------
+// THE RESPECT TRAJECTORY. The gang faction cannot be worked (Singularity.ts
+// refuses workForFaction for it) — its reputation arrives passively as
+//
+//     rep += faction_rep x GROSS respect gained x (1 + favor/100) / 75
+//                                                          (Gang.ts:152-155)
+//
+// GROSS: ascension subtracts a member's earned respect from the gang's total
+// (Gang.ts:391) but never from the faction's reputation, so the reputation
+// trajectory integrates gains, not the respect balance. And the gains grow —
+// every cycle adds exp (GangMember.ts:calculateExpGain), the skill curve
+// lifts the stat weight, recruits arrive at 5^(n-3) respect — so a snapshot
+// rate underprices every unlock. This simulates the game's own loop under
+// gang.js's own assignment policy (assign(), re-run every step), which is
+// what gang.js will actually do, so the forecast is of the policy in force.
+//
+// Left out, both in the conservative direction: ascension (would raise
+// long-run exp multipliers) and equipment (would raise stats). Territory is
+// held constant (warfare is off until power dominates). Wanted follows
+// Gang.ts:157-166 with the per-process justice factor, at the game's
+// 10-cycle process granularity (GangConstants.minCyclesToProcess).
+// ---------------------------------------------------------------------------
+
+export const CYCLES_PER_PROCESS = 10 // GangConstants.minCyclesToProcess: 2000ms / 200ms
+
+/** A fresh recruit (GangMember constructor): every exp 0, every mult 1, no ascension. */
+export function freshMember(name) {
+  const m = { name, task: 'Unassigned', earnedRespect: 0, upgrades: [], augmentations: [] }
+  for (const s of STATS) {
+    m[`${s}_exp`] = 0
+    m[`${s}_mult`] = 1
+    m[`${s}_asc_points`] = 0
+    m[s] = skillOf(0, 1)
+  }
+  return m
+}
+
+/**
+ * Forward-simulate the gang. `g`: {respect, wantedLevel, territory, isHacking};
+ * `members`: getMemberInformation objects (stats, <stat>_exp, <stat>_mult,
+ * <stat>_asc_points); `o`: {softcap, horizonH=24, stepSec=60, mode}.
+ *
+ * Returns { samples: [{h, respect, gross, members, wantedLevel}], respectPerSec }
+ * — `gross` is cumulative gross respect gained since h=0 (the reputation
+ * integrand), `respectPerSec` the policy's rate at h=0 — or null when the
+ * inputs are unreadable. Samples are one per step, so callers interpolate.
+ */
+export function simulateGang(g, members, o = {}) {
+  if (!g || !num(g.respect) || !num(g.wantedLevel) || !num(g.territory) || typeof g.isHacking !== 'boolean') return null
+  if (!Array.isArray(members) || !num(o.softcap)) return null
+  const horizonH = num(o.horizonH) && o.horizonH > 0 ? o.horizonH : 24
+  const stepSec = num(o.stepSec) && o.stepSec > 0 ? o.stepSec : 60
+  const cyclesPerStep = Math.max(1, Math.round(stepSec / CYCLE_SEC))
+  const processesPerStep = Math.max(1, Math.round(cyclesPerStep / CYCLES_PER_PROCESS))
+  const ms = members.map((m) => {
+    const c = { ...m }
+    for (const s of STATS) {
+      if (!num(c[`${s}_exp`])) c[`${s}_exp`] = 0
+      if (!num(c[`${s}_mult`])) c[`${s}_mult`] = 1
+      if (!num(c[`${s}_asc_points`])) c[`${s}_asc_points`] = 0
+      c[s] = skillOf(c[`${s}_exp`], c[`${s}_mult`] * ascMult(c[`${s}_asc_points`]))
+    }
+    return c
+  })
+  const state = { respect: g.respect, wantedLevel: g.wantedLevel, territory: g.territory, isHacking: g.isHacking }
+  let gross = 0
+  let respectPerSec = null
+  let recruitIndex = 0
+  const samples = [{ h: 0, respect: state.respect, gross: 0, members: ms.length, wantedLevel: state.wantedLevel }]
+  const steps = Math.ceil((horizonH * 3600) / stepSec)
+  for (let i = 1; i <= steps; i++) {
+    // Recruit first, as gang.js does at the top of its loop.
+    while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
+    const plan = assign(state, ms, { softcap: o.softcap, mode: o.mode })
+    if (!plan) return null
+    if (respectPerSec === null) respectPerSec = plan.rates.respect
+    // Per-cycle gains at this step's stats and penalty (Gang.ts:processGains).
+    let respectGainPerCycle = 0
+    let wantedGainPerCycle = 0
+    let justice = 0
+    const tasks = ms.map((m) => TASK[plan.assignments[m.name]])
+    for (let k = 0; k < ms.length; k++) {
+      const t = tasks[k]
+      respectGainPerCycle += respectGain(state, ms[k], t, o.softcap)
+      wantedGainPerCycle += wantedGain(state, ms[k], t)
+      if (t.baseWanted < 0) justice++
+    }
+    const gained = respectGainPerCycle * cyclesPerStep
+    gross += gained
+    state.respect += gained
+    // Wanted: the game applies the justice factor once per process of 10 cycles.
+    for (let p = 0; p < processesPerStep; p++) {
+      if (state.wantedLevel !== 1 || wantedGainPerCycle >= 0) {
+        const old = state.wantedLevel
+        const next = (old + wantedGainPerCycle * CYCLES_PER_PROCESS) * (1 - justice * 0.001)
+        state.wantedLevel = next
+        if (state.wantedLevel < 1 || (wantedGainPerCycle <= 0 && state.wantedLevel > old)) state.wantedLevel = 1
+      }
+    }
+    // Exp and skills (Gang.ts:processExperienceGains).
+    for (let k = 0; k < ms.length; k++) {
+      const e = expGain(tasks[k], ms[k])
+      const m = ms[k]
+      for (const s of STATS) {
+        m[`${s}_exp`] += e[s] * cyclesPerStep
+        m[s] = skillOf(m[`${s}_exp`], m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
+      }
+    }
+    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, members: ms.length, wantedLevel: state.wantedLevel })
+  }
+  return { samples, respectPerSec: respectPerSec ?? 0, horizonH, stepSec }
+}
+
+/**
+ * Faction reputation at `h` hours along a forecast: repNow plus the gross
+ * respect gained by then, converted at the game's ratio. `o`: {facRepMult,
+ * favor}. Beyond the horizon the last sample's gross is held flat — a floor,
+ * never an extrapolation. null when anything is unreadable.
+ */
+export function gangRepAt(forecast, h, repNow, o = {}) {
+  if (!forecast || !Array.isArray(forecast.samples) || !forecast.samples.length || !num(h) || h < 0 || !num(repNow)) return null
+  if (!num(o.facRepMult) || o.facRepMult <= 0) return null
+  const favor = num(o.favor) && o.favor >= 0 ? o.favor : 0
+  const s = forecast.samples
+  let gross
+  if (h >= s[s.length - 1].h) gross = s[s.length - 1].gross
+  else {
+    let i = 1
+    while (i < s.length && s[i].h < h) i++
+    const a = s[i - 1]
+    const b = s[i]
+    const f = b.h === a.h ? 0 : (h - a.h) / (b.h - a.h)
+    gross = a.gross + f * (b.gross - a.gross)
+  }
+  return repNow + (o.facRepMult * gross * (1 + favor / 100)) / RESPECT_TO_REP
+}
+
+/**
+ * Hours until the gang faction's reputation reaches `target`, or Infinity
+ * when the forecast horizon does not reach it (known: not inside the
+ * horizon), or null when unreadable.
+ */
+export function hoursToGangRep(forecast, target, repNow, o = {}) {
+  if (!num(target)) return null
+  const r0 = gangRepAt(forecast, 0, repNow, o)
+  if (r0 === null) return null
+  if (target <= r0) return 0
+  const s = forecast.samples
+  for (let i = 1; i < s.length; i++) {
+    const rb = gangRepAt(forecast, s[i].h, repNow, o)
+    if (rb >= target) {
+      const ra = gangRepAt(forecast, s[i - 1].h, repNow, o)
+      const f = rb === ra ? 1 : (target - ra) / (rb - ra)
+      return s[i - 1].h + f * (s[i].h - s[i - 1].h)
+    }
+  }
+  return Infinity
+}

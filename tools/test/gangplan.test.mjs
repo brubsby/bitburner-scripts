@@ -196,5 +196,78 @@ export async function run() {
   }
   checks.push(c4);
 
+  // ---------------------------------------------------------------------
+  const c5 = new Check("GP5", "simulateGang steps the game's own loop: gross respect, wanted with the per-process justice factor, exp -> skill, recruits at 5^(n-3)");
+  {
+    const { simulateGang, freshMember, respectGain, wantedGain, expGain, skillOf, ascMult, assign, TASK, CYCLES_PER_PROCESS, CYCLE_SEC } = gp;
+    c5.examined(1);
+    if (CYCLES_PER_PROCESS !== 10) c5.fail("GangConstants.minCyclesToProcess is 2000ms / 200ms = 10 cycles");
+    // One 60-second step by hand, from a mid-strength gang under the same policy.
+    const g = { respect: 1000, wantedLevel: 10, territory: 1 / 7, isHacking: false };
+    const mk = (v) => { const m = freshMember("m" + v); for (const st of ["str", "def", "dex", "agi"]) { m[st + "_exp"] = Math.exp((v + 200) / 32) - 534.5; m[st] = v; } return m; };
+    const members = [mk(60), mk(80), mk(100)];
+    const sim = simulateGang(g, members, { softcap: 1, horizonH: 60 / 3600, stepSec: 60 });
+    if (!sim || sim.samples.length !== 2) c5.fail("a one-step horizon yields exactly two samples");
+    else {
+      const plan = assign(g, members.map((m) => ({ ...m })), { softcap: 1 });
+      const cycles = 300;
+      let r = 0, w = 0, justice = 0;
+      for (const m of members) { const t = TASK[plan.assignments[m.name]]; r += respectGain(g, m, t, 1); w += wantedGain(g, m, t); if (t.baseWanted < 0) justice++; }
+      const s1 = sim.samples[1];
+      if (Math.abs(s1.gross - r * cycles) > 1e-9) c5.fail(`gross respect after one step must be 300 x per-cycle gain: ${s1.gross} vs ${r * cycles}`);
+      if (Math.abs(s1.respect - (1000 + r * cycles)) > 1e-9) c5.fail("respect balance advances by the gross gain");
+      let wanted = 10;
+      for (let p = 0; p < 30; p++) wanted = (wanted + w * 10) * (1 - justice * 0.001);
+      if (Math.abs(s1.wantedLevel - wanted) > 1e-9) c5.fail(`wanted must follow 30 processes of (w + gain x 10) x (1 - justice/1000): ${s1.wantedLevel} vs ${wanted}`);
+      if (Math.abs(sim.respectPerSec - r / CYCLE_SEC) > 1e-12) c5.fail("respectPerSec is the policy's rate at h=0");
+    }
+    // Recruiting: 1000 respect admits 7 members (5^4 = 625 <= 1000 < 3125).
+    c5.examined(1);
+    const sim7 = simulateGang(g, members, { softcap: 1, horizonH: 60 / 3600, stepSec: 60 });
+    if (sim7 && sim7.samples[1].members !== 7) c5.fail(`1000 respect must recruit up to 7 members, got ${sim7?.samples[1].members}`);
+    // Exp -> skill over many steps: a member's stat must rise, and by the game's curve.
+    c5.examined(1);
+    const one = [mk(60)];
+    const long = simulateGang({ ...g, respect: 1 }, one, { softcap: 1, horizonH: 2, stepSec: 60 });
+    if (!long || !(long.samples.at(-1).gross > long.samples[60].gross - long.samples[0].gross)) c5.fail("gains must not fall as exp accrues");
+    const e = expGain(TASK["Mug People"], one[0]);
+    const expAfter = one[0].str_exp + e.str * 300;
+    if (!(skillOf(expAfter, 1) >= 60)) c5.fail("skill curve: exp only rises");
+    // Refusals.
+    c5.examined(1);
+    if (simulateGang(null, members, { softcap: 1 }) !== null) c5.fail("no gang -> null");
+    if (simulateGang(g, members, {}) !== null) c5.fail("no softcap -> null");
+    if (simulateGang({ ...g, isHacking: "no" }, members, { softcap: 1 }) !== null) c5.fail("unreadable isHacking -> null");
+    c5.note("one 60s step hand-stepped (gross, balance, wanted x30 processes, rate), recruit rule, 2h monotone gains, refusals");
+  }
+  checks.push(c5);
+
+  // ---------------------------------------------------------------------
+  const c6 = new Check("GP6", "gangRepAt / hoursToGangRep: rep = now + facRep x gross x (1+favor/100) / 75, interpolated; beyond the horizon is Infinity (known), unreadable is null");
+  {
+    const { gangRepAt, hoursToGangRep, RESPECT_TO_REP } = gp;
+    c6.examined(1);
+    if (RESPECT_TO_REP !== 75) c6.fail("GangRespectToReputationRatio is 75");
+    const fc = { samples: [{ h: 0, gross: 0 }, { h: 1, gross: 750 }, { h: 2, gross: 3000 }], horizonH: 2 };
+    const o = { facRepMult: 1.2, favor: 50 };
+    // 1h: 750 gross x 1.2 x 1.5 / 75 = 18 rep on top of 10.
+    if (Math.abs(gangRepAt(fc, 1, 10, o) - 28) > 1e-9) c6.fail(`rep at 1h must be 28, got ${gangRepAt(fc, 1, 10, o)}`);
+    // 0.5h interpolates gross linearly: 375 -> 9 rep.
+    if (Math.abs(gangRepAt(fc, 0.5, 10, o) - 19) > 1e-9) c6.fail("rep at 0.5h interpolates the gross");
+    // Beyond the horizon holds flat, never extrapolates.
+    if (Math.abs(gangRepAt(fc, 5, 10, o) - (10 + (3000 * 1.2 * 1.5) / 75)) > 1e-9) c6.fail("beyond the horizon the last gross is held");
+    // hoursToGangRep: 28 is reached at exactly 1h; 10 is now (0); 1e6 is beyond (Infinity); NaN target null.
+    if (Math.abs(hoursToGangRep(fc, 28, 10, o) - 1) > 1e-9) c6.fail("28 rep is reached at 1h");
+    if (hoursToGangRep(fc, 10, 10, o) !== 0) c6.fail("a target already held is 0 hours");
+    if (hoursToGangRep(fc, 1e6, 10, o) !== Infinity) c6.fail("beyond the horizon is Infinity, a known answer");
+    if (hoursToGangRep(fc, NaN, 10, o) !== null) c6.fail("an unreadable target is null");
+    if (gangRepAt(fc, 1, 10, { favor: 0 }) !== null) c6.fail("no faction_rep multiplier -> null, never 1");
+    if (gangRepAt(null, 1, 10, o) !== null) c6.fail("no forecast -> null");
+    // Favor unreadable -> 0 (never guessed upward).
+    if (Math.abs(gangRepAt(fc, 1, 10, { facRepMult: 1 }) - 20) > 1e-9) c6.fail("missing favor is 0");
+    c6.note("ratio 75, favor and faction_rep multipliers, interpolation, flat beyond horizon, Infinity vs null");
+  }
+  checks.push(c6);
+
   return checks;
 }

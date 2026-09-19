@@ -27,7 +27,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, simulateGang, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -59,6 +59,14 @@ export async function main(ns) {
   const softcap = bitNodeMults(info.currentNode)?.GangSoftcap
   let bought = []
   let ascended = []
+  // THE RESPECT FORECAST (gangplan.js simulateGang): the gang faction's
+  // reputation is respect / 75 and cannot be worked for, so progress.js
+  // prices its catalogue off this trajectory. Rebuilt every FORECAST_MS, one
+  // sample per 5 simulated minutes over 24h, under the assignment policy
+  // this file actually runs. Gross respect is what reputation integrates.
+  const FORECAST_MS = 60000
+  const HORIZON_H = 24
+  let forecast = null
 
   while (true) {
     try {
@@ -119,6 +127,21 @@ export async function main(ns) {
       for (const m of members) {
         const want = plan.assignments[m.name]
         if (want && m.task !== want) ns.gang.setMemberTask(m.name, want)
+      }
+
+      // Forecast, on the pre-ascension members: ascension is left out of the
+      // simulation (conservative), so feeding it post-ascension stats would
+      // not change what it says, and pre-ascension stats are what earn now.
+      if (!forecast || Date.now() - Date.parse(forecast.at) >= FORECAST_MS) {
+        const sim = simulateGang(gang, members, { softcap, mode: plan.mode, horizonH: HORIZON_H, stepSec: 60 })
+        forecast = sim
+          ? {
+              at: new Date().toISOString(),
+              horizonH: sim.horizonH,
+              respectPerSec: sim.respectPerSec,
+              samples: sim.samples.filter((x, i) => i % 5 === 0 || i === sim.samples.length - 1).map((x) => ({ h: +x.h.toFixed(4), gross: x.gross, respect: x.respect, members: x.members })),
+            }
+          : { at: new Date().toISOString(), why: 'simulateGang could not read the gang' }
       }
 
       // Ascend.
@@ -187,6 +210,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
+            forecast,
             recruited,
             ascended,
             bought,
