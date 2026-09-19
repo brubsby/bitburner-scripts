@@ -840,7 +840,17 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
       why: gc.why ?? null,
       // The economic horizon: what is left of this install window. gang.js
       // scores its policies by the unlock value reached inside it.
-      remainingWindowH: joinCtx?.state?.windowH > 0 ? Math.max(0, joinCtx.state.windowH - (joinCtx.state.lifeAgeH ?? 0)) : null,
+      remainingWindowH: (() => {
+        // The ledger's median window, floored by the install gate's own
+        // hold from the last pass — a life the gate is deliberately holding
+        // past the median is not over (the hacknet claimant learned this
+        // the same day: remainingLife in hacknetplan.js).
+        const ledger = joinCtx?.state?.windowH > 0 ? Math.max(0, joinCtx.state.windowH - (joinCtx.state.lifeAgeH ?? 0)) : null
+        const gate = readJson(ns, GATE)
+        const hold = gate && gate.lastAugReset === info?.lastAugReset && gate.install === false && gate.bestWait?.waitMs > 0 ? Math.max(0, (gate.bestWait.waitMs - (now - Date.parse(gate.at))) / 3600000) : null
+        if (ledger === null && hold === null) return null
+        return Math.max(ledger ?? 0, hold ?? 0)
+      })(),
       // The projection this pass makes, for the next pass to score: rep at
       // 0.25h steps out to 4h, then hourly to the horizon.
       projected: gc.forecast ? [...Array.from({ length: 16 }, (_, i) => (i + 1) * 0.25), ...Array.from({ length: Math.max(0, Math.floor(gc.forecast.horizonH) - 4) }, (_, i) => 5 + i)].map((h) => ({ h, rep: Math.round((repIn(h) ?? 0) * 100) / 100 })) : null,
