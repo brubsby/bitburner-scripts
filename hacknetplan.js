@@ -182,7 +182,11 @@ const fmtH = (h) => (h === Infinity ? 'never' : h < 1 ? `${(h * 60).toFixed(1)}m
  *   ledger — the planner's window from the lifetimes ledger (factionplan.txt):
  *            { windowH, lifeAgeH, ageMs }. A MEDIAN of past lives.
  *   gate   — the install gate's own decision (installgate.txt):
- *            { install, waitMs, ageMs }.
+ *            { install, waitMs, ageMs, passMs }. passMs is the planner's job
+ *            interval: a holding planner cannot install before it runs again,
+ *            so the hold is at least that long from the gate's stamp — without
+ *            it a 3-minute hold read on a 10-minute pass cadence left the
+ *            claimant blind for the 7 minutes in between.
  *
  * The failure this prevents (2026-09-19, BN2 second life): the ledger window
  * was 0.56h, the life was 1h old, and the gate was holding — "waiting 0.1h
@@ -196,7 +200,8 @@ const fmtH = (h) => (h === Infinity ? 'never' : h < 1 ? `${(h * 60).toFixed(1)}m
 export function remainingLife({ ledger, gate } = {}) {
   if (gate && gate.install === true) return { hours: 0, why: 'the install gate says install', source: 'gate' }
   const ledgerH = ledger && num(ledger.windowH) && ledger.windowH > 0 ? Math.max(0, ledger.windowH - (num(ledger.lifeAgeH) ? ledger.lifeAgeH : 0) - (num(ledger.ageMs) ? ledger.ageMs : 0) / 3600000) : null
-  const gateH = gate && gate.install === false && num(gate.waitMs) && gate.waitMs > 0 ? Math.max(0, (gate.waitMs - (num(gate.ageMs) ? gate.ageMs : 0)) / 3600000) : null
+  const holdMs = gate && gate.install === false ? Math.max(num(gate.waitMs) && gate.waitMs > 0 ? gate.waitMs : 0, num(gate.passMs) && gate.passMs > 0 ? gate.passMs : 0) : 0
+  const gateH = holdMs > 0 ? Math.max(0, (holdMs - (num(gate.ageMs) ? gate.ageMs : 0)) / 3600000) : null
   if (ledgerH === null && gateH === null) return { hours: null, why: 'neither the ledger window nor the install gate is readable', source: null }
   if (gateH === null) return { hours: ledgerH, why: null, source: 'ledger' }
   if (ledgerH === null) return { hours: gateH, why: null, source: 'gate' }

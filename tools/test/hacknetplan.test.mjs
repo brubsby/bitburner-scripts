@@ -122,7 +122,15 @@ export async function run() {
     // The wait already elapsed: the gate contributes 0, not a negative number.
     const late = remainingLife({ ledger: null, gate: { install: false, waitMs: 60000, ageMs: 120000 } });
     if (late.hours !== 0) c4.fail(`an elapsed hold is 0 hours, got ${late.hours}`);
-    c4.note("eight shapes; the rule is max(ledger, gate-hold), install => 0, unreadable => null");
+    // The pass floor: a 3-minute hold read 4 minutes later on a 5-minute cadence still has 1 minute left.
+    const floor = remainingLife({ ledger: null, gate: { install: false, waitMs: 3 * 60000, ageMs: 4 * 60000, passMs: 5 * 60000 } });
+    if (Math.abs(floor.hours - 1 / 60) > 1e-9) c4.fail(`the pass interval must floor the hold, got ${floor.hours}h`);
+    // hacknet.js's copy of the cadence must be watchdog.js's JOB_MIN_INTERVAL.
+    const wd = fs.readFileSync(path.resolve("watchdog.js"), "utf8").match(/const JOB_MIN_INTERVAL = (\d+)/);
+    const hk = fs.readFileSync(path.resolve("hacknet.js"), "utf8").match(/const PLANNER_PASS_MS = (\d+)/);
+    if (!wd || !hk) c4.fail("JOB_MIN_INTERVAL (watchdog.js) and PLANNER_PASS_MS (hacknet.js) must both be literal constants");
+    else if (wd[1] !== hk[1]) c4.fail(`hacknet.js PLANNER_PASS_MS ${hk[1]} != watchdog.js JOB_MIN_INTERVAL ${wd[1]}`);
+    c4.note("nine shapes; the rule is max(ledger, max(gate-hold, pass interval)), install => 0, unreadable => null; PLANNER_PASS_MS == JOB_MIN_INTERVAL");
   }
   checks.push(c4);
 

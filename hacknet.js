@@ -48,6 +48,13 @@ const GATE_FILE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
 /** A window older than this is a different life's or a dead planner's. */
 const SCHEDULE_FRESH_MS = 20 * 60 * 1000
+/**
+ * watchdog.js's JOB_MIN_INTERVAL: progress.js cannot run — so cannot install —
+ * sooner than this after the pass that published the gate. HN4 pins the two
+ * constants equal (watchdog.js cannot be imported here: its ns surface would
+ * be billed to this script).
+ */
+const PLANNER_PASS_MS = 300000
 
 function totals(ns) {
   const n = ns.hacknet.numNodes()
@@ -102,7 +109,7 @@ function remainingLifeH(ns, lastAugReset) {
   const gate = readFresh(GATE_FILE)
   return remainingLife({
     ledger: sched ? { windowH: sched.windowH, lifeAgeH: sched.lifeAgeH, ageMs: sched.ageMs } : null,
-    gate: gate ? { install: gate.install, waitMs: gate.bestWait?.waitMs, ageMs: gate.ageMs } : null,
+    gate: gate ? { install: gate.install, waitMs: gate.bestWait?.waitMs, ageMs: gate.ageMs, passMs: PLANNER_PASS_MS } : null,
   })
 }
 
