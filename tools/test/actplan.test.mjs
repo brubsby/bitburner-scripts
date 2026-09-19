@@ -100,6 +100,10 @@ export async function run() {
     // Gang faction joined, no schedule yet: the slot earns money.
     const gq = decide(base({ factions: ["Slum Snakes"], player: player({ karma: -40, money: 3e6, skills: { ...player().skills, strength: 39, defense: 34, dexterity: 35, agility: 37 } }) }));
     if (gq.kind !== "crime" || gq.args[0] === "Homicide") c2.fail(`gang node, joined, no schedule: crime for money, got ${gq.kind} ${gq.args}`);
+    const gf = decide(base({ gangNode: false, factions: ["Slum Snakes", "CyberSec"], gangFaction: "Slum Snakes", schedule: { current: { faction: "Slum Snakes" } } }));
+    if (gf.kind !== "work" || gf.args[0] !== "CyberSec") c2.fail(`the gang faction cannot be worked; the next joined one is, got ${gf.kind} ${gf.args}`);
+    const only = decide(base({ gangNode: false, factions: ["Slum Snakes"], gangFaction: "Slum Snakes" }));
+    if (only.kind !== "idle") c2.fail("only the gang faction joined outside a gang node: idle with a reason");
     const w = decide(base({ factions: ["Slum Snakes"], schedule: { current: { faction: "Slum Snakes" } } }));
     if (w.kind !== "work" || w.args[0] !== "Slum Snakes") c2.fail("joined: work the schedule's faction");
     const w2 = decide(base({ gangNode: false, factions: ["CyberSec"], schedule: { current: { faction: "NiteSec" } } }));

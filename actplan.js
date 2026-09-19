@@ -124,8 +124,11 @@ export function decide(s = {}) {
       return { kind: 'crime', args: [money.crime], why: `gang node, no schedule yet: ${money.crime} is the best money crime (${Math.round(money.rates.money)}/s); the gang carries the reputation` }
     }
   }
-  if (s.factions.length) {
-    const target = s.schedule?.current?.faction && s.factions.includes(s.schedule.current.faction) ? s.schedule.current.faction : s.factions[0]
+  // The gang's own faction cannot be worked (the game refuses); its rep is the gang's.
+  const workable = s.gangFaction ? s.factions.filter((f) => f !== s.gangFaction) : s.factions
+  if (s.factions.length && !workable.length) return { kind: 'idle', why: `only the gang faction (${s.gangFaction}) is joined, and it cannot be worked` }
+  if (workable.length) {
+    const target = s.schedule?.current?.faction && workable.includes(s.schedule.current.faction) ? s.schedule.current.faction : workable[0]
     if (s.work?.kind === 'work' && s.work.faction === target) return { kind: 'idle', why: `working ${target}` }
     return { kind: 'work', args: [target, 'hacking'], why: s.schedule?.current?.faction === target ? `schedule's current faction` : `first joined faction (no schedule yet)` }
   }

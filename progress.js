@@ -1259,6 +1259,22 @@ async function act(ns, canJoin, info) {
   //
   // ns.getPlayer() is already referenced above, so the fresh read costs no RAM.
   const factions = ns.getPlayer().factions
+  // THE GANG FACTION CANNOT BE WORKED. Singularity.ts:105-111 refuses
+  // workForFaction for the faction a gang belongs to; its reputation arrives
+  // as gang respect / 75 (Gang.ts:154). Measured live in BitNode 2 on
+  // 2026-09-19: the schedule chose Slum Snakes, the work order ran, the game
+  // returned false for all three work types. So the gang faction stays in
+  // `factions` — its catalogue and purchases are real — and leaves
+  // `workable`, the list every work decision below draws from. If the gang
+  // exists but its telemetry cannot name the faction, every joined gang
+  // faction is excluded: an order that fails every pass is worse than a
+  // grind deferred one.
+  const gangFaction = (() => {
+    if (!ns.gang.inGang()) return null
+    const g = readJson(ns, '/tel/gang.txt')
+    return g?.faction ?? factions.find((f) => GANG_FACTIONS.includes(f)) ?? null
+  })()
+  const workable = gangFaction ? factions.filter((f) => f !== gangFaction) : factions
 
   // READ THE WORK STATE FROM SINGULARITY, NOT FROM getPlayer().
   //
@@ -1714,7 +1730,7 @@ async function act(ns, canJoin, info) {
   // working the wrong faction?") and the body ("which one should we start?")
   // need the same answer. Computing it twice would also write the telemetry
   // twice and could disagree with itself between the two reads.
-  const schedule = canJoin && (factions?.length || candidates.length) ? planFactionWork(ns, sing, factions ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta }) : null
+  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta }) : null
   let scheduleTarget = schedule?.current?.faction ?? null
   // THE GANG FACTION FIRST, in a node that allows a gang. Its catalogue
   // grows to almost every augmentation in the game once the gang exists, so
@@ -1922,7 +1938,7 @@ async function act(ns, canJoin, info) {
         }
       }
     }
-  } else if (deskGuarded && factions?.length && canWork && !flags.dry) {
+  } else if (deskGuarded && workable?.length && canWork && !flags.dry) {
     // The measuring fallback. Any joined faction's work feeds the rate
     // measurement, so this branch's freedom is in WHICH — and the first
     // version spent it on HACK_FACTIONS order, the same hand-ranked list the
@@ -1938,18 +1954,18 @@ async function act(ns, canJoin, info) {
     // instant at $81B/s income; below it, work is the only channel there is.
     // So the fallback prefers a faction that still owes us an augmentation
     // AND cannot be donated to, nearest unlock first.
-    const fallback = measuringTarget(sing, factions, offers, info)
+    const fallback = measuringTarget(sing, workable, offers, info)
     if (!(work?.type === 'FACTION' && work.factionName === fallback)) {
       if (order('work', [fallback, 'hacking'], 'measuring fallback while the desk ranking is estimated')) did.push(`ordered work ${fallback} while the desk ranking measures`)
     }
     workedFaction = fallback
-  } else if (!factions || factions.length === 0) {
+  } else if (!workable || workable.length === 0) {
     if (wantCompany) {
       todo.push(`Best plan starts with employment at ${wantCompany} — needs Singularity to act.`)
     } else {
       todo.push('NO FACTION JOINED — reputation is earning ZERO. Backdoor a story server (run findpath.js <server>) and accept the invite.')
     }
-  } else if (!work || work.type !== 'FACTION' || wrongFaction(sing, work, factions, canJoin, scheduleTarget) || (crimeAlt?.wins && work.type !== 'CRIME')) {
+  } else if (!work || work.type !== 'FACTION' || wrongFaction(sing, work, workable, canJoin, scheduleTarget) || (crimeAlt?.wins && work.type !== 'CRIME')) {
     // ALSO RE-EVALUATE WHILE ALREADY WORKING.
     //
     // This branch used to fire only when no faction work was running, so
@@ -1976,7 +1992,7 @@ async function act(ns, canJoin, info) {
     // releases them, with favour applied to the rate (reputation.ts:9). It also
     // returns a SCHEDULE — work to a reputation cap, switch, come back — which
     // is what makes "hit the cap and move on" expressible rather than emergent.
-    const byQuality = HACK_FACTIONS.find((f) => factions.includes(f)) ?? factions[0]
+    const byQuality = HACK_FACTIONS.find((f) => workable.includes(f)) ?? workable[0]
     const target = scheduleTarget ?? byQuality
     if (schedule?.current) {
       did.push(
@@ -2840,7 +2856,7 @@ async function act(ns, canJoin, info) {
   }
 
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: crimeAlt ?? null, ordered: orders.length }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: crimeAlt ?? null, ordered: orders.length, gangFaction }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 

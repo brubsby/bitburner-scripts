@@ -246,6 +246,7 @@ export async function main(ns) {
         })(),
         work,
         tried,
+        gangFaction: ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction ?? null : null,
       }
       const d = decide(state)
       let outcome = null
