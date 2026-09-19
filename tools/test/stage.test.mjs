@@ -526,7 +526,7 @@ function runB711() {
     // Single-call Singularity actors: act.js execs one at a time on whichever
     // rooted host has the room and each exits after its call (actplan.js).
     "act-join.js", "act-work.js", "act-crime.js", "act-gym.js", "act-travel.js",
-    "act-company.js", "act-course.js", "act-focus.js", "act-buyprogram.js", "act-donate.js", "act-buyaug.js", "act-install.js",
+    "act-company.js", "act-course.js", "act-focus.js", "act-buyprogram.js", "act-donate.js", "act-buyaug.js", "act-install.js", "act-homeram.js",
     // Snapshot readers, one Singularity read family each, run by act.js (snapshot.js).
     "snap-owned.js", "snap-catalog.js", "snap-augprice.js", "snap-augstats.js", "snap-prereq.js", "snap-rep.js", "snap-invites.js", "snap-static.js",
     "killall.js", "process.js", "eval.js", "steve.js", "ctscan.js", "ctsolve.js",

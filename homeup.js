@@ -212,12 +212,19 @@ async function once(ns, flags) {
   // every write via the thunk; `nextCost` is passed per call because it is the
   // one field the watchdog would act on and it must always be the caller's
   // current value, never a stale closure. Every existing field keeps its name.
+  // `next` and `blockedByCity` are for act.js: the UI route below needs the
+  // player in Sector-12, and when it is not, act.js performs the same
+  // purchase through the Singularity actor instead (act-homeram.js).
+  let blockedByCity = false
+  let nextWanted = null
   const note = reporter(ns, STATUS, () => ({
     dry: flags.dry,
     reserve: flags.reserve,
     bought,
     notes,
     errors: errors.slice(-5),
+    next: nextWanted,
+    blockedByCity,
   }))
 
   // The path no try/finally can reach. ns.atExit costs 0GB and runs before the
@@ -244,6 +251,7 @@ async function once(ns, flags) {
   // form of (maxRam, cpuCores); see homecost.js.
   const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
   let nextCost = next ? next.cost : Infinity
+  nextWanted = next ? { kind: next.kind, cost: next.cost } : null
 
   // Nothing affordable, so there is nothing the UI could tell us. Report and
   // leave without touching the screen or the lock.
@@ -281,6 +289,7 @@ async function once(ns, flags) {
 
     if (!(await goToAlpha(ns))) {
       notes.push('could not reach Alpha Enterprises (in Sector-12?)')
+      blockedByCity = true
     } else {
       const before = { ram: ns.getServerMaxRam('home'), cores: ns.getServer('home').cpuCores }
       const state = () => `${ns.getServerMaxRam('home')}GB/${ns.getServer('home').cpuCores}c`

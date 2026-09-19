@@ -31,6 +31,7 @@ import { decide } from 'actplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { canUseSingularity, canUseGang } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
+import { nextHomeUpgrade } from 'homecost.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -51,6 +52,7 @@ const ACTORS = {
   donate: 'act-donate.js',
   buyaug: 'act-buyaug.js',
   install: 'act-install.js',
+  homeram: 'act-homeram.js',
 }
 /** Dynamic snapshots older than this are re-taken before the planner's next pass. */
 const SNAPSHOT_REFRESH_MS = 60 * 1000
@@ -148,17 +150,36 @@ async function runActor(ns, kind, args) {
   return { ran: true, host, pid, result: fresh ? r : null, ok: fresh ? r.ok === true : null }
 }
 
-/** homeup.js --reserve 0 on home, bounded: the remainder is spent or forfeit, never a blocked install. */
+/**
+ * Spend the remainder on home RAM/cores before an install: money does not
+ * survive a prestige, home does. Through the Singularity actor, from any
+ * city — homeup.js's UI route needs Sector-12 and forfeited $2.95b from
+ * Chongqing on the first BN2 install. Bounded; never blocks the install.
+ */
 async function spendDown(ns) {
+  const bought = []
   try {
-    const pid = ns.exec('homeup.js', 'home', 1, '--reserve', 0)
-    if (!pid) return 'could not start homeup.js — installing anyway, the remainder is forfeit'
-    const until = Date.now() + 30000
-    while (ns.isRunning(pid) && Date.now() < until) await ns.sleep(500)
-    return ns.isRunning(pid) ? 'spend-down did not finish within 30s — installing anyway' : 'spent the remainder on home RAM/cores before installing'
+    for (let i = 0; i < 8; i++) {
+      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      if (!next || ns.getServerMoneyAvailable('home') < next.cost) break
+      const r = await runActor(ns, 'homeram', [next.kind])
+      if (r.ok !== true) break
+      bought.push(`${next.kind} ${Math.round(next.cost / 1e6)}m`)
+    }
   } catch (e) {
-    return `spend-down failed (${String(e).slice(0, 60)}) — installing anyway`
+    return `spend-down failed (${String(e).slice(0, 60)}) after ${bought.length} purchase(s) — installing anyway`
   }
+  return bought.length ? `spent the remainder on home: ${bought.join(', ')}` : 'nothing affordable to spend the remainder on'
+}
+
+/** homeup.js decided a purchase but could not reach Alpha Enterprises: make it from here. */
+async function homeUpgradeIfBlocked(ns) {
+  fetchFromHome(ns, '/tel/homeup.txt')
+  const h = readJson(ns, '/tel/homeup.txt')
+  if (!h?.blockedByCity || !h.next || Date.now() - Date.parse(h.at) > 3 * 60e3) return null
+  if (ns.getServerMoneyAvailable('home') < h.next.cost) return null
+  const r = await runActor(ns, 'homeram', [h.next.kind])
+  return { kind: h.next.kind, cost: h.next.cost, ok: r.ok }
 }
 
 export async function main(ns) {
@@ -250,6 +271,9 @@ export async function main(ns) {
         continue
       }
 
+      // ---- 1b. a home upgrade homeup.js decided but could not perform ----
+      const homeUp = await homeUpgradeIfBlocked(ns)
+
       // ---- 2. the bootstrap ----------------------------------------------
       const state = {
         now: Date.now(),
@@ -283,7 +307,7 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, log: log.slice(-8), tried })
+      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, log: log.slice(-8), tried })
       await ns.sleep(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)
