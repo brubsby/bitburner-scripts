@@ -27,7 +27,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, choosePolicy, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -65,17 +65,24 @@ export async function main(ns) {
   // prices its catalogue off this trajectory. Rebuilt every FORECAST_MS, one
   // sample per 5 simulated minutes over 24h, under the assignment policy
   // this file actually runs. Gross respect is what reputation integrates.
-  const FORECAST_MS = 60000
-  const HORIZON_H = 12
+  // THE POLICY, searched by trajectory (gangplan.js policySearch): two real
+  // numbers — k, train while stat weight on the hardest respect task is
+  // below k x 4 x difficulty; x, the ascension gain floor — found by
+  // golden-section coordinate descent against the ECONOMIC objective the
+  // planner publishes (unlock ln-values inside the remaining install
+  // window), plus one rollout per member who could ascend: now vs not for
+  // an hour. The search is a generator: each tick spends at most
+  // SEARCH_BUDGET_MS on it and the incumbent policy stays in force until a
+  // search completes. A new search starts SEARCH_EVERY_MS after the last
+  // decision.
+  const SEARCH_BUDGET_MS = 300
+  const SEARCH_EVERY_MS = 60000
+  const STEP_SEC = 180
+  let policy = { k: 1, x: 1.25, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25 (no search complete yet)' }
+  let search = null
+  let searchStartedAt = 0
   let forecast = null
-  // THE POLICY, chosen by trajectory (gangplan.js choosePolicy): greedy
-  // assign() never trains, and training first reached the first catalogue
-  // unlock 8x sooner on the live gang. Re-chosen with every forecast; the
-  // target is the next gang-faction unlock progress.js publishes.
-  let policy = { name: 'greedy (no forecast yet)', assignFn: assign, ascend: { minGain: 1.25 }, ascendName: 'gain>=1.25 (no forecast yet)' }
-  let policyTable = null
-  let target = null
-
+  let objective = null
   while (true) {
     try {
       const player = ns.getPlayer()
@@ -126,41 +133,56 @@ export async function main(ns) {
       } catch {
         /* unreadable gate: respect, the default the recruits need */
       }
-      // Re-choose the policy before assigning, so this loop's assignment
-      // is the chosen policy's — not last minute's.
-      if (!forecast || Date.now() - Date.parse(forecast.at) >= FORECAST_MS) {
-        // The next unlock's reputation, converted to the gross respect that
-        // reaches it: rep = facRep x gross x (1 + favor/100) / 75. Unreadable
-        // or absent -> no target -> most respect at the horizon.
-        target = null
+      // The objective, from the planner's gang section (same life, fresh):
+      // unlock values and the remaining install window. Absent -> value 0
+      // and reputation at an 8h horizon decides — stated in `why`.
+      if (!search && (!policy.at || Date.now() - policy.at >= SEARCH_EVERY_MS)) {
+        objective = null
         try {
           fetchFromHome(ns, SCHEDULE)
           const sched = JSON.parse(ns.read(SCHEDULE) || 'null')
           const gs = sched?.gang
-          // The nearest unlock by reputation, whatever order the table is in.
-          const next = (gs?.unlocks ?? []).filter((u) => typeof u.repReq === 'number' && u.repReq > (gs.repNow ?? 0)).reduce((a, u) => (!a || u.repReq < a.repReq ? u : a), null)
-          if (sched?.lastAugReset === info.lastAugReset && next && gs.facRepMult > 0 && typeof gs.repNow === 'number') {
-            target = { name: next.name, repReq: next.repReq, gross: ((next.repReq - gs.repNow) * RESPECT_TO_REP) / (gs.facRepMult * (1 + Math.max(0, gs.favor ?? 0) / 100)) }
-          }
+          if (sched?.lastAugReset === info.lastAugReset && gs && Date.now() - Date.parse(sched.at) < 20 * 60 * 1000 && gs.facRepMult > 0 && typeof gs.repNow === 'number') {
+            const horizonH = Math.min(12, Math.max(2, gs.remainingWindowH ?? 8))
+            objective = { unlocks: (gs.unlocks ?? []).filter((u) => typeof u.repReq === 'number' && typeof u.value === 'number'), repNow: gs.repNow, facRepMult: gs.facRepMult, favor: gs.favor ?? 0, horizonH, why: null }
+          } else objective = { unlocks: [], horizonH: 8, why: 'no fresh same-life gang section in factionplan.txt' }
         } catch {
-          /* no schedule: no target */
+          objective = { unlocks: [], horizonH: 8, why: 'factionplan.txt unreadable' }
         }
-        const choice = choosePolicy(gang, members, { softcap, mode, horizonH: HORIZON_H, stepSec: 120, targetGross: target?.gross, ascend: policy.ascend })
-        if (choice) {
-          policy = { name: choice.chosen.name, assignFn: choice.chosen.assignFn, ascend: choice.chosen.ascend, ascendName: choice.chosen.ascendName }
-          policyTable = choice.table.map((r) => ({ ...r, hoursToTarget: r.hoursToTarget === Infinity ? null : r.hoursToTarget, grossAtHorizon: Math.round(r.grossAtHorizon) }))
-          const sim = choice.chosen.forecast
-          forecast = {
-            at: new Date().toISOString(),
-            horizonH: sim.horizonH,
-            respectPerSec: sim.respectPerSec,
-            policy: `${policy.name} / ascend ${policy.ascendName}`,
-            samples: sim.samples.map((x) => ({ h: +x.h.toFixed(4), gross: x.gross, respect: x.respect, members: x.members })),
+        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, incumbent: { k: policy.k, x: policy.x } })
+        searchStartedAt = Date.now()
+      }
+      if (search) {
+        const t0 = Date.now()
+        let r = null
+        do {
+          r = search.next()
+        } while (!r.done && Date.now() - t0 < SEARCH_BUDGET_MS)
+        if (r.done) {
+          const d = r.value
+          search = null
+          if (d) {
+            policy = {
+              k: d.k,
+              x: d.x,
+              assignFn: trainRatio(d.k, gang.isHacking),
+              ascendNow: Object.fromEntries(d.ascendNow.map((a) => [a.name, a.ascend])),
+              at: Date.now(),
+              score: d.score,
+              sims: d.sims,
+              searchMs: Date.now() - searchStartedAt,
+              evals: d.evals.length,
+              rollouts: d.ascendNow,
+              why: objective?.why ?? null,
+            }
+            const sim = d.forecast
+            forecast = sim
+              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'}`, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, members: s.members })) }
+              : { at: new Date().toISOString(), why: 'the chosen policy could not be simulated' }
           }
-        } else {
-          forecast = { at: new Date().toISOString(), why: 'choosePolicy could not read the gang' }
         }
       }
+      if (!policy.assignFn) policy.assignFn = trainRatio(policy.k, gang.isHacking) ?? assign
       const plan = policy.assignFn(gang, members, { softcap, mode })
       if (!plan) {
         publish(ns, { ...base, phase: 'refused', why: 'assign could not read the gang' })
@@ -172,10 +194,12 @@ export async function main(ns) {
         if (want && m.task !== want) ns.gang.setMemberTask(m.name, want)
       }
 
-      // Ascend, under the rule the trajectory chose (null: never).
-      for (const m of policy.ascend ? members : []) {
+      // Ascend only whom the rollout said to, while that decision is fresh;
+      // the game's own result and the member-keeping guard still apply.
+      const rolloutFresh = policy.at && Date.now() - policy.at < 3 * SEARCH_EVERY_MS
+      for (const m of rolloutFresh ? members.filter((m) => policy.ascendNow[m.name]) : []) {
         const r = ns.gang.getAscensionResult(m.name)
-        const v = shouldAscend(m, r, gang, { members: members.length, minGain: policy.ascend.minGain })
+        const v = shouldAscend(m, r, gang, { members: members.length, minGain: 1 })
         if (v.ascend && ns.gang.ascendMember(m.name)) ascended.push({ at: new Date().toISOString(), name: m.name, why: v.why })
       }
       ascended = ascended.slice(-12)
@@ -238,7 +262,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { chosen: policy.name, ascend: policy.ascendName, target, table: policyTable },
+            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,

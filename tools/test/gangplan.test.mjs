@@ -361,5 +361,89 @@ export async function run() {
   }
   checks.push(c8);
 
+  // ---------------------------------------------------------------------
+  const c9 = new Check("GP9", "the economic objective: value of unlocks reached inside the window, reputation as tie-break; unreadable objective scores 0 and says nothing");
+  {
+    const { scoreTrajectory, betterScore } = gp;
+    c9.examined(1);
+    const fc = { samples: [{ h: 0, gross: 0 }, { h: 1, gross: 750 }, { h: 2, gross: 3000 }], horizonH: 2 };
+    const obj = { unlocks: [{ repReq: 20, value: 0.1 }, { repReq: 40, value: 0.3 }, { repReq: 1e6, value: 5 }], repNow: 10, facRepMult: 1, favor: 0, horizonH: 2 };
+    const sc = scoreTrajectory(fc, obj);
+    // rep at 2h = 10 + 3000/75 = 50: unlocks 20 and 40 reached (0.4), not 1e6.
+    if (Math.abs(sc.value - 0.4) > 1e-12) c9.fail(`value must sum the unlocks reached: ${sc.value}`);
+    if (Math.abs(sc.repAtHorizon - 50) > 1e-9) c9.fail("repAtHorizon is rep at the objective horizon");
+    if (Math.abs(sc.hoursToFirst - 1) > 1e-9) c9.fail("hoursToFirst is the earliest unlock (20 rep at 1h)");
+    const short = scoreTrajectory(fc, { ...obj, horizonH: 1 });
+    if (short.value !== 0.1) c9.fail("a 1h window reaches only the 20-rep unlock");
+    const none = scoreTrajectory(fc, {});
+    if (none.value !== 0 || none.repAtHorizon !== null) c9.fail("no objective: value 0, reputation unreadable -> gross decides");
+    if (!betterScore({ value: 0.4, repAtHorizon: 1 }, { value: 0.1, repAtHorizon: 1e9 })) c9.fail("value beats reputation");
+    if (!betterScore({ value: 0.4, repAtHorizon: 2 }, { value: 0.4, repAtHorizon: 1 })) c9.fail("equal value: reputation decides");
+    if (!betterScore({ value: 0, repAtHorizon: null, grossAtHorizon: 5 }, { value: 0, repAtHorizon: null, grossAtHorizon: 4 })) c9.fail("unreadable reputation: gross decides");
+    c9.note("sum of reached unlock values, window cut, tie-breaks, unreadable objective");
+  }
+  checks.push(c9);
+
+  // ---------------------------------------------------------------------
+  const c10 = new Check("GP10", "continuous search: golden-section coordinate descent beats every named policy on the live fixture; k=0 is greedy; k=1 is train-until; never is its own point");
+  {
+    const { runSearch, trainRatio, trainUntil, hardestRespectTask, freshMember, skillOf, ascMult, STATS, choosePolicy, scoreTrajectory, betterScore, simulateGang } = gp;
+    c10.examined(1);
+    if (hardestRespectTask(false)?.name !== "Terrorism" || hardestRespectTask(true)?.name !== "Cyberterrorism") c10.fail("the hardest respect task is Terrorism / Cyberterrorism");
+    const raw = [{"n":"steve","str":[1424.2,1.04,4700],"def":[1458,1.1681,4700],"dex":[1413.6,1,4700],"agi":[653.8,1.04,4694],"cha":[485.8,1.04,0]},{"n":"beve","str":[1427.4,1.04,4700],"def":[1438.4,1.0816,4700],"dex":[1416.8,1,4700],"agi":[647.3,1.04,4694],"cha":[491.8,1.04,0]},{"n":"sneve","str":[1433,1.04,4699],"def":[1444,1.0816,4699],"dex":[1422.4,1,4699],"agi":[636,1.04,4694],"cha":[502.3,1.04,0]},{"n":"ash","str":[910.3,1.04,0],"def":[917.3,1.0816,0],"dex":[903.6,1,0],"agi":[434,1.04,0],"cha":[476.3,1.04,0]},{"n":"bex","str":[866,1.04,0],"def":[873,1.0816,0],"dex":[859.3,1,0],"agi":[409.5,1.04,0],"cha":[456.5,1.04,0]},{"n":"cid","str":[745.9,1,0],"def":[745.9,1,0],"dex":[745.9,1,0],"agi":[361.4,1,0],"cha":[384.4,1,0]},{"n":"dov","str":[456.6,1,0],"def":[456.6,1,0],"dex":[456.6,1,0],"agi":[245.7,1,0],"cha":[210.8,1,0]}];
+    const live = raw.map((r) => { const m = freshMember(r.n); m.earnedRespect = 200; for (const s of STATS) { if (!r[s]) continue; m[s + "_exp"] = r[s][0]; m[s + "_mult"] = r[s][1]; m[s + "_asc_points"] = r[s][2]; m[s] = skillOf(m[s + "_exp"], m[s + "_mult"] * ascMult(m[s + "_asc_points"])); } return m; });
+    const G = { respect: 1588, wantedLevel: 23.5, territory: 1 / 7, isHacking: false };
+    const objective = { unlocks: [{ repReq: 1000, value: 0.02 }, { repReq: 5000, value: 0.05 }, { repReq: 27500, value: 0.1 }, { repReq: 2.5e6, value: 0.5 }], repNow: 2.7, facRepMult: 1.3937, favor: 0.05, horizonH: 8 };
+    const o = { softcap: 1, horizonH: 8, stepSec: 180, objective };
+    const r = runSearch(G, live, { ...o, incumbent: { k: 1, x: 1.25 } });
+    if (!r || !(r.sims > 20)) c10.fail("the search must run its simulations");
+    // Every named policy under the same objective must not beat the search.
+    const named = choosePolicy(G, live, { ...o, targetGross: 1 });
+    for (const row of named.table) {
+      const f = simulateGang(G, live, { ...o, assignFn: (row.stage === "task" ? gp.policies(false).find((p) => p.name === row.name) : { assignFn: named.chosen.assignFn }).assignFn, ascend: row.stage === "task" ? { minGain: 1.25 } : gp.ASCENSION_RULES.find((a) => row.name.endsWith(a.name)).ascend });
+      const sc = scoreTrajectory(f, objective);
+      if (betterScore(sc, r.score) && sc.value > r.score.value) c10.fail(`named policy ${row.name} reaches more value (${sc.value}) than the search (${r.score.value})`);
+    }
+    if (!(r.k > 0 && r.k <= 1.5)) c10.fail(`k must be searched inside (0, 1.5], got ${r.k}`);
+    if (!(r.score.value >= 0.17)) c10.fail(`the search must reach the 1000/5000/27500 unlocks inside 8h on the live gang, value ${r.score.value}`);
+    // k = 0 is greedy; k = 1 is train-until on the hardest task.
+    const g0 = trainRatio(0, false)(G, live, { softcap: 1 });
+    if (Object.values(g0.assignments).includes("Train Combat")) c10.fail("k = 0 never trains");
+    const g1 = trainRatio(1, false)(G, live, { softcap: 1 });
+    const tu = trainUntil("Terrorism")(G, live, { softcap: 1 });
+    if (JSON.stringify(g1.assignments) !== JSON.stringify(tu.assignments)) c10.fail("k = 1 equals train-until-Terrorism");
+    if (trainRatio(-1, false) !== null) c10.fail("a negative k is null");
+    // The evals record shows both coordinates and the never point.
+    if (!r.evals.some((e) => e.x === Infinity)) c10.fail("never is evaluated as its own point");
+    if (!(r.ascendNow.length >= 3)) c10.fail("rollouts run for every member who could ascend (3 have exp over 1000)");
+    c10.note(`search: k=${r.k.toFixed(3)} x=${isFinite(r.x) ? r.x.toFixed(3) : "never"} value=${r.score.value} in ${r.sims} sims; no named policy reaches more value`);
+  }
+  checks.push(c10);
+
+  // ---------------------------------------------------------------------
+  const c11 = new Check("GP11", "the search is a generator (one simulation per next, no decision until done) and rollouts force/defer one member's ascension");
+  {
+    const { policySearch, simulateGang, freshMember, skillOf } = gp;
+    c11.examined(1);
+    const m = freshMember("a");
+    for (const st of ["str", "def", "dex", "agi"]) { m[st + "_exp"] = 5000; m[st] = skillOf(5000, 1); }
+    m.earnedRespect = 300;
+    const G = { respect: 1000, wantedLevel: 5, territory: 1 / 7, isHacking: false };
+    const it = policySearch(G, [m], { softcap: 1, horizonH: 1, stepSec: 300, objective: {}, rounds: 1 });
+    let n = 0;
+    let r = it.next();
+    while (!r.done) { n++; if (r.value !== undefined) c11.fail("a yield carries no decision"); r = it.next(); }
+    if (!r.value || r.value.sims !== n) c11.fail(`one simulation per next(): ${n} yields vs ${r.value?.sims} sims`);
+    if (!(n > 10)) c11.fail("a one-round search still runs both line searches");
+    // Force vs defer.
+    const forced = simulateGang(G, [m], { softcap: 1, horizonH: 600 / 3600, stepSec: 300, ascend: { minGain: 5 }, forceAscend: ["a"] });
+    const deferred = simulateGang(G, [m], { softcap: 1, horizonH: 600 / 3600, stepSec: 300, ascend: { minGain: 1.01 }, deferAscend: { a: 1 } });
+    if (forced.ascensions !== 1) c11.fail("forceAscend ascends at the first step regardless of the floor");
+    if (deferred.ascensions !== 0) c11.fail("deferAscend holds the member back for the deferral");
+    if (!(policySearch(null, [m], { softcap: 1 }).next().value === null)) c11.fail("no gang -> null");
+    c11.note("generator cadence, force and defer, refusal");
+  }
+  checks.push(c11);
+
   return checks;
 }

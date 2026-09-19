@@ -806,9 +806,13 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
         if (of.faction !== gc.faction || !(of.repReq > repNow)) continue
         const atH = hoursToGangRep(gc.forecast, of.repReq, repNow, { facRepMult: gc.facRepMult, favor: gc.favor })
         const h = atH === null ? null : Math.max(0, atH - gc.ageH)
-        unlocks.push({ name: of.name, repReq: of.repReq, atH: h !== null && isFinite(h) ? Math.round(h * 100) / 100 : null, ...(h === Infinity ? { why: `beyond the ${gc.forecast.horizonH}h forecast horizon` } : {}) })
+        // `value`: the ln(M) this augmentation is worth in the current basket
+        // — the same logValue every real offer is priced by — so gang.js
+        // optimises the same quantity the install gate prices.
+        const value = of.mults ? logValue(of.mults, joinCtx?.channels, joinCtx?.channelWeights ?? null) : null
+        unlocks.push({ name: of.name, repReq: of.repReq, value: value !== null && isFinite(value) ? Math.round(value * 1e4) / 1e4 : null, atH: h !== null && isFinite(h) ? Math.round(h * 100) / 100 : null, ...(h === Infinity ? { why: `beyond the ${gc.forecast.horizonH}h forecast horizon` } : {}) })
       }
-      unlocks.sort((a, b) => (a.atH ?? Infinity) - (b.atH ?? Infinity))
+      unlocks.sort((a, b) => (a.atH ?? Infinity) - (b.atH ?? Infinity) || a.repReq - b.repReq)
     }
     let calibration = null
     const pg = prior.gang
@@ -834,6 +838,9 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
       repPerSecNow: gc.forecast && gc.facRepMult ? (gc.respectPerSec * gc.facRepMult * (1 + (gc.favor ?? 0) / 100)) / 75 : null,
       forecastAgeMin: gc.ageH != null ? Math.round(gc.ageH * 60) : null,
       why: gc.why ?? null,
+      // The economic horizon: what is left of this install window. gang.js
+      // scores its policies by the unlock value reached inside it.
+      remainingWindowH: joinCtx?.state?.windowH > 0 ? Math.max(0, joinCtx.state.windowH - (joinCtx.state.lifeAgeH ?? 0)) : null,
       // The projection this pass makes, for the next pass to score: rep at
       // 0.25h steps out to 4h, then hourly to the horizon.
       projected: gc.forecast ? [...Array.from({ length: 16 }, (_, i) => (i + 1) * 0.25), ...Array.from({ length: Math.max(0, Math.floor(gc.forecast.horizonH) - 4) }, (_, i) => 5 + i)].map((h) => ({ h, rep: Math.round((repIn(h) ?? 0) * 100) / 100 })) : null,

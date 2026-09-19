@@ -382,11 +382,19 @@ export function simulateGang(g, members, o = {}) {
   // rebuilt from augmentations alone), and the member's EARNED respect
   // deducted from the gang's balance — never from the faction's reputation.
   // o.ascend null/absent: never ascend.
-  const ascend = o.ascend && num(o.ascend.minGain) ? o.ascend : null
+  const ascend = o.ascend && num(o.ascend.minGain) && isFinite(o.ascend.minGain) ? o.ascend : null
+  // Rollout controls: `forceAscend` names ascend at the first step regardless
+  // of the gain floor (the member-keeping guard still holds); `deferAscend`
+  // {name: hours} holds a member back from the rule until that hour.
+  const force = new Set(o.forceAscend ?? [])
+  const defer = o.deferAscend ?? {}
   let ascensions = 0
+  let hNow = 0
   const tryAscend = () => {
-    if (!ascend) return
     for (const m of ms) {
+      const forced = force.has(m.name) && hNow === 0
+      if (!forced && !ascend) continue
+      if (!forced && num(defer[m.name]) && hNow < defer[m.name]) continue
       const gains = {}
       let any = false
       for (const s of STATS) {
@@ -396,7 +404,7 @@ export function simulateGang(g, members, o = {}) {
       if (!any) continue
       const result = { respect: m.earnedRespect }
       for (const s of STATS) result[s] = ascMult(m[`${s}_asc_points`] + gains[s]) / ascMult(m[`${s}_asc_points`])
-      const v = shouldAscend(m, result, state, { minGain: ascend.minGain, members: ms.length })
+      const v = shouldAscend(m, result, state, { minGain: forced ? 1 : ascend.minGain, members: ms.length })
       if (!v.ascend) continue
       for (const s of STATS) {
         m[`${s}_asc_points`] += gains[s]
@@ -422,6 +430,7 @@ export function simulateGang(g, members, o = {}) {
   for (let i = 1; i <= steps; i++) {
     // Recruit first, as gang.js does at the top of its loop; then ascend.
     while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
+    hNow = ((i - 1) * stepSec) / 3600
     tryAscend()
     // `o.assignFn` lets a caller forecast a DIFFERENT policy than assign()
     // — that is how policies are compared, by their trajectories.
@@ -643,4 +652,202 @@ function chooseAmong(g, members, o, cands, stage) {
   }
   if (!best) return null
   return { chosen: { name: best.p.name, ascendName: best.p.ascendName, assignFn: best.p.assignFn, ascend: best.p.ascend, forecast: best.f }, table }
+}
+
+
+// ---------------------------------------------------------------------------
+// THE ECONOMIC OBJECTIVE AND THE CONTINUOUS SEARCH.
+//
+// "Hours to the next unlock" was a proxy. The planner knows the real thing:
+// the remaining install window, and the ln(M) each gang-catalogue
+// augmentation is worth in the current basket (factionplan.txt gang.unlocks
+// [{repReq, value}], gang.remainingWindowH). A trajectory scores as the value
+// of every unlock whose reputation it reaches inside the window, with
+// reputation at the window end as the tie-break — so Neurotrainer I and The
+// Red Pill are no longer the same "next unlock".
+//
+// The policies are two real numbers, searched by golden-section coordinate
+// descent from the incumbent (k, x): train while a member's stat weight on
+// the gang's hardest respect task is below k x 4 x difficulty (k = 0 is
+// greedy, k = 1 is "train until it clears"); ascend at gain floor x
+// (Infinity is never). Then one discrete rollout per member who could
+// ascend: "ascend now" against "not for an hour", under (k, x). The search
+// is a GENERATOR — one simulation per next() — so gang.js spends a bounded
+// slice of each tick on it and the incumbent stays in force meanwhile.
+// ---------------------------------------------------------------------------
+
+/** The hardest task that pays respect (Terrorism for combat gangs, Cyberterrorism for hacking). */
+export function hardestRespectTask(isHacking) {
+  // Ties on difficulty (Terrorism and Human Trafficking, both 36) go to the higher base respect.
+  return tasksFor(isHacking).filter((t) => t.baseRespect > 0).reduce((a, t) => (!a || t.difficulty > a.difficulty || (t.difficulty === a.difficulty && t.baseRespect > a.baseRespect) ? t : a), null)
+}
+
+/** Train while stat weight on the hardest respect task is below k x 4 x difficulty; k = 0 never trains. */
+export function trainRatio(k, isHacking) {
+  const top = hardestRespectTask(isHacking)
+  if (!top || !num(k) || k < 0) return null
+  return (g, ms, o) => {
+    const train = g.isHacking ? TASK['Train Hacking'] : TASK['Train Combat']
+    const trainees = k > 0 ? ms.filter((m) => statWeight(top, m) < k * 4 * top.difficulty) : []
+    const rest = ms.filter((m) => !trainees.includes(m))
+    const plan = rest.length ? assign(g, rest, o) : { assignments: {}, why: {}, mode: o.mode === 'money' ? 'money' : 'respect' }
+    if (!plan) return null
+    for (const m of trainees) {
+      plan.assignments[m.name] = train.name
+      plan.why[m.name] = `train: stat weight ${statWeight(top, m).toFixed(0)} below ${k.toFixed(2)} x ${4 * top.difficulty} on ${top.name}`
+    }
+    const rates = { respect: 0, money: 0, wanted: 0 }
+    for (const m of ms) {
+      const t = TASK[plan.assignments[m.name]]
+      rates.respect += respectGain(g, m, t, o.softcap) / CYCLE_SEC
+      rates.money += moneyGain(g, m, t, o.softcap) / CYCLE_SEC
+      rates.wanted += wantedGain(g, m, t) / CYCLE_SEC
+    }
+    return { ...plan, rates }
+  }
+}
+
+/**
+ * Score a forecast: { value, repAtHorizon, hoursToFirst }. `obj`: {unlocks:
+ * [{repReq, value}], repNow, facRepMult, favor, horizonH}. Without a
+ * readable objective the value is 0 and reputation decides — never a guess.
+ */
+export function scoreTrajectory(f, obj = {}) {
+  const horizonH = num(obj.horizonH) && obj.horizonH > 0 ? obj.horizonH : f?.horizonH
+  const conv = { facRepMult: obj.facRepMult, favor: obj.favor }
+  const repH = num(obj.repNow) && num(obj.facRepMult) ? gangRepAt(f, horizonH, obj.repNow, conv) : null
+  let value = 0
+  let hoursToFirst = null
+  for (const u of obj.unlocks ?? []) {
+    if (!num(u?.repReq) || !num(u?.value) || !(u.value > 0)) continue
+    if (repH !== null && u.repReq <= repH) value += u.value
+    const h = repH !== null ? hoursToGangRep(f, u.repReq, obj.repNow, conv) : null
+    if (h !== null && isFinite(h) && (hoursToFirst === null || h < hoursToFirst)) hoursToFirst = h
+  }
+  const last = f.samples[f.samples.length - 1]
+  return { value, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst }
+}
+
+/** Is score a better than b? Value first, then reputation (gross when reputation is unreadable). */
+export const betterScore = (a, b) => {
+  if (!b) return true
+  if (a.value !== b.value) return a.value > b.value
+  const ra = a.repAtHorizon ?? a.grossAtHorizon
+  const rb = b.repAtHorizon ?? b.grossAtHorizon
+  return ra > rb
+}
+
+/**
+ * Golden-section line search as a generator: `evalFn(param)` is itself a
+ * generator that yields per simulation and returns a score. Maximises under
+ * betterScore over [lo, hi]; endpoints are evaluated too. Returns
+ * {param, score, evals: [{param, score}]}.
+ */
+export function* goldenSearch(lo, hi, evalFn, o = {}) {
+  const iters = num(o.iters) ? o.iters : 6
+  const memo = new Map()
+  const evals = []
+  const at = function* (p) {
+    const key = p.toFixed(4)
+    if (memo.has(key)) return memo.get(key)
+    const sc = yield* evalFn(p)
+    memo.set(key, sc)
+    evals.push({ param: p, score: sc })
+    return sc
+  }
+  const phi = (Math.sqrt(5) - 1) / 2
+  let a = lo
+  let b = hi
+  let best = { param: lo, score: yield* at(lo) }
+  const sHi = yield* at(hi)
+  if (betterScore(sHi, best.score)) best = { param: hi, score: sHi }
+  let c = b - phi * (b - a)
+  let d = a + phi * (b - a)
+  let fc = yield* at(c)
+  let fd = yield* at(d)
+  for (let i = 0; i < iters; i++) {
+    if (betterScore(fc, fd)) {
+      b = d
+      d = c
+      fd = fc
+      c = b - phi * (b - a)
+      fc = yield* at(c)
+    } else {
+      a = c
+      c = d
+      fc = fd
+      d = a + phi * (b - a)
+      fd = yield* at(d)
+    }
+  }
+  for (const [p, sc] of [[c, fc], [d, fd]]) if (betterScore(sc, best.score)) best = { param: p, score: sc }
+  return { ...best, evals }
+}
+
+/**
+ * The full search as a generator. `o`: {softcap, horizonH, stepSec, mode,
+ * objective, incumbent: {k, x}, rounds = 2, rollout = true}. Each next()
+ * runs at most one simulation. Returns {k, x, score, forecast, evals,
+ * ascendNow: [{name, now, later}], sims}.
+ */
+export function* policySearch(g, members, o = {}) {
+  if (!g || !Array.isArray(members) || !num(o.softcap)) return null
+  const isHacking = g.isHacking === true
+  let k = num(o.incumbent?.k) ? o.incumbent.k : 1
+  let x = num(o.incumbent?.x) ? o.incumbent.x : 1.25
+  let sims = 0
+  const simAt = (kk, xx, extra = {}) => {
+    sims++
+    const f = simulateGang(g, members, { softcap: o.softcap, horizonH: o.horizonH, stepSec: o.stepSec, mode: o.mode, assignFn: trainRatio(kk, isHacking), ascend: { minGain: xx }, ...extra })
+    return f ? { f, score: scoreTrajectory(f, o.objective) } : null
+  }
+  const evalK = function* (kk) {
+    const r = simAt(kk, x)
+    yield
+    return r ? r.score : { value: -Infinity, repAtHorizon: -Infinity, grossAtHorizon: -Infinity }
+  }
+  const evalX = function* (xx) {
+    const r = simAt(k, xx)
+    yield
+    return r ? r.score : { value: -Infinity, repAtHorizon: -Infinity, grossAtHorizon: -Infinity }
+  }
+  const evals = []
+  const rounds = num(o.rounds) ? o.rounds : 2
+  let best = null
+  for (let r = 0; r < rounds; r++) {
+    const rk = yield* goldenSearch(0, 1.5, evalK, { iters: 5 })
+    k = rk.param
+    evals.push(...rk.evals.map((e) => ({ round: r, k: e.param, x, score: e.score })))
+    // x over [1.02, 3]; "never" (Infinity) evaluated as its own point.
+    const rx = yield* goldenSearch(1.02, 3, evalX, { iters: 5 })
+    const never = yield* evalX(Infinity)
+    evals.push(...rx.evals.map((e) => ({ round: r, k, x: e.param, score: e.score })), { round: r, k, x: Infinity, score: never })
+    x = betterScore(never, rx.score) ? Infinity : rx.param
+    best = betterScore(never, rx.score) ? never : rx.score
+  }
+  const chosen = simAt(k, x)
+  yield
+  // Rollouts: for each member who could ascend, "now" vs "not for an hour".
+  const ascendNow = []
+  if (o.rollout !== false) {
+    for (const m of members) {
+      const gains = STATS.map((s) => Math.max((num(m[`${s}_exp`]) ? m[`${s}_exp`] : 0) - ASC_POINTS_FLOOR, 0))
+      if (!gains.some((v) => v > 0)) continue
+      const now = simAt(k, x, { forceAscend: [m.name] })
+      yield
+      const later = simAt(k, x, { deferAscend: { [m.name]: 1 } })
+      yield
+      if (now && later) ascendNow.push({ name: m.name, now: now.score, later: later.score, ascend: betterScore(now.score, later.score) })
+    }
+  }
+  return { k, x, score: chosen?.score ?? best, forecast: chosen?.f ?? null, evals, ascendNow, sims }
+}
+
+/** Run a policySearch to completion synchronously (tests, tools). */
+export function runSearch(g, members, o = {}) {
+  const it = policySearch(g, members, o)
+  for (;;) {
+    const r = it.next()
+    if (r.done) return r.value
+  }
 }
