@@ -297,6 +297,10 @@ export async function run() {
     if (!(statWeight(TASK.Terrorism, strong[0]) - 4 * 36 > 0)) c7.fail("fixture: the strong member must clear Terrorism");
     const p = trainUntil("Terrorism")(G, strong, { softcap: 1 });
     if (Object.values(p.assignments).includes("Train Combat")) c7.fail("nobody trains once everyone clears the task");
+    // The live 22:15 failure: a gang below the wanted floor whose members do NOT clear Terrorism must train, not do justice.
+    const low = trainUntil("Terrorism")({ ...G, respect: 598, wantedLevel: 100 }, live, { softcap: 1 });
+    if (Object.values(low.assignments).some((t) => t !== "Train Combat")) c7.fail(`trainees are split off before wanted control: ${JSON.stringify(low.assignments)}`);
+    if (low.rates.wanted !== 0) c7.fail("a training gang earns no wanted");
     // Shapes.
     c7.examined(1);
     if (policies(false).length < 5 || policies(false)[0].name !== "greedy") c7.fail("combat policies: greedy first, then train-until for every hard respect task");

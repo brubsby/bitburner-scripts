@@ -524,22 +524,28 @@ export function hoursToGangRep(forecast, target, repNow, o = {}) {
 // So the policy is chosen by what its trajectory reaches, not by this cycle.
 // ---------------------------------------------------------------------------
 
-/** "Train until `clearTask` clears its difficulty, then the greedy pick" as an assignFn. */
+/**
+ * "Train until `clearTask` clears its difficulty, then the greedy pick" as an
+ * assignFn. Trainees are split off FIRST and the greedy pick (with its wanted
+ * control) runs on the rest: composing the other way round let greedy's
+ * Terrorism picks for the trainees trip the wanted floor and convert the
+ * whole gang to Vigilante Justice — seen live 2026-09-19 22:15, penalty
+ * 0.857 with every member on justice while training would have earned no
+ * wanted at all.
+ */
 export function trainUntil(clearTaskName) {
   const clearTask = TASK[clearTaskName]
   if (!clearTask) return null
   return (g, ms, o) => {
-    const plan = assign(g, ms, o)
-    if (!plan) return null
     const train = g.isHacking ? TASK['Train Hacking'] : TASK['Train Combat']
-    for (const m of ms) {
-      if (plan.assignments[m.name] === 'Vigilante Justice' || plan.assignments[m.name] === 'Ethical Hacking') continue
-      if (statWeight(clearTask, m) - 4 * clearTask.difficulty <= 0) {
-        plan.assignments[m.name] = train.name
-        plan.why[m.name] = `train until ${clearTaskName} clears (stat weight ${statWeight(clearTask, m).toFixed(0)} of ${4 * clearTask.difficulty})`
-      }
+    const trainees = ms.filter((m) => statWeight(clearTask, m) - 4 * clearTask.difficulty <= 0)
+    const rest = ms.filter((m) => !trainees.includes(m))
+    const plan = rest.length ? assign(g, rest, o) : { assignments: {}, why: {}, mode: o.mode === 'money' ? 'money' : 'respect' }
+    if (!plan) return null
+    for (const m of trainees) {
+      plan.assignments[m.name] = train.name
+      plan.why[m.name] = `train until ${clearTaskName} clears (stat weight ${statWeight(clearTask, m).toFixed(0)} of ${4 * clearTask.difficulty})`
     }
-    // Rates for what is actually assigned now.
     const rates = { respect: 0, money: 0, wanted: 0 }
     for (const m of ms) {
       const t = TASK[plan.assignments[m.name]]

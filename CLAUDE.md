@@ -944,3 +944,17 @@ read them rather than trusting anything written here, which goes stale.
 `early.js` is the small HGW loop that bridges the opening. Early sim results
 say the threshold loop is fine but pinning it to one target costs roughly 3x
 versus retargeting as the hacking level rises.
+
+### Reloading a script on a non-adjacent host
+
+`Terminal.executeCommands('connect X; kill y.js')` only works when X is adjacent
+to home — for anything placed "anywhere" (gang.js, hacknet.js, act.js, which the
+watchdog does NOT revive) kill through the game's own worker table, then re-run
+the idempotent boot:
+
+```js
+const ws = req.c['./src/Netscript/WorkerScripts.ts'].exports.workerScripts
+const kill = req.c['./src/Netscript/killWorkerScript.ts'].exports.killWorkerScript
+for (const w of [...ws.values()].filter((w) => w.name === 'gang.js')) kill(w)
+await req.c['./src/Terminal.ts'].exports.Terminal.executeCommands('home; run boot.js')
+```
