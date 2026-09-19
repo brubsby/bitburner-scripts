@@ -35,6 +35,7 @@ import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
 const ORDERS = '/tel/orders.txt'
+const HISTORY = '/tel/act-history.jsonl'
 const ORDERS_FRESH_MS = 15 * 60 * 1000
 const ACTORS = {
   join: 'act-join.js',
@@ -206,6 +207,15 @@ export async function main(ns) {
               results.push({ id: o.id, kind: o.kind, skipped: 'nothing queued to install' })
               continue
             }
+            // A BROKEN CHAIN DOES NOT INSTALL. The gate priced this install on
+            // the whole plan; if a purchase failed, what is queued is not what
+            // was priced, and the planner must re-decide on the real state
+            // next pass. Live on 2026-09-19 the first BN2 install fired with
+            // ONE of eleven planned augmentations bought.
+            if (chainFailed) {
+              results.push({ id: o.id, kind: o.kind, skipped: `a purchase in this batch failed; ${bought} bought of the plan — not installing on a partial plan` })
+              continue
+            }
             const sd = await spendDown(ns)
             const r = await runActor(ns, 'install', o.args)
             results.push({ id: o.id, kind: o.kind, ...r, spendDown: sd })
@@ -224,6 +234,15 @@ export async function main(ns) {
           if (o.kind === 'join') tried[o.args[0]] = Date.now()
         }
         ordersReport = { at: batch.at, count: batch.orders.length, results }
+        // Every batch's results, appended: the per-batch report is overwritten
+        // by the next one, and an install's chain is exactly the thing that
+        // must be auditable afterwards.
+        try {
+          ns.write(HISTORY, JSON.stringify({ at: new Date().toISOString(), batch: batch.at, lastAugReset: info.lastAugReset, results }) + '\n', 'a')
+          if (here !== 'home') ns.scp(HISTORY, 'home', here)
+        } catch {
+          /* history is a courtesy; the batch already ran */
+        }
         // The reads the orders just changed — owned, catalogue, reputation, invitations.
         const after = await refreshSnapshots(ns, info, { force: true })
         publish({ health: 'ok', orders: ordersReport, snapshots: after, decision: { kind: 'idle', why: 'executed the planner\'s orders' }, work, last, log: log.slice(-8), tried })
