@@ -235,6 +235,14 @@ donate/buyaug stops the rest of that chain; install runs only with something
 queued and after the homeup spend-down. Each batch executes once, keyed by its
 stamp, same life only. Outcomes: `/tel/act.txt` `orders.results`.
 
+**The planner reads snapshots, not Singularity.** `snapshot.js` turns
+`/tel/snap-*.txt` (written by `snap-*.js`, one read family each, 51-99GB at
+SF4.1, run by act.js every minute and after every order batch) into the view
+progress.js calls under unpriced names. progress.js prices 8.45GB flat and refuses
+a pass (`snapshots-missing`) when a family is absent, from another life
+(dynamic) or another node (static). The Source-File 4 multiplier now touches only
+the actors, one at a time; the whole loop runs from a 128GB home.
+
 ## Driving the game without the browser
 
 `cmd.js` is a terminal bridge. It runs in-game, watches a file, and types
@@ -311,8 +319,8 @@ that payload has no work field (NetscriptFunctions.ts:1371-1389), which is why
 
 **Home is not free real estate — two reserves must be jointly satisfiable.**
 `progress.js` raises itself to a Singularity allocation with `ns.ramOverride` and
-needs it as ONE contiguous block on home: `13 + 38.6*mult` GB, which at SF4.1 is
-**631GB** (was 1197 before the acts moved to act.js). Anything that sizes itself from home's raw free space will eat it.
+needs it as ONE contiguous block on home: `13 + 6.25*mult` GB (the largest single actor), which at SF4.1 is
+**113GB** (was 1197 before the acts and reads moved to act.js and the snapshot actors). Anything that sizes itself from home's raw free space will eat it.
 `watchdog.js`'s `shareThreads()` did exactly that — 80% of the largest free block,
 home included — and `share.js` took **960GB, then 1112GB** of a 2048GB home while
 `progress.js` was denied 1192.85GB pass after pass. Self-defeating in the obvious
@@ -320,7 +328,7 @@ direction: share multiplies *faction work* reputation and `progress.js` is what
 starts the faction work, so it bought a bonus on an activity that was not running.
 `batch.js` had the mirror bug — when home is also the largest fleet host,
 `reserveFor('home')` summed both reserves and demanded 2157GB of a 2048GB machine,
-with nothing checking the sum. The `13 + 38.6*mult` formula is now duplicated in
+with nothing checking the sum. The `13 + 6.25*mult` formula is now duplicated in
 three files on purpose (importing `progress.js` would drag its whole Singularity
 graph into each); **[R6] is what keeps the copies honest.**
 

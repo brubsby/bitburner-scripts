@@ -18,7 +18,7 @@
 // script stealing the UI every few minutes. Both now read through
 // ns.singularity.getCurrentWork / isFocused. `player.factionInvitations` is
 // still absent from getPlayer(), but the acting path already sources
-// invitations from sing.checkFactionInvitations(); only the SF4-less advisory
+// invitations from sing.invitations(); only the SF4-less advisory
 // fallback reads the missing field, and it degrades to "no invitations".
 //
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@
 //                        save's Singularity RAM multiplier (sfgate.js:71-77).
 //
 // THE PROBE. The shipped file decides capability by CALLING a singularity
-// function inside a try/catch (`capable(ns, () => sing.getOwnedAugmentations(false))`).
+// function inside a try/catch (`capable(ns, () => sing.ownedAugs(false))`).
 // That cannot survive an override: APIWrapper.ts:80 charges the call's RAM
 // BEFORE the body runs, so the probe alone costs 5GB (80GB at SF4.1) and
 // NetscriptHelpers.tsx:523 calls killWorkerScript before it throws — the catch
@@ -125,6 +125,7 @@ import {
 } from 'installgate.js'
 import { planSchedule, bestCompatibleSet, holdCandidates, logValue } from 'factionplan.js'
 import { joinWait, timeToMeet } from 'joinplan.js'
+import { snapshotView } from 'snapshot.js'
 // Pure: the expected contract stream, which is NOT script income and so is
 // invisible to getTotalScriptIncome (contractplan.js has the derivation).
 import { contractIncome } from 'contractplan.js'
@@ -231,7 +232,11 @@ import { planPurchases, NFG, isSoa, BASE_PRICE_MULT } from 'augplan.js'
 // remains is the READ surface the plan needs. Measured with the game's own
 // calculator: 47.05GB at 1x, 626.05GB at 16x. The planner therefore runs at
 // a 1TB home instead of 2TB — one $3.2b upgrade earlier.
-const RAISE_CEILING = (mult) => 8.45 + 38.6 * mult
+// 38.6 -> 0 (2026-09-19, later the same day): the READS left too, for the
+// snapshot actors (snapshot.js). No Singularity name remains in this file's
+// import graph; measured 8.45GB in every regime. The Source-File multiplier
+// no longer touches the planner at all — only the actors, one at a time.
+const RAISE_CEILING = (mult) => 8.45 + 0 * mult
 
 export async function main(ns) {
   ns.ramOverride(2.6)
@@ -476,7 +481,7 @@ function measuringTarget(sing, factions, offers, info) {
     // in fact only be able to work for.
     let donatable = false
     try {
-      donatable = donateNeed !== null && sing.getFactionFavor(f) >= donateNeed
+      donatable = donateNeed !== null && sing.factionFavor(f) >= donateNeed
     } catch {
       /* unreadable favour -> not donatable -> work is the channel */
     }
@@ -505,8 +510,8 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
   const reps = {}
   const byFaction = new Map()
   for (const f of factions) {
-    reps[f] = sing.getFactionRep(f)
-    byFaction.set(f, { name: f, rep: reps[f], favor: sing.getFactionFavor(f), augs: [] })
+    reps[f] = sing.factionRep(f)
+    byFaction.set(f, { name: f, rep: reps[f], favor: sing.factionFavor(f), augs: [] })
   }
   for (const o of offers) {
     const e = byFaction.get(o.faction)
@@ -917,8 +922,8 @@ function readJson(ns, path) {
 function favorGainOf(sing, faction, canJoin, o = {}) {
   if (!canJoin || !faction) return 1
   try {
-    const favor = sing.getFactionFavor(faction)
-    const rep = sing.getFactionRep(faction)
+    const favor = sing.factionFavor(faction)
+    const rep = sing.factionRep(faction)
     if (!isFinite(favor) || !isFinite(rep) || favor < 0 || rep < 0) return 1
     const after = addRepToFavor(favor, rep)
     const gain = (1 + after / 100) / (1 + favor / 100)
@@ -1089,7 +1094,20 @@ async function act(ns, canJoin, info) {
       return { error: String(e).slice(0, 120) }
     }
   })()
-  const sing = ns.singularity
+  // THE READS COME FROM SNAPSHOTS (snapshot.js): every Singularity read this
+  // file needs is taken by a snap-*.js actor and read here from a file under
+  // an unpriced name. A missing or stale family refuses the pass, exactly as
+  // the RAM denial did — the planner never plans on another life's catalogue.
+  const sing = snapshotView(ns, info)
+  if (sing.missing.length) {
+    note('waiting', {
+      result: 'snapshots-missing',
+      gate: 'snapshotView',
+      missing: sing.missing,
+      detail: `${sing.missing.length} snapshot(s) unavailable — act.js refreshes them; nothing is planned on stale reads`,
+    })
+    return
+  }
   // The derived objective (objective.js) — computed in the offers block once
   // a plan exists to measure elasticities against; every earlier consumer
   // (the city-faction pricing) sees null and prices flat, exactly as before.
@@ -1120,7 +1138,7 @@ async function act(ns, canJoin, info) {
   const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders }, null, 2), 'w')
 
   // --- 1. accept invitations -------------------------------------------------
-  const invites = canJoin ? sing.checkFactionInvitations() : (player.factionInvitations ?? [])
+  const invites = canJoin ? sing.invitations() : (player.factionInvitations ?? [])
   // Non-exclusive invitations are free: joining costs nothing and can only add
   // augmentations, so they are accepted without analysis.
   const wanted = invites.filter((f) => !CITY_FACTIONS.includes(f))
@@ -1160,16 +1178,16 @@ async function act(ns, canJoin, info) {
       // Owned set, computed locally — the file's allCount is built later, in
       // the purchase block. A TDZ reference to it here crashed the entire
       // pass (loudly: health:error), which is how this reordering was caught.
-      const cityOwned = new Set(sing.getOwnedAugmentations(true))
+      const cityOwned = new Set(sing.ownedAugs(true))
       const candidates = CITY_FACTIONS.map((name) => {
         let value = 0
         let enemies = []
         const augs = []
         try {
-          enemies = sing.getFactionEnemies(name)
-          for (const aug of sing.getAugmentationsFromFaction(name)) {
+          enemies = sing.factionEnemies(name)
+          for (const aug of sing.factionAugs(name)) {
             if (cityOwned.has(aug) && aug !== NFG) continue
-            value += logValue(sing.getAugmentationStats(aug), channelsUsed, channelWeights)
+            value += logValue(sing.augStats(aug), channelsUsed, channelWeights)
             augs.push(aug) // distinct unowned — a Daedalus ticket regardless of multipliers
           }
         } catch {
@@ -1193,7 +1211,7 @@ async function act(ns, canJoin, info) {
       let availFromJoined = 0
       for (const f of player.factions) {
         try {
-          for (const a of sing.getAugmentationsFromFaction(f)) if (a !== NFG && !cityOwned.has(a)) availFromJoined++
+          for (const a of sing.factionAugs(f)) if (a !== NFG && !cityOwned.has(a)) availFromJoined++
         } catch {
           /* unreadable faction contributes nothing to the count */
         }
@@ -1260,7 +1278,7 @@ async function act(ns, canJoin, info) {
   // `player.focus` is absent from the same payload, which made the refocus
   // branch below unreachable: `undefined === false` is false, so an unfocused
   // faction work session was never corrected despite costing 20% of the rate.
-  const work = canJoin ? sing.getCurrentWork() : null
+  const work = canJoin ? sing.currentWork() : null
 
   // --- offers, gathered EARLY -----------------------------------------------
   //
@@ -1291,8 +1309,8 @@ async function act(ns, canJoin, info) {
   let ticketsWanted = 0
   if (canBuyAug) {
     const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
-    installedCount = count(sing.getOwnedAugmentations(false))
-    allCount = count(sing.getOwnedAugmentations(true))
+    installedCount = count(sing.ownedAugs(false))
+    allCount = count(sing.ownedAugs(true))
     const held = []
     for (const [name, n] of allCount) {
       for (let i = 0; i < n - (installedCount.get(name) ?? 0); i++) held.push(name)
@@ -1303,27 +1321,27 @@ async function act(ns, canJoin, info) {
     const donateNeed = favorNeededToDonate(1) // BN4 leaves FavorToDonateToFaction at 1
     const fwrg = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null
     for (const f of player.factions) {
-      const rep = sing.getFactionRep(f)
+      const rep = sing.factionRep(f)
       // Past the donation threshold a rep wall is a PRICE (donation.ts:8) —
       // attached per offer so augplan can charge it as a fixed cost. Left
       // absent below the threshold or with an unreadable BitNode term, and
       // the wall stands exactly as before.
-      const donatable = sing.getFactionFavor(f) >= donateNeed && fwrg !== null
-      for (const aug of sing.getAugmentationsFromFaction(f)) {
+      const donatable = sing.factionFavor(f) >= donateNeed && fwrg !== null
+      for (const aug of sing.factionAugs(f)) {
         // NeuroFlux is the only repeatable augmentation (AugmentationHelpers.ts:117-120).
         if (allCount.has(aug) && aug !== NFG) continue
-        const repReq = sing.getAugmentationRepReq(aug)
+        const repReq = sing.augRepReq(aug)
         offers.push({
           name: aug,
           faction: f,
-          baseCost: sing.getAugmentationPrice(aug) / (isSoa(aug) ? 1 : unqueue),
+          baseCost: sing.augPrice(aug) / (isSoa(aug) ? 1 : unqueue),
           repReq,
           factionRep: rep,
           ...(donatable && repReq > rep
             ? { donationCost: donationForRep(repReq - rep, player.mults?.faction_rep ?? 1, fwrg) }
             : {}),
-          mults: sing.getAugmentationStats(aug),
-          prereqs: sing.getAugmentationPrereq(aug),
+          mults: sing.augStats(aug),
+          prereqs: sing.augPrereq(aug),
           // The live NFG price already carries 1.14^getLevel(), so the planner
           // starts its own chain at 0 rather than double-counting the level.
           nfgLevel: 0,
@@ -1514,12 +1532,12 @@ async function act(ns, canJoin, info) {
     const companyFavors = {}
     for (const m of MEGACORPS) {
       try {
-        companyReps[m.company] = sing.getCompanyRep(m.company)
+        companyReps[m.company] = sing.companyRep(m.company)
         // Favour survives installs (Company.ts:77-80) and multiplies later
         // rep gain — the ladder that makes a long stint converge across
         // lives. Without it the forecast reads the same 22h every life while
         // the truth shrinks.
-        companyFavors[m.company] = sing.getCompanyFavor(m.company)
+        companyFavors[m.company] = sing.companyFavor(m.company)
       } catch {
         /* unreadable stays absent — joinplan refuses rather than assumes 0 */
       }
@@ -1673,16 +1691,16 @@ async function act(ns, canJoin, info) {
       if (player.factions.includes(name)) continue
       try {
         const augs = []
-        for (const aug of sing.getAugmentationsFromFaction(name)) {
+        for (const aug of sing.factionAugs(name)) {
           if (allCount.has(aug) && aug !== NFG) continue
-          augs.push({ name: aug, repReq: sing.getAugmentationRepReq(aug), mults: sing.getAugmentationStats(aug) })
+          augs.push({ name: aug, repReq: sing.augRepReq(aug), mults: sing.augStats(aug) })
         }
         candidates.push({
           name,
-          requirements: sing.getFactionInviteRequirements(name),
+          requirements: sing.inviteReqs(name),
           augs,
-          rep: sing.getFactionRep(name),
-          favor: sing.getFactionFavor(name),
+          rep: sing.factionRep(name),
+          favor: sing.factionFavor(name),
         })
       } catch (e) {
         // An unreadable faction is REPORTED, not dropped — a silently missing
@@ -1980,7 +1998,7 @@ async function act(ns, canJoin, info) {
     } else {
       todo.push(`NO FACTION WORK RUNNING — reputation is earning ZERO. Start hacking contracts for ${target} and FOCUS it (unfocused costs 20%).`)
     }
-  } else if (canWork && !sing.isFocused()) {
+  } else if (canWork && !sing.focused()) {
     if (canWork && !flags.dry) {
       order('focus', [true], 'unfocused work costs 20%')
       did.push('ordered refocus of faction work')
@@ -2101,8 +2119,8 @@ async function act(ns, canJoin, info) {
     // a Set every queued NeuroFlux was discarded — four of them (M = 1.1268)
     // reported as M = 1.0000, and the gate held on evidence it should have
     // counted.
-    const installed = count(sing.getOwnedAugmentations(false))
-    for (const [name, n] of count(sing.getOwnedAugmentations(true))) {
+    const installed = count(sing.ownedAugs(false))
+    for (const [name, n] of count(sing.ownedAugs(true))) {
       for (let i = 0; i < n - (installed.get(name) ?? 0); i++) pending.push(name)
     }
   }
@@ -2118,7 +2136,7 @@ async function act(ns, canJoin, info) {
   // `real` and not `ln`: this is a REPORTED multiplier, so it must carry no
   // synthetic dominance value — that is the split augValue exists to keep.
   const heldM = pending.reduce(
-    (m, a) => m * Math.exp(augValue({ name: a, mults: sing.getAugmentationStats(a) }, { channels: channelsUsed, weights: channelWeights }).real),
+    (m, a) => m * Math.exp(augValue({ name: a, mults: sing.augStats(a) }, { channels: channelsUsed, weights: channelWeights }).real),
     1,
   )
   const M = heldM * (plan ? plan.M : 1)
@@ -2271,7 +2289,7 @@ async function act(ns, canJoin, info) {
               expPerSec: schedule.expPerSec,
             })
           : null
-      const favMult = 1 + (canJoin && workingF ? Math.max(0, sing.getFactionFavor(workingF)) : 0) / 100
+      const favMult = 1 + (canJoin && workingF ? Math.max(0, sing.factionFavor(workingF)) : 0) / 100
       // INCOME IS A TRAJECTORY TOO — the batch cycle is clocked by weaken
       // time, which divides by (hacking + 50), so income scales at least with
       // (level + 50) as the level climbs. trajectory.js states why that is a
@@ -2681,7 +2699,7 @@ async function act(ns, canJoin, info) {
       const bought = []
       if (plan) {
         for (const item of plan.buy) {
-          const live = sing.getAugmentationPrice(item.name)
+          const live = sing.augPrice(item.name)
           // COMPARE AUG-PRICE TO AUG-PRICE. item.price carries the donation
           // for rep-walled purchases (augplan folds it into the row so the
           // budget binds on the true total) — but getAugmentationPrice knows
@@ -2710,7 +2728,7 @@ async function act(ns, canJoin, info) {
             // The plan priced the donation conservatively (full shortfall per
             // item); donate only what is STILL short at execution time — an
             // earlier donation for a same-faction item may already cover it.
-            const short = item.donation && sing.getAugmentationRepReq(item.name) - sing.getFactionRep(item.faction)
+            const short = item.donation && sing.augRepReq(item.name) - sing.factionRep(item.faction)
             if (short > 0) {
               const fwrgExec = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? 1
               const dollars = Math.ceil(donationForRep(short, player.mults?.faction_rep ?? 1, fwrgExec) * 1.01)
@@ -2781,7 +2799,7 @@ async function act(ns, canJoin, info) {
                 // in it.
                 exitFavor: (() => {
                   try {
-                    return canJoin ? sing.getFactionFavor('Daedalus') : undefined
+                    return canJoin ? sing.factionFavor('Daedalus') : undefined
                   } catch {
                     return undefined
                   }

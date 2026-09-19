@@ -125,7 +125,9 @@ const SETTINGS = {
   // every regime — checked duplication rather than an import, because pulling
   // progress.js in here would drag its entire Singularity import graph into
   // the batcher's own price.
-  homeReserve: (mult) => 13 + 38.6 * mult,
+  // 13 + the largest single actor (snap-static.js: 3.25 + 6 x mult, 99GB at
+  // SF4.1) so a snapshot or an install always has somewhere to run on home.
+  homeReserve: (mult) => 13 + 6.25 * mult,
   // Fraction of total fleet RAM left unclaimed so ns.share() has somewhere to
   // live. Not a courtesy: share multiplies *faction reputation*, and reputation
   // — not money — is what gates leaving the BitNode. The bonus is

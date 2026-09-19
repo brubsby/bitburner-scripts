@@ -30,6 +30,7 @@
 import { decide } from 'actplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { canUseSingularity, canUseGang } from 'sfgate.js'
+import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -50,6 +51,48 @@ const ACTORS = {
   buyaug: 'act-buyaug.js',
   install: 'act-install.js',
 }
+/** Dynamic snapshots older than this are re-taken before the planner's next pass. */
+const SNAPSHOT_REFRESH_MS = 60 * 1000
+
+/**
+ * Keep the planner's snapshot files current: static families once per
+ * BitNode, dynamic ones every minute and immediately after an order batch.
+ * One actor at a time, in dependency order (the price/stats/prereq readers
+ * enumerate from the catalogue file). Returns what ran and what could not.
+ */
+async function refreshSnapshots(ns, info, { force = false } = {}) {
+  const ran = []
+  const failed = []
+  for (const key of SNAPSHOT_ORDER) {
+    const spec = SNAPSHOTS[key]
+    fetchFromHome(ns, spec.file)
+    const r = readSnapshot(ns, key, info)
+    const age = r.at ? Date.now() - Date.parse(r.at) : Infinity
+    const stale = !r.data || (spec.dynamic && (force || age > SNAPSHOT_REFRESH_MS))
+    if (!stale) continue
+    const out = await runSnapshot(ns, spec.actor)
+    if (out.ran) ran.push(key)
+    else failed.push(`${key}: ${out.why}`)
+  }
+  return { ran, failed }
+}
+
+async function runSnapshot(ns, actor) {
+  const price = ns.getScriptRam(actor, 'home')
+  const hosts = rootedHosts(ns)
+    .map((h) => ({ h, free: ns.getServerMaxRam(h) - ns.getServerUsedRam(h) }))
+    .filter((x) => x.free >= price)
+    .sort((a, b) => b.free - a.free)
+  if (!hosts.length) return { ran: false, why: `no rooted host has ${price}GB free` }
+  const host = hosts[0].h
+  if (host !== 'home') ns.scp([actor, 'factions.js', 'companyplan.js', 'installgate.js'], host, 'home')
+  const pid = ns.exec(actor, host, 1)
+  if (!pid) return { ran: false, why: `exec refused on ${host}` }
+  const until = Date.now() + 15000
+  while (ns.isRunning(pid) && Date.now() < until) await ns.sleep(200)
+  return { ran: true, host }
+}
+
 /** Orders whose failure ends the purchase chain they belong to. */
 const CHAIN = new Set(['donate', 'buyaug'])
 
@@ -142,6 +185,7 @@ export async function main(ns) {
     try {
       const player = ns.getPlayer()
       for (const f of ['/tel/progress.txt', '/tel/factionplan.txt', ORDERS]) fetchFromHome(ns, f)
+      const snaps = await refreshSnapshots(ns, info)
 
       // ---- 1. orders from the planner --------------------------------------
       const batch = readJson(ns, ORDERS)
@@ -180,7 +224,9 @@ export async function main(ns) {
           if (o.kind === 'join') tried[o.args[0]] = Date.now()
         }
         ordersReport = { at: batch.at, count: batch.orders.length, results }
-        publish({ health: 'ok', orders: ordersReport, decision: { kind: 'idle', why: 'executed the planner\'s orders' }, work, last, log: log.slice(-8), tried })
+        // The reads the orders just changed — owned, catalogue, reputation, invitations.
+        const after = await refreshSnapshots(ns, info, { force: true })
+        publish({ health: 'ok', orders: ordersReport, snapshots: after, decision: { kind: 'idle', why: 'executed the planner\'s orders' }, work, last, log: log.slice(-8), tried })
         await ns.sleep(5000)
         continue
       }
@@ -217,7 +263,7 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, log: log.slice(-8), tried })
+      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, log: log.slice(-8), tried })
       await ns.sleep(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)
