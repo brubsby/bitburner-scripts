@@ -64,6 +64,9 @@ export const MAX_MEMBERS = 12
 export const FREE_MEMBERS = 3
 export const RECRUIT_BASE = 5
 export const RESPECT_TO_REP = 75
+export const CYCLES_PER_TERRITORY_UPDATE = 100 // GangConstants.CyclesPerTerritoryAndPowerUpdate (20s)
+/** Gang/data/power.ts: the NPC gangs' additive power multipliers. */
+export const POWER_MULT = { 'Slum Snakes': 1, Tetrads: 2, 'The Syndicate': 2, 'The Dark Army': 2, 'Speakers for the Dead': 5, NiteSec: 2, 'The Black Hand': 5 }
 export const ASC_POINTS_FLOOR = 1000
 export const KARMA_FOR_GANG = -54000 // GangConstants.GangKarmaRequirement, outside BitNode 2
 
@@ -337,6 +340,60 @@ export function bestEquipment(m, owned, budget, disc, isHacking) {
 
 export const CYCLES_PER_PROCESS = 10 // GangConstants.minCyclesToProcess: 2000ms / 200ms
 
+/** GangMember.ts:calculatePower — the sum of the six stats over 95. */
+// Written over STATS: a literal `.hack` here is billed as ns.hack (0.1GB) by the static pricer.
+export const memberPower = (m) => STATS.reduce((a, st) => a + (num(m[st]) ? m[st] : 0), 0) / 95
+
+/** Gang.ts:calculateTerritoryGain at the roll's mean (random() + 0.5 -> 1). */
+export function territoryGain(winPower, losePower, loseTerritory) {
+  const powerBonus = Math.max(1, 1 + Math.log(winPower / losePower) / Math.log(50))
+  return Math.min(loseTerritory, powerBonus * 0.0001)
+}
+
+/**
+ * One territory-and-power update (every 100 cycles, Gang.ts:173-270) in
+ * EXPECTATION: rivals' random gains at their means, each clash the player
+ * is in weighed by its win chance, deaths as accumulated probability per
+ * warfare member (Gang.ts:clash: 35% of clashes, 0.01 or 0.005 / def^0.6).
+ * Rival-vs-rival clashes are left out (second order). Mutates `t` =
+ * {power, territory, rivals: {name: {power, territory}}, clashChance,
+ * engaged} and returns the expected deaths per warfare member this update.
+ */
+export function territoryUpdate(t, warfareMembers) {
+  const sumPower = warfareMembers.reduce((a, m) => a + memberPower(m), 0)
+  t.power += 0.015 * Math.max(0.002, t.territory) * sumPower
+  for (const [name, r] of Object.entries(t.rivals)) {
+    const mult = POWER_MULT[name] ?? 1
+    r.power += 0.5 * Math.min(0.85, r.power * 0.005) + 0.5 * (0.75 * 0.75 * r.territory * mult)
+  }
+  t.clashChance = t.engaged ? 1 : Math.max(0, t.clashChance - 0.01)
+  const rivals = Object.values(t.rivals).filter((r) => r.territory > 0)
+  const deathPerMember = {}
+  if (!(t.clashChance > 0) || !rivals.length) return deathPerMember
+  // The player's gang enters ~2 clashes per update (its own pick, and one
+  // rival's pick of it on average), each against a uniformly random rival.
+  const clashes = 2 * t.clashChance
+  for (const r of rivals) {
+    const perRival = clashes / rivals.length
+    const p = t.power / (t.power + r.power)
+    const win = p * perRival
+    const lose = (1 - p) * perRival
+    const dWin = territoryGain(t.power, r.power, r.territory)
+    const dLose = territoryGain(r.power, t.power, t.territory)
+    const d = win * dWin - lose * dLose
+    t.territory += d
+    r.territory -= d
+    t.power *= Math.pow(1 / 1.008, lose)
+    r.power *= Math.pow(1 / 1.01, win)
+    for (const m of warfareMembers) {
+      const def = Math.max(1, m.def)
+      deathPerMember[m.name] = (deathPerMember[m.name] ?? 0) + 0.35 * ((win * 0.005 + lose * 0.01) / Math.pow(def, 0.6))
+    }
+  }
+  t.territory = Math.max(0, Math.min(1, t.territory))
+  return deathPerMember
+}
+
 /** A fresh recruit (GangMember constructor): every exp 0, every mult 1, no ascension. */
 export function freshMember(name) {
   const m = { name, task: 'Unassigned', earnedRespect: 0, upgrades: [], augmentations: [] }
@@ -411,6 +468,7 @@ export function simulateGang(g, members, o = {}) {
         m[`${s}_exp`] = 0
         m[`${s}_mult`] = 1
       }
+      m.upgrades = []
       for (const name of m.augmentations) {
         const u = UPGRADES.find((x) => x.name === name)
         if (u) for (const s of STATS) if (u.mults[s]) m[`${s}_mult`] *= u.mults[s]
@@ -422,6 +480,44 @@ export function simulateGang(g, members, o = {}) {
     }
   }
   const state = { respect: g.respect, wantedLevel: g.wantedLevel, territory: g.territory, isHacking: g.isHacking }
+  // TERRITORY AND POWER (o.rivals: {name: {power, territory}} from
+  // getAllGangInformation; absent -> territory held constant, no warfare).
+  // o.warfare: {fraction, engageRatio} — the strongest `fraction` of members
+  // hold Territory Warfare; warfare is engaged while our power >= engageRatio
+  // x the strongest rival's. Deaths accumulate per member and take the
+  // member (and 5% of respect + their earned respect) at probability 1.
+  const rivalsIn = o.rivals && typeof o.rivals === 'object' ? Object.fromEntries(Object.entries(o.rivals).filter(([n]) => n !== g.faction).map(([n, r]) => [n, { power: num(r?.power) ? r.power : 0, territory: num(r?.territory) ? r.territory : 0 }])) : null
+  const terr = rivalsIn && Object.keys(rivalsIn).length ? { power: num(g.power) ? g.power : 0, territory: g.territory, rivals: rivalsIn, clashChance: g.territoryWarfareEngaged ? 1 : num(g.territoryClashChance) ? g.territoryClashChance : 0, engaged: !!g.territoryWarfareEngaged } : null
+  const warfare = terr && o.warfare && num(o.warfare.fraction) && o.warfare.fraction > 0 ? { fraction: Math.min(1, o.warfare.fraction), engageRatio: num(o.warfare.engageRatio) ? o.warfare.engageRatio : Infinity } : null
+  const deathAcc = {}
+  let deaths = 0
+  let cyclesToTerritory = 0
+  // EQUIPMENT (o.equipment: {budget, fraction}): at the first step, and
+  // again whenever an ascension has stripped a member, the greedy
+  // gain-per-dollar buy (bestEquipment) runs against what is left of
+  // fraction x budget. No income inside the simulation — one-shot money.
+  let equipLeft = o.equipment && num(o.equipment.budget) && num(o.equipment.fraction) ? Math.max(0, o.equipment.budget * Math.min(1, Math.max(0, o.equipment.fraction))) : 0
+  let equipSpent = 0
+  const buyEquipment = () => {
+    if (!(equipLeft > 0)) return
+    const disc = discount(state.respect, terr ? terr.power : num(g.power) ? g.power : 0)
+    for (let round = 0; round < 60 && equipLeft > 0; round++) {
+      let best = null
+      for (const m of ms) {
+        const e = bestEquipment(m, [...(m.upgrades ?? []), ...(m.augmentations ?? [])], equipLeft, disc, state.isHacking)
+        if (e && (!best || e.gainPerDollar > best.gainPerDollar)) best = { ...e, m }
+      }
+      if (!best) break
+      const u = UPGRADES.find((x) => x.name === best.name)
+      const m = best.m
+      if (u.type === 'g') m.augmentations = [...m.augmentations, u.name]
+      else m.upgrades = [...(m.upgrades ?? []), u.name]
+      for (const st of STATS) if (u.mults[st]) m[`${st}_mult`] *= u.mults[st]
+      for (const st of STATS) m[st] = skillOf(m[`${st}_exp`], m[`${st}_mult`] * ascMult(m[`${st}_asc_points`]))
+      equipLeft -= best.cost
+      equipSpent += best.cost
+    }
+  }
   let gross = 0
   let respectPerSec = null
   let recruitIndex = 0
@@ -432,10 +528,21 @@ export function simulateGang(g, members, o = {}) {
     while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
     hNow = ((i - 1) * stepSec) / 3600
     tryAscend()
+    buyEquipment()
     // `o.assignFn` lets a caller forecast a DIFFERENT policy than assign()
     // — that is how policies are compared, by their trajectories.
     const plan = (o.assignFn ?? assign)(state, ms, { softcap: o.softcap, mode: o.mode })
     if (!plan) return null
+    // Warfare: the strongest `fraction` of members (by power) hold
+    // Territory Warfare instead of what the policy gave them.
+    let warfareMembers = []
+    if (warfare) {
+      const n = Math.round(warfare.fraction * ms.length)
+      warfareMembers = [...ms].sort((a, b) => memberPower(b) - memberPower(a)).slice(0, n)
+      for (const m of warfareMembers) plan.assignments[m.name] = 'Territory Warfare'
+      const maxRival = Math.max(...Object.values(terr.rivals).map((r) => r.power))
+      terr.engaged = terr.power >= warfare.engageRatio * maxRival
+    } else if (terr) terr.engaged = false
     if (respectPerSec === null) respectPerSec = plan.rates.respect
     // Per-cycle gains at this step's stats and penalty (Gang.ts:processGains).
     let respectGainPerCycle = 0
@@ -471,9 +578,26 @@ export function simulateGang(g, members, o = {}) {
         m[s] = skillOf(m[`${s}_exp`], m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
       }
     }
-    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, members: ms.length, wantedLevel: state.wantedLevel, ascensions })
+    // Territory and power, every 100 cycles; deaths take members.
+    if (terr) {
+      cyclesToTerritory += cyclesPerStep
+      while (cyclesToTerritory >= CYCLES_PER_TERRITORY_UPDATE) {
+        cyclesToTerritory -= CYCLES_PER_TERRITORY_UPDATE
+        const dp = territoryUpdate(terr, warfareMembers)
+        for (const [name, p] of Object.entries(dp)) deathAcc[name] = (deathAcc[name] ?? 0) + p
+      }
+      state.territory = terr.territory
+      for (const m of [...ms]) {
+        if (!(deathAcc[m.name] >= 1)) continue
+        deathAcc[m.name] = 0
+        state.respect = Math.max(1, state.respect - (0.05 * state.respect + m.earnedRespect))
+        ms.splice(ms.indexOf(m), 1)
+        deaths++
+      }
+    }
+    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, members: ms.length, wantedLevel: state.wantedLevel, ascensions, territory: state.territory, power: terr ? terr.power : null })
   }
-  return { samples, respectPerSec: respectPerSec ?? 0, horizonH, stepSec, ascensions }
+  return { samples, respectPerSec: respectPerSec ?? 0, horizonH, stepSec, ascensions, deaths, equipSpent, territory: state.territory, power: terr ? terr.power : null, engaged: terr ? terr.engaged : null }
 }
 
 /**
@@ -793,40 +917,64 @@ export function* goldenSearch(lo, hi, evalFn, o = {}) {
 export function* policySearch(g, members, o = {}) {
   if (!g || !Array.isArray(members) || !num(o.softcap)) return null
   const isHacking = g.isHacking === true
-  let k = num(o.incumbent?.k) ? o.incumbent.k : 1
-  let x = num(o.incumbent?.x) ? o.incumbent.x : 1.25
+  // The coordinates: k (train ratio), x (ascension floor), y (equipment
+  // spend fraction of o.equipment.budget), w (warfare fraction of members),
+  // e (engage when our power >= e x the strongest rival's). y needs a
+  // budget, w and e need rivals — absent inputs leave that coordinate out.
+  const P = { k: num(o.incumbent?.k) ? o.incumbent.k : 1, x: num(o.incumbent?.x) ? o.incumbent.x : 1.25, y: num(o.incumbent?.y) ? o.incumbent.y : 1, w: num(o.incumbent?.w) ? o.incumbent.w : 0, e: num(o.incumbent?.e) ? o.incumbent.e : 1.2 }
+  const hasBudget = o.equipment && num(o.equipment.budget) && o.equipment.budget > 0
+  const hasRivals = o.rivals && Object.keys(o.rivals).length > 0
   let sims = 0
-  const simAt = (kk, xx, extra = {}) => {
+  const NEG = { value: -Infinity, repAtHorizon: -Infinity, grossAtHorizon: -Infinity }
+  const simAt = (q, extra = {}) => {
     sims++
-    const f = simulateGang(g, members, { softcap: o.softcap, horizonH: o.horizonH, stepSec: o.stepSec, mode: o.mode, assignFn: trainRatio(kk, isHacking), ascend: { minGain: xx }, ...extra })
+    const f = simulateGang(g, members, {
+      softcap: o.softcap,
+      horizonH: o.horizonH,
+      stepSec: o.stepSec,
+      mode: o.mode,
+      assignFn: trainRatio(q.k, isHacking),
+      ascend: { minGain: q.x },
+      equipment: hasBudget ? { budget: o.equipment.budget, fraction: q.y } : null,
+      rivals: hasRivals ? o.rivals : null,
+      warfare: hasRivals ? { fraction: q.w, engageRatio: q.e } : null,
+      ...extra,
+    })
     return f ? { f, score: scoreTrajectory(f, o.objective) } : null
   }
-  const evalK = function* (kk) {
-    const r = simAt(kk, x)
-    yield
-    return r ? r.score : { value: -Infinity, repAtHorizon: -Infinity, grossAtHorizon: -Infinity }
-  }
-  const evalX = function* (xx) {
-    const r = simAt(k, xx)
-    yield
-    return r ? r.score : { value: -Infinity, repAtHorizon: -Infinity, grossAtHorizon: -Infinity }
-  }
+  const evalCoord = (name) =>
+    function* (v) {
+      const r = simAt({ ...P, [name]: v })
+      yield
+      return r ? r.score : NEG
+    }
   const evals = []
   const rounds = num(o.rounds) ? o.rounds : 2
   let best = null
+  const lines = [
+    // k over [0, 8]: the live search sat on 1.5 and then on 3.
+    { name: 'k', lo: 0, hi: 8, iters: 6 },
+    { name: 'x', lo: 1.02, hi: 3, iters: 5, extra: Infinity },
+    ...(hasBudget ? [{ name: 'y', lo: 0, hi: 1, iters: 4 }] : []),
+    ...(hasRivals ? [{ name: 'w', lo: 0, hi: 1, iters: 5 }, { name: 'e', lo: 0.3, hi: 3, iters: 5 }] : []),
+  ]
   for (let r = 0; r < rounds; r++) {
-    // k over [0, 3]: 1.5 was the first bound and the live search sat on it (22:37).
-    const rk = yield* goldenSearch(0, 3, evalK, { iters: 6 })
-    k = rk.param
-    evals.push(...rk.evals.map((e) => ({ round: r, k: e.param, x, score: e.score })))
-    // x over [1.02, 3]; "never" (Infinity) evaluated as its own point.
-    const rx = yield* goldenSearch(1.02, 3, evalX, { iters: 5 })
-    const never = yield* evalX(Infinity)
-    evals.push(...rx.evals.map((e) => ({ round: r, k, x: e.param, score: e.score })), { round: r, k, x: Infinity, score: never })
-    x = betterScore(never, rx.score) ? Infinity : rx.param
-    best = betterScore(never, rx.score) ? never : rx.score
+    for (const L of lines) {
+      const rl = yield* goldenSearch(L.lo, L.hi, evalCoord(L.name), { iters: L.iters })
+      let pick = { param: rl.param, score: rl.score }
+      evals.push(...rl.evals.map((ev) => ({ round: r, ...P, [L.name]: ev.param, score: ev.score })))
+      if (L.extra !== undefined) {
+        const sc = yield* evalCoord(L.name)(L.extra)
+        evals.push({ round: r, ...P, [L.name]: L.extra, score: sc })
+        if (betterScore(sc, pick.score)) pick = { param: L.extra, score: sc }
+      }
+      P[L.name] = pick.param
+      best = pick.score
+    }
   }
-  const chosen = simAt(k, x)
+  const k = P.k
+  const x = P.x
+  const chosen = simAt(P)
   yield
   // Rollouts: for each member who could ascend, "now" vs "not for an hour".
   const ascendNow = []
@@ -834,14 +982,14 @@ export function* policySearch(g, members, o = {}) {
     for (const m of members) {
       const gains = STATS.map((s) => Math.max((num(m[`${s}_exp`]) ? m[`${s}_exp`] : 0) - ASC_POINTS_FLOOR, 0))
       if (!gains.some((v) => v > 0)) continue
-      const now = simAt(k, x, { forceAscend: [m.name] })
+      const now = simAt(P, { forceAscend: [m.name] })
       yield
-      const later = simAt(k, x, { deferAscend: { [m.name]: 1 } })
+      const later = simAt(P, { deferAscend: { [m.name]: 1 } })
       yield
       if (now && later) ascendNow.push({ name: m.name, now: now.score, later: later.score, ascend: betterScore(now.score, later.score) })
     }
   }
-  return { k, x, score: chosen?.score ?? best, forecast: chosen?.f ?? null, evals, ascendNow, sims }
+  return { k, x, y: hasBudget ? P.y : null, w: hasRivals ? P.w : null, e: hasRivals ? P.e : null, score: chosen?.score ?? best, forecast: chosen?.f ?? null, evals, ascendNow, sims }
 }
 
 /** Run a policySearch to completion synchronously (tests, tools). */

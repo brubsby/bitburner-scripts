@@ -404,7 +404,7 @@ export async function run() {
       const sc = scoreTrajectory(f, objective);
       if (betterScore(sc, r.score) && sc.value > r.score.value) c10.fail(`named policy ${row.name} reaches more value (${sc.value}) than the search (${r.score.value})`);
     }
-    if (!(r.k > 0 && r.k <= 3)) c10.fail(`k must be searched inside (0, 3], got ${r.k}`);
+    if (!(r.k > 0 && r.k <= 8)) c10.fail(`k must be searched inside (0, 8], got ${r.k}`);
     if (!(r.score.value >= 0.17)) c10.fail(`the search must reach the 1000/5000/27500 unlocks inside 8h on the live gang, value ${r.score.value}`);
     // k = 0 is greedy; k = 1 is train-until on the hardest task.
     const g0 = trainRatio(0, false)(G, live, { softcap: 1 });
@@ -444,6 +444,80 @@ export async function run() {
     c11.note("generator cadence, force and defer, refusal");
   }
   checks.push(c11);
+
+  // ---------------------------------------------------------------------
+  const c12 = new Check("GP12", "territory and power follow Gang.ts:173-270 in expectation: our power from warfare members, rivals' mean gains, clash-weighted territory, deaths per def^0.6");
+  {
+    const { territoryUpdate, territoryGain, memberPower, freshMember, POWER_MULT, CYCLES_PER_TERRITORY_UPDATE } = gp;
+    c12.examined(1);
+    if (CYCLES_PER_TERRITORY_UPDATE !== 100) c12.fail("CyclesPerTerritoryAndPowerUpdate is 100");
+    if (POWER_MULT["Speakers for the Dead"] !== 5 || POWER_MULT.Tetrads !== 2 || POWER_MULT["Slum Snakes"] !== 1) c12.fail("power.ts multipliers");
+    const m = freshMember("w"); m.hack = 5; m.str = 100; m.def = 100; m.dex = 100; m.agi = 50; m.cha = 20;
+    if (Math.abs(memberPower(m) - 375 / 95) > 1e-12) c12.fail("memberPower is the stat sum over 95");
+    // Territory gain at the mean roll: powerBonus = max(1, 1 + ln(win/lose)/ln 50), x 0.0001, capped by the loser's territory.
+    if (Math.abs(territoryGain(50, 1, 1) - 2 * 0.0001) > 1e-15) c12.fail("50x power doubles the territory gain");
+    if (territoryGain(1, 50, 1) !== 0.0001) c12.fail("a weaker winner gets the base gain");
+    if (territoryGain(50, 1, 0.00005) !== 0.00005) c12.fail("gain is capped by the loser's territory");
+    // One update, no clashes (clashChance 0, not engaged): only power moves.
+    const t = { power: 1, territory: 1 / 7, rivals: { Tetrads: { power: 8, territory: 0.1 }, "The Black Hand": { power: 128, territory: 0.2 } }, clashChance: 0, engaged: false };
+    const dp = territoryUpdate(t, [m]);
+    if (Math.abs(t.power - (1 + 0.015 * (1 / 7) * (375 / 95))) > 1e-12) c12.fail("our power gain is 0.015 x territory x sum of warfare member power");
+    if (Math.abs(t.rivals.Tetrads.power - (8 + 0.5 * Math.min(0.85, 8 * 0.005) + 0.5 * 0.75 * 0.75 * 0.1 * 2)) > 1e-12) c12.fail("rival power: half multiplicative (capped 0.85), half additive at the mean roll x territory x multiplier");
+    if (Math.abs(t.territory - 1 / 7) > 1e-15 || Object.keys(dp).length) c12.fail("no clash chance: territory untouched, no deaths");
+    // Engaged: clashChance 1, two clashes per update split over rivals, territory moves by win chance.
+    const t2 = { power: 200, territory: 0.1, rivals: { Tetrads: { power: 8, territory: 0.1 } }, clashChance: 0, engaged: true };
+    const p0 = 200 + 0.015 * 0.1 * (375 / 95);
+    const dp2 = territoryUpdate(t2, [m]);
+    const rp = 8 + 0.5 * Math.min(0.85, 8 * 0.005) + 0.5 * 0.75 * 0.75 * 0.1 * 2;
+    const p = p0 / (p0 + rp);
+    const expected = 0.1 + 2 * (p * territoryGain(p0, rp, 0.1) - (1 - p) * territoryGain(rp, p0, 0.1));
+    if (Math.abs(t2.territory - expected) > 1e-12) c12.fail(`territory must move by the clash-weighted expectation: ${t2.territory} vs ${expected}`);
+    if (t2.clashChance !== 1) c12.fail("engaged sets clashChance to 1");
+    const death = 0.35 * ((2 * p * 0.005 + 2 * (1 - p) * 0.01) / Math.pow(100, 0.6));
+    if (Math.abs(dp2.w - death) > 1e-15) c12.fail(`death probability per update: ${dp2.w} vs ${death}`);
+    // Disengaged: clash chance decays 0.01 per update.
+    const t3 = { power: 1, territory: 0.1, rivals: { Tetrads: { power: 8, territory: 0.1 } }, clashChance: 0.5, engaged: false };
+    territoryUpdate(t3, []);
+    if (Math.abs(t3.clashChance - 0.49) > 1e-12) c12.fail("clash chance decays by 0.01 when disengaged");
+    c12.note("power gains, mean rival gains, clash expectation, deaths, decay — hand-checked");
+  }
+  checks.push(c12);
+
+  // ---------------------------------------------------------------------
+  const c13 = new Check("GP13", "equipment and warfare inside the trajectory: greedy buys raise multipliers and are lost on ascension; warfare members are the strongest; coordinates appear only with inputs");
+  {
+    const { simulateGang, runSearch, freshMember, skillOf, trainRatio } = gp;
+    c13.examined(1);
+    const mk = (v) => { const m = freshMember("m" + v); for (const st of ["str", "def", "dex", "agi"]) { m[st + "_exp"] = Math.exp((v + 200) / 32) - 534.5; m[st] = v; } return m; };
+    const G = { respect: 5000, wantedLevel: 10, territory: 1 / 7, isHacking: false, power: 1, faction: "Slum Snakes" };
+    const base = simulateGang(G, [mk(60), mk(80)], { softcap: 1, horizonH: 1, stepSec: 180, ascend: null, assignFn: trainRatio(0, false) });
+    const eq = simulateGang(G, [mk(60), mk(80)], { softcap: 1, horizonH: 1, stepSec: 180, ascend: null, assignFn: trainRatio(0, false), equipment: { budget: 5e7, fraction: 1 } });
+    if (!(eq.equipSpent > 0 && eq.equipSpent <= 5e7)) c13.fail(`equipment must be bought inside the budget: ${eq.equipSpent}`);
+    if (!(eq.samples.at(-1).gross > base.samples.at(-1).gross)) c13.fail("equipment must raise the respect trajectory");
+    // Lost on ascension: a member with big exp ascends at step 1 and the upgrades go; the sim re-buys from what is left.
+    const rich = mk(60); for (const st of ["str", "def", "dex", "agi"]) { rich[st + "_exp"] = 9000; rich[st] = skillOf(9000, 1); }
+    const asc = simulateGang({ ...G, respect: 1e6 }, [rich], { softcap: 1, horizonH: 600 / 3600, stepSec: 300, ascend: { minGain: 1.01 }, equipment: { budget: 1.2e6, fraction: 1 } });
+    if (!(asc.ascensions >= 1)) c13.fail("fixture: the member ascends");
+    // Budget 1.2m buys one Baseball Bat at 1m / discount(1e6 respect, power 1); the later ascension strips it and what is left cannot re-buy.
+    const bat = 1e6 / gp.discount(1e6, 1);
+    if (Math.abs(asc.equipSpent - bat) > 1) c13.fail(`one bat bought at the discount, none re-bought after the strip: spent ${asc.equipSpent} vs ${bat}`);
+    // Warfare: rivals present, fraction 0.5 of two members -> the stronger one on Territory Warfare, power grows.
+    // A dominant gang (power 50 vs 1, 90% territory): warfare engages and territory grows; rivals outgrow a power-1 gang, so dominance is the fixture.
+    const rivals = { Tetrads: { power: 1, territory: 0.05 } };
+    const dom = { ...G, power: 50, territory: 0.9 };
+    const war = simulateGang(dom, [mk(60), mk(80)], { softcap: 1, horizonH: 1, stepSec: 180, ascend: null, assignFn: trainRatio(0, false), rivals, warfare: { fraction: 0.5, engageRatio: 1.2 } });
+    if (!(war.power > 50)) c13.fail("a warfare member raises our power");
+    if (!(war.engaged && war.territory > 0.9)) c13.fail(`with power over 1.2x the rival, warfare engages and territory grows: engaged ${war.engaged}, territory ${war.territory}`);
+    const noWar = simulateGang(dom, [mk(60), mk(80)], { softcap: 1, horizonH: 1, stepSec: 180, ascend: null, assignFn: trainRatio(0, false), rivals, warfare: { fraction: 0.5, engageRatio: 100 } });
+    if (noWar.engaged !== false || Math.abs(noWar.territory - 0.9) > 1e-12) c13.fail("an engage ratio never met keeps warfare off and territory constant");
+    // Coordinates only with inputs.
+    const r0 = runSearch(G, [mk(60), mk(80)], { softcap: 1, horizonH: 0.5, stepSec: 300, objective: {}, rounds: 1 });
+    if (r0.y !== null || r0.w !== null || r0.e !== null) c13.fail("no budget / no rivals: y, w, e are null");
+    const r1 = runSearch(G, [mk(60), mk(80)], { softcap: 1, horizonH: 0.5, stepSec: 300, objective: {}, rounds: 1, rivals, equipment: { budget: 1e7 } });
+    if (!(r1.y >= 0 && r1.y <= 1 && r1.w >= 0 && r1.w <= 1 && r1.e >= 0.3 && r1.e <= 3)) c13.fail(`coordinates inside their ranges: ${JSON.stringify([r1.y, r1.w, r1.e])}`);
+    c13.note("equipment bought and stripped, warfare raises power and territory, coordinates gated on inputs");
+  }
+  checks.push(c13);
 
   return checks;
 }

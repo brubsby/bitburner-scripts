@@ -27,7 +27,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -78,8 +78,18 @@ export async function main(ns) {
   const SEARCH_BUDGET_MS = 300
   const SEARCH_EVERY_MS = 60000
   const STEP_SEC = 180
-  let policy = { k: 1, x: 1.25, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25 (no search complete yet)' }
+  let policy = { k: 1, x: 1.25, y: 1, w: 0, e: 1.2, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25, spend the gang budget, no warfare (no search complete yet)' }
   let search = null
+  const readClaims = () => ({
+    join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
+    augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
+    home: (() => {
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      if (!up) return 0
+      const ram = ns.getServerMaxRam('home')
+      return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
+    })(),
+  })
   let searchStartedAt = 0
   let forecast = null
   let objective = null
@@ -122,7 +132,17 @@ export async function main(ns) {
 
       const g = ns.gang.getGangInformation()
       const members = ns.gang.getMemberNames().map((n) => ns.gang.getMemberInformation(n))
-      const gang = { respect: g.respect, wantedLevel: g.wantedLevel, territory: g.territory, isHacking: g.isHacking }
+      const gang = { respect: g.respect, wantedLevel: g.wantedLevel, territory: g.territory, isHacking: g.isHacking, power: g.power, faction: g.faction, territoryWarfareEngaged: g.territoryWarfareEngaged, territoryClashChance: g.territoryClashChance }
+      // Rivals (getAllGangInformation): power and territory, for the
+      // territory model. Unreadable -> null -> the warfare coordinate is
+      // left out of the search and warfare stays off.
+      let rivals = null
+      try {
+        const all = ns.gang.getAllGangInformation()
+        rivals = Object.fromEntries(Object.entries(all).filter(([n]) => n !== g.faction).map(([n, o]) => [n, { power: o.power, territory: o.territory }]))
+      } catch {
+        rivals = null
+      }
 
       // Mode: what the install gate says is binding — money means money.
       fetchFromHome(ns, GATE_FILE)
@@ -149,7 +169,8 @@ export async function main(ns) {
         } catch {
           objective = { unlocks: [], horizonH: 8, why: 'factionplan.txt unreadable' }
         }
-        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, incumbent: { k: policy.k, x: policy.x } })
+        const budgetNow = spendable('gang', ns.getServerMoneyAvailable('home'), readClaims())
+        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: budgetNow > 0 ? { budget: budgetNow } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e } })
         searchStartedAt = Date.now()
       }
       if (search) {
@@ -165,6 +186,9 @@ export async function main(ns) {
             policy = {
               k: d.k,
               x: d.x,
+              y: d.y ?? policy.y,
+              w: d.w ?? 0,
+              e: d.e ?? policy.e,
               assignFn: trainRatio(d.k, gang.isHacking),
               ascendNow: Object.fromEntries(d.ascendNow.map((a) => [a.name, a.ascend])),
               at: Date.now(),
@@ -177,7 +201,7 @@ export async function main(ns) {
             }
             const sim = d.forecast
             forecast = sim
-              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'}`, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, members: s.members })) }
+              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'} y=${d.y ?? '-'} w=${d.w ?? '-'} e=${d.e ?? '-'}`, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, members: s.members })) }
               : { at: new Date().toISOString(), why: 'the chosen policy could not be simulated' }
           }
         }
@@ -188,6 +212,21 @@ export async function main(ns) {
         publish(ns, { ...base, phase: 'refused', why: 'assign could not read the gang' })
         await ns.sleep(30000)
         continue
+      }
+      // Warfare, as the search chose: the strongest w-fraction of members
+      // hold Territory Warfare; engage while our power >= e x the strongest
+      // rival's. Without rivals readable, none of this happens.
+      let warfare = false
+      if (rivals && policy.w > 0) {
+        const n = Math.round(policy.w * members.length)
+        for (const m of [...members].sort((a, b) => memberPower(b) - memberPower(a)).slice(0, n)) plan.assignments[m.name] = 'Territory Warfare'
+        const maxRival = Math.max(...Object.values(rivals).map((r) => r.power))
+        warfare = g.power >= policy.e * maxRival
+      }
+      try {
+        if (g.territoryWarfareEngaged !== warfare) ns.gang.setTerritoryWarfare(warfare)
+      } catch {
+        /* leave warfare as it is */
       }
       for (const m of members) {
         const want = plan.assignments[m.name]
@@ -204,18 +243,11 @@ export async function main(ns) {
       }
       ascended = ascended.slice(-12)
 
-      // Equipment, inside the budget every higher claim leaves.
-      const claims = {
-        join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
-        augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
-        home: (() => {
-          const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
-          if (!up) return 0
-          const ram = ns.getServerMaxRam('home')
-          return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
-        })(),
-      }
-      let budget = spendable('gang', ns.getServerMoneyAvailable('home'), claims)
+      // Equipment, inside the budget every higher claim leaves, at the
+      // fraction y the search chose (equipment is lost on ascension, so
+      // WHEN to spend is the trajectory's call).
+      const claims = readClaims()
+      let budget = spendable('gang', ns.getServerMoneyAvailable('home'), claims) * policy.y
       const disc = discount(g.respect, g.power)
       const purchases = []
       for (let round = 0; round < 24 && budget > 0; round++) {
@@ -232,17 +264,6 @@ export async function main(ns) {
         if (idx >= 0) members[idx] = ns.gang.getMemberInformation(best.member)
       }
       if (purchases.length) bought = [...bought, ...purchases.map((p) => ({ at: new Date().toISOString(), ...p }))].slice(-20)
-
-      // Territory warfare only from strength.
-      let warfare = false
-      try {
-        const others = ns.gang.getAllGangInformation()
-        const rivals = Object.entries(others).filter(([n]) => n !== g.faction).map(([n, o]) => ({ name: n, power: o.power }))
-        warfare = rivals.length > 0 && rivals.every((r) => g.power > 1.2 * r.power)
-        if (g.territoryWarfareEngaged !== warfare) ns.gang.setTerritoryWarfare(warfare)
-      } catch {
-        /* unreadable rivals: leave warfare as it is */
-      }
 
       publish(ns, {
             ...base,
@@ -262,7 +283,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, why: objective.why } : null, why: policy.why },
+            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), y: policy.y, w: policy.w, e: policy.e, rivals, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,
