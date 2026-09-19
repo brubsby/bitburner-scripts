@@ -110,6 +110,7 @@ export const programs = {
   'ServerProfiler.exe': { level: 75, time: MIN5 * 6, price: 1e6 },
   'AutoLink.exe': { level: 25, time: MIN5 * 3, price: 1e6 },
   'Formulas.exe': { level: 1000, time: MIN5 * 48, price: 5e9 },
+  'b1t_flum3.exe': { level: 1, time: MIN5 / 20 },
 }
 export const INT_PROGRAM_EXP_PER_SEC = 0.1 // CONSTANTS.IntelligenceProgramBaseExpGain
 

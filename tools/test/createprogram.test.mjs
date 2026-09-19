@@ -21,7 +21,9 @@ export async function run() {
     const file = names[m[1]];
     const level = Number(m[2]);
     const expr = m[3].trim();
-    const time = expr.split("*").map((t) => t.trim()).reduce((a, t) => a * (t.startsWith("CONSTANTS.") ? (table[t.slice(10)] ?? ms(t.slice(10))) : Number(t)), 1);
+    const [num, den] = expr.split("/").map((x) => x.trim());
+    const val = (e) => e.split("*").map((t) => t.trim()).reduce((a, t) => a * (t.startsWith("CONSTANTS.") ? (table[t.slice(10)] ?? ms(t.slice(10))) : Number(t)), 1);
+    const time = val(num) / (den ? Number(den) : 1);
     c.examined(1);
     n++;
     const ours = programs[file];
