@@ -318,6 +318,45 @@ export function run() {
   }
   checks.push(c12);
 
+  // ---------------------------------------------------------------------
+  const c13 = new Check("BU13", "the ln(M) competition: join and augmentation claims yield to a spend with strictly more ln per dollar; unreadable rivals and the home claim hold");
+  {
+    const { marginalLnPerDollar } = await import("../../budget.js");
+    const claims = { join: 100e9, augmentations: 5e9, home: { amount: 1e9, deltaGB: 512 } };
+    c13.examined(1);
+    if (reserveFor("gang", claims) !== 106e9) c13.fail("no competition: every claim held");
+    const win = { lnPerDollar: 1e-9, rivals: { join: 1e-10, augmentations: 5e-10 } };
+    if (reserveFor("gang", claims, { lnCompete: win }) !== 1e9) c13.fail("beating both rivals leaves only the home claim");
+    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: 3e-10, rivals: { join: 1e-10, augmentations: 5e-10 } } }) !== 6e9) c13.fail("beating only the join rival waives only the join claim");
+    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: 1e-10, rivals: { join: 1e-10, augmentations: 5e-10 } } }) !== 106e9) c13.fail("equal is not strictly better: hold");
+    for (const [label, lc] of [
+      ["no own figure", { rivals: { join: 0, augmentations: 0 } }],
+      ["zero own figure", { lnPerDollar: 0, rivals: { join: 0, augmentations: 0 } }],
+      ["null rivals", { lnPerDollar: 1, rivals: { join: null, augmentations: null } }],
+      ["no rivals", { lnPerDollar: 1 }],
+    ]) {
+      c13.examined(1);
+      if (reserveFor("gang", claims, { lnCompete: lc }) !== 106e9) c13.fail(`${label}: an unreadable side must keep both claims`);
+    }
+    c13.examined(1);
+    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0 } } }) !== 1e9) c13.fail("the home claim is never waived by the competition");
+    // marginalLnPerDollar reads the gate file.
+    c13.examined(1);
+    const gate = JSON.stringify({ lastAugReset: 7, planned: true, plan: { buy: [{ price: 1e6, m: 1.1 }, { price: 4e6, m: 1.05 }] }, joinClaim: 100e9, joinValueLn: 12.5 });
+    const r = marginalLnPerDollar(gate, 7);
+    if (Math.abs(r.augmentations - Math.log(1.05) / 4e6) > 1e-20) c13.fail("augmentations rival is the plan's least ln per dollar");
+    if (Math.abs(r.join - 12.5 / 100e9) > 1e-20) c13.fail("join rival is value over requirement");
+    const stale = marginalLnPerDollar(gate, 8);
+    if (stale.augmentations !== null || stale.join !== null) c13.fail("a stale-life gate reads as unreadable");
+    const empty = marginalLnPerDollar(JSON.stringify({ lastAugReset: 7, planned: false, plan: null, joinClaim: 0 }), 7);
+    if (empty.augmentations !== 0 || empty.join !== 0) c13.fail("an explicit empty plan and a zero join claim displace nothing: 0");
+    const noVal = marginalLnPerDollar(JSON.stringify({ lastAugReset: 7, planned: false, plan: null, joinClaim: 100e9 }), 7);
+    if (noVal.join !== null) c13.fail("a join claim without a value is unreadable, never 0");
+    if (marginalLnPerDollar("not json", 7).join !== null) c13.fail("garbage is unreadable");
+    c13.note("waivers per claim, strictness, unreadable sides, home never, gate parsing");
+  }
+  checks.push(c13);
+
   /* ---------------------------------------------------------------- BU9 --- */
   const c9 = new Check("BU9", "joinClaim: money held for an INVITATION, refused when unreadable or from another life");
   {

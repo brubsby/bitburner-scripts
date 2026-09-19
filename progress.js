@@ -139,7 +139,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 'agi' }
 import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
-import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, moneyLn } from 'objective.js'
+import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -809,7 +809,7 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
         // `value`: the ln(M) this augmentation is worth in the current basket
         // — the same logValue every real offer is priced by — so gang.js
         // optimises the same quantity the install gate prices.
-        const value = of.mults ? logValue(of.mults, joinCtx?.channels, joinCtx?.channelWeights ?? null) : null
+        const value = of.name === TERMINAL_AUG ? TERMINAL_LN : of.mults ? logValue(of.mults, joinCtx?.channels, joinCtx?.channelWeights ?? null) : null
         unlocks.push({ name: of.name, repReq: of.repReq, value: value !== null && isFinite(value) ? Math.round(value * 1e4) / 1e4 : null, atH: h !== null && isFinite(h) ? Math.round(h * 100) / 100 : null, ...(h === Infinity ? { why: `beyond the ${gc.forecast.horizonH}h forecast horizon` } : {}) })
       }
       unlocks.sort((a, b) => (a.atH ?? Infinity) - (b.atH ?? Infinity) || a.repReq - b.repReq)
@@ -942,6 +942,24 @@ function joinMoneyClaim(candidates, player) {
     }
   }
   return want
+}
+
+/**
+ * The exit faction's value in ln(M): its catalogue's log-multipliers plus
+ * TERMINAL_LN for The Red Pill. The join claim's side of budget.js's ln(M)
+ * competition (marginalLnPerDollar divides it by the requirement). null
+ * when the candidate or its catalogue is unreadable — the claim then holds.
+ */
+function joinValueLn(candidates, weights) {
+  if (!Array.isArray(candidates)) return null
+  const c = candidates.find((x) => x?.name === EXIT_FACTION)
+  if (!c || !Array.isArray(c.augs)) return null
+  let ln = 0
+  for (const a of c.augs) {
+    if (a?.name === TERMINAL_AUG) ln += TERMINAL_LN
+    else if (a?.mults) ln += logValue(a.mults, undefined, weights ?? null)
+  }
+  return isFinite(ln) ? ln : null
 }
 
 /**
@@ -2348,6 +2366,7 @@ async function act(ns, canJoin, info) {
           pending: [],
           plan: null,
           joinClaim: joinMoneyClaim(candidates, player),
+          joinValueLn: joinValueLn(candidates, channelWeights),
           incomeSample: makeIncomeSample(incNow, player, schedule),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
         },
@@ -2772,6 +2791,7 @@ async function act(ns, canJoin, info) {
           // present, so a reader never has to infer it from the shape.
           planned: true,
           joinClaim: joinMoneyClaim(candidates, player),
+          joinValueLn: joinValueLn(candidates, channelWeights),
           pending,
           heldM,
           // The income model's inputs, persisted so the NEXT pass can score

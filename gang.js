@@ -27,8 +27,8 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
-import { spendable, augClaim, joinClaim } from 'budget.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
+import { spendable, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { sfLevel } from 'sfgate.js'
@@ -80,6 +80,8 @@ export async function main(ns) {
   const STEP_SEC = 180
   let policy = { k: 1, x: 1.25, y: 1, w: 0, e: 1.2, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25, spend the gang budget, no warfare (no search complete yet)' }
   let search = null
+  let searchBudget = 0
+  let compete = null
   const readClaims = () => ({
     join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
     augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
@@ -169,8 +171,16 @@ export async function main(ns) {
         } catch {
           objective = { unlocks: [], horizonH: 8, why: 'factionplan.txt unreadable' }
         }
-        const budgetNow = spendable('gang', ns.getServerMoneyAvailable('home'), readClaims())
-        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: budgetNow > 0 ? { budget: budgetNow } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e } })
+        // THE BUDGET THE GANG MAY COMPETE FOR: everything the join and
+        // augmentation claims hold (never the home claim) — budget.js's
+        // ln(M) competition decides after the search whether the chosen
+        // spend earns it. The search sees the contested budget so y is
+        // chosen against real money; the spend is then cut to what the
+        // competition allows.
+        const claimsNow = readClaims()
+        const contested = spendable('gang', ns.getServerMoneyAvailable('home'), claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0 } } })
+        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e } })
+        searchBudget = contested
         searchStartedAt = Date.now()
       }
       if (search) {
@@ -198,6 +208,15 @@ export async function main(ns) {
               evals: d.evals.length,
               rollouts: d.ascendNow,
               why: objective?.why ?? null,
+            }
+            // The spend's own ln per dollar: the chosen trajectory's value
+            // minus the same policy without equipment, over the cost.
+            compete = null
+            if (searchBudget > 0 && d.y > 0 && d.forecast && d.forecast.equipSpent > 0) {
+              const bare = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, assignFn: policy.assignFn, ascend: { minGain: d.x }, rivals, warfare: rivals ? { fraction: d.w, engageRatio: d.e } : null })
+              const without = bare ? scoreTrajectory(bare, objective) : null
+              const lnGain = without ? d.score.value - without.value : null
+              compete = { cost: d.forecast.equipSpent, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget }
             }
             const sim = d.forecast
             forecast = sim
@@ -247,7 +266,16 @@ export async function main(ns) {
       // fraction y the search chose (equipment is lost on ascension, so
       // WHEN to spend is the trajectory's call).
       const claims = readClaims()
-      let budget = spendable('gang', ns.getServerMoneyAvailable('home'), claims) * policy.y
+      // Compete: the rivals' ln per dollar from the gate file; the gang's own
+      // from the last decision. Unreadable either side keeps the claims.
+      fetchFromHome(ns, GATE_FILE)
+      const rivalsLn = marginalLnPerDollar(ns.read(GATE_FILE), info.lastAugReset)
+      const lnCompete = compete && typeof compete.lnPerDollar === 'number' && compete.lnPerDollar > 0 ? { lnPerDollar: compete.lnPerDollar, rivals: rivalsLn } : null
+      const permitted = spendable('gang', ns.getServerMoneyAvailable('home'), claims, lnCompete ? { lnCompete } : {})
+      // Spend what the trajectory chose, inside what the competition allows.
+      let budget = Math.min(permitted, compete ? compete.cost : permitted * policy.y)
+      if (compete) compete.rivals = rivalsLn
+      if (compete) compete.permitted = permitted
       const disc = discount(g.respect, g.power)
       const purchases = []
       for (let round = 0; round < 24 && budget > 0; round++) {
@@ -283,7 +311,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), y: policy.y, w: policy.w, e: policy.e, rivals, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, why: objective.why } : null, why: policy.why },
+            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,

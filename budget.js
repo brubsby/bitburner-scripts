@@ -147,6 +147,31 @@ export function reserveFor(spender, claims = {}, o = {}) {
       v = amt
     }
 
+    // ------------------------------------------------------------------
+    // THE ln(M) COMPETITION — the join and augmentation claims may be spent
+    // through by a purchase that buys MORE ln(M) per dollar than the claim
+    // it displaces. Both sides are priced by the same objective:
+    //   augmentations: the plan's least valuable item, ln(m)/price — the
+    //                  item a diverted dollar actually drops.
+    //   join:          the exit faction's value (catalogue ln + TERMINAL_LN)
+    //                  over its money requirement — saving from income, a
+    //                  dollar spent delays the join by 1/income, i.e. by
+    //                  1/requirement of the whole saving time, so the linear
+    //                  cost per dollar is value/requirement exactly.
+    // The caller supplies opts.lnCompete = {lnPerDollar, rivals: {augmentations,
+    // join}} — its own ln per dollar (measured by trajectory: value with the
+    // spend minus value without, over cost) and each rival's. A claim is
+    // waived only when its rival figure is readable and STRICTLY below the
+    // spender's; unreadable rivals keep the hold. The HOME claim is never
+    // waived here: home RAM has no ln(M) price. BU13 pins every shape.
+    // ------------------------------------------------------------------
+    if ((key === 'join' || key === 'augmentations') && o.lnCompete) {
+      const lc = o.lnCompete
+      const fin = (x) => typeof x === 'number' && isFinite(x)
+      const rival = lc.rivals?.[key]
+      if (fin(lc.lnPerDollar) && lc.lnPerDollar > 0 && fin(rival) && rival >= 0 && lc.lnPerDollar > rival) continue
+    }
+
     // A claim nobody could read is not a claim of zero. This is the direction
     // that matters: treating "unknown" as "nothing is promised" is how a
     // low-priority spender empties an account the high-priority one was about
@@ -155,6 +180,47 @@ export function reserveFor(spender, claims = {}, o = {}) {
     held += v
   }
   return held
+}
+
+/**
+ * The rivals' ln(M) per dollar for the competition above, from the gate
+ * file: {augmentations, join}, each null when unreadable (a null rival keeps
+ * its claim). Stale-life files read as unreadable, like augClaim.
+ */
+export function marginalLnPerDollar(text, lastAugReset) {
+  const out = { augmentations: null, join: null }
+  if (!text) return out
+  let d
+  try {
+    d = JSON.parse(text)
+  } catch {
+    return out
+  }
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return out
+  if (typeof lastAugReset === 'number' && d.lastAugReset !== lastAugReset) return out
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  // Augmentations: the plan's least ln per dollar; an explicit empty plan
+  // means nothing is displaced -> 0 (any positive spend beats it).
+  if (d.plan === null || d.plan === undefined) {
+    if (d.planned === false) out.augmentations = 0
+  } else if (Array.isArray(d.plan.buy)) {
+    let least = null
+    for (const it of d.plan.buy) {
+      if (!fin(it?.price) || it.price <= 0 || !fin(it?.m) || it.m <= 0) {
+        least = null
+        break
+      }
+      const lpd = Math.log(it.m) / it.price
+      if (least === null || lpd < least) least = lpd
+    }
+    out.augmentations = d.plan.buy.length === 0 ? 0 : least
+  }
+  // Join: value over requirement; a zero claim displaces nothing.
+  if (fin(d.joinClaim)) {
+    if (d.joinClaim === 0) out.join = 0
+    else if (fin(d.joinValueLn) && d.joinValueLn >= 0) out.join = d.joinValueLn / d.joinClaim
+  }
+  return out
 }
 
 /** What is actually spendable by this spender right now. Never negative. */
