@@ -1131,8 +1131,14 @@ async function act(ns, canJoin, info) {
   const canBuyAug = canJoin
   const canInstall = canJoin
   const orders = []
+  // Orders execute AFTER this pass, in sequence, so a travel ordered early in
+  // the batch changes the city every later order sees. Track it: the body
+  // step once ordered "travel to Chongqing for Tetrads" and then "gym at
+  // Powerhouse" (Sector-12) in the same batch, and the gym refused.
+  let cityAfterOrders = player.city
   const order = (kind, args, why) => {
     orders.push({ id: orders.length + 1, kind, args, why })
+    if (kind === 'travel') cityAfterOrders = args[0]
     return true
   }
   const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders }, null, 2), 'w')
@@ -1260,7 +1266,7 @@ async function act(ns, canJoin, info) {
             todo.push(`${f}: chosen, needs ${(moneyReq / 1e6).toFixed(0)}m in hand plus the fare`)
             continue
           }
-          if (player.city !== city) order('travel', [city], `${f} invites only in ${city}`)
+          if (cityAfterOrders !== city) order('travel', [city], `${f} invites only in ${city}`)
           order('join', [f], `chosen city set [${pick.chosen.join(', ')}]; invitation follows presence`)
           did.push(`ordered travel to ${city} and join ${f} (chosen city set)`)
         }
@@ -1929,7 +1935,7 @@ async function act(ns, canJoin, info) {
       const already = work?.type === 'CLASS' && String(work.classType ?? '') === cls && work.location === bodyStep.gym
       if (!already) {
         try {
-          if (player.city !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
+          if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
           if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${scheduleTarget}`)) {
             did.push(`training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation`)
           } else {
@@ -1960,7 +1966,7 @@ async function act(ns, canJoin, info) {
         // Player.city per campus). Travel is instant and $200k — seconds of
         // income against the hours the better campus saves.
         try {
-          if (player.city !== 'Volhaven') order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')
+          if (cityAfterOrders !== 'Volhaven') order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')
           if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`)) {
             did.push(`studying Leadership at ZB to charisma ${train.toCha} (~${train.hours.toFixed(1)}h) before the ${wantCompany} desk — training beat the plain stint on total hours`)
           } else {
