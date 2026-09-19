@@ -7,7 +7,7 @@
 // allocation, so this file raises to one of TWO ceilings instead of returning.
 //
 // The original `main` body is preserved as `act(ns, canJoin)` with exactly ONE
-// substantive change, described under "the probe" below.
+// substantive change, described under "the probePlan" below.
 //
 // The `player.currentWork` / `player.focus` defects recorded in
 // docs/game-knowledge.md §1 ARE now fixed, because wiring this file into
@@ -47,9 +47,9 @@
 // THE PROBE. The shipped file decides capability by CALLING a singularity
 // function inside a try/catch (`capable(ns, () => sing.ownedAugs(false))`).
 // That cannot survive an override: APIWrapper.ts:80 charges the call's RAM
-// BEFORE the body runs, so the probe alone costs 5GB (80GB at SF4.1) and
+// BEFORE the body runs, so the probePlan alone costs 5GB (80GB at SF4.1) and
 // NetscriptHelpers.tsx:523 calls killWorkerScript before it throws — the catch
-// runs but the script is already dead. The probe is therefore replaced by
+// runs but the script is already dead. The probePlan is therefore replaced by
 // `canUseSingularity(info)`, which is the SAME predicate the game itself uses:
 // checkSingularityAccess (NetscriptHelpers.tsx:438-446) is a bare
 // `canAccessBitNodeFeature(4)`, and sfgate.js:63 is that rule. Invariant SF3 —
@@ -139,7 +139,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 'agi' }
 import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
-import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn } from 'objective.js'
+import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -312,6 +312,36 @@ export async function main(ns) {
     // or buy anything, so nothing is promised — and saying so is strictly more
     // accurate than leaving the previous node's plan standing. This is the same
     // shape act() writes when it has no plan, so readers parse one thing.
+    // THE HOME CLAIM'S SIDE OF THE ln(M) COMPETITION (objective.homeLn):
+    // the next home upgrade's ln per dollar from the batcher's income per
+    // GB, the window, and the measured elasticity. Any unreadable input
+    // publishes null and the home claim holds as before.
+    const homeCompete = () => {
+      try {
+        const hu = readJson(ns, '/tel/homeup.txt')
+        const bt = readJson(ns, '/tel/batch.txt')
+        const inc = ns.getTotalScriptIncome()
+        const w = measureWindow(ns)
+        const next = hu?.next
+        // homeup.js publishes homeRam when it runs; between runs boot.txt's
+        // figure (written at every boot, i.e. after every install) stands in.
+        const homeRam = hu?.homeRam > 0 ? hu.homeRam : readJson(ns, '/tel/boot.txt')?.homeRam
+        const deltaGB = next?.kind === 'RAM' && homeRam > 0 ? homeRam : null
+        const h = homeLn({
+          incomePerSec: (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || null,
+          deltaGB,
+          ramTotal: bt?.ram?.total,
+          windowH: w?.windowH,
+          cost: next?.cost,
+          eBudget: weightsMeta?.eBudget,
+          remainingWindows: weightsMeta?.remainingWindows,
+          budget: weightsMeta?.probeMoney,
+        })
+        return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, eBudget: weightsMeta?.eBudget ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
+      } catch {
+        return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', eBudget: null, remainingWindows: null, probeMoney: null }
+      }
+    }
     ns.write(
       GATE,
       JSON.stringify(
@@ -371,7 +401,7 @@ export async function main(ns) {
 
 
 /*
- * REMOVED: `capable(ns, fn)`, the try/catch probe.
+ * REMOVED: `capable(ns, fn)`, the try/catch probePlan.
  *
  * The shipped file's reasoning was "there is no 'do I have Source-File 4' API
  * that does not itself cost RAM, so the honest test is to call the thing and
@@ -380,10 +410,10 @@ export async function main(ns) {
  *  - ns.getResetInfo() costs 1.0GB and answers it exactly. The game's own gate,
  *    checkSingularityAccess (NetscriptHelpers.tsx:438-446), is a bare
  *    canAccessBitNodeFeature(4), which is sfgate.js:63.
- *  - the probe is FATAL under an ns.ramOverride: APIWrapper.ts:80 charges the
+ *  - the probePlan is FATAL under an ns.ramOverride: APIWrapper.ts:80 charges the
  *    call's RAM before its body runs, and NetscriptHelpers.tsx:523 calls
  *    killWorkerScript(ws) before throwing — so the catch runs in a process that
- *    is already dead. A 5GB (80GB at SF4.1) probe to learn something a 1GB call
+ *    is already dead. A 5GB (80GB at SF4.1) probePlan to learn something a 1GB call
  *    already knows.
  *
  * The 'SF may be present at level 1 with some calls gated higher' worry does not
@@ -723,12 +753,12 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
   // CHOICE. Charisma does nothing for the hacking path; it compresses the
   // megacorp desk wall (chaMult divides the exp-curve exponent), and the
   // desk-path sentinel showed the ranking is no longer robust to leaving
-  // that unpriced. So probe: re-run the desk forecast at chaMult x1.5 (and
+  // that unpriced. So probePlan: re-run the desk forecast at chaMult x1.5 (and
   // chaExpMult x1.5), and weight each channel by the rate gained PAST THE
   // INCUMBENT best segment — charisma bought for a path never taken buys
-  // nothing, so a losing probe prices at exactly zero (objective.js's
+  // nothing, so a losing probePlan prices at exactly zero (objective.js's
   // pathGainWeight). Persisted in this file's output and merged into the
-  // basket NEXT pass: the probe needs this pass's best rate, so the weights
+  // basket NEXT pass: the probePlan needs this pass's best rate, so the weights
   // trail one pass — a 5-minute lag against hours-scale decisions.
   let chaWeights = null
   try {
@@ -769,7 +799,7 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
           if (h0?.hours > 0 && h1?.hours > 0) {
             // The gain that counts: the probed desk rate past the INCUMBENT
             // (the better of the unprobed desk and the schedule's best) —
-            // a probe that fails to cross either prices at <= 0.
+            // a probePlan that fails to cross either prices at <= 0.
             const r0 = lnCat / (h0.hours + grindH)
             const r1 = lnCat / (h1.hours + grindH)
             best = Math.max(best, r1 - Math.max(r0, bestRate))
@@ -785,7 +815,7 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
       }
     }
   } catch {
-    /* the probe is additive — failure leaves charisma unpriced, as before */
+    /* the probePlan is additive — failure leaves charisma unpriced, as before */
   }
 
   // THE GANG CHANNEL'S UNLOCK TABLE and its calibration. Each gang-faction
@@ -1208,7 +1238,7 @@ async function act(ns, canJoin, info) {
   // --- capability probes, each cheap and done once ---------------------------
   // `canJoin` is now passed in from main(), derived through sfgate.js rather
   // than by calling a singularity function and catching the throw. See "THE
-  // PROBE" in this file's header: under an ns.ramOverride the old probe was
+  // PROBE" in this file's header: under an ns.ramOverride the old probePlan was
   // fatal, because the call's RAM is charged before its body runs.
   // ACTING IS BY ORDER. Every Singularity ACT this file used to make — join,
   // work, crime, gym, travel, company, course, focus, TOR and programs,
@@ -1556,7 +1586,7 @@ async function act(ns, canJoin, info) {
     // ------------------------------------------------------------------
     // THE DERIVED OBJECTIVE (objective.js has the model). Two stages,
     // because the weights need elasticities and the elasticities need a
-    // plan: the flat plan above is the probe, the weighted re-plan below is
+    // plan: the flat plan above is the probePlan, the weighted re-plan below is
     // what ships. The elasticities are the REAL optimiser's response to a
     // 50% bigger budget and to reputation arriving 50% faster (donation
     // costs shrunk in step — past the threshold faster rep IS cheaper rep),
@@ -1564,20 +1594,40 @@ async function act(ns, canJoin, info) {
     // ------------------------------------------------------------------
     channelWeights = null
     weightsMeta = { source: 'flat' }
-    if (plan && plan.logM > 1e-9) {
+    // THE PROBE BUDGET. The elasticity is the optimiser's response to more
+    // money AT THE BUDGET THE PURCHASE HAPPENS WITH — the install's, not
+    // this minute's. Measured at live money it read "unmeasured" for the
+    // first hours of every life (nothing affordable yet, logM 0), which
+    // left the crime slot, the gang's budget and the home claim unpriced
+    // exactly when the decisions were being made. So the probePlan runs at
+    // live money plus what income earns over what is left of the window
+    // (flat income: a lower bound); the SHIPPED plan below stays at live
+    // money, because purchases must be affordable now.
+    const projectedBudget = (() => {
+      const inc = ns.getTotalScriptIncome()
+      const income = (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || 0
+      const w = measureWindow(ns)
+      const lifeAgeH = Math.max(0, (Date.now() - (info?.lastAugReset ?? Date.now())) / 3600000)
+      const remainingH = w?.windowH > 0 ? Math.max(0, w.windowH - lifeAgeH) : 0
+      return liveMoney + income * remainingH * 3600
+    })()
+    const probePlan = plan && plan.logM > 1e-9 ? plan : projectedBudget > liveMoney ? planPurchases({ ...planArgs, money: projectedBudget }) : plan
+    const probeMoney = probePlan === plan ? liveMoney : projectedBudget
+    if (probePlan && probePlan.logM > 1e-9) {
       try {
         const K = 1.5
-        const richer = planPurchases({ ...planArgs, money: planArgs.money * K })
+        const richer = planPurchases({ ...planArgs, money: probeMoney * K })
         const faster = planPurchases({
           ...planArgs,
+          money: probeMoney,
           offers: offers.map((of) => ({
             ...of,
             factionRep: (of.factionRep ?? 0) * K,
             ...(typeof of.donationCost === 'number' ? { donationCost: of.donationCost / K } : {}),
           })),
         })
-        const eBudget = Math.max(0, (richer.logM - plan.logM) / Math.log(K))
-        const eRep = Math.max(0, (faster.logM - plan.logM) / Math.log(K))
+        const eBudget = Math.max(0, (richer.logM - probePlan.logM) / Math.log(K))
+        const eRep = Math.max(0, (faster.logM - probePlan.logM) / Math.log(K))
 
         // Remaining windows to the exit condition, on the measured growth.
         const wdd = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
@@ -1607,7 +1657,7 @@ async function act(ns, canJoin, info) {
         })
         if (derived) {
           channelWeights = derived.weights
-          // CHARISMA RIDES IN FROM THE PREVIOUS PASS. The desk probe runs in
+          // CHARISMA RIDES IN FROM THE PREVIOUS PASS. The desk probePlan runs in
           // planFactionWork (it needs the schedule's best rate) and persists
           // its channel weights in the schedule file; merging the prior
           // pass's figures here closes the loop with a 5-minute lag. The
@@ -1625,9 +1675,9 @@ async function act(ns, canJoin, info) {
               }
             }
           } catch {
-            /* no prior probe — charisma stays unpriced this pass */
+            /* no prior probePlan — charisma stays unpriced this pass */
           }
-          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), probeMoney, probedAtProjected: probePlan !== plan, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
           plan = planPurchases({
             ...planArgs,
             channelWeights,
@@ -1635,7 +1685,7 @@ async function act(ns, canJoin, info) {
             // The elasticity and the window count only exist on this branch;
             // they are what turns a dollar grant into ln without inventing a
             // coefficient.
-            oneoff: { ...oneoffBase, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
+            oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
           })
         }
       } catch {
@@ -1967,7 +2017,7 @@ async function act(ns, canJoin, info) {
     if (!c) return null
     const perHour = c.rates.money * 3600
     const rate = schedule?.current?.rate
-    const v = moneyLn(perHour, { money: player.money, eBudget: weightsMeta?.eBudget, remainingWindows: weightsMeta?.remainingWindows })
+    const v = moneyLn(perHour, { money: weightsMeta?.probeMoney ?? player.money, eBudget: weightsMeta?.eBudget, remainingWindows: weightsMeta?.remainingWindows })
     if (v.ln === null) return { crime: c.crime, perHour, wins: false, why: v.reason }
     if (!(rate > 0)) return { crime: c.crime, perHour, lnPerHour: v.ln, wins: true, why: 'no priced faction work to compete with' }
     return { crime: c.crime, perHour, lnPerHour: v.ln, factionLnPerHour: rate, wins: v.ln > rate, why: v.ln > rate ? `crime ${v.ln.toFixed(4)} > faction ${rate.toFixed(4)} ln(M)/h` : `faction ${rate.toFixed(4)} >= crime ${v.ln.toFixed(4)} ln(M)/h` }
@@ -2367,6 +2417,7 @@ async function act(ns, canJoin, info) {
           plan: null,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
+          ...homeCompete(),
           incomeSample: makeIncomeSample(incNow, player, schedule),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
         },
@@ -2792,6 +2843,7 @@ async function act(ns, canJoin, info) {
           planned: true,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
+          ...homeCompete(),
           pending,
           heldM,
           // The income model's inputs, persisted so the NEXT pass can score

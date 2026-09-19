@@ -539,3 +539,34 @@ export function moneyLn(dollars, ctx = {}) {
         : POST_INSTALL_MONEY
   return { ln: N * eB * Math.log((opening + dollars) / opening), windows: N, opening, reason: null }
 }
+
+
+/**
+ * THE VALUE OF HOME RAM IN ln(M), so the home claim can compete on the same
+ * terms as everything else (budget.js lnCompete).
+ *
+ * The batcher's income scales with the RAM it runs on — the proportionality
+ * budget.js's fleet exception already uses — so one more gigabyte of home
+ * earns incomePerSec x deltaGB / ramTotal per second, every window from now
+ * on (home survives installs). That is dollars per window, and moneyLn
+ * prices dollars over the remaining windows against the projected budget.
+ *
+ *   o: { incomePerSec, deltaGB, ramTotal, windowH, cost, eBudget,
+ *        remainingWindows, budget }
+ *
+ * Returns { ln, lnPerDollar, dollarsPerWindow, reason }. Every input must
+ * be readable and positive or the value is null with the reason — the
+ * claim then HOLDS, as it always did. Deliberately assumes the batcher is
+ * RAM-bound (it is, most of every life): a spare-RAM moment would price
+ * home at zero and waive a permanent asset for a transient reading.
+ */
+export function homeLn(o = {}) {
+  const num = (x) => typeof x === 'number' && isFinite(x) && x > 0
+  for (const k of ['incomePerSec', 'deltaGB', 'ramTotal', 'windowH', 'cost']) {
+    if (!num(o[k])) return { ln: null, lnPerDollar: null, dollarsPerWindow: null, reason: `${k} unreadable — home keeps its claim` }
+  }
+  const dollarsPerWindow = (o.incomePerSec * o.deltaGB * o.windowH * 3600) / o.ramTotal
+  const v = moneyLn(dollarsPerWindow, { money: o.budget, eBudget: o.eBudget, remainingWindows: o.remainingWindows })
+  if (v.ln === null) return { ln: null, lnPerDollar: null, dollarsPerWindow, reason: v.reason }
+  return { ln: v.ln, lnPerDollar: v.ln / o.cost, dollarsPerWindow, reason: null }
+}

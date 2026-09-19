@@ -8,7 +8,7 @@
 import { Check } from "./harness.mjs";
 import "./gameresolve.mjs";
 
-const { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_LN, TICKET_LN, oneoffValue, ONEOFF_EFFECTS, PROGRAM_PRICE, POST_INSTALL_MONEY } = await import("../../objective.js");
+const { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_LN, TICKET_LN, oneoffValue, ONEOFF_EFFECTS, PROGRAM_PRICE, POST_INSTALL_MONEY, moneyLn, homeLn } = await import("../../objective.js");
 const { rootScripts, source, load } = await import("./ram.mjs");
 await load();
 const { progressFactor, RATE_CHANNELS, shouldInstall } = await import("../../installgate.js");
@@ -417,6 +417,29 @@ export async function run() {
     cJoin.note("short -> bind; afforded+unjoined -> bind (the fix); joined -> release; unknown -> old behaviour");
   }
   checks.push(cJoin);
+
+  // ---------------------------------------------------------------------
+  const cHome = new Check("OB5", "homeLn: a home GB earns income x deltaGB / ramTotal per second every remaining window, priced by moneyLn at the probe budget; any unreadable input holds the claim");
+  {
+    cHome.examined(1);
+    const o = { incomePerSec: 1e5, deltaGB: 512, ramTotal: 1024, windowH: 2, cost: 1e9, eBudget: 0.4, remainingWindows: 5, budget: 5e8 };
+    const h = homeLn(o);
+    const dollars = (1e5 * 512 * 2 * 3600) / 1024; // 3.6e8 per window
+    if (Math.abs(h.dollarsPerWindow - dollars) > 1e-6) cHome.fail("dollars per window is income x deltaGB / ramTotal x window seconds");
+    const expect = moneyLn(dollars, { money: 5e8, eBudget: 0.4, remainingWindows: 5 }).ln;
+    if (Math.abs(h.ln - expect) > 1e-12) cHome.fail("ln is moneyLn of those dollars at the probe budget");
+    if (Math.abs(h.lnPerDollar - expect / 1e9) > 1e-21) cHome.fail("ln per dollar divides by the upgrade cost");
+    for (const k of ["incomePerSec", "deltaGB", "ramTotal", "windowH", "cost"]) {
+      cHome.examined(1);
+      const r = homeLn({ ...o, [k]: null });
+      if (r.ln !== null || r.lnPerDollar !== null || !r.reason) cHome.fail(`${k} unreadable must be null with a reason`);
+    }
+    cHome.examined(1);
+    const noE = homeLn({ ...o, eBudget: null });
+    if (noE.ln !== null || !/elasticity/.test(noE.reason)) cHome.fail("without the elasticity the reason names it");
+    cHome.note("hand-checked against moneyLn; six refusal shapes");
+  }
+  checks.push(cHome);
 
   return checks;
 }

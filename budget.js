@@ -144,6 +144,16 @@ export function reserveFor(spender, claims = {}, o = {}) {
       if (mr && num(mr.cost) && num(mr.gainPerSec) && num(mr.horizonSec) && mr.gainPerSec * mr.horizonSec > mr.cost) {
         continue
       }
+      // THE ln(M) FORM for home (the competition below): the planner prices
+      // the next home upgrade in ln per dollar (objective.homeLn, published
+      // as homeLnPerDollar) and a spend that buys strictly more ln per
+      // dollar goes through. No figure -> the hold stands.
+      const lc = o.lnCompete
+      if (lc) {
+        const own = typeof lc.lnPerDollar === 'number' && !Number.isNaN(lc.lnPerDollar) && lc.lnPerDollar > 0
+        const rival = lc.rivals?.home
+        if (own && typeof rival === 'number' && isFinite(rival) && rival >= 0 && lc.lnPerDollar > rival) continue
+      }
       v = amt
     }
 
@@ -162,8 +172,9 @@ export function reserveFor(spender, claims = {}, o = {}) {
     // join}} — its own ln per dollar (measured by trajectory: value with the
     // spend minus value without, over cost) and each rival's. A claim is
     // waived only when its rival figure is readable and STRICTLY below the
-    // spender's; unreadable rivals keep the hold. The HOME claim is never
-    // waived here: home RAM has no ln(M) price. BU13 pins every shape.
+    // spender's; unreadable rivals keep the hold. The HOME claim competes
+    // through its own branch above, on objective.homeLn's figure. BU13
+    // pins every shape.
     // ------------------------------------------------------------------
     if ((key === 'join' || key === 'augmentations') && o.lnCompete) {
       const lc = o.lnCompete
@@ -191,7 +202,7 @@ export function reserveFor(spender, claims = {}, o = {}) {
  * its claim). Stale-life files read as unreadable, like augClaim.
  */
 export function marginalLnPerDollar(text, lastAugReset) {
-  const out = { augmentations: null, join: null }
+  const out = { augmentations: null, join: null, home: null }
   if (!text) return out
   let d
   try {
@@ -223,6 +234,8 @@ export function marginalLnPerDollar(text, lastAugReset) {
     if (d.joinClaim === 0) out.join = 0
     else if (fin(d.joinValueLn) && d.joinValueLn >= 0) out.join = d.joinValueLn / d.joinClaim
   }
+  // Home: the planner's figure, as published.
+  if (fin(d.homeLnPerDollar) && d.homeLnPerDollar >= 0) out.home = d.homeLnPerDollar
   return out
 }
 

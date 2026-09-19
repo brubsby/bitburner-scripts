@@ -171,14 +171,14 @@ export async function main(ns) {
         } catch {
           objective = { unlocks: [], horizonH: 8, why: 'factionplan.txt unreadable' }
         }
-        // THE BUDGET THE GANG MAY COMPETE FOR: everything the join and
-        // augmentation claims hold (never the home claim) — budget.js's
+        // THE BUDGET THE GANG MAY COMPETE FOR: everything the join,
+        // augmentation and home claims hold — budget.js's
         // ln(M) competition decides after the search whether the chosen
         // spend earns it. The search sees the contested budget so y is
         // chosen against real money; the spend is then cut to what the
         // competition allows.
         const claimsNow = readClaims()
-        const contested = spendable('gang', ns.getServerMoneyAvailable('home'), claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0 } } })
+        const contested = spendable('gang', ns.getServerMoneyAvailable('home'), claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0, home: 0 } } })
         search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e } })
         searchBudget = contested
         searchStartedAt = Date.now()

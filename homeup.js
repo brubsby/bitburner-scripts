@@ -225,6 +225,9 @@ async function once(ns, flags) {
     errors: errors.slice(-5),
     next: nextWanted,
     blockedByCity,
+    // For the planner's home valuation (objective.homeLn): a RAM upgrade
+    // doubles home, so its deltaGB is the current size.
+    homeRam: ns.getServerMaxRam('home'),
   }))
 
   // The path no try/finally can reach. ns.atExit costs 0GB and runs before the

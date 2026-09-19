@@ -339,11 +339,16 @@ export function run() {
       if (reserveFor("gang", claims, { lnCompete: lc }) !== 106e9) c13.fail(`${label}: an unreadable side must keep both claims`);
     }
     c13.examined(1);
-    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0 } } }) !== 1e9) c13.fail("the home claim is never waived by the competition");
+    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0 } } }) !== 1e9) c13.fail("without a home figure the home claim holds");
+    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: 1e-9, rivals: { join: 0, augmentations: 0, home: 5e-10 } } }) !== 0) c13.fail("beating the home figure waives the home claim too");
+    if (reserveFor("gang", claims, { lnCompete: { lnPerDollar: 1e-9, rivals: { join: 0, augmentations: 0, home: 2e-9 } } }) !== 1e9) c13.fail("losing to the home figure keeps the home claim");
+    if (reserveFor("gang", { ...claims, home: 1e9 }, { lnCompete: { lnPerDollar: 1e-9, rivals: { join: 0, augmentations: 0, home: 0 } } }) !== 1e9) c13.fail("a plain-number home claim (legacy shape) never competes");
     // marginalLnPerDollar reads the gate file.
     c13.examined(1);
     const gate = JSON.stringify({ lastAugReset: 7, planned: true, plan: { buy: [{ price: 1e6, m: 1.1 }, { price: 4e6, m: 1.05 }] }, joinClaim: 100e9, joinValueLn: 12.5 });
     const r = marginalLnPerDollar(gate, 7);
+    if (r.home !== null) c13.fail("no home figure published -> home rival null");
+    if (marginalLnPerDollar(JSON.stringify({ lastAugReset: 7, planned: false, plan: null, joinClaim: 0, homeLnPerDollar: 3e-10 }), 7).home !== 3e-10) c13.fail("the home figure is read as published");
     if (Math.abs(r.augmentations - Math.log(1.05) / 4e6) > 1e-20) c13.fail("augmentations rival is the plan's least ln per dollar");
     if (Math.abs(r.join - 12.5 / 100e9) > 1e-20) c13.fail("join rival is value over requirement");
     const stale = marginalLnPerDollar(gate, 8);
