@@ -125,7 +125,7 @@ const SETTINGS = {
   // every regime — checked duplication rather than an import, because pulling
   // progress.js in here would drag its entire Singularity import graph into
   // the batcher's own price.
-  homeReserve: (mult) => 13 + 81.0 * mult,
+  homeReserve: (mult) => 13 + 38.6 * mult,
   // Fraction of total fleet RAM left unclaimed so ns.share() has somewhere to
   // live. Not a courtesy: share multiplies *faction reputation*, and reputation
   // — not money — is what gates leaving the BitNode. The bonus is

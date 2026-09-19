@@ -698,11 +698,11 @@ function shareThreads(ns, hosts, frac = 0.8) {
   // progress.js is what STARTS the faction work. Starving it bought a bonus on
   // an activity that was not running.
   //
-  // The 13 + 81*mult formula is duplicated from batch.js's SETTINGS.homeReserve
+  // The 13 + 38.6*mult formula is duplicated from batch.js's SETTINGS.homeReserve
   // ON PURPOSE — importing progress.js here would drag its whole Singularity
   // import graph into the watchdog's price. [R6] is the check that keeps the
   // copies honest; change one and it fails.
-  const homeReserve = 13 + 81.0 * singularityRamMultiplier(ns.getResetInfo())
+  const homeReserve = 13 + 38.6 * singularityRamMultiplier(ns.getResetInfo())
   let biggest = 0
   for (const h of hosts) {
     if (!ns.hasRootAccess(h)) continue

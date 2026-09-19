@@ -526,6 +526,7 @@ function runB711() {
     // Single-call Singularity actors: act.js execs one at a time on whichever
     // rooted host has the room and each exits after its call (actplan.js).
     "act-join.js", "act-work.js", "act-crime.js", "act-gym.js", "act-travel.js",
+    "act-company.js", "act-course.js", "act-focus.js", "act-buyprogram.js", "act-donate.js", "act-buyaug.js", "act-install.js",
     "killall.js", "process.js", "eval.js", "steve.js", "ctscan.js", "ctsolve.js",
     "serverrank.js", "hash.js", "infiltration.js", "infilhelper.js",
     // Dual library/CLI: imported for their data, runnable for a readout.

@@ -86,6 +86,8 @@
 // ---------------------------------------------------------------------------
 
 const STATUS = '/tel/progress.txt'
+/** The acts this pass wants performed, for act.js (see "ACTING IS BY ORDER"). */
+const ORDERS = '/tel/orders.txt'
 const TODO = '/tel/todo.txt'
 const GATE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
@@ -224,7 +226,12 @@ import { planPurchases, NFG, isSoa, BASE_PRICE_MULT } from 'augplan.js'
 // 9.35 -> 9.55: ns.stock.hasWseAccount / hasTixApiAccess / has4SData /
 // has4SDataTixApi (0.05 each, RamCostGenerator.ts:126-129) for the stock
 // entry pricing; getConstants is 0.
-const RAISE_CEILING = (mult) => 9.55 + 81.0 * mult
+// 81.0 -> 38.6 and 9.55 -> 8.45 (2026-09-19): every Singularity ACT left this
+// file for act.js's single-call actors ("ACTING IS BY ORDER" below). What
+// remains is the READ surface the plan needs. Measured with the game's own
+// calculator: 47.05GB at 1x, 626.05GB at 16x. The planner therefore runs at
+// a 1TB home instead of 2TB — one $3.2b upgrade earlier.
+const RAISE_CEILING = (mult) => 8.45 + 38.6 * mult
 
 export async function main(ns) {
   ns.ramOverride(2.6)
@@ -1095,9 +1102,22 @@ async function act(ns, canJoin, info) {
   // than by calling a singularity function and catching the throw. See "THE
   // PROBE" in this file's header: under an ns.ramOverride the old probe was
   // fatal, because the call's RAM is charged before its body runs.
-  const canWork = canJoin && typeof sing.workForFaction === 'function'
-  const canBuyAug = canJoin && typeof sing.purchaseAugmentation === 'function'
-  const canInstall = canJoin && typeof sing.installAugmentations === 'function'
+  // ACTING IS BY ORDER. Every Singularity ACT this file used to make — join,
+  // work, crime, gym, travel, company, course, focus, TOR and programs,
+  // donation, purchase, install — is now an entry in /tel/orders.txt that
+  // act.js executes with a single-call actor (act-*.js, 32-100GB each). The
+  // act identifiers were ~42 base units of this file's price (674GB at
+  // SF4.1); without them the planner needs only its reads, and runs at 1TB
+  // home instead of 2TB. The three flags below are therefore one flag.
+  const canWork = canJoin
+  const canBuyAug = canJoin
+  const canInstall = canJoin
+  const orders = []
+  const order = (kind, args, why) => {
+    orders.push({ id: orders.length + 1, kind, args, why })
+    return true
+  }
+  const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders }, null, 2), 'w')
 
   // --- 1. accept invitations -------------------------------------------------
   const invites = canJoin ? sing.checkFactionInvitations() : (player.factionInvitations ?? [])
@@ -1106,7 +1126,7 @@ async function act(ns, canJoin, info) {
   const wanted = invites.filter((f) => !CITY_FACTIONS.includes(f))
   for (const f of wanted) {
     if (canJoin && !flags.dry) {
-      if (sing.joinFaction(f)) did.push(`joined ${f}`)
+      if (order('join', [f], 'non-exclusive invitation')) did.push(`ordered join ${f}`)
     } else {
       todo.push(`Accept the ${f} invitation (Factions tab).`)
     }
@@ -1196,7 +1216,7 @@ async function act(ns, canJoin, info) {
             todo.push(`${f} invite declined: the best compatible city set is [${pick.chosen.join(', ') || 'none'}] worth ${pick.value.toFixed(4)} ln(M)`)
             continue
           }
-          if (sing.joinFaction(f)) did.push(`joined ${f} (city set [${pick.chosen.join(', ')}], ${pick.value.toFixed(4)} ln(M))`)
+          if (order('join', [f], 'best compatible city set')) did.push(`ordered join ${f} (city set [${pick.chosen.join(', ')}], ${pick.value.toFixed(4)} ln(M))`)
         }
       }
     }
@@ -1731,7 +1751,7 @@ async function act(ns, canJoin, info) {
     const dest = want?.blockers?.find((b) => b.travel)?.travel?.city
     if (dest && player.city !== dest && !player.factions.includes(scheduleTarget)) {
       try {
-        if (sing.travelToCity(dest)) {
+        if (order('travel', [dest], `${scheduleTarget}'s only unmet requirement is location`)) {
           did.push(`travelled to ${dest} for the ${scheduleTarget} invitation (its only unmet requirement was location; $200k, no time)`)
         } else {
           todo.push(`could not travel to ${dest} for ${scheduleTarget} — needs $200k on hand`)
@@ -1821,7 +1841,7 @@ async function act(ns, canJoin, info) {
           // commitCrime returns the crime's duration in ms and starts ONE
           // attempt; the game repeats it (CrimeWork.process loops) until the
           // work is replaced, so this is a start, not a per-attempt call.
-          const ms = sing.commitCrime(bodyStep.type, true)
+          const ms = order('crime', [bodyStep.type], `${bodyStep.karmaShort ? 'karma' : 'kills'} short for ${scheduleTarget}`) ? 1 : 0
           if (ms > 0) did.push(`committing ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
           else todo.push(`commitCrime(${bodyStep.type}) did not start`)
         } catch (e) {
@@ -1833,8 +1853,8 @@ async function act(ns, canJoin, info) {
       const already = work?.type === 'CLASS' && String(work.classType ?? '') === cls && work.location === bodyStep.gym
       if (!already) {
         try {
-          if (player.city !== bodyStep.city) sing.travelToCity(bodyStep.city)
-          if (sing.gymWorkout(bodyStep.gym, cls, true)) {
+          if (player.city !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
+          if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${scheduleTarget}`)) {
             did.push(`training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation`)
           } else {
             todo.push(`gymWorkout(${bodyStep.gym}, ${cls}) refused — in ${player.city}, needs ${bodyStep.city}`)
@@ -1864,8 +1884,8 @@ async function act(ns, canJoin, info) {
         // Player.city per campus). Travel is instant and $200k — seconds of
         // income against the hours the better campus saves.
         try {
-          if (player.city !== 'Volhaven') sing.travelToCity('Volhaven')
-          if (sing.universityCourse('ZB Institute of Technology', 'Leadership', true)) {
+          if (player.city !== 'Volhaven') order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')
+          if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`)) {
             did.push(`studying Leadership at ZB to charisma ${train.toCha} (~${train.hours.toFixed(1)}h) before the ${wantCompany} desk — training beat the plain stint on total hours`)
           } else {
             todo.push(`Could not start the Leadership course at ZB — start it manually (Volhaven > ZB Institute).`)
@@ -1876,14 +1896,8 @@ async function act(ns, canJoin, info) {
       }
     } else {
       const already = work?.type === 'COMPANY' && work.companyName === wantCompany
-      try {
-        const position = sing.applyToCompany(wantCompany, 'Software')
-        if (position) did.push(`applied at ${wantCompany}: now ${typeof position === 'string' ? position : 'hired'}`)
-      } catch {
-        /* not qualified for a promotion right now — the current job stands */
-      }
       if (!already) {
-        if (sing.workForCompany(wantCompany, true)) {
+        if (order('company', [wantCompany, 'Software'], `${schedule.current.workH.toFixed(1)}h of employment toward ${schedule.current.faction}`)) {
           did.push(`working at ${wantCompany} (company) toward the ${schedule.current.faction} faction — ${schedule.current.workH.toFixed(1)}h of employment in the plan`)
         } else {
           todo.push(`Could not start company work at ${wantCompany} — apply and start it manually (City > ${wantCompany}).`)
@@ -1908,7 +1922,7 @@ async function act(ns, canJoin, info) {
     // AND cannot be donated to, nearest unlock first.
     const fallback = measuringTarget(sing, factions, offers, info)
     if (!(work?.type === 'FACTION' && work.factionName === fallback)) {
-      if (sing.workForFaction(fallback, 'hacking', true)) did.push(`working ${fallback} while the desk ranking measures`)
+      if (order('work', [fallback, 'hacking'], 'measuring fallback while the desk ranking is estimated')) did.push(`ordered work ${fallback} while the desk ranking measures`)
     }
     workedFaction = fallback
   } else if (!factions || factions.length === 0) {
@@ -1955,12 +1969,12 @@ async function act(ns, canJoin, info) {
       workedFaction = null
       if (work?.type === 'CRIME' && String(work.crimeType ?? '') === crimeAlt.crime) {
         did.push(`crime loop (${crimeAlt.crime}) holds the work slot: ${crimeAlt.why}`)
-      } else if (sing.commitCrime(crimeAlt.crime, true) > 0) {
+      } else if (order('crime', [crimeAlt.crime], crimeAlt.why)) {
         did.push(`committing ${crimeAlt.crime} for money (${Math.round(crimeAlt.perHour / 3600)}/s): ${crimeAlt.why}`)
       } else todo.push(`commitCrime(${crimeAlt.crime}) did not start`)
     } else if (canWork && !flags.dry) {
-      if (sing.workForFaction(target, 'hacking', true)) {
-        did.push(`working for ${target}, focused${crimeAlt ? ` (${crimeAlt.why})` : ''}`)
+      if (order('work', [target, 'hacking'], crimeAlt ? crimeAlt.why : "schedule's current faction")) {
+        did.push(`ordered work for ${target}, focused${crimeAlt ? ` (${crimeAlt.why})` : ''}`)
         workedFaction = target
       } else todo.push(`Could not start faction work for ${target} — start it manually.`)
     } else {
@@ -1968,8 +1982,8 @@ async function act(ns, canJoin, info) {
     }
   } else if (canWork && !sing.isFocused()) {
     if (canWork && !flags.dry) {
-      sing.setFocus(true)
-      did.push('refocused faction work')
+      order('focus', [true], 'unfocused work costs 20%')
+      did.push('ordered refocus of faction work')
     } else {
       todo.push('Faction work is UNFOCUSED — costs 20% of the rate. Click Focus, then verify a few seconds later; it has been seen reverting.')
     }
@@ -1999,13 +2013,13 @@ async function act(ns, canJoin, info) {
   const hasTor = ns.hasTorRouter()
   if (!hasTor) {
     if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > 200e3) {
-      if (sing.purchaseTor()) did.push('bought TOR')
+      if (order('tor', [], 'gates every port program')) did.push('ordered TOR')
     } else todo.push('Buy the TOR router ($200k) — gates every port program.')
   }
   for (const [file, price] of PROGRAMS) {
     if (ns.fileExists(file, 'home')) continue
     if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > price * 2) {
-      if (sing.purchaseProgram(file)) did.push(`bought ${file}`)
+      if (order('program', [file], 'unlocks a tier of servers')) did.push(`ordered ${file}`)
     } else if (ns.getServerMoneyAvailable('home') > price) {
       todo.push(`Buy ${file} ($${(price / 1e6).toFixed(1)}m) — unlocks a tier of servers to root.`)
     }
@@ -2700,14 +2714,14 @@ async function act(ns, canJoin, info) {
             if (short > 0) {
               const fwrgExec = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? 1
               const dollars = Math.ceil(donationForRep(short, player.mults?.faction_rep ?? 1, fwrgExec) * 1.01)
-              if (!sing.donateToFaction(item.faction, dollars)) {
+              if (!order('donate', [item.faction, dollars], `${Math.round(short).toLocaleString()} rep for ${item.name}`)) {
                 did.push(`DONATION REFUSED: $${ns.format.number(dollars)} to ${item.faction} for ${item.name} — favour or funds short at execution`)
                 break
               }
               did.push(`donated $${ns.format.number(dollars)} to ${item.faction} (${Math.round(short).toLocaleString()} rep) for ${item.name}`)
             }
           }
-          if (!sing.purchaseAugmentation(item.faction, item.name)) {
+          if (!order('buyaug', [item.faction, item.name], `planned at $${plannedAugPrice.toFixed(0)}`)) {
             // The shipped file ignored this return value entirely, which is how
             // a prerequisite failure stayed invisible.
             did.push(`REFUSED by the game: ${item.name} from ${item.faction} — rep, money or an unmet prerequisite`)
@@ -2783,45 +2797,17 @@ async function act(ns, canJoin, info) {
         } catch {
           /* an unreadable ledger must not block the install — it only costs one sample */
         }
-        // SPEND THE REMAINDER FIRST. `prestigeHomeComputer`
-        // (Server/ServerHelpers.ts:226-239) resets programs, serversOnNetwork
-        // and ramUsed but touches NEITHER maxRam NOR cpuCores, so home RAM and
-        // cores are permanent for the whole BitNode — while money resets to
-        // $1,262 (PlayerObjectGeneralMethods.ts:102). Every dollar still held
-        // when installAugmentations is called is therefore DESTROYED.
-        //
-        // CLAUDE.md has said "run homeup.js --reserve 0 before installing, this
-        // is not optional" since the life that installed holding $2.07
-        // QUADRILLION. It said it to a HUMAN. Nothing on the autonomous path
-        // ever did it, so the loop has been burning its remainder on every
-        // install it has ever made — the same shape as every other gap this
-        // session: a step that works while someone is driving and silently
-        // does not when nobody is.
-        //
-        // Bounded, and never allowed to block the install. homeup takes the
-        // global UI lock and walks to Alpha Enterprises, so it can legitimately
-        // fail to start or fail to finish; an install deferred forever because
-        // a spender would not exit is far worse than a burnt remainder. On
-        // timeout we install anyway and say what happened.
-        try {
-          const pid = ns.exec('homeup.js', 'home', 1, '--reserve', 0)
-          if (pid) {
-            const until = Date.now() + 30000
-            while (ns.isRunning(pid) && Date.now() < until) await ns.sleep(500)
-            did.push(
-              ns.isRunning(pid)
-                ? 'pre-install spend-down did not finish within 30s — installing anyway, the remainder is forfeit'
-                : 'spent the remainder on home RAM/cores before installing (money does not survive a prestige; home RAM does)',
-            )
-          } else {
-            did.push('could not start homeup.js to spend the remainder — installing anyway, the remainder is forfeit')
-          }
-        } catch (e) {
-          did.push(`pre-install spend-down failed (${String(e).slice(0, 60)}) — installing anyway`)
-        }
-        ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate }, null, 2), 'w')
-        sing.installAugmentations('boot.js')
-        return // the game reloads; boot.js brings the stack back up
+        // The spend-down (homeup.js --reserve 0: money does not survive a
+        // prestige, home RAM does) runs in act.js immediately before the
+        // install actor — AFTER the purchases above have executed, which is
+        // the only order that makes sense. The install order carries the
+        // count already queued so act.js can install even if every purchase
+        // in this batch failed but earlier ones are waiting.
+        order('install', ['boot.js'], gate.why)
+        orders[orders.length - 1].requireQueued = pending.length
+        ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length }, null, 2), 'w')
+        flushOrders()
+        return // act.js installs; the game reloads; boot.js brings the stack back up
       }
     } else {
       // Holding is a decision, not silence: published every pass with the
@@ -2835,7 +2821,8 @@ async function act(ns, canJoin, info) {
     }
   }
 
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: crimeAlt ?? null }
+  flushOrders()
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: crimeAlt ?? null, ordered: orders.length }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 
