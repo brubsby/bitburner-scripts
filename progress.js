@@ -312,36 +312,6 @@ export async function main(ns) {
     // or buy anything, so nothing is promised — and saying so is strictly more
     // accurate than leaving the previous node's plan standing. This is the same
     // shape act() writes when it has no plan, so readers parse one thing.
-    // THE HOME CLAIM'S SIDE OF THE ln(M) COMPETITION (objective.homeLn):
-    // the next home upgrade's ln per dollar from the batcher's income per
-    // GB, the window, and the measured elasticity. Any unreadable input
-    // publishes null and the home claim holds as before.
-    const homeCompete = () => {
-      try {
-        const hu = readJson(ns, '/tel/homeup.txt')
-        const bt = readJson(ns, '/tel/batch.txt')
-        const inc = ns.getTotalScriptIncome()
-        const w = measureWindow(ns)
-        const next = hu?.next
-        // homeup.js publishes homeRam when it runs; between runs boot.txt's
-        // figure (written at every boot, i.e. after every install) stands in.
-        const homeRam = hu?.homeRam > 0 ? hu.homeRam : readJson(ns, '/tel/boot.txt')?.homeRam
-        const deltaGB = next?.kind === 'RAM' && homeRam > 0 ? homeRam : null
-        const h = homeLn({
-          incomePerSec: (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || null,
-          deltaGB,
-          ramTotal: bt?.ram?.total,
-          windowH: w?.windowH,
-          cost: next?.cost,
-          eBudget: weightsMeta?.eBudget,
-          remainingWindows: weightsMeta?.remainingWindows,
-          budget: weightsMeta?.probeMoney,
-        })
-        return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, eBudget: weightsMeta?.eBudget ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
-      } catch {
-        return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', eBudget: null, remainingWindows: null, probeMoney: null }
-      }
-    }
     ns.write(
       GATE,
       JSON.stringify(
@@ -383,7 +353,7 @@ export async function main(ns) {
   }
 
   try {
-    const r = await act(ns, canJoin, info)
+    const r = await act(ns, canJoin, info, note)
     finished = true
     return r
   } catch (err) {
@@ -1149,7 +1119,7 @@ function makeIncomeSample(incomePerSec, player, schedule) {
   }
 }
 
-async function act(ns, canJoin, info) {
+async function act(ns, canJoin, info, note) {
   const flags = ns.flags([
     ['dry', false],
     ['no-install', false],
@@ -1717,6 +1687,36 @@ async function act(ns, canJoin, info) {
   // FAVOUR AND REPUTATION PERSIST ACROSS MEMBERSHIP, so they are read for
   // unjoined factions too — a faction we left at high favour re-prices
   // accordingly, which is the rep-cap-and-return pattern.
+  // THE HOME CLAIM'S SIDE OF THE ln(M) COMPETITION (objective.homeLn):
+  // the next home upgrade's ln per dollar from the batcher's income per
+  // GB, the window, and the measured elasticity. Any unreadable input
+  // publishes null and the home claim holds as before.
+  const homeCompete = () => {
+    try {
+      const hu = readJson(ns, '/tel/homeup.txt')
+      const bt = readJson(ns, '/tel/batch.txt')
+      const inc = ns.getTotalScriptIncome()
+      const w = measureWindow(ns)
+      const next = hu?.next
+      // homeup.js publishes homeRam when it runs; between runs boot.txt's
+      // figure (written at every boot, i.e. after every install) stands in.
+      const homeRam = hu?.homeRam > 0 ? hu.homeRam : readJson(ns, '/tel/boot.txt')?.homeRam
+      const deltaGB = next?.kind === 'RAM' && homeRam > 0 ? homeRam : null
+      const h = homeLn({
+        incomePerSec: (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || null,
+        deltaGB,
+        ramTotal: bt?.ram?.total,
+        windowH: w?.windowH,
+        cost: next?.cost,
+        eBudget: weightsMeta?.eBudget,
+        remainingWindows: weightsMeta?.remainingWindows,
+        budget: weightsMeta?.probeMoney,
+      })
+      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, eBudget: weightsMeta?.eBudget ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
+    } catch {
+      return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', eBudget: null, remainingWindows: null, probeMoney: null }
+    }
+  }
   let candidates = []
   let joinState = null
   if (canJoin) {
