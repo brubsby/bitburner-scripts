@@ -107,7 +107,7 @@ const SCHEDULE = '/tel/factionplan.txt'
  */
 const WD_BASE_HACKING = 3000
 
-import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel } from 'sfgate.js'
 import { GANG_FACTIONS } from 'gangplan.js'
 // The whole faction space as data — see factions.js and [BC9].
 import { ALL_FACTIONS } from 'factions.js'
@@ -146,7 +146,7 @@ import { bestCrimeFor } from 'bodyplan.js'
 import { bestExitPolicy, cycleStats } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
-import { planPurchases, NFG, isSoa, BASE_PRICE_MULT } from 'augplan.js'
+import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -2761,9 +2761,22 @@ async function act(ns, canJoin, info) {
       // it has drifted, rather than silently buying something else at a rank the
       // plan never priced.
       const bought = []
+      // THE SNAPSHOT PRICE IS PRE-BATCH. Every queued purchase multiplies the
+      // next one by MultipleAugMultiplier (x1.9, less the SF11 discount), and
+      // each NeuroFlux level by another 1.14 — the plan priced exactly that,
+      // by rank. With live reads the re-read price carried the escalation;
+      // the snapshot was taken before this batch's first purchase and does
+      // not. On the first BitNode 2 install (2026-09-19 19:37) item two of
+      // eleven therefore read as "90% drift", the loop stopped, and the
+      // install fired on ONE augmentation with $2.95b in hand. The expected
+      // live price is the snapshot price escalated by what this batch has
+      // already ordered.
+      const rGeneric = genericPriceMultiplier(sfLevel(info, 11))
+      let batchRank = 0
+      let batchNfg = 0
       if (plan) {
         for (const item of plan.buy) {
-          const live = sing.augPrice(item.name)
+          const live = sing.augPrice(item.name) * Math.pow(rGeneric, batchRank) * (item.name === NFG ? Math.pow(NFG_LEVEL_MULT, batchNfg) : 1)
           // COMPARE AUG-PRICE TO AUG-PRICE. item.price carries the donation
           // for rep-walled purchases (augplan folds it into the row so the
           // budget binds on the true total) — but getAugmentationPrice knows
@@ -2810,6 +2823,8 @@ async function act(ns, canJoin, info) {
             break
           }
           bought.push(item.name)
+          batchRank++
+          if (item.name === NFG) batchNfg++
         }
       }
       const installing = pending.length + bought.length
