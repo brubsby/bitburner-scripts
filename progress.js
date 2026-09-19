@@ -1171,7 +1171,16 @@ async function act(ns, canJoin, info) {
   // (ns.singularity.getFactionEnemies, Singularity.ts:740) rather than a copy
   // here that could drift.
   const cityInvites = invites.filter((f) => CITY_FACTIONS.includes(f))
-  if (cityInvites.length) {
+  // THE SET IS CHOSEN WHENEVER A CITY FACTION IS STILL UNJOINED, not only
+  // when one has invited us: an invitation needs presence in the city, so
+  // waiting for invitations meant waiting for the schedule to reach that
+  // faction's segment before travelling — live, a chosen set of three sat
+  // unjoined for a pass while the planner worked NiteSec, with $1.5b in hand
+  // and $200k fares. Now every chosen, unjoined, uninvited faction gets a
+  // travel order followed by a join order; invitations are re-checked every
+  // ten game cycles (engine.tsx:171-176), so the join lands seconds after.
+  const unjoinedCity = CITY_FACTIONS.filter((f) => !player.factions.includes(f))
+  if (cityInvites.length || unjoinedCity.length) {
     if (!canJoin || flags.dry) {
       todo.push(`${cityInvites.join(', ')} invite(s) pending — city factions, need Singularity to price and join.`)
     } else {
@@ -1235,6 +1244,25 @@ async function act(ns, canJoin, info) {
             continue
           }
           if (order('join', [f], 'best compatible city set')) did.push(`ordered join ${f} (city set [${pick.chosen.join(', ')}], ${pick.value.toFixed(4)} ln(M))`)
+        }
+        for (const f of pick.chosen) {
+          if (player.factions.includes(f) || cityInvites.includes(f)) continue
+          let reqs = []
+          try {
+            reqs = sing.inviteReqs(f)
+          } catch {
+            continue // unreadable requirements: not a faction to chase blind
+          }
+          const city = reqs.find((r) => r?.type === 'city')?.city
+          const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
+          if (!city) continue
+          if (!((player.money ?? 0) >= moneyReq + 200e3)) {
+            todo.push(`${f}: chosen, needs ${(moneyReq / 1e6).toFixed(0)}m in hand plus the fare`)
+            continue
+          }
+          if (player.city !== city) order('travel', [city], `${f} invites only in ${city}`)
+          order('join', [f], `chosen city set [${pick.chosen.join(', ')}]; invitation follows presence`)
+          did.push(`ordered travel to ${city} and join ${f} (chosen city set)`)
         }
       }
     }
