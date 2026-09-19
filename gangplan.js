@@ -815,7 +815,8 @@ export function* policySearch(g, members, o = {}) {
   const rounds = num(o.rounds) ? o.rounds : 2
   let best = null
   for (let r = 0; r < rounds; r++) {
-    const rk = yield* goldenSearch(0, 1.5, evalK, { iters: 5 })
+    // k over [0, 3]: 1.5 was the first bound and the live search sat on it (22:37).
+    const rk = yield* goldenSearch(0, 3, evalK, { iters: 6 })
     k = rk.param
     evals.push(...rk.evals.map((e) => ({ round: r, k: e.param, x, score: e.score })))
     // x over [1.02, 3]; "never" (Infinity) evaluated as its own point.

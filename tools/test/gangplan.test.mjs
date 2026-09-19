@@ -404,7 +404,7 @@ export async function run() {
       const sc = scoreTrajectory(f, objective);
       if (betterScore(sc, r.score) && sc.value > r.score.value) c10.fail(`named policy ${row.name} reaches more value (${sc.value}) than the search (${r.score.value})`);
     }
-    if (!(r.k > 0 && r.k <= 1.5)) c10.fail(`k must be searched inside (0, 1.5], got ${r.k}`);
+    if (!(r.k > 0 && r.k <= 3)) c10.fail(`k must be searched inside (0, 3], got ${r.k}`);
     if (!(r.score.value >= 0.17)) c10.fail(`the search must reach the 1000/5000/27500 unlocks inside 8h on the live gang, value ${r.score.value}`);
     // k = 0 is greedy; k = 1 is train-until on the hardest task.
     const g0 = trainRatio(0, false)(G, live, { softcap: 1 });
