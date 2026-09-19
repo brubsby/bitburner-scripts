@@ -347,6 +347,15 @@ export async function run() {
     if (!c || !c.chosen.ascendName || c.chosen.ascend === undefined) c8.fail("chosen must carry an ascension rule");
     if (!c.table.some((r) => r.stage === "task") || !c.table.some((r) => r.stage === "ascension")) c8.fail("the table must show both stages");
     if (c.table.filter((r) => r.stage === "ascension").length !== ASCENSION_RULES.length) c8.fail("every ascension rule is simulated");
+    // A near target ties every rule on hours; the horizon must break the tie, so "never" cannot win it.
+    const near = choosePolicy({ respect: 600, wantedLevel: 5, territory: 1 / 7, isHacking: false }, ms, { softcap: 1, horizonH: 6, stepSec: 120, targetGross: 1 });
+    if (near) {
+      const rows = near.table.filter((r) => r.stage === "ascension");
+      const hrs = rows.map((r) => r.hoursToTarget);
+      if (!(Math.max(...hrs) <= Math.min(...hrs) * 1.02)) c8.fail("fixture: every rule must tie on hours at a near target");
+      const top = rows.reduce((a, r) => (r.grossAtHorizon > a.grossAtHorizon ? r : a));
+      if (!top.name.endsWith(near.chosen.ascendName)) c8.fail(`a tie at a near target breaks on the horizon: chose ${near.chosen.ascendName}, best horizon ${top.name}`);
+    }
     if (typeof assign !== "function") c8.fail("assign still exported");
     c8.note("hand-stepped ascension (deduction, floor, recruit guard, never), two-stage table");
   }

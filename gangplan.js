@@ -627,10 +627,18 @@ function chooseAmong(g, members, o, cands, stage) {
     }
     const row = { stage, name: p.name, hoursToTarget, grossAtHorizon: last.gross, membersAtHorizon: last.members, ascensions: f.ascensions }
     table.push(row)
-    const better =
-      !best ||
-      (row.hoursToTarget !== null && best.row.hoursToTarget !== null && isFinite(row.hoursToTarget) && row.hoursToTarget < best.row.hoursToTarget) ||
-      ((row.hoursToTarget === null || !isFinite(row.hoursToTarget)) && (best.row.hoursToTarget === null || !isFinite(best.row.hoursToTarget)) && row.grossAtHorizon > best.row.grossAtHorizon)
+    // Sooner to the target wins; within 2% of the incumbent's hours (or when
+    // neither reaches it) the horizon decides — a near target ties every
+    // ascension rule at the same hour, and "never" must not win that tie.
+    const reaches = (r) => r.hoursToTarget !== null && isFinite(r.hoursToTarget)
+    let better = !best
+    if (best) {
+      if (reaches(row) && !reaches(best.row)) better = true
+      else if (reaches(row) && reaches(best.row)) {
+        if (row.hoursToTarget < best.row.hoursToTarget * 0.98) better = true
+        else if (row.hoursToTarget <= best.row.hoursToTarget * 1.02 && row.grossAtHorizon > best.row.grossAtHorizon) better = true
+      } else if (!reaches(row) && !reaches(best.row) && row.grossAtHorizon > best.row.grossAtHorizon) better = true
+    }
     if (better) best = { p, f, row }
   }
   if (!best) return null
