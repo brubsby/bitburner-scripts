@@ -385,7 +385,9 @@ export function simulateGang(g, members, o = {}) {
   for (let i = 1; i <= steps; i++) {
     // Recruit first, as gang.js does at the top of its loop.
     while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
-    const plan = assign(state, ms, { softcap: o.softcap, mode: o.mode })
+    // `o.assignFn` lets a caller forecast a DIFFERENT policy than assign()
+    // — that is how policies are compared, by their trajectories.
+    const plan = (o.assignFn ?? assign)(state, ms, { softcap: o.softcap, mode: o.mode })
     if (!plan) return null
     if (respectPerSec === null) respectPerSec = plan.rates.respect
     // Per-cycle gains at this step's stats and penalty (Gang.ts:processGains).
@@ -469,4 +471,91 @@ export function hoursToGangRep(forecast, target, repNow, o = {}) {
     }
   }
   return Infinity
+}
+
+// ---------------------------------------------------------------------------
+// POLICY CHOICE BY TRAJECTORY. assign() is greedy — the best task THIS cycle —
+// and a greedy policy never trains, because training earns nothing this
+// cycle. But Train Combat pays difficulty^0.9 = 63x the exp of Mug People
+// (GangMember.ts:calculateExpGain), and Terrorism pays ~100x its respect once
+// a member's stat weight clears 4 x difficulty (formulas.ts). Measured on the
+// live gang 2026-09-19: greedy reached the first gang-catalogue unlock
+// (5,000 rep) in 28.5h; "train until Terrorism clears, then greedy" in 3.4h.
+// So the policy is chosen by what its trajectory reaches, not by this cycle.
+// ---------------------------------------------------------------------------
+
+/** "Train until `clearTask` clears its difficulty, then the greedy pick" as an assignFn. */
+export function trainUntil(clearTaskName) {
+  const clearTask = TASK[clearTaskName]
+  if (!clearTask) return null
+  return (g, ms, o) => {
+    const plan = assign(g, ms, o)
+    if (!plan) return null
+    const train = g.isHacking ? TASK['Train Hacking'] : TASK['Train Combat']
+    for (const m of ms) {
+      if (plan.assignments[m.name] === 'Vigilante Justice' || plan.assignments[m.name] === 'Ethical Hacking') continue
+      if (statWeight(clearTask, m) - 4 * clearTask.difficulty <= 0) {
+        plan.assignments[m.name] = train.name
+        plan.why[m.name] = `train until ${clearTaskName} clears (stat weight ${statWeight(clearTask, m).toFixed(0)} of ${4 * clearTask.difficulty})`
+      }
+    }
+    // Rates for what is actually assigned now.
+    const rates = { respect: 0, money: 0, wanted: 0 }
+    for (const m of ms) {
+      const t = TASK[plan.assignments[m.name]]
+      rates.respect += respectGain(g, m, t, o.softcap) / CYCLE_SEC
+      rates.money += moneyGain(g, m, t, o.softcap) / CYCLE_SEC
+      rates.wanted += wantedGain(g, m, t) / CYCLE_SEC
+    }
+    return { ...plan, rates }
+  }
+}
+
+/** The candidate policies for a gang of this kind: greedy, and train-until-X for every respect task harder than the easiest. */
+export function policies(isHacking) {
+  const out = [{ name: 'greedy', assignFn: assign }]
+  for (const t of tasksFor(isHacking)) {
+    if (!(t.baseRespect > 0) || t.difficulty <= 1) continue
+    out.push({ name: `train until ${t.name}`, assignFn: trainUntil(t.name) })
+  }
+  return out
+}
+
+/**
+ * Choose the policy whose trajectory reaches `o.targetGross` (gross respect
+ * to gain — the reputation target converted by the caller) soonest; with no
+ * target, or none reachable inside the horizon, the one with the most gross
+ * respect at the horizon. Returns { chosen: {name, assignFn, forecast},
+ * table: [{name, hoursToTarget, grossAtHorizon}] } or null.
+ */
+export function choosePolicy(g, members, o = {}) {
+  const cands = o.policies ?? policies(g?.isHacking)
+  const table = []
+  let best = null
+  for (const p of cands) {
+    const f = simulateGang(g, members, { ...o, assignFn: p.assignFn })
+    if (!f) continue
+    const last = f.samples[f.samples.length - 1]
+    let hoursToTarget = null
+    if (num(o.targetGross) && o.targetGross > 0) {
+      hoursToTarget = Infinity
+      for (let i = 1; i < f.samples.length; i++) {
+        if (f.samples[i].gross >= o.targetGross) {
+          const a = f.samples[i - 1]
+          const b = f.samples[i]
+          hoursToTarget = a.h + ((o.targetGross - a.gross) / (b.gross - a.gross || 1)) * (b.h - a.h)
+          break
+        }
+      }
+    }
+    const row = { name: p.name, hoursToTarget, grossAtHorizon: last.gross, membersAtHorizon: last.members }
+    table.push(row)
+    const better =
+      !best ||
+      (row.hoursToTarget !== null && best.row.hoursToTarget !== null && isFinite(row.hoursToTarget) && row.hoursToTarget < best.row.hoursToTarget) ||
+      ((row.hoursToTarget === null || !isFinite(row.hoursToTarget)) && (best.row.hoursToTarget === null || !isFinite(best.row.hoursToTarget)) && row.grossAtHorizon > best.row.grossAtHorizon)
+    if (better) best = { p, f, row }
+  }
+  if (!best) return null
+  return { chosen: { name: best.p.name, assignFn: best.p.assignFn, forecast: best.f }, table }
 }

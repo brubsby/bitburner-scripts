@@ -27,7 +27,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, simulateGang, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, choosePolicy, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -49,6 +49,7 @@ function publish(ns, obj) {
   if (ns.getHostname() !== 'home') ns.scp(STATUS, 'home', ns.getHostname())
 }
 const GATE_FILE = '/tel/installgate.txt'
+const SCHEDULE = '/tel/factionplan.txt'
 const NAMES = ['ash', 'bex', 'cid', 'dov', 'eli', 'fay', 'gus', 'hal', 'ivy', 'jax', 'kit', 'lou', 'max', 'nia', 'oz', 'pip']
 
 export async function main(ns) {
@@ -65,8 +66,15 @@ export async function main(ns) {
   // sample per 5 simulated minutes over 24h, under the assignment policy
   // this file actually runs. Gross respect is what reputation integrates.
   const FORECAST_MS = 60000
-  const HORIZON_H = 24
+  const HORIZON_H = 12
   let forecast = null
+  // THE POLICY, chosen by trajectory (gangplan.js choosePolicy): greedy
+  // assign() never trains, and training first reached the first catalogue
+  // unlock 8x sooner on the live gang. Re-chosen with every forecast; the
+  // target is the next gang-faction unlock progress.js publishes.
+  let policy = { name: 'greedy (no forecast yet)', assignFn: assign }
+  let policyTable = null
+  let target = null
 
   while (true) {
     try {
@@ -118,7 +126,42 @@ export async function main(ns) {
       } catch {
         /* unreadable gate: respect, the default the recruits need */
       }
-      const plan = assign(gang, members, { softcap, mode })
+      // Re-choose the policy before assigning, so this loop's assignment
+      // is the chosen policy's — not last minute's.
+      if (!forecast || Date.now() - Date.parse(forecast.at) >= FORECAST_MS) {
+        // The next unlock's reputation, converted to the gross respect that
+        // reaches it: rep = facRep x gross x (1 + favor/100) / 75. Unreadable
+        // or absent -> no target -> most respect at the horizon.
+        target = null
+        try {
+          fetchFromHome(ns, SCHEDULE)
+          const sched = JSON.parse(ns.read(SCHEDULE) || 'null')
+          const gs = sched?.gang
+          // The nearest unlock by reputation, whatever order the table is in.
+          const next = (gs?.unlocks ?? []).filter((u) => typeof u.repReq === 'number' && u.repReq > (gs.repNow ?? 0)).reduce((a, u) => (!a || u.repReq < a.repReq ? u : a), null)
+          if (sched?.lastAugReset === info.lastAugReset && next && gs.facRepMult > 0 && typeof gs.repNow === 'number') {
+            target = { name: next.name, repReq: next.repReq, gross: ((next.repReq - gs.repNow) * RESPECT_TO_REP) / (gs.facRepMult * (1 + Math.max(0, gs.favor ?? 0) / 100)) }
+          }
+        } catch {
+          /* no schedule: no target */
+        }
+        const choice = choosePolicy(gang, members, { softcap, mode, horizonH: HORIZON_H, stepSec: 120, targetGross: target?.gross })
+        if (choice) {
+          policy = { name: choice.chosen.name, assignFn: choice.chosen.assignFn }
+          policyTable = choice.table.map((r) => ({ ...r, hoursToTarget: r.hoursToTarget === Infinity ? null : r.hoursToTarget, grossAtHorizon: Math.round(r.grossAtHorizon) }))
+          const sim = choice.chosen.forecast
+          forecast = {
+            at: new Date().toISOString(),
+            horizonH: sim.horizonH,
+            respectPerSec: sim.respectPerSec,
+            policy: policy.name,
+            samples: sim.samples.map((x) => ({ h: +x.h.toFixed(4), gross: x.gross, respect: x.respect, members: x.members })),
+          }
+        } else {
+          forecast = { at: new Date().toISOString(), why: 'choosePolicy could not read the gang' }
+        }
+      }
+      const plan = policy.assignFn(gang, members, { softcap, mode })
       if (!plan) {
         publish(ns, { ...base, phase: 'refused', why: 'assign could not read the gang' })
         await ns.sleep(30000)
@@ -127,21 +170,6 @@ export async function main(ns) {
       for (const m of members) {
         const want = plan.assignments[m.name]
         if (want && m.task !== want) ns.gang.setMemberTask(m.name, want)
-      }
-
-      // Forecast, on the pre-ascension members: ascension is left out of the
-      // simulation (conservative), so feeding it post-ascension stats would
-      // not change what it says, and pre-ascension stats are what earn now.
-      if (!forecast || Date.now() - Date.parse(forecast.at) >= FORECAST_MS) {
-        const sim = simulateGang(gang, members, { softcap, mode: plan.mode, horizonH: HORIZON_H, stepSec: 60 })
-        forecast = sim
-          ? {
-              at: new Date().toISOString(),
-              horizonH: sim.horizonH,
-              respectPerSec: sim.respectPerSec,
-              samples: sim.samples.filter((x, i) => i % 5 === 0 || i === sim.samples.length - 1).map((x) => ({ h: +x.h.toFixed(4), gross: x.gross, respect: x.respect, members: x.members })),
-            }
-          : { at: new Date().toISOString(), why: 'simulateGang could not read the gang' }
       }
 
       // Ascend.
@@ -210,6 +238,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
+            policy: { chosen: policy.name, target, table: policyTable },
             forecast,
             recruited,
             ascended,

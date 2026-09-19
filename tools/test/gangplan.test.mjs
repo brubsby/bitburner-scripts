@@ -269,5 +269,39 @@ export async function run() {
   }
   checks.push(c6);
 
+  // ---------------------------------------------------------------------
+  const c7 = new Check("GP7", "choosePolicy picks by trajectory: the live 2026-09-19 gang trains first (8x sooner to 5,000 rep); a gang that already clears Terrorism stays greedy; refusals");
+  {
+    const { choosePolicy, policies, trainUntil, freshMember, skillOf, ascMult, STATS, TASK, statWeight } = gp;
+    c7.examined(1);
+    const raw = [{"n":"steve","str":[1424.2,1.04,4700],"def":[1458,1.1681,4700],"dex":[1413.6,1,4700],"agi":[653.8,1.04,4694],"cha":[485.8,1.04,0]},{"n":"beve","str":[1427.4,1.04,4700],"def":[1438.4,1.0816,4700],"dex":[1416.8,1,4700],"agi":[647.3,1.04,4694],"cha":[491.8,1.04,0]},{"n":"sneve","str":[1433,1.04,4699],"def":[1444,1.0816,4699],"dex":[1422.4,1,4699],"agi":[636,1.04,4694],"cha":[502.3,1.04,0]},{"n":"ash","str":[910.3,1.04,0],"def":[917.3,1.0816,0],"dex":[903.6,1,0],"agi":[434,1.04,0],"cha":[476.3,1.04,0]},{"n":"bex","str":[866,1.04,0],"def":[873,1.0816,0],"dex":[859.3,1,0],"agi":[409.5,1.04,0],"cha":[456.5,1.04,0]},{"n":"cid","str":[745.9,1,0],"def":[745.9,1,0],"dex":[745.9,1,0],"agi":[361.4,1,0],"cha":[384.4,1,0]},{"n":"dov","str":[456.6,1,0],"def":[456.6,1,0],"dex":[456.6,1,0],"agi":[245.7,1,0],"cha":[210.8,1,0]}];
+    const live = raw.map((r) => { const m = freshMember(r.n); for (const s of STATS) { if (!r[s]) continue; m[s + "_exp"] = r[s][0]; m[s + "_mult"] = r[s][1]; m[s + "_asc_points"] = r[s][2]; m[s] = skillOf(m[s + "_exp"], m[s + "_mult"] * ascMult(m[s + "_asc_points"])); } return m; });
+    const G = { respect: 1588, wantedLevel: 23.5, territory: 1 / 7, isHacking: false };
+    const targetGross = ((5000 - 2.7) * 75) / (1.3937 * 1.0005);
+    const c = choosePolicy(G, live, { softcap: 1, horizonH: 12, stepSec: 120, targetGross });
+    if (!c) c7.fail("choosePolicy must read the live gang");
+    else {
+      if (c.chosen.name !== "train until Terrorism") c7.fail(`the live gang must train until Terrorism, chose ${c.chosen.name}`);
+      const greedy = c.table.find((r) => r.name === "greedy");
+      const chosen = c.table.find((r) => r.name === c.chosen.name);
+      if (!(greedy.hoursToTarget === Infinity || greedy.hoursToTarget > 8 * chosen.hoursToTarget)) c7.fail(`training must beat greedy by >8x, greedy ${greedy.hoursToTarget} vs ${chosen.hoursToTarget}`);
+      if (!(chosen.hoursToTarget > 2 && chosen.hoursToTarget < 5)) c7.fail(`the measured 3.4h must reproduce, got ${chosen.hoursToTarget}`);
+      if (c.chosen.forecast.samples.length < 100) c7.fail("the chosen policy's forecast comes back with it");
+    }
+    // A gang that already clears Terrorism: trainUntil assigns nobody to training, so greedy ties and stays.
+    c7.examined(1);
+    const strong = live.map((m) => { const s = { ...m }; for (const st of ["str", "def", "dex", "cha"]) { s[st + "_exp"] = 1e6; s[st] = skillOf(1e6, 1); } return s; });
+    if (!(statWeight(TASK.Terrorism, strong[0]) - 4 * 36 > 0)) c7.fail("fixture: the strong member must clear Terrorism");
+    const p = trainUntil("Terrorism")(G, strong, { softcap: 1 });
+    if (Object.values(p.assignments).includes("Train Combat")) c7.fail("nobody trains once everyone clears the task");
+    // Shapes.
+    c7.examined(1);
+    if (policies(false).length < 5 || policies(false)[0].name !== "greedy") c7.fail("combat policies: greedy first, then train-until for every hard respect task");
+    if (trainUntil("No Such Task") !== null) c7.fail("an unknown task is null");
+    if (choosePolicy(null, live, { softcap: 1 }) !== null) c7.fail("no gang -> null");
+    c7.note("live fixture reproduces the 8x; strong gang stays greedy; policy list and refusals");
+  }
+  checks.push(c7);
+
   return checks;
 }
