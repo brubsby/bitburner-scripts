@@ -55,11 +55,11 @@ const b = await importRootScript("batch.js");
 
 const rel = (a, c) => (a === c ? 0 : Math.abs(a - c) / Math.max(Math.abs(a), Math.abs(c), 1e-12));
 
-function mockPerson(mults, hacking) {
+function mockPerson(mults, hacking, intelligence = 0) {
   const p = g.mockPerson ? g.mockPerson() : {};
   return {
     ...p,
-    skills: { ...(p.skills ?? {}), hacking, intelligence: 0 },
+    skills: { ...(p.skills ?? {}), hacking, intelligence },
     mults: {
       ...(p.mults ?? {}),
       hacking_money: mults.money,
@@ -104,9 +104,13 @@ let worst = { phi: 0, chance: 0, k: 0, grow: 0, weaken: 0 };
 let worstWhere = {};
 let checks = 0;
 
+// Intelligence enters calculateHackingChance (weight 1) and nothing else the
+// batcher ports; 0 and the live BN2 value on 2026-09-19 are both checked.
+const INTELLIGENCE = [0, 61];
+
 for (const m of MULTS) {
-  for (const lvl of LEVELS) {
-    const person = mockPerson(m, lvl);
+  for (const lvl of LEVELS) for (const int of INTELLIGENCE) {
+    const person = mockPerson(m, lvl, int);
     for (const s of SERVERS) {
       const srv = mockServer(s.required, s.minSec, s.growth, s.moneyMax);
       const mults = { chance: m.chance, speed: m.speed, money: m.money, growth: m.growth };
@@ -130,7 +134,7 @@ for (const m of MULTS) {
       const phiOurs = b.hackFraction(lvl, s.required, s.minSec, mults) * g.currentNodeMults.ScriptHackMoney;
       // --- hack chance ---------------------------------------------------
       const chGame = g.calculateHackingChance(srv, person);
-      const chOurs = b.hackChance(lvl, s.required, s.minSec, mults);
+      const chOurs = b.hackChance(lvl, s.required, s.minSec, mults, int);
 
       if (rel(phiGame, phiOurs) > worst.phi) {
         worst.phi = rel(phiGame, phiOurs)

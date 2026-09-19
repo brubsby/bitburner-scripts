@@ -339,11 +339,16 @@ export function hackFraction(level, required, minSec, mults) {
   return Math.min(1, Math.max(0, (difficultyMult * skillMult * mults.money) / 240))
 }
 
-/** calculateHackingChance (Hacking.ts:9-24). */
-export function hackChance(level, required, minSec, mults) {
+/** calculateHackingChance (Hacking.ts:9-24), intelligence term included:
+ *  x (1 + int^0.8 / 600) (intelligence.ts:1, weight 1). Omitted until
+ *  2026-09-19 — 4.5% at intelligence 61 — which only the Formulas-less
+ *  fallback ever felt; with Source-File 5 Formulas.exe is permanent and the
+ *  live branch above is the game's own function. */
+export function hackChance(level, required, minSec, mults, intelligence = 0) {
   if (minSec >= 100) return 0
   const skillMult = Math.max(1.75 * level, 1)
-  return Math.min(1, Math.max(0, ((skillMult - required) / skillMult) * ((100 - minSec) / 100) * mults.chance))
+  const intBonus = 1 + Math.pow(Math.max(0, intelligence), 0.8) / 600
+  return Math.min(1, Math.max(0, ((skillMult - required) / skillMult) * ((100 - minSec) / 100) * mults.chance * intBonus))
 }
 
 /** calculateServerGrowthLog(server, 1, player, 1) — the per-thread growth constant. */
@@ -742,7 +747,7 @@ function attachMath(ns, t, y = 1) {
     t.kNow = Math.log(f.growPercent(srv, 1, p, 1))
   } else {
     t.phi0 = hackFraction(t.level, t.required, t.minSec, t.mults)
-    t.chance = hackChance(t.level, t.required, t.minSec, t.mults)
+    t.chance = hackChance(t.level, t.required, t.minSec, t.mults, ns.getPlayer().skills?.intelligence ?? 0)
     t.k = growthK(t.minSec, t.growth, t.mults)
     t.kNow = growthK(Math.max(t.sec, t.minSec), t.growth, t.mults)
   }

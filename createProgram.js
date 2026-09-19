@@ -84,98 +84,51 @@ export async function main(ns) {
 
 
 
-const intelligence_exp_divisor = 200
-const milliseconds_per_twenty_hours = 72000000
-const milliseconds_per_ten_hours = 36000000
-const milliseconds_per_eight_hours = 28800000
-const milliseconds_per_four_hours = 14400000
-const milliseconds_per_two_hours = 7200000
-const milliseconds_per_hour = 3600000
-const milliseconds_per_half_hour = 1800000
-const milliseconds_per_quarter_hour = 900000
-const milliseconds_per_five_minutes = 300000
-
+// ---------------------------------------------------------------------------
+// THE GAME'S MODEL (Work/CreateProgramWork.ts, Programs/Programs.ts), replacing
+// a hand-rolled table that divided the level by 200 for "intelligence exp" and
+// ignored intelligence entirely for time. Every constant below is cited.
+//
+//   effective level to start  = max(1, level - intelligence / 2)     Programs.ts:26-28
+//   skillMult = 1 + ((hacking / level) x (1 + 3 x int^0.8 / 600) - 1) / 5   CreateProgramWork.ts:61-63
+//             x focus (0.8 unfocused, Constants.ts BaseFocusBonus)   CreateProgramWork.ts:64
+//   seconds   = time / (1000 x skillMult)                            unitRate = 200ms x skillMult, unitNeeded = time
+//   int exp   = 0.1 x seconds worked (success only)                  CreateProgramWork.ts:79, IntelligenceProgramBaseExpGain
+//
+// `level` and `time` per program are the game's own (Programs.ts create:{}),
+// checked by tools/test/createprogram.test.mjs [PG1].
+const MIN5 = 5 * 60 * 1000
 export const programs = {
-    "NUKE.exe": {
-        hacking_level_required: 1,
-        intelligence_exp: 1 / intelligence_exp_divisor,
-        time: milliseconds_per_five_minutes,
-        intelligence_exp_per_millisecond: 1 / intelligence_exp_divisor / milliseconds_per_five_minutes
-    },
-    "BruteSSH.exe": {
-        hacking_level_required: 50,
-        intelligence_exp: 50 / intelligence_exp_divisor,
-        time: milliseconds_per_five_minutes * 2,
-        intelligence_exp_per_millisecond: 50 / intelligence_exp_divisor / (milliseconds_per_five_minutes * 2),
-        price: 500e3,
-        port_program: true
-    },
-    "FTPCrack.exe": {
-        hacking_level_required: 100,
-        intelligence_exp: 100 / intelligence_exp_divisor,
-        time: milliseconds_per_half_hour,
-        intelligence_exp_per_millisecond: 100 / intelligence_exp_divisor / milliseconds_per_half_hour,
-        price: 1500e3,
-        port_program: true
-    },
-    "relaySMTP.exe": {
-        hacking_level_required: 250,
-        intelligence_exp: 250 / intelligence_exp_divisor,
-        time: milliseconds_per_two_hours,
-        intelligence_exp_per_millisecond: 250 / intelligence_exp_divisor / milliseconds_per_two_hours,
-        price: 5e6,
-        port_program: true
-    },
-    "HTTPWorm.exe": {
-        hacking_level_required: 500,
-        intelligence_exp: 500 / intelligence_exp_divisor,
-        time: milliseconds_per_four_hours,
-        intelligence_exp_per_millisecond: 500 / intelligence_exp_divisor / milliseconds_per_four_hours,
-        price: 30e6,
-        port_program: true
-    },
-    "SQLInject.exe": {
-        hacking_level_required: 750,
-        intelligence_exp: 750 / intelligence_exp_divisor,
-        time: milliseconds_per_eight_hours,
-        intelligence_exp_per_millisecond: 750 / intelligence_exp_divisor / milliseconds_per_eight_hours,
-        price: 250e6,
-        port_program: true
-    },
-    "DeepscanV1.exe": {
-        hacking_level_required: 75,
-        intelligence_exp: 75 / intelligence_exp_divisor,
-        time: milliseconds_per_quarter_hour,
-        intelligence_exp_per_millisecond: 75 / intelligence_exp_divisor / milliseconds_per_quarter_hour,
-        price: 500000
-    },
-    "DeepscanV2.exe": {
-        hacking_level_required: 400,
-        intelligence_exp: 400 / intelligence_exp_divisor,
-        time: milliseconds_per_two_hours,
-        intelligence_exp_per_millisecond: 400 / intelligence_exp_divisor / milliseconds_per_two_hours,
-        price: 25e6
-    },
-    "ServerProfiler.exe": {
-        hacking_level_required: 75,
-        intelligence_exp: 75 / intelligence_exp_divisor,
-        time: milliseconds_per_half_hour,
-        intelligence_exp_per_millisecond: 75 / intelligence_exp_divisor / milliseconds_per_half_hour,
-        price: 1e6
-    },
-    "AutoLink.exe": {
-        hacking_level_required: 25,
-        intelligence_exp: 25 / intelligence_exp_divisor,
-        time: milliseconds_per_quarter_hour,
-        intelligence_exp_per_millisecond: 25 / intelligence_exp_divisor / milliseconds_per_quarter_hour,
-        price: 1e6
-    },
-    "b1t_flum3.exe": {
-        hacking_level_required: 1,
-        intelligence_exp: 1 / intelligence_exp_divisor,
-        time: milliseconds_per_five_minutes / 20,
-        intelligence_exp_per_millisecond: 1 / intelligence_exp_divisor / milliseconds_per_five_minutes / 20
-    }
+  'NUKE.exe': { level: 1, time: MIN5 },
+  'BruteSSH.exe': { level: 50, time: MIN5 * 2, price: 500e3, port_program: true },
+  'FTPCrack.exe': { level: 100, time: MIN5 * 6, price: 1500e3, port_program: true },
+  'relaySMTP.exe': { level: 250, time: MIN5 * 24, price: 5e6, port_program: true },
+  'HTTPWorm.exe': { level: 500, time: MIN5 * 48, price: 30e6, port_program: true },
+  'SQLInject.exe': { level: 750, time: MIN5 * 96, price: 250e6, port_program: true },
+  'DeepscanV1.exe': { level: 75, time: MIN5 * 3, price: 500000 },
+  'DeepscanV2.exe': { level: 400, time: MIN5 * 24, price: 25e6 },
+  'ServerProfiler.exe': { level: 75, time: MIN5 * 6, price: 1e6 },
+  'AutoLink.exe': { level: 25, time: MIN5 * 3, price: 1e6 },
+  'Formulas.exe': { level: 1000, time: MIN5 * 48, price: 5e9 },
+}
+export const INT_PROGRAM_EXP_PER_SEC = 0.1 // CONSTANTS.IntelligenceProgramBaseExpGain
+
+/** Programs.ts:26-28 — intelligence lowers the level needed to START. */
+export const effectiveLevel = (level, intelligence = 0) => Math.max(1, level - Math.max(0, intelligence) / 2)
+
+/**
+ * Time and intelligence exp to create `name` from these stats — pure.
+ * Returns `{ eligible, seconds, intExp }` or null for an unknown program.
+ */
+export function programPlan(name, { hacking, intelligence = 0, focus = 1 } = {}) {
+  const p = programs[name]
+  if (!p || !(typeof hacking === 'number' && isFinite(hacking))) return null
+  const eligible = hacking >= effectiveLevel(p.level, intelligence)
+  const intBonus = 1 + (3 * Math.pow(Math.max(0, intelligence), 0.8)) / 600
+  let skillMult = (hacking / p.level) * intBonus
+  skillMult = (1 + (skillMult - 1) / 5) * focus
+  const seconds = p.time / (1000 * skillMult)
+  return { eligible, seconds, intExp: INT_PROGRAM_EXP_PER_SEC * seconds, skillMult }
 }
 
 const EPSILON_WAIT_TIME = 1000
@@ -194,7 +147,7 @@ export function getCreateProgramTasks(ns) {
         // at :229 does `.shift()` on those keys, producing
         // `createProgram(undefined)`. Dormant only because this script is in
         // neither boot.js's STACK nor watchdog.js's WATCHED.
-        .filter(program => ns.getPlayer().skills.hacking >= programs[program].hacking_level_required)
+        .filter(program => ns.getPlayer().skills.hacking >= effectiveLevel(programs[program].level, ns.getPlayer().skills.intelligence))
         .reduce((result, program) => {result[program] = programs[program]; return result}, {})
 }
 
@@ -229,8 +182,8 @@ async function act(ns) {
 
         // Same v1 defect: `player.hacking` is undefined on a raw getPlayer()
         // result, so `undefined < n` is false and this guard never fired either.
-        if ((player.skills?.hacking ?? 0) < programs[program].hacking_level_required) {
-            ns.tprint(`${program} hacking level requirement (${programs[program].hacking_level_required}) not met (yours: ${player.hacking})`)
+        if ((player.skills?.hacking ?? 0) < effectiveLevel(programs[program].level, player.skills?.intelligence)) {
+            ns.tprint(`${program} hacking level requirement (${effectiveLevel(programs[program].level, player.skills?.intelligence)} with intelligence) not met (yours: ${player.skills?.hacking})`)
             runCallbackExit(ns, callback)
         }
     }
