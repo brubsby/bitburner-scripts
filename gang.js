@@ -72,7 +72,7 @@ export async function main(ns) {
   // assign() never trains, and training first reached the first catalogue
   // unlock 8x sooner on the live gang. Re-chosen with every forecast; the
   // target is the next gang-faction unlock progress.js publishes.
-  let policy = { name: 'greedy (no forecast yet)', assignFn: assign }
+  let policy = { name: 'greedy (no forecast yet)', assignFn: assign, ascend: { minGain: 1.25 }, ascendName: 'gain>=1.25 (no forecast yet)' }
   let policyTable = null
   let target = null
 
@@ -145,16 +145,16 @@ export async function main(ns) {
         } catch {
           /* no schedule: no target */
         }
-        const choice = choosePolicy(gang, members, { softcap, mode, horizonH: HORIZON_H, stepSec: 120, targetGross: target?.gross })
+        const choice = choosePolicy(gang, members, { softcap, mode, horizonH: HORIZON_H, stepSec: 120, targetGross: target?.gross, ascend: policy.ascend })
         if (choice) {
-          policy = { name: choice.chosen.name, assignFn: choice.chosen.assignFn }
+          policy = { name: choice.chosen.name, assignFn: choice.chosen.assignFn, ascend: choice.chosen.ascend, ascendName: choice.chosen.ascendName }
           policyTable = choice.table.map((r) => ({ ...r, hoursToTarget: r.hoursToTarget === Infinity ? null : r.hoursToTarget, grossAtHorizon: Math.round(r.grossAtHorizon) }))
           const sim = choice.chosen.forecast
           forecast = {
             at: new Date().toISOString(),
             horizonH: sim.horizonH,
             respectPerSec: sim.respectPerSec,
-            policy: policy.name,
+            policy: `${policy.name} / ascend ${policy.ascendName}`,
             samples: sim.samples.map((x) => ({ h: +x.h.toFixed(4), gross: x.gross, respect: x.respect, members: x.members })),
           }
         } else {
@@ -172,10 +172,10 @@ export async function main(ns) {
         if (want && m.task !== want) ns.gang.setMemberTask(m.name, want)
       }
 
-      // Ascend.
-      for (const m of members) {
+      // Ascend, under the rule the trajectory chose (null: never).
+      for (const m of policy.ascend ? members : []) {
         const r = ns.gang.getAscensionResult(m.name)
-        const v = shouldAscend(m, r, gang, { members: members.length })
+        const v = shouldAscend(m, r, gang, { members: members.length, minGain: policy.ascend.minGain })
         if (v.ascend && ns.gang.ascendMember(m.name)) ascended.push({ at: new Date().toISOString(), name: m.name, why: v.why })
       }
       ascended = ascended.slice(-12)
@@ -238,7 +238,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { chosen: policy.name, target, table: policyTable },
+            policy: { chosen: policy.name, ascend: policy.ascendName, target, table: policyTable },
             forecast,
             recruited,
             ascended,

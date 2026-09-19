@@ -367,7 +367,7 @@ export function simulateGang(g, members, o = {}) {
   const cyclesPerStep = Math.max(1, Math.round(stepSec / CYCLE_SEC))
   const processesPerStep = Math.max(1, Math.round(cyclesPerStep / CYCLES_PER_PROCESS))
   const ms = members.map((m) => {
-    const c = { ...m }
+    const c = { ...m, earnedRespect: num(m.earnedRespect) ? m.earnedRespect : 0, augmentations: Array.isArray(m.augmentations) ? m.augmentations : [] }
     for (const s of STATS) {
       if (!num(c[`${s}_exp`])) c[`${s}_exp`] = 0
       if (!num(c[`${s}_mult`])) c[`${s}_mult`] = 1
@@ -376,15 +376,53 @@ export function simulateGang(g, members, o = {}) {
     }
     return c
   })
+  // ASCENSION, as gang.js decides it (shouldAscend at o.ascend.minGain, keeping
+  // every member) and as the game applies it (GangMember.ts:ascend): points
+  // += max(exp - 1000, 0) per stat, exp -> 0, upgrades lost (multipliers
+  // rebuilt from augmentations alone), and the member's EARNED respect
+  // deducted from the gang's balance — never from the faction's reputation.
+  // o.ascend null/absent: never ascend.
+  const ascend = o.ascend && num(o.ascend.minGain) ? o.ascend : null
+  let ascensions = 0
+  const tryAscend = () => {
+    if (!ascend) return
+    for (const m of ms) {
+      const gains = {}
+      let any = false
+      for (const s of STATS) {
+        gains[s] = Math.max(m[`${s}_exp`] - ASC_POINTS_FLOOR, 0)
+        if (gains[s] > 0) any = true
+      }
+      if (!any) continue
+      const result = { respect: m.earnedRespect }
+      for (const s of STATS) result[s] = ascMult(m[`${s}_asc_points`] + gains[s]) / ascMult(m[`${s}_asc_points`])
+      const v = shouldAscend(m, result, state, { minGain: ascend.minGain, members: ms.length })
+      if (!v.ascend) continue
+      for (const s of STATS) {
+        m[`${s}_asc_points`] += gains[s]
+        m[`${s}_exp`] = 0
+        m[`${s}_mult`] = 1
+      }
+      for (const name of m.augmentations) {
+        const u = UPGRADES.find((x) => x.name === name)
+        if (u) for (const s of STATS) if (u.mults[s]) m[`${s}_mult`] *= u.mults[s]
+      }
+      for (const s of STATS) m[s] = skillOf(0, m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
+      state.respect = Math.max(1, state.respect - m.earnedRespect)
+      m.earnedRespect = 0
+      ascensions++
+    }
+  }
   const state = { respect: g.respect, wantedLevel: g.wantedLevel, territory: g.territory, isHacking: g.isHacking }
   let gross = 0
   let respectPerSec = null
   let recruitIndex = 0
-  const samples = [{ h: 0, respect: state.respect, gross: 0, members: ms.length, wantedLevel: state.wantedLevel }]
+  const samples = [{ h: 0, respect: state.respect, gross: 0, members: ms.length, wantedLevel: state.wantedLevel, ascensions: 0 }]
   const steps = Math.ceil((horizonH * 3600) / stepSec)
   for (let i = 1; i <= steps; i++) {
-    // Recruit first, as gang.js does at the top of its loop.
+    // Recruit first, as gang.js does at the top of its loop; then ascend.
     while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
+    tryAscend()
     // `o.assignFn` lets a caller forecast a DIFFERENT policy than assign()
     // — that is how policies are compared, by their trajectories.
     const plan = (o.assignFn ?? assign)(state, ms, { softcap: o.softcap, mode: o.mode })
@@ -397,7 +435,9 @@ export function simulateGang(g, members, o = {}) {
     const tasks = ms.map((m) => TASK[plan.assignments[m.name]])
     for (let k = 0; k < ms.length; k++) {
       const t = tasks[k]
-      respectGainPerCycle += respectGain(state, ms[k], t, o.softcap)
+      const r = respectGain(state, ms[k], t, o.softcap)
+      respectGainPerCycle += r
+      ms[k].earnedRespect += r * cyclesPerStep
       wantedGainPerCycle += wantedGain(state, ms[k], t)
       if (t.baseWanted < 0) justice++
     }
@@ -422,9 +462,9 @@ export function simulateGang(g, members, o = {}) {
         m[s] = skillOf(m[`${s}_exp`], m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
       }
     }
-    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, members: ms.length, wantedLevel: state.wantedLevel })
+    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, members: ms.length, wantedLevel: state.wantedLevel, ascensions })
   }
-  return { samples, respectPerSec: respectPerSec ?? 0, horizonH, stepSec }
+  return { samples, respectPerSec: respectPerSec ?? 0, horizonH, stepSec, ascensions }
 }
 
 /**
@@ -528,12 +568,43 @@ export function policies(isHacking) {
  * respect at the horizon. Returns { chosen: {name, assignFn, forecast},
  * table: [{name, hoursToTarget, grossAtHorizon}] } or null.
  */
+/**
+ * The ascension rules to choose between: never, or gang.js's shouldAscend at
+ * a gain floor. Ascending costs the member's earned respect (recruits slip)
+ * and buys a lasting multiplier (exp accrues faster ever after) — which wins
+ * depends on where the next recruit threshold and the next unlock sit, so
+ * it is chosen by trajectory like the task policy.
+ */
+export const ASCENSION_RULES = [
+  { name: 'never', ascend: null },
+  { name: 'gain>=1.1', ascend: { minGain: 1.1 } },
+  { name: 'gain>=1.25', ascend: { minGain: 1.25 } },
+  { name: 'gain>=1.5', ascend: { minGain: 1.5 } },
+  { name: 'gain>=2', ascend: { minGain: 2 } },
+]
+
+/**
+ * Two stages, coordinate-wise (a full cross is 45 simulations a minute in
+ * the game thread): the task policy is chosen under the incumbent ascension
+ * rule (o.ascend, default gain>=1.25), then the ascension rule under the
+ * chosen task policy. The returned `chosen` carries both; `table` has every
+ * row of both stages with `stage` marked.
+ */
 export function choosePolicy(g, members, o = {}) {
-  const cands = o.policies ?? policies(g?.isHacking)
+  const incumbent = o.ascend === undefined ? { minGain: 1.25 } : o.ascend
+  const s1 = chooseAmong(g, members, { ...o, ascend: incumbent }, (o.policies ?? policies(g?.isHacking)).map((p) => ({ ...p, ascend: incumbent })), 'task')
+  if (!s1) return null
+  const rules = o.ascensionRules ?? ASCENSION_RULES
+  const s2 = chooseAmong(g, members, o, rules.map((r) => ({ name: `${s1.chosen.name} / ascend ${r.name}`, assignFn: s1.chosen.assignFn, ascend: r.ascend, ascendName: r.name })), 'ascension')
+  const chosen = s2 ? s2.chosen : s1.chosen
+  return { chosen: { name: s1.chosen.name, ascendName: chosen.ascendName ?? 'gain>=1.25', assignFn: chosen.assignFn, ascend: chosen.ascend, forecast: chosen.forecast }, table: [...s1.table, ...(s2?.table ?? [])] }
+}
+
+function chooseAmong(g, members, o, cands, stage) {
   const table = []
   let best = null
   for (const p of cands) {
-    const f = simulateGang(g, members, { ...o, assignFn: p.assignFn })
+    const f = simulateGang(g, members, { ...o, assignFn: p.assignFn, ascend: p.ascend })
     if (!f) continue
     const last = f.samples[f.samples.length - 1]
     let hoursToTarget = null
@@ -548,7 +619,7 @@ export function choosePolicy(g, members, o = {}) {
         }
       }
     }
-    const row = { name: p.name, hoursToTarget, grossAtHorizon: last.gross, membersAtHorizon: last.members }
+    const row = { stage, name: p.name, hoursToTarget, grossAtHorizon: last.gross, membersAtHorizon: last.members, ascensions: f.ascensions }
     table.push(row)
     const better =
       !best ||
@@ -557,5 +628,5 @@ export function choosePolicy(g, members, o = {}) {
     if (better) best = { p, f, row }
   }
   if (!best) return null
-  return { chosen: { name: best.p.name, assignFn: best.p.assignFn, forecast: best.f }, table }
+  return { chosen: { name: best.p.name, ascendName: best.p.ascendName, assignFn: best.p.assignFn, ascend: best.p.ascend, forecast: best.f }, table }
 }

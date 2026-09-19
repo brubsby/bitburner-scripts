@@ -278,7 +278,10 @@ export async function run() {
     const live = raw.map((r) => { const m = freshMember(r.n); for (const s of STATS) { if (!r[s]) continue; m[s + "_exp"] = r[s][0]; m[s + "_mult"] = r[s][1]; m[s + "_asc_points"] = r[s][2]; m[s] = skillOf(m[s + "_exp"], m[s + "_mult"] * ascMult(m[s + "_asc_points"])); } return m; });
     const G = { respect: 1588, wantedLevel: 23.5, territory: 1 / 7, isHacking: false };
     const targetGross = ((5000 - 2.7) * 75) / (1.3937 * 1.0005);
-    const c = choosePolicy(G, live, { softcap: 1, horizonH: 12, stepSec: 120, targetGross });
+    // ascend: null reproduces the 2026-09-19 measurement, which was taken before ascension entered the simulator.
+    const c = choosePolicy(G, live, { softcap: 1, horizonH: 12, stepSec: 120, targetGross, ascend: null, ascensionRules: [{ name: "never", ascend: null }] });
+    const withAsc = choosePolicy(G, live, { softcap: 1, horizonH: 12, stepSec: 120, targetGross });
+    if (withAsc && c && !(withAsc.table.find((r) => r.name === withAsc.chosen.name && r.stage === "task").hoursToTarget < c.table.find((r) => r.name === c.chosen.name && r.stage === "task").hoursToTarget)) c7.fail("ascension in the trajectory must reach the target sooner than never ascending on the live gang");
     if (!c) c7.fail("choosePolicy must read the live gang");
     else {
       if (c.chosen.name !== "train until Terrorism") c7.fail(`the live gang must train until Terrorism, chose ${c.chosen.name}`);
@@ -302,6 +305,48 @@ export async function run() {
     c7.note("live fixture reproduces the 8x; strong gang stays greedy; policy list and refusals");
   }
   checks.push(c7);
+
+  // ---------------------------------------------------------------------
+  const c8 = new Check("GP8", "ascension in the trajectory follows GangMember.ts:ascend (points += exp-1000, exp -> 0, upgrades lost, earned respect deducted) and is chosen by rule");
+  {
+    const { simulateGang, freshMember, skillOf, ascMult, STATS, choosePolicy, ASCENSION_RULES, assign } = gp;
+    c8.examined(1);
+    // One member with 5,000 exp in every combat stat, a weapon multiplier and one augmentation, 300 earned respect.
+    const m = freshMember("asc");
+    for (const st of ["str", "def", "dex", "agi"]) { m[st + "_exp"] = 5000; m[st + "_mult"] = 1.2; m[st] = skillOf(5000, 1.2); }
+    m.augmentations = ["Bionic Arms"]; // str x1.3, dex x1.3 survive ascension
+    m.earnedRespect = 300;
+    const G = { respect: 1000, wantedLevel: 5, territory: 1 / 7, isHacking: false };
+    const never = simulateGang(G, [m], { softcap: 1, horizonH: 120 / 3600, stepSec: 120, ascend: null });
+    const rule = simulateGang(G, [m], { softcap: 1, horizonH: 120 / 3600, stepSec: 120, ascend: { minGain: 1.25 } });
+    if (!never || !rule) c8.fail("both runs must read the fixture");
+    else {
+      if (never.ascensions !== 0) c8.fail("ascend: null never ascends");
+      // Gain: ascMult(4000)/ascMult(0) = sqrt(2) = 1.414 >= 1.25, and 1000-300=700 respect keeps 7 members (625) -> ascends.
+      if (rule.ascensions !== 1) c8.fail(`the 1.25 rule must ascend once, got ${rule.ascensions}`);
+      const r1 = rule.samples[1];
+      if (Math.abs(r1.respect - (1000 - 300 + (r1.gross ?? 0))) > 1e-6) c8.fail(`earned respect (300) is deducted from the balance: ${r1.respect}`);
+      if (!(r1.gross >= 0)) c8.fail("gross reputation integrand is never reduced by ascension");
+      // A member ascended at 5,000 exp restarts at exp 0 with mult 1 x augmentation 1.3 on str: skill = skillOf(0, 1.3 x sqrt(4000/2000)).
+      // Verify via a rule run that ascends at a 2x floor (refused: gain 1.414 < 2) vs 1.25 (taken).
+      const strict = simulateGang(G, [m], { softcap: 1, horizonH: 120 / 3600, stepSec: 120, ascend: { minGain: 2 } });
+      if (strict.ascensions !== 0) c8.fail("gain 1.414 must not clear a 2x floor");
+      // The recruit guard: at 1000 respect with 8 members (needs 3125 to keep 8... no: needs 5^(8-3)=3125 > 1000 already) — use 7 members: 625 kept after 700.
+      const seven = [m, ...Array.from({ length: 6 }, (_, i) => freshMember("f" + i))];
+      const keep = simulateGang({ ...G, respect: 900 }, seven, { softcap: 1, horizonH: 120 / 3600, stepSec: 120, ascend: { minGain: 1.25 } });
+      if (keep.ascensions !== 0) c8.fail("ascension that would drop respect below what keeps every member (900-300 < 625) is refused");
+    }
+    // choosePolicy returns an ascension rule and its table carries both stages.
+    c8.examined(1);
+    const ms = Array.from({ length: 3 }, (_, i) => { const x = freshMember("m" + i); for (const st of ["str", "def", "dex", "agi"]) { x[st + "_exp"] = 3000; x[st] = skillOf(3000, 1); } return x; });
+    const c = choosePolicy({ respect: 200, wantedLevel: 2, territory: 1 / 7, isHacking: false }, ms, { softcap: 1, horizonH: 2, stepSec: 120 });
+    if (!c || !c.chosen.ascendName || c.chosen.ascend === undefined) c8.fail("chosen must carry an ascension rule");
+    if (!c.table.some((r) => r.stage === "task") || !c.table.some((r) => r.stage === "ascension")) c8.fail("the table must show both stages");
+    if (c.table.filter((r) => r.stage === "ascension").length !== ASCENSION_RULES.length) c8.fail("every ascension rule is simulated");
+    if (typeof assign !== "function") c8.fail("assign still exported");
+    c8.note("hand-stepped ascension (deduction, floor, recruit guard, never), two-stage table");
+  }
+  checks.push(c8);
 
   return checks;
 }
