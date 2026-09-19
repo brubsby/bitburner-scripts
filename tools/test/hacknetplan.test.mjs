@@ -13,7 +13,7 @@ import "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
 
 const hp = await import("../../hacknetplan.js");
-const { HN, moneyRate, levelCost, ramCost, coreCost, nodeCost, bestUpgrade, verdict } = hp;
+const { HN, moneyRate, levelCost, ramCost, coreCost, nodeCost, bestUpgrade, verdict, remainingLife } = hp;
 
 const MULTS1 = { hacknet_node_money: 1, hacknet_node_purchase_cost: 1, hacknet_node_level_cost: 1, hacknet_node_ram_cost: 1, hacknet_node_core_cost: 1 };
 
@@ -95,6 +95,36 @@ export async function run() {
     c3.note("five verdict shapes checked; the rule is paybackH < remainingH, nothing else");
   }
   checks.push(c3);
+
+  // ---------------------------------------------------------------------
+  const c4 = new Check("HN4", "remaining life is the larger of the ledger window and the gate's hold; install means 0; nothing readable refuses");
+  {
+    c4.examined(1);
+    const H = 3600000;
+    // The 2026-09-19 stall: window 0.56h, life 1h old, gate holding 0.1h.
+    const stall = remainingLife({ ledger: { windowH: 0.56, lifeAgeH: 1, ageMs: 60000 }, gate: { install: false, waitMs: 0.1 * H, ageMs: 60000 } });
+    if (!(stall.hours > 0.05 && stall.hours < 0.11)) c4.fail(`a holding gate must floor the horizon at its wait, got ${stall.hours}`);
+    if (stall.source !== "gate") c4.fail("the gate's hold must be named as the binding witness when the ledger has expired");
+    if (verdict({ kind: "level", index: 0, cost: 1, gainPerSec: 1, paybackH: 0.05 }, stall.hours).buy !== true) c4.fail("a 3-minute payback must buy inside a 5-minute hold");
+    // The ledger wins when it is the longer witness.
+    const led = remainingLife({ ledger: { windowH: 2, lifeAgeH: 0.5, ageMs: 0 }, gate: { install: false, waitMs: 0.1 * H, ageMs: 0 } });
+    if (Math.abs(led.hours - 1.5) > 1e-9 || led.source !== "ledger") c4.fail(`ledger 1.5h must beat a 0.1h hold, got ${JSON.stringify(led)}`);
+    // Install decided: nothing is left, whatever the ledger says.
+    const inst = remainingLife({ ledger: { windowH: 2, lifeAgeH: 0, ageMs: 0 }, gate: { install: true, waitMs: 0.1 * H, ageMs: 0 } });
+    if (inst.hours !== 0) c4.fail("a gate that says install must leave 0 hours");
+    // One witness missing: the other stands alone.
+    if (remainingLife({ ledger: null, gate: { install: false, waitMs: 0.2 * H, ageMs: 0 } }).hours !== 0.2) c4.fail("gate alone must stand");
+    if (remainingLife({ ledger: { windowH: 1, lifeAgeH: 0.25, ageMs: 0 }, gate: null }).hours !== 0.75) c4.fail("ledger alone must stand");
+    // Nothing readable: null, and verdict refuses on null.
+    const none = remainingLife({ ledger: null, gate: null });
+    if (none.hours !== null || !none.why) c4.fail("nothing readable must be null with a reason");
+    if (remainingLife({}).hours !== null) c4.fail("no arguments must be null");
+    // The wait already elapsed: the gate contributes 0, not a negative number.
+    const late = remainingLife({ ledger: null, gate: { install: false, waitMs: 60000, ageMs: 120000 } });
+    if (late.hours !== 0) c4.fail(`an elapsed hold is 0 hours, got ${late.hours}`);
+    c4.note("eight shapes; the rule is max(ledger, gate-hold), install => 0, unreadable => null");
+  }
+  checks.push(c4);
 
   return checks;
 }

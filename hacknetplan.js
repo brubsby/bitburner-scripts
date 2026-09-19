@@ -174,3 +174,31 @@ export function verdict(best, remainingH) {
 }
 
 const fmtH = (h) => (h === Infinity ? 'never' : h < 1 ? `${(h * 60).toFixed(1)}min` : `${h.toFixed(2)}h`)
+
+/**
+ * Hours left in this life, from two witnesses that the caller has already
+ * checked for freshness and life-stamp (pass null for a stale or foreign one):
+ *
+ *   ledger — the planner's window from the lifetimes ledger (factionplan.txt):
+ *            { windowH, lifeAgeH, ageMs }. A MEDIAN of past lives.
+ *   gate   — the install gate's own decision (installgate.txt):
+ *            { install, waitMs, ageMs }.
+ *
+ * The failure this prevents (2026-09-19, BN2 second life): the ledger window
+ * was 0.56h, the life was 1h old, and the gate was holding — "waiting 0.1h
+ * buys M=1.52". The ledger alone read "0.0min left" and every purchase was
+ * refused for the rest of the life. A gate that is holding has said it will
+ * not install before its wait elapses, so that wait is a floor on what is
+ * left; the ledger's window is the other witness; the larger of the two is
+ * the horizon. A gate that says install means 0. Neither readable means null,
+ * and verdict() refuses on null.
+ */
+export function remainingLife({ ledger, gate } = {}) {
+  if (gate && gate.install === true) return { hours: 0, why: 'the install gate says install', source: 'gate' }
+  const ledgerH = ledger && num(ledger.windowH) && ledger.windowH > 0 ? Math.max(0, ledger.windowH - (num(ledger.lifeAgeH) ? ledger.lifeAgeH : 0) - (num(ledger.ageMs) ? ledger.ageMs : 0) / 3600000) : null
+  const gateH = gate && gate.install === false && num(gate.waitMs) && gate.waitMs > 0 ? Math.max(0, (gate.waitMs - (num(gate.ageMs) ? gate.ageMs : 0)) / 3600000) : null
+  if (ledgerH === null && gateH === null) return { hours: null, why: 'neither the ledger window nor the install gate is readable', source: null }
+  if (gateH === null) return { hours: ledgerH, why: null, source: 'ledger' }
+  if (ledgerH === null) return { hours: gateH, why: null, source: 'gate' }
+  return gateH > ledgerH ? { hours: gateH, why: null, source: 'gate' } : { hours: ledgerH, why: null, source: 'ledger' }
+}

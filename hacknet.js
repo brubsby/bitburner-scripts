@@ -36,7 +36,7 @@
 // file refuses phase 2 there rather than pricing hashes as dollars.
 
 import { reporter } from 'status.js'
-import { bestUpgrade, verdict } from 'hacknetplan.js'
+import { bestUpgrade, verdict, remainingLife } from 'hacknetplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -76,20 +76,34 @@ function fetchFromHome(ns, file) {
   }
 }
 
-/** Hours left in this life from the planner's measured window; null when unreadable or stale. */
-function remainingLifeH(ns) {
+/**
+ * Hours left in this life: hacknetplan.remainingLife over the planner's ledger
+ * window (factionplan.txt) and the install gate's own decision (installgate.txt).
+ * Each witness is dropped (null) when stale or from another life, so a dead
+ * planner cannot keep a horizon alive.
+ */
+function remainingLifeH(ns, lastAugReset) {
   fetchFromHome(ns, SCHEDULE)
-  let s
-  try {
-    s = JSON.parse(ns.read(SCHEDULE) || 'null')
-  } catch {
-    return { hours: null, why: 'factionplan.txt unreadable' }
+  fetchFromHome(ns, GATE_FILE)
+  const readFresh = (file) => {
+    let s
+    try {
+      s = JSON.parse(ns.read(file) || 'null')
+    } catch {
+      return null
+    }
+    if (!s) return null
+    const ageMs = Date.now() - Date.parse(s.at ?? 0)
+    if (!(ageMs < SCHEDULE_FRESH_MS)) return null
+    if (typeof s.lastAugReset === 'number' && s.lastAugReset !== lastAugReset) return null
+    return { ...s, ageMs }
   }
-  if (!s || !(s.windowH > 0)) return { hours: null, why: 'no measured install window' }
-  const age = Date.now() - Date.parse(s.at ?? 0)
-  if (!(age < SCHEDULE_FRESH_MS)) return { hours: null, why: `factionplan.txt is ${Math.round(age / 60000)} min old` }
-  const lifeAge = typeof s.lifeAgeH === 'number' && s.lifeAgeH > 0 ? s.lifeAgeH : 0
-  return { hours: Math.max(0, s.windowH - lifeAge - age / 3600000), why: null }
+  const sched = readFresh(SCHEDULE)
+  const gate = readFresh(GATE_FILE)
+  return remainingLife({
+    ledger: sched ? { windowH: sched.windowH, lifeAgeH: sched.lifeAgeH, ageMs: sched.ageMs } : null,
+    gate: gate ? { install: gate.install, waitMs: gate.bestWait?.waitMs, ageMs: gate.ageMs } : null,
+  })
 }
 
 /** Publish the status on home, wherever this runs — the daemon reads home. */
@@ -169,7 +183,7 @@ export async function main(ns) {
       const nodeMoney = bitNodeMults(info.currentNode)?.HacknetNodeMoney
       const mults = ns.getPlayer().mults
       const plan = bestUpgrade(t.list, mults, nodeMoney)
-      const life = remainingLifeH(ns)
+      const life = remainingLifeH(ns, info.lastAugReset)
       const v = life.hours === null ? { buy: false, why: life.why } : verdict(plan.best, life.hours)
       // What budget.js leaves after the join, augmentation and home claims.
       // Unreadable claims fail closed to "nothing spendable" — see budget.js.
