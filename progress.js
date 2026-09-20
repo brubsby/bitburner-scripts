@@ -1585,7 +1585,12 @@ async function act(ns, canJoin, info, note) {
     })()
     const probePlan = plan && plan.logM > 1e-9 ? plan : projectedBudget > liveMoney ? planPurchases({ ...planArgs, money: projectedBudget }) : plan
     const probeMoney = probePlan === plan ? liveMoney : projectedBudget
-    if (probePlan && probePlan.logM > 1e-9) {
+    // A plan whose logM is 0 is a MEASUREMENT, not a missing one: at this
+    // pass (2026-09-20 00:15, $1.9b, every valued augmentation rep-gated)
+    // money buys no ln(M) and reputation is the binding input — eBudget 0,
+    // eRep > 0 is exactly what the probes then read. Refusing on logM 0 left
+    // the elasticity "unmeasured" whenever it was zero.
+    if (probePlan) {
       try {
         const K = 1.5
         const richer = planPurchases({ ...planArgs, money: probeMoney * K })
@@ -1674,7 +1679,7 @@ async function act(ns, canJoin, info, note) {
         weightsMeta = { source: 'flat', why: `derivation threw: ${String(err).slice(0, 200)}` }
       }
     } else {
-      weightsMeta = { source: 'flat', why: probePlan ? `nothing purchasable at the probe budget $${Math.round(probeMoney).toLocaleString()} (logM ${probePlan.logM})` : 'no plan' }
+      weightsMeta = { source: 'flat', why: 'no plan could be built this pass' }
     }
     // A planner that silently fell back to a heuristic must say so, every pass.
     if (!plan.exact) did.push(`plan is APPROXIMATE: ${plan.approximation}`)
