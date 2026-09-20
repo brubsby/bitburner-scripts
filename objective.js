@@ -552,12 +552,27 @@ export function moneyLn(dollars, ctx = {}) {
  * prices dollars over the remaining windows against the projected budget.
  *
  *   o: { incomePerSec, deltaGB, ramTotal, windowH, cost, eBudget,
- *        remainingWindows, budget }
+ *        remainingWindows, budget, join: { valueLn, claim, money } }
  *
- * Returns { ln, lnPerDollar, dollarsPerWindow, reason }. Every input must
- * be readable and positive or the value is null with the reason — the
- * claim then HOLDS, as it always did. Deliberately assumes the batcher is
- * RAM-bound (it is, most of every life): a spare-RAM moment would price
+ * TWO CHANNELS, summed. (1) The plan channel: moneyLn prices the extra
+ * dollars through the measured budget elasticity. (2) The join channel:
+ * while the exit faction's money requirement is unmet, every dollar of
+ * income brings the join closer, and budget.js prices that dollar at
+ * valueLn / claim (the join rival's exact linear figure). Home's extra
+ * income runs for min(time to the join at today's income, one window) —
+ * the window because money resets at the install that ends it — so
+ *   lnJoin = incomePerSec x deltaGB / ramTotal x min(T, window) x valueLn / claim.
+ * The two are one figure: with eBudget 0 (money moves no purchase) home
+ * still wins the join's hold exactly when it pays itself back before the
+ * join — the moneyReturn exception, derived rather than declared.
+ *
+ * Returns { ln, lnPerDollar, dollarsPerWindow, lnPlan, lnJoin, reason }.
+ * Every input must be readable and positive or the value is null with the
+ * reason — the claim then HOLDS, as it always did. A join claim of 0 is a
+ * known nothing (lnJoin 0); an absent or unreadable join input refuses,
+ * because an underpriced home figure is what lets a rival spend through
+ * the one asset that survives installs. Deliberately assumes the batcher
+ * is RAM-bound (it is, most of every life): a spare-RAM moment would price
  * home at zero and waive a permanent asset for a transient reading.
  */
 export function homeLn(o = {}) {
@@ -566,7 +581,21 @@ export function homeLn(o = {}) {
     if (!num(o[k])) return { ln: null, lnPerDollar: null, dollarsPerWindow: null, reason: `${k} unreadable — home keeps its claim` }
   }
   const dollarsPerWindow = (o.incomePerSec * o.deltaGB * o.windowH * 3600) / o.ramTotal
+  const refuse = (reason) => ({ ln: null, lnPerDollar: null, dollarsPerWindow, lnPlan: null, lnJoin: null, reason })
   const v = moneyLn(dollarsPerWindow, { money: o.budget, eBudget: o.eBudget, remainingWindows: o.remainingWindows })
-  if (v.ln === null) return { ln: null, lnPerDollar: null, dollarsPerWindow, reason: v.reason }
-  return { ln: v.ln, lnPerDollar: v.ln / o.cost, dollarsPerWindow, reason: null }
+  if (v.ln === null) return refuse(v.reason)
+  const j = o.join
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  if (!j || typeof j !== 'object') return refuse('join inputs unreadable — home keeps its claim')
+  let lnJoin = 0
+  if (!fin(j.claim) || j.claim < 0) return refuse('join claim unreadable — home keeps its claim')
+  if (j.claim > 0) {
+    if (!fin(j.valueLn) || j.valueLn < 0) return refuse('join value unreadable — home keeps its claim')
+    if (!fin(j.money) || j.money < 0) return refuse('money unreadable — home keeps its claim')
+    const tJoin = Math.max(0, (j.claim - j.money) / o.incomePerSec)
+    const secs = Math.min(tJoin, o.windowH * 3600)
+    lnJoin = ((o.incomePerSec * o.deltaGB) / o.ramTotal) * secs * (j.valueLn / j.claim)
+  }
+  const ln = v.ln + lnJoin
+  return { ln, lnPerDollar: ln / o.cost, dollarsPerWindow, lnPlan: v.ln, lnJoin, reason: null }
 }

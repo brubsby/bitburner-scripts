@@ -1726,7 +1726,7 @@ async function act(ns, canJoin, info, note) {
   // the next home upgrade's ln per dollar from the batcher's income per
   // GB, the window, and the measured elasticity. Any unreadable input
   // publishes null and the home claim holds as before.
-  const homeCompete = () => {
+  const homeCompete = (join) => {
     try {
       const hu = readJson(ns, '/tel/homeup.txt')
       const bt = readJson(ns, '/tel/batch.txt')
@@ -1746,10 +1746,14 @@ async function act(ns, canJoin, info, note) {
         eBudget: weightsMeta?.eBudget,
         remainingWindows: weightsMeta?.remainingWindows,
         budget: weightsMeta?.probeMoney,
+        // The join channel: the exit faction's value over its requirement
+        // (the same figure budget.js prices the join rival at) x the
+        // dollars home's extra income brings in before the join.
+        join,
       })
-      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, eBudget: weightsMeta?.eBudget ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
+      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
     } catch {
-      return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', eBudget: null, remainingWindows: null, probeMoney: null }
+      return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', homeLnJoin: null, homeLnPlan: null, eBudget: null, remainingWindows: null, probeMoney: null }
     }
   }
   if (canJoin) {
@@ -2450,7 +2454,7 @@ async function act(ns, canJoin, info, note) {
           plan: null,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
-          ...homeCompete(),
+          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
           incomeSample: makeIncomeSample(incNow, player, schedule),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
         },
@@ -2876,7 +2880,7 @@ async function act(ns, canJoin, info, note) {
           planned: true,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
-          ...homeCompete(),
+          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
           pending,
           heldM,
           // The income model's inputs, persisted so the NEXT pass can score

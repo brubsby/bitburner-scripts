@@ -102,7 +102,7 @@ import { STORY_SERVERS } from 'storyservers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
-import { reserveFor as budgetHold, augClaim, joinClaim } from 'budget.js'
+import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
 import { singularityRamMultiplier } from 'sfgate.js'
 
@@ -554,14 +554,28 @@ const WATCHED = [
       // spending money that is already promised to augmentations.
       const claimSrc = ns.read('/tel/installgate.txt')
       const claimLife = ns.getResetInfo().lastAugReset
-      const held = budgetHold('home', {
-        // NO `?? 0` on either: an unreadable claim must block the upgrade, not
-        // license it. `join` is money that must be HELD to satisfy a faction's
-        // money requirement — Daedalus wants $100b IN HAND, and home RAM is
-        // bought with the same dollars.
-        join: joinClaim(claimSrc, claimLife),
-        augmentations: augClaim(claimSrc, claimLife),
-      })
+      // THE ln(M) COMPETITION (budget.js lnCompete): home's own ln per
+      // dollar is the planner's figure (objective.homeLn, published as
+      // homeLnPerDollar — the plan channel through the measured elasticity
+      // plus the join channel, income brought in before the exit faction's
+      // requirement is met). It spends through the join or augmentation
+      // hold only when strictly above that rival's figure; an unreadable
+      // figure on either side keeps the hold, as it always did. Without
+      // this, the $100b join claim sat ahead of a $1b home block for a
+      // whole life regardless of which one the trajectory wanted first.
+      const ln = marginalLnPerDollar(claimSrc, claimLife)
+      const held = budgetHold(
+        'home',
+        {
+          // NO `?? 0` on either: an unreadable claim must block the upgrade, not
+          // license it. `join` is money that must be HELD to satisfy a faction's
+          // money requirement — Daedalus wants $100b IN HAND, and home RAM is
+          // bought with the same dollars.
+          join: joinClaim(claimSrc, claimLife),
+          augmentations: augClaim(claimSrc, claimLife),
+        },
+        { lnCompete: { lnPerDollar: ln.home, rivals: { join: ln.join, augmentations: ln.augmentations } } },
+      )
       // NOT `return false`. A non-finite hold means the claim could not be
       // READ, which no amount of money will change — and reported as a plain
       // false it is indistinguishable from "saving up", which is what let it

@@ -422,7 +422,7 @@ export async function run() {
   const cHome = new Check("OB5", "homeLn: a home GB earns income x deltaGB / ramTotal per second every remaining window, priced by moneyLn at the probe budget; any unreadable input holds the claim");
   {
     cHome.examined(1);
-    const o = { incomePerSec: 1e5, deltaGB: 512, ramTotal: 1024, windowH: 2, cost: 1e9, eBudget: 0.4, remainingWindows: 5, budget: 5e8 };
+    const o = { incomePerSec: 1e5, deltaGB: 512, ramTotal: 1024, windowH: 2, cost: 1e9, eBudget: 0.4, remainingWindows: 5, budget: 5e8, join: { claim: 0, valueLn: 10, money: 1e8 } };
     const h = homeLn(o);
     const dollars = (1e5 * 512 * 2 * 3600) / 1024; // 3.6e8 per window
     if (Math.abs(h.dollarsPerWindow - dollars) > 1e-6) cHome.fail("dollars per window is income x deltaGB / ramTotal x window seconds");
@@ -437,9 +437,40 @@ export async function run() {
     cHome.examined(1);
     const noE = homeLn({ ...o, eBudget: null });
     if (noE.ln !== null || !/elasticity/.test(noE.reason)) cHome.fail("without the elasticity the reason names it");
+    if (h.lnJoin !== 0 || h.lnPlan !== expect) cHome.fail("a join claim of 0 is a known nothing: lnJoin 0, lnPlan carries the whole figure");
     cHome.note("hand-checked against moneyLn; six refusal shapes");
   }
   checks.push(cHome);
+
+  const cHomeJoin = new Check("OB6", "homeLn's join channel: home's extra income before the exit faction's requirement is met, priced at the join rival's valueLn/claim; capped at one window; with eBudget 0 home beats the join hold exactly when it pays back before the join");
+  {
+    const base = { incomePerSec: 1e5, deltaGB: 512, ramTotal: 1024, windowH: 2, cost: 1e9, eBudget: 0, remainingWindows: 5, budget: 5e8 };
+    cHomeJoin.examined(1);
+    // Join 5e9 away at 1e5/s -> 5e4 s to the join, inside a 7200 s window? No: capped at the window.
+    const far = homeLn({ ...base, join: { claim: 100e9, valueLn: 10, money: 95e9 } });
+    const rate = (1e5 * 512) / 1024; // extra income per second
+    const expectFar = rate * 7200 * (10 / 100e9);
+    if (Math.abs(far.lnJoin - expectFar) > 1e-18) cHomeJoin.fail(`join channel capped at one window: ${far.lnJoin} != ${expectFar}`);
+    if (far.lnPlan !== 0 || Math.abs(far.ln - expectFar) > 1e-18) cHomeJoin.fail("with eBudget 0 the plan channel is 0 and the join channel is the whole figure");
+    cHomeJoin.examined(1);
+    // Join 1e8 away at 1e5/s -> 1000 s, inside the window: the channel runs 1000 s only.
+    const near = homeLn({ ...base, join: { claim: 100e9, valueLn: 10, money: 100e9 - 1e8 } });
+    if (Math.abs(near.lnJoin - rate * 1000 * (10 / 100e9)) > 1e-18) cHomeJoin.fail("join channel runs only until the join");
+    cHomeJoin.examined(1);
+    // Payback test against the rival budget.js prices the join at (valueLn/claim per dollar):
+    // home wins iff rate x min(T, window) > cost. Here 5e4 x 7200 = 3.6e8 < 1e9 -> home loses.
+    const rival = 10 / 100e9;
+    if (!(far.lnPerDollar < rival)) cHomeJoin.fail("a block that does not pay back before the join loses to the join rival");
+    const cheap = homeLn({ ...base, cost: 1e8, join: { claim: 100e9, valueLn: 10, money: 95e9 } });
+    if (!(cheap.lnPerDollar > rival)) cHomeJoin.fail("a block that pays back inside the window beats the join rival");
+    cHomeJoin.examined(1);
+    for (const j of [undefined, null, 5, { claim: null, valueLn: 10, money: 1 }, { claim: 1e9, valueLn: null, money: 1 }, { claim: 1e9, valueLn: 10, money: null }, { claim: -1, valueLn: 10, money: 1 }]) {
+      const r = homeLn({ ...base, join: j });
+      if (r.ln !== null || r.lnPerDollar !== null || !r.reason) cHomeJoin.fail(`join input ${JSON.stringify(j)} unreadable must refuse with a reason`);
+    }
+    cHomeJoin.note("window cap, join cap, payback boundary both sides, seven refusal shapes");
+  }
+  checks.push(cHomeJoin);
 
   return checks;
 }
