@@ -122,19 +122,28 @@ export async function run() {
     const gang = { wanted: true, haveSF2: true, chance: 1, karma: 0, focused: true };
 
     c3.examined(3);
-    // BitNode 2 grants access outright — no karma leg, and it says so.
+    // BitNode 2 grants access outright — no karma at all, and it says so.
     const bn2 = nodeHours({ node: 2, from: 4, measured, gang });
-    if (bn2.gangHours !== 0 || !/grants gang access outright/.test(bn2.gangWhy ?? "")) c3.fail(`BitNode 2 must owe no karma: ${JSON.stringify(bn2.gangWhy)}`);
-    // Elsewhere it is the full 15h on top of the exit.
+    if (bn2.gangGrindHours !== 0 || !/grants gang access outright/.test(bn2.gangWhy ?? "")) c3.fail(`BitNode 2 must owe no karma: ${JSON.stringify(bn2.gangWhy)}`);
+    // Elsewhere the grind is real but CONCURRENT: karma survives installs
+    // (only prestigeSourceFile zeroes it), so it runs on the work slot
+    // alongside the climb and adds wall-clock only if it outlasts the node.
     const bn4 = nodeHours({ node: 4, from: 4, measured, gang });
-    if (Math.abs(bn4.gangHours - 15) > 1e-9) c3.fail(`BitNode 4 must owe 15h of karma, got ${bn4.gangHours}`);
-    if (Math.abs(bn4.hours - (bn4.exitHours + bn4.gangHours)) > 1e-9) c3.fail("total hours must be the exit plus the gang leg");
+    if (Math.abs(bn4.gangGrindHours - 15) > 1e-9) c3.fail(`BitNode 4's grind is 15h, got ${bn4.gangGrindHours}`);
+    if (!(bn4.exitHours > bn4.gangGrindHours)) c3.fail("fixture: the exit must outlast the grind for the concurrency check to mean anything");
+    if (bn4.gangAdds !== 0) c3.fail(`a grind shorter than the node adds no wall-clock, got ${bn4.gangAdds}`);
+    if (Math.abs(bn4.hours - bn4.exitHours) > 1e-9) c3.fail("total must equal the exit when the grind fits inside it");
+    if (bn4.workSlotHours !== bn4.gangGrindHours) c3.fail("the work-slot cost must still be reported, not summed away");
+    // A grind that OUTLASTS the node does add its overhang.
+    const slow = nodeHours({ node: 4, from: 4, measured, gang: { ...gang, chance: 0 } });
+    if (!(slow.gangAdds > 0)) c3.fail("a grind longer than the node must add its overhang");
+    if (Math.abs(slow.hours - (slow.exitHours + slow.gangAdds)) > 1e-9) c3.fail("overhang must be added exactly once");
+    if (Math.abs(slow.gangAdds - (slow.gangGrindHours - slow.exitHours)) > 1e-9) c3.fail("the overhang is grind minus exit, nothing else");
     // Without SF2 there is no gang to pay for at all.
     const noSf = nodeHours({ node: 4, from: 4, measured, gang: { ...gang, haveSF2: false } });
-    if (noSf.gangHours !== 0 || !/no SF2/.test(noSf.gangWhy ?? "")) c3.fail(`without SF2 the leg must be dropped and named: ${JSON.stringify(noSf.gangWhy)}`);
-    // Not wanting a gang drops it too.
+    if (noSf.gangGrindHours !== 0 || !/no SF2/.test(noSf.gangWhy ?? "")) c3.fail(`without SF2 the grind must be dropped and named: ${JSON.stringify(noSf.gangWhy)}`);
     const noGang = nodeHours({ node: 4, from: 4, measured, gang: null });
-    if (noGang.gangHours !== 0) c3.fail("no gang wanted, no gang leg");
+    if (noGang.gangGrindHours !== 0) c3.fail("no gang wanted, no grind");
 
     c3.examined(2);
     const ranked = rankNodes({ candidates: [4, 5, 11, 12], from: 4, owned: { 4: 1, 5: 1 }, measured, gang, rewards: { 4: "Singularity 16x -> 4x" } });
@@ -161,7 +170,7 @@ export async function run() {
     }
     const h4 = readable.find((r) => r.node === 4)?.hours;
     const h5 = readable.find((r) => r.node === 5)?.hours;
-    if (h4 != null && h5 != null && !(h4 > h5)) c3.fail(`BN4 (exit 9000, +15h gang) must cost more than BN5 (exit 4500): ${h4} vs ${h5}`);
+    if (h4 != null && h5 != null && !(h4 > h5)) c3.fail(`BN4 (exit 9000) must cost more than BN5 (exit 4500): ${h4} vs ${h5}`);
     c3.note(`ranked: ${readable.map((r) => `BN${r.node} ${r.hours.toFixed(1)}h (${r.installs} installs)`).join(", ")}; BN12 refused — ${bn12.why}`);
   }
   checks.push(c3);

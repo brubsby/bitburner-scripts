@@ -205,9 +205,25 @@ export function nodeHours(o = {}) {
   const core = policy.best
   if (!core || core.hours === null) return { hours: null, why: `BitNode ${node}: ${policy.why ?? 'no exit policy could be priced'}` }
 
-  // The gang leg. In BitNode 2 access is granted outright; everywhere else it
-  // costs karma we do not have, and only if we hold SF2 at all.
-  let gangLeg = 0
+  // THE GANG GRIND IS CONCURRENT, NOT A LEG.
+  //
+  // Karma is zeroed only by prestigeSourceFile — entering a BitNode — and
+  // never by prestigeAugmentation, so it accumulates monotonically across
+  // every install cycle of a node (PlayerObjectGeneralMethods.ts:146). The
+  // grind therefore runs on the PLAYER'S WORK SLOT alongside the batcher's
+  // climb; it does not stop scripts earning or levelling, and it is paid once
+  // per node rather than once per cycle.
+  //
+  // The first version of this added it to the exit time. That was wrong in a
+  // way that mattered: an 18.5h grind on top of a 53.3h exit made BitNode 10
+  // look 16.2h cheaper overall and flipped the recommended order. Once the
+  // grind is concurrent it adds wall-clock time only if it OUTLASTS the node.
+  //
+  // What it really costs is the work slot — faction reputation not earned for
+  // those hours. exitHours does not model the work slot as a resource, so
+  // that cost is REPORTED and never summed, the same discipline this module
+  // applies to source-file value. `gangAdds` is the honest wall-clock figure.
+  let gangGrind = 0
   let gangWhy = null
   if (gang?.wanted) {
     if (node === 2) gangWhy = 'BitNode 2 grants gang access outright'
@@ -215,17 +231,21 @@ export function nodeHours(o = {}) {
     else {
       const k = karmaHours({ chance: gang.chance, karma: gang.karma, focused: gang.focused })
       if (k.hours === null) return { hours: null, why: `BitNode ${node}: ${k.why}` }
-      gangLeg = k.hours
-      gangWhy = `${k.hours.toFixed(1)}h of homicide to karma ${GANG_KARMA}`
+      gangGrind = k.hours
+      gangWhy = `${k.hours.toFixed(1)}h of homicide to karma ${GANG_KARMA}, concurrent with the climb`
     }
   }
+  // Only the overhang is wall-clock.
+  const gangAdds = Math.max(0, gangGrind - core.hours)
 
   return {
-    hours: core.hours + gangLeg,
+    hours: core.hours + gangAdds,
     exitHours: core.hours,
+    gangGrindHours: gangGrind,
+    gangAdds,
+    workSlotHours: gangGrind,
     installs: core.installsFirst,
     atSearchEdge: !!policy.atSearchEdge,
-    gangHours: gangLeg,
     gangWhy,
     exitLevel,
     incomeRatio: inc.ratio,
@@ -256,7 +276,9 @@ export function rankNodes(o = {}) {
       exitHours: r.exitHours ?? null,
       installs: r.installs ?? null,
       atSearchEdge: r.atSearchEdge ?? false,
-      gangHours: r.gangHours ?? null,
+      gangGrindHours: r.gangGrindHours ?? null,
+      gangAdds: r.gangAdds ?? null,
+      workSlotHours: r.workSlotHours ?? null,
       gangWhy: r.gangWhy ?? null,
       exitLevel: r.exitLevel ?? exitLevelFor(node),
       sfFrom: have,
