@@ -34,6 +34,40 @@
 // the gang policy (k 4.2, ascend floor 1.09, all-money split) taken from a
 // search at a 17-24h horizon. The install-cycle gap it reports is ~3x, so the
 // verdict survives a good deal of error in either.
+// ---------------------------------------------------------------------------
+// CALIBRATION — what this file can and cannot establish.
+//
+// NOT CALIBRATED against the live game, and it cannot be: it compares a node
+// that WAS played with a counterfactual one that was not. There is no live
+// counterpart to "BN4 without a gang", so no cross-check exists for the
+// quantity this file exists to produce.
+//
+// What IS checked, and where: the gang earnings come from gangplan.simulateGang
+// under this node's own GangSoftcap, and that model's live calibration is
+// `factionplan.txt gang.calibration.ratio` (actual/predicted rep gain). The
+// exit legs come from exitplan.bestExitPolicy against gates read from the
+// game's own multiplier table. Neither is re-derived here.
+//
+// TWO TRAPS, both of which produced garbage before this file worked, and both
+// of which are still live if the inputs are changed:
+//
+//   1. `nodeplan.nodeHours` takes NO GATES, so money never binds inside it.
+//      Driving the comparison through it returns IDENTICAL numbers for the
+//      with-gang and without-gang branches — a null result that looks like a
+//      finding. This file uses bestExitPolicy for that reason.
+//   2. `exitplan.exitHours` holds `repPerSec` CONSTANT. At the live 0.302/s
+//      the Daedalus 2.5m leg alone prices at ~2,300h and swamps every other
+//      term, which is how an earlier attempt returned 2416h vs 2388h. Past
+//      150 favour reputation is BOUGHT (`donationForRep`), so the exit rep leg
+//      is a MONEY leg and must be priced as one.
+//
+// AND IT DOES NOT TRANSFER BETWEEN NODES. `Prestige.prestigeSourceFile` nulls
+// `Player.gang` and calls `resetGangs()` beside the karma reset, so every node
+// pays its own ~36h karma grind and the gang must repay it inside that node.
+// The BN4 verdict is about BN4's money nerfs. Re-run it per node rather than
+// carrying the answer forward.
+// ---------------------------------------------------------------------------
+
 import '../test/gameresolve.mjs'
 import fs from 'node:fs'
 const np=await import('nodeplan.js'); const gp=await import('gangplan.js'); const ep=await import('exitplan.js')

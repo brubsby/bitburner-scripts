@@ -6,6 +6,25 @@
 // ---------------------------------------------------------------------------
 // CALIBRATION
 //
+// PRECONDITION — THE EXTERNAL SOLVER. Every number below is produced by
+// golib.js's chooseMoveUCT at a real search budget, which in the live game
+// means tools/go-solver.mjs is running: Netscript shares the browser's main
+// thread, so go.js in-game searches at `maxms 20` and treats its own local
+// search as a fallback ("local fallback only; the external solver does the
+// real search", go.js:138). A run without the solver is NOT a slightly worse
+// version of the configuration measured here — it is a regime none of these
+// measurements describe, and go.js's own header records flat 20ms search
+// losing 90 straight games to the Daedalus AI.
+//
+// This is stated because it silently failed: on 2026-09-20 the solver was
+// found never to have been started across a 67-hour daemon session spanning
+// BN5, BN2 and BN4, with `remoteMoves: 0` unread in /tel/go.txt. The daemon
+// now supervises the solver and go.js reports `health: 'warn'` when it is not
+// answering, so the precondition is checked at runtime as well as asserted
+// here — but a reader reaching these numbers from outside that machinery still
+// needs to know they do not apply to a solver-less run.
+//
+//
 // This file's output is a decision — "play NxN instead of 9x9" — so under
 // CLAUDE.md it must reproduce a quantity the live game already displays and
 // print the error, pass or fail, on every run. It does: a CHECK block runs
@@ -118,7 +137,15 @@ function winstreakMultiplier(winStreak, previousWinStreak) {
 }
 
 // --- scoring.ts:56-88 + resetWinstreak, transcribed ------------------------
-function replay(seq) {
+// `difficulty` was the literal 1.5 until 2026-09-20, which was correct for
+// every configuration this file had ever seen: getDifficultyMultiplier is
+// (komi+0.5)*0.25, a function of KOMI, and the opponent was hardcoded to
+// Daedalus (komi 5.5) in the harness. Once the opponent became a dimension the
+// constant silently priced Illuminati's 5x5 special case (8, not 2 —
+// effect.ts:132-135) at 1.5, understating it by 5.33x and Netburners by 0.33x.
+// It is now taken per sequence from the game records, which carry the komi the
+// game itself scored with.
+function replay(seq, difficulty) {
   let winStreak = 0;
   let oldWinStreak = 0;
   let power = 0;
@@ -137,7 +164,7 @@ function replay(seq) {
     }
     const m = winstreakMultiplier(winStreak, oldWinStreak);
     multSum += m;
-    power += black * 1.5 * m;
+    power += black * difficulty * m;
   }
   return { power, meanMult: multSum / seq.length, maxStreak, evenStreakHits };
 }
@@ -181,10 +208,19 @@ for (const [config, all] of byConfig) {
   const { size, maxms } = gs[0];
   const pairs = gs.map((g) => ({ won: g.won, black: g.black }));
 
-  const observed = replay(pairs);
+  // One difficulty per configuration, and it must be ONE: a configuration is a
+  // fixed (size, maxms, opponent), so a spread here means the records were
+  // mixed and the replay below would be meaningless.
+  const difficulties = [...new Set(gs.map((g) => g.difficulty))];
+  if (difficulties.length !== 1) {
+    throw new Error(`config ${config} mixes difficulty multipliers ${difficulties.join(", ")} — records are not one configuration`);
+  }
+  const [difficulty] = difficulties;
+
+  const observed = replay(pairs, difficulty);
   const boot = [];
   for (let i = 0; i < BOOTSTRAP; i++) boot.push(pairs[(rnd() * pairs.length) | 0]);
-  const steady = replay(boot);
+  const steady = replay(boot, difficulty);
 
   const wins = pairs.filter((p) => p.won).length;
   const n = pairs.length;
@@ -205,6 +241,7 @@ for (const [config, all] of byConfig) {
     config,
     size,
     maxms,
+    difficulty,
     games: n,
     truncated: gs.filter((g) => g.truncated).length,
     winRate: p,
@@ -248,6 +285,34 @@ function liveCheck() {
   } catch (e) {
     uncheckable("go-boardsize", `no .telemetry/go.txt — ${e.message}. Is the daemon connected and go.js running?`);
     return;
+  }
+
+  // THE PRECONDITION, CHECKED RATHER THAN ASSUMED. Every arm here is played by
+  // a real search; the live game only gets one when tools/go-solver.mjs is
+  // answering. If it is not, the live win rate and game length below are from
+  // the 20ms local fallback and comparing them to this harness measures the
+  // absence of the solver, not the accuracy of the model — and it would do it
+  // while printing a reassuring percentage.
+  const liveMoves = live.moves ?? 0;
+  const liveRemote = live.remoteMoves ?? 0;
+  if (liveMoves >= 10 && liveRemote === 0) {
+    uncheckable(
+      "go-boardsize SOLVER",
+      `the live game played all ${liveMoves} of its moves on the local fallback (remoteMoves 0) — tools/go-solver.mjs ` +
+        `was not answering. Nothing below can be calibrated against that: it is a different search budget, which is ` +
+        `a different regime. Start the daemon (which supervises the solver) and re-run.`,
+    );
+    calibrationReport("go-boardsize calibration");
+    console.log("");
+    return;
+  }
+  if (liveMoves >= 10 && liveRemote / liveMoves < 0.5) {
+    uncheckable(
+      "go-boardsize SOLVER",
+      `the live game got solver answers for only ${liveRemote} of ${liveMoves} moves ` +
+        `(${((100 * liveRemote) / liveMoves).toFixed(0)}%) — the rest fell back to ${live.maxms}ms local search, so the ` +
+        `live arm is a mixture of two search budgets and the checks below are diluted by an unknown amount.`,
+    );
   }
 
   const arm = rows.find((r) => r.size === live.boardSize && r.maxms === live.maxms);

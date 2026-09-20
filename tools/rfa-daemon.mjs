@@ -10,6 +10,7 @@
 
 import { WebSocketServer } from "ws";
 import http from "node:http";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -511,6 +512,96 @@ fs.watch(ROOT, { recursive: true }, (_event, filename) => {
   );
 });
 
+/* ----------------------------------------------------------- go solver */
+//
+// The IPvGO search runs in its own OS process (tools/go-solver.mjs) because
+// Netscript shares the browser's main thread — see that file's header. Until
+// 2026-09-20 the only thing that ever started it was a human typing
+// `npm run gosolver`, and on 2026-09-20 it was found to have been absent for
+// the whole of a 67-hour daemon session spanning three BitNodes. Nothing
+// noticed: go.js falls back to a 20ms local search and keeps reporting
+// health 'ok', so the run degraded to exactly the regime the external solver
+// exists to escape and said nothing.
+//
+// A run with no human in it cannot depend on a human starting a process, so
+// the daemon owns its lifetime. This is supervision, not a one-shot spawn:
+// the solver is restarted on any exit, with backoff, and killed when the
+// daemon goes down so `npm run daemon` twice does not leave orphans.
+//
+// GO_SOLVER=0 disables it, for the case where it is being run by hand with
+// different flags — two solvers answering the same /go/req.txt would race on
+// `seq` and each would waste the other's work.
+const GO_SOLVER = process.env.GO_SOLVER !== "0";
+const GO_SOLVER_MAXMS = process.env.GO_SOLVER_MAXMS ?? "800";
+const GO_SOLVER_POLL = process.env.GO_SOLVER_POLL ?? "150";
+// Backoff bounds. The floor is not zero: a solver that dies instantly (a
+// syntax error in golib.js, say) would otherwise spin a restart loop that is
+// itself a bigger CPU cost than the search.
+const SOLVER_BACKOFF_MIN_MS = 1_000;
+const SOLVER_BACKOFF_MAX_MS = 60_000;
+// An exit sooner than this is a failure to start rather than a crash mid-run,
+// and is what escalates the backoff.
+const SOLVER_HEALTHY_MS = 30_000;
+
+const solver = { child: null, restarts: 0, startedAt: null, lastExit: null, backoffMs: SOLVER_BACKOFF_MIN_MS, stopping: false };
+
+function startSolver() {
+  if (!GO_SOLVER || solver.stopping || solver.child) return;
+  const args = ["tools/go-solver.mjs", "--maxms", String(GO_SOLVER_MAXMS), "--poll", String(GO_SOLVER_POLL)];
+  // The solver lowers its own scheduling priority to 19 on startup
+  // (go-solver.mjs:40), so it needs no `nice` wrapper here — and wrapping it
+  // would put a shell between us and the child, which would break the kill
+  // on shutdown below.
+  const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
+  solver.child = child;
+  solver.startedAt = Date.now();
+
+  const relay = (stream, tag) => {
+    let buf = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      buf += chunk;
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) log(`${tag} ${line.trim()}`);
+    });
+  };
+  relay(child.stdout, "gosolver:");
+  relay(child.stderr, "gosolver!");
+
+  child.on("error", (e) => log(`gosolver! spawn failed: ${e.message ?? e}`));
+  child.on("exit", (code, signal) => {
+    const ranMs = Date.now() - (solver.startedAt ?? Date.now());
+    solver.child = null;
+    solver.lastExit = { at: new Date().toISOString(), code, signal, ranMs };
+    if (solver.stopping) return;
+    solver.restarts++;
+    // A solver that ran a healthy while and then died gets an immediate retry;
+    // one that could not stay up backs off, so a permanent fault costs one log
+    // line a minute rather than a busy loop.
+    if (ranMs >= SOLVER_HEALTHY_MS) solver.backoffMs = SOLVER_BACKOFF_MIN_MS;
+    else solver.backoffMs = Math.min(SOLVER_BACKOFF_MAX_MS, solver.backoffMs * 2);
+    log(`gosolver! exited code=${code} signal=${signal} after ${(ranMs / 1000).toFixed(1)}s — restart #${solver.restarts} in ${solver.backoffMs}ms`);
+    setTimeout(startSolver, solver.backoffMs).unref?.();
+  });
+}
+
+function stopSolver() {
+  solver.stopping = true;
+  if (solver.child) solver.child.kill("SIGTERM");
+}
+
+if (GO_SOLVER) startSolver();
+else log("gosolver: disabled by GO_SOLVER=0");
+
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, () => {
+    stopSolver();
+    process.exit(0);
+  });
+}
+process.on("exit", stopSolver);
+
 /* ------------------------------------------------------------ control port */
 
 http
@@ -529,6 +620,18 @@ http
             connected: !!socket && socket.readyState === socket.OPEN,
             tracked: trackedFiles().length,
             lastTelemetry: lastDigest?.at ?? null,
+            // Published so "is the solver alive?" is answerable without ps.
+            // go.js can see its own remoteMoves but not why they stopped.
+            goSolver: !GO_SOLVER
+              ? { enabled: false }
+              : {
+                  enabled: true,
+                  running: !!solver.child,
+                  pid: solver.child?.pid ?? null,
+                  upSec: solver.child && solver.startedAt ? Math.round((Date.now() - solver.startedAt) / 1000) : 0,
+                  restarts: solver.restarts,
+                  lastExit: solver.lastExit,
+                },
           });
         }
         // Rooted hosts from the last decoded save. The RFA has no "list

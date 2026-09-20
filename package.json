@@ -7,7 +7,7 @@
     "test": "node tools/test/run.mjs",
     "test:warn-fatal": "node tools/test/run.mjs --warn-fatal",
     "daemon": "node tools/rfa-daemon.mjs",
-    "gosolver": "nice -n 19 node tools/go-solver.mjs --maxms 800 --poll 150",
+    "gosolver": "node tools/go-solver.mjs --maxms 800 --poll 150",
     "verify": "node tools/verify-deploy.mjs",
     "snapshot": "node tools/snapshot.mjs",
     "snapshot:watch": "nice -n 19 node tools/snapshot.mjs --watch",

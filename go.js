@@ -142,6 +142,71 @@ const SETTINGS = {
   // Which cheat, when available. playTwoMoves nets +1 stone of tempo at 60%
   // against -1 turn at 40%.
   cheat: 'twoMoves',
+  // The solver-absence alarm. See solverHealth() below.
+  solverWarnAfter: 10,
+  solverMinShare: 0.5,
+}
+
+/**
+ * Is the external solver actually answering?
+ *
+ * THIS CHECK EXISTS BECAUSE ITS ABSENCE COST A WHOLE BITNODE. The fallback
+ * below ("if no reply arrives, think locally") is the graceful-degradation
+ * rule working exactly as designed, and on 2026-09-20 tools/go-solver.mjs was
+ * found never to have been started in a 67-hour daemon session spanning BN5,
+ * BN2 and BN4. go.js had been playing every move with the 20ms local search —
+ * the regime its own header records as losing 90 straight games — while
+ * publishing `health: 'ok'` the entire time. `remoteMoves: 0` and
+ * `localMoves: 47` were both sitting in /tel/go.txt; nothing read them.
+ *
+ * Degrading quietly is correct. Degrading SILENTLY is not, and those are
+ * different things: the first keeps playing, the second removes the operator's
+ * ability to know it is happening. Every board-size and opponent measurement
+ * in this project is taken at 800ms against the external solver, so a run
+ * without it is not a slightly worse version of the configuration those
+ * measurements chose — it is a regime none of them describe.
+ *
+ * Refuses to judge under `warnAfter` moves rather than warning early: a solver
+ * that has just been restarted by the daemon legitimately misses the first
+ * move or two, and an alarm that cries wolf on every startup is one that gets
+ * ignored on the run that matters.
+ *
+ * @param {object} o
+ * @param {number} o.moves        total moves played this session
+ * @param {number} o.remoteMoves  how many the solver answered
+ * @returns {{health: 'ok'|'warn', detail: string|null, solverShare: number|null}}
+ */
+export function solverHealth(o = {}) {
+  const { moves, remoteMoves } = o
+  const warnAfter = typeof o.warnAfter === 'number' ? o.warnAfter : SETTINGS.solverWarnAfter
+  const minShare = typeof o.minShare === 'number' ? o.minShare : SETTINGS.solverMinShare
+  const n = typeof moves === 'number' && isFinite(moves) ? moves : 0
+  const r = typeof remoteMoves === 'number' && isFinite(remoteMoves) ? remoteMoves : 0
+  if (n < warnAfter) return { health: 'ok', detail: null, solverShare: null }
+  // `answered`, not `share`: `share` is a priced bare ns name and naming a
+  // local that costs go.js 2.40GB of RAM for an API it never calls. The RAM
+  // checker (invariant B1) caught it; it is not a style preference.
+  const answered = r / n
+  if (r === 0) {
+    return {
+      health: 'warn',
+      detail:
+        `external Go solver is not answering — all ${n} moves used the ${SETTINGS.maxms}ms local fallback. ` +
+        `Node power per hour is a fraction of the measured figure. Is tools/go-solver.mjs running? ` +
+        `The daemon supervises it; check GET localhost:12526/status -> goSolver.`,
+      solverShare: 0,
+    }
+  }
+  if (answered < minShare) {
+    return {
+      health: 'warn',
+      detail:
+        `external Go solver answered only ${r} of ${n} moves (${(100 * answered).toFixed(0)}%) — it is restarting, ` +
+        `timing out, or slower than --remotems. Check localhost:12526/status -> goSolver.restarts.`,
+      solverShare: answered,
+    }
+  }
+  return { health: 'ok', detail: null, solverShare: answered }
 }
 
 export async function main(ns) {
@@ -391,7 +456,11 @@ export async function main(ns) {
       const s = ns.go.analysis.getStats()[flags.opponent] || {}
       const bonusPercent = s.bonusPercent ?? 0
 
-      note('ok', {
+      // The solver alarm rides the same write as everything else, so a reader
+      // that already parses /tel/go.txt gets it for free and one that only
+      // looks at `health` still sees it.
+      const solver = solverHealth({ moves, remoteMoves })
+      note(solver.health, {
         wins: s.wins ?? 0,
         losses: s.losses ?? 0,
         winStreak: s.winStreak ?? 0,
@@ -399,6 +468,8 @@ export async function main(ns) {
         factionRepBonusPct: Number(bonusPercent.toFixed(3)),
         factionRepMult: Number((1 + bonusPercent / 100).toFixed(4)),
         finalScore,
+        solverShare: solver.solverShare,
+        ...(solver.detail ? { detail: solver.detail } : {}),
       })
       ns.print(`game ${games}: ${s.wins ?? 0}W/${s.losses ?? 0}L faction_rep +${bonusPercent.toFixed(2)}%`)
     } catch (err) {

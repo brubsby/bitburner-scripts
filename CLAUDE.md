@@ -21,9 +21,12 @@ substantially, and most material on the web predates that.
 
 ```bash
 cd ~/Repos/bitburner && npm run start:dev     # game at http://localhost:8000
-cd ~/Repos/bitburner-scripts && npm run daemon # RFA websocket 12525, control HTTP 12526
-npm run gosolver                               # external Go search (optional but wanted)
+cd ~/Repos/bitburner-scripts && npm run daemon # RFA + control HTTP + the Go solver
 ```
+
+**The daemon starts the Go solver itself** — `npm run gosolver` is for running
+one by hand with different flags, and needs `GO_SOLVER=0` on the daemon so the
+two do not race each other on `/go/req.txt`.
 
 `gosolver` is the IPvGO brain: go.js in-game writes each position to
 `/go/req.txt`, this process answers `/go/move.txt` with a real UCT search
@@ -31,8 +34,25 @@ npm run gosolver                               # external Go search (optional bu
 browser main thread, so meaningful search cannot run in-game — 20ms/move lost
 90 straight to the Daedalus AI. go.js falls back to its own weak local search
 if the solver is not running, so this process dying degrades the bot rather
-than stopping it. The watchdog cannot restart OS processes — if Go results
-look weak, check this is alive first.
+than stopping it.
+
+**It used to require a human, and that cost a BitNode.** On 2026-09-20 the
+solver was found never to have been started in a 67-hour daemon session
+spanning BN5, BN2 and BN4: `remoteMoves: 0` and `localMoves: 47` sat in
+`/tel/go.txt` while `health` read `ok`, so every Go move in that run used the
+20ms fallback — the regime every board-size and opponent measurement in this
+repo exists to escape. Three things changed, and they are the pattern to copy
+for anything else that lives outside the game:
+
+- the daemon **supervises** it (restart with backoff, killed on shutdown, state
+  on `GET localhost:12526/status` under `goSolver`), because a run with no
+  human in it cannot depend on a human starting a process;
+- go.js reports `health: 'warn'` when the solver is not answering
+  (`solverHealth()`), because degrading *quietly* is correct and degrading
+  *silently* is not — they are different things;
+- `tools/sim/go-boardsize*.mjs` and `go-opponent.mjs` state the solver as a
+  PRECONDITION, and the report refuses to calibrate at all against a live game
+  whose moves came from the fallback.
 
 Then in-game: Options → Remote API → port `12525` → Connect.
 

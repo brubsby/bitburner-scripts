@@ -6,6 +6,25 @@
 // ---------------------------------------------------------------------------
 // CALIBRATION — read this before acting on anything downstream of this file.
 //
+// PRECONDITION — THE EXTERNAL SOLVER. Every number below is produced by
+// golib.js's chooseMoveUCT at a real search budget, which in the live game
+// means tools/go-solver.mjs is running: Netscript shares the browser's main
+// thread, so go.js in-game searches at `maxms 20` and treats its own local
+// search as a fallback ("local fallback only; the external solver does the
+// real search", go.js:138). A run without the solver is NOT a slightly worse
+// version of the configuration measured here — it is a regime none of these
+// measurements describe, and go.js's own header records flat 20ms search
+// losing 90 straight games to the Daedalus AI.
+//
+// This is stated because it silently failed: on 2026-09-20 the solver was
+// found never to have been started across a 67-hour daemon session spanning
+// BN5, BN2 and BN4, with `remoteMoves: 0` unread in /tel/go.txt. The daemon
+// now supervises the solver and go.js reports `health: 'warn'` when it is not
+// answering, so the precondition is checked at runtime as well as asserted
+// here — but a reader reaching these numbers from outside that machinery still
+// needs to know they do not apply to a solver-less run.
+//
+//
 // This file MEASURES; it decides nothing on its own. It emits one JSONL record
 // per game and tools/sim/go-boardsize-report.mjs turns those into the
 // power-per-hour table and the board-size recommendation. **The live check
@@ -129,16 +148,25 @@ const num = (name, dflt) => {
   return i > -1 ? Number(argv[i + 1]) : dflt;
 };
 
+// Config syntax: SIZExMAXMS[@Opponent], e.g. "5x800" or "5x800@Illuminati".
+// The opponent was a hardcoded constant until 2026-09-20; it is a per-config
+// dimension because the CHANNEL a config farms (effect.ts:68-101 maps each
+// opponent to a different multiplier) and the rate it farms at are decided by
+// the same choice, and only the rate is measurable here. The report prices the
+// channel; this file only ever reports node power per hour PER OPPONENT, which
+// is not comparable across opponents without that pricing step.
 const CONFIGS = str("configs", "5x1500,7x1500,9x1500,13x1500")
   .split(",")
   .map((s) => {
-    const [size, maxms] = s.split("x").map(Number);
-    return { size, maxms, key: s };
+    const [spec, opp] = s.split("@");
+    const [size, maxms] = spec.split("x").map(Number);
+    const opponent = opp ? GoOpponent[opp] : GoOpponent.Daedalus;
+    if (!opponent) throw new Error(`unknown opponent in config "${s}": ${opp}`);
+    return { size, maxms, opponent, key: s };
   });
 const GAMES = num("games", 40);
 const WORKER = num("worker", 0);
 const OUT = str("out", null);
-const OPPONENT = GoOpponent.Daedalus;
 const VERBOSE = argv.includes("--verbose");
 
 // appendFileSync, not a write stream: a stream buffers, and a run this long is
@@ -164,7 +192,7 @@ function validGrid(state, N) {
  */
 const rngSeed = () => Math.floor(Math.random() * 30000 * 1000);
 
-async function playGame(N, maxms) {
+async function playGame(N, maxms, OPPONENT) {
   // netscriptGoImplementation.ts:368 — resetBoardState uses applyObstacles=true.
   // Daedalus gets no handicap stones (boardState.ts:100-107).
   const state = g.getNewBoardState(N, OPPONENT, true);
@@ -280,7 +308,7 @@ emit({ kind: "start", worker: WORKER, configs: CONFIGS.map((c) => c.key), games:
 for (let round = 0; round < GAMES; round++) {
   for (const cfg of CONFIGS) {
     const wall0 = Date.now();
-    const r = await playGame(cfg.size, cfg.maxms);
+    const r = await playGame(cfg.size, cfg.maxms, cfg.opponent);
     const s = stats.get(cfg.key);
     const applied = applyResult(s, r.black, r.white, cfg.size, r.komi);
     emit({
@@ -289,6 +317,7 @@ for (let round = 0; round < GAMES; round++) {
       config: cfg.key,
       size: cfg.size,
       maxms: cfg.maxms,
+      opponent: cfg.opponent,
       round,
       ...r,
       ...applied,
