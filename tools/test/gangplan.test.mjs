@@ -571,5 +571,117 @@ export async function run() {
   }
   checks.push(c14);
 
+  // ---------------------------------------------------------------------
+  const c15 = new Check(
+    "GP15",
+    "the coarse tail and per-window money: territory survives installs, so warfare is judged over the node — a window-long horizon inverts its sign, and a node-long haul must not be counted once per window",
+  );
+  {
+    const { simulateGang, runSearch, scoreTrajectory, freshMember, skillOf, TAIL_STEP_SEC, MAX_TAIL_STEPS } = gp;
+    const STATSX = ["hack", "str", "def", "dex", "agi", "cha"];
+    // The game's own opening position (AllGangs.getDefaultAllGangs): every
+    // gang power 1, territory 1/7. Members at a uniform stat level.
+    const expFor = (lvl) => { let lo = 0, hi = 1e9; for (let j = 0; j < 200; j++) { const mid = (lo + hi) / 2; if (skillOf(mid, 1) < lvl) lo = mid; else hi = mid; } return lo; };
+    const cold = (lvl, n = 12) => { const out = []; for (let i = 0; i < n; i++) { const m = freshMember("c" + i); const e = expFor(lvl); for (const st of STATSX) { m[st + "_exp"] = e; m[st] = skillOf(e, 1); } out.push(m); } return out; };
+    const RIVAL_NAMES = ["Tetrads", "The Syndicate", "The Dark Army", "Speakers for the Dead", "NiteSec", "The Black Hand"];
+    const rivals = () => Object.fromEntries(RIVAL_NAMES.map((n) => [n, { power: 1, territory: 1 / 7 }]));
+    const G = { faction: "Slum Snakes", isHacking: false, respect: 1e5, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false };
+    const base = (extra) => ({ softcap: 1, stepSec: 60, mode: "money", assignFn: gp.trainRatio(0, false, 1), ascend: { minGain: 3 }, rivals: rivals(), ...extra });
+
+    // (a) The schedule: fine to horizonH, coarse to tailH, and the tail is
+    // capped so one simulation cannot run away on a long node.
+    c15.examined(1);
+    const fine = simulateGang(G, cold(600), base({ horizonH: 2, warfare: { fraction: 0.1667, engageRatio: 0.3 } }));
+    const tailed = simulateGang(G, cold(600), base({ horizonH: 2, tailH: 12, warfare: { fraction: 0.1667, engageRatio: 0.3 } }));
+    if (fine.tailH !== 2) c15.fail(`no tailH leaves the sim at its horizon: ${fine.tailH}`);
+    if (tailed.tailH !== 12) c15.fail(`tailH is reported: ${tailed.tailH}`);
+    const wantSteps = 2 * 3600 / 60 + Math.ceil(10 * 3600 / TAIL_STEP_SEC);
+    if (tailed.samples.length - 1 !== wantSteps) c15.fail(`schedule is fine-then-coarse: ${tailed.samples.length - 1} steps, expected ${wantSteps}`);
+    if (Math.abs(tailed.samples[tailed.samples.length - 1].h - 12) > 1e-6) c15.fail(`the tail ends at tailH: ${tailed.samples[tailed.samples.length - 1].h}`);
+    const capped = simulateGang(G, cold(600), base({ horizonH: 2, tailH: 1e5, warfare: { fraction: 0.1667, engageRatio: 0.3 } }));
+    if (capped.samples.length - 1 !== 2 * 3600 / 60 + MAX_TAIL_STEPS) c15.fail(`the tail is capped at MAX_TAIL_STEPS: ${capped.samples.length - 1}`);
+
+    // (b) WHAT THE COARSE TAIL COSTS, EXACTLY. A tail step re-plans once and
+    // then integrates in stepSec sub-steps, so the only thing it coarsens is
+    // the CADENCE OF DECISIONS — ascend, equip, recruit, re-pick the warfare
+    // squad. Hold ascension still and the tail reproduces an all-fine run of
+    // the same hours to the last decimal; let it ascend and the whole gap
+    // comes back, because a 900s step ascends up to fifteen minutes late and
+    // that compounds. So the error is bounded, attributable, and one-sided.
+    c15.examined(1);
+    const allFine = simulateGang(G, cold(600), base({ horizonH: 12, warfare: { fraction: 0.1667, engageRatio: 0.3 } }));
+    const fineNoAsc = simulateGang(G, cold(600), base({ horizonH: 12, ascend: null, warfare: { fraction: 0.75, engageRatio: 0.3 } }));
+    const tailNoAsc = simulateGang(G, cold(600), base({ horizonH: 2, tailH: 12, ascend: null, warfare: { fraction: 0.75, engageRatio: 0.3 } }));
+    if (!(fineNoAsc.territory > G.territory)) c15.fail("fixture: the no-ascension comparison must actually conquer ground");
+    const exactErr = Math.abs(fineNoAsc.money - tailNoAsc.money) / fineNoAsc.money;
+    if (!(exactErr < 0.005)) c15.fail(`with decisions held still the tail is exact: ${(exactErr * 100).toFixed(2)}% apart`);
+    if (Math.abs(fineNoAsc.territory - tailNoAsc.territory) > 1e-9) c15.fail(`territory is exact without ascension: ${fineNoAsc.territory} vs ${tailNoAsc.territory}`);
+    // With ascension the tail must stay CONSERVATIVE — never flattering.
+    const moneyErr = (tailed.money - allFine.money) / allFine.money;
+    if (moneyErr > 0.01) c15.fail(`the coarse tail must not overstate: ${(moneyErr * 100).toFixed(1)}%`);
+    if (!(moneyErr > -0.3)) c15.fail(`the coarse tail understates by more than a third: ${(moneyErr * 100).toFixed(1)}%`);
+    c15.note(`coarse tail: ${tailed.samples.length - 1} steps vs ${allFine.samples.length - 1} fine — exact (${(exactErr * 100).toFixed(2)}%) with decisions held still, ${(moneyErr * 100).toFixed(1)}% conservative once ascension moves on the coarser cadence`);
+
+    // (c) Per-window pricing equals the flat-rate form exactly when the
+    // simulation IS one window — the change is not a rescaling.
+    c15.examined(1);
+    const oneWin = { budget: 1e9, eBudget: 0.3, remainingWindows: 20 };
+    const sFlat = scoreTrajectory(tailed, { horizonH: 2, money: oneWin });
+    if (sFlat.moneyMode !== "flat-rate") c15.fail(`no windowH -> flat-rate mode, got ${sFlat.moneyMode}`);
+    const win2 = simulateGang(G, cold(600), base({ horizonH: 2, warfare: { fraction: 0.1667, engageRatio: 0.3 } }));
+    const sPerOne = scoreTrajectory(win2, { horizonH: 2, money: { ...oneWin, windowH: 2 } });
+    const sFlatOne = scoreTrajectory(win2, { horizonH: 2, money: oneWin });
+    if (sPerOne.moneyMode !== "per-window") c15.fail(`a windowH -> per-window mode, got ${sPerOne.moneyMode}`);
+    if (Math.abs(sPerOne.moneyValue - sFlatOne.moneyValue) > 1e-9) c15.fail(`one window: per-window ${sPerOne.moneyValue} must equal flat ${sFlatOne.moneyValue}`);
+
+    // (d) ... and is strictly SMALLER than the flat form on a node-long tail,
+    // because flat would count the whole node's haul once per window.
+    c15.examined(1);
+    const sPerTail = scoreTrajectory(tailed, { horizonH: 2, money: { ...oneWin, windowH: 2 } });
+    const sFlatTail = scoreTrajectory(tailed, { horizonH: 2, money: oneWin });
+    if (!(sPerTail.moneyValue < sFlatTail.moneyValue)) c15.fail(`flat double-counts a node-long haul: per ${sPerTail.moneyValue} vs flat ${sFlatTail.moneyValue}`);
+
+    // (e) THE REGRESSION. At a window-long horizon warfare scores WORSE than
+    // not fighting; with the tail it scores better. This sign inversion is
+    // the whole reason the tail exists.
+    c15.examined(1);
+    const money = { budget: 1e9, eBudget: 0.3, remainingWindows: 14, windowH: 2, firstWindowH: 2 };
+    const scoreW = (w, tailH) => scoreTrajectory(
+      simulateGang(G, cold(600), base({ horizonH: 2, tailH, warfare: { fraction: w, engageRatio: 0.3 } })),
+      { horizonH: 2, money },
+    ).value;
+    const noTailWar = scoreW(0.1667, undefined);
+    const noTailPeace = scoreW(0, undefined);
+    const tailWar = scoreW(0.1667, 28);
+    const tailPeace = scoreW(0, 28);
+    if (!(noTailWar < noTailPeace)) c15.fail(`fixture: at a 2h horizon warfare must look like a loss (war ${noTailWar.toFixed(2)} vs peace ${noTailPeace.toFixed(2)})`);
+    if (!(tailWar > tailPeace)) c15.fail(`with the tail warfare must win: war ${tailWar.toFixed(2)} vs peace ${tailPeace.toFixed(2)}`);
+    c15.note(`cold start, 12 members at stat 600: 2h horizon prices war ${noTailWar.toFixed(2)} vs peace ${noTailPeace.toFixed(2)} (war loses); with a 28h tail ${tailWar.toFixed(2)} vs ${tailPeace.toFixed(2)} (war wins)`);
+
+    // (f) THE SEARCH, JUDGED ON THE NODE RATHER THAN ON ITS OWN YARDSTICK.
+    // The joint search is not obliged to reproduce (e): it can sometimes buy
+    // its way past the trough inside a 2h horizon by co-adapting the
+    // ascension floor and the engage ratio, and on this fixture it does. So
+    // the claim is not "the untailed search refuses to fight" — it is that
+    // the policy chosen WITH the tail is the better one over the node, which
+    // is the only comparison that settles a horizon argument.
+    c15.examined(1);
+    const sOpts = { softcap: 1, stepSec: 120, mode: "money", rivals: rivals(), rounds: 1, rollout: false };
+    const noTail = runSearch(G, cold(600), { ...sOpts, horizonH: 2, objective: { horizonH: 2, unlocks: [], money } });
+    const withTail = runSearch(G, cold(600), { ...sOpts, horizonH: 2, tailH: 28, objective: { horizonH: 2, unlocks: [], money } });
+    const overNode = (q) => simulateGang(G, cold(600), base({ horizonH: 2, tailH: 28, stepSec: 120, assignFn: gp.trainRatio(q.k, false, q.m ?? 0), ascend: { minGain: q.x }, warfare: { fraction: q.w, engageRatio: q.e } }));
+    const fNo = overNode(noTail);
+    const fYes = overNode(withTail);
+    if (!(fYes.money >= fNo.money)) c15.fail(`the tailed policy must not be poorer over the node: $${(fYes.money / 1e12).toFixed(0)}T vs $${(fNo.money / 1e12).toFixed(0)}T`);
+    c15.note(`over 28h the tailed policy (w=${withTail.w.toFixed(4)}) earns $${(fYes.money / 1e12).toFixed(0)}T against $${(fNo.money / 1e12).toFixed(0)}T for the one chosen at a 2h horizon (w=${noTail.w.toFixed(4)})`);
+
+    // (g) A weak gang still refuses — the tail is not a bias toward warfare.
+    c15.examined(1);
+    const weak = runSearch(G, cold(200), { ...sOpts, horizonH: 2, tailH: 28, objective: { horizonH: 2, unlocks: [], money } });
+    if (!(weak.w < 0.05)) c15.fail(`a gang that loses the power race must not fight: w=${weak.w}`);
+    c15.note(`a gang at stat 200 loses the power race and the tail still picks w=${weak.w.toFixed(4)}`);
+  }
+  checks.push(c15);
+
   return checks;
 }

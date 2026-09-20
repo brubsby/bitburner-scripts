@@ -50,6 +50,8 @@ function publish(ns, obj) {
 }
 const GATE_FILE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
+/** Ceiling on the coarse tail past the install window, in hours. */
+const TAIL_MAX_H = 32
 const NAMES = ['ash', 'bex', 'cid', 'dov', 'eli', 'fay', 'gus', 'hal', 'ivy', 'jax', 'kit', 'lou', 'max', 'nia', 'oz', 'pip']
 
 export async function main(ns) {
@@ -166,7 +168,7 @@ export async function main(ns) {
           const gs = sched?.gang
           if (sched?.lastAugReset === info.lastAugReset && gs && Date.now() - Date.parse(sched.at) < 20 * 60 * 1000 && gs.facRepMult > 0 && typeof gs.repNow === 'number') {
             const horizonH = Math.min(12, Math.max(2, gs.remainingWindowH ?? 8))
-            objective = { unlocks: (gs.unlocks ?? []).filter((u) => typeof u.repReq === 'number' && typeof u.value === 'number'), repNow: gs.repNow, facRepMult: gs.facRepMult, favor: gs.favor ?? 0, horizonH, why: null }
+            objective = { unlocks: (gs.unlocks ?? []).filter((u) => typeof u.repReq === 'number' && typeof u.value === 'number'), repNow: gs.repNow, facRepMult: gs.facRepMult, favor: gs.favor ?? 0, horizonH, remainingWindowH: typeof gs.remainingWindowH === 'number' && gs.remainingWindowH > 0 ? gs.remainingWindowH : null, why: null }
           } else objective = { unlocks: [], horizonH: 8, why: 'no fresh same-life gang section in factionplan.txt' }
         } catch {
           objective = { unlocks: [], horizonH: 8, why: 'factionplan.txt unreadable' }
@@ -185,7 +187,20 @@ export async function main(ns) {
           if (gate?.lastAugReset !== info.lastAugReset) objective.moneyWhy = 'installgate.txt is from another life'
           else if (!ob || ob.source !== 'derived') objective.moneyWhy = `objective not derived: ${ob?.why ?? 'no objective record'}`
           else if (!fin(ob.eBudget) || !fin(ob.remainingWindows) || !fin(ob.probeMoney)) objective.moneyWhy = 'objective lacks eBudget/remainingWindows/probeMoney'
-          else objective.money = { eBudget: ob.eBudget, remainingWindows: ob.remainingWindows, budget: ob.probeMoney }
+          else {
+            // windowH turns the score from "this window's haul x N windows"
+            // into a sum over the windows actually simulated — the
+            // constant-rate assumption territory exists to break. Absent,
+            // the score falls back to the flat-rate form under a named mode.
+            objective.money = { eBudget: ob.eBudget, remainingWindows: ob.remainingWindows, budget: ob.probeMoney, windowH: fin(ob.windowH) && ob.windowH > 0 ? ob.windowH : null, firstWindowH: objective.remainingWindowH }
+            // THE TAIL: territory and power survive an install (only a new
+            // BitNode resets the gang), so warfare must be judged over the
+            // node's remaining hours, not the current install window. At a
+            // 2h horizon warfare scores HALF of not fighting; at 12h it
+            // scores 47% more. Without a window length there is no node
+            // length either, and the tail stays off.
+            if (objective.money.windowH) objective.tailH = Math.max(objective.horizonH, Math.min(TAIL_MAX_H, ob.remainingWindows * objective.money.windowH))
+          }
         } catch {
           objective.moneyWhy = 'installgate.txt unreadable'
         }
@@ -197,7 +212,7 @@ export async function main(ns) {
         // competition allows.
         const claimsNow = readClaims()
         const contested = spendable('gang', ns.getServerMoneyAvailable('home'), claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0, home: 0 } } })
-        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e, m: policy.m } })
+        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e, m: policy.m } })
         searchBudget = contested
         searchStartedAt = Date.now()
       }
@@ -232,7 +247,7 @@ export async function main(ns) {
             // minus the same policy without equipment, over the cost.
             compete = null
             if (searchBudget > 0 && d.y > 0 && d.forecast && d.forecast.equipSpent > 0) {
-              const bare = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, assignFn: policy.assignFn, ascend: { minGain: d.x }, rivals, warfare: rivals ? { fraction: d.w, engageRatio: d.e } : null })
+              const bare = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, assignFn: policy.assignFn, ascend: { minGain: d.x }, rivals, warfare: rivals ? { fraction: d.w, engageRatio: d.e } : null })
               const without = bare ? scoreTrajectory(bare, objective) : null
               const lnGain = without ? d.score.value - without.value : null
               compete = { cost: d.forecast.equipSpent, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget }
@@ -330,7 +345,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
+            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,

@@ -67,6 +67,9 @@ export const FREE_MEMBERS = 3
 export const RECRUIT_BASE = 5
 export const RESPECT_TO_REP = 75
 export const CYCLES_PER_TERRITORY_UPDATE = 100 // GangConstants.CyclesPerTerritoryAndPowerUpdate (20s)
+/** The coarse tail past the install window: step, and a ceiling on its length. */
+export const TAIL_STEP_SEC = 900
+export const MAX_TAIL_STEPS = 128
 /** Gang/data/power.ts: the NPC gangs' additive power multipliers. */
 export const POWER_MULT = { 'Slum Snakes': 1, Tetrads: 2, 'The Syndicate': 2, 'The Dark Army': 2, 'Speakers for the Dead': 5, NiteSec: 2, 'The Black Hand': 5 }
 export const ASC_POINTS_FLOOR = 1000
@@ -414,7 +417,27 @@ export function freshMember(name) {
 /**
  * Forward-simulate the gang. `g`: {respect, wantedLevel, territory, isHacking};
  * `members`: getMemberInformation objects (stats, <stat>_exp, <stat>_mult,
- * <stat>_asc_points); `o`: {softcap, horizonH=24, stepSec=60, mode}.
+ * <stat>_asc_points); `o`: {softcap, horizonH=24, stepSec=60, mode,
+ * tailH, tailStepSec=900}.
+ *
+ * TWO RESOLUTIONS. `horizonH` is the FINE window, stepped at `stepSec`.
+ * `tailH` (when greater) extends the simulation to the node's remaining
+ * hours in `tailStepSec` steps. The tail exists because TERRITORY SURVIVES
+ * INSTALLS (Prestige.ts:prestigeAugmentation keeps the gang; only
+ * prestigeSourceFile resets it) while warfare costs earners up front: at a
+ * 2h horizon the strongest-gang warfare policy scores HALF of w=0, and at
+ * 12h it scores 47% MORE. A horizon that ends inside the investment trough
+ * does not merely underweight territory, it inverts the sign, so the
+ * planner refuses to start a war it should be winning.
+ *
+ * A coarse step is a coarse DECISION, not a coarse integral: it re-plans
+ * once and then integrates in `stepSec` sub-steps, so gains, stats, wanted,
+ * territory and power all keep fine resolution. What coarsens is the
+ * cadence of ascend / equip / recruit / re-pick the warfare squad. Measured
+ * on a cold-start fixture: with ascension held still a 900s tail reproduces
+ * an all-fine run of the same hours to 0.00%, and with ascension free it
+ * runs 18% BELOW it — late ascensions, compounding, and one-sided. The tail
+ * is therefore conservative, never flattering, about a conquest.
  *
  * Returns { samples: [{h, respect, gross, members, wantedLevel}], respectPerSec }
  * — `gross` is cumulative gross respect gained since h=0 (the reputation
@@ -426,8 +449,13 @@ export function simulateGang(g, members, o = {}) {
   if (!Array.isArray(members) || !num(o.softcap)) return null
   const horizonH = num(o.horizonH) && o.horizonH > 0 ? o.horizonH : 24
   const stepSec = num(o.stepSec) && o.stepSec > 0 ? o.stepSec : 60
-  const cyclesPerStep = Math.max(1, Math.round(stepSec / CYCLE_SEC))
-  const processesPerStep = Math.max(1, Math.round(cyclesPerStep / CYCLES_PER_PROCESS))
+  const tailStepSec = num(o.tailStepSec) && o.tailStepSec > 0 ? o.tailStepSec : TAIL_STEP_SEC
+  const tailH = num(o.tailH) && o.tailH > horizonH ? o.tailH : horizonH
+  // The step schedule: fine to horizonH, then coarse to tailH, capped at
+  // MAX_TAIL_STEPS so a long node cannot make one simulation unbounded.
+  const schedule = []
+  for (let i = 0, n = Math.ceil((horizonH * 3600) / stepSec); i < n; i++) schedule.push(stepSec)
+  for (let i = 0, n = Math.min(MAX_TAIL_STEPS, Math.ceil(((tailH - horizonH) * 3600) / tailStepSec)); i < n; i++) schedule.push(tailStepSec)
   const ms = members.map((m) => {
     const c = { ...m, earnedRespect: num(m.earnedRespect) ? m.earnedRespect : 0, augmentations: Array.isArray(m.augmentations) ? m.augmentations : [] }
     for (const s of STATS) {
@@ -532,11 +560,54 @@ export function simulateGang(g, members, o = {}) {
   let respectPerSec = null
   let recruitIndex = 0
   const samples = [{ h: 0, respect: state.respect, gross: 0, money: 0, members: ms.length, wantedLevel: state.wantedLevel, ascensions: 0 }]
-  const steps = Math.ceil((horizonH * 3600) / stepSec)
-  for (let i = 1; i <= steps; i++) {
+  // Experience, territory and power all advance on their own clocks; a step
+  // just hands them its cycles. Kept as closures so a coarse tail step can
+  // call them once per sub-step without re-planning (see the sub-step note).
+  const advanceExp = (cycles, tasks) => {
+    if (cycles <= 0) return
+    for (let k = 0; k < ms.length; k++) {
+      const e = expGain(tasks[k], ms[k])
+      const m = ms[k]
+      for (const s of STATS) {
+        m[`${s}_exp`] += e[s] * cycles
+        m[s] = skillOf(m[`${s}_exp`], m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
+      }
+    }
+  }
+  const advanceTerritory = (cycles, warfareMembers) => {
+    if (!terr || cycles <= 0) return
+    cyclesToTerritory += cycles
+    while (cyclesToTerritory >= CYCLES_PER_TERRITORY_UPDATE) {
+      cyclesToTerritory -= CYCLES_PER_TERRITORY_UPDATE
+      const dp = territoryUpdate(terr, warfareMembers)
+      for (const [name, p] of Object.entries(dp)) deathAcc[name] = (deathAcc[name] ?? 0) + p
+    }
+    state.territory = terr.territory
+  }
+  let elapsedSec = 0
+  for (let i = 1; i <= schedule.length; i++) {
+    const stepSecNow = schedule[i - 1]
+    const cyclesPerStep = Math.max(1, Math.round(stepSecNow / CYCLE_SEC))
+    const processesPerStep = Math.max(1, Math.round(cyclesPerStep / CYCLES_PER_PROCESS))
+    // A COARSE STEP IS A COARSE DECISION, NOT A COARSE INTEGRAL. The costly
+    // part of a step is assign() choosing a task for every member; the gains
+    // loop is a dozen multiplications. So a tail step re-plans once and then
+    // integrates in `stepSec` sub-steps exactly as the fine loop does.
+    //
+    // Integrating a 900s step in one go instead understates a gang mid
+    // conquest badly — money is convex in territory, so holding both
+    // territory and the warfare members' power still for a quarter of an
+    // hour loses clashes we would have won and prices the earnings at a
+    // territory we have already left. Measured on a cold-start fixture that
+    // was -54% at the steepest hour, and worst for the policy conquering
+    // fastest: a bias against the warfare the tail exists to evaluate.
+    const isTail = stepSecNow > stepSec
+    const subs = isTail ? Math.max(1, Math.round(stepSecNow / stepSec)) : 1
+    const cyclesSub = cyclesPerStep / subs
+    const processesSub = Math.max(1, Math.round(cyclesSub / CYCLES_PER_PROCESS))
     // Recruit first, as gang.js does at the top of its loop; then ascend.
     while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
-    hNow = ((i - 1) * stepSec) / 3600
+    hNow = elapsedSec / 3600
     tryAscend()
     buyEquipment()
     // `o.assignFn` lets a caller forecast a DIFFERENT policy than assign()
@@ -553,54 +624,44 @@ export function simulateGang(g, members, o = {}) {
       const maxRival = Math.max(...Object.values(terr.rivals).map((r) => r.power))
       terr.engaged = terr.power >= warfare.engageRatio * maxRival
     } else if (terr) terr.engaged = false
-    if (respectPerSec === null) respectPerSec = plan.rates.respect
-    // Per-cycle gains at this step's stats and penalty (Gang.ts:processGains).
-    let respectGainPerCycle = 0
-    let moneyGainPerCycle = 0
-    let wantedGainPerCycle = 0
-    let justice = 0
     const tasks = ms.map((m) => TASK[plan.assignments[m.name]])
-    for (let k = 0; k < ms.length; k++) {
-      const t = tasks[k]
-      const r = respectGain(state, ms[k], t, o.softcap)
-      respectGainPerCycle += r
-      ms[k].earnedRespect += r * cyclesPerStep
-      moneyGainPerCycle += moneyGain(state, ms[k], t, o.softcap)
-      wantedGainPerCycle += wantedGain(state, ms[k], t)
-      if (t.baseWanted < 0) justice++
-    }
-    if (moneyPerSec === null) moneyPerSec = moneyGainPerCycle / CYCLE_SEC
-    const gained = respectGainPerCycle * cyclesPerStep
-    gross += gained
-    money += moneyGainPerCycle * cyclesPerStep
-    state.respect += gained
-    // Wanted: the game applies the justice factor once per process of 10 cycles.
-    for (let p = 0; p < processesPerStep; p++) {
-      if (state.wantedLevel !== 1 || wantedGainPerCycle >= 0) {
-        const old = state.wantedLevel
-        const next = (old + wantedGainPerCycle * CYCLES_PER_PROCESS) * (1 - justice * 0.001)
-        state.wantedLevel = next
-        if (state.wantedLevel < 1 || (wantedGainPerCycle <= 0 && state.wantedLevel > old)) state.wantedLevel = 1
+    if (respectPerSec === null) respectPerSec = plan.rates.respect
+    for (let sub = 0; sub < subs; sub++) {
+      // Per-cycle gains at this sub-step's stats and penalty (Gang.ts:processGains).
+      let respectGainPerCycle = 0
+      let moneyGainPerCycle = 0
+      let wantedGainPerCycle = 0
+      let justice = 0
+      for (let k = 0; k < ms.length; k++) {
+        const t = tasks[k]
+        const r = respectGain(state, ms[k], t, o.softcap)
+        respectGainPerCycle += r
+        ms[k].earnedRespect += r * cyclesSub
+        moneyGainPerCycle += moneyGain(state, ms[k], t, o.softcap)
+        wantedGainPerCycle += wantedGain(state, ms[k], t)
+        if (t.baseWanted < 0) justice++
       }
-    }
-    // Exp and skills (Gang.ts:processExperienceGains).
-    for (let k = 0; k < ms.length; k++) {
-      const e = expGain(tasks[k], ms[k])
-      const m = ms[k]
-      for (const s of STATS) {
-        m[`${s}_exp`] += e[s] * cyclesPerStep
-        m[s] = skillOf(m[`${s}_exp`], m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
+      if (moneyPerSec === null) moneyPerSec = moneyGainPerCycle / CYCLE_SEC
+      const gained = respectGainPerCycle * cyclesSub
+      gross += gained
+      money += moneyGainPerCycle * cyclesSub
+      state.respect += gained
+      // Wanted: the game applies the justice factor once per process of 10 cycles.
+      for (let p = 0; p < processesSub; p++) {
+        if (state.wantedLevel !== 1 || wantedGainPerCycle >= 0) {
+          const old = state.wantedLevel
+          const next = (old + wantedGainPerCycle * CYCLES_PER_PROCESS) * (1 - justice * 0.001)
+          state.wantedLevel = next
+          if (state.wantedLevel < 1 || (wantedGainPerCycle <= 0 && state.wantedLevel > old)) state.wantedLevel = 1
+        }
       }
+      // Exp and skills (Gang.ts:processExperienceGains).
+      advanceExp(cyclesSub, tasks)
+      // Territory and power, every 100 cycles.
+      advanceTerritory(cyclesSub, warfareMembers)
     }
-    // Territory and power, every 100 cycles; deaths take members.
+    // Deaths take members, once the whole step's clash risk has accrued.
     if (terr) {
-      cyclesToTerritory += cyclesPerStep
-      while (cyclesToTerritory >= CYCLES_PER_TERRITORY_UPDATE) {
-        cyclesToTerritory -= CYCLES_PER_TERRITORY_UPDATE
-        const dp = territoryUpdate(terr, warfareMembers)
-        for (const [name, p] of Object.entries(dp)) deathAcc[name] = (deathAcc[name] ?? 0) + p
-      }
-      state.territory = terr.territory
       for (const m of [...ms]) {
         if (!(deathAcc[m.name] >= 1)) continue
         deathAcc[m.name] = 0
@@ -609,9 +670,10 @@ export function simulateGang(g, members, o = {}) {
         deaths++
       }
     }
-    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, money, members: ms.length, wantedLevel: state.wantedLevel, ascensions, territory: state.territory, power: terr ? terr.power : null })
+    elapsedSec += stepSecNow
+    samples.push({ h: elapsedSec / 3600, respect: state.respect, gross, money, members: ms.length, wantedLevel: state.wantedLevel, ascensions, territory: state.territory, power: terr ? terr.power : null })
   }
-  return { samples, respectPerSec: respectPerSec ?? 0, moneyPerSec: moneyPerSec ?? 0, money, horizonH, stepSec, ascensions, deaths, equipSpent, territory: state.territory, power: terr ? terr.power : null, engaged: terr ? terr.engaged : null }
+  return { samples, respectPerSec: respectPerSec ?? 0, moneyPerSec: moneyPerSec ?? 0, money, horizonH, tailH, stepSec, ascensions, deaths, equipSpent, territory: state.territory, power: terr ? terr.power : null, engaged: terr ? terr.engaged : null }
 }
 
 /**
@@ -873,6 +935,82 @@ export function trainRatio(k, isHacking, m = 0) {
 }
 
 /**
+ * Cumulative money at hour `h`, linearly interpolated between samples.
+ * Past the last sample it returns the last figure — the caller decides what
+ * an unsimulated hour is worth; this never extrapolates a rate.
+ */
+function moneyAtHour(f, h) {
+  const ss = f?.samples
+  if (!Array.isArray(ss) || !ss.length) return null
+  if (h <= ss[0].h) return num(ss[0].money) ? ss[0].money : null
+  for (let i = 1; i < ss.length; i++) {
+    if (ss[i].h < h) continue
+    const a = ss[i - 1]
+    const b = ss[i]
+    if (!num(a.money) || !num(b.money)) return null
+    const span = b.h - a.h
+    return span > 0 ? a.money + ((b.money - a.money) * (h - a.h)) / span : b.money
+  }
+  const last = ss[ss.length - 1]
+  return num(last.money) ? last.money : null
+}
+
+/**
+ * THE PER-WINDOW MONEY VALUE. `moneyLn(haul, {remainingWindows: N})` is
+ * N x eB x ln((B+haul)/B) — one window's haul valued as if that same sum
+ * recurred in each of the N remaining windows. With horizonH ~ one window
+ * that is coherent bookkeeping, and it carries a CONSTANT-RATE ASSUMPTION
+ * that territory is precisely built to break: conquest lifts the gang's
+ * rate ~100x over a node ($64m/s at territory 0.22, $6.5b/s at 1.0), so
+ * the window we can see is the worst one there will ever be.
+ *
+ * So: chop the simulated hours into windows, price each window's OWN haul
+ * at N=1 against the same live budget, and sum. Identical arithmetic when
+ * the rate really is flat; strictly larger when it grows. Windows past the
+ * simulation keep the last SIMULATED window's haul — flat extrapolation of
+ * a measured window, never of a rate.
+ *
+ * `m`: {budget, eBudget, remainingWindows, windowH, firstWindowH}. Without
+ * a window length there is nothing to chop by, so this returns null and the
+ * caller falls back to the flat-rate form under a named mode.
+ */
+function perWindowMoneyLn(f, m) {
+  const N = m.remainingWindows
+  if (!num(m.windowH) || m.windowH <= 0 || !num(N) || N <= 0) return null
+  const first = num(m.firstWindowH) && m.firstWindowH > 0 ? Math.min(m.firstWindowH, m.windowH) : m.windowH
+  const simH = f?.samples?.length ? f.samples[f.samples.length - 1].h : 0
+  let ln = 0
+  let at = 0
+  let priced = 0
+  let lastHaul = null
+  while (priced < N && at < simH - 1e-9) {
+    const end = Math.min(simH, at + (priced === 0 ? first : m.windowH))
+    const haul = moneyAtHour(f, end) - moneyAtHour(f, at)
+    if (!num(haul)) return null
+    // A partial final window is scaled to a whole one so every term in the
+    // sum prices the same span; otherwise the tail's last sliver would drag
+    // the extrapolated remainder down.
+    const span = end - at
+    const whole = span > 0 ? haul * ((priced === 0 ? first : m.windowH) / span) : haul
+    if (whole > 0) {
+      const v = moneyLn(whole, { money: m.budget, eBudget: m.eBudget, remainingWindows: 1 })
+      if (v.ln === null) return { ln: null, reason: v.reason }
+      ln += v.ln
+    }
+    lastHaul = whole
+    priced++
+    at = end
+  }
+  // The windows we could not simulate repeat the last one we could.
+  if (priced < N && num(lastHaul) && lastHaul > 0) {
+    const v = moneyLn(lastHaul, { money: m.budget, eBudget: m.eBudget, remainingWindows: N - priced })
+    if (v.ln === null) return { ln: null, reason: v.reason }
+    ln += v.ln
+  }
+  return { ln, reason: null, windowsPriced: priced }
+}
+
+/**
  * Score a forecast: { value, repAtHorizon, hoursToFirst }. `obj`: {unlocks:
  * [{repReq, value}], repNow, facRepMult, favor, horizonH}. Without a
  * readable objective the value is 0 and reputation decides — never a guess.
@@ -891,8 +1029,13 @@ export function scoreTrajectory(f, obj = {}) {
   const moneyAt = num(f?.money) ? f.money : (f?.samples?.length ? f.samples[f.samples.length - 1].money : null)
   let moneyValue = 0
   let moneyWhy = null
+  let moneyMode = null
   if (obj.money && typeof obj.money === 'object') {
-    const v = num(moneyAt) && moneyAt > 0 ? moneyLn(moneyAt, { money: obj.money.budget, eBudget: obj.money.eBudget, remainingWindows: obj.money.remainingWindows }) : { ln: 0, reason: null }
+    // Per window when a window length is readable, flat-rate otherwise —
+    // the mode is published so a silent fallback cannot hide.
+    const per = num(moneyAt) && moneyAt > 0 ? perWindowMoneyLn(f, obj.money) : { ln: 0, reason: null }
+    const v = per ?? (num(moneyAt) && moneyAt > 0 ? moneyLn(moneyAt, { money: obj.money.budget, eBudget: obj.money.eBudget, remainingWindows: obj.money.remainingWindows }) : { ln: 0, reason: null })
+    moneyMode = per ? 'per-window' : 'flat-rate'
     if (v.ln === null) moneyWhy = v.reason
     else moneyValue = v.ln
   } else moneyWhy = 'no money objective'
@@ -904,7 +1047,7 @@ export function scoreTrajectory(f, obj = {}) {
     if (h !== null && isFinite(h) && (hoursToFirst === null || h < hoursToFirst)) hoursToFirst = h
   }
   const last = f.samples[f.samples.length - 1]
-  return { value, unlockValue: value - moneyValue, moneyValue, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst }
+  return { value, unlockValue: value - moneyValue, moneyValue, moneyMode, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst }
 }
 
 /** Is score a better than b? Value first, then reputation (gross when reputation is unreadable). */
@@ -964,7 +1107,7 @@ export function* goldenSearch(lo, hi, evalFn, o = {}) {
 }
 
 /**
- * The full search as a generator. `o`: {softcap, horizonH, stepSec, mode,
+ * The full search as a generator. `o`: {softcap, horizonH, tailH, tailStepSec, stepSec, mode,
  * objective, incumbent: {k, x}, rounds = 2, rollout = true}. Each next()
  * runs at most one simulation. Returns {k, x, score, forecast, evals,
  * ascendNow: [{name, now, later}], sims}.
@@ -989,6 +1132,8 @@ export function* policySearch(g, members, o = {}) {
     const f = simulateGang(g, members, {
       softcap: o.softcap,
       horizonH: o.horizonH,
+      tailH: o.tailH,
+      tailStepSec: o.tailStepSec,
       stepSec: o.stepSec,
       mode: o.mode,
       assignFn: trainRatio(q.k, isHacking, hasMoney ? q.m : 0),

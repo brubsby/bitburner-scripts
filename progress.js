@@ -1691,7 +1691,11 @@ async function act(ns, canJoin, info, note) {
           } catch {
             /* no prior probePlan — charisma stays unpriced this pass */
           }
-          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          // windowH rides along so the gang can price its trajectory PER
+          // WINDOW instead of assuming this window's rate repeats — see
+          // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
+          const winH = measureWindow(ns, info)?.windowH
+          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
           plan = planPurchases({
             ...planArgs,
             channelWeights,
