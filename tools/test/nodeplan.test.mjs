@@ -11,7 +11,7 @@ import "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
 
 const np = await import("../../nodeplan.js");
-const { exitLevelFor, karmaHours, compoundGain, projectIncome, projectExp, nodeHours, rankNodes, EXIT_BASE_LEVEL, GANG_KARMA, HOMICIDE, UNFOCUSED } = np;
+const { exitLevelFor, karmaHours, compoundGain, workSlotCost, projectIncome, projectExp, nodeHours, rankNodes, EXIT_BASE_LEVEL, GANG_KARMA, HOMICIDE, UNFOCUSED } = np;
 const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
 
 export async function run() {
@@ -205,6 +205,63 @@ export async function run() {
     }
   }
   checks.push(c4);
+
+  const c5 = new Check("NP5", "workSlotCost prices the grind against faction work on the legs each actually shortens, and refuses rather than half-converging");
+  {
+    const measured = { incomePerSec: 1e4, expPerSec: 5e3, hacking: 500, hackingExp: 1e6, hackingMult: 2, money: 1e6, cycleHours: 1.5, multGainPerCycle: 1.12 };
+    const gates = { joinMoney: 100e9, terminalRep: 2.5e6 };
+    const grindHours = 16;
+
+    // THE TRADE-OFF, AS A DIRECTION RATHER THAN A SIGN. Whether the grind is
+    // cheaper depends on which leg binds, and a fixture that happens to sit
+    // on one side of that pins nothing useful. What must hold everywhere is
+    // the shape: the more the slot earns by committing crime, the less the
+    // grind costs — strictly, at a fixed reputation rate.
+    c5.examined(1);
+    const at = (crimeMoneyPerSec) => workSlotCost({ node: 4, from: 4, measured, gates, slot: { repPerSec: 100, crimeMoneyPerSec }, grindHours });
+    const sweep = [0, 2e3, 5e3, 2e4, 1e5].map((m) => ({ m, r: at(m) }));
+    for (const { m, r } of sweep) if (r.costHours === null) c5.fail(`crime rate ${m} refused: ${r.why}`);
+    const costs = sweep.map((x) => x.r.costHours);
+    for (let i = 1; i < costs.length; i++) {
+      if (!(costs[i] < costs[i - 1])) c5.fail(`cost must fall as crime money rises: ${costs[i - 1]} -> ${costs[i]} at ${sweep[i].m}/s`);
+    }
+    // And it must actually cross: enough crime money makes the grind free.
+    if (!(costs[0] > 0)) c5.fail(`with no crime money the grind can only cost time, got ${costs[0]}`);
+    if (!(costs[costs.length - 1] < 0)) c5.fail(`enough crime money must make the grind cheaper than faction work, got ${costs[costs.length - 1]}`);
+
+    // costHours is exactly the difference it reports, not a separate estimate.
+    c5.examined(1);
+    const rich = sweep[sweep.length - 1].r;
+    if (Math.abs(rich.costHours - (rich.withGrind - rich.withFactionWork)) > 1e-9) c5.fail("costHours must be exactly withGrind - withFactionWork");
+
+    // The reported side-figures are the inputs times the hours, not derived.
+    c5.examined(1);
+    if (rich && rich.costHours !== null) {
+      if (Math.abs(rich.repForgone - 100 * grindHours * 3600) > 1e-6) c5.fail(`repForgone should be rate x seconds, got ${rich.repForgone}`);
+      if (Math.abs(rich.moneyEarned - 1e5 * grindHours * 3600) > 1e-6) c5.fail(`moneyEarned should be rate x seconds, got ${rich.moneyEarned}`);
+    }
+
+    // Refusals, each named.
+    c5.examined(4);
+    for (const [o, what] of [
+      [{ node: 4, from: 4, measured, gates, slot: { repPerSec: 1, crimeMoneyPerSec: 1 }, grindHours: 0 }, "no grind to price"],
+      [{ node: 4, from: 4, measured, gates, slot: { repPerSec: null, crimeMoneyPerSec: 1 }, grindHours }, "an unreadable reputation rate"],
+      [{ node: 4, from: 4, measured, gates, slot: { repPerSec: 1, crimeMoneyPerSec: null }, grindHours }, "an unreadable crime rate"],
+      [{ node: 12, from: 4, measured, gates, slot: { repPerSec: 1, crimeMoneyPerSec: 1 }, grindHours }, "a node with no multiplier table"],
+    ]) {
+      const r = workSlotCost(o);
+      if (r.costHours !== null || !r.why) c5.fail(`${what} must refuse with a reason, got ${JSON.stringify(r)}`);
+    }
+    // A search too narrow for the real gates must refuse, not return the edge.
+    c5.examined(1);
+    const pinned = workSlotCost({ node: 4, from: 4, measured, gates, slot: { repPerSec: 1, crimeMoneyPerSec: 5e3 }, grindHours, maxInstalls: 2 });
+    if (pinned.costHours !== null || !/edge/.test(pinned.why ?? "")) c5.fail(`a pinned install search must refuse by name, got ${JSON.stringify(pinned)}`);
+
+    if (rich && rich.costHours !== null) {
+      c5.note(`crime-money sweep 0 -> 1e5/s moves the cost ${costs[0].toFixed(2)}h -> ${costs[costs.length - 1].toFixed(2)}h; at 1e5/s the grind ${grindHours}h forgoes ${Math.round(rich.repForgone).toLocaleString("en")} rep, earns $${(rich.moneyEarned / 1e6).toFixed(0)}m — node ${rich.withFactionWork.toFixed(1)}h on faction work vs ${rich.withGrind.toFixed(1)}h grinding, cost ${rich.costHours.toFixed(2)}h`);
+    }
+  }
+  checks.push(c5);
 
   return checks;
 }

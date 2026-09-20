@@ -257,6 +257,100 @@ export function nodeHours(o = {}) {
 }
 
 /**
+ * WHAT THE KARMA GRIND ACTUALLY COSTS.
+ *
+ * The grind adds no wall-clock — it hides inside the climb — but it is not
+ * free, because the player's work slot is a resource with exactly one
+ * occupant. exitHours prices two legs the slot can shorten, and they are
+ * DIFFERENT legs:
+ *
+ *   hoard join money   $100b for Daedalus   <- crime money shortens this
+ *   exit reputation    2.5m Daedalus rep    <- faction work shortens this
+ *
+ * So the question is not "how much is the slot worth" but "which leg is
+ * binding". Homicide is not idle time: it pays money and combat experience
+ * while it pays karma. In a node like BitNode 4, where money is nerfed to
+ * 0.2 x 0.1125 and reputation only to 0.75, the crime money may well be worth
+ * more than the reputation it displaces — and that is a result, not an
+ * assumption, so this computes both and reports the difference.
+ *
+ * The slot is a time-average over the node: diverting it for `grindHours` out
+ * of a node of H hours scales the reputation it earns by (1 - grindHours/H)
+ * and adds crime money for the same fraction. H depends on those rates, so
+ * this iterates to a fixed point and REFUSES rather than returning a
+ * half-converged number.
+ *
+ * `o`: { node, from, measured, gates: {joinMoney, terminalRep, ...},
+ *        slot: {repPerSec, crimeMoneyPerSec}, grindHours }
+ */
+export function workSlotCost(o = {}) {
+  // 120 because the REAL gates make policies long: with Daedalus's $100b
+  // hoard and 2.5m reputation in play, the optimum sat past 40 installs at
+  // every reputation rate tried and the edge guard refused the lot. A
+  // refusal is better than a wrong number, but a default that always refuses
+  // is just a broken tool.
+  const { node, from, measured = {}, gates = {}, slot = {}, grindHours, maxInstalls = 120, iters = 8 } = o
+  if (!pos(grindHours)) return { costHours: null, why: 'no grind to price' }
+  if (!num(slot.repPerSec) || slot.repPerSec < 0) return { costHours: null, why: 'work-slot reputation rate unreadable' }
+  if (!num(slot.crimeMoneyPerSec) || slot.crimeMoneyPerSec < 0) return { costHours: null, why: 'crime money rate unreadable' }
+
+  const inc = projectIncome(measured.incomePerSec, from, node)
+  if (inc.why) return { costHours: null, why: inc.why }
+  const exp = projectExp(measured.expPerSec, from, node)
+  if (exp.why) return { costHours: null, why: exp.why }
+  const exitLevel = exitLevelFor(node)
+  if (!pos(exitLevel)) return { costHours: null, why: `BitNode ${node}: WorldDaemonDifficulty unreadable` }
+
+  const run = (repPerSec, extraIncome) => {
+    const p = bestExitPolicy({
+      money: measured.money ?? 0,
+      incomePerSec: inc.incomePerSec + extraIncome,
+      hacking: measured.hacking,
+      hackingExp: measured.hackingExp ?? 0,
+      hackingMult: measured.hackingMult,
+      expPerSec: exp.expPerSec,
+      cycleHours: measured.cycleHours,
+      multGainPerCycle: measured.multGainPerCycle,
+      exitLevel,
+      repPerSec,
+      ...gates,
+    }, maxInstalls)
+    return p.best && p.best.hours !== null ? { hours: p.best.hours, edge: !!p.atSearchEdge, legs: p.best.legs } : null
+  }
+
+  // (a) the slot on faction work for the whole node.
+  const faction = run(slot.repPerSec, 0)
+  if (!faction) return { costHours: null, why: 'could not price the node with the work slot on faction work' }
+
+  // (b) the slot diverted to homicide for grindHours — a time-average that
+  // depends on the node length it is averaging over, hence the fixed point.
+  let H = faction.hours
+  let grind = null
+  let converged = false
+  for (let i = 0; i < iters; i++) {
+    const share = Math.min(1, grindHours / Math.max(grindHours, H))
+    grind = run(slot.repPerSec * (1 - share), slot.crimeMoneyPerSec * share)
+    if (!grind) return { costHours: null, why: 'could not price the node with the work slot on homicide' }
+    if (Math.abs(grind.hours - H) < 0.01) { converged = true; H = grind.hours; break }
+    H = grind.hours
+  }
+  if (!converged) return { costHours: null, why: `the work-slot average did not converge in ${iters} iterations` }
+  if (faction.edge || grind.edge) return { costHours: null, why: 'install search pinned at its edge — widen maxInstalls before trusting this' }
+
+  return {
+    costHours: grind.hours - faction.hours,
+    withFactionWork: faction.hours,
+    withGrind: grind.hours,
+    grindShare: Math.min(1, grindHours / Math.max(grindHours, grind.hours)),
+    // Both rates are per SECOND and grindHours is in hours — the first cut
+    // multiplied them directly and under-reported by 3600x.
+    repForgone: slot.repPerSec * grindHours * 3600,
+    moneyEarned: slot.crimeMoneyPerSec * grindHours * 3600,
+    why: null,
+  }
+}
+
+/**
  * Rank candidate nodes by hours, reporting what each one awards.
  *
  * Deliberately returns hours and rewards SIDE BY SIDE rather than one score.
