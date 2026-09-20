@@ -519,5 +519,57 @@ export async function run() {
   }
   checks.push(c13);
 
+  const c14 = new Check("GP14", "gang money inside the trajectory: dollars accumulate per cycle, the money split m puts the best earners on money tasks, the scorer prices horizon money through objective.moneyLn, and the search picks money when nothing is left to unlock");
+  {
+    const { simulateGang, runSearch, freshMember, trainRatio, scoreTrajectory, moneyGain, bestMoneyGain, TASK } = gp;
+    const { moneyLn } = await import("../../objective.js");
+    // Strong members: every combat task clears; Human Trafficking is their best money task.
+    const mk = (v, name) => { const m = freshMember(name); for (const st of ["hack", "str", "def", "dex", "agi", "cha"]) { m[st + "_exp"] = Math.exp((v + 200) / 32) - 534.5; m[st] = v; } return m; };
+    const G = { respect: 1e6, wantedLevel: 10, territory: 1 / 7, isHacking: false, power: 1, faction: "Slum Snakes" };
+    const ms = () => [mk(3000, "a"), mk(3000, "b"), mk(3000, "c")];
+    c14.examined(1);
+    const allMoney = simulateGang(G, ms(), { softcap: 1, horizonH: 0.5, stepSec: 180, ascend: null, assignFn: trainRatio(0, false, 1) });
+    const allRespect = simulateGang(G, ms(), { softcap: 1, horizonH: 0.5, stepSec: 180, ascend: null, assignFn: trainRatio(0, false, 0) });
+    if (!(allMoney.money > 0)) c14.fail("m = 1 earns money");
+    // (The respect-best task at these stats can itself pay — Human Trafficking carries respect — so the claim is ordering, not zero.)
+    if (!(allMoney.money > allRespect.money)) c14.fail(`m = 1 earns more money than m = 0: ${allMoney.money} vs ${allRespect.money}`);
+    if (!(allRespect.samples.at(-1).gross > allMoney.samples.at(-1).gross)) c14.fail("m = 0 earns more respect than m = 1");
+    // First step: money per second is the sum of each member's best money task at the starting stats.
+    const g0 = { ...G };
+    const expect = ms().reduce((a, m) => a + bestMoneyGain(g0, m, false, 1), 0) / gp.CYCLE_SEC;
+    if (Math.abs(allMoney.moneyPerSec - expect) > 1e-6 * expect) c14.fail(`moneyPerSec at step 1 is the members' best money tasks: ${allMoney.moneyPerSec} vs ${expect}`);
+    if (!(Math.abs(allMoney.samples[1].money - allMoney.moneyPerSec * 180) < 1e-6 * allMoney.samples[1].money)) c14.fail("the first sample holds one step of that rate");
+    c14.examined(1);
+    // Partial split: of three earners, m = 1/3 puts one on money and two on respect.
+    const plan = trainRatio(0, false, 1 / 3)(G, ms(), { softcap: 1, mode: "respect" });
+    const tasks = Object.values(plan.assignments);
+    if (tasks.filter((t) => TASK[t].baseMoney > 0 && TASK[t].baseRespect < 0.01).length !== 1) c14.fail(`m = 1/3 of 3 -> one money task: ${tasks.join(", ")}`);
+    if (plan.mode !== "split") c14.fail("a partial split reports mode 'split'");
+    c14.examined(1);
+    // Scoring: horizon money priced by moneyLn at the objective's budget; unreadable money objective -> 0 with a reason.
+    const money = { eBudget: 0.4, remainingWindows: 10, budget: 1e9 };
+    const sc = scoreTrajectory(allMoney, { horizonH: 0.5, money });
+    const want = moneyLn(allMoney.money, { money: 1e9, eBudget: 0.4, remainingWindows: 10 }).ln;
+    if (Math.abs(sc.moneyValue - want) > 1e-12 || Math.abs(sc.value - want) > 1e-12) c14.fail(`money value is moneyLn of horizon money: ${sc.moneyValue} vs ${want}`);
+    const scNo = scoreTrajectory(allMoney, { horizonH: 0.5 });
+    if (scNo.moneyValue !== 0 || !scNo.moneyWhy) c14.fail("no money objective -> 0 with a reason");
+    const scRef = scoreTrajectory(allMoney, { horizonH: 0.5, money: { eBudget: null, remainingWindows: 10, budget: 1e9 } });
+    if (scRef.moneyValue !== 0 || !/elasticity/.test(scRef.moneyWhy)) c14.fail("an unmeasured elasticity refuses with its reason");
+    c14.examined(1);
+    // Search: nothing to unlock and a priced dollar -> m = 1; a big unlock reachable only on respect inside the horizon -> m stays low.
+    const searched = runSearch(G, ms(), { softcap: 1, horizonH: 0.5, stepSec: 180, objective: { horizonH: 0.5, unlocks: [], money }, rounds: 1, rollout: false });
+    if (!(searched.m > 0.9)) c14.fail(`with nothing to unlock the split goes to money: m=${searched.m}`);
+    if (!(searched.score.moneyValue > 0)) c14.fail("the chosen score carries the money value");
+    const repObj = { horizonH: 0.5, unlocks: [{ repReq: 1e6 / 75 * 0.9 + 1, value: 50 }], repNow: 0, facRepMult: 1, favor: 0, money };
+    // The unlock needs almost all the respect the all-respect gang earns in the horizon; money members would miss it.
+    const rAll = scoreTrajectory(allRespect, repObj);
+    const rMoney = scoreTrajectory(allMoney, repObj);
+    if (!(rAll.unlockValue >= rMoney.unlockValue)) c14.fail("fixture: the unlock favours respect");
+    const withoutMoney = runSearch(G, ms(), { softcap: 1, horizonH: 0.5, stepSec: 180, objective: { horizonH: 0.5, unlocks: [] }, rounds: 1, rollout: false });
+    if (withoutMoney.m !== null) c14.fail("without a money objective the split is not a coordinate");
+    c14.note("accumulation vs rate, one-of-three split, moneyLn scoring and two refusals, search flips to money when unlocks are gone");
+  }
+  checks.push(c14);
+
   return checks;
 }

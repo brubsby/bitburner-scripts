@@ -59,6 +59,8 @@
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 
+import { moneyLn } from 'objective.js'
+
 export const CYCLE_SEC = 0.2 // CONSTANTS.MilliPerCycle
 export const MAX_MEMBERS = 12
 export const FREE_MEMBERS = 3
@@ -224,7 +226,10 @@ export function assign(g, members, o = {}) {
   if (!g || !num(g.respect) || !num(g.wantedLevel) || !num(g.territory) || typeof g.isHacking !== 'boolean') return null
   if (!Array.isArray(members) || !num(o.softcap)) return null
   const minPenalty = num(o.minPenalty) ? o.minPenalty : 0.9
-  const mode = members.length < MAX_MEMBERS ? 'respect' : o.mode === 'money' ? 'money' : 'respect'
+  // Below the member cap respect is what recruits need — unless the caller
+  // is splitting the gang by trajectory (o.split, from trainRatio's m),
+  // in which case the search has already priced recruits against money.
+  const mode = !o.split && members.length < MAX_MEMBERS ? 'respect' : o.mode === 'money' ? 'money' : 'respect'
   const pool = tasksFor(g.isHacking)
   const justice = g.isHacking ? TASK['Ethical Hacking'] : TASK['Vigilante Justice']
   const train = g.isHacking ? TASK['Train Hacking'] : TASK['Train Combat']
@@ -519,9 +524,14 @@ export function simulateGang(g, members, o = {}) {
     }
   }
   let gross = 0
+  // MONEY, accumulated per cycle like respect (Gang.ts:processGains adds
+  // moneyGainRate x cycles to the player). Reported alongside gross so the
+  // scorer can price it through the objective's money bridge.
+  let money = 0
+  let moneyPerSec = null
   let respectPerSec = null
   let recruitIndex = 0
-  const samples = [{ h: 0, respect: state.respect, gross: 0, members: ms.length, wantedLevel: state.wantedLevel, ascensions: 0 }]
+  const samples = [{ h: 0, respect: state.respect, gross: 0, money: 0, members: ms.length, wantedLevel: state.wantedLevel, ascensions: 0 }]
   const steps = Math.ceil((horizonH * 3600) / stepSec)
   for (let i = 1; i <= steps; i++) {
     // Recruit first, as gang.js does at the top of its loop; then ascend.
@@ -546,6 +556,7 @@ export function simulateGang(g, members, o = {}) {
     if (respectPerSec === null) respectPerSec = plan.rates.respect
     // Per-cycle gains at this step's stats and penalty (Gang.ts:processGains).
     let respectGainPerCycle = 0
+    let moneyGainPerCycle = 0
     let wantedGainPerCycle = 0
     let justice = 0
     const tasks = ms.map((m) => TASK[plan.assignments[m.name]])
@@ -554,11 +565,14 @@ export function simulateGang(g, members, o = {}) {
       const r = respectGain(state, ms[k], t, o.softcap)
       respectGainPerCycle += r
       ms[k].earnedRespect += r * cyclesPerStep
+      moneyGainPerCycle += moneyGain(state, ms[k], t, o.softcap)
       wantedGainPerCycle += wantedGain(state, ms[k], t)
       if (t.baseWanted < 0) justice++
     }
+    if (moneyPerSec === null) moneyPerSec = moneyGainPerCycle / CYCLE_SEC
     const gained = respectGainPerCycle * cyclesPerStep
     gross += gained
+    money += moneyGainPerCycle * cyclesPerStep
     state.respect += gained
     // Wanted: the game applies the justice factor once per process of 10 cycles.
     for (let p = 0; p < processesPerStep; p++) {
@@ -595,9 +609,9 @@ export function simulateGang(g, members, o = {}) {
         deaths++
       }
     }
-    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, members: ms.length, wantedLevel: state.wantedLevel, ascensions, territory: state.territory, power: terr ? terr.power : null })
+    samples.push({ h: (i * stepSec) / 3600, respect: state.respect, gross, money, members: ms.length, wantedLevel: state.wantedLevel, ascensions, territory: state.territory, power: terr ? terr.power : null })
   }
-  return { samples, respectPerSec: respectPerSec ?? 0, horizonH, stepSec, ascensions, deaths, equipSpent, territory: state.territory, power: terr ? terr.power : null, engaged: terr ? terr.engaged : null }
+  return { samples, respectPerSec: respectPerSec ?? 0, moneyPerSec: moneyPerSec ?? 0, money, horizonH, stepSec, ascensions, deaths, equipSpent, territory: state.territory, power: terr ? terr.power : null, engaged: terr ? terr.engaged : null }
 }
 
 /**
@@ -806,15 +820,42 @@ export function hardestRespectTask(isHacking) {
   return tasksFor(isHacking).filter((t) => t.baseRespect > 0).reduce((a, t) => (!a || t.difficulty > a.difficulty || (t.difficulty === a.difficulty && t.baseRespect > a.baseRespect) ? t : a), null)
 }
 
-/** Train while stat weight on the hardest respect task is below k x 4 x difficulty; k = 0 never trains. */
-export function trainRatio(k, isHacking) {
+/** A member's best money task gain per cycle (0 when none clears its difficulty). */
+export function bestMoneyGain(g, m, isHacking, softcap) {
+  let best = 0
+  for (const t of tasksFor(isHacking)) if (t.baseMoney > 0) best = Math.max(best, moneyGain(g, m, t, softcap))
+  return best
+}
+
+/**
+ * Train while stat weight on the hardest respect task is below k x 4 x
+ * difficulty; k = 0 never trains. `m` in [0, 1] is the MONEY SPLIT: of the
+ * members not training, the round(m x n) with the most to earn take their
+ * best money task and the rest their best respect task (m = 0: all
+ * respect, the pre-2026-09-20 behaviour; m = 1: all money). The split is a
+ * search coordinate — the trajectory prices gang dollars through the
+ * objective's money bridge against what respect still buys — so the
+ * assign() rule that holds respect below the member cap is bypassed here.
+ */
+export function trainRatio(k, isHacking, m = 0) {
   const top = hardestRespectTask(isHacking)
   if (!top || !num(k) || k < 0) return null
+  const split = num(m) ? Math.min(1, Math.max(0, m)) : 0
   return (g, ms, o) => {
     const train = g.isHacking ? TASK['Train Hacking'] : TASK['Train Combat']
-    const trainees = k > 0 ? ms.filter((m) => statWeight(top, m) < k * 4 * top.difficulty) : []
-    const rest = ms.filter((m) => !trainees.includes(m))
-    const plan = rest.length ? assign(g, rest, o) : { assignments: {}, why: {}, mode: o.mode === 'money' ? 'money' : 'respect' }
+    const trainees = k > 0 ? ms.filter((mem) => statWeight(top, mem) < k * 4 * top.difficulty) : []
+    const rest = ms.filter((mem) => !trainees.includes(mem))
+    let plan
+    if (split > 0 && rest.length) {
+      const n = Math.round(split * rest.length)
+      const byMoney = [...rest].sort((a, b) => bestMoneyGain(g, b, g.isHacking, o.softcap) - bestMoneyGain(g, a, g.isHacking, o.softcap))
+      const earners = byMoney.slice(0, n)
+      const others = byMoney.slice(n)
+      const pm = earners.length ? assign(g, earners, { ...o, mode: 'money', split: true }) : { assignments: {}, why: {} }
+      const pr = others.length ? assign(g, others, { ...o, mode: 'respect', split: true }) : { assignments: {}, why: {} }
+      if (!pm || !pr) return null
+      plan = { assignments: { ...pm.assignments, ...pr.assignments }, why: { ...pm.why, ...pr.why }, mode: n === rest.length ? 'money' : n === 0 ? 'respect' : 'split' }
+    } else plan = rest.length ? assign(g, rest, o) : { assignments: {}, why: {}, mode: o.mode === 'money' ? 'money' : 'respect' }
     if (!plan) return null
     for (const m of trainees) {
       plan.assignments[m.name] = train.name
@@ -842,6 +883,20 @@ export function scoreTrajectory(f, obj = {}) {
   const repH = num(obj.repNow) && num(obj.facRepMult) ? gangRepAt(f, horizonH, obj.repNow, conv) : null
   let value = 0
   let hoursToFirst = null
+  // GANG MONEY, priced through the ONE money bridge (objective.moneyLn):
+  // the dollars earned by the horizon, at the gate's measured elasticity
+  // and projected budget. `obj.money` = {eBudget, remainingWindows,
+  // budget}; unreadable -> 0 with the reason, never a guess — the gang
+  // then farms respect as it did before money was priced.
+  const moneyAt = num(f?.money) ? f.money : (f?.samples?.length ? f.samples[f.samples.length - 1].money : null)
+  let moneyValue = 0
+  let moneyWhy = null
+  if (obj.money && typeof obj.money === 'object') {
+    const v = num(moneyAt) && moneyAt > 0 ? moneyLn(moneyAt, { money: obj.money.budget, eBudget: obj.money.eBudget, remainingWindows: obj.money.remainingWindows }) : { ln: 0, reason: null }
+    if (v.ln === null) moneyWhy = v.reason
+    else moneyValue = v.ln
+  } else moneyWhy = 'no money objective'
+  value += moneyValue
   for (const u of obj.unlocks ?? []) {
     if (!num(u?.repReq) || !num(u?.value) || !(u.value > 0)) continue
     if (repH !== null && u.repReq <= repH) value += u.value
@@ -849,7 +904,7 @@ export function scoreTrajectory(f, obj = {}) {
     if (h !== null && isFinite(h) && (hoursToFirst === null || h < hoursToFirst)) hoursToFirst = h
   }
   const last = f.samples[f.samples.length - 1]
-  return { value, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst }
+  return { value, unlockValue: value - moneyValue, moneyValue, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst }
 }
 
 /** Is score a better than b? Value first, then reputation (gross when reputation is unreadable). */
@@ -921,9 +976,12 @@ export function* policySearch(g, members, o = {}) {
   // spend fraction of o.equipment.budget), w (warfare fraction of members),
   // e (engage when our power >= e x the strongest rival's). y needs a
   // budget, w and e need rivals — absent inputs leave that coordinate out.
-  const P = { k: num(o.incumbent?.k) ? o.incumbent.k : 1, x: num(o.incumbent?.x) ? o.incumbent.x : 1.25, y: num(o.incumbent?.y) ? o.incumbent.y : 1, w: num(o.incumbent?.w) ? o.incumbent.w : 0, e: num(o.incumbent?.e) ? o.incumbent.e : 1.2 }
+  const P = { k: num(o.incumbent?.k) ? o.incumbent.k : 1, x: num(o.incumbent?.x) ? o.incumbent.x : 1.25, y: num(o.incumbent?.y) ? o.incumbent.y : 1, w: num(o.incumbent?.w) ? o.incumbent.w : 0, e: num(o.incumbent?.e) ? o.incumbent.e : 1.2, m: num(o.incumbent?.m) ? o.incumbent.m : 0 }
   const hasBudget = o.equipment && num(o.equipment.budget) && o.equipment.budget > 0
   const hasRivals = o.rivals && Object.keys(o.rivals).length > 0
+  // m (money split) is searched only when the objective can price a dollar.
+  const mo = o.objective?.money
+  const hasMoney = !!(mo && typeof mo === 'object' && moneyLn(1, { money: mo.budget, eBudget: mo.eBudget, remainingWindows: mo.remainingWindows }).ln !== null)
   let sims = 0
   const NEG = { value: -Infinity, repAtHorizon: -Infinity, grossAtHorizon: -Infinity }
   const simAt = (q, extra = {}) => {
@@ -933,7 +991,7 @@ export function* policySearch(g, members, o = {}) {
       horizonH: o.horizonH,
       stepSec: o.stepSec,
       mode: o.mode,
-      assignFn: trainRatio(q.k, isHacking),
+      assignFn: trainRatio(q.k, isHacking, hasMoney ? q.m : 0),
       ascend: { minGain: q.x },
       equipment: hasBudget ? { budget: o.equipment.budget, fraction: q.y } : null,
       rivals: hasRivals ? o.rivals : null,
@@ -955,6 +1013,7 @@ export function* policySearch(g, members, o = {}) {
     // k over [0, 8]: the live search sat on 1.5 and then on 3.
     { name: 'k', lo: 0, hi: 8, iters: 6 },
     { name: 'x', lo: 1.02, hi: 3, iters: 5, extra: Infinity },
+    ...(hasMoney ? [{ name: 'm', lo: 0, hi: 1, iters: 5 }] : []),
     ...(hasBudget ? [{ name: 'y', lo: 0, hi: 1, iters: 4 }] : []),
     ...(hasRivals ? [{ name: 'w', lo: 0, hi: 1, iters: 5 }, { name: 'e', lo: 0.3, hi: 3, iters: 5 }] : []),
   ]
@@ -989,7 +1048,7 @@ export function* policySearch(g, members, o = {}) {
       if (now && later) ascendNow.push({ name: m.name, now: now.score, later: later.score, ascend: betterScore(now.score, later.score) })
     }
   }
-  return { k, x, y: hasBudget ? P.y : null, w: hasRivals ? P.w : null, e: hasRivals ? P.e : null, score: chosen?.score ?? best, forecast: chosen?.f ?? null, evals, ascendNow, sims }
+  return { k, x, m: hasMoney ? P.m : null, y: hasBudget ? P.y : null, w: hasRivals ? P.w : null, e: hasRivals ? P.e : null, score: chosen?.score ?? best, forecast: chosen?.f ?? null, evals, ascendNow, sims }
 }
 
 /** Run a policySearch to completion synchronously (tests, tools). */

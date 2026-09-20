@@ -78,7 +78,7 @@ export async function main(ns) {
   const SEARCH_BUDGET_MS = 300
   const SEARCH_EVERY_MS = 60000
   const STEP_SEC = 180
-  let policy = { k: 1, x: 1.25, y: 1, w: 0, e: 1.2, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25, spend the gang budget, no warfare (no search complete yet)' }
+  let policy = { k: 1, x: 1.25, y: 1, w: 0, e: 1.2, m: 0, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25, spend the gang budget, no warfare (no search complete yet)' }
   let search = null
   let searchBudget = 0
   let compete = null
@@ -171,6 +171,24 @@ export async function main(ns) {
         } catch {
           objective = { unlocks: [], horizonH: 8, why: 'factionplan.txt unreadable' }
         }
+        // THE MONEY OBJECTIVE: gang dollars are priced through the gate's
+        // derived objective (eBudget, remaining windows, projected budget),
+        // the same bridge the crime slot and home use. Unreadable -> the
+        // search leaves the money split out and says why; the gang farms
+        // respect as before rather than guessing what a dollar is worth.
+        objective.money = null
+        objective.moneyWhy = null
+        try {
+          const gate = JSON.parse(ns.read(GATE_FILE) || 'null')
+          const ob = gate?.objective
+          const fin = (v) => typeof v === 'number' && isFinite(v)
+          if (gate?.lastAugReset !== info.lastAugReset) objective.moneyWhy = 'installgate.txt is from another life'
+          else if (!ob || ob.source !== 'derived') objective.moneyWhy = `objective not derived: ${ob?.why ?? 'no objective record'}`
+          else if (!fin(ob.eBudget) || !fin(ob.remainingWindows) || !fin(ob.probeMoney)) objective.moneyWhy = 'objective lacks eBudget/remainingWindows/probeMoney'
+          else objective.money = { eBudget: ob.eBudget, remainingWindows: ob.remainingWindows, budget: ob.probeMoney }
+        } catch {
+          objective.moneyWhy = 'installgate.txt unreadable'
+        }
         // THE BUDGET THE GANG MAY COMPETE FOR: everything the join,
         // augmentation and home claims hold — budget.js's
         // ln(M) competition decides after the search whether the chosen
@@ -179,7 +197,7 @@ export async function main(ns) {
         // competition allows.
         const claimsNow = readClaims()
         const contested = spendable('gang', ns.getServerMoneyAvailable('home'), claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0, home: 0 } } })
-        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e } })
+        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e, m: policy.m } })
         searchBudget = contested
         searchStartedAt = Date.now()
       }
@@ -199,7 +217,8 @@ export async function main(ns) {
               y: d.y ?? policy.y,
               w: d.w ?? 0,
               e: d.e ?? policy.e,
-              assignFn: trainRatio(d.k, gang.isHacking),
+              m: d.m ?? 0,
+              assignFn: trainRatio(d.k, gang.isHacking, d.m ?? 0),
               ascendNow: Object.fromEntries(d.ascendNow.map((a) => [a.name, a.ascend])),
               at: Date.now(),
               score: d.score,
@@ -220,12 +239,12 @@ export async function main(ns) {
             }
             const sim = d.forecast
             forecast = sim
-              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'} y=${d.y ?? '-'} w=${d.w ?? '-'} e=${d.e ?? '-'}`, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, members: s.members })) }
+              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'} m=${d.m ?? '-'} y=${d.y ?? '-'} w=${d.w ?? '-'} e=${d.e ?? '-'}`, moneyPerSec: sim.moneyPerSec, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent, money: sim.money }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, money: s.money, members: s.members })) }
               : { at: new Date().toISOString(), why: 'the chosen policy could not be simulated' }
           }
         }
       }
-      if (!policy.assignFn) policy.assignFn = trainRatio(policy.k, gang.isHacking) ?? assign
+      if (!policy.assignFn) policy.assignFn = trainRatio(policy.k, gang.isHacking, policy.m) ?? assign
       const plan = policy.assignFn(gang, members, { softcap, mode })
       if (!plan) {
         publish(ns, { ...base, phase: 'refused', why: 'assign could not read the gang' })
@@ -311,7 +330,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, why: objective.why } : null, why: policy.why },
+            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,
