@@ -168,5 +168,32 @@ export async function run() {
   }
   checks.push(c4);
 
+  // ---------------------------------------------------------------------
+  const c5 = new Check("SC5", "the ledger is measured per BitNode: BN5 lives at 11x followed by BN2 lives at 1.4x must not read as shrinking growth");
+  {
+    const mixed = [
+      ...[10.74, 10.9, 11.0, 11.1, 11.29].map((m, i) => ({ at: `t${i}`, lifeH: 0.3, hackMult: m, bitNode: 5, augs: 36 })),
+      { at: "b1", lifeH: 3.09, hackMult: 1.3392, bitNode: 2, augs: 0 },
+      { at: "b2", lifeH: 1.5, hackMult: 1.3392, bitNode: 2, augs: 1 },
+      { at: "b3", lifeH: 1.58, hackMult: 1.45, bitNode: 2, augs: 11 },
+    ];
+    c5.examined(1);
+    const unscoped = measureFromLedger(mixed);
+    if (!(unscoped.windowMeta.gRaw < 1)) c5.fail("fixture: the unscoped ratio must read below 1 (that is the live bug)");
+    const scoped = measureFromLedger(mixed, 2);
+    const want = Math.pow(1.45 / 1.3392, 1 / 2);
+    if (Math.abs(scoped.windowMeta.gRaw - Math.round(want * 1000) / 1000) > 1e-9) c5.fail(`same-node growth must be (1.45/1.3392)^(1/2): ${scoped.windowMeta.gRaw} vs ${want}`);
+    if (!(scoped.rateGrowthPerCycle > 1)) c5.fail("scoped growth is above 1, so ln(g) > 0 and the window count is readable");
+    if (scoped.windowMeta.samples !== 3 || scoped.windowMeta.sameNode !== 2) c5.fail("meta names the node and counts only its lives");
+    if (Math.abs(scoped.windowH - 1.58 * (scoped.windowMeta.windowBias ?? 1)) > 1e-9) c5.fail("the window is the same-node lower median");
+    // A node with fewer than two lives sits on the fallbacks, loudly.
+    const fresh = measureFromLedger(mixed, 11);
+    if (fresh.windowMeta.windowSource !== "fallback" || fresh.windowMeta.gSource !== "fallback" || fresh.windowMeta.samples !== 0) c5.fail("an unplayed node reads as fallback with zero samples");
+    // Without a node the old behaviour stands.
+    if (measureFromLedger(mixed).windowMeta.sameNode !== null) c5.fail("no node given: unscoped, sameNode null");
+    c5.note("mixed-node ledger: unscoped 0.767 vs scoped 1.041; fallback for an unplayed node");
+  }
+  checks.push(c5);
+
   return checks;
 }

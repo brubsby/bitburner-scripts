@@ -48,9 +48,17 @@ const G_CLAMP = 1.5 // a mid-run aug spree can spike one ratio; 1.2 sat ON the r
  * absent until measurable (joinplan's count forecast refuses without it,
  * correctly).
  */
-export function measureFromLedger(ledger) {
-  const entries = Array.isArray(ledger) ? ledger : []
-  const meta = { windowSource: 'fallback', gSource: 'fallback', gClampBinding: false, samples: entries.length }
+export function measureFromLedger(ledger, bitNode = null) {
+  // SAME-NODE LIVES ONLY when the node is known. The ledger crosses BitNode
+  // boundaries, and the last eight lives on 2026-09-19 were five BN5 lives
+  // at hackMult ~11 followed by three BN2 lives at ~1.4: the growth ratio
+  // read 0.767, clamped to 1, ln(1) = 0 made the remaining-window count
+  // unreadable, deriveWeights refused, and the budget elasticity stayed
+  // "unmeasured" for the whole evening. A new node starts on the fallbacks
+  // until it has two lives of its own — the honest state.
+  const all = Array.isArray(ledger) ? ledger : []
+  const entries = typeof bitNode === 'number' ? all.filter((e) => e?.bitNode === bitNode) : all
+  const meta = { windowSource: 'fallback', gSource: 'fallback', gClampBinding: false, samples: entries.length, sameNode: typeof bitNode === 'number' ? bitNode : null }
   const out = { windowH: FALLBACK.windowH, rateGrowthPerCycle: FALLBACK.g }
 
   // RECENT lives only. The full-ledger median trailed a regime shift by a

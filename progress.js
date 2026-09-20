@@ -1070,13 +1070,13 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  * are the 2026-09-15 measurements, dated at the call site, replaced as soon
  * as three real samples exist.
  */
-function measureWindow(ns) {
+function measureWindow(ns, info = null) {
   // All logic lives in scorecard.js (pure, SC1-SC3 tested — including the
   // regression where a min-3-samples guard here silently priced every ladder
   // at the dated fallback g while the ledger had already measured 6x more).
   // This wrapper only reads the file.
   try {
-    return measureFromLedger(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'))
+    return measureFromLedger(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode ?? null)
   } catch {
     return measureFromLedger([])
   }
@@ -1576,7 +1576,7 @@ async function act(ns, canJoin, info, note) {
     const projectedBudget = (() => {
       const inc = ns.getTotalScriptIncome()
       const income = (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || 0
-      const w = measureWindow(ns)
+      const w = measureWindow(ns, info)
       const lifeAgeH = Math.max(0, (Date.now() - (info?.lastAugReset ?? Date.now())) / 3600000)
       const remainingH = w?.windowH > 0 ? Math.max(0, w.windowH - lifeAgeH) : 0
       return liveMoney + income * remainingH * 3600
@@ -1696,7 +1696,7 @@ async function act(ns, canJoin, info, note) {
       const hu = readJson(ns, '/tel/homeup.txt')
       const bt = readJson(ns, '/tel/batch.txt')
       const inc = ns.getTotalScriptIncome()
-      const w = measureWindow(ns)
+      const w = measureWindow(ns, info)
       const next = hu?.next
       // homeup.js publishes homeRam when it runs; between runs boot.txt's
       // figure (written at every boot, i.e. after every install) stands in.
@@ -1777,7 +1777,7 @@ async function act(ns, canJoin, info, note) {
       // growth 3.4%/install across ~15) — dated, and self-replacing as the
       // ledger fills. They exist so the very first lives after deploy price
       // ladders instead of refusing.
-      ...measureWindow(ns),
+      ...measureWindow(ns, info),
       lifeAgeH: Math.max(0, (Date.now() - (info?.lastAugReset ?? Date.now())) / 3600000),
       // The donation terminal's inputs (favor.js's repLadder): the threshold,
       // the conversion multipliers, and the money side. Income is read here —
