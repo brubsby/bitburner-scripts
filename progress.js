@@ -1467,6 +1467,8 @@ async function act(ns, canJoin, info, note) {
   // the reason those three carry the note they do. 0 means "no count gate",
   // which is the correct reading when the augmentation path is unavailable.
   let ticketsWanted = 0
+  let candidates = []
+  let joinState = null
   if (canBuyAug) {
     const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
     installedCount = count(sing.ownedAugs(false))
@@ -1602,7 +1604,12 @@ async function act(ns, canJoin, info, note) {
         // Remaining windows to the exit condition, on the measured growth.
         const wdd = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
         const needMult = wdd > 0 ? multiplierNeeded(3000 * wdd, player.exp?.hacking ?? 0) : null
-        const g = joinState?.rateGrowthPerCycle
+        // joinState is built AFTER this block (it needs the plan), so the
+        // growth comes straight from the ledger — the same measurement
+        // joinState carries. Reading joinState here was a temporal-dead-zone
+        // ReferenceError that the silent catch hid: the derived objective
+        // never ran in this life until 2026-09-20 00:10.
+        const g = measureWindow(ns, info).rateGrowthPerCycle
         const remainingWindows =
           needMult > (player.mults?.hacking ?? 0) && g > 1
             ? Math.log(needMult / player.mults.hacking) / Math.log(g)
@@ -1625,6 +1632,9 @@ async function act(ns, canJoin, info, note) {
           chanceObs,
           growShare,
         })
+        if (!derived) {
+          weightsMeta = { source: 'flat', why: `deriveWeights refused: remainingWindows=${remainingWindows} eBudget=${eBudget} eRep=${eRep} chanceObs=${chanceObs} growShare=${growShare} needMult=${needMult} mult=${player.mults?.hacking} g=${g}` }
+        }
         if (derived) {
           channelWeights = derived.weights
           // CHARISMA RIDES IN FROM THE PREVIOUS PASS. The desk probePlan runs in
@@ -1658,9 +1668,13 @@ async function act(ns, canJoin, info, note) {
             oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
           })
         }
-      } catch {
-        /* any failure keeps the flat plan — degraded loudly via weightsMeta */
+      } catch (err) {
+        // Any failure keeps the flat plan — and NAMES the failure. A silent
+        // catch here hid a thrown probe for a whole evening (2026-09-20).
+        weightsMeta = { source: 'flat', why: `derivation threw: ${String(err).slice(0, 200)}` }
       }
+    } else {
+      weightsMeta = { source: 'flat', why: probePlan ? `nothing purchasable at the probe budget $${Math.round(probeMoney).toLocaleString()} (logM ${probePlan.logM})` : 'no plan' }
     }
     // A planner that silently fell back to a heuristic must say so, every pass.
     if (!plan.exact) did.push(`plan is APPROXIMATE: ${plan.approximation}`)
@@ -1717,8 +1731,6 @@ async function act(ns, canJoin, info, note) {
       return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', eBudget: null, remainingWindows: null, probeMoney: null }
     }
   }
-  let candidates = []
-  let joinState = null
   if (canJoin) {
     // Backdoor state from backdoor.js's own telemetry (0GB read) rather than
     // ns.getServer (2GB): C4 allows it because backdoor.js verifies against
