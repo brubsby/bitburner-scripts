@@ -52,6 +52,15 @@ const GATE_FILE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
 /** Ceiling on the coarse tail past the install window, in hours. */
 const TAIL_MAX_H = 32
+// THE LAST READABLE WINDOW LENGTH THIS LIFE. progress.js measures windowH
+// from the lifetime ledger and publishes null on a pass that cannot read it,
+// which is the right refusal for a figure it would otherwise guess — but a
+// consumer that drops the tail whenever one pass comes back null makes the
+// gang oscillate between two different objectives. A window length measured
+// earlier THIS LIFE is a measurement, not a guess, so it is remembered and
+// named (see `windowHSource` in the telemetry). Cleared when the life changes.
+let lastWindowH = null
+let lastWindowLife = null
 const NAMES = ['ash', 'bex', 'cid', 'dov', 'eli', 'fay', 'gus', 'hal', 'ivy', 'jax', 'kit', 'lou', 'max', 'nia', 'oz', 'pip']
 
 export async function main(ns) {
@@ -192,7 +201,13 @@ export async function main(ns) {
             // into a sum over the windows actually simulated — the
             // constant-rate assumption territory exists to break. Absent,
             // the score falls back to the flat-rate form under a named mode.
-            objective.money = { eBudget: ob.eBudget, remainingWindows: ob.remainingWindows, budget: ob.probeMoney, windowH: fin(ob.windowH) && ob.windowH > 0 ? ob.windowH : null, firstWindowH: objective.remainingWindowH }
+            if (lastWindowLife !== info.lastAugReset) {
+              lastWindowH = null
+              lastWindowLife = info.lastAugReset
+            }
+            if (fin(ob.windowH) && ob.windowH > 0) lastWindowH = ob.windowH
+            objective.windowHSource = fin(ob.windowH) && ob.windowH > 0 ? 'gate' : lastWindowH ? 'remembered this life' : null
+            objective.money = { eBudget: ob.eBudget, remainingWindows: ob.remainingWindows, budget: ob.probeMoney, windowH: lastWindowH, firstWindowH: objective.remainingWindowH }
             // THE TAIL: territory and power survive an install (only a new
             // BitNode resets the gang), so warfare must be judged over the
             // node's remaining hours, not the current install window. At a
@@ -345,7 +360,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
+            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, windowHSource: objective.windowHSource ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,
