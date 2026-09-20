@@ -1623,10 +1623,26 @@ async function act(ns, canJoin, info, note) {
         // The batcher's own saturation and thread shape, from its telemetry.
         const bt = readJson(ns, '/tel/batch.txt')
         const live = (bt?.targets ?? []).filter((t) => t?.plan && t.cal?.chanceObs != null)
-        const chanceObs = live.length ? live.reduce((a, t) => a + t.cal.chanceObs, 0) / live.length : null
-        const growShare = live.length
+        let chanceObs = live.length ? live.reduce((a, t) => a + t.cal.chanceObs, 0) / live.length : null
+        let growShare = live.length
           ? live.reduce((a, t) => a + t.plan.g / (t.plan.h + t.plan.g + t.plan.w1 + t.plan.w2), 0) / live.length
           : null
+        // THE BATCHER'S CALIBRATION IS A PROPERTY OF THE BATCHER, NOT THE LIFE.
+        // For the first minutes after an install it has no landings yet, and
+        // refusing the whole derived basket for the two channels it weights
+        // (chance, grow) left the elasticity unmeasured at every life's
+        // start (2026-09-20 00:25). The last published figures stand in,
+        // from any life, and `calSource` says so.
+        let calSource = live.length ? 'live' : null
+        if (chanceObs === null || growShare === null) {
+          const priorGate = readJson(ns, GATE)
+          const po = priorGate?.objective
+          if (typeof po?.chanceObs === 'number' && typeof po?.growShare === 'number') {
+            chanceObs = po.chanceObs
+            growShare = po.growShare
+            calSource = priorGate.lastAugReset === info?.lastAugReset ? 'prior pass' : 'prior life'
+          }
+        }
 
         const derived = deriveWeights({
           remainingWindows,
@@ -1638,7 +1654,7 @@ async function act(ns, canJoin, info, note) {
           growShare,
         })
         if (!derived) {
-          weightsMeta = { source: 'flat', why: `deriveWeights refused: remainingWindows=${remainingWindows} eBudget=${eBudget} eRep=${eRep} chanceObs=${chanceObs} growShare=${growShare} needMult=${needMult} mult=${player.mults?.hacking} g=${g}` }
+          weightsMeta = { source: 'flat', chanceObs, growShare, calSource, why: `deriveWeights refused: remainingWindows=${remainingWindows} eBudget=${eBudget} eRep=${eRep} chanceObs=${chanceObs} growShare=${growShare} needMult=${needMult} mult=${player.mults?.hacking} g=${g}` }
         }
         if (derived) {
           channelWeights = derived.weights
@@ -1662,7 +1678,7 @@ async function act(ns, canJoin, info, note) {
           } catch {
             /* no prior probePlan — charisma stays unpriced this pass */
           }
-          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), probeMoney, probedAtProjected: probePlan !== plan, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
           plan = planPurchases({
             ...planArgs,
             channelWeights,
