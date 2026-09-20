@@ -2455,6 +2455,11 @@ async function act(ns, canJoin, info, note) {
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
           ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
+          // The objective record rides the unplanned write too: the
+          // derivation runs whether or not anything is affordable, and a
+          // refusal on this path was invisible (2026-09-20 01:10 — the
+          // home figure read "elasticity not measured" with no why).
+          objective: weightsMeta,
           incomeSample: makeIncomeSample(incNow, player, schedule),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
         },
