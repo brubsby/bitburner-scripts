@@ -12,7 +12,7 @@ import { GAME } from "./build-ram.mjs";
 import { load, asSave, ramOf } from "./ram.mjs";
 
 const ap = await import("../../actplan.js");
-const { decide, SLUM_SNAKES, HACK_LINE, RETRY_MS } = ap;
+const { decide, gangKarmaTarget, SLUM_SNAKES, HACK_LINE, RETRY_MS } = ap;
 
 const NODE = { CrimeSuccessRate: 1, CrimeMoney: 3, CrimeExpGain: 1 };
 function player(o = {}) {
@@ -123,6 +123,53 @@ export async function run() {
     c2.note(`fresh BN2 life: ${d0.kind} ${d0.args} — ${d0.why}`);
   }
   checks.push(c2);
+
+  // ---------------------------------------------------------------------
+  const c3 = new Check("AC3", "the gang's karma gate is the GANG's, not the faction's: outside BitNode 2 the crime loop continues past the join to -54,000");
+  {
+    const src = fs.readFileSync(path.join(GAME, "src/Gang/data/Constants.ts"), "utf8");
+    const req = Number(src.match(/GangKarmaRequirement:\s*(-?\d+)/)?.[1]);
+    const access = fs.readFileSync(path.join(GAME, "src/PersonObjects/Player/PlayerObjectGangMethods.ts"), "utf8");
+
+    // The source rule: BN2 short-circuits to success; everywhere else karma binds.
+    c3.examined(1);
+    if (!Number.isFinite(req)) c3.fail("could not read GangKarmaRequirement from Gang/data/Constants.ts");
+    if (req !== gangKarmaTarget(false)) c3.fail(`gangKarmaTarget(non-BN2) is ${gangKarmaTarget(false)}, source says ${req}`);
+    if (gangKarmaTarget(true) !== SLUM_SNAKES.karma) c3.fail(`in BitNode 2 only the faction's karma binds, got ${gangKarmaTarget(true)}`);
+    if (!/bitNodeN === 2/.test(access) || !/GangKarmaRequirement/.test(access)) {
+      c3.fail("canAccessGang no longer reads as 'BN2 exempt, otherwise karma' — re-check the rule");
+    }
+
+    // A member of the gang faction who already meets its -9: BN2 is finished,
+    // everywhere else the gang is still 6000x of karma away.
+    const joinedP = (karma) => {
+      const p = player({ karma, money: 2e6 });
+      for (const st of ["strength", "defense", "dexterity", "agility"]) p.skills[st] = 40;
+      return p;
+    };
+    const joined = (karma, gangKarma) => decide(base({ factions: ["Slum Snakes"], gangKarma, player: joinedP(karma) }));
+    c3.examined(1);
+    const inBN2 = joined(-9, gangKarmaTarget(true));
+    if (inBN2.kind === "crime" && /gang needs karma/.test(inBN2.why ?? "")) c3.fail("in BitNode 2 the bootstrap must not keep grinding karma after the join");
+    const outside = joined(-9, gangKarmaTarget(false));
+    if (outside.kind !== "crime") c3.fail(`outside BitNode 2, karma -9 is not enough for a gang: expected crime, got ${outside.kind} — ${outside.why}`);
+    if (!/karma/.test(outside.why ?? "")) c3.fail("the crime decision must say which karma gate it is chasing");
+
+    // Met: the loop stops rather than grinding forever.
+    c3.examined(1);
+    const met = joined(req - 1, gangKarmaTarget(false));
+    if (met.kind === "crime" && /gang needs karma/.test(met.why ?? "")) c3.fail("karma target met: the gang crime loop must stop");
+    // Already committing the crime it would pick: idle, not a restart every tick.
+    const running = decide(base({ factions: ["Slum Snakes"], gangKarma: gangKarmaTarget(false), work: { kind: "crime", type: outside.args?.[0] }, player: joinedP(-9) }));
+    if (running.kind !== "idle") c3.fail(`already committing the chosen crime: expected idle, got ${running.kind}`);
+
+    // An absent gangKarma leaves the old behaviour exactly as it was.
+    c3.examined(1);
+    const legacy = decide(base({ factions: ["Slum Snakes"], player: joinedP(-9) }));
+    if (legacy.kind === "crime" && /gang needs karma/.test(legacy.why ?? "")) c3.fail("without a gangKarma input the new loop must not engage");
+    c3.note(`GangKarmaRequirement ${req} read from source; outside BN2 at karma -9 the plan says: ${outside.kind} ${outside.args} — ${outside.why}`);
+  }
+  checks.push(c3);
 
   return checks;
 }

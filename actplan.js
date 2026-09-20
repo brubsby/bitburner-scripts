@@ -39,12 +39,28 @@
 // Every action carries `why`, and the idle cases say why too.
 
 import { COMBAT, crimeLeg, bestCrimeFor } from 'bodyplan.js'
-import { GANG_FACTIONS } from 'gangplan.js'
+import { GANG_FACTIONS, KARMA_FOR_GANG } from 'gangplan.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 
 /** Faction/FactionInfo.tsx:665 — the cheapest gang faction to enter. [AC1] re-reads the source. */
 export const SLUM_SNAKES = { name: 'Slum Snakes', combat: 30, money: 1e6, karma: -9 }
+
+/**
+ * THE KARMA THE GANG ITSELF NEEDS, which is not the karma the FACTION needs.
+ *
+ * PlayerObjectGangMethods.canAccessGang: inside BitNode 2 gang access is
+ * granted outright, so the only karma that matters is the -9 Slum Snakes ask
+ * for entry. ANYWHERE ELSE it additionally requires karma <= -54,000
+ * (GangConstants.GangKarmaRequirement), which is ~6000x further.
+ *
+ * Every gang run so far has been in BitNode 2, so the bootstrap stopped at
+ * -9, joined the faction, and fell silent — and outside BN2 that would leave
+ * gang.js refusing forever with "karma must reach -54000" while nothing in
+ * the plan was driving karma at all. The faction join is a WAYPOINT, not the
+ * goal: crime continues until the gang can actually be formed.
+ */
+export const gangKarmaTarget = (inBitNode2) => (inBitNode2 ? SLUM_SNAKES.karma : KARMA_FOR_GANG)
 /** Where the x10 gym is (bodyplan.GYMS). */
 export const GYM = { name: 'Powerhouse Gym', city: 'Sector-12' }
 export const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 'agi' }
@@ -58,7 +74,7 @@ export const PROGRESS_FRESH_MS = 15 * 60 * 1000
 
 /**
  * @param s  {
- *   now, gangNode, factions, player: {skills, exp, mults, karma, numPeopleKilled, city, money},
+ *   now, gangNode, gangKarma, factions, player: {skills, exp, mults, karma, numPeopleKilled, city, money},
  *   node: {CrimeSuccessRate, CrimeMoney, CrimeExpGain},
  *   progress: {at, health} | null,           the latest /tel/progress.txt
  *   schedule: {current: {faction}} | null,   the latest /tel/factionplan.txt
@@ -75,6 +91,22 @@ export function decide(s = {}) {
   const at = Date.parse(s.progress?.at ?? '')
   if (num(at) && s.now - at < PROGRESS_FRESH_MS && s.progress?.health !== 'error') {
     return { kind: 'idle', why: `progress.js acted ${Math.round((s.now - at) / 60000)} min ago — it owns the work slot` }
+  }
+
+  // 1b. In a gang faction already, but the gang's own karma gate is unmet —
+  // keep the crime loop running. Outside BitNode 2 this is the long leg of
+  // the bootstrap by far, and joining the faction does not end it.
+  if (s.gangNode === true && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
+    const target = num(s.gangKarma) ? s.gangKarma : SLUM_SNAKES.karma
+    if (!(num(p.karma) && p.karma <= target)) {
+      const leg = crimeLeg({ karma: target }, p, s.node, { focus: 1 })
+      const crime = leg?.crime ?? 'Homicide'
+      const eta = leg ? ` (~${leg.hours.toFixed(1)}h to karma ${target})` : ''
+      if (s.work?.kind === 'crime' && s.work.type === crime) {
+        return { kind: 'idle', why: `crime loop (${crime}) already running for the gang: karma ${Math.round(p.karma)}/${target}${eta}` }
+      }
+      return { kind: 'crime', args: [crime], why: `gang needs karma ${target}, have ${Math.round(p.karma)}: ${crime}${eta}` }
+    }
   }
 
   // 1. The gang bootstrap.

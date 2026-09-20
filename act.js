@@ -27,7 +27,7 @@
 //
 // Everything it does is published to /tel/act.txt with the reason.
 
-import { decide } from 'actplan.js'
+import { decide, gangKarmaTarget } from 'actplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { canUseSingularity, canUseGang } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
@@ -278,6 +278,8 @@ export async function main(ns) {
       const state = {
         now: Date.now(),
         gangNode: canUseGang(info),
+        // The gang's own karma gate — -9 is only the faction's price.
+        gangKarma: gangKarmaTarget(info?.currentNode === 2),
         factions: player.factions ?? [],
         player,
         node: node ? { CrimeSuccessRate: node.CrimeSuccessRate, CrimeMoney: node.CrimeMoney, CrimeExpGain: node.CrimeExpGain } : null,
