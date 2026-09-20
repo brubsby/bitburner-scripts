@@ -1648,11 +1648,11 @@ async function act(ns, canJoin, info, note) {
             growShare = po.growShare
             calSource = priorGate.lastAugReset === info?.lastAugReset ? 'prior pass' : 'prior life'
           } else {
-            const rm = readJson(ns, CAL_LAST)
-            if (typeof rm?.chanceObs === 'number' && typeof rm?.growShare === 'number') {
-              chanceObs = rm.chanceObs
-              growShare = rm.growShare
-              calSource = `remembered ${rm.at}`
+            const remembered = readJson(ns, CAL_LAST)
+            if (typeof remembered?.chanceObs === 'number' && typeof remembered?.growShare === 'number') {
+              chanceObs = remembered.chanceObs
+              growShare = remembered.growShare
+              calSource = `remembered ${remembered.at}`
             }
           }
         }
