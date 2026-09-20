@@ -1,6 +1,3 @@
-const usage = () =>
-  ns.tprint();
-
 export async function main(ns) {
   let flag_data = ns.flags([
     ["host", ns.getHostname()],

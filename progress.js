@@ -1079,9 +1079,21 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  * when one is running); with no such measurement the channel refuses rather
  * than inventing what a gang might be worth.
  */
-function karmaChannelCtx(ns, info, player, node) {
+/**
+ * The BitNode multiplier table is DERIVED HERE, not taken as an argument.
+ *
+ * It used to be a fourth parameter, and the single call site passed a bare
+ * `node` that does not exist in that scope — so progress.js threw
+ * `ReferenceError: node is not defined` on every pass and the planner was
+ * simply down. `karmaChannelCtx` catches and returns `{gangPending:false}`,
+ * but the throw happened at the CALL, outside its own try, so the catch could
+ * never see it. A parameter whose only correct value is a pure function of
+ * another parameter is a parameter that can only be got wrong.
+ */
+function karmaChannelCtx(ns, info, player) {
   try {
     const fin = (v) => typeof v === 'number' && isFinite(v)
+    const node = bitNodeMults(info?.currentNode) ?? null
     if (!canUseGang(info)) return { gangPending: false }
     if (info?.currentNode === 2) return { gangPending: true, gangKarmaWaived: true }
     // A gang we already have is not pending.
@@ -1591,7 +1603,7 @@ async function act(ns, canJoin, info, note) {
       // gangIncomePerSec comes from a gang we have actually run, never a
       // guess, so on a run that has never had one this channel prices 0 and
       // says why.
-      ...karmaChannelCtx(ns, info, player, node),
+      ...karmaChannelCtx(ns, info, player),
     }
 
     const planArgs = {

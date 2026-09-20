@@ -43,13 +43,18 @@ export async function run() {
     // answer somewhere. A table where every row could pass by returning
     // {health:'ok'} unconditionally is not a test of anything.
     const cases = [
-      { o: { moves: 0, remoteMoves: 0 }, health: "ok", share: null, why: "no moves yet — nothing to judge" },
-      { o: { moves: 9, remoteMoves: 0 }, health: "ok", share: null, why: "under the 10-move threshold, a just-restarted solver" },
-      { o: { moves: 10, remoteMoves: 0 }, health: "warn", share: 0, why: "solver absent, at the threshold" },
-      { o: { moves: 47, remoteMoves: 0 }, health: "warn", share: 0, why: "the live 2026-09-20 reading" },
-      { o: { moves: 40, remoteMoves: 10 }, health: "warn", share: 0.25, why: "solver answering a quarter of moves" },
-      { o: { moves: 40, remoteMoves: 30 }, health: "ok", share: 0.75, why: "solver healthy" },
-      { o: { moves: 40, remoteMoves: 40 }, health: "ok", share: 1, why: "solver answering everything" },
+      { o: { remoteMoves: 0, localMoves: 0 }, health: "ok", share: null, why: "no requests yet — nothing to judge" },
+      { o: { remoteMoves: 0, localMoves: 9 }, health: "ok", share: null, why: "under the 10-request threshold, a just-restarted solver" },
+      { o: { remoteMoves: 0, localMoves: 10 }, health: "warn", share: 0, why: "solver absent, at the threshold" },
+      { o: { remoteMoves: 0, localMoves: 47 }, health: "warn", share: 0, why: "the live 2026-09-20 reading" },
+      { o: { remoteMoves: 10, localMoves: 30 }, health: "warn", share: 0.25, why: "solver answering a quarter of requests" },
+      { o: { remoteMoves: 30, localMoves: 10 }, health: "ok", share: 0.75, why: "solver healthy" },
+      { o: { remoteMoves: 40, localMoves: 0 }, health: "ok", share: 1, why: "solver answering everything" },
+      // THE DENOMINATOR. The live reading that caught this was remote 20 /
+      // local 4 while go.js's `moves` counter said 21 — dividing by `moves`
+      // gives 0.95 and can exceed 1, because `moves` only counts turns where a
+      // ranked move was played. The share must be 20/24.
+      { o: { remoteMoves: 20, localMoves: 4 }, health: "ok", share: 20 / 24, why: "the live 2026-09-20 22:18 reading" },
     ];
     for (const { o, health, share, why } of cases) {
       c1.examined(1);
@@ -63,7 +68,7 @@ export async function run() {
     // to go and look at, or it is an alarm that leaves the reader where the
     // 67-hour outage left them.
     c1.examined(1);
-    const absent = solverHealth({ moves: 47, remoteMoves: 0 });
+    const absent = solverHealth({ remoteMoves: 0, localMoves: 47 });
     if (!/go-solver|12526/.test(absent.detail ?? "")) {
       c1.fail("the absent-solver warn must point at tools/go-solver.mjs or the daemon status port", absent.detail);
     }
@@ -76,7 +81,7 @@ export async function run() {
     // "Nobody is answering" and "answering too slowly" send a reader to
     // different places.
     c1.examined(1);
-    const degraded = solverHealth({ moves: 40, remoteMoves: 10 });
+    const degraded = solverHealth({ remoteMoves: 10, localMoves: 30 });
     if (!/not answering/.test(absent.detail ?? "")) {
       c1.fail("the absent-solver warn must say the solver is NOT ANSWERING, distinctly from a slow one", absent.detail);
     }
@@ -87,7 +92,7 @@ export async function run() {
       c1.fail("absent and degraded solvers produce the same message — one branch is dead and nothing would notice");
     }
     // Garbage in must not silently read as healthy.
-    for (const o of [{}, { moves: null, remoteMoves: null }, { moves: NaN, remoteMoves: 5 }]) {
+    for (const o of [{}, { remoteMoves: null, localMoves: null }, { remoteMoves: NaN, localMoves: NaN }]) {
       c1.examined(1);
       const r = solverHealth(o);
       if (r.health !== "ok" || r.solverShare !== null) c1.fail(`unreadable counters must refuse to judge, ${JSON.stringify(o)} gave ${JSON.stringify(r)}`);
@@ -101,7 +106,7 @@ export async function run() {
   {
     const src = read("go.js");
     c2.examined(1);
-    if (!/const solver = solverHealth\(\{ moves, remoteMoves \}\)/.test(src)) {
+    if (!/const solver = solverHealth\(\{ remoteMoves, localMoves \}\)/.test(src)) {
       c2.fail("go.js no longer computes solverHealth() from its own move counters");
     }
     c2.examined(1);

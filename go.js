@@ -171,17 +171,28 @@ const SETTINGS = {
  * move or two, and an alarm that cries wolf on every startup is one that gets
  * ignored on the run that matters.
  *
+ * THE DENOMINATOR IS remoteMoves + localMoves, not `moves`. They are different
+ * counters and the difference is not cosmetic: `moves` only increments when a
+ * ranked move was actually played (go.js:384), while every turn we ASK for a
+ * move increments exactly one of remote/local. A live reading right after this
+ * shipped showed `moves: 21` against `remote 20 + local 4 = 24` — so dividing
+ * by `moves` inflates the share and can exceed 1, making the degraded-solver
+ * branch fire later than intended or not at all. The quantity being measured
+ * is "of the move requests, how many did the solver answer", and that is the
+ * sum of the two counters by construction.
+ *
  * @param {object} o
- * @param {number} o.moves        total moves played this session
- * @param {number} o.remoteMoves  how many the solver answered
+ * @param {number} o.remoteMoves  requests the solver answered
+ * @param {number} o.localMoves   requests that fell back to the local search
  * @returns {{health: 'ok'|'warn', detail: string|null, solverShare: number|null}}
  */
 export function solverHealth(o = {}) {
-  const { moves, remoteMoves } = o
+  const { remoteMoves, localMoves } = o
   const warnAfter = typeof o.warnAfter === 'number' ? o.warnAfter : SETTINGS.solverWarnAfter
   const minShare = typeof o.minShare === 'number' ? o.minShare : SETTINGS.solverMinShare
-  const n = typeof moves === 'number' && isFinite(moves) ? moves : 0
   const r = typeof remoteMoves === 'number' && isFinite(remoteMoves) ? remoteMoves : 0
+  const l = typeof localMoves === 'number' && isFinite(localMoves) ? localMoves : 0
+  const n = r + l
   if (n < warnAfter) return { health: 'ok', detail: null, solverShare: null }
   // `answered`, not `share`: `share` is a priced bare ns name and naming a
   // local that costs go.js 2.40GB of RAM for an API it never calls. The RAM
@@ -191,7 +202,7 @@ export function solverHealth(o = {}) {
     return {
       health: 'warn',
       detail:
-        `external Go solver is not answering — all ${n} moves used the ${SETTINGS.maxms}ms local fallback. ` +
+        `external Go solver is not answering — all ${n} move requests used the ${SETTINGS.maxms}ms local fallback. ` +
         `Node power per hour is a fraction of the measured figure. Is tools/go-solver.mjs running? ` +
         `The daemon supervises it; check GET localhost:12526/status -> goSolver.`,
       solverShare: 0,
@@ -459,7 +470,7 @@ export async function main(ns) {
       // The solver alarm rides the same write as everything else, so a reader
       // that already parses /tel/go.txt gets it for free and one that only
       // looks at `health` still sees it.
-      const solver = solverHealth({ moves, remoteMoves })
+      const solver = solverHealth({ remoteMoves, localMoves })
       note(solver.health, {
         wins: s.wins ?? 0,
         losses: s.losses ?? 0,

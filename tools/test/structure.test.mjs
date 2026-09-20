@@ -691,11 +691,137 @@ function c9() {
   return c;
 }
 
+
+/* ======================================================================== */
+/**
+ * C10 — a script boot.js may place OFF HOME must pull the telemetry it reads.
+ *
+ * `ns.read` is LOCAL to the host the script runs on, and it returns '' for a
+ * missing file rather than throwing. So a script placed `where: 'anywhere'`
+ * that reads another script's /tel file gets an empty string on every host but
+ * home, parses it to null, and takes whatever branch "unknown" leads to —
+ * silently, forever, while its own telemetry reports health fine.
+ *
+ * THIS IS NOT HYPOTHETICAL. homeup.js --watch is the bootstrap ratchet: it
+ * buys home RAM at the bottom tier and RE-ENTERS boot.js when home outgrows
+ * the tier boot planned for, because nothing else re-runs the launcher down
+ * there. It read `/tel/boot.txt` — written by boot.js ON HOME — while running
+ * on foodnstuff, where boot.js places it so that a 32GB home keeps its worker
+ * threads. The read returned '', `plannedTier()` returned null, and the guard
+ * `planned !== null` skipped the re-entry every minute for 6.8 hours: home
+ * went 32GB -> 256GB in BitNode 4 while /tel/boot.txt still said `tier: 32`,
+ * so progress.js, watchdog.js, batch.js and go.js were never admitted and a
+ * 256GB home ran a 32GB script set. Every component reported healthy, because
+ * by its own lights every component was.
+ *
+ * The fix is one scp, and ns.scp is usually already in the script's RAM cost
+ * (gang.js, buyserv.js and homeup.js all push their own status file home), so
+ * this costs nothing but knowing to do it.
+ *
+ * WHAT THIS DOES NOT CATCH: a path built at runtime, and a pull that happens
+ * once outside the read loop while the file keeps changing on home. It matches
+ * literal '/tel/*.txt' paths and single-level constants only.
+ */
+function c10() {
+  const c = new Check("C10", "scripts boot.js may place off home PULL the /tel files they read");
+  const bootSrc = read("boot.js");
+
+  // The manifest entries boot.js does not pin to home. Entries are split on
+  // `script:` FIRST and each block's own `where:` read inside it — a single
+  // regex spanning from `script:` to `where: 'anywhere'` runs happily past the
+  // end of one entry into the next and reported watchdog.js (where: 'home')
+  // as placed anywhere.
+  const blocks = bootSrc.split(/\n\s*script:\s*/).slice(1);
+  const anywhere = [];
+  for (const b of blocks) {
+    const name = b.match(/^'([^']+)'/)?.[1];
+    if (!name) continue;
+    const where = b.slice(0, b.search(/\n\s*script:|$/)).match(/where:\s*'([^']+)'/)?.[1];
+    if (where === "anywhere") anywhere.push(name);
+  }
+  if (!anywhere.length) {
+    c.fail("parsed zero `where: 'anywhere'` entries out of boot.js", "that is a rotted parser, not a clean repo");
+    return c;
+  }
+  c.note(`boot.js places ${anywhere.length} script(s) anywhere: ${anywhere.join(", ")}`);
+
+  for (const script of anywhere) {
+    let src;
+    try {
+      src = read(script);
+    } catch {
+      c.fail(`boot.js names ${script} but it is not in the repo`);
+      continue;
+    }
+    c.examined(1);
+
+    // Constants: `const NAME = '/tel/x.txt'`.
+    const constPath = new Map();
+    for (const m of src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*'(\/tel\/[^']+)'/g)) constPath.set(m[1], m[2]);
+    const resolve = (tok) => (tok.startsWith("'") ? tok.slice(1, -1) : (constPath.get(tok) ?? null));
+
+    // What this script WRITES is its own — reading it back locally is correct.
+    const own = new Set();
+    for (const m of src.matchAll(/ns\.write\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)) {
+      const r = resolve(m[1]);
+      if (r) own.add(r);
+    }
+
+    // What it PULLS: ns.scp(X, ns.getHostname(), 'home') — directly, or via a
+    // one-argument helper whose body does that (gang.js's fetchFromHome).
+    const pulled = new Set();
+    const viaParam = new Set();
+    // The destination may be `ns.getHostname()` inline or a variable hoisted
+    // out of it (`const here = ns.getHostname()` — hacknet.js). Matching only
+    // the inline spelling reported hacknet.js as missing a pull it plainly
+    // does, and a false positive here gets the whole check deleted.
+    const hostVars = ["ns\\.getHostname\\(\\)"];
+    for (const hv of src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*ns\.getHostname\(\)/g)) hostVars.push(hv[1]);
+    const dest = `(?:${hostVars.join("|")})`;
+    const pullRe = new RegExp(`ns\\.scp\\(\\s*([A-Za-z_$][\\w$]*|'\\/tel\\/[^']+')\\s*,\\s*${dest}\\s*,\\s*'home'\\s*\\)`, "g");
+    for (const m of src.matchAll(pullRe)) {
+      const r = resolve(m[1]);
+      if (r) pulled.add(r);
+      else viaParam.add(m[1]); // a helper's parameter name
+    }
+    for (const param of viaParam) {
+      // Find the helper that declares `param`, then everything passed to it.
+      const decl = new RegExp(`function\\s+([A-Za-z_$][\\w$]*)\\s*\\([^)]*\\b${param}\\b`, "g");
+      for (const d of src.matchAll(decl)) {
+        const call = new RegExp(`\\b${d[1]}\\(\\s*ns\\s*,\\s*('\\/tel\\/[^']+'|[A-Za-z_$][\\w$]*)`, "g");
+        for (const cm of src.matchAll(call)) {
+          const r = resolve(cm[1]);
+          if (r) pulled.add(r);
+        }
+      }
+    }
+
+    // Every /tel file it READS that it does not write and does not pull.
+    const missing = new Set();
+    for (const m of src.matchAll(/ns\.read\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)) {
+      const r = resolve(m[1]);
+      if (!r || own.has(r) || pulled.has(r)) continue;
+      missing.add(r);
+    }
+    if (missing.size) {
+      c.fail(
+        `${script} reads ${[...missing].join(", ")} but never pulls it from home`,
+        `boot.js may place this script off home, where ns.read returns '' for a file it does not have — ` +
+          `the read degrades to "unknown" silently. Add ns.scp(path, ns.getHostname(), 'home') before the read.`,
+      );
+    } else {
+      const reads = [...new Set([...src.matchAll(/ns\.read\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)].map((m) => resolve(m[1])).filter(Boolean))];
+      if (reads.length) c.note(`${script.padEnd(12)} reads ${reads.length} /tel file(s), all written here or pulled from home`);
+    }
+  }
+  return c;
+}
+
 /* ======================================================================== */
 
 export async function run() {
   const managed = managedSet();
-  return [c1(managed), c2(), c3(), c4(), c6(), c7(), c8(), c9()];
+  return [c1(managed), c2(), c3(), c4(), c6(), c7(), c8(), c9(), c10()];
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

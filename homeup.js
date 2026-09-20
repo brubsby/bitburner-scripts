@@ -133,8 +133,28 @@ export async function main(ns) {
   // recomputed, because the question is "does the running plan still match the
   // home it was planned for", and boot.js's own record is the only answer that
   // cannot disagree with boot.js.
+  //
+  // THE FILE IS ON HOME AND THIS SCRIPT USUALLY IS NOT. boot.js places this
+  // entry `where: 'anywhere'` on purpose — at 32GB every home GB is a worker
+  // thread — and `/tel/boot.txt` is written by boot.js on home. `ns.read` is
+  // LOCAL to the host, and returns '' for a missing file rather than throwing,
+  // so off home this read produced `null`, the `planned !== null` guard below
+  // skipped the re-entry, and the ratchet this whole function exists to be
+  // silently did nothing.
+  //
+  // Observed 2026-09-20 in BitNode 4: homeup.js on foodnstuff bought home from
+  // 32GB to 256GB over 6.8 hours, exactly as designed, while /tel/boot.txt on
+  // home still read `tier: 32` — so progress.js, watchdog.js, batch.js and
+  // go.js were never admitted and a 256GB home ran a 32GB script set. Its own
+  // telemetry said `health: 'waiting'` throughout, because by its own lights
+  // it was fine.
+  //
+  // So pull home's copy first, the same way setLockTransport above pulls the
+  // UI lock. ns.scp is already in this script's RAM cost for that reason, so
+  // the fix is free.
   const plannedTier = () => {
     try {
+      if (ns.getHostname() !== 'home') ns.scp('/tel/boot.txt', ns.getHostname(), 'home')
       const d = JSON.parse(ns.read('/tel/boot.txt') || 'null')
       return typeof d?.tier === 'number' ? d.tier : null
     } catch {

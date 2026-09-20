@@ -47,6 +47,8 @@ import { fleetTarget } from 'fleetshape.js'
 
 // Where progress.js publishes the augmentation plan and its total cost.
 const GATE_FILE = '/tel/installgate.txt'
+const SCHEDULE_FILE = '/tel/factionplan.txt'
+const BATCH_FILE = '/tel/batch.txt'
 
 const SETTINGS = {
   // Port openers in price order (src/DarkWeb/DarkWebItems.ts). The reserve is
@@ -134,7 +136,34 @@ function reserveFor(ns) {
  * UNREADABLE claim holds everything back rather than reading as zero — that
  * direction is deliberate, and budget.js [BU2] asserts it.
  */
+/**
+ * Home's telemetry, copied here when this runs off home.
+ *
+ * boot.js places buyserv.js `where: 'anywhere'`, and `ns.read` is LOCAL to the
+ * host: off home it returns '' for every file below, which is not an error and
+ * does not throw. The claims then read as UNDETERMINED — and while that is the
+ * safe direction (budget.js holds spending back rather than permitting it), it
+ * is safe by accident, on a host that is simply the wrong place to be looking.
+ * Every rival claim would be invisible and the reserve would sit at its floor
+ * forever for a reason nothing reports.
+ *
+ * The same read-off-home defect in homeup.js stalled a BitNode 4 bootstrap for
+ * 6.8 hours (see tools/test/structure.test.mjs C10, which is what caught this
+ * one). ns.scp and ns.getHostname are already in this script's cost for the
+ * status mirror, so pulling is free.
+ */
+function fetchFromHome(ns, file) {
+  if (ns.getHostname() === 'home') return
+  try {
+    ns.scp(file, ns.getHostname(), 'home')
+  } catch {
+    /* previous copy stays — an old gate beats no gate */
+  }
+}
+
 function reserveNow(ns) {
+  fetchFromHome(ns, GATE_FILE)
+  fetchFromHome(ns, SCHEDULE_FILE)
   let base = SETTINGS.floorReserve
   for (const p of SETTINGS.programs) {
     if (!ns.fileExists(p.file, 'home')) {
@@ -187,7 +216,7 @@ function reserveNow(ns) {
     try {
       const inc0 = ns.getTotalScriptIncome()
       const incomePerSec = (isFinite(inc0?.[0]) && inc0[0] > 0 ? inc0[0] : 0) || (isFinite(inc0?.[1]) && inc0[1] > 0 ? inc0[1] : 0)
-      const sched = JSON.parse(ns.read('/tel/factionplan.txt') || 'null')
+      const sched = JSON.parse(ns.read(SCHEDULE_FILE) || 'null')
       const windowH = sched?.windowH > 0 ? sched.windowH : 1.72 // 2026-09-15 measured median, self-replacing
       const fleetDollarPerGB = ns.cloud.getServerCost(4096) / 4096
       if (!(incomePerSec > 0) || !(fleetDollarPerGB > 0)) return undefined
@@ -329,7 +358,8 @@ export async function main(ns) {
       let target = knee
       let fleetTgt = null
       try {
-        const bt = JSON.parse(ns.read('/tel/batch.txt') || 'null')
+        fetchFromHome(ns, BATCH_FILE)
+        const bt = JSON.parse(ns.read(BATCH_FILE) || 'null')
         const batchGB = Math.max(0, ...((bt?.targets ?? []).map((t) => t?.plan?.gb).filter((g) => typeof g === 'number' && isFinite(g) && g > 0)))
         if (batchGB > 0) {
           fleetTgt = fleetTarget(batchGB, (r) => ns.cloud.getServerCost(r), { maxRam })
