@@ -303,6 +303,58 @@ export function crimeLeg(want, person, node, o = {}) {
 }
 
 /**
+ * THE KARMA GRIND ACROSS INSTALL CYCLES.
+ *
+ * crimeLeg assumes one continuous stretch, which is right for a gang inside
+ * BitNode 2 (access is granted outright, so the only karma that matters is
+ * the faction's -9) and WRONG everywhere else, where the gate is -54,000 and
+ * the run installs many times on the way.
+ *
+ * Karma survives an install — prestigeSourceFile zeroes it, prestigeAugmentation
+ * does not — but the COMBAT SKILLS THAT MAKE HOMICIDE SUCCEED do not: that
+ * function sets every skill to 1 and every exp to 0. Measured on the live BN4
+ * run, homicide's success rate falls from 92.7% to 1.16% across an install,
+ * and the karma rate with it from 0.945/s to the 0.259/s floor where only the
+ * quarter-karma paid on FAILURE is still coming in.
+ *
+ * So the grind is a sawtooth, and its average depends on how fast skills
+ * rebuild — which is exactly what a combat multiplier changes. This walks the
+ * cycles, resetting exp at each install and keeping the multipliers (which
+ * augmentations do survive), and returns the total hours.
+ *
+ * `o`: { cycleHours, karmaTarget, focus, maxCycles }. Refuses (null) on an
+ * unreadable person, node or cycle length rather than assuming one.
+ */
+export function karmaGrindAcrossCycles(person, node, o = {}) {
+  const karmaTarget = num(o.karmaTarget) ? o.karmaTarget : null
+  const cycleHours = num(o.cycleHours) && o.cycleHours > 0 ? o.cycleHours : null
+  if (karmaTarget === null || cycleHours === null) return null
+  if (personProblem(person) || nodeProblem(node)) return null
+  const maxCycles = num(o.maxCycles) && o.maxCycles > 0 ? o.maxCycles : 200
+  const until = (pp) => pp.karma <= karmaTarget
+
+  const p = clonePerson(person)
+  if (until(p)) return { hours: 0, cycles: 0, atCycleCap: false }
+  let hours = 0
+  for (let cycle = 0; cycle < maxCycles; cycle++) {
+    // One cycle of homicide, or the rest of the grind if it finishes first.
+    const leg = simulateCrime('Homicide', p, node, { ...o, until, maxHours: cycleHours })
+    if (!leg) return null
+    if (leg.hours <= cycleHours && until(leg.person)) {
+      return { hours: hours + leg.hours, cycles: cycle, atCycleCap: false }
+    }
+    // The cycle ran out: carry karma and multipliers, lose skills to the install.
+    hours += cycleHours
+    p.karma = leg.person.karma
+    p.numPeopleKilled = leg.person.numPeopleKilled
+    for (const s of SKILLS) p.exp[s] = 0
+    relevel(p)
+  }
+  // A cap reached is REPORTED, never returned as though it were the answer.
+  return { hours: Infinity, cycles: maxCycles, atCycleCap: true }
+}
+
+/**
  * Where to train. The best gym in the game is Powerhouse (x10) in Sector-12
  * and travel is instant for $200k, so the answer is Powerhouse unless the run
  * cannot afford the ticket — then the best gym in the current city, and null

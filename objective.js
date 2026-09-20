@@ -231,10 +231,20 @@ export function augValue(aug, ctx = {}) {
   // with a reason for every ordinary augmentation, so this costs nothing on
   // the common path and cannot silently inflate anything else.
   const one = oneoffValue(aug, ctx)
-  if (one.ln > 0) {
-    return { ln: real + one.ln, real, synthetic: one.ln, kind: one.kind, why: one.reason }
+  // Combat multipliers, which RATE_CHANNELS cannot see at all. Added on the
+  // same terms and for the same reason: an augmentation can carry real
+  // hacking multipliers AND shorten the karma grind, and it is worth both.
+  // Prices at 0 with a reason whenever no gang is pending, which is almost
+  // always, so the common path is unchanged.
+  const karma = karmaValue(aug, ctx)
+  const synthetic = one.ln + karma.ln
+  if (synthetic > 0) {
+    const kinds = [one.ln > 0 ? one.kind : null, karma.ln > 0 ? karma.kind : null].filter(Boolean)
+    const whys = [one.ln > 0 ? one.reason : null, karma.ln > 0 ? karma.reason : null].filter(Boolean)
+    return { ln: real + synthetic, real, synthetic, kind: kinds.join('+'), why: whys.join('; ') }
   }
-  return { ln: real, real, synthetic: 0, kind: 'aug', ...(one.reason ? { why: one.reason } : {}) }
+  const why = [one.reason, karma.reason].filter(Boolean).join('; ')
+  return { ln: real, real, synthetic: 0, kind: 'aug', ...(why ? { why } : {}) }
 }
 
 /**
@@ -498,6 +508,75 @@ export function oneoffValue(aug, ctx = {}) {
   const priced = moneyLn(grant, ctx)
   if (priced.ln === null) return { ln: 0, kind: 'oneoff:grant', reason: priced.reason }
   return { ln: priced.ln, kind: 'oneoff:grant', reason: `${Math.round(grant)} granted per life x ${priced.windows.toFixed(1)} remaining, against a ${Math.round(priced.opening)} budget` }
+}
+
+/**
+ * COMBAT MULTIPLIERS, PRICED BY THE KARMA THEY BUY.
+ *
+ * RATE_CHANNELS is ['hacking', 'hacking_money', 'hacking_speed',
+ * 'hacking_chance', 'hacking_grow', 'faction_rep']. An augmentation whose
+ * mults are {strength: 1.05, dexterity: 1.05} matches none of them, so
+ * progressFactor returns 1, ln(1) is 0, and it is NEVER BOUGHT — the same
+ * shape of hole that left HiveMind and Neuralstimulator unpriced for two days.
+ *
+ * Usually that is correct: combat skills do nothing for a hacking exit. There
+ * is exactly one situation where it is badly wrong, and the run is in it.
+ * Outside BitNode 2 a gang needs karma <= -54,000, homicide is the only crime
+ * worth committing for it (its worst case, all failures at quarter karma, is
+ * still 4x the best case of any other crime), and an install resets every
+ * combat skill to 1 — dropping homicide from 92.7% to 1.16% and the karma
+ * rate to its failure floor. The grind is therefore a sawtooth whose average
+ * depends entirely on how fast skills rebuild, and THAT is what a combat
+ * multiplier changes: measured on the live BitNode 4 state, mult 1 -> 2 takes
+ * the grind from 36.4h to 27.4h.
+ *
+ * Nine hours earlier is nine hours of gang income earlier, so the value is
+ * that income through the ONE money bridge — no new units, no new constant.
+ *
+ * REFUSES, by name, when the gang is not pending, when the node grants gang
+ * access outright, or when any input is unreadable. Worth zero for a stated
+ * reason is a different thing from unpriced, and the whole point of this
+ * function is that the difference shows up in telemetry.
+ */
+export function karmaValue(aug, ctx = {}) {
+  const num = (x) => typeof x === 'number' && isFinite(x)
+  const mults = aug?.mults
+  if (!mults || typeof mults !== 'object') return { ln: 0, kind: null, reason: null }
+  const combat = ['strength', 'defense', 'dexterity', 'agility']
+  const lifts = combat.filter((c) => num(mults[c]) && mults[c] > 1)
+  if (!lifts.length) return { ln: 0, kind: null, reason: null }
+
+  if (ctx.gangPending !== true) {
+    return { ln: 0, kind: 'karma:combat', reason: 'no gang pending — combat multipliers buy no karma' }
+  }
+  if (ctx.gangKarmaWaived === true) {
+    return { ln: 0, kind: 'karma:combat', reason: 'this BitNode grants gang access without karma' }
+  }
+  if (!num(ctx.gangIncomePerSec) || ctx.gangIncomePerSec <= 0) {
+    return { ln: 0, kind: 'karma:combat', reason: 'no measured gang income — cannot price an earlier gang' }
+  }
+  if (typeof ctx.grindHours !== 'function') {
+    return { ln: 0, kind: 'karma:combat', reason: 'no grind model supplied — cannot price the rebuild' }
+  }
+
+  const before = ctx.grindHours(null)
+  const after = ctx.grindHours(Object.fromEntries(combat.map((c) => [c, num(mults[c]) ? mults[c] : 1])))
+  if (!num(before) || !num(after)) {
+    return { ln: 0, kind: 'karma:combat', reason: 'the karma grind could not be simulated with and without this augmentation' }
+  }
+  const saved = before - after
+  if (!(saved > 0)) {
+    return { ln: 0, kind: 'karma:combat', reason: `no hours saved on the grind (${before.toFixed(1)}h either way)` }
+  }
+
+  const priced = moneyLn(ctx.gangIncomePerSec * saved * 3600, ctx)
+  if (priced.ln === null) return { ln: 0, kind: 'karma:combat', reason: priced.reason }
+  return {
+    ln: priced.ln,
+    kind: 'karma:combat',
+    hoursSaved: saved,
+    reason: `karma grind ${before.toFixed(1)}h -> ${after.toFixed(1)}h, ${saved.toFixed(1)}h earlier gang at $${Math.round(ctx.gangIncomePerSec)}/s`,
+  }
 }
 
 /**

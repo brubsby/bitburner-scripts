@@ -27,7 +27,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
 import { spendable, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -47,8 +47,26 @@ function fetchFromHome(ns, file) {
 function publish(ns, obj) {
   ns.write(STATUS, JSON.stringify(obj, null, 2), 'w')
   if (ns.getHostname() !== 'home') ns.scp(STATUS, 'home', ns.getHostname())
+  // THE BEST MONEY RATE A GANG OF OURS HAS ACTUALLY PRODUCED, kept in its own
+  // file so it survives the life that measured it. objective.karmaValue needs
+  // it to price combat multipliers — an earlier gang is worth its income, and
+  // without a measurement there is nothing honest to multiply. Monotonic: a
+  // gang mid-rebuild must not erase what a mature one demonstrated.
+  try {
+    const perSec = obj?.rates?.gameMoneyPerCycle / CYCLE_SEC
+    if (typeof perSec === 'number' && isFinite(perSec) && perSec > 0) {
+      const prev = JSON.parse(ns.read(GANG_LAST) || 'null')
+      if (!(typeof prev?.moneyPerSec === 'number' && prev.moneyPerSec >= perSec)) {
+        ns.write(GANG_LAST, JSON.stringify({ at: new Date().toISOString(), bitNode: obj?.bitNode ?? null, moneyPerSec: perSec }), 'w')
+        if (ns.getHostname() !== 'home') ns.scp(GANG_LAST, 'home', ns.getHostname())
+      }
+    }
+  } catch {
+    /* the remembered rate is an optimisation; never fail a publish for it */
+  }
 }
 const GATE_FILE = '/tel/installgate.txt'
+const GANG_LAST = '/tel/gang-last.txt'
 const SCHEDULE = '/tel/factionplan.txt'
 /** Ceiling on the coarse tail past the install window, in hours. */
 const TAIL_MAX_H = 32

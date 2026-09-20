@@ -472,5 +472,97 @@ export async function run() {
   }
   checks.push(cHomeJoin);
 
+  const c7 = new Check("OB7", "combat multipliers are priced by the karma they buy, and only while a gang is actually pending");
+  {
+    const { karmaValue } = await import("../../objective.js");
+    const bp = await import("../../bodyplan.js");
+    // RATE_CHANNELS carries no combat channel, so this aug is worth exactly
+    // nothing to progressFactor — which is the hole this function fills.
+    const aug = { name: "Wired Reflexes", mults: { strength: 1.05, dexterity: 1.05 } };
+    const { RATE_CHANNELS, progressFactor } = await import("../../installgate.js");
+    c7.examined(1);
+    if (RATE_CHANNELS.some((c) => ["strength", "defense", "dexterity", "agility"].includes(c))) {
+      c7.fail("RATE_CHANNELS now has a combat channel — karmaValue may be double-counting");
+    }
+    if (progressFactor([aug.mults], RATE_CHANNELS, null) !== 1) c7.fail("fixture: a combat-only aug must score M = 1 through the normal path");
+
+    // A grind model that simply gets faster with a better multiplier.
+    const grind = (m) => (m ? 36.4 / ((m.strength + m.defense + m.dexterity + m.agility) / 4) : 36.4);
+    const base = { gangPending: true, gangIncomePerSec: 1e6, money: 1e9, eBudget: 0.3, remainingWindows: 20, grindHours: grind };
+
+    c7.examined(1);
+    const v = karmaValue(aug, base);
+    if (!(v.ln > 0)) c7.fail(`a combat aug with a gang pending must price above zero, got ${JSON.stringify(v)}`);
+    if (v.kind !== "karma:combat") c7.fail(`kind must name the channel, got ${v.kind}`);
+    if (!(v.hoursSaved > 0)) c7.fail("hoursSaved must be reported");
+    // The value IS the money bridge on the hours saved — no new constant.
+    const { moneyLn } = await import("../../objective.js");
+    const want = moneyLn(base.gangIncomePerSec * v.hoursSaved * 3600, base).ln;
+    if (Math.abs(v.ln - want) > 1e-9) c7.fail(`value must be moneyLn of the earlier gang income: ${v.ln} vs ${want}`);
+
+    // More multiplier, more value — the direction, not a knife-edge sign.
+    c7.examined(1);
+    const bigger = karmaValue({ name: "x", mults: { strength: 2, defense: 2, dexterity: 2, agility: 2 } }, base);
+    if (!(bigger.ln > v.ln)) c7.fail(`a larger combat multiplier must be worth more: ${bigger.ln} vs ${v.ln}`);
+
+    // Every refusal named, and distinguishable from "worth nothing".
+    c7.examined(6);
+    const cases = [
+      [{ name: "n", mults: { hacking: 1.5 } }, base, null, "an aug with no combat multipliers is simply not this channel's business"],
+      [aug, { ...base, gangPending: false }, /no gang pending/, "no gang pending"],
+      [aug, { ...base, gangKarmaWaived: true }, /without karma/, "a node that waives the karma gate"],
+      [aug, { ...base, gangIncomePerSec: null }, /gang income/, "no measured gang income"],
+      [aug, { ...base, grindHours: undefined }, /grind model/, "no grind model"],
+      [aug, { ...base, eBudget: null }, /elasticity/, "an unmeasured elasticity"],
+    ];
+    for (const [a, ctx, re, what] of cases) {
+      const r = karmaValue(a, ctx);
+      if (r.ln !== 0) c7.fail(`${what} must price at 0, got ${r.ln}`);
+      if (re && !re.test(r.reason ?? "")) c7.fail(`${what} must say why, got ${JSON.stringify(r.reason)}`);
+      if (!re && r.reason !== null) c7.fail(`${what} should carry no reason, got ${JSON.stringify(r.reason)}`);
+    }
+    // WIRED: augValue must actually consult it, or this is dead code — the
+    // exact shape of the orphaned-capability bug B7.11 exists to catch.
+    c7.examined(1);
+    const { augValue } = await import("../../objective.js");
+    const scored = augValue(aug, base);
+    if (!(scored.ln > 0)) c7.fail(`augValue must pick up the karma channel, got ${JSON.stringify(scored)}`);
+    if (!/karma:combat/.test(scored.kind ?? "")) c7.fail(`augValue must name the channel, got ${scored.kind}`);
+    const unpriced = augValue(aug, { ...base, gangPending: false });
+    if (unpriced.ln !== 0) c7.fail(`with no gang pending a combat-only aug is still worth nothing, got ${unpriced.ln}`);
+    // Real multipliers AND combat: both, not one instead of the other.
+    const both = augValue({ name: "mixed", mults: { hacking: 1.5, strength: 1.05, defense: 1.05, dexterity: 1.05, agility: 1.05 } }, base);
+    const hackOnly = augValue({ name: "hack", mults: { hacking: 1.5 } }, base);
+    if (!(both.ln > hackOnly.ln)) c7.fail(`an aug with hacking AND combat must beat hacking alone: ${both.ln} vs ${hackOnly.ln}`);
+    if (Math.abs(both.real - hackOnly.real) > 1e-12) c7.fail("the real (multiplier) component must be unchanged by the karma channel");
+
+    // A grind the aug does not shorten is zero WITH a reason, not unpriced.
+    c7.examined(1);
+    const flat = karmaValue(aug, { ...base, grindHours: () => 20 });
+    if (flat.ln !== 0 || !/no hours saved/.test(flat.reason ?? "")) c7.fail(`an aug that saves nothing must say so: ${JSON.stringify(flat)}`);
+
+    // The sawtooth itself: an install resets skills, so the grind across
+    // cycles must be strictly worse than one continuous stretch.
+    c7.examined(1);
+    const person = {
+      skills: { hacking: 283, strength: 156, defense: 81, dexterity: 81, agility: 81, charisma: 1, intelligence: 79 },
+      exp: { hacking: 0, strength: 0, defense: 0, dexterity: 0, agility: 0, charisma: 0 },
+      mults: Object.fromEntries(["strength", "defense", "dexterity", "agility", "charisma", "hacking"].flatMap((k) => [[k, 1], [`${k}_exp`, 1]]).concat([["crime_success", 1.586], ["crime_money", 1]])),
+      karma: -6369, numPeopleKilled: 0, money: 38e6,
+    };
+    for (const st of ["strength", "defense", "dexterity", "agility"]) person.exp[st] = Math.exp((person.skills[st] + 200) / 32) - 534.6;
+    const node = { CrimeSuccessRate: 1, CrimeMoney: 0.2, CrimeExpGain: 0.5 };
+    const continuous = bp.crimeLeg({ karma: -54000 }, person, node, { focus: 1 });
+    const sawtooth = bp.karmaGrindAcrossCycles(person, node, { karmaTarget: -54000, cycleHours: 1.5, focus: 1 });
+    if (!continuous || !sawtooth) c7.fail("could not simulate the grind both ways");
+    else {
+      if (!(sawtooth.hours > continuous.hours)) c7.fail(`installs reset skills, so the sawtooth must cost more: ${sawtooth.hours} vs ${continuous.hours}`);
+      const better = bp.karmaGrindAcrossCycles({ ...person, mults: { ...person.mults, strength: 2, defense: 2, dexterity: 2, agility: 2 } }, node, { karmaTarget: -54000, cycleHours: 1.5, focus: 1 });
+      if (!(better.hours < sawtooth.hours)) c7.fail(`a combat multiplier must shorten the sawtooth: ${better.hours} vs ${sawtooth.hours}`);
+      c7.note(`grind ${continuous.hours.toFixed(1)}h continuous vs ${sawtooth.hours.toFixed(1)}h across 1.5h install cycles; combat mult 2 brings it to ${better.hours.toFixed(1)}h`);
+    }
+  }
+  checks.push(c7);
+
   return checks;
 }

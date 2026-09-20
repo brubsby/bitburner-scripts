@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel } from 'sfgate.js'
-import { GANG_FACTIONS, gangRepAt, hoursToGangRep } from 'gangplan.js'
+import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG } from 'gangplan.js'
 // The whole faction space as data — see factions.js and [BC9].
 import { ALL_FACTIONS } from 'factions.js'
 import { reporter } from 'status.js'
@@ -141,7 +141,7 @@ import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, cycleStats } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -1070,6 +1070,49 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  * are the 2026-09-15 measurements, dated at the call site, replaced as soon
  * as three real samples exist.
  */
+/**
+ * Inputs for objective.karmaValue: is a gang pending, what would it earn, and
+ * how long is the karma grind with and without a candidate's combat mults.
+ *
+ * Every figure is measured or absent. `gangIncomePerSec` is the best money
+ * rate a gang of ours has actually produced (remembered in /tel/gang-last.txt
+ * when one is running); with no such measurement the channel refuses rather
+ * than inventing what a gang might be worth.
+ */
+function karmaChannelCtx(ns, info, player, node) {
+  try {
+    const fin = (v) => typeof v === 'number' && isFinite(v)
+    if (!canUseGang(info)) return { gangPending: false }
+    if (info?.currentNode === 2) return { gangPending: true, gangKarmaWaived: true }
+    // A gang we already have is not pending.
+    const live = readJson(ns, '/tel/gang.txt')
+    if (live?.lastAugReset === info?.lastAugReset && live?.faction) return { gangPending: false }
+    const remembered = readJson(ns, '/tel/gang-last.txt')
+    const gangIncomePerSec = fin(remembered?.moneyPerSec) && remembered.moneyPerSec > 0 ? remembered.moneyPerSec : null
+    const w = measureWindow(ns, info)
+    const cycleHours = fin(w?.windowH) && w.windowH > 0 ? w.windowH : null
+    const person = {
+      skills: player?.skills,
+      exp: player?.exp,
+      mults: player?.mults,
+      karma: player?.karma,
+      numPeopleKilled: player?.numPeopleKilled,
+      money: player?.money,
+    }
+    const grindHours = (lift) => {
+      if (cycleHours === null) return null
+      const p = lift
+        ? { ...person, mults: { ...person.mults, ...Object.fromEntries(Object.entries(lift).map(([k, v]) => [k, (person.mults?.[k] ?? 1) * v])) } }
+        : person
+      const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1 })
+      return r && isFinite(r.hours) ? r.hours : null
+    }
+    return { gangPending: true, gangIncomePerSec, grindHours }
+  } catch {
+    return { gangPending: false }
+  }
+}
+
 function measureWindow(ns, info = null) {
   // All logic lives in scorecard.js (pure, SC1-SC3 tested — including the
   // regression where a min-3-samples guard here silently priced every ladder
@@ -1541,6 +1584,14 @@ async function act(ns, canJoin, info, note) {
       // focusPenalty() is only paid when work is UNFOCUSED
       // (PlayerObjectGeneralMethods.ts:622).
       unfocused: work?.focused === false,
+      // THE KARMA CHANNEL. Combat multipliers are invisible to RATE_CHANNELS
+      // and matter in exactly one situation: a gang pending outside BitNode 2,
+      // where installs reset the combat skills homicide needs and a better
+      // multiplier rebuilds them faster. Every input is read or refused —
+      // gangIncomePerSec comes from a gang we have actually run, never a
+      // guess, so on a run that has never had one this channel prices 0 and
+      // says why.
+      ...karmaChannelCtx(ns, info, player, node),
     }
 
     const planArgs = {
