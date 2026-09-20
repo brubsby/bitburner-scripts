@@ -596,6 +596,7 @@ export async function run() {
     if (fine.tailH !== 2) c15.fail(`no tailH leaves the sim at its horizon: ${fine.tailH}`);
     if (tailed.tailH !== 12) c15.fail(`tailH is reported: ${tailed.tailH}`);
     const wantSteps = 2 * 3600 / 60 + Math.ceil(10 * 3600 / TAIL_STEP_SEC);
+    if (!(TAIL_STEP_SEC > 60)) c15.fail("the tail step must be coarser than the fine step");
     if (tailed.samples.length - 1 !== wantSteps) c15.fail(`schedule is fine-then-coarse: ${tailed.samples.length - 1} steps, expected ${wantSteps}`);
     if (Math.abs(tailed.samples[tailed.samples.length - 1].h - 12) > 1e-6) c15.fail(`the tail ends at tailH: ${tailed.samples[tailed.samples.length - 1].h}`);
     const capped = simulateGang(G, cold(600), base({ horizonH: 2, tailH: 1e5, warfare: { fraction: 0.1667, engageRatio: 0.3 } }));
@@ -614,13 +615,13 @@ export async function run() {
     const tailNoAsc = simulateGang(G, cold(600), base({ horizonH: 2, tailH: 12, ascend: null, warfare: { fraction: 0.75, engageRatio: 0.3 } }));
     if (!(fineNoAsc.territory > G.territory)) c15.fail("fixture: the no-ascension comparison must actually conquer ground");
     const exactErr = Math.abs(fineNoAsc.money - tailNoAsc.money) / fineNoAsc.money;
-    if (!(exactErr < 0.005)) c15.fail(`with decisions held still the tail is exact: ${(exactErr * 100).toFixed(2)}% apart`);
-    if (Math.abs(fineNoAsc.territory - tailNoAsc.territory) > 1e-9) c15.fail(`territory is exact without ascension: ${fineNoAsc.territory} vs ${tailNoAsc.territory}`);
+    if (!(exactErr < 0.01)) c15.fail(`with decisions held still the tail tracks the fine run: ${(exactErr * 100).toFixed(2)}% apart`);
+    if (Math.abs(fineNoAsc.territory - tailNoAsc.territory) > 0.005) c15.fail(`territory tracks without ascension: ${fineNoAsc.territory} vs ${tailNoAsc.territory}`);
     // With ascension the tail must stay CONSERVATIVE — never flattering.
     const moneyErr = (tailed.money - allFine.money) / allFine.money;
     if (moneyErr > 0.01) c15.fail(`the coarse tail must not overstate: ${(moneyErr * 100).toFixed(1)}%`);
-    if (!(moneyErr > -0.3)) c15.fail(`the coarse tail understates by more than a third: ${(moneyErr * 100).toFixed(1)}%`);
-    c15.note(`coarse tail: ${tailed.samples.length - 1} steps vs ${allFine.samples.length - 1} fine — exact (${(exactErr * 100).toFixed(2)}%) with decisions held still, ${(moneyErr * 100).toFixed(1)}% conservative once ascension moves on the coarser cadence`);
+    if (!(moneyErr > -0.15)) c15.fail(`the coarse tail understates too far to trust: ${(moneyErr * 100).toFixed(1)}%`);
+    c15.note(`coarse tail: ${tailed.samples.length - 1} steps vs ${allFine.samples.length - 1} fine — within ${(exactErr * 100).toFixed(2)}% with decisions held still, ${(moneyErr * 100).toFixed(1)}% conservative once equipment and the warfare squad move on the coarser cadence`);
 
     // (c) Per-window pricing equals the flat-rate form exactly when the
     // simulation IS one window — the change is not a rescaling.

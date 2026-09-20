@@ -67,8 +67,17 @@ export const FREE_MEMBERS = 3
 export const RECRUIT_BASE = 5
 export const RESPECT_TO_REP = 75
 export const CYCLES_PER_TERRITORY_UPDATE = 100 // GangConstants.CyclesPerTerritoryAndPowerUpdate (20s)
-/** The coarse tail past the install window: step, and a ceiling on its length. */
+// THE COARSE TAIL past the install window: how long a step re-plans for,
+// how finely that step integrates, and a ceiling on the tail's length.
+// Chosen by measurement at live scale (12 members, a 30h tail), against an
+// all-fine run of the same hours, everything free to move:
+//    900/300  199ms/sim   -7.3%      1800/300   156ms/sim  -16.6%
+//    900/60   428ms/sim   -5.2%      1800/150   226ms/sim  -15.3%
+// gang.js gives the search 300ms per tick and a tailless sim costs 77ms, so
+// 900/300 buys a node-long trajectory for 2.6x a window-long one and stays
+// inside the budget; 900/60 is barely better and does not.
 export const TAIL_STEP_SEC = 900
+export const TAIL_SUB_SEC = 300
 export const MAX_TAIL_STEPS = 128
 /** Gang/data/power.ts: the NPC gangs' additive power multipliers. */
 export const POWER_MULT = { 'Slum Snakes': 1, Tetrads: 2, 'The Syndicate': 2, 'The Dark Army': 2, 'Speakers for the Dead': 5, NiteSec: 2, 'The Black Hand': 5 }
@@ -434,10 +443,12 @@ export function freshMember(name) {
  * once and then integrates in `stepSec` sub-steps, so gains, stats, wanted,
  * territory and power all keep fine resolution. What coarsens is the
  * cadence of ascend / equip / recruit / re-pick the warfare squad. Measured
- * on a cold-start fixture: with ascension held still a 900s tail reproduces
- * an all-fine run of the same hours to 0.00%, and with ascension free it
- * runs 18% BELOW it — late ascensions, compounding, and one-sided. The tail
- * is therefore conservative, never flattering, about a conquest.
+ * on a cold-start fixture: with the decisions held still the tail reproduces
+ * an all-fine run of the same hours to within 0.31%, and with everything
+ * free it runs ~7% BELOW it — equipment and the warfare squad are still
+ * re-picked only once per coarse step, and arriving late compounds. The
+ * error is one-sided, so the tail is conservative about a conquest, never
+ * flattering.
  *
  * Returns { samples: [{h, respect, gross, members, wantedLevel}], respectPerSec }
  * — `gross` is cumulative gross respect gained since h=0 (the reputation
@@ -451,6 +462,8 @@ export function simulateGang(g, members, o = {}) {
   const stepSec = num(o.stepSec) && o.stepSec > 0 ? o.stepSec : 60
   const tailStepSec = num(o.tailStepSec) && o.tailStepSec > 0 ? o.tailStepSec : TAIL_STEP_SEC
   const tailH = num(o.tailH) && o.tailH > horizonH ? o.tailH : horizonH
+  // Sub-step inside a coarse step (see the sub-step note in the loop).
+  const tailSubSec = num(o.tailSubSec) && o.tailSubSec > 0 ? o.tailSubSec : TAIL_SUB_SEC
   // The step schedule: fine to horizonH, then coarse to tailH, capped at
   // MAX_TAIL_STEPS so a long node cannot make one simulation unbounded.
   const schedule = []
@@ -602,7 +615,7 @@ export function simulateGang(g, members, o = {}) {
     // was -54% at the steepest hour, and worst for the policy conquering
     // fastest: a bias against the warfare the tail exists to evaluate.
     const isTail = stepSecNow > stepSec
-    const subs = isTail ? Math.max(1, Math.round(stepSecNow / stepSec)) : 1
+    const subs = isTail ? Math.max(1, Math.round(stepSecNow / tailSubSec)) : 1
     const cyclesSub = cyclesPerStep / subs
     const processesSub = Math.max(1, Math.round(cyclesSub / CYCLES_PER_PROCESS))
     // Recruit first, as gang.js does at the top of its loop; then ascend.
@@ -659,6 +672,16 @@ export function simulateGang(g, members, o = {}) {
       advanceExp(cyclesSub, tasks)
       // Territory and power, every 100 cycles.
       advanceTerritory(cyclesSub, warfareMembers)
+      // Recruit and ascend on the SUB-step too. These are cheap beside
+      // assign(), and holding them to the coarse step was the whole of the
+      // tail's error: a 1800s step ascends up to half an hour late and that
+      // compounds into a ~40% shortfall over a node. Re-planning stays
+      // coarse; only the decisions that cost nothing to re-take move here.
+      if (isTail && sub + 1 < subs) {
+        hNow = (elapsedSec + (sub + 1) * cyclesSub * CYCLE_SEC) / 3600
+        while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
+        tryAscend()
+      }
     }
     // Deaths take members, once the whole step's clash risk has accrued.
     if (terr) {
