@@ -82,14 +82,14 @@ export const TIERS = [8, 32, 64, 128, 256, 1024]
  * @param {Function} opt.costOf    (script) => GB in the CURRENT regime, or 0/NaN if unpriceable
  * @param {number}   opt.bootRam   RAM the launcher itself holds while it runs
  * @param {number}   opt.minOps    worker slots to keep free on home
- * @returns {{tier, worker, opRam, reserve, homeUsed, admit, defer}}
+ * @returns {{tier, worker, opRam, reserve, action, homeUsed, admit, defer}}
  *
  * `admit` entries carry a resolved `cost` and, for the worker, `threads`.
  * `defer` entries ALWAYS carry a `why` — a deferral with no reason is
  * indistinguishable from a script someone quietly deleted, which is exactly the
  * failure this planner exists to stop.
  */
-export function planStack(manifest, { homeRam, costOf, bootRam = 0, minOps = MIN_OPS }) {
+export function planStack(manifest, { homeRam, costOf, bootRam = 0, minOps = MIN_OPS, actionRam = 0 }) {
   const priced = (s) => {
     const n = Number(costOf(s))
     return Number.isFinite(n) && n > 0 ? n : null
@@ -103,6 +103,20 @@ export function planStack(manifest, { homeRam, costOf, bootRam = 0, minOps = MIN
   )
   const opRam = (worker && priced(worker.script)) || priced('w.js') || 1.75
   const reserve = minOps * opRam
+
+  // THE ACTION SLOT. act.js does not do its own work — it places a one-shot
+  // actor (act-crime.js, act-join.js, ...) on any rooted host with room. The
+  // worker below takes "what is left", which on a small home means NOTHING is
+  // left, and the fleet fills every other host too. act.js then decides
+  // correctly and cannot execute: observed live in BitNode 4 at 15:41, where
+  // it chose to stop gym training and commit crime, could not place a 7.25GB
+  // actor on a fleet whose largest free block was 5.3GB, and so left the gym
+  // running for 35 minutes — into MINUS $1.4m, because a started Singularity
+  // action keeps charging whether or not anything is left to manage it.
+  //
+  // A worker thread is elastic and an action is not, so the action slot comes
+  // off the top like the op reserve. Sized by the caller to the largest actor.
+  const action = Number.isFinite(actionRam) && actionRam > 0 ? actionRam : 0
 
   const admit = []
   const defer = []
@@ -157,13 +171,14 @@ export function planStack(manifest, { homeRam, costOf, bootRam = 0, minOps = MIN
       continue
     }
 
-    const free = homeRam - bootRam - reserve - homeUsed
+    const free = homeRam - bootRam - reserve - action - homeUsed
     if (cost > free) {
       defer.push({
         ...entry,
         why:
-          `needs ${cost}GB, only ${Math.max(0, round(free))}GB of home is left after the launcher (${bootRam}GB) ` +
-          `and ${minOps} worker slots (${round(reserve)}GB) — ${entry.why}`,
+          `needs ${cost}GB, only ${Math.max(0, round(free))}GB of home is left after the launcher (${bootRam}GB), ` +
+          `${minOps} worker slots (${round(reserve)}GB)` +
+          `${action > 0 ? ` and the action slot (${round(action)}GB)` : ''} — ${entry.why}`,
       })
       continue
     }
@@ -180,7 +195,9 @@ export function planStack(manifest, { homeRam, costOf, bootRam = 0, minOps = MIN
   // the launcher's RAM is already back in the pool when this runs.
   if (worker) {
     const cost = priced(worker.script)
-    const threads = cost ? Math.floor((homeRam - homeUsed) / cost) : 0
+    // The action slot is held back from the worker too — it is the whole point
+    // that something is left for act.js to place an actor into.
+    const threads = cost ? Math.floor((homeRam - homeUsed - action) / cost) : 0
     if (threads > 0) {
       homeUsed = round(homeUsed + cost * threads)
       admit.push({ ...worker, cost, threads })
@@ -194,6 +211,7 @@ export function planStack(manifest, { homeRam, costOf, bootRam = 0, minOps = MIN
     worker: worker ? worker.script : null,
     opRam,
     reserve: round(reserve),
+    action: round(action),
     homeUsed: round(homeUsed),
     admit,
     defer,

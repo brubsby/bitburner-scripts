@@ -506,7 +506,16 @@ export async function main(ns) {
       return 0
     }
   }
-  const plan = planStack(STACK, { homeRam, costOf, bootRam: costOf('boot.js'), minOps: MIN_OPS })
+  // The largest one-shot actor act.js might have to place. Read off the
+  // deployed files rather than a constant, so a new act-*.js cannot silently
+  // outgrow the slot reserved for it.
+  const actionRam = (() => {
+    if (!STACK.some((e) => e.script === 'act.js')) return 0
+    let max = 0
+    for (const f of ns.ls('home', 'act-')) if (f.endsWith('.js')) max = Math.max(max, costOf(f))
+    return max
+  })()
+  const plan = planStack(STACK, { homeRam, costOf, bootRam: costOf('boot.js'), minOps: MIN_OPS, actionRam })
 
   const started = []
   const stopped = []
@@ -523,6 +532,7 @@ export async function main(ns) {
     bootRam: costOf('boot.js'),
     worker: plan.worker,
     reservedForWorkers: plan.reserve,
+    actionSlot: plan.action,
     homePlanned: plan.homeUsed,
     dry,
     rooted,

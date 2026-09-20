@@ -47,7 +47,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check, fmt } from "./harness.mjs";
-import { load, asSave, source, priceOverlay, rootScripts, REPO } from "./ram.mjs";
+import { load, asSave, source, priceOverlay, rootScripts, trackedFiles, REPO } from "./ram.mjs";
 import { watchdogStack } from "./ram.test.mjs";
 
 const STAGING = path.join(REPO, "tools/staging/boot");
@@ -446,6 +446,53 @@ function planCheck() {
     );
   } else {
     c.note(`watchdog.js watches ${watched.length} script(s); all of them carry a tier in the manifest`);
+  }
+
+  /* -- B7.12: the action slot survives the worker --------------------------
+   *
+   * act.js places a one-shot actor (act-crime.js and friends) on any rooted
+   * host with room, and the worker takes "what is left" of home. On a small
+   * home that is nothing, and the fleet fills every other host too, so act.js
+   * decides correctly and cannot execute. Live in BitNode 4 at 15:41 it chose
+   * to stop gym training and commit crime, found no free block bigger than
+   * 5.3GB for a 7.25GB actor, and left the gym running for 35 minutes — to
+   * MINUS $1.4m, because a Singularity action keeps charging with or without
+   * anything left to manage it. A worker thread is elastic; an action is not.
+   */
+  {
+    const reg = REGIMES.find((r) => r.id === "BN4/noSF") ?? REGIMES[0];
+    asSave(reg);
+    const costOf = (script) => priceOf(overlay, script) ?? 0;
+    const actors = trackedFiles().map((f) => f.remote).filter((f) => /^act-[^/]*\.js$/.test(f));
+    const actionRam = Math.max(0, ...actors.map(costOf));
+    c.examined(actors.length);
+    if (!actors.length) c.fail("B7.12 no act-*.js actors found to size the action slot against");
+    if (!(actionRam > 0)) c.fail("B7.12 the largest actor prices at 0GB — the slot would be empty");
+
+    for (const homeRam of [32, 64, 128]) {
+      const withSlot = planStack(manifest, { homeRam, costOf, bootRam: costOf("boot.js"), minOps: MIN_OPS, actionRam });
+      const free = homeRam - withSlot.homeUsed;
+      if (withSlot.action !== Math.round(actionRam * 100) / 100) {
+        c.fail(`B7.12 the plan does not report the action slot at ${homeRam}GB: ${withSlot.action} vs ${actionRam}`);
+      }
+      // The whole point: an actor must FIT once the plan is resident.
+      if (!(free >= actionRam - 1e-9)) {
+        c.fail(
+          `B7.12 a ${homeRam}GB home leaves ${free.toFixed(2)}GB after the plan, below the ${actionRam}GB actor it must place`,
+          "act.js would decide correctly and never execute — the BitNode 4 gym drain",
+        );
+      }
+    }
+    // Absent the slot the old behaviour is unchanged, so this is opt-in.
+    const none = planStack(manifest, { homeRam: 32, costOf, bootRam: costOf("boot.js"), minOps: MIN_OPS });
+    if (none.action !== 0) c.fail(`B7.12 no actionRam must mean no slot, got ${none.action}`);
+    const slot32 = planStack(manifest, { homeRam: 32, costOf, bootRam: costOf("boot.js"), minOps: MIN_OPS, actionRam });
+    c.note(
+      `action slot ${actionRam}GB (largest of ${actors.length} act-*.js) — a 32GB home keeps ` +
+        `${(32 - slot32.homeUsed).toFixed(2)}GB free and still runs ` +
+        `${slot32.admit.find((e) => e.role === "worker")?.threads ?? 0} worker threads ` +
+        `(${none.admit.find((e) => e.role === "worker")?.threads ?? 0} without the slot)`,
+    );
   }
 
   return c;
