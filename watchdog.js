@@ -547,6 +547,13 @@ const WATCHED = [
     // arithmetic over state we already hold, so the answer is exact and free.
     trigger: (ns) => {
       const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      // Published on the job record (jobs['homeup.js'].next) so the planner
+      // prices the CURRENT upgrade: homeup.txt's `next` is only as fresh as
+      // homeup's last run, and when the hold keeps homeup from running the
+      // planner read a stale kind, priced home as unreadable, and the hold
+      // stood on that — circular (2026-09-20 10:30, cores from 06:37 while
+      // the next block was RAM).
+      homeNext = next
       if (!next) return false
       // Hold back only what a HIGHER-priority spender has claimed. ns.read is
       // 0GB and an unreadable claim blocks rather than reading as zero
@@ -615,6 +622,8 @@ const INTERVAL = 30000
  * that just came up has no business claiming it has watched anything stall.
  */
 const blockedFor = {}
+/** The home upgrade the homeup trigger last priced, for jobs['homeup.js'].next. */
+let homeNext = null
 
 /** script -> consecutive cycles its OWN telemetry has reported health:error. */
 const failingFor = {}
@@ -963,6 +972,7 @@ export async function main(ns) {
               rec.state = blocked ? `BLOCKED: ${blocked}` : 'idle: trigger false'
             }
             if (blocked) rec.blockedFor = blockedFor[script]
+            if (script === 'homeup.js') rec.next = homeNext
             continue
           }
 

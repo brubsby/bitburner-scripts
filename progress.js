@@ -1745,7 +1745,10 @@ async function act(ns, canJoin, info, note) {
       const bt = readJson(ns, '/tel/batch.txt')
       const inc = ns.getTotalScriptIncome()
       const w = measureWindow(ns, info)
-      const next = hu?.next
+      // The watchdog prices the next upgrade every cycle (jobs['homeup.js']
+      // .next); homeup.txt's copy is only as fresh as homeup's last run and
+      // went stale for hours behind the join hold. Watchdog first.
+      const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
       // homeup.js publishes homeRam when it runs; between runs boot.txt's
       // figure (written at every boot, i.e. after every install) stands in.
       const homeRam = hu?.homeRam > 0 ? hu.homeRam : readJson(ns, '/tel/boot.txt')?.homeRam
