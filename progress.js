@@ -1634,6 +1634,12 @@ async function act(ns, canJoin, info, note) {
         // start (2026-09-20 00:25). The last published figures stand in,
         // from any life, and `calSource` says so.
         let calSource = live.length ? 'live' : null
+        // The last LIVE reading is also remembered in its own file, because
+        // the prior-gate chain breaks whenever one gate lacks the record
+        // (2026-09-20 01:10: an unplanned write dropped it, the batcher had
+        // restarted, and the figures were gone until it landed again).
+        const CAL_LAST = '/tel/cal-last.txt'
+        if (live.length) ns.write(CAL_LAST, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset, chanceObs, growShare }), 'w')
         if (chanceObs === null || growShare === null) {
           const priorGate = readJson(ns, GATE)
           const po = priorGate?.objective
@@ -1641,6 +1647,13 @@ async function act(ns, canJoin, info, note) {
             chanceObs = po.chanceObs
             growShare = po.growShare
             calSource = priorGate.lastAugReset === info?.lastAugReset ? 'prior pass' : 'prior life'
+          } else {
+            const rm = readJson(ns, CAL_LAST)
+            if (typeof rm?.chanceObs === 'number' && typeof rm?.growShare === 'number') {
+              chanceObs = rm.chanceObs
+              growShare = rm.growShare
+              calSource = `remembered ${rm.at}`
+            }
           }
         }
 
