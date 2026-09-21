@@ -2067,6 +2067,41 @@ async function act(ns, canJoin, info, note) {
   // is the one the gang creates. Take the cheapest gang faction to join,
   // by joinplan's own forecast, and hand it to the body step below as the
   // current segment. gang.js creates the gang the moment the join lands.
+  // THE WORK SLOT IS HANDED OVER, NOT CONTESTED.
+  //
+  // act.js runs the gang bootstrap — gym, crime, travel, join — and every one
+  // of those steps uses the WORK SLOT, the same single resource this file
+  // spends on faction work and crime. Two components wanting one slot needs an
+  // owner, and until 2026-09-21 the protocol was that act.js stood down
+  // whenever /tel/progress.txt was less than 15 minutes old. That is a
+  // HEARTBEAT, not a claim: this file publishes on every pass, so the
+  // condition was permanently true and act.js was permanently idle whenever
+  // the planner was alive.
+  //
+  // What that cost, live in BitNode 4: act.js started gym strength for the
+  // Slum Snakes gate (all four combat stats at 30), then never got the slot
+  // back to move on to the next stat. Strength ran to 137 against a target of
+  // 30 while defense, dexterity and agility sat at 1, and an invitation the
+  // planner itself described as "1.3 min" away stayed out of reach for the
+  // best part of an hour — on the critical path of the gang route this node's
+  // own trajectory calculation says is 63% faster than not having a gang.
+  //
+  // So the planner yields explicitly while that bootstrap is incomplete, and
+  // says so in its telemetry. One owner at a time, named.
+  // THE BOOTSTRAP IS NOT OVER AT THE JOIN. Outside BitNode 2 the gang itself
+  // needs karma -54,000 (GangConstants.GangKarmaRequirement), which the faction
+  // at -9 does not come close to — a ~12h Homicide loop that act.js runs and
+  // that is the critical path of this node. Yielding only until the faction is
+  // joined would hand the slot back to faction work the moment Slum Snakes
+  // admits us and starve the grind that actually creates the gang. So the test
+  // is simply: is there a gang yet?
+  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang()
+  // WHO HOLDS THE WORK SLOT THIS PASS. null means nobody here does, and act.js
+  // is free to use it. Declared here rather than inside the branch so that
+  // every path out of this file publishes a definite answer — an absent field
+  // would read as "no claim" to act.js, which is the permissive direction and
+  // must therefore be deliberate rather than accidental.
+  let slotOwner = null
   if (canJoin && canUseGang(info) && !ns.gang.inGang() && !player.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const pick = (schedule?.joinForecasts ?? [])
       .filter((f) => GANG_FACTIONS.includes(f.name) && typeof f.hours === 'number' && isFinite(f.hours))
@@ -2327,15 +2362,21 @@ async function act(ns, canJoin, info, note) {
         `plan: ${schedule.segments.map((g) => `${g.faction}->${Math.round(g.untilRep).toLocaleString()}rep(${g.hours.toFixed(1)}h)`).join(' ')}`,
       )
     }
-    if (canWork && !flags.dry && crimeAlt?.wins) {
+    if (gangBootstrapPending) {
+      slotOwner = null
+      did.push('work slot: YIELDED to act.js for the gang bootstrap (gym/crime/join, then the karma grind) — no gang exists yet')
+    } else if (canWork && !flags.dry && crimeAlt?.wins) {
       workedFaction = null
       if (work?.type === 'CRIME' && String(work.crimeType ?? '') === crimeAlt.crime) {
+        slotOwner = 'crime'
         did.push(`crime loop (${crimeAlt.crime}) holds the work slot: ${crimeAlt.why}`)
       } else if (order('crime', [crimeAlt.crime], crimeAlt.why)) {
+        slotOwner = 'crime'
         did.push(`committing ${crimeAlt.crime} for money (${Math.round(crimeAlt.perHour / 3600)}/s): ${crimeAlt.why}`)
       } else todo.push(`commitCrime(${crimeAlt.crime}) did not start`)
     } else if (canWork && !flags.dry) {
       if (order('work', [target, 'hacking'], crimeAlt ? crimeAlt.why : "schedule's current faction")) {
+        slotOwner = 'faction'
         did.push(`ordered work for ${target}, focused${crimeAlt ? ` (${crimeAlt.why})` : ''}`)
         workedFaction = target
       } else todo.push(`Could not start faction work for ${target} — start it manually.`)
@@ -3219,7 +3260,7 @@ async function act(ns, canJoin, info, note) {
   }
 
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: crimeAlt ?? null, ordered: orders.length, gangFaction }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending }, ordered: orders.length, gangFaction }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 

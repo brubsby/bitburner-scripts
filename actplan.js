@@ -87,10 +87,32 @@ export function decide(s = {}) {
   const p = s.player
   if (!p || !Array.isArray(s.factions) || !num(s.now)) return { kind: 'idle', why: 'state unreadable' }
 
-  // 0. The planner owns the slot when it is acting.
+  // 0. The planner owns the slot only when it says it TOOK it.
+  //
+  // This used to defer on `progress.at` alone — "a progress.txt newer than 15
+  // minutes means the planner is acting". But progress.js publishes on every
+  // pass whether or not it touched the work slot, so `at` is a HEARTBEAT and
+  // the condition was true forever: act.js stood down permanently whenever the
+  // planner was alive, which is whenever anything is working.
+  //
+  // Live in BitNode 4 that froze the gang bootstrap mid-sequence. act.js
+  // started gym strength for the Slum Snakes gate (all four combat stats at
+  // 30) and never got the slot back to advance to the next stat: strength
+  // reached 137 against a target of 30 while defense, dexterity and agility
+  // stayed at 1, and an invitation the planner itself priced at 1.3 minutes
+  // away went unclaimed for the best part of an hour. The component that knew
+  // the right next move (`combatShort[0]` below would have picked defense the
+  // moment strength passed 30) was the one that could never run.
+  //
+  // progress.js now publishes `slot.owner` — 'crime', 'faction', or null when
+  // it has yielded. An ABSENT owner field reads as no claim, which is the
+  // permissive direction; that is deliberate, because the failure it replaces
+  // was act.js doing nothing at all, and a planner too old to trust should not
+  // be able to hold the slot by inertia.
   const at = Date.parse(s.progress?.at ?? '')
-  if (num(at) && s.now - at < PROGRESS_FRESH_MS && s.progress?.health !== 'error') {
-    return { kind: 'idle', why: `progress.js acted ${Math.round((s.now - at) / 60000)} min ago — it owns the work slot` }
+  const owner = s.progress?.slot?.owner ?? null
+  if (num(at) && s.now - at < PROGRESS_FRESH_MS && s.progress?.health !== 'error' && owner) {
+    return { kind: 'idle', why: `progress.js holds the work slot for ${owner} work (${Math.round((s.now - at) / 60000)} min ago)` }
   }
 
   // 1b. In a gang faction already, but the gang's own karma gate is unmet —

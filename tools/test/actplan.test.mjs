@@ -62,13 +62,32 @@ export async function run() {
 
   const c2 = new Check("AC2", "decision order: hand-over, then the gang bootstrap (crime -> gym/travel -> join), then work, then invitations");
   {
+    // THE HAND-OVER IS A CLAIM, NOT A HEARTBEAT.
+    //
+    // This block used to assert that ANY progress.txt under 15 minutes old
+    // made act.js idle. progress.js publishes on every pass, so that condition
+    // is permanently true and act.js was permanently idle — which froze the
+    // gang bootstrap mid-sequence in BitNode 4: gym strength ran to 137
+    // against a target of 30 while defense/dexterity/agility stayed at 1,
+    // because the line that would have moved to defense could never run.
+    // The test asserted the bug, so it could never have caught it.
     c2.examined(1);
-    const fresh = decide(base({ progress: { at: new Date(NOW - 5 * 60e3).toISOString(), health: "ok" } }));
-    if (fresh.kind !== "idle" || !/progress\.js/.test(fresh.why)) c2.fail("a fresh acting planner must make act.js idle");
-    const denied = decide(base({ progress: { at: new Date(NOW - 5 * 60e3).toISOString(), health: "error" } }));
+    const claim = (owner, ageMin = 5, health = "ok") => ({ at: new Date(NOW - ageMin * 60e3).toISOString(), health, slot: { owner } });
+    const held = decide(base({ progress: claim("faction") }));
+    if (held.kind !== "idle" || !/holds the work slot/.test(held.why)) c2.fail("a planner that CLAIMED the slot must make act.js idle", JSON.stringify(held));
+    const heldCrime = decide(base({ progress: claim("crime") }));
+    if (heldCrime.kind !== "idle") c2.fail("a crime claim also holds the slot");
+    // The yield: the planner ran, and said the slot is not its.
+    const yielded = decide(base({ progress: claim(null) }));
+    if (yielded.kind === "idle") c2.fail("a planner that YIELDED the slot must not keep act.js idle — this is the frozen-bootstrap case", JSON.stringify(yielded));
+    // An absent slot field is an OLD planner build: treat as no claim, because
+    // deferring by inertia is the failure being removed.
+    const legacy = decide(base({ progress: { at: new Date(NOW - 5 * 60e3).toISOString(), health: "ok" } }));
+    if (legacy.kind === "idle") c2.fail("a progress.txt with no slot field asserts no claim — act.js must proceed");
+    const denied = decide(base({ progress: claim("faction", 5, "error") }));
     if (denied.kind === "idle") c2.fail("a planner whose RAM raise was denied is not acting — act.js must proceed");
-    const stale = decide(base({ progress: { at: new Date(NOW - 60 * 60e3).toISOString(), health: "ok" } }));
-    if (stale.kind === "idle") c2.fail("an hour-old progress.txt is not an acting planner");
+    const stale = decide(base({ progress: claim("faction", 60) }));
+    if (stale.kind === "idle") c2.fail("an hour-old progress.txt is not an acting planner, claim or no claim");
 
     c2.examined(1);
     const d0 = decide(base());
@@ -119,10 +138,61 @@ export async function run() {
     const h2 = decide(base({ gangNode: false, tried: Object.fromEntries(HACK_LINE.map((f) => [f, NOW - RETRY_MS / 2])) }));
     if (h2.kind !== "idle") c2.fail("every hack-line join tried recently: idle");
     if (decide({}).kind !== "idle") c2.fail("unreadable state: idle with a reason");
-    for (const d of [fresh, d0, t, g, j, w, h, h2]) if (!d.why) c2.fail(`${d.kind} carries no reason`);
+    for (const d of [held, yielded, d0, t, g, j, w, h, h2]) if (!d.why) c2.fail(`${d.kind} carries no reason`);
     c2.note(`fresh BN2 life: ${d0.kind} ${d0.args} — ${d0.why}`);
   }
   checks.push(c2);
+
+  // ---------------------------------------------------------------------
+  const c4 = new Check("AC4", "the combat sequence ADVANCES — a stat at its target hands over to the next, and a yielded planner cannot freeze it");
+  {
+    // The live BitNode 4 shape that motivated this: strength far past the
+    // gate, the other three untouched. The only correct answer is defense.
+    const overshot = player({
+      karma: -20,
+      money: 2e6,
+      city: "Sector-12",
+      skills: { ...player().skills, strength: 137, defense: 1, dexterity: 1, agility: 1 },
+    });
+    c4.examined(1);
+    const d = decide(base({ player: overshot, progress: { at: new Date(NOW - 60e3).toISOString(), health: "ok", slot: { owner: null } } }));
+    if (d.kind !== "gym" || d.args[1] !== "def") {
+      c4.fail(`strength 137/30 with defense at 1 must train DEFENSE next, got ${JSON.stringify(d)}`);
+    }
+    // ...and it must not matter that the planner ran a second ago, so long as
+    // it yielded. This is the exact freeze: an owner of 'faction' here would
+    // return idle and strength would keep climbing.
+    c4.examined(1);
+    const frozen = decide(base({ player: overshot, progress: { at: new Date(NOW - 1e3).toISOString(), health: "ok", slot: { owner: null } } }));
+    if (frozen.kind === "idle") c4.fail("a yielded planner must never freeze the combat sequence", JSON.stringify(frozen));
+
+    // Walk the whole gate: each stat completing hands over to the next, and
+    // the last one completing reaches the join. A sequence that cannot finish
+    // is the bug; asserting only the first step would not have caught it.
+    c4.examined(1);
+    const order = [];
+    const skills = { ...player().skills, strength: 1, defense: 1, dexterity: 1, agility: 1 };
+    for (let step = 0; step < 12; step++) {
+      const st = { ...player({ karma: -20, money: 2e6, city: "Sector-12" }), skills: { ...skills } };
+      const r = decide(base({ player: st, progress: { at: new Date(NOW - 1e3).toISOString(), health: "ok", slot: { owner: null } } }));
+      if (r.kind === "join") {
+        order.push("join");
+        break;
+      }
+      if (r.kind !== "gym") {
+        c4.fail(`step ${step}: expected gym or join, got ${r.kind} (${r.why})`);
+        break;
+      }
+      order.push(r.args[1]);
+      // Training completes that stat exactly to the gate.
+      const full = { str: "strength", def: "defense", dex: "dexterity", agi: "agility" }[r.args[1]];
+      skills[full] = 30;
+    }
+    const expected = ["str", "def", "dex", "agi", "join"].join(",");
+    if (order.join(",") !== expected) c4.fail(`the gate must be walked ${expected}, got ${order.join(",")}`);
+    c4.note(`combat gate walked: ${order.join(" -> ")}`);
+  }
+  checks.push(c4);
 
   // ---------------------------------------------------------------------
   const c3 = new Check("AC3", "the gang's karma gate is the GANG's, not the faction's: outside BitNode 2 the crime loop continues past the join to -54,000");
