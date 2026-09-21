@@ -195,6 +195,54 @@ export async function run() {
   checks.push(c4);
 
   // ---------------------------------------------------------------------
+  const c5 = new Check("AC5", "an install mid-bootstrap drops the faction but NOT the karma — the join branch must still serve the GANG's gate");
+  {
+    // THE LIVE 2026-09-21 STATE. An install landed with karma at -50,311 of
+    // the gang's -54,000. Karma survives an install; faction membership does
+    // not. So act.js woke outside Slum Snakes, with karma far past the
+    // FACTION's -9 and 3,689 short of the GANG's, and money/combat reset.
+    //
+    // The join branch read karma as satisfied, optimised for the $1m join
+    // gate, and chose Shoplift — 0.0173 karma/s against Homicide's 0.2565.
+    // Fifteen times slower on the only axis still gating the gang, and
+    // Homicide pays the combat exp the join needs as well.
+    const postInstall = player({
+      karma: -50311,
+      money: 1262,
+      city: "Sector-12",
+      skills: { ...player().skills, hacking: 1, strength: 1, defense: 1, dexterity: 2, agility: 2 },
+    });
+    const st = base({ player: postInstall, factions: [], gangKarma: -54000, progress: { at: new Date(NOW - 1e3).toISOString(), health: "ok", slot: { owner: null } } });
+
+    c5.examined(1);
+    const d = decide(st);
+    if (d.kind !== "crime") c5.fail(`3,689 karma short of the gang gate must run a crime, got ${d.kind} (${d.why})`);
+    if (d.args?.[0] === "Shoplift") c5.fail("Shoplift is the best MONEY crime and near-zero karma — the live regression, chosen because the gang's gate was invisible");
+    const { bestCrimeFor } = await import("../../bodyplan.js");
+    const byKarma = bestCrimeFor("karma", postInstall, NODE, { focus: 1 })?.crime;
+    if (d.args?.[0] !== byKarma) c5.fail(`with the gang's gate open the crime must serve KARMA (${byKarma}), got ${d.args?.[0]}`);
+    if (!/GANG/.test(d.why ?? "")) c5.fail("the reason must name WHICH gate is driving the choice", d.why);
+
+    // The faction's own gate still governs once the gang's is met: with karma
+    // past -54,000 and only money short, the best MONEY crime is correct
+    // again. Without this the fix would just pin Homicide forever.
+    c5.examined(1);
+    const karmaDone = { ...postInstall, karma: -60000 };
+    const m = decide(base({ player: karmaDone, factions: [], gangKarma: -54000, progress: { at: new Date(NOW - 1e3).toISOString(), health: "ok", slot: { owner: null } } }));
+    const byMoney = bestCrimeFor("money", karmaDone, NODE, { focus: 1 })?.crime;
+    if (m.kind !== "crime" || m.args?.[0] !== byMoney) c5.fail(`gang gate met, money short: the best MONEY crime (${byMoney}), got ${m.kind} ${m.args?.[0]}`);
+
+    // In BitNode 2 the gang gate IS the faction gate, so nothing changes.
+    c5.examined(1);
+    const bn2 = decide(base({ player: { ...postInstall, karma: -20 }, factions: [], gangKarma: -9, progress: { at: new Date(NOW - 1e3).toISOString(), health: "ok", slot: { owner: null } } }));
+    if (bn2.kind !== "crime" || bn2.args?.[0] !== bestCrimeFor("money", { ...postInstall, karma: -20 }, NODE, { focus: 1 })?.crime) {
+      c5.fail(`BitNode 2: karma -20 clears the -9 gang gate, so money governs, got ${bn2.args?.[0]}`);
+    }
+    c5.note(`post-install karma -50,311/-54,000 -> ${d.args?.[0]}; gate met -> ${m.args?.[0]}`);
+  }
+  checks.push(c5);
+
+  // ---------------------------------------------------------------------
   const c3 = new Check("AC3", "the gang's karma gate is the GANG's, not the faction's: outside BitNode 2 the crime loop continues past the join to -54,000");
   {
     const src = fs.readFileSync(path.join(GAME, "src/Gang/data/Constants.ts"), "utf8");

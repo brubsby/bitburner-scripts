@@ -136,24 +136,45 @@ export function decide(s = {}) {
     const combatShort = COMBAT.filter((st) => !(num(p.skills?.[st]) && p.skills[st] >= SLUM_SNAKES.combat))
     const karmaShort = !(num(p.karma) && p.karma <= SLUM_SNAKES.karma)
     const moneyShort = !(num(p.money) && p.money >= SLUM_SNAKES.money)
+    // THE GANG'S KARMA GATE SURVIVES THE FACTION'S. Joining Slum Snakes wants
+    // karma -9; the GANG wants -54,000 outside BitNode 2
+    // (GangConstants.GangKarmaRequirement), and karma survives an install
+    // while faction membership does NOT. So the state this branch actually
+    // meets after a mid-bootstrap install is: karma far past the faction gate,
+    // out of the faction, money and combat reset.
+    //
+    // Block 1b already knows this, but 1b only runs once we are IN the
+    // faction — so the same gate was missing from precisely the branch an
+    // install drops us into. Live on 2026-09-21: karma -50,311 of -54,000,
+    // 3,689 short, and this branch read karma as DONE (it is past -9), picked
+    // the best MONEY crime for the $1m join gate, and settled on Shoplift at
+    // 0.0173 karma/s against Homicide's 0.2565 — a 15x worse rate on the one
+    // axis still gating the gang, while Homicide pays that karma AND the
+    // combat exp the join needs AND money.
+    const gangKarmaShort = s.gangKarma !== undefined && num(s.gangKarma) && !(num(p.karma) && p.karma <= s.gangKarma)
     if (!combatShort.length && !karmaShort && !moneyShort) {
       const last = s.tried?.[SLUM_SNAKES.name] ?? 0
       if (s.now - last < 60e3) return { kind: 'idle', why: `Slum Snakes requirements met; join tried ${Math.round((s.now - last) / 1000)}s ago, waiting for the invitation` }
       return { kind: 'join', args: [SLUM_SNAKES.name], why: 'Slum Snakes requirements met: combat 30, $1m, karma -9' }
     }
-    if (karmaShort || moneyShort) {
-      // Karma short: the TRAJECTORY to the karma target picks the crime.
-      // Only money short: the best money crime at current stats — at combat
-      // ~35 that is Mug at 2.4x Homicide's dollars, and karma is already paid.
-      const leg = karmaShort ? crimeLeg({ karma: SLUM_SNAKES.karma }, p, s.node, { focus: 1 }) : null
-      const money = karmaShort ? null : bestCrimeFor('money', p, s.node, { focus: 1 })
-      const crime = karmaShort ? (leg?.crime ?? 'Homicide') : (money?.crime ?? 'Mug')
-      if (s.work?.kind === 'crime' && s.work.type === crime) return { kind: 'idle', why: `crime loop (${crime}) already running: karma ${Math.round(p.karma)}/${SLUM_SNAKES.karma}, ${Math.round(p.money)}/${SLUM_SNAKES.money}` }
+    if (karmaShort || moneyShort || gangKarmaShort) {
+      // Karma short: the TRAJECTORY to the karma target picks the crime, and
+      // the target is the FURTHER of the two gates still open — the gang's
+      // when it is, because a crime chosen for the faction's -9 can be
+      // fifteen times slower at the karma that actually creates the gang.
+      // Only money short, with BOTH karma gates met: the best money crime at
+      // current stats — at combat ~35 that is Mug at 2.4x Homicide's dollars.
+      const karmaGoal = gangKarmaShort ? s.gangKarma : SLUM_SNAKES.karma
+      const anyKarmaShort = karmaShort || gangKarmaShort
+      const leg = anyKarmaShort ? crimeLeg({ karma: karmaGoal }, p, s.node, { focus: 1 }) : null
+      const money = anyKarmaShort ? null : bestCrimeFor('money', p, s.node, { focus: 1 })
+      const crime = anyKarmaShort ? (leg?.crime ?? 'Homicide') : (money?.crime ?? 'Mug')
+      if (s.work?.kind === 'crime' && s.work.type === crime) return { kind: 'idle', why: `crime loop (${crime}) already running: karma ${Math.round(p.karma)}/${karmaGoal}, ${Math.round(p.money)}/${SLUM_SNAKES.money}` }
       return {
         kind: 'crime',
         args: [crime],
-        why: karmaShort
-          ? `karma short for Slum Snakes: ${crime} pays karma, combat exp and money together${leg ? ` (~${(leg.hours * 60).toFixed(1)} min to karma ${SLUM_SNAKES.karma})` : ''}`
+        why: anyKarmaShort
+          ? `karma ${Math.round(p.karma)}/${karmaGoal} (${gangKarmaShort ? "the GANG's gate" : "Slum Snakes'"}): ${crime} pays karma, combat exp and money together${leg ? ` (~${leg.hours < 1 ? `${(leg.hours * 60).toFixed(1)} min` : `${leg.hours.toFixed(1)}h`})` : ''}`
           : `money short for Slum Snakes: ${crime} is the best money crime at these stats${money ? ` (${Math.round(money.rates.money)}/s)` : ''}`,
       }
     }
