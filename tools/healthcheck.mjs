@@ -176,8 +176,37 @@ if (!prev) {
       note(`karma ${Math.round(prev.karma)} -> ${Math.round(now.karma)}`);
     }
   } else {
-    if (now.gangRespect !== null && prev.gangRespect !== null && !(now.gangRespect > prev.gangRespect)) {
-      fail("gang respect is not growing", `${prev.gangRespect} -> ${now.gangRespect}`);
+    // A FLAT RESPECT IS NOT AUTOMATICALLY A STALL. gangplan's policy search
+    // deliberately TRAINS first: greedy assignment never trained, and training
+    // first reached the first unlock 8x sooner (28.5h -> 3.4h) because respect
+    // per second is a function of stats that barely exist at recruitment. A
+    // gang whose every member is on a training task earns exactly zero respect
+    // and is behaving correctly.
+    //
+    // This check said otherwise on its first encounter with a fresh gang
+    // (respect 1 -> 1, three members on Train Combat, an ascension round at
+    // x1.647 already banked) — a false positive, and a false positive nobody
+    // can fix is how a check gets ignored and then deleted.
+    //
+    // So: training is a legitimate non-growing state, but training FOREVER is
+    // not. The state file carries when the current training stretch began and
+    // this fails once it outlasts any plausible one.
+    const TRAIN_BUDGET_H = 6;
+    const assignments = Object.values(tel["gang.txt"]?.assignments ?? {});
+    const training = assignments.length > 0 && assignments.every((t) => /^Train /.test(String(t)));
+    const grew = now.gangRespect !== null && prev.gangRespect !== null && now.gangRespect > prev.gangRespect;
+    if (grew) {
+      now.trainingSince = null;
+    } else if (training) {
+      now.trainingSince = prev.trainingSince ?? prev.at;
+      const h = (Date.parse(now.at) - Date.parse(now.trainingSince)) / 3600000;
+      if (h > TRAIN_BUDGET_H) {
+        fail(`the gang has been training ${h.toFixed(1)}h with no respect earned`, `budget ${TRAIN_BUDGET_H}h — the policy trains before earning, but not indefinitely; check factionplan.txt gang.unlocks and gang.txt policy.k`);
+      } else {
+        note(`gang training ${h.toFixed(1)}h/${TRAIN_BUDGET_H}h (respect stays flat by design: ${assignments.length} member(s) on training tasks)`);
+      }
+    } else if (now.gangRespect !== null && prev.gangRespect !== null) {
+      fail("gang respect is not growing and nobody is training", `${prev.gangRespect} -> ${now.gangRespect}, assignments ${JSON.stringify(tel["gang.txt"]?.assignments ?? null)}`);
     }
     note(`gang ${now.gangFaction}: respect ${Math.round(now.gangRespect ?? 0).toLocaleString()}, territory ${((now.gangTerritory ?? 0) * 100).toFixed(1)}%`);
   }
