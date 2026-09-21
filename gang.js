@@ -324,7 +324,30 @@ export async function main(ns) {
       const rolloutFresh = policy.at && Date.now() - policy.at < 3 * SEARCH_EVERY_MS
       for (const m of rolloutFresh ? members.filter((m) => policy.ascendNow[m.name]) : []) {
         const r = ns.gang.getAscensionResult(m.name)
-        const v = shouldAscend(m, r, gang, { members: members.length, minGain: 1 })
+        // THE FLOOR IS THE ONE THE SEARCH CHOSE, not 1.
+        //
+        // `minGain: 1` was a deliberate loosening — the rollout above has
+        // already decided WHO and WHEN, so this was meant to be a sanity
+        // guard rather than a second policy. But `gain >= 1` admits an
+        // ascension that multiplies every stat by exactly 1.000, which cannot
+        // pay by construction: it resets the member's earned respect AND
+        // destroys every piece of equipment they hold.
+        //
+        // Live on 2026-09-21 that ran as a loop. A member ascended has almost
+        // no exp since its reset, so its NEXT ascension result is ~1.000, the
+        // rollout asked again, and this guard said yes again: kit, lou and dov
+        // each ascended twice inside one minute at x1.000, gang respect fell
+        // 25.3M -> 20.4M in an hour, and 16 upgrades per member were rebought
+        // each time. `dov` ended on 46,754 earned respect against 3-4M for its
+        // peers.
+        //
+        // policy.x is what the search computed for exactly this question
+        // (1.708 live). Using it here only ever REFUSES — the rollout still
+        // chooses whom to put forward — so the rollout keeps its judgement
+        // about timing and loses only the ability to approve an ascension its
+        // own search would have rejected.
+        const floor = typeof policy.x === 'number' && isFinite(policy.x) && policy.x > 1 ? policy.x : 1.25
+        const v = shouldAscend(m, r, gang, { members: members.length, minGain: floor })
         if (v.ascend && ns.gang.ascendMember(m.name)) ascended.push({ at: new Date().toISOString(), name: m.name, why: v.why })
       }
       ascended = ascended.slice(-12)

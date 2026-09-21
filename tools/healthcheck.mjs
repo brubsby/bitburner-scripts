@@ -141,6 +141,7 @@ const now = {
   lastAugReset: state.lastAugReset ?? null,
   gangFaction: tel["gang.txt"]?.faction ?? null,
   gangRespect: tel["gang.txt"]?.respect ?? null,
+  gangMembers: tel["gang.txt"]?.members ?? null,
   gangTerritory: tel["gang.txt"]?.territory ?? null,
   goBonusPct: tel["go.txt"]?.factionRepBonusPct ?? null,
   goRemote: tel["go.txt"]?.remoteMoves ?? null,
@@ -149,10 +150,19 @@ const now = {
 
 if (state.__error) fail("daemon /state unreadable", state.__error);
 
+// Telemetry advances on its own cadence — the daemon mirrors the save every
+// 30s, gang.js and go.js publish per tick — so two samples taken close
+// together read the SAME numbers and every movement check fires at once.
+// That is a false positive manufactured by the checker, and it showed up the
+// first time this file was run twice in a minute. Movement needs a real
+// interval to be movement.
+const MIN_INTERVAL_MIN = 5;
+const dtMin = prev ? (Date.parse(now.at) - Date.parse(prev.at)) / 60000 : null;
 if (!prev) {
   note("no previous sample — movement checks skipped THIS RUN ONLY (they are the point of this file)");
+} else if (dtMin < MIN_INTERVAL_MIN) {
+  note(`previous sample is only ${dtMin.toFixed(1)} min old (need ${MIN_INTERVAL_MIN}) — movement checks skipped, and the sample is NOT overwritten so the next run still has a real baseline`);
 } else {
-  const dtMin = (Date.parse(now.at) - Date.parse(prev.at)) / 60000;
   note(`compared against a sample ${dtMin.toFixed(0)} min old`);
   const moved = (a, b) => a !== null && b !== null && a !== b;
 
@@ -206,7 +216,22 @@ if (!prev) {
         note(`gang training ${h.toFixed(1)}h/${TRAIN_BUDGET_H}h (respect stays flat by design: ${assignments.length} member(s) on training tasks)`);
       }
     } else if (now.gangRespect !== null && prev.gangRespect !== null) {
-      fail("gang respect is not growing and nobody is training", `${prev.gangRespect} -> ${now.gangRespect}, assignments ${JSON.stringify(tel["gang.txt"]?.assignments ?? null)}`);
+      // RESPECT IS NOT MONOTONIC. Ascension subtracts the member's earned
+      // respect from the gang total (Gang.ts:391), so a fall is the expected
+      // reading right after one — and the faction REPUTATION it feeds is
+      // computed from GROSS gains, which an ascension never reduces. What is
+      // NOT expected is a fall with no ascension behind it.
+      const asc = tel["gang.txt"]?.ascended ?? [];
+      const since = asc.filter((a) => Date.parse(a.at ?? "") > Date.parse(prev.at));
+      if (since.length) {
+        note(`gang respect ${Math.round(prev.gangRespect).toLocaleString()} -> ${Math.round(now.gangRespect).toLocaleString()} across ${since.length} ascension(s) — ascension pays respect for stat multipliers`);
+        // ...but an ascension that buys nothing is pure loss, and the live
+        // guard let a x1.000 loop run for an hour before it was caught.
+        const noop = since.filter((a) => /gain x1\.000/.test(String(a.why ?? "")));
+        if (noop.length) fail(`${noop.length} ascension(s) at gain x1.000`, `an ascension that multiplies stats by 1 cannot pay: it resets earned respect and destroys the member's equipment. Members: ${[...new Set(noop.map((a) => a.name))].join(", ")}`);
+      } else {
+        fail("gang respect is not growing, nobody is training, and no ascension explains it", `${Math.round(prev.gangRespect)} -> ${Math.round(now.gangRespect)}, assignments ${JSON.stringify(tel["gang.txt"]?.assignments ?? null)}`);
+      }
     }
     note(`gang ${now.gangFaction}: respect ${Math.round(now.gangRespect ?? 0).toLocaleString()}, territory ${((now.gangTerritory ?? 0) * 100).toFixed(1)}%`);
   }
@@ -228,7 +253,9 @@ if (act && act.decision?.kind === "idle" && !act.decision?.why) fail("act.js is 
 if (act?.decision?.why) note(`act.js: ${String(act.decision.why).slice(0, 150)}`);
 
 try {
-  fs.writeFileSync(STATE, JSON.stringify(now, null, 1));
+  // Do NOT overwrite a baseline the run was too close to use: doing so would
+  // reset the clock on every quick re-run and movement would never be checked.
+  if (!prev || dtMin >= MIN_INTERVAL_MIN) fs.writeFileSync(STATE, JSON.stringify(now, null, 1));
 } catch (e) {
   fail("could not write the healthcheck sample", `${e.message} — the next run has nothing to compare against`);
 }
