@@ -494,3 +494,103 @@ export function expPerSecWithFleet(base, fleetHacking) {
   const f = num(fleetHacking) && fleetHacking > 0 ? fleetHacking : 0
   return b + f
 }
+
+/** PersonObjects/formulas/reputation.ts — MaxSkillLevel, and the two work
+ *  types a sleeve can be given for a faction. `getDarknetCharismaBonus` is
+ *  ZERO without Source-File 15 level 3 and is omitted here for that reason;
+ *  [SP9] fails if the game stops gating it that way. */
+export const MAX_SKILL_LEVEL = 975
+
+/**
+ * REPUTATION PER SECOND one sleeve earns for a faction.
+ *
+ * SleeveFactionWork.getReputationRate (SleeveFactionWork.ts:36) is
+ * `calculateFactionRep(sleeve, type, faction.favor) * sleeve.shockBonus()`,
+ * and process() adds `rep * cycles` straight onto faction.playerReputation.
+ *
+ * THE DIFFERENCE FROM EVERY OTHER SLEEVE OUTPUT: this is NOT scaled by sync.
+ * Karma is (SleeveCrimeWork.ts:47) and the exp transfer is
+ * (applySleeveGains), but faction reputation is not — a sleeve at sync 1
+ * earns a faction the same reputation as one at sync 100. So an unsynchronised
+ * fleet, which is nearly worthless for karma, is at FULL value here, and the
+ * synchronise break-even does not apply to a reputation objective at all.
+ *
+ * Shock does scale it, and shock decays passively, so it improves on its own.
+ *
+ * `o.favor` is the faction's CURRENT favor; the returned `base` divides it back
+ * out, because that is the shape exitplan's repPerSec expects (a base rate, the
+ * favour multiplier applied separately).
+ */
+export function sleeveFactionRepPerSec(sleeve, o = {}) {
+  if (personProblem(sleeve)) return null
+  const frep = sleeve?.mults?.faction_rep
+  if (!num(frep) || frep < 0) return null
+  const nodeRepMult = num(o.nodeWorkRepMult) && o.nodeWorkRepMult >= 0 ? o.nodeWorkRepMult : null
+  if (nodeRepMult === null) return null
+  // NOT `share`: that is a priced ns identifier (2.40GB) and the RAM checker
+  // matches bare names anywhere in the import graph, so naming this local
+  // `share` pushed sleeve.js from 41.75 to 44.15GB — past the tier boot.js
+  // places it at. The same trap cost go.js 2.40GB earlier in this session.
+  const shareBonus = num(o.sharePower) && o.sharePower > 0 ? o.sharePower : 1
+  const k = sleeve.skills
+  const intB = intelligenceBonus(k.intelligence, 1)
+  const shockBonus = (100 - (num(sleeve.shock) ? sleeve.shock : 0)) / 100
+  // reputation.ts:16-23. The share bonus multiplies the WHOLE expression here.
+  const hacking = ((k.hacking + k.intelligence / 3) / MAX_SKILL_LEVEL) * frep * intB * nodeRepMult * shareBonus
+  // reputation.ts:39-52. Here it multiplies only the (hacking + int) term, and
+  // the divisor is 5.5 rather than 1 — transposing those two is the easy error,
+  // which is why [SP9] checks both against the game's own functions.
+  const field =
+    ((0.9 * (k.strength + k.defense + k.dexterity + k.agility + k.charisma + (k.hacking + k.intelligence) * shareBonus)) /
+      MAX_SKILL_LEVEL /
+      5.5) *
+    frep *
+    nodeRepMult *
+    intB
+  // Per CYCLE above; 5 cycles per second.
+  const best = hacking >= field ? { type: 'hacking', base: hacking } : { type: 'field', base: field }
+  const favorMult = num(o.favor) && o.favor > 0 ? 1 + o.favor / 100 : 1
+  return {
+    workType: best.type,
+    base: best.base * CYCLES_PER_SEC * shockBonus,
+    perSec: best.base * CYCLES_PER_SEC * shockBonus * favorMult,
+    why: `${best.type} work, shock ${(num(sleeve.shock) ? sleeve.shock : 0).toFixed(0)} — reputation is NOT sync-scaled, so this is the full rate at any sync`,
+  }
+}
+
+/**
+ * WHAT THE FLEET ADDS TO ONE FACTION'S REPUTATION, per second.
+ *
+ * ONE SLEEVE, not the sum. `setToFactionWork` THROWS — it does not return
+ * false — when another sleeve already works that faction
+ * (NetscriptFunctions/Sleeve.ts:152-164), so a fleet of eight cannot stack on
+ * Daedalus. Summing them would overstate the exit reputation leg by the whole
+ * fleet size, on the single longest leg in a BitNode, which is the most
+ * expensive place in this repo to be optimistic.
+ *
+ * The player may work the same faction alongside its one sleeve; that
+ * constraint is sleeve-versus-sleeve only.
+ */
+export function fleetFactionRepPerSec(sleeves, o = {}) {
+  if (!Array.isArray(sleeves)) return null
+  if (!sleeves.length) return { base: 0, perSec: 0, sleeve: null, why: 'no sleeves — a known zero' }
+  let best = null
+  for (const sl of sleeves) {
+    const r = sleeveFactionRepPerSec(sl, o)
+    if (!r) return null
+    if (!best || r.base > best.base) best = { ...r, sleeve: sl.index ?? null }
+  }
+  return { ...best, why: `best single sleeve (${best.why}); only ONE sleeve may work a faction, so this is not a sum` }
+}
+
+/**
+ * The exit reputation rate with the fleet in it. Additive, and null-preserving
+ * for the same reason expPerSecWithFleet is: a reputation leg priced on a
+ * sleeve alone is a different trajectory, not a cautious one.
+ */
+export function repPerSecWithFleet(base, fleetBase) {
+  const b = num(base) && base > 0 ? base : null
+  if (b === null) return num(base) ? base : null
+  const f = num(fleetBase) && fleetBase > 0 ? fleetBase : 0
+  return b + f
+}

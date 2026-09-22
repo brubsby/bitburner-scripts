@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangGainHours } from 'gangworth.js'
-import { expPerSecWithFleet } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet } from 'sleeveplan.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
  *  nsGetMember is strict — "strength" throws, "str" works. */
@@ -1112,6 +1112,7 @@ function readFleet(ns, info) {
     return {
       assist: { karmaPerSec: f.karmaPerSec, killsPerSec: fin(f.killsPerSec) ? f.killsPerSec : 0 },
       expToPlayerHacking: fin(f.expToPlayerHacking) ? f.expToPlayerHacking : null,
+      factionRepPerSec: fin(f.factionRepPerSec) ? f.factionRepPerSec : null,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
     }
 }
@@ -1166,7 +1167,7 @@ function gangWorthNow(ns, info, player, gainHours = null) {
  * for THIS BitNode is carried forward with the stamp saying when it was
  * priced. A carried horizon is visible; a null one silently changes behaviour.
  */
-function writeSleevePlan(ns, info, verdict, horizonHours) {
+function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null) {
   let carried = null
   if (horizonHours === null) {
     try {
@@ -1186,6 +1187,11 @@ function writeSleevePlan(ns, info, verdict, horizonHours) {
       bitNode: info?.currentNode,
       lastAugReset: info?.lastAugReset,
       objective: verdict?.worth === true ? 'karma' : 'money',
+      // sleeve.js prices faction reputation and needs the share bonus for it.
+      // It travels here because ns.getSharePower is 2.6GB and this file already
+      // pays for it; adding it there would push sleeve.js past the RAM tier
+      // boot.js places it at.
+      sharePower: typeof sharePower === 'number' && isFinite(sharePower) && sharePower > 0 ? sharePower : null,
       horizonHours: hours,
       horizonAt: horizonHours !== null ? new Date().toISOString() : carried?.at ?? null,
       horizonCarried: horizonHours === null && hours !== null,
@@ -2713,7 +2719,7 @@ async function act(ns, canJoin, info, note) {
     // (exitPolicy runs below), so writeSleevePlan carries this node's last
     // priced one forward rather than publishing a null that would re-task the
     // fleet off synchronising every time an unplanned pass ran.
-    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null)
+    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null, ns.getSharePower())
     ns.write(
       GATE,
       JSON.stringify(
@@ -2964,7 +2970,11 @@ async function act(ns, canJoin, info, note) {
               // the fleet's few exp/s alone is not a conservative estimate of a
               // climb, it is a different trajectory that happens to be a number.
               expPerSec: expPerSecWithFleet(schedule?.expPerSec, planFleet?.expToPlayerHacking),
-              repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
+              // ONE sleeve's worth, because only one sleeve may work a faction
+              // (setToFactionWork throws otherwise) — fleetFactionRepPerSec
+              // takes a max, not a sum, and summing here would overstate the
+              // longest leg in the node by the whole fleet size.
+              repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, planFleet?.factionRepPerSec),
               exitRep: rp?.factionRep ?? 0,
               exitFavor: rp?.favor ?? 0,
               cycleHours: cyc?.cycleHours,
@@ -3144,7 +3154,7 @@ async function act(ns, canJoin, info, note) {
                 hackingExp: player.exp?.hacking ?? 0,
                 hackingMult: player.mults?.hacking,
                 expPerSec: expPerSecWithFleet(schedule?.expPerSec, readFleet(ns, info)?.expToPlayerHacking),
-                repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
+                repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, readFleet(ns, info)?.factionRepPerSec),
                 cycleHours: cyc?.cycleHours,
                 multGainPerCycle: cyc?.multGainPerCycle,
                 exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
@@ -3234,6 +3244,7 @@ async function act(ns, canJoin, info, note) {
         // cannot change a decision the raw value would have got right.
         return Math.min(h, MAX_PLANNING_HORIZON_H)
       })(),
+      ns.getSharePower(),
     )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards

@@ -102,7 +102,7 @@ import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { fleetExpToPlayer, fleetRates, sleeveAssignments, syncBreakevenHours } from 'sleeveplan.js'
+import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours } from 'sleeveplan.js'
 import { CRIMES } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
@@ -531,6 +531,22 @@ async function act(ns, note) {
 		// and only one of them can be planned around.
 		const disableSleeveExp = ns.getResetInfo()?.bitNodeOptions?.disableSleeveExpAndAugmentation === true
 		const expT = fleetExpToPlayer(sleeves, { disableSleeveExp, onlyStudying: false })
+		// FACTION REPUTATION. Unlike karma and the exp transfer this is NOT
+		// sync-scaled (SleeveFactionWork.ts:36 applies shockBonus alone), so an
+		// unsynchronised fleet is at full value here — and only ONE sleeve may
+		// work a faction, so this is the best single sleeve, never a sum.
+		const repT = fleetFactionRepPerSec(sleeves, {
+			nodeWorkRepMult: node?.FactionWorkRepGain,
+			// FROM THE PLAN, not ns.getSharePower — that call is 2.6GB and would
+			// push this file's ceiling from 41.75 to 44.35, past the tier
+			// boot.js places it at. progress.js already pays for it (it needs
+			// the same quantity for the reputation estimator), so it travels in
+			// /tel/sleeveplan.txt. Absent, the share bonus is 1: the game's own
+			// floor when nothing is sharing, and the conservative value here
+			// since sharing only ever raises it.
+			sharePower: typeof plan?.sharePower === 'number' && isFinite(plan.sharePower) && plan.sharePower > 0 ? plan.sharePower : 1,
+			favor: 0,
+		})
 		note(refusals.length ? 'error' : 'ok', {
 			result: refusals.length ? 'refusals' : 'assigned',
 			sleeves: sleeves.length,
@@ -543,6 +559,9 @@ async function act(ns, note) {
 			// Hacking exp/s the fleet would hand the PLAYER if studying. Null,
 			// never 0, when it cannot be priced.
 			expToPlayerHacking: expT ? expT.hacking : null,
+			// Base rate (favour divided out) — the shape exitplan's repPerSec wants.
+			factionRepPerSec: repT ? repT.base : null,
+			factionWorkType: repT ? repT.workType ?? null : null,
 			disableSleeveExp,
 			objective,
 			horizonHours,

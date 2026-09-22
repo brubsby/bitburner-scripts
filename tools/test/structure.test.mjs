@@ -938,7 +938,7 @@ function c11() {
       // `at` is deliberately NOT here: status.js's reporter stamps it on every
       // publication, so it belongs to that contract, not this one. Listing it
       // would make this check pass on a shared helper rather than on sleeve.js.
-      fields: ["bitNode", "karmaPerSec", "killsPerSec", "contributing", "sleeves", "expToPlayerHacking"],
+      fields: ["bitNode", "karmaPerSec", "killsPerSec", "contributing", "sleeves", "expToPlayerHacking", "factionRepPerSec"],
       scope: /note\(refusals\.length \? 'error' : 'ok', \{[\s\S]*?\n\t\t\}\)/,
     },
     {
@@ -947,7 +947,7 @@ function c11() {
       reader: "sleeve.js",
       publisher: "progress.js",
       what: "/tel/sleeveplan.txt",
-      fields: ["objective", "horizonHours", "bitNode"],
+      fields: ["objective", "horizonHours", "bitNode", "sharePower"],
       scope: /ns\.write\(\s*'\/tel\/sleeveplan\.txt'[\s\S]*?'w',\s*\)/,
     },
   ];

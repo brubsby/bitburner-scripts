@@ -34,6 +34,7 @@ function sleeve(over = {}) {
   }
   mults.crime_success = 1;
   mults.crime_money = 1;
+  mults.faction_rep = 1;
   return { skills, exp, mults, sync: 100, shock: 0, memory: 1, city: "Sector-12", index: 0, ...over };
 }
 
@@ -365,6 +366,97 @@ export async function run() {
     c8.note(`1 sleeve at sync 48 studying Algorithms hands the player ${live.hacking.toFixed(2)} hacking exp/s; measured live 2026-09-22 the player earned 316/s, so +${((live.hacking / 316) * 100).toFixed(1)}% — real, and not dominant at one sleeve`);
   }
   checks.push(c8);
+
+  // ---------------------------------------------------------------------
+  const c9 = new Check("SP9", "sleeve faction reputation matches the game's own formulas, and is NOT sync-scaled");
+  {
+    let g;
+    try {
+      await import("../sim/env.mjs");
+      g = await import("../sim/game.bundle.mjs");
+    } catch (e) {
+      c9.warn(`could not load the game bundle: ${e.message}`, "the formula is then self-consistent but unverified against source");
+    }
+    if (g?.getHackingWorkRepGain && g?.getFactionFieldWorkRepGain) {
+      const saved = g.currentNodeMults.FactionWorkRepGain;
+      for (const [hack, combat, cha, int, frep, bn] of [
+        [1, 1, 1, 0, 1, 1],
+        [400, 200, 50, 0, 1.6, 0.75],
+        [2500, 900, 300, 30, 3.5, 0.5],
+        // FIELD WORK MUST WIN SOMEWHERE, or "always pick hacking" passes —
+        // it did. A sleeve this repo trains for crime has high combat and
+        // hacking 1, which is precisely where field work is worth ~285x
+        // hacking work, so omitting the shape omitted the realistic case.
+        [1, 400, 100, 0, 1, 1],
+      ]) {
+        c9.examined(1);
+        g.currentNodeMults.FactionWorkRepGain = bn;
+        const person = {
+          skills: { hacking: hack, strength: combat, defense: combat, dexterity: combat, agility: combat, charisma: cha, intelligence: int },
+          mults: { faction_rep: frep },
+        };
+        const sl = sleeve({
+          skills: person.skills,
+          mults: { ...sleeve().mults, faction_rep: frep },
+          shock: 0,
+          sync: 1, // deliberately the WORST sync — reputation must not care
+        });
+        const mine = sp.sleeveFactionRepPerSec(sl, { nodeWorkRepMult: bn, sharePower: g.calculateCurrentShareBonus(), favor: 0 });
+        const gameHack = g.getHackingWorkRepGain(person, 0) * 5;
+        const gameField = g.getFactionFieldWorkRepGain(person, 0) * 5;
+        const want = Math.max(gameHack, gameField);
+        const rel = Math.abs(mine.base - want) / want;
+        if (rel > 1e-9) c9.fail(`hacking ${hack}/combat ${combat}: mine ${mine.base}, game ${want} (${(rel * 100).toFixed(4)}%)`);
+        const wantType = gameHack >= gameField ? "hacking" : "field";
+        if (mine.workType !== wantType) c9.fail(`at hacking ${hack}/combat ${combat} the better work type is ${wantType}, picked ${mine.workType}`);
+      }
+      g.currentNodeMults.FactionWorkRepGain = saved;
+      c9.note("both work types equal the game's own functions x5 cycles at four stat shapes (hacking wins three, field the trained-combat one), and the better is picked");
+    }
+
+    c9.examined(4);
+    // NOT SYNC-SCALED — the property that makes an unsynchronised fleet
+    // full-value for reputation while it is nearly worthless for karma.
+    const lo = sp.sleeveFactionRepPerSec(sleeve({ sync: 1 }), { nodeWorkRepMult: 1 });
+    const hi = sp.sleeveFactionRepPerSec(sleeve({ sync: 100 }), { nodeWorkRepMult: 1 });
+    if (Math.abs(lo.base - hi.base) > 1e-12) c9.fail("faction reputation is not scaled by sync — SleeveFactionWork.getReputationRate applies shockBonus only");
+    const swk = game("src/PersonObjects/Sleeve/Work/SleeveFactionWork.ts");
+    if (/syncBonus/.test(swk)) c9.fail("SleeveFactionWork has grown a sync term — this model says it has none");
+    // NOT [^)]* — that stops at the nested this.getFaction() and reported a
+    // missing shockBonus that was plainly there. Match to the end of the line.
+    if (!/calculateFactionRep\(.*\*\s*sleeve\.shockBonus\(\)/.test(swk)) c9.fail("getReputationRate no longer applies shockBonus");
+    // Shock DOES scale it.
+    if (!(sp.sleeveFactionRepPerSec(sleeve({ shock: 50 }), { nodeWorkRepMult: 1 }).base < hi.base)) c9.fail("shock must scale faction reputation");
+    // The darknet charisma term is zero without SF15 lvl 3, which is why it is
+    // absent from the model. If the game stops gating it, the model is wrong.
+    if (!/activeSourceFileLvl\(15\)\s*>=\s*3/.test(game("src/PersonObjects/formulas/reputation.ts"))) {
+      c9.fail("getDarknetCharismaBonus is no longer gated on Source-File 15 level 3 — this model omits it on that basis");
+    }
+
+    c9.examined(3);
+    // ONE SLEEVE PER FACTION, so the fleet figure is a MAX and never a sum.
+    // setToFactionWork throws when another sleeve holds the faction.
+    const nsSleeve = game("src/NetscriptFunctions/Sleeve.ts");
+    if (!/cannot work for faction[\s\S]{0,80}because Sleeve/.test(nsSleeve)) {
+      c9.fail("the one-sleeve-per-faction rule is gone from setToFactionWork — fleetFactionRepPerSec takes a max because of it");
+    }
+    const four = sp.fleetFactionRepPerSec([0, 1, 2, 3].map((i) => sleeve({ index: i })), { nodeWorkRepMult: 1 });
+    const alone = sp.fleetFactionRepPerSec([sleeve()], { nodeWorkRepMult: 1 });
+    if (Math.abs(four.base - alone.base) > 1e-12) {
+      c9.fail(`four sleeves cannot stack on one faction: got ${four.base} vs ${alone.base} for one — a sum would overstate the exit reputation leg by the fleet size`);
+    }
+    if (sp.fleetFactionRepPerSec([sleeve(), { index: 1 }], { nodeWorkRepMult: 1 }) !== null) c9.fail("an unreadable sleeve must refuse the total");
+    if (sp.fleetFactionRepPerSec([], { nodeWorkRepMult: 1 })?.base !== 0) c9.fail("no sleeves is a known zero");
+    // Additive-only, same discipline as the exp transfer.
+    if (sp.repPerSecWithFleet(3.54, 0.5) !== 3.54 + 0.5) c9.fail("a measured rate gains the fleet's");
+    for (const bad of [null, undefined, 0, NaN]) {
+      if (sp.repPerSecWithFleet(bad, 0.5) === 0.5) c9.fail(`with the player's rate ${bad}, the sleeve alone is not the reputation leg`);
+    }
+    if (sp.repPerSecWithFleet(3.54, null) !== 3.54) c9.fail("an unknown fleet leaves the player's rate alone");
+    const live = sp.sleeveFactionRepPerSec(sleeve({ skills: { ...sleeve().skills, hacking: 94 } }), { nodeWorkRepMult: 1 });
+    c9.note(`a sleeve at the player's live hacking 94 would earn ${live.base.toFixed(3)} rep/s base vs the player's measured 3.54 — and at sync 1, since reputation ignores sync`);
+  }
+  checks.push(c9);
 
   return checks;
 }
