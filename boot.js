@@ -174,7 +174,25 @@ const STACK = [
     script: 'homeup.js',
     where: 'anywhere',
     tier: 8,
-    until: 64,
+    // 64 -> 128. `until` says "retire once watchdog.js takes over as a job",
+    // and 64 was watchdog.js's tier — but the handover is not guaranteed at
+    // that size, and when it fails the result is a DEADLOCK rather than a
+    // slowdown: nothing else admitted below the watchdog can raise home RAM,
+    // so home never reaches the size at which the watchdog fits.
+    //
+    // Live on 2026-09-22 in BitNode 10. Leaving BitNode 4 tripled the action
+    // slot — Singularity is free inside BN4 and costs 4x at SF4.2 — from
+    // 8.25GB to 26.25GB. At 64GB home that leaves 2.4GB after the launcher,
+    // the worker slots and the action slot, so watchdog.js (8.9GB) deferred
+    // and the homeup JOB (6.6GB) deferred with it. homeup --watch had already
+    // retired at 64. Home sat at 64GB for four and a half hours holding
+    // $66m against a $47.8m upgrade, with sleeve.js unplaceable the whole
+    // time — in the BitNode entered specifically for sleeves.
+    //
+    // 128 is where the watchdog fits with the action slot at its SF4.2 size.
+    // The resident copy is rank 3, so it is admitted long before the entries
+    // that squeeze the watchdog out.
+    until: 128,
     rank: 3,
     args: ['--watch', '--reserve', 0],
     advances: 'homeRam',
