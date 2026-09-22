@@ -297,6 +297,48 @@ if (!prev) {
   }
 }
 
+/* ------------------------------------------------------ D2. the watchdog */
+//
+// IS ANYTHING RESTARTING ANYTHING? The watchdog is the only supervisor inside
+// the game, and it has no supervisor of its own — so its absence is the one
+// failure that disables recovery from every other failure.
+//
+// It went missing for four and a half hours in BitNode 10 on 2026-09-22 and
+// this file PASSED throughout. It even printed "watchdog.js is no longer
+// running" — but that was a `detail` string copied out of PREVIOUS-LIFE
+// telemetry, prose in the notes rather than a check. Reporting a sentence is
+// not the same as testing the claim it makes.
+//
+// The consequence was a deadlock: homeup.js --watch retires in favour of the
+// watchdog, the watchdog did not fit at 64GB once the action slot tripled on
+// leaving BitNode 4, and nothing else admitted below it can raise home RAM —
+// so home could never reach the size at which the watchdog would fit.
+//
+// A DEFERRED watchdog is not an excused absence, unlike sleeve.js's: boot.js
+// explaining why it could not fit is the DIAGNOSIS of the deadlock, not a
+// reason to accept it. So the reason is attached to the failure, never
+// substituted for it.
+const WATCHDOG_TIER = 64;
+const GRACE_MIN = 10; // a fresh life legitimately has not booted it yet
+const lifeMin = now.lifeMs !== null ? now.lifeMs / 60000 : null;
+if (now.homeRam !== null && now.homeRam >= WATCHDOG_TIER && (lifeMin === null || lifeMin > GRACE_MIN)) {
+  const wdTel = tel["watchdog.txt"];
+  const absent = !wdTel || staleFromLastLife.has("watchdog.txt");
+  if (absent) {
+    const boot = readTel("boot.txt");
+    const why =
+      (boot?.defer ?? []).find((d) => /watchdog\.js/.test(String(d?.script ?? "")))?.why ??
+      (boot?.failed ?? []).find((x) => /^watchdog\.js:/.test(String(x))) ??
+      "boot.js records neither a defer nor a failure for it";
+    fail(
+      `home is ${now.homeRam}GB but watchdog.js has not published this life`,
+      `nothing is reviving dead scripts or running jobs, and the home-RAM ratchet retires in its favour — this is the shape that froze BitNode 10 for 4.5h. boot.js says: ${String(why).slice(0, 220)}`,
+    );
+  } else {
+    note(`watchdog: publishing this life (health '${wdTel.health}')`);
+  }
+}
+
 /* --------------------------------------------------------- E. sleeves */
 //
 // ARE SLEEVES ACTUALLY EARNING? The reason this run came to BitNode 10, and
