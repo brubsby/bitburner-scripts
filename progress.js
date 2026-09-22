@@ -1257,6 +1257,7 @@ async function act(ns, canJoin, info, note) {
   // The derived objective (objective.js) — computed in the offers block once
   // a plan exists to measure elasticities against; every earlier consumer
   // (the city-faction pricing) sees null and prices flat, exactly as before.
+  let gangWorthVerdict = null
   let channelWeights = null
   let channelsUsed = [...RATE_CHANNELS]
   let weightsMeta = { source: 'flat' }
@@ -2953,7 +2954,7 @@ async function act(ns, canJoin, info, note) {
       // the gang's measured income advantage and is null until a gang in THIS
       // node has demonstrated one — so the verdict refuses rather than
       // assuming, which is what leaves the bootstrap alone by default.
-      gangWorth: gangVerdict({
+      gangWorth: (gangWorthVerdict = gangVerdict({
         node: info?.currentNode,
         mults: bitNodeMults(info?.currentNode),
         grindHours: (() => {
@@ -3000,7 +3001,7 @@ async function act(ns, canJoin, info, note) {
             return null
           }
         })(),
-      }),
+      })),
     })
 
     // ------------------------------------------------------------------
@@ -3062,6 +3063,12 @@ async function act(ns, canJoin, info, note) {
           // Symmetric with the empty-queue write below: `planned` is always
           // present, so a reader never has to infer it from the shape.
           planned: true,
+          // THE GANG VERDICT act.js READS. It was computed into the gate's
+          // INPUT object and never published — so the file carried no
+          // gangWorth at all, act.js read undefined, and the karma grind
+          // carried on exactly as before while every test passed. The value
+          // existed; nothing could see it.
+          gangWorth: gangWorthVerdict,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
           ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
