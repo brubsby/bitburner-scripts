@@ -594,3 +594,39 @@ export function repPerSecWithFleet(base, fleetBase) {
   const f = num(fleetBase) && fleetBase > 0 ? fleetBase : 0
   return b + f
 }
+
+/**
+ * THE FLEET YOU ARRIVE IN A NEW BITNODE WITH — which is NOT the fleet you have.
+ *
+ * `prestigeSourceFile` calls sleeve.prestige() on every sleeve
+ * (PlayerObjectGeneralMethods.ts:147): exp 0, every skill back to 1, shock 100,
+ * sync = max(memory, 1), city Sector-12. Only the COUNT survives. BitNode 10
+ * alone then caps shock at 25 and floors sync at 25 (ibid:149-153).
+ *
+ * This matters because nodeplan ranks candidate BitNodes, and pricing the gang
+ * karma grind in a destination node with TODAY's fleet would credit sync 63 and
+ * trained combat to sleeves that will arrive at sync 1 and skill 1. At sync 1 a
+ * sleeve delivers one percent of its karma, and at skill 1 its Homicide chance
+ * is half a percent — so the two errors multiply and the help would be
+ * overstated by around four orders of magnitude.
+ *
+ * `memory` survives, so it is taken from the live fleet rather than assumed.
+ */
+export const BN10_SHOCK_CAP = 25
+export const BN10_SYNC_FLOOR = 25
+
+export function arrivingFleet(sleeves, destNode) {
+  if (!Array.isArray(sleeves)) return null
+  const skills = { hacking: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, intelligence: 0 }
+  const exp = { hacking: 0, strength: 0, defense: 0, dexterity: 0, agility: 0, charisma: 0 }
+  return sleeves.map((sl, i) => {
+    const memory = num(sl?.memory) && sl.memory > 0 ? sl.memory : 1
+    let sync = Math.max(memory, 1)
+    let shock = 100
+    if (destNode === 10) {
+      shock = Math.min(BN10_SHOCK_CAP, shock)
+      sync = Math.max(BN10_SYNC_FLOOR, sync)
+    }
+    return { skills: { ...skills }, exp: { ...exp }, mults: sl?.mults, sync, shock, memory, city: 'Sector-12', index: sl?.index ?? i }
+  })
+}

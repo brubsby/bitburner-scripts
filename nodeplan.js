@@ -35,6 +35,10 @@
 
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { exitHours, bestExitPolicy, levelAt } from 'exitplan.js'
+// BN10_SYNC_FLOOR rather than a bare 25: [C5] flags an unregistered literal,
+// correctly — the game multiplies 25 by CloudServerLimit elsewhere, and a
+// number with no cited source cannot be told apart from that one.
+import { BN10_SYNC_FLOOR } from 'sleeveplan.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -67,6 +71,22 @@ export function exitLevelFor(node) {
  * because homicide pays combat exp, so this is an UPPER bound that the live
  * planner's crimeLeg refines. Returns null with a reason rather than a guess.
  */
+/*
+ * ON `assistPerSec` AND THE LIMITS OF THIS MODULE.
+ *
+ * The sleeve term below is correct for what it models. It does NOT make this
+ * module's node ranking trustworthy on its own: watchdog.js:473 declines to use
+ * `rankNodes` for a SEPARATE and still-unfixed reason — `projectIncome` /
+ * `projectExp` carry the CURRENT multiplier into a fresh node, while
+ * prestigeSourceFile strips every augmentation, so a candidate node is credited
+ * with this life's 16.18x and almost everything returns ~0h.
+ *
+ * That is the same class of error the sleeve term exists to avoid — today's
+ * state carried across a boundary that resets it — and it is called out here
+ * rather than left for the next reader to rediscover. Fixing it is a separate
+ * piece of work; until it is fixed, a sleeve-aware karma leg makes this module
+ * less wrong, not right.
+ */
 export function karmaHours(o = {}) {
   const { chance, karma = 0, target = GANG_KARMA, focused = true } = o
   if (!num(chance) || chance < 0 || chance > 1) return { hours: null, why: 'homicide success rate unreadable' }
@@ -74,9 +94,24 @@ export function karmaHours(o = {}) {
   const remaining = karma - target
   if (remaining <= 0) return { hours: 0, why: null, perSec: null }
   const focus = focused ? 1 : UNFOCUSED
-  const perSec = ((chance + (1 - chance) / 4) * HOMICIDE.karma * focus) / HOMICIDE.seconds
+  const playerPerSec = ((chance + (1 - chance) / 4) * HOMICIDE.karma * focus) / HOMICIDE.seconds
+  // THE SLEEVE FLEET, if one is supplied. SleeveCrimeWork.ts:47 decrements the
+  // same Player.karma, so the fleet's karma is simply added to the player's.
+  //
+  // It must be the ARRIVING fleet's rate, not today's. This function ranks
+  // candidate BitNodes, and prestigeSourceFile resets every sleeve on entry —
+  // exp 0, skills 1, sync back to max(memory,1). Measured on the live fleet:
+  // 0.63 karma/s today against 0.000051 arriving in BitNode 2, because sync 1
+  // pays one percent and skill 1 gives Homicide a half-percent chance and the
+  // two errors multiply. sleeveplan.arrivingFleet builds that shape; passing
+  // today's rate here would overstate the help by four orders of magnitude.
+  //
+  // An unknown fleet contributes 0, which prices the grind as the player alone
+  // — the direction that overstates the gate rather than a node's appeal.
+  const assist = num(o.assistPerSec) && o.assistPerSec > 0 ? o.assistPerSec : 0
+  const perSec = playerPerSec + assist
   if (!pos(perSec)) return { hours: null, why: 'homicide pays no karma at this success rate' }
-  return { hours: remaining / perSec / 3600, perSec, why: null }
+  return { hours: remaining / perSec / 3600, perSec, playerPerSec, assistPerSec: assist, why: null }
 }
 
 /**
@@ -229,10 +264,14 @@ export function nodeHours(o = {}) {
     if (node === 2) gangWhy = 'BitNode 2 grants gang access outright'
     else if (!gang.haveSF2) gangWhy = 'no SF2 — no gang outside BitNode 2'
     else {
-      const k = karmaHours({ chance: gang.chance, karma: gang.karma, focused: gang.focused })
+      const k = karmaHours({ chance: gang.chance, karma: gang.karma, focused: gang.focused, assistPerSec: gang.assistPerSec })
       if (k.hours === null) return { hours: null, why: `BitNode ${node}: ${k.why}` }
       gangGrind = k.hours
-      gangWhy = `${k.hours.toFixed(1)}h of homicide to karma ${GANG_KARMA}, concurrent with the climb`
+      gangWhy =
+        `${k.hours.toFixed(1)}h of homicide to karma ${GANG_KARMA}, concurrent with the climb` +
+        (k.assistPerSec > 0
+          ? ` (${((k.assistPerSec / k.perSec) * 100).toFixed(1)}% of it from the sleeve fleet AS IT ARRIVES — reset to sync ${node === 10 ? BN10_SYNC_FLOOR : 1} and skill 1, not as it stands today)`
+          : ' (no sleeve fleet priced — the player grinds it alone)')
     }
   }
   // Only the overhang is wall-clock.

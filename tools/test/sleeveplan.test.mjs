@@ -458,5 +458,51 @@ export async function run() {
   }
   checks.push(c9);
 
+  // ---------------------------------------------------------------------
+  const c10 = new Check("SP10", "the fleet you ARRIVE with is a reset fleet, and nodeplan prices that one");
+  {
+    c10.examined(6);
+    // prestigeSourceFile resets every sleeve; only the COUNT survives.
+    const gm = game("src/PersonObjects/Player/PlayerObjectGeneralMethods.ts");
+    if (!/prestigeSourceFile[\s\S]{0,400}?sleeves\.forEach\(\(sleeve\) => sleeve\.prestige\(\)\)/.test(gm)) {
+      c10.fail("prestigeSourceFile no longer resets every sleeve — arrivingFleet is built on that");
+    }
+    if (/prestigeAugmentation[\s\S]{0,600}?sleeve\.prestige\(\)/.test(gm.slice(0, gm.indexOf("prestigeSourceFile")))) {
+      c10.fail("prestigeAugmentation now resets sleeves too — installs were assumed NOT to");
+    }
+    const sl = game("src/PersonObjects/Sleeve/Sleeve.ts");
+    if (!/this\.sync = Math\.max\(this\.memory, 1\)/.test(sl)) c10.fail("sleeve.prestige no longer sets sync = max(memory, 1)");
+    if (!/this\.shock = 100/.test(sl)) c10.fail("sleeve.prestige no longer sets shock = 100");
+    // BitNode 10's exception.
+    if (!/bitNodeN === 10[\s\S]{0,300}?Math\.min\(25[\s\S]{0,120}?Math\.max\(25/.test(gm)) {
+      c10.fail("BitNode 10 no longer caps shock at 25 and floors sync at 25 — arrivingFleet encodes that exception");
+    }
+
+    // A trained, synchronised fleet must arrive nearly worthless for KARMA.
+    const trained = [sleeve({ sync: 63, shock: 0, memory: 1, skills: { hacking: 200, strength: 300, defense: 300, dexterity: 300, agility: 300, charisma: 50, intelligence: 0 } })];
+    const now = sp.fleetRates(trained, NODE1).karmaPerSec;
+    const toBn2 = sp.fleetRates(sp.arrivingFleet(trained, 2), NODE1).karmaPerSec;
+    const toBn10 = sp.fleetRates(sp.arrivingFleet(trained, 10), NODE1).karmaPerSec;
+    if (!(toBn2 < now / 1000)) c10.fail(`a reset fleet must be orders of magnitude weaker: ${toBn2} vs ${now} today`);
+    if (!(toBn10 > toBn2)) c10.fail("BitNode 10 floors sync at 25, so it must arrive stronger than BitNode 2 at sync 1");
+    if (sp.arrivingFleet(trained, 2)[0].skills.strength !== 1) c10.fail("an arriving sleeve is at skill 1");
+    if (sp.arrivingFleet(null, 2) !== null) c10.fail("an unreadable fleet must refuse");
+
+    // nodeplan must actually USE an assist, and must price the grind as the
+    // player alone when none is supplied.
+    const { karmaHours } = await import("../../nodeplan.js");
+    const alone = karmaHours({ chance: 0.5, karma: 0 });
+    const helped = karmaHours({ chance: 0.5, karma: 0, assistPerSec: 0.5 });
+    if (!(helped.hours < alone.hours)) c10.fail("an assist must shorten nodeplan's karma leg");
+    if (alone.assistPerSec !== 0) c10.fail("no assist supplied means zero credited, not unknown");
+    for (const bad of [null, -1, NaN]) {
+      if (karmaHours({ chance: 0.5, karma: 0, assistPerSec: bad }).hours !== alone.hours) {
+        c10.fail(`an unreadable assist (${bad}) must not be credited`);
+      }
+    }
+    c10.note(`live-shaped fleet: ${now.toFixed(4)} karma/s today, ${toBn2.toFixed(6)} arriving in BitNode 2 (${(now / toBn2).toFixed(0)}x weaker), ${toBn10.toFixed(6)} in BitNode 10 where sync floors at 25`);
+  }
+  checks.push(c10);
+
   return checks;
 }
