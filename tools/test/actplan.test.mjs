@@ -280,12 +280,21 @@ export async function run() {
     for (const [o, what] of [
       [{ node: 10, mults: null, grindHours: 36, gangGainHours: 0.9 }, "no multiplier table"],
       [{ node: 10, mults: bn.bitNodeMults(10), gangGainHours: 0.9 }, "no measured grind"],
-      [{ node: 10, mults: bn.bitNodeMults(10), grindHours: 36 }, "no measured gang gain"],
+      // (no measured gain at a HEALTHY income scale is a verdict, not a
+      // refusal — see the income-scale branch; BitNode 1 is the ambiguous case)
+      [{ node: 1, mults: { ServerMaxMoney: 0.1, ScriptHackMoney: 0.5 }, grindHours: 36 }, "no measured gang gain below the healthy scale"],
     ]) {
       c6.examined(1);
       const r = gw.gangVerdict(o);
       if (r.worth !== null || !r.why) c6.fail(`${what} must REFUSE by name, got ${JSON.stringify(r)}`);
     }
+    // The income-scale fallback: unmeasured, but plainly healthy income is
+    // enough to refuse a gang — that is the case BitNode 4's answer got wrong.
+    c6.examined(1);
+    const scaleOnly = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36 });
+    if (scaleOnly.worth !== false) c6.fail(`BitNode 10 at income scale 0.5 must refuse a gang even unmeasured, got ${JSON.stringify(scaleOnly)}`);
+    const bn4Scale = gw.gangVerdict({ node: 4, mults: bn.bitNodeMults(4), grindHours: 36 });
+    if (bn4Scale.worth !== null) c6.fail(`BitNode 4 at income scale 0.0225 must REFUSE to judge unmeasured, not cancel the gang, got ${JSON.stringify(bn4Scale)}`);
     c6.note(`BN4 ${bn4.worth} / BN10 ${bn10.worth}: ${bn10.why}`);
   }
   checks.push(c6);

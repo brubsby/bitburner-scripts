@@ -133,7 +133,7 @@ import { contractIncome } from 'contractplan.js'
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { gangVerdict } from 'gangworth.js'
+import { gangVerdict, gangGainHours } from 'gangworth.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
  *  nsGetMember is strict — "strength" throws, "str" works. */
@@ -2967,7 +2967,39 @@ async function act(ns, canJoin, info, note) {
             return null
           }
         })(),
-        gangGainHours: null,
+        // MEASURED, not assumed: the same exit-policy search run with and
+        // without the gang's money — how tools/sim/gang-vs-nogang.mjs prices
+        // it. The income comes from a gang this run has actually operated
+        // (/tel/gang-last.txt is written only on a demonstrated rate), so a
+        // node that has never had one REFUSES instead of inheriting another
+        // node's answer. That refusal is why BitNode 4's verdict could govern
+        // BitNode 10 in the first place, and it is the behaviour being fixed.
+        gangGainHours: (() => {
+          try {
+            const perSec = readJson(ns, '/tel/gang-last.txt')?.moneyPerSec
+            if (!(typeof perSec === 'number' && perSec > 0)) return null
+            const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+            const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+            return gangGainHours(
+              bestExitPolicy,
+              {
+                money: player.money ?? 0,
+                incomePerSec: incomePerSec + contractMoneyPerSec,
+                hacking: player.skills?.hacking,
+                hackingExp: player.exp?.hacking ?? 0,
+                hackingMult: player.mults?.hacking,
+                expPerSec: schedule?.expPerSec,
+                repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
+                cycleHours: cyc?.cycleHours,
+                multGainPerCycle: cyc?.multGainPerCycle,
+                exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
+              },
+              perSec,
+            ).hours
+          } catch {
+            return null
+          }
+        })(),
       }),
     })
 
