@@ -271,6 +271,32 @@ const STACK = [
       'room. It idles the moment progress.js reports a live acting pass.',
   },
   {
+    // MOVED OUT OF tools/test/stage.test.mjs's HAND_RUN LIST on 2026-09-22,
+    // on entering BitNode 10 — the deliberate step that list exists to force.
+    // It was exempt because "a standing job would be a guaranteed no-op"
+    // without Source-File 10, which was true until this node and is the reason
+    // sleeve.js sat fully written, RAM-overridden and covered by [R1..R5]
+    // while nothing ever launched it.
+    //
+    // Sleeves are why this node was chosen. The previous BitNode spent ~20
+    // hours on one Homicide karma grind to -54,000 — work-slot-bound, and it
+    // recurs in every gang node because prestigeSourceFile zeroes karma. A
+    // sleeve is another actor committing crime, so the grind divides.
+    //
+    // 2.60GB declared, raised to 41.15GB at runtime once sfgate says the API
+    // is usable (the ns.sleeve.* surface is 4GB a call and is NOT scaled by
+    // Source-File 4). It refuses in telemetry rather than throwing when the
+    // capability is absent, so it is safe in the manifest in every node.
+    script: 'sleeve.js',
+    where: 'anywhere',
+    tier: 64,
+    rank: 28,
+    why:
+      'sleeves are parallel actors: each one commits crime, trains or works a faction alongside the player, and the ' +
+      'karma grind that gates a gang is the single longest work-slot leg of a gang node. Refuses by name in ' +
+      '/tel/sleeve.txt without Source-File 10, so it costs 2.60GB and says why in nodes that cannot use it.',
+  },
+  {
     script: 'hacknet.js',
     where: 'anywhere',
     tier: 32,

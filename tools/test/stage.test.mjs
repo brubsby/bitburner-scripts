@@ -585,11 +585,23 @@ function runB711() {
     "autobuy-sing.js",
     // SOURCE-FILE GATED, and unmanaged here for that reason rather than by
     // oversight. Each needs a Source-File this save does not hold, so a
-    // standing job would be a guaranteed no-op: gang.js SF2, sleeve.js SF10,
-    // bladeburner.js SF6/7, go-cheat.js SF14.2, stock.js SF8. When one of
-    // those is earned, its script moves OUT of this list and into the
-    // manifest — and this check is what will make that a deliberate step.
-    "gang.js", "sleeve.js", "bladeburner.js", "go-cheat.js", "stock.js",
+    // standing job would be a guaranteed no-op: bladeburner.js SF6/7,
+    // go-cheat.js SF14.2, stock.js SF8. When one of those is earned, its
+    // script moves OUT of this list and into the manifest.
+    //
+    // THAT USED TO DEPEND ON SOMEONE REMEMBERING. sleeve.js sat here fully
+    // written, RAM-overridden and covered by [R1..R5] while nothing launched
+    // it — and the run then travelled to BitNode 10 SPECIFICALLY for sleeves,
+    // where it would have done nothing at all. gang.js had the opposite
+    // problem: it reached the manifest and was left in this list too, so the
+    // exemption was silently stale.
+    //
+    // SF_GATED below makes it automatic: own the Source-File and the exemption
+    // expires, so the check fails until the script is wired in. Ownership is
+    // read from live telemetry and an UNREADABLE save leaves the exemption
+    // standing — unknown must not manufacture a failure, but it must not
+    // manufacture a pass either, so that case is NOTED out loud.
+    "bladeburner.js", "go-cheat.js", "stock.js",
     // Needs SF4 and is superseded on the autonomous path: progress.js buys
     // programs through torbuy.js/autobuy.js. Kept for hand use.
     "createProgram.js", "healer.js",
@@ -598,6 +610,42 @@ function runB711() {
     // what removes them.
     "training.js", "crime.js",
   ]);
+
+  // Which exemptions are conditional, and on what.
+  const SF_GATED = { "bladeburner.js": [6, 7], "go-cheat.js": [14], "stock.js": [8], "sleeve.js": [10], "gang.js": [2] };
+  // .telemetry/state.json, written by the daemon on every save poll
+  // (rfa-daemon.mjs:412). NOT bn.txt: that file has no writer anywhere in this
+  // repo and was frozen at BitNode 5 from 2026-09-19, so reading it looked
+  // like a live check and was a stale one — which is precisely the silence
+  // this whole block exists to remove. A source with no writer is worse than
+  // no source, because it answers.
+  const STATE = path.join(REPO, ".telemetry", "state.json");
+  const ownedSF = (() => {
+    try {
+      const st = JSON.parse(fs.readFileSync(STATE, "utf8"));
+      const ageH = (Date.now() - Date.parse(st.at)) / 3600000;
+      if (!Number.isFinite(ageH) || ageH > 24) return null;
+      const out = new Map();
+      // sourceFiles serialises as a JSONMap: {ctor, data: [[n, lvl], ...]}.
+      const data = Array.isArray(st.sourceFiles) ? st.sourceFiles : (st.sourceFiles?.data ?? []);
+      for (const [n, lvl] of data) out.set(Number(n), Number(lvl));
+      // Being INSIDE a BitNode grants its capability even with no Source-File.
+      if (Number.isFinite(st.bitNode)) out.set(Number(st.bitNode), Math.max(out.get(Number(st.bitNode)) ?? 0, 1));
+      return out.size ? out : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (!ownedSF) {
+    c.note("no fresh .telemetry/state.json — Source-File exemptions left standing, and NOT verified against a save");
+  } else {
+    for (const [script, sfs] of Object.entries(SF_GATED)) {
+      const held = sfs.filter((n) => (ownedSF.get(n) ?? 0) > 0);
+      if (!held.length) continue;
+      HAND_RUN.delete(script);
+      c.note(`${script}: Source-File ${held.join("/")} is held, so its exemption has expired — it must be in the manifest`);
+    }
+  }
   const orphans = [];
   for (const name of rootScripts()) {
     if (manifest.has(name) || watched.has(name) || HAND_RUN.has(name)) continue;

@@ -43,6 +43,7 @@ const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes("--json");
 const QUIET = argv.includes("--quiet");
 
+const num = (v) => typeof v === "number" && isFinite(v);
 const problems = [];
 const notes = [];
 const fail = (what, detail) => problems.push({ what, detail: detail ?? null });
@@ -98,6 +99,9 @@ else if (verify.error) {
 }
 
 /* ------------------------------------------------- C. liveness + health */
+// Fetched before the freshness loop, which needs the current life's start to
+// tell "this component is stalled" from "this component has not started yet".
+const state = await ctl("/state");
 // Budget per file: how stale is too stale. A job that runs every few minutes
 // gets a wider budget than a resident daemon.
 const FRESH = { "act.txt": 15, "progress.txt": 45, "watchdog.txt": 20, "batch.txt": 20, "go.txt": 30, "gang.txt": 20 };
@@ -113,7 +117,20 @@ for (const [name, budget] of Object.entries(FRESH)) {
   }
   const age = ageMin(d.at);
   if (age === null) fail(`/tel/${name} has no readable timestamp`);
-  else if (age > budget) fail(`/tel/${name} is ${age.toFixed(0)} min stale (budget ${budget})`, `health '${d.health}' — a stale file reporting 'ok' is the shape every silent failure here has taken`);
+  else if (age > budget) {
+    // A file left behind by the previous BitNode is not a stalled component,
+    // it is a component that has not started yet. `lastAugReset` moves on
+    // every install and every node change, so a file older than the current
+    // life is from a stack that no longer exists.
+    // The current life began `playtimeSinceLastAug` ago — the one field /state
+    // actually carries for this. Anything published before that is from a
+    // stack that no longer exists, not a stalled one. (lastAugReset would be
+    // the direct answer and /state does not publish it.)
+    const lifeStartMs = num(state.playtimeSinceLastAug) ? Date.now() - state.playtimeSinceLastAug : null;
+    const bornLastLife = lifeStartMs !== null && Date.parse(d.at) < lifeStartMs;
+    if (bornLastLife) note(`/tel/${name} is ${age.toFixed(0)} min old and from a PREVIOUS life — not yet republished this one`);
+    else fail(`/tel/${name} is ${age.toFixed(0)} min stale (budget ${budget})`, `health '${d.health}' — a stale file reporting 'ok' is the shape every silent failure here has taken`);
+  }
   if (d.health === "error") fail(`${name} reports health 'error'`, String(d.detail ?? "").slice(0, 200));
 }
 if (tel["watchdog.txt"]?.detail) note(`watchdog: ${String(tel["watchdog.txt"].detail).slice(0, 160)}`);
@@ -121,7 +138,6 @@ if (tel["watchdog.txt"]?.detail) note(`watchdog: ${String(tel["watchdog.txt"].de
 if (tel["go.txt"]?.health === "warn") fail("go.js reports health 'warn'", String(tel["go.txt"].detail ?? "").slice(0, 200));
 
 /* ------------------------------------------------- D. movement vs last */
-const state = await ctl("/state");
 const prev = (() => {
   try {
     return JSON.parse(fs.readFileSync(STATE, "utf8"));
@@ -139,6 +155,7 @@ const now = {
   homeRam: state.home?.ram ?? null,
   augs: (state.augmentations ?? []).length,
   lastAugReset: state.lastAugReset ?? null,
+  bitNode: state.bitNode ?? null,
   gangFaction: tel["gang.txt"]?.faction ?? null,
   gangRespect: tel["gang.txt"]?.respect ?? null,
   gangMembers: tel["gang.txt"]?.members ?? null,
@@ -160,6 +177,17 @@ const MIN_INTERVAL_MIN = 5;
 const dtMin = prev ? (Date.parse(now.at) - Date.parse(prev.at)) / 60000 : null;
 if (!prev) {
   note("no previous sample — movement checks skipped THIS RUN ONLY (they are the point of this file)");
+} else if (prev.bitNode !== null && now.bitNode !== null && prev.bitNode !== now.bitNode) {
+  // A BITNODE CHANGE INVALIDATES EVERY MOVEMENT CHECK AT ONCE, and each one
+  // fires: prestigeSourceFile sets home RAM back to 32 (Prestige.ts:245),
+  // zeroes karma and the gang, strips every augmentation and resets hacking to
+  // 1, while the scripts that publish /tel are still coming back up. Checking
+  // a new node against the old one's numbers reports five failures and not one
+  // of them is real — which is how a checker teaches its reader to ignore it.
+  //
+  // The transition itself is the news, so it is reported as such and the
+  // baseline is replaced.
+  note(`BitNode ${prev.bitNode} -> ${now.bitNode}: movement checks reset, this sample becomes the new baseline`);
 } else if (dtMin < MIN_INTERVAL_MIN) {
   note(`previous sample is only ${dtMin.toFixed(1)} min old (need ${MIN_INTERVAL_MIN}) — movement checks skipped, and the sample is NOT overwritten so the next run still has a real baseline`);
 } else {
