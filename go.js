@@ -87,6 +87,8 @@
 import { chooseMove } from 'golib.js'
 import { canUseGoCheat, sfLevel } from 'sfgate.js'
 import { chooseOpponent } from 'goplan.js'
+// Pure data module (no ns surface): the BitNode table, for GoPower.
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 
@@ -285,11 +287,20 @@ export async function main(ns) {
     try {
       if (ns.getHostname() !== 'home') ns.scp(GATE_FILE, ns.getHostname(), 'home')
       const gate = JSON.parse(ns.read(GATE_FILE) || 'null')
+      // `weights` and `windowH` live on the DERIVED objective only
+      // (progress.js:1761); a refusing pass publishes neither, and
+      // chooseOpponent treats that as "cannot tell the channels apart" and
+      // keeps the incumbent. That is the intended path, not a defect.
+      //
+      // goPower was read off the gate file, which has never carried it — so
+      // it silently defaulted to 1 and would have UNDER-PRICED every opponent
+      // by a factor of 4 in BitNode 14, the one node where Go is the point.
+      // It comes from the BitNode table, which is the authority.
       const pick = chooseOpponent({
         weights: gate?.objective?.weights ?? null,
-        windowH: gate?.objective?.windowH ?? gate?.plan?.windowH ?? null,
+        windowH: gate?.objective?.windowH ?? null,
         incumbent: current,
-        goPower: gate?.goPower ?? 1,
+        goPower: bitNodeMults(reset?.currentNode)?.GoPower ?? 1,
         sf14,
       })
       if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why: pick.why, switched: false }

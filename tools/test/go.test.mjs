@@ -25,16 +25,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
 import { REPO } from "./ram.mjs";
-// go.js imports golib.js/sfgate.js/status.js with Netscript bare specifiers,
-// which node cannot resolve — see tools/sim/rootimport.mjs for why importing
-// the real shipped file (rather than a copy) is worth the shim.
-import { importRootScript } from "../sim/rootimport.mjs";
+// go.js imports golib.js/sfgate.js/status.js/bitNodeMultipliers.js with
+// Netscript bare specifiers, and those import further bare specifiers in turn.
+// rootimport.mjs rewrites only the file handed to it, so a TRANSITIVE bare
+// import throws at load — which is what happened the moment go.js gained
+// bitNodeMultipliers.js. gameresolve.mjs installs a resolver instead and
+// handles the whole graph.
+import "./gameresolve.mjs";
 
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), "utf8");
 
 export async function run() {
   const checks = [];
-  const { solverHealth } = await importRootScript("go.js");
+  const { solverHealth } = await import("../../go.js");
 
   /* ------------------------------------------------------------------ GO1 */
   const c1 = new Check("GO1", "solverHealth() fires on an absent solver, on a degraded one, and refuses to judge on thin evidence");
@@ -169,7 +172,7 @@ export async function run() {
   /* ------------------------------------------------------------------ GO5 */
   const c5 = new Check("GO5", "the opponent is PRICED against the live objective, and every refusal is named");
   {
-    const gp = await importRootScript("goplan.js");
+    const gp = await import("../../goplan.js");
     const W = (over = {}) => ({ faction_rep: 0.5, hacking_speed: 0.5, hacking_money: 0.5, ...over });
 
     // REFUSALS FIRST. Each must keep the incumbent and say why — a Go farm
