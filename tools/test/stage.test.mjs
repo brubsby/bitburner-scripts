@@ -564,6 +564,43 @@ function runB711() {
   // EXEMPT BY NAME AND BY REASON, in three groups. Adding a name here is a
   // decision someone has to write down, which is the point — the failure this
   // check exists for was a script nobody had decided anything about.
+  // B7.12 — a manifest entry whose script RAISES its RAM at runtime must be
+  // placed against the raised figure. boot.js sizes placement from
+  // `entry.cost`, which for an ns.ramOverride script is the declared FLOOR;
+  // the raise that follows is denied silently on a host that cannot afford it
+  // (NetscriptFunctions.ts:1210-1214 returns the old allocation), so the
+  // script simply returns.
+  //
+  // Live on 2026-09-22: sleeve.js declares 2.60GB and raises to 41.15GB.
+  // placeOff chose foodnstuff — the tightest 16GB fit for 2.60GB — the raise
+  // failed, and it exited four seconds after boot started it. The run was in
+  // BitNode 10, entered specifically for sleeves, with no sleeve driver.
+  {
+    const bootSrc2 = source("boot.js") ?? "";
+    if (!/Math\.max\(entry\.cost, entry\.raisesTo/.test(bootSrc2)) {
+      c.fail("boot.js places entries by entry.cost alone", "a script that raises its allocation must be placed against the RAISED figure or the raise is denied on arrival");
+    }
+    for (const name of rootScripts()) {
+      const code = source(name) ?? "";
+      const m = code.match(/RAISE_CEILING\s*=\s*\(?[^)]*\)?\s*=>\s*([0-9.]+)/);
+      if (!m) continue;
+      const declared = Number(m[1]);
+      const entry = (parsed.entries ?? []).find((e) => e.script === name);
+      if (!entry) continue; // not in the manifest: nothing places it
+      // Only entries boot.js PLACES. A `kind: 'job'` is launched by
+      // watchdog.js on its own host (home), and boot's placement loop skips it
+      // outright — so raisesTo would be inert there. progress.js, faction.js
+      // and endgame.js are all jobs, and flagging them made this check noise
+      // on three entries it has no say over.
+      if (entry.kind === "job" || entry.role === "worker") continue;
+      if (entry.where === "home") continue; // home's budget is planned separately
+      c.examined(1);
+      if (!/raisesTo/.test(bootSrc2.slice(Math.max(0, bootSrc2.indexOf(`script: '${name}'`)), bootSrc2.indexOf(`script: '${name}'`) + 900))) {
+        c.fail(`${name} raises to ${declared}GB but its manifest entry declares no raisesTo`, "boot.js would place it by its 2.6GB-class floor and the raise would be denied");
+      }
+    }
+  }
+
   const HAND_RUN = new Set([
     // Launchers, workers and hand-run operations. boot.js is run by a human or
     // by an install callback; the h/g/w workers are placed by batch.js itself;

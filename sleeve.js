@@ -13,7 +13,7 @@
 // merely returned.
 //
 // ---------------------------------------------------------------------------
-// RAMOVERRIDE 2.6GB — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
+// RAMOVERRIDE 2.6GB (raises to 41.75) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
 //
 // Why this is sound: Netscript bills a script for every ns identifier in its
 // import graph whether or not the call is reachable (RamCalculations.ts:407
@@ -114,21 +114,44 @@ const RAMOVERRIDE_STATUS = '/tel/sleeve.txt'
  *  evaluates it per regime; a constant that ignores `mult` is the honest answer
  *  here, not a shortcut. Measured with the game's own calculator
  *  (tools/staging/fix4/measure.mjs). */
-const RAISE_CEILING = (mult) => 41.15 + 0 * mult
+const RAISE_CEILING = (mult) => 41.75 + 0 * mult
 
 export async function main(ns) {
   ns.ramOverride(2.6)
 
   const rerrors = []
   const note = reporter(ns, RAMOVERRIDE_STATUS, () => ({ errors: rerrors.slice(-5) }))
-  ns.atExit(() => note.exit('stopped', { detail: 'sleeve.js exited' }))
+  // THE DAEMON ONLY MIRRORS /tel/* FROM HOME, and boot.js places this script
+  // `where: 'anywhere'`. Without this push its telemetry — including the
+  // atExit record that says WHY it stopped — is written to whichever rooted
+  // host it landed on and is never seen again. That is exactly how its first
+  // live start failed in silence: it exited four seconds in on a host too
+  // small for its RAM raise, and the only evidence sat on foodnstuff.
+  // 41.15 -> 41.75GB: ns.scp (0.60GB) was NOT already in this file's price —
+  // I asserted it was, and [R5] priced the file with the game's own
+  // calculator and proved otherwise. ns.getHostname was already there.
+  const mirror = () => {
+    try {
+      if (ns.getHostname() !== 'home') ns.scp(RAMOVERRIDE_STATUS, 'home', ns.getHostname())
+    } catch {
+      /* home unreachable; the local copy still stands */
+    }
+  }
+  const say = (health, fields) => {
+    note(health, fields)
+    mirror()
+  }
+  ns.atExit(() => {
+    note.exit('stopped', { detail: 'sleeve.js exited' })
+    mirror()
+  })
 
   // Ask the GAME what this save can do, through the shared rules. Not a
   // try/catch around the namespace: RAM is billed before a line executes, so
   // such a guard can never fire (CLAUDE.md, "a guard that can never fire").
   const info = ns.getResetInfo()
   if (!canUseSleeve(info)) {
-    note('waiting', {
+    say('waiting', {
       result: 'capability-absent',
       gate: 'canUseSleeve',
       needs: 'Source-File 10',
@@ -144,12 +167,12 @@ export async function main(ns) {
   if (!(await raiseRam(ns, want, RAMOVERRIDE_STATUS, 'sleeve.js needs its full allocation before the first gated call'))) return
 
   try {
-    note('ok', { result: 'running', allocation: want, detail: 'allocation raised; running the original body' })
-    await act(ns, note)
-    note('ok', { result: 'finished', detail: 'sleeve.js returned normally' })
+    say('ok', { result: 'running', allocation: want, detail: 'allocation raised; running the original body' })
+    await act(ns, say)
+    say('ok', { result: 'finished', detail: 'sleeve.js returned normally' })
   } catch (err) {
     ns.print(record(rerrors, err))
-    note('error', { result: 'error', detail: describe(err) })
+    say('error', { result: 'error', detail: describe(err) })
     throw err
   }
 }
@@ -406,9 +429,30 @@ async function act(ns, note) {
 
 		if (print_tasks) ns.print(JSON.stringify(sleeves.map(s => ({ index: s.index, city: s.city, sync: s.sync, shock: s.shock, task: s.task })), null, 2));
 
+		// SYNC IS THE WHOLE MECHANISM, so it is published rather than left in a
+		// print nobody reads. SleeveCrimeWork.ts:47 credits the player
+		// `crime.karma * sleeve.syncBonus()`, and syncBonus() is sync/100 — a
+		// fresh sleeve starts at sync = max(memory, 1), so it contributes ONE
+		// PERCENT of the karma until synchronised. A monitor watching only the
+		// assignment count would report eight sleeves committing Homicide and
+		// call that healthy while they delivered almost nothing.
+		//
+		// shock is published beside it because it gates effectiveness the same
+		// way (shockBonus = (100 - shock)/100) and decays passively in
+		// Sleeve.process(), so a reader can tell "recovering" from "stuck".
+		const syncs = sleeves.map((x) => x.sync)
+		const shocks = sleeves.map((x) => x.shock)
+		const mean = (a) => (a.length ? a.reduce((p, q) => p + q, 0) / a.length : null)
 		note(refusals.length ? 'error' : 'ok', {
 			result: refusals.length ? 'refusals' : 'assigned',
 			sleeves: sleeves.length,
+			syncMean: mean(syncs),
+			syncMin: syncs.length ? Math.min(...syncs) : null,
+			shockMean: mean(shocks),
+			// karma actually delivered per unit of nominal crime karma: the sum
+			// of syncBonus() across sleeves, which is what the grind is worth.
+			karmaYield: syncs.length ? syncs.reduce((p, q) => p + q / 100, 0) : null,
+			assigned: sleeves.map((x) => ({ i: x.index, sync: +x.sync.toFixed(1), shock: +x.shock.toFixed(1), task: x.task?.type ?? x.task ?? null })),
 			tasks: sleeveTasks,
 			unknownTasks: [...warned],
 			refusals,

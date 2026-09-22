@@ -104,14 +104,14 @@ else if (verify.error) {
 const state = await ctl("/state");
 // Budget per file: how stale is too stale. A job that runs every few minutes
 // gets a wider budget than a resident daemon.
-const FRESH = { "act.txt": 15, "progress.txt": 45, "watchdog.txt": 20, "batch.txt": 20, "go.txt": 30, "gang.txt": 20 };
+const FRESH = { "act.txt": 15, "progress.txt": 45, "watchdog.txt": 20, "batch.txt": 20, "go.txt": 30, "gang.txt": 20, "sleeve.txt": 20 };
 const tel = {};
 for (const [name, budget] of Object.entries(FRESH)) {
   const d = readTel(name);
   tel[name] = d;
   if (!d) {
     // gang.txt legitimately absent before a gang node's first gang.js run.
-    if (name === "gang.txt") continue;
+    if (name === "gang.txt" || name === "sleeve.txt") continue;
     fail(`/tel/${name} is missing or unparseable`, "UNKNOWN is not a pass — the component may be dead");
     continue;
   }
@@ -165,6 +165,8 @@ const now = {
   gangMembers: tel["gang.txt"]?.members ?? null,
   gangTerritory: tel["gang.txt"]?.territory ?? null,
   goBonusPct: tel["go.txt"]?.factionRepBonusPct ?? null,
+  sleeveSyncMin: tel["sleeve.txt"]?.syncMin ?? null,
+  sleeveKarmaYield: tel["sleeve.txt"]?.karmaYield ?? null,
   goRemote: tel["go.txt"]?.remoteMoves ?? null,
   batchPerSec: tel["batch.txt"]?.totals?.earnedPerSec ?? null,
 };
@@ -285,6 +287,42 @@ if (!prev) {
   // Home RAM only ever goes up within a node.
   if (now.homeRam !== null && prev.homeRam !== null && now.homeRam < prev.homeRam) {
     fail(`home RAM went DOWN (${prev.homeRam} -> ${now.homeRam})`, "only a BitNode change does that");
+  }
+}
+
+/* --------------------------------------------------------- E. sleeves */
+//
+// ARE SLEEVES ACTUALLY EARNING? The reason this run came to BitNode 10, and
+// the one mechanic where "assigned and working" and "producing anything" come
+// apart by two orders of magnitude.
+//
+// SleeveCrimeWork.ts:47 credits the player `crime.karma * sleeve.syncBonus()`,
+// syncBonus() is sync/100, and a fresh sleeve starts at sync = max(memory, 1).
+// So eight sleeves committing Homicide at sync 1 deliver 8% of ONE player's
+// karma rate while every count-based reading says the fleet is fully deployed.
+// That is why karmaYield — the sum of syncBonus() across sleeves — is the
+// number checked here, not the assignment count.
+const sleeve = tel["sleeve.txt"];
+// sleeve.js is a tier-64 manifest entry, so below that home size its absence
+// is the plan working, not a fault.
+const SLEEVE_TIER = 64;
+const sleevesExpected = now.homeRam !== null && now.homeRam >= SLEEVE_TIER;
+if (!sleevesExpected) {
+  note(`sleeves: home is ${now.homeRam}GB and sleeve.js is admitted at ${SLEEVE_TIER}GB — not expected yet`);
+} else if (!sleeve) {
+  fail("home is past sleeve.js's tier but /tel/sleeve.txt does not exist", "nothing is driving the sleeves, which is why this node was chosen");
+} else {
+  if (sleeve.result === "refusals") fail(`${(sleeve.refusals ?? []).length} sleeve assignment(s) refused by the game`, String(sleeve.detail ?? ""));
+  if (!num(sleeve.sleeves) || sleeve.sleeves <= 0) fail("sleeve.js reports zero sleeves", "Source-File 10 grants one per level and BitNode 10 grants up to eight");
+  if (num(sleeve.karmaYield)) {
+    note(`sleeves: ${sleeve.sleeves}, sync mean ${num(sleeve.syncMean) ? sleeve.syncMean.toFixed(1) : "?"} / min ${num(sleeve.syncMin) ? sleeve.syncMin.toFixed(1) : "?"}, karma yield ${sleeve.karmaYield.toFixed(2)}x a player`);
+    // Below full sync the fleet must be CLOSING that gap; a flat syncMin with
+    // sleeves already on crime is the silent-underperformance case.
+    if (num(sleeve.syncMin) && sleeve.syncMin < 100 && prev && num(prev.sleeveSyncMin) && sleeve.syncMin <= prev.sleeveSyncMin && dtMin >= MIN_INTERVAL_MIN) {
+      fail(`sleeve sync is not rising (min ${prev.sleeveSyncMin.toFixed(1)} -> ${sleeve.syncMin.toFixed(1)})`, "karma from a sleeve scales with sync/100, so an unsynchronised sleeve on crime earns almost nothing");
+    }
+  } else {
+    fail("sleeve.js publishes no karmaYield", "without sync there is no way to tell a working fleet from a fully-assigned idle one");
   }
 }
 

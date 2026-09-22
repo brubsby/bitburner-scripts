@@ -291,6 +291,9 @@ const STACK = [
     where: 'anywhere',
     tier: 64,
     rank: 28,
+    // Declares 2.60GB, raises to this once sfgate confirms the API. Placement
+    // must use the RAISED figure or the raise is denied on arrival.
+    raisesTo: 41.75,
     why:
       'sleeves are parallel actors: each one commits crime, trains or works a faction alongside the player, and the ' +
       'karma grind that gates a gang is the single longest work-slot leg of a gang node. Refuses by name in ' +
@@ -621,7 +624,22 @@ export async function main(ns) {
       if (running.length) continue
 
       const threads = entry.threads || 1
-      const need = entry.cost * threads
+      // PLACE AGAINST THE RAISED COST, not the declared one.
+      //
+      // A script with ns.ramOverride declares a floor and raises to its full
+      // price at runtime once a capability check passes. `entry.cost` is that
+      // FLOOR, so placing by it puts the script on a host that cannot afford
+      // what it is about to ask for — and a denied raise returns the old
+      // allocation silently (NetscriptFunctions.ts:1210-1214), so the script
+      // returns and the failure is invisible.
+      //
+      // Live on 2026-09-22: sleeve.js declares 2.60GB and raises to 41.75GB.
+      // placeOff picked foodnstuff, the tightest 16GB fit for 2.60GB. The
+      // raise failed, sleeve.js exited four seconds after boot started it, and
+      // the run sat in BitNode 10 — entered specifically FOR sleeves — with no
+      // sleeve driver at all. Nothing noticed, because the only record of the
+      // exit was written to foodnstuff.
+      const need = Math.max(entry.cost, entry.raisesTo ?? 0) * threads
       const host = entry.where === 'home' ? (spare(ns, 'home') >= need ? 'home' : null) : placeOff(ns, hosts, need)
       if (!host) {
         failed.push(`${entry.script}: planned ${need}GB but no host had it free`)
