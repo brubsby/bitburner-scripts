@@ -166,5 +166,86 @@ export async function run() {
   }
   checks.push(c4);
 
+  /* ------------------------------------------------------------------ GO5 */
+  const c5 = new Check("GO5", "the opponent is PRICED against the live objective, and every refusal is named");
+  {
+    const gp = await importRootScript("goplan.js");
+    const W = (over = {}) => ({ faction_rep: 0.5, hacking_speed: 0.5, hacking_money: 0.5, ...over });
+
+    // REFUSALS FIRST. Each must keep the incumbent and say why — a Go farm
+    // that churns its board on an unreadable objective is worse than one that
+    // never moves, because nodePower is per opponent and a switch discards it.
+    for (const [o, what] of [
+      [{ weights: null, windowH: 1.3, incumbent: "Daedalus" }, "no derived weights (a flat-weights pass)"],
+      [{ weights: W(), windowH: null, incumbent: "Daedalus" }, "no measured install window"],
+      [{ weights: W({ hacking_speed: null }), windowH: 1.3, incumbent: "Daedalus" }, "a partial basket"],
+      [{ weights: W({ faction_rep: 0, hacking_speed: 0, hacking_money: 0 }), windowH: 1.3, incumbent: "Daedalus" }, "every weight zero"],
+    ]) {
+      c5.examined(1);
+      const r = gp.chooseOpponent(o);
+      if (!r.refused) c5.fail(`${what} must REFUSE, got ${JSON.stringify(r)}`);
+      if (r.opponent !== "Daedalus") c5.fail(`${what} must keep the incumbent, got ${r.opponent}`);
+      if (!r.why) c5.fail(`${what} must name the refusal`);
+    }
+
+    // THE CROSSOVER. faction_rep is Daedalus; hacking_speed is Illuminati.
+    // With reputation weighted far above the budget channels, Daedalus wins;
+    // reverse it and it must not.
+    c5.examined(1);
+    const repHeavy = gp.chooseOpponent({ weights: W({ faction_rep: 5, hacking_speed: 0.1, hacking_money: 0.1 }), windowH: 1.3, incumbent: "Illuminati" });
+    if (repHeavy.opponent !== "Daedalus") c5.fail(`a reputation-dominated objective must choose Daedalus, got ${repHeavy.opponent} (${repHeavy.why})`);
+    c5.examined(1);
+    const budgetHeavy = gp.chooseOpponent({ weights: W({ faction_rep: 0.01, hacking_speed: 5, hacking_money: 0.1 }), windowH: 1.3, incumbent: "Daedalus" });
+    if (budgetHeavy.opponent !== "Illuminati") c5.fail(`a speed-dominated objective must choose Illuminati, got ${budgetHeavy.opponent} (${budgetHeavy.why})`);
+    if (budgetHeavy.refused) c5.fail("a decidable objective must not refuse");
+
+    // THE LIVE SHAPE: eRep 0 against eBudget 0.147 measured 2026-09-21. With
+    // reputation weighing nothing, Daedalus — the opponent this repo shipped
+    // as a CONSTANT — is the wrong board.
+    c5.examined(1);
+    const live = gp.chooseOpponent({ weights: { faction_rep: 0, hacking_speed: 0.147, hacking_money: 0.147 }, windowH: 1.31, incumbent: "Daedalus" });
+    if (live.opponent === "Daedalus") c5.fail("with faction_rep weighing 0 the constant is not defensible", live.why);
+
+    // Unpriceable channels are refused BY NAME, never scored zero: "not
+    // priceable" and "worthless" are different claims.
+    c5.examined(1);
+    for (const n of ["SlumSnakes", "Netburners", "Tetrads"]) {
+      if (gp.PRICEABLE.includes(gp.OPPONENTS[n].channel)) c5.fail(`${n}'s channel ${gp.OPPONENTS[n].channel} is not in RATE_CHANNELS and must not be priceable`);
+    }
+
+    // The window is load-bearing: a Go bonus dies at every install, so a
+    // SHORTER window mustprice  every opponent lower. If it does not, the reset is
+    // not being modelled and the whole comparison is end-of-window value.
+    c5.examined(1);
+    const short = gp.meanEffect(gp.POWER_PER_HOUR.Daedalus, 1.1, 0.5);
+    const long = gp.meanEffect(gp.POWER_PER_HOUR.Daedalus, 1.1, 4);
+    if (!(short < long)) c5.fail(`a shorter install window must price lower (0.5h ${short} vs 4h ${long})`);
+    // AND IT MUST BE THE AVERAGE, NOT THE ENDPOINT. Both rise with the window,
+    // so monotonicity alone passes over a version that scores effect(P*H) —
+    // which is what this check did when first mutation-tested, and it is the
+    // error that would overstate every opponent and mislead the comparison
+    // against augmentations. effect() is concave and increasing from 1, so the
+    // mean over [0,H] is strictly BELOW the value at H.
+    for (const h of [0.5, 1.3, 4]) {
+      c5.examined(1);
+      const mean = gp.meanEffect(gp.POWER_PER_HOUR.Daedalus, 1.1, h);
+      const end = gp.effectAt(gp.POWER_PER_HOUR.Daedalus * h, 1.1);
+      if (!(mean < end * 0.995)) {
+        c5.fail(`at ${h}h the window mean (${mean}) must be materially below the end-of-window value (${end}) — otherwise the install reset is not modelled`);
+      }
+    }
+    c5.note(`Daedalus mean multiplier over a window: 0.5h ${short.toFixed(4)}, 1.3h ${gp.meanEffect(gp.POWER_PER_HOUR.Daedalus, 1.1, 1.3).toFixed(4)}, 4h ${long.toFixed(4)}`);
+
+    // go.js must actually consult it, and must not switch mid-life for free.
+    const src = read("go.js");
+    c5.examined(1);
+    if (!/chooseOpponent\(/.test(src)) c5.fail("go.js does not call chooseOpponent — the opponent is a constant again");
+    if (/resetBoardState\(flags\.opponent/.test(src)) c5.fail("go.js still resets the board against the startup FLAG rather than the priced opponent");
+    if (!/banked \+\$\{bonusPct/.test(src) && !/bonusPct > 1/.test(src)) {
+      c5.fail("go.js does not guard against switching while the incumbent has banked power — nodePower is per opponent and a switch discards it");
+    }
+  }
+  checks.push(c5);
+
   return checks;
 }

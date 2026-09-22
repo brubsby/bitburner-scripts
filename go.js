@@ -86,6 +86,7 @@
 
 import { chooseMove } from 'golib.js'
 import { canUseGoCheat, sfLevel } from 'sfgate.js'
+import { chooseOpponent } from 'goplan.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 
@@ -261,6 +262,51 @@ export async function main(ns) {
   // whether the cheat API is available is exactly what a reader wants to know.
   const reset = ns.getResetInfo()
   const sf14 = sfLevel(reset, 14)
+
+  /**
+   * THE OPPONENT IS A CHANNEL CHOICE, re-priced each life rather than fixed.
+   *
+   * `SETTINGS.opponent` was a constant carried out of BitNode 2, where the run
+   * was reputation-bound and the gang sold The Red Pill. Every opponent feeds a
+   * different multiplier, so that constant is a standing bet on which channel
+   * matters — and nothing re-examined it.
+   *
+   * WHEN it switches matters as much as what to. nodePower is per opponent and
+   * every install zeroes all of them (Go/Go.ts:34-47), so a switch made mid-life
+   * throws away whatever the incumbent has banked, while a switch made just
+   * after an install costs exactly nothing. So this only ever moves while the
+   * board is cheap to leave, and otherwise keeps playing what it was playing.
+   *
+   * `ns.read` is 0GB and the gate file is on home; ns.scp pulls it because
+   * boot.js may place this script off home (invariant C10).
+   */
+  const GATE_FILE = '/tel/installgate.txt'
+  const pickOpponent = (current, bonusPct) => {
+    try {
+      if (ns.getHostname() !== 'home') ns.scp(GATE_FILE, ns.getHostname(), 'home')
+      const gate = JSON.parse(ns.read(GATE_FILE) || 'null')
+      const pick = chooseOpponent({
+        weights: gate?.objective?.weights ?? null,
+        windowH: gate?.objective?.windowH ?? gate?.plan?.windowH ?? null,
+        incumbent: current,
+        goPower: gate?.goPower ?? 1,
+        sf14,
+      })
+      if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why: pick.why, switched: false }
+      // Only switch while there is little to abandon. A bonus still near zero
+      // is a board we have just started; anything else has banked power that
+      // moving would discard for nothing.
+      if (typeof bonusPct === 'number' && bonusPct > 1) {
+        return { opponent: current, why: `${pick.opponent} scores better but ${current} has banked +${bonusPct.toFixed(2)}% — switching discards it; waiting for the next install`, switched: false }
+      }
+      return { opponent: pick.opponent, why: pick.why, switched: true }
+    } catch (e) {
+      return { opponent: current, why: `opponent pricing failed: ${String(e).slice(0, 80)}`, switched: false }
+    }
+  }
+  let opponent = flags.opponent
+  let opponentWhy = 'startup default'
+  let lastAugReset = reset.lastAugReset
   const canCheat = canUseGoCheat(reset) && ns.fileExists('go-cheat.js', 'home')
 
   let games = 0
@@ -301,7 +347,8 @@ export async function main(ns) {
   // paths still say how much had been banked. Every existing field keeps its
   // name and position in spirit; `health` and `errors` are additive.
   const note = reporter(ns, SETTINGS.statusFile, () => ({
-    opponent: flags.opponent,
+    opponent,
+    opponentWhy,
     boardSize: N,
     maxms: flags.maxms,
     idle: flags.idle,
@@ -328,11 +375,25 @@ export async function main(ns) {
     note.exit('stopped', { detail: 'go.js is no longer playing — the faction_rep bonus has stopped growing' })
   }, 'status')
 
-  note('ok', { detail: `starting vs ${flags.opponent} on ${N}x${N}` })
+  note('ok', { detail: `starting vs ${opponent} on ${N}x${N}` })
 
   while (flags.games < 0 || games < flags.games) {
     try {
-      ns.go.resetBoardState(flags.opponent, N)
+      // Re-priced at the game boundary — never mid-game, which would abandon a
+      // position. An install since the last game means every opponent's power
+      // is back to zero, so a switch there is free by construction.
+      const bonusNow = ns.go.analysis.getStats()[opponent]?.bonusPercent ?? 0
+      const reNow = ns.getResetInfo().lastAugReset
+      const installed = reNow !== lastAugReset
+      lastAugReset = reNow
+      const pick = pickOpponent(opponent, installed ? 0 : bonusNow)
+      if (pick.switched) {
+        note('ok', { detail: `opponent ${opponent} -> ${pick.opponent}: ${pick.why}` })
+        ns.print(`switching opponent ${opponent} -> ${pick.opponent}`)
+      }
+      opponent = pick.opponent
+      opponentWhy = pick.why
+      ns.go.resetBoardState(opponent, N)
       await ns.sleep(100)
 
       const komi = ns.go.getGameState()?.komi ?? 5.5
@@ -464,7 +525,7 @@ export async function main(ns) {
       // returns undefined and prints a flat 0 on every game, which looks
       // exactly like "the bot banks nothing" — it cost an hour of chasing a
       // gameplay problem that did not exist.
-      const s = ns.go.analysis.getStats()[flags.opponent] || {}
+      const s = ns.go.analysis.getStats()[opponent] || {}
       const bonusPercent = s.bonusPercent ?? 0
 
       // The solver alarm rides the same write as everything else, so a reader
