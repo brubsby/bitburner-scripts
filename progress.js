@@ -133,6 +133,7 @@ import { contractIncome } from 'contractplan.js'
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
+import { gangVerdict } from 'gangworth.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
  *  nsGetMember is strict — "strength" throws, "str" works. */
@@ -2946,6 +2947,28 @@ async function act(ns, canJoin, info, note) {
       futures,
       incomePerSec,
       incomeSource,
+      // IS A GANG WORTH ITS KARMA GATE IN THIS NODE? Published so act.js can
+      // read a priced answer instead of inheriting BitNode 4's. grindHours
+      // comes from the same model act.js uses for the leg; gangGainHours is
+      // the gang's measured income advantage and is null until a gang in THIS
+      // node has demonstrated one — so the verdict refuses rather than
+      // assuming, which is what leaves the bootstrap alone by default.
+      gangWorth: gangVerdict({
+        node: info?.currentNode,
+        mults: bitNodeMults(info?.currentNode),
+        grindHours: (() => {
+          // The same karma-grind model the crime leg uses. karmaChannelCtx
+          // builds it from the live person and this node's multipliers; an
+          // unreadable one yields null and the verdict refuses.
+          try {
+            const k = karmaChannelCtx(ns, info, player)
+            return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
+          } catch {
+            return null
+          }
+        })(),
+        gangGainHours: null,
+      }),
     })
 
     // ------------------------------------------------------------------

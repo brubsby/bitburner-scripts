@@ -118,7 +118,7 @@ export function decide(s = {}) {
   // 1b. In a gang faction already, but the gang's own karma gate is unmet —
   // keep the crime loop running. Outside BitNode 2 this is the long leg of
   // the bootstrap by far, and joining the faction does not end it.
-  if (s.gangNode === true && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
+  if (s.gangNode === true && s.gangWorth?.worth !== false && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const target = num(s.gangKarma) ? s.gangKarma : SLUM_SNAKES.karma
     if (!(num(p.karma) && p.karma <= target)) {
       const leg = crimeLeg({ karma: target }, p, s.node, { focus: 1 })
@@ -131,8 +131,22 @@ export function decide(s = {}) {
     }
   }
 
-  // 1. The gang bootstrap.
-  if (s.gangNode === true && !s.factions.some((f) => GANG_FACTIONS.includes(f))) {
+  // 1. The gang bootstrap — but only where a gang PAYS FOR ITSELF.
+  //
+  // `gangNode` means "this node ALLOWS a gang", which is not the same as
+  // "a gang is worth the karma gate". Outside BitNode 2 that gate is -54,000
+  // and costs a full work-slot grind; gangworth.js prices whether the gang's
+  // income repays it INSIDE this node. It answers 102h (63%) in BitNode 4 and
+  // 0.9h (1%) in BitNode 10, where the batcher is 22x less nerfed and funds
+  // the install ladder by itself.
+  //
+  // An explicit false skips the bootstrap. An UNKNOWN verdict leaves the old
+  // behaviour standing rather than silently abandoning the gang — the failure
+  // being fixed is an unexamined assumption, and inverting it unexamined would
+  // be the same mistake pointing the other way.
+  if (s.gangNode === true && s.gangWorth?.worth === false) {
+    // Fall through to the faction/work path below.
+  } else if (s.gangNode === true && !s.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const combatShort = COMBAT.filter((st) => !(num(p.skills?.[st]) && p.skills[st] >= SLUM_SNAKES.combat))
     const karmaShort = !(num(p.karma) && p.karma <= SLUM_SNAKES.karma)
     const moneyShort = !(num(p.money) && p.money >= SLUM_SNAKES.money)

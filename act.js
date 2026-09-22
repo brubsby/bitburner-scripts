@@ -278,6 +278,17 @@ export async function main(ns) {
       const state = {
         now: Date.now(),
         gangNode: canUseGang(info),
+        // WHETHER A GANG PAYS FOR ITSELF HERE, priced per node rather than
+        // assumed from BitNode 4. progress.js publishes the measured legs;
+        // an absent or refused verdict leaves the bootstrap alone.
+        gangWorth: (() => {
+          try {
+            const g = readJson(ns, '/tel/installgate.txt')?.gangWorth
+            return g && typeof g === 'object' ? g : undefined
+          } catch {
+            return undefined
+          }
+        })(),
         // The gang's own karma gate — -9 is only the faction's price.
         gangKarma: gangKarmaTarget(info?.currentNode === 2),
         factions: player.factions ?? [],

@@ -73,20 +73,32 @@ import fs from 'node:fs'
 const np=await import('nodeplan.js'); const gp=await import('gangplan.js'); const ep=await import('exitplan.js')
 const ledger=JSON.parse(fs.readFileSync(new URL('../../.telemetry/lifetimes.txt', import.meta.url),'utf8'))
 const cg=np.compoundGain(ledger,2)
-const FACREP=1.24, FWRG=0.75
+// THE NODE IS A PARAMETER. It was hardcoded to 4, and the file's own header
+// says the verdict "does not transfer between nodes" — yet nothing stopped it
+// being read as a standing answer. `--node N` reads that node's real
+// multipliers so the question can be re-asked where it actually matters.
+const NODE=Number((process.argv.find((a,i)=>process.argv[i-1]==='--node'))??4)
+const bn=await import('bitNodeMultipliers.js')
+const M=bn.bitNodeMults(NODE)??{}
+const FACREP=1.24, FWRG=M.FactionWorkRepGain??1
+const SOFTCAP=M.GangSoftcap??1
+// Script income scales with what a server HOLDS and what a hack TAKES, both
+// per-node (nodeplan.projectIncome). Measured in BitNode 4; re-based here.
+const M4=bn.bitNodeMults(4)
+const INCOME_SCALE=((M.ServerMaxMoney??1)*(M.ScriptHackMoney??1))/((M4.ServerMaxMoney??1)*(M4.ScriptHackMoney??1))
 const donationCost=2.5e6*1e6/FACREP/FWRG
 const base={money:3.55e6,hacking:271,hackingExp:26548,hackingMult:1.3392,expPerSec:7.4,
-  cycleHours:cg.cycleHours,multGainPerCycle:cg.gain,exitLevel:np.exitLevelFor(4),
+  cycleHours:cg.cycleHours,multGainPerCycle:cg.gain,exitLevel:np.exitLevelFor(NODE),
   joinMoney:100e9, terminalRep:2.5e6, donationCost, favorToDonate:150, exitFavor:150}
-console.log('Daedalus 2.5m rep by donation costs $'+(donationCost/1e12).toFixed(2)+'t in BN4')
+console.log(`BitNode ${NODE}: donation for 2.5m rep $${(donationCost/1e12).toFixed(2)}t | income scale vs BN4 ${INCOME_SCALE.toFixed(2)}x | GangSoftcap ${SOFTCAP}`)
 const G={faction:'Slum Snakes',isHacking:false,respect:1,wantedLevel:1,territory:1/7,power:1,territoryClashChance:0,territoryWarfareEngaged:false}
 const R=()=>Object.fromEntries(['Tetrads','The Syndicate','The Dark Army','Speakers for the Dead','NiteSec','The Black Hand'].map(n=>[n,{power:1,territory:1/7}]))
 const cache=new Map()
 const gangAvgOver=(H)=>{ if(H<=0.5) return 0
   const k=H.toFixed(1); if(cache.has(k)) return cache.get(k)
-  const f=gp.simulateGang(G,[],{softcap:1,horizonH:Math.min(H,200),stepSec:300,mode:'money',assignFn:gp.trainRatio(4.2,false,1),ascend:{minGain:1.09},rivals:R(),warfare:{fraction:0,engageRatio:1}})
+  const f=gp.simulateGang(G,[],{softcap:SOFTCAP,horizonH:Math.min(H,200),stepSec:300,mode:'money',assignFn:gp.trainRatio(4.2,false,1),ascend:{minGain:1.09},rivals:R(),warfare:{fraction:0,engageRatio:1}})
   const v=f? f.money/(Math.min(H,200)*3600):0; cache.set(k,v); return v }
-const run=(repPerSec,extra)=>{const p=ep.bestExitPolicy({...base,incomePerSec:1279.87+extra,repPerSec},120)
+const run=(repPerSec,extra)=>{const p=ep.bestExitPolicy({...base,incomePerSec:1279.87*INCOME_SCALE+extra,repPerSec},120)
   return p.best&&p.best.hours!==null?{h:p.best.hours,edge:!!p.atSearchEdge,inst:p.best.installsFirst,legs:p.best.legs}:null}
 const GRIND=36.4, REP=0.302, CRIME=4143.9
 const noGang=run(REP,0)

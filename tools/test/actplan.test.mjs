@@ -243,6 +243,54 @@ export async function run() {
   checks.push(c5);
 
   // ---------------------------------------------------------------------
+  const c6 = new Check("AC6", "the gang bootstrap runs only where a gang PAYS FOR ITSELF");
+  {
+    const gw = await import("../../gangworth.js");
+    const bn = await import("../../bitNodeMultipliers.js");
+    const short = player({ karma: -20, money: 5000, city: "Sector-12" });
+    const st = (worth) => base({ player: short, factions: [], gangKarma: -54000, gangWorth: worth, progress: { at: new Date(NOW - 1e3).toISOString(), health: "ok", slot: { owner: null } } });
+
+    // NOT worth it: the slot must go to the faction path, not an 11h grind.
+    c6.examined(1);
+    const skip = decide(st({ worth: false, why: "priced 0.9h against a 36h gate" }));
+    // ASSERT THE KIND, not the wording. The first version of this matched
+    // /Slum Snakes|gang/ against the reason and passed over the gate being
+    // removed entirely, because the reason actually reads "the GANG's gate"
+    // and the regex was case-sensitive. The crime path in this branch EXISTS
+    // only to serve the gang, so a crime decision at all is the failure.
+    if (skip.kind === "crime") c6.fail("a gang priced as NOT worth it must not drive the crime bootstrap", `${skip.kind}: ${skip.why}`);
+
+    // Worth it, and UNKNOWN, both keep the bootstrap — inverting an
+    // unexamined assumption unexamined is the same mistake reversed.
+    c6.examined(1);
+    for (const [w, what] of [[{ worth: true }, "worth it"], [undefined, "unpriced"], [{ worth: null, why: "refused" }, "refused"]]) {
+      const d = decide(st(w));
+      if (d.kind === "idle") c6.fail(`a ${what} verdict must still run the gang bootstrap, got idle (${d.why})`);
+    }
+
+    // The verdict itself: BitNode 4 wins, BitNode 10 does not, and every
+    // missing input REFUSES by name rather than assuming the BN4 answer.
+    c6.examined(1);
+    const bn4 = gw.gangVerdict({ node: 4, mults: bn.bitNodeMults(4), grindHours: 36, gangGainHours: 102 });
+    if (bn4.worth !== true) c6.fail(`BitNode 4 measured 102h against a 36h gate must be WORTH it, got ${JSON.stringify(bn4)}`);
+    const bn10 = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36, gangGainHours: 0.9 });
+    if (bn10.worth !== false) c6.fail(`BitNode 10 measured 0.9h against a 36h gate must NOT be worth it, got ${JSON.stringify(bn10)}`);
+    const bn2 = gw.gangVerdict({ node: 2 });
+    if (bn2.worth !== true) c6.fail("BitNode 2 grants gang access outright and sells The Red Pill through it — always worth it");
+    for (const [o, what] of [
+      [{ node: 10, mults: null, grindHours: 36, gangGainHours: 0.9 }, "no multiplier table"],
+      [{ node: 10, mults: bn.bitNodeMults(10), gangGainHours: 0.9 }, "no measured grind"],
+      [{ node: 10, mults: bn.bitNodeMults(10), grindHours: 36 }, "no measured gang gain"],
+    ]) {
+      c6.examined(1);
+      const r = gw.gangVerdict(o);
+      if (r.worth !== null || !r.why) c6.fail(`${what} must REFUSE by name, got ${JSON.stringify(r)}`);
+    }
+    c6.note(`BN4 ${bn4.worth} / BN10 ${bn10.worth}: ${bn10.why}`);
+  }
+  checks.push(c6);
+
+  // ---------------------------------------------------------------------
   const c3 = new Check("AC3", "the gang's karma gate is the GANG's, not the faction's: outside BitNode 2 the crime loop continues past the join to -54,000");
   {
     const src = fs.readFileSync(path.join(GAME, "src/Gang/data/Constants.ts"), "utf8");
