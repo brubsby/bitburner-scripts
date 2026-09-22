@@ -448,6 +448,35 @@ const WATCHED = [
   // SF5 1->2 (+3.70%) and 2->3 (+1.79%) are poor trades at ~22h a node and
   // should not be taken by momentum.
   //
+  // REVISED 2026-09-21, SF5.1 in hand and SF4.2 about to be: **10**, for
+  // sleeves — and the argument is no longer about percentages.
+  //
+  // This BitNode spent ~20 HOURS on one Homicide karma grind to -54,000. That
+  // leg is entirely work-slot-bound, it recurs in EVERY gang node because
+  // karma dies at a node change (prestigeSourceFile zeroes it beside the gang
+  // itself), and a sleeve is the only thing in the game that parallelises it:
+  // each one is another actor committing crime. SF10 grants one per level, to
+  // three. Sleeves also work factions, which is the other work-slot leg — the
+  // Daedalus reputation this very block is waiting on.
+  //
+  // The alternative considered was 14, whose Source-File doubles the stat
+  // multipliers from Go node power and unlocks go.cheat. Rejected: its exit is
+  // 15,000 against BitNode 10's 6,000, with HackingLevelMultiplier 0.4 and
+  // HackingSpeedMultiplier 0.3 to get there; its FactionWorkRepGain 0.2 makes
+  // the reputation leg five times slower; and GangUniqueAugs 0.4 is the
+  // stingiest in the game, so the gang-as-augmentation-ladder that carries
+  // these runs is weakest exactly where Go is strongest. The Go bonus it
+  // doubles is capped by the install window anyway — it resets on every
+  // install (Go/Go.ts:34-47) and currently reads +31.8% over ~1.3h. A long
+  // hostile node for a narrow, window-capped reward.
+  //
+  // NOT computed with nodeplan.rankNodes: that projects the CURRENT
+  // multiplier into a fresh node, and prestigeSourceFile strips every
+  // augmentation, so it credited a new node with this life's 16.18x and
+  // returned ~0h for almost everything. The argument above is from the
+  // multiplier tables and this node's own measured legs, and that is stated
+  // rather than dressed as a trajectory run.
+  //
   // This cannot fire early. It needs hacking 9000 AND root on a server that
   // does not exist on the network until The Red Pill has been installed
   // (Prestige.ts:174-181), which in turn needs 30 augmentations, $100b and
@@ -459,7 +488,7 @@ const WATCHED = [
   {
     script: 'endgame.js',
     host: 'home',
-    args: ['--next', 5],
+    args: ['--next', 10],
     minIntervalMs: 3600000,
     trigger: () => true,
   },
