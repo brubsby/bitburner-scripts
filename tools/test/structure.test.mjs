@@ -722,6 +722,16 @@ function c9() {
  * once outside the read loop while the file keeps changing on home. It matches
  * literal '/tel/*.txt' paths and single-level constants only.
  */
+/** The body of a function whose opening brace is at `open`, by brace matching. */
+function braceBody(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) return src.slice(open, i + 1);
+  }
+  return src.slice(open);
+}
+
 function c10() {
   const c = new Check("C10", "scripts boot.js may place off home PULL the /tel files they read");
   const bootSrc = read("boot.js");
@@ -731,6 +741,11 @@ function c10() {
   // regex spanning from `script:` to `where: 'anywhere'` runs happily past the
   // end of one entry into the next and reported watchdog.js (where: 'home')
   // as placed anywhere.
+  // Both spellings of a read. This matched `ns.read(` alone, and act.js reads
+  // every one of its /tel files through `readJson(ns, path)` — so the script
+  // this check was written for was entirely invisible to it.
+  const READ_RE = /(?:ns\.read|readJson)\(\s*(?:ns\s*,\s*)?('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g;
+
   const blocks = bootSrc.split(/\n\s*script:\s*/).slice(1);
   const anywhere = [];
   for (const b of blocks) {
@@ -784,21 +799,48 @@ function c10() {
       if (r) pulled.add(r);
       else viaParam.add(m[1]); // a helper's parameter name
     }
+    // A helper only PULLS if its own body does the scp. Matching a helper by
+    // parameter NAME alone matched act.js's `readJson(ns, file)` — a READER,
+    // which declares a `file` parameter exactly like `fetchFromHome(ns, file)`
+    // does — so every readJson call was scored as a pull. That is why this
+    // check sat green over the omission it exists to catch: act.js read
+    // /tel/installgate.txt (the gang verdict) off home without pulling it, got
+    // '' , and the karma grind ran on. Require the body.
+    const pullers = new Set();
     for (const param of viaParam) {
-      // Find the helper that declares `param`, then everything passed to it.
-      const decl = new RegExp(`function\\s+([A-Za-z_$][\\w$]*)\\s*\\([^)]*\\b${param}\\b`, "g");
-      for (const d of src.matchAll(decl)) {
-        const call = new RegExp(`\\b${d[1]}\\(\\s*ns\\s*,\\s*('\\/tel\\/[^']+'|[A-Za-z_$][\\w$]*)`, "g");
-        for (const cm of src.matchAll(call)) {
-          const r = resolve(cm[1]);
-          if (r) pulled.add(r);
-        }
+      for (const d of src.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/g)) {
+        if (!new RegExp(`\\b${param}\\b`).test(d[2])) continue;
+        const body = braceBody(src, d.index + d[0].length - 1);
+        if (!new RegExp(`ns\\.scp\\(\\s*${param}\\s*,\\s*${dest}\\s*,\\s*'home'`).test(body)) continue;
+        pullers.add(d[1]);
+      }
+    }
+    for (const fn of pullers) {
+      for (const cm of src.matchAll(new RegExp(`\\b${fn}\\(\\s*ns\\s*,\\s*('\\/tel\\/[^']+'|[A-Za-z_$][\\w$]*)`, "g"))) {
+        const r = resolve(cm[1]);
+        if (r) pulled.add(r);
+      }
+    }
+    // PULL LOOPS: `for (const f of ['/tel/a.txt', B]) fetchFromHome(ns, f)`.
+    // Resolving only direct call arguments sees the loop variable `f`, which
+    // resolves to nothing, and every path in the array stays unaccounted.
+    for (const m of src.matchAll(/for\s*\(\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s+of\s*\[([^\]]*)\]\s*\)\s*([A-Za-z_$][\w$]*)\(\s*ns\s*,\s*([A-Za-z_$][\w$]*)/g)) {
+      const [, loopVar, arrayBody, fn, arg] = m;
+      if (!pullers.has(fn) || arg !== loopVar) continue;
+      for (const tok of arrayBody.split(",").map((x) => x.trim()).filter(Boolean)) {
+        const r = resolve(tok);
+        if (r) pulled.add(r);
       }
     }
 
     // Every /tel file it READS that it does not write and does not pull.
     const missing = new Set();
-    for (const m of src.matchAll(/ns\.read\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)) {
+    // BOTH SPELLINGS. This matched `ns.read(` only, and act.js reads through
+    // readJson(ns, path) — so EVERY read in the script this check was written
+    // for was invisible to it. Removing act.js's pulls entirely still passed.
+    // The helper is the common spelling in this repo, which made the omission
+    // maximally quiet.
+    for (const m of src.matchAll(READ_RE)) {
       const r = resolve(m[1]);
       if (!r || own.has(r) || pulled.has(r)) continue;
       missing.add(r);
@@ -810,7 +852,7 @@ function c10() {
           `the read degrades to "unknown" silently. Add ns.scp(path, ns.getHostname(), 'home') before the read.`,
       );
     } else {
-      const reads = [...new Set([...src.matchAll(/ns\.read\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)].map((m) => resolve(m[1])).filter(Boolean))];
+      const reads = [...new Set([...src.matchAll(READ_RE)].map((m) => resolve(m[1])).filter(Boolean))];
       if (reads.length) c.note(`${script.padEnd(12)} reads ${reads.length} /tel file(s), all written here or pulled from home`);
     }
   }

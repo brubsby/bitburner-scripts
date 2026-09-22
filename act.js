@@ -210,7 +210,7 @@ export async function main(ns) {
       // without being pulled, so off home ns.read returned '' and the verdict
       // was undefined — the karma grind carried on with the answer sitting on
       // home, unreachable. Invariant C10 exists for exactly this.
-      for (const f of ['/tel/progress.txt', '/tel/factionplan.txt', '/tel/installgate.txt', ORDERS]) fetchFromHome(ns, f)
+      for (const f of ['/tel/progress.txt', '/tel/factionplan.txt', '/tel/installgate.txt', '/tel/gang.txt', ORDERS]) fetchFromHome(ns, f)
       const snaps = await refreshSnapshots(ns, info)
 
       // ---- 1. orders from the planner --------------------------------------
