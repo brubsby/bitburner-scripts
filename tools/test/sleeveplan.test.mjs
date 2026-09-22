@@ -249,5 +249,65 @@ export async function run() {
   }
   checks.push(c6);
 
+  // ---------------------------------------------------------------------
+  const c7 = new Check("SP7", "train-or-work is searched over the horizon, and working now can still win");
+  {
+    c7.examined(5);
+    const fresh = sleeve({ sync: 45 });
+    // A fresh sleeve is worth almost nothing at crime, so training must win by
+    // a wide margin — this is the gap that left the fleet shoplifting.
+    const p = sp.sleevePolicy(fresh, NODE1, { objective: "karma", horizonHours: 40 });
+    if (!p) c7.fail("a readable sleeve and horizon must price");
+    else if (p.task !== "train") c7.fail(`a skill-1 sleeve over 40h must train first, got ${p.task}`);
+    else if (!(p.trainHours > 0 && p.trainHours < 40)) c7.fail(`training time must be inside the horizon, got ${p.trainHours}`);
+
+    // T = 0 IS IN THE GRID, so a saturated sleeve works now. Without this the
+    // check only proves the function likes training.
+    const done = sleeve({ sync: 100, skills: { hacking: 999, strength: 999, defense: 999, dexterity: 999, agility: 999, charisma: 999, intelligence: 0 } });
+    const q = sp.sleevePolicy(done, NODE1, { objective: "karma", horizonHours: 40 });
+    if (q?.task !== "Homicide") c7.fail(`a sleeve already at 100% chance must work now, got ${q?.task}`);
+
+    // And a horizon too short to repay training must work now too.
+    const tiny = sp.sleevePolicy(fresh, NODE1, { objective: "karma", horizonHours: 0.01 });
+    if (!tiny) c7.fail("a short horizon must still price");
+    // The search must be MONOTONE in the obvious direction: a longer horizon
+    // never makes training less attractive in absolute value delivered.
+    const short = sp.sleevePolicy(fresh, NODE1, { objective: "karma", horizonHours: 10 });
+    const long = sp.sleevePolicy(fresh, NODE1, { objective: "karma", horizonHours: 100 });
+    if (!(long.value > short.value)) c7.fail("more horizon must deliver more");
+    if (!(long.trainHours >= short.trainHours)) c7.fail("more horizon must not train less");
+
+    // No horizon: refuse, rather than search against an invented one.
+    if (sp.sleevePolicy(fresh, NODE1, { objective: "karma" }) !== null) c7.fail("no horizon must refuse");
+    if (sp.sleevePolicy({ index: 0 }, NODE1, { objective: "karma", horizonHours: 40 }) !== null) c7.fail("an unreadable sleeve must refuse");
+
+    // The assignment that comes out is a stat sleeve.js can actually pass to
+    // setToGymWorkout — one of the four, not 'train'.
+    // At sync 100 the synchronise leg is done, so the next decision is the
+    // train-or-work one. (A sleeve BELOW 100 past the break-even synchronises
+    // first — SP3 — because sync is the exchange rate on everything it later
+    // delivers, not only on karma.)
+    const plan = sp.sleeveAssignments([sleeve({ sync: 100 })], NODE1, { objective: "karma", horizonHours: 40, playerIntelligence: 0 });
+    if (!["strength", "defense", "dexterity", "agility"].includes(plan.tasks[0])) {
+      c7.fail(`the emitted task must be a gym stat sleeve.js maps to a GymType, got ${plan.tasks[0]}`);
+    }
+    // TRAINING TIME COSTS THE HORIZON. Dropping the `- T` term left every
+    // other assertion here green: the saturated sleeve still worked now
+    // (training buys it nothing either way) and both monotone checks held,
+    // while the search silently preferred the longest training split on every
+    // fresh sleeve. Re-derive the value from the rate it priced.
+    for (const H of [10, 40, 100]) {
+      const r = sp.sleevePolicy(fresh, NODE1, { objective: "karma", horizonHours: H });
+      if (r?.task !== "train") continue;
+      const want = r.afterRate * (H - r.trainHours) * 3600;
+      if (Math.abs(r.value - want) > 1e-9) {
+        c7.fail(`at ${H}h the value must be the post-training rate over what is LEFT of the horizon: ${r.value} vs ${want}`);
+      }
+      if (!(r.trainHours < H)) c7.fail("training cannot consume the whole horizon and still deliver");
+    }
+    c7.note(`skill-1 sleeve over 40h: ${p.why}`);
+  }
+  checks.push(c7);
+
   return checks;
 }

@@ -48,12 +48,36 @@
 // contribution is the STABLE half and the player's is the half that keeps
 // starting over.
 //
+// THE EXP TRANSFER — the largest sleeve term, and NOT YET MODELLED HERE.
+//
+// applySleeveGains (Sleeve/Work/Work.ts:16-24) does three things with the
+// gains of whatever a sleeve is doing:
+//
+//   applyWorkStatsExp(sleeve, gains, mult)                    the sleeve itself
+//   Player.gainMoney(gains.money * mult)                      UNSCALED by sync
+//   applyWorkStatsExp(Player, gains, mult * syncBonus)        the PLAYER
+//   ...and every OTHER sleeve, at mult * syncBonus * their shockBonus
+//
+// So a sleeve at a gym trains the player and the whole rest of the fleet at
+// sync% of its own rate, and a sleeve at university raises the PLAYER's hacking
+// — which feeds the BitNode exit level, the hardest gate in the run. Sync is
+// therefore not the karma term this module first treated it as; it is the
+// exchange rate on everything a sleeve produces except money.
+//
+// `sleeveCrimeRates` and `sleevePolicy` below price karma, kills and money ONLY.
+// They do not price the exp a sleeve hands the player, so every number they
+// produce is a LOWER BOUND on what the sleeve is worth, and the `train` verdict
+// is reinforced rather than undermined by the omission: training is exactly the
+// activity whose unpriced term is largest. Pricing it properly means valuing
+// player exp against the exit trajectory, which belongs with exitplan, not here.
+//
 // A BITNODE CHANGE DOES reset them (`prestigeSourceFile` calls sleeve.prestige()
 // on each: exp 0, shock 100, sync = max(memory,1), city Sector-12), with BitNode
 // 10 alone capping shock at 25 and flooring sync at 25
 // (PlayerObjectGeneralMethods.ts:142-152). The COUNT persists across nodes.
 // ---------------------------------------------------------------------------
-import { CRIMES, crimeChance, intelligenceBonus, personProblem } from 'bodyplan.js'
+import { CRIMES, GYMS, crimeChance, gymRate, intelligenceBonus, personProblem } from 'bodyplan.js'
+import { skillFromExp } from 'installgate.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 
@@ -225,6 +249,14 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       why.push(`sleeve ${i}: sync unreadable — no assignment, refusing to guess`)
       continue
     }
+    // PRECEDENCE, NOT A SEARCH: synchronise outranks training when both are
+    // indicated. That is a policy and is called one — sync multiplies
+    // everything the sleeve subsequently hands the player (applySleeveGains
+    // scales the exp transfer by syncBonus, see the header), so it is the
+    // exchange rate the later legs are paid at, and doing it first is the
+    // ordering that cannot be wrong by more than the delay. It is NOT proven
+    // optimal against the training leg; proving that needs the exp transfer
+    // priced, which this module does not yet do.
     if (sync < 100 && horizonHours !== null && breakeven !== null && horizonHours > breakeven) {
       tasks.push('sync')
       why.push(`sleeve ${i}: sync ${sync.toFixed(1)} and ${horizonHours.toFixed(1)}h horizon is past the ${breakeven.toFixed(1)}h break-even — synchronise`)
@@ -243,6 +275,21 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       why.push(`sleeve ${i}: shock ${shock.toFixed(1)} scales the ${objective} this objective wants — recover`)
       continue
     }
+    // TRAIN OR WORK — searched, not assumed. A sleeve out of a BitNode change
+    // has every skill at 1, where its best money crime pays ~$300/s and its
+    // Homicide chance is 0.5%; sending it straight to crime is barely
+    // distinguishable from leaving it idle. sleevePolicy prices both and T = 0
+    // is in its grid, so "work now" still wins wherever it should.
+    const policy = horizonHours === null ? null : sleevePolicy(s, node, { ...o, objective })
+    if (policy && policy.task === 'train') {
+      // The weighted stat this sleeve is furthest behind on. sleeve.js maps the
+      // long skill names to GymType members; the shipped gym branch picked the
+      // lowest PLAYER combat skill, which is the wrong body entirely.
+      const stat = [...policy.trainStat].sort((a, b) => (s.skills?.[a] ?? 0) - (s.skills?.[b] ?? 0))[0]
+      tasks.push(stat)
+      why.push(`sleeve ${i}: ${policy.why} — training ${stat} first`)
+      continue
+    }
     const pick = bestSleeveCrime(s, node, objective === 'karma' ? 'karma' : objective === 'money' ? 'money' : 'karma')
     if (!pick) {
       tasks.push(null)
@@ -250,7 +297,94 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       continue
     }
     tasks.push(pick.crime)
-    why.push(`sleeve ${i}: ${pick.crime} at ${(pick.rates.chance * 100).toFixed(0)}% for ${objective}`)
+    why.push(`sleeve ${i}: ${pick.crime} at ${(pick.rates.chance * 100).toFixed(0)}% for ${objective}${policy ? ` — ${policy.why}` : ''}`)
   }
   return { tasks, why, breakevenHours: breakeven, objective, horizonHours }
+}
+
+/**
+ * TRAIN FIRST, OR WORK NOW?
+ *
+ * The third constant sleeve.js was answering by hand, and the one that matters
+ * most for a fresh fleet. A sleeve out of `prestigeSourceFile` has every skill
+ * at 1, so its Homicide chance is 0.5% and its best money crime pays ~$300/s —
+ * against a batcher earning millions. Committing it to crime immediately is
+ * very nearly the same as leaving it idle, which is what the run was doing.
+ *
+ * This is a SEARCH, not a rule: for each candidate training time T it prices
+ * what the sleeve delivers over the horizon — nothing for T, then the improved
+ * rate for what is left — and takes the best T. T = 0 is in the grid, so "work
+ * now" wins whenever it should and no threshold has to be guessed.
+ *
+ * TWO APPROXIMATIONS, both named rather than hidden:
+ *
+ *   1. Training time is split EVENLY across the stats the chosen crime weights.
+ *      Chance is linear in each skill but skill is logarithmic in exp
+ *      (skill.ts), so the true optimum spreads rather than piling into the
+ *      highest weight — but the exact split is a constrained optimisation this
+ *      does not solve. An even split is a lower bound on what training buys, so
+ *      the error is in the direction of training too little.
+ *   2. The rate after training is held constant for the rest of the horizon,
+ *      when in truth the crime keeps training the sleeve further. Also a lower
+ *      bound.
+ *
+ * Both understate training, so a `work` verdict from this function is solid and
+ * a `train` verdict is conservative.
+ *
+ * Returns `{ task, trainStat, trainHours, value, why }`, or null if unreadable.
+ */
+export function sleevePolicy(sleeve, node, o = {}) {
+  const objective = o.objective === 'money' ? 'money' : 'karma'
+  const horizonHours = num(o.horizonHours) && o.horizonHours > 0 ? o.horizonHours : null
+  if (horizonHours === null) return null
+  if (personProblem(sleeve) || !num(sleeve?.sync)) return null
+  const trainingMult = num(o.trainingMult) && o.trainingMult > 0 ? o.trainingMult : 1
+  const gym = [...GYMS].sort((a, b) => b.expMult - a.expMult)[0]
+  // SleeveClassWork.calculateRates and SleeveCrimeWork.getExp both scale gains
+  // by shockBonus (Sleeve.ts:174) — exp included, which is why shock is a term
+  // here even though it is not one for karma.
+  const shockBonus = (100 - (num(sleeve.shock) ? sleeve.shock : 0)) / 100
+
+  const pick = bestSleeveCrime(sleeve, node, objective)
+  if (!pick) return null
+  const base = { task: pick.crime, trainStat: null, trainHours: 0, value: pick.rates[objective] * horizonHours * 3600 }
+
+  // The stats this crime's success chance actually weights. A stat with no
+  // weight is time thrown away.
+  const stats = Object.keys(CRIMES[pick.crime].weight).filter((k) => k !== 'hacking' && k !== 'charisma')
+  if (!stats.length) return { ...base, why: `${pick.crime} weights no trainable combat stat — work now` }
+
+  let best = base
+  const trials = []
+  for (let i = 1; i <= 19; i++) {
+    const T = (horizonHours * i) / 20
+    const trained = { ...sleeve, skills: { ...sleeve.skills }, exp: { ...sleeve.exp } }
+    let ok = true
+    for (const st of stats) {
+      const rate = gymRate(gym, st, sleeve, trainingMult)
+      if (rate === null) {
+        ok = false
+        break
+      }
+      trained.exp[st] = (trained.exp[st] ?? 0) + rate * shockBonus * ((T * 3600) / stats.length)
+      trained.skills[st] = skillFromExp(trained.exp[st], sleeve.mults?.[st] ?? 1)
+    }
+    if (!ok) break
+    const after = sleeveCrimeRates(trained, node, pick.crime)
+    if (!after) break
+    const value = after[objective] * (horizonHours - T) * 3600
+    trials.push({ T, value })
+    if (value > best.value) best = { task: 'train', trainStat: stats, trainHours: T, value, after: after.chance, afterRate: after[objective] }
+  }
+  if (!trials.length) return { ...base, why: `${pick.crime} now — training could not be priced` }
+  if (best.task !== 'train') {
+    return { ...base, why: `${pick.crime} at ${(pick.rates.chance * 100).toFixed(1)}% now beats every training split over ${horizonHours.toFixed(1)}h` }
+  }
+  return {
+    ...best,
+    why:
+      `train ${best.trainStat.join('/')} at ${gym.name} for ${best.trainHours.toFixed(1)}h of a ${horizonHours.toFixed(1)}h horizon, ` +
+      `then ${pick.crime}: ${(pick.rates.chance * 100).toFixed(1)}% -> ${(best.after * 100).toFixed(1)}% chance, ` +
+      `${(best.value / base.value).toFixed(1)}x what working now delivers`,
+  }
 }
