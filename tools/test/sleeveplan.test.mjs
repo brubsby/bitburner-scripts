@@ -19,7 +19,7 @@ import "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
 
 const sp = await import("../../sleeveplan.js");
-const { CRIMES, crimeRates, intelligenceBonus } = await import("../../bodyplan.js");
+const { CRIMES, crimeRates, intelligenceBonus, simulateCrime, karmaGrindAcrossCycles } = await import("../../bodyplan.js");
 
 const NODE1 = { CrimeSuccessRate: 1, CrimeMoney: 1, CrimeExpGain: 1 };
 
@@ -200,6 +200,54 @@ export async function run() {
     c5.note(`1 fresh sleeve at sync 100 delivers ${one.karmaPerSec.toFixed(4)} karma/s; the empty fleet is 0, the unreadable one is null`);
   }
   checks.push(c5);
+
+  // ---------------------------------------------------------------------
+  const c6 = new Check("SP6", "the fleet is a term in the karma grind, and a missing fleet is not a zero one");
+  {
+    c6.examined(6);
+    // A fresh-life player, the shape karmaChannelCtx passes after an install.
+    const player = sleeve({ karma: 0, numPeopleKilled: 0, money: 0, sync: undefined });
+    delete player.sync;
+    delete player.shock;
+    const until = (pp) => pp.karma <= -54000;
+    const alone = simulateCrime("Homicide", player, NODE1, { until, maxHours: 500 });
+    if (!alone || !(alone.hours > 0)) c6.fail("the lone-player grind must price");
+
+    // A fleet of four synchronised sleeves at the player's own stats.
+    const fleet = sp.fleetRates([0, 1, 2, 3].map((i) => sleeve({ index: i, sync: 100 })), NODE1);
+    const helped = simulateCrime("Homicide", player, NODE1, { until, maxHours: 500, assist: fleet });
+    if (!(helped.hours < alone.hours)) {
+      c6.fail(`a fleet delivering ${fleet.karmaPerSec.toFixed(4)} karma/s must shorten the grind: ${helped.hours.toFixed(1)}h vs ${alone.hours.toFixed(1)}h alone`);
+    }
+    // And the kills it pays must land too — Speakers for the Dead wants 30.
+    if (!(fleet.killsPerSec > 0)) c6.fail("Homicide kills, so the fleet pays the kill gate as well");
+    const killUntil = (pp) => pp.numPeopleKilled >= 30;
+    const kAlone = simulateCrime("Homicide", player, NODE1, { until: killUntil, maxHours: 500 });
+    const kHelped = simulateCrime("Homicide", player, NODE1, { until: killUntil, maxHours: 500, assist: fleet });
+    if (!(kHelped.hours < kAlone.hours)) c6.fail("the fleet's kills must count toward a kill gate");
+
+    // A NULL assist must price exactly as the lone player does — the fleet is
+    // unknown, so nothing is claimed for it. This is the direction that makes
+    // a karma gate look MORE expensive, which is the safe one.
+    const unknown = simulateCrime("Homicide", player, NODE1, { until, maxHours: 500, assist: null });
+    if (Math.abs(unknown.hours - alone.hours) > 1e-9) c6.fail("an unreadable fleet must not be credited");
+
+    // Across install cycles the fleet must STILL help — this is where it
+    // matters most, because the player's exp is zeroed each cycle and the
+    // sleeves' is not (prestigeAugmentation never calls sleeve.prestige()).
+    const gAlone = karmaGrindAcrossCycles(player, NODE1, { karmaTarget: -54000, cycleHours: 2, focus: 1 });
+    const gHelped = karmaGrindAcrossCycles(player, NODE1, { karmaTarget: -54000, cycleHours: 2, focus: 1, assist: fleet });
+    if (!gAlone || !gHelped) c6.fail("both multi-cycle grinds must price");
+    else if (!(gHelped.hours < gAlone.hours)) {
+      c6.fail(`the fleet must shorten the ACROSS-CYCLES grind too: ${gHelped.hours}h vs ${gAlone.hours}h`);
+    } else {
+      c6.note(`4 sleeves at sync 100 cut the -54,000 grind from ${gAlone.hours.toFixed(1)}h to ${gHelped.hours.toFixed(1)}h across 2h install cycles`);
+    }
+    // A negative or nonsense assist must not be credited either.
+    const bad = simulateCrime("Homicide", player, NODE1, { until, maxHours: 500, assist: { karmaPerSec: -5 } });
+    if (Math.abs(bad.hours - alone.hours) > 1e-9) c6.fail("a negative assist must be ignored, not subtracted");
+  }
+  checks.push(c6);
 
   return checks;
 }

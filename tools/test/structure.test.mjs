@@ -912,6 +912,32 @@ function c11() {
       // Only the derived branch carries these; find that literal specifically.
       scope: /weightsMeta = \{ source: 'derived'[\s\S]{0,800}?\}\n/,
     },
+    {
+      // THE FLEET AS A TRAJECTORY TERM. karmaChannelCtx reads these four names
+      // off /tel/sleeve.txt and feeds karmaPerSec/killsPerSec to
+      // karmaGrindAcrossCycles as `assist`. Every one of them reads as
+      // undefined if sleeve.js stops publishing it, and the grind then prices
+      // as though the player were alone — quietly, in the direction that keeps
+      // the old behaviour, which is exactly how the gang verdict came to be
+      // computed and never published.
+      reader: "progress.js",
+      publisher: "sleeve.js",
+      what: "the fleet record on /tel/sleeve.txt",
+      // `at` is deliberately NOT here: status.js's reporter stamps it on every
+      // publication, so it belongs to that contract, not this one. Listing it
+      // would make this check pass on a shared helper rather than on sleeve.js.
+      fields: ["bitNode", "karmaPerSec", "killsPerSec", "contributing", "sleeves"],
+      scope: /note\(refusals\.length \? 'error' : 'ok', \{[\s\S]*?\n\t\t\}\)/,
+    },
+    {
+      // And the other direction: sleeve.js reads its objective and horizon off
+      // a file only progress.js writes.
+      reader: "sleeve.js",
+      publisher: "progress.js",
+      what: "/tel/sleeveplan.txt",
+      fields: ["objective", "horizonHours", "bitNode"],
+      scope: /ns\.write\(\s*'\/tel\/sleeveplan\.txt'[\s\S]*?'w',\s*\)/,
+    },
   ];
   for (const { reader, publisher, what, fields, scope } of CONTRACTS) {
     let pubSrc;
@@ -937,7 +963,14 @@ function c11() {
     }
     for (const f of fields) {
       c.examined(1);
-      if (!new RegExp(`\\b${f}\\b`).test(pubSrc)) {
+      // A KEY, not a mention. `\bfield\b` passed over the removal of
+      // `objective:` from the sleeve plan write, because the `why` string in
+      // the same object says "objective follows the gang verdict" — the
+      // publisher's own prose satisfying the check, the same way its comments
+      // did before those were stripped. String literals go too, and the field
+      // must appear in key position (`f:`) or as shorthand (`f,` / `f}`).
+      const body = pubSrc.replace(/'(?:[^'\\]|\\.)*'/g, " ").replace(/"(?:[^"\\]|\\.)*"/g, " ").replace(/`(?:[^`\\]|\\.)*`/g, " ");
+      if (!new RegExp(`\\b${f}\\s*(?::|,|\\}|$)`, "m").test(body)) {
         c.fail(`${reader} depends on \`${f}\` but ${publisher} never writes it to ${what}`, "an absent field reads as undefined, a `?? fallback` turns it into a plausible number, and the check that needed it skips itself in silence");
       }
     }

@@ -101,10 +101,21 @@
 import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
+import { bitNodeMults } from 'bitNodeMultipliers.js'
+import { fleetRates, sleeveAssignments, syncBreakevenHours } from 'sleeveplan.js'
+import { CRIMES } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 
 const RAMOVERRIDE_STATUS = '/tel/sleeve.txt'
+/** What progress.js wants the fleet doing, and over what horizon. Written on
+ *  home; this script runs `where: 'anywhere'`, so it must be PULLED before it
+ *  is read or ns.read returns '' and every sleeve silently falls back to the
+ *  no-plan default. Invariant C10. */
+const PLAN = '/tel/sleeveplan.txt'
+/** The CrimeType strings setToCommitCrime accepts (Crime/Enums.ts), via the
+ *  one table this repo keeps checked against game source ([BP1]). */
+const CRIME_NAMES = new Set(Object.keys(CRIMES))
 
 /** This file's FULL static price as a function of the Singularity RAM
  *  multiplier (sfgate.js:71-77). The ns.singularity surface is now EMPTY — the
@@ -316,6 +327,8 @@ async function act(ns, note) {
 	// terminal full of the same line is how a real message gets missed.
 	const warned = new Set();
 
+	const node = bitNodeMults(ns.getResetInfo()?.currentNode) ?? null
+
 	while (true) {
 		refusals = [];
 		let sleeves = getSleeves(ns);
@@ -327,9 +340,38 @@ async function act(ns, note) {
 			sleeveTasks = localStorageSleeveTasks;
 		}
 
+		// THE PLAN, from progress.js. Pull first — see PLAN's comment.
+		if (ns.getHostname() !== 'home') {
+			try { ns.scp(PLAN, ns.getHostname(), 'home') } catch { /* previous copy stands */ }
+		}
+		let plan = null
+		try { plan = JSON.parse(ns.read(PLAN) || 'null') } catch { plan = null }
+		// A plan from another BitNode is not a plan: prestigeSourceFile calls
+		// sleeve.prestige() on every sleeve, so the fleet it was written for no
+		// longer exists.
+		if (plan && node !== null && plan.bitNode !== ns.getResetInfo()?.currentNode) plan = null
+		// WITHOUT A PLAN, WORK FOR MONEY. Doing nothing was the shipped
+		// behaviour and it is the one clearly wrong answer: boot.js launches
+		// this script with no arguments, so `sleeveTasks` was always empty,
+		// every sleeve hit `if (!sleeveTask) return`, and the script whose
+		// BitNode was entered FOR sleeves never assigned a single one. Money is
+		// the default because no objective is harmed by a sleeve earning it,
+		// and because the alternative — assuming karma — is the assumption that
+		// cost this run four hours of Homicide in a node where the gang is not
+		// worth its gate.
+		const objective = plan?.objective ?? 'money'
+		const horizonHours = typeof plan?.horizonHours === 'number' && isFinite(plan.horizonHours) ? plan.horizonHours : null
+		const auto = sleeveAssignments(sleeves, node, {
+			objective,
+			horizonHours,
+			playerIntelligence: ns.getPlayer?.().skills?.intelligence,
+		})
+
 		sleeves.forEach((sleeve, index) => {
 			let sleeveTask = sleeveTasks[index] ?
 				sleeveTasks[index].toLowerCase() : undefined;
+			// No hand-written word for this sleeve: take the plan's answer.
+			if (!sleeveTask) sleeveTask = auto?.tasks?.[index] ?? undefined;
 			if (!sleeveTask) return;
 			switch (sleeveTask) {
 				case 'strength':
@@ -408,7 +450,35 @@ async function act(ns, note) {
 					}
 				} break;
 
+				// THE PLANNED TASKS. sleeveplan emits 'sync', 'shock' or a
+				// CrimeType name; the cases above are the hand-written words.
+				case 'sync': {
+					if (sleeve.task?.type !== 'SYNCHRO') {
+						doTask(`sleeve ${sleeve.index} synchronize`,
+							() => ns.sleeve.setToSynchronize(sleeve.index));
+					}
+				} break;
+
+				case 'shock': {
+					if (sleeve.task?.type !== 'RECOVERY') {
+						doTask(`sleeve ${sleeve.index} shock recovery`,
+							() => ns.sleeve.setToShockRecovery(sleeve.index));
+					}
+				} break;
+
 				default: {
+					// A CrimeType name, from the plan or typed by hand. Re-issuing
+					// it would be worse than doing nothing: startWork calls
+					// finish() on the current work (Sleeve.ts:182-185) and
+					// SleeveCrimeWork's cyclesWorked goes back to zero, so a
+					// 30s tick re-issuing a 600s Heist completes it NEVER.
+					if (CRIME_NAMES.has(sleeveTask)) {
+						if (!isAlreadyCommitting(sleeve.task, sleeveTask)) {
+							doTask(`sleeve ${sleeve.index} crime ${sleeveTask}`,
+								() => ns.sleeve.setToCommitCrime(sleeve.index, sleeveTask));
+						}
+						break;
+					}
 					if (!warned.has(sleeveTask)) {
 						warned.add(sleeveTask);
 						ns.tprint(`sleeve.js: unknown task "${sleeveTask}" for sleeve ${sleeve.index}; falling back to sync/shock/homicide.`);
@@ -443,9 +513,30 @@ async function act(ns, note) {
 		const syncs = sleeves.map((x) => x.sync)
 		const shocks = sleeves.map((x) => x.shock)
 		const mean = (a) => (a.length ? a.reduce((p, q) => p + q, 0) / a.length : null)
+		// WHAT THE FLEET IS WORTH TO THE TRAJECTORY. progress.js has no
+		// ns.sleeve.* budget (9 members at 4GB each), so the actor that owns
+		// the API prices the fleet and publishes the rates; the planner reads
+		// two numbers. karmaChannelCtx feeds them to karmaGrindAcrossCycles as
+		// `assist`, which is how the karma gate stopped being priced as though
+		// the player grinds it alone.
+		//
+		// Published as null, never 0, when it cannot be priced — a fleet that
+		// reads as zero is indistinguishable from no fleet at all, and the
+		// reader must be able to say "unknown" rather than "none".
+		const rates = fleetRates(sleeves, node, { objective })
 		note(refusals.length ? 'error' : 'ok', {
 			result: refusals.length ? 'refusals' : 'assigned',
 			sleeves: sleeves.length,
+			bitNode: ns.getResetInfo()?.currentNode ?? null,
+			// The fleet as a trajectory term. C11 checks progress.js's reads
+			// against these names.
+			karmaPerSec: rates ? rates.karmaPerSec : null,
+			killsPerSec: rates ? rates.killsPerSec : null,
+			contributing: rates ? rates.contributing : null,
+			objective,
+			horizonHours,
+			syncBreakevenHours: syncBreakevenHours(ns.getPlayer?.().skills?.intelligence),
+			plan: auto ? auto.why : null,
 			syncMean: mean(syncs),
 			syncMin: syncs.length ? Math.min(...syncs) : null,
 			shockMean: mean(shocks),

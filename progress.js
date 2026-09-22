@@ -109,6 +109,7 @@ const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel } from 'sfgate.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG } from 'gangplan.js'
+
 // The whole faction space as data — see factions.js and [BC9].
 import { ALL_FACTIONS } from 'factions.js'
 import { reporter } from 'status.js'
@@ -1080,6 +1081,10 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  * when one is running); with no such measurement the channel refuses rather
  * than inventing what a gang might be worth.
  */
+/** Sleeve telemetry older than this describes a fleet that may since have
+ *  been re-tasked. sleeve.js publishes every 30s, so this is ten ticks. */
+const SLEEVE_FRESH_MS = 5 * 60 * 1000
+
 /**
  * The BitNode multiplier table is DERIVED HERE, not taken as an argument.
  *
@@ -1112,15 +1117,39 @@ function karmaChannelCtx(ns, info, player) {
       numPeopleKilled: player?.numPeopleKilled,
       money: player?.money,
     }
+    // THE SLEEVE FLEET, priced by sleeve.js (which owns the ns.sleeve.* budget)
+    // and read here as two rates. DERIVED, not a parameter: the last time this
+    // function took something a caller had to get right, one call site passed a
+    // `node` that did not exist in its scope and the planner threw on every
+    // pass.
+    //
+    // A stale or foreign-node record is NOT a fleet of zero. It is unknown, and
+    // `assist` stays null so the grind prices as though the player were alone —
+    // which OVERSTATES the gate rather than understating it, and so cannot talk
+    // the run into a gang it has not earned.
+    const fleet = (() => {
+      const f = readJson(ns, '/tel/sleeve.txt')
+      if (!f) return { assist: null, why: 'no /tel/sleeve.txt — fleet unknown' }
+      if (f.bitNode !== info?.currentNode) {
+        return { assist: null, why: `sleeve telemetry is from BitNode ${f.bitNode}, not ${info?.currentNode} — prestigeSourceFile resets every sleeve, so it describes a fleet that no longer exists` }
+      }
+      const age = Date.now() - Date.parse(f.at ?? '')
+      if (!(age >= 0 && age < SLEEVE_FRESH_MS)) return { assist: null, why: 'sleeve telemetry is stale or undated — fleet unknown' }
+      if (!fin(f.karmaPerSec)) return { assist: null, why: f.sleeves === 0 ? 'no sleeves in this save' : 'sleeve.js could not price the fleet' }
+      return {
+        assist: { karmaPerSec: f.karmaPerSec, killsPerSec: fin(f.killsPerSec) ? f.killsPerSec : 0 },
+        why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
+      }
+    })()
     const grindHours = (lift) => {
       if (cycleHours === null) return null
       const p = lift
         ? { ...person, mults: { ...person.mults, ...Object.fromEntries(Object.entries(lift).map(([k, v]) => [k, (person.mults?.[k] ?? 1) * v])) } }
         : person
-      const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1 })
+      const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1, assist: fleet.assist })
       return r && isFinite(r.hours) ? r.hours : null
     }
-    return { gangPending: true, gangIncomePerSec, grindHours }
+    return { gangPending: true, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetWhy: fleet.why }
   } catch {
     return { gangPending: false }
   }
@@ -2779,6 +2808,53 @@ async function act(ns, canJoin, info, note) {
       futures = discountFutures(futures, M, futuresCalibration?.trust)
     }
 
+    // THE NODE'S REMAINING HOURS, hoisted out of the install gate because two
+    // decisions need it and they are not the same decision.
+    //
+    // An install window is the horizon for anything an install destroys — Go
+    // node power (Go.prestigeAugmentation zeroes it), the player's combat exp.
+    // The SLEEVE fleet is not in that class: prestigeAugmentation never calls
+    // sleeve.prestige(), so sync and skills survive every install and only a
+    // BitNode change resets them. The horizon governing whether synchronising
+    // a sleeve repays is therefore the REST OF THE NODE, not the rest of the
+    // window — a distinction worth about 25h of sleeve output when the window
+    // is 2h and the node has 40h left.
+    const exitPolicy = (() => {
+          try {
+            const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+            const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
+            const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+            return bestExitPolicy({
+              money: player.money ?? 0,
+              incomePerSec: incomePerSec + contractMoneyPerSec,
+              hacking: player.skills?.hacking,
+              hackingExp: player.exp?.hacking ?? 0,
+              hackingMult: player.mults?.hacking,
+              expPerSec: schedule?.expPerSec,
+              repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
+              exitRep: rp?.factionRep ?? 0,
+              exitFavor: rp?.favor ?? 0,
+              cycleHours: cyc?.cycleHours,
+              multGainPerCycle: cyc?.multGainPerCycle,
+              exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
+              // The requirement, not the shortfall: exitHours skips the leg
+              // itself when the cash is already there, and feeding it a claim
+              // that had collapsed to 0 would hide the leg entirely.
+              joinMoney: exitFactionMoneyReq(candidates) ?? 0,
+              terminalRep: rp?.baseRep ?? 0,
+              donationCost: typeof rp?.donationCost === 'number' ? rp.donationCost : null,
+              // 150 x FavorToDonateToFaction (Faction/formulas/donation.ts:17),
+              // read from the node rather than assumed.
+              favorToDonate: (() => {
+                const f = bitNodeMults(info?.currentNode)?.FavorToDonateToFaction
+                return typeof f === 'number' && isFinite(f) && f > 0 ? 150 * f : null
+              })(),
+            })
+          } catch {
+            return null
+          }
+        })()
+
     const gate = shouldInstall({
       ageMs: Date.now() - (info?.lastAugReset ?? 0),
       M,
@@ -2814,41 +2890,7 @@ async function act(ns, canJoin, info, note) {
         // decided by comparing trajectories rather than by a threshold on the
         // current hacking level. Refuses (and bindingGate falls back to the
         // threshold, loudly) whenever a rate is missing.
-        exitPolicy: (() => {
-          try {
-            const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
-            const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
-            const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
-            return bestExitPolicy({
-              money: player.money ?? 0,
-              incomePerSec: incomePerSec + contractMoneyPerSec,
-              hacking: player.skills?.hacking,
-              hackingExp: player.exp?.hacking ?? 0,
-              hackingMult: player.mults?.hacking,
-              expPerSec: schedule?.expPerSec,
-              repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
-              exitRep: rp?.factionRep ?? 0,
-              exitFavor: rp?.favor ?? 0,
-              cycleHours: cyc?.cycleHours,
-              multGainPerCycle: cyc?.multGainPerCycle,
-              exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
-              // The requirement, not the shortfall: exitHours skips the leg
-              // itself when the cash is already there, and feeding it a claim
-              // that had collapsed to 0 would hide the leg entirely.
-              joinMoney: exitFactionMoneyReq(candidates) ?? 0,
-              terminalRep: rp?.baseRep ?? 0,
-              donationCost: typeof rp?.donationCost === 'number' ? rp.donationCost : null,
-              // 150 x FavorToDonateToFaction (Faction/formulas/donation.ts:17),
-              // read from the node rather than assumed.
-              favorToDonate: (() => {
-                const f = bitNodeMults(info?.currentNode)?.FavorToDonateToFaction
-                return typeof f === 'number' && isFinite(f) && f > 0 ? 150 * f : null
-              })(),
-            })
-          } catch {
-            return null
-          }
-        })(),
+        exitPolicy,
         // Membership, not affordability. See bindingGate: the money gate must
         // stay bound until we are actually a member, or holding the money ends
         // the gate and frees the install that destroys it.
@@ -3047,6 +3089,44 @@ async function act(ns, canJoin, info, note) {
         /* server not spawned yet — the Red Pill install has not landed */
       }
     }
+
+    // WHAT THE SLEEVE FLEET SHOULD BE DOING. sleeve.js owns the ns.sleeve.*
+    // budget and does the assigning; this says what the run wants and over what
+    // horizon, which are the two things only the planner knows.
+    //
+    // THE HORIZON IS THE NODE, NOT THE INSTALL WINDOW. Everything else this
+    // planner amortises — Go node power, the player's combat exp — is destroyed
+    // by an install, so the window is its horizon. Sleeves are not:
+    // prestigeAugmentation never calls sleeve.prestige(), so sync and skills
+    // survive every install and only a BitNode change resets them. Pricing the
+    // ~27.8h synchronise investment against a 2h window would refuse it forever
+    // in a node with 40h left.
+    //
+    // THE OBJECTIVE FOLLOWS THE GANG VERDICT. Karma is worth a sleeve's time
+    // only where a gang is worth its gate; everywhere else the fleet earns
+    // money, which no objective is harmed by. This is the same verdict act.js
+    // gates its own karma grind on, read from the same place, so the player and
+    // the fleet cannot end up grinding for different reasons.
+    ns.write(
+      '/tel/sleeveplan.txt',
+      JSON.stringify({
+        at: new Date().toISOString(),
+        bitNode: info?.currentNode,
+        lastAugReset: info?.lastAugReset,
+        objective: gangWorthVerdict?.worth === true ? 'karma' : 'money',
+        // null rather than a number when the exit cannot be priced: sleeveplan
+        // refuses the synchronise investment against an unknown horizon rather
+        // than assuming one, and that refusal is the safe direction.
+        horizonHours: (() => {
+          const h = exitPolicy?.best?.hours
+          return typeof h === 'number' && isFinite(h) && h > 0 ? h : null
+        })(),
+        why:
+          `objective follows the gang verdict (${gangWorthVerdict?.worth === true ? 'gang is worth its karma gate here' : gangWorthVerdict?.worth === false ? 'gang is NOT worth its karma gate here' : 'gang unpriced — not grinding karma on an unknown'}); ` +
+          `horizon is the rest of the NODE because installs do not reset sleeves`,
+      }),
+      'w',
+    )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards
     // would never happen and the next life would start with no history — and

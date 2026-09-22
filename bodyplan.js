@@ -231,6 +231,22 @@ export function simulateCrime(crime, person, node, o = {}) {
   if (!c || !until || personProblem(person) || nodeProblem(node)) return null
   const focus = num(o.focus) ? o.focus : 1
   const maxHours = num(o.maxHours) ? o.maxHours : 2000
+  // THE SLEEVE FLEET, if there is one. `assist` is constant karma and kills
+  // per second contributed by something other than the player's own work slot
+  // — in practice sleeveplan.fleetRates. It is integrated alongside the
+  // player's crime because that is literally what the game does:
+  // SleeveCrimeWork.ts:47 decrements the SAME Player.karma.
+  //
+  // Held CONSTANT on purpose. Sleeves gain combat exp from their crimes, so
+  // their success chance rises and this understates them — conservative in the
+  // direction that makes a karma gate look MORE expensive, which is the safe
+  // direction for a verdict that decides whether to spend 18h grinding.
+  //
+  // An `assist` that cannot be read is not an `assist` of zero: the caller
+  // passes null and must say so. Passing 0 here is a claim that there is no
+  // fleet, and callers who do not know must not make it.
+  const assistKarma = num(o.assist?.karmaPerSec) && o.assist.karmaPerSec >= 0 ? o.assist.karmaPerSec : 0
+  const assistKills = num(o.assist?.killsPerSec) && o.assist.killsPerSec >= 0 ? o.assist.killsPerSec : 0
   const p = clonePerson(person)
   if (until(p)) return { hours: 0, person: p }
   let sec = 0
@@ -242,8 +258,8 @@ export function simulateCrime(crime, person, node, o = {}) {
     // 2000-hour Illuminati one finishes in ~2,500 iterations.
     const step = Math.max(1, sec / 200)
     for (const s of SKILLS) p.exp[s] += r.exp[s] * step
-    p.karma -= r.karma * step
-    p.numPeopleKilled += r.kills * step
+    p.karma -= (r.karma + assistKarma) * step
+    p.numPeopleKilled += (r.kills + assistKills) * step
     p.money += r.money * step
     relevel(p)
     sec += step
@@ -344,6 +360,14 @@ export function karmaGrindAcrossCycles(person, node, o = {}) {
       return { hours: hours + leg.hours, cycles: cycle, atCycleCap: false }
     }
     // The cycle ran out: carry karma and multipliers, lose skills to the install.
+    //
+    // THE FLEET DOES NOT LOSE ITS SKILLS HERE, and that is not an omission:
+    // `prestigeAugmentation` never calls sleeve.prestige() (it only re-tasks
+    // each sleeve, PlayerObjectGeneralMethods.ts:120), so sleeve exp, skills
+    // and sync all survive an install. Across a multi-cycle grind the player's
+    // contribution keeps restarting from level 1 and the fleet's does not —
+    // which is exactly why `o.assist` is a constant carried through the whole
+    // loop rather than something reset alongside `p.exp`.
     hours += cycleHours
     p.karma = leg.person.karma
     p.numPeopleKilled = leg.person.numPeopleKilled
