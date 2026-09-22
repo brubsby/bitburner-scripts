@@ -102,7 +102,7 @@ import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { fleetRates, sleeveAssignments, syncBreakevenHours } from 'sleeveplan.js'
+import { fleetExpToPlayer, fleetRates, sleeveAssignments, syncBreakevenHours } from 'sleeveplan.js'
 import { CRIMES } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
@@ -524,6 +524,13 @@ async function act(ns, note) {
 		// reads as zero is indistinguishable from no fleet at all, and the
 		// reader must be able to say "unknown" rather than "none".
 		const rates = fleetRates(sleeves, node, { objective })
+		// THE EXP TRANSFER. applySleeveGains hands the player the sleeve's exp
+		// scaled by sync, and `disableSleeveExpAndAugmentation` is a BitNode
+		// OPTION that zeroes it outright — read from the save rather than
+		// assumed, because a known zero and an unknown are different answers
+		// and only one of them can be planned around.
+		const disableSleeveExp = ns.getResetInfo()?.bitNodeOptions?.disableSleeveExpAndAugmentation === true
+		const expT = fleetExpToPlayer(sleeves, { disableSleeveExp, onlyStudying: false })
 		note(refusals.length ? 'error' : 'ok', {
 			result: refusals.length ? 'refusals' : 'assigned',
 			sleeves: sleeves.length,
@@ -533,6 +540,10 @@ async function act(ns, note) {
 			karmaPerSec: rates ? rates.karmaPerSec : null,
 			killsPerSec: rates ? rates.killsPerSec : null,
 			contributing: rates ? rates.contributing : null,
+			// Hacking exp/s the fleet would hand the PLAYER if studying. Null,
+			// never 0, when it cannot be priced.
+			expToPlayerHacking: expT ? expT.hacking : null,
+			disableSleeveExp,
 			objective,
 			horizonHours,
 			syncBreakevenHours: syncBreakevenHours(ns.getPlayer?.().skills?.intelligence),

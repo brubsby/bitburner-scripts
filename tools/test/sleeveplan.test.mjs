@@ -309,5 +309,62 @@ export async function run() {
   }
   checks.push(c7);
 
+  // ---------------------------------------------------------------------
+  const c8 = new Check("SP8", "the exp transfer to the player is the game's, and additive only");
+  {
+    c8.examined(6);
+    // The formula, against source: class earnings are per-CYCLE and scaled by
+    // location.expMult / gameCPS, so per second the gameCPS cancels.
+    const cw = game("src/Work/ClassWork.tsx");
+    const algo = Number(cw.match(/algorithms\][\s\S]{0,200}?hackExp:\s*([\d.]+)/)?.[1]);
+    if (algo !== sp.CLASSES.Algorithms.exp) c8.fail(`Algorithms hackExp is ${algo} in source, ${sp.CLASSES.Algorithms.exp} here`);
+    const fm = game("src/Work/Formulas.ts");
+    if (!/location\.expMult\s*\/\s*gameCPS/.test(fm)) c8.fail("calculateClassEarnings no longer scales by location.expMult / gameCPS");
+    // The transfer itself, and that it is SYNC-scaled.
+    const wk = game("src/PersonObjects/Sleeve/Work/Work.ts");
+    if (!/applyWorkStatsExp\(Player, shockedStats, mult \* sync\)/.test(wk)) {
+      c8.fail("applySleeveGains no longer hands the PLAYER the sleeve's exp scaled by sync — fleetExpToPlayer assumes it does");
+    }
+    const one = sp.sleeveStudyExpPerSec(sleeve({ sync: 100 }));
+    if (one?.perSec !== 4 * 4) c8.fail(`Algorithms at the best university is exp 4 x expMult 4 = 16/s, got ${one?.perSec}`);
+    if (one?.university !== "ZB Institute of Technology") c8.fail("the best university is ZB (expMult 4)");
+    const half = sp.fleetExpToPlayer([sleeve({ sync: 50 })]);
+    const full = sp.fleetExpToPlayer([sleeve({ sync: 100 })]);
+    if (Math.abs(half.hacking * 2 - full.hacking) > 1e-9) c8.fail("the transfer is linear in sync");
+    if (Math.abs(full.hacking - 16) > 1e-9) c8.fail(`at sync 100 the whole 16/s transfers, got ${full.hacking}`);
+    // Shock scales it (it scales exp), unlike karma.
+    if (!(sp.fleetExpToPlayer([sleeve({ sync: 100, shock: 50 })]).hacking < full.hacking)) {
+      c8.fail("shock scales the exp transfer — SleeveClassWork.calculateRates applies shockBonus");
+    }
+    // KNOWN ZERO vs UNKNOWN. The BitNode option is readable, so it is a zero
+    // that can be planned around; an unreadable sleeve is not.
+    const off = sp.fleetExpToPlayer([sleeve()], { disableSleeveExp: true });
+    if (off?.hacking !== 0) c8.fail("disableSleeveExpAndAugmentation means a KNOWN zero transfer");
+    if (!/disableSleeveExpAndAugmentation/.test(off?.why ?? "")) c8.fail("and it must name the option");
+    if (!/disableSleeveExpAndAugmentation/.test(game("src/Work/Formulas.ts"))) {
+      c8.fail("processWorkStats no longer gates sleeve exp on that option — the refusal here is stale");
+    }
+    if (sp.fleetExpToPlayer([sleeve(), { index: 1 }]) !== null) c8.fail("one unreadable sleeve must refuse the whole total");
+    if (sp.fleetExpToPlayer(null) !== null) c8.fail("an unreadable fleet must refuse");
+
+    // CALIBRATION, printed whether it passes or fails (CLAUDE.md): the model
+    // must be stated against a quantity the live game shows, so nobody reads
+    // "the largest sleeve term" as "sleeves dominate the trajectory".
+    // ADDITIVE ONLY. Returning the fleet's rate where the player's is
+    // unmeasured survived every other assertion here, because it only shows up
+    // on the path where exitplan was already refusing.
+    if (sp.expPerSecWithFleet(316, 7.68) !== 316 + 7.68) c8.fail("a measured rate gains the fleet's");
+    for (const bad of [null, undefined, 0, NaN]) {
+      const r = sp.expPerSecWithFleet(bad, 7.68);
+      if (r === 7.68) c8.fail(`with the player's rate ${bad}, the fleet alone is NOT the climb rate — refuse instead`);
+      if (!(r === null || r === 0)) c8.fail(`unmeasured player rate must pass through, got ${r}`);
+    }
+    if (sp.expPerSecWithFleet(316, null) !== 316) c8.fail("an unknown fleet must leave the player's rate alone");
+
+    const live = sp.fleetExpToPlayer([sleeve({ sync: 48 })]);
+    c8.note(`1 sleeve at sync 48 studying Algorithms hands the player ${live.hacking.toFixed(2)} hacking exp/s; measured live 2026-09-22 the player earned 316/s, so +${((live.hacking / 316) * 100).toFixed(1)}% — real, and not dominant at one sleeve`);
+  }
+  checks.push(c8);
+
   return checks;
 }

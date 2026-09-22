@@ -388,3 +388,109 @@ export function sleevePolicy(sleeve, node, o = {}) {
       `${(best.value / base.value).toFixed(1)}x what working now delivers`,
   }
 }
+
+/**
+ * UNIVERSITIES — Locations/data/LocationsMetadata.ts. `expMult` is the whole
+ * difference between them; ZB is the best in the game and sleeve.js's study
+ * branch already travels to Volhaven for it.
+ */
+export const UNIVERSITIES = [
+  { name: 'ZB Institute of Technology', city: 'Volhaven', expMult: 4 },
+  { name: 'Summit University', city: 'Aevum', expMult: 3 },
+  { name: 'Rothman University', city: 'Sector-12', expMult: 2 },
+]
+
+/**
+ * CLASSES — Work/ClassWork.tsx:23-60, the per-cycle `earnings` of each. Only
+ * the two that matter here: the highest hacking course and the highest
+ * charisma one. A gym class has base exp 1, which is why bodyplan's `gymRate`
+ * needs no table.
+ */
+export const CLASSES = {
+  Algorithms: { skill: 'hacking', exp: 4, cost: 320 },
+  Leadership: { skill: 'charisma', exp: 4, cost: 320 },
+}
+
+/**
+ * EXP PER SECOND A SLEEVE GAINS from studying `course` at the best university.
+ *
+ * calculateClassEarnings (Work/Formulas.ts:99-112) scales the class's per-cycle
+ * earnings by `location.expMult / gameCPS * hashMult` and multiplies by the
+ * person's own multipliers; SleeveClassWork.calculateRates then scales the
+ * whole thing by shockBonus. Per SECOND the gameCPS cancels, leaving
+ *
+ *     exp * expMult * studyMult * mults[skill_exp] * shockBonus
+ *
+ * — the same shape as bodyplan's gymRate, whose base exp is 1.
+ */
+export function sleeveStudyExpPerSec(sleeve, course = 'Algorithms', o = {}) {
+  const c = CLASSES[course]
+  if (!c) return null
+  const uni = [...UNIVERSITIES].sort((a, b) => b.expMult - a.expMult)[0]
+  const mult = sleeve?.mults?.[`${c.skill}_exp`]
+  if (!num(mult) || mult < 0) return null
+  const studyMult = num(o.studyMult) && o.studyMult > 0 ? o.studyMult : 1
+  const shockBonus = (100 - (num(sleeve?.shock) ? sleeve.shock : 0)) / 100
+  return { skill: c.skill, university: uni.name, city: uni.city, perSec: c.exp * uni.expMult * studyMult * mult * shockBonus }
+}
+
+/**
+ * WHAT THE FLEET HANDS THE PLAYER, per second, in exp.
+ *
+ * This is the term the header names as the largest and this module did not
+ * price. applySleeveGains (Sleeve/Work/Work.ts:16-24) applies the sleeve's
+ * gains to the PLAYER scaled by `syncBonus()` — so a sleeve studying
+ * Algorithms raises the player's hacking, which is the input to the exit
+ * climb, the longest leg in a BitNode.
+ *
+ * TWO REFUSALS, both real gates rather than defensive noise:
+ *
+ *   * `disableSleeveExpAndAugmentation` is a BitNode OPTION (readable through
+ *     ns.getResetInfo().bitNodeOptions) and processWorkStats zeroes EVERY exp
+ *     field for a sleeve when it is set — Work/Formulas.ts:118-129. In such a
+ *     save the transfer is a KNOWN zero, not an unknown, and saying which
+ *     matters: a zero can be planned around, an unknown cannot.
+ *   * an unreadable sleeve returns null for the whole fleet, for the same
+ *     reason fleetRates does: a total quietly short by one sleeve is worse
+ *     than no total.
+ */
+export function fleetExpToPlayer(sleeves, o = {}) {
+  if (!Array.isArray(sleeves)) return null
+  if (o.disableSleeveExp === true) {
+    return { hacking: 0, charisma: 0, contributing: 0, why: 'bitNodeOptions.disableSleeveExpAndAugmentation is set — sleeves grant no exp at all in this save (a known zero)' }
+  }
+  let hacking = 0
+  let charisma = 0
+  let contributing = 0
+  for (const sl of sleeves) {
+    if (!num(sl?.sync)) return null
+    const study = sleeveStudyExpPerSec(sl, 'Algorithms', o)
+    if (!study) return null
+    // Only a sleeve actually STUDYING transfers study exp. One committing
+    // crime transfers the crime's exp instead, which is a different and much
+    // smaller number; counting every sleeve as though it were at university
+    // would be the optimistic direction.
+    if (o.onlyStudying && sl.task !== 'CLASS') continue
+    hacking += study.perSec * (sl.sync / 100)
+    contributing++
+  }
+  return { hacking, charisma, contributing, why: `${contributing} sleeve(s) studying would hand the player ${hacking.toFixed(2)} hacking exp/s` }
+}
+
+/**
+ * THE HACKING EXP RATE THE EXIT CLIMB RUNS ON, with the fleet in it.
+ *
+ * ADDITIVE ONLY, and that restriction is the whole function. When the player's
+ * own rate is unmeasured this returns it unchanged — null — rather than the
+ * fleet's contribution alone: a climb priced on 7.68 exp/s with the player's
+ * 316/s missing is not a conservative estimate, it is a different trajectory
+ * that happens to be a number, and exitplan's refusal on a null rate was
+ * already the correct behaviour. Lives in this module rather than in
+ * progress.js so it can be tested without importing an ns-bound file.
+ */
+export function expPerSecWithFleet(base, fleetHacking) {
+  const b = num(base) && base > 0 ? base : null
+  if (b === null) return num(base) ? base : null
+  const f = num(fleetHacking) && fleetHacking > 0 ? fleetHacking : 0
+  return b + f
+}

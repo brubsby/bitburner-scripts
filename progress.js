@@ -135,6 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangGainHours } from 'gangworth.js'
+import { expPerSecWithFleet } from 'sleeveplan.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
  *  nsGetMember is strict — "strength" throws, "str" works. */
@@ -1089,6 +1090,34 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  * than inventing what a gang might be worth.
  */
 /**
+ * THE SLEEVE FLEET as the planner sees it. ONE reader, because two copies of
+ * "is this record this node's, and fresh?" is two chances to drift — and the
+ * freshness rule is the whole difference between a fleet and a memory of one.
+ *
+ * A stale or foreign-node record is NOT a fleet of zero. It is unknown, and
+ * every field stays null so callers price as though the fleet were not there —
+ * which OVERSTATES the karma gate rather than understating it, and cannot talk
+ * the run into a gang it has not earned.
+ */
+function readFleet(ns, info) {
+  const fin = (v) => typeof v === 'number' && isFinite(v)
+    const f = readJson(ns, '/tel/sleeve.txt')
+    if (!f) return { assist: null, why: 'no /tel/sleeve.txt — fleet unknown' }
+    if (f.bitNode !== info?.currentNode) {
+      return { assist: null, why: `sleeve telemetry is from BitNode ${f.bitNode}, not ${info?.currentNode} — prestigeSourceFile resets every sleeve, so it describes a fleet that no longer exists` }
+    }
+    const age = Date.now() - Date.parse(f.at ?? '')
+    if (!(age >= 0 && age < SLEEVE_FRESH_MS)) return { assist: null, why: 'sleeve telemetry is stale or undated — fleet unknown' }
+    if (!fin(f.karmaPerSec)) return { assist: null, why: f.sleeves === 0 ? 'no sleeves in this save' : 'sleeve.js could not price the fleet' }
+    return {
+      assist: { karmaPerSec: f.karmaPerSec, killsPerSec: fin(f.killsPerSec) ? f.killsPerSec : 0 },
+      expToPlayerHacking: fin(f.expToPlayerHacking) ? f.expToPlayerHacking : null,
+      why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
+    }
+}
+
+
+/**
  * THE GANG VERDICT AND THE SLEEVE PLAN, on EVERY gate write.
  *
  * Both of these were published on the `planned: true` path only. On a pass
@@ -1222,20 +1251,7 @@ function karmaChannelCtx(ns, info, player) {
     // `assist` stays null so the grind prices as though the player were alone —
     // which OVERSTATES the gate rather than understating it, and so cannot talk
     // the run into a gang it has not earned.
-    const fleet = (() => {
-      const f = readJson(ns, '/tel/sleeve.txt')
-      if (!f) return { assist: null, why: 'no /tel/sleeve.txt — fleet unknown' }
-      if (f.bitNode !== info?.currentNode) {
-        return { assist: null, why: `sleeve telemetry is from BitNode ${f.bitNode}, not ${info?.currentNode} — prestigeSourceFile resets every sleeve, so it describes a fleet that no longer exists` }
-      }
-      const age = Date.now() - Date.parse(f.at ?? '')
-      if (!(age >= 0 && age < SLEEVE_FRESH_MS)) return { assist: null, why: 'sleeve telemetry is stale or undated — fleet unknown' }
-      if (!fin(f.karmaPerSec)) return { assist: null, why: f.sleeves === 0 ? 'no sleeves in this save' : 'sleeve.js could not price the fleet' }
-      return {
-        assist: { karmaPerSec: f.karmaPerSec, killsPerSec: fin(f.killsPerSec) ? f.killsPerSec : 0 },
-        why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
-      }
-    })()
+    const fleet = readFleet(ns, info)
     const grindHours = (lift) => {
       if (cycleHours === null) return null
       const p = lift
@@ -1244,7 +1260,7 @@ function karmaChannelCtx(ns, info, player) {
       const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1, assist: fleet.assist })
       return r && isFinite(r.hours) ? r.hours : null
     }
-    return { gangPending: true, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetWhy: fleet.why }
+    return { gangPending: true, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
   } catch {
     return { gangPending: false }
   }
@@ -2930,6 +2946,8 @@ async function act(ns, canJoin, info, note) {
     // a sleeve repays is therefore the REST OF THE NODE, not the rest of the
     // window — a distinction worth about 25h of sleeve output when the window
     // is 2h and the node has 40h left.
+    // The fleet, read once for both the exit trajectory and the sleeve plan.
+    const planFleet = readFleet(ns, info)
     const exitPolicy = (() => {
           try {
             const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
@@ -2941,7 +2959,11 @@ async function act(ns, canJoin, info, note) {
               hacking: player.skills?.hacking,
               hackingExp: player.exp?.hacking ?? 0,
               hackingMult: player.mults?.hacking,
-              expPerSec: schedule?.expPerSec,
+              // The sleeve fleet's exp transfer rides the exit climb. Additive
+              // only: a null player rate stays null (exitplan refuses), because
+              // the fleet's few exp/s alone is not a conservative estimate of a
+              // climb, it is a different trajectory that happens to be a number.
+              expPerSec: expPerSecWithFleet(schedule?.expPerSec, planFleet?.expToPlayerHacking),
               repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
               exitRep: rp?.factionRep ?? 0,
               exitFavor: rp?.favor ?? 0,
@@ -3121,7 +3143,7 @@ async function act(ns, canJoin, info, note) {
                 hacking: player.skills?.hacking,
                 hackingExp: player.exp?.hacking ?? 0,
                 hackingMult: player.mults?.hacking,
-                expPerSec: schedule?.expPerSec,
+                expPerSec: expPerSecWithFleet(schedule?.expPerSec, readFleet(ns, info)?.expToPlayerHacking),
                 repPerSec: schedule?.estimated ? null : schedule?.measuredBaseRepPerSec,
                 cycleHours: cyc?.cycleHours,
                 multGainPerCycle: cyc?.multGainPerCycle,
