@@ -106,6 +106,10 @@ const state = await ctl("/state");
 // gets a wider budget than a resident daemon.
 const FRESH = { "act.txt": 15, "progress.txt": 45, "watchdog.txt": 20, "batch.txt": 20, "go.txt": 30, "gang.txt": 20, "sleeve.txt": 20 };
 const tel = {};
+// Files carried over from a previous life: their CONTENTS are history, so a
+// movement check comparing them reports a stall in a component that has not
+// started yet. go.js is tier 128 and a fresh node is back at 32GB.
+const staleFromLastLife = new Set();
 for (const [name, budget] of Object.entries(FRESH)) {
   const d = readTel(name);
   tel[name] = d;
@@ -128,7 +132,10 @@ for (const [name, budget] of Object.entries(FRESH)) {
     // the direct answer and /state does not publish it.)
     const lifeStartMs = num(state.playtimeSinceLastAug) ? Date.now() - state.playtimeSinceLastAug : null;
     const bornLastLife = lifeStartMs !== null && Date.parse(d.at) < lifeStartMs;
-    if (bornLastLife) note(`/tel/${name} is ${age.toFixed(0)} min old and from a PREVIOUS life — not yet republished this one`);
+    if (bornLastLife) {
+      staleFromLastLife.add(name);
+      note(`/tel/${name} is ${age.toFixed(0)} min old and from a PREVIOUS life — not yet republished this one`);
+    }
     else fail(`/tel/${name} is ${age.toFixed(0)} min stale (budget ${budget})`, `health '${d.health}' — a stale file reporting 'ok' is the shape every silent failure here has taken`);
   }
   if (d.health === "error") fail(`${name} reports health 'error'`, String(d.detail ?? "").slice(0, 200));
@@ -207,7 +214,7 @@ if (!prev) {
   // an install since the last sample legitimately drops it.
   const installed = now.lifeMs !== null && prev.lifeMs !== null && now.lifeMs < prev.lifeMs;
   if (installed) note(`an install landed since the last sample (${now.augs} augmentations owned)`);
-  if (now.goRemote !== null && prev.goRemote !== null && now.goRemote === prev.goRemote && !installed) {
+  if (!staleFromLastLife.has("go.txt") && now.goRemote !== null && prev.goRemote !== null && now.goRemote === prev.goRemote && !installed) {
     fail("go.js has answered no new solver moves since the last sample", "the farm is stalled or the solver stopped");
   }
 
@@ -310,7 +317,16 @@ const sleevesExpected = now.homeRam !== null && now.homeRam >= SLEEVE_TIER;
 if (!sleevesExpected) {
   note(`sleeves: home is ${now.homeRam}GB and sleeve.js is admitted at ${SLEEVE_TIER}GB — not expected yet`);
 } else if (!sleeve) {
-  fail("home is past sleeve.js's tier but /tel/sleeve.txt does not exist", "nothing is driving the sleeves, which is why this node was chosen");
+  // EXPLAINED ABSENCE IS NOT SILENT ABSENCE. boot.js refuses to place an entry
+  // no host can hold and records the refusal, which is the system working —
+  // sleeve.js needs 41.75GB free and a 64GB home with the fleet loaded has
+  // none. Failing on that trains the reader to ignore the sleeve section
+  // during exactly the hours it is expected to be quiet. An absence with NO
+  // recorded reason is still a failure, because that is the shape of a driver
+  // that died without saying so.
+  const bootFail = (readTel("boot.txt")?.failed ?? []).find((x) => /^sleeve\.js:/.test(String(x)));
+  if (bootFail) note(`sleeves: not placed — ${bootFail} (boot.js refused rather than starting it somewhere it cannot raise)`);
+  else fail("home is past sleeve.js's tier, /tel/sleeve.txt does not exist, and boot.js records no reason", "a driver that is simply absent, with nothing explaining it, is the silent-failure shape");
 } else {
   if (sleeve.result === "refusals") fail(`${(sleeve.refusals ?? []).length} sleeve assignment(s) refused by the game`, String(sleeve.detail ?? ""));
   if (!num(sleeve.sleeves) || sleeve.sleeves <= 0) fail("sleeve.js reports zero sleeves", "Source-File 10 grants one per level and BitNode 10 grants up to eight");
