@@ -628,6 +628,18 @@ function c9() {
   const MANDATORY = ["joinClaim"];
   const KNOWN_OPTIONAL = ["budgetClaim"];
 
+  //   gangWorth   MANDATORY, and not a *Claim — act.js reads it, not budget.js,
+  //               so the discovery below cannot find it. It was published on
+  //               the `planned: true` path only, and a pass with nothing
+  //               affordable returns from the `total === 0` write long before
+  //               reaching it. In BitNode 10 that left the gate file carrying
+  //               no verdict for ten hours while act.js, reading undefined,
+  //               fell back to its default and ground 21,000 karma toward a
+  //               gang the node had already priced as NOT worth its gate.
+  //               Twice now the same shape: first computed into an object that
+  //               was never written, then computed on a branch not taken.
+  const MANDATORY_FOR_ACTORS = ["gangWorth"];
+
   const budget = read("budget.js");
   const discovered = [...new Set([...budget.matchAll(/\bd\.([A-Za-z_]\w*)/g)].map((m) => m[1]))].filter((f) =>
     f.endsWith("Claim"),
@@ -649,8 +661,8 @@ function c9() {
       );
     }
   }
-  const required = MANDATORY;
-  c.note(`claim fields in budget.js: ${discovered.join(", ")} — mandatory: ${required.join(", ")}`);
+  const required = [...MANDATORY, ...MANDATORY_FOR_ACTORS];
+  c.note(`claim fields in budget.js: ${discovered.join(", ")} — mandatory: ${required.join(", ")} (gangWorth is act.js's, not a claim)`);
 
   const src = read("progress.js");
   // Each ns.write(GATE, ...) call, with its argument text.

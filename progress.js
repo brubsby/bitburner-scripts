@@ -345,6 +345,13 @@ export async function main(ns) {
           // gives: a progress.js that cannot raise RAM cannot join a faction
           // either, so no money is promised to a join.
           joinClaim: 0,
+          // AND THE GANG VERDICT, explicitly unpriced. act.js gates its karma
+          // grind on this field; an absent one reads the same as an absent one
+          // on any other path, and "the planner could not run" is exactly when
+          // the operator most needs the file to say so rather than to be quiet.
+          // null, not false: a progress.js that cannot raise RAM has not
+          // decided the gang is worthless, it has decided nothing.
+          gangWorth: null,
         },
         null,
         2,
@@ -1081,6 +1088,87 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  * when one is running); with no such measurement the channel refuses rather
  * than inventing what a gang might be worth.
  */
+/**
+ * THE GANG VERDICT AND THE SLEEVE PLAN, on EVERY gate write.
+ *
+ * Both of these were published on the `planned: true` path only. On a pass
+ * where nothing is affordable progress.js takes the `total === 0` write and
+ * returns, so for ten hours in BitNode 10 the gate file carried no `gangWorth`
+ * at all, act.js read undefined and fell back to grinding karma toward a gang
+ * this node had already priced as NOT worth its gate — 21,000 karma of work
+ * slot spent on a leg that had been cancelled. /tel/sleeveplan.txt went stale
+ * the same way and the fleet ran on a ten-hour-old objective.
+ *
+ * This is the SECOND time the same shape has cost this run: the verdict was
+ * computed into an object that was never written, and now computed on a branch
+ * that was not taken. A value that only exists on the happy path is not
+ * published. [C9] now fails the suite if any gate write omits `gangWorth`.
+ *
+ * `gangGainHours` is optional because only the planned path can afford to
+ * price it (it runs two exit-policy searches). Without it gangVerdict falls
+ * back to the node's income scale, which is the term the comparison turns on
+ * and is known from the multiplier table alone — a weaker claim that says so.
+ */
+function gangWorthNow(ns, info, player, gainHours = null) {
+  try {
+    return gangVerdict({
+      node: info?.currentNode,
+      mults: bitNodeMults(info?.currentNode),
+      grindHours: (() => {
+        try {
+          const k = karmaChannelCtx(ns, info, player)
+          return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
+        } catch {
+          return null
+        }
+      })(),
+      gangGainHours: gainHours,
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Write /tel/sleeveplan.txt. `horizonHours` is null on any path that cannot
+ * price the exit; rather than publish a null horizon — which would make
+ * sleeveplan refuse the synchronise investment and re-task the fleet every
+ * time an unplanned pass ran, oscillating it — the previously priced horizon
+ * for THIS BitNode is carried forward with the stamp saying when it was
+ * priced. A carried horizon is visible; a null one silently changes behaviour.
+ */
+function writeSleevePlan(ns, info, verdict, horizonHours) {
+  let carried = null
+  if (horizonHours === null) {
+    try {
+      const prev = JSON.parse(ns.read('/tel/sleeveplan.txt') || 'null')
+      if (prev && prev.bitNode === info?.currentNode && typeof prev.horizonHours === 'number') {
+        carried = { hours: prev.horizonHours, at: prev.horizonAt ?? prev.at ?? null }
+      }
+    } catch {
+      /* absent or mid-write — a null horizon is then the honest answer */
+    }
+  }
+  const hours = horizonHours !== null ? horizonHours : carried?.hours ?? null
+  ns.write(
+    '/tel/sleeveplan.txt',
+    JSON.stringify({
+      at: new Date().toISOString(),
+      bitNode: info?.currentNode,
+      lastAugReset: info?.lastAugReset,
+      objective: verdict?.worth === true ? 'karma' : 'money',
+      horizonHours: hours,
+      horizonAt: horizonHours !== null ? new Date().toISOString() : carried?.at ?? null,
+      horizonCarried: horizonHours === null && hours !== null,
+      why:
+        `objective follows the gang verdict (${verdict?.worth === true ? 'gang is worth its karma gate here' : verdict?.worth === false ? 'gang is NOT worth its karma gate here' : 'gang unpriced — not grinding karma on an unknown'}); ` +
+        `horizon is the rest of the NODE because installs do not reset sleeves` +
+        (horizonHours === null && hours !== null ? `; carried from ${carried?.at} — this pass could not price the exit` : ''),
+    }),
+    'w',
+  )
+}
+
 /** Sleeve telemetry older than this describes a fleet that may since have
  *  been re-tasked. sleeve.js publishes every 30s, so this is ten ticks. */
 const SLEEVE_FRESH_MS = 5 * 60 * 1000
@@ -2605,6 +2693,11 @@ async function act(ns, canJoin, info, note) {
     } catch {
       /* absent or mid-write — no prior, which only defers scoring */
     }
+    // The fleet's plan rides this path too. The horizon cannot be priced here
+    // (exitPolicy runs below), so writeSleevePlan carries this node's last
+    // priced one forward rather than publishing a null that would re-task the
+    // fleet off synchronising every time an unplanned pass ran.
+    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null)
     ns.write(
       GATE,
       JSON.stringify(
@@ -2617,6 +2710,17 @@ async function act(ns, canJoin, info, note) {
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
           ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
+          // THE GANG VERDICT RIDES THIS WRITE TOO, for exactly the reason the
+          // objective record below does — and it was missing, which cost ten
+          // hours of work slot. A pass with nothing affordable ends here, so a
+          // field published only on the planned path is published on no path
+          // at all whenever the run is between purchases. act.js read
+          // undefined and grinding karma is its default.
+          //
+          // gangGainHours is null here: the two exit-policy searches that
+          // price it are too heavy for a path that exists to be cheap. The
+          // verdict falls back to the node's income scale and says so.
+          gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player)),
           // The objective record rides the unplanned write too: the
           // derivation runs whether or not anything is affordable, and a
           // refusal on this path was invisible (2026-09-20 01:10 — the
@@ -3003,28 +3107,7 @@ async function act(ns, canJoin, info, note) {
       // the gang's measured income advantage and is null until a gang in THIS
       // node has demonstrated one — so the verdict refuses rather than
       // assuming, which is what leaves the bootstrap alone by default.
-      gangWorth: (gangWorthVerdict = gangVerdict({
-        node: info?.currentNode,
-        mults: bitNodeMults(info?.currentNode),
-        grindHours: (() => {
-          // The same karma-grind model the crime leg uses. karmaChannelCtx
-          // builds it from the live person and this node's multipliers; an
-          // unreadable one yields null and the verdict refuses.
-          try {
-            const k = karmaChannelCtx(ns, info, player)
-            return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
-          } catch {
-            return null
-          }
-        })(),
-        // MEASURED, not assumed: the same exit-policy search run with and
-        // without the gang's money — how tools/sim/gang-vs-nogang.mjs prices
-        // it. The income comes from a gang this run has actually operated
-        // (/tel/gang-last.txt is written only on a demonstrated rate), so a
-        // node that has never had one REFUSES instead of inheriting another
-        // node's answer. That refusal is why BitNode 4's verdict could govern
-        // BitNode 10 in the first place, and it is the behaviour being fixed.
-        gangGainHours: (() => {
+      gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, (() => {
           try {
             const perSec = readJson(ns, '/tel/gang-last.txt')?.moneyPerSec
             if (!(typeof perSec === 'number' && perSec > 0)) return null
@@ -3049,8 +3132,7 @@ async function act(ns, canJoin, info, note) {
           } catch {
             return null
           }
-        })(),
-      })),
+        })())),
     })
 
     // ------------------------------------------------------------------
@@ -3114,40 +3196,22 @@ async function act(ns, canJoin, info, note) {
     // money, which no objective is harmed by. This is the same verdict act.js
     // gates its own karma grind on, read from the same place, so the player and
     // the fleet cannot end up grinding for different reasons.
-    ns.write(
-      '/tel/sleeveplan.txt',
-      JSON.stringify({
-        at: new Date().toISOString(),
-        bitNode: info?.currentNode,
-        lastAugReset: info?.lastAugReset,
-        objective: gangWorthVerdict?.worth === true ? 'karma' : 'money',
-        // null rather than a number when the exit cannot be priced: sleeveplan
-        // refuses the synchronise investment against an unknown horizon rather
-        // than assuming one, and that refusal is the safe direction.
-        horizonHours: (() => {
-          const h = exitPolicy?.best?.hours
-          if (!(typeof h === 'number' && isFinite(h) && h > 0)) return null
-          // CAP IT. Live, this published 1.8e55 hours: the exit climb to
-          // hacking 6000 at the current exp rate is an honest computation whose
-          // answer means "unreachable", and `isFinite` happily passed it. A
-          // number no reader can sanity-check is the permissive direction —
-          // "unreachable" encoded as "an extremely long horizon", which makes
-          // every investment look free and overflows anything that multiplies
-          // by it.
-          //
-          // The cap cannot change a decision the raw value would have got
-          // right: every sleeve break-even is monotone in the horizon, so
-          // anything past the cap and anything past 1e55 choose identically.
-          // It only stops an unreadable number leaving this file.
-          return Math.min(h, MAX_PLANNING_HORIZON_H)
-        })(),
-        // Published beside it so the cap is visible rather than silent.
-        horizonRawHours: exitPolicy?.best?.hours ?? null,
-        why:
-          `objective follows the gang verdict (${gangWorthVerdict?.worth === true ? 'gang is worth its karma gate here' : gangWorthVerdict?.worth === false ? 'gang is NOT worth its karma gate here' : 'gang unpriced — not grinding karma on an unknown'}); ` +
-          `horizon is the rest of the NODE because installs do not reset sleeves`,
-      }),
-      'w',
+    writeSleevePlan(
+      ns,
+      info,
+      gangWorthVerdict,
+      (() => {
+        const h = exitPolicy?.best?.hours
+        if (!(typeof h === 'number' && isFinite(h) && h > 0)) return null
+        // CAP IT. Live, this published 1.8e55 hours: the exit climb at the
+        // current exp rate is an honest computation whose answer means
+        // "unreachable", and `isFinite` happily passed it. A number no reader
+        // can sanity-check is the permissive direction — it makes every
+        // investment look free and overflows anything that multiplies by it.
+        // Every sleeve break-even is monotone in the horizon, so the cap
+        // cannot change a decision the raw value would have got right.
+        return Math.min(h, MAX_PLANNING_HORIZON_H)
+      })(),
     )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards
