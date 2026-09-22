@@ -154,7 +154,11 @@ const now = {
   hackingExp: state.exp?.hacking ?? null,
   homeRam: state.home?.ram ?? null,
   augs: (state.augmentations ?? []).length,
-  lastAugReset: state.lastAugReset ?? null,
+  // /state does NOT publish lastAugReset, so this read `undefined` and the
+  // install-detection branch below was dead: `installed` was always false.
+  // playtimeSinceLastAug is the field it does publish, and an install resets
+  // it to ~0, so a DROP is an install.
+  lifeMs: num(state.playtimeSinceLastAug) ? state.playtimeSinceLastAug : null,
   bitNode: state.bitNode ?? null,
   gangFaction: tel["gang.txt"]?.faction ?? null,
   gangRespect: tel["gang.txt"]?.respect ?? null,
@@ -199,7 +203,7 @@ if (!prev) {
 
   // Go power must climb while go.js is alive; the bonus resets on install, so
   // an install since the last sample legitimately drops it.
-  const installed = moved(prev.lastAugReset, now.lastAugReset);
+  const installed = now.lifeMs !== null && prev.lifeMs !== null && now.lifeMs < prev.lifeMs;
   if (installed) note(`an install landed since the last sample (${now.augs} augmentations owned)`);
   if (now.goRemote !== null && prev.goRemote !== null && now.goRemote === prev.goRemote && !installed) {
     fail("go.js has answered no new solver moves since the last sample", "the farm is stalled or the solver stopped");
@@ -265,7 +269,16 @@ if (!prev) {
   }
 
   // Hacking experience is the exit currency. It may only reset on an install.
-  if (now.hackingExp !== null && prev.hackingExp !== null && now.hackingExp <= prev.hackingExp && !installed) {
+  //
+  // THE INPUT IS CHECKED BEFORE THE CONDITION. This read `state.exp?.hacking`,
+  // which the daemon did not publish, so it was null on every run and the test
+  // skipped itself in silence while the file printed HAPPY PATH — the precise
+  // shape of "a check that examined zero things looks like a check that
+  // passed". The daemon now publishes `exp`; if it ever stops, that is a
+  // finding, not a pass.
+  if (now.hackingExp === null) {
+    fail("hacking experience is unreadable", "daemon /state carries no exp.hacking — the exit-progress check cannot run, and a check that cannot run must not read as a pass");
+  } else if (prev.hackingExp !== null && now.hackingExp <= prev.hackingExp && !installed) {
     fail("hacking experience has not increased", "nothing is hacking — the exit level is the node's end condition");
   }
 

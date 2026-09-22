@@ -398,6 +398,14 @@ function digest(save) {
     exploits: p.exploits,
     playtimeSinceLastAug: p.playtimeSinceLastAug,
     totalPlaytime: p.totalPlaytime,
+    // EXPERIENCE, not just the level. Level is logarithmic in exp, so at a
+    // mature multiplier it can sit still for an hour while exp climbs steadily
+    // — a movement check reading the level would call that a stall. Without
+    // this field tools/healthcheck.mjs's "hacking experience has not
+    // increased" test read `undefined`, skipped itself on every run, and
+    // reported a pass: a check that examines nothing looks exactly like a
+    // check that passed.
+    exp: p.exp,
   };
 }
 
