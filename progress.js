@@ -1085,6 +1085,13 @@ function favorGainOf(sing, faction, canJoin, o = {}) {
  *  been re-tasked. sleeve.js publishes every 30s, so this is ten ticks. */
 const SLEEVE_FRESH_MS = 5 * 60 * 1000
 
+/** The longest horizon any plan is allowed to be priced against. Not a claim
+ *  about how long a BitNode lasts — a bound past which the exit computation is
+ *  reporting "unreachable" rather than a duration, and every consumer's
+ *  decision has long since saturated. Recorded lives in this repo have run
+ *  20-100h; this is an order of magnitude past the longest. */
+const MAX_PLANNING_HORIZON_H = 1000
+
 /**
  * The BitNode multiplier table is DERIVED HERE, not taken as an argument.
  *
@@ -3119,8 +3126,23 @@ async function act(ns, canJoin, info, note) {
         // than assuming one, and that refusal is the safe direction.
         horizonHours: (() => {
           const h = exitPolicy?.best?.hours
-          return typeof h === 'number' && isFinite(h) && h > 0 ? h : null
+          if (!(typeof h === 'number' && isFinite(h) && h > 0)) return null
+          // CAP IT. Live, this published 1.8e55 hours: the exit climb to
+          // hacking 6000 at the current exp rate is an honest computation whose
+          // answer means "unreachable", and `isFinite` happily passed it. A
+          // number no reader can sanity-check is the permissive direction —
+          // "unreachable" encoded as "an extremely long horizon", which makes
+          // every investment look free and overflows anything that multiplies
+          // by it.
+          //
+          // The cap cannot change a decision the raw value would have got
+          // right: every sleeve break-even is monotone in the horizon, so
+          // anything past the cap and anything past 1e55 choose identically.
+          // It only stops an unreadable number leaving this file.
+          return Math.min(h, MAX_PLANNING_HORIZON_H)
         })(),
+        // Published beside it so the cap is visible rather than silent.
+        horizonRawHours: exitPolicy?.best?.hours ?? null,
         why:
           `objective follows the gang verdict (${gangWorthVerdict?.worth === true ? 'gang is worth its karma gate here' : gangWorthVerdict?.worth === false ? 'gang is NOT worth its karma gate here' : 'gang unpriced — not grinding karma on an unknown'}); ` +
           `horizon is the rest of the NODE because installs do not reset sleeves`,
