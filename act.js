@@ -53,6 +53,7 @@ const ACTORS = {
   buyaug: 'act-buyaug.js',
   install: 'act-install.js',
   homeram: 'act-homeram.js',
+  graft: 'act-graft.js',
 }
 /** Dynamic snapshots older than this are re-taken before the planner's next pass. */
 const SNAPSHOT_REFRESH_MS = 60 * 1000
