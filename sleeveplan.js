@@ -191,6 +191,21 @@ export function fleetRates(sleeves, node, o = {}) {
   if (!Array.isArray(sleeves)) return null
   const objective = o.objective ?? 'karma'
   const crime = o.crime ?? null
+  // A NON-CRIME OBJECTIVE IS A KNOWN ZERO, NOT AN UNREADABLE FLEET. Asked for
+  // 'rep', this used to hunt for the best crime by a `rep` field that no crime
+  // has, find none, and report the whole fleet as unreadable — so progress.js
+  // logged "sleeve.js could not price the fleet" about a fleet it could see
+  // perfectly well. Sleeves earning reputation commit no crime, so they pay no
+  // karma and no kills, and that is an answer rather than a failure.
+  if (objective !== 'karma' && objective !== 'money' && objective !== 'kills' && !crime) {
+    return {
+      karmaPerSec: 0,
+      killsPerSec: 0,
+      sleeves: sleeves.length,
+      contributing: 0,
+      why: `objective '${objective}' commits no crime, so the fleet pays no karma — a known zero, not an unmeasured one`,
+    }
+  }
   let karmaPerSec = 0
   let killsPerSec = 0
   let contributing = 0
@@ -527,9 +542,16 @@ export function fleetExpToPlayer(sleeves, o = {}) {
     const study = sleeveStudyExpPerSec(sl, 'Algorithms', o)
     if (!study) return null
     // Only a sleeve actually STUDYING transfers study exp. One committing
-    // crime transfers the crime's exp instead, which is a different and much
-    // smaller number; counting every sleeve as though it were at university
-    // would be the optimistic direction.
+    // crime, training at a gym or working a faction transfers THAT activity's
+    // exp instead — combat exp, not the hacking exp the exit climb runs on.
+    //
+    // `onlyStudying: false` therefore answers a HYPOTHETICAL ("what would the
+    // fleet hand us if it studied"), which is a fine planning number and a
+    // dishonest trajectory input. sleeve.js passed false and fed the result
+    // straight into bestExitPolicy, crediting the exit climb with 14.48
+    // hacking exp/s from a sleeve that was standing in a gym — the exact
+    // optimism the previous version of this comment warned about, committed by
+    // the caller three lines of code later.
     if (o.onlyStudying && sl.task !== 'CLASS') continue
     hacking += study.perSec * (sl.sync / 100)
     contributing++

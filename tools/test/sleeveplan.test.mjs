@@ -549,5 +549,55 @@ export async function run() {
   }
   checks.push(c11);
 
+  // ---------------------------------------------------------------------
+  const c12 = new Check("SP12", "what is PUBLISHED is what the fleet delivers, not what it could deliver");
+  {
+    c12.examined(7);
+    const studying = sleeve({ sync: 100, task: "CLASS" });
+    const inGym = sleeve({ sync: 100, task: "CLASS" });
+    const onCrime = sleeve({ sync: 100, task: "CRIME" });
+    const onFaction = sleeve({ sync: 100, task: "FACTION" });
+
+    // THE BUG: a sleeve doing anything else was credited with the Algorithms
+    // study rate, and sleeve.js fed that straight into bestExitPolicy as the
+    // rate the exit climb runs on — 14.48 hacking exp/s from a sleeve standing
+    // in a gym. Combat exp is not hacking exp.
+    const actual = sp.fleetExpToPlayer([onCrime, onFaction], { onlyStudying: true });
+    if (actual === null) c12.fail("a readable fleet doing other work is not unreadable");
+    else if (actual.hacking !== 0) c12.fail(`no sleeve is studying, so the hacking transfer is ZERO, got ${actual.hacking}`);
+    const real = sp.fleetExpToPlayer([studying], { onlyStudying: true });
+    if (!(real.hacking > 0)) c12.fail("a sleeve that IS studying must transfer");
+    // The hypothetical still exists, and must differ — otherwise the flag does nothing.
+    const hypo = sp.fleetExpToPlayer([onCrime, onFaction], { onlyStudying: false });
+    if (!(hypo.hacking > 0)) c12.fail("the planning figure still answers 'what if they studied'");
+    if (hypo.hacking === actual.hacking) c12.fail("actual and hypothetical must not be the same number");
+
+    // And the ACTOR must publish the actual one to the field progress.js feeds
+    // to the exit climb.
+    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "sleeve.js"), "utf8");
+    const bare = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const expT = bare.match(/const expT = fleetExpToPlayer\([^)]*\)/)?.[0] ?? "";
+    if (!/onlyStudying:\s*true/.test(expT)) {
+      c12.fail(`expToPlayerHacking must be the ACTUAL transfer: ${expT || "(assignment not found)"}`,
+        "progress.js feeds it to bestExitPolicy as the exit climb's exp rate; a hypothetical there overstates the trajectory");
+    }
+
+    c12.examined(4);
+    // A non-crime objective is a KNOWN ZERO karma, not an unreadable fleet.
+    // Asked for 'rep' this returned null, and progress.js logged "sleeve.js
+    // could not price the fleet" about a fleet it could see perfectly well.
+    const rep = sp.fleetRates([sleeve({ sync: 100 })], NODE1, { objective: "rep" });
+    if (rep === null) c12.fail("a 'rep' objective must not read as an unreadable fleet — sleeves earning reputation commit no crime");
+    else {
+      if (rep.karmaPerSec !== 0) c12.fail("a fleet committing no crime pays zero karma");
+      if (!/known zero/.test(rep.why)) c12.fail("and it must say the zero is KNOWN");
+    }
+    // Crime objectives are unaffected.
+    const karma = sp.fleetRates([sleeve({ sync: 100 })], NODE1, { objective: "karma" });
+    if (!(karma && karma.karmaPerSec > 0)) c12.fail("a karma objective still prices the crime");
+    c12.note(`gym+faction fleet: actual ${actual.hacking} exp/s, hypothetical ${hypo.hacking.toFixed(2)}; 'rep' objective karma = known 0`);
+  }
+  checks.push(c12);
+
   return checks;
 }

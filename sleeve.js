@@ -556,7 +556,15 @@ async function act(ns, note) {
 		// assumed, because a known zero and an unknown are different answers
 		// and only one of them can be planned around.
 		const disableSleeveExp = ns.getResetInfo()?.bitNodeOptions?.disableSleeveExpAndAugmentation === true
-		const expT = fleetExpToPlayer(sleeves, { disableSleeveExp, onlyStudying: false })
+		// ACTUAL, not hypothetical: progress.js feeds this straight to
+		// bestExitPolicy as the rate the exit climb runs on, so a sleeve in a
+		// gym must contribute ZERO hacking exp, not the Algorithms rate it
+		// would earn if it were at university.
+		const expT = fleetExpToPlayer(sleeves, { disableSleeveExp, onlyStudying: true })
+		// The hypothetical is still worth publishing — it is what the study
+		// objective would buy — but under a name that cannot be mistaken for
+		// what the fleet is delivering right now.
+		const expIfStudying = fleetExpToPlayer(sleeves, { disableSleeveExp, onlyStudying: false })
 		// FACTION REPUTATION. Unlike karma and the exp transfer this is NOT
 		// sync-scaled (SleeveFactionWork.ts:36 applies shockBonus alone), so an
 		// unsynchronised fleet is at full value here — and only ONE sleeve may
@@ -585,6 +593,7 @@ async function act(ns, note) {
 			// Hacking exp/s the fleet would hand the PLAYER if studying. Null,
 			// never 0, when it cannot be priced.
 			expToPlayerHacking: expT ? expT.hacking : null,
+			expToPlayerHackingIfStudying: expIfStudying ? expIfStudying.hacking : null,
 			// Base rate (favour divided out) — the shape exitplan's repPerSec wants.
 			factionRepPerSec: repT ? repT.base : null,
 			factionWorkType: repT ? repT.workType ?? null : null,
