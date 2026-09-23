@@ -9,7 +9,7 @@ import path from "node:path";
 import { Check } from "./harness.mjs";
 import "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
-import { load, asSave, ramOf } from "./ram.mjs";
+import { load, asSave, ramOf, REPO } from "./ram.mjs";
 
 const ap = await import("../../actplan.js");
 const { decide, gangKarmaTarget, SLUM_SNAKES, HACK_LINE, RETRY_MS } = ap;
@@ -345,6 +345,69 @@ export async function run() {
     c3.note(`GangKarmaRequirement ${req} read from source; outside BN2 at karma -9 the plan says: ${outside.kind} ${outside.args} — ${outside.why}`);
   }
   checks.push(c3);
+
+  // ---------------------------------------------------------------------
+  const c7 = new Check("AC7", "nothing is priced as buying a gang the node has declined, or on another node's income");
+  {
+    const gw = await import("../../gangworth.js");
+    c7.examined(6);
+    // PENDING IS A VERDICT, NOT A CAPABILITY. objective.karmaValue weights an
+    // augmentation's combat multipliers by the hours they shave off the karma
+    // grind; progress.js decided "pending" from `canUseGang && !inGang` alone,
+    // so a node that priced the gang as NOT worth its gate went on paying for
+    // combat multipliers to reach it faster.
+    const declined = { worth: false, why: "priced out" };
+    if (gw.gangIsPending({ canUse: true, node: 10, inGang: false, verdict: declined }).pending !== false) {
+      c7.fail("a gang priced NOT worth its gate is not pending — combat multipliers buy nothing toward one");
+    }
+    if (gw.gangIsPending({ canUse: true, node: 10, inGang: false, verdict: { worth: true } }).pending !== true) {
+      c7.fail("a gang priced worth its gate IS pending");
+    }
+    // UNPRICED leaves it pending, matching actplan: cancelling on an unknown is
+    // the same unexamined assumption pointing the other way.
+    if (gw.gangIsPending({ canUse: true, node: 10, inGang: false, verdict: null }).pending !== true) {
+      c7.fail("an UNPRICED gang stays pending rather than being cancelled on an unknown");
+    }
+    if (gw.gangIsPending({ canUse: false, node: 10 }).pending !== false) c7.fail("no capability, not pending");
+    if (gw.gangIsPending({ canUse: true, node: 10, inGang: true }).pending !== false) c7.fail("already in a gang, not pending");
+    // BitNode 2 outranks the verdict: access is granted outright.
+    const bn2p = gw.gangIsPending({ canUse: true, node: 2, inGang: false, verdict: declined });
+    if (bn2p.pending !== true || bn2p.karmaWaived !== true) c7.fail("BitNode 2 is pending with karma waived whatever the verdict says");
+
+    c7.examined(5);
+    // THE REMEMBERED INCOME MUST BE THIS NODE'S. Live on 2026-09-22
+    // /tel/gang-last.txt carried $276m/s measured by the BitNode 4 gang and was
+    // being read in BitNode 10 — the same "BitNode 4 answer governs BitNode 10"
+    // defect this module exists to stop, one layer down in the channel weights.
+    const bn4rec = { bitNode: 4, moneyPerSec: 276278377 };
+    if (gw.rememberedGangIncome(bn4rec, 10).perSec !== null) {
+      c7.fail("income measured in another BitNode must be refused — the scales differ 22x between 4 and 10");
+    }
+    if (!/BitNode 4/.test(gw.rememberedGangIncome(bn4rec, 10).why)) c7.fail("and the refusal must name the node it came from");
+    if (gw.rememberedGangIncome(bn4rec, 4).perSec !== 276278377) c7.fail("this node's own measurement is usable");
+    // A record with NO bitNode is refused, not assumed local — gang.js wrote
+    // that field as null for its entire life, so the shape really occurs.
+    // The node-mismatch guard would refuse this anyway (undefined !== 10), so
+    // what the missing-field guard uniquely owns is the REASON — and a
+    // diagnostic that misnames its cause costs the reader time disproving it.
+    const noNode = gw.rememberedGangIncome({ moneyPerSec: 1e6 }, 10);
+    if (noNode.perSec !== null) c7.fail("a record that does not say which node measured it must REFUSE, not be assumed local");
+    if (!/does not say which BitNode/.test(noNode.why)) {
+      c7.fail(`a record with no bitNode must be refused as UNKNOWN, not reported as "measured in BitNode undefined": ${noNode.why}`);
+    }
+    for (const bad of [null, {}, { bitNode: 10, moneyPerSec: 0 }, { bitNode: 10, moneyPerSec: -5 }]) {
+      if (gw.rememberedGangIncome(bad, 10).perSec !== null) c7.fail(`unreadable remembered income must refuse: ${JSON.stringify(bad)}`);
+    }
+
+    c7.examined(1);
+    // And gang.js must now WRITE the node, or every record is refused forever.
+    const gangSrc = fs.readFileSync(path.join(REPO, "gang.js"), "utf8");
+    if (!/GANG_LAST[\s\S]{0,200}?bitNode:\s*ns\.getResetInfo\(\)/.test(gangSrc)) {
+      c7.fail("gang.js must write the live BitNode into /tel/gang-last.txt", "it wrote `obj?.bitNode ?? null` — a field no reader could ever check");
+    }
+    c7.note("gang pending follows the verdict; remembered income is refused unless this node measured it");
+  }
+  checks.push(c7);
 
   return checks;
 }

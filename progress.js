@@ -134,7 +134,7 @@ import { contractIncome } from 'contractplan.js'
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { gangVerdict, gangGainHours } from 'gangworth.js'
+import { gangVerdict, gangGainHours, gangIsPending, rememberedGangIncome } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet } from 'sleeveplan.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
@@ -1262,13 +1262,23 @@ function karmaChannelCtx(ns, info, player) {
   try {
     const fin = (v) => typeof v === 'number' && isFinite(v)
     const node = bitNodeMults(info?.currentNode) ?? null
-    if (!canUseGang(info)) return { gangPending: false }
-    if (info?.currentNode === 2) return { gangPending: true, gangKarmaWaived: true }
-    // A gang we already have is not pending.
+    // PENDING IS A VERDICT, NOT A CAPABILITY. This read "can this save have a
+    // gang, and is it not in one" — so in a node that priced the gang as NOT
+    // worth its karma gate, objective.karmaValue went on weighting combat
+    // multipliers by the hours they shave off a grind nobody was doing.
     const live = readJson(ns, '/tel/gang.txt')
-    if (live?.lastAugReset === info?.lastAugReset && live?.faction) return { gangPending: false }
-    const remembered = readJson(ns, '/tel/gang-last.txt')
-    const gangIncomePerSec = fin(remembered?.moneyPerSec) && remembered.moneyPerSec > 0 ? remembered.moneyPerSec : null
+    const pend = gangIsPending({
+      canUse: canUseGang(info),
+      node: info?.currentNode,
+      inGang: live?.lastAugReset === info?.lastAugReset && !!live?.faction,
+      verdict: readJson(ns, GATE)?.gangWorth ?? null,
+    })
+    if (!pend.pending) return { gangPending: false, gangPendingWhy: pend.why }
+    if (pend.karmaWaived) return { gangPending: true, gangKarmaWaived: true, gangPendingWhy: pend.why }
+    // AND THE REMEMBERED INCOME MUST BE THIS NODE'S. Read without a node check
+    // it carried $276m/s from the BitNode 4 gang into BitNode 10.
+    const inc = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), info?.currentNode)
+    const gangIncomePerSec = inc.perSec
     const w = measureWindow(ns, info)
     const cycleHours = fin(w?.windowH) && w.windowH > 0 ? w.windowH : null
     const person = {
@@ -1298,7 +1308,7 @@ function karmaChannelCtx(ns, info, player) {
       const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1, assist: fleet.assist })
       return r && isFinite(r.hours) ? r.hours : null
     }
-    return { gangPending: true, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
+    return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
   } catch {
     return { gangPending: false }
   }

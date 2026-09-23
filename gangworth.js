@@ -140,3 +140,56 @@ export function gangVerdict(o = {}) {
       `(script income scale ${scale.toFixed(4)} — the gang wins where the batcher cannot fund the install ladder)`,
   }
 }
+
+/**
+ * IS A GANG STILL PENDING — i.e. should anything still be priced as buying one?
+ *
+ * `objective.karmaValue` weights an augmentation's COMBAT multipliers by the
+ * hours they shave off the karma grind. That is only value if the run intends
+ * to grind. progress.js decided "pending" from capability alone —
+ * `canUseGang(info) && not already in one` — with no reference to the verdict
+ * this module exists to produce, so in a node that priced the gang as NOT
+ * worth its gate the augmentation planner went on paying for combat
+ * multipliers to reach it faster.
+ *
+ * An UNKNOWN verdict leaves the gang pending, matching actplan: the failure
+ * being fixed is an unexamined assumption, and inverting it unexamined is the
+ * same mistake pointing the other way.
+ */
+export function gangIsPending({ canUse, node, inGang, verdict } = {}) {
+  if (canUse !== true) return { pending: false, why: 'this save cannot have a gang' }
+  if (inGang === true) return { pending: false, why: 'already in a gang — nothing left to buy' }
+  if (node === GANG_IS_THE_NODE) return { pending: true, karmaWaived: true, why: 'BitNode 2 grants gang access outright' }
+  if (verdict?.worth === false) {
+    return { pending: false, why: `the gang is priced NOT worth its karma gate in BitNode ${node}, so combat multipliers buy nothing toward one` }
+  }
+  return { pending: true, why: verdict?.worth === true ? 'the gang is priced worth its gate here' : 'the gang is unpriced — left pending rather than cancelled on an unknown' }
+}
+
+/**
+ * THE REMEMBERED GANG INCOME, but only if it is THIS node's.
+ *
+ * /tel/gang-last.txt is the rate a gang in some previous life actually earned,
+ * and it survives a BitNode change like every other telemetry file. Read
+ * without a node check it hands one node's economy to another: live on
+ * 2026-09-22 it carried $276m/s measured by the BitNode 4 gang and was being
+ * read in BitNode 10, whose income scale is 22x different and whose gang was
+ * already priced as not worth having. That is the same defect this module was
+ * written to stop — the BitNode 4 answer governing BitNode 10 — surviving one
+ * layer down in the channel weights.
+ *
+ * A record with no `bitNode` at all is REFUSED rather than assumed local:
+ * gang.js wrote that field as null for its whole life, so "missing" is a
+ * shape that really occurs and really means unknown.
+ */
+export function rememberedGangIncome(record, node) {
+  if (!record || typeof record !== 'object') return { perSec: null, why: 'no remembered gang income' }
+  if (!num(record.moneyPerSec) || record.moneyPerSec <= 0) return { perSec: null, why: 'remembered gang income unreadable' }
+  if (!num(record.bitNode)) {
+    return { perSec: null, why: 'the remembered gang income does not say which BitNode measured it — refusing rather than assuming this one' }
+  }
+  if (record.bitNode !== node) {
+    return { perSec: null, why: `the remembered gang income was measured in BitNode ${record.bitNode}, not ${node} — income scale differs by node, so it says nothing here` }
+  }
+  return { perSec: record.moneyPerSec, why: `$${(record.moneyPerSec / 1e6).toFixed(2)}m/s measured by a gang in this node` }
+}

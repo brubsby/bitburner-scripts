@@ -57,7 +57,12 @@ function publish(ns, obj) {
     if (typeof perSec === 'number' && isFinite(perSec) && perSec > 0) {
       const prev = JSON.parse(ns.read(GANG_LAST) || 'null')
       if (!(typeof prev?.moneyPerSec === 'number' && prev.moneyPerSec >= perSec)) {
-        ns.write(GANG_LAST, JSON.stringify({ at: new Date().toISOString(), bitNode: obj?.bitNode ?? null, moneyPerSec: perSec }), 'w')
+        // bitNode FROM THE GAME, not from the status object — `obj` never carried
+        // one, so this field was written as null for its entire life and every
+        // reader that might have checked it had nothing to check. gangworth.js
+        // now REFUSES a record without it, which turns that silence into a
+        // refusal instead of a wrong answer.
+        ns.write(GANG_LAST, JSON.stringify({ at: new Date().toISOString(), bitNode: ns.getResetInfo()?.currentNode ?? null, moneyPerSec: perSec }), 'w')
         if (ns.getHostname() !== 'home') ns.scp(GANG_LAST, 'home', ns.getHostname())
       }
     }
