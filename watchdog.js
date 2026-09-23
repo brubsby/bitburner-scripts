@@ -182,6 +182,9 @@ const WATCHED = [
   // batcher that still makes progress on the critical path.
   { script: 'ctauto.js', host: 'home', args: [] },
   { script: 'tel.js', host: 'home', args: [] },
+  // The link everything else reports over. If this dies the run goes blind
+  // without going wrong, which is the failure mode that is hardest to notice.
+  { script: 'rfalink.js', host: 'home', args: [] },
   // Focus is worth 25% and is dropped by any navigation away from the work
   // screen — including cmd.js's own terminal trips — so this needs to be
   // running whenever faction work is. No predicate: it is a no-op when there is

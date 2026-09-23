@@ -208,10 +208,33 @@ const STACK = [
       'the moment it sees watchdog.js running, so the retirement holds mid-life and not only at the next boot',
   },
   {
-    script: 'errlog.js',
+    // THE LINK ITSELF, admitted below everything that reports over it. The
+    // machine suspends 1-4 times a day (KDE idle suspend, unchanged for a
+    // fortnight); the game survives it and the websocket does not, so the
+    // whole /tel surface freezes at the moment of sleep while the run carries
+    // on. On 2026-09-23 that hid 393 minutes — six hourly checks reading a
+    // snapshot from 03:35, unable to tell a frozen view from a quiet game.
+    //
+    // The reconnect CANNOT come from the daemon: the Remote File API is the
+    // game connecting to us, so the initiative has to be on the page. 1.60GB —
+    // `window` goes through eval, so nothing here is priced.
+    script: 'rfalink.js',
     where: 'anywhere',
     tier: 8,
     rank: 4,
+    why:
+      'reconnects the Remote File API from inside the game when the websocket dies, which is what a machine suspend '
+      + 'does to it every time. Without it every /tel file silently freezes at the moment of sleep and stays frozen '
+      + 'until a human opens the browser — the run continues underneath, so nothing looks wrong, which is the exact '
+      + 'shape this repo keeps paying for. Ranked just above errlog.js because a crash report that cannot leave the '
+      + 'game is not a report. Only calls newRemoteFileApiConnection when the game itself says the link is not live, '
+      + 'and at most once a minute, so a dead daemon costs one attempt per minute rather than a storm.',
+  },
+  {
+    script: 'errlog.js',
+    where: 'anywhere',
+    tier: 8,
+    rank: 5,
     why:
       'mirrors the game\'s own error ring buffer (ErrorState, last 100) to /tel/errors.txt, so a crash is visible ' +
       'over the RFA instead of only as a modal on the player\'s screen. Admitted at the LOWEST tier on purpose: an ' +
@@ -223,21 +246,21 @@ const STACK = [
     script: 'torbuy.js',
     where: 'home',
     tier: 32,
-    rank: 5,
+    rank: 6,
     why: 'TOR gates the darkweb, which gates the port programs, which gate every remaining server — and it is the one purchase autobuy.js could never make without SF4. Exits as soon as TOR is owned. Deferred from 8GB because it polls for $200k an 8GB opening does not have, holding a worker thread for the whole wait',
   },
   {
     script: 'cmd.js',
     where: 'home',
     tier: 32,
-    rank: 6,
+    rank: 7,
     why: 'the terminal bridge — backdoor.js drives it, and it is what makes headless play possible at all. 8.15GB is three worker threads, which is why it waits for 32GB',
   },
   {
     script: 'backdoor.js',
     where: 'home',
     tier: 32,
-    rank: 8,
+    rank: 9,
     why:
       'backdoors gate the faction invites that gate every augmentation; an install wipes them and forgetting it means ' +
       'reputation earns zero until a human notices. Needs cmd.js, so it is ranked directly after it. ' +
@@ -248,14 +271,14 @@ const STACK = [
     where: 'home',
     kind: 'oneshot',
     tier: 32,
-    rank: 9,
+    rank: 10,
     why: 'turns off the confirmation modals that otherwise interrupt every UI-driving script, then exits — its steady-state footprint is zero, so it is budgeted transiently rather than given a permanent 2.30GB slot',
   },
   {
     script: 'tel.js',
     where: 'anywhere',
     tier: 32,
-    rank: 10,
+    rank: 11,
     why: 'the save file excludes running scripts, so this is the only source of "what is actually running". Placed off home — 4.00GB of home is two worker threads and this needs none of them',
   },
 
@@ -264,7 +287,7 @@ const STACK = [
     script: 'gang.js',
     where: 'anywhere',
     tier: 64,
-    rank: 26,
+    rank: 27,
     why:
       'in a gang-capable node the gang faction becomes the augmentation ladder and the money. gang.js waits (refusing, ' +
       'in its telemetry) until a gang faction is joined, then creates, recruits, assigns, ascends and ' +
@@ -274,14 +297,14 @@ const STACK = [
     script: 'watchdog.js',
     where: 'home',
     tier: 64,
-    rank: 11,
+    rank: 12,
     why: 'resilience is worth 7.80GB only once there is a stack worth reviving. seed.js makes this argument itself: at 32GB it is three worker threads, "too expensive in the one phase where threads are the whole game"',
   },
   {
     script: 'act.js',
     where: 'anywhere',
     tier: 32,
-    rank: 27,
+    rank: 28,
     why:
       'the early-game Singularity strategy. progress.js cannot act until home spares 9.55 + 81 x mult GB in one ' +
       'block (1,305GB at SF4.1, hour 9 of the BN5 run); act.js is ~6GB, decides with actplan.js, and runs ONE ' +
@@ -308,7 +331,7 @@ const STACK = [
     script: 'sleeve.js',
     where: 'anywhere',
     tier: 64,
-    rank: 28,
+    rank: 29,
     // Declares 2.60GB, raises to this once sfgate confirms the API. Placement
     // must use the RAISED figure or the raise is denied on arrival.
     // 41.75 -> 45.75: ns.sleeve.setToFactionWork, so the fleet can work the
@@ -323,7 +346,7 @@ const STACK = [
     script: 'hacknet.js',
     where: 'anywhere',
     tier: 32,
-    rank: 14,
+    rank: 15,
     why:
       'buys the cheapest hacknet upgrade that moves a Netburners requirement and STOPS — 100 levels, 8 RAM, 4 cores. ' +
       'Netburners is five distinct augmentations, and distinct augmentations are the Daedalus gate. The hacknet API ' +
@@ -339,21 +362,21 @@ const STACK = [
     script: 'buyserv.js',
     where: 'anywhere',
     tier: 64,
-    rank: 12,
+    rank: 13,
     why: 'the cloud fleet is the growth engine, but it needs money the 8/32 tiers do not have yet. Off home, so it costs the home budget nothing',
   },
   {
     script: 'upkeep.js',
     where: 'home',
     tier: 64,
-    rank: 13,
+    rank: 14,
     why: 'reclaims the 25% focus bonus and the 24h export favour. Worth nothing before faction work exists, and faction work needs a backdoor first',
   },
   {
     script: 'autobuy.js',
     where: 'home',
     tier: 32,
-    rank: 7,
+    rank: 8,
     why:
       'buys the port programs, and port programs gate ROOTING, which gates the whole fleet. ' +
       'MOVED 64 -> 32 because its price was wrong by 16x in the manifest that justified the tier: the note said ' +
@@ -372,7 +395,7 @@ const STACK = [
     where: 'home',
     kind: 'job',
     tier: 64,
-    rank: 23,
+    rank: 24,
     // The only script in the collection that raises home RAM, which makes it
     // the only thing that can move a tier to the next one. See `advances` in
     // the manifest header and [B7.10].
@@ -385,7 +408,7 @@ const STACK = [
     script: 'batch.js',
     where: 'home',
     tier: 128,
-    rank: 15,
+    rank: 16,
     why: 'the real batcher, and strictly better per GB than early.js on a fleet with contiguous free blocks. Held back below 128GB by invariant B5: it sizes a plan against the fleet TOTAL and then has to place each op on a SINGLE host, so on an opening fleet it reports placeFails forever and earns nothing — 7,274 failures and $0 over 27 minutes, observed. Until batch.js plans against the largest free BLOCK this tier is the guard',
   },
   {
@@ -407,14 +430,14 @@ const STACK = [
     where: 'home',
     kind: 'job',
     tier: 32,
-    rank: 17,
+    rank: 18,
     why: 'the only owner of reputation and augmentations; 2.60GB via its declared override, and a no-op until a faction invitation exists',
   },
   {
     script: 'fast.js',
     where: 'home',
     tier: 64,
-    rank: 16,
+    rank: 17,
     why: 'dashboard fast lane at 2.6GB; cheap, and its absence is invisible except as stale numbers',
   },
   {
@@ -425,7 +448,7 @@ const STACK = [
     where: 'home',
     kind: 'job',
     tier: 128,
-    rank: 25,
+    rank: 26,
     why: 'roots and destroys w0r1d_d43m0n — the last step, and the only one that leaves the node; a no-op until The Red Pill has been installed',
   },
   {
@@ -436,7 +459,7 @@ const STACK = [
     where: 'home',
     kind: 'job',
     tier: 128,
-    rank: 24,
+    rank: 25,
     why: 'reports unmet faction requirements so the plan is visible; pure analysis, so it yields to anything that earns',
   },
   {
@@ -444,28 +467,28 @@ const STACK = [
     where: 'home',
     kind: 'job',
     tier: 128,
-    rank: 21,
+    rank: 22,
     why: 'watchdog-triggered. Converts money into NeuroFlux levels through donations, which need favour past the donation threshold, which needs an install — so there is nothing for it to do in the first life at any home size',
   },
   {
     script: 'share.js',
     where: 'anywhere',
     tier: 128,
-    rank: 18,
+    rank: 19,
     why: 'multiplies faction-work reputation by 1 + ln(threads)/25, and does exactly nothing with no faction joined. watchdog.js carries the invariant that kills it when the last faction is dropped by an install',
   },
   {
     script: 'go.js',
     where: 'home',
     tier: 128,
-    rank: 19,
+    rank: 20,
     why: 'IPvGO node power feeds the faction_rep multiplier on every reputation stream, but 20.30GB is eight early.js threads and it needs the external solver running to beat a Daedalus-grade opponent',
   },
   {
     script: 'bootnag.js',
     where: 'home',
     tier: 128,
-    rank: 20,
+    rank: 21,
     why: 'the human-TODO report this launcher used to inline. It is 2.60GB of ns.getServer/ns.getPlayer that an 8GB home cannot pay; /tel/boot.txt carries the machine-readable half for free at every tier',
   },
 
@@ -474,7 +497,7 @@ const STACK = [
     script: 'ctauto.js',
     where: 'home',
     tier: 256,
-    rank: 22,
+    rank: 23,
     why: 'contracts pay ~$25m and, once money stops being the constraint, faction reputation that cannot be bought at any price below 150 favour. But 22.00GB is nine early.js threads and contracts are sparse; it is the last thing in, not the first',
   },
 ]
