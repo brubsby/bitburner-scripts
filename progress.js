@@ -1141,9 +1141,13 @@ function readFleet(ns, info) {
  */
 function gangWorthNow(ns, info, player, gainHours = null) {
   try {
+    const live = readJson(ns, '/tel/gang.txt')
     return gangVerdict({
       node: info?.currentNode,
       mults: bitNodeMults(info?.currentNode),
+      // Same-life check, as everywhere: a gang record from a previous life is
+      // a memory of a gang, not a gang.
+      inGang: live?.lastAugReset === info?.lastAugReset && !!live?.faction,
       grindHours: (() => {
         try {
           const k = karmaChannelCtx(ns, info, player)
@@ -1214,7 +1218,11 @@ function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null, rep
       // on 2026-09-22 at 56h of a 687h exit for one trained sleeve, against
       // 0.63h for the exp transfer and ~0.02% of income for crime money.
       // Money last, as the lever that is never wrong and never much.
-      objective: verdict?.worth === true ? 'karma' : repFaction ? 'rep' : 'money',
+      // `gatePaid` is checked explicitly rather than relied on to keep `worth`
+      // falsy: the whole point of that field is that the gate question is
+      // settled, and a sleeve grinding karma for a gang we already have is the
+      // exact waste this guard exists to make impossible.
+      objective: verdict?.worth === true && verdict?.gatePaid !== true ? 'karma' : repFaction ? 'rep' : 'money',
       // MEMBERSHIP IS CHECKED HERE, not in sleeve.js: setToFactionWork THROWS
       // when the player is not a member, so publishing a faction we have not
       // joined would cost a caught exception per sleeve per 30s tick forever.

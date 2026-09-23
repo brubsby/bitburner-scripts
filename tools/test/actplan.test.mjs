@@ -409,5 +409,51 @@ export async function run() {
   }
   checks.push(c7);
 
+  // ---------------------------------------------------------------------
+  const c8 = new Check("AC8", "a gang already held is a PAID gate, not an unpriceable one");
+  {
+    const gw = await import("../../gangworth.js");
+    const bn = await import("../../bitNodeMultipliers.js");
+    c8.examined(7);
+    // Live on 2026-09-23 this said "no measured karma grind — the gang cannot
+    // be priced without what it costs to reach", which reads as a broken
+    // measurement. The truth was that the run had acquired the gang, so the
+    // question had no answer rather than a missing input.
+    const held = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), inGang: true });
+    if (held.gatePaid !== true) c8.fail("being in a gang must be reported as the gate being PAID");
+    if (held.grindHours !== 0) c8.fail("the remaining grind for a gang we have is zero, not unknown");
+    if (/cannot be priced|no measured karma grind/.test(held.why)) {
+      c8.fail(`the reason must name the real cause, not a missing input: "${held.why}"`);
+    }
+    if (!/paid|sunk/i.test(held.why)) c8.fail("and it must say the gate is paid");
+
+    // `worth` MUST NOT become true: writeSleevePlan keys the fleet objective
+    // off it, and a truthy answer would send every sleeve to grind karma the
+    // run has no use for.
+    if (held.worth === true) {
+      c8.fail("worth must stay null when the gate is paid — a truthy verdict re-tasks the whole sleeve fleet to karma");
+    }
+    // It outranks even BitNode 2, where the gate is waived rather than paid.
+    const bn2Held = gw.gangVerdict({ node: 2, inGang: true });
+    if (bn2Held.gatePaid !== true) c8.fail("already holding a gang outranks the BitNode 2 waiver");
+    // And it changes nothing when we do NOT have one.
+    const pending = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36, gangGainHours: 0.9 });
+    if (pending.gatePaid === true || pending.worth !== false) c8.fail("without a gang the verdict is unchanged");
+
+    c8.examined(2);
+    // The publisher must not route a paid gate to the karma objective.
+    const src = fs.readFileSync(path.join(REPO, "progress.js"), "utf8");
+    const write = src.match(/ns\.write\(\s*'\/tel\/sleeveplan\.txt'[\s\S]*?'w',\s*\)/);
+    if (!write) c8.fail("could not locate the sleeve plan write in progress.js", "a rotted check, not a clean repo");
+    // COMMENTS ARE NOT CODE. The first version of this grepped the raw block,
+    // and the explanatory comment above the line says "gatePaid" three times —
+    // so removing the guard left the check green. C11 learned this the same way.
+    else if (!/gatePaid/.test(write[0].replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 "))) {
+      c8.fail("the sleeve objective must check gatePaid explicitly", "relying on `worth` staying falsy makes a future change to it silently re-task the fleet to karma");
+    }
+    c8.note(`held gang -> gatePaid, grind 0, worth stays null; "${held.why.slice(0, 80)}..."`);
+  }
+  checks.push(c8);
+
   return checks;
 }

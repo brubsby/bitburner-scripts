@@ -93,8 +93,36 @@ export const HEALTHY_INCOME_SCALE = 0.25
  * @returns {{worth: boolean|null, gainHours, grindHours, why}}
  */
 export function gangVerdict(o = {}) {
-  const { node, mults, grindHours, gangGainHours } = o
+  const { node, mults, grindHours, gangGainHours, inGang } = o
   const keep = (why) => ({ worth: null, gainHours: null, grindHours: num(grindHours) ? grindHours : null, why })
+
+  // THE GATE IS ALREADY PAID. This function answers one question — "is the
+  // gang's income worth SPENDING the work slot to reach karma -54,000" — and
+  // once a gang exists that question has no answer rather than a missing input.
+  //
+  // It used to fall through to `keep('no measured karma grind — the gang
+  // cannot be priced without what it costs to reach')`, because karmaChannelCtx
+  // stops supplying grindHours the moment we are in a gang. Live on 2026-09-23
+  // that is exactly what it said, and it reads as a data problem: it sent the
+  // reader looking for a broken measurement when the truth was that the run had
+  // simply acquired the gang (karma drifted past the gate during a 6.5h
+  // disconnect, as a by-product of crime done for other reasons — the slot was
+  // never spent on it). A diagnostic that misnames its cause costs the reader
+  // the time to disprove it, which is the whole reason this file exists.
+  //
+  // `worth` stays NULL and does not become true, deliberately. writeSleevePlan
+  // keys the fleet's objective off `worth === true`, so a truthy answer here
+  // would send every sleeve off to grind karma the run no longer has any use
+  // for. `gatePaid` is the field that carries the real state.
+  if (inGang === true) {
+    return {
+      worth: null,
+      gatePaid: true,
+      gainHours: null,
+      grindHours: 0,
+      why: `already in a gang in BitNode ${node} — the karma gate is paid and its cost is sunk, so "is the gate worth paying" no longer has an answer. Operate the gang: its income is upside with nothing left to recover.`,
+    }
+  }
 
   // BitNode 2 is not a trade-off: the gang catalogue carries The Red Pill
   // there (FactionHelpers.tsx:180-183) and access is granted without karma.
