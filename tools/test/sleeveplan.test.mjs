@@ -599,5 +599,59 @@ export async function run() {
   }
   checks.push(c12);
 
+  // ---------------------------------------------------------------------
+  const c13 = new Check("SP13", "the plan says WHERE its horizon came from — priced, capped, carried or none");
+  {
+    c13.examined(5);
+    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8");
+    const fn = src.match(/function writeSleevePlan\([\s\S]*?\n\}/)?.[0] ?? "";
+    if (!fn) c13.fail("could not locate writeSleevePlan in progress.js", "a rotted check, not a clean repo");
+    const bare = fn.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+
+    // The three cases are not interchangeable: a sleeve deciding to spend 100h
+    // training must not read "capped" and "priced" as the same fact. A flat
+    // `horizonHours: 1000` with no provenance took twenty minutes of inference
+    // across other files to explain, which is the cost this pins down.
+    for (const f of ["horizonRawHours", "horizonSource", "horizonWhy"]) {
+      if (!new RegExp(`\\b${f}\\s*:`).test(bare)) {
+        c13.fail(`the sleeve plan must publish \`${f}\``, "a horizon whose origin cannot be read is a number nobody can check");
+      }
+    }
+    for (const word of ["capped", "priced", "carried", "unpriceable"]) {
+      if (!new RegExp(`'${word}'`).test(bare)) c13.fail(`horizonSource must be able to say '${word}'`);
+    }
+    // THE CAP MUST LIVE HERE, not at the call site — that split is what dropped
+    // horizonRawHours when this function was extracted.
+    // NOT a bare mention: the cap is named in the horizonWhy strings too, so
+    // `/MAX_PLANNING_HORIZON_H/` passed while the cap itself had been moved
+    // back out. Pin the assignment that actually applies it.
+    if (!/const horizonHours\s*=[^\n]*MAX_PLANNING_HORIZON_H/.test(bare)) {
+      c13.fail("writeSleevePlan must own the cap", "applying it at the call site is what silently lost the raw figure in a refactor");
+    }
+    c13.note("horizon carries raw, capped, source and why — the three cases are distinguishable from the file alone");
+  }
+  checks.push(c13);
+
+  // ---------------------------------------------------------------------
+  const c14 = new Check("SP14", "the fleet record carries the skills that explain its rates");
+  {
+    c14.examined(2);
+    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "sleeve.js"), "utf8");
+    const bare = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const assigned = bare.match(/assigned:\s*sleeves\.map\([\s\S]*?\)\),/)?.[0] ?? "";
+    if (!assigned) c14.fail("could not locate the assigned record in sleeve.js");
+    // Field work sums str/def/dex/agi and every crime weights them, so these
+    // four are what explain the published rep and karma rates. Without them a
+    // reader sees a rate climbing and cannot tell training from mis-crediting.
+    for (const k of ["str", "def", "dex", "agi"]) {
+      if (!new RegExp(`\\b${k}\\s*:`).test(assigned)) {
+        c14.fail(`each sleeve must publish ${k}`, "sleeveplan's train-or-work search is a claim about these stats; without them nothing can check it against the game");
+      }
+    }
+    if (!/skills\s*:/.test(assigned)) c14.fail("the per-sleeve record must carry a skills block");
+    c14.note("each sleeve publishes str/def/dex/agi/hack beside its task, so the training leg is auditable");
+  }
+  checks.push(c14);
+
   return checks;
 }

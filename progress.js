@@ -1193,7 +1193,18 @@ function sleeveRepFaction(player, schedule, gangFaction) {
  * for THIS BitNode is carried forward with the stamp saying when it was
  * priced. A carried horizon is visible; a null one silently changes behaviour.
  */
-function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null, repFaction = null) {
+function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, repFaction = null) {
+  // THE CAP IS OWNED HERE so its provenance can be published with it. It used
+  // to be applied at the call site beside a `horizonRawHours` field, and that
+  // field was dropped when this function was extracted — leaving the plan
+  // reading a flat `horizonHours: 1000` with nothing saying whether that was
+  // a measured exit, a capped one, or a stand-in for an exit that could not be
+  // priced at all. Those three have very different meanings for a sleeve
+  // deciding to spend 100h training, and telling them apart took twenty
+  // minutes of inference from other files. A number whose origin cannot be
+  // read is the shape this repo keeps paying for.
+  const raw = typeof rawHorizonHours === 'number' && isFinite(rawHorizonHours) && rawHorizonHours > 0 ? rawHorizonHours : null
+  const horizonHours = raw === null ? null : Math.min(raw, MAX_PLANNING_HORIZON_H)
   let carried = null
   if (horizonHours === null) {
     try {
@@ -1233,8 +1244,27 @@ function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null, rep
       // boot.js places it at.
       sharePower: typeof sharePower === 'number' && isFinite(sharePower) && sharePower > 0 ? sharePower : null,
       horizonHours: hours,
+      horizonRawHours: raw,
       horizonAt: horizonHours !== null ? new Date().toISOString() : carried?.at ?? null,
       horizonCarried: horizonHours === null && hours !== null,
+      // WHERE THE NUMBER CAME FROM, in one readable word. The three cases are
+      // not interchangeable and the plan must not look the same in all of them.
+      horizonSource:
+        raw !== null && raw > MAX_PLANNING_HORIZON_H
+          ? 'capped'
+          : raw !== null
+            ? 'priced'
+            : hours !== null
+              ? 'carried'
+              : 'unpriceable',
+      horizonWhy:
+        raw !== null && raw > MAX_PLANNING_HORIZON_H
+          ? `the exit priced at ${raw.toExponential(3)}h, which means UNREACHABLE rather than a duration — capped to ${MAX_PLANNING_HORIZON_H}h so no reader plans against an unreadable number`
+          : raw !== null
+            ? `the exit priced at ${raw.toFixed(1)}h`
+            : hours !== null
+              ? `this pass could not price the exit; carried this node's last priced horizon from ${carried?.at}`
+              : 'the exit could not be priced and no earlier horizon exists — sleeveplan refuses the synchronise and training investments rather than sizing them against a guess',
       why:
         `objective follows the gang verdict (${verdict?.worth === true ? 'gang is worth its karma gate here' : verdict?.worth === false ? 'gang is NOT worth its karma gate here' : 'gang unpriced — not grinding karma on an unknown'}); ` +
         `horizon is the rest of the NODE because installs do not reset sleeves` +
@@ -3282,18 +3312,9 @@ async function act(ns, canJoin, info, note) {
       ns,
       info,
       gangWorthVerdict,
-      (() => {
-        const h = exitPolicy?.best?.hours
-        if (!(typeof h === 'number' && isFinite(h) && h > 0)) return null
-        // CAP IT. Live, this published 1.8e55 hours: the exit climb at the
-        // current exp rate is an honest computation whose answer means
-        // "unreachable", and `isFinite` happily passed it. A number no reader
-        // can sanity-check is the permissive direction — it makes every
-        // investment look free and overflows anything that multiplies by it.
-        // Every sleeve break-even is monotone in the horizon, so the cap
-        // cannot change a decision the raw value would have got right.
-        return Math.min(h, MAX_PLANNING_HORIZON_H)
-      })(),
+      // RAW. writeSleevePlan owns the cap so it can publish both figures and
+      // say which one the plan is standing on.
+      exitPolicy?.best?.hours ?? null,
       ns.getSharePower(),
       sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction),
     )

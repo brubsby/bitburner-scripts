@@ -608,7 +608,20 @@ async function act(ns, note) {
 			// karma actually delivered per unit of nominal crime karma: the sum
 			// of syncBonus() across sleeves, which is what the grind is worth.
 			karmaYield: syncs.length ? syncs.reduce((p, q) => p + q / 100, 0) : null,
-			assigned: sleeves.map((x) => ({ i: x.index, sync: +x.sync.toFixed(1), shock: +x.shock.toFixed(1), task: x.task?.type ?? x.task ?? null })),
+			// SKILLS RIDE THE RECORD. Without them the training leg is invisible:
+			// a reader sees the rep rate climbing and cannot tell whether the
+			// sleeve is training, already trained, or being credited someone
+			// else's numbers. `str/def/dex/agi` are what field work sums and
+			// what every crime weights, so they are the four that explain the
+			// rate — and sleeveplan's whole train-or-work search is a claim
+			// about them that nothing could previously check against the game.
+			assigned: sleeves.map((x) => ({
+				i: x.index,
+				sync: +x.sync.toFixed(1),
+				shock: +x.shock.toFixed(1),
+				task: x.task?.type ?? x.task ?? null,
+				skills: { str: x.skills?.strength ?? null, def: x.skills?.defense ?? null, dex: x.skills?.dexterity ?? null, agi: x.skills?.agility ?? null, hack: x.skills?.hacking ?? null },
+			})),
 			tasks: sleeveTasks,
 			unknownTasks: [...warned],
 			refusals,
