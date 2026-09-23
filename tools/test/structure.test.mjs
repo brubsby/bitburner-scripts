@@ -947,7 +947,7 @@ function c11() {
       reader: "sleeve.js",
       publisher: "progress.js",
       what: "/tel/sleeveplan.txt",
-      fields: ["objective", "horizonHours", "bitNode", "sharePower"],
+      fields: ["objective", "horizonHours", "bitNode", "sharePower", "repFaction"],
       scope: /ns\.write\(\s*'\/tel\/sleeveplan\.txt'[\s\S]*?'w',\s*\)/,
     },
   ];

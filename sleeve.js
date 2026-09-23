@@ -13,7 +13,7 @@
 // merely returned.
 //
 // ---------------------------------------------------------------------------
-// RAMOVERRIDE 2.6GB (raises to 41.75) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
+// RAMOVERRIDE 2.6GB (raises to 45.75) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery / setToFactionWork, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
 //
 // Why this is sound: Netscript bills a script for every ns identifier in its
 // import graph whether or not the call is reachable (RamCalculations.ts:407
@@ -125,7 +125,7 @@ const CRIME_NAMES = new Set(Object.keys(CRIMES))
  *  evaluates it per regime; a constant that ignores `mult` is the honest answer
  *  here, not a shortcut. Measured with the game's own calculator
  *  (tools/staging/fix4/measure.mjs). */
-const RAISE_CEILING = (mult) => 41.75 + 0 * mult
+const RAISE_CEILING = (mult) => 45.75 + 0 * mult
 
 export async function main(ns) {
   ns.ramOverride(2.6)
@@ -138,6 +138,10 @@ export async function main(ns) {
   // host it landed on and is never seen again. That is exactly how its first
   // live start failed in silence: it exited four seconds in on a host too
   // small for its RAM raise, and the only evidence sat on foodnstuff.
+  // 41.75 -> 45.75GB: ns.sleeve.setToFactionWork, so the fleet can work the
+  // faction whose reputation gates the exit — priced at 56h of a 687h exit for
+  // one trained sleeve, against 0.63h for the exp transfer. Still under the
+  // tier-64 placement boot.js gives this script.
   // 41.15 -> 41.75GB: ns.scp (0.60GB) was NOT already in this file's price —
   // I asserted it was, and [R5] priced the file with the game's own
   // calculator and proved otherwise. ns.getHostname was already there.
@@ -365,6 +369,13 @@ async function act(ns, note) {
 			objective,
 			horizonHours,
 			playerIntelligence: ns.getPlayer?.().skills?.intelligence,
+			// The faction whose reputation the run actually needs, and the
+			// inputs to price it. progress.js publishes the faction only when
+			// the player is already a MEMBER — setToFactionWork throws
+			// otherwise, and a throw per sleeve per tick is not a plan.
+			repFaction: typeof plan?.repFaction === 'string' ? plan.repFaction : null,
+			nodeWorkRepMult: node?.FactionWorkRepGain,
+			sharePower: typeof plan?.sharePower === 'number' && isFinite(plan.sharePower) && plan.sharePower > 0 ? plan.sharePower : 1,
 		})
 
 		sleeves.forEach((sleeve, index) => {
@@ -373,6 +384,21 @@ async function act(ns, note) {
 			// No hand-written word for this sleeve: take the plan's answer.
 			if (!sleeveTask) sleeveTask = auto?.tasks?.[index] ?? undefined;
 			if (!sleeveTask) return;
+			// FACTION WORK is the one task that needs more than a word, so the
+			// planner emits an object for it. setToFactionWork THROWS rather
+			// than returning false — not a member, another sleeve already holds
+			// the faction, or it is the gang's faction — so doTask's catch is
+			// what keeps a refusal a published refusal instead of a dead script.
+			if (typeof sleeveTask === 'object') {
+				if (sleeveTask.kind === 'faction' && sleeveTask.faction) {
+					const already = sleeve.task?.type === 'FACTION' && sleeve.task?.factionName === sleeveTask.faction
+					if (!already) {
+						doTask(`sleeve ${sleeve.index} faction ${sleeveTask.faction}/${sleeveTask.workType}`,
+							() => ns.sleeve.setToFactionWork(sleeve.index, sleeveTask.faction, sleeveTask.workType));
+					}
+				}
+				return;
+			}
 			switch (sleeveTask) {
 				case 'strength':
 				case 'str':

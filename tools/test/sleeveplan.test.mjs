@@ -504,5 +504,50 @@ export async function run() {
   }
   checks.push(c10);
 
+  // ---------------------------------------------------------------------
+  const c11 = new Check("SP11", "faction work is assignable, one sleeve per faction, and sync is not its price");
+  {
+    c11.examined(8);
+    const N = NODE1;
+    const opts = { objective: "rep", repFaction: "Daedalus", horizonHours: 200, playerIntelligence: 0, nodeWorkRepMult: 1, sharePower: 1.23 };
+
+    // SYNC IS NOT A REPUTATION COST. This branch used to fire for every
+    // objective, so a fleet told to earn reputation spent ~28h synchronising
+    // and bought nothing: syncBonus() appears only in the exp transfer and in
+    // karma, never in SleeveFactionWork.
+    const unsynced = sleeve({ sync: 20 });
+    const repPlan = sp.sleeveAssignments([unsynced], N, opts);
+    if (repPlan.tasks[0] === "sync") c11.fail("a reputation objective must NOT synchronise — sync scales karma and the exp transfer, not faction reputation");
+    const karmaPlan = sp.sleeveAssignments([unsynced], N, { ...opts, objective: "karma" });
+    if (karmaPlan.tasks[0] !== "sync") c11.fail("a karma objective at sync 20 past the break-even still synchronises");
+    const moneyPlan = sp.sleeveAssignments([unsynced], N, { ...opts, objective: "money" });
+    if (moneyPlan.tasks[0] === "sync") c11.fail("money is not sync-scaled either — Player.gainMoney carries no sync term");
+    if (!sp.SYNC_SCALED.has("karma")) c11.fail("karma IS sync-scaled");
+    for (const o of ["money", "rep"]) if (sp.SYNC_SCALED.has(o)) c11.fail(`${o} is not sync-scaled`);
+
+    // A TRAINED sleeve actually takes the faction task, and it is an object
+    // carrying the faction and work type — setToFactionWork needs both.
+    const trained = sleeve({ sync: 20, skills: { hacking: 1, strength: 600, defense: 600, dexterity: 600, agility: 600, charisma: 200, intelligence: 0 } });
+    const t = sp.sleeveAssignments([trained], N, opts).tasks[0];
+    if (!t || typeof t !== "object" || t.kind !== "faction") c11.fail(`a trained sleeve on a rep objective takes faction work, got ${JSON.stringify(t)}`);
+    else {
+      if (t.faction !== "Daedalus") c11.fail("the task must name the faction");
+      if (!["hacking", "field", "security"].includes(t.workType)) c11.fail(`the task must name a FactionWorkType, got ${t.workType}`);
+    }
+
+    // ONE SLEEVE PER FACTION — the second must NOT also be given it, because
+    // setToFactionWork throws and the whole tick's assignments would be lost.
+    const two = sp.sleeveAssignments([trained, { ...trained, index: 1 }], N, opts);
+    const factionTasks = two.tasks.filter((x) => x && typeof x === "object" && x.kind === "faction");
+    if (factionTasks.length !== 1) c11.fail(`exactly one sleeve may hold a faction, ${factionTasks.length} were given it`);
+    if (two.tasks[1] && typeof two.tasks[1] === "object") c11.fail("the second sleeve must fall through to another objective, not idle");
+
+    // No faction supplied (not a member): never emit faction work.
+    const none = sp.sleeveAssignments([trained], N, { ...opts, repFaction: null });
+    if (none.tasks.some((x) => x && typeof x === "object")) c11.fail("with no faction published, nothing may be assigned faction work");
+    c11.note(`trained sleeve -> ${JSON.stringify(t)}; a second one falls through to ${JSON.stringify(two.tasks[1])}`);
+  }
+  checks.push(c11);
+
   return checks;
 }

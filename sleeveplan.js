@@ -234,6 +234,11 @@ export function fleetRates(sleeves, node, o = {}) {
  *
  * Returns `{ tasks: [...], why: [...] }` with one entry per sleeve.
  */
+/** The objectives sync actually multiplies: karma (SleeveCrimeWork.ts:47) and
+ *  the exp handed to the player (Sleeve/Work/Work.ts:19). Money and faction
+ *  reputation carry no sync term at all. */
+export const SYNC_SCALED = new Set(['karma', 'exp'])
+
 export function sleeveAssignments(sleeves, node, o = {}) {
   if (!Array.isArray(sleeves)) return null
   const objective = o.objective ?? 'karma'
@@ -241,6 +246,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
   const breakeven = syncBreakevenHours(o.playerIntelligence)
   const tasks = []
   const why = []
+  let repTaken = false
   for (const s of sleeves) {
     const i = s?.index ?? tasks.length
     const sync = num(s?.sync) ? s.sync : null
@@ -248,6 +254,22 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       tasks.push(null)
       why.push(`sleeve ${i}: sync unreadable — no assignment, refusing to guess`)
       continue
+    }
+    // WHAT SYNC ACTUALLY SCALES, which is less than this used to assume.
+    // syncBonus() appears in exactly two places in the game (Sleeve/Work/
+    // Work.ts:19 and SleeveCrimeWork.ts:47): the exp handed to the player and
+    // the other sleeves, and karma. It does NOT scale money —
+    // `Player.gainMoney(shockedStats.money * mult)` carries no sync term — and
+    // it does NOT scale faction reputation, which SleeveFactionWork applies
+    // shockBonus to alone.
+    //
+    // This branch used to fire for EVERY objective, so a fleet told to earn
+    // reputation would spend ~28h synchronising first and buy nothing with it.
+    // Priced live on 2026-09-22: the exp transfer that sync does multiply is
+    // worth 0.63h of a 687h exit, while the reputation leg it was delaying is
+    // worth 56h. Synchronising ahead of it was the wrong lever by ~90x.
+    if (!SYNC_SCALED.has(objective) && sync < 100) {
+      why.push(`sleeve ${i}: sync ${sync.toFixed(1)} left alone — sync scales karma and the exp transfer, neither of which is the ${objective} objective`)
     }
     // PRECEDENCE, NOT A SEARCH: synchronise outranks training when both are
     // indicated. That is a policy and is called one — sync multiplies
@@ -257,14 +279,14 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // ordering that cannot be wrong by more than the delay. It is NOT proven
     // optimal against the training leg; proving that needs the exp transfer
     // priced, which this module does not yet do.
-    if (sync < 100 && horizonHours !== null && breakeven !== null && horizonHours > breakeven) {
+    if (SYNC_SCALED.has(objective) && sync < 100 && horizonHours !== null && breakeven !== null && horizonHours > breakeven) {
       tasks.push('sync')
       why.push(`sleeve ${i}: sync ${sync.toFixed(1)} and ${horizonHours.toFixed(1)}h horizon is past the ${breakeven.toFixed(1)}h break-even — synchronise`)
       continue
     }
-    if (sync < 100 && horizonHours === null) {
+    if (SYNC_SCALED.has(objective) && sync < 100 && horizonHours === null) {
       why.push(`sleeve ${i}: sync ${sync.toFixed(1)} but no horizon supplied — not investing in synchronise blind`)
-    } else if (sync < 100) {
+    } else if (SYNC_SCALED.has(objective) && sync < 100) {
       why.push(`sleeve ${i}: sync ${sync.toFixed(1)}, but a ${horizonHours.toFixed(1)}h horizon is short of the ${breakeven === null ? '?' : breakeven.toFixed(1)}h break-even — work instead`)
     }
     // SHOCK IS NOT A KARMA TERM. It scales exp and money only, so recovering
@@ -280,7 +302,12 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // Homicide chance is 0.5%; sending it straight to crime is barely
     // distinguishable from leaving it idle. sleevePolicy prices both and T = 0
     // is in its grid, so "work now" still wins wherever it should.
-    const policy = horizonHours === null ? null : sleevePolicy(s, node, { ...o, objective })
+    // FACTION WORK. Only ONE sleeve may hold a faction (setToFactionWork
+    // THROWS otherwise), so the first sleeve to be assigned it takes it and the
+    // rest fall through to the crime objective. Reputation is not sync-scaled,
+    // so the sleeve picked is the one with the best stats, not the best sync.
+    const wantRep = objective === 'rep' && typeof o.repFaction === 'string' && o.repFaction && !repTaken
+    const policy = horizonHours === null ? null : sleevePolicy(s, node, { ...o, objective: wantRep ? 'rep' : objective === 'rep' ? 'money' : objective })
     if (policy && policy.task === 'train') {
       // The weighted stat this sleeve is furthest behind on. sleeve.js maps the
       // long skill names to GymType members; the shipped gym branch picked the
@@ -290,7 +317,14 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       why.push(`sleeve ${i}: ${policy.why} — training ${stat} first`)
       continue
     }
-    const pick = bestSleeveCrime(s, node, objective === 'karma' ? 'karma' : objective === 'money' ? 'money' : 'karma')
+    if (wantRep && policy && policy.task === 'faction') {
+      const r = sleeveFactionRepPerSec(s, o)
+      repTaken = true
+      tasks.push({ kind: 'faction', faction: o.repFaction, workType: r?.workType ?? 'hacking' })
+      why.push(`sleeve ${i}: faction work for ${o.repFaction} (${r?.workType ?? '?'}) at ${(r?.base ?? 0).toFixed(3)} rep/s — reputation ignores sync, and only one sleeve may hold a faction`)
+      continue
+    }
+    const pick = bestSleeveCrime(s, node, objective === 'rep' || objective === 'money' ? 'money' : 'karma')
     if (!pick) {
       tasks.push(null)
       why.push(`sleeve ${i}: cannot price any crime — refusing to assign one`)
@@ -334,7 +368,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
  * Returns `{ task, trainStat, trainHours, value, why }`, or null if unreadable.
  */
 export function sleevePolicy(sleeve, node, o = {}) {
-  const objective = o.objective === 'money' ? 'money' : 'karma'
+  const objective = o.objective === 'money' ? 'money' : o.objective === 'rep' ? 'rep' : 'karma'
   const horizonHours = num(o.horizonHours) && o.horizonHours > 0 ? o.horizonHours : null
   if (horizonHours === null) return null
   if (personProblem(sleeve) || !num(sleeve?.sync)) return null
@@ -345,13 +379,28 @@ export function sleevePolicy(sleeve, node, o = {}) {
   // here even though it is not one for karma.
   const shockBonus = (100 - (num(sleeve.shock) ? sleeve.shock : 0)) / 100
 
-  const pick = bestSleeveCrime(sleeve, node, objective)
+  // REPUTATION is not a crime, so it does not go through bestSleeveCrime. Its
+  // rate is driven by the same combat stats field work sums, which is why the
+  // train-or-work search below works unchanged on it — and why a sleeve
+  // trained for Homicide is also the sleeve that earns reputation fastest.
+  const repRate = objective === 'rep' ? (sl) => sleeveFactionRepPerSec(sl, o)?.base ?? null : null
+  const rateOf = (sl) => {
+    if (repRate) return repRate(sl)
+    const r = bestSleeveCrime(sl, node, objective)
+    return r ? r.rates[objective] : null
+  }
+  const pick = objective === 'rep' ? { crime: 'faction', rates: { chance: 1 } } : bestSleeveCrime(sleeve, node, objective)
   if (!pick) return null
-  const base = { task: pick.crime, trainStat: null, trainHours: 0, value: pick.rates[objective] * horizonHours * 3600 }
+  const now = rateOf(sleeve)
+  if (now === null) return null
+  const base = { task: objective === 'rep' ? 'faction' : pick.crime, trainStat: null, trainHours: 0, value: now * horizonHours * 3600 }
 
-  // The stats this crime's success chance actually weights. A stat with no
-  // weight is time thrown away.
-  const stats = Object.keys(CRIMES[pick.crime].weight).filter((k) => k !== 'hacking' && k !== 'charisma')
+  // The stats that drive the rate. For a crime, the ones its success chance
+  // weights; for field work, the four combat stats it sums.
+  const stats =
+    objective === 'rep'
+      ? ['strength', 'defense', 'dexterity', 'agility']
+      : Object.keys(CRIMES[pick.crime].weight).filter((k) => k !== 'hacking' && k !== 'charisma')
   if (!stats.length) return { ...base, why: `${pick.crime} weights no trainable combat stat — work now` }
 
   let best = base
@@ -370,21 +419,32 @@ export function sleevePolicy(sleeve, node, o = {}) {
       trained.skills[st] = skillFromExp(trained.exp[st], sleeve.mults?.[st] ?? 1)
     }
     if (!ok) break
-    const after = sleeveCrimeRates(trained, node, pick.crime)
-    if (!after) break
-    const value = after[objective] * (horizonHours - T) * 3600
+    const afterRate = rateOf(trained)
+    if (afterRate === null) break
+    const value = afterRate * (horizonHours - T) * 3600
     trials.push({ T, value })
-    if (value > best.value) best = { task: 'train', trainStat: stats, trainHours: T, value, after: after.chance, afterRate: after[objective] }
+    if (value > best.value) {
+      best = {
+        task: 'train',
+        trainStat: stats,
+        trainHours: T,
+        value,
+        after: objective === 'rep' ? afterRate : sleeveCrimeRates(trained, node, pick.crime)?.chance,
+        afterRate,
+      }
+    }
   }
   if (!trials.length) return { ...base, why: `${pick.crime} now — training could not be priced` }
+  const label = objective === 'rep' ? `faction work at ${now.toFixed(3)} rep/s` : `${pick.crime} at ${(pick.rates.chance * 100).toFixed(1)}%`
   if (best.task !== 'train') {
-    return { ...base, why: `${pick.crime} at ${(pick.rates.chance * 100).toFixed(1)}% now beats every training split over ${horizonHours.toFixed(1)}h` }
+    return { ...base, why: `${label} now beats every training split over ${horizonHours.toFixed(1)}h` }
   }
+  const gained = objective === 'rep' ? `${now.toFixed(3)} -> ${best.afterRate.toFixed(3)} rep/s` : `${(pick.rates.chance * 100).toFixed(1)}% -> ${(best.after * 100).toFixed(1)}% chance`
   return {
     ...best,
     why:
       `train ${best.trainStat.join('/')} at ${gym.name} for ${best.trainHours.toFixed(1)}h of a ${horizonHours.toFixed(1)}h horizon, ` +
-      `then ${pick.crime}: ${(pick.rates.chance * 100).toFixed(1)}% -> ${(best.after * 100).toFixed(1)}% chance, ` +
+      `then ${objective === 'rep' ? 'faction work' : pick.crime}: ${gained}, ` +
       `${(best.value / base.value).toFixed(1)}x what working now delivers`,
   }
 }

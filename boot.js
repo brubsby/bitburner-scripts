@@ -311,7 +311,9 @@ const STACK = [
     rank: 28,
     // Declares 2.60GB, raises to this once sfgate confirms the API. Placement
     // must use the RAISED figure or the raise is denied on arrival.
-    raisesTo: 41.75,
+    // 41.75 -> 45.75: ns.sleeve.setToFactionWork, so the fleet can work the
+    // faction whose reputation gates the exit. Still well inside tier 64.
+    raisesTo: 45.75,
     why:
       'sleeves are parallel actors: each one commits crime, trains or works a faction alongside the player, and the ' +
       'karma grind that gates a gang is the single longest work-slot leg of a gang node. Refuses by name in ' +

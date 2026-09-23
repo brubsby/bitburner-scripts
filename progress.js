@@ -1160,6 +1160,28 @@ function gangWorthNow(ns, info, player, gainHours = null) {
 }
 
 /**
+ * THE FACTION A SLEEVE SHOULD WORK FOR — or null, which means "do not try".
+ *
+ * `setToFactionWork` THROWS when the player is not a member
+ * (NetscriptFunctions/Sleeve.ts:148-150), so this must be a faction we have
+ * actually joined; the membership test belongs here, where the player object
+ * is, rather than in sleeve.js where a mistake costs a caught exception per
+ * sleeve per tick forever.
+ *
+ * The faction chosen is the one the SCHEDULE is currently working, so the
+ * sleeve doubles up on the leg the run is actually spending its work slot on.
+ * It also may not be the gang's faction: SleeveFactionWork.process stops the
+ * sleeve outright for that one (SleeveFactionWork.ts:47).
+ */
+function sleeveRepFaction(player, schedule, gangFaction) {
+  const f = schedule?.current?.faction
+  if (typeof f !== 'string' || !f) return null
+  if (!Array.isArray(player?.factions) || !player.factions.includes(f)) return null
+  if (gangFaction && f === gangFaction) return null
+  return f
+}
+
+/**
  * Write /tel/sleeveplan.txt. `horizonHours` is null on any path that cannot
  * price the exit; rather than publish a null horizon — which would make
  * sleeveplan refuse the synchronise investment and re-task the fleet every
@@ -1167,7 +1189,7 @@ function gangWorthNow(ns, info, player, gainHours = null) {
  * for THIS BitNode is carried forward with the stamp saying when it was
  * priced. A carried horizon is visible; a null one silently changes behaviour.
  */
-function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null) {
+function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null, repFaction = null) {
   let carried = null
   if (horizonHours === null) {
     try {
@@ -1186,7 +1208,17 @@ function writeSleevePlan(ns, info, verdict, horizonHours, sharePower = null) {
       at: new Date().toISOString(),
       bitNode: info?.currentNode,
       lastAugReset: info?.lastAugReset,
-      objective: verdict?.worth === true ? 'karma' : 'money',
+      // THE OBJECTIVE, in the order the levers are actually worth something.
+      // Karma only where a gang repays its gate. Otherwise REPUTATION whenever
+      // there is a faction the run is a member of and grinding — priced live
+      // on 2026-09-22 at 56h of a 687h exit for one trained sleeve, against
+      // 0.63h for the exp transfer and ~0.02% of income for crime money.
+      // Money last, as the lever that is never wrong and never much.
+      objective: verdict?.worth === true ? 'karma' : repFaction ? 'rep' : 'money',
+      // MEMBERSHIP IS CHECKED HERE, not in sleeve.js: setToFactionWork THROWS
+      // when the player is not a member, so publishing a faction we have not
+      // joined would cost a caught exception per sleeve per 30s tick forever.
+      repFaction,
       // sleeve.js prices faction reputation and needs the share bonus for it.
       // It travels here because ns.getSharePower is 2.6GB and this file already
       // pays for it; adding it there would push sleeve.js past the RAM tier
@@ -2719,7 +2751,7 @@ async function act(ns, canJoin, info, note) {
     // (exitPolicy runs below), so writeSleevePlan carries this node's last
     // priced one forward rather than publishing a null that would re-task the
     // fleet off synchronising every time an unplanned pass ran.
-    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null, ns.getSharePower())
+    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null, ns.getSharePower(), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction))
     ns.write(
       GATE,
       JSON.stringify(
@@ -3245,6 +3277,7 @@ async function act(ns, canJoin, info, note) {
         return Math.min(h, MAX_PLANNING_HORIZON_H)
       })(),
       ns.getSharePower(),
+      sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction),
     )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards
