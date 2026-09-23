@@ -69,8 +69,28 @@ export async function main(ns) {
   // a status file that stops updating is indistinguishable from a game that
   // stopped changing (invariant C1).
   let last = {}
-  const note = reporter(ns, TELEMETRY, () => last)
-  ns.atExit(() => note.exit('stopped', { detail: 'seed.js exited' }))
+  const publish = reporter(ns, TELEMETRY, () => last)
+  // THE DAEMON MIRRORS /tel/* FROM HOME ONLY, and boot.js places this script
+  // `where: 'anywhere'`. Off home every record above — including the atExit
+  // one that says why it stopped — is written where nothing will ever read it,
+  // which defeats the point the comment above makes about --watch mode.
+  // ns.scp is already in this file's price for pushing the seeded scripts out.
+  // Invariant C12.
+  const mirror = () => {
+    try {
+      if (ns.getHostname() !== 'home') ns.scp(TELEMETRY, 'home', ns.getHostname())
+    } catch {
+      /* home unreachable; the local copy still stands */
+    }
+  }
+  const note = (health, fields) => {
+    publish(health, fields)
+    mirror()
+  }
+  ns.atExit(() => {
+    publish.exit('stopped', { detail: 'seed.js exited' })
+    mirror()
+  })
 
   do {
     try {

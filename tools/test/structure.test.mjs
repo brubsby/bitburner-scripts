@@ -873,6 +873,106 @@ function c10() {
 
 /* ======================================================================== */
 /**
+ * C12 — a script boot.js may place OFF HOME must mirror its telemetry back.
+ *
+ * C10's mirror image, and the half that was missing. C10 says a script placed
+ * `where: 'anywhere'` must PULL the /tel files it reads, because ns.read is
+ * local. This says it must also PUSH the /tel file it WRITES, because the
+ * daemon only mirrors /tel/* from home — so a status written on n00dles is
+ * written into the void, and the last readable record is whatever the script
+ * published the last time it happened to run on home.
+ *
+ * TWICE NOW. sleeve.js was fixed for exactly this on 2026-09-20 (it exited
+ * four seconds in on a host too small for its RAM raise, and the only evidence
+ * sat on foodnstuff). rfalink.js was written afterwards, without the fix, and
+ * on 2026-09-23 it went one better: it exited on home at 11:05, was re-placed
+ * on n00dles by a later boot re-entry, and published its healthy records into
+ * the void — so the newest record anyone could read said `stopped`, from
+ * hours before, while the script was alive. The machine then slept for 10.5
+ * hours with nothing reconnecting the link, and the telemetry that would have
+ * shown rfalink missing was itself the thing that had gone missing.
+ *
+ * The fix in both cases is three lines. What was absent was anything that
+ * noticed the fix had not been carried forward.
+ */
+function c12() {
+  const c = new Check("C12", "scripts boot.js may place off home MIRROR their /tel status back to home");
+
+  // EXEMPTIONS, with the reason and the consequence stated. An exemption whose
+  // cost is not written down is how a trade becomes an oversight.
+  const EXEMPT = {
+    "share.js":
+      "ns.scp costs 0.60GB PER THREAD and share.js is deliberately run at hundreds of threads " +
+      "(the reputation bonus is 1 + ln(threads)/25), so mirroring would cost more RAM than the status is worth. " +
+      "The consequence is accepted and real: /tel/share.txt is invisible whenever share.js runs off home, which it " +
+      "does now (sigma-cosmetics). watchdog.js owns share.js's lifecycle, so its absence is detectable there instead.",
+  };
+
+  let bootSrc;
+  try {
+    bootSrc = read("boot.js");
+  } catch {
+    c.fail("boot.js is not readable");
+    return c;
+  }
+  const blocks = bootSrc.split(/\n\s*script:\s*/).slice(1);
+  const anywhere = [];
+  for (const b of blocks) {
+    const name = b.match(/^'([^']+)'/)?.[1];
+    if (!name) continue;
+    const where = b.slice(0, b.search(/\n\s*script:|$/)).match(/where:\s*'([^']+)'/)?.[1];
+    if (where === "anywhere") anywhere.push(name);
+  }
+  if (!anywhere.length) {
+    c.fail("parsed zero `where: 'anywhere'` entries out of boot.js", "that is a rotted parser, not a clean repo");
+    return c;
+  }
+
+  const publishes = [];
+  for (const script of anywhere) {
+    let src;
+    try {
+      src = read(script);
+    } catch {
+      continue;
+    }
+    c.examined(1);
+    // Does it publish a /tel status at all? Either through status.js's reporter
+    // or a direct write. A script that publishes nothing has nothing to mirror.
+    const writesTel = /reporter\(\s*ns\s*,/.test(src) || /ns\.write\(\s*'\/tel\//.test(src);
+    if (!writesTel) continue;
+    publishes.push(script);
+    // The push: ns.scp(<status>, 'home', ...) — destination home, from here.
+    const mirrors = /ns\.scp\([^)]*,\s*'home'\s*,/.test(src);
+    if (mirrors) continue;
+    if (EXEMPT[script]) {
+      c.note(`${script.padEnd(12)} EXEMPT — ${EXEMPT[script].slice(0, 96)}...`);
+      continue;
+    }
+    c.fail(
+      `${script} publishes a /tel status but never mirrors it to home`,
+      "the daemon mirrors /tel/* from HOME only, so every record this writes off home is invisible — including the " +
+        "atExit record that would say why it stopped. Add ns.scp(STATUS, 'home', ns.getHostname()) beside the publish.",
+    );
+  }
+  // A CHECK THAT EXAMINED NOTHING LOOKS EXACTLY LIKE A CHECK THAT PASSED.
+  // Blinding the publish detector — so `writesTel` is false for every script —
+  // left this reporting PASS over a repo where nothing mirrored at all. Nine of
+  // eleven publish today; a run that finds none has a rotted parser, not a
+  // clean repo, which is the distinction the harness header exists for.
+  if (!publishes.length) {
+    c.fail(
+      "found no 'anywhere' script that publishes a /tel status",
+      "nine of eleven do — finding zero means this check stopped recognising publishers, not that the repo changed",
+    );
+    return c;
+  }
+  c.note(`${publishes.length} of ${anywhere.length} 'anywhere' script(s) publish a /tel status: ${publishes.join(", ")}`);
+  return c;
+}
+
+/* ======================================================================== */
+/**
  * C11 — a reader must not depend on a field its publisher never writes.
  *
  * THREE TIMES IN ONE SESSION, so it is a class and not an incident:
@@ -1011,7 +1111,7 @@ function c11() {
 
 export async function run() {
   const managed = managedSet();
-  return [c1(managed), c2(), c3(), c4(), c6(), c7(), c8(), c9(), c10(), c11()];
+  return [c1(managed), c2(), c3(), c4(), c6(), c7(), c8(), c9(), c10(), c11(), c12()];
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

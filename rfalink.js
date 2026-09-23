@@ -75,8 +75,30 @@ function reachApi() {
 export async function main(ns) {
   ns.disableLog('ALL')
   const errors = []
-  const note = reporter(ns, STATUS, () => ({ errors: errors.slice(-5) }))
-  ns.atExit(() => note.exit('stopped', { detail: 'rfalink.js exited' }))
+  const publish = reporter(ns, STATUS, () => ({ errors: errors.slice(-5) }))
+  // THE DAEMON ONLY MIRRORS /tel/* FROM HOME, and boot.js places this script
+  // `where: 'anywhere'`. Without this push its telemetry is written to
+  // whichever rooted host it landed on and is never seen again — which is
+  // exactly how its own absence went unnoticed: it exited on home, was later
+  // re-placed on n00dles by a boot re-entry, and published into the void while
+  // the last record anyone could read still said "stopped" from hours earlier.
+  // sleeve.js was fixed for this same reason; the fix simply was not carried
+  // to the script written afterwards. Invariant C12 now enforces it.
+  const mirror = () => {
+    try {
+      if (ns.getHostname() !== 'home') ns.scp(STATUS, 'home', ns.getHostname())
+    } catch {
+      /* home unreachable; the local copy still stands */
+    }
+  }
+  const note = (health, fields) => {
+    publish(health, fields)
+    mirror()
+  }
+  ns.atExit(() => {
+    publish.exit('stopped', { detail: 'rfalink.js exited' })
+    mirror()
+  })
 
   let reconnects = 0
   let lastTry = 0
