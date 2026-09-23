@@ -221,8 +221,28 @@ if (!prev) {
   // The gang is this node's whole plan: before it exists karma must fall
   // toward the gate; after it exists respect must climb.
   if (!now.gangFaction) {
-    if (now.karma !== null && prev.karma !== null && now.karma >= prev.karma) {
-      fail(`karma is not falling (${Math.round(prev.karma)} -> ${Math.round(now.karma)})`, "no gang yet, so karma is the gate — a flat karma means the work slot is on something else");
+    // KARMA IS ONLY A GATE WHERE THE GANG IS WORTH ITS PRICE. This branch read
+    // "no gang" as "karma must be falling", which was true while every node was
+    // assumed to want one. gangworth.js prices that per node now, and BitNode
+    // 10 answers NO on income scale alone — so the run deliberately stopped
+    // grinding, and this check called the correct behaviour a problem for
+    // several hours.
+    //
+    // A check that cries wolf on intended behaviour is worse than no check:
+    // it is the one that gets skimmed past, and then the real stall is skimmed
+    // past with it. The verdict is read from the same file act.js gates on, so
+    // the monitor and the actor cannot disagree about what the run is doing.
+    const verdict = readTel("installgate.txt")?.gangWorth ?? null;
+    const karmaIsTheGate = verdict?.worth !== false;
+    if (!karmaIsTheGate) {
+      note(`karma flat at ${Math.round(now.karma ?? 0)} and that is CORRECT — the gang is priced NOT worth its gate in this node, so the work slot is elsewhere`);
+    } else if (now.karma !== null && prev.karma !== null && now.karma >= prev.karma) {
+      fail(
+        `karma is not falling (${Math.round(prev.karma)} -> ${Math.round(now.karma)})`,
+        verdict?.worth === true
+          ? "the gang IS priced worth its gate here, so karma is the gate — a flat karma means the work slot is on something else"
+          : "no gang yet and the gang is UNPRICED, so karma is still assumed to be the gate — a flat karma means the work slot is on something else",
+      );
     } else if (now.karma !== null) {
       note(`karma ${Math.round(prev.karma)} -> ${Math.round(now.karma)}`);
     }
@@ -374,10 +394,23 @@ if (!sleevesExpected) {
   if (!num(sleeve.sleeves) || sleeve.sleeves <= 0) fail("sleeve.js reports zero sleeves", "Source-File 10 grants one per level and BitNode 10 grants up to eight");
   if (num(sleeve.karmaYield)) {
     note(`sleeves: ${sleeve.sleeves}, sync mean ${num(sleeve.syncMean) ? sleeve.syncMean.toFixed(1) : "?"} / min ${num(sleeve.syncMin) ? sleeve.syncMin.toFixed(1) : "?"}, karma yield ${sleeve.karmaYield.toFixed(2)}x a player`);
-    // Below full sync the fleet must be CLOSING that gap; a flat syncMin with
-    // sleeves already on crime is the silent-underperformance case.
-    if (num(sleeve.syncMin) && sleeve.syncMin < 100 && prev && num(prev.sleeveSyncMin) && sleeve.syncMin <= prev.sleeveSyncMin && dtMin >= MIN_INTERVAL_MIN) {
-      fail(`sleeve sync is not rising (min ${prev.sleeveSyncMin.toFixed(1)} -> ${sleeve.syncMin.toFixed(1)})`, "karma from a sleeve scales with sync/100, so an unsynchronised sleeve on crime earns almost nothing");
+    // SYNC IS ONLY WORTH BUYING FOR THE OBJECTIVES IT SCALES. syncBonus()
+    // appears in exactly two places in the game — the exp handed to the player
+    // (Sleeve/Work/Work.ts:19) and karma (SleeveCrimeWork.ts:47). It does NOT
+    // scale money, and it does NOT scale faction reputation.
+    //
+    // So a fleet earning money or reputation SHOULD leave sync where it is,
+    // and this check would then fail forever on correct behaviour — the same
+    // defect the karma-movement check above had, and one introduced by the very
+    // change that taught the planner to stop synchronising. Two checks crying
+    // wolf about one deliberate decision is how the real stall gets skimmed
+    // past. The objective is read from the plan the fleet is actually following.
+    const sleeveObjective = sleeve.objective ?? readTel("sleeveplan.txt")?.objective ?? null;
+    const syncIsWorthBuying = sleeveObjective === null || sleeveObjective === "karma";
+    if (num(sleeve.syncMin) && sleeve.syncMin < 100 && !syncIsWorthBuying) {
+      note(`sleeve sync flat at ${sleeve.syncMin.toFixed(1)} and that is CORRECT — the objective is '${sleeveObjective}', which sync does not scale`);
+    } else if (num(sleeve.syncMin) && sleeve.syncMin < 100 && prev && num(prev.sleeveSyncMin) && sleeve.syncMin <= prev.sleeveSyncMin && dtMin >= MIN_INTERVAL_MIN) {
+      fail(`sleeve sync is not rising (min ${prev.sleeveSyncMin.toFixed(1)} -> ${sleeve.syncMin.toFixed(1)})`, `the objective is '${sleeveObjective ?? "unknown"}', which sync DOES scale — karma from a sleeve is sync/100, so an unsynchronised sleeve earns almost nothing`);
     }
   } else {
     fail("sleeve.js publishes no karmaYield", "without sync there is no way to tell a working fleet from a fully-assigned idle one");
