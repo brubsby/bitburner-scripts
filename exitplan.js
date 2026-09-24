@@ -263,8 +263,54 @@ export function bestExitPolicy(o = {}, maxInstalls = 6) {
  */
 export function cycleStats(ledger, bitNode, { minN = 3, recent = 6 } = {}) {
   if (!Array.isArray(ledger)) return null
-  const lives = ledger.filter((e) => e && e.bitNode === bitNode && pos(e.lifeH) && pos(e.hackMult))
-  if (lives.length < minN) return { cycleHours: null, multGainPerCycle: null, n: lives.length, why: `only ${lives.length} completed life/lives in this BitNode (need ${minN})` }
+  const all = ledger.filter((e) => e && e.bitNode === bitNode && pos(e.lifeH) && pos(e.hackMult))
+  // COUNT-TICKET INSTALLS ARE NOT MULTIPLIER CYCLES, and must not be measured
+  // as if they were.
+  //
+  // When the Daedalus count gate binds, installgate installs batches of
+  // "tickets" — the cheapest distinct augmentations, bought for the count and
+  // carrying no hacking multiplier. Each one leaves `hackMult` exactly where it
+  // was and lasts ~20 minutes. Live in BitNode 10 on 2026-09-24, five of the
+  // last six lives were tickets, so this median read `multGainPerCycle: 1.0`
+  // and `cycleHours: 0.33`: "installs never raise the multiplier, and a cycle
+  // is twenty minutes".
+  //
+  // That was not a statistical nuisance, it was a deadlock. bestExitPolicy,
+  // told installing cannot grow the multiplier, correctly chose to hold; so
+  // bindingGate's multiplier branch never fired and it fell through to the
+  // join-money gate, which is `destroyedByInstall` — holding $2.8t to protect
+  // a $100b join that hacking 2500 made impossible without installs. Hacking
+  // crawled 261 -> 263 in twenty minutes while money piled up.
+  //
+  // The signature is observable in the ledger alone: the aug count ROSE and
+  // the multiplier did NOT. Filtered before the recent window is taken, or a
+  // window of six mostly-ticket lives would leave one or two to median. A life
+  // missing `augs` is kept — unclassifiable is not the same as a ticket.
+  let ticketsExcluded = 0
+  const lives = []
+  for (let i = 0; i < all.length; i++) {
+    const prev = all[i - 1]
+    const isTicket =
+      prev !== undefined &&
+      pos(all[i].augs) &&
+      pos(prev.augs) &&
+      all[i].augs > prev.augs &&
+      Math.abs(all[i].hackMult / prev.hackMult - 1) < 1e-9
+    if (isTicket) {
+      ticketsExcluded++
+      continue
+    }
+    lives.push(all[i])
+  }
+  if (lives.length < minN) {
+    return {
+      cycleHours: null,
+      multGainPerCycle: null,
+      n: lives.length,
+      ticketsExcluded,
+      why: `only ${lives.length} multiplier life/lives in this BitNode (need ${minN})${ticketsExcluded ? ` — ${ticketsExcluded} count-ticket install(s) excluded` : ''}`,
+    }
+  }
   const tail = lives.slice(-recent)
   const med = (xs) => {
     const s = [...xs].sort((a, b) => a - b)
@@ -280,6 +326,22 @@ export function cycleStats(ledger, bitNode, { minN = 3, recent = 6 } = {}) {
     cycleHours: med(tail.map((e) => e.lifeH)),
     multGainPerCycle: gains.length ? med(gains) : null,
     n: tail.length,
+    ticketsExcluded,
     why: gains.length ? null : 'no usable multiplier ratio between consecutive lives',
   }
+}
+
+/**
+ * The multiplier the hacking LEVEL curve actually uses: raw x the BitNode's
+ * HackingLevelMultiplier (Person.ts:59-62). ns.getPlayer().mults is the raw
+ * value, so every level projection must pass through this — see
+ * progress.js's effectiveHackingMult for the history (2.86x wrong in BN10).
+ * Pure so it can be tested; null rather than the raw value when either input
+ * is unreadable.
+ */
+export function effectiveHackingMultOf(raw, hackingLevelMultiplier) {
+  if (!(typeof raw === 'number' && isFinite(raw) && raw > 0)) return null
+  const bn = hackingLevelMultiplier
+  if (!(typeof bn === 'number' && isFinite(bn) && bn >= 0)) return null
+  return raw * bn
 }

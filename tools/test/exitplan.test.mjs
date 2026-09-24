@@ -209,5 +209,78 @@ export async function run() {
   }
   checks.push(c6);
 
+  // ---------------------------------------------------------------------
+  const c7 = new Check("XP7", "count-ticket installs are not multiplier cycles — cycleStats must not measure them");
+  {
+    const { cycleStats } = await import("../../exitplan.js");
+    c7.examined(3);
+    // THE LIVE LEDGER, BitNode 10, 2026-09-24. Five of the last six lives were
+    // count tickets: aug count up, hackMult flat, ~20 minutes each. The median
+    // read multGainPerCycle 1.0 and cycleHours 0.33, bestExitPolicy concluded
+    // installing could not grow the multiplier, and bindingGate fell through to
+    // the destructive join-money hold: $2.8t protecting a $100b join that only
+    // installs could make reachable. Hacking crawled 261 -> 263 in 20 minutes.
+    const L = (lifeH, hackMult, augs) => ({ bitNode: 10, lifeH, hackMult, augs });
+    const live = [
+      L(3.25, 1.5242, 6), L(7.74, 1.667, 7), L(1.42, 1.667, 8), L(11.97, 1.7504, 12),
+      L(0.33, 1.7504, 19), L(0.33, 1.7504, 22), L(0.33, 1.7504, 24), L(0.5, 1.7504, 26), L(0.33, 1.8379, 29),
+    ];
+    const r = cycleStats(live, 10);
+    if (!(r.multGainPerCycle > 1.01)) c7.fail(`ticket installs must not collapse the growth estimate to 1.0, got ${r.multGainPerCycle}`);
+    if (!(r.cycleHours > 1)) c7.fail(`twenty-minute ticket lives must not set the cycle length, got ${r.cycleHours}h`);
+    if (r.ticketsExcluded !== 5) c7.fail(`five ticket installs are in this ledger (the 8, 19, 22, 24, 26 lives), excluded ${r.ticketsExcluded}`);
+    // A MIXED batch — count rose AND the multiplier rose — is a real cycle.
+    if (!live.slice(-1).every((l) => l.hackMult > 1.7504)) c7.fail("fixture: the last life is the mixed batch");
+    // NOTHING MOVED — same count, same multiplier — is not a ticket: nothing
+    // was bought for the count. It is an install that failed to raise the
+    // multiplier, which is exactly what the growth estimate SHOULD see. Only a
+    // RISE in the count marks a ticket (`>`, not `>=`).
+    const flat = cycleStats([L(2, 1.5, 10), L(2, 1.5, 10), L(2, 1.6, 12), L(2, 1.7, 14)], 10);
+    if (flat.ticketsExcluded !== 0) c7.fail(`a life where neither count nor multiplier moved must be KEPT, excluded ${flat.ticketsExcluded}`);
+    // A life with no aug count is unclassifiable, and kept rather than guessed.
+    // (The pos() guards on `augs` are redundant with JS itself — undefined > x
+    // is false for every x — so no mutation of them can change behaviour; this
+    // pins the outcome, which holds either way.)
+    const noAugs = cycleStats([{ bitNode: 10, lifeH: 2, hackMult: 1.5 }, { bitNode: 10, lifeH: 2, hackMult: 1.5 }, { bitNode: 10, lifeH: 2, hackMult: 1.6 }], 10);
+    if (noAugs.ticketsExcluded !== 0) c7.fail("a life missing `augs` cannot be classified a ticket and must be kept");
+    c7.note(`live ledger: multGain ${r.multGainPerCycle.toFixed(4)}, cycle ${r.cycleHours.toFixed(2)}h, ${r.ticketsExcluded} ticket installs excluded (was 1.0 / 0.33h)`);
+  }
+  checks.push(c7);
+
+  // ---------------------------------------------------------------------
+  const c8 = new Check("XP8", "the level curve uses mults.hacking x HackingLevelMultiplier — and progress.js feeds only that");
+  {
+    const { effectiveHackingMultOf } = await import("../../exitplan.js");
+    const fs = (await import("node:fs")).default;
+    const path = (await import("node:path")).default;
+    const { GAME } = await import("./build-ram.mjs");
+    c8.examined(4);
+    // The game's own statement of the formula, read rather than remembered.
+    const person = fs.readFileSync(path.join(GAME, "src/PersonObjects/Person.ts"), "utf8");
+    if (!/calculateSkill\(\s*this\.exp\.hacking,\s*this\.mults\.hacking \* currentNodeMults\.HackingLevelMultiplier/.test(person)) {
+      c8.fail("Person.ts no longer computes the hacking level from mults.hacking x HackingLevelMultiplier — this correction assumes it does");
+    }
+    // …while getPlayer hands back the RAW multiplier.
+    const nsf = fs.readFileSync(path.join(GAME, "src/NetscriptFunctions.ts"), "utf8");
+    if (!/mults:\s*\{\s*\.\.\.Player\.mults\s*\}/.test(nsf)) c8.fail("getPlayer no longer returns raw Player.mults — the correction may now double-apply the factor");
+    if (Math.abs(effectiveHackingMultOf(1.8379, 0.35) - 0.643265) > 1e-6) c8.fail("BitNode 10: 1.8379 x 0.35");
+    if (effectiveHackingMultOf(1.5, 1) !== 1.5) c8.fail("a factor of 1 leaves the multiplier unchanged");
+    if (effectiveHackingMultOf(1.5, undefined) !== null || effectiveHackingMultOf(null, 0.35) !== null) {
+      c8.fail("unreadable input must REFUSE (null), never fall back to the raw value — that is 2.86x wrong in BitNode 10");
+    }
+
+    // THE STRUCTURAL GUARD. HackingLevelMultiplier appeared nowhere in the
+    // planner, so every level projection ran on the raw value in eleven
+    // BitNodes. No `hackingMult:` feed in progress.js may be the raw field.
+    c8.examined(1);
+    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const raw = [...src.matchAll(/hackingMult:\s*player\.mults\??\.hacking\b/g)].length;
+    if (raw) c8.fail(`${raw} \`hackingMult:\` feed(s) in progress.js pass the RAW multiplier into a level curve`, "use effectiveHackingMult(player, info)");
+    const eff = [...src.matchAll(/hackingMult:\s*effectiveHackingMult\(/g)].length;
+    if (eff < 5) c8.fail(`expected the level feeds to use effectiveHackingMult; found ${eff}`, "the parser found too few — a rotted check, not a clean repo");
+    c8.note(`BN10 effective ${effectiveHackingMultOf(1.8379, 0.35).toFixed(4)} vs raw 1.8379 (2.86x); ${eff} level feeds use it, 0 raw`);
+  }
+  checks.push(c8);
+
   return checks;
 }

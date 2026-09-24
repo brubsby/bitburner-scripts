@@ -147,7 +147,7 @@ import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TER
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, effectiveHackingMultOf } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1313,6 +1313,38 @@ const SLEEVE_FRESH_MS = 5 * 60 * 1000
 const MAX_PLANNING_HORIZON_H = 1000
 
 /**
+ * THE HACKING MULTIPLIER THE LEVEL CURVE ACTUALLY USES.
+ *
+ * The game computes the hacking level as
+ *   calculateSkill(exp, mults.hacking * currentNodeMults.HackingLevelMultiplier)
+ * (Person.ts:59-62), but ns.getPlayer().mults is `{ ...Player.mults }` — the
+ * RAW multiplier, without the BitNode factor (NetscriptFunctions.ts getPlayer).
+ *
+ * Every level projection in this file fed that raw value to the level curve:
+ * the exit climb, the income model's (level+50) growth, the objective's
+ * expShare, the join timings, the exp still needed for a gate, and the
+ * remaining-windows estimate (which divided an EFFECTIVE multiplierNeeded by a
+ * RAW multiplier). HackingLevelMultiplier appeared nowhere in the planner.
+ *
+ * It is 1 in BitNodes 1, 4, 5 and 8 — where most of this code was written and
+ * measured — and 0.8 / 0.8 / 0.35 / 0.35 / 0.5 / 0.35 / 0.6 / decreasing /
+ * 0.25 / 0.4 / 0.6 in 2, 3, 6, 7, 9, 10, 11, 12, 13, 14 and 15. So in BitNode
+ * 10 every projection believed the run levels 2.86x faster than it does, and in
+ * BitNode 2 — the gang node — 1.25x. CLAUDE.md's "true here, false elsewhere"
+ * row, exactly: FactionWorkRepGain had the same shape.
+ *
+ * NOT used for the lifetimes ledger's `hackMult`: cycleStats takes RATIOS of
+ * that field, which the constant factor cancels out of, and switching its
+ * units mid-ledger would fake a one-time 0.35x drop between two lives.
+ *
+ * null — never the raw value — when either factor is unreadable, so a caller
+ * refuses rather than projecting on a multiplier that is 2.86x wrong.
+ */
+function effectiveHackingMult(player, info) {
+  return effectiveHackingMultOf(player?.mults?.hacking, bitNodeMults(info?.currentNode)?.HackingLevelMultiplier)
+}
+
+/**
  * The BitNode multiplier table is DERIVED HERE, not taken as an argument.
  *
  * It used to be a fourth parameter, and the single call site passed a bare
@@ -1417,13 +1449,13 @@ function scoreIncome(prevIncome, incomePerSec) {
 }
 
 /** The model's inputs at this instant, persisted so the NEXT pass can score. */
-function makeIncomeSample(incomePerSec, player, schedule) {
+function makeIncomeSample(incomePerSec, player, schedule, info) {
   return {
     at: new Date().toISOString(),
     incomePerSec,
     hacking: player.skills?.hacking,
     hackingExp: schedule?.hackingExp,
-    hackingMult: player.mults?.hacking,
+    hackingMult: effectiveHackingMult(player, info),
     expPerSec: schedule?.expPerSec,
   }
 }
@@ -1934,8 +1966,12 @@ async function act(ns, canJoin, info, note) {
         // never ran in this life until 2026-09-20 00:10.
         const g = measureWindow(ns, info).rateGrowthPerCycle
         const remainingWindows =
-          needMult > (player.mults?.hacking ?? 0) && g > 1
-            ? Math.log(needMult / player.mults.hacking) / Math.log(g)
+          // needMult is the EFFECTIVE multiplier the exit level needs
+          // (multiplierNeeded inverts calculateSkill), so it is compared with
+          // the effective multiplier — not the raw one, which overstated how
+          // close the run is by 1/HackingLevelMultiplier.
+          needMult > (effectiveHackingMult(player, info) ?? Infinity) && g > 1
+            ? Math.log(needMult / effectiveHackingMult(player, info)) / Math.log(g)
             : null
 
         // The batcher's own saturation and thread shape, from its telemetry.
@@ -1979,13 +2015,13 @@ async function act(ns, canJoin, info, note) {
           remainingWindows,
           eBudget,
           eRep,
-          hackingMult: player.mults?.hacking,
+          hackingMult: effectiveHackingMult(player, info),
           level: player.skills?.hacking,
           chanceObs,
           growShare,
         })
         if (!derived) {
-          weightsMeta = { source: 'flat', chanceObs, growShare, calSource, why: `deriveWeights refused: remainingWindows=${remainingWindows} eBudget=${eBudget} eRep=${eRep} chanceObs=${chanceObs} growShare=${growShare} needMult=${needMult} mult=${player.mults?.hacking} g=${g}` }
+          weightsMeta = { source: 'flat', chanceObs, growShare, calSource, why: `deriveWeights refused: remainingWindows=${remainingWindows} eBudget=${eBudget} eRep=${eRep} chanceObs=${chanceObs} growShare=${growShare} needMult=${needMult} mult=${effectiveHackingMult(player, info)} (raw ${player.mults?.hacking}) g=${g}` }
         }
         if (derived) {
           channelWeights = derived.weights
@@ -2140,7 +2176,7 @@ async function act(ns, canJoin, info, note) {
       incomePerSec: joinIncome,
       hacking: player.skills?.hacking,
       hackingExp: player.exp?.hacking,
-      hackingMult: player.mults?.hacking,
+      hackingMult: effectiveHackingMult(player, info),
       // The formula-derived stand-in for the base rep rate on passes where
       // nothing has measured yet (trajectory.js explains the Four Sigma
       // abandonment this prevents). getSharePower is the game's own share
@@ -2855,7 +2891,7 @@ async function act(ns, canJoin, info, note) {
           // refusal on this path was invisible (2026-09-20 01:10 — the
           // home figure read "elasticity not measured" with no why).
           objective: weightsMeta,
-          incomeSample: makeIncomeSample(incNow, player, schedule),
+          incomeSample: makeIncomeSample(incNow, player, schedule, info),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
         },
         null,
@@ -2948,7 +2984,7 @@ async function act(ns, canJoin, info, note) {
               baseRepPerSec: schedule.measuredBaseRepPerSec,
               hacking: player.skills?.hacking,
               hackingExp: schedule.hackingExp,
-              hackingMult: player.mults?.hacking,
+              hackingMult: effectiveHackingMult(player, info),
               expPerSec: schedule.expPerSec,
             })
           : null
@@ -2962,7 +2998,7 @@ async function act(ns, canJoin, info, note) {
         incomePerSec,
         hacking: player.skills?.hacking,
         hackingExp: schedule?.hackingExp,
-        hackingMult: player.mults?.hacking,
+        hackingMult: effectiveHackingMult(player, info),
         expPerSec: schedule?.expPerSec,
       })
       // Two kinds of candidate. The FIXED ladder projects the working
@@ -3071,7 +3107,7 @@ async function act(ns, canJoin, info, note) {
               incomePerSec: incomePerSec + contractMoneyPerSec,
               hacking: player.skills?.hacking,
               hackingExp: player.exp?.hacking ?? 0,
-              hackingMult: player.mults?.hacking,
+              hackingMult: effectiveHackingMult(player, info),
               // The sleeve fleet's exp transfer rides the exit climb. Additive
               // only: a null player rate stays null (exitplan refuses), because
               // the fleet's few exp/s alone is not a conservative estimate of a
@@ -3303,7 +3339,7 @@ async function act(ns, canJoin, info, note) {
                 incomePerSec: incomePerSec + contractMoneyPerSec,
                 hacking: player.skills?.hacking,
                 hackingExp: player.exp?.hacking ?? 0,
-                hackingMult: player.mults?.hacking,
+                hackingMult: effectiveHackingMult(player, info),
                 expPerSec: expPerSecWithFleet(schedule?.expPerSec, readFleet(ns, info)?.expToPlayerHacking),
                 repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, readFleet(ns, info)?.factionRepPerSec),
                 cycleHours: cyc?.cycleHours,
@@ -3337,7 +3373,7 @@ async function act(ns, canJoin, info, note) {
     // ------------------------------------------------------------------
     let terminal = null
     if (installedCount.has('The Red Pill')) {
-      const expNeed = expForSkill(gate.target, player.mults?.hacking ?? 1)
+      const expNeed = expForSkill(gate.target, effectiveHackingMult(player, info) ?? NaN)
       const expRate = schedule?.expPerSec
       const sprintH = expRate > 0 ? Math.max(0, expNeed - (player.exp?.hacking ?? 0)) / expRate / 3600 : null
       const ladderH = joinState ? timeToMeet({ type: 'skills', skills: { hacking: gate.target } }, { ...joinState, expPerSec: schedule?.expPerSec }) : null
@@ -3420,7 +3456,7 @@ async function act(ns, canJoin, info, note) {
           // The income model's inputs, persisted so the NEXT pass can score
           // this pass's prediction — and the score of the last one, published
           // whether it flatters the model or not.
-          incomeSample: makeIncomeSample(incomePerSec, player, schedule),
+          incomeSample: makeIncomeSample(incomePerSec, player, schedule, info),
           incomeCalibration,
           futuresCalibration,
           futurePredictions,
