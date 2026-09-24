@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangGainHours, gangIsPending, rememberedGangIncome } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, covenantCampaign, covenantActive, sleevesFromCovenant, COVENANT } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -1118,6 +1118,9 @@ function readFleet(ns, info) {
       // The BitNode option that zeroes every sleeve exp gain. Read rather than
       // assumed, so 'exp' is only chosen where it can actually be earned.
       expDisabled: f.disableSleeveExp === true,
+      // The fleet's size — the Covenant campaign derives its purchase count
+      // from it (sleeveplan.sleevesFromCovenant); absent, it refuses.
+      sleeves: Number.isInteger(f.sleeves) ? f.sleeves : null,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
     }
 }
@@ -1324,6 +1327,33 @@ function nextInstallGainOf(plan, pending, offers) {
   const names = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])]
   if (!names.length) return null
   return batchHackingGain(names.map((n) => byName.get(n)?.mults ?? {}))
+}
+
+/**
+ * The Covenant campaign priced for this pass (sleeveplan.covenantCampaign),
+ * shared by the planned path (as a gate future) and the unplanned one (as the
+ * campaign itself — with nothing to install, there is no window to hold).
+ */
+function covenantCandidate(ns, info, player, schedule, incomePerSec, itraj) {
+  const fleet = readFleet(ns, info)
+  const nSleeves = Number.isInteger(fleet?.sleeves) ? fleet.sleeves : null
+  const member = player.factions.includes(COVENANT.faction)
+  const fc = [...(schedule?.joinForecasts ?? []), ...(schedule?.unpriceable ?? [])].find((x) => x?.name === COVENANT.faction)
+  const gymH = member ? 0 : (fc?.blockers ?? []).reduce((t, b) => (t === null ? null : b?.gym ? (typeof b.gym.hours === 'number' && isFinite(b.gym.hours) ? t + b.gym.hours : null) : t), fc ? 0 : null)
+  const playerRep = schedule?.measuredBaseRepPerSec > 0 ? schedule.measuredBaseRepPerSec : schedule?.estimatedBaseRepPerSec > 0 ? schedule.estimatedBaseRepPerSec : null
+  const rhoNow = achievableRate(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)?.rate ?? null
+  return covenantCampaign({
+    bitNode: info?.currentNode,
+    member,
+    fromCovenant: nSleeves === null ? null : sleevesFromCovenant(nSleeves, sfLevel(info, 10), info?.currentNode),
+    n: nSleeves,
+    money: ns.getServerMoneyAvailable('home'),
+    moneyBy: (h) => (itraj ? itraj.moneyBy(h) : incomePerSec * h * 3600),
+    combatHours: gymH,
+    repShare: typeof fleet?.factionRepPerSec === 'number' && playerRep ? fleet.factionRepPerSec / playerRep : null,
+    legHours: schedule?.totalHours,
+    rho: rhoNow,
+  })
 }
 
 /**
@@ -2524,7 +2554,22 @@ async function act(ns, canJoin, info, note) {
   // is fiction. Crime first, because the leg was priced with the crimes'
   // combat exp credited to the gym; then each stat still short, one class at
   // a time, at the gym the forecast named.
-  const bodyStep = (() => {
+  // THE COVENANT CAMPAIGN, when the install gate is HOLDING for it (it chose
+  // the covenant future last pass, this life): its combat legs take the work
+  // slot, as priced — the campaign's future charged the gym hours against
+  // reputation. The legs' "does not fit one install window" refusal is
+  // exactly what the hold removes, so it is not consulted here.
+  const covenantStep = (() => {
+    if (!canJoin || player.factions.includes(COVENANT.faction)) return null
+    if (!covenantActive(readJson(ns, '/tel/installgate.txt'), info?.lastAugReset)) return null
+    const fc = [...(schedule?.joinForecasts ?? []), ...(schedule?.unpriceable ?? [])].find((x) => x?.name === COVENANT.faction)
+    for (const b of fc?.blockers ?? []) {
+      const leg = b?.gym?.legs?.find((l) => (player.skills?.[l.stat] ?? 0) < l.to)
+      if (leg) return { kind: 'gym', gym: b.gym.gym, city: b.gym.city, forFaction: COVENANT.faction, ...leg }
+    }
+    return null
+  })()
+  const bodyStep = covenantStep ?? (() => {
     if (!scheduleTarget || wantCompany || !(schedule?.current?.workH > 0)) return null
     if (player.factions.includes(scheduleTarget)) return null
     const f = schedule?.joinForecasts?.find((x) => x.name === scheduleTarget)
@@ -2589,8 +2634,8 @@ async function act(ns, canJoin, info, note) {
       if (!already) {
         try {
           if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
-          if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${scheduleTarget}`)) {
-            did.push(`training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation`)
+          if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`)) {
+            did.push(`training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${bodyStep.forFaction ?? scheduleTarget} invitation${bodyStep.forFaction ? ' — the install gate is holding for the Covenant sleeve campaign' : ''}`)
           } else {
             todo.push(`gymWorkout(${bodyStep.gym}, ${cls}) refused — in ${player.city}, needs ${bodyStep.city}`)
           }
@@ -2946,6 +2991,16 @@ async function act(ns, canJoin, info, note) {
           objective: weightsMeta,
           incomeSample: makeIncomeSample(incNow, player, schedule, info),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
+          // Nothing to install, so no window to hold: the campaign, if it
+          // prices positive, simply runs (sleeveplan.covenantActive).
+          ...(() => {
+            try {
+              const cc = covenantCandidate(ns, info, player, schedule, incNow, null)
+              return { covenantCampaign: cc.campaign, covenantWhy: cc.why }
+            } catch (e) {
+              return { covenantCampaign: null, covenantWhy: `covenant campaign unpriced: ${String(e).slice(0, 80)}` }
+            }
+          })(),
         },
         null,
         2,
@@ -3022,6 +3077,8 @@ async function act(ns, canJoin, info, note) {
     const incomePerSec = incomeNow || incomeAvg
     const incomeSource = incomeNow ? 'running-scripts' : incomeAvg ? 'since-last-aug' : 'none'
     let futures = []
+    // Why the Covenant campaign was or was not offered this pass (installgate.txt).
+    let covenantWhy = null
     let incomeCalibration = null
     let futuresCalibration = null
     let futurePredictions = []
@@ -3112,6 +3169,40 @@ async function act(ns, canJoin, info, note) {
         } catch {
           /* a projection that cannot be priced is simply not offered */
         }
+      }
+
+      // THE COVENANT CAMPAIGN — one more wait, priced by sleeveplan.
+      // covenantCampaign: hold long enough to join The Covenant and buy the
+      // next sleeve inside this window (money and combat exp both reset at an
+      // install). The wait's augmentations are planned with the sleeve's price
+      // taken out of the money, reputation accrues only for the hours the work
+      // slot is not at the gym, and the sleeve's hours saved enter as ln(M) at
+      // rho. Offered only when that is positive; the gate's marginal rule
+      // decides against every other wait, and gate.bestWait.covenant is what
+      // the body step and sleeveaug.js act on.
+      try {
+        const cc = covenantCandidate(ns, info, player, schedule, incomePerSec, itraj)
+        covenantWhy = cc.why
+        if (cc.campaign && cc.campaign.lnEquiv > 0) {
+          const c = cc.campaign
+          const workH = Math.max(0, c.waitH - c.combatH)
+          const repGain = ftraj ? ftraj.repBetween(0, workH, favMult) : 0
+          const moneyGain = itraj ? itraj.moneyBy(c.waitH) : incomePerSec * c.waitH * 3600
+          const f = planPurchases({
+            offers: offers.map((o) => (repGain > 0 && o.faction === workingF ? { ...o, factionRep: o.factionRep + repGain } : o)),
+            money: Math.max(0, ns.getServerMoneyAvailable('home') + moneyGain - c.spend),
+            r: BASE_PRICE_MULT,
+            nodeMoneyMult: 1,
+            owned: [...installedCount.keys()],
+            soaOwned: [...allCount.keys()].filter(isSoa).length,
+            channelWeights,
+            channels: channelsUsed,
+          })
+          const Mw = heldM * (f && f.M > 1 ? f.M : 1) * Math.exp(c.lnEquiv)
+          if (Mw > 1) futures.push({ waitMs: c.waitH * 3600000, M: Mw, covenant: { spend: c.spend, combatH: c.combatH, moneyH: c.moneyH, hoursSaved: c.hoursSaved, lnEquiv: c.lnEquiv, crossNode: c.crossNode } })
+        }
+      } catch (e) {
+        covenantWhy = `covenant campaign unpriced: ${String(e).slice(0, 80)}`
       }
 
       incomeCalibration = scoreIncome(prevIncome, incomePerSec)
@@ -3514,6 +3605,7 @@ async function act(ns, canJoin, info, note) {
           incomeSample: makeIncomeSample(incomePerSec, player, schedule, info),
           incomeCalibration,
           futuresCalibration,
+          covenantWhy,
           futurePredictions,
           // The objective the plan was priced under — derived per pass from
           // measured elasticities, or 'flat' when derivation refused. A

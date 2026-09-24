@@ -834,3 +834,129 @@ export function sleeveAugBatch(o = {}) {
     why: `${best.n} aug(s) x${best.G.toFixed(3)} on ${o.objective}: saves ${best.saved.toFixed(2)}h of a ${L.toFixed(1)}h leg for ${best.costHours.toFixed(3)}h of income`,
   }
 }
+
+// ---------------------------------------------------------------------------
+// MORE SLEEVES — The Covenant (SleeveCovenantPurchases.tsx).
+//
+//   * only inside BitNode 10, only as a Covenant member, at most 5 ever;
+//   * cost 10^n x $10t for the (n+1)th (getSleeveCost);
+//   * PERMANENT FOR THE WHOLE PLAYTHROUGH: nothing resets sleevesFromCovenant,
+//     and prestigeSourceFile keeps the count ("the number of sleeves you have
+//     persists", PlayerObjectGeneralMethods.ts:147) — so leaving BN10 closes
+//     the only window to buy one;
+//   * membership needs, at invite time, 20 installed augs, $75b, hacking 850
+//     and ALL FOUR combat skills at 850 (FactionInfo.tsx:167). Money and
+//     combat exp both reset at every install, so the join and the purchase
+//     must fit ONE install window — a campaign the install gate has to choose
+//     to hold for, priced as one more `futures` candidate.
+//
+// Priced as a FLOOR: the hours the extra sleeve saves in the rest of THIS
+// node's reputation schedule, converted to ln(M) at rho — the gate's own
+// exchange rate between an hour and a multiplier. Every later node's use of
+// the sleeve is real value that nothing here can measure (nodeplan.js keeps
+// cross-node value as text for the same reason), so it is published as
+// unpriced upside and never folded in. A floor that says buy is right; a
+// refusal names what it left out.
+export const COVENANT = { faction: 'The Covenant', joinMoney: 75e9, skill: 850, augs: 20, maxSleeves: 5, baseCost: 10e12 }
+
+/** Price of the next Covenant sleeve given how many were bought (getSleeveCost). */
+export function covenantSleeveCost(fromCovenant) {
+  if (!Number.isInteger(fromCovenant) || fromCovenant < 0 || fromCovenant >= COVENANT.maxSleeves) return Infinity
+  return Math.pow(10, fromCovenant) * COVENANT.baseCost
+}
+
+/** Covenant purchases so far: the fleet minus what SF10 and BN10 grant (recalculateNumberOfOwnedSleeves). */
+export function sleevesFromCovenant(numSleeves, sf10Level, bitNode) {
+  if (!Number.isInteger(numSleeves) || !Number.isInteger(sf10Level)) return null
+  const n = numSleeves - Math.min(3, sf10Level + (bitNode === 10 ? 1 : 0))
+  return n >= 0 ? n : null
+}
+
+/**
+ * Hours one more sleeve saves on a leg of L hours, the fleet already n sleeves
+ * each worth `share` of the player's rate: L(1 - (1+ns)/(1+(n+1)s)). Assumes
+ * the new sleeve adds the same share — true while the schedule has a faction
+ * for it (one sleeve per faction); stated, not hidden.
+ */
+export function extraSleeveHoursSaved(o = {}) {
+  // Read through `o`: a local named after an ns function is billed as one
+  // (B1) — this module is in progress.js's import graph.
+  const n = o.n
+  const s = o.repShare
+  const L = o.legHours
+  if (!Number.isInteger(n) || n < 0 || !num(s) || s < 0 || !num(L) || L < 0) return null
+  return L * (1 - (1 + n * s) / (1 + (n + 1) * s))
+}
+
+/**
+ * The campaign as a gate candidate.
+ * @param {object} o
+ * @param {number}  o.bitNode
+ * @param {boolean} o.member       already in The Covenant
+ * @param {number}  o.fromCovenant sleeves bought so far
+ * @param {number}  o.n            sleeves owned
+ * @param {number}  o.money        on hand now
+ * @param {(h:number)=>number} o.moneyBy  income over the next h hours
+ * @param {number|null} o.combatHours  work-slot hours to meet the combat legs (0 when met or a member)
+ * @param {number}  o.repShare     one sleeve's share of the player's rep rate
+ * @param {number}  o.legHours     reputation hours left in the node's schedule
+ * @param {number|null} o.rho      ln(M)/h — the gate's exchange rate
+ * @param {number}  [o.maxWaitH=200]
+ */
+export function covenantCampaign(o = {}) {
+  const refuse = (why) => ({ campaign: null, why })
+  if (o.bitNode !== 10) return refuse('Covenant sleeves are sold only inside BitNode 10')
+  if (!Number.isInteger(o.fromCovenant)) return refuse('Covenant purchase count unreadable')
+  const cost = covenantSleeveCost(o.fromCovenant)
+  if (!isFinite(cost)) return refuse(`all ${COVENANT.maxSleeves} Covenant sleeves bought`)
+  if (!num(o.rho) || o.rho <= 0) return refuse('no rho (no completed lives in this node) — no exchange rate from hours to ln(M)')
+  if (typeof o.moneyBy !== 'function' || !num(o.money)) return refuse('income trajectory unreadable')
+  const combatH = o.member ? 0 : o.combatHours
+  if (!num(combatH) || combatH < 0) return refuse('combat legs unpriced (a gym leg has no rate)')
+  const maxH = num(o.maxWaitH) ? o.maxWaitH : 200
+  // Money: the invite checks $75b on hand, the purchase spends the cost; the
+  // larger binds. Smallest wait that reaches it, by bisection on the trajectory.
+  const need = o.member ? cost : Math.max(cost, COVENANT.joinMoney)
+  const have = (h) => o.money + o.moneyBy(h)
+  let moneyH = 0
+  if (have(0) < need) {
+    if (!(have(maxH) >= need)) return refuse(`$${need.toExponential(2)} is not reachable within ${maxH}h on this life's income`)
+    let lo = 0
+    let hi = maxH
+    for (let i = 0; i < 50; i++) {
+      const mid = (lo + hi) / 2
+      if (have(mid) >= need) hi = mid
+      else lo = mid
+    }
+    moneyH = hi
+  }
+  const waitH = Math.max(moneyH, combatH)
+  const saved = extraSleeveHoursSaved({ n: o.n, repShare: o.repShare, legHours: Math.max(0, (o.legHours ?? NaN) - waitH) })
+  if (saved === null) return refuse('sleeve share or schedule length unreadable')
+  return {
+    campaign: {
+      waitH,
+      moneyH,
+      combatH,
+      spend: cost,
+      hoursSaved: saved,
+      lnEquiv: o.rho * saved,
+      crossNode: `unpriced upside: sleeve #${o.n + 1} persists into every later node (sleevesFromCovenant never resets)`,
+    },
+    why: `hold ${waitH.toFixed(1)}h (money ${moneyH.toFixed(1)}h, combat ${combatH.toFixed(1)}h) to buy sleeve #${o.n + 1} for $${cost.toExponential(2)}: saves ${saved.toFixed(2)}h of this node = ${(o.rho * saved).toFixed(3)} ln(M) at rho`,
+  }
+}
+
+/**
+ * Is the Covenant campaign ON, per the gate file? One rule for every actor
+ * (progress.js's body step, sleeveaug.js's purchase):
+ *   - an install is pending and the gate HOLDS for the covenant future it chose; or
+ *   - nothing is planned (no install to hold), and the campaign priced positive.
+ * Same life only: the file survives installs and a node change.
+ */
+export function covenantActive(gate, lastAugReset) {
+  if (!gate || gate.lastAugReset !== lastAugReset) return null
+  if (gate.planned !== false && gate.install === false && gate.bestWait?.covenant) return gate.bestWait.covenant
+  if (gate.planned === false && gate.covenantCampaign && gate.covenantCampaign.lnEquiv > 0) return gate.covenantCampaign
+  return null
+}
