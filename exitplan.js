@@ -176,6 +176,33 @@ export function hoursToRep(target, o = {}) {
  *
  * Returns { hours, legs, mult } or { hours: null, why } — never a guess.
  */
+/**
+ * A sleeve term as a function of hours FROM NOW: `steps` [{atH, perSec}] (each
+ * replaces the rate from its hour on) when given, else `perSec` from `delayH`.
+ * Null input -> always 0.
+ */
+function sleeveRateFn(term) {
+  if (!term) return () => 0
+  if (Array.isArray(term.steps) && term.steps.length) {
+    const st = term.steps.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH)
+    return (t) => {
+      let v = 0
+      for (const x of st) if (x.atH <= t) v = x.perSec
+      return v
+    }
+  }
+  const S = pos(term.perSec) ? term.perSec : 0
+  const D = num(term.delayH) && term.delayH > 0 ? term.delayH : 0
+  return (t) => (t >= D ? S : 0)
+}
+
+/** The hours at which a step function can change, after `from`. */
+function sleeveBreaks(term, from) {
+  if (!term) return []
+  if (Array.isArray(term.steps)) return term.steps.map((x) => x?.atH).filter((a) => num(a) && a > from).sort((a, b) => a - b)
+  return num(term.delayH) && term.delayH > from ? [term.delayH] : []
+}
+
 export function exitHours(o = {}) {
   const {
     installsFirst = 0,
@@ -360,8 +387,9 @@ export function exitHours(o = {}) {
   }
 
   if (terminalRep > 0) {
-    const fleetOn = sleeveRep && pos(sleeveRep.perSec)
-    let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repRate) ? repRate : 0) + sleeveRep.perSec : repRate, donationCost: donation, favor: exitFavor, favorToDonate, moneyLeg })
+    const fleetOn = !!sleeveRep && (pos(sleeveRep.perSec) || (Array.isArray(sleeveRep.steps) && sleeveRep.steps.some((x) => pos(x?.perSec))))
+    const sRep = sleeveRateFn(fleetOn ? sleeveRep : null)
+    let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repRate) ? repRate : 0) + sRep(h) : repRate, donationCost: donation, favor: exitFavor, favorToDonate, moneyLeg })
     // GROUND REPUTATION AS A TRAJECTORY. Faction-work rep is linear in the
     // player's hacking level (reputation.ts:16), and after an install the
     // level restarts from 1 and climbs as exp accrues — so the rep leg runs
@@ -371,8 +399,7 @@ export function exitHours(o = {}) {
     // two-minute steps; the last lands exactly.
     if (r.how === 'ground' && (fleetOn || installsFirst > 0)) {
       const P = pos(repRate) ? repRate : 0
-      const S = fleetOn ? sleeveRep.perSec : 0
-      const D = fleetOn ? Math.max(0, (num(sleeveRep.delayH) ? sleeveRep.delayH : 0) - h) : 0
+      const legStart = h
       const need = terminalRep - exitRep
       const scale = installsFirst > 0 && pos(hacking) ? (e) => levelAt(e, mult) / hacking : () => 1
       const step = 1 / 30
@@ -384,7 +411,7 @@ export function exitHours(o = {}) {
           t = Infinity
           break
         }
-        const rate = P * scale(e) + (t >= D ? S : 0)
+        const rate = P * scale(e) + sRep(legStart + t)
         const add = rate * step * 3600
         if (rate > 0 && acc + add >= need) {
           t += (need - acc) / rate / 3600
@@ -409,12 +436,31 @@ export function exitHours(o = {}) {
   // NOW): it joins the climb only once its delay has passed — the synchronise,
   // shock recovery or training it spends first. Piecewise, like sleeveRep.
   let climb
-  if (sleeveExp && pos(sleeveExp.perSec)) {
+  const expOn = !!sleeveExp && (pos(sleeveExp.perSec) || (Array.isArray(sleeveExp.steps) && sleeveExp.steps.some((x) => pos(x?.perSec))))
+  if (expOn) {
+    // Segment by segment between the sleeve's rate changes: constant rate in
+    // each, so each lands exactly.
     const need = expForLevel(exitLevel, mult)
     const P = pos(expRate) ? expRate : 0
-    const S = sleeveExp.perSec
-    const D = Math.max(0, (num(sleeveExp.delayH) ? sleeveExp.delayH : 0) - h)
-    climb = !pos(mult) ? null : need <= 0 ? 0 : P > 0 && P * D * 3600 >= need ? need / P / 3600 : (need + S * D * 3600) / (P + S) / 3600
+    const sExp = sleeveRateFn(sleeveExp)
+    if (!pos(mult)) climb = null
+    else if (need <= 0) climb = 0
+    else {
+      let acc = 0
+      let t = h
+      climb = Infinity
+      for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
+        const rate = P + sExp(t)
+        const span = b - t
+        if (rate > 0 && acc + rate * span * 3600 >= need) {
+          climb = t - h + (need - acc) / rate / 3600
+          break
+        }
+        if (!isFinite(span)) break
+        acc += rate * span * 3600
+        t = b
+      }
+    }
   } else climb = hoursToLevel(exitLevel, mult, 0, expRate)
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
   h += climb
@@ -672,9 +718,8 @@ export function spendExit(o = {}) {
  * "don't", for scripts that cannot re-plan themselves (gang.js).
  *   - final window (no install coming): the spend leaves the money short.
  *   - otherwise: the next install at W buys the batch the planner priced at
- *     moneyAtW - spent, read from the published ladder as the largest level
- *     not above it — a step down, so the spend is charged at least its true
- *     crowding-out (a bias toward not spending, stated).
+ *     moneyAtW - spent, interpolated geometrically between the published
+ *     ladder's levels.
  * Null when the record carries no install point or ladder.
  */
 export function spendRuns(record, spent) {
@@ -682,10 +727,28 @@ export function spendRuns(record, spent) {
   if (!base || !num(spent) || spent < 0) return null
   if (record.finalWindow === true) return { without: { ...base }, with: { ...base, money: Math.max(0, (base.money ?? 0) - spent) }, max: 0, min: 0 }
   if (!num(record.W) || record.W < 0 || !num(record.moneyAtW) || !Array.isArray(record.gainsByMoney) || !record.gainsByMoney.length) return null
+  // Between two ladder levels, interpolated geometrically per channel (gains
+  // multiply), so a spend is charged its crowding-out, not the next level
+  // down. Below the lowest level: that level; above the highest: the highest.
+  const ladder = [...record.gainsByMoney].filter((r) => num(r?.money) && r?.gains).sort((a, b) => a.money - b.money)
   const gAt = (m) => {
-    let g = null
-    for (const r of [...record.gainsByMoney].sort((a, b) => a.money - b.money)) if (num(r?.money) && r.money <= m + 1e-6) g = r.gains
-    return g
+    if (!ladder.length) return null
+    if (m <= ladder[0].money) return ladder[0].gains
+    for (let i = 1; i < ladder.length; i++) {
+      const lo = ladder[i - 1]
+      const hi = ladder[i]
+      if (m <= hi.money) {
+        const f = hi.money > lo.money ? (m - lo.money) / (hi.money - lo.money) : 1
+        const out = {}
+        for (const k of new Set([...Object.keys(lo.gains), ...Object.keys(hi.gains)])) {
+          const a = pos(lo.gains[k]) ? lo.gains[k] : 1
+          const b = pos(hi.gains[k]) ? hi.gains[k] : 1
+          out[k] = Math.exp(Math.log(a) + f * (Math.log(b) - Math.log(a)))
+        }
+        return out
+      }
+    }
+    return ladder[ladder.length - 1].gains
   }
   const inputsWith = (g) => ({ ...base, firstInstallH: record.W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) })
   return { without: inputsWith(gAt(record.moneyAtW)), with: inputsWith(gAt(record.moneyAtW - spent)), max: 400, min: 1 }

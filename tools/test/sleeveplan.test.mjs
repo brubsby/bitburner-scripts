@@ -895,5 +895,18 @@ export async function run() {
   }
   checks.push(c23);
 
+  const c24 = new Check("SP24", "shock: the 'work now' side climbs as shock falls passively (a schedule), not a flat shocked rate");
+  {
+    c24.examined(2);
+    const calls = [];
+    const exitOf = (k, t) => (calls.push(t), t.steps ? 30 : 31);
+    const sleeve = { index: 0, sync: 100, shock: 60, skills: { hacking: 50, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 1, intelligence: 0 }, exp: { hacking: 1000 }, mults: { hacking_exp: 1 }, city: "Sector-12", memory: 1 };
+    const a = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf, playerIntelligence: 0 });
+    const withSteps = calls.find((t) => Array.isArray(t.steps));
+    if (!withSteps || !(withSteps.steps.length > 2) || !(withSteps.steps[withSteps.steps.length - 1].perSec > withSteps.steps[0].perSec)) c24.fail(`the working side must be a rising schedule: ${JSON.stringify(calls[0])}`);
+    if (a?.tasks?.[0] === "shock") c24.fail("with working-now sooner, the sleeve must not recover");
+  }
+  checks.push(c24);
+
   return checks;
 }

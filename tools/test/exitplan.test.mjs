@@ -591,5 +591,37 @@ export async function run() {
   }
   checks.push(c24);
 
+  const c25 = new Check("XP25", "spendRuns interpolates the batch ladder geometrically — a spend is charged its crowding-out, not a step down");
+  {
+    const { spendRuns } = await import("../../exitplan.js");
+    c25.examined(3);
+    const rec = { W: 1, finalWindow: false, moneyAtW: 100, gainsByMoney: [{ money: 0, gains: { hacking: 1 } }, { money: 50, gains: { hacking: 2 } }, { money: 100, gains: { hacking: 8 } }], inputs: { money: 1 } };
+    const g = (spent) => spendRuns(rec, spent).with.installGains.hacking;
+    if (Math.abs(g(0) - 8) > 1e-12) c25.fail("no spend: the top level");
+    if (Math.abs(g(25) - 4) > 1e-9) c25.fail(`halfway between 2 and 8 geometrically is 4, got ${g(25)}`);
+    if (Math.abs(g(100) - 1) > 1e-12) c25.fail("everything spent: the bottom level");
+  }
+  checks.push(c25);
+
+  const c26 = new Check("XP26", "a sleeve term as a schedule of steps: equal to the one-step form when it is one step, between when it ramps");
+  {
+    c26.examined(4);
+    const b = { money: 1e12, incomePerSec: 1e8, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 1e4, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 0 };
+    const leg = (o, name) => exitHours({ ...b, ...o }).legs.find((l) => l.leg === name)?.hours;
+    const r1 = leg({ sleeveRep: { perSec: 10, delayH: 2 } }, "exit reputation"), r2 = leg({ sleeveRep: { steps: [{ atH: 2, perSec: 10 }] } }, "exit reputation");
+    if (Math.abs(r1 - r2) > 1e-6) c26.fail(`one step equals the delayed form (rep): ${r1} vs ${r2}`);
+    // Exp checks with no rep leg ahead of the climb (a 23h rep leg would let
+    // every schedule finish before the climb starts).
+    const legE = (o) => exitHours({ ...b, terminalRep: 0, ...o }).legs.find((l) => l.leg === "climb to exit level")?.hours;
+    const e1 = legE({ sleeveExp: { perSec: 5e3, delayH: 1 } }), e2 = legE({ sleeveExp: { steps: [{ atH: 1, perSec: 5e3 }] } });
+    if (Math.abs(e1 - e2) > 1e-9) c26.fail(`one step equals the delayed form (exp): ${e1} vs ${e2}`);
+    const now = leg({ sleeveRep: { perSec: 10, delayH: 0 } }, "exit reputation"), late = leg({ sleeveRep: { perSec: 10, delayH: 4 } }, "exit reputation");
+    const ramp = leg({ sleeveRep: { steps: [{ atH: 0, perSec: 5 }, { atH: 2, perSec: 10 }] } }, "exit reputation");
+    if (!(ramp > now && ramp < late)) c26.fail(`a ramp must land between full-now and full-later: ${now} < ${ramp} < ${late}`);
+    const e3 = legE({ sleeveExp: { steps: [{ atH: 0, perSec: 2e3 }, { atH: 1, perSec: 5e3 }] } });
+    if (!(e3 < e1)) c26.fail("an exp ramp that starts earlier must climb sooner");
+  }
+  checks.push(c26);
+
   return checks;
 }

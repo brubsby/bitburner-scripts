@@ -341,10 +341,9 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // SHOCK IS NOT A KARMA TERM. It scales exp and money only, so recovering
     // it while the objective is karma buys nothing at all.
     const shock = num(s?.shock) ? s.shock : 0
-    // SHOCK RECOVERY, as two exits: the objective's rate at today's shock
-    // from now, against the unshocked rate after recovering. The passive
-    // decline while working is ignored on the "now" side — a slight bias
-    // toward recovering, stated. The break-even rule is the named fallback.
+    // SHOCK RECOVERY, as two exits: working now — the rate climbing as shock
+    // falls passively — against the unshocked rate after recovering at the
+    // dedicated rate. The break-even rule is the named fallback.
     let shockDecided = false
     if (objective !== 'karma' && shock > 0 && typeof o.exitOf === 'function') {
       const bonus = (100 - shock) / 100
@@ -353,8 +352,17 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       if (num(rateNow) && rateNow > 0 && bonus > 0 && num(sp) && sp > 0) {
         const T = shock / sp / 3600
         const kind = objective === 'rep' ? 'rep' : objective === 'exp' ? 'exp' : 'money'
-        const now = o.exitOf(kind, { perSec: rateNow, delayH: 0 })
-        const healed = o.exitOf(kind, { perSec: rateNow / bonus, delayH: T })
+        // Working, shock still falls passively (Sleeve.process); the rate
+        // climbs as it does — an 8-step ramp to full over the passive
+        // recovery time, against recovering at the dedicated rate first.
+        const passive = shockPerSec(s?.skills?.intelligence ?? 0, false)
+        const Tp = num(passive) && passive > 0 ? shock / passive / 3600 : Infinity
+        const full = rateNow / bonus
+        const steps = isFinite(Tp)
+          ? [...Array(8).keys()].map((k) => ({ atH: (k * Tp) / 8, perSec: (full * (100 - Math.max(0, shock - passive * ((k * Tp) / 8) * 3600))) / 100 })).concat([{ atH: Tp, perSec: full }])
+          : [{ atH: 0, perSec: rateNow }]
+        const now = o.exitOf(kind, { steps })
+        const healed = o.exitOf(kind, { perSec: full, delayH: T })
         if (num(now) && num(healed)) {
           shockDecided = true
           if (healed < now - 1 / 60) {
@@ -885,11 +893,18 @@ export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.no
   const base = record.inputs
   const P = base.repPerSec
   return (objective, t) => {
-    if (!t || !num(t.perSec) || t.perSec < 0 || !num(t.delayH) || t.delayH < 0) return null
+    // Either one delayed rate {perSec, delayH} or a schedule {steps:
+    // [{atH, perSec}]} — a rate that changes as the sleeve's shock falls.
+    const steps = Array.isArray(t?.steps) ? t.steps.filter((x) => num(x?.atH) && x.atH >= 0 && num(x?.perSec) && x.perSec >= 0) : null
+    if (!steps && (!t || !num(t.perSec) || t.perSec < 0 || !num(t.delayH) || t.delayH < 0)) return null
+    if (steps && !steps.length) return null
+    const sched = steps ?? [{ atH: t.delayH, perSec: t.perSec }]
+    const last = sched.reduce((a, b) => (b.atH >= a.atH ? b : a))
+    const term = steps ? { steps } : { perSec: t.perSec, delayH: t.delayH }
     let o = null
-    if (objective === 'rep') o = { ...base, sleeveRep: { perSec: t.perSec, delayH: t.delayH }, ...(num(P) && P > 0 ? { repBoost: { K: (P + t.perSec) / P, e: record.eRep, fromH: t.delayH } } : {}) }
-    else if (objective === 'exp') o = { ...base, sleeveExp: { perSec: t.perSec, delayH: t.delayH } }
-    else if (objective === 'money') o = { ...base, extraIncome: [{ atH: t.delayH, perSec: t.perSec }], eBudget: record.eBudget }
+    if (objective === 'rep') o = { ...base, sleeveRep: term, ...(num(P) && P > 0 ? { repBoost: { K: (P + last.perSec) / P, e: record.eRep, fromH: last.atH } } : {}) }
+    else if (objective === 'exp') o = { ...base, sleeveExp: term }
+    else if (objective === 'money') o = { ...base, extraIncome: sched, eBudget: record.eBudget }
     if (!o) return null
     const r = bestExitPolicy(o)
     return num(r?.best?.hours) ? r.best.hours : null
