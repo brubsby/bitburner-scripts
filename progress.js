@@ -1845,7 +1845,19 @@ function karmaChannelCtx(ns, info, player) {
       const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1, assist })
       return r && isFinite(r.hours) ? r.hours : null
     }
-    return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
+    // The exit with the gang after a grind of H hours (gangworth.gangExit on
+    // last pass's published exit inputs), and the planner's unit for hours:
+    // karmaValue prices a combat augmentation's shorter grind through these.
+    const rec = readJson(ns, '/tel/exitinputs.txt')
+    const recOk = rec?.inputs && rec.lastAugReset === info?.lastAugReset && Date.now() - Date.parse(rec.at) < 15 * 60e3
+    const gangExitH = recOk
+      ? (H) => {
+          const g = gangExitNow(ns, info, { ...rec.inputs, eRep: rec.eRep, eBudget: rec.eBudget }, H)
+          return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
+        }
+      : null
+    const hoursPerLn = readJson(ns, GATE)?.objective?.exitSensitivity?.hoursPerLn?.hacking ?? null
+    return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, gangExitH, hoursPerLn, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
   } catch {
     return { gangPending: false }
   }

@@ -552,7 +552,10 @@ export function karmaValue(aug, ctx = {}) {
   if (ctx.gangKarmaWaived === true) {
     return { ln: 0, kind: 'karma:combat', reason: 'this BitNode grants gang access without karma' }
   }
-  if (!num(ctx.gangIncomePerSec) || ctx.gangIncomePerSec <= 0) {
+  // Measured gang income is needed only by the moneyLn fallback; the exit
+  // path prices the gang from its own trajectory (measured or simulated).
+  const exitPath = typeof ctx.gangExitH === 'function' && num(ctx.hoursPerLn) && ctx.hoursPerLn > 0
+  if (!exitPath && (!num(ctx.gangIncomePerSec) || ctx.gangIncomePerSec <= 0)) {
     return { ln: 0, kind: 'karma:combat', reason: 'no measured gang income — cannot price an earlier gang' }
   }
   if (typeof ctx.grindHours !== 'function') {
@@ -567,6 +570,25 @@ export function karmaValue(aug, ctx = {}) {
   const saved = before - after
   if (!(saved > 0)) {
     return { ln: 0, kind: 'karma:combat', reason: `no hours saved on the grind (${before.toFixed(1)}h either way)` }
+  }
+
+  // THE EXIT, when it can be priced (ctx.gangExitH, ctx.hoursPerLn): the
+  // node's exit with the gang after the shorter grind against after the
+  // longer one — a simulated trajectory each (gangworth.gangExit) — in the
+  // planner's unit by the exit's own hours per ln of hacking. The gang's
+  // income times the hours saved, through moneyLn, is the named fallback.
+  if (typeof ctx.gangExitH === 'function' && num(ctx.hoursPerLn) && ctx.hoursPerLn > 0) {
+    const hB = ctx.gangExitH(before)
+    const hA = ctx.gangExitH(after)
+    if (num(hB) && num(hA)) {
+      return {
+        ln: Math.max(0, hB - hA) / ctx.hoursPerLn,
+        kind: 'karma:combat',
+        hoursSaved: saved,
+        exitSavedH: hB - hA,
+        reason: `karma grind ${before.toFixed(1)}h -> ${after.toFixed(1)}h: exit ${hB.toFixed(2)}h -> ${hA.toFixed(2)}h (simulated)`,
+      }
+    }
   }
 
   const priced = moneyLn(ctx.gangIncomePerSec * saved * 3600, ctx)

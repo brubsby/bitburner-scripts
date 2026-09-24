@@ -585,5 +585,20 @@ export async function run() {
   }
   checks.push(cew);
 
+  const ckx = new Check("OB-KARMA-EXIT", "a combat aug's value is the simulated exit its shorter karma grind saves, in hacking-ln");
+  {
+    const { karmaValue } = await import("../../objective.js");
+    ckx.examined(3);
+    const aug = { name: "x", mults: { strength: 1.5, defense: 1.5, dexterity: 1.5, agility: 1.5 } };
+    const ctx = { gangPending: true, grindHours: (lift) => (lift ? 20 : 30), gangExitH: (H) => 50 + H, hoursPerLn: 5 };
+    const v = karmaValue(aug, ctx);
+    if (Math.abs(v.ln - (80 - 70) / 5) > 1e-12) ckx.fail(`ln must be the exit hours saved / hours per ln: ${JSON.stringify(v)}`);
+    // No measured gang income is fine on the exit path (the gang's trajectory is simulated).
+    if (!(karmaValue(aug, { ...ctx, gangIncomePerSec: null }).ln > 0)) ckx.fail("the exit path must not require measured gang income");
+    // A grind that no longer changes the exit is worth nothing.
+    if (karmaValue(aug, { ...ctx, gangExitH: () => 60 }).ln !== 0) ckx.fail("no exit hours saved, no value");
+  }
+  checks.push(ckx);
+
   return checks;
 }

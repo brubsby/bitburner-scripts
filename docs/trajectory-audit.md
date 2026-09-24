@@ -26,7 +26,7 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | 3 | ~~work slot: crime vs faction~~ **done 2026-09-24** (crimeAlt: two exits planned at W) | progress.js ~2602 | `moneyLn(crime $/h)` vs schedule ln/h | mostly there (`nodeplan.workSlotCost`) |
 | 4 | which faction to work | factionplan.js:205 | greedy `acc/hoursAll` | per-cycle mult gain as a function of the schedule |
 | 5 | ~~gang worth its karma gate~~ **done 2026-09-24** (gangworth.gangExit: income after the grind, simulateGang trajectory when unmeasured; the income-scale threshold is deleted) | gangworth.js:160 | gain from t=0 minus the grind as flat hours; income-scale fallback | delayed income step; work-slot hours outside the final window |
-| 6 | combat augs to shorten the karma grind | objective.js:572 | `moneyLn(gangIncome x saved)` | as #5 |
+| 6 | ~~combat augs to shorten the karma grind~~ **done 2026-09-24** (karmaValue: exit with the gang after the shorter grind vs the longer, in hacking-ln) | objective.js:572 | `moneyLn(gangIncome x saved)` | as #5 |
 | 7 | ~~hacknet~~ **done 2026-09-24** | hacknet.js exit verdict | `payback < remainingH` is the named fallback | — |
 | 9 | ~~sleeve task: sync / shock / train-vs-work / objective ladder~~ **done 2026-09-24** (sleeveObjectiveByExit; sleeveExitOf for sync/shock/train; karma's sync keeps the break-even as the named fallback — its value runs through the gang grind) | sleeveplan.js:130,297,310,459; progress.js ladder | break-even `100/rate`; `afterRate x (H-T)`; fixed ordering | `sleeveExp {perSec, delayH}`; the ladder is expressible now through `planFleet` |
 | 10 | charisma / company path | objective.js:140 | rate x horizon | no company-path leg |
