@@ -155,6 +155,14 @@ export function hoursToRep(target, o = {}) {
  * without it is the in-node price of the sleeve; its use in later nodes
  * (sleevesFromCovenant persists) is not simulated here.
  *
+ * THE FLEET'S REPUTATION AS ITS OWN TERM (optional `sleeveRep`
+ * {perSec, delayH}): the player grinds at `repPerSec` from the start and the
+ * best sleeve adds `perSec` only after `delayH` — the retrain a sleeve
+ * augmentation forces (every purchase zeroes the sleeve's exp, and its rep is
+ * linear in its skill). With delayH 0 it is exactly repPerSec + perSec, so the
+ * with/without comparison of a sleeve purchase runs both trajectories in this
+ * one shape.
+ *
  * Returns { hours, legs, mult } or { hours: null, why } — never a guess.
  */
 export function exitHours(o = {}) {
@@ -183,6 +191,7 @@ export function exitHours(o = {}) {
     donationCost = null,
     favorToDonate = null,
     covenant = null,
+    sleeveRep = null,
   } = o
 
   if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
@@ -262,7 +271,17 @@ export function exitHours(o = {}) {
   }
 
   if (terminalRep > 0) {
-    const r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec, donationCost, favor: exitFavor, favorToDonate, moneyLeg })
+    const fleetOn = sleeveRep && pos(sleeveRep.perSec)
+    let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repPerSec) ? repPerSec : 0) + sleeveRep.perSec : repPerSec, donationCost, favor: exitFavor, favorToDonate, moneyLeg })
+    if (fleetOn && r.how === 'ground') {
+      // Piecewise: player alone for delayH, then player + sleeve.
+      const P = pos(repPerSec) ? repPerSec : 0
+      const S = sleeveRep.perSec
+      const D = num(sleeveRep.delayH) && sleeveRep.delayH > 0 ? sleeveRep.delayH : 0
+      const need = terminalRep - exitRep
+      const t = P > 0 && P * D * 3600 >= need ? need / P / 3600 : (need + S * D * 3600) / (P + S) / 3600
+      r = { hours: t, how: 'ground' }
+    }
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }
     h += r.hours
     if (r.how === 'ground') slotH += r.hours

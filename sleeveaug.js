@@ -9,15 +9,16 @@
 //
 // Nothing bought these before, and they are the cheapest permanent purchase in
 // the game: baseCost with no x1.9 escalation and no reputation spent, kept for
-// the rest of the node (installs never touch sleeves). The pricing, the reset
-// every purchase causes, and what is refused are in sleeveplan.js
-// sleeveAugBatch. This file only gathers the inputs, asks, and buys.
+// the rest of the node (installs never touch sleeves). This file gathers the
+// offers and buys; the decision — the exit simulated with the batch against
+// the exit without it — is progress.js sleeveAugExitOf (and covenantExitOf
+// for another sleeve). Two passes: offers out, verdict back, purchase.
 //
 // Every input is telemetry another script already publishes; anything
 // unreadable refuses (a guessed share or leg would buy on a stand-in).
 
 import { canUseSleeve, sfLevel } from 'sfgate.js'
-import { sleeveAugBatch, sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, COVENANT } from 'sleeveplan.js'
+import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, COVENANT } from 'sleeveplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { reporter } from 'status.js'
@@ -61,7 +62,6 @@ function decideAndBuy(ns, flags, note) {
   if (!canUseSleeve(info)) return note('ok', { result: 'no-sleeves', detail: 'no Sleeve API (needs SF10 or BitNode 10)' })
 
   const fleet = readJson(ns, '/tel/sleeve.txt')
-  const plan = readJson(ns, '/tel/sleeveplan.txt')
   const status = readJson(ns, '/tel/status.txt')
   const schedule = readJson(ns, '/tel/factionplan.txt')
   const stats = readJson(ns, '/tel/snap-augstats.txt')?.data?.stats
@@ -81,8 +81,6 @@ function decideAndBuy(ns, flags, note) {
     home,
   })
 
-  const playerRep = num(schedule?.measuredBaseRepPerSec) && schedule.measuredBaseRepPerSec > 0 ? schedule.measuredBaseRepPerSec : num(schedule?.estimatedBaseRepPerSec) && schedule.estimatedBaseRepPerSec > 0 ? schedule.estimatedBaseRepPerSec : null
-  const horizon = num(plan?.horizonHours) ? plan.horizonHours : null
   const decisions = []
   const bought = []
 
@@ -123,44 +121,59 @@ function decideAndBuy(ns, flags, note) {
     } else decisions.push({ sleeve: 'refused', why: r?.message ?? 'purchaseSleeve failed' })
   }
 
+  // --- 2. AUGMENTATIONS. This job gathers the offers; the DECISION is
+  // progress.js's sleeveAugExitOf — the exit simulated after buying a batch
+  // against the exit without it (CLAUDE.md: trajectories against
+  // trajectories). It buys exactly the batch that comparison published, and
+  // only while the comparison is this life's and fresh.
+  let verdict = null
+  try {
+    const g = JSON.parse(gate || 'null')
+    if (g && g.lastAugReset === info.lastAugReset && g.sleeveAugExit && Date.now() - Date.parse(g.sleeveAugExit.at) < 20 * 60e3) verdict = g.sleeveAugExit
+  } catch {
+    verdict = null
+  }
+  const join = joinClaim(gate, info.lastAugReset)
+  const offers = []
   for (let i = 0; i < ns.sleeve.getNumSleeves(); i++) {
     const sl = ns.sleeve.getSleeve(i)
     const task = fleet.assigned?.find((a) => a.i === i)?.task ?? null
+    const objective = task === 'CLASS' ? 'exp' : task === 'FACTION' ? 'rep' : task
+    const ownStudy = sleeveStudyExpPerSec(sl, 'Algorithms')?.perSec ?? null
+    // Back to today's hacking exp at the sleeve's own study rate: its skill is
+    // what its rep runs on, and a purchase zeroes the exp.
+    const retrainHours = num(sl.exp?.hacking) && num(ownStudy) && ownStudy > 0 ? sl.exp.hacking / ownStudy / 3600 : null
+    const augs = ns.sleeve.getSleevePurchasableAugs(i).map((a) => ({ name: a.name, cost: a.cost, mults: stats[a.name] ?? null }))
+    offers.push({ i, task, objective, shock: sl.shock, retrainHours, augs: augs.filter((a) => a.mults), unpriced: augs.filter((a) => !a.mults).map((a) => a.name) })
+
+    if (!verdict || verdict.i !== i || !verdict.buy?.length) continue
     if (sl.shock > 0) {
       decisions.push({ i, buy: [], why: `shock ${sl.shock.toFixed(2)} > 0 — the game refuses purchases until it is 0` })
       continue
     }
-    const objective = task === 'CLASS' ? 'exp' : task === 'FACTION' ? 'rep' : task
-    let sleeveShare = null
-    let legHours = null
-    let retrainHours = 0
-    const ownStudy = sleeveStudyExpPerSec(sl, 'Algorithms')?.perSec ?? null
-    if (objective === 'exp') {
-      sleeveShare = num(ownStudy) && num(status.expPerSec) && status.expPerSec > 0 ? (ownStudy * sl.sync / 100) / status.expPerSec : null
-      legHours = horizon
-    } else if (objective === 'rep') {
-      sleeveShare = num(fleet.factionRepPerSec) && playerRep ? fleet.factionRepPerSec / playerRep : null
-      legHours = num(schedule?.totalHours) && horizon !== null ? Math.min(schedule.totalHours, horizon) : null
-      // Back to today's hacking exp at the sleeve's own study rate. Its skill
-      // is what the rep rate runs on, and the purchase zeroes the exp.
-      retrainHours = num(sl.exp?.hacking) && num(ownStudy) && ownStudy > 0 ? sl.exp.hacking / ownStudy / 3600 : null
+    const priced = verdict.buy.map((n) => augs.find((a) => a.name === n))
+    if (priced.some((a) => !a)) {
+      decisions.push({ i, buy: [], why: 'the published batch names an aug no longer offered — waiting for a fresh comparison' })
+      continue
     }
-    const candidates = ns.sleeve.getSleevePurchasableAugs(i).map((a) => ({ name: a.name, cost: a.cost, mults: stats[a.name] ?? null }))
-    const unpriced = candidates.filter((a) => !a.mults).map((a) => a.name)
-    const d = sleeveAugBatch({ candidates: candidates.filter((a) => a.mults), objective, share: sleeveShare, legHours, incomePerSec: status.incomePerSec, budget, retrainHours })
-    decisions.push({ i, task, objective, share: sleeveShare, legHours, retrainHours, offered: candidates.length, unpriced, ...d })
-
+    const total = priced.reduce((t, a) => t + a.cost, 0)
+    if (!(num(join) && ns.getServerMoneyAvailable('home') - join >= total)) {
+      decisions.push({ i, buy: [], why: `batch $${ns.format.number(total)} would touch the join claim (${join})` })
+      continue
+    }
+    decisions.push({ i, buy: verdict.buy, why: verdict.why })
     if (flags.dry) continue
-    for (const a of d.buy) {
+    for (const a of priced) {
       if (ns.sleeve.purchaseSleeveAug(i, a.name)) {
         bought.push(`sleeve ${i}: ${a.name} ($${ns.format.number(a.cost)})`)
-        budget -= a.cost
       } else {
         decisions.push({ i, refused: a.name, why: 'purchaseSleeveAug returned false (money, shock or availability changed)' })
         break
       }
     }
   }
+  if (!verdict) decisions.push({ augs: 'no fresh sleeveAugExit comparison from progress.js yet' })
+  else if (!verdict.buy?.length) decisions.push({ augs: verdict.why })
 
-  return note('ok', { result: bought.length ? 'bought' : 'nothing', bought, decisions, budget })
+  return note('ok', { result: bought.length ? 'bought' : 'nothing', bought, decisions, budget, offers })
 }

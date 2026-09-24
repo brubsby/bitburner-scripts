@@ -734,106 +734,17 @@ export function arrivingFleet(sleeves, destNode) {
 }
 
 // ---------------------------------------------------------------------------
-// SLEEVE AUGMENTATIONS — which to buy, priced in the node's own time.
+// SLEEVE AUGMENTATIONS. Game facts (Sleeve.ts:91-401, NetscriptFunctions/
+// Sleeve.ts:225-258): price is aug.baseCost, no x1.9, no reputation spent;
+// only at shock 0 and never with disableSleeveExpAndAugmentation; kept for
+// the whole node; EVERY purchase zeroes that sleeve's exp. Study exp scales
+// with the sleeve's hacking_exp (Work/Formulas.ts:115); hacking-work rep is
+// linear in its hacking skill and faction_rep (reputation.ts:16).
 //
-// What the game charges and does (Sleeve.ts:91-401, NetscriptFunctions/
-// Sleeve.ts:225-258):
-//   * price is aug.baseCost — no x1.9 per purchase, no reputation spent;
-//   * only when the sleeve's shock is 0, and never with the
-//     disableSleeveExpAndAugmentation option;
-//   * permanent for the NODE: prestigeAugmentation never touches sleeves, only
-//     a BitNode change calls sleeve.prestige();
-//   * EVERY purchase zeroes that sleeve's exp (installAugmentation), so the
-//     skills it earned are lost and must be retrained.
-//
-// Value, per objective — only the channel the sleeve is serving is priced;
-// any other objective is refused rather than guessed:
-//   exp  study exp is multWorkStats(..., sleeve.mults) (Work/Formulas.ts:115),
-//        independent of skills: gain = hacking_exp, retraining costs nothing.
-//   rep  getHackingWorkRepGain (reputation.ts:16) is linear in the sleeve's
-//        hacking SKILL and in faction_rep; the skill is linear in the hacking
-//        mult at a given exp (skill.ts:13), so gain = faction_rep x hacking.
-//        hacking_exp only adds 32*ln(g) levels and is priced at x1 — a floor.
-//        Retraining back to today's exp is charged at the sleeve's own study
-//        rate.
-//
-// The channel's total rate is P(1+s), s = the sleeve's share of the player's
-// own rate on it. Scaling the sleeve by G shortens a leg of L hours by
-// L(1 - (1+s)/(1+sG)); the retrain costs ~T hours of the sleeve's share,
-// T*s/(1+sG). A batch is worth buying when those hours exceed the hours of
-// income its price takes (cost / incomePerSec), and only from money no
-// higher-priority claimant holds (budget.js 'sleeveaugs'). Batched because the
-// exp reset is paid once per purchase round, not once per aug.
-
-const SLEEVE_AUG_VALUED = { exp: ['hacking_exp'], rep: ['faction_rep', 'hacking'] }
-
-/** Level -> exp, the inverse of calculateSkill (skill.ts:17-19). */
-export function expForLevel(level, mult = 1) {
-  if (!num(level) || !num(mult) || mult <= 0) return null
-  return Math.max(0, Math.exp((level / mult + 200) / 32) - 534.6)
-}
-
-/**
- * @param {object} o
- * @param {Array<{name,cost,mults}>} o.candidates  getSleevePurchasableAugs with mults
- * @param {'exp'|'rep'|string} o.objective
- * @param {number} o.share        sleeve rate / player rate on that channel
- * @param {number} o.legHours     hours left on that channel's leg
- * @param {number} o.incomePerSec
- * @param {number} o.budget       what budget.js leaves this spender
- * @param {number} [o.retrainHours] rep only: hours to regain today's exp
- * @returns {{buy: Array, why: string, gain?, hoursSaved?, costHours?}}
- */
-export function sleeveAugBatch(o = {}) {
-  const valued = SLEEVE_AUG_VALUED[o.objective]
-  if (!valued) return { buy: [], why: `objective '${o.objective}' is not priced for sleeve augmentations — nothing bought on a guess` }
-  for (const k of ['share', 'legHours', 'incomePerSec', 'budget']) {
-    if (!num(o[k]) || o[k] < 0) return { buy: [], why: `${k} unreadable (${o[k]}) — refusing rather than pricing on a stand-in` }
-  }
-  if (!(o.incomePerSec > 0)) return { buy: [], why: 'no income measured — a price cannot be converted to hours' }
-  const retrain = o.objective === 'rep' ? o.retrainHours : 0
-  if (!num(retrain) || retrain < 0) return { buy: [], why: `retrain hours unreadable (${retrain})` }
-
-  const gainOf = (a) => valued.reduce((g, k) => g * (num(a?.mults?.[k]) && a.mults[k] > 0 ? a.mults[k] : 1), 1)
-  const ranked = (o.candidates ?? [])
-    .filter((a) => num(a?.cost) && a.cost > 0 && gainOf(a) > 1 + 1e-12)
-    .map((a) => ({ name: a.name, cost: a.cost, gain: gainOf(a) }))
-    .sort((a, b) => Math.log(b.gain) / b.cost - Math.log(a.gain) / a.cost)
-  if (!ranked.length) return { buy: [], why: `nothing purchasable raises ${valued.join(' x ')}` }
-
-  const s = o.share
-  const L = o.legHours
-  const worth = (G, cost) => {
-    const saved = L * (1 - (1 + s) / (1 + s * G)) - (retrain * s) / (1 + s * G)
-    return { saved, costHours: cost / o.incomePerSec / 3600, net: saved - cost / o.incomePerSec / 3600 }
-  }
-  // Best affordable PREFIX of the ln(gain)/$ order: the reset is paid once
-  // whatever the batch size, so the batch is judged as a whole.
-  let best = null
-  let G = 1
-  let cost = 0
-  for (let i = 0; i < ranked.length; i++) {
-    G *= ranked[i].gain
-    cost += ranked[i].cost
-    if (cost > o.budget) break
-    const w = worth(G, cost)
-    if (w.net > 0 && (!best || w.net > best.net)) best = { n: i + 1, G, cost, ...w }
-  }
-  if (!best) {
-    const w1 = worth(ranked[0].gain, ranked[0].cost)
-    const why = ranked[0].cost > o.budget
-      ? `cheapest valued aug ${ranked[0].name} costs ${ranked[0].cost.toExponential(2)}, budget ${o.budget.toExponential(2)}`
-      : `best batch saves ${w1.saved.toFixed(3)}h against ${w1.costHours.toFixed(3)}h of income (share ${s.toFixed(4)}, leg ${L.toFixed(1)}h)`
-    return { buy: [], why }
-  }
-  return {
-    buy: ranked.slice(0, best.n),
-    gain: best.G,
-    hoursSaved: best.saved,
-    costHours: best.costHours,
-    why: `${best.n} aug(s) x${best.G.toFixed(3)} on ${o.objective}: saves ${best.saved.toFixed(2)}h of a ${L.toFixed(1)}h leg for ${best.costHours.toFixed(3)}h of income`,
-  }
-}
+// The DECISION is progress.js sleeveAugExitOf: the exit simulated after the
+// batch (money spent, pending augs re-planned, the sleeve's rate scaled, its
+// rep delayed by the retrain) against the exit without it. A leg-hours
+// formula stood here first and was the shortcut CLAUDE.md now forbids.
 
 // ---------------------------------------------------------------------------
 // MORE SLEEVES — The Covenant (SleeveCovenantPurchases.tsx).

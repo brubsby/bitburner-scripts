@@ -379,5 +379,22 @@ export async function run() {
   }
   checks.push(c11);
 
+  const c12 = new Check("XP12", "the fleet's rep as its own term: delay 0 equals the summed rate, a retrain delay costs time, donations ignore it");
+  {
+    c12.examined(4);
+    const b = { money: 1e12, incomePerSec: 1e9, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 1e7, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9 };
+    const sum = exitHours({ ...b, repPerSec: 60 }).hours;
+    const split0 = exitHours({ ...b, repPerSec: 50, sleeveRep: { perSec: 10, delayH: 0 } }).hours;
+    if (Math.abs(sum - split0) > 1e-9) c12.fail(`delay 0 must equal the summed rate: ${sum} vs ${split0}`);
+    const late = exitHours({ ...b, repPerSec: 50, sleeveRep: { perSec: 10, delayH: 2 } }).hours;
+    const repLeg = 2.5e6 / 60 / 3600;
+    if (!(late > split0)) c12.fail("a retrain delay must cost time");
+    if (Math.abs(late - split0 - (10 * 2 * 3600) / 60 / 3600) > 1e-6) c12.fail(`delay cost must be the sleeve's lost rep at the combined rate: ${late - split0}`);
+    const don = { ...b, exitFavor: 200, favorToDonate: 150, donationCost: 1e12 };
+    if (exitHours({ ...don, repPerSec: 50, sleeveRep: { perSec: 10, delayH: 9 } }).hours !== exitHours({ ...don, repPerSec: 60 }).hours) c12.fail("a donated rep leg does not depend on the sleeve");
+    void repLeg;
+  }
+  checks.push(c12);
+
   return checks;
 }

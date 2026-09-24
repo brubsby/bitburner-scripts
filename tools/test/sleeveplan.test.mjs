@@ -691,38 +691,56 @@ export async function run() {
   }
   checks.push(c15);
 
-  const c16 = new Check("SP16", "sleeve augmentations: priced on the sleeve's channel, net of the exp reset, within budget, refused when unpriced");
+  const c16 = new Check("SP16", "sleeve augs: decided by two simulated exits in progress.js; sleeveaug.js buys exactly that batch");
   {
-    const A = { name: "expAug", cost: 1e8, mults: { hacking_exp: 1.1 } };
-    const R = { name: "repAug", cost: 1e9, mults: { faction_rep: 1.2 } };
-    const H = { name: "hackAug", cost: 2e9, mults: { hacking: 1.1, strength: 1.5 } };
-    const base = { candidates: [A, R, H], share: 0.13, legHours: 50, incomePerSec: 1e8, budget: 1e12, retrainHours: 0.1 };
-    c16.examined(9);
-    const e = sp.sleeveAugBatch({ ...base, objective: "exp", share: 0.002, legHours: 1000 });
-    if (e.buy.map((a) => a.name).join() !== "expAug") c16.fail(`exp values hacking_exp only: bought ${e.buy.map((a) => a.name)}`);
-    const r = sp.sleeveAugBatch({ ...base, objective: "rep" });
-    const rn = r.buy.map((a) => a.name).sort().join();
-    if (rn !== "hackAug,repAug") c16.fail(`rep values faction_rep x hacking (strength is not rep): bought ${rn}`);
-    if (Math.abs(r.gain - 1.32) > 1e-9) c16.fail(`rep batch gain must be 1.2 x 1.1, got ${r.gain}`);
-    // The reset: a retrain longer than the leg can save must refuse the batch.
-    const slow = sp.sleeveAugBatch({ ...base, objective: "rep", retrainHours: 1e4 });
-    if (slow.buy.length) c16.fail("a retrain that costs more hours than the batch saves must not buy");
-    // Payback: a price that takes longer to earn than it saves is refused.
-    const dear = sp.sleeveAugBatch({ ...base, objective: "exp", share: 0.002, legHours: 1000, incomePerSec: 1e3 });
-    if (dear.buy.length) c16.fail(`an aug costing ${(1e8 / 1e3 / 3600).toFixed(0)}h of income to save 0.2h must not buy`);
-    // Budget caps the batch.
-    const poor = sp.sleeveAugBatch({ ...base, objective: "rep", budget: 1.5e9 });
-    if (poor.buy.reduce((t, a) => t + a.cost, 0) > 1.5e9) c16.fail("the batch exceeded the budget");
-    // Unpriced objective and unreadable inputs refuse — never a guess.
-    for (const bad of [{ objective: "karma" }, { objective: "rep", share: null }, { objective: "rep", legHours: NaN }, { objective: "rep", retrainHours: undefined }]) {
-      if (sp.sleeveAugBatch({ ...base, ...bad }).buy.length) c16.fail(`must refuse on ${JSON.stringify(bad)}`);
-    }
-    // expForLevel inverts the game's calculateSkill (skill.ts:13).
-    const skill = (x, m) => Math.floor(m * (32 * Math.log(x + 534.6) - 200));
-    for (const [lvl, m] of [[74, 1], [500, 1.3], [10, 0.5]]) {
-      const x = sp.expForLevel(lvl, m);
-      if (skill(x + 1e-6 * (x + 1), m) < lvl || skill(x * 0.99, m) >= lvl && x > 1) c16.fail(`expForLevel(${lvl}, ${m}) = ${x} is not the threshold`);
-    }
+    const fs = (await import("node:fs")).default;
+    const path = (await import("node:path")).default;
+    const { fileURLToPath } = await import("node:url");
+    const src = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const fn = src.slice(src.indexOf("function sleeveAugExitOf"), src.indexOf("function covenantExitOf"));
+    if (typeof sp.sleeveAugBatch === "function") c16.fail("the leg-hours shortcut must not come back");
+    if (!/const without = bestExitPolicy\(split\(1, 1, 0, 0\)\)/.test(fn)) c16.fail("the base trajectory must be the same builder with no batch");
+    if (!/bestExitPolicy\(sl\.objective === 'rep' \? split\(G, 1, sl\.retrainHours \?\? 0, cost\) : split\(1, G, 0, cost\)\)/.test(fn)) c16.fail("each batch must be a simulated exit on the same builder");
+    if (!/money: Math\.max\(0, base\.money - cost\)/.test(fn) || !/replanAt\(Math\.max\(0, liveMoney - cost\)\)/.test(fn)) c16.fail("the batch run must spend the price and re-plan the pending augs on what is left");
+    if (!/const deltaH = best\.hours - without\.best\.hours/.test(fn)) c16.fail("the decision is the difference of the two exits");
+
+    const { main } = await import("../../sleeveaug.js");
+    const now = new Date().toISOString();
+    const run = async (o = {}) => {
+      const files = {
+        "/tel/sleeve.txt": JSON.stringify({ at: now, disableSleeveExp: false, assigned: [{ i: 0, task: "FACTION" }] }),
+        "/tel/status.txt": JSON.stringify({ at: now, incomePerSec: 1e8 }),
+        "/tel/factionplan.txt": JSON.stringify({}),
+        "/tel/snap-augstats.txt": JSON.stringify({ data: { stats: { A: { faction_rep: 1.2 }, B: { hacking: 1.1 } } } }),
+        "/tel/installgate.txt": JSON.stringify({ lastAugReset: o.life ?? 1, planned: false, plan: null, joinClaim: o.join ?? 0, sleeveAugExit: { at: o.stale ? new Date(Date.now() - 3600e3).toISOString() : now, i: 0, buy: o.buy ?? ["A", "B"], why: "t" } }),
+      };
+      const log = [];
+      const ns = {
+        args: [], flags: () => ({ dry: false }), disableLog() {}, atExit() {},
+        read: (f) => files[f] ?? "", write: (f, d) => (files[f] = d),
+        getResetInfo: () => ({ currentNode: 10, lastAugReset: 1, ownedSF: new Map() }),
+        getPlayer: () => ({ factions: [] }), getServerMoneyAvailable: () => o.money ?? 1e12, getServerMaxRam: () => 2 ** 30, getServer: () => ({ cpuCores: 8 }),
+        format: { number: (x) => String(x) },
+        sleeve: {
+          getNumSleeves: () => 1, getSleeveCost: () => 1e13, purchaseSleeve: () => ({ success: false }),
+          getSleeve: () => ({ shock: o.shock ?? 0, sync: 100, exp: { hacking: 1000 }, mults: { hacking_exp: 1 } }),
+          getSleevePurchasableAugs: () => [{ name: "A", cost: 1e9 }, { name: "B", cost: 2e9 }, { name: "C", cost: 5e9 }],
+          purchaseSleeveAug: (i, n) => (log.push(n), true),
+        },
+      };
+      await main(ns);
+      return { log, out: JSON.parse(files["/tel/sleeveaug.txt"] || "{}") };
+    };
+    c16.examined(10);
+    const ok = await run();
+    if (ok.log.join() !== "A,B") c16.fail(`must buy exactly the published batch, bought ${ok.log}`);
+    if (!Array.isArray(ok.out.offers) || ok.out.offers[0]?.augs?.length !== 2 || ok.out.offers[0]?.objective !== "rep") c16.fail("the offers (with mults and objective) must be published for the comparison");
+    if (!(ok.out.offers?.[0]?.retrainHours > 0)) c16.fail("the retrain the purchase forces must be published");
+    if ((await run({ stale: true })).log.length) c16.fail("a stale verdict must not buy");
+    if ((await run({ life: 2 })).log.length) c16.fail("another life's verdict must not buy");
+    if ((await run({ shock: 5 })).log.length) c16.fail("shock > 0: the game refuses; do not try");
+    if ((await run({ buy: ["A", "Z"] })).log.length) c16.fail("a batch naming an aug no longer offered must wait for a fresh comparison");
+    if ((await run({ money: 2.5e9, join: 1e9 })).log.length) c16.fail("the join claim is never spent");
   }
   checks.push(c16);
 

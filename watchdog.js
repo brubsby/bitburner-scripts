@@ -491,8 +491,8 @@ const WATCHED = [
   // Hourly: nothing it waits on changes on a five-minute scale, and it costs
   // 35.2GB while it runs.
   // Sleeve augmentations: baseCost, no x1.9, kept for the whole node, and
-  // nothing bought them. sleeveaug.js prices each batch in the node's own time
-  // (sleeveplan.js sleeveAugBatch) and exits. Every 10 minutes is ample: the
+  // nothing bought them. sleeveaug.js publishes the offers and buys what
+  // progress.js's simulated-exit comparison chose, then exits. Every 10 minutes is ample: the
   // inputs move on the scale of the schedule, and it costs ~19GB while it runs.
   {
     script: 'sleeveaug.js',

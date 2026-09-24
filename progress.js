@@ -1331,6 +1331,65 @@ function nextInstallGainOf(plan, pending, offers) {
 }
 
 /**
+ * SLEEVE AUGMENTATIONS, trajectory against trajectory: the best exit policy
+ * after buying a batch now against the best without it, on one input builder.
+ * The batch run spends the price (and re-plans the pending augmentations on
+ * what is left — the purchase can crowd them out), scales the sleeve's rate
+ * by the batch's gain on the channel it serves, and delays that sleeve's
+ * reputation by the retrain the purchase forces (every buy zeroes its exp).
+ * The candidates, their multipliers and the retrain come from sleeveaug.js
+ * (/tel/sleeveaug.txt); prefixes of the ln(gain)/$ order are each simulated.
+ */
+function sleeveAugExitOf(ns, info, schedule, inputs, planFleet, replanAt, pending, offers, liveMoney) {
+  const out = (why, extra = {}) => ({ at: new Date().toISOString(), buy: [], why, ...extra })
+  try {
+    const t = readJson(ns, '/tel/sleeveaug.txt')
+    const cands = Array.isArray(t?.offers) ? t.offers : null
+    if (!cands || !(Date.now() - Date.parse(t.at) < 20 * 60e3)) return out('no fresh offers from sleeveaug.js')
+    const base = inputs()
+    const baseRep = schedule?.estimated ? null : schedule?.measuredBaseRepPerSec
+    const fleetRep = planFleet?.factionRepPerSec
+    const fleetExp = planFleet?.expToPlayerHacking
+    const split = (gRep, gExp, delayH, cost) => {
+      const plan2 = cost > 0 && typeof replanAt === 'function' ? replanAt(Math.max(0, liveMoney - cost)) : null
+      return {
+        ...base,
+        money: Math.max(0, base.money - cost),
+        repPerSec: baseRep > 0 ? baseRep : null,
+        sleeveRep: fleetRep > 0 ? { perSec: fleetRep * gRep, delayH } : null,
+        expPerSec: (base.expPerSec ?? 0) + (fleetExp > 0 ? fleetExp * (gExp - 1) : 0),
+        ...(plan2 ? { nextInstallGain: nextInstallGainOf(plan2, pending, offers) } : {}),
+      }
+    }
+    const without = bestExitPolicy(split(1, 1, 0, 0))
+    if (!without.best) return out(`no base trajectory: ${without.why}`)
+    let best = null
+    for (const sl of cands) {
+      const gain = (a, keys) => keys.reduce((g, k) => g * (typeof a.mults?.[k] === 'number' && a.mults[k] > 0 ? a.mults[k] : 1), 1)
+      const keys = sl.objective === 'rep' ? ['faction_rep', 'hacking'] : sl.objective === 'exp' ? ['hacking_exp'] : null
+      if (!keys || !Array.isArray(sl.augs) || !sl.augs.length) continue
+      const ranked = sl.augs.filter((a) => a.cost > 0 && gain(a, keys) > 1).sort((a, b) => Math.log(gain(b, keys)) / b.cost - Math.log(gain(a, keys)) / a.cost)
+      let G = 1
+      let cost = 0
+      for (let k = 0; k < ranked.length; k++) {
+        G *= gain(ranked[k], keys)
+        cost += ranked[k].cost
+        if (cost > liveMoney) break
+        const w = bestExitPolicy(sl.objective === 'rep' ? split(G, 1, sl.retrainHours ?? 0, cost) : split(1, G, 0, cost))
+        if (w.best && (!best || w.best.hours < best.hours)) best = { i: sl.i, n: k + 1, names: ranked.slice(0, k + 1).map((a) => a.name), cost, G, hours: w.best.hours }
+      }
+    }
+    if (!best) return out(`nothing priced (base exit ${without.best.hours.toFixed(1)}h)`, { withoutH: without.best.hours })
+    const deltaH = best.hours - without.best.hours
+    const summary = `sleeve ${best.i}: ${best.n} aug(s) x${best.G.toFixed(3)} for $${Math.round(best.cost)} -> exit ${best.hours.toFixed(2)}h vs ${without.best.hours.toFixed(2)}h (${deltaH >= 0 ? '+' : ''}${deltaH.toFixed(3)}h)`
+    if (!(deltaH < 0)) return out(`${summary} — not faster`, { deltaH, withH: best.hours, withoutH: without.best.hours })
+    return { at: new Date().toISOString(), i: best.i, buy: best.names, cost: best.cost, deltaH, withH: best.hours, withoutH: without.best.hours, why: `${summary} — buy` }
+  } catch (e) {
+    return out(`sleeve aug comparison failed: ${String(e).slice(0, 80)}`)
+  }
+}
+
+/**
  * The Covenant sleeve priced as a TRAJECTORY AGAINST A TRAJECTORY: the best
  * exit policy with the campaign in the final window (exitplan `covenant`)
  * against the best without it, on identical inputs. Published whatever it
@@ -1931,6 +1990,10 @@ async function act(ns, canJoin, info, note) {
   // Pure gathering: no purchases happen here, so moving it changes what the
   // decision can see and nothing else.
   let plan = null
+  // Re-plan the purchases on a different budget, with the shipped plan's
+  // weights — what an alternative trajectory that spends money elsewhere
+  // first (a sleeve purchase) would be left to buy.
+  let replanAt = null
   // Hoisted: the forward projection in section 5 re-plans against the SAME
   // offer set at a larger budget, so these must outlive this block. Declaring
   // them inside it left `offers` undefined at the gate call — caught by
@@ -2040,6 +2103,7 @@ async function act(ns, canJoin, info, note) {
       oneoff: oneoffBase,
     }
     plan = planPurchases(planArgs)
+    replanAt = (m) => planPurchases({ ...planArgs, money: m })
 
     // ------------------------------------------------------------------
     // THE DERIVED OBJECTIVE (objective.js has the model). Two stages,
@@ -2186,6 +2250,14 @@ async function act(ns, canJoin, info, note) {
           // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
           const winH = measureWindow(ns, info)?.windowH
           weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          replanAt = (m) =>
+            planPurchases({
+              ...planArgs,
+              money: m,
+              channelWeights,
+              channels: channelsUsed,
+              oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
+            })
           plan = planPurchases({
             ...planArgs,
             channelWeights,
@@ -3062,7 +3134,10 @@ async function act(ns, canJoin, info, note) {
             } catch {
               base = null
             }
-            return { covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf) }
+            return {
+              covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf),
+              sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home')),
+            }
           })(),
         },
         null,
@@ -3280,6 +3355,7 @@ async function act(ns, canJoin, info, note) {
     // `covenant`), against the one without. It runs only when that is faster
     // AND the final window is now (the best policy installs no more).
     const covenantExit = covenantExitOf(ns, info, player, schedule, exitPolicy, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet)
+    const sleeveAugExit = sleeveAugExitOf(ns, info, schedule, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet, replanAt, pending, offers, ns.getServerMoneyAvailable('home'))
 
     // DISTINCT augmentations this install would add, NeuroFlux excluded. Hoisted
     // so the count timing below prices the same batch the gate judges.
@@ -3601,6 +3677,7 @@ async function act(ns, canJoin, info, note) {
           incomeCalibration,
           futuresCalibration,
           covenantExit,
+          sleeveAugExit,
           futurePredictions,
           // The objective the plan was priced under — derived per pass from
           // measured elasticities, or 'flat' when derivation refused. A
