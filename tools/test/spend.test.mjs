@@ -72,5 +72,14 @@ export async function run() {
   }
   checks.push(c5);
 
+  const c6 = new Check("SE6", "charisma's weight is the exit a faster desk path saves, per ln of charisma; rate x remaining hours only as the fallback");
+  {
+    const pr = src("progress.js");
+    c6.examined(2);
+    if (!/const a1 = bestExitPolicy\(\{ \.\.\.base, perCycleExtra: \{ hacking: Math\.exp\(rateGain \* cyc\), fromInstall: 1 \} \}\)\.best\?\.hours/.test(pr) || !/Math\.max\(0, a0 - a1\) \/ hpl \/ Math\.log\(K\)/.test(pr)) c6.fail("the desk path's lift must be priced as two exits, per ln of K, in hacking-ln");
+    if (!/const w = wExit \?\? pathGainWeight\(/.test(pr)) c6.fail("pathGainWeight survives only as the fallback");
+  }
+  checks.push(c6);
+
   return checks;
 }

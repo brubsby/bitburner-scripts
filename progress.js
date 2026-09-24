@@ -816,7 +816,29 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
       const rawH = 1 + wm.remainingWindows * ((wm.eBudget ?? 0) + (wm.eRep ?? 0))
       const remainingHours = wm.remainingWindows * joinCtx.state.windowH
       for (const [key, field] of [['charisma', 'chaMult'], ['charisma_exp', 'chaExpMult']]) {
-        const w = pathGainWeight({ rateGain: probeDesk(field), lnK: Math.log(K), remainingHours, rawHacking: rawH })
+        // THE EXIT, when it can be priced: a desk path faster by rateGain ln(M)
+        // per hour of the work slot adds rateGain x (a life's hours) to every
+        // later life's gain — the node's exit with that per-cycle lift against
+        // without, per ln of the charisma multiplier, in hacking-ln by the
+        // exit's own hours per ln. pathGainWeight's rate x remaining hours is
+        // the named fallback.
+        const rateGain = probeDesk(field)
+        const wExit = (() => {
+          try {
+            const rec = readJson(ns, '/tel/exitinputs.txt')
+            const hpl = readJson(ns, GATE)?.objective?.exitSensitivity?.hoursPerLn?.hacking
+            const cyc = rec?.inputs?.cycleHours
+            if (!rec?.inputs || rec.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(rec.at) < 15 * 60e3) || !(hpl > 0) || !(cyc > 0)) return null
+            if (!(rateGain > 0)) return 0
+            const base = { ...rec.inputs, eRep: rec.eRep, eBudget: rec.eBudget }
+            const a0 = bestExitPolicy(base).best?.hours
+            const a1 = bestExitPolicy({ ...base, perCycleExtra: { hacking: Math.exp(rateGain * cyc), fromInstall: 1 } }).best?.hours
+            return typeof a0 === 'number' && typeof a1 === 'number' ? Math.max(0, a0 - a1) / hpl / Math.log(K) : null
+          } catch {
+            return null
+          }
+        })()
+        const w = wExit ?? pathGainWeight({ rateGain, lnK: Math.log(K), remainingHours, rawHacking: rawH })
         if (w !== null && w > 0) (chaWeights ??= {})[key] = Math.round(w * 10000) / 10000
       }
     }
