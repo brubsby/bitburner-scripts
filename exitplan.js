@@ -662,3 +662,22 @@ export function spendRuns(record, spent) {
   const inputsWith = (g) => ({ ...base, firstInstallH: record.W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) })
   return { without: inputsWith(gAt(record.moneyAtW)), with: inputsWith(gAt(record.moneyAtW - spent)), max: 400, min: 1 }
 }
+
+/**
+ * A spend with an income stream, from the published exit inputs, for callers
+ * that cannot re-plan themselves: the exit if $cost is paid now for
+ * +gainPerSec from now on (spendRuns takes the price out of the next batch or
+ * the final window; the income rides extraIncome through eBudget) against the
+ * exit if not. { deltaH, withH, withoutH } or { deltaH: null, why }.
+ */
+export function spendExitFromRecord(record, lastAugReset, cost, gainPerSec, now = Date.now()) {
+  if (!record?.inputs || record.lastAugReset !== lastAugReset || !(now - Date.parse(record.at) < 15 * 60e3)) return { deltaH: null, why: 'no fresh exit inputs' }
+  if (!num(cost) || cost < 0 || !num(gainPerSec) || gainPerSec < 0) return { deltaH: null, why: 'cost or income unreadable' }
+  const runs = spendRuns(record, cost)
+  if (!runs) return { deltaH: null, why: 'the exit inputs carry no install point or batch ladder' }
+  const e = { eRep: record.eRep, eBudget: record.eBudget }
+  const without = bestExitPolicy({ ...runs.without, ...e }, runs.max, runs.min)?.best?.hours
+  const withS = bestExitPolicy({ ...runs.with, ...e, extraIncome: [{ atH: 0, perSec: gainPerSec }] }, runs.max, runs.min)?.best?.hours
+  if (!num(without) || !num(withS)) return { deltaH: null, why: 'an exit could not be priced' }
+  return { deltaH: withS - without, withH: withS, withoutH: without }
+}

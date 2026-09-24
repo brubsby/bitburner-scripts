@@ -526,5 +526,44 @@ export async function run() {
   }
   checks.push(c20);
 
+  const c21 = new Check("XP21", "a spend with an income stream, from the published record: price out of the next batch, income from now");
+  {
+    const { spendExitFromRecord } = await import("../../exitplan.js");
+    const sp = await import("../../stockplan.js");
+    c21.examined(5);
+    const now = Date.now();
+    const ladder = [0, 0.5, 0.9, 1, 2].map((f) => ({ money: 1e10 * f, gains: { hacking: 1 + f, rep: 1, income: 1, exp: 1 } }));
+    const record = { at: new Date(now).toISOString(), lastAugReset: 1, W: 2, finalWindow: false, moneyAtW: 1e10, gainsByMoney: ladder, eBudget: 0.3, eRep: 0, inputs: { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 100e9, cycleHours: 4, multGainPerCycle: 1.1 } };
+    const good = spendExitFromRecord(record, 1, 1e8, 1e9, now);
+    const bad = spendExitFromRecord(record, 1, 9e9, 1, now);
+    if (!(good.deltaH < 0)) c21.fail(`a cheap spend earning 10x income must be faster: ${JSON.stringify(good)}`);
+    if (!(bad.deltaH > 0)) c21.fail(`most of the batch's money for nothing must be slower: ${JSON.stringify(bad)}`);
+    if (spendExitFromRecord({ ...record, lastAugReset: 2 }, 1, 1e8, 1e9, now).deltaH !== null) c21.fail("another life's record refuses");
+    const v1 = sp.verdict({ entry: { total: 5e9 }, exitCmp: { deltaH: -1, withH: 9, withoutH: 10 } });
+    const v2 = sp.verdict({ entry: { total: 5e9 }, exitCmp: { deltaH: 2, withH: 12, withoutH: 10 } });
+    if (v1.buy !== true || v2.buy !== false || v1.decidedBy !== "exit-sim") c21.fail("stockplan must follow a priced exit comparison");
+  }
+  checks.push(c21);
+
+  // factionplan ranks factions by ln(M) per hour of the work slot. That is the
+  // exit comparison ONLY IF the exit is strictly decreasing in per-life gain
+  // at a fixed cadence — then a higher rate is a sooner exit and ranking by
+  // rate is ranking by trajectory. Pinned here so the equivalence is proven,
+  // not assumed (docs/trajectory-audit.md #4).
+  const c22 = new Check("XP22", "at a fixed cadence the exit is strictly decreasing in per-life gain, so faction ranking by ln/h is ranking by exit");
+  {
+    const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 6000, joinMoney: 100e9, cycleHours: 4 };
+    let prev = Infinity;
+    let n = 0;
+    for (let r = 0.005; r <= 0.2; r *= 1.3) {
+      const h = bestExitPolicy({ ...b, multGainPerCycle: Math.exp(r * 4) }).best?.hours;
+      n++;
+      if (!(h < prev)) c22.fail(`ln rate ${r.toFixed(4)}/h: exit ${h} is not below ${prev}`);
+      prev = h;
+    }
+    c22.examined(n);
+  }
+  checks.push(c22);
+
   return checks;
 }

@@ -148,7 +148,7 @@ import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERM
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1994,7 +1994,13 @@ async function act(ns, canJoin, info, note) {
       const nm = bitNodeMults(info?.currentNode)
       const owned = { wse: ns.stock.hasWseAccount(), tix: ns.stock.hasTixApiAccess(), data4s: ns.stock.has4SData(), api4s: ns.stock.has4SDataTixApi() }
       const entry = stockEntryCost(owned, { FourSigmaMarketDataCost: nm?.FourSigmaMarketDataCost, FourSigmaMarketDataApiCost: nm?.FourSigmaMarketDataApiCost }, ns.stock.getConstants())
-      return { owned, entry, verdict: stockVerdict({ entry, capital: player.money, edgePerHour: null, remainingH: null }) }
+      // The edge is not read yet (no 4S forecast), so there is no income to
+      // price. When it is, the entry is two simulated exits
+      // (exitplan.spendExitFromRecord); stockVerdict's own rule is the named
+      // fallback.
+      const edgePerHour = null
+      const exitCmp = edgePerHour !== null && entry?.total > 0 ? spendExitFromRecord(readJson(ns, '/tel/exitinputs.txt'), info?.lastAugReset, entry.total, (player.money * edgePerHour) / 3600) : null
+      return { owned, entry, verdict: stockVerdict({ entry, capital: player.money, edgePerHour, remainingH: null, exitCmp }) }
     } catch (e) {
       return { error: String(e).slice(0, 120) }
     }

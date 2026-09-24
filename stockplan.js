@@ -114,6 +114,14 @@ export function entryCost(owned, node, consts = STOCK) {
  * state of a run that has not bought it.
  */
 export function verdict(o = {}) {
+  // THE EXIT, when progress.js could price it (o.exitCmp from
+  // exitplan.spendExitFromRecord: the node's exit paying the entry now for
+  // capital x edge per hour, against not): buy iff it is sooner. The
+  // capital x edge x remaining-hours rule below is the named fallback.
+  if (o.exitCmp && typeof o.exitCmp.deltaH === 'number' && isFinite(o.exitCmp.deltaH)) {
+    const buy = o.exitCmp.deltaH < 0
+    return { buy, decidedBy: 'exit-sim', why: `exit ${o.exitCmp.withH?.toFixed?.(2)}h buying the entry vs ${o.exitCmp.withoutH?.toFixed?.(2)}h not` }
+  }
   const e = o.entry
   if (!e || !num(e.total)) return { buy: false, why: 'entry cost unreadable' }
   if (e.total === 0) return { buy: false, why: 'everything is already owned; nothing to buy' }

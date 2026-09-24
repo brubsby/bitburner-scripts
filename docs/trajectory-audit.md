@@ -22,9 +22,9 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | # | Decision | Where | Shortcut | Simulator gap |
 |---|---|---|---|---|
 | 1 | ~~install now vs hold~~ **done 2026-09-24** | installgate.js `exitCompare` | now/wait/never simulated exits; the rate rule is the named fallback | — |
-| 2 | budget split: home / fleet / hacknet / augs / join — **home, fleet, hacknet done 2026-09-24** (spendExit; payback/ln rules are named fallbacks). Remaining: the join claim's own value | budget.js:137,147,230; objective.js:664 `homeLn`; progress.js `budgetClaim` | payback vs `income x horizon`; `ln(m)/price` | income as a function of home RAM; cycle length responding to spend |
+| 2 | ~~budget split~~ **done 2026-09-24**: home, fleet, hacknet and gang spends follow simulated exits (spendExit / spendExitFromRecord / gangEquipExit); the join claim is the exit's own gate (joinMoney leg), not a choice | budget.js:137,147,230; objective.js:664 `homeLn`; progress.js `budgetClaim` | payback vs `income x horizon`; `ln(m)/price` | income as a function of home RAM; cycle length responding to spend |
 | 3 | ~~work slot: crime vs faction~~ **done 2026-09-24** (crimeAlt: two exits planned at W) | progress.js ~2602 | `moneyLn(crime $/h)` vs schedule ln/h | mostly there (`nodeplan.workSlotCost`) |
-| 4 | which faction to work | factionplan.js:205 | greedy `acc/hoursAll` | per-cycle mult gain as a function of the schedule |
+| 4 | ~~which faction to work~~ **done 2026-09-24 by equivalence**: ranking by ln/h in exit-derived units is ranking by exit, because the exit is strictly decreasing in per-life gain at a fixed cadence (XP22 pins it) | factionplan.js:205 | greedy `acc/hoursAll` | per-cycle mult gain as a function of the schedule |
 | 5 | ~~gang worth its karma gate~~ **done 2026-09-24** (gangworth.gangExit: income after the grind, simulateGang trajectory when unmeasured; the income-scale threshold is deleted) | gangworth.js:160 | gain from t=0 minus the grind as flat hours; income-scale fallback | delayed income step; work-slot hours outside the final window |
 | 6 | ~~combat augs to shorten the karma grind~~ **done 2026-09-24** (karmaValue: exit with the gang after the shorter grind vs the longer, in hacking-ln) | objective.js:572 | `moneyLn(gangIncome x saved)` | as #5 |
 | 7 | ~~hacknet~~ **done 2026-09-24** | hacknet.js exit verdict | `payback < remainingH` is the named fallback | — |
@@ -32,7 +32,7 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | 10 | ~~charisma / company path~~ **done 2026-09-24** (the desk path's ln-rate lift as a per-cycle exit gain, per ln of K, in hacking-ln) | objective.js:140 | rate x horizon | no company-path leg |
 | 11 | ~~NFG donation-threshold crossing~~ **done 2026-09-24** (exit with perCycleExtra vs without, in hacking-ln via exitWeights' hours per ln) | progress.js ~672 | one window's income in NFG levels | donation only modelled for the exit faction |
 | 12 | ~~gang equipment~~ **done 2026-09-24** (gangEquipExit + exitplan.spendRuns on the published W / ladder; the gang's own policy search still scores by moneyLn — see deriveWeights) | gang.js:296 | gang sim with/without, but scored by `moneyLn` over a gang horizon | score through the exit instead |
-| 13 | stock entry | stockplan.js:125 | `capital x edge x H > entry` | dormant (`edgePerHour: null`) |
+| 13 | ~~stock entry~~ **done 2026-09-24** (stockplan follows exitplan.spendExitFromRecord when an edge is read; still dormant) | stockplan.js:125 | `capital x edge x H > entry` | dormant (`edgePerHour: null`) |
 
 **Done 2026-09-24:** the channel weights are now `objective.exitWeights` — the exit's hours saved per ln of each channel in the next batch, normalised to hacking (deriveWeights is the named fallback). Was: `objective.deriveWeights` is `N x elasticity`
 (remaining windows x a measured elasticity), which is rate x horizon. Every
