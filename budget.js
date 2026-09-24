@@ -50,7 +50,10 @@
 // is already promised.
 
 /** Spend priority, highest first. The order is the survival order, not taste. */
-export const PRIORITY = ['join', 'augmentations', 'home', 'servers', 'neuroflux', 'hacknet', 'gang']
+// 'sleeveaugs' sits beside home because it survives installs the same way:
+// sleeve augmentations last the whole node (only a BitNode change resets
+// sleeves), so they rank above everything an install destroys.
+export const PRIORITY = ['join', 'augmentations', 'home', 'sleeveaugs', 'servers', 'neuroflux', 'hacknet', 'gang']
 
 /**
  * The spenders that publish a COST, and so can be held back for.

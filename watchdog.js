@@ -490,6 +490,17 @@ const WATCHED = [
   //
   // Hourly: nothing it waits on changes on a five-minute scale, and it costs
   // 35.2GB while it runs.
+  // Sleeve augmentations: baseCost, no x1.9, kept for the whole node, and
+  // nothing bought them. sleeveaug.js prices each batch in the node's own time
+  // (sleeveplan.js sleeveAugBatch) and exits. Every 10 minutes is ample: the
+  // inputs move on the scale of the schedule, and it costs ~19GB while it runs.
+  {
+    script: 'sleeveaug.js',
+    host: 'home',
+    args: [],
+    minIntervalMs: 600000,
+    trigger: (ns) => canAccessFeature(ns.getResetInfo(), 10),
+  },
   {
     script: 'endgame.js',
     host: 'home',

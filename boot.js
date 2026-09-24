@@ -471,6 +471,14 @@ const STACK = [
     why: 'watchdog-triggered. Converts money into NeuroFlux levels through donations, which need favour past the donation threshold, which needs an install — so there is nothing for it to do in the first life at any home size',
   },
   {
+    script: 'sleeveaug.js',
+    where: 'home',
+    kind: 'job',
+    tier: 128,
+    rank: 30,
+    why: 'watchdog-triggered every 10 min where sleeves exist. Buys sleeve augmentations (baseCost, no x1.9, kept for the whole node) when a batch saves more hours on the sleeve\'s channel than its price takes to earn; ~19GB only while it runs',
+  },
+  {
     script: 'share.js',
     where: 'anywhere',
     tier: 128,

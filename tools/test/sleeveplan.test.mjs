@@ -691,5 +691,40 @@ export async function run() {
   }
   checks.push(c15);
 
+  const c16 = new Check("SP16", "sleeve augmentations: priced on the sleeve's channel, net of the exp reset, within budget, refused when unpriced");
+  {
+    const A = { name: "expAug", cost: 1e8, mults: { hacking_exp: 1.1 } };
+    const R = { name: "repAug", cost: 1e9, mults: { faction_rep: 1.2 } };
+    const H = { name: "hackAug", cost: 2e9, mults: { hacking: 1.1, strength: 1.5 } };
+    const base = { candidates: [A, R, H], share: 0.13, legHours: 50, incomePerSec: 1e8, budget: 1e12, retrainHours: 0.1 };
+    c16.examined(9);
+    const e = sp.sleeveAugBatch({ ...base, objective: "exp", share: 0.002, legHours: 1000 });
+    if (e.buy.map((a) => a.name).join() !== "expAug") c16.fail(`exp values hacking_exp only: bought ${e.buy.map((a) => a.name)}`);
+    const r = sp.sleeveAugBatch({ ...base, objective: "rep" });
+    const rn = r.buy.map((a) => a.name).sort().join();
+    if (rn !== "hackAug,repAug") c16.fail(`rep values faction_rep x hacking (strength is not rep): bought ${rn}`);
+    if (Math.abs(r.gain - 1.32) > 1e-9) c16.fail(`rep batch gain must be 1.2 x 1.1, got ${r.gain}`);
+    // The reset: a retrain longer than the leg can save must refuse the batch.
+    const slow = sp.sleeveAugBatch({ ...base, objective: "rep", retrainHours: 1e4 });
+    if (slow.buy.length) c16.fail("a retrain that costs more hours than the batch saves must not buy");
+    // Payback: a price that takes longer to earn than it saves is refused.
+    const dear = sp.sleeveAugBatch({ ...base, objective: "exp", share: 0.002, legHours: 1000, incomePerSec: 1e3 });
+    if (dear.buy.length) c16.fail(`an aug costing ${(1e8 / 1e3 / 3600).toFixed(0)}h of income to save 0.2h must not buy`);
+    // Budget caps the batch.
+    const poor = sp.sleeveAugBatch({ ...base, objective: "rep", budget: 1.5e9 });
+    if (poor.buy.reduce((t, a) => t + a.cost, 0) > 1.5e9) c16.fail("the batch exceeded the budget");
+    // Unpriced objective and unreadable inputs refuse — never a guess.
+    for (const bad of [{ objective: "karma" }, { objective: "rep", share: null }, { objective: "rep", legHours: NaN }, { objective: "rep", retrainHours: undefined }]) {
+      if (sp.sleeveAugBatch({ ...base, ...bad }).buy.length) c16.fail(`must refuse on ${JSON.stringify(bad)}`);
+    }
+    // expForLevel inverts the game's calculateSkill (skill.ts:13).
+    const skill = (x, m) => Math.floor(m * (32 * Math.log(x + 534.6) - 200));
+    for (const [lvl, m] of [[74, 1], [500, 1.3], [10, 0.5]]) {
+      const x = sp.expForLevel(lvl, m);
+      if (skill(x + 1e-6 * (x + 1), m) < lvl || skill(x * 0.99, m) >= lvl && x > 1) c16.fail(`expForLevel(${lvl}, ${m}) = ${x} is not the threshold`);
+    }
+  }
+  checks.push(c16);
+
   return checks;
 }
