@@ -116,6 +116,15 @@ any multi-step edit to a root script, write it to a scratch copy, run
 file it replaces; a rise is refused unless `--allow-ram-rise`), and only then
 move it into place.
 
+**Mutation-test in a sandbox, never in place.** "Mutate, run the suite,
+restore" deploys every mutant into the game for the seconds in between, and
+on 2026-09-24 that happened dozens of times. Use
+`node tools/mutant.mjs <file.js> <from> <to> <test-module>...`. It copies the
+repo (beside a link to the game source, which the tests resolve as a sibling)
+into a scratch directory outside the daemon's watch, mutates the copy, and
+reports CAUGHT (exit 0), SURVIVED (1) or COULD NOT RUN (2). A module that
+throws counts as "could not run", never as caught.
+
 `docs/`, `backups/` and `cw/` are *walked*. They look safe only because the
 extension filter is `.js .jsx .ts .tsx .txt .script` and they happen to contain
 `.md` and `.json` — so **a `.js` or `.txt` dropped into `docs/` hot-deploys into
