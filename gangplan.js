@@ -179,7 +179,7 @@ export const skillOf = (exp, mult) => Math.max(Math.floor(mult * (32 * Math.log(
 export const wantedPenalty = (g) => g.respect / (g.respect + g.wantedLevel)
 
 export function statWeight(task, m) {
-  return (task.hackWeight / 100) * m.hack + (task.strWeight / 100) * m.str + (task.defWeight / 100) * m.def + (task.dexWeight / 100) * m.dex + (task.agiWeight / 100) * m.agi + (task.chaWeight / 100) * m.cha
+  return (task.hackWeight / 100) * m[STATS[0]] + (task.strWeight / 100) * m.str + (task.defWeight / 100) * m.def + (task.dexWeight / 100) * m.dex + (task.agiWeight / 100) * m.agi + (task.chaWeight / 100) * m.cha
 }
 const terr = (g, exp) => Math.max(0.005, Math.pow(g.territory * 100, exp) / 100)
 const soft = (g, softcap) => (0.2 * g.territory + 0.8) * softcap

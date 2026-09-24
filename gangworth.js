@@ -70,30 +70,63 @@ export function gangGainHours(bestExitPolicy, base, gangIncomePerSec, maxInstall
   }
 }
 
-/** BitNode 2 grants gang access outright and sells The Red Pill through it. */
-export const GANG_IS_THE_NODE = 2
+/**
+ * A fresh gang's income trajectory from gangplan.simulateGang's samples
+ * (cumulative money at hour h) as hourly steps [{atH, perSec}] from the gang's
+ * creation. Null when the simulation produced nothing usable.
+ */
+export function gangIncomeSchedule(sim, stepH = 1) {
+  const s = Array.isArray(sim?.samples) ? sim.samples.filter((x) => num(x?.h) && num(x?.money)) : []
+  if (s.length < 2) return null
+  const at = (h) => {
+    let m = 0
+    for (const x of s) {
+      if (x.h > h) break
+      m = x.money
+    }
+    return m
+  }
+  const out = []
+  const end = s[s.length - 1].h
+  for (let h = 0; h + stepH <= end + 1e-9; h += stepH) out.push({ atH: h, perSec: Math.max(0, (at(h + stepH) - at(h)) / (stepH * 3600)) })
+  // Past the simulated horizon the last hour's rate holds.
+  return out.length ? out : null
+}
 
 /**
- * Script income scale at or above which the batcher funds the install ladder
- * unaided, so a gang cannot repay its karma gate.
- *
- * BitNode 4 measured 0.0225 and the gang won by 63%; BitNode 10 measured 0.5
- * and it won by 1%. 0.25 sits between them, nearer the losing side — chosen so
- * that the threshold only ever REFUSES a gang where income is clearly healthy,
- * and leaves every ambiguous node to the simulation.
+ * THE GANG AS TRAJECTORY AGAINST TRAJECTORY (CLAUDE.md): the node's exit
+ * without a gang against the exit with one whose income arrives only when the
+ * karma grind ends — the schedule shifted by grindHours, and each later life's
+ * augmentation growth lifted by the measured eBudget. `savedH` > 0 means the
+ * gang reaches the exit sooner, grind included. The grind's use of the work
+ * slot before the final window is not simulated (faction rep there moves the
+ * install cadence, which exitplan holds at its measured rate) — stated.
  */
-export const HEALTHY_INCOME_SCALE = 0.25
+export function gangExit(bestExitPolicy, base, schedule, grindHours, eBudget = null, maxInstalls = 400) {
+  if (typeof bestExitPolicy !== 'function' || !base) return { savedH: null, why: 'no exit policy or inputs' }
+  if (!Array.isArray(schedule) || !schedule.length) return { savedH: null, why: 'no gang income trajectory (measured or simulated)' }
+  if (!num(grindHours) || grindHours < 0) return { savedH: null, why: 'karma grind unpriced' }
+  const without = bestExitPolicy({ ...base }, maxInstalls)
+  const withG = bestExitPolicy({ ...base, extraIncome: schedule.map((x) => ({ atH: x.atH + grindHours, perSec: x.perSec })), eBudget }, maxInstalls)
+  const a = without?.best?.hours
+  const b = withG?.best?.hours
+  if (!num(a) || !num(b)) return { savedH: null, why: `exit unpriceable (${without?.why ?? 'ok'} / ${withG?.why ?? 'ok'})` }
+  return { savedH: a - b, withoutH: a, withH: b, why: `exit ${a.toFixed(1)}h without a gang vs ${b.toFixed(1)}h with one after a ${grindHours.toFixed(1)}h karma grind` }
+}
+
+/** BitNode 2 grants gang access outright and sells The Red Pill through it. */
+export const GANG_IS_THE_NODE = 2
 
 /**
  * @param {object} o
  * @param {number} o.node          current BitNode
  * @param {object} o.mults         that node's multiplier table (bitNodeMultipliers.js)
  * @param {number} o.grindHours    measured hours still to spend reaching karma -54,000
- * @param {number} o.gangGainHours hours the gang's income would save over the node
+ * @param {object} o.gangExit      gangExit(): the simulated exit with the gang (income after the grind) against without
  * @returns {{worth: boolean|null, gainHours, grindHours, why}}
  */
 export function gangVerdict(o = {}) {
-  const { node, mults, grindHours, gangGainHours, inGang } = o
+  const { node, mults, grindHours, inGang } = o
   const keep = (why) => ({ worth: null, gainHours: null, grindHours: num(grindHours) ? grindHours : null, why })
 
   // THE GATE IS ALREADY PAID. This function answers one question — "is the
@@ -131,41 +164,23 @@ export function gangVerdict(o = {}) {
   }
   if (!mults || typeof mults !== 'object') return keep(`no multiplier table for BitNode ${node} — refusing to price the gang`)
   if (!num(grindHours) || grindHours < 0) return keep('no measured karma grind — the gang cannot be priced without what it costs to reach')
-  // NO MEASURED GAIN: fall back to the node's income scale, which is the term
-  // the whole comparison turns on and is known from the multiplier table
-  // alone. A gang earns its karma gate where the batcher CANNOT fund the
-  // install ladder; tools/sim/gang-vs-nogang.mjs measured 102h (63%) at a
-  // scale of 0.0225 in BitNode 4 and 0.9h (1%) at 0.5 in BitNode 10.
-  //
-  // This is a WEAKER claim than the simulation and says so: it only refuses a
-  // gang where script income is plainly healthy, which is the case the BitNode
-  // 4 answer got wrong. Anywhere ambiguous it still refuses to judge, so the
-  // bootstrap is left alone rather than cancelled on a guess.
-  if (!num(gangGainHours)) {
-    const scale = (mults.ServerMaxMoney ?? 1) * (mults.ScriptHackMoney ?? 1)
-    if (!num(scale)) return keep('no measured gang gain and no readable income scale')
-    if (scale >= HEALTHY_INCOME_SCALE) {
-      return {
-        worth: false,
-        gainHours: null,
-        grindHours,
-        why:
-          `NOT worth it in BitNode ${node} on income scale alone: ServerMaxMoney x ScriptHackMoney = ${scale.toFixed(4)}, at or above the ${HEALTHY_INCOME_SCALE} where the batcher funds the install ladder by itself. ` +
-          `The karma gate costs ${grindHours.toFixed(1)}h of work slot for a leg the gang barely shortens (measured 0.9h / 1% in BitNode 10 at this scale). Unmeasured here — the simulation is tools/sim/gang-vs-nogang.mjs --node ${node}.`,
-      }
-    }
-    return keep(`no measured gang gain, and income scale ${scale.toFixed(4)} is below ${HEALTHY_INCOME_SCALE} where a gang plausibly pays — refusing rather than assuming either answer`)
-  }
-
-  const worth = gangGainHours > grindHours
-  const scale = (mults.ServerMaxMoney ?? 1) * (mults.ScriptHackMoney ?? 1)
+  // THE VERDICT IS ONE COMPARISON: gangExit's savedH (the exit with the
+  // gang, its income delayed by the grind, against without). It replaced
+  // `gangGainHours > grindHours` — a gain priced from t=0 minus the grind as
+  // flat hours — and an income-scale threshold used when nothing was
+  // measured, both shortcuts CLAUDE.md now forbids. Without a comparison this
+  // refuses; progress.js always supplies one (measured income, or
+  // gangplan.simulateGang's trajectory for a fresh gang in this node).
+  const ex = o.gangExit
+  if (!ex || !num(ex.savedH)) return keep(`no simulated exit comparison: ${ex?.why ?? 'none supplied'}`)
+  const worth = ex.savedH > 0
   return {
     worth,
-    gainHours: gangGainHours,
+    gainHours: ex.savedH,
     grindHours,
-    why:
-      `${worth ? 'WORTH IT' : 'NOT worth it'} in BitNode ${node}: the gang saves ${gangGainHours.toFixed(1)}h and the karma gate costs ${grindHours.toFixed(1)}h of work slot ` +
-      `(script income scale ${scale.toFixed(4)} — the gang wins where the batcher cannot fund the install ladder)`,
+    withH: ex.withH ?? null,
+    withoutH: ex.withoutH ?? null,
+    why: `${worth ? 'WORTH IT' : 'NOT worth it'} in BitNode ${node}: ${ex.why} (${ex.savedH >= 0 ? 'saves' : 'costs'} ${Math.abs(ex.savedH).toFixed(1)}h, grind included)`,
   }
 }
 

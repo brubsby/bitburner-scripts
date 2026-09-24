@@ -684,5 +684,26 @@ export async function run() {
   }
   checks.push(c15);
 
+  const cgx = new Check("GX1", "the gang verdict is two simulated exits: income after the grind, later lives lifted by eBudget");
+  {
+    const gw = await import("../../gangworth.js");
+    const { bestExitPolicy } = await import("../../exitplan.js");
+    cgx.examined(6);
+    const base = { money: 1e6, incomePerSec: 1e5, hacking: 300, hackingExp: 1e6, hackingMult: 1.3, expPerSec: 50, repPerSec: 0.3, exitRep: 0, exitFavor: 150, favorToDonate: 150, donationCost: 3e12, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9, cycleHours: 2, multGainPerCycle: 1.12 };
+    const rich = [{ atH: 0, perSec: 1e7 }];
+    const early = gw.gangExit(bestExitPolicy, base, rich, 5, 0.3);
+    const late = gw.gangExit(bestExitPolicy, base, rich, 40, 0.3);
+    if (!(early.savedH > 0)) cgx.fail(`a rich gang after a short grind must reach the exit sooner: ${early.why}`);
+    if (!(late.savedH < early.savedH)) cgx.fail("a longer grind must save less — the income arrives later");
+    const poor = gw.gangExit(bestExitPolicy, base, [{ atH: 0, perSec: 1 }], 5, 0.3);
+    if (!(Math.abs(poor.savedH) < early.savedH)) cgx.fail("a negligible gang income must save (almost) nothing");
+    const noE = gw.gangExit(bestExitPolicy, base, rich, 5, null);
+    if (!(noE.savedH <= early.savedH)) cgx.fail("the eBudget response can only add value to later lives");
+    if (gw.gangExit(bestExitPolicy, base, null, 5).savedH !== null) cgx.fail("no income trajectory must refuse");
+    const sched = gw.gangIncomeSchedule({ samples: [{ h: 0, money: 0 }, { h: 1, money: 3600 }, { h: 2, money: 3600 * 3 }] });
+    if (!sched || sched.length !== 2 || Math.abs(sched[0].perSec - 1) > 1e-9 || Math.abs(sched[1].perSec - 2) > 1e-9) cgx.fail(`hourly steps from cumulative money: ${JSON.stringify(sched)}`);
+  }
+  checks.push(cgx);
+
   return checks;
 }

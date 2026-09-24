@@ -85,7 +85,7 @@ export function hoursToLevel(level, mult, exp0, expPerSec) {
  * scale of the answer and the cost is irrelevant offline.
  */
 export function hoursToMoney(target, o = {}) {
-  const { money0 = 0, incomeAtLevel1, mult, exp0 = 0, expPerSec, maxHours = 1e4, stepH = 1 / 120 } = o
+  const { money0 = 0, incomeAtLevel1, mult, exp0 = 0, expPerSec, maxHours = 1e4, stepH = 1 / 120, extraAt = null } = o
   if (!num(target) || target <= money0) return 0
   if (!pos(incomeAtLevel1) || !pos(mult) || !num(exp0)) return null
   let money = money0
@@ -94,7 +94,7 @@ export function hoursToMoney(target, o = {}) {
   while (h < maxHours) {
     const lvl = levelAt(exp, mult)
     // income(level) = incomeAtLevel1 * (level + 50) / 51
-    const rate = (incomeAtLevel1 * (lvl + 50)) / 51
+    const rate = (incomeAtLevel1 * (lvl + 50)) / 51 + (typeof extraAt === 'function' ? extraAt(h) : 0)
     // The last step lands exactly: without this the answer is quantised to
     // stepH, and a with/without comparison of a small spend reads as zero
     // (or as a whole step) — noise deciding purchases.
@@ -205,7 +205,22 @@ export function exitHours(o = {}) {
     sleeveRep = null,
     firstInstallH = null,
     installGains = null,
+    extraIncome = null,
+    eBudget = null,
   } = o
+  // INCOME THAT ARRIVES LATER (extraIncome [{atH, perSec}], absolute node
+  // hours from now; each step REPLACES the extra from its hour on) — a gang
+  // that starts earning when its karma grind ends, for instance. It feeds the
+  // money legs at the hour they run, and, with eBudget (the planner's measured
+  // dln(planM)/dln(money)), each later life's augmentation growth:
+  // g x ((income + extra)/income)^eBudget for a cycle starting at that hour.
+  const steps = Array.isArray(extraIncome) ? extraIncome.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH) : []
+  const extraAt = (t) => {
+    let v = 0
+    for (const x of steps) if (x.atH <= t) v = x.perSec
+    return v
+  }
+  const growthAt = (t) => (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
 
   if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
     return { hours: null, why: 'live state unreadable (income, hacking, multiplier or exit level)' }
@@ -251,7 +266,9 @@ export function exitHours(o = {}) {
       if (pos(donation)) donation /= installGains.rep
     }
     if (pos(installGains?.income) && installGains.income >= 1) incomeAtLevel1 *= installGains.income
-    mult = hackingMult * firstGain * Math.pow(multGainPerCycle, installsFirst - 1)
+    // Cycle by cycle, so a later-arriving income can lift the cycles after it.
+    mult = hackingMult * firstGain
+    for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours)
     exp = 0
     cash = 1262 // PlayerObjectGeneralMethods.ts:102
     legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
@@ -260,7 +277,10 @@ export function exitHours(o = {}) {
   // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
   // legs read this rather than the input.
   let expRate = expPerSec
-  const moneyLeg = (target) => hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate })
+  const moneyLeg = (target) => {
+    const t0 = h
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null })
+  }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
   let slotH = 0

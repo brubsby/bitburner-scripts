@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel } from 'sfgate.js'
-import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG } from 'gangplan.js'
+import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGang, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
 import { ALL_FACTIONS } from 'factions.js'
@@ -134,7 +134,7 @@ import { contractIncome } from 'contractplan.js'
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { gangVerdict, gangGainHours, gangIsPending, rememberedGangIncome } from 'gangworth.js'
+import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
@@ -1148,28 +1148,47 @@ function readFleet(ns, info) {
  * back to the node's income scale, which is the term the comparison turns on
  * and is known from the multiplier table alone — a weaker claim that says so.
  */
-function gangWorthNow(ns, info, player, gainHours = null) {
+function gangWorthNow(ns, info, player, inputsFn = null) {
   try {
     const live = readJson(ns, '/tel/gang.txt')
-    return gangVerdict({
-      node: info?.currentNode,
-      mults: bitNodeMults(info?.currentNode),
-      // Same-life check, as everywhere: a gang record from a previous life is
-      // a memory of a gang, not a gang.
-      inGang: live?.lastAugReset === info?.lastAugReset && !!live?.faction,
-      grindHours: (() => {
-        try {
-          const k = karmaChannelCtx(ns, info, player)
-          return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
-        } catch {
-          return null
-        }
-      })(),
-      gangGainHours: gainHours,
-    })
+    const inGang = live?.lastAugReset === info?.lastAugReset && !!live?.faction
+    const grindHours = (() => {
+      try {
+        const k = karmaChannelCtx(ns, info, player)
+        return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
+      } catch {
+        return null
+      }
+    })()
+    // THE COMPARISON (gangworth.gangExit): only while a gang is still a
+    // choice — not in one, not BitNode 2, gangs reachable — and only where the
+    // caller can build the exit's inputs.
+    const exitCmp = !inGang && info?.currentNode !== 2 && canUseGang(info) && typeof inputsFn === 'function' ? gangExitNow(ns, info, inputsFn(), grindHours) : null
+    return gangVerdict({ node: info?.currentNode, mults: bitNodeMults(info?.currentNode), inGang, grindHours, gangExit: exitCmp })
   } catch {
     return null
   }
+}
+
+/**
+ * The gang's income trajectory for gangworth.gangExit: measured, when a gang
+ * in THIS node has run (rememberedGangIncome), else gangplan.simulateGang from
+ * a fresh gang under this node's GangSoftcap — the same fresh-gang setup
+ * tools/sim/gang-vs-nogang.mjs uses. Never another node's number.
+ */
+function gangExitNow(ns, info, inputs, grindHours) {
+  const node = info?.currentNode
+  const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
+  let sched = remembered.perSec ? [{ atH: 0, perSec: remembered.perSec }] : null
+  if (!sched) {
+    const softcap = bitNodeMults(node)?.GangSoftcap
+    const G = { faction: 'Slum Snakes', isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false }
+    const rivals = Object.fromEntries(['Tetrads', 'The Syndicate', 'The Dark Army', 'Speakers for the Dead', 'NiteSec', 'The Black Hand'].map((n) => [n, { power: 1, territory: 1 / 7 }]))
+    const sim = typeof softcap === 'number' ? simulateGang(G, [], { softcap, horizonH: 100, stepSec: 300, mode: 'money', assignFn: trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } }) : null
+    sched = gangIncomeSchedule(sim)
+  }
+  const eB = readJson(ns, '/tel/installgate.txt')?.eBudget
+  return gangExit(bestExitPolicy, inputs, sched, grindHours, typeof eB === 'number' && isFinite(eB) ? eB : null)
 }
 
 /**
@@ -3176,7 +3195,8 @@ async function act(ns, canJoin, info, note) {
     // (exitPolicy runs below), so writeSleevePlan carries this node's last
     // priced one forward rather than publishing a null that would re-task the
     // fleet off synchronising every time an unplanned pass ran.
-    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null, ns.getSharePower(), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction), readFleet(ns, info)?.expDisabled === true)
+    const gangInputs0 = () => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
+    writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction), readFleet(ns, info)?.expDisabled === true)
     ns.write(
       GATE,
       JSON.stringify(
@@ -3199,7 +3219,7 @@ async function act(ns, canJoin, info, note) {
           // gangGainHours is null here: the two exit-policy searches that
           // price it are too heavy for a path that exists to be cheap. The
           // verdict falls back to the node's income scale and says so.
-          gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player)),
+          gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, gangInputs0)),
           // The objective record rides the unplanned write too: the
           // derivation runs whether or not anything is affordable, and a
           // refusal on this path was invisible (2026-09-20 01:10 — the
@@ -3662,21 +3682,7 @@ async function act(ns, canJoin, info, note) {
       // the gang's measured income advantage and is null until a gang in THIS
       // node has demonstrated one — so the verdict refuses rather than
       // assuming, which is what leaves the bootstrap alone by default.
-      gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, (() => {
-          try {
-            const perSec = readJson(ns, '/tel/gang-last.txt')?.moneyPerSec
-            if (!(typeof perSec === 'number' && perSec > 0)) return null
-            // The shared builder (CLAUDE.md: same inputs, one builder) — this
-            // used to assemble its own, on cycleStats's median.
-            return gangGainHours(
-              bestExitPolicy,
-              exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)),
-              perSec,
-            ).hours
-          } catch {
-            return null
-          }
-        })())),
+      gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))),
     })
 
     // ------------------------------------------------------------------

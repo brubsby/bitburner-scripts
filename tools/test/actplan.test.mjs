@@ -268,33 +268,27 @@ export async function run() {
       if (d.kind === "idle") c6.fail(`a ${what} verdict must still run the gang bootstrap, got idle (${d.why})`);
     }
 
-    // The verdict itself: BitNode 4 wins, BitNode 10 does not, and every
-    // missing input REFUSES by name rather than assuming the BN4 answer.
+    // The verdict is ONE simulated comparison (gangworth.gangExit): worth iff
+    // the exit with the gang (income after the grind) is sooner. Every missing
+    // input REFUSES by name; the old income-scale shortcut must not return.
     c6.examined(1);
-    const bn4 = gw.gangVerdict({ node: 4, mults: bn.bitNodeMults(4), grindHours: 36, gangGainHours: 102 });
-    if (bn4.worth !== true) c6.fail(`BitNode 4 measured 102h against a 36h gate must be WORTH it, got ${JSON.stringify(bn4)}`);
-    const bn10 = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36, gangGainHours: 0.9 });
-    if (bn10.worth !== false) c6.fail(`BitNode 10 measured 0.9h against a 36h gate must NOT be worth it, got ${JSON.stringify(bn10)}`);
+    const bn4 = gw.gangVerdict({ node: 4, mults: bn.bitNodeMults(4), grindHours: 36, gangExit: { savedH: 66, withH: 94, withoutH: 160, why: "t" } });
+    if (bn4.worth !== true) c6.fail(`a gang whose exit is 66h sooner, grind included, must be WORTH it, got ${JSON.stringify(bn4)}`);
+    const bn10 = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36, gangExit: { savedH: -35, why: "t" } });
+    if (bn10.worth !== false) c6.fail(`a gang whose exit is 35h later must NOT be worth it, got ${JSON.stringify(bn10)}`);
     const bn2 = gw.gangVerdict({ node: 2 });
     if (bn2.worth !== true) c6.fail("BitNode 2 grants gang access outright and sells The Red Pill through it — always worth it");
     for (const [o, what] of [
-      [{ node: 10, mults: null, grindHours: 36, gangGainHours: 0.9 }, "no multiplier table"],
-      [{ node: 10, mults: bn.bitNodeMults(10), gangGainHours: 0.9 }, "no measured grind"],
-      // (no measured gain at a HEALTHY income scale is a verdict, not a
-      // refusal — see the income-scale branch; BitNode 1 is the ambiguous case)
-      [{ node: 1, mults: { ServerMaxMoney: 0.1, ScriptHackMoney: 0.5 }, grindHours: 36 }, "no measured gang gain below the healthy scale"],
+      [{ node: 10, mults: null, grindHours: 36, gangExit: { savedH: 1 } }, "no multiplier table"],
+      [{ node: 10, mults: bn.bitNodeMults(10), gangExit: { savedH: 1 } }, "no measured grind"],
+      [{ node: 10, mults: bn.bitNodeMults(10), grindHours: 36 }, "no comparison (the income-scale shortcut is gone)"],
+      [{ node: 4, mults: bn.bitNodeMults(4), grindHours: 36, gangExit: { savedH: null, why: "unpriced" } }, "an unpriced comparison"],
     ]) {
       c6.examined(1);
       const r = gw.gangVerdict(o);
       if (r.worth !== null || !r.why) c6.fail(`${what} must REFUSE by name, got ${JSON.stringify(r)}`);
     }
-    // The income-scale fallback: unmeasured, but plainly healthy income is
-    // enough to refuse a gang — that is the case BitNode 4's answer got wrong.
-    c6.examined(1);
-    const scaleOnly = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36 });
-    if (scaleOnly.worth !== false) c6.fail(`BitNode 10 at income scale 0.5 must refuse a gang even unmeasured, got ${JSON.stringify(scaleOnly)}`);
-    const bn4Scale = gw.gangVerdict({ node: 4, mults: bn.bitNodeMults(4), grindHours: 36 });
-    if (bn4Scale.worth !== null) c6.fail(`BitNode 4 at income scale 0.0225 must REFUSE to judge unmeasured, not cancel the gang, got ${JSON.stringify(bn4Scale)}`);
+    if ("HEALTHY_INCOME_SCALE" in gw) c6.fail("the income-scale threshold must not come back");
     c6.note(`BN4 ${bn4.worth} / BN10 ${bn10.worth}: ${bn10.why}`);
   }
   checks.push(c6);
@@ -437,7 +431,7 @@ export async function run() {
     const bn2Held = gw.gangVerdict({ node: 2, inGang: true });
     if (bn2Held.gatePaid !== true) c8.fail("already holding a gang outranks the BitNode 2 waiver");
     // And it changes nothing when we do NOT have one.
-    const pending = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36, gangGainHours: 0.9 });
+    const pending = gw.gangVerdict({ node: 10, mults: bn.bitNodeMults(10), grindHours: 36, gangExit: { savedH: -1, why: "t" } });
     if (pending.gatePaid === true || pending.worth !== false) c8.fail("without a gang the verdict is unchanged");
 
     c8.examined(2);

@@ -462,5 +462,18 @@ export async function run() {
   }
   checks.push(c15);
 
+  const c16 = new Check("XP16", "income that arrives later: it shortens the money legs from its hour on, and not before");
+  {
+    c16.examined(3);
+    const b = { money: 0, incomePerSec: 1e6, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 800, joinMoney: 100e9 };
+    const hoard = (o) => exitHours({ ...b, ...o }).legs.find((l) => l.leg === "hoard join money")?.hours;
+    const none = hoard({}), now = hoard({ extraIncome: [{ atH: 0, perSec: 1e7 }] }), later = hoard({ extraIncome: [{ atH: 1e6, perSec: 1e7 }] });
+    if (!(now < none / 5)) c16.fail(`income from hour 0 must shorten the hoard: ${none} -> ${now}`);
+    if (Math.abs(later - none) > 1e-9) c16.fail("income arriving after the leg must not shorten it");
+    const mid = hoard({ extraIncome: [{ atH: none / 2, perSec: 1e7 }] });
+    if (!(mid < none && mid > now)) c16.fail("income arriving mid-leg must land between");
+  }
+  checks.push(c16);
+
   return checks;
 }
