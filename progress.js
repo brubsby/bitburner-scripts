@@ -1404,11 +1404,16 @@ const MAX_PLANNING_HORIZON_H = 1000
  *   hacking  the level climb (mults.hacking)
  *   rep      ground reputation and the donation price (faction_rep, donation.ts:8)
  *   income   batch income: linear in money per hack and in success chance,
- *            inverse in op time — hacking_money x hacking_chance x hacking_speed.
- *            hacking_grow is priced at x1 (it changes the batch's shape more than
- *            its take) — a floor, stated.
+ *            inverse in op time — hacking_money x hacking_chance x hacking_speed,
+ *            and hacking_grow to the power of grow's measured share of the batch
+ *            (growShareNow; x1 when unmeasured).
  * Null when the batch is empty or unreadable.
  */
+// grow's measured share of the batch (weightsMeta.growShare, last pass's gate
+// record), set once per pass in act(): the exponent income responds to
+// hacking_grow with. Null -> grow priced at x1, the old floor.
+let growShareNow = null
+
 function installGainsOf(names, offers) {
   const byName = new Map((offers ?? []).map((o) => [o?.name, o]))
   if (!Array.isArray(names) || !names.length) return null
@@ -1416,7 +1421,9 @@ function installGainsOf(names, offers) {
     const m = byName.get(n)?.mults?.[k]
     return h * (typeof m === 'number' && isFinite(m) && m > 0 ? m : 1)
   }, g), 1)
-  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']), exp: prod(['hacking_exp']) }
+  const growMult = prod(['hacking_grow'])
+  const growLift = typeof growShareNow === 'number' && growShareNow >= 0 && growShareNow <= 1 ? Math.pow(growMult, growShareNow) : 1
+  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']) * growLift, exp: prod(['hacking_exp']) }
 }
 
 function nextInstallGainOf(plan, pending, offers) {
@@ -1941,6 +1948,10 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 }
 
 async function act(ns, canJoin, info, note) {
+  {
+    const g = readJson(ns, GATE)?.objective?.growShare
+    growShareNow = typeof g === 'number' && isFinite(g) ? g : null
+  }
   const flags = ns.flags([
     ['dry', false],
     ['no-install', false],

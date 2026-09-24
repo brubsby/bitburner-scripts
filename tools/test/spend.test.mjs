@@ -98,5 +98,15 @@ export async function run() {
   }
   checks.push(c7);
 
+  const c8 = new Check("SE8", "a batch's income gain carries hacking_grow at its measured batch share, set each pass");
+  {
+    const pr = src("progress.js");
+    c8.examined(2);
+    const fn = pr.slice(pr.indexOf("function installGainsOf"), pr.indexOf("function nextInstallGainOf"));
+    if (!/Math\.pow\(growMult, growShareNow\)/.test(fn) || !/income: prod\(\['hacking_money', 'hacking_chance', 'hacking_speed'\]\) \* growLift/.test(fn)) c8.fail("income must include grow^growShare");
+    if (!/growShareNow = typeof g === 'number' && isFinite\(g\) \? g : null/.test(pr)) c8.fail("act() must set the measured share each pass");
+  }
+  checks.push(c8);
+
   return checks;
 }

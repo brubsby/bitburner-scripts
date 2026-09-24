@@ -46,3 +46,17 @@ aug-plan ranking and every `moneyLn` conversion inherits it.
 3. `sleeveExp {perSec, delayH}` (#9).
 4. A generic upfront spend debited in any window (every purchase).
 5. `multGainPerCycle` as a function of rep and spend (#3, #4).
+
+## Also fixed on the way (2026-09-24)
+
+- The exit's endpoint model: `endpointCycleStats` (ln(M)/h over the same lives as the cadence) replaced `cycleStats`'s median; the live exit went from 5.5e43h to ~68h, which is what made every comparison above meaningful.
+- Rep leg: integrated at the rebuilt level's rate after an install (XP23); sleeve terms are schedules (XP26).
+- `persistBaseline`: a batch lifts later lives only by its gains beyond the plan the cadence already represents (XP19).
+- Removed stated biases: ladder step-down (XP25), shock's passive fall while working (SP24), `repBoost` delay (XP24), grow priced at x1 (SE8).
+- Sleeve study exp read as 0 (task object vs string, SP22); decisions on float ties (SP23); the rep objective vanishing when the player's rate was estimated.
+- Process: `tools/precheck.mjs` (syntax + RAM before a save goes live), `tools/mutant.mjs` (mutation tests in a sandbox, not the live repo).
+
+## Not simulated, by design (published as such, never folded in)
+
+- A Covenant sleeve's value in later BitNodes (sleevesFromCovenant persists) — cross-node play is nodeplan's job.
+- Named fallbacks (moneyLn, deriveWeights, payback rules) remain for passes whose exit cannot be priced; each decision publishes which decided.
