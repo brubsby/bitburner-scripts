@@ -211,7 +211,21 @@ export function exitHours(o = {}) {
     sleeveExp = null,
     eRep = null,
     persistBaseline = null,
+    perCycleExtra = null,
   } = o
+  // SOMETHING EVERY LATER LIFE ALSO BUYS (perCycleExtra {hacking, rep, income,
+  // fromInstall}): from install number `fromInstall` on, each install carries
+  // these extra gains on top of the measured cadence — k NeuroFlux levels a
+  // life once a faction's donation pipe is open, for instance. rep and income
+  // act through eRep / eBudget like any persisting gain.
+  const cycleExtraAt = (() => {
+    if (!perCycleExtra) return () => 1
+    const f = (pos(perCycleExtra.hacking) ? perCycleExtra.hacking : 1) *
+      (pos(perCycleExtra.rep) && num(eRep) && eRep > 0 ? Math.pow(perCycleExtra.rep, eRep) : 1) *
+      (pos(perCycleExtra.income) && num(eBudget) && eBudget > 0 ? Math.pow(perCycleExtra.income, eBudget) : 1)
+    const from = num(perCycleExtra.fromInstall) && perCycleExtra.fromInstall >= 1 ? perCycleExtra.fromInstall : 2
+    return (i) => (i + 1 >= from ? f : 1)
+  })()
   // INCOME THAT ARRIVES LATER (extraIncome [{atH, perSec}], absolute node
   // hours from now; each step REPLACES the extra from its hour on) — a gang
   // that starts earning when its karma grind ends, for instance. It feeds the
@@ -293,7 +307,7 @@ export function exitHours(o = {}) {
       (num(eBudget) && eBudget > 0 ? Math.pow(ratio('income'), eBudget) : 1)
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain
-    for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift
+    for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift * cycleExtraAt(i)
     exp = 0
     cash = 1262 // PlayerObjectGeneralMethods.ts:102
     legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })

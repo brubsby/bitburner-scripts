@@ -515,5 +515,16 @@ export async function run() {
   }
   checks.push(c19);
 
+  const c20 = new Check("XP20", "something every later life also buys (perCycleExtra) lifts installs from its install number on");
+  {
+    c20.examined(2);
+    const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.1, installsFirst: 10, firstInstallH: 0 };
+    const base = exitHours(b).mult, x = exitHours({ ...b, perCycleExtra: { hacking: 1.05, fromInstall: 3 } }).mult;
+    // installs 3..10 carry it: 8 of them.
+    if (Math.abs(x / base - Math.pow(1.05, 8)) > 1e-9) c20.fail(`installs 3..10 each x1.05: ${x / base}`);
+    if (!(bestExitPolicy({ ...b, perCycleExtra: { hacking: 1.05 } }).best.hours < bestExitPolicy(b).best.hours)) c20.fail("a recurring gain must reach the exit sooner");
+  }
+  checks.push(c20);
+
   return checks;
 }

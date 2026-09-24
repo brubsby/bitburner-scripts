@@ -676,13 +676,37 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
       const budget = wctx.donateIncome * wctx.windowH * 3600
       const k = nfgLevelsByDonation(budget, nfgOffer.repReq, wctx.donateRepMult, wctx.donateNodeMult)
       if (k > 0) {
+        // THE VALUE AS A TRAJECTORY (CLAUDE.md): the node's exit when every
+        // install from the second after crossing also buys these k levels
+        // (exitplan perCycleExtra: NFG's own per-level mults, rep and income
+        // through eRep / eBudget), against the exit without — the hours saved
+        // expressed in the planner's unit by the exit's own hours per ln of
+        // hacking (objective.exitWeights). One window's levels at the
+        // basket's per-level ln is the named fallback.
+        const lnByExit = (() => {
+          try {
+            const rec = readJson(ns, '/tel/exitinputs.txt')
+            const hpl = readJson(ns, GATE)?.objective?.exitSensitivity?.hoursPerLn?.hacking
+            if (!rec?.inputs || rec.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(rec.at) < 15 * 60e3) || !(hpl > 0)) return null
+            const m = nfgOffer.mults ?? {}
+            const pw = (x) => Math.pow(typeof x === 'number' && x > 0 ? x : 1, k)
+            const extra = { hacking: pw(m.hacking), rep: pw(m.faction_rep), income: pw(m.hacking_money) * pw(m.hacking_speed) * pw(m.hacking_chance), fromInstall: 2 }
+            const inputsX = { ...rec.inputs, eRep: rec.eRep, eBudget: rec.eBudget }
+            const without = bestExitPolicy(inputsX).best?.hours
+            const withX = bestExitPolicy({ ...inputsX, perCycleExtra: extra }).best?.hours
+            return typeof without === 'number' && typeof withX === 'number' ? Math.max(0, without - withX) / hpl : null
+          } catch {
+            return null
+          }
+        })()
+        const lnCross = lnByExit ?? k * lnPerLevel
         for (const f of byFaction.values()) {
           const gap = repToCross(f.favor)
           if (gap === null || gap === 0) continue // unreadable, or the pipe is already open
           f.augs.push({
-            name: `(cross the donation threshold -> ${k} NFG/install)`,
+            name: `(cross the donation threshold -> ${k} NFG/install${lnByExit === null ? ', one-window fallback' : ', exit-priced'})`,
             repReq: f.rep + gap,
-            mults: { hacking: Math.exp(k * lnPerLevel) },
+            mults: { hacking: Math.exp(lnCross) },
             banked: true,
           })
         }

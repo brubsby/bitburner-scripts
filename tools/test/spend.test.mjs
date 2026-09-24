@@ -62,5 +62,15 @@ export async function run() {
   }
   checks.push(c4);
 
+  const c5 = new Check("SE5", "the NFG donation-threshold crossing is valued by two simulated exits; one window's levels only as the named fallback");
+  {
+    const pr = src("progress.js");
+    const blk = pr.slice(pr.indexOf("const lnByExit = (() => {"), pr.indexOf("const lnCross = "));
+    c5.examined(2);
+    if (!/const withX = bestExitPolicy\(\{ \.\.\.inputsX, perCycleExtra: extra \}\)\.best\?\.hours/.test(blk) || !/Math\.max\(0, without - withX\) \/ hpl/.test(blk)) c5.fail("the crossing's value must be hours saved by the recurring levels, in hacking-ln units");
+    if (!/const lnCross = lnByExit \?\? k \* lnPerLevel/.test(pr)) c5.fail("the one-window formula survives only as the fallback");
+  }
+  checks.push(c5);
+
   return checks;
 }

@@ -30,7 +30,7 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | 7 | ~~hacknet~~ **done 2026-09-24** | hacknet.js exit verdict | `payback < remainingH` is the named fallback | — |
 | 9 | ~~sleeve task: sync / shock / train-vs-work / objective ladder~~ **done 2026-09-24** (sleeveObjectiveByExit; sleeveExitOf for sync/shock/train; karma's sync keeps the break-even as the named fallback — its value runs through the gang grind) | sleeveplan.js:130,297,310,459; progress.js ladder | break-even `100/rate`; `afterRate x (H-T)`; fixed ordering | `sleeveExp {perSec, delayH}`; the ladder is expressible now through `planFleet` |
 | 10 | charisma / company path | objective.js:140 | rate x horizon | no company-path leg |
-| 11 | NFG donation-threshold crossing | progress.js ~672 | one window's income in NFG levels | donation only modelled for the exit faction |
+| 11 | ~~NFG donation-threshold crossing~~ **done 2026-09-24** (exit with perCycleExtra vs without, in hacking-ln via exitWeights' hours per ln) | progress.js ~672 | one window's income in NFG levels | donation only modelled for the exit faction |
 | 12 | ~~gang equipment~~ **done 2026-09-24** (gangEquipExit + exitplan.spendRuns on the published W / ladder; the gang's own policy search still scores by moneyLn — see deriveWeights) | gang.js:296 | gang sim with/without, but scored by `moneyLn` over a gang horizon | score through the exit instead |
 | 13 | stock entry | stockplan.js:125 | `capital x edge x H > entry` | dormant (`edgePerHour: null`) |
 
