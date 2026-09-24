@@ -1113,6 +1113,9 @@ function readFleet(ns, info) {
       assist: { karmaPerSec: f.karmaPerSec, killsPerSec: fin(f.killsPerSec) ? f.killsPerSec : 0 },
       expToPlayerHacking: fin(f.expToPlayerHacking) ? f.expToPlayerHacking : null,
       factionRepPerSec: fin(f.factionRepPerSec) ? f.factionRepPerSec : null,
+      // The BitNode option that zeroes every sleeve exp gain. Read rather than
+      // assumed, so 'exp' is only chosen where it can actually be earned.
+      expDisabled: f.disableSleeveExp === true,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
     }
 }
@@ -1193,7 +1196,7 @@ function sleeveRepFaction(player, schedule, gangFaction) {
  * for THIS BitNode is carried forward with the stamp saying when it was
  * priced. A carried horizon is visible; a null one silently changes behaviour.
  */
-function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, repFaction = null) {
+function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, repFaction = null, expDisabled = false) {
   // THE CAP IS OWNED HERE so its provenance can be published with it. It used
   // to be applied at the call site beside a `horizonRawHours` field, and that
   // field was dropped when this function was extracted — leaving the plan
@@ -1233,7 +1236,30 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
       // falsy: the whole point of that field is that the gate question is
       // settled, and a sleeve grinding karma for a gang we already have is the
       // exact waste this guard exists to make impossible.
-      objective: verdict?.worth === true && verdict?.gatePaid !== true ? 'karma' : repFaction ? 'rep' : 'money',
+      // THE OBJECTIVE LADDER, in the order the levers are actually worth
+      // something — and MONEY IS THE LAST RUNG, not the default it used to be.
+      //
+      // Measured live on 2026-09-24, with one sleeve: on money it delivers
+      // ~$300/s against the run's $11.2m/s (0.003%); studying, it hands the
+      // player 14.5 hacking exp/s against their own 788/s (1.8%). Six hundred
+      // times better. Money was the fallback because it "is never wrong and
+      // never much" — true, but it was being chosen whenever no faction was
+      // workable, which is most of a node where the only faction with real
+      // reputation is the gang's own and a sleeve may not work that one.
+      //
+      //   karma  only where a gang is PENDING and priced worth its gate
+      //   rep    only where there is a faction the run is a member of and
+      //          grinding, and that is not the gang's
+      //   exp    otherwise — it feeds the hacking level the exit climb needs
+      //   money  only when sleeve exp is impossible outright
+      objective:
+        verdict?.worth === true && verdict?.gatePaid !== true
+          ? 'karma'
+          : repFaction
+            ? 'rep'
+            : expDisabled
+              ? 'money'
+              : 'exp',
       // MEMBERSHIP IS CHECKED HERE, not in sleeve.js: setToFactionWork THROWS
       // when the player is not a member, so publishing a faction we have not
       // joined would cost a caught exception per sleeve per 30s tick forever.
@@ -2799,7 +2825,7 @@ async function act(ns, canJoin, info, note) {
     // (exitPolicy runs below), so writeSleevePlan carries this node's last
     // priced one forward rather than publishing a null that would re-task the
     // fleet off synchronising every time an unplanned pass ran.
-    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null, ns.getSharePower(), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction))
+    writeSleevePlan(ns, info, gangWorthNow(ns, info, player), null, ns.getSharePower(), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction), readFleet(ns, info)?.expDisabled === true)
     ns.write(
       GATE,
       JSON.stringify(
@@ -3317,6 +3343,7 @@ async function act(ns, canJoin, info, note) {
       exitPolicy?.best?.hours ?? null,
       ns.getSharePower(),
       sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction),
+      planFleet?.expDisabled === true,
     )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards

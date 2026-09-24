@@ -653,5 +653,43 @@ export async function run() {
   }
   checks.push(c14);
 
+  // ---------------------------------------------------------------------
+  const c15 = new Check("SP15", "money is the LAST objective, not the default — exp outranks it ~600x");
+  {
+    c15.examined(6);
+    const sl = sleeve({ sync: 90.5, skills: { hacking: 1, strength: 77, defense: 77, dexterity: 77, agility: 76, charisma: 1, intelligence: 0 } });
+    const o = { horizonHours: 1000, playerIntelligence: 95, nodeWorkRepMult: 1, sharePower: 1.03 };
+
+    // THE EXP OBJECTIVE EXISTS AND NEEDS NO TRAINING. Study exp is flat in the
+    // sleeve's own stats, so there is nothing for the train-or-work search to
+    // find — and at sync 100 it is simply Algorithms at the best university.
+    const synced = sp.sleeveAssignments([sleeve({ sync: 100 })], NODE1, { ...o, objective: "exp" });
+    if (synced.tasks[0] !== "hacking") c15.fail(`a synced sleeve on 'exp' studies, got ${JSON.stringify(synced.tasks[0])}`);
+    if (!/does not scale with the sleeve/.test(synced.why.join(" "))) c15.fail("and it must say training buys nothing here");
+    // Below full sync it synchronises FIRST, because sync does scale the transfer.
+    const under = sp.sleeveAssignments([sl], NODE1, { ...o, objective: "exp" });
+    if (under.tasks[0] !== "sync") c15.fail("sync scales the exp transfer, so an under-synced sleeve synchronises first");
+    if (!sp.SYNC_SCALED.has("exp")) c15.fail("'exp' must be in SYNC_SCALED");
+
+    // THE LADDER. money is reachable only when sleeve exp is impossible.
+    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8");
+    const fn = src.match(/function writeSleevePlan\([\s\S]*?\n\}/)?.[0] ?? "";
+    const bare = fn.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    if (!fn) c15.fail("could not locate writeSleevePlan", "a rotted check, not a clean repo");
+    // Order matters and the string order in the source is the ladder.
+    const order = ["'karma'", "'rep'", "'money'", "'exp'"].map((k) => [k, bare.indexOf(k)]).filter(([, i]) => i >= 0);
+    const idx = Object.fromEntries(order);
+    if (idx["'exp'"] === undefined) {
+      c15.fail("the objective ladder must be able to choose 'exp'", "on money a sleeve delivered 0.003% of income; studying, 1.8% of the player's exp rate");
+    }
+    if (idx["'money'"] === undefined) c15.fail("money must remain reachable for saves where sleeve exp is disabled");
+    // money must be GATED on expDisabled, not be the bare fallback.
+    if (!/expDisabled/.test(bare)) {
+      c15.fail("money must be chosen only when sleeve exp is impossible", "otherwise it is picked whenever no faction is workable, which is most of a node whose only real reputation is the gang's own");
+    }
+    c15.note(`'exp' assignment: sync ${under.tasks[0]} below 100, then ${synced.tasks[0]} at 100; money gated on expDisabled`);
+  }
+  checks.push(c15);
+
   return checks;
 }

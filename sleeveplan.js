@@ -312,6 +312,26 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       why.push(`sleeve ${i}: shock ${shock.toFixed(1)} scales the ${objective} this objective wants — recover`)
       continue
     }
+    // THE EXP OBJECTIVE NEEDS NO TRAINING AND NO CRIME. Study exp is a flat
+    // `classExp * university expMult * mults[skill_exp]` — it does NOT scale
+    // with the sleeve's own skills at all, so the train-or-work search below
+    // has nothing to search and Algorithms at ZB is simply the answer.
+    //
+    // It is the right answer far more often than it looks. Measured live on
+    // 2026-09-24: a sleeve on money delivered ~$300/s against the run's
+    // $11.2m/s, i.e. 0.003% — while studying it hands the player 14.5 hacking
+    // exp/s against their own 788/s, i.e. 1.8%. Six hundred times better, and
+    // both are small: that is what "the fleet is one sleeve" costs.
+    if (objective === 'exp') {
+      tasks.push('hacking')
+      const study = sleeveStudyExpPerSec(s, 'Algorithms', o)
+      why.push(
+        `sleeve ${i}: study Algorithms at ${study?.university ?? 'the best university'} — ` +
+          `${((study?.perSec ?? 0) * (sync / 100)).toFixed(1)} hacking exp/s to the player at sync ${sync.toFixed(1)} ` +
+          `(study exp does not scale with the sleeve's own stats, so there is nothing to train first)`,
+      )
+      continue
+    }
     // TRAIN OR WORK — searched, not assumed. A sleeve out of a BitNode change
     // has every skill at 1, where its best money crime pays ~$300/s and its
     // Homicide chance is 0.5%; sending it straight to crime is barely
