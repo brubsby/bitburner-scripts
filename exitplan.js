@@ -248,7 +248,10 @@ export function exitHours(o = {}) {
   // (progress.js, reputation arriving 50% faster) — so each later life's gain
   // is lifted by K^e, the reputation twin of eBudget.
   const repLift = repBoost && pos(repBoost.K) && repBoost.K >= 1 && num(repBoost.e) && repBoost.e > 0 ? Math.pow(repBoost.K, repBoost.e) : 1
-  const growthAt = (t) => repLift * (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
+  // repBoost.fromH: the lift starts with the first cycle beginning at or after
+  // that hour (a sleeve that trains or recovers first adds its rep later).
+  const repFrom = num(repBoost?.fromH) && repBoost.fromH > 0 ? repBoost.fromH : 0
+  const growthAt = (t) => (t >= repFrom ? repLift : 1) * (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
 
   if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
     return { hours: null, why: 'live state unreadable (income, hacking, multiplier or exit level)' }
@@ -359,13 +362,38 @@ export function exitHours(o = {}) {
   if (terminalRep > 0) {
     const fleetOn = sleeveRep && pos(sleeveRep.perSec)
     let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repRate) ? repRate : 0) + sleeveRep.perSec : repRate, donationCost: donation, favor: exitFavor, favorToDonate, moneyLeg })
-    if (fleetOn && r.how === 'ground') {
-      // Piecewise: player alone for delayH, then player + sleeve.
+    // GROUND REPUTATION AS A TRAJECTORY. Faction-work rep is linear in the
+    // player's hacking level (reputation.ts:16), and after an install the
+    // level restarts from 1 and climbs as exp accrues — so the rep leg runs
+    // at repPerSec x level(t)/level-now, not at today's rate. The sleeve's
+    // term is not scaled (sleeves keep their skills across installs) and
+    // joins at its delayH, measured FROM NOW like sleeveExp. Integrated in
+    // two-minute steps; the last lands exactly.
+    if (r.how === 'ground' && (fleetOn || installsFirst > 0)) {
       const P = pos(repRate) ? repRate : 0
-      const S = sleeveRep.perSec
-      const D = num(sleeveRep.delayH) && sleeveRep.delayH > 0 ? sleeveRep.delayH : 0
+      const S = fleetOn ? sleeveRep.perSec : 0
+      const D = fleetOn ? Math.max(0, (num(sleeveRep.delayH) ? sleeveRep.delayH : 0) - h) : 0
       const need = terminalRep - exitRep
-      const t = P > 0 && P * D * 3600 >= need ? need / P / 3600 : (need + S * D * 3600) / (P + S) / 3600
+      const scale = installsFirst > 0 && pos(hacking) ? (e) => levelAt(e, mult) / hacking : () => 1
+      const step = 1 / 30
+      let acc = 0
+      let t = 0
+      let e = exp
+      for (;;) {
+        if (t > 1e4) {
+          t = Infinity
+          break
+        }
+        const rate = P * scale(e) + (t >= D ? S : 0)
+        const add = rate * step * 3600
+        if (rate > 0 && acc + add >= need) {
+          t += (need - acc) / rate / 3600
+          break
+        }
+        acc += add
+        e += pos(expRate) ? expRate * step * 3600 : 0
+        t += step
+      }
       r = { hours: t, how: 'ground' }
     }
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }

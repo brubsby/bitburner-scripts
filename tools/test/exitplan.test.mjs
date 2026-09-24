@@ -429,7 +429,10 @@ export async function run() {
     if (!(at({ firstInstallH: 0, installGains: { hacking: 2, rep: 1, income: 1 } }).hours < h0)) c14.fail("a hacking gain must shorten the exit");
     const repLeg = (r) => r.legs.find((l) => l.leg === "exit reputation")?.hours;
     const rg = at({ firstInstallH: 0, installGains: { hacking: 1.1, rep: 2, income: 1 } });
-    if (Math.abs(repLeg(rg) * 2 - repLeg(at({ firstInstallH: 0, installGains: { hacking: 1.1, rep: 1, income: 1 } }))) > 1e-6) c14.fail("a x2 faction_rep batch must halve the ground rep leg");
+    // Doubling the rate shortens the leg, but by less than half: the level —
+    // and so the rate — climbs through the leg (XP23), so the tail is faster.
+    const r1 = repLeg(at({ firstInstallH: 0, installGains: { hacking: 1.1, rep: 1, income: 1 } }));
+    if (!(repLeg(rg) < r1 && repLeg(rg) >= r1 / 2 - 1e-6)) c14.fail(`a x2 faction_rep batch must shorten the ground rep leg, by at most half: ${repLeg(rg)} vs ${r1}`);
     const money = (r) => r.legs.find((l) => l.leg === "hoard join money")?.hours;
     if (!(money(at({ firstInstallH: 0, installGains: { hacking: 1, rep: 1, income: 3 } })) < money(at({ firstInstallH: 0 })))) c14.fail("an income gain must shorten the money legs");
   }
@@ -564,6 +567,29 @@ export async function run() {
     c22.examined(n);
   }
   checks.push(c22);
+
+  const c23 = new Check("XP23", "ground rep after an install runs at the rebuilt level's rate, not today's");
+  {
+    c23.examined(2);
+    // Slow rebuild (100 exp/s): the level stays far below today's for most of the leg.
+    const b = { money: 1e12, incomePerSec: 1e8, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 100, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.0001 };
+    const repLeg = (r) => r.legs.find((l) => l.leg === "exit reputation")?.hours;
+    const noInstall = repLeg(exitHours({ ...b, installsFirst: 0 }));
+    if (Math.abs(noInstall - 2.5e6 / 30 / 3600) > 1e-9) c23.fail(`without an install the rate is today's: ${noInstall}`);
+    const afterInstall = repLeg(exitHours({ ...b, installsFirst: 1, firstInstallH: 0 }));
+    if (!(afterInstall > noInstall * 1.5)) c23.fail(`after an install the level restarts, so the leg must be much longer: ${afterInstall} vs ${noInstall}`);
+  }
+  checks.push(c23);
+
+  const c24 = new Check("XP24", "repBoost.fromH: the lift starts with the first life beginning after it");
+  {
+    c24.examined(1);
+    const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.1, installsFirst: 10, firstInstallH: 0 };
+    const base = exitHours(b).mult, late = exitHours({ ...b, repBoost: { K: 2, e: 0.5, fromH: 13 } }).mult;
+    // later cycles start at 0,4,8,...,32; those at >= 13 are 16..32 (5 of the 9).
+    if (Math.abs(late / base - Math.pow(Math.pow(2, 0.5), 5)) > 1e-9) c24.fail(`5 of 9 later lives lifted: ${late / base}`);
+  }
+  checks.push(c24);
 
   return checks;
 }

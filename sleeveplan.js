@@ -877,8 +877,8 @@ export function covenantActive(gate, lastAugReset) {
  * "a higher rate after T hours", compared as two exits. Null (refuse) for a
  * stale, foreign or absent record, and for karma — its value runs through the
  * gang's grind, which progress.js prices.
- * repBoost uses the delayed rate for the whole node: a small overstatement of
- * a train-first option, stated.
+ * repBoost starts at the delay too (fromH): the lift from the sleeve's rep
+ * begins with the first life after it starts working.
  */
 export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.now()) {
   if (!record || typeof bestExitPolicy !== 'function' || record.lastAugReset !== lastAugReset || !(now - Date.parse(record.at) < 15 * 60e3) || !record.inputs) return null
@@ -887,7 +887,7 @@ export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.no
   return (objective, t) => {
     if (!t || !num(t.perSec) || t.perSec < 0 || !num(t.delayH) || t.delayH < 0) return null
     let o = null
-    if (objective === 'rep') o = { ...base, sleeveRep: { perSec: t.perSec, delayH: t.delayH }, ...(num(P) && P > 0 ? { repBoost: { K: (P + t.perSec) / P, e: record.eRep } } : {}) }
+    if (objective === 'rep') o = { ...base, sleeveRep: { perSec: t.perSec, delayH: t.delayH }, ...(num(P) && P > 0 ? { repBoost: { K: (P + t.perSec) / P, e: record.eRep, fromH: t.delayH } } : {}) }
     else if (objective === 'exp') o = { ...base, sleeveExp: { perSec: t.perSec, delayH: t.delayH } }
     else if (objective === 'money') o = { ...base, extraIncome: [{ atH: t.delayH, perSec: t.perSec }], eBudget: record.eBudget }
     if (!o) return null
