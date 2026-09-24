@@ -98,5 +98,20 @@ export async function run() {
   }
   checks.push(c3);
 
+  const c4 = new Check("HU4", "cmd.js waits for an idle human before the DOM path, and does not refocus over one");
+  {
+    const cm = src("cmd.js");
+    // Every place main() reaches the screen: showTerminal()/submit() calls
+    // outside their own definitions. Each must come after the wait.
+    const main = cm.indexOf("export async function main");
+    const sites = [...cm.matchAll(/\b(showTerminal|submit)\(/g)].map((m) => m.index).filter((i) => i > main);
+    const loop = cm.search(/for \(let waited = 0, seen = humanOnHome\(ns\); seen\.atScreen === true;/);
+    c4.examined(sites.length);
+    if (!sites.length) c4.fail("cmd.js: no DOM call in main() found — the check examined nothing");
+    for (const i of sites) if (loop < 0 || loop > i) c4.fail(`cmd.js: a DOM call at offset ${i} is not preceded by the wait on humanOnHome`);
+    if (!/r\.via !== 'ns'\) && humanOnHome\(ns\)\.atScreen !== true\) restoreFocus\(\)/.test(cm)) c4.fail("cmd.js: restoreFocus() clicks Focus over a human at the window");
+  }
+  checks.push(c4);
+
   return checks;
 }

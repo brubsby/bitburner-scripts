@@ -70,6 +70,7 @@
 // ---------------------------------------------------------------------------
 
 import { acquire, release, touch } from 'lock.js'
+import { humanOnHome } from 'human.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record, publish } from 'status.js'
 
@@ -435,6 +436,18 @@ export async function main(ns) {
             continue
           }
 
+          // The DOM path takes the screen over (Terminal page, focus dropped),
+          // so it waits while a human is at the game window (human.js) —
+          // holding the lock, so nothing else navigates meanwhile either. The
+          // NS path above never waits: it does not touch the screen. Unknown
+          // (upkeep.js not publishing) proceeds, as before.
+          for (let waited = 0, seen = humanOnHome(ns); seen.atScreen === true; seen = humanOnHome(ns)) {
+            if (waited === 0) note('waiting', { detail: `holding '${line}' until the human is idle: ${seen.why}` })
+            await ns.sleep(5000)
+            waited += 5000
+            if (waited % 30000 === 0) touch(ns)
+          }
+
           // Opening the Terminal tab is a React state change, so the input is not
           // in the DOM until the next render — clicking and checking in the same
           // tick always failed. Give it a moment.
@@ -537,7 +550,8 @@ export async function main(ns) {
 
         // The DOM path steals focus from faction work; give it back.
         try {
-          if (results.some((r) => r.via !== 'ns')) restoreFocus()
+          // Not if the human came back during the batch: they may be looking.
+          if (results.some((r) => r.via !== 'ns') && humanOnHome(ns).atScreen !== true) restoreFocus()
         } catch {
           /* nothing focusable */
         }
