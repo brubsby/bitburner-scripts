@@ -266,6 +266,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
   const tasks = []
   const why = []
   let repTaken = false
+  const syncDecided = new Set()
   for (const s of sleeves) {
     const i = s?.index ?? tasks.length
     const sync = num(s?.sync) ? s.sync : null
@@ -298,7 +299,28 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // ordering that cannot be wrong by more than the delay. It is NOT proven
     // optimal against the training leg; proving that needs the exp transfer
     // priced, which this module does not yet do.
-    if (SYNC_SCALED.has(objective) && sync < 100 && horizonHours !== null && breakeven !== null && horizonHours > breakeven) {
+    // SYNCHRONISE, as two exits when the exit can be priced (sleeveExitOf):
+    // study at today's sync from now, against full sync after the hours it
+    // takes to reach it. The break-even rule below is the named fallback.
+    if (SYNC_SCALED.has(objective) && sync < 100 && typeof o.exitOf === 'function' && objective === 'exp') {
+      const r = sleeveStudyExpPerSec(s, 'Algorithms', o)?.perSec
+      const sp = syncPerSec(o.playerIntelligence)
+      if (num(r) && r > 0 && num(sp) && sp > 0) {
+        const T = (100 - sync) / sp / 3600
+        const now = o.exitOf('exp', { perSec: (r * sync) / 100, delayH: 0 })
+        const synced = o.exitOf('exp', { perSec: r, delayH: T })
+        if (num(now) && num(synced)) {
+          if (synced < now) {
+            tasks.push('sync')
+            why.push(`sleeve ${i}: synchronise ${sync.toFixed(1)} -> 100 (${T.toFixed(1)}h): exit ${synced.toFixed(2)}h vs ${now.toFixed(2)}h studying now`)
+            continue
+          }
+          why.push(`sleeve ${i}: study now: exit ${now.toFixed(2)}h vs ${synced.toFixed(2)}h after synchronising`)
+          syncDecided.add(i)
+        }
+      }
+    }
+    if (!syncDecided.has(i) && SYNC_SCALED.has(objective) && sync < 100 && horizonHours !== null && breakeven !== null && horizonHours > breakeven) {
       tasks.push('sync')
       why.push(`sleeve ${i}: sync ${sync.toFixed(1)} and ${horizonHours.toFixed(1)}h horizon is past the ${breakeven.toFixed(1)}h break-even — synchronise`)
       continue
@@ -311,7 +333,32 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // SHOCK IS NOT A KARMA TERM. It scales exp and money only, so recovering
     // it while the objective is karma buys nothing at all.
     const shock = num(s?.shock) ? s.shock : 0
-    if (objective !== 'karma' && shock > 0 && horizonHours !== null && horizonHours > (breakeven ?? Infinity)) {
+    // SHOCK RECOVERY, as two exits: the objective's rate at today's shock
+    // from now, against the unshocked rate after recovering. The passive
+    // decline while working is ignored on the "now" side — a slight bias
+    // toward recovering, stated. The break-even rule is the named fallback.
+    let shockDecided = false
+    if (objective !== 'karma' && shock > 0 && typeof o.exitOf === 'function') {
+      const bonus = (100 - shock) / 100
+      const rateNow = objective === 'exp' ? sleeveStudyExpPerSec(s, 'Algorithms', o)?.perSec : objective === 'rep' ? sleeveFactionRepPerSec(s, o)?.base : bestSleeveCrime(s, node, 'money')?.rates?.money
+      const sp = shockPerSec(s?.skills?.intelligence ?? 0, true)
+      if (num(rateNow) && rateNow > 0 && bonus > 0 && num(sp) && sp > 0) {
+        const T = shock / sp / 3600
+        const kind = objective === 'rep' ? 'rep' : objective === 'exp' ? 'exp' : 'money'
+        const now = o.exitOf(kind, { perSec: rateNow, delayH: 0 })
+        const healed = o.exitOf(kind, { perSec: rateNow / bonus, delayH: T })
+        if (num(now) && num(healed)) {
+          shockDecided = true
+          if (healed < now) {
+            tasks.push('shock')
+            why.push(`sleeve ${i}: recover shock ${shock.toFixed(1)} (${T.toFixed(1)}h): exit ${healed.toFixed(2)}h vs ${now.toFixed(2)}h working shocked`)
+            continue
+          }
+          why.push(`sleeve ${i}: work through shock ${shock.toFixed(1)}: exit ${now.toFixed(2)}h vs ${healed.toFixed(2)}h after recovering`)
+        }
+      }
+    }
+    if (!shockDecided && objective !== 'karma' && shock > 0 && horizonHours !== null && horizonHours > (breakeven ?? Infinity)) {
       tasks.push('shock')
       why.push(`sleeve ${i}: shock ${shock.toFixed(1)} scales the ${objective} this objective wants — recover`)
       continue
@@ -432,7 +479,9 @@ export function sleevePolicy(sleeve, node, o = {}) {
   if (!pick) return null
   const now = rateOf(sleeve)
   if (now === null) return null
-  const base = { task: objective === 'rep' ? 'faction' : pick.crime, trainStat: null, trainHours: 0, value: now * horizonHours * 3600 }
+  const exitNow = (objective === 'rep' || objective === 'money') && typeof o.exitOf === 'function' ? o.exitOf(objective, { perSec: now, delayH: 0 }) : null
+  const decidedBy = num(exitNow) ? 'exit-sim' : 'rate-x-horizon fallback'
+  const base = { task: objective === 'rep' ? 'faction' : pick.crime, trainStat: null, trainHours: 0, value: num(exitNow) ? -exitNow : now * horizonHours * 3600, decidedBy }
 
   // The stats that drive the rate. For a crime, the ones its success chance
   // weights; for field work, the four combat stats it sums.
@@ -460,7 +509,12 @@ export function sleevePolicy(sleeve, node, o = {}) {
     if (!ok) break
     const afterRate = rateOf(trained)
     if (afterRate === null) break
-    const value = afterRate * (horizonHours - T) * 3600
+    // THE EXIT, when it can be priced (o.exitOf): lower hours is better, so
+    // the value is its negative; rate x remaining horizon is the named
+    // fallback for karma (priced through the gang) or an unpriceable exit.
+    const exitKind = objective === 'rep' ? 'rep' : objective === 'money' ? 'money' : null
+    const ex = exitKind && typeof o.exitOf === 'function' ? o.exitOf(exitKind, { perSec: afterRate, delayH: T }) : null
+    const value = num(ex) ? -ex : afterRate * (horizonHours - T) * 3600
     trials.push({ T, value })
     if (value > best.value) {
       best = {
@@ -476,7 +530,7 @@ export function sleevePolicy(sleeve, node, o = {}) {
   if (!trials.length) return { ...base, why: `${pick.crime} now — training could not be priced` }
   const label = objective === 'rep' ? `faction work at ${now.toFixed(3)} rep/s` : `${pick.crime} at ${(pick.rates.chance * 100).toFixed(1)}%`
   if (best.task !== 'train') {
-    return { ...base, why: `${label} now beats every training split over ${horizonHours.toFixed(1)}h` }
+    return { ...base, why: `${label} now beats every training split over ${horizonHours.toFixed(1)}h (${decidedBy})` }
   }
   const gained = objective === 'rep' ? `${now.toFixed(3)} -> ${best.afterRate.toFixed(3)} rep/s` : `${(pick.rates.chance * 100).toFixed(1)}% -> ${(best.after * 100).toFixed(1)}% chance`
   return {
@@ -484,7 +538,8 @@ export function sleevePolicy(sleeve, node, o = {}) {
     why:
       `train ${best.trainStat.join('/')} at ${gym.name} for ${best.trainHours.toFixed(1)}h of a ${horizonHours.toFixed(1)}h horizon, ` +
       `then ${objective === 'rep' ? 'faction work' : pick.crime}: ${gained}, ` +
-      `${(best.value / base.value).toFixed(1)}x what working now delivers`,
+      (decidedBy === 'exit-sim' ? `exit ${(-best.value).toFixed(2)}h vs ${(-base.value).toFixed(2)}h working now` : `${(best.value / base.value).toFixed(1)}x what working now delivers (${decidedBy})`),
+    decidedBy,
   }
 }
 
@@ -798,4 +853,35 @@ export function sleevesFromCovenant(numSleeves, sf10Level, bitNode) {
 export function covenantActive(gate, lastAugReset) {
   if (!gate || gate.lastAugReset !== lastAugReset) return null
   return gate.covenantExit?.active === true ? gate.covenantExit : null
+}
+
+/**
+ * THE SLEEVE'S OWN CHOICES AS EXITS. From progress.js's published exit inputs
+ * (/tel/exitinputs.txt: the player alone, eRep, eBudget), a function
+ * exitOf(objective, {perSec, delayH}) -> the node's exit in hours with the
+ * sleeve delivering `perSec` on that objective from `delayH` hours from now:
+ *   rep   its rep on the exit leg (sleeveRep) and repBoost for every life
+ *   exp   its exp on the climb (sleeveExp)
+ *   money its crime income from delayH on (extraIncome, eBudget)
+ * Synchronise, shock recovery and train-first are each "this rate now" vs
+ * "a higher rate after T hours", compared as two exits. Null (refuse) for a
+ * stale, foreign or absent record, and for karma — its value runs through the
+ * gang's grind, which progress.js prices.
+ * repBoost uses the delayed rate for the whole node: a small overstatement of
+ * a train-first option, stated.
+ */
+export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.now()) {
+  if (!record || typeof bestExitPolicy !== 'function' || record.lastAugReset !== lastAugReset || !(now - Date.parse(record.at) < 15 * 60e3) || !record.inputs) return null
+  const base = record.inputs
+  const P = base.repPerSec
+  return (objective, t) => {
+    if (!t || !num(t.perSec) || t.perSec < 0 || !num(t.delayH) || t.delayH < 0) return null
+    let o = null
+    if (objective === 'rep') o = { ...base, sleeveRep: { perSec: t.perSec, delayH: t.delayH }, ...(num(P) && P > 0 ? { repBoost: { K: (P + t.perSec) / P, e: record.eRep } } : {}) }
+    else if (objective === 'exp') o = { ...base, sleeveExp: { perSec: t.perSec, delayH: t.delayH } }
+    else if (objective === 'money') o = { ...base, extraIncome: [{ atH: t.delayH, perSec: t.perSec }], eBudget: record.eBudget }
+    if (!o) return null
+    const r = bestExitPolicy(o)
+    return num(r?.best?.hours) ? r.best.hours : null
+  }
 }

@@ -1381,6 +1381,33 @@ function nextInstallGainOf(plan, pending, offers) {
 }
 
 /**
+ * The exit simulation's inputs with the sleeve fleet REMOVED (the player
+ * alone), published for scripts that price their own choices as exits —
+ * sleeve.js's synchronise / shock / train decisions, gang.js's equipment —
+ * so they compare trajectories on the same state this planner does, without
+ * rebuilding it. With the measured responses the simulation needs.
+ */
+function publishExitInputs(ns, info, inputs) {
+  try {
+    const gate = readJson(ns, GATE)
+    ns.write(
+      '/tel/exitinputs.txt',
+      JSON.stringify({
+        at: new Date().toISOString(),
+        lastAugReset: info?.lastAugReset ?? null,
+        bitNode: info?.currentNode ?? null,
+        inputs,
+        eRep: typeof gate?.objective?.eRep === 'number' ? gate.objective.eRep : null,
+        eBudget: typeof gate?.eBudget === 'number' ? gate.eBudget : null,
+      }),
+      'w',
+    )
+  } catch {
+    /* the readers refuse a stale or missing file and fall back, named */
+  }
+}
+
+/**
  * THE SLEEVE OBJECTIVE, trajectory against trajectory: the node's exit with
  * the fleet serving each objective it can (sleeve.js byObjective rates), from
  * one input builder with the player alone as the base. The soonest wins.
@@ -3259,6 +3286,7 @@ async function act(ns, canJoin, info, note) {
       const repF = sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction)
       const expOff = readFleet(ns, info)?.expDisabled === true
       const byExit = sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
+      publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }))
       writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
     ns.write(
@@ -3810,6 +3838,7 @@ async function act(ns, canJoin, info, note) {
     // money, which no objective is harmed by. This is the same verdict act.js
     // gates its own karma grind on, read from the same place, so the player and
     // the fleet cannot end up grinding for different reasons.
+    publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }))
     writeSleevePlan(
       ns,
       info,

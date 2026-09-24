@@ -208,6 +208,7 @@ export function exitHours(o = {}) {
     extraIncome = null,
     eBudget = null,
     repBoost = null,
+    sleeveExp = null,
   } = o
   // INCOME THAT ARRIVES LATER (extraIncome [{atH, perSec}], absolute node
   // hours from now; each step REPLACES the extra from its hour on) — a gang
@@ -339,7 +340,17 @@ export function exitHours(o = {}) {
 
   // The final install: skills reset, and the climb runs on the multiplier we
   // froze at. This is the leg the whole install-vs-hold trade turns on.
-  const climb = hoursToLevel(exitLevel, mult, 0, expRate)
+  // The sleeve's exp as its own term (sleeveExp {perSec, delayH}, delayH from
+  // NOW): it joins the climb only once its delay has passed — the synchronise,
+  // shock recovery or training it spends first. Piecewise, like sleeveRep.
+  let climb
+  if (sleeveExp && pos(sleeveExp.perSec)) {
+    const need = expForLevel(exitLevel, mult)
+    const P = pos(expRate) ? expRate : 0
+    const S = sleeveExp.perSec
+    const D = Math.max(0, (num(sleeveExp.delayH) ? sleeveExp.delayH : 0) - h)
+    climb = !pos(mult) ? null : need <= 0 ? 0 : P > 0 && P * D * 3600 >= need ? need / P / 3600 : (need + S * D * 3600) / (P + S) / 3600
+  } else climb = hoursToLevel(exitLevel, mult, 0, expRate)
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
   h += climb
   legs.push({ leg: 'climb to exit level', hours: climb, detail: `hacking ${exitLevel} at mult ${mult.toFixed(2)}` })

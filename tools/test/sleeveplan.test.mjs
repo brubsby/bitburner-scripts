@@ -839,5 +839,33 @@ export async function run() {
   }
   checks.push(c20);
 
+  const c21 = new Check("SP21", "synchronise, shock recovery and train-first are decided by two simulated exits when priced");
+  {
+    const { bestExitPolicy } = await import("../../exitplan.js");
+    c21.examined(8);
+    const now = Date.now();
+    const rec = { at: new Date(now).toISOString(), lastAugReset: 1, inputs: { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e4, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9, cycleHours: 4, multGainPerCycle: 1.1 }, eRep: 0.2, eBudget: 0.1 };
+    const ex = sp.sleeveExitOf(rec, 1, bestExitPolicy, now);
+    if (typeof ex !== "function") c21.fail("a fresh same-life record builds exitOf");
+    else {
+      if (ex("karma", { perSec: 1, delayH: 0 }) !== null) c21.fail("karma is progress.js's to price — refuse");
+      for (const k of ["rep", "exp", "money"]) if (!(ex(k, { perSec: 10, delayH: 0 }) > 0)) c21.fail(`${k} must price`);
+      if (!(ex("rep", { perSec: 10, delayH: 0 }) < ex("rep", { perSec: 10, delayH: 5 }))) c21.fail("the same rate later must be slower");
+    }
+    if (sp.sleeveExitOf({ ...rec, lastAugReset: 2 }, 1, bestExitPolicy, now) !== null) c21.fail("another life's inputs refuse");
+    if (sp.sleeveExitOf({ ...rec, at: new Date(now - 3600e3).toISOString() }, 1, bestExitPolicy, now) !== null) c21.fail("stale inputs refuse");
+    // The decisions follow the stub exitOf.
+    const sleeve = { index: 0, sync: 40, shock: 0, skills: { hacking: 50, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 1, intelligence: 0 }, exp: { hacking: 1000, strength: 100, defense: 100, dexterity: 100, agility: 100, charisma: 0 }, mults: { hacking_exp: 1, strength_exp: 1, defense_exp: 1, dexterity_exp: 1, agility_exp: 1, charisma_exp: 1, hacking: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, crime_success: 1, crime_money: 1, faction_rep: 1 }, city: "Sector-12", memory: 1 };
+    const favorSync = (k, t) => (t.delayH > 0 ? 10 : 20);
+    const favorNow = (k, t) => (t.delayH > 0 ? 20 : 10);
+    const a1 = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf: favorSync, playerIntelligence: 0 });
+    if (a1?.tasks?.[0] !== "sync") c21.fail(`exp: a faster exit after synchronising must synchronise: ${a1?.why?.[0]}`);
+    const a2 = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 5000, exitOf: favorNow, playerIntelligence: 0 });
+    if (a2?.tasks?.[0] === "sync") c21.fail(`exp: studying now must win when its exit is sooner, whatever the break-even says: ${a2?.why?.[0]}`);
+    const a3 = sp.sleeveAssignments([{ ...sleeve, sync: 100, shock: 50 }], null, { objective: "exp", horizonHours: 5000, exitOf: favorNow, playerIntelligence: 0 });
+    if (a3?.tasks?.[0] === "shock") c21.fail(`shock: working now must win when its exit is sooner: ${a3?.why?.[0]}`);
+  }
+  checks.push(c21);
+
   return checks;
 }

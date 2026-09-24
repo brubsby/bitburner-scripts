@@ -487,5 +487,18 @@ export async function run() {
   }
   checks.push(c17);
 
+  const c18 = new Check("XP18", "the sleeve's exp joins the climb after its delay (sleeveExp), piecewise like sleeveRep");
+  {
+    c18.examined(3);
+    const b = { money: 1e12, incomePerSec: 1e8, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 1e4, repPerSec: 60, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0 };
+    const climb = (o) => exitHours({ ...b, ...o }).legs.find((l) => l.leg === "climb to exit level").hours;
+    const sum = climb({ expPerSec: 1.5e4 }), s0 = climb({ sleeveExp: { perSec: 5e3, delayH: 0 } });
+    if (Math.abs(sum - s0) > 1e-9) c18.fail(`delay 0 equals the summed rate: ${sum} vs ${s0}`);
+    const late = climb({ sleeveExp: { perSec: 5e3, delayH: 1 } });
+    if (Math.abs(late - s0 - (5e3 * 3600) / 1.5e4 / 3600) > 1e-6) c18.fail(`a 1h delay costs the sleeve's lost exp at the combined rate: ${late - s0}`);
+    if (!(climb({ sleeveExp: { perSec: 5e5, delayH: 0.5 } }) < climb({ sleeveExp: { perSec: 5e3, delayH: 0 } }))) c18.fail("a much higher rate after a short delay must win");
+  }
+  checks.push(c18);
+
   return checks;
 }

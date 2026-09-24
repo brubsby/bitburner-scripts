@@ -102,7 +102,8 @@ import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours } from 'sleeveplan.js'
+import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf } from 'sleeveplan.js'
+import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
@@ -113,6 +114,10 @@ const RAMOVERRIDE_STATUS = '/tel/sleeve.txt'
  *  is read or ns.read returns '' and every sleeve silently falls back to the
  *  no-plan default. Invariant C10. */
 const PLAN = '/tel/sleeveplan.txt'
+// progress.js's exit inputs: synchronise / shock / train-first are priced as
+// two simulated exits (sleeveplan.sleeveExitOf), falling back, named, when
+// this is stale or absent.
+const EXIT_INPUTS = '/tel/exitinputs.txt'
 /** The CrimeType strings setToCommitCrime accepts (Crime/Enums.ts), via the
  *  one table this repo keeps checked against game source ([BP1]). */
 const CRIME_NAMES = new Set(Object.keys(CRIMES))
@@ -347,6 +352,7 @@ async function act(ns, note) {
 		// THE PLAN, from progress.js. Pull first — see PLAN's comment.
 		if (ns.getHostname() !== 'home') {
 			try { ns.scp(PLAN, ns.getHostname(), 'home') } catch { /* previous copy stands */ }
+			try { ns.scp(EXIT_INPUTS, ns.getHostname(), 'home') } catch { /* previous copy stands */ }
 		}
 		let plan = null
 		try { plan = JSON.parse(ns.read(PLAN) || 'null') } catch { plan = null }
@@ -376,6 +382,13 @@ async function act(ns, note) {
 			repFaction: typeof plan?.repFaction === 'string' ? plan.repFaction : null,
 			nodeWorkRepMult: node?.FactionWorkRepGain,
 			sharePower: typeof plan?.sharePower === 'number' && isFinite(plan.sharePower) && plan.sharePower > 0 ? plan.sharePower : 1,
+			exitOf: (() => {
+				try {
+					return sleeveExitOf(JSON.parse(ns.read(EXIT_INPUTS) || 'null'), ns.getResetInfo().lastAugReset, bestExitPolicy)
+				} catch {
+					return null
+				}
+			})(),
 		})
 
 		sleeves.forEach((sleeve, index) => {
