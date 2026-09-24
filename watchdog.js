@@ -104,7 +104,7 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { singularityRamMultiplier, canAccessFeature } from 'sfgate.js'
+import { singularityRamMultiplier, canAccessFeature, SF_FILE } from 'sfgate.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -255,7 +255,9 @@ const WATCHED = [
   // work to start" trigger — it is the condition under which this process is
   // legitimate, and once TOR is bought a surviving torbuy has nothing to do but
   // hold the screen.
-  { script: 'torbuy.js', host: 'home', args: [], invariant: (ns) => !ns.hasTorRouter() },
+  // Not with Singularity: autobuy.js and the planner buy TOR with no screen,
+  // and this is the DOM route (City -> Alpha Enterprises).
+  { script: 'torbuy.js', host: 'home', args: [], invariant: (ns) => !ns.hasTorRouter() && !canAccessFeature(ns.getResetInfo(), 4) },
   { script: 'go.js', host: 'home', args: [] },
   // Multiplies faction reputation gain by 1 + ln(threads)/25. Sized small on
   // purpose: the curve is steeply concave and the rest of the fleet is worth
@@ -946,6 +948,8 @@ export async function main(ns) {
   while (true) {
     try {
       cycles++
+      // For the 0GB readers of sfgate.singularityKnown (backdoor.js, torbuy.js).
+      ns.write(SF_FILE, JSON.stringify({ at: new Date().toISOString(), singularity: canAccessFeature(ns.getResetInfo(), 4) }), 'w')
       // One network walk per cycle instead of one per entry. Topology only
       // changes when buyserv buys a server, and a 30s delay in noticing that is
       // invisible; thirteen redundant BFS walks every tick were not free.

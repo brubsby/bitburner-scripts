@@ -28,6 +28,7 @@
 //     screen back to faction work mid-sequence.
 
 import { acquire, release } from 'lock.js'
+import { singularityKnown } from 'sfgate.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 
@@ -87,6 +88,14 @@ export async function main(ns) {
       })
     }
   })
+
+  // SINGULARITY: not this script's job. autobuy.js buys TOR through
+  // purchaseTor (autobuy-sing.js) and progress.js orders it (act-buyprogram.js),
+  // neither touching the screen; this route unfocuses work and walks the City.
+  if (singularityKnown(ns)) {
+    say('ok', 'Singularity available: TOR is bought by autobuy.js / the planner with no screen')
+    return
+  }
 
   while (true) {
     try {

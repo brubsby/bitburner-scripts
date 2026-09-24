@@ -37,6 +37,28 @@
 //   hacknet servers           Hacknet/HacknetHelpers.tsx:35
 //   Stanek's Gift API         NetscriptFunctions/Stanek.ts:18
 
+// Whether Singularity is callable, published every 30s by watchdog.js (which
+// already pays ns.getResetInfo's 1GB) so home residents that only need the
+// yes/no — backdoor.js, torbuy.js — read it for 0GB instead of paying 1GB each
+// at a 32GB home where the budget has no gigabyte to spare (B2.4b).
+export const SF_FILE = '/tel/sf.txt'
+const SF_FRESH_MS = 3 * 60 * 1000
+
+/**
+ * true only on a FRESH record saying so. Missing, stale or unreadable reads as
+ * false — the caller then takes its no-Singularity route (the DOM/bridge one),
+ * which is what it did before this existed. Freshness matters in one direction:
+ * leaving BitNode 4 without SF4 turns a true into a false.
+ */
+export function singularityKnown(ns, now = Date.now()) {
+  try {
+    const r = JSON.parse(ns.read(SF_FILE) || 'null')
+    return r?.singularity === true && now - Date.parse(r.at) < SF_FRESH_MS
+  } catch {
+    return false
+  }
+}
+
 /** Level of Source-File `n`, 0 if not owned. */
 export const sfLevel = (resetInfo, n) => resetInfo?.ownedSF?.get(n) ?? 0
 

@@ -38,6 +38,12 @@ const RESULT = '/tel/act-result.txt'
 const ORDERS = '/tel/orders.txt'
 const HISTORY = '/tel/act-history.txt'
 const ORDERS_FRESH_MS = 15 * 60 * 1000
+// Every module an act-*.js or snap-*.js imports, transitively. scp copies
+// exactly the files named, and an actor placed off home without its imports
+// fails to load — human.js reached the work actors this way (HU6 derives the
+// real closure from the sources and fails if this list misses any of it).
+const ACTOR_DEPS = ['factions.js', 'companyplan.js', 'installgate.js', 'human.js', 'sfgate.js']
+
 const ACTORS = {
   join: 'act-join.js',
   work: 'act-work.js',
@@ -89,7 +95,7 @@ async function runSnapshot(ns, actor) {
     .sort((a, b) => b.free - a.free)
   if (!hosts.length) return { ran: false, why: `no rooted host has ${price}GB free` }
   const host = hosts[0].h
-  if (host !== 'home') ns.scp([actor, 'factions.js', 'companyplan.js', 'installgate.js'], host, 'home')
+  if (host !== 'home') ns.scp([actor, ...ACTOR_DEPS], host, 'home')
   const pid = ns.exec(actor, host, 1)
   if (!pid) return { ran: false, why: `exec refused on ${host}` }
   const until = Date.now() + 15000
@@ -139,7 +145,7 @@ async function runActor(ns, kind, args) {
     .sort((a, b) => b.free - a.free)
   if (!hosts.length) return { ran: false, why: `no rooted host has ${price}GB free for ${actor}` }
   const host = hosts[0].h
-  if (host !== 'home') ns.scp(actor, host, 'home')
+  if (host !== 'home') ns.scp([actor, ...ACTOR_DEPS], host, 'home')
   const pid = ns.exec(actor, host, 1, ...actorArgs)
   if (!pid) return { ran: false, why: `exec of ${actor} refused on ${host}` }
   // Wait for the actor to exit (a call is milliseconds; the install never returns).
@@ -173,11 +179,47 @@ async function spendDown(ns) {
   return bought.length ? `spent the remainder on home: ${bought.join(', ')}` : 'nothing affordable to spend the remainder on'
 }
 
-/** homeup.js decided a purchase but could not reach Alpha Enterprises: make it from here. */
+// backdoor.js's request for a Singularity backdoor (0GB for it to post; see
+// its BACKDOOR_REQ). Same path, spelled out: importing backdoor.js would bill
+// its whole ns graph here.
+const BACKDOOR_REQ = '/tel/backdoor-req.txt'
+const BACKDOOR_ACTOR = 'act-backdoor.js'
+// The in-flight backdoor, so a fresh request is not served twice while
+// installBackdoor runs (hacking time / 4 — up to minutes). NOT waited on: the
+// work slot's actors must not queue behind it.
+let backdoorPid = 0
+
+/** Launch act-backdoor.js for a fresh request, never for w0r1d_d43m0n. */
+function backdoorIfRequested(ns) {
+  if (backdoorPid && ns.isRunning(backdoorPid)) return null
+  backdoorPid = 0
+  fetchFromHome(ns, BACKDOOR_REQ)
+  const q = readJson(ns, BACKDOOR_REQ)
+  if (!q?.target || !Array.isArray(q.route) || !q.route.length || !(Date.now() - Date.parse(q.at) < 3 * 60e3)) return null
+  // Endgame.js alone backdoors the World Daemon; act-backdoor.js refuses it
+  // too, and this refuses before spending an exec on it.
+  if ([q.target, ...q.route].some((h) => String(h).toLowerCase() === 'w0r1d_d43m0n')) return { target: q.target, ok: false, why: 'refused: w0r1d_d43m0n' }
+  if (!ns.serverExists(q.target) || ns.getServer(q.target).backdoorInstalled) return null
+  const price = ns.getScriptRam(BACKDOOR_ACTOR, 'home')
+  const hosts = rootedHosts(ns)
+    .map((h) => ({ h, free: ns.getServerMaxRam(h) - ns.getServerUsedRam(h) }))
+    .filter((x) => x.free >= price)
+    .sort((a, b) => b.free - a.free)
+  if (!hosts.length) return { target: q.target, ok: false, why: `no rooted host has ${price}GB free for ${BACKDOOR_ACTOR}` }
+  const host = hosts[0].h
+  if (host !== 'home') ns.scp([BACKDOOR_ACTOR, ...ACTOR_DEPS], host, 'home')
+  backdoorPid = ns.exec(BACKDOOR_ACTOR, host, 1, ...q.route.map(String))
+  return { target: q.target, ok: backdoorPid > 0, host, pid: backdoorPid }
+}
+
+/**
+ * homeup.js decided a purchase and either could not reach Alpha Enterprises or,
+ * with Singularity, handed it here by design (viaActor): make it from here.
+ */
 async function homeUpgradeIfBlocked(ns) {
   fetchFromHome(ns, '/tel/homeup.txt')
   const h = readJson(ns, '/tel/homeup.txt')
-  if (!h?.blockedByCity || !h.next || Date.now() - Date.parse(h.at) > 3 * 60e3) return null
+  if (!(h?.blockedByCity || h?.viaActor) || !h.next || Date.now() - Date.parse(h.at) > 3 * 60e3) return null
   if (ns.getServerMoneyAvailable('home') < h.next.cost) return null
   const r = await runActor(ns, 'homeram', [h.next.kind])
   return { kind: h.next.kind, cost: h.next.cost, ok: r.ok }
@@ -278,6 +320,8 @@ export async function main(ns) {
 
       // ---- 1b. a home upgrade homeup.js decided but could not perform ----
       const homeUp = await homeUpgradeIfBlocked(ns)
+      // ---- 1c. a backdoor backdoor.js asked for (Singularity, no screen) ----
+      const backdoor = backdoorIfRequested(ns)
 
       // ---- 2. the bootstrap ----------------------------------------------
       const state = {
@@ -325,7 +369,7 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, log: log.slice(-8), tried })
+      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, backdoor, log: log.slice(-8), tried })
       await ns.sleep(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)

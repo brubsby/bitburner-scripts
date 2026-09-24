@@ -36,8 +36,16 @@ import { reporter, describe, record } from 'status.js'
 // output, which was a circular gate that killed this script across a prestige.
 // See storyservers.js and invariants C4.
 import { STORY_SERVERS } from 'storyservers.js'
+import { singularityKnown } from 'sfgate.js'
 
 const CMD_IN = '/cmd/in.txt'
+// With Singularity the backdoor is act-backdoor.js's (connect + installBackdoor,
+// no screen), launched by act.js from this request. Posting a file costs 0GB;
+// exec'ing the helper here would cost 1.3GB a 32GB home cannot spare (B2.4b).
+export const BACKDOOR_REQ = '/tel/backdoor-req.txt'
+// A request nobody served for this long means act.js is not running or has no
+// host with room for the actor: fall back to the bridge rather than wait forever.
+const REQ_PATIENCE_MS = 10 * 60 * 1000
 const BUSY = '/cmd/busy.txt'
 const STATUS = '/tel/backdoor.txt'
 const INTERVAL = 30000
@@ -136,6 +144,9 @@ export async function main(ns) {
     })
   }, 'status')
 
+  // When the current Singularity request was first posted, per target.
+  const requestedAt = new Map()
+
   while (true) {
     const report = []
     let queuedThisPass = false
@@ -177,6 +188,22 @@ export async function main(ns) {
         if (!route) {
           report.push(`${host}: no route`)
           continue
+        }
+
+        // SINGULARITY FIRST: no Terminal page, no focus lost, no waiting for
+        // the human to go idle. Re-posted every pass (the request is only
+        // served while fresh); unserved past REQ_PATIENCE_MS, the bridge,
+        // which works at any Source-File level.
+        if (singularityKnown(ns)) {
+          if (!requestedAt.has(host)) requestedAt.set(host, Date.now())
+          const waited = Date.now() - requestedAt.get(host)
+          if (waited < REQ_PATIENCE_MS) {
+            ns.write(BACKDOOR_REQ, JSON.stringify({ at: new Date().toISOString(), target: host, route: route.slice(1) }), 'w')
+            queuedThisPass = true
+            report.push(`${host}: requested from act.js (act-backdoor.js, ${route.length - 1} hops, ${Math.round(waited / 1000)}s)`)
+            continue
+          }
+          report.push(`${host}: act.js has not served the request in ${Math.round(waited / 60000)} min — using the bridge`)
         }
         const lines = [...route.slice(1).map((h) => `connect ${h}`), 'backdoor', 'home']
         ns.write(CMD_IN, lines.join('\n'), 'w')

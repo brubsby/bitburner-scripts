@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Check } from "./harness.mjs";
+import "./gameresolve.mjs";
 const h = await import("../../human.js");
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
@@ -112,6 +113,84 @@ export async function run() {
     if (!/r\.via !== 'ns'\) && humanOnHome\(ns\)\.atScreen !== true\) restoreFocus\(\)/.test(cm)) c4.fail("cmd.js: restoreFocus() clicks Focus over a human at the window");
   }
   checks.push(c4);
+
+  const c5 = new Check("HU5", "with Singularity, home upgrades, TOR and backdoors take no screen; the backdoor helper refuses w0r1d_d43m0n");
+  {
+    // Behaviour of act-backdoor.js against a recording ns.
+    const { main } = await import("../../act-backdoor.js");
+    const mk = (sf4) => {
+      const calls = [];
+      const files = {};
+      return {
+        calls, files,
+        ns: {
+          args: [], disableLog() {}, write: (f, d) => (files[f] = d), getHostname: () => "home", scp: () => true,
+          getResetInfo: () => ({ currentNode: 10, ownedSF: new Map(sf4 ? [[4, 1]] : []) }),
+          singularity: {
+            connect: (h) => (calls.push(`connect ${h}`), true),
+            installBackdoor: async () => void calls.push("installBackdoor"),
+          },
+        },
+      };
+    };
+    let t = mk(true);
+    t.ns.args = ["zer0", "neo-net", "CSEC"];
+    await main(t.ns);
+    const want = "connect home,connect zer0,connect neo-net,connect CSEC,installBackdoor,connect home";
+    if (t.calls.join(",") !== want) c5.fail(`route walk: got ${t.calls.join(",")}`);
+    if (!JSON.parse(t.files["/tel/act-backdoor.txt"] || "{}").ok) c5.fail("a completed backdoor must publish ok");
+    for (const args of [["w0r1d_d43m0n"], ["The-Cave", "W0R1D_D43M0N"]]) {
+      t = mk(true);
+      t.ns.args = args;
+      await main(t.ns);
+      if (t.calls.length) c5.fail(`w0r1d_d43m0n in ${args.join(" ")}: made ${t.calls.length} Singularity call(s) — must refuse before any`);
+    }
+    t = mk(false);
+    t.ns.args = ["CSEC"];
+    await main(t.ns);
+    if (t.calls.length) c5.fail("without Singularity the helper must refuse, not throw mid-route");
+
+    // Callers: the Singularity route is taken BEFORE any UI route.
+    const order = (f, first, second, what) => {
+      const x = src(f);
+      const i = x.search(first), j = x.search(second);
+      if (i < 0 || j < 0) c5.fail(`${f}: could not find ${i < 0 ? first : second} — examined nothing`);
+      else if (i > j) c5.fail(`${f}: ${what}`);
+    };
+    order("homeup.js", /if \(canUseSingularity\(ns\.getResetInfo\(\)\)\) \{\s*viaActor = true/, /acquire\(ns, 'homeup'\)/, "takes the UI lock before handing the purchase to act.js");
+    order("torbuy.js", /if \(singularityKnown\(ns\)\) \{\s*say\('ok'/, /acquire\(ns/, "navigates before standing down under Singularity");
+    order("backdoor.js", /ns\.write\(BACKDOOR_REQ/, /ns\.write\(CMD_IN/, "queues the bridge before requesting the Singularity backdoor");
+    order("act.js", /=== 'w0r1d_d43m0n'\)\) return \{ target: q\.target, ok: false/, /ns\.exec\(BACKDOOR_ACTOR/, "launches a requested backdoor before refusing w0r1d_d43m0n");
+    if (!/const BACKDOOR_REQ = '\/tel\/backdoor-req\.txt'/.test(src("act.js")) || !/export const BACKDOOR_REQ = '\/tel\/backdoor-req\.txt'/.test(src("backdoor.js"))) c5.fail("backdoor.js and act.js disagree on the request path — requests would never be served");
+    if (!/h\?\.blockedByCity \|\| h\?\.viaActor/.test(src("act.js"))) c5.fail("act.js: does not perform homeup's viaActor purchases — home would never upgrade");
+    if (!/invariant: \(ns\) => !ns\.hasTorRouter\(\) && !canAccessFeature\(ns\.getResetInfo\(\), 4\)/.test(src("watchdog.js"))) c5.fail("watchdog.js: torbuy relaunched under Singularity");
+    const { singularityKnown, SF_FILE } = await import("../../sfgate.js");
+    const T = Date.parse("2026-09-24T10:00:00Z");
+    const rd = (o) => ({ read: (f) => (f === SF_FILE && o ? JSON.stringify(o) : "") });
+    if (singularityKnown(rd({ at: new Date(T - 30e3).toISOString(), singularity: true }), T) !== true) c5.fail("a fresh true must read true");
+    if (singularityKnown(rd({ at: new Date(T - 10 * 60e3).toISOString(), singularity: true }), T) !== false) c5.fail("a stale true must read false (left BN4 without SF4)");
+    if (singularityKnown(rd(null), T) !== false) c5.fail("a missing record must read false — the old DOM/bridge route");
+    c5.examined(13);
+  }
+  checks.push(c5);
+
+  const c6 = new Check("HU6", "act.js copies every module its actors import when it places one off home");
+  {
+    const imports = (f) => [...fs.readFileSync(path.join(REPO, f), "utf8").matchAll(/^import[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+    const closure = (f, seen = new Set()) => {
+      for (const d of imports(f)) if (!seen.has(d)) { seen.add(d); closure(d, seen); }
+      return seen;
+    };
+    const act = src("act.js");
+    const listed = new Set(((act.match(/const ACTOR_DEPS = \[([^\]]*)\]/) || [])[1] || "").match(/[\w.-]+\.js/g) || []);
+    if (!listed.size) c6.fail("act.js: no ACTOR_DEPS list found");
+    const scps = [...act.matchAll(/ns\.scp\(([^)]*)\)/g)].map((m) => m[1]).filter((a) => /actor/.test(a));
+    for (const a of scps) if (!/\.\.\.ACTOR_DEPS/.test(a)) c6.fail(`act.js: an actor scp copies without ACTOR_DEPS: scp(${a})`);
+    const actors = fs.readdirSync(REPO).filter((f) => /^(act|snap)-.*\.js$/.test(f));
+    c6.examined(actors.length);
+    for (const f of actors) for (const d of closure(f)) if (!listed.has(d)) c6.fail(`${f} imports ${d}, which act.js does not copy off home`);
+  }
+  checks.push(c6);
 
   return checks;
 }

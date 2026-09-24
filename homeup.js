@@ -37,6 +37,7 @@
 
 import { acquire, release, setLockTransport, LOCK_FILE } from 'lock.js'
 import { nextHomeUpgrade } from 'homecost.js'
+import { canUseSingularity } from 'sfgate.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 
@@ -236,6 +237,9 @@ async function once(ns, flags) {
   // player in Sector-12, and when it is not, act.js performs the same
   // purchase through the Singularity actor instead (act-homeram.js).
   let blockedByCity = false
+  // With Singularity the purchase is act-homeram.js's, from any city and with
+  // no screen: this script decides, act.js buys. No UI lock, no navigation.
+  let viaActor = false
   let nextWanted = null
   // MIRROR HOME. This script runs `where: 'anywhere'`, the daemon mirrors
   // /tel/* from home only, and act.js PULLS /tel/homeup.txt from home to read
@@ -258,6 +262,7 @@ async function once(ns, flags) {
     errors: errors.slice(-5),
     next: nextWanted,
     blockedByCity,
+    viaActor,
     // For the planner's home valuation (objective.homeLn): a RAM upgrade
     // doubles home, so its deltaGB is the current size.
     homeRam: ns.getServerMaxRam('home'),
@@ -312,6 +317,18 @@ async function once(ns, flags) {
     )
     settled = true
     report(note, ns, next ? 'waiting' : 'ok', nextCost)
+    return
+  }
+
+  // SINGULARITY: never drive the UI. The Alpha Enterprises route unfocuses
+  // work, navigates the City and holds the UI lock; upgradeHomeRam/Cores do
+  // the same purchase from anywhere. act.js performs it within ~30s
+  // (homeUpgradeIfBlocked). The pre-install spend-down already went that way.
+  if (canUseSingularity(ns.getResetInfo())) {
+    viaActor = true
+    notes.push(`Singularity: act.js buys ${next.kind} ($${ns.format.number(next.cost)}) through act-homeram.js — no screen`)
+    settled = true
+    report(note, ns, 'ok', nextCost)
     return
   }
 
