@@ -91,7 +91,8 @@
 // early is free and must not wait for a human, while leaving the node should be
 // a decision someone made on purpose.
 
-import { canUseSingularity, singularityRamMultiplier } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, sfLevel } from 'sfgate.js'
+import { COVENANT_MANDATE, covenantMandated, sleevesFromCovenant } from 'sleeveplan.js'
 import { reporter } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 
@@ -123,6 +124,8 @@ export async function main(ns) {
   const flags = ns.flags([
     ['next', 0],
     ['dry', false],
+    // The Covenant mandate (below) is waived only by saying so.
+    ['waive-covenant', false],
   ])
   ns.disableLog('ALL')
 
@@ -239,6 +242,34 @@ export async function main(ns) {
     published = true
     ns.tprint(`endgame: READY — ${report.detail}`)
     return
+  }
+
+  // THE COVENANT MANDATE (sleeveplan.COVENANT_MANDATE, the user's decision
+  // 2026-09-24): do not leave BitNode 10 until the mandated Covenant sleeves
+  // are bought — this node is the only place they can be. A precondition
+  // only: it refuses, it never acts. The count comes from sleeve.js's
+  // telemetry (0GB); unreadable or stale refuses too, because leaving on an
+  // unknown is irreversible. --waive-covenant overrides, explicitly.
+  if (reset?.currentNode === COVENANT_MANDATE.node && !flags['waive-covenant']) {
+    let fleet = null
+    try {
+      fleet = JSON.parse(ns.read('/tel/sleeve.txt') || 'null')
+    } catch {
+      fleet = null
+    }
+    const fresh = fleet && fleet.bitNode === reset.currentNode && Date.now() - Date.parse(fleet.at) < 15 * 60e3 && Number.isInteger(fleet.sleeves)
+    const from = fresh ? sleevesFromCovenant(fleet.sleeves, sfLevel(reset, 10), reset.currentNode) : null
+    if (from === null || covenantMandated(reset.currentNode, from)) {
+      report.result = 'held'
+      report.detail =
+        from === null
+          ? `ready, but the Covenant sleeve count is unreadable (sleeve.txt ${fleet ? 'stale or foreign' : 'missing'}) — not leaving BitNode ${reset.currentNode} on an unknown (mandate ${COVENANT_MANDATE.decided}; --waive-covenant to override)`
+          : `ready, but only ${from} of the ${COVENANT_MANDATE.target} mandated Covenant sleeves are bought — BitNode ${reset.currentNode} is the only place to buy them (mandate ${COVENANT_MANDATE.decided}; --waive-covenant to override)`
+      note('ok', report)
+      published = true
+      ns.tprint(`endgame: ${report.detail}`)
+      return
+    }
   }
 
   if (!flags.next || flags.dry) {

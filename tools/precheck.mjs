@@ -49,10 +49,26 @@ try {
   console.error(`precheck: could not load the RAM calculator: ${e}`);
   process.exit(2);
 }
+// Singularity prices depend on the save (RamCostGenerator.ts SF4Cost reads
+// Player.bitNodeN and the SF4 level), and without one the calculator THREW
+// and this still printed "ok" — a vacuous check for exactly the scripts that
+// cost the most. Price both files against the same fixed save (BN1, SF4.1:
+// Singularity at x16, the regime every node but BN4 runs under).
+m.asSave({ bitNode: 1, sf: { 4: 1 } });
 const strip = (code) => code.replace(/ns\.ramOverride\([^)]*\)/, "0");
-const price = (code) => m.priceCode(strip(code), name)?.cost;
+const price = (code) => {
+  try {
+    return m.priceCode(strip(code), name)?.cost;
+  } catch (e) {
+    return { error: String(e).slice(0, 200) };
+  }
+};
 const now = fs.existsSync(`${m.REPO}/${name}`) ? price(fs.readFileSync(`${m.REPO}/${name}`, "utf8")) : null;
 const next = price(fs.readFileSync(cand, "utf8"));
+if (typeof now !== "number" && now !== null) {
+  console.error(`precheck: the CURRENT ${name} does not price (${JSON.stringify(now)}) — cannot compare, refusing`);
+  process.exit(2);
+}
 if (typeof next !== "number") {
   console.error(`precheck: the candidate does not price (${JSON.stringify(next)}) — refusing`);
   process.exit(1);

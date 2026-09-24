@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -1168,6 +1168,7 @@ function readFleet(ns, info) {
       // from it (sleeveplan.sleevesFromCovenant); absent, it refuses.
       sleeves: Number.isInteger(f.sleeves) ? f.sleeves : null,
       byObjective: f.byObjective && typeof f.byObjective === 'object' ? f.byObjective : null,
+      gymToPlayerAtTm1: f.gymToPlayerAtTm1 && typeof f.gymToPlayerAtTm1 === 'object' ? f.gymToPlayerAtTm1 : null,
       expToPlayerHackingIfStudying: fin(f.expToPlayerHackingIfStudying) ? f.expToPlayerHackingIfStudying : null,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
     }
@@ -1298,6 +1299,19 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
     }
   }
   const hours = horizonHours !== null ? horizonHours : carried?.hours ?? null
+  // THE COVENANT CAMPAIGN outranks every objective while it runs: the fleet
+  // trains the player's current stat at the gym (its exp transfers), which is
+  // what the campaign's legs were priced with. Not a member yet only — once
+  // joined, the fleet goes back to the priced objective.
+  const cv = (() => {
+    try {
+      const g = covenantActive(readJson(ns, '/tel/installgate.txt'), info?.lastAugReset)
+      return g && !g.member && g.trainStat ? g : null
+    } catch {
+      return null
+    }
+  })()
+  if (cv) byExit = { objective: 'covenant', why: `the mandated Covenant campaign is running: train ${cv.trainStat} beside the player`, trainStat: cv.trainStat }
   ns.write(
     '/tel/sleeveplan.txt',
     JSON.stringify({
@@ -1332,8 +1346,9 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
       //   money  only when sleeve exp is impossible outright
       // The simulated-exit choice when it priced; the old ladder only as the
       // named fallback (objectiveDecidedBy).
-      objectiveDecidedBy: byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
+      objectiveDecidedBy: byExit?.objective === 'covenant' ? 'covenant-mandate' : byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
       objectiveWhy: byExit?.why ?? null,
+      trainStat: byExit?.trainStat ?? null,
       objective: byExit?.objective ? byExit.objective :
         verdict?.worth === true && verdict?.gatePaid !== true
           ? 'karma'
@@ -1668,9 +1683,12 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     const cost = covenantSleeveCost(from)
     if (!isFinite(cost)) return out(false, 'all Covenant sleeves bought')
     const member = player.factions.includes(COVENANT.faction)
-    const fc = [...(schedule?.joinForecasts ?? []), ...(schedule?.unpriceable ?? [])].find((x) => x?.name === COVENANT.faction)
-    const combatH = member ? 0 : (fc?.blockers ?? []).reduce((t, b) => (t === null ? null : b?.gym ? (typeof b.gym.hours === 'number' && isFinite(b.gym.hours) ? t + b.gym.hours : null) : t), fc ? 0 : null)
-    if (combatH === null) return out(false, 'Covenant combat legs unpriced (no forecast or a gym leg without a rate)')
+    // The combat legs with the fleet at the gym beside the player
+    // (sleeveplan.covenantCombatHours); the player-alone forecast was ~2x.
+    const legs = member ? null : covenantCombatHours(player, planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
+    const combatH = member ? 0 : legs ? legs.hours : null
+    if (combatH === null) return out(false, 'Covenant combat legs unpriced (player or fleet gym rates unreadable)')
+    const mandated = covenantMandated(info?.currentNode, from)
     const base = basePolicy?.best
     if (!base) return out(false, `no base trajectory to compare against: ${basePolicy?.why ?? 'exit unpriced'}`)
     // The new sleeve's exp transfer, at the fleet's per-sleeve study rate.
@@ -1678,8 +1696,16 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     const withC = bestExitPolicy({ ...inputs(), covenant: { cost, joinMoney: COVENANT.joinMoney, combatH, member, sleeveExpPerSec: perSleeveExp } })
     if (!withC.best) return out(false, `the campaign trajectory could not be priced: ${withC.why}`)
     const deltaH = withC.best.hours - base.hours
-    const extra = { deltaH, withH: withC.best.hours, withoutH: base.hours, installsWith: withC.best.installsFirst, installsWithout: base.installsFirst, cost, combatH, member }
+    const extra = { deltaH, withH: withC.best.hours, withoutH: base.hours, installsWith: withC.best.installsFirst, installsWithout: base.installsFirst, cost, combatH, member, mandated, trainStat: legs?.current ?? null, combatLegs: legs?.legs ?? null }
     const summary = `exit ${withC.best.hours.toFixed(1)}h with the campaign vs ${base.hours.toFixed(1)}h without (${deltaH >= 0 ? '+' : ''}${deltaH.toFixed(1)}h in this node)`
+    // THE MANDATE (sleeveplan.COVENANT_MANDATE, the user's decision): the
+    // campaign is not optional, so only WHEN is priced — it runs in the
+    // window the simulation places it, the final one of its best policy.
+    if (mandated) {
+      return withC.best.installsFirst === 0
+        ? out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}): this is the window the simulation places it in; run it now`, extra)
+        : out(false, `${summary} — MANDATED (${COVENANT_MANDATE.decided}): scheduled after ${withC.best.installsFirst} more install(s)`, extra)
+    }
     if (!(deltaH < 0)) return out(false, `${summary} — slower in this node`, extra)
     if (base.installsFirst !== 0 || withC.best.installsFirst !== 0) return out(false, `${summary} — faster, but not yet the final window (${withC.best.installsFirst} install(s) first)`, extra)
     return out(true, `${summary} — run it now`, extra)
@@ -3041,13 +3067,13 @@ async function act(ns, canJoin, info, note) {
   // exactly what the hold removes, so it is not consulted here.
   const covenantStep = (() => {
     if (!canJoin || player.factions.includes(COVENANT.faction)) return null
-    if (!covenantActive(readJson(ns, '/tel/installgate.txt'), info?.lastAugReset)) return null
-    const fc = [...(schedule?.joinForecasts ?? []), ...(schedule?.unpriceable ?? [])].find((x) => x?.name === COVENANT.faction)
-    for (const b of fc?.blockers ?? []) {
-      const leg = b?.gym?.legs?.find((l) => (player.skills?.[l.stat] ?? 0) < l.to)
-      if (leg) return { kind: 'gym', gym: b.gym.gym, city: b.gym.city, forFaction: COVENANT.faction, ...leg }
-    }
-    return null
+    const cv = covenantActive(readJson(ns, '/tel/installgate.txt'), info?.lastAugReset)
+    if (!cv) return null
+    // The stat the campaign's legs name, so the player and the fleet stack on
+    // the same one (sleeveplan.covenantCombatHours).
+    const legs = covenantCombatHours(player, readFleet(ns, info)?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
+    const leg = legs?.legs?.[0]
+    return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: COVENANT.faction, stat: leg.stat, to: COVENANT.skill, hours: leg.hours } : null
   })()
   const bodyStep = covenantStep ?? (() => {
     if (!scheduleTarget || wantCompany || !(schedule?.current?.workH > 0)) return null
@@ -3781,7 +3807,11 @@ async function act(ns, canJoin, info, note) {
     // again — all on one input builder, so only the choice differs.
     const exitCompare = (() => {
       try {
-        const inputs = exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+        const inputs0 = exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+        // A MANDATED Covenant campaign is in every trajectory the gate
+        // compares — it happens whichever way the gate chooses.
+        const cm = covenantExitOf(ns, info, player, schedule, { best: { hours: 1, installsFirst: 0 } }, () => inputs0, planFleet)
+        const inputs = cm?.mandated && typeof cm.combatH === 'number' ? { ...inputs0, covenant: { cost: cm.cost, joinMoney: COVENANT.joinMoney, combatH: cm.combatH, member: cm.member, sleeveExpPerSec: 0 } } : inputs0
         const now = bestExitPolicy({ ...inputs, firstInstallH: 0 }, 400, 1)
         const never = bestExitPolicy(inputs, 0, 0)
         const waits = futures.map((f) => {

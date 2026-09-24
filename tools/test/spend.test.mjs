@@ -108,5 +108,20 @@ export async function run() {
   }
   checks.push(c8);
 
+  const c9 = new Check("SE9", "endgame.js will not leave BitNode 10 before the mandated Covenant sleeves — a refusal placed before any action");
+  {
+    const eg = src("endgame.js");
+    c9.examined(4);
+    const gateAt = eg.indexOf("if (reset?.currentNode === COVENANT_MANDATE.node && !flags['waive-covenant']) {");
+    const readyAt = eg.indexOf("if (!flags.next || flags.dry) {");
+    const destroyAt = eg.indexOf("destroyW0r1dD43m0n(");
+    if (gateAt < 0 || !(gateAt < readyAt && gateAt < destroyAt)) c9.fail("the mandate check must come before the ready report and the destroy call");
+    const blk = eg.slice(gateAt, readyAt);
+    if (!/if \(from === null \|\| covenantMandated\(reset\.currentNode, from\)\) \{[\s\S]*?return\s*\}/.test(blk)) c9.fail("an unknown count or an unmet mandate must RETURN (refuse), not continue");
+    if (/singularity|destroyW0r1dD43m0n|connect|installBackdoor/.test(blk)) c9.fail("the precondition must never act — only refuse");
+    if (!/\['waive-covenant', false\]/.test(eg)) c9.fail("the override must be an explicit flag, off by default");
+  }
+  checks.push(c9);
+
   return checks;
 }

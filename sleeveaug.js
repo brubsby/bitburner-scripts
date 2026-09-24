@@ -18,7 +18,7 @@
 // unreadable refuses (a guessed share or leg would buy on a stand-in).
 
 import { canUseSleeve, sfLevel } from 'sfgate.js'
-import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, COVENANT } from 'sleeveplan.js'
+import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, covenantSleeveCost, COVENANT, COVENANT_MANDATE } from 'sleeveplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { reporter } from 'status.js'
@@ -102,6 +102,16 @@ function decideAndBuy(ns, flags, note) {
       g = null
     }
     const join = joinClaim(gate, info.lastAugReset)
+    // THE MANDATE (sleeveplan.COVENANT_MANDATE, the user's decision): as a
+    // member in its node, buy up to `target` whenever the money clears the
+    // join claim, and one more (up to `opportunistic`) only when it does so
+    // without holding for it — never a price this window cannot already pay.
+    if (info.currentNode === COVENANT_MANDATE.node && from < COVENANT_MANDATE.opportunistic) {
+      const room = num(join) ? money - join : null
+      if (room === null) return { buy: false, why: 'join claim unreadable — not spending' }
+      const why = from < COVENANT_MANDATE.target ? `mandated: sleeve #${from + 1} of ${COVENANT_MANDATE.target} (${COVENANT_MANDATE.decided})` : `opportunistic: sleeve #${from + 1} affordable now without holding`
+      return room >= cost ? { buy: true, cost, why, more: true } : { buy: false, why: `${why} — $${ns.format.number(room)} of $${ns.format.number(cost)} free` }
+    }
     // Only when the simulated exit WITH the campaign beats the one without
     // (progress.js covenantExitOf). That comparison already spent this price
     // before the rest of the window's money, so the sleeve goes first; the
@@ -114,11 +124,21 @@ function decideAndBuy(ns, flags, note) {
   })()
   decisions.push({ sleeve: another })
   if (another.buy && !flags.dry) {
-    const r = ns.sleeve.purchaseSleeve()
-    if (r?.success) {
-      bought.push(`Covenant sleeve ($${ns.format.number(another.cost)})`)
-      budget = Math.max(0, budget - another.cost)
-    } else decisions.push({ sleeve: 'refused', why: r?.message ?? 'purchaseSleeve failed' })
+    // Under the mandate, as many as the money clears in one go (each is 10x
+    // the last, so this is at most a few).
+    for (let k = 0; k < COVENANT_MANDATE.opportunistic; k++) {
+      const r = ns.sleeve.purchaseSleeve()
+      if (!r?.success) {
+        if (k === 0) decisions.push({ sleeve: 'refused', why: r?.message ?? 'purchaseSleeve failed' })
+        break
+      }
+      bought.push(`Covenant sleeve ($${ns.format.number(ns.sleeve.getSleeveCost ? covenantSleeveCost(sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode) - 1) : another.cost)})`)
+      if (!another.more) break
+      const n2 = sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode)
+      if (n2 === null || n2 >= COVENANT_MANDATE.opportunistic) break
+      const j2 = joinClaim(ns.read(GATE_FILE), info.lastAugReset)
+      if (!(typeof j2 === 'number' && ns.getServerMoneyAvailable('home') - j2 >= ns.sleeve.getSleeveCost())) break
+    }
   }
 
   // --- 2. AUGMENTATIONS. This job gathers the offers; the DECISION is

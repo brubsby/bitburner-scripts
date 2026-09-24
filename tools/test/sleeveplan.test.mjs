@@ -794,9 +794,13 @@ export async function run() {
       await main(w.ns);
       return w;
     };
-    c18.examined(6);
+    c18.examined(7);
+    if ((await run({ active: true, money: 5e12 })).log.length) c18.fail("the mandate never buys what the money cannot clear");
     if (!(await run({ active: true })).log.includes("purchaseSleeve")) c18.fail("an active comparison must buy");
-    if ((await run({ active: false, income: 1e15 })).log.length) c18.fail("no buy without the comparison, however rich — no snapshot shortcut");
+    // Under the mandate (BN10, fewer than 4 bought) a member buys whenever the
+    // money clears the join claim — the user decided the campaign; only its
+    // timing is priced.
+    if (!(await run({ active: false, income: 1e15 })).log.includes("purchaseSleeve")) c18.fail("the mandate must buy as a member with the money, comparison or not");
     if ((await run({ active: true, member: false })).log.length) c18.fail("never without Covenant membership");
     if ((await run({ active: true, node: 4 })).log.length) c18.fail("never outside BitNode 10");
     if ((await run({ active: true, money: 1.5e13, join: 1e13 })).log.length) c18.fail("the join claim is never spent");
@@ -816,7 +820,7 @@ export async function run() {
     if (!/const deltaH = withC\.best\.hours - base\.hours/.test(fn)) c19.fail("the decision must be the difference of the two simulated exits");
     if (!/base\.installsFirst !== 0 \|\| withC\.best\.installsFirst !== 0\) return out\(false/.test(fn)) c19.fail("active only in the final window");
     if ((src.match(/covenantExitOf\(ns, info, player, schedule,/g) || []).length < 3) c19.fail("both the planned and the nothing-to-buy path must publish the comparison");
-    if (!/if \(!covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\) return null[\s\S]{0,600}const bodyStep = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the comparison is on, ahead of the schedule's own body step");
+    if (!/const cv = covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\s*if \(!cv\) return null[\s\S]{0,700}const bodyStep = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the campaign is on, ahead of the schedule's own body step");
     const rf = src.slice(src.indexOf("function readFleet"), src.indexOf("function readFleet") + 3200);
     if (!/sleeves: Number\.isInteger\(f\.sleeves\) \? f\.sleeves : null/.test(rf)) c19.fail("readFleet must return the fleet size the comparison counts from");
   }
@@ -835,7 +839,7 @@ export async function run() {
     if (!/\['money', finish\(\{ \.\.\.base, extraIncome: \[\{ atH: 0, perSec: by\.money \}\], eBudget: eB \}/.test(fn)) c20.fail("money: crime income from now through eBudget");
     if (!/\['karma', finish\(base, \{ karmaPerSec: by\.karma/.test(fn)) c20.fail("karma: the fleet's karma shortening the gang's grind");
     if (!/\.sort\(\(a, b\) => \(Math\.abs\(a\[1\] - b\[1\]\) < 1 \/ 60 \? 0 : a\[1\] - b\[1\]\)\)/.test(fn)) c20.fail("the soonest exit must win (ties within a minute keep the earlier-listed objective)");
-    if (!/objectiveDecidedBy: byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
+    if (!/objectiveDecidedBy: byExit\?\.objective === 'covenant' \? 'covenant-mandate' : byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
   }
   checks.push(c20);
 
@@ -907,6 +911,24 @@ export async function run() {
     if (a?.tasks?.[0] === "shock") c24.fail("with working-now sooner, the sleeve must not recover");
   }
   checks.push(c24);
+
+  const c25 = new Check("SP25", "the Covenant mandate: binds in BN10 below 4 bought; combat legs stack the fleet's gym exp on the player's stat");
+  {
+    c25.examined(6);
+    if (sp.COVENANT_MANDATE.target !== 4 || sp.COVENANT_MANDATE.opportunistic !== 5 || sp.COVENANT_MANDATE.node !== 10) c25.fail(`the user's decision is #1-#4 in BN10, #5 opportunistic: ${JSON.stringify(sp.COVENANT_MANDATE)}`);
+    if (!sp.covenantMandated(10, 0) || !sp.covenantMandated(10, 3) || sp.covenantMandated(10, 4) || sp.covenantMandated(4, 0) || sp.covenantMandated(10, null)) c25.fail("binds in BN10 while fewer than 4 are bought, nowhere else, never on an unknown count");
+    const player = { exp: { strength: 0, defense: 0, dexterity: 0, agility: 0 }, mults: { strength: 1, defense: 1, dexterity: 1, agility: 1, strength_exp: 1, defense_exp: 1, dexterity_exp: 1, agility_exp: 1 } };
+    const alone = sp.covenantCombatHours(player, null, 1);
+    const P = alone.legs[0].playerRate;
+    const helped = sp.covenantCombatHours(player, { strength: P, defense: P, dexterity: P, agility: P }, 1);
+    if (Math.abs(helped.hours - alone.hours / 2) > 1e-9) c25.fail(`a fleet matching the player's gym rate halves the legs: ${alone.hours} -> ${helped.hours}`);
+    if (helped.current !== "strength" || alone.legs.length !== 4) c25.fail("all four stats are legs, trained in a fixed order");
+    const tm2 = sp.covenantCombatHours(player, { strength: P, defense: P, dexterity: P, agility: P }, 2);
+    if (Math.abs(tm2.hours - helped.hours / 2) > 1e-9) c25.fail("the training multiplier scales player and fleet alike");
+    const a = sp.sleeveAssignments([{ index: 0, sync: 100 }, { index: 1, sync: 50 }], null, { objective: "covenant", trainStat: "agility" });
+    if (a?.tasks?.join() !== "agility,agility") c25.fail(`every sleeve trains the campaign's stat: ${a?.tasks}`);
+  }
+  checks.push(c25);
 
   return checks;
 }

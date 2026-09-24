@@ -104,7 +104,7 @@ import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf } from 'sleeveplan.js'
 import { bestExitPolicy } from 'exitplan.js'
-import { CRIMES } from 'bodyplan.js'
+import { CRIMES, GYMS, gymRate } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 
@@ -380,6 +380,8 @@ async function act(ns, note) {
 			// the player is already a MEMBER — setToFactionWork throws
 			// otherwise, and a throw per sleeve per tick is not a plan.
 			repFaction: typeof plan?.repFaction === 'string' ? plan.repFaction : null,
+			// The Covenant campaign's stat (objective 'covenant').
+			trainStat: typeof plan?.trainStat === 'string' ? plan.trainStat : null,
 			nodeWorkRepMult: node?.FactionWorkRepGain,
 			sharePower: typeof plan?.sharePower === 'number' && isFinite(plan.sharePower) && plan.sharePower > 0 ? plan.sharePower : 1,
 			exitOf: (() => {
@@ -604,6 +606,24 @@ async function act(ns, note) {
 			// progress.js's objective choice, which simulates the exit under
 			// each and keeps the soonest (CLAUDE.md: trajectories against
 			// trajectories). Null, never 0, where unpriceable.
+			// Combat exp the fleet hands the PLAYER per second if every sleeve
+			// trains that stat at the best gym, at training multiplier 1 (linear
+			// in it: progress.js scales by ns.hacknet.getTrainingMult, which would
+			// cost this file 0.5GB). The Covenant campaign's legs are priced with it.
+			gymToPlayerAtTm1: (() => {
+				const gym = [...GYMS].sort((a, b) => b.expMult - a.expMult)[0]
+				const tm = 1
+				const out = {}
+				for (const st of ['strength', 'defense', 'dexterity', 'agility']) {
+					let v = 0
+					for (const sl of sleeves) {
+						const r = gymRate(gym, st, sl, tm)
+						if (typeof r === 'number' && isFinite(r) && typeof sl.sync === 'number') v += r * (sl.sync / 100) * ((100 - (sl.shock ?? 0)) / 100)
+					}
+					out[st] = v
+				}
+				return out
+			})(),
 			byObjective: (() => {
 				const k = fleetRates(sleeves, node, { objective: 'karma' })
 				const m = fleetRates(sleeves, node, { objective: 'money' })

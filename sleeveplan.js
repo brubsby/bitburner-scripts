@@ -76,7 +76,7 @@
 // 10 alone capping shock at 25 and flooring sync at 25
 // (PlayerObjectGeneralMethods.ts:142-152). The COUNT persists across nodes.
 // ---------------------------------------------------------------------------
-import { CRIMES, GYMS, crimeChance, gymRate, intelligenceBonus, personProblem } from 'bodyplan.js'
+import { CRIMES, GYMS, crimeChance, gymRate, hoursToStat, intelligenceBonus, personProblem } from 'bodyplan.js'
 import { skillFromExp } from 'installgate.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
@@ -275,6 +275,17 @@ export function sleeveAssignments(sleeves, node, o = {}) {
   const why = []
   let repTaken = false
   const syncDecided = new Set()
+  // THE COVENANT CAMPAIGN: every sleeve trains the player's current stat at
+  // the gym — its exp transfers to the player — ahead of any other objective.
+  if (objective === 'covenant') {
+    const st = ['strength', 'defense', 'dexterity', 'agility'].includes(o.trainStat) ? o.trainStat : null
+    for (const s of sleeves) {
+      const i = s?.index ?? tasks.length
+      tasks.push(st)
+      why.push(st ? `sleeve ${i}: train ${st} for the Covenant campaign (exp transfers to the player)` : `sleeve ${i}: covenant campaign without a stat — no assignment`)
+    }
+    return { tasks, why, breakevenHours: null, objective, horizonHours }
+  }
   for (const s of sleeves) {
     const i = s?.index ?? tasks.length
     const sync = num(s?.sync) ? s.sync : null
@@ -909,4 +920,52 @@ export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.no
     const r = bestExitPolicy(o)
     return num(r?.best?.hours) ? r.best.hours : null
   }
+}
+
+/**
+ * THE COVENANT MANDATE — a decision the user made, not one this code priced.
+ *
+ * 2026-09-24: "should we get all the sleeves we can from this run through the
+ * bn?" -> yes, on the recommendation: sleeves #1-#4 before leaving BitNode 10,
+ * and #5 only when it is affordable without holding for it. Why it overrides
+ * the in-node price: the simulated exit says the campaign costs this node
+ * ~52h, but the purchase is only possible in BN10 and the sleeves persist into
+ * every later node (sleevesFromCovenant never resets), which nothing here
+ * simulates. So the campaign is MANDATORY, and what the simulation still
+ * decides is WHEN: it runs in the window the exit simulation finds cheapest.
+ */
+export const COVENANT_MANDATE = { node: 10, target: 4, opportunistic: 5, decided: '2026-09-24 (user)' }
+
+/** Whether the mandate still binds: in its node, fewer than `target` bought. */
+export function covenantMandated(bitNode, fromCovenant) {
+  return bitNode === COVENANT_MANDATE.node && Number.isInteger(fromCovenant) && fromCovenant < COVENANT_MANDATE.target
+}
+
+/**
+ * Combat legs to the Covenant's 850s with the fleet at the gym beside the
+ * player: every sleeve trains the same stat, and its exp reaches the player
+ * scaled by sync and its shock bonus (applySleeveGains, Work.ts:16-24 — the
+ * player's own exp mults are NOT applied to it). Stats one at a time; stacking
+ * everyone on one stat is optimal when rates are proportional across stats,
+ * stated. Homicide also trains all four combat stats but at a fraction of the
+ * gym's rate per stat, so it is not used. { hours, legs, slowest } or null.
+ */
+export function covenantCombatHours(player, fleetGymAtTm1, trainingMult, target = COVENANT.skill) {
+  const gym = [...GYMS].sort((a, b) => b.expMult - a.expMult)[0]
+  if (!player?.exp || !player?.mults || !num(trainingMult) || trainingMult <= 0) return null
+  let hours = 0
+  const legs = []
+  for (const st of ['strength', 'defense', 'dexterity', 'agility']) {
+    const P = gymRate(gym, st, player, trainingMult)
+    if (!num(P)) return null
+    const f = fleetGymAtTm1?.[st]
+    const S = num(f) && f > 0 ? f * trainingMult : 0
+    const h = hoursToStat(st, target, player, P + S)
+    if (h === null) return null
+    if (h > 0) legs.push({ stat: st, hours: h, playerRate: P, sleeveRate: S })
+    hours += h
+  }
+  // The stat to train now: the first still short, in a fixed order, so the
+  // player and every sleeve stack on the same one (see above).
+  return { hours, legs, current: legs.length ? legs[0].stat : null, gym: gym.name, city: gym.city }
 }
