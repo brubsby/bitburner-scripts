@@ -1121,6 +1121,7 @@ function readFleet(ns, info) {
       // The fleet's size — the Covenant campaign derives its purchase count
       // from it (sleeveplan.sleevesFromCovenant); absent, it refuses.
       sleeves: Number.isInteger(f.sleeves) ? f.sleeves : null,
+      byObjective: f.byObjective && typeof f.byObjective === 'object' ? f.byObjective : null,
       expToPlayerHackingIfStudying: fin(f.expToPlayerHackingIfStudying) ? f.expToPlayerHackingIfStudying : null,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
     }
@@ -1176,16 +1177,22 @@ function gangWorthNow(ns, info, player, inputsFn = null) {
  * a fresh gang under this node's GangSoftcap — the same fresh-gang setup
  * tools/sim/gang-vs-nogang.mjs uses. Never another node's number.
  */
+let gangSchedMemo = null
 function gangExitNow(ns, info, inputs, grindHours) {
   const node = info?.currentNode
   const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
   let sched = remembered.perSec ? [{ atH: 0, perSec: remembered.perSec }] : null
+  // The fresh-gang simulation is the same for every caller in a pass (the
+  // sleeve objective choice asks up to four times): computed once per node
+  // per 10 minutes.
+  if (!sched && gangSchedMemo && gangSchedMemo.node === node && Date.now() - gangSchedMemo.at < 600e3) sched = gangSchedMemo.sched
   if (!sched) {
     const softcap = bitNodeMults(node)?.GangSoftcap
     const G = { faction: 'Slum Snakes', isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false }
     const rivals = Object.fromEntries(['Tetrads', 'The Syndicate', 'The Dark Army', 'Speakers for the Dead', 'NiteSec', 'The Black Hand'].map((n) => [n, { power: 1, territory: 1 / 7 }]))
     const sim = typeof softcap === 'number' ? simulateGang(G, [], { softcap, horizonH: 100, stepSec: 300, mode: 'money', assignFn: trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } }) : null
     sched = gangIncomeSchedule(sim)
+    gangSchedMemo = { node, at: Date.now(), sched }
   }
   const eB = readJson(ns, '/tel/installgate.txt')?.eBudget
   return gangExit(bestExitPolicy, inputs, sched, grindHours, typeof eB === 'number' && isFinite(eB) ? eB : null)
@@ -1221,7 +1228,7 @@ function sleeveRepFaction(player, schedule, gangFaction) {
  * for THIS BitNode is carried forward with the stamp saying when it was
  * priced. A carried horizon is visible; a null one silently changes behaviour.
  */
-function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, repFaction = null, expDisabled = false) {
+function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, repFaction = null, expDisabled = false, byExit = null) {
   // THE CAP IS OWNED HERE so its provenance can be published with it. It used
   // to be applied at the call site beside a `horizonRawHours` field, and that
   // field was dropped when this function was extracted — leaving the plan
@@ -1277,7 +1284,11 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
       //          grinding, and that is not the gang's
       //   exp    otherwise — it feeds the hacking level the exit climb needs
       //   money  only when sleeve exp is impossible outright
-      objective:
+      // The simulated-exit choice when it priced; the old ladder only as the
+      // named fallback (objectiveDecidedBy).
+      objectiveDecidedBy: byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
+      objectiveWhy: byExit?.why ?? null,
+      objective: byExit?.objective ? byExit.objective :
         verdict?.worth === true && verdict?.gatePaid !== true
           ? 'karma'
           : repFaction
@@ -1367,6 +1378,51 @@ function nextInstallGainOf(plan, pending, offers) {
   const names = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])]
   if (!names.length) return null
   return batchHackingGain(names.map((n) => byName.get(n)?.mults ?? {}))
+}
+
+/**
+ * THE SLEEVE OBJECTIVE, trajectory against trajectory: the node's exit with
+ * the fleet serving each objective it can (sleeve.js byObjective rates), from
+ * one input builder with the player alone as the base. The soonest wins.
+ *   rep    the sleeve's reputation on the exit's ground leg, and every life's
+ *          reputation x K = (player + sleeve)/player, which buys K^eRep more
+ *          augmentation growth per life (exitplan repBoost)
+ *   exp    its study exp on the level climb
+ *   money  its crime income, from now, through eBudget
+ *   karma  its karma shortening the gang's grind (gangworth.gangExit)
+ * While a gang is still a choice, every candidate is simulated WITH it (its
+ * income after the grind that candidate implies), counted only where it pays.
+ * Replaced a fixed ladder (karma > rep > exp > money) that no trajectory chose.
+ */
+function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabled) {
+  const out = (objective, why, extra = {}) => ({ objective, why, ...extra })
+  try {
+    const fleet = readFleet(ns, info)
+    const by = fleet?.byObjective
+    if (!by) return out(null, `no per-objective fleet rates from sleeve.js (${fleet?.why ?? 'no fleet'})`)
+    const base = inputsFn({ expToPlayerHacking: 0, factionRepPerSec: 0 })
+    const gate = readJson(ns, GATE)
+    const eRep = typeof gate?.objective?.eRep === 'number' ? gate.objective.eRep : null
+    const eB = typeof gate?.eBudget === 'number' ? gate.eBudget : null
+    const playerRep = base.repPerSec
+    const k = karmaChannelCtx(ns, info, player)
+    const gang = k?.gangPending === true && !k.gangKarmaWaived && typeof k.grindHours === 'function'
+    const finish = (inputs, assist) => {
+      if (!gang) return bestExitPolicy(inputs).best?.hours ?? null
+      const g = gangExitNow(ns, info, inputs, k.grindHours(null, assist))
+      return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
+    }
+    const cands = []
+    if (gang && by.karma > 0) cands.push(['karma', finish(base, { karmaPerSec: by.karma, killsPerSec: 0 })])
+    if (repFaction && by.rep > 0 && playerRep > 0) cands.push(['rep', finish({ ...base, sleeveRep: { perSec: by.rep, delayH: 0 }, repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } }, null)])
+    if (!expDisabled && by.exp > 0) cands.push(['exp', finish({ ...base, expPerSec: (base.expPerSec ?? 0) + by.exp }, null)])
+    if (by.money > 0) cands.push(['money', finish({ ...base, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
+    const priced = cands.filter(([, h]) => typeof h === 'number' && isFinite(h)).sort((a, b) => a[1] - b[1])
+    if (!priced.length) return out(null, `no objective could be priced (${cands.map(([o]) => o).join(', ') || 'none viable'})`)
+    return out(priced[0][0], `simulated exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}${eRep === null ? ' (eRep unmeasured: rep priced on the exit leg only — a floor)' : ''}`, { exits: Object.fromEntries(priced) })
+  } catch (e) {
+    return out(null, `objective comparison threw: ${String(e).slice(0, 80)}`)
+  }
 }
 
 /**
@@ -1696,12 +1752,15 @@ function karmaChannelCtx(ns, info, player) {
     // which OVERSTATES the gate rather than understating it, and so cannot talk
     // the run into a gang it has not earned.
     const fleet = readFleet(ns, info)
-    const grindHours = (lift) => {
+    // `assist` defaults to what the fleet delivers now; the sleeve objective
+    // choice passes the fleet's rate UNDER a given objective (or null for the
+    // player alone) to simulate each alternative.
+    const grindHours = (lift, assist = fleet.assist) => {
       if (cycleHours === null) return null
       const p = lift
         ? { ...person, mults: { ...person.mults, ...Object.fromEntries(Object.entries(lift).map(([k, v]) => [k, (person.mults?.[k] ?? 1) * v])) } }
         : person
-      const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1, assist: fleet.assist })
+      const r = karmaGrindAcrossCycles(p, node, { karmaTarget: KARMA_FOR_GANG, cycleHours, focus: 1, assist })
       return r && isFinite(r.hours) ? r.hours : null
     }
     return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
@@ -3196,7 +3255,12 @@ async function act(ns, canJoin, info, note) {
     // priced one forward rather than publishing a null that would re-task the
     // fleet off synchronising every time an unplanned pass ran.
     const gangInputs0 = () => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
-    writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction), readFleet(ns, info)?.expDisabled === true)
+    {
+      const repF = sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction)
+      const expOff = readFleet(ns, info)?.expDisabled === true
+      const byExit = sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
+      writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
+    }
     ns.write(
       GATE,
       JSON.stringify(
@@ -3756,6 +3820,7 @@ async function act(ns, canJoin, info, note) {
       ns.getSharePower(),
       sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction),
       planFleet?.expDisabled === true,
+      sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, pf), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction), planFleet?.expDisabled === true),
     )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards

@@ -822,5 +822,22 @@ export async function run() {
   }
   checks.push(c19);
 
+  const c20 = new Check("SP20", "the sleeve objective is the soonest of simulated exits, one per objective, from the player-alone base");
+  {
+    const fs = (await import("node:fs")).default;
+    const path = (await import("node:path")).default;
+    const { fileURLToPath } = await import("node:url");
+    const src = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const fn = src.slice(src.indexOf("function sleeveObjectiveByExit"), src.indexOf("function spendVerdictsOf"));
+    c20.examined(6);
+    if (!/const base = inputsFn\(\{ expToPlayerHacking: 0, factionRepPerSec: 0 \}\)/.test(fn)) c20.fail("the base must be the shared builder with the fleet removed");
+    if (!/\['rep', finish\(\{ \.\.\.base, sleeveRep: \{ perSec: by\.rep, delayH: 0 \}, repBoost: \{ K: \(playerRep \+ by\.rep\) \/ playerRep, e: eRep \} \}/.test(fn)) c20.fail("rep: the sleeve's rep on the exit leg and repBoost on every life");
+    if (!/\['money', finish\(\{ \.\.\.base, extraIncome: \[\{ atH: 0, perSec: by\.money \}\], eBudget: eB \}/.test(fn)) c20.fail("money: crime income from now through eBudget");
+    if (!/\['karma', finish\(base, \{ karmaPerSec: by\.karma/.test(fn)) c20.fail("karma: the fleet's karma shortening the gang's grind");
+    if (!/\.sort\(\(a, b\) => a\[1\] - b\[1\]\)/.test(fn)) c20.fail("the soonest exit must win");
+    if (!/objectiveDecidedBy: byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
+  }
+  checks.push(c20);
+
   return checks;
 }

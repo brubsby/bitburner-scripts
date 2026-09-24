@@ -207,6 +207,7 @@ export function exitHours(o = {}) {
     installGains = null,
     extraIncome = null,
     eBudget = null,
+    repBoost = null,
   } = o
   // INCOME THAT ARRIVES LATER (extraIncome [{atH, perSec}], absolute node
   // hours from now; each step REPLACES the extra from its hour on) — a gang
@@ -220,7 +221,13 @@ export function exitHours(o = {}) {
     for (const x of steps) if (x.atH <= t) v = x.perSec
     return v
   }
-  const growthAt = (t) => (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
+  // REPUTATION THAT RUNS FASTER ALL NODE (repBoost {K, e}): a sleeve working
+  // factions beside the player multiplies the reputation every life earns by
+  // K, and the planner measures what that buys as eRep = dln(planM)/dln(rep)
+  // (progress.js, reputation arriving 50% faster) — so each later life's gain
+  // is lifted by K^e, the reputation twin of eBudget.
+  const repLift = repBoost && pos(repBoost.K) && repBoost.K >= 1 && num(repBoost.e) && repBoost.e > 0 ? Math.pow(repBoost.K, repBoost.e) : 1
+  const growthAt = (t) => repLift * (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
 
   if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
     return { hours: null, why: 'live state unreadable (income, hacking, multiplier or exit level)' }

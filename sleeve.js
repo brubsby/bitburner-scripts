@@ -587,6 +587,20 @@ async function act(ns, note) {
 			bitNode: ns.getResetInfo()?.currentNode ?? null,
 			// The fleet as a trajectory term. C11 checks progress.js's reads
 			// against these names.
+			// WHAT THE FLEET WOULD DELIVER UNDER EACH OBJECTIVE — the inputs of
+			// progress.js's objective choice, which simulates the exit under
+			// each and keeps the soonest (CLAUDE.md: trajectories against
+			// trajectories). Null, never 0, where unpriceable.
+			byObjective: (() => {
+				const k = fleetRates(sleeves, node, { objective: 'karma' })
+				const m = fleetRates(sleeves, node, { objective: 'money' })
+				return {
+					karma: k ? k.karmaPerSec : null,
+					money: m ? m.moneyPerSec : null,
+					rep: repT ? repT.base : null,
+					exp: expIfStudying ? expIfStudying.hacking : null,
+				}
+			})(),
 			karmaPerSec: rates ? rates.karmaPerSec : null,
 			killsPerSec: rates ? rates.killsPerSec : null,
 			contributing: rates ? rates.contributing : null,

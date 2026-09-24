@@ -201,6 +201,7 @@ export function fleetRates(sleeves, node, o = {}) {
     return {
       karmaPerSec: 0,
       killsPerSec: 0,
+      moneyPerSec: 0,
       sleeves: sleeves.length,
       contributing: 0,
       why: `objective '${objective}' commits no crime, so the fleet pays no karma — a known zero, not an unmeasured one`,
@@ -208,6 +209,7 @@ export function fleetRates(sleeves, node, o = {}) {
   }
   let karmaPerSec = 0
   let killsPerSec = 0
+  let moneyPerSec = 0
   let contributing = 0
   const unreadable = []
   for (const s of sleeves) {
@@ -220,6 +222,7 @@ export function fleetRates(sleeves, node, o = {}) {
     }
     karmaPerSec += pick.rates.karma
     killsPerSec += pick.rates.kills
+    moneyPerSec += num(pick.rates.money) ? pick.rates.money : 0
     contributing++
   }
   // One unreadable sleeve makes the SUM wrong, and a sum that is quietly short
@@ -228,6 +231,7 @@ export function fleetRates(sleeves, node, o = {}) {
   return {
     karmaPerSec,
     killsPerSec,
+    moneyPerSec,
     sleeves: sleeves.length,
     contributing,
     why: sleeves.length

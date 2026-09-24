@@ -475,5 +475,17 @@ export async function run() {
   }
   checks.push(c16);
 
+  const c17 = new Check("XP17", "reputation running faster all node (repBoost) lifts every later life's gain by K^eRep");
+  {
+    c17.examined(3);
+    const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.1 };
+    const k = (o) => exitHours({ ...b, installsFirst: 10, ...o });
+    const m0 = k({}).mult, m1 = k({ repBoost: { K: 2, e: 0.5 } }).mult;
+    if (Math.abs(m1 / m0 - Math.pow(Math.pow(2, 0.5), 9)) > 1e-9) c17.fail(`9 later cycles each lifted by 2^0.5: ratio ${m1 / m0}`);
+    if (k({ repBoost: { K: 2, e: null } }).mult !== m0) c17.fail("an unmeasured eRep lifts nothing (a floor), never a guess");
+    if (!(bestExitPolicy({ ...b, repBoost: { K: 2, e: 0.5 } }).best.hours < bestExitPolicy(b).best.hours)) c17.fail("faster reputation must reach the exit sooner");
+  }
+  checks.push(c17);
+
   return checks;
 }

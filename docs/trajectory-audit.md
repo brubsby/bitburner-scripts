@@ -28,7 +28,7 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | 5 | ~~gang worth its karma gate~~ **done 2026-09-24** (gangworth.gangExit: income after the grind, simulateGang trajectory when unmeasured; the income-scale threshold is deleted) | gangworth.js:160 | gain from t=0 minus the grind as flat hours; income-scale fallback | delayed income step; work-slot hours outside the final window |
 | 6 | combat augs to shorten the karma grind | objective.js:572 | `moneyLn(gangIncome x saved)` | as #5 |
 | 7 | ~~hacknet~~ **done 2026-09-24** | hacknet.js exit verdict | `payback < remainingH` is the named fallback | — |
-| 9 | sleeve task: sync / shock / train-vs-work / objective ladder | sleeveplan.js:130,297,310,459; progress.js ladder | break-even `100/rate`; `afterRate x (H-T)`; fixed ordering | `sleeveExp {perSec, delayH}`; the ladder is expressible now through `planFleet` |
+| 9 | sleeve task: sync / shock / train-vs-work / ~~objective ladder~~ (**objective done 2026-09-24**: sleeveObjectiveByExit) | sleeveplan.js:130,297,310,459; progress.js ladder | break-even `100/rate`; `afterRate x (H-T)`; fixed ordering | `sleeveExp {perSec, delayH}`; the ladder is expressible now through `planFleet` |
 | 10 | charisma / company path | objective.js:140 | rate x horizon | no company-path leg |
 | 11 | NFG donation-threshold crossing | progress.js ~672 | one window's income in NFG levels | donation only modelled for the exit faction |
 | 12 | gang equipment | gang.js:296 | gang sim with/without, but scored by `moneyLn` over a gang horizon | score through the exit instead |
