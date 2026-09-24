@@ -831,10 +831,10 @@ export async function run() {
     const fn = src.slice(src.indexOf("function sleeveObjectiveByExit"), src.indexOf("function spendVerdictsOf"));
     c20.examined(6);
     if (!/const base = inputsFn\(\{ expToPlayerHacking: 0, factionRepPerSec: 0 \}\)/.test(fn)) c20.fail("the base must be the shared builder with the fleet removed");
-    if (!/\['rep', finish\(\{ \.\.\.base, sleeveRep: \{ perSec: by\.rep, delayH: 0 \}, repBoost: \{ K: \(playerRep \+ by\.rep\) \/ playerRep, e: eRep \} \}/.test(fn)) c20.fail("rep: the sleeve's rep on the exit leg and repBoost on every life");
+    if (!/if \(repFaction && by\.rep > 0\) cands\.push\(\['rep', finish\(\{ \.\.\.base, sleeveRep: \{ perSec: by\.rep, delayH: 0 \}, \.\.\.\(playerRep > 0 \? \{ repBoost: \{ K: \(playerRep \+ by\.rep\) \/ playerRep, e: eRep \} \} : \{\}\) \}/.test(fn)) c20.fail("rep: the sleeve's rep on the exit leg always; repBoost only with a measured player rate (it vanished whenever the rate was estimated)");
     if (!/\['money', finish\(\{ \.\.\.base, extraIncome: \[\{ atH: 0, perSec: by\.money \}\], eBudget: eB \}/.test(fn)) c20.fail("money: crime income from now through eBudget");
     if (!/\['karma', finish\(base, \{ karmaPerSec: by\.karma/.test(fn)) c20.fail("karma: the fleet's karma shortening the gang's grind");
-    if (!/\.sort\(\(a, b\) => a\[1\] - b\[1\]\)/.test(fn)) c20.fail("the soonest exit must win");
+    if (!/\.sort\(\(a, b\) => \(Math\.abs\(a\[1\] - b\[1\]\) < 1 \/ 60 \? 0 : a\[1\] - b\[1\]\)\)/.test(fn)) c20.fail("the soonest exit must win (ties within a minute keep the earlier-listed objective)");
     if (!/objectiveDecidedBy: byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
   }
   checks.push(c20);
@@ -866,6 +866,34 @@ export async function run() {
     if (a3?.tasks?.[0] === "shock") c21.fail(`shock: working now must win when its exit is sooner: ${a3?.why?.[0]}`);
   }
   checks.push(c21);
+
+  const c22 = new Check("SP22", "the fleet's task reads from the OBJECT sleeve.js carries, not only a bare string");
+  {
+    c22.examined(4);
+    const base = { index: 0, sync: 100, shock: 0, skills: { hacking: 50, intelligence: 0 }, exp: { hacking: 0 }, mults: { hacking_exp: 1 } };
+    const studyingObj = sp.fleetExpToPlayer([{ ...base, task: { type: "CLASS", classType: "Algorithms" } }], { onlyStudying: true });
+    const studyingStr = sp.fleetExpToPlayer([{ ...base, task: "CLASS" }], { onlyStudying: true });
+    const crimeObj = sp.fleetExpToPlayer([{ ...base, task: { type: "CRIME" } }], { onlyStudying: true });
+    if (!(studyingObj?.hacking > 0)) c22.fail(`a sleeve whose task is {type:'CLASS'} must transfer study exp (live: it read 0): ${JSON.stringify(studyingObj)}`);
+    if (studyingObj?.hacking !== studyingStr?.hacking) c22.fail("object and string forms must agree");
+    if (crimeObj?.hacking !== 0) c22.fail("a sleeve at crime transfers no study exp");
+    if (sp.taskType({ type: "FACTION" }) !== "FACTION" || sp.taskType(null) !== null) c22.fail("taskType reads the object's type and refuses nothing as null");
+  }
+  checks.push(c22);
+
+  const c23 = new Check("SP23", "a tie (under a minute of exit) keeps the sleeve working — no synchronise or train on floating-point noise");
+  {
+    c23.examined(2);
+    const sleeve = { index: 0, sync: 40, shock: 0, skills: { hacking: 50, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 1, intelligence: 0 }, exp: { hacking: 1000, strength: 100, defense: 100, dexterity: 100, agility: 100, charisma: 0 }, mults: { hacking_exp: 1, strength_exp: 1, defense_exp: 1, dexterity_exp: 1, agility_exp: 1, charisma_exp: 1, hacking: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, crime_success: 1, crime_money: 1, faction_rep: 1 }, city: "Sector-12", memory: 1 };
+    const almost = (k, t) => 40.77 - (t.delayH > 0 ? 1e-9 : 0);
+    const a = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf: almost, playerIntelligence: 0 });
+    if (a?.tasks?.[0] === "sync") c23.fail(`a 1e-9h edge must not send the sleeve to synchronise: ${a?.why?.[0]}`);
+    const p = sp.sleevePolicy({ ...sleeve, sync: 100 }, NODE1, { objective: "money", horizonHours: 50, exitOf: almost });
+    if (!p) c23.fail("the policy must price (a null result would pass this check vacuously)");
+    else if (p.task === "train") c23.fail(`a 1e-9h edge must not send the sleeve to train: ${p.why}`);
+    if (p && p.decidedBy !== "exit-sim") c23.fail(`the policy must be decided by the exit here: ${p.decidedBy}`);
+  }
+  checks.push(c23);
 
   return checks;
 }

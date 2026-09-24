@@ -80,6 +80,14 @@ import { CRIMES, GYMS, crimeChance, gymRate, intelligenceBonus, personProblem } 
 import { skillFromExp } from 'installgate.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
+/**
+ * A sleeve's task TYPE, from either form it arrives in: sleeve.js carries the
+ * object ns.sleeve.getTask returns ({type: 'CLASS', ...}), tests and
+ * telemetry carry the bare string. Comparing the object to 'CLASS' was never
+ * true, so a studying sleeve read as delivering 0 exp to the exit's climb
+ * (found live 2026-09-24: expToPlayerHacking 0 with the task CLASS).
+ */
+export const taskType = (t) => (typeof t === 'string' ? t : typeof t?.type === 'string' ? t.type : null)
 
 /** SleeveSynchroWork.ts:15-18 — per CYCLE, and there are 5 cycles per second
  *  (CONSTANTS.MilliPerCycle = 200, Sleeve.process:265). The intelligence that
@@ -214,7 +222,7 @@ export function fleetRates(sleeves, node, o = {}) {
   const unreadable = []
   for (const s of sleeves) {
     // An idle or non-crime sleeve is a KNOWN zero, not an unreadable one.
-    if (o.onlyAssigned && s?.task !== 'CRIME') continue
+    if (o.onlyAssigned && taskType(s?.task) !== 'CRIME') continue
     const pick = crime ? { crime, rates: sleeveCrimeRates(s, node, crime) } : bestSleeveCrime(s, node, objective)
     if (!pick || !pick.rates) {
       unreadable.push(s?.index ?? '?')
@@ -310,7 +318,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
         const now = o.exitOf('exp', { perSec: (r * sync) / 100, delayH: 0 })
         const synced = o.exitOf('exp', { perSec: r, delayH: T })
         if (num(now) && num(synced)) {
-          if (synced < now) {
+          if (synced < now - 1 / 60) {
             tasks.push('sync')
             why.push(`sleeve ${i}: synchronise ${sync.toFixed(1)} -> 100 (${T.toFixed(1)}h): exit ${synced.toFixed(2)}h vs ${now.toFixed(2)}h studying now`)
             continue
@@ -349,7 +357,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
         const healed = o.exitOf(kind, { perSec: rateNow / bonus, delayH: T })
         if (num(now) && num(healed)) {
           shockDecided = true
-          if (healed < now) {
+          if (healed < now - 1 / 60) {
             tasks.push('shock')
             why.push(`sleeve ${i}: recover shock ${shock.toFixed(1)} (${T.toFixed(1)}h): exit ${healed.toFixed(2)}h vs ${now.toFixed(2)}h working shocked`)
             continue
@@ -516,7 +524,9 @@ export function sleevePolicy(sleeve, node, o = {}) {
     const ex = exitKind && typeof o.exitOf === 'function' ? o.exitOf(exitKind, { perSec: afterRate, delayH: T }) : null
     const value = num(ex) ? -ex : afterRate * (horizonHours - T) * 3600
     trials.push({ T, value })
-    if (value > best.value) {
+    // A training split must beat working now by more than a minute of exit
+    // (or of the fallback's value scale) — a tie keeps the sleeve working.
+    if (value > best.value + (decidedBy === 'exit-sim' ? 1 / 60 : Math.abs(best.value) * 1e-9)) {
       best = {
         task: 'train',
         trainStat: stats,
@@ -631,7 +641,7 @@ export function fleetExpToPlayer(sleeves, o = {}) {
     // hacking exp/s from a sleeve that was standing in a gym — the exact
     // optimism the previous version of this comment warned about, committed by
     // the caller three lines of code later.
-    if (o.onlyStudying && sl.task !== 'CLASS') continue
+    if (o.onlyStudying && taskType(sl.task) !== 'CLASS') continue
     hacking += study.perSec * (sl.sync / 100)
     contributing++
   }

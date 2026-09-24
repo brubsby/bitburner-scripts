@@ -1504,10 +1504,16 @@ function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabl
     }
     const cands = []
     if (gang && by.karma > 0) cands.push(['karma', finish(base, { karmaPerSec: by.karma, killsPerSec: 0 })])
-    if (repFaction && by.rep > 0 && playerRep > 0) cands.push(['rep', finish({ ...base, sleeveRep: { perSec: by.rep, delayH: 0 }, repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } }, null)])
+    // The sleeve's rep prices on the exit leg by itself; the life-to-life lift
+    // (repBoost) needs the player's measured rate as its denominator, and is
+    // simply omitted (a floor) while that rate is only estimated.
+    if (repFaction && by.rep > 0) cands.push(['rep', finish({ ...base, sleeveRep: { perSec: by.rep, delayH: 0 }, ...(playerRep > 0 ? { repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } } : {}) }, null)])
     if (!expDisabled && by.exp > 0) cands.push(['exp', finish({ ...base, expPerSec: (base.expPerSec ?? 0) + by.exp }, null)])
     if (by.money > 0) cands.push(['money', finish({ ...base, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
-    const priced = cands.filter(([, h]) => typeof h === 'number' && isFinite(h)).sort((a, b) => a[1] - b[1])
+    // Ties within a minute are ties, not decisions: the earlier-listed
+    // objective keeps them (sort is stable), so floating-point noise cannot
+    // flip the fleet from pass to pass.
+    const priced = cands.filter(([, h]) => typeof h === 'number' && isFinite(h)).sort((a, b) => (Math.abs(a[1] - b[1]) < 1 / 60 ? 0 : a[1] - b[1]))
     if (!priced.length) return out(null, `no objective could be priced (${cands.map(([o]) => o).join(', ') || 'none viable'})`)
     return out(priced[0][0], `simulated exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}${eRep === null ? ' (eRep unmeasured: rep priced on the exit leg only — a floor)' : ''}`, { exits: Object.fromEntries(priced) })
   } catch (e) {
