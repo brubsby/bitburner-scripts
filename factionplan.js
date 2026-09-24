@@ -368,9 +368,21 @@ export function planSchedule(factions, baseRepPerSec, o = {}) {
   // ("BitRunners, join in 9h") is a forecast, not an instruction — working it
   // is impossible, and handing it to the caller as `current` would make
   // progress.js try to start work at a faction we are not in. The first
-  // JOINED segment is the one to act on; the locked one stays visible in
-  // `segments` and in `nextJoin`.
-  const actionable = segments.find((sg) => !sg.joinInH && !sg.pausedForJoin) ?? segments.find((sg) => !sg.joinInH) ?? null
+  // segment at a faction JOINED NOW is the one to act on; the locked one stays
+  // visible in `segments` and in `nextJoin`.
+  //
+  // Joined-now means "entered with no join wait", NOT "carries no pause flag".
+  // It used to skip every `pausedForJoin` segment, and a truncated grind is
+  // exactly the one to work NOW — the pause only says where it ends. Live
+  // 2026-09-24 the plan read NiteSec (paused) -> The Black Hand (paused) ->
+  // BitRunners, so `current` skipped both and landed on BitRunners, which is
+  // released by the pause rather than by a joinInH wait and so carried no flag
+  // at all: progress.js ordered work at a faction we had not joined every
+  // pass, and the sleeve, handed the same unjoined faction, fell back to
+  // studying for 0.2% of the player's exp instead of adding rep.
+  // From the INPUT: the walk above zeroes joinWaitHours as joins land.
+  const joinedNow = new Set((factions ?? []).filter((f) => !f.joinWaitHours).map((f) => f.name))
+  const actionable = segments.find((sg) => !sg.joinInH && joinedNow.has(sg.faction)) ?? null
   // A join shows up two ways: an idle-wait segment (joinInH) or a work segment
   // truncated at the release (pausedForJoin, the join lands as it ends). Both
   // are "a faction opens at hour X", and nextJoin must report whichever comes

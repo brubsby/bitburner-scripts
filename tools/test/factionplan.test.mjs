@@ -329,6 +329,10 @@ export function run() {
         c9.fail(`nextJoin must surface the truncation-flow join too: ${JSON.stringify(t.nextJoin)}`);
       }
       if (t.segments[1]?.faction !== "BitRunners") c9.fail("the released faction must compete at its release hour and win here");
+      // The live bug: `current` skipped the paused segment and named the
+      // faction the pause RELEASES — BitRunners, not joined. The paused grind
+      // is what to work now.
+      if (t.current?.faction !== "CyberSec") c9.fail(`current must be the joined, truncated grind (CyberSec), got ${t.current?.faction} — work cannot start at a faction not yet joined`);
       const resumed = t.segments.find((sg, i) => i > 1 && sg.faction === "CyberSec");
       if (!resumed) c9.fail("the paused grind must resume after the better faction's tranche");
       else if (Math.abs(resumed.untilRep - 36000) > 1e-6) c9.fail(`the resumed segment must finish the walk at 36000, got ${resumed.untilRep}`);
