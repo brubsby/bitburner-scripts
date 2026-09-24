@@ -104,7 +104,7 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { singularityRamMultiplier } from 'sfgate.js'
+import { singularityRamMultiplier, canAccessFeature } from 'sfgate.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -541,7 +541,17 @@ const WATCHED = [
     // JOB_MIN_INTERVAL, not the predicate. That is a stated, bounded staleness
     // (at most 6 launches per 30 minutes) rather than a silent one, and unlike
     // the telemetry gate it is correct on the first tick of a fresh life.
-    trigger: (ns) => ns.getServerMoneyAvailable('home') > NFG_RESERVE,
+    //
+    // NOT WITH SINGULARITY. nfg.js is the DOM route: every launch clicks "Do
+    // something else simultaneously", navigates to Factions and holds the UI
+    // lock — dropping focus, dragging a human's screen away, and standing
+    // upkeep.js down while it runs. With Singularity the planner prices NFG
+    // levels (augplan planPurchases, donation included) and act.js buys them
+    // through donate/buyaug orders with no screen at all. Live 2026-09-24 it
+    // was still relaunching in an SF4 node and failing every run ("no
+    // NeuroFlux card on this faction", faction '?' — its name regex predates
+    // the gang factions).
+    trigger: (ns) => ns.getServerMoneyAvailable('home') > NFG_RESERVE && !canAccessFeature(ns.getResetInfo(), 4),
   },
   // Convert surplus cash into home RAM/cores, which are the ONLY purchases that
   // survive an install (prestigeHomeComputer touches neither maxRam nor

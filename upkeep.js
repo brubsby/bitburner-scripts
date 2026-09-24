@@ -60,6 +60,7 @@
 
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
+import { HUMAN, watchInput, humanRecord, humanVerdict } from 'human.js'
 
 const STATUS = '/tel/upkeep.txt'
 // While this file exists, stand down and touch nothing on screen.
@@ -81,6 +82,7 @@ const EXPORT_CHECK = 3600000
 // and infilhelper.js use. Referencing them directly would price this script out
 // of running permanently.
 const doc = eval('document')
+const win = eval('window')
 
 /** First visible element whose trimmed text is exactly `text`. */
 function byText(tag, text) {
@@ -112,6 +114,8 @@ export async function main(ns) {
   ns.tprint('upkeep.js: watching focus and the 24h export favor bonus')
 
   let refocused = 0
+  let deferred = 0
+  const input = watchInput(win, doc)
   let claimed = 0
   let lastExportCheck = 0
   let idleTicks = 0
@@ -125,6 +129,7 @@ export async function main(ns) {
 
   const say = reporter(ns, STATUS, () => ({
     refocused,
+    deferredForHuman: deferred,
     exportClaims: claimed,
     idleTicks,
     idleSeconds: Math.round((idleTicks * POLL) / 1000),
@@ -145,6 +150,9 @@ export async function main(ns) {
   while (true) {
     try {
       if (ns.fileExists(LOCK, 'home')) {
+        // Still publish who is looking: the lock stands THIS script down, not
+        // the other focus-takers that read HUMAN.
+        ns.write(HUMAN, JSON.stringify(humanRecord(input, doc, 'locked')), 'w')
         state = 'locked'
         say('locked', { work: 'locked', note: 'standing down: ' + LOCK })
         await ns.sleep(POLL)
@@ -153,8 +161,22 @@ export async function main(ns) {
 
       state = workState()
 
+      // Who is looking. Published every tick so the other focus-takers
+      // (progress.js's setFocus order, the work actors' focus flag) judge the
+      // same record; written before anything else so a throw below cannot
+      // leave it to go stale and silently hand focus back mid-look.
+      const human = humanRecord(input, doc, state)
+      ns.write(HUMAN, JSON.stringify(human), 'w')
+      const seen = humanVerdict(human)
+
       // --- 1. Focus -----------------------------------------------------
-      if (state === 'unfocused') {
+      // Not while a human is at the window: they unfocused to look at
+      // something, and clicking Focus drags them back to the work screen
+      // before they can. Refocused once they have been idle IDLE_MS.
+      if (state === 'unfocused' && seen.atScreen === true) {
+        deferred++
+        note = `left work unfocused: ${seen.why}`
+      } else if (state === 'unfocused') {
         const btn = byText('button', 'Focus')
         if (btn) {
           btn.click()
@@ -190,7 +212,10 @@ export async function main(ns) {
       // away before a single faction had been rejoined.
       const now = Date.now()
       const joined = (ns.getPlayer().factions || []).length
-      if (joined > 0 && now - lastExportCheck > EXPORT_CHECK) {
+      // Also not while a human is looking: the claim navigates the page out
+      // from under them. lastExportCheck is left alone, so it runs on the
+      // first idle tick instead of an hour later.
+      if (joined > 0 && now - lastExportCheck > EXPORT_CHECK && seen.atScreen !== true) {
         lastExportCheck = now
 
         // Focused work hides the whole navigation sidebar — the only visible

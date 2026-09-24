@@ -136,6 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangGainHours, gangIsPending, rememberedGangIncome } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet } from 'sleeveplan.js'
+import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
@@ -2721,7 +2722,13 @@ async function act(ns, canJoin, info, note) {
       todo.push(`NO FACTION WORK RUNNING — reputation is earning ZERO. Start hacking contracts for ${target} and FOCUS it (unfocused costs 20%).`)
     }
   } else if (canWork && !sing.focused()) {
-    if (canWork && !flags.dry) {
+    // A human unfocused it to look at the game: refocusing yanks them back to
+    // the work screen. Leave it until they have been idle (human.js); unknown
+    // (upkeep.js not publishing) still refocuses.
+    const seen = humanOnHome(ns)
+    if (seen.atScreen === true) {
+      did.push(`left work unfocused — human at the window (${seen.why})`)
+    } else if (canWork && !flags.dry) {
       order('focus', [true], 'unfocused work costs 20%')
       did.push('ordered refocus of faction work')
     } else {
