@@ -1,0 +1,45 @@
+// [SE] spenders follow the simulated-exit verdict (CLAUDE.md "Decisions
+// compare simulated trajectories"), falling back to their old rules — named —
+// only when no fresh verdict exists.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { Check } from "./harness.mjs";
+import "./gameresolve.mjs";
+const b = await import("../../budget.js");
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const src = (f) => fs.readFileSync(path.join(REPO, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+
+export async function run() {
+  const checks = [];
+
+  const c1 = new Check("SE1", "an exit-approved spend passes the augmentation and home claims, never the join claim");
+  {
+    c1.examined(3);
+    const claims = { join: 5e9, augmentations: 7e9, home: 11e9 };
+    if (b.reserveFor("hacknet", claims) !== 23e9) c1.fail(`without approval every higher claim holds: ${b.reserveFor("hacknet", claims)}`);
+    if (b.reserveFor("hacknet", claims, { exitApproved: true }) !== 5e9) c1.fail(`approved: only the join claim holds, got ${b.reserveFor("hacknet", claims, { exitApproved: true })}`);
+    if (b.reserveFor("servers", { ...claims, join: null }, { exitApproved: true }) !== Infinity) c1.fail("an unreadable join claim still blocks an approved spend");
+  }
+  checks.push(c1);
+
+  const c2 = new Check("SE2", "every spender reads its spendExit verdict before its fallback rule, and progress prices it at the gate's own install point");
+  {
+    c2.examined(5);
+    const hn = src("hacknet.js");
+    if (!(/const exitV = /.test(hn) && hn.indexOf("const exitV = ") < hn.indexOf("const v = exitV ??"))) c2.fail("hacknet.js must take the exit verdict first");
+    if (!/decidedBy: 'payback-fallback'/.test(hn)) c2.fail("hacknet.js must name its fallback");
+    const bs = src("buyserv.js");
+    const rn = bs.slice(bs.indexOf("function reserveNow"), bs.indexOf("function reserveNow") + 2500);
+    if (!(rn.indexOf("v.servers") > 0 && rn.indexOf("v.servers") < rn.indexOf("let base = SETTINGS.floorReserve"))) c2.fail("buyserv.js reserveNow must follow the verdict before the claims rule");
+    const wd = src("watchdog.js");
+    const hu = wd.slice(wd.indexOf("script: 'homeup.js'"), wd.indexOf("script: 'homeup.js'") + 3000);
+    if (!(hu.indexOf("spendExit") > 0 && hu.indexOf("spendExit") < hu.indexOf("marginalLnPerDollar(claimSrc"))) c2.fail("the homeup trigger must follow the verdict before the ln competition");
+    const pr = src("progress.js");
+    if (!/gate\.install \? 0 : gate\.holdForever \? null : gate\.bestWait\?\.waitMs > 0 \? gate\.bestWait\.waitMs \/ 3600000 : 0,\s*gate\.holdForever === true,/.test(pr)) c2.fail("progress.js must price spends at the gate's own install point");
+  }
+  checks.push(c2);
+
+  return checks;
+}

@@ -266,6 +266,7 @@ async function once(ns, flags) {
     // For the planner's home valuation (objective.homeLn): a RAM upgrade
     // doubles home, so its deltaGB is the current size.
     homeRam: ns.getServerMaxRam('home'),
+    cores: ns.getServer('home').cpuCores,
   }))
   // Every publication goes through here so none can reach the file without
   // reaching home — including the atExit record, which is the one that says

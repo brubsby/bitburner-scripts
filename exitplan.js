@@ -95,10 +95,13 @@ export function hoursToMoney(target, o = {}) {
     const lvl = levelAt(exp, mult)
     // income(level) = incomeAtLevel1 * (level + 50) / 51
     const rate = (incomeAtLevel1 * (lvl + 50)) / 51
+    // The last step lands exactly: without this the answer is quantised to
+    // stepH, and a with/without comparison of a small spend reads as zero
+    // (or as a whole step) — noise deciding purchases.
+    if (money + rate * stepH * 3600 >= target) return h + (target - money) / rate / 3600
     money += rate * stepH * 3600
     exp += pos(expPerSec) ? expPerSec * stepH * 3600 : 0
     h += stepH
-    if (money >= target) return h
   }
   return Infinity
 }
@@ -496,4 +499,66 @@ export function batchHackingGain(multsList) {
     if (typeof h === 'number' && isFinite(h) && h > 0) g *= h
   }
   return read ? g : null
+}
+
+/**
+ * A SPEND, trajectory against trajectory: the node's exit if $cost is spent
+ * now for +gainPerSec income, against the exit if it is not — on one input set.
+ *
+ *   o.inputs      exitInputsOf's object (the without-run is exactly this)
+ *   o.W           hours until the next install the plan intends (the gate's
+ *                 choice: 0 = now, a wait, or null with o.finalWindow)
+ *   o.finalWindow true when no install is coming (the gate holds forever):
+ *                 the spend and its income ride the final window to the exit
+ *   o.persists    true when the income survives installs (home RAM, cores);
+ *                 false for anything an install destroys (cloud, hacknet)
+ *   o.moneyAt(h)  money on hand h hours from now without the spend
+ *   o.gainsAt(m)  installGains of the batch the planner buys with $m (null ok)
+ *
+ * In-life income only changes the money at the install, i.e. the batch that
+ * install can buy — which is exactly where a spend can crowd out
+ * augmentations, and so is priced by re-planning, not by a claim.
+ * Returns { deltaH, withH, withoutH } or { deltaH: null, why }.
+ */
+export function spendExit(o = {}) {
+  const { inputs, cost, gainPerSec, persists = false, finalWindow = false } = o
+  if (!inputs || !pos(cost) || !num(gainPerSec) || gainPerSec < 0) return { deltaH: null, why: 'spend unreadable (cost or gain)' }
+  if (finalWindow) {
+    const without = bestExitPolicy(inputs, 0, 0)
+    const withS = bestExitPolicy({ ...inputs, money: Math.max(0, (inputs.money ?? 0) - cost), incomePerSec: inputs.incomePerSec + gainPerSec }, 0, 0)
+    if (!without.best || !withS.best) return { deltaH: null, why: `final window unpriced: ${without.why ?? withS.why}` }
+    return { deltaH: withS.best.hours - without.best.hours, withH: withS.best.hours, withoutH: without.best.hours }
+  }
+  const W = o.W
+  if (!num(W) || W < 0 || typeof o.moneyAt !== 'function') return { deltaH: null, why: 'install point or money trajectory unreadable' }
+  const m0 = o.moneyAt(W)
+  const m1 = m0 - cost + gainPerSec * W * 3600
+  const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
+  const exitWith = (m, extraIncome) => {
+    const g = m >= 0 ? gainsAt(m) : null
+    if (m < 0) return { best: null, why: 'the spend is not affordable by the install' }
+    return bestExitPolicy({ ...inputs, incomePerSec: inputs.incomePerSec + extraIncome, firstInstallH: W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) }, 400, 1)
+  }
+  // Income that persists also buys more augmentations in EVERY later life:
+  // the planner measures that response as eBudget = dln(planM)/dln(money)
+  // (progress.js, the plan re-run at x1.5 money), so a later life's gain
+  // becomes g x K^eBudget at income xK. Unmeasured, it is left out — the
+  // verdict is then a floor, and says so.
+  const K = persists && gainPerSec > 0 ? (inputs.incomePerSec + gainPerSec) / inputs.incomePerSec : 1
+  const e = num(o.eBudget) && o.eBudget >= 0 ? o.eBudget : null
+  const without = exitWith(m0, 0)
+  const withS = (() => {
+    const r = exitWith(m1, persists ? gainPerSec : 0)
+    if (!(K > 1) || e === null || !pos(inputs.multGainPerCycle)) return r
+    const g = inputs.multGainPerCycle * Math.pow(K, e)
+    const gAt = m1 >= 0 ? gainsAt(m1) : null
+    return m1 < 0 ? r : bestExitPolicy({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, multGainPerCycle: g, firstInstallH: W, ...(gAt ? { installGains: gAt, nextInstallGain: gAt.hacking } : {}) }, 400, 1)
+  })()
+  if (!without.best || !withS.best) return { deltaH: null, why: `unpriced: ${without.why ?? withS.why}` }
+  return {
+    deltaH: withS.best.hours - without.best.hours,
+    withH: withS.best.hours,
+    withoutH: without.best.hours,
+    ...(persists && K > 1 && e === null ? { floor: 'later lives priced without the augmentation-growth response (eBudget unmeasured)' } : {}),
+  }
 }

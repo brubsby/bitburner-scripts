@@ -22,12 +22,12 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | # | Decision | Where | Shortcut | Simulator gap |
 |---|---|---|---|---|
 | 1 | ~~install now vs hold~~ **done 2026-09-24** | installgate.js `exitCompare` | now/wait/never simulated exits; the rate rule is the named fallback | — |
-| 2 | budget split: home / fleet / hacknet / augs / join | budget.js:137,147,230; objective.js:664 `homeLn`; progress.js `budgetClaim` | payback vs `income x horizon`; `ln(m)/price` | income as a function of home RAM; cycle length responding to spend |
+| 2 | budget split: home / fleet / hacknet / augs / join — **home, fleet, hacknet done 2026-09-24** (spendExit; payback/ln rules are named fallbacks). Remaining: the join claim's own value | budget.js:137,147,230; objective.js:664 `homeLn`; progress.js `budgetClaim` | payback vs `income x horizon`; `ln(m)/price` | income as a function of home RAM; cycle length responding to spend |
 | 3 | work slot: crime vs faction | progress.js ~2602 | `moneyLn(crime $/h)` vs schedule ln/h | mostly there (`nodeplan.workSlotCost`) |
 | 4 | which faction to work | factionplan.js:205 | greedy `acc/hoursAll` | per-cycle mult gain as a function of the schedule |
 | 5 | gang worth its karma gate | gangworth.js:160 | gain from t=0 minus the grind as flat hours; income-scale fallback | delayed income step; work-slot hours outside the final window |
 | 6 | combat augs to shorten the karma grind | objective.js:572 | `moneyLn(gangIncome x saved)` | as #5 |
-| 7 | hacknet | hacknetplan.js:157,170; hacknet.js:211 | `payback < remainingH` | in-life income steps |
+| 7 | ~~hacknet~~ **done 2026-09-24** | hacknet.js exit verdict | `payback < remainingH` is the named fallback | — |
 | 9 | sleeve task: sync / shock / train-vs-work / objective ladder | sleeveplan.js:130,297,310,459; progress.js ladder | break-even `100/rate`; `afterRate x (H-T)`; fixed ordering | `sleeveExp {perSec, delayH}`; the ladder is expressible now through `planFleet` |
 | 10 | charisma / company path | objective.js:140 | rate x horizon | no company-path leg |
 | 11 | NFG donation-threshold crossing | progress.js ~672 | one window's income in NFG levels | donation only modelled for the exit faction |

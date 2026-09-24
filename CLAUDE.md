@@ -106,6 +106,16 @@ to SKIP_DIRS only takes effect when the daemon restarts, while the dot rule
 works immediately.
 **Put experiments in `tools/`.**
 
+**Stage risky edits and precheck them before they land.** Because saving *is*
+deploying, a broken intermediate state runs in the game at once. On
+2026-09-24, three edits went live broken in one session: a syntax error, and
+twice a local named after an ns function (`share`, `run`) that the RAM
+calculator billed, pushing progress.js past its `ramOverride` ceiling. For
+any multi-step edit to a root script, write it to a scratch copy, run
+`node tools/precheck.mjs <copy> <name>.js` (syntax, plus static RAM against the
+file it replaces; a rise is refused unless `--allow-ram-rise`), and only then
+move it into place.
+
 `docs/`, `backups/` and `cw/` are *walked*. They look safe only because the
 extension filter is `.js .jsx .ts .tsx .txt .script` and they happen to contain
 `.md` and `.json` — so **a `.js` or `.txt` dropped into `docs/` hot-deploys into

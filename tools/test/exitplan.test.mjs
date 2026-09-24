@@ -435,5 +435,32 @@ export async function run() {
   }
   checks.push(c14);
 
+  const c15 = new Check("XP15", "a spend is priced as two simulated exits: in-life income only through the next batch, home's persists, crowding-out priced by re-planning");
+  {
+    const { spendExit } = await import("../../exitplan.js");
+    c15.examined(8);
+    const inputs = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9, cycleHours: 4, multGainPerCycle: 1.1 };
+    const gainsAt = (m) => ({ hacking: 1 + m / 1e13, rep: 1, income: 1 });
+    const moneyAt = (h) => 1e9 + 1e8 * h * 3600;
+    const at = (o) => spendExit({ inputs, cost: 1e9, gainPerSec: 1e6, W: 5, moneyAt, gainsAt, ...o });
+    // Installing NOW: a destroyed-at-install spend buys nothing and costs the batch its money.
+    if (!(at({ W: 0 }).deltaH > 0)) c15.fail("a spend whose income dies at an install happening now must be slower");
+    // Persisting income beats the same spend that dies at the install.
+    if (!(at({ persists: true }).deltaH < at({ persists: false }).deltaH)) c15.fail("income that survives installs must be worth more");
+    // Crowding out: a spend returning nothing is strictly slower (the batch shrank).
+    if (!(at({ gainPerSec: 0 }).deltaH > 0)) c15.fail("a spend with no return must price as the augmentations it crowds out");
+    // A spend earning back more than it costs before the install is faster.
+    if (!(at({ gainPerSec: 1e7 }).deltaH < 0)) c15.fail("a spend that pays back before the install and grows the batch must be faster");
+    // Final window: money and income ride to the exit.
+    const fw = spendExit({ inputs: { ...inputs, money: 2e11 }, cost: 1e11, gainPerSec: 0, finalWindow: true });
+    if (!(fw.deltaH >= 0)) c15.fail("in the final window a no-return spend cannot be faster");
+    if (spendExit({ inputs, cost: 1e9, gainPerSec: null, W: 5, moneyAt }).deltaH !== null) c15.fail("an unreadable gain must refuse, not price as zero");
+    // Persisting income also grows every later life's batch (eBudget): with a measured response it is worth more.
+    const e0 = at({ persists: true, gainPerSec: 1e7 }), e1 = at({ persists: true, gainPerSec: 1e7, eBudget: 0.5 });
+    if (!(e1.deltaH < e0.deltaH)) c15.fail("a measured budget elasticity must make persisting income worth more in later lives");
+    if (!e0.floor) c15.fail("without eBudget the verdict must say it is a floor");
+  }
+  checks.push(c15);
+
   return checks;
 }

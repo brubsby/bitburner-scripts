@@ -616,6 +616,21 @@ const WATCHED = [
       // spending money that is already promised to augmentations.
       const claimSrc = ns.read('/tel/installgate.txt')
       const claimLife = ns.getResetInfo().lastAugReset
+      // THE EXIT VERDICT (installgate spendExit.home): the node's exit with this
+      // upgrade against without, from progress.js, when it is this life's,
+      // fresh and priced the same upgrade. It keeps only the join claim. The
+      // ln-per-dollar competition below is the fallback when there is none.
+      try {
+        const x = JSON.parse(claimSrc || 'null')?.spendExit
+        const v = x?.home
+        if (x && x.lastAugReset === claimLife && Date.now() - Date.parse(x.at) < 15 * 60e3 && v?.cost > 0 && v.kind === next.kind && Math.abs(v.cost / next.cost - 1) < 0.01) {
+          if (!v.buy) return false
+          const join = joinClaim(claimSrc, claimLife)
+          return isFinite(join) && ns.getServerMoneyAvailable('home') >= next.cost + join
+        }
+      } catch {
+        /* fall back to the claims rule */
+      }
       // THE ln(M) COMPETITION (budget.js lnCompete): home's own ln per
       // dollar is the planner's figure (objective.homeLn, published as
       // homeLnPerDollar — the plan channel through the measured elasticity

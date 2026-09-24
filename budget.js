@@ -92,6 +92,13 @@ export function reserveFor(spender, claims = {}, o = {}) {
   let held = 0
   for (const key of CLAIMANTS) {
     if (PRIORITY.indexOf(key) >= rank) continue
+    // THE EXIT VERDICT. A spender whose purchase progress.js priced as a
+    // simulated exit against the exit without it (exitplan.spendExit, the
+    // augmentations re-planned on the money the purchase leaves) has already
+    // been weighed against the augmentation and home claims — the comparison
+    // IS that weighing. So those two are waived. The join claim never is: it
+    // is the exit's own gate, and a simulated exit does not model the invite.
+    if (o.exitApproved === true && (key === 'augmentations' || key === 'home')) continue
     let v = claims[key]
 
     // ------------------------------------------------------------------

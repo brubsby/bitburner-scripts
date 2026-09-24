@@ -164,6 +164,25 @@ function fetchFromHome(ns, file) {
 function reserveNow(ns) {
   fetchFromHome(ns, GATE_FILE)
   fetchFromHome(ns, SCHEDULE_FILE)
+  // THE EXIT VERDICT, when progress.js published a fresh one this life
+  // (installgate spendExit.servers — the node's exit with this much fleet
+  // spend against without, CLAUDE.md "Decisions compare simulated
+  // trajectories"): spend at most its maxSpend, keep the join claim, and
+  // nothing else. Stale or absent, the claims-and-payback rule below stands.
+  try {
+    const g = JSON.parse(ns.read(GATE_FILE) || 'null')
+    const v = g?.spendExit
+    const life = ns.getResetInfo().lastAugReset
+    if (v && v.lastAugReset === life && Date.now() - Date.parse(v.at) < 15 * 60e3 && v.servers) {
+      const money = ns.getServerMoneyAvailable('home')
+      const join = joinClaim(ns.read(GATE_FILE), life)
+      if (typeof join !== 'number') return Infinity
+      const spend = v.servers.buy && v.servers.maxSpend > 0 ? v.servers.maxSpend : 0
+      return Math.max(join, money - spend, SETTINGS.floorReserve)
+    }
+  } catch {
+    /* fall through to the claims rule */
+  }
   let base = SETTINGS.floorReserve
   for (const p of SETTINGS.programs) {
     if (!ns.fileExists(p.file, 'home')) {
@@ -415,6 +434,9 @@ export async function main(ns) {
 
       const fleet = owned.map((h) => ({ host: h, ram: ns.getServerMaxRam(h) }))
       note('ok', {
+        // What a GB of fleet costs at the size this pass buys — progress.js
+        // prices the fleet spend's exit comparison with it.
+        fleetDollarPerGB: target > 0 ? ns.cloud.getServerCost(target) / target : null,
         money: Math.round(ns.getServerMoneyAvailable('home')),
         reserve,
         owned: fleet.length,

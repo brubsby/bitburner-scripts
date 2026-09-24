@@ -148,7 +148,7 @@ import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TER
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain, spendExit } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1348,6 +1348,69 @@ function nextInstallGainOf(plan, pending, offers) {
   const names = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])]
   if (!names.length) return null
   return batchHackingGain(names.map((n) => byName.get(n)?.mults ?? {}))
+}
+
+/**
+ * THE SPENDERS' VERDICTS, trajectory against trajectory (exitplan.spendExit):
+ * for home, hacknet and the cloud fleet, the node's exit if their next
+ * purchase is made now against the exit if it is not, on one input builder.
+ * The in-life income a purchase adds changes only the money at the next
+ * install (so the batch that install buys — re-planned, which is where a
+ * spend crowds out augmentations); home's income also persists into every
+ * later life. W is the gate's own install point this pass.
+ *
+ * Income per GB is the batcher's average (batch.txt ram.total against script
+ * income) — the linear response of a batcher that is RAM-bound; cores are
+ * priced by their grow/weaken bonus on home's share of that RAM
+ * (1 + (cores-1)/16, ServerHelpers core bonus). Published as installgate
+ * `spendExit`; home/hacknet/buyserv follow it when fresh and fall back to
+ * their old rules, named, when not.
+ */
+function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, replanAt, pending, offers) {
+  const out = { at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, W, finalWindow }
+  try {
+    const gainsAt = (m) => {
+      if (typeof replanAt !== 'function') return null
+      const p2 = replanAt(Math.max(0, m))
+      return installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
+    }
+    const common = { inputs, W, finalWindow, moneyAt: (h) => liveMoney + moneyBy(h), gainsAt, eBudget: readJson(ns, '/tel/installgate.txt')?.eBudget }
+    const income = inputs?.incomePerSec
+    const ramTotal = readJson(ns, '/tel/batch.txt')?.ram?.total
+    const perGB = income > 0 && ramTotal > 0 ? income / ramTotal : null
+    const verdict = (cost, gainPerSec, persists, extra = {}) => {
+      if (!(gainPerSec >= 0)) return { buy: false, cost, why: 'income response unreadable', ...extra }
+      const r = spendExit({ ...common, cost, gainPerSec, persists })
+      if (r.deltaH === null) return { buy: false, cost, why: r.why, ...extra }
+      return { buy: r.deltaH < 0, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)`, ...extra }
+    }
+    // Home: the next upgrade homeup.js / the watchdog priced.
+    const hu = readJson(ns, '/tel/homeup.txt')
+    const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
+    const homeRam = hu?.homeRam > 0 ? hu.homeRam : null
+    if (next?.cost > 0 && perGB !== null && homeRam) {
+      const gain = next.kind === 'RAM' ? perGB * homeRam : perGB * homeRam * (1 / (15 + (hu?.cores ?? 1)))
+      out.home = verdict(next.cost, gain, true, { kind: next.kind })
+    } else out.home = { buy: false, why: 'next home upgrade, home RAM or income per GB unreadable' }
+    // Hacknet: its own best upgrade (game formula, hacknetplan).
+    const hn = readJson(ns, '/tel/hacknet.txt')
+    if (hn?.best?.cost > 0 && Date.now() - Date.parse(hn.at) < 15 * 60e3) out.hacknet = verdict(hn.best.cost, hn.best.gainPerSec, false, { kind: hn.best.kind, index: hn.best.index })
+    else out.hacknet = { buy: false, why: 'no fresh hacknet offer' }
+    // Cloud fleet: how much of the money to put into RAM at buyserv's $/GB.
+    const bs = readJson(ns, '/tel/buyserv.txt')
+    if (bs?.fleetDollarPerGB > 0 && perGB !== null && liveMoney > 0) {
+      let best = null
+      for (const f of [0.1, 0.25, 0.5, 1]) {
+        const x = liveMoney * f
+        const v = verdict(x, (x / bs.fleetDollarPerGB) * perGB, false)
+        if (v.buy && (!best || v.deltaH < best.deltaH)) best = { ...v, maxSpend: x }
+      }
+      out.servers = best ?? { buy: false, maxSpend: 0, why: 'no fleet spend shortens the exit' }
+    } else out.servers = { buy: false, maxSpend: 0, why: "buyserv's $/GB or income per GB unreadable" }
+  } catch (e) {
+    out.why = `spend verdicts threw: ${String(e).slice(0, 80)}`
+  }
+  return out
 }
 
 /**
@@ -3156,7 +3219,11 @@ async function act(ns, canJoin, info, note) {
             } catch {
               base = null
             }
+            // No gate on this path: the install point is the life's expected
+            // remainder — the median window minus this life's age — stated.
+            const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
             return {
+              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home'), (h) => incNow * h * 3600, replanAt, pending, offers),
               covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf),
               sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home')),
             }
@@ -3240,6 +3307,8 @@ async function act(ns, canJoin, info, note) {
     let incomeCalibration = null
     let futuresCalibration = null
     let futurePredictions = []
+    // The income trajectory, hoisted for the spend verdicts written with the gate.
+    let incomeTraj = null
     if (plan && incomePerSec > 0) {
       // Rebuild the schedule's own trajectory from its persisted inputs — the
       // same calibrated closed form, so the gate and the schedule cannot
@@ -3262,13 +3331,13 @@ async function act(ns, canJoin, info, note) {
       // (level + 50) as the level climbs. trajectory.js states why that is a
       // LOWER bound (fleet growth and retargeting add more); the flat model
       // is the explicit fallback when the inputs are unmeasured.
-      const itraj = incomeModel({
+      const itraj = (incomeTraj = incomeModel({
         incomePerSec,
         hacking: player.skills?.hacking,
         hackingExp: schedule?.hackingExp,
         hackingMult: effectiveHackingMult(player, info),
         expPerSec: schedule?.expPerSec,
-      })
+      }))
       // Two kinds of candidate. The FIXED ladder projects the working
       // faction's rep along its trajectory — ordinary waiting. The HOLD
       // candidates come from the schedule's spanning segments: each one says
@@ -3717,6 +3786,15 @@ async function act(ns, canJoin, info, note) {
           futuresCalibration,
           covenantExit,
           sleeveAugExit,
+          spendExit: spendVerdictsOf(
+            ns, info,
+            exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet),
+            gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0,
+            gate.holdForever === true,
+            ns.getServerMoneyAvailable('home'),
+            (h) => (incomeTraj ? incomeTraj.moneyBy(h) : incomePerSec * h * 3600),
+            replanAt, pending, offers,
+          ),
           futurePredictions,
           // The objective the plan was priced under — derived per pass from
           // measured elasticities, or 'flat' when derivation refused. A

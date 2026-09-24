@@ -191,10 +191,26 @@ export async function main(ns) {
       const mults = ns.getPlayer().mults
       const plan = bestUpgrade(t.list, mults, nodeMoney)
       const life = remainingLifeH(ns, info.lastAugReset)
-      const v = life.hours === null ? { buy: false, why: life.why } : verdict(plan.best, life.hours)
+      // THE EXIT VERDICT (installgate spendExit.hacknet): the node's exit with
+      // this upgrade against without, from progress.js. Used when it is this
+      // life's, fresh, and priced the same upgrade (within 1%). Otherwise the
+      // payback rule below, named as the fallback it is.
+      fetchFromHome(ns, GATE_FILE)
+      const exitV = (() => {
+        try {
+          const g = JSON.parse(ns.read(GATE_FILE) || 'null')
+          const x = g?.spendExit
+          const h = x?.hacknet
+          if (!x || x.lastAugReset !== info.lastAugReset || !(Date.now() - Date.parse(x.at) < 15 * 60e3) || !h || !(h.cost > 0) || !plan.best) return null
+          if (Math.abs(h.cost / plan.best.cost - 1) > 0.01) return null
+          return { buy: h.buy === true, why: `exit-sim: ${h.why}`, decidedBy: 'exit-sim' }
+        } catch {
+          return null
+        }
+      })()
+      const v = exitV ?? (life.hours === null ? { buy: false, why: life.why, decidedBy: 'payback-fallback' } : { ...verdict(plan.best, life.hours), decidedBy: 'payback-fallback' })
       // What budget.js leaves after the join, augmentation and home claims.
       // Unreadable claims fail closed to "nothing spendable" — see budget.js.
-      fetchFromHome(ns, GATE_FILE)
       const claims = {
         join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
         augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
@@ -208,7 +224,10 @@ export async function main(ns) {
       // Through the HOME claim only when the purchase returns more than it
       // costs before the install (budget.js's money-return exception); the
       // join and augmentation claims are never waived.
-      const opts = plan.best && life.hours !== null ? { payback: { moneyReturn: { cost: plan.best.cost, gainPerSec: plan.best.gainPerSec, horizonSec: life.hours * 3600 } } } : {}
+      // An exit verdict already re-planned the augmentations on the money this
+      // leaves, so it may spend through the augmentation and home claims —
+      // never the join's (budget.js exitApproved).
+      const opts = exitV?.buy ? { exitApproved: true } : plan.best && life.hours !== null ? { payback: { moneyReturn: { cost: plan.best.cost, gainPerSec: plan.best.gainPerSec, horizonSec: life.hours * 3600 } } } : {}
       const free = spendable('hacknet', money, claims, opts)
       const affordable = plan.best ? plan.best.cost <= free : false
       publish(ns, {
