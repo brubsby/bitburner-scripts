@@ -282,5 +282,65 @@ export async function run() {
   }
   checks.push(c8);
 
+  // ---------------------------------------------------------------------
+  const c9 = new Check("XP9", "the FIRST install is priced at the planned batch's gain, not the historical median");
+  {
+    const { batchHackingGain, effectiveHackingMultOf } = await import("../../exitplan.js");
+    c9.examined(4);
+    // The gain is the product of HACKING multipliers — not the plan's
+    // channel-weighted M, which would count rep or exp value as level growth.
+    if (Math.abs(batchHackingGain([{ hacking: 1.2 }, { hacking: 1.5 }, { faction_rep: 3 }]) - 1.8) > 1e-12) {
+      c9.fail("batchHackingGain multiplies hacking mults only; a faction_rep aug contributes x1");
+    }
+    if (batchHackingGain([]) !== null || batchHackingGain(null) !== null) c9.fail("nothing readable must be null, not 1");
+
+    // THE LIVE CASE. Count gate just met, a 14-aug batch at x22.1 in the plan,
+    // median x1.05. Priced on the median alone, every install left the
+    // effective multiplier below 1 and the climb to 6000 cost ~1e24 hours.
+    const base = {
+      money: 2.5e12, incomePerSec: 111e6, hacking: 263, hackingExp: 3.4e7,
+      hackingMult: effectiveHackingMultOf(1.8379, 0.35), expPerSec: 7226, repPerSec: 3.54,
+      exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, cycleHours: 5.5, multGainPerCycle: 1.05,
+      exitLevel: 6000, joinMoney: 100e9, donationCost: null, favorToDonate: 150,
+    };
+    const median = bestExitPolicy({ ...base }, 30).best;
+    const planned = bestExitPolicy({ ...base, nextInstallGain: 22.1 }, 30).best;
+    if (!planned) c9.fail("with the planned gain the exit must price");
+    else {
+      if (!(planned.hours < 1000)) c9.fail(`a x22 batch in hand makes the exit reachable, got ${planned.hours}h`);
+      if (median && !(planned.hours < median.hours / 1e6)) c9.fail("the planned gain must change the answer by orders of magnitude, not a rounding error");
+      if (planned.installsFirst < 1) c9.fail("installing the planned batch must be part of the optimal policy");
+    }
+    // Only the FIRST install uses it: installing twice must apply it once.
+    const one = exitHours({ ...base, installsFirst: 1, nextInstallGain: 10 });
+    const two = exitHours({ ...base, installsFirst: 2, nextInstallGain: 10 });
+    const m1 = one.mult ?? null;
+    const m2 = two.mult ?? null;
+    if (m1 !== null && m2 !== null && Math.abs(m2 / m1 - 1.05) > 1e-9) {
+      c9.fail(`the second install must add the MEDIAN gain, not the planned one again: ratio ${m2 / m1}`);
+    }
+    // A gain below 1 is not a batch that raises anything — ignored.
+    const junk = exitHours({ ...base, installsFirst: 1, nextInstallGain: 0.5 });
+    const med1 = exitHours({ ...base, installsFirst: 1 });
+    if (junk.mult !== med1.mult) c9.fail("a planned gain below 1 must fall back to the median");
+    c9.note(`live shape: ${median ? median.hours.toExponential(2) : "refused"}h on the median alone -> ${planned ? planned.hours.toFixed(1) : "?"}h with the planned x22.1 batch (${planned?.installsFirst} install)`);
+  }
+  checks.push(c9);
+
+  const c10 = new Check("XP10", "every fleet-adjusted exp rate fed to the exit climbs from exitExpPerSec, not the raw schedule");
+  {
+    const fs = (await import("node:fs")).default;
+    const path = (await import("node:path")).default;
+    const { GAME } = await import("./build-ram.mjs");
+    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const calls = [...src.matchAll(/expPerSecWithFleet\(([^\n]{0,40})/g)];
+    c10.examined(calls.length);
+    if (calls.length < 2) c10.fail(`expected both exit-policy feeds, found ${calls.length}`);
+    for (const m of calls) {
+      if (!/^\s*exitExpPerSec\(ns, schedule\),/.test(m[1])) c10.fail(`exit exp rate fed from '${m[1].trim()}' — schedule.expPerSec alone is 0 while the batcher is not training and prices the climb at ~1e45h`);
+    }
+  }
+  checks.push(c10);
+
   return checks;
 }

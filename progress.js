@@ -147,7 +147,7 @@ import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TER
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, effectiveHackingMultOf } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, effectiveHackingMultOf, batchHackingGain } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1311,6 +1311,52 @@ const SLEEVE_FRESH_MS = 5 * 60 * 1000
  *  decision has long since saturated. Recorded lives in this repo have run
  *  20-100h; this is an order of magnitude past the longest. */
 const MAX_PLANNING_HORIZON_H = 1000
+
+/**
+ * The hacking-multiplier gain of the batch the next install will bank: the
+ * plan's purchases plus anything already queued, by name against the live
+ * offers. Feeds bestExitPolicy's FIRST install, which the historical median
+ * mispriced by 20x the moment the catalogue opened up (exitplan.js).
+ */
+function nextInstallGainOf(plan, pending, offers) {
+  const byName = new Map((offers ?? []).map((o) => [o?.name, o]))
+  const names = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])]
+  if (!names.length) return null
+  return batchHackingGain(names.map((n) => byName.get(n)?.mults ?? {}))
+}
+
+/**
+ * THE HACKING EXP RATE THE EXIT CLIMB RUNS ON — the TOTAL rate, not only the
+ * part the faction-work schedule measured.
+ *
+ * bestExitPolicy's climb took `schedule.expPerSec` and nothing else. That is
+ * measured between two SCHEDULE samples of the same life, so it is null or
+ * near-zero for a stretch after every install and absent whenever no faction
+ * is workable — and the count-batch phase installed every ~20 minutes. Live on
+ * 2026-09-24 the planner priced the exit at 4.3e45 hours while scripts were
+ * producing 7,226 hacking exp/s, which tel.js measures (getTotalScriptExpGain)
+ * and publishes on home. Priced with that rate the same exit is ~212 hours.
+ *
+ * The larger of the two: the schedule's figure is a TOTAL delta (scripts plus
+ * faction work) when it has one, and the script rate is a floor that is always
+ * there. A stale tel.js record is refused — a rate from before an install is
+ * the mature batcher's, and the climb after one starts from a restart.
+ */
+function exitExpPerSec(ns, schedule) {
+  const fin = (v) => typeof v === 'number' && isFinite(v) && v > 0
+  const sched = fin(schedule?.expPerSec) ? schedule.expPerSec : null
+  let script = null
+  try {
+    const t = JSON.parse(ns.read('/tel/status.txt') || 'null')
+    const age = Date.now() - Date.parse(t?.at ?? '')
+    if (age >= 0 && age < 5 * 60 * 1000 && fin(t?.expPerSec)) script = t.expPerSec
+  } catch {
+    /* unreadable: the schedule's figure stands alone */
+  }
+  if (sched === null) return script
+  if (script === null) return sched
+  return Math.max(sched, script)
+}
 
 /**
  * THE HACKING MULTIPLIER THE LEVEL CURVE ACTUALLY USES.
@@ -3112,7 +3158,7 @@ async function act(ns, canJoin, info, note) {
               // only: a null player rate stays null (exitplan refuses), because
               // the fleet's few exp/s alone is not a conservative estimate of a
               // climb, it is a different trajectory that happens to be a number.
-              expPerSec: expPerSecWithFleet(schedule?.expPerSec, planFleet?.expToPlayerHacking),
+              expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule), planFleet?.expToPlayerHacking),
               // ONE sleeve's worth, because only one sleeve may work a faction
               // (setToFactionWork throws otherwise) — fleetFactionRepPerSec
               // takes a max, not a sum, and summing here would overstate the
@@ -3122,6 +3168,7 @@ async function act(ns, canJoin, info, note) {
               exitFavor: rp?.favor ?? 0,
               cycleHours: cyc?.cycleHours,
               multGainPerCycle: cyc?.multGainPerCycle,
+              nextInstallGain: nextInstallGainOf(plan, pending, offers),
               exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
               // The requirement, not the shortfall: exitHours skips the leg
               // itself when the cash is already there, and feeding it a claim
@@ -3340,10 +3387,11 @@ async function act(ns, canJoin, info, note) {
                 hacking: player.skills?.hacking,
                 hackingExp: player.exp?.hacking ?? 0,
                 hackingMult: effectiveHackingMult(player, info),
-                expPerSec: expPerSecWithFleet(schedule?.expPerSec, readFleet(ns, info)?.expToPlayerHacking),
+                expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule), readFleet(ns, info)?.expToPlayerHacking),
                 repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, readFleet(ns, info)?.factionRepPerSec),
                 cycleHours: cyc?.cycleHours,
                 multGainPerCycle: cyc?.multGainPerCycle,
+              nextInstallGain: nextInstallGainOf(plan, pending, offers),
                 exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
               },
               perSec,

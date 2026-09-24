@@ -159,6 +159,9 @@ export function exitHours(o = {}) {
     // measured per-cycle behaviour, from the lifetimes ledger
     cycleHours,
     multGainPerCycle,
+    // The hacking-multiplier gain of the batch ACTUALLY being assembled for
+    // the next install, when there is one. Optional; see below.
+    nextInstallGain = null,
     // the gates
     exitLevel,
     joinMoney = 0,
@@ -188,7 +191,22 @@ export function exitHours(o = {}) {
 
   if (installsFirst > 0) {
     h += installsFirst * cycleHours
-    mult = hackingMult * Math.pow(multGainPerCycle, installsFirst)
+    // THE FIRST INSTALL IS NOT A MEDIAN ONE. multGainPerCycle is the median
+    // ratio across recent lives, which predicts a typical future cycle — and is
+    // a poor predictor of the one about to happen whenever the catalogue has
+    // just changed. Live in BitNode 10 on 2026-09-24, the count gate had just
+    // been met, the catalogue opened up to real hacking augmentations, and the
+    // plan was a 14-aug batch at M = 22.1 while the median said x1.05. Every
+    // install priced at x1.05 left the effective multiplier below 1 after six
+    // of them, so the climb to hacking 6000 priced at 2.8e89 hours — while the
+    // batch sitting in the plan would have taken it to ~14 in one install.
+    //
+    // So the first install uses the planned batch's own gain when one is
+    // supplied, and the median covers only the installs after it. The planned
+    // gain is a LOWER bound for that install: the gate is still letting the
+    // batch grow, so what actually installs will be at least this.
+    const firstGain = pos(nextInstallGain) && nextInstallGain >= 1 ? nextInstallGain : multGainPerCycle
+    mult = hackingMult * firstGain * Math.pow(multGainPerCycle, installsFirst - 1)
     exp = 0
     cash = 1262 // PlayerObjectGeneralMethods.ts:102
     legs.push({ leg: 'install cycles', hours: installsFirst * cycleHours, detail: `${installsFirst} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
@@ -344,4 +362,24 @@ export function effectiveHackingMultOf(raw, hackingLevelMultiplier) {
   const bn = hackingLevelMultiplier
   if (!(typeof bn === 'number' && isFinite(bn) && bn >= 0)) return null
   return raw * bn
+}
+
+/**
+ * The hacking-multiplier gain of a batch: the product of each augmentation's
+ * `mults.hacking` (1 when it has none). Deliberately NOT the plan's `M`, which
+ * is channel-WEIGHTED — the moment faction_rep or hacking_exp carries weight,
+ * `M` counts value that does not raise the level at all, and a climb priced on
+ * it would be optimistic by exactly that amount. null when nothing is readable.
+ */
+export function batchHackingGain(multsList) {
+  if (!Array.isArray(multsList)) return null
+  let g = 1
+  let read = 0
+  for (const m of multsList) {
+    if (!m || typeof m !== 'object') continue
+    read++
+    const h = m.hacking
+    if (typeof h === 'number' && isFinite(h) && h > 0) g *= h
+  }
+  return read ? g : null
 }
