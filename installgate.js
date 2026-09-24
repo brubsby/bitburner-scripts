@@ -125,6 +125,11 @@
  */
 export const RATE_CHANNELS = ['hacking', 'hacking_money', 'hacking_speed', 'hacking_chance', 'hacking_grow', 'faction_rep']
 
+/** The smallest ticket batch the count gate will install for, unless fewer
+ *  than this remain to be banked. See shouldInstall's COUNT BATCH block: it is
+ *  an anti-thrash floor, stated as a policy rather than derived. */
+export const COUNT_MIN_BATCH = 3
+
 /**
  * Combine per-augmentation multiplier objects into one progress factor.
  *
@@ -283,8 +288,43 @@ export function shouldInstall(o) {
   // way to strand the run. progress.js decides sprint-versus-more-installs
   // afterwards on its own arithmetic.
   const terminal = o.terminal === true
-  if (!terminal) {
-    if (M <= 1) return no(`the queued augmentations give no gain on ${RATE_CHANNELS.join('/')} (M=${M})`)
+
+  // --- THE COUNT BATCH: the other install M says nothing about ---------------
+  //
+  // Daedalus needs N DISTINCT augmentations (DaedalusAugsRequirement, 30 here)
+  // and they only count once INSTALLED — haveAugmentations reads
+  // Player.augmentations, which a queued purchase is not in. So when the count
+  // gate binds, augplan correctly plans "tickets": the cheapest distinct
+  // augmentations, bought for the count and carrying no valued multiplier. It
+  // labels them `kind: 'ticket'`, `m: 1`.
+  //
+  // And `M <= 1` refused every one of them, right here, before the count logic
+  // below was ever read. A ticket batch has M = 1 by construction, so the gate
+  // refused the one install the count gate needed — exactly the shape of the
+  // Red Pill deadlock above, one gate to the left.
+  //
+  // Live in BitNode 10 on 2026-09-24: seven tickets planned, M = 1, countGain 7,
+  // countShort 18, and NOTHING installed for 11.9 hours. It is worse than a
+  // held install, because progress.js only BUYS inside `if (gate.install)` — so
+  // the tickets were never even purchased, and the save showed zero queued
+  // while the plan showed seven. The count had been frozen at 12 all that time,
+  // on the gate that stands between the run and the exit.
+  //
+  // `countStalls` below HOLDS a zero-count install (the NeuroFlux treadmill).
+  // Nothing could PERMIT a count install. This is that half.
+  const countShortEarly = num(o.countShort) ? o.countShort : 0
+  const countGainEarly = num(o.countGain) ? o.countGain : 0
+  // A FLOOR, so the rule cannot thrash. Installing resets money to $1262 and
+  // restarts the batcher, so a one-ticket batch planned on the first pass of a
+  // new life would reset the money that was about to buy several more. Three,
+  // or whatever is left if fewer than three remain — the batch that finishes
+  // the gate is never refused for being small. A policy, not a proof: the
+  // honest version prices "install now" against "wait for a bigger batch" in
+  // count per hour, and nothing here does that yet.
+  const countFloor = Math.min(COUNT_MIN_BATCH, Math.max(countShortEarly, 1))
+  const countBanks = countShortEarly > 0 && countGainEarly >= countFloor
+  if (!terminal && !countBanks) {
+    if (M <= 1) return no(`the queued augmentations give no gain on ${RATE_CHANNELS.join('/')} (M=${M})`, { countShort: countShortEarly, countGain: countGainEarly, countFloor })
   }
 
   // Both are pure functions of M and the life's age, so they are computed
@@ -367,7 +407,15 @@ export function shouldInstall(o) {
   // there is no better purchase for a second sample to discover. It was also
   // the guard a first attempt at the override missed — the M check and this one
   // are far apart in the file, so the test pins each separately.
-  if (!terminal && (!prev || !num(prev.ageMs) || !num(prev.M) || prev.M <= 0 || ageMs <= prev.ageMs)) {
+  //
+  // A COUNT BATCH skips it for the same reason, and it is the mistake this
+  // comment predicts: the count override was first written against the M check
+  // alone and still held every ticket batch here. "Are better purchases still
+  // arriving?" is a multiplier-rate question. A ticket's value is that it is
+  // DISTINCT, which the plan states directly; there is no rate for a second
+  // sample to reveal, and batch size is the anti-thrash floor's job, not this
+  // guard's. IG16 pins each guard separately, as the terminal case does.
+  if (!terminal && !countBanks && (!prev || !num(prev.ageMs) || !num(prev.M) || prev.M <= 0 || ageMs <= prev.ageMs)) {
     return {
       ...base(),
       install: false,
@@ -524,7 +572,18 @@ export function shouldInstall(o) {
   // being fixed is an objective that confidently scored the wrong thing.
   const destructive = o.binding?.destroyedByInstall === true
 
-  const install = terminal || (expOk && netGain && !waitBeats && !countStalls && !destructive)
+  // THE COUNT INSTALL. Banks distinct augmentations toward a gate the exit
+  // cannot pass without, whatever M is. `destructive` still vetoes it: if the
+  // binding gate is one an install would destroy, banking count does not
+  // outrank losing it.
+  //
+  // It deliberately does NOT wait on `countReachableLater`. That flag is true
+  // whenever any skipped augmentation could be bought by waiting — and with a
+  // gang generating reputation continuously it is true forever, which is the
+  // deadlock the countStalls comment warns about: a hold that cannot state what
+  // would end it. The floor above is the anti-thrash guard instead.
+  const countInstall = countBanks && !destructive
+  const install = terminal || countInstall || (expOk && netGain && !waitBeats && !countStalls && !destructive)
 
   return {
     ...base(),
@@ -544,10 +603,17 @@ export function shouldInstall(o) {
     countShort,
     countGain,
     countStalls,
+    countBanks,
+    countInstall,
+    countFloor,
     binding: o.binding ?? null,
     destructive,
     why: terminal
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
+      : countInstall && !(expOk && netGain && !waitBeats)
+      ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs. ` +
+        `They carry no valued multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold: they only count once installed, ` +
+        `and nothing is bought until the gate says install.`
       : install
       ? `install: ${queued} aug(s), M=${M.toFixed(4)} -> ${Meff.toFixed(4)} with the x${favorGain.toFixed(4)} favour gain (Go bonus ${goBonusPct.toFixed(1)}% regrows, so it is not charged). Installing now accumulates ${rateNow.toFixed(4)} ln(M)/h; nothing reachable beats it` +
         (bestWait ? ` (best wait ${(bestWait.waitMs / 3600000).toFixed(1)}h -> M=${bestWait.M.toFixed(4)} = ${rateWait.toFixed(4)}/h)` : ' (nothing further is reachable)')
@@ -570,7 +636,11 @@ export function shouldInstall(o) {
   function base() {
     return { M, queued, ageMs, exp, target, rateNow, rho, rhoSource, sample: { ageMs, M } }
   }
-  function no(why) {
+  // `extra` so an early refusal can still publish the state that explains it.
+  // The M<=1 return used to fire before the count was read, so /tel showed
+  // countShort/countGain as NULL on exactly the path that was stalling on the
+  // count — the evidence and the fault shared one early return.
+  function no(why, extra = {}) {
     return {
       install: false,
       why: `hold: ${why}`,
@@ -581,6 +651,7 @@ export function shouldInstall(o) {
       rho,
       rhoSource,
       sample: { ageMs, M: num(M) ? M : 1 },
+      ...extra,
     }
   }
 }

@@ -708,5 +708,63 @@ export function run() {
   }
   checks.push(c15);
 
+  // ---------------------------------------------------------------------
+  const c16 = new Check("IG16", "a COUNT BATCH installs at M=1 — the count gate cannot be passed any other way");
+  {
+    const base = { ageMs: 12 * H, exp: EXP, prev: null, futures: [] };
+    // THE LIVE CASE. BitNode 10, 2026-09-24: seven tickets planned, M = 1,
+    // countGain 7, countShort 18 — and nothing installed for 11.9 hours,
+    // because `M <= 1` returned before the count was ever read. progress.js
+    // only buys inside `if (gate.install)`, so the tickets were never even
+    // purchased. This asserts it exactly as it was stuck.
+    c16.examined(1);
+    const live = shouldInstall({ ...base, M: 1, queued: 7, countShort: 18, countGain: 7, countReachableLater: true });
+    if (live.install !== true) c16.fail(`seven tickets toward an 18-short count gate must INSTALL at M=1, got hold: ${live.why}`);
+    if (live.countInstall !== true) c16.fail("and it must say the count is why");
+    if (!/COUNT BATCH/.test(live.why ?? "")) c16.fail(`the reason must name the count batch, not a multiplier: ${live.why}`);
+
+    // NOT gated on countReachableLater: with a gang generating reputation that
+    // is true forever, and a hold that cannot state what ends it is a deadlock.
+    c16.examined(1);
+    if (live.install !== true) c16.fail("countReachableLater: true must not hold a count batch — it never becomes false while a gang runs");
+
+    // ANTI-THRASH: a single ticket right after an install would reset the money
+    // that was about to buy several more.
+    c16.examined(1);
+    const tiny = shouldInstall({ ...base, M: 1, queued: 1, countShort: 18, countGain: 1 });
+    if (tiny.install !== false) c16.fail(`one ticket when 18 are needed is below the floor and must hold, got install: ${tiny.why}`);
+
+    // THE FINISHING BATCH is never refused for being small.
+    c16.examined(1);
+    const last = shouldInstall({ ...base, M: 1, queued: 1, countShort: 1, countGain: 1 });
+    if (last.install !== true) c16.fail(`the batch that finishes the gate must install whatever its size, got hold: ${last.why}`);
+    const lastTwo = shouldInstall({ ...base, M: 1, queued: 2, countShort: 2, countGain: 2 });
+    if (lastTwo.install !== true) c16.fail("two needed and two queued must install");
+
+    // DESTRUCTIVE STILL VETOES: banking count does not outrank losing the gate
+    // an install would destroy.
+    c16.examined(1);
+    const dest = shouldInstall({ ...base, M: 1, queued: 7, countShort: 18, countGain: 7, binding: { gate: "money", destroyedByInstall: true, why: "the join money" } });
+    if (dest.install !== false) c16.fail("a destructive binding gate must still veto a count install");
+
+    // THE TREADMILL IS STILL HELD: zero distinct gain is not a count batch, so
+    // the M<=1 refusal stands exactly as before.
+    c16.examined(1);
+    const tread = shouldInstall({ ...base, M: 1, queued: 3, countShort: 18, countGain: 0 });
+    if (tread.install !== false) c16.fail("a zero-count queue (NeuroFlux only) must still be refused at M=1");
+    // ...and it must now PUBLISH the count state it refused on, not nulls.
+    if (tread.countShort !== 18 || tread.countGain !== 0) {
+      c16.fail(`the M<=1 refusal must publish countShort/countGain, got ${tread.countShort}/${tread.countGain}`, "they were null on exactly the path that stalled on the count");
+    }
+
+    // No count gate at all: behaviour unchanged.
+    c16.examined(1);
+    const nogate = shouldInstall({ ...base, M: 1, queued: 7, countShort: 0, countGain: 7 });
+    if (nogate.install !== false) c16.fail("with no count gate outstanding, M=1 still refuses");
+
+    c16.note(`live case (M=1, 7 tickets, 18 short) -> ${live.install ? "INSTALL" : "hold"}; 1 of 18 -> ${tiny.install ? "install" : "hold"}; 1 of 1 -> ${last.install ? "install" : "hold"}; floor ${gate.COUNT_MIN_BATCH}`);
+  }
+  checks.push(c16);
+
   return checks;
 }
