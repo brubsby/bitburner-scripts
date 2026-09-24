@@ -32,6 +32,8 @@ import { spendable, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { sfLevel } from 'sfgate.js'
+import { gangEquipExit } from 'gangworth.js'
+import { bestExitPolicy, spendRuns } from 'exitplan.js'
 
 const STATUS = '/tel/gang.txt'
 
@@ -78,6 +80,9 @@ function publish(ns, obj) {
   }
 }
 const GATE_FILE = '/tel/installgate.txt'
+// progress.js's exit inputs: the equipment spend is priced as two simulated
+// exits (gangworth.gangEquipExit), falling back, named, when stale.
+const EXIT_INPUTS = '/tel/exitinputs.txt'
 const GANG_LAST = '/tel/gang-last.txt'
 const SCHEDULE = '/tel/factionplan.txt'
 /** Ceiling on the coarse tail past the install window, in hours. */
@@ -295,7 +300,14 @@ export async function main(ns) {
               const bare = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, assignFn: policy.assignFn, ascend: { minGain: d.x }, rivals, warfare: rivals ? { fraction: d.w, engageRatio: d.e } : null })
               const without = bare ? scoreTrajectory(bare, objective) : null
               const lnGain = without ? d.score.value - without.value : null
-              compete = { cost: d.forecast.equipSpent, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget }
+              fetchFromHome(ns, EXIT_INPUTS)
+              let exitCmp = null
+              try {
+                exitCmp = gangEquipExit(JSON.parse(ns.read(EXIT_INPUTS) || 'null'), info.lastAugReset, bestExitPolicy, d.forecast, bare, d.forecast.equipSpent, Date.now(), spendRuns)
+              } catch (e) {
+                exitCmp = { deltaH: null, why: `gang equipment exit threw: ${String(e).slice(0, 80)}` }
+              }
+              compete = { cost: d.forecast.equipSpent, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget, exitCmp }
             }
             const sim = d.forecast
             forecast = sim
@@ -373,7 +385,17 @@ export async function main(ns) {
       fetchFromHome(ns, GATE_FILE)
       const rivalsLn = marginalLnPerDollar(ns.read(GATE_FILE), info.lastAugReset)
       const lnCompete = compete && typeof compete.lnPerDollar === 'number' && compete.lnPerDollar > 0 ? { lnPerDollar: compete.lnPerDollar, rivals: rivalsLn } : null
-      const permitted = spendable('gang', ns.getServerMoneyAvailable('home'), claims, lnCompete ? { lnCompete } : {})
+      // THE EXIT DECIDES when it could be priced (compete.exitCmp): the gang
+      // with the equipment against without, as two simulated exits — an
+      // approved spend passes the augmentation and home claims (budget.js
+      // exitApproved), a refused one spends nothing. The ln-per-dollar
+      // competition is the named fallback for an unpriced exit.
+      const exitCmp = compete?.exitCmp
+      const exitPriced = !!exitCmp && typeof exitCmp.deltaH === 'number' && isFinite(exitCmp.deltaH)
+      const permitted = exitPriced
+        ? exitCmp.deltaH < 0 ? spendable('gang', ns.getServerMoneyAvailable('home'), claims, { exitApproved: true }) : 0
+        : spendable('gang', ns.getServerMoneyAvailable('home'), claims, lnCompete ? { lnCompete } : {})
+      if (compete) compete.decidedBy = exitPriced ? 'exit-sim' : 'ln-per-dollar fallback'
       // Spend what the trajectory chose, inside what the competition allows.
       let budget = Math.min(permitted, compete ? compete.cost : permitted * policy.y)
       if (compete) compete.rivals = rivalsLn

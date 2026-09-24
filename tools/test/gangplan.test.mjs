@@ -705,5 +705,24 @@ export async function run() {
   }
   checks.push(cgx);
 
+  const cgx2 = new Check("GX2", "gang equipment is two simulated exits: the gang with it (price paid now) against without");
+  {
+    const gw = await import("../../gangworth.js");
+    const { bestExitPolicy, spendRuns } = await import("../../exitplan.js");
+    cgx2.examined(4);
+    const now = Date.now();
+    // The ladder: the next batch's hacking gain grows with the money at W.
+    const ladder = [0, 0.25, 0.5, 0.75, 0.9, 1, 1.25, 1.5, 2].map((f) => ({ money: 1e10 * f, gains: { hacking: 1 + 2 * f, rep: 1, income: 1 } }));
+    const rec = { W: 3, finalWindow: false, moneyAtW: 1e10, gainsByMoney: ladder, at: new Date(now).toISOString(), lastAugReset: 1, eBudget: 0.2, inputs: { money: 1e10, incomePerSec: 1e6, hacking: 300, hackingExp: 1e6, hackingMult: 1.3, expPerSec: 50, repPerSec: 0.3, exitRep: 0, exitFavor: 150, favorToDonate: 150, donationCost: 3e12, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9, cycleHours: 2, multGainPerCycle: 1.12 } };
+    const sim = (perSec) => ({ samples: Array.from({ length: 50 }, (_, h) => ({ h, money: perSec * h * 3600 })) });
+    const good = gw.gangEquipExit(rec, 1, bestExitPolicy, sim(5e7), sim(1e7), 1e9, now, spendRuns);
+    if (!(good.deltaH < 0)) cgx2.fail(`equipment that multiplies gang income for a small price must reach the exit sooner: ${good.why}`);
+    const bad = gw.gangEquipExit(rec, 1, bestExitPolicy, sim(1.0001e7), sim(1e7), 9e9, now, spendRuns);
+    if (!(bad.deltaH > 0)) cgx2.fail(`equipment that adds nothing for most of the money must be slower: ${bad.why}`);
+    if (gw.gangEquipExit({ ...rec, lastAugReset: 2 }, 1, bestExitPolicy, sim(5e7), sim(1e7), 1e9, now, spendRuns).deltaH !== null) cgx2.fail("another life's inputs refuse");
+    if (gw.gangEquipExit(rec, 1, bestExitPolicy, null, sim(1e7), 1e9, now, spendRuns).deltaH !== null) cgx2.fail("an unreadable trajectory refuses");
+  }
+  checks.push(cgx2);
+
   return checks;
 }

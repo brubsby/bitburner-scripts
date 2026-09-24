@@ -53,5 +53,14 @@ export async function run() {
   }
   checks.push(c3);
 
+  const c4 = new Check("SE4", "gang.js spends on equipment by the simulated-exit comparison, ln-per-dollar only as the named fallback");
+  {
+    const gs = src("gang.js");
+    c4.examined(2);
+    if (!/const permitted = exitPriced\s*\? exitCmp\.deltaH < 0 \? spendable\('gang', ns\.getServerMoneyAvailable\('home'\), claims, \{ exitApproved: true \}\) : 0\s*: spendable\('gang', ns\.getServerMoneyAvailable\('home'\), claims, lnCompete \? \{ lnCompete \} : \{\}\)/.test(gs)) c4.fail("gang.js must follow the exit comparison before the ln competition");
+    if (!/gangEquipExit\(JSON\.parse\(ns\.read\(EXIT_INPUTS\)/.test(gs) || !/fetchFromHome\(ns, EXIT_INPUTS\)/.test(gs)) c4.fail("gang.js must price equipment from progress.js's exit inputs, pulled from home");
+  }
+  checks.push(c4);
+
   return checks;
 }

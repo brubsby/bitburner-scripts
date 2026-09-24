@@ -600,3 +600,28 @@ export function spendExit(o = {}) {
     ...(persists && K > 1 && e === null ? { floor: 'later lives priced without the augmentation-growth response (eBudget unmeasured)' } : {}),
   }
 }
+
+/**
+ * WITH AND WITHOUT A SPEND, from progress.js's published exit inputs
+ * (/tel/exitinputs.txt): the two input sets for "spend $spent now" against
+ * "don't", for scripts that cannot re-plan themselves (gang.js).
+ *   - final window (no install coming): the spend leaves the money short.
+ *   - otherwise: the next install at W buys the batch the planner priced at
+ *     moneyAtW - spent, read from the published ladder as the largest level
+ *     not above it — a step down, so the spend is charged at least its true
+ *     crowding-out (a bias toward not spending, stated).
+ * Null when the record carries no install point or ladder.
+ */
+export function spendRuns(record, spent) {
+  const base = record?.inputs
+  if (!base || !num(spent) || spent < 0) return null
+  if (record.finalWindow === true) return { without: { ...base }, with: { ...base, money: Math.max(0, (base.money ?? 0) - spent) }, max: 0, min: 0 }
+  if (!num(record.W) || record.W < 0 || !num(record.moneyAtW) || !Array.isArray(record.gainsByMoney) || !record.gainsByMoney.length) return null
+  const gAt = (m) => {
+    let g = null
+    for (const r of [...record.gainsByMoney].sort((a, b) => a.money - b.money)) if (num(r?.money) && r.money <= m + 1e-6) g = r.gains
+    return g
+  }
+  const inputsWith = (g) => ({ ...base, firstInstallH: record.W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) })
+  return { without: inputsWith(gAt(record.moneyAtW)), with: inputsWith(gAt(record.moneyAtW - spent)), max: 400, min: 1 }
+}

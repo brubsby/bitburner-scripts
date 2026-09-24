@@ -236,3 +236,32 @@ export function rememberedGangIncome(record, node) {
   }
   return { perSec: record.moneyPerSec, why: `$${(record.moneyPerSec / 1e6).toFixed(2)}m/s measured by a gang in this node` }
 }
+
+/**
+ * GANG EQUIPMENT, trajectory against trajectory: the node's exit with the gang
+ * run as gangplan simulated it WITH the planned equipment (its price out of
+ * the money now) against the same gang WITHOUT it — each gang trajectory's
+ * money as an income schedule from now, on progress.js's published exit
+ * inputs (/tel/exitinputs.txt). Replaces lnGain / equipSpent against the
+ * rivals' ln per dollar. Null deltaH (refuse) on a stale or foreign record.
+ */
+export function gangEquipExit(record, lastAugReset, bestExitPolicy, withSim, bareSim, spent, now = Date.now(), spendRunsFn = null) {
+  if (typeof spendRunsFn !== 'function') return { deltaH: null, why: 'no spendRuns supplied' }
+  if (!record || typeof bestExitPolicy !== 'function' || record.lastAugReset !== lastAugReset || !(now - Date.parse(record.at) < 15 * 60e3) || !record.inputs) {
+    return { deltaH: null, why: 'no fresh exit inputs from progress.js' }
+  }
+  const sw = gangIncomeSchedule(withSim)
+  const sb = gangIncomeSchedule(bareSim)
+  if (!sw || !sb || !num(spent) || spent < 0) return { deltaH: null, why: 'a gang trajectory or the spend is unreadable' }
+  const e = num(record.eBudget) ? record.eBudget : null
+  // The price comes out of the next batch (or the final window), priced by
+  // the planner's own ladder — exitplan.spendRuns.
+  const runs = spendRunsFn(record, spent)
+  if (!runs) return { deltaH: null, why: 'the exit inputs carry no install point or batch ladder' }
+  const withE = bestExitPolicy({ ...runs.with, extraIncome: sw, eBudget: e }, runs.max, runs.min)
+  const bare = bestExitPolicy({ ...runs.without, extraIncome: sb, eBudget: e }, runs.max, runs.min)
+  const a = withE?.best?.hours
+  const b = bare?.best?.hours
+  if (!num(a) || !num(b)) return { deltaH: null, why: 'an exit could not be priced' }
+  return { deltaH: a - b, withH: a, withoutH: b, why: `exit ${a.toFixed(2)}h with the equipment vs ${b.toFixed(2)}h without` }
+}

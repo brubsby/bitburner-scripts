@@ -1387,9 +1387,22 @@ function nextInstallGainOf(plan, pending, offers) {
  * so they compare trajectories on the same state this planner does, without
  * rebuilding it. With the measured responses the simulation needs.
  */
-function publishExitInputs(ns, info, inputs) {
+function publishExitInputs(ns, info, inputs, at = null) {
   try {
     const gate = readJson(ns, GATE)
+    // WHERE THIS LIFE ENDS AND WHAT IT CAN BUY THERE, for scripts that price a
+    // spend now: the gate's install point W, the money expected at W, and the
+    // batch gains the planner buys at a ladder of money levels (replanAt). A
+    // spend of $X is then the batch at moneyAtW - X — the crowding-out priced
+    // by the same planner, not assumed away.
+    const table = (() => {
+      if (!at || typeof at.replanAt !== 'function' || !(at.moneyAtW >= 0)) return null
+      return [0, 0.25, 0.5, 0.75, 0.9, 1, 1.25, 1.5, 2].map((f) => {
+        const m = at.moneyAtW * f
+        const p2 = at.replanAt(m)
+        return { money: m, gains: installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(at.pending ?? [])], at.offers) }
+      })
+    })()
     ns.write(
       '/tel/exitinputs.txt',
       JSON.stringify({
@@ -1399,6 +1412,10 @@ function publishExitInputs(ns, info, inputs) {
         inputs,
         eRep: typeof gate?.objective?.eRep === 'number' ? gate.objective.eRep : null,
         eBudget: typeof gate?.eBudget === 'number' ? gate.eBudget : null,
+        W: at && typeof at.W === 'number' ? at.W : null,
+        finalWindow: at?.finalWindow === true,
+        moneyAtW: at && typeof at.moneyAtW === 'number' ? at.moneyAtW : null,
+        gainsByMoney: table,
       }),
       'w',
     )
@@ -3317,7 +3334,10 @@ async function act(ns, canJoin, info, note) {
       const repF = sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction)
       const expOff = readFleet(ns, info)?.expDisabled === true
       const byExit = sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
-      publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }))
+      {
+        const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
+        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + incNow * W0 * 3600, replanAt, pending, offers })
+      }
       writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
     ns.write(
@@ -3869,7 +3889,11 @@ async function act(ns, canJoin, info, note) {
     // money, which no objective is harmed by. This is the same verdict act.js
     // gates its own karma grind on, read from the same place, so the player and
     // the fleet cannot end up grinding for different reasons.
-    publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }))
+    {
+      const Wg = gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0
+      const mW = Wg === null ? ns.getServerMoneyAvailable('home') : ns.getServerMoneyAvailable('home') + (incomeTraj ? incomeTraj.moneyBy(Wg) : incomePerSec * Wg * 3600)
+      publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), { W: Wg, finalWindow: gate.holdForever === true, moneyAtW: mW, replanAt, pending, offers })
+    }
     writeSleevePlan(
       ns,
       info,
