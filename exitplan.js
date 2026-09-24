@@ -313,7 +313,7 @@ export function exitHours(o = {}) {
  * truncated search reads as "this is the optimum" when it may only be the edge
  * of where we looked (CLAUDE.md: no silent caps).
  */
-export function bestExitPolicy(o = {}, maxInstalls = 6) {
+export function bestExitPolicy(o = {}, maxInstalls = 400) {
   const tried = []
   let best = null
   for (let k = 0; k <= maxInstalls; k++) {
@@ -344,6 +344,37 @@ export function bestExitPolicy(o = {}, maxInstalls = 6) {
  * Refuses (null) below `minN` lives: with one sample there is no ratio, and
  * inventing one would price an install we have never actually observed.
  */
+/**
+ * THE ENDPOINT MODEL for exit simulations: the node's measured ln(M) growth
+ * per hour and the cadence it came at, over the SAME lives.
+ *
+ * Why not cycleStats: its median per-install gain discards the lives that do
+ * the work — the multiplier grows in occasional large batches between runs of
+ * count-ticket and near-empty lives, so the median ratio sits near 1 (BN10,
+ * 2026-09-24: 1.05) while the node actually grew x2.8 in 48.9h. Fed the
+ * median, the exit priced at 1e39-1e43 hours, and every trajectory
+ * comparison built on it was comparing noise. nodeplan.compoundGain had the
+ * geometric mean right but paired it with the MEDIAN life length, which the
+ * many 20-minute ticket lives drag down; gain and cadence must come from the
+ * same lives, so this uses total ln growth over total hours and the MEAN
+ * life length, and derives the per-install gain from the two.
+ *
+ * { cycleHours, multGainPerCycle, lnPerHour, n } or null below minN lives or
+ * when the multiplier did not grow (a rate of zero is not an endpoint model).
+ */
+export function endpointCycleStats(ledger, bitNode, { minN = 3 } = {}) {
+  if (!Array.isArray(ledger)) return null
+  const lives = ledger.filter((e) => e && e.bitNode === bitNode && pos(e.lifeH) && pos(e.hackMult))
+  if (lives.length < minN) return null
+  const grown = lives.slice(1)
+  const hours = grown.reduce((t, e) => t + e.lifeH, 0)
+  const ratio = lives[lives.length - 1].hackMult / lives[0].hackMult
+  if (!pos(hours) || !(ratio > 1)) return null
+  const lnPerHour = Math.log(ratio) / hours
+  const cycleHours = hours / grown.length
+  return { cycleHours, multGainPerCycle: Math.exp(lnPerHour * cycleHours), lnPerHour, n: lives.length, from: lives[0].hackMult, to: lives[lives.length - 1].hackMult, hours }
+}
+
 export function cycleStats(ledger, bitNode, { minN = 3, recent = 6 } = {}) {
   if (!Array.isArray(ledger)) return null
   const all = ledger.filter((e) => e && e.bitNode === bitNode && pos(e.lifeH) && pos(e.hackMult))

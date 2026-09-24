@@ -148,7 +148,7 @@ import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TER
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, effectiveHackingMultOf, batchHackingGain } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1434,7 +1434,8 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
  * inputs measures the inputs, not the choice.
  */
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
-  const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+  // The endpoint model (exitplan.endpointCycleStats), not cycleStats's median.
+  const cyc = endpointCycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
   const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
   const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
   return {

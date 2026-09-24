@@ -396,5 +396,23 @@ export async function run() {
   }
   checks.push(c12);
 
+  const c13 = new Check("XP13", "the exit's endpoint model: the node's ln(M)/h over the same lives as its cadence, not the median per-install gain");
+  {
+    const { endpointCycleStats, cycleStats } = await import("../../exitplan.js");
+    c13.examined(4);
+    // The live BN10 shape: a few big batches between many flat ticket lives.
+    const L = [[11.32, 1.494, 5], [3.25, 1.524, 6], [7.74, 1.667, 7], [1.42, 1.667, 8], [11.97, 1.75, 12], [0.33, 1.75, 19], [0.33, 1.75, 22], [0.33, 1.75, 24], [0.5, 1.75, 26], [0.33, 1.838, 29], [8.63, 1.838, 30], [0.42, 3.735, 43]].map(([lifeH, hackMult, augs]) => ({ bitNode: 10, lifeH, hackMult, augs }));
+    const e = endpointCycleStats(L, 10);
+    const hours = L.slice(1).reduce((t, x) => t + x.lifeH, 0);
+    const rate = Math.log(3.735 / 1.494) / hours;
+    if (!e || Math.abs(e.lnPerHour - rate) > 1e-12) c13.fail(`lnPerHour must be ln(last/first)/hours of the grown lives: ${e?.lnPerHour} vs ${rate}`);
+    else if (Math.abs(Math.log(e.multGainPerCycle) - rate * e.cycleHours) > 1e-12) c13.fail("per-install gain must be exp(rate x mean cadence) — gain and cadence from the same lives");
+    const med = cycleStats(L, 10);
+    if (med && e && !(e.multGainPerCycle > med.multGainPerCycle)) c13.fail("the endpoint gain must exceed the median here — that gap is the 1e40h exit");
+    if (endpointCycleStats(L.map((x) => ({ ...x, hackMult: 2 })), 10) !== null) c13.fail("no growth is not an endpoint model — refuse");
+    if (endpointCycleStats(L.slice(0, 2), 10) !== null) c13.fail("below minN lives, refuse");
+  }
+  checks.push(c13);
+
   return checks;
 }
