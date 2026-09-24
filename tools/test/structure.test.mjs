@@ -1055,7 +1055,7 @@ function c11() {
       what: "the DERIVED objective on /tel/installgate.txt (progress.js:1761)",
       fields: ["weights", "windowH"],
       // Only the derived branch carries these; find that literal specifically.
-      scope: /weightsMeta = \{ source: 'derived'[\s\S]{0,800}?\}\n/,
+      scope: /weightsMeta = \{ source: derived\?\.source \?\? 'derived'[\s\S]{0,1200}?\}\n/,
     },
     {
       // THE FLEET AS A TRAJECTORY TERM. karmaChannelCtx reads these four names

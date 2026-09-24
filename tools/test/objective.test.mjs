@@ -564,5 +564,26 @@ export async function run() {
   }
   checks.push(c7);
 
+  const cew = new Check("OB-EXIT", "channel weights are the exit's own sensitivities per ln of the next batch, normalised to hacking");
+  {
+    const ob = await import("../../objective.js");
+    const { bestExitPolicy, spendRuns } = await import("../../exitplan.js");
+    cew.examined(5);
+    const now = Date.now();
+    const ladder = [0, 0.5, 1, 2].map((f) => ({ money: 1e10 * f, gains: { hacking: 1.5, rep: 1.2, income: 1.1, exp: 1.05 } }));
+    const inputs = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9, cycleHours: 4, multGainPerCycle: 1.1 };
+    const rec = { at: new Date(now).toISOString(), lastAugReset: 1, W: 2, finalWindow: false, moneyAtW: 1e10, gainsByMoney: ladder, eRep: 0.2, eBudget: 0.1, inputs };
+    const r = ob.exitWeights(rec, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now);
+    if (!r) cew.fail("a fresh record must price the weights");
+    else {
+      if (r.weights.hacking !== 1) cew.fail("hacking is the unit");
+      if (!(r.weights.faction_rep > 0)) cew.fail(`a ground rep leg must make faction_rep worth something: ${JSON.stringify(r.sensitivities)}`);
+      if (Math.abs(r.weights.hacking_chance - 0.1 * r.weights.hacking_money) > 1e-12) cew.fail("chance carries the unsaturated share of the income weight");
+    }
+    if (ob.exitWeights({ ...rec, lastAugReset: 2 }, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now) !== null) cew.fail("another life's record refuses (deriveWeights is the named fallback)");
+    if (ob.exitWeights({ ...rec, finalWindow: true }, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now) !== null) cew.fail("the final window has no next batch to weigh — refuse");
+  }
+  checks.push(cew);
+
   return checks;
 }

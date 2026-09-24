@@ -34,7 +34,7 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 | 12 | ~~gang equipment~~ **done 2026-09-24** (gangEquipExit + exitplan.spendRuns on the published W / ladder; the gang's own policy search still scores by moneyLn — see deriveWeights) | gang.js:296 | gang sim with/without, but scored by `moneyLn` over a gang horizon | score through the exit instead |
 | 13 | stock entry | stockplan.js:125 | `capital x edge x H > entry` | dormant (`edgePerHour: null`) |
 
-Underneath the list: `objective.deriveWeights` is `N x elasticity`
+**Done 2026-09-24:** the channel weights are now `objective.exitWeights` — the exit's hours saved per ln of each channel in the next batch, normalised to hacking (deriveWeights is the named fallback). Was: `objective.deriveWeights` is `N x elasticity`
 (remaining windows x a measured elasticity), which is rate x horizon. Every
 aug-plan ranking and every `moneyLn` conversion inherits it.
 

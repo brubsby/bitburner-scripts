@@ -500,5 +500,20 @@ export async function run() {
   }
   checks.push(c18);
 
+  const c19 = new Check("XP19", "a batch lifts later lives only by its gains beyond the plan the cadence already represents");
+  {
+    c19.examined(3);
+    const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.1, eRep: 0.5, eBudget: 0.3, installsFirst: 10, firstInstallH: 0 };
+    const g = { hacking: 1.2, rep: 1.5, income: 1.3, exp: 1 };
+    const plain = exitHours({ ...b, installGains: g }).mult;
+    const same = exitHours({ ...b, installGains: g, persistBaseline: g }).mult;
+    if (Math.abs(same - plain) > 1e-9 * plain) c19.fail("the plan the cadence represents must lift nothing (no double count)");
+    const bigger = exitHours({ ...b, installGains: { ...g, rep: 3 }, persistBaseline: g }).mult;
+    if (Math.abs(bigger / same - Math.pow(Math.pow(2, 0.5), 9)) > 1e-9) c19.fail(`twice the plan's rep lifts each of 9 later lives by 2^eRep: ${bigger / same}`);
+    const none = exitHours({ ...b, installGains: { ...g, rep: 3 } }).mult;
+    if (Math.abs(none / exitHours({ ...b, installGains: g }).mult - 1) > 1e-12) c19.fail("no baseline, no lift");
+  }
+  checks.push(c19);
+
   return checks;
 }

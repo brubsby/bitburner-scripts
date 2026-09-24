@@ -678,3 +678,56 @@ export function homeLn(o = {}) {
   const ln = v.ln + lnJoin
   return { ln, lnPerDollar: ln / o.cost, dollarsPerWindow, lnPlan: v.ln, lnJoin, reason: null }
 }
+
+/**
+ * THE CHANNEL WEIGHTS AS THE EXIT'S OWN SENSITIVITIES (CLAUDE.md: decisions
+ * compare simulated trajectories). deriveWeights built them as remaining
+ * windows x a measured elasticity — rate x horizon. This asks the simulator:
+ * how many hours sooner is the node's exit per unit ln of each channel in the
+ * NEXT batch (at the gate's install point W, on progress.js's published exit
+ * inputs), normalised to hacking. Channels map onto what the exit simulation
+ * runs on (exitplan installGains):
+ *   hacking                       -> hacking (the climb)
+ *   faction_rep                   -> rep (ground rep, donation price, and every
+ *                                    later life through eRep)
+ *   hacking_money / _speed        -> income (money legs, later lives via eBudget)
+ *   hacking_chance / hacking_grow -> income x the measured saturation shares
+ *                                    (1 - observed chance; grow's share of the
+ *                                    batch), as deriveWeights had them
+ *   hacking_exp                   -> exp (the climb's exp rate)
+ * Null (the caller falls back, named) on a stale or foreign record, or when the
+ * exit does not respond to hacking (no unit to normalise to).
+ */
+export function exitWeights(record, lastAugReset, bestExitPolicy, spendRuns, o = {}, now = Date.now()) {
+  const num = (x) => typeof x === 'number' && isFinite(x)
+  if (!record || typeof bestExitPolicy !== 'function' || typeof spendRuns !== 'function') return null
+  if (record.lastAugReset !== lastAugReset || !(now - Date.parse(record.at) < 15 * 60e3)) return null
+  const tChance = num(o.chanceObs) && o.chanceObs <= 1 && o.chanceObs >= 0 ? 1 - o.chanceObs : null
+  const tGrow = num(o.growShare) && o.growShare <= 1 && o.growShare >= 0 ? o.growShare : null
+  if (tChance === null || tGrow === null) return null
+  const runs = spendRuns(record, 0)
+  if (!runs || runs.min !== 1) return null // the final window has no next batch to weigh
+  const base = { ...runs.without, eRep: record.eRep, eBudget: record.eBudget }
+  const g0 = base.installGains ?? { hacking: 1, rep: 1, income: 1, exp: 1 }
+  const d = 0.05
+  const T = (g) => bestExitPolicy({ ...base, installGains: g, nextInstallGain: g.hacking }, runs.max, runs.min)?.best?.hours
+  const T0 = T(g0)
+  if (!num(T0)) return null
+  const s = {}
+  for (const k of ['hacking', 'rep', 'income', 'exp']) {
+    const Tk = T({ ...g0, [k]: (num(g0[k]) && g0[k] > 0 ? g0[k] : 1) * Math.exp(d) })
+    s[k] = num(Tk) ? (T0 - Tk) / d : null
+  }
+  if (!(s.hacking > 0)) return null
+  const w = (x) => (num(x) ? Math.max(0, x) / s.hacking : 0)
+  const weights = {
+    hacking: 1,
+    faction_rep: w(s.rep),
+    hacking_money: w(s.income),
+    hacking_speed: w(s.income),
+    hacking_chance: tChance * w(s.income),
+    hacking_grow: tGrow * w(s.income),
+    hacking_exp: w(s.exp),
+  }
+  return { weights, sensitivities: s, exitH: T0, W: record.W }
+}

@@ -144,11 +144,11 @@ import { freshCurve, countTiming } from 'countplan.js'
 const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 'agi' }
 import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
-import { deriveWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
+import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain, spendExit } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1370,7 +1370,7 @@ function installGainsOf(names, offers) {
     const m = byName.get(n)?.mults?.[k]
     return h * (typeof m === 'number' && isFinite(m) && m > 0 ? m : 1)
   }, g), 1)
-  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']) }
+  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']), exp: prod(['hacking_exp']) }
 }
 
 function nextInstallGainOf(plan, pending, offers) {
@@ -1662,6 +1662,20 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     multGainPerCycle: cyc?.multGainPerCycle,
     nextInstallGain: nextInstallGainOf(plan, pending, offers),
     installGains: installGainsOf([...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers),
+    // The batch the measured cadence already represents: alternatives lift or
+    // lower later lives only by their gains relative to this (exitplan).
+    persistBaseline: installGainsOf([...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers),
+    // The planner's measured responses of its own batch to money and
+    // reputation (last pass's gate record): what a persisting income or
+    // reputation gain buys in every later life (exitplan persistLift).
+    eRep: (() => {
+      const e = readJson(ns, GATE)?.objective?.eRep
+      return typeof e === 'number' && isFinite(e) ? e : null
+    })(),
+    eBudget: (() => {
+      const e = readJson(ns, GATE)?.eBudget
+      return typeof e === 'number' && isFinite(e) ? e : null
+    })(),
     exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
     // The requirement, not the shortfall: exitHours skips the leg
     // itself when the cash is already there, and feeding it a claim
@@ -2418,7 +2432,18 @@ async function act(ns, canJoin, info, note) {
           }
         }
 
-        const derived = deriveWeights({
+        // THE EXIT'S SENSITIVITIES FIRST (objective.exitWeights): hours saved
+        // per ln of each channel in the next batch, on last pass's published
+        // exit inputs. deriveWeights' windows x elasticity is the named
+        // fallback when the exit cannot be priced.
+        const byExit = (() => {
+          try {
+            return exitWeights(readJson(ns, '/tel/exitinputs.txt'), info?.lastAugReset, bestExitPolicy, spendRuns, { chanceObs, growShare })
+          } catch {
+            return null
+          }
+        })()
+        const derived = byExit ? { weights: byExit.weights, raw: byExit.sensitivities, indirect: null, source: 'exit-sensitivity' } : deriveWeights({
           remainingWindows,
           eBudget,
           eRep,
@@ -2456,7 +2481,7 @@ async function act(ns, canJoin, info, note) {
           // WINDOW instead of assuming this window's rate repeats — see
           // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
           const winH = measureWindow(ns, info)?.windowH
-          weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          weightsMeta = { source: derived?.source ?? 'derived', exitSensitivity: byExit ? { hoursPerLn: byExit.sensitivities, exitH: byExit.exitH, W: byExit.W } : null, eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
           replanAt = (m, offersAt = null) =>
             planPurchases({
               ...planArgs,

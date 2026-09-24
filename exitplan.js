@@ -209,6 +209,8 @@ export function exitHours(o = {}) {
     eBudget = null,
     repBoost = null,
     sleeveExp = null,
+    eRep = null,
+    persistBaseline = null,
   } = o
   // INCOME THAT ARRIVES LATER (extraIncome [{atH, perSec}], absolute node
   // hours from now; each step REPLACES the extra from its hour on) — a gang
@@ -274,9 +276,24 @@ export function exitHours(o = {}) {
       if (pos(donation)) donation /= installGains.rep
     }
     if (pos(installGains?.income) && installGains.income >= 1) incomeAtLevel1 *= installGains.income
+    // AUGMENTATIONS PERSIST: the batch's reputation and income gains act in
+    // EVERY later life, so each later install buys more — by the measured
+    // responses (eRep, eBudget) of the planner's own batch to reputation and
+    // money, the same K^e lift repBoost and extraIncome use. Unmeasured, no
+    // lift (a floor).
+    // RELATIVE TO THE PLAN THE CADENCE ALREADY REPRESENTS: the measured
+    // per-life growth embeds a typical batch's own rep and income flywheel,
+    // so only a batch's gain BEYOND the current plan's (persistBaseline, the
+    // gains exitInputsOf was built with) lifts later lives. Applying the full
+    // gain double-counted the baseline: live 2026-09-24 it priced the exit at
+    // 15.5h against 66h the pass before. No baseline, no lift.
+    const ratio = (k) => (pos(installGains?.[k]) && pos(persistBaseline?.[k]) ? installGains[k] / persistBaseline[k] : 1)
+    const persistLift =
+      (num(eRep) && eRep > 0 ? Math.pow(ratio('rep'), eRep) : 1) *
+      (num(eBudget) && eBudget > 0 ? Math.pow(ratio('income'), eBudget) : 1)
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain
-    for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours)
+    for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift
     exp = 0
     cash = 1262 // PlayerObjectGeneralMethods.ts:102
     legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
@@ -285,6 +302,8 @@ export function exitHours(o = {}) {
   // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
   // legs read this rather than the input.
   let expRate = expPerSec
+  // The batch's hacking_exp scales the player's own exp from the install on.
+  if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
   const moneyLeg = (target) => {
     const t0 = h
     return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null })
