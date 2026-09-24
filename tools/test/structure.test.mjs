@@ -787,12 +787,28 @@ function c10() {
     for (const m of src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*'(\/tel\/[^']+)'/g)) constPath.set(m[1], m[2]);
     const resolve = (tok) => (tok.startsWith("'") ? tok.slice(1, -1) : (constPath.get(tok) ?? null));
 
-    // What this script WRITES is its own — reading it back locally is correct.
+    // WRITING A FILE DOES NOT MAKE READING IT LOCALLY CORRECT.
+    //
+    // This used to exempt every file the script also writes — "reading it back
+    // locally is correct". That holds for a scratch file written and re-read in
+    // one run. It is FALSE for an accumulator, whose whole point is state from
+    // EARLIER runs: an 'anywhere' script is re-placed on whatever host has room
+    // after every install, so the local copy is empty on the new host, and a
+    // ledger that reads locally restarts from nothing on every re-placement.
+    //
+    // Scanned on 2026-09-24, every 'anywhere' script that reads its own write is
+    // an accumulator, and there is no legitimate within-run read-back at all:
+    //   * tel.js / /tel/earnings.txt — the fresh-life ledger countplan needs
+    //     three completed lives of. Without the pull it never gets one, so the
+    //     count timing never calibrates and falls back to its floor forever.
+    //     This check reported PASS with that pull deleted.
+    //   * gang.js / /tel/gang-last.txt — "monotonic: a gang mid-rebuild must
+    //     not erase what a mature one demonstrated". Off home `prev` is always
+    //     null, so the guard never holds and a rebuilding gang overwrites the
+    //     mature rate on home. Never pulled; never caught.
+    // A read of a /tel file is a reliance on persisted state, and persisted
+    // state lives on home. Pull it.
     const own = new Set();
-    for (const m of src.matchAll(/ns\.write\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)) {
-      const r = resolve(m[1]);
-      if (r) own.add(r);
-    }
 
     // What it PULLS: ns.scp(X, ns.getHostname(), 'home') — directly, or via a
     // one-argument helper whose body does that (gang.js's fetchFromHome).
@@ -942,17 +958,34 @@ function c12() {
     const writesTel = /reporter\(\s*ns\s*,/.test(src) || /ns\.write\(\s*'\/tel\//.test(src);
     if (!writesTel) continue;
     publishes.push(script);
-    // The push: ns.scp(<status>, 'home', ...) — destination home, from here.
-    const mirrors = /ns\.scp\([^)]*,\s*'home'\s*,/.test(src);
-    if (mirrors) continue;
     if (EXEMPT[script]) {
       c.note(`${script.padEnd(12)} EXEMPT — ${EXEMPT[script].slice(0, 96)}...`);
       continue;
     }
+    // EACH FILE, not "any push". The first version asked only whether the
+    // script mirrored SOMETHING home, so tel.js's status mirror satisfied it
+    // while the fresh-life earnings ledger beside it could be deleted from the
+    // push list with the check still green. A ledger that never reaches home is
+    // a measurement nothing can read, which is the same failure as no ledger.
+    const constPath = new Map();
+    for (const m of src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*'(\/tel\/[^']+)'/g)) constPath.set(m[1], m[2]);
+    const resolve = (tok) => (tok.startsWith("'") ? tok.slice(1, -1) : (constPath.get(tok) ?? null));
+    const written = new Set();
+    for (const m of src.matchAll(/(?:ns\.write|reporter)\(\s*(?:ns\s*,\s*)?('\/tel\/[^']+'|[A-Za-z_$][\w$]*)/g)) {
+      const r = resolve(m[1]);
+      if (r) written.add(r);
+    }
+    const pushed = new Set();
+    for (const m of src.matchAll(/ns\.scp\(\s*('\/tel\/[^']+'|[A-Za-z_$][\w$]*)\s*,\s*'home'\s*,/g)) {
+      const r = resolve(m[1]);
+      if (r) pushed.add(r);
+    }
+    const unmirrored = [...written].filter((f) => !pushed.has(f));
+    if (!unmirrored.length) continue;
     c.fail(
-      `${script} publishes a /tel status but never mirrors it to home`,
+      `${script} writes ${unmirrored.join(", ")} but never mirrors ${unmirrored.length > 1 ? "them" : "it"} to home`,
       "the daemon mirrors /tel/* from HOME only, so every record this writes off home is invisible — including the " +
-        "atExit record that would say why it stopped. Add ns.scp(STATUS, 'home', ns.getHostname()) beside the publish.",
+        "atExit record that would say why it stopped. Add ns.scp(FILE, 'home', ns.getHostname()) after each write.",
     );
   }
   // A CHECK THAT EXAMINED NOTHING LOOKS EXACTLY LIKE A CHECK THAT PASSED.

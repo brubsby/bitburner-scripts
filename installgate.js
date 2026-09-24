@@ -322,7 +322,26 @@ export function shouldInstall(o) {
   // honest version prices "install now" against "wait for a bigger batch" in
   // count per hour, and nothing here does that yet.
   const countFloor = Math.min(COUNT_MIN_BATCH, Math.max(countShortEarly, 1))
-  const countBanks = countShortEarly > 0 && countGainEarly >= countFloor
+  // A COUNT BATCH IS CONSIDERED whenever it would bank distinct augmentations
+  // toward an outstanding gate, so it always reaches the decision below past
+  // both early returns. Whether to install it NOW is a separate question:
+  //
+  //   PRICED — countplan.js's finite-horizon DP, against a fresh-life earnings
+  //   curve MEASURED from completed lives (tel.js's ledger). It fills a batch
+  //   in a mature life until the 1.9^n escalation outruns income, which is
+  //   exactly where the floor went wrong: at three it installed, while money
+  //   was flowing fast enough that adding up to ~seven was the faster path.
+  //
+  //   FLOOR — COUNT_MIN_BATCH, only while the curve is unmeasured. countplan
+  //   REFUSES (installNow: null) until it has enough lives, because the first
+  //   attempt at this guessed a fresh life's income 100x too high and concluded
+  //   "install after every single ticket". An uncalibrated model driving an
+  //   irreversible install is the failure CLAUDE.md is written against.
+  const timing = o.countTiming ?? null
+  const timingPriced = timing && (timing.installNow === true || timing.installNow === false)
+  const countBanks = countShortEarly > 0 && countGainEarly > 0
+  const countWants = timingPriced ? timing.installNow === true : countGainEarly >= countFloor
+  const countDecidedBy = timingPriced ? 'priced' : 'floor'
   if (!terminal && !countBanks) {
     if (M <= 1) return no(`the queued augmentations give no gain on ${RATE_CHANNELS.join('/')} (M=${M})`, { countShort: countShortEarly, countGain: countGainEarly, countFloor })
   }
@@ -582,7 +601,7 @@ export function shouldInstall(o) {
   // gang generating reputation continuously it is true forever, which is the
   // deadlock the countStalls comment warns about: a hold that cannot state what
   // would end it. The floor above is the anti-thrash guard instead.
-  const countInstall = countBanks && !destructive
+  const countInstall = countBanks && countWants && !destructive
   const install = terminal || countInstall || (expOk && netGain && !waitBeats && !countStalls && !destructive)
 
   return {
@@ -606,14 +625,22 @@ export function shouldInstall(o) {
     countBanks,
     countInstall,
     countFloor,
+    countWants,
+    countDecidedBy,
+    countTimingWhy: timing?.why ?? null,
     binding: o.binding ?? null,
     destructive,
     why: terminal
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
       : countInstall && !(expOk && netGain && !waitBeats)
-      ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs. ` +
-        `They carry no valued multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold: they only count once installed, ` +
-        `and nothing is bought until the gate says install.`
+      ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs, ` +
+        `decided by the ${countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
+        `M=${M.toFixed(4)} is expected for tickets and is NOT a reason to hold.`
+      : countBanks && !countWants && !destructive && !(expOk && netGain && !waitBeats)
+      ? `hold: COUNT BATCH of ${countGain} not yet — ` +
+        (countDecidedBy === 'priced'
+          ? `the priced timing says a bigger batch is faster: ${timing?.why ?? ''}`
+          : `below the floor of ${countFloor}, and the timing is not yet priced (${timing?.why ?? 'no timing supplied'})`)
       : install
       ? `install: ${queued} aug(s), M=${M.toFixed(4)} -> ${Meff.toFixed(4)} with the x${favorGain.toFixed(4)} favour gain (Go bonus ${goBonusPct.toFixed(1)}% regrows, so it is not charged). Installing now accumulates ${rateNow.toFixed(4)} ln(M)/h; nothing reachable beats it` +
         (bestWait ? ` (best wait ${(bestWait.waitMs / 3600000).toFixed(1)}h -> M=${bestWait.M.toFixed(4)} = ${rateWait.toFixed(4)}/h)` : ' (nothing further is reachable)')

@@ -766,5 +766,45 @@ export function run() {
   }
   checks.push(c16);
 
+  // ---------------------------------------------------------------------
+  const c17 = new Check("IG17", "a PRICED count timing overrides the floor in both directions, and says which decided");
+  {
+    const base = { ageMs: 12 * H, exp: EXP, prev: null, futures: [], M: 1 };
+    // THE FLOOR'S MISTAKE, reversed. At three tickets in a mature life the
+    // DP says a bigger batch is faster; the floor of three installed here.
+    c17.examined(1);
+    const wait = shouldInstall({ ...base, queued: 3, countShort: 18, countGain: 3, countTiming: { installNow: false, why: "wait for 7: 0.13h more this life" } });
+    if (wait.install !== false) c17.fail(`a priced "wait for a bigger batch" must HOLD even at the floor, got install: ${wait.why}`);
+    if (wait.countDecidedBy !== "priced") c17.fail("and it must say the priced timing decided");
+    if (!/bigger batch is faster/.test(wait.why ?? "")) c17.fail(`the hold must name the priced reason: ${wait.why}`);
+
+    // And below the floor, a priced "install now" must INSTALL.
+    c17.examined(1);
+    const go = shouldInstall({ ...base, queued: 2, countShort: 18, countGain: 2, countTiming: { installNow: true, why: "install 2 now" } });
+    if (go.install !== true) c17.fail(`a priced "install now" must install even below the floor, got: ${go.why}`);
+    if (go.countDecidedBy !== "priced") c17.fail("priced must be named as the decider");
+
+    // UNPRICED: installNow null falls back to the floor, and SAYS so.
+    c17.examined(1);
+    const blind = shouldInstall({ ...base, queued: 2, countShort: 18, countGain: 2, countTiming: { installNow: null, why: "only 1 completed life/lives recorded" } });
+    if (blind.install !== false) c17.fail("unpriced below the floor must hold");
+    if (blind.countDecidedBy !== "floor") c17.fail("an unpriced timing must hand the decision to the floor");
+    if (!/not yet priced/.test(blind.why ?? "")) c17.fail(`the fallback must say the timing is unpriced, with its reason: ${blind.why}`);
+    if (!/completed life/.test(blind.why ?? "")) c17.fail("and carry the timing's own reason for refusing");
+
+    // DESTRUCTIVE still vetoes a priced install.
+    c17.examined(1);
+    const dest = shouldInstall({ ...base, queued: 5, countShort: 18, countGain: 5, countTiming: { installNow: true, why: "install" }, binding: { gate: "money", destroyedByInstall: true, why: "join money" } });
+    if (dest.install !== false) c17.fail("a destructive gate vetoes even a priced install");
+
+    // A priced HOLD must not be overridden by the M<=1 early return reading as
+    // a different cause: the count batch reaches its own decision.
+    c17.examined(1);
+    if (/no gain on/.test(wait.why ?? "")) c17.fail("a priced count hold must not be reported as the M<=1 multiplier refusal");
+
+    c17.note(`priced wait at 3 -> ${wait.install ? "install" : "hold"}; priced install at 2 -> ${go.install ? "install" : "hold"}; unpriced at 2 -> ${blind.install ? "install" : "hold"} via ${blind.countDecidedBy}`);
+  }
+  checks.push(c17);
+
   return checks;
 }

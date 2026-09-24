@@ -53,6 +53,90 @@ function scanAll(ns) {
   return [...seen]
 }
 
+/**
+ * THE FRESH-LIFE EARNINGS LEDGER — the measurement countplan.js needs.
+ *
+ * countplan decides how many count tickets to bank per install, and the input
+ * that decides it is how slowly a FRESH life earns. That was never recorded:
+ * the planner's own ledgers track multipliers and life lengths, not money, and
+ * the money BALANCE is useless for it because every augmentation purchase
+ * spends it. The first attempt at the pricing guessed the ramp instead, at
+ * 100x the truth, and concluded "install after every single ticket".
+ *
+ * `ns.getMoneySources().sinceInstall` is the right instrument. The game zeroes
+ * it on every install (PlayerObjectGeneralMethods.ts:128), and it is kept PER
+ * SOURCE, so income can be summed while spending is ignored — augmentation
+ * purchases land under `augmentations` as a negative (FactionHelpers.tsx:120)
+ * and never enter the sum below.
+ *
+ * AGE IS WALL-CLOCK SINCE THE INSTALL — `Date.now() - lastAugReset` — and the
+ * first draft got this wrong in a way that would have looked like data. It
+ * read `player.playtimeSinceLastAug`, which ns.getPlayer() does NOT expose
+ * (it returns `totalPlaytime` only; NetscriptFunctions.ts getPlayer), so every
+ * sample would have been written at age 0: a populated ledger describing
+ * nothing. The wall clock is also the right one here. A machine suspend
+ * advances it, but the game credits offline progress on wake, so the earnings
+ * below advance over the SAME interval and the pairing stays true — and the
+ * question countplan asks, "how long until this is affordable", is a
+ * wall-clock question anyway.
+ *
+ * GANG INCOME IS IN IT, AND ARRIVES IN A LUMP. The first sample of the first
+ * recorded life read $7.14m earned at age 0.0003h — one second — which looks
+ * like a broken clock or a missed reset. It is neither: moneySourceA showed
+ * `gang: 7137013`, credited in a burst right after the install. Player.gang
+ * survives an install, so its income is not part of the fresh-life RAMP at all
+ * — it flows on both sides of countplan's install-versus-wait comparison and
+ * largely cancels there. It is real money available for tickets, it is small
+ * against ticket prices of $40m-$1.2b, and the median across lives absorbs a
+ * lump that is not representative. Left in deliberately.
+ */
+const EARN = '/tel/earnings.txt'
+const EARN_EVERY_MS = 5 * 60 * 1000
+/** Lives kept. countplan needs three completed ones; eight survives a node's worth. */
+const EARN_LIVES = 8
+/** Income sources only — every expense source is left out on purpose. */
+const INCOME_SOURCES = ['hacking', 'hacknet', 'gang', 'codingcontract', 'crime', 'work', 'stock', 'infiltration', 'sleeves', 'corporation', 'bladeburner', 'darknet']
+
+function recordEarnings(ns, self) {
+  const info = ns.getResetInfo()
+  const src = ns.getMoneySources()?.sinceInstall ?? {}
+  const earned = INCOME_SOURCES.reduce((sum, k) => sum + Math.max(0, typeof src[k] === 'number' && isFinite(src[k]) ? src[k] : 0), 0)
+  const since = info?.lastAugReset
+  if (!(typeof since === 'number' && isFinite(since) && since > 0)) return
+  const ageH = (Date.now() - since) / 3600000
+  if (!(ageH >= 0) || !isFinite(earned)) return
+  // PULL before reading: this script runs off home, where ns.read of a file
+  // it does not hold returns '' — and a ledger rebuilt from nothing every
+  // pass would never accumulate a single completed life. Invariant C10.
+  if (self !== 'home') {
+    try {
+      ns.scp(EARN, self, 'home')
+    } catch {
+      /* first run, or home unreachable: start from empty */
+    }
+  }
+  let led = null
+  try {
+    led = JSON.parse(ns.read(EARN) || 'null')
+  } catch {
+    led = null
+  }
+  if (!led || typeof led !== 'object' || typeof led.lives !== 'object' || led.lives === null) led = { lives: {} }
+  const key = String(info?.lastAugReset ?? 'unknown')
+  // A NEW life has begun whenever a different lastAugReset appears, so every
+  // other open life is now finished. That is the only way a life is ever
+  // marked complete, and countplan uses completed lives alone.
+  for (const [k, L] of Object.entries(led.lives)) if (k !== key && L && !L.complete) L.complete = true
+  const L = (led.lives[key] ??= { node: info?.currentNode ?? null, complete: false, samples: [] })
+  L.samples.push([Math.round(ageH * 1e4) / 1e4, Math.round(earned)])
+  const keys = Object.keys(led.lives).sort((a, b) => Number(a) - Number(b))
+  while (keys.length > EARN_LIVES) delete led.lives[keys.shift()]
+  ns.write(EARN, JSON.stringify(led), 'w')
+  // And PUSH after writing, or the ledger lives on this host and nothing on
+  // home ever reads it. Invariant C12.
+  if (self !== 'home') ns.scp(EARN, 'home', self)
+}
+
 export async function main(ns) {
   const interval = (ns.args[0] || 5) * 1000
 
@@ -80,6 +164,7 @@ export async function main(ns) {
   let lastGood = null
   let lastGoodAt = null
   let consecutiveErrors = 0
+  let lastEarnAt = 0
 
   ns.atExit(() => {
     note.exit('stopped', {
@@ -145,6 +230,18 @@ export async function main(ns) {
       consecutiveErrors = 0
 
       mirror()
+
+      // Its own try: the earnings ledger is a measurement for countplan.js,
+      // and a failure recording it must never cost the status this script
+      // exists to publish.
+      if (Date.now() - lastEarnAt >= EARN_EVERY_MS) {
+        try {
+          recordEarnings(ns, self)
+          lastEarnAt = Date.now()
+        } catch (err) {
+          ns.print(`tel: earnings ledger not written: ${describe(err)}`)
+        }
+      }
     } catch (err) {
       // Never die, and never go quiet. Republish the last true snapshot with
       // the failure attached, so a reader sees both what the world looked like

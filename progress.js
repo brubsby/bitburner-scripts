@@ -136,6 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangGainHours, gangIsPending, rememberedGangIncome } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet } from 'sleeveplan.js'
+import { freshCurve, countTiming } from 'countplan.js'
 
 /** GymType uses skill SHORT CODES (Work/Enums.ts:17-22) and gymWorkout's
  *  nsGetMember is strict — "strength" throws, "str" works. */
@@ -3104,6 +3105,58 @@ async function act(ns, canJoin, info, note) {
           }
         })()
 
+    // DISTINCT augmentations this install would add, NeuroFlux excluded. Hoisted
+    // so the count timing below prices the same batch the gate judges.
+    const countGainNow = (() => {
+      const seen = new Set(installedCount.keys())
+      let n = 0
+      for (const b of [...(plan?.buy ?? []), ...pending.map((p) => ({ name: p }))]) {
+        if (b.name === NFG || seen.has(b.name)) continue
+        seen.add(b.name)
+        n++
+      }
+      return n
+    })()
+
+    // WHEN TO INSTALL A COUNT BATCH, priced against measured lives
+    // (countplan.js). Replaces installgate's COUNT_MIN_BATCH floor as soon as
+    // tel.js has recorded enough completed lives to measure a fresh life's
+    // earnings ramp; until then installNow is null and the gate keeps the floor,
+    // naming why. The prices are every ticket still obtainable — base price
+    // (already live, node multiplier included) plus the donation a rep-short
+    // one needs, which is what the ticket path would actually pay.
+    const countTimingNow = (() => {
+      try {
+        const seen = new Set(installedCount.keys())
+        const named = new Set()
+        const prices = []
+        for (const a of offers ?? []) {
+          if (!a || a.name === NFG || seen.has(a.name) || named.has(a.name)) continue
+          if (!(typeof a.baseCost === 'number' && isFinite(a.baseCost) && a.baseCost >= 0)) continue
+          const short = (a.factionRep ?? 0) < (a.repReq ?? 0)
+          const don = !short ? 0 : typeof a.donationCost === 'number' && isFinite(a.donationCost) ? a.donationCost : null
+          if (don === null) continue // rep-short and not donatable: not obtainable for money
+          named.add(a.name)
+          prices.push(a.baseCost + don)
+        }
+        const since = info?.lastAugReset
+        return countTiming({
+          prices,
+          r: BASE_PRICE_MULT,
+          kNow: countGainNow,
+          remaining: ticketsWanted,
+          moneyNow: player.money ?? 0,
+          // Wall-clock since the install — the same clock tel.js records the
+          // ledger in, so the current life sits on the curve it is compared to.
+          ageH: typeof since === 'number' && since > 0 ? (Date.now() - since) / 3600000 : null,
+          curve: freshCurve(readJson(ns, '/tel/earnings.txt'), info?.currentNode),
+          freshStart: 1262,
+        })
+      } catch (err) {
+        return { installNow: null, why: `count timing threw (${String(err).slice(0, 80)}) — the floor stands` }
+      }
+    })()
+
     const gate = shouldInstall({
       ageMs: Date.now() - (info?.lastAugReset ?? 0),
       M,
@@ -3170,16 +3223,8 @@ async function act(ns, canJoin, info, note) {
         })(),
       }),
       countShort: ticketsWanted,
-      countGain: (() => {
-        const seen = new Set(installedCount.keys())
-        let n = 0
-        for (const b of [...(plan?.buy ?? []), ...pending.map((p) => ({ name: p }))]) {
-          if (b.name === NFG || seen.has(b.name)) continue
-          seen.add(b.name)
-          n++
-        }
-        return n
-      })(),
+      countGain: countGainNow,
+      countTiming: countTimingNow,
       countReachableLater: (plan?.skipped ?? []).some((sk) => sk?.name && sk.name !== NFG && !installedCount.has(sk.name)),
       // RHO: the rate a completed life actually sustains in THIS BitNode, which
       // is what the stopping rule compares the marginal gain against. Measured

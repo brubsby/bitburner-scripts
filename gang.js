@@ -55,6 +55,13 @@ function publish(ns, obj) {
   try {
     const perSec = obj?.rates?.gameMoneyPerCycle / CYCLE_SEC
     if (typeof perSec === 'number' && isFinite(perSec) && perSec > 0) {
+      // PULL FIRST. This is an accumulator — the best rate a gang of ours has
+      // EVER produced — and gang.js runs 'anywhere'. Off home ns.read returned
+      // '' so `prev` was always null, the monotonic guard below never held, and
+      // a rebuilding gang overwrote the mature rate on home: the exact thing
+      // this block's own comment says must not happen. Found by C10 once C10
+      // stopped exempting files a script also writes.
+      fetchFromHome(ns, GANG_LAST)
       const prev = JSON.parse(ns.read(GANG_LAST) || 'null')
       if (!(typeof prev?.moneyPerSec === 'number' && prev.moneyPerSec >= perSec)) {
         // bitNode FROM THE GAME, not from the status object — `obj` never carried

@@ -237,7 +237,20 @@ async function once(ns, flags) {
   // purchase through the Singularity actor instead (act-homeram.js).
   let blockedByCity = false
   let nextWanted = null
-  const note = reporter(ns, STATUS, () => ({
+  // MIRROR HOME. This script runs `where: 'anywhere'`, the daemon mirrors
+  // /tel/* from home only, and act.js PULLS /tel/homeup.txt from home to read
+  // the next upgrade — so off home, act.js was faithfully pulling a stale or
+  // absent copy of a file this script never sent. The old C12 missed it: this
+  // file already pushed the UI lock home, and "pushes something" was all it
+  // asked. ns.scp is already in this script's price for that lock.
+  const mirrorStatus = () => {
+    try {
+      if (ns.getHostname() !== 'home') ns.scp(STATUS, 'home', ns.getHostname())
+    } catch {
+      /* home unreachable; the local copy still stands */
+    }
+  }
+  const publish = reporter(ns, STATUS, () => ({
     dry: flags.dry,
     reserve: flags.reserve,
     bought,
@@ -249,6 +262,19 @@ async function once(ns, flags) {
     // doubles home, so its deltaGB is the current size.
     homeRam: ns.getServerMaxRam('home'),
   }))
+  // Every publication goes through here so none can reach the file without
+  // reaching home — including the atExit record, which is the one that says
+  // why the script stopped.
+  const note = (health, fields) => {
+    const r = publish(health, fields)
+    mirrorStatus()
+    return r
+  }
+  note.exit = (...args) => {
+    const r = publish.exit(...args)
+    mirrorStatus()
+    return r
+  }
 
   // The path no try/finally can reach. ns.atExit costs 0GB and runs before the
   // worker is torn down (killWorkerScript.ts:64-84), so the write still lands.
