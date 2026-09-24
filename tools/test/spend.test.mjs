@@ -81,5 +81,22 @@ export async function run() {
   }
   checks.push(c6);
 
+  const c7 = new Check("SE7", "every reader of the objective's source accepts the exit-priced objective too");
+  {
+    const files = fs.readdirSync(REPO).filter((f) => f.endsWith(".js"));
+    let n = 0;
+    for (const f of files) {
+      const t = src(f);
+      for (const m of t.matchAll(/source\s*[!=]==\s*'derived'/g)) {
+        n++;
+        const around = t.slice(Math.max(0, m.index - 200), m.index + 200);
+        if (!/'exit-sensitivity'/.test(around)) c7.fail(`${f}: tests source === 'derived' without 'exit-sensitivity' — the exit-priced objective would read as underived (gang.js switched its money objective off this way)`);
+      }
+    }
+    c7.examined(n);
+    if (!n) c7.fail("no reader found — the check examined nothing");
+  }
+  checks.push(c7);
+
   return checks;
 }

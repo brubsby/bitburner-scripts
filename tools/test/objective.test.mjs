@@ -600,5 +600,25 @@ export async function run() {
   }
   checks.push(ckx);
 
+  const cmx = new Check("OB-MONEY-EXIT", "money arriving life by life (grants, gang hauls) is valued as the exit its batch lifts save, moneyLn only as fallback");
+  {
+    const ob = await import("../../objective.js");
+    const gp = await import("../../gangplan.js");
+    const { bestExitPolicy } = await import("../../exitplan.js");
+    cmx.examined(4);
+    const now = Date.now();
+    const record = { at: new Date(now).toISOString(), lastAugReset: 1, eRep: 0.1, eBudget: 0.3, inputs: { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.1 } };
+    const exit = { record, hoursPerLn: 10, bestExitPolicy, lastAugReset: 1 };
+    const lifts = ob.exitLnOfInstallLifts([1, 1.1, 1.1, 1.1], exit, now);
+    if (!(lifts > 0)) cmx.fail("lifting three later batches must save exit hours");
+    if (ob.exitLnOfInstallLifts([1, 1.1], { ...exit, lastAugReset: 2 }, now) !== null) cmx.fail("another life's record refuses");
+    const g = ob.oneoffValue({ name: "CashRoot Starter Kit" }, { money: 1e8, eBudget: 0.3, remainingWindows: 10, exit });
+    if (!(g.ln > 0) || !/priced as the exit/.test(g.reason ?? "")) cmx.fail(`a starting-money grant must price through the exit: ${JSON.stringify(g)}`);
+    const f = { samples: Array.from({ length: 25 }, (_, h) => ({ h, money: 1e7 * h * 3600, gross: 1 })), horizonH: 24 };
+    const sc = gp.scoreTrajectory(f, { money: { eBudget: 0.3, remainingWindows: 5, budget: 1e10, windowH: 4, firstWindowH: 4, exit } });
+    if (sc.moneyMode !== "exit" || !(sc.moneyValue > 0)) cmx.fail(`gang money must price through the exit: ${sc.moneyMode} ${sc.moneyValue}`);
+  }
+  checks.push(cmx);
+
   return checks;
 }

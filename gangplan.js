@@ -59,7 +59,7 @@
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 
-import { moneyLn } from 'objective.js'
+import { moneyLn, exitLnOfInstallLifts } from 'objective.js'
 
 export const CYCLE_SEC = 0.2 // CONSTANTS.MilliPerCycle
 export const MAX_MEMBERS = 12
@@ -1002,6 +1002,28 @@ function perWindowMoneyLn(f, m) {
   if (!num(m.windowH) || m.windowH <= 0 || !num(N) || N <= 0) return null
   const first = num(m.firstWindowH) && m.firstWindowH > 0 ? Math.min(m.firstWindowH, m.windowH) : m.windowH
   const simH = f?.samples?.length ? f.samples[f.samples.length - 1].h : 0
+  // THE EXIT, when it can be priced (m.exit): each window's haul lifts the
+  // batch of the install that ends it by ((B + haul)/B)^eBudget, and the
+  // value is the node's exit with those lifts against without, in hacking-ln
+  // (objective.exitLnOfInstallLifts). The moneyLn sum below is the named
+  // fallback.
+  if (m.exit && num(m.budget) && m.budget > 0 && num(m.eBudget)) {
+    const lifts = []
+    let at0 = 0
+    let last = null
+    for (let i = 0; i < Math.ceil(N) && at0 < simH - 1e-9; i++) {
+      const end = Math.min(simH, at0 + (i === 0 ? first : m.windowH))
+      const haul = moneyAtHour(f, end) - moneyAtHour(f, at0)
+      const span = end - at0
+      const whole = span > 0 ? haul * ((i === 0 ? first : m.windowH) / span) : haul
+      last = num(whole) && whole > 0 ? whole : 0
+      lifts.push(Math.pow((m.budget + last) / m.budget, m.eBudget))
+      at0 = end
+    }
+    while (lifts.length < Math.ceil(N) && last !== null) lifts.push(Math.pow((m.budget + last) / m.budget, m.eBudget))
+    const ln = exitLnOfInstallLifts(lifts, m.exit)
+    if (num(ln)) return { ln, reason: null, windowsPriced: lifts.length, mode: 'exit' }
+  }
   let ln = 0
   let at = 0
   let priced = 0
@@ -1058,7 +1080,7 @@ export function scoreTrajectory(f, obj = {}) {
     // the mode is published so a silent fallback cannot hide.
     const per = num(moneyAt) && moneyAt > 0 ? perWindowMoneyLn(f, obj.money) : { ln: 0, reason: null }
     const v = per ?? (num(moneyAt) && moneyAt > 0 ? moneyLn(moneyAt, { money: obj.money.budget, eBudget: obj.money.eBudget, remainingWindows: obj.money.remainingWindows }) : { ln: 0, reason: null })
-    moneyMode = per ? 'per-window' : 'flat-rate'
+    moneyMode = per ? (per.mode === 'exit' ? 'exit' : 'per-window') : 'flat-rate'
     if (v.ln === null) moneyWhy = v.reason
     else moneyValue = v.ln
   } else moneyWhy = 'no money objective'

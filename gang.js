@@ -229,7 +229,9 @@ export async function main(ns) {
           const ob = gate?.objective
           const fin = (v) => typeof v === 'number' && isFinite(v)
           if (gate?.lastAugReset !== info.lastAugReset) objective.moneyWhy = 'installgate.txt is from another life'
-          else if (!ob || ob.source !== 'derived') objective.moneyWhy = `objective not derived: ${ob?.why ?? 'no objective record'}`
+          // 'exit-sensitivity' is the derived objective priced by the exit
+          // (objective.exitWeights); both carry eBudget / windows / budget.
+          else if (!ob || (ob.source !== 'derived' && ob.source !== 'exit-sensitivity')) objective.moneyWhy = `objective not derived: ${ob?.why ?? 'no objective record'}`
           else if (!fin(ob.eBudget) || !fin(ob.remainingWindows) || !fin(ob.probeMoney)) objective.moneyWhy = 'objective lacks eBudget/remainingWindows/probeMoney'
           else {
             // windowH turns the score from "this window's haul x N windows"
@@ -242,7 +244,25 @@ export async function main(ns) {
             }
             if (fin(ob.windowH) && ob.windowH > 0) lastWindowH = ob.windowH
             objective.windowHSource = fin(ob.windowH) && ob.windowH > 0 ? 'gate' : lastWindowH ? 'remembered this life' : null
-            objective.money = { eBudget: ob.eBudget, remainingWindows: ob.remainingWindows, budget: ob.probeMoney, windowH: lastWindowH, firstWindowH: objective.remainingWindowH }
+            objective.money = {
+              eBudget: ob.eBudget,
+              remainingWindows: ob.remainingWindows,
+              budget: ob.probeMoney,
+              windowH: lastWindowH,
+              firstWindowH: objective.remainingWindowH,
+              // The gang's money valued through the node's exit (gangplan
+              // perWindowMoneyLn exit path) on progress.js's published inputs.
+              exit: (() => {
+                try {
+                  fetchFromHome(ns, EXIT_INPUTS)
+                  const record = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
+                  const hoursPerLn = gate?.objective?.exitSensitivity?.hoursPerLn?.hacking
+                  return record && hoursPerLn > 0 ? { record, hoursPerLn, bestExitPolicy, lastAugReset: info.lastAugReset } : null
+                } catch {
+                  return null
+                }
+              })(),
+            }
             // THE TAIL: territory and power survive an install (only a new
             // BitNode resets the gang), so warfare must be judged over the
             // node's remaining hours, not the current install window. At a

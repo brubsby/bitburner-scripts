@@ -220,6 +220,10 @@ export function exitHours(o = {}) {
   // act through eRep / eBudget like any persisting gain.
   const cycleExtraAt = (() => {
     if (!perCycleExtra) return () => 1
+    // Per-install lifts (byInstall[j] multiplies install j+1, the first
+    // included): a sequence of one-window money hauls, each lifting the
+    // batch of the install that ends its window.
+    if (Array.isArray(perCycleExtra.byInstall)) return (i) => (pos(perCycleExtra.byInstall[i]) ? perCycleExtra.byInstall[i] : 1)
     const f = (pos(perCycleExtra.hacking) ? perCycleExtra.hacking : 1) *
       (pos(perCycleExtra.rep) && num(eRep) && eRep > 0 ? Math.pow(perCycleExtra.rep, eRep) : 1) *
       (pos(perCycleExtra.income) && num(eBudget) && eBudget > 0 ? Math.pow(perCycleExtra.income, eBudget) : 1)
@@ -306,7 +310,7 @@ export function exitHours(o = {}) {
       (num(eRep) && eRep > 0 ? Math.pow(ratio('rep'), eRep) : 1) *
       (num(eBudget) && eBudget > 0 ? Math.pow(ratio('income'), eBudget) : 1)
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
-    mult = hackingMult * firstGain
+    mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
     for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift * cycleExtraAt(i)
     exp = 0
     cash = 1262 // PlayerObjectGeneralMethods.ts:102

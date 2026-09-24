@@ -771,7 +771,7 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     const ctx = joinCtx?.state?.companyCtx
     const wm = joinCtx?.weightsMeta
     const bestRate = plan.segments?.[0]?.rate ?? 0
-    if (ctx && wm?.source === 'derived' && wm.remainingWindows > 0 && joinCtx?.state?.windowH > 0) {
+    if (ctx && (wm?.source === 'derived' || wm?.source === 'exit-sensitivity') && wm.remainingWindows > 0 && joinCtx?.state?.windowH > 0) {
       const K = 1.5
       const grindH = 350e3 / Math.max(baseForPlan, 0.1) / 3600
       const probeDesk = (field) => {
@@ -2273,6 +2273,8 @@ async function act(ns, canJoin, info, note) {
   // weights — what an alternative trajectory that spends money elsewhere
   // first (a sleeve purchase) would be left to buy.
   let replanAt = null
+  // See the oneoff grant valuation: set where the exit weights are priced.
+  let oneoffExit = null
   // Hoisted: the forward projection in section 5 re-plans against the SAME
   // offer set at a larger budget, so these must outlive this block. Declaring
   // them inside it left `offers` undefined at the gate call — caught by
@@ -2501,6 +2503,9 @@ async function act(ns, canJoin, info, note) {
             return null
           }
         })()
+        // The exit context one-off grants are valued through (objective
+        // grantValue): the published inputs and this pass's hours per ln.
+        oneoffExit = byExit ? { record: readJson(ns, '/tel/exitinputs.txt'), hoursPerLn: byExit.sensitivities.hacking, bestExitPolicy, lastAugReset: info?.lastAugReset } : null
         const derived = byExit ? { weights: byExit.weights, raw: byExit.sensitivities, indirect: null, source: 'exit-sensitivity' } : deriveWeights({
           remainingWindows,
           eBudget,
@@ -2547,7 +2552,7 @@ async function act(ns, canJoin, info, note) {
               ...(offersAt ? { offers: offersAt } : {}),
               channelWeights,
               channels: channelsUsed,
-              oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
+              oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed, exit: oneoffExit },
             })
           plan = planPurchases({
             ...planArgs,
@@ -2556,7 +2561,7 @@ async function act(ns, canJoin, info, note) {
             // The elasticity and the window count only exist on this branch;
             // they are what turns a dollar grant into ln without inventing a
             // coefficient.
-            oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
+            oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed, exit: oneoffExit },
           })
         }
       } catch (err) {

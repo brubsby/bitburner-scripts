@@ -505,6 +505,16 @@ export function oneoffValue(aug, ctx = {}) {
   }
   if (grant <= 0) return { ln: 0, kind: 'oneoff:grant', reason: 'every granted program is already owned' }
 
+  // THE EXIT, when it can be priced (ctx.exit): the grant opens every life
+  // after the install with more money, lifting each later batch by
+  // ((opening + grant)/opening)^eBudget — installs 2 onward — and the value is
+  // the node's exit with those lifts against without, in hacking-ln
+  // (exitLnOfInstallLifts). moneyLn's windows x eB x ln is the named fallback.
+  if (ctx.exit && num(ctx.money) && ctx.money > 0 && num(ctx.eBudget) && ctx.eBudget >= 0) {
+    const lift = Math.pow((ctx.money + grant) / ctx.money, ctx.eBudget)
+    const ln = exitLnOfInstallLifts([1, ...Array(399).fill(lift)], ctx.exit)
+    if (num(ln)) return { ln, kind: 'oneoff:grant', reason: `${Math.round(grant)} granted per life: each later batch x${lift.toFixed(4)}, priced as the exit it saves` }
+  }
   const priced = moneyLn(grant, ctx)
   if (priced.ln === null) return { ln: 0, kind: 'oneoff:grant', reason: priced.reason }
   return { ln: priced.ln, kind: 'oneoff:grant', reason: `${Math.round(grant)} granted per life x ${priced.windows.toFixed(1)} remaining, against a ${Math.round(priced.opening)} budget` }
@@ -752,4 +762,24 @@ export function exitWeights(record, lastAugReset, bestExitPolicy, spendRuns, o =
     hacking_exp: w(s.exp),
   }
   return { weights, sensitivities: s, exitH: T0, W: record.W }
+}
+
+/**
+ * Per-install lifts as an exit comparison, in the planner's unit: the node's
+ * exit with install j+1's batch lifted by lifts[j] (exitplan perCycleExtra
+ * byInstall) against without, on progress.js's published exit inputs, divided
+ * by the exit's own hours per ln of hacking. The trajectory replacement for
+ * moneyLn's N x eB x ln((B+$)/B) wherever money arrives window by window.
+ * `exit`: { record, hoursPerLn, bestExitPolicy, lastAugReset }. Null (refuse)
+ * on a stale, foreign or missing record.
+ */
+export function exitLnOfInstallLifts(lifts, exit, now = Date.now()) {
+  const num = (x) => typeof x === 'number' && isFinite(x)
+  const rec = exit?.record
+  if (!Array.isArray(lifts) || !rec?.inputs || typeof exit.bestExitPolicy !== 'function' || !(exit.hoursPerLn > 0)) return null
+  if (rec.lastAugReset !== exit.lastAugReset || !(now - Date.parse(rec.at) < 15 * 60e3)) return null
+  const base = { ...rec.inputs, eRep: rec.eRep, eBudget: rec.eBudget }
+  const a0 = exit.bestExitPolicy(base).best?.hours
+  const a1 = exit.bestExitPolicy({ ...base, perCycleExtra: { byInstall: lifts } }).best?.hours
+  return num(a0) && num(a1) ? Math.max(0, a0 - a1) / exit.hoursPerLn : null
 }
