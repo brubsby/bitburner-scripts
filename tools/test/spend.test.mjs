@@ -41,5 +41,17 @@ export async function run() {
   }
   checks.push(c2);
 
+  const c3 = new Check("SE3", "crime vs faction work is two simulated exits at the gate's install point, not moneyLn against a schedule rate");
+  {
+    const pr = src("progress.js");
+    const fn = pr.slice(pr.indexOf("const crimeAlt = (() => {"), pr.indexOf("const alreadyAtDesk"));
+    c3.examined(4);
+    if (/moneyLn\(/.test(fn)) c3.fail("the moneyLn rate shortcut must not decide the slot");
+    if (!/const fH = exitAt\(replanAt\(m, repGain > 0 \? offers\.map\(\(o\) => \(o\.faction === faction \? \{ \.\.\.o, factionRep: o\.factionRep \+ repGain \} : o\)\) : null\)\)/.test(fn)) c3.fail("faction work: the batch re-planned with the rep it earns by W");
+    if (!/const cH = exitAt\(replanAt\(m \+ perHour \* W\)\)/.test(fn)) c3.fail("crime: the batch re-planned with the money it earns by W");
+    if (!/const wins = cH < fH/.test(fn)) c3.fail("crime takes the slot only when its exit is sooner");
+  }
+  checks.push(c3);
+
   return checks;
 }

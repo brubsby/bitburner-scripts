@@ -2293,7 +2293,7 @@ async function act(ns, canJoin, info, note) {
       oneoff: oneoffBase,
     }
     plan = planPurchases(planArgs)
-    replanAt = (m) => planPurchases({ ...planArgs, money: m })
+    replanAt = (m, offersAt = null) => planPurchases({ ...planArgs, money: m, ...(offersAt ? { offers: offersAt } : {}) })
 
     // ------------------------------------------------------------------
     // THE DERIVED OBJECTIVE (objective.js has the model). Two stages,
@@ -2440,10 +2440,11 @@ async function act(ns, canJoin, info, note) {
           // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
           const winH = measureWindow(ns, info)?.windowH
           weightsMeta = { source: 'derived', eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
-          replanAt = (m) =>
+          replanAt = (m, offersAt = null) =>
             planPurchases({
               ...planArgs,
               money: m,
+              ...(offersAt ? { offers: offersAt } : {}),
               channelWeights,
               channels: channelsUsed,
               oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed },
@@ -2855,16 +2856,46 @@ async function act(ns, canJoin, info, note) {
   // place and says why. Crime money was computed by bodyplan and consumed by
   // nothing until 2026-09-19 — in BitNode 2, where crime pays x3, the
   // early-game truth was Mug at $33k/s against a fleet earning $108/s.
+  // CRIME OR FACTION WORK FOR THE REST OF THIS LIFE, trajectory against
+  // trajectory: the node's exit when the next install (at the gate's own
+  // install point W) buys the batch faction work's reputation unlocks, against
+  // the batch crime's extra money buys — each re-planned (replanAt), each
+  // simulated to the exit on the shared builder. It replaced
+  // moneyLn(crime $/h) vs the schedule's ln(M)/h, a rate shortcut. W = 0 (an
+  // install now) makes them equal, and faction work keeps the slot.
   const crimeAlt = (() => {
     if (!joinState?.body || !joinState?.node) return null
     const c = bestCrimeFor('money', joinState.body, joinState.node, { focus: 1 })
     if (!c) return null
     const perHour = c.rates.money * 3600
-    const rate = schedule?.current?.rate
-    const v = moneyLn(perHour, { money: weightsMeta?.probeMoney ?? player.money, eBudget: weightsMeta?.eBudget, remainingWindows: weightsMeta?.remainingWindows })
-    if (v.ln === null) return { crime: c.crime, perHour, wins: false, why: v.reason }
-    if (!(rate > 0)) return { crime: c.crime, perHour, lnPerHour: v.ln, wins: true, why: 'no priced faction work to compete with' }
-    return { crime: c.crime, perHour, lnPerHour: v.ln, factionLnPerHour: rate, wins: v.ln > rate, why: v.ln > rate ? `crime ${v.ln.toFixed(4)} > faction ${rate.toFixed(4)} ln(M)/h` : `faction ${rate.toFixed(4)} >= crime ${v.ln.toFixed(4)} ln(M)/h` }
+    try {
+      if (typeof replanAt !== 'function') return { crime: c.crime, perHour, wins: false, why: 'no plan to re-price — faction work keeps the slot' }
+      const inc0 = ns.getTotalScriptIncome()
+      const incomeNow = (isFinite(inc0?.[0]) && inc0[0] > 0 ? inc0[0] : 0) || (isFinite(inc0?.[1]) && inc0[1] > 0 ? inc0[1] : 0)
+      const g = readJson(ns, GATE)
+      const W = g && g.lastAugReset === info?.lastAugReset && g.planned !== false
+        ? (g.install ? 0 : g.holdForever ? null : g.bestWait?.waitMs > 0 ? g.bestWait.waitMs / 3600000 : 0)
+        : schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
+      if (W === null) return { crime: c.crime, perHour, wins: false, why: 'no install point to price the rest of this life against — faction work keeps the slot' }
+      const faction = schedule?.current?.faction
+      const baseRep = schedule?.estimated ? schedule?.estimatedBaseRepPerSec : schedule?.measuredBaseRepPerSec
+      const fav = faction && canJoin ? 1 + Math.max(0, sing.factionFavor(faction)) / 100 : 1
+      const repGain = faction && baseRep > 0 ? baseRep * fav * W * 3600 : 0
+      const inputs = exitInputsOf(ns, info, player, schedule, incomeNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
+      const m = ns.getServerMoneyAvailable('home') + incomeNow * W * 3600
+      const gainsOf = (p2) => installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
+      const exitAt = (p2) => {
+        const gi = gainsOf(p2)
+        return bestExitPolicy({ ...inputs, firstInstallH: W, ...(gi ? { installGains: gi, nextInstallGain: gi.hacking } : {}) }, 400, 1).best?.hours ?? null
+      }
+      const fH = exitAt(replanAt(m, repGain > 0 ? offers.map((o) => (o.faction === faction ? { ...o, factionRep: o.factionRep + repGain } : o)) : null))
+      const cH = exitAt(replanAt(m + perHour * W))
+      if (fH === null || cH === null) return { crime: c.crime, perHour, wins: false, why: 'an exit could not be priced — faction work keeps the slot' }
+      const wins = cH < fH
+      return { crime: c.crime, perHour, wins, exitCrimeH: cH, exitFactionH: fH, decidedBy: 'exit-sim', why: `${wins ? 'crime' : 'faction work'}: exit ${Math.min(cH, fH).toFixed(2)}h vs ${Math.max(cH, fH).toFixed(2)}h (${W.toFixed(1)}h to the install)` }
+    } catch (e) {
+      return { crime: c.crime, perHour, wins: false, why: `crime vs faction comparison threw: ${String(e).slice(0, 80)} — faction work keeps the slot` }
+    }
   })()
   const alreadyAtDesk = work?.type === 'COMPANY' && work.companyName === wantCompany
   const deskGuarded = wantCompany && schedule?.estimated && !alreadyAtDesk
