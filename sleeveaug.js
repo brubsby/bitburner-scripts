@@ -17,7 +17,7 @@
 // unreadable refuses (a guessed share or leg would buy on a stand-in).
 
 import { canUseSleeve, sfLevel } from 'sfgate.js'
-import { sleeveAugBatch, sleeveStudyExpPerSec, extraSleeveHoursSaved, sleevesFromCovenant, covenantActive, COVENANT } from 'sleeveplan.js'
+import { sleeveAugBatch, sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, COVENANT } from 'sleeveplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { reporter } from 'status.js'
@@ -94,7 +94,7 @@ function decideAndBuy(ns, flags, note) {
     const from = sleevesFromCovenant(n, sfLevel(info, 10), info.currentNode)
     if (info.currentNode !== 10) return { buy: false, why: 'Covenant sleeves are sold only inside BitNode 10' }
     if (from === null || from >= COVENANT.maxSleeves) return { buy: false, why: from === null ? 'purchase count unreadable' : 'all Covenant sleeves bought' }
-    if (!ns.getPlayer().factions.includes(COVENANT.faction)) return { buy: false, why: `not a ${COVENANT.faction} member (the campaign, if worth it, is the install gate's hold)` }
+    if (!ns.getPlayer().factions.includes(COVENANT.faction)) return { buy: false, why: `not a ${COVENANT.faction} member (the body step trains for it only when the simulated exit with the campaign is faster)` }
     const cost = ns.sleeve.getSleeveCost()
     const money = ns.getServerMoneyAvailable('home')
     let g = null
@@ -104,24 +104,15 @@ function decideAndBuy(ns, flags, note) {
       g = null
     }
     const join = joinClaim(gate, info.lastAugReset)
-    // (a) The gate chose the campaign: its future planned the augmentations
-    // on money MINUS this price, so the sleeve goes first. The join claim is
-    // still never touched.
+    // Only when the simulated exit WITH the campaign beats the one without
+    // (progress.js covenantExitOf). That comparison already spent this price
+    // before the rest of the window's money, so the sleeve goes first; the
+    // join claim is still never touched.
     const campaign = covenantActive(g, info.lastAugReset)
-    if (campaign) {
-      return num(join) && money - join >= cost
-        ? { buy: true, cost, why: `the Covenant campaign is on (${campaign.hoursSaved?.toFixed?.(2)}h saved)` }
-        : { buy: false, why: `campaign held; money $${ns.format.number(money)} of $${ns.format.number(cost)} (+ join claim ${join})` }
-    }
-    // (b) Otherwise the floor rule, like the augmentations: unclaimed money,
-    // and more hours saved in this node than the price takes to earn.
-    const repShare = num(fleet.factionRepPerSec) && playerRep ? fleet.factionRepPerSec / playerRep : null
-    const saved = extraSleeveHoursSaved({ n, repShare, legHours: num(schedule?.totalHours) ? schedule.totalHours : NaN })
-    const costH = num(status.incomePerSec) && status.incomePerSec > 0 ? cost / status.incomePerSec / 3600 : null
-    if (saved === null || costH === null) return { buy: false, why: 'share, schedule or income unreadable — not buying a $' + ns.format.number(cost) + ' sleeve on a guess' }
-    if (budget < cost) return { buy: false, why: `budget $${ns.format.number(budget)} < $${ns.format.number(cost)}` }
-    if (!(saved > costH)) return { buy: false, why: `saves ${saved.toFixed(2)}h of this node for ${costH.toFixed(2)}h of income (every later node's use is unpriced upside)` }
-    return { buy: true, cost, why: `saves ${saved.toFixed(2)}h for ${costH.toFixed(2)}h of income, from unclaimed money` }
+    if (!campaign) return { buy: false, why: `the campaign is not on: ${g?.covenantExit?.why ?? 'no comparison published'}` }
+    return num(join) && money - join >= cost
+      ? { buy: true, cost, why: campaign.why }
+      : { buy: false, why: `campaign on; money $${ns.format.number(money)} of $${ns.format.number(cost)} (+ join claim ${join})` }
   })()
   decisions.push({ sleeve: another })
   if (another.buy && !flags.dry) {

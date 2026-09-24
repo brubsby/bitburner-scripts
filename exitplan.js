@@ -141,6 +141,20 @@ export function hoursToRep(target, o = {}) {
  *   5. climb to the exit level   exponential in exitLevel/mult — the leg the
  *                                whole trade is really about
  *
+ * THE COVENANT CAMPAIGN (optional `covenant`), placed in the FINAL window —
+ * the one window long enough to hold it, since money and combat exp both
+ * reset at an install (sleeveplan.js COVENANT). It adds:
+ *   - a money leg to max(sleeve price, $75b invite money), then spends the price;
+ *   - its combat legs on the WORK SLOT, which the passive legs (hoards, climb)
+ *     can overlap but a ground reputation leg cannot: the window is at least
+ *     combat + ground-rep hours;
+ *   - after the purchase, the new sleeve's exp transfer on the climb.
+ * It adds NOTHING to the exit reputation leg: one sleeve per faction
+ * (setToFactionWork throws otherwise) and the fleet's best one already works
+ * it (fleetFactionRepPerSec is a max). Comparing this against the same policy
+ * without it is the in-node price of the sleeve; its use in later nodes
+ * (sleevesFromCovenant persists) is not simulated here.
+ *
  * Returns { hours, legs, mult } or { hours: null, why } — never a guess.
  */
 export function exitHours(o = {}) {
@@ -168,6 +182,7 @@ export function exitHours(o = {}) {
     terminalRep = 0,
     donationCost = null,
     favorToDonate = null,
+    covenant = null,
   } = o
 
   if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
@@ -212,31 +227,62 @@ export function exitHours(o = {}) {
     legs.push({ leg: 'install cycles', hours: installsFirst * cycleHours, detail: `${installsFirst} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
   }
 
-  const moneyLeg = (target) => hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec })
+  // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
+  // legs read this rather than the input.
+  let expRate = expPerSec
+  const moneyLeg = (target) => hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate })
+  // The final window starts here; `slotH` is what it needs of the work slot.
+  const finalStart = h
+  let slotH = 0
+
+  if (covenant) {
+    if (!pos(covenant.cost) || !num(covenant.combatH) || covenant.combatH < 0) return { hours: null, why: 'covenant campaign unpriced (cost or combat hours)' }
+    const target = covenant.member ? covenant.cost : Math.max(covenant.cost, covenant.joinMoney ?? 0)
+    if (target > cash) {
+      const hm = moneyLeg(target)
+      if (!num(hm)) return { hours: null, why: 'could not price the Covenant money leg' }
+      h += hm
+      exp += pos(expRate) ? expRate * hm * 3600 : 0
+      cash = target
+      legs.push({ leg: 'covenant money', hours: hm, detail: `$${Math.round(target)} in hand` })
+    }
+    cash -= covenant.cost
+    slotH += covenant.member ? 0 : covenant.combatH
+    if (pos(covenant.sleeveExpPerSec)) expRate = (pos(expRate) ? expRate : 0) + covenant.sleeveExpPerSec
+  }
 
   if (joinMoney > cash) {
     const hm = moneyLeg(joinMoney)
     if (!num(hm)) return { hours: null, why: 'could not price the join-money leg' }
     h += hm
+    cash = joinMoney
     legs.push({ leg: 'hoard join money', hours: hm, detail: `$${Math.round(joinMoney)} in hand` })
     // The hoard leg also banks exp, which the climb below inherits.
-    exp += pos(expPerSec) ? expPerSec * hm * 3600 : 0
+    exp += pos(expRate) ? expRate * hm * 3600 : 0
   }
 
   if (terminalRep > 0) {
     const r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec, donationCost, favor: exitFavor, favorToDonate, moneyLeg })
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }
     h += r.hours
+    if (r.how === 'ground') slotH += r.hours
     legs.push({ leg: 'exit reputation', hours: r.hours, detail: `${Math.round(terminalRep)} rep, ${r.how}` })
-    exp += pos(expPerSec) ? expPerSec * r.hours * 3600 : 0
+    exp += pos(expRate) ? expRate * r.hours * 3600 : 0
   }
 
   // The final install: skills reset, and the climb runs on the multiplier we
   // froze at. This is the leg the whole install-vs-hold trade turns on.
-  const climb = hoursToLevel(exitLevel, mult, 0, expPerSec)
+  const climb = hoursToLevel(exitLevel, mult, 0, expRate)
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
   h += climb
   legs.push({ leg: 'climb to exit level', hours: climb, detail: `hacking ${exitLevel} at mult ${mult.toFixed(2)}` })
+
+  // The work slot can bind the window: the passive legs overlap it, a ground
+  // reputation leg and the Covenant gym legs do not overlap each other.
+  if (slotH > h - finalStart) {
+    legs.push({ leg: 'work slot binds', hours: slotH - (h - finalStart), detail: `${slotH.toFixed(1)}h of work slot in a ${(h - finalStart).toFixed(1)}h window` })
+    h = finalStart + slotH
+  }
 
   return { hours: h, legs, mult }
 }

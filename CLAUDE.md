@@ -522,6 +522,54 @@ out, and how long would it take?** If the answer is "someone eventually notices
 the numbers look wrong", it is not finished. `npm test` encodes as much of this
 as is statically checkable; the rest is a habit.
 
+## Decisions compare simulated trajectories — never a shortcut
+
+**Every choice between two ways of playing is priced by simulating BOTH
+playstyles to the same endpoint, from the same inputs, and comparing the
+results.** In practice the endpoint is almost always the node's exit
+(`exitplan.bestExitPolicy`). The inputs are one shared builder
+(`progress.js` `exitInputsOf`), so the two runs differ only in the choice.
+The decision is the difference: `withH - withoutH`.
+
+The shortcut this rules out has a recognisable shape: take a *current* rate or
+a *current* plan, compute "hours saved on a leg" or "rate x horizon", and
+compare that to a price. It keeps being written because it is short and it
+looks principled. It is wrong for the same reason every time: the choice
+changes the trajectory the leg sits on, and the shortcut holds that trajectory
+fixed.
+
+It was written twice on 2026-09-24 alone, the second time right after the
+user had said it:
+
+- **Covenant sleeves** were valued as "hours the extra sleeve saves on the
+  remaining rep schedule". That schedule assumed the ordinary install cadence,
+  which a 168h hold does not have. It also credited rep that a second sleeve
+  cannot earn: one sleeve per faction, and the exit's faction already has the
+  best one. Simulated properly (exitplan `covenant`, the campaign in the final
+  window), the in-node effect is a pure cost: the price's money leg plus gym
+  hours on the work slot.
+- **Sleeve augmentations** used the same `L(1-(1+s)/(1+sG))` leg formula.
+
+What the rule obliges:
+
+1. **Name the two trajectories** before writing any pricing code: "exit with
+   X" vs "exit without X". If one of them cannot be simulated yet, extend the
+   simulator (`exitplan`, `nodeplan`, `trajectory.js`) rather than
+   approximating the difference.
+2. **Same inputs, one builder.** A comparison between runs built from
+   different inputs measures the inputs.
+3. **Say where the choice sits in the trajectory.** A campaign that only fits
+   the final window is simulated there and acts only when the final window is
+   now.
+4. **What the simulator cannot see is published as not simulated, never
+   folded in.** Example: a Covenant sleeve persists into later nodes, but
+   cross-node play is `nodeplan`'s job. A guessed term inside the comparison
+   turns a measurement into an opinion.
+5. **Tests assert the comparison**, not a formula for the delta. Assert the
+   decision is `withH - withoutH` on shared inputs (SP19). Bring back the
+   deleted shortcut and watch the test fail (SP17 fails if
+   `covenantCampaign` reappears).
+
 ## Fidelity: model the real game, except where RAM says otherwise
 
 Every piece of tooling should model the game as it actually behaves. There is

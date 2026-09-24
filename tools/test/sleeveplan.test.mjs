@@ -726,44 +726,22 @@ export async function run() {
   }
   checks.push(c16);
 
-  const c17 = new Check("SP17", "Covenant sleeves: cost ladder, count, hours saved, and the campaign's wait and value");
+  const c17 = new Check("SP17", "Covenant sleeves: cost ladder, count, and one published comparison decides");
   {
-    c17.examined(12);
+    c17.examined(8);
     if (sp.covenantSleeveCost(0) !== 10e12 || sp.covenantSleeveCost(2) !== 1e15 || sp.covenantSleeveCost(5) !== Infinity) c17.fail("cost is 10^n x $10t for n < 5 (getSleeveCost)");
     if (sp.sleevesFromCovenant(1, 0, 10) !== 0 || sp.sleevesFromCovenant(3, 1, 10) !== 1 || sp.sleevesFromCovenant(4, 3, 4) !== 1) c17.fail("count = fleet - min(3, SF10 + inBN10)");
-    const h = sp.extraSleeveHoursSaved({ n: 1, repShare: 0.13, legHours: 50 });
-    if (Math.abs(h - 50 * (1 - 1.13 / 1.26)) > 1e-9) c17.fail(`hours saved formula: ${h}`);
-    const base = { bitNode: 10, member: false, fromCovenant: 0, n: 1, money: 3e9, moneyBy: (x) => 1e8 * x * 3600, combatHours: 5, repShare: 0.13, legHours: 100, rho: 0.3 };
-    for (const [bad, what] of [[{ bitNode: 4 }, "outside BN10"], [{ rho: null }, "no rho"], [{ fromCovenant: 5 }, "all bought"], [{ combatHours: null }, "combat unpriced"], [{ moneyBy: (x) => 1 }, "unreachable money"]]) {
-      if (sp.covenantCampaign({ ...base, ...bad }).campaign) c17.fail(`must refuse: ${what}`);
-    }
-    const c = sp.covenantCampaign(base).campaign;
-    if (!c) c17.fail("the base case must price");
-    else {
-      // $10t - $3b at $1e8/s: (1e13 - 3e9) / 1e8 / 3600 h.
-      const want = (1e13 - 3e9) / 1e8 / 3600;
-      if (Math.abs(c.moneyH - want) > 1e-3) c17.fail(`money leg ${c.moneyH} vs ${want}`);
-      if (c.waitH !== Math.max(c.moneyH, 5)) c17.fail("wait = max(money leg, combat leg)");
-      const saved = sp.extraSleeveHoursSaved({ n: 1, repShare: 0.13, legHours: 100 - c.waitH });
-      if (Math.abs(c.hoursSaved - saved) > 1e-9) c17.fail("hours saved count only the schedule left AFTER the wait");
-      if (Math.abs(c.lnEquiv - 0.3 * saved) > 1e-12) c17.fail("value = rho x hours saved");
-      if (!/unpriced upside/.test(c.crossNode)) c17.fail("cross-node value must be named as unpriced, never folded in");
-    }
-    const m = sp.covenantCampaign({ ...base, member: true, combatHours: null }).campaign;
-    if (!m || m.combatH !== 0) c17.fail("a member has no combat leg");
-    // covenantActive: one rule for the body step and the buyer.
     const A = sp.covenantActive;
-    if (!A({ lastAugReset: 1, planned: true, install: false, bestWait: { covenant: { x: 1 } } }, 1)) c17.fail("a gate holding for the covenant future is active");
-    if (A({ lastAugReset: 1, planned: true, install: true, bestWait: { covenant: { x: 1 } } }, 1)) c17.fail("an installing gate is not holding");
-    if (!A({ lastAugReset: 1, planned: false, covenantCampaign: { lnEquiv: 0.2 } }, 1)) c17.fail("nothing planned + positive campaign is active");
-    if (A({ lastAugReset: 1, planned: false, covenantCampaign: { lnEquiv: 0 } }, 1)) c17.fail("a zero-value campaign is not active");
-    if (A({ lastAugReset: 1, planned: false, covenantCampaign: { lnEquiv: 1 } }, 2)) c17.fail("another life's gate file is never active");
-    const slow = sp.covenantCampaign({ ...base, combatHours: 500 }).campaign;
-    if (!slow || slow.lnEquiv !== 0) c17.fail("a wait longer than the schedule saves nothing");
+    if (!A({ lastAugReset: 1, covenantExit: { active: true } }, 1)) c17.fail("a published faster trajectory is active");
+    if (A({ lastAugReset: 1, covenantExit: { active: false, deltaH: -5 } }, 1)) c17.fail("only `active` decides — a faster delta outside the final window is not");
+    if (A({ lastAugReset: 1, covenantExit: { active: "yes" } }, 1)) c17.fail("active must be exactly true");
+    if (A({ lastAugReset: 1, covenantExit: { active: true } }, 2)) c17.fail("another life's gate file is never active");
+    if (A({ lastAugReset: 1 }, 1)) c17.fail("no comparison published is not active");
+    if (typeof sp.covenantCampaign === "function" || typeof sp.extraSleeveHoursSaved === "function") c17.fail("the snapshot shortcut (hours saved on a leg) must not come back — decisions compare simulated trajectories");
   }
   checks.push(c17);
 
-  const c18 = new Check("SP18", "sleeveaug.js buys a sleeve only as a member, first when the gate holds for it, else on the floor rule");
+  const c18 = new Check("SP18", "sleeveaug.js buys a Covenant sleeve only as a member and only when the published trajectory comparison is on");
   {
     const { main } = await import("../../sleeveaug.js");
     const now = new Date().toISOString();
@@ -771,18 +749,14 @@ export async function run() {
       const files = {
         "/tel/sleeve.txt": JSON.stringify({ at: now, disableSleeveExp: false, factionRepPerSec: 0.46, assigned: [{ i: 0, task: "FACTION" }] }),
         "/tel/status.txt": JSON.stringify({ at: now, incomePerSec: o.income ?? 1e8, expPerSec: 7000 }),
-        "/tel/factionplan.txt": JSON.stringify({ measuredBaseRepPerSec: 3.54, totalHours: o.legH ?? 50 }),
+        "/tel/factionplan.txt": JSON.stringify({ measuredBaseRepPerSec: 3.54, totalHours: 50 }),
         "/tel/sleeveplan.txt": JSON.stringify({ horizonHours: 1000 }),
         "/tel/snap-augstats.txt": JSON.stringify({ data: { stats: {} } }),
-        "/tel/installgate.txt": JSON.stringify(
-          o.hold
-            ? { lastAugReset: 1, install: false, planned: true, plan: { buy: [] }, joinClaim: 0, bestWait: { waitMs: 1, covenant: { hoursSaved: 3 } } }
-            : { lastAugReset: 1, planned: false, plan: null, joinClaim: 0, covenantCampaign: o.campaign ?? null },
-        ),
+        "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: false, plan: null, joinClaim: o.join ?? 0, covenantExit: { active: !!o.active, why: "test" } }),
       };
       const log = [];
       const ns = {
-        args: o.dry ? ["--dry"] : [], flags: () => ({ dry: !!o.dry }), disableLog() {}, atExit() {},
+        args: [], flags: () => ({ dry: false }), disableLog() {}, atExit() {},
         read: (f) => files[f] ?? "", write: (f, d) => (files[f] = d),
         getResetInfo: () => ({ currentNode: o.node ?? 10, lastAugReset: 1, ownedSF: new Map() }),
         getPlayer: () => ({ factions: o.member === false ? [] : ["The Covenant"] }),
@@ -795,7 +769,7 @@ export async function run() {
           getSleevePurchasableAugs: () => [], purchaseSleeveAug: () => false,
         },
       };
-      return { ns, log, files };
+      return { ns, log };
     };
     const run = async (o) => {
       const w = world(o);
@@ -803,34 +777,30 @@ export async function run() {
       return w;
     };
     c18.examined(6);
-    // Nothing planned (no install to hold) and the campaign priced positive: it runs.
-    if (!(await run({ campaign: { lnEquiv: 0.5, hoursSaved: 2 } })).log.includes("purchaseSleeve")) c18.fail("with nothing to install, a positive campaign must buy");
-    // Held by the gate: buys even though budget.js leaves nothing (the plan is empty-claimed here, so check the rule, not the budget).
-    if (!(await run({ hold: true })).log.includes("purchaseSleeve")) c18.fail("the gate holding for the campaign must buy");
-    if ((await run({ hold: true, member: false })).log.length) c18.fail("never without Covenant membership");
-    if ((await run({ hold: true, node: 4 })).log.length) c18.fail("never outside BitNode 10");
-    // Floor rule, no hold: $10t at $1e8/s is ~27.8h of income; 50h of schedule saves ~2.6h — refuse.
-    if ((await run({})).log.length) c18.fail("the floor rule must refuse a sleeve that saves fewer hours than its price costs");
-    // Rich enough that the price is minutes: buy.
-    if (!(await run({ income: 1e12, legH: 500 })).log.includes("purchaseSleeve")) c18.fail("the floor rule must buy when hours saved beat the price in hours");
+    if (!(await run({ active: true })).log.includes("purchaseSleeve")) c18.fail("an active comparison must buy");
+    if ((await run({ active: false, income: 1e15 })).log.length) c18.fail("no buy without the comparison, however rich — no snapshot shortcut");
+    if ((await run({ active: true, member: false })).log.length) c18.fail("never without Covenant membership");
+    if ((await run({ active: true, node: 4 })).log.length) c18.fail("never outside BitNode 10");
+    if ((await run({ active: true, money: 1.5e13, join: 1e13 })).log.length) c18.fail("the join claim is never spent");
+    if (!(await run({ active: true, money: 2.5e13, join: 1e13 })).log.includes("purchaseSleeve")) c18.fail("money beyond the join claim buys");
   }
   checks.push(c18);
 
-  const c19 = new Check("SP19", "progress.js offers the Covenant campaign to the gate and trains for it only while the gate holds for it");
+  const c19 = new Check("SP19", "progress.js decides the Covenant by comparing two simulated exits on one set of inputs, on both paths");
   {
     const fs = (await import("node:fs")).default;
     const path = (await import("node:path")).default;
     const { fileURLToPath } = await import("node:url");
     const src = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-    c19.examined(5);
-    // Live 2026-09-24 the campaign refused "purchase count unreadable" every
-    // pass: readFleet never passed the fleet size through.
-    const rf = src.slice(src.indexOf("function readFleet"), src.indexOf("function readFleet") + 3000);
-    if (!/sleeves: Number\.isInteger\(f\.sleeves\) \? f\.sleeves : null/.test(rf)) c19.fail("readFleet must return the fleet size the campaign counts from");
-    if (!/covenantCandidate\(ns, info, player, schedule, incNow, null\)[\s\S]{0,120}covenantCampaign: cc\.campaign/.test(src)) c19.fail("the unplanned path must publish the campaign — with nothing to install it is never offered to a gate");
-    if (!/if \(cc\.campaign && cc\.campaign\.lnEquiv > 0\)[\s\S]{0,1200}futures\.push\(\{ waitMs: c\.waitH \* 3600000, M: Mw, covenant:/.test(src)) c19.fail("the campaign is not offered as a future (or is offered at zero value)");
-    if (!/money: Math\.max\(0, ns\.getServerMoneyAvailable\('home'\) \+ moneyGain - c\.spend\)/.test(src)) c19.fail("the campaign's augmentation plan must be priced on money minus the sleeve");
-    if (!/if \(!covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\) return null[\s\S]{0,600}const bodyStep = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the gate holds for the campaign, ahead of the schedule's own body step");
+    c19.examined(6);
+    const fn = src.slice(src.indexOf("function covenantExitOf"), src.indexOf("function exitInputsOf"));
+    if (!/bestExitPolicy\(\{ \.\.\.inputs\(\), covenant: \{/.test(fn)) c19.fail("the campaign trajectory must be the SAME inputs plus `covenant`");
+    if (!/const deltaH = withC\.best\.hours - base\.hours/.test(fn)) c19.fail("the decision must be the difference of the two simulated exits");
+    if (!/base\.installsFirst !== 0 \|\| withC\.best\.installsFirst !== 0\) return out\(false/.test(fn)) c19.fail("active only in the final window");
+    if ((src.match(/covenantExitOf\(ns, info, player, schedule,/g) || []).length < 3) c19.fail("both the planned and the nothing-to-buy path must publish the comparison");
+    if (!/if \(!covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\) return null[\s\S]{0,600}const bodyStep = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the comparison is on, ahead of the schedule's own body step");
+    const rf = src.slice(src.indexOf("function readFleet"), src.indexOf("function readFleet") + 3200);
+    if (!/sleeves: Number\.isInteger\(f\.sleeves\) \? f\.sleeves : null/.test(rf)) c19.fail("readFleet must return the fleet size the comparison counts from");
   }
   checks.push(c19);
 

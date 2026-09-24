@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangGainHours, gangIsPending, rememberedGangIncome } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, covenantCampaign, covenantActive, sleevesFromCovenant, COVENANT } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -1121,6 +1121,7 @@ function readFleet(ns, info) {
       // The fleet's size — the Covenant campaign derives its purchase count
       // from it (sleeveplan.sleevesFromCovenant); absent, it refuses.
       sleeves: Number.isInteger(f.sleeves) ? f.sleeves : null,
+      expToPlayerHackingIfStudying: fin(f.expToPlayerHackingIfStudying) ? f.expToPlayerHackingIfStudying : null,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
     }
 }
@@ -1330,30 +1331,88 @@ function nextInstallGainOf(plan, pending, offers) {
 }
 
 /**
- * The Covenant campaign priced for this pass (sleeveplan.covenantCampaign),
- * shared by the planned path (as a gate future) and the unplanned one (as the
- * campaign itself — with nothing to install, there is no window to hold).
+ * The Covenant sleeve priced as a TRAJECTORY AGAINST A TRAJECTORY: the best
+ * exit policy with the campaign in the final window (exitplan `covenant`)
+ * against the best without it, on identical inputs. Published whatever it
+ * finds; `active` only when the campaign's trajectory reaches the exit sooner
+ * AND the final window is now (the best policy installs no more), because
+ * that is the only window long enough to hold it.
  */
-function covenantCandidate(ns, info, player, schedule, incomePerSec, itraj) {
-  const fleet = readFleet(ns, info)
-  const nSleeves = Number.isInteger(fleet?.sleeves) ? fleet.sleeves : null
-  const member = player.factions.includes(COVENANT.faction)
-  const fc = [...(schedule?.joinForecasts ?? []), ...(schedule?.unpriceable ?? [])].find((x) => x?.name === COVENANT.faction)
-  const gymH = member ? 0 : (fc?.blockers ?? []).reduce((t, b) => (t === null ? null : b?.gym ? (typeof b.gym.hours === 'number' && isFinite(b.gym.hours) ? t + b.gym.hours : null) : t), fc ? 0 : null)
-  const playerRep = schedule?.measuredBaseRepPerSec > 0 ? schedule.measuredBaseRepPerSec : schedule?.estimatedBaseRepPerSec > 0 ? schedule.estimatedBaseRepPerSec : null
-  const rhoNow = achievableRate(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)?.rate ?? null
-  return covenantCampaign({
-    bitNode: info?.currentNode,
-    member,
-    fromCovenant: nSleeves === null ? null : sleevesFromCovenant(nSleeves, sfLevel(info, 10), info?.currentNode),
-    n: nSleeves,
-    money: ns.getServerMoneyAvailable('home'),
-    moneyBy: (h) => (itraj ? itraj.moneyBy(h) : incomePerSec * h * 3600),
-    combatHours: gymH,
-    repShare: typeof fleet?.factionRepPerSec === 'number' && playerRep ? fleet.factionRepPerSec / playerRep : null,
-    legHours: schedule?.totalHours,
-    rho: rhoNow,
-  })
+function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFleet) {
+  const out = (active, why, extra = {}) => ({ active, why, crossNode: 'not simulated: sleevesFromCovenant persists into every later node (only prestigeSourceFile resets a sleeve, never the count)', ...extra })
+  try {
+    if (info?.currentNode !== 10) return out(false, 'Covenant sleeves are sold only inside BitNode 10')
+    const n = Number.isInteger(planFleet?.sleeves) ? planFleet.sleeves : null
+    const from = n === null ? null : sleevesFromCovenant(n, sfLevel(info, 10), info?.currentNode)
+    if (from === null) return out(false, 'fleet size unreadable')
+    const cost = covenantSleeveCost(from)
+    if (!isFinite(cost)) return out(false, 'all Covenant sleeves bought')
+    const member = player.factions.includes(COVENANT.faction)
+    const fc = [...(schedule?.joinForecasts ?? []), ...(schedule?.unpriceable ?? [])].find((x) => x?.name === COVENANT.faction)
+    const combatH = member ? 0 : (fc?.blockers ?? []).reduce((t, b) => (t === null ? null : b?.gym ? (typeof b.gym.hours === 'number' && isFinite(b.gym.hours) ? t + b.gym.hours : null) : t), fc ? 0 : null)
+    if (combatH === null) return out(false, 'Covenant combat legs unpriced (no forecast or a gym leg without a rate)')
+    const base = basePolicy?.best
+    if (!base) return out(false, `no base trajectory to compare against: ${basePolicy?.why ?? 'exit unpriced'}`)
+    // The new sleeve's exp transfer, at the fleet's per-sleeve study rate.
+    const perSleeveExp = planFleet?.expToPlayerHackingIfStudying && n > 0 ? planFleet.expToPlayerHackingIfStudying / n : 0
+    const withC = bestExitPolicy({ ...inputs(), covenant: { cost, joinMoney: COVENANT.joinMoney, combatH, member, sleeveExpPerSec: perSleeveExp } })
+    if (!withC.best) return out(false, `the campaign trajectory could not be priced: ${withC.why}`)
+    const deltaH = withC.best.hours - base.hours
+    const extra = { deltaH, withH: withC.best.hours, withoutH: base.hours, installsWith: withC.best.installsFirst, installsWithout: base.installsFirst, cost, combatH, member }
+    const summary = `exit ${withC.best.hours.toFixed(1)}h with the campaign vs ${base.hours.toFixed(1)}h without (${deltaH >= 0 ? '+' : ''}${deltaH.toFixed(1)}h in this node)`
+    if (!(deltaH < 0)) return out(false, `${summary} — slower in this node`, extra)
+    if (base.installsFirst !== 0 || withC.best.installsFirst !== 0) return out(false, `${summary} — faster, but not yet the final window (${withC.best.installsFirst} install(s) first)`, extra)
+    return out(true, `${summary} — run it now`, extra)
+  } catch (e) {
+    return out(false, `covenant comparison failed: ${String(e).slice(0, 80)}`)
+  }
+}
+
+/**
+ * The exit simulation's inputs — one builder, so the planned and unplanned
+ * paths and every alternative trajectory (the Covenant campaign) are priced on
+ * the SAME state. A comparison between two trajectories built from different
+ * inputs measures the inputs, not the choice.
+ */
+function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
+  const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+  const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
+  const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+  return {
+    money: player.money ?? 0,
+    incomePerSec: incomePerSec + contractMoneyPerSec,
+    hacking: player.skills?.hacking,
+    hackingExp: player.exp?.hacking ?? 0,
+    hackingMult: effectiveHackingMult(player, info),
+    // The sleeve fleet's exp transfer rides the exit climb. Additive
+    // only: a null player rate stays null (exitplan refuses), because
+    // the fleet's few exp/s alone is not a conservative estimate of a
+    // climb, it is a different trajectory that happens to be a number.
+    expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule), planFleet?.expToPlayerHacking),
+    // ONE sleeve's worth, because only one sleeve may work a faction
+    // (setToFactionWork throws otherwise) — fleetFactionRepPerSec
+    // takes a max, not a sum, and summing here would overstate the
+    // longest leg in the node by the whole fleet size.
+    repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, planFleet?.factionRepPerSec),
+    exitRep: rp?.factionRep ?? 0,
+    exitFavor: rp?.favor ?? 0,
+    cycleHours: cyc?.cycleHours,
+    multGainPerCycle: cyc?.multGainPerCycle,
+    nextInstallGain: nextInstallGainOf(plan, pending, offers),
+    exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
+    // The requirement, not the shortfall: exitHours skips the leg
+    // itself when the cash is already there, and feeding it a claim
+    // that had collapsed to 0 would hide the leg entirely.
+    joinMoney: exitFactionMoneyReq(candidates) ?? 0,
+    terminalRep: rp?.baseRep ?? 0,
+    donationCost: typeof rp?.donationCost === 'number' ? rp.donationCost : null,
+    // 150 x FavorToDonateToFaction (Faction/formulas/donation.ts:17),
+    // read from the node rather than assumed.
+    favorToDonate: (() => {
+      const f = bitNodeMults(info?.currentNode)?.FavorToDonateToFaction
+      return typeof f === 'number' && isFinite(f) && f > 0 ? 150 * f : null
+    })(),
+  }
 }
 
 /**
@@ -2991,15 +3050,19 @@ async function act(ns, canJoin, info, note) {
           objective: weightsMeta,
           incomeSample: makeIncomeSample(incNow, player, schedule, info),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
-          // Nothing to install, so no window to hold: the campaign, if it
-          // prices positive, simply runs (sleeveplan.covenantActive).
+          // The Covenant comparison rides this path too: a life with nothing
+          // left to buy is very often the final window, which is the only
+          // one the campaign can fit in.
           ...(() => {
+            const pf = readFleet(ns, info)
+            const inputs = () => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf)
+            let base = null
             try {
-              const cc = covenantCandidate(ns, info, player, schedule, incNow, null)
-              return { covenantCampaign: cc.campaign, covenantWhy: cc.why }
-            } catch (e) {
-              return { covenantCampaign: null, covenantWhy: `covenant campaign unpriced: ${String(e).slice(0, 80)}` }
+              base = bestExitPolicy(inputs())
+            } catch {
+              base = null
             }
+            return { covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf) }
           })(),
         },
         null,
@@ -3077,8 +3140,6 @@ async function act(ns, canJoin, info, note) {
     const incomePerSec = incomeNow || incomeAvg
     const incomeSource = incomeNow ? 'running-scripts' : incomeAvg ? 'since-last-aug' : 'none'
     let futures = []
-    // Why the Covenant campaign was or was not offered this pass (installgate.txt).
-    let covenantWhy = null
     let incomeCalibration = null
     let futuresCalibration = null
     let futurePredictions = []
@@ -3171,40 +3232,6 @@ async function act(ns, canJoin, info, note) {
         }
       }
 
-      // THE COVENANT CAMPAIGN — one more wait, priced by sleeveplan.
-      // covenantCampaign: hold long enough to join The Covenant and buy the
-      // next sleeve inside this window (money and combat exp both reset at an
-      // install). The wait's augmentations are planned with the sleeve's price
-      // taken out of the money, reputation accrues only for the hours the work
-      // slot is not at the gym, and the sleeve's hours saved enter as ln(M) at
-      // rho. Offered only when that is positive; the gate's marginal rule
-      // decides against every other wait, and gate.bestWait.covenant is what
-      // the body step and sleeveaug.js act on.
-      try {
-        const cc = covenantCandidate(ns, info, player, schedule, incomePerSec, itraj)
-        covenantWhy = cc.why
-        if (cc.campaign && cc.campaign.lnEquiv > 0) {
-          const c = cc.campaign
-          const workH = Math.max(0, c.waitH - c.combatH)
-          const repGain = ftraj ? ftraj.repBetween(0, workH, favMult) : 0
-          const moneyGain = itraj ? itraj.moneyBy(c.waitH) : incomePerSec * c.waitH * 3600
-          const f = planPurchases({
-            offers: offers.map((o) => (repGain > 0 && o.faction === workingF ? { ...o, factionRep: o.factionRep + repGain } : o)),
-            money: Math.max(0, ns.getServerMoneyAvailable('home') + moneyGain - c.spend),
-            r: BASE_PRICE_MULT,
-            nodeMoneyMult: 1,
-            owned: [...installedCount.keys()],
-            soaOwned: [...allCount.keys()].filter(isSoa).length,
-            channelWeights,
-            channels: channelsUsed,
-          })
-          const Mw = heldM * (f && f.M > 1 ? f.M : 1) * Math.exp(c.lnEquiv)
-          if (Mw > 1) futures.push({ waitMs: c.waitH * 3600000, M: Mw, covenant: { spend: c.spend, combatH: c.combatH, moneyH: c.moneyH, hoursSaved: c.hoursSaved, lnEquiv: c.lnEquiv, crossNode: c.crossNode } })
-        }
-      } catch (e) {
-        covenantWhy = `covenant campaign unpriced: ${String(e).slice(0, 80)}`
-      }
-
       incomeCalibration = scoreIncome(prevIncome, incomePerSec)
 
       // CALIBRATE THE FUTURES BEFORE ACTING ON THEM.
@@ -3242,49 +3269,17 @@ async function act(ns, canJoin, info, note) {
     // The fleet, read once for both the exit trajectory and the sleeve plan.
     const planFleet = readFleet(ns, info)
     const exitPolicy = (() => {
-          try {
-            const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
-            const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
-            const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
-            return bestExitPolicy({
-              money: player.money ?? 0,
-              incomePerSec: incomePerSec + contractMoneyPerSec,
-              hacking: player.skills?.hacking,
-              hackingExp: player.exp?.hacking ?? 0,
-              hackingMult: effectiveHackingMult(player, info),
-              // The sleeve fleet's exp transfer rides the exit climb. Additive
-              // only: a null player rate stays null (exitplan refuses), because
-              // the fleet's few exp/s alone is not a conservative estimate of a
-              // climb, it is a different trajectory that happens to be a number.
-              expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule), planFleet?.expToPlayerHacking),
-              // ONE sleeve's worth, because only one sleeve may work a faction
-              // (setToFactionWork throws otherwise) — fleetFactionRepPerSec
-              // takes a max, not a sum, and summing here would overstate the
-              // longest leg in the node by the whole fleet size.
-              repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, planFleet?.factionRepPerSec),
-              exitRep: rp?.factionRep ?? 0,
-              exitFavor: rp?.favor ?? 0,
-              cycleHours: cyc?.cycleHours,
-              multGainPerCycle: cyc?.multGainPerCycle,
-              nextInstallGain: nextInstallGainOf(plan, pending, offers),
-              exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
-              // The requirement, not the shortfall: exitHours skips the leg
-              // itself when the cash is already there, and feeding it a claim
-              // that had collapsed to 0 would hide the leg entirely.
-              joinMoney: exitFactionMoneyReq(candidates) ?? 0,
-              terminalRep: rp?.baseRep ?? 0,
-              donationCost: typeof rp?.donationCost === 'number' ? rp.donationCost : null,
-              // 150 x FavorToDonateToFaction (Faction/formulas/donation.ts:17),
-              // read from the node rather than assumed.
-              favorToDonate: (() => {
-                const f = bitNodeMults(info?.currentNode)?.FavorToDonateToFaction
-                return typeof f === 'number' && isFinite(f) && f > 0 ? 150 * f : null
-              })(),
-            })
-          } catch {
-            return null
-          }
-        })()
+      try {
+        return bestExitPolicy(exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet))
+      } catch {
+        return null
+      }
+    })()
+    // THE COVENANT CAMPAIGN, as a trajectory against a trajectory: the same
+    // exit simulation with the campaign in the final window (exitplan
+    // `covenant`), against the one without. It runs only when that is faster
+    // AND the final window is now (the best policy installs no more).
+    const covenantExit = covenantExitOf(ns, info, player, schedule, exitPolicy, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet)
 
     // DISTINCT augmentations this install would add, NeuroFlux excluded. Hoisted
     // so the count timing below prices the same batch the gate judges.
@@ -3605,7 +3600,7 @@ async function act(ns, canJoin, info, note) {
           incomeSample: makeIncomeSample(incomePerSec, player, schedule, info),
           incomeCalibration,
           futuresCalibration,
-          covenantWhy,
+          covenantExit,
           futurePredictions,
           // The objective the plan was priced under — derived per pass from
           // measured elasticities, or 'flat' when derivation refused. A

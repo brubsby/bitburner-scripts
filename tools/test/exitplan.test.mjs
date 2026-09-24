@@ -342,5 +342,42 @@ export async function run() {
   }
   checks.push(c10);
 
+  const c11 = new Check("XP11", "the Covenant campaign is simulated in the final window: money spent, gym on the work slot, no extra exit rep");
+  {
+    c11.examined(6);
+    // Donation-bound exit rep (a passive money leg), so the gym can overlap.
+    const base = {
+      money: 1e12, incomePerSec: 1e9, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 1e7, repPerSec: 50,
+      exitRep: 0, exitFavor: 200, favorToDonate: 150, donationCost: 5e13, terminalRep: 2.5e6,
+      exitLevel: 3000, joinMoney: 100e9, cycleHours: 3, multGainPerCycle: 1.2,
+    };
+    const cov = (o) => ({ ...base, covenant: { cost: 1e13, joinMoney: 75e9, combatH: 5, member: false, sleeveExpPerSec: 0, ...o } });
+    const w0 = exitHours(base);
+    const w1 = exitHours(cov({}));
+    if (!(w0.hours > 0) || !(w1.hours > 0)) c11.fail(`both trajectories must price: ${w0.why ?? ""} ${w1.why ?? ""}`);
+    else {
+      // $1e13 at ~$1e9/s is ~2.8h of money that the base never earns.
+      if (!(w1.hours > w0.hours + 2)) c11.fail(`the sleeve's price must cost the window its money leg: ${w0.hours} -> ${w1.hours}`);
+      if (!w1.legs.some((l) => l.leg === "covenant money")) c11.fail("the money leg must be visible");
+    }
+    // The gym overlaps passive legs: 5h of gym inside a longer passive window adds nothing beyond the money.
+    const short = exitHours(cov({ combatH: 0.01 }));
+    if (Math.abs(short.hours - w1.hours) > 1e-9) c11.fail("gym hours inside the passive window must not add time");
+    // ...but it binds when it outlasts the window.
+    const long = exitHours(cov({ combatH: 500 }));
+    if (!(Math.abs(long.hours - 500) < 1e-6 && long.legs.some((l) => l.leg === "work slot binds"))) c11.fail(`500h of gym must bind the window: ${long.hours}`);
+    // A ground exit rep leg and the gym share the slot: both count.
+    const ground = { ...base, exitFavor: 0 };
+    const g0 = exitHours(ground);
+    const g1 = exitHours({ ...ground, covenant: { cost: 1, joinMoney: 0, combatH: g0.hours * 2, member: false } });
+    const repH = g0.legs.find((l) => l.leg === "exit reputation")?.hours ?? 0;
+    if (!(g1.hours >= g0.hours * 2 + repH - 1e-6)) c11.fail("ground rep and gym do not overlap each other");
+    // One sleeve per faction: the exit rep leg is identical with the campaign.
+    const repLeg = (r) => r.legs.find((l) => l.leg === "exit reputation")?.hours;
+    if (repLeg(exitHours({ ...ground, covenant: { cost: 1, joinMoney: 0, combatH: 0, member: true } })) !== repLeg(g0)) c11.fail("a second sleeve cannot add exit reputation — one sleeve per faction");
+    if (exitHours(cov({ combatH: null })).hours !== null) c11.fail("an unpriced combat leg must refuse, not read as zero");
+  }
+  checks.push(c11);
+
   return checks;
 }
