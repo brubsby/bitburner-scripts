@@ -537,7 +537,29 @@ export function shouldInstall(o) {
       if (marginalBest === null || r > marginalBest) marginalBest = r
     }
   }
-  const waitBeats = rho !== null ? marginalBest !== null && marginalBest > rho : bestWait !== null && rateWait > rateNow
+  const rateWaitBeats = rho !== null ? marginalBest !== null && marginalBest > rho : bestWait !== null && rateWait > rateNow
+  // --- THE DECISION, WHEN THE EXIT CAN BE PRICED: trajectory against
+  // trajectory (CLAUDE.md). progress.js simulates the node's exit for each
+  // choice on one input builder — install now, install after each candidate
+  // wait (with that wait's batch), and never install again — and the soonest
+  // exit wins. The rate rule above (ln(M) per hour of this life, against rho)
+  // is a shortcut of exactly the forbidden shape and survives only as the
+  // named fallback for a pass whose exit cannot be priced.
+  const ex = o.exitCompare
+  const exitDecides = !!ex && typeof ex.nowH === 'number' && isFinite(ex.nowH) && ex.nowH > 0
+  let exitWait = null
+  if (exitDecides) {
+    for (const w of ex.waits ?? []) {
+      if (typeof w?.H === 'number' && isFinite(w.H) && (exitWait === null || w.H < exitWait.H)) exitWait = w
+    }
+  }
+  const neverBest = exitDecides && typeof ex.neverH === 'number' && isFinite(ex.neverH) && ex.neverH < ex.nowH && !(exitWait && exitWait.H <= ex.neverH)
+  const exitWaitBeats = exitDecides && exitWait !== null && exitWait.H < ex.nowH
+  if (exitDecides) {
+    bestWait = exitWait ? (o.futures ?? []).find((f) => f.waitMs === exitWait.waitMs) ?? null : null
+  }
+  const waitBeats = exitDecides ? exitWaitBeats || neverBest : rateWaitBeats
+  const decidedBy = exitDecides ? 'exit-sim' : `rate-fallback (${ex?.why ?? 'no exit comparison supplied'})`
   // M <= 1 means the queued augmentations add nothing on the rate channels, so
   // there is no trade to make. This also keeps ln(M) positive, which the rate
   // comparison below depends on — a negative rate inverts the ordering and the
@@ -602,7 +624,9 @@ export function shouldInstall(o) {
   // deadlock the countStalls comment warns about: a hold that cannot state what
   // would end it. The floor above is the anti-thrash guard instead.
   const countInstall = countBanks && countWants && !destructive
-  const install = terminal || countInstall || (expOk && netGain && !waitBeats && !countStalls && !destructive)
+  // expOk is the rate rule's own guard (enough exp to bank); the simulated
+  // exit prices the climb itself, so it does not apply there.
+  const install = terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive)
 
   return {
     ...base(),
@@ -628,6 +652,11 @@ export function shouldInstall(o) {
     countWants,
     countDecidedBy,
     countTimingWhy: timing?.why ?? null,
+    decidedBy,
+    exitNowH: exitDecides ? ex.nowH : null,
+    exitBestWaitH: exitWait?.H ?? null,
+    exitNeverH: exitDecides && typeof ex.neverH === 'number' ? ex.neverH : null,
+    holdForever: neverBest || undefined,
     binding: o.binding ?? null,
     destructive,
     why: terminal
@@ -641,6 +670,12 @@ export function shouldInstall(o) {
         (countDecidedBy === 'priced'
           ? `the priced timing says a bigger batch is faster: ${timing?.why ?? ''}`
           : `below the floor of ${countFloor}, and the timing is not yet priced (${timing?.why ?? 'no timing supplied'})`)
+      : install && exitDecides
+      ? `install: ${queued} aug(s) — the simulated exit installing now is ${ex.nowH.toFixed(1)}h, the best wait ${exitWait ? exitWait.H.toFixed(1) + 'h (' + (exitWait.waitMs / 3600000).toFixed(1) + 'h wait)' : 'unpriced'}, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}`
+      : !install && exitDecides && waitBeats && !destructive && !countStalls
+      ? neverBest
+        ? `hold: never installing again exits sooner (${ex.neverH.toFixed(1)}h) than installing now (${ex.nowH.toFixed(1)}h) — this is the final window`
+        : `hold: waiting ${(exitWait.waitMs / 3600000).toFixed(1)}h then installing exits at ${exitWait.H.toFixed(1)}h, installing now at ${ex.nowH.toFixed(1)}h (simulated exits)`
       : install
       ? `install: ${queued} aug(s), M=${M.toFixed(4)} -> ${Meff.toFixed(4)} with the x${favorGain.toFixed(4)} favour gain (Go bonus ${goBonusPct.toFixed(1)}% regrows, so it is not charged). Installing now accumulates ${rateNow.toFixed(4)} ln(M)/h; nothing reachable beats it` +
         (bestWait ? ` (best wait ${(bestWait.waitMs / 3600000).toFixed(1)}h -> M=${bestWait.M.toFixed(4)} = ${rateWait.toFixed(4)}/h)` : ' (nothing further is reachable)')

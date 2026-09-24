@@ -163,6 +163,14 @@ export function hoursToRep(target, o = {}) {
  * with/without comparison of a sleeve purchase runs both trajectories in this
  * one shape.
  *
+ * THE FIRST INSTALL, when it is the decision (the install gate): `firstInstallH`
+ * is how long this life runs before it (0 = install now; default one cadence),
+ * and `installGains` {hacking, rep, income} is what that batch multiplies —
+ * hacking the level climb, rep the ground reputation rate and (through
+ * faction_rep, donation.ts:8) the donation price, income the money legs. Later
+ * installs carry the measured per-cycle hacking gain only; their rep and
+ * income gains are priced at x1 — a floor, stated.
+ *
  * Returns { hours, legs, mult } or { hours: null, why } — never a guess.
  */
 export function exitHours(o = {}) {
@@ -192,6 +200,8 @@ export function exitHours(o = {}) {
     favorToDonate = null,
     covenant = null,
     sleeveRep = null,
+    firstInstallH = null,
+    installGains = null,
   } = o
 
   if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
@@ -205,7 +215,9 @@ export function exitHours(o = {}) {
   // Income at level 1 for THIS fleet, derived from the live pair. Everything
   // downstream of an install starts here, which is what makes the rebuild
   // visible instead of assumed away.
-  const incomeAtLevel1 = (incomePerSec * 51) / (hacking + 50)
+  let incomeAtLevel1 = (incomePerSec * 51) / (hacking + 50)
+  let repRate = repPerSec
+  let donation = donationCost
 
   const legs = []
   let h = 0
@@ -214,7 +226,8 @@ export function exitHours(o = {}) {
   let cash = money
 
   if (installsFirst > 0) {
-    h += installsFirst * cycleHours
+    const firstH = num(firstInstallH) && firstInstallH >= 0 ? firstInstallH : cycleHours
+    h += firstH + (installsFirst - 1) * cycleHours
     // THE FIRST INSTALL IS NOT A MEDIAN ONE. multGainPerCycle is the median
     // ratio across recent lives, which predicts a typical future cycle — and is
     // a poor predictor of the one about to happen whenever the catalogue has
@@ -229,11 +242,16 @@ export function exitHours(o = {}) {
     // supplied, and the median covers only the installs after it. The planned
     // gain is a LOWER bound for that install: the gate is still letting the
     // batch grow, so what actually installs will be at least this.
-    const firstGain = pos(nextInstallGain) && nextInstallGain >= 1 ? nextInstallGain : multGainPerCycle
+    const firstGain = pos(installGains?.hacking) && installGains.hacking >= 1 ? installGains.hacking : pos(nextInstallGain) && nextInstallGain >= 1 ? nextInstallGain : multGainPerCycle
+    if (pos(installGains?.rep) && installGains.rep >= 1) {
+      if (pos(repRate)) repRate *= installGains.rep
+      if (pos(donation)) donation /= installGains.rep
+    }
+    if (pos(installGains?.income) && installGains.income >= 1) incomeAtLevel1 *= installGains.income
     mult = hackingMult * firstGain * Math.pow(multGainPerCycle, installsFirst - 1)
     exp = 0
     cash = 1262 // PlayerObjectGeneralMethods.ts:102
-    legs.push({ leg: 'install cycles', hours: installsFirst * cycleHours, detail: `${installsFirst} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
+    legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
   }
 
   // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
@@ -272,10 +290,10 @@ export function exitHours(o = {}) {
 
   if (terminalRep > 0) {
     const fleetOn = sleeveRep && pos(sleeveRep.perSec)
-    let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repPerSec) ? repPerSec : 0) + sleeveRep.perSec : repPerSec, donationCost, favor: exitFavor, favorToDonate, moneyLeg })
+    let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repRate) ? repRate : 0) + sleeveRep.perSec : repRate, donationCost: donation, favor: exitFavor, favorToDonate, moneyLeg })
     if (fleetOn && r.how === 'ground') {
       // Piecewise: player alone for delayH, then player + sleeve.
-      const P = pos(repPerSec) ? repPerSec : 0
+      const P = pos(repRate) ? repRate : 0
       const S = sleeveRep.perSec
       const D = num(sleeveRep.delayH) && sleeveRep.delayH > 0 ? sleeveRep.delayH : 0
       const need = terminalRep - exitRep
@@ -313,10 +331,10 @@ export function exitHours(o = {}) {
  * truncated search reads as "this is the optimum" when it may only be the edge
  * of where we looked (CLAUDE.md: no silent caps).
  */
-export function bestExitPolicy(o = {}, maxInstalls = 400) {
+export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
   const tried = []
   let best = null
-  for (let k = 0; k <= maxInstalls; k++) {
+  for (let k = minInstalls; k <= maxInstalls; k++) {
     const r = exitHours({ ...o, installsFirst: k })
     tried.push({ installsFirst: k, hours: r.hours, why: r.why ?? null })
     if (num(r.hours) && (best === null || r.hours < best.hours)) best = { ...r, installsFirst: k }

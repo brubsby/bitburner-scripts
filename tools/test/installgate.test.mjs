@@ -806,5 +806,28 @@ export function run() {
   }
   checks.push(c17);
 
+  const c18 = new Check("IG18", "install vs hold is decided by simulated exits when they are priced; the rate rule is only the named fallback");
+  {
+    const prev = { ageMs: 1 * H, M: 1.5 };
+    const futures = [{ waitMs: 2 * H, M: 3 }, { waitMs: 4 * H, M: 5 }];
+    const base = { ageMs: 3 * H, exp: EXP, prev, futures, M: 2, queued: 4 };
+    c18.examined(6);
+    const now = shouldInstall({ ...base, exitCompare: { nowH: 50, neverH: 90, waits: [{ waitMs: 2 * H, H: 55 }, { waitMs: 4 * H, H: 60 }] } });
+    if (now.install !== true || now.decidedBy !== "exit-sim") c18.fail(`the soonest exit is installing now: ${now.why}`);
+    const wait = shouldInstall({ ...base, exitCompare: { nowH: 50, neverH: 90, waits: [{ waitMs: 2 * H, H: 55 }, { waitMs: 4 * H, H: 45 }] } });
+    if (wait.install !== false || wait.bestWait?.waitMs !== 4 * H) c18.fail(`a wait whose exit is sooner must hold, naming that wait: ${wait.why}`);
+    const never = shouldInstall({ ...base, exitCompare: { nowH: 50, neverH: 40, waits: [{ waitMs: 2 * H, H: 55 }] } });
+    if (never.install !== false || never.holdForever !== true) c18.fail(`never installing again, when sooner, is the final window: ${never.why}`);
+    // The rate rule would hold here (big M ahead); the exit says install — the exit decides.
+    const disagree = shouldInstall({ ...base, rho: 0.0001, exitCompare: { nowH: 10, neverH: 99, waits: [{ waitMs: 4 * H, H: 11 }] } });
+    if (disagree.install !== true) c18.fail("when the exit is priced, the rate rule must not overrule it");
+    const fb = shouldInstall({ ...base, exitCompare: { nowH: null, why: "exit unpriced" } });
+    if (!/^rate-fallback/.test(fb.decidedBy ?? "")) c18.fail(`an unpriced exit falls back to the rate rule and says so: ${fb.decidedBy}`);
+    // The count batch is its own gate and still installs.
+    const count = shouldInstall({ ...base, M: 1, countShort: 10, countGain: 5, countTiming: { installNow: true, why: "t" }, exitCompare: { nowH: 50, neverH: 40, waits: [] } });
+    if (count.install !== true) c18.fail("a priced count batch still installs");
+  }
+  checks.push(c18);
+
   return checks;
 }

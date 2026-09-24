@@ -21,7 +21,7 @@ unless it is marked done. Ranked by how much money or time the decision moves.
 
 | # | Decision | Where | Shortcut | Simulator gap |
 |---|---|---|---|---|
-| 1 | install now vs hold | installgate.js:415,481 | `ln(M)/A` vs `ln(M_future)/(A+wait)` | first-install time plus its gain |
+| 1 | ~~install now vs hold~~ **done 2026-09-24** | installgate.js `exitCompare` | now/wait/never simulated exits; the rate rule is the named fallback | — |
 | 2 | budget split: home / fleet / hacknet / augs / join | budget.js:137,147,230; objective.js:664 `homeLn`; progress.js `budgetClaim` | payback vs `income x horizon`; `ln(m)/price` | income as a function of home RAM; cycle length responding to spend |
 | 3 | work slot: crime vs faction | progress.js ~2602 | `moneyLn(crime $/h)` vs schedule ln/h | mostly there (`nodeplan.workSlotCost`) |
 | 4 | which faction to work | factionplan.js:205 | greedy `acc/hoursAll` | per-cycle mult gain as a function of the schedule |

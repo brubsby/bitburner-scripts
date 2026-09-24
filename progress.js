@@ -1323,6 +1323,26 @@ const MAX_PLANNING_HORIZON_H = 1000
  * offers. Feeds bestExitPolicy's FIRST install, which the historical median
  * mispriced by 20x the moment the catalogue opened up (exitplan.js).
  */
+/**
+ * What installing a batch multiplies, per channel the exit simulation runs on:
+ *   hacking  the level climb (mults.hacking)
+ *   rep      ground reputation and the donation price (faction_rep, donation.ts:8)
+ *   income   batch income: linear in money per hack and in success chance,
+ *            inverse in op time — hacking_money x hacking_chance x hacking_speed.
+ *            hacking_grow is priced at x1 (it changes the batch's shape more than
+ *            its take) — a floor, stated.
+ * Null when the batch is empty or unreadable.
+ */
+function installGainsOf(names, offers) {
+  const byName = new Map((offers ?? []).map((o) => [o?.name, o]))
+  if (!Array.isArray(names) || !names.length) return null
+  const prod = (keys) => names.reduce((g, n) => keys.reduce((h, k) => {
+    const m = byName.get(n)?.mults?.[k]
+    return h * (typeof m === 'number' && isFinite(m) && m > 0 ? m : 1)
+  }, g), 1)
+  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']) }
+}
+
 function nextInstallGainOf(plan, pending, offers) {
   const byName = new Map((offers ?? []).map((o) => [o?.name, o]))
   const names = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])]
@@ -1358,7 +1378,7 @@ function sleeveAugExitOf(ns, info, schedule, inputs, planFleet, replanAt, pendin
         repPerSec: baseRep > 0 ? baseRep : null,
         sleeveRep: fleetRep > 0 ? { perSec: fleetRep * gRep, delayH } : null,
         expPerSec: (base.expPerSec ?? 0) + (fleetExp > 0 ? fleetExp * (gExp - 1) : 0),
-        ...(plan2 ? { nextInstallGain: nextInstallGainOf(plan2, pending, offers) } : {}),
+        ...(plan2 ? { nextInstallGain: nextInstallGainOf(plan2, pending, offers), installGains: installGainsOf([...(plan2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers) } : {}),
       }
     }
     const without = bestExitPolicy(split(1, 1, 0, 0))
@@ -1459,6 +1479,7 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     cycleHours: cyc?.cycleHours,
     multGainPerCycle: cyc?.multGainPerCycle,
     nextInstallGain: nextInstallGainOf(plan, pending, offers),
+    installGains: installGainsOf([...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers),
     exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
     // The requirement, not the shortfall: exitHours skips the leg
     // itself when the cash is already there, and feeding it a claim
@@ -3302,6 +3323,7 @@ async function act(ns, canJoin, info, note) {
               ...(gangRep !== null ? { gangRepProjected: Math.round(gangRep) } : {}),
               ...(gangUnlock ? { gangUnlock } : {}),
               moneyProjected: Math.round(moneyGain),
+              buy: (f.buy ?? []).map((b) => b.name),
             })
         } catch {
           /* a projection that cannot be priced is simply not offered */
@@ -3410,7 +3432,35 @@ async function act(ns, canJoin, info, note) {
       }
     })()
 
+    // THE INSTALL DECISION AS SIMULATED EXITS (installgate exitCompare): the
+    // node's exit if the queue installs now, if it installs after each
+    // candidate wait (with that wait's batch), and if nothing is installed
+    // again — all on one input builder, so only the choice differs.
+    const exitCompare = (() => {
+      try {
+        const inputs = exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+        const now = bestExitPolicy({ ...inputs, firstInstallH: 0 }, 400, 1)
+        const never = bestExitPolicy(inputs, 0, 0)
+        const waits = futures.map((f) => {
+          const g = installGainsOf([...(f.buy ?? []), ...pending], offers)
+          const r = bestExitPolicy({ ...inputs, firstInstallH: f.waitMs / 3600000, installGains: g, nextInstallGain: g?.hacking ?? null }, 400, 1)
+          return { waitMs: f.waitMs, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null }
+        })
+        return {
+          nowH: now.best?.hours ?? null,
+          nowInstalls: now.best?.installsFirst ?? null,
+          neverH: never.best?.hours ?? null,
+          waits,
+          atSearchEdge: now.atSearchEdge === true,
+          why: now.best ? null : now.why,
+        }
+      } catch (e) {
+        return { nowH: null, why: `exit comparison threw: ${String(e).slice(0, 80)}` }
+      }
+    })()
+
     const gate = shouldInstall({
+      exitCompare,
       ageMs: Date.now() - (info?.lastAugReset ?? 0),
       M,
       queued: total,
@@ -3547,23 +3597,11 @@ async function act(ns, canJoin, info, note) {
           try {
             const perSec = readJson(ns, '/tel/gang-last.txt')?.moneyPerSec
             if (!(typeof perSec === 'number' && perSec > 0)) return null
-            const cyc = cycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
-            const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+            // The shared builder (CLAUDE.md: same inputs, one builder) — this
+            // used to assemble its own, on cycleStats's median.
             return gangGainHours(
               bestExitPolicy,
-              {
-                money: player.money ?? 0,
-                incomePerSec: incomePerSec + contractMoneyPerSec,
-                hacking: player.skills?.hacking,
-                hackingExp: player.exp?.hacking ?? 0,
-                hackingMult: effectiveHackingMult(player, info),
-                expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule), readFleet(ns, info)?.expToPlayerHacking),
-                repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, readFleet(ns, info)?.factionRepPerSec),
-                cycleHours: cyc?.cycleHours,
-                multGainPerCycle: cyc?.multGainPerCycle,
-              nextInstallGain: nextInstallGainOf(plan, pending, offers),
-                exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
-              },
+              exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)),
               perSec,
             ).hours
           } catch {

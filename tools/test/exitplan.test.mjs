@@ -335,7 +335,10 @@ export async function run() {
     const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const calls = [...src.matchAll(/expPerSecWithFleet\(([^\n]{0,40})/g)];
     c10.examined(calls.length);
-    if (calls.length < 2) c10.fail(`expected both exit-policy feeds, found ${calls.length}`);
+    // One feed since every exit simulation shares exitInputsOf (CLAUDE.md: one builder).
+    if (calls.length < 1) c10.fail(`expected the exit input builder's feed, found ${calls.length}`);
+    const builder = src.slice(src.indexOf("function exitInputsOf"), src.indexOf("function exitInputsOf") + 2500);
+    if (!/expPerSecWithFleet\(exitExpPerSec\(ns, schedule\),/.test(builder)) c10.fail("exitInputsOf must feed the exit from exitExpPerSec");
     for (const m of calls) {
       if (!/^\s*exitExpPerSec\(ns, schedule\),/.test(m[1])) c10.fail(`exit exp rate fed from '${m[1].trim()}' — schedule.expPerSec alone is 0 while the batcher is not training and prices the climb at ~1e45h`);
     }
@@ -413,6 +416,24 @@ export async function run() {
     if (endpointCycleStats(L.slice(0, 2), 10) !== null) c13.fail("below minN lives, refuse");
   }
   checks.push(c13);
+
+  const c14 = new Check("XP14", "the first install's timing and per-channel gains move the simulated exit the way the game would");
+  {
+    c14.examined(5);
+    const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 2.5e6, exitLevel: 3000, joinMoney: 100e9, cycleHours: 4, multGainPerCycle: 1.1 };
+    const at = (o) => exitHours({ ...b, installsFirst: 3, ...o });
+    const h0 = at({ firstInstallH: 0 }).hours, h2 = at({ firstInstallH: 2 }).hours;
+    if (Math.abs(h2 - h0 - 2) > 1e-9) c14.fail(`waiting 2h before the first install must cost exactly 2h at equal gains: ${h2 - h0}`);
+    const hd = at({}).hours;
+    if (Math.abs(hd - h0 - 4) > 1e-9) c14.fail("the default first install is one cadence away");
+    if (!(at({ firstInstallH: 0, installGains: { hacking: 2, rep: 1, income: 1 } }).hours < h0)) c14.fail("a hacking gain must shorten the exit");
+    const repLeg = (r) => r.legs.find((l) => l.leg === "exit reputation")?.hours;
+    const rg = at({ firstInstallH: 0, installGains: { hacking: 1.1, rep: 2, income: 1 } });
+    if (Math.abs(repLeg(rg) * 2 - repLeg(at({ firstInstallH: 0, installGains: { hacking: 1.1, rep: 1, income: 1 } }))) > 1e-6) c14.fail("a x2 faction_rep batch must halve the ground rep leg");
+    const money = (r) => r.legs.find((l) => l.leg === "hoard join money")?.hours;
+    if (!(money(at({ firstInstallH: 0, installGains: { hacking: 1, rep: 1, income: 3 } })) < money(at({ firstInstallH: 0 })))) c14.fail("an income gain must shorten the money legs");
+  }
+  checks.push(c14);
 
   return checks;
 }
