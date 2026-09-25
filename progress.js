@@ -1845,6 +1845,11 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     capitalCap: econNow?.capitalCap ?? null,
     // What an install leaves: $1262, or BitNode 8's $250m (Prestige.ts:158).
     installCash: postInstallMoney(info?.currentNode),
+    // Where donations open at favor 0 (FavorToDonateToFaction 0, BitNode 8)
+    // reputation is bought from the first join, and the work slot's faction
+    // work shrinks what is owed while the money is saved — exitplan prices the
+    // rep leg that way, and gangworth charges the karma grind the slot hours.
+    workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
   }
 }
 
@@ -2906,12 +2911,20 @@ async function act(ns, canJoin, info, note) {
       // the conversion multipliers, and the money side. Income is read here —
       // cheap, already referenced — because the schedule runs before the
       // futures section reads it for its own purposes.
-      donateAt: favorNeededToDonate(1),
+      // From the node (was favorNeededToDonate(1), i.e. 150 everywhere; BN8's
+      // threshold is 0 and BN3's 75). Null when the table is unreadable,
+      // which disarms the donation terminal rather than guessing.
+      donateAt: favorToDonateOf(bitNodeMults(info?.currentNode)),
       donateRepMult: player.mults?.faction_rep,
       donateNodeMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
       donateIncome: (() => {
-        const inc = ns.getTotalScriptIncome()
-        return (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || (isFinite(inc?.[1]) && inc[1] > 0 ? inc[1] : 0) || null
+        // nodeecon.incomeOf, so BitNode 8's income (the trader's) is seen at
+        // all. repLadder takes a FLAT rate, so the trader's compounding
+        // return enters as its rate on today's capital — a floor, since the
+        // capital grows while the ladder runs.
+        const e = incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow })
+        const cap = e.capitalReturnPerSec > 0 ? e.capitalReturnPerSec * Math.min(ns.getServerMoneyAvailable('home') + e.equity, e.capitalCap ?? Infinity) : 0
+        return e.incomePerSec + cap || null
       })(),
       baseRepEstimate: estimateBaseRepPerSec({
         hacking: player.skills?.hacking,

@@ -29,6 +29,9 @@
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 
+/** Two simulated exits closer than this are the same exit (progress.js objective sort uses 1/60). */
+export const EXIT_RESOLUTION_H = 1 / 60
+
 /**
  * HOW MANY HOURS THE GANG'S INCOME SAVES, priced the way
  * tools/sim/gang-vs-nogang.mjs prices it: the same exit policy search run
@@ -107,7 +110,17 @@ export function gangExit(bestExitPolicy, base, schedule, grindHours, eBudget = n
   if (!Array.isArray(schedule) || !schedule.length) return { savedH: null, why: 'no gang income trajectory (measured or simulated)' }
   if (!num(grindHours) || grindHours < 0) return { savedH: null, why: 'karma grind unpriced' }
   const without = bestExitPolicy({ ...base }, maxInstalls)
-  const withG = bestExitPolicy({ ...base, extraIncome: schedule.map((x) => ({ atH: x.atH + grindHours, perSec: x.perSec })), eBudget }, maxInstalls)
+  // THE GRIND HOLDS THE WORK SLOT (exitplan slotBusyH) where the model can
+  // price what the slot would otherwise earn: with base.workWhileDonating
+  // (donations open at favor 0 — BitNode 8) the exit's reputation leg is
+  // work-plus-donation, so every hour of crime is an hour of reputation the
+  // money must buy instead. BitNode 8 is where this decides the answer: with
+  // GangSoftcap 0 a gang earns ~$60/s (gangplan at x^0 = 1 per member per
+  // cycle, Gang/formulas/formulas.ts:71), and without the slot's cost that
+  // tiny income read as "WORTH IT". Elsewhere it stays unsimulated, as the
+  // header says, so no other node's verdict moves.
+  const slot = base.workWhileDonating === true ? { slotBusyH: grindHours } : {}
+  const withG = bestExitPolicy({ ...base, ...slot, extraIncome: schedule.map((x) => ({ atH: x.atH + grindHours, perSec: x.perSec })), eBudget }, maxInstalls)
   const a = without?.best?.hours
   const b = withG?.best?.hours
   if (!num(a) || !num(b)) return { savedH: null, why: `exit unpriceable (${without?.why ?? 'ok'} / ${withG?.why ?? 'ok'})` }
@@ -173,7 +186,15 @@ export function gangVerdict(o = {}) {
   // gangplan.simulateGang's trajectory for a fresh gang in this node).
   const ex = o.gangExit
   if (!ex || !num(ex.savedH)) return keep(`no simulated exit comparison: ${ex?.why ?? 'none supplied'}`)
-  const worth = ex.savedH > 0
+  // A saving inside the planner's own exit resolution is not a saving. The
+  // objective comparison in progress.js treats two simulated exits within a
+  // minute as equal (EXIT_RESOLUTION_H), and a gate that costs a karma grind
+  // must clear the same bar. BitNode 8 is the case: GangSoftcap 0 leaves a
+  // gang ~$60/s, which moved a 54.6h exit by 14 seconds and read "WORTH IT",
+  // sending the work slot to crime for a gate that buys nothing. The grind's
+  // own cost in an earlier life is not simulated (header), so a tie is not
+  // a licence to pay it.
+  const worth = ex.savedH > EXIT_RESOLUTION_H
   return {
     worth,
     gainHours: ex.savedH,

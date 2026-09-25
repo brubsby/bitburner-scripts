@@ -133,7 +133,16 @@ export function hoursToMoney(target, o = {}) {
     // The last step lands exactly: without this the answer is quantised to
     // stepH, and a with/without comparison of a small spend reads as zero
     // (or as a whole step) — noise deciding purchases.
-    if (money + add >= target) return h + ((target - money) / add) * stepH
+    //
+    // o.targetAt(h) (optional): a target that FALLS while the money is saved —
+    // a donation shrinking as faction work earns the same reputation
+    // (hoursToRep, workWhileDonating). Landed by solving the step linearly.
+    if (typeof o.targetAt === 'function') {
+      const T0 = o.targetAt(h)
+      const T1 = o.targetAt(h + stepH)
+      if (money >= T0) return h
+      if (money + add >= T1) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * stepH
+    } else if (money + add >= target) return h + ((target - money) / add) * stepH
     money += add
     exp += pos(expPerSec) ? expPerSec * dt : 0
     h += stepH
@@ -165,6 +174,24 @@ export function hoursToRep(target, o = {}) {
   const { rep0 = 0, repPerSec, donationCost = null, favor = 0, favorToDonate = null, moneyLeg = null } = o
   if (!num(target) || target <= rep0) return { hours: 0, how: 'already held' }
   if (num(favorToDonate) && favorToDonate >= 0 && favor >= favorToDonate && pos(donationCost) && typeof moneyLeg === 'function') {
+    // WORK WHILE SAVING (o.workWhileDonating): the work slot keeps earning
+    // the same reputation while the money is saved, so the donation still
+    // owed at hour t is cost x (1 - rep earned by t / need) and the leg ends
+    // when the money meets it — never later than grinding alone. The work
+    // is the player's (from o.slotFreeAt, when something else holds the slot
+    // first, e.g. a karma grind) plus a sleeve's (o.sleeveRepPerSec, not
+    // slot-bound). Off unless the caller asks, so a node where the route
+    // opens only at 150 favor prices as it always did.
+    const P = o.workWhileDonating === true && pos(repPerSec) ? repPerSec : 0
+    const S = o.workWhileDonating === true && pos(o.sleeveRepPerSec) ? o.sleeveRepPerSec : 0
+    if (P > 0 || S > 0) {
+      const need = target - rep0
+      const free = num(o.slotFreeAt) && o.slotFreeAt > 0 ? o.slotFreeAt : 0
+      const earned = (t) => (P * Math.max(0, t - free) + S * t) * 3600
+      const targetAt = (t) => donationCost * Math.max(0, 1 - earned(t) / need)
+      const h = moneyLeg(donationCost, targetAt)
+      if (num(h)) return { hours: h, how: `donated the remainder after ${Math.round(earned(h))} rep of work (of $${Math.round(donationCost)})` }
+    }
     const h = moneyLeg(donationCost)
     if (num(h)) return { hours: h, how: `donated $${Math.round(donationCost)}` }
   }
@@ -416,13 +443,20 @@ export function exitHours(o = {}) {
   let expRate = expPerSec
   // The batch's hacking_exp scales the player's own exp from the install on.
   if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
-  const moneyLeg = (target) => {
+  const moneyLeg = (target, targetAt = null) => {
     const t0 = h
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, targetAt })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
   let slotH = 0
+  // THE WORK SLOT HELD FROM NOW (o.slotBusyH): something else occupies it for
+  // this many hours first — the gang's karma grind (gangworth.gangExit). Only
+  // when the final window IS now (installsFirst 0); a grind inside an earlier
+  // life moves that life's cadence, which this model holds at its measured
+  // rate — not simulated, and gangworth says so.
+  const busyH = installsFirst === 0 && num(o.slotBusyH) && o.slotBusyH > 0 ? o.slotBusyH : 0
+  slotH += busyH
 
   if (covenant) {
     if (!pos(covenant.cost) || !num(covenant.combatH) || covenant.combatH < 0) return { hours: null, why: 'covenant campaign unpriced (cost or combat hours)' }
@@ -453,7 +487,24 @@ export function exitHours(o = {}) {
   if (terminalRep > 0) {
     const fleetOn = !!sleeveRep && (pos(sleeveRep.perSec) || (Array.isArray(sleeveRep.steps) && sleeveRep.steps.some((x) => pos(x?.perSec))))
     const sRep = sleeveRateFn(fleetOn ? sleeveRep : null)
-    let r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: fleetOn ? (pos(repRate) ? repRate : 0) + sRep(h) : repRate, donationCost: donation, favor: exitFavor, favorToDonate, moneyLeg })
+    // workWhileDonating (o, set by progress.js where donations open at favor
+    // 0 — BitNode 8): the donation leg is priced with the slot's work (and
+    // the best sleeve's, constant at its rate now) shrinking what is owed.
+    // Reputation per hour is held at today's level-rate: a floor after an
+    // install, when the level climbs back.
+    const wwd = o.workWhileDonating === true
+    let r = hoursToRep(terminalRep, {
+      rep0: exitRep,
+      repPerSec: wwd ? repRate : fleetOn ? (pos(repRate) ? repRate : 0) + sRep(h) : repRate,
+      donationCost: donation,
+      favor: exitFavor,
+      favorToDonate,
+      moneyLeg,
+      workWhileDonating: wwd,
+      sleeveRepPerSec: wwd && fleetOn ? sRep(h) : 0,
+      slotFreeAt: Math.max(0, busyH - (h - finalStart)),
+    })
+    if (wwd && r.how === 'ground' && fleetOn) r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: (pos(repRate) ? repRate : 0) + sRep(h) })
     // GROUND REPUTATION AS A TRAJECTORY. Faction-work rep is linear in the
     // player's hacking level (reputation.ts:16), and after an install the
     // level restarts from 1 and climbs as exp accrues — so the rep leg runs
