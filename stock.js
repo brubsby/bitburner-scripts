@@ -29,7 +29,7 @@
 // process and a per-tick handoff to save 2.5GB.
 
 import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META } from 'stockstrat.js'
-import { buy4SVerdict } from 'stockplan.js'
+import { buy4SVerdict, manipCurveAt, growthRate } from 'stockplan.js'
 import { canShortStock } from 'sfgate.js'
 import { reserveFor, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
@@ -75,19 +75,20 @@ function holdOf(ns, info) {
 
 /**
  * Which server's batch should carry {stock: true}, and on which side
- * (nodeecon.js `manip`): the companies behind our three largest positions —
- * 'grow' pushes a long's second-order forecast up, 'hack' a short's down
- * (PlayerInfluencing.ts). Offline, 2 moneyMax-fractions per tick of flagged
- * grows on the largest position lifted $250m growth from ~96%/h to ~266%/h
- * (tools/sim/stocks/compare.mjs new-pre-ls+manip2); what the live batcher
- * delivers is not measured.
+ * (nodeecon.js `manip`): the company behind our LARGEST position (all its
+ * servers) — 'grow' pushes a long's second-order forecast up, 'hack' a
+ * short's down (PlayerInfluencing.ts). ONE company, because that is exactly
+ * what the harness behind `manipCurve` nudges (tools/sim/stocks/
+ * manipcurve.mjs -> strategies.mjs manipulate(): largest position with a
+ * server, same side rule); publishing more hosts would let the batcher
+ * deliver nudges the curve never priced.
  */
-function manipOf(positions, prices) {
+export function manipOf(positions, prices) {
   const top = Object.entries(positions)
     .map(([s, [L, , Sh]]) => ({ s, v: (L + Sh) * prices[s], side: L >= Sh ? 'grow' : 'hack' }))
     .filter((x) => x.v > 0 && SYMBOL_META[x.s]?.servers?.length)
     .sort((a, b) => b.v - a.v)
-    .slice(0, 3)
+    .slice(0, 1)
   const out = {}
   for (const x of top) for (const h of SYMBOL_META[x.s].servers) out[h] = x.side
   return out
@@ -304,6 +305,24 @@ export async function main(ns) {
         capitalCap: syms.reduce((a, s) => a + maxShares[s] * prices[s], 0),
         incomePerSec: lifeSec >= 60 ? lifePnl / lifeSec : null,
         manip: manipOf(positions, prices),
+        // Return per second at each nudge rate the batcher could deliver, at
+        // this wealth and mode (stockplan.MANIP_TABLE, harness, NOT CALIBRATED).
+        manipCurve: manipCurveAt(has4S ? '4S-long' : 'pre-long', wealth),
+        // LIVE CALIBRATION: the measured return over the last hour against the
+        // harness's prediction at the same capital and mode (no manipulation
+        // assumed — a served manip shows as a positive error).
+        calibration: (() => {
+          const measured = ret.length >= 10 && wCap > 0 ? wPnl / wCap : null
+          const g = growthRate(has4S ? (canShort ? '4S-ls' : '4S-long') : canShort ? 'pre-ls' : 'pre-long', wealth)
+          const predicted = g === null ? null : g / 3600
+          return {
+            predictedPerSec: predicted,
+            measuredPerSec: measured,
+            ticks: ret.length,
+            errorPct: measured !== null && predicted ? +((100 * (measured - predicted)) / predicted).toFixed(1) : null,
+            note: ret.length < 600 ? 'less than an hour of ticks — noisy' : 'last hour',
+          }
+        })(),
         hold,
         held,
         last,

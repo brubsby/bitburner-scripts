@@ -92,22 +92,30 @@ export function compare({ caps = CAPS, seeds = SEEDS, only = ONLY, burn = BURN }
   return { names, res };
 }
 
-export function calibrationLine() {
+export async function calibrationLine() {
+  const { growthRate } = await import("../../../stockplan.js");
   const cands = [path.join(HERE, "../../../.telemetry/stock.txt"), path.join(process.env.HOME ?? "", "Repos/bitburner-scripts/.telemetry/stock.txt")];
   for (const f of cands) {
+    let t;
     try {
-      const t = JSON.parse(fs.readFileSync(f, "utf8"));
-      return `CALIBRATION: live ${f} — mode ${t.mode}, wealth $${fmt(t.wealth ?? 0)}, ${t.counters?.ticks ?? "?"} ticks; no growth history is recorded yet, so this table is NOT CALIBRATED against it`;
+      t = JSON.parse(fs.readFileSync(f, "utf8"));
     } catch {
-      /* next */
+      continue;
     }
+    const W = (t.cash ?? 0) + (t.equity ?? t.positionsValue ?? 0);
+    const regime = `${/4S/.test(t.mode ?? "") && !/pre/.test(t.mode ?? "") ? "4S" : "pre"}-${t.canShort ? "ls" : "long"}`;
+    const pred = growthRate(regime, W);
+    const meas = typeof t.returnPerSec === "number" ? t.returnPerSec * 3600 : null;
+    const age = (Date.now() - Date.parse(t.at ?? "")) / 60e3;
+    const err = pred && meas !== null ? ((100 * (meas - pred)) / pred).toFixed(1) + "%" : "n/a";
+    return `CALIBRATION (live ${f}, ${age.toFixed(0)} min old, ${t.calibration?.ticks ?? "?"} ticks in the window): measured ${meas === null ? "unmeasured" : (meas * 100).toFixed(1) + "%/h"} vs harness ${pred === null ? "n/a" : (pred * 100).toFixed(1) + "%/h"} (${regime} at $${fmt(W)}) — error ${err}. One hour of one market is noisy (seed p25..p75 spans roughly +-40%); a sustained error beyond that means the harness is wrong.`;
   }
   return "CALIBRATION: NOT CALIBRATED — no live /tel/stock.txt mirror found; every mechanic is the game's own code, the market state and cadence are not";
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const t0 = Date.now();
-  console.log(calibrationLine());
+  console.log(await calibrationLine());
   const { names, res } = compare();
   if (JSON_OUT) console.log(JSON.stringify({ hours: HOURS, seeds: SEEDS, burn: BURN, res }, null, 1));
   else {

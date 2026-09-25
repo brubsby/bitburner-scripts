@@ -179,5 +179,54 @@ export async function run() {
   }
   checks.push(c4);
 
+  // -------------------------------------------------------------------
+  const c5 = new Check("ST5", "manipCurve: published, what batch.js/expfarm read, priced on the ONE company stock.js flags, and it earns");
+  {
+    const { stockRecordOf } = await import("../../nodeecon.js");
+    const { rateAt } = await import("../../expfarm.js");
+    const m = new Market({ seed: 11, money: 2.5e8, burnInTicks: 3000 });
+    const f = await runShipped(m, 300, {});
+    const tel = JSON.parse(f.files["/tel/stock.txt"]);
+    c5.examined(1);
+    const rec = stockRecordOf(tel, 1, Date.parse(tel.at));
+    if (!rec.ok || !Array.isArray(rec.manipCurve) || rec.manipCurve.length < 2) c5.fail("nodeecon.stockRecordOf does not yield a manipCurve of >= 2 points", JSON.stringify(tel.manipCurve));
+    else {
+      const r0 = rateAt(rec.manipCurve, 0);
+      const r1 = rateAt(rec.manipCurve, 1);
+      if (!(r1 > r0)) c5.fail(`manipCurve does not rise with nudges (r(0)=${r0}, r(1)=${r1})`);
+      for (let i = 1; i < rec.manipCurve.length; i++) if (rec.manipCurve[i].returnPerSec < rec.manipCurve[i - 1].returnPerSec) c5.fail("manipCurve decreases somewhere — expfarm would price extra nudges as a loss");
+      // r(0) is the unmanipulated harness rate: must agree with RATE_TABLE's within seed noise.
+      const g = SP.growthRate("pre-long", m.wealth()) / 3600;
+      if (Math.abs(r0 / g - 1) > 0.35) c5.fail(`manipCurve r(0) ${r0.toExponential(2)} vs RATE_TABLE ${g.toExponential(2)} — the two tables disagree by >35%`);
+      c5.note(`at $${(m.wealth() / 1e6).toFixed(0)}m: r(0) ${(r0 * 3600 * 100).toFixed(0)}%/h, r(1 nudge/s) ${(r1 * 3600 * 100).toFixed(0)}%/h`);
+    }
+    c5.examined(1);
+    const hosts = Object.keys(tel.manip ?? {});
+    const syms = new Set(hosts.map((h) => Object.entries(S.SYMBOL_META).find(([, v]) => v.servers.includes(h))?.[0]));
+    if (syms.size > 1) c5.fail(`manip names ${syms.size} companies (${[...syms].join(",")}); the curve is priced on ONE (the largest position)`);
+    if (hosts.length && !Object.values(tel.manip).every((v) => v === "grow")) c5.fail("long-only book but manip asks for a hack-side flag");
+    // And on a book of three companies, directly: only the largest is named.
+    c5.examined(1);
+    const { manipOf } = await import("../../stock.js");
+    const pos = { JGN: [1e6, 0, 0, 0], FNS: [1e5, 0, 0, 0], ECP: [0, 0, 5e4, 0] };
+    const px = { JGN: 100, FNS: 100, ECP: 100 };
+    const mo = manipOf(pos, px);
+    if (JSON.stringify(mo) !== JSON.stringify({ joesguns: "grow" })) c5.fail(`manipOf on three companies names ${JSON.stringify(mo)}; must be only the largest ({joesguns: 'grow'})`);
+    // The harness's claim, re-measured: nudges on the largest position raise the median.
+    c5.examined(4);
+    const grow = (manip) =>
+      median([1, 2, 3, 4].map((seed) => {
+        const mk = new Market({ seed, money: 2.5e8, burnInTicks: 3000 });
+        runNew(mk, 900, { manip });
+        return Math.log(mk.wealth() / 2.5e8);
+      }));
+    const a = grow(0);
+    const b = grow(3);
+    if (!(b > a)) c5.fail(`3 nudges/tick on the largest position did not raise median growth (${a.toFixed(2)} -> ${b.toFixed(2)} ln over 1.5h)`);
+    c5.note(`harness, $250m, 1.5h: ln-growth ${a.toFixed(2)} unmanipulated vs ${b.toFixed(2)} at 3 nudges/tick; calibration field present: ${"calibration" in tel}`);
+    if (!tel.calibration || !("predictedPerSec" in tel.calibration)) c5.fail("/tel/stock.txt lacks the live calibration field");
+  }
+  checks.push(c5);
+
   return checks;
 }

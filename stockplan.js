@@ -230,3 +230,64 @@ export function buy4SVerdict({ wealth, cost, horizonH, canShort = false, why = n
     notSimulated: 'value beyond this life (4S persists through installs) — only strengthens a buy',
   }
 }
+
+// ---------------------------------------------------------------------------
+// THE MANIPULATION CURVE (nodeecon.js `manipCurve`, read by batch.js through
+// expfarm.manipVerdict): the trader's return per second as a function of the
+// forecast-nudge rate the batcher delivers on the `manip` hosts, at the
+// trader's current wealth.
+//
+// Source: tools/sim/stocks/manipcurve.mjs (8 seeds x 2h, burn-in 3000, the
+// game's own market and influenceStockThroughServerGrow, nudges spread over
+// each tick on the LARGEST position's company — what stock.js publishes as
+// `manip`), 2026-09-25, long-only. Median ln-growth per hour; each capital's
+// column made non-decreasing in the nudge rate (a running max: two cells
+// dipped by seed noise, 1e11 pre-4S at 10/tick and 1e12 4S at 3/tick).
+//
+// NOT CALIBRATED against the live game: no live manipulation has been
+// measured. stock.js publishes `calibration` (measured vs predicted return)
+// for the unmanipulated rate; a served manip shows up as its positive error.
+
+export const MANIP_TABLE = {
+  source: 'tools/sim/stocks/manipcurve.mjs --seeds 8 --hours 2 (running max over nudges)',
+  caps: [1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13],
+  nudgesPerSec: [0, 0.25 / 6, 1 / 6, 3 / 6, 10 / 6],
+  'pre-long': [
+    [0.805, 0.907, 0.911, 0.768, 0.531, 0.241, 0.038],
+    [0.842, 1.208, 0.981, 0.91, 0.655, 0.337, 0.048],
+    [1.749, 1.558, 1.509, 1.332, 0.816, 0.382, 0.054],
+    [2.384, 2.244, 2.005, 1.731, 1.55, 0.665, 0.093],
+    [3.336, 2.697, 2.337, 2.015, 1.55, 0.761, 0.107],
+  ],
+  '4S-long': [
+    [1.288, 1.321, 1.282, 1.205, 0.843, 0.479, 0.11],
+    [1.756, 1.79, 1.61, 1.307, 1.004, 0.533, 0.123],
+    [3.227, 3.042, 2.811, 1.952, 1.559, 0.898, 0.212],
+    [4.189, 4.128, 3.307, 2.697, 1.699, 0.898, 0.212],
+    [4.87, 4.195, 3.651, 2.73, 1.751, 0.925, 0.212],
+  ],
+}
+
+/** ln-growth/h interpolated in log capital; above the table, $/h held flat (saturation). */
+function interpCap(caps, row, W) {
+  if (W <= caps[0]) return row[0]
+  const n = caps.length - 1
+  if (W >= caps[n]) return (row[n] * caps[n]) / W
+  let i = 0
+  while (W > caps[i + 1]) i++
+  const x = (Math.log(W) - Math.log(caps[i])) / (Math.log(caps[i + 1]) - Math.log(caps[i]))
+  return row[i] + x * (row[i + 1] - row[i])
+}
+
+/**
+ * `manipCurve` for the record: [{nudgesPerSec, returnPerSec}] at wealth W for
+ * 'pre-long' | '4S-long'. null when W is unreadable. Shorts are not in the
+ * table (stock.js is long-only by default); with --short the long curve is
+ * published as the nearest measured regime.
+ */
+export function manipCurveAt(regime, W) {
+  const t = MANIP_TABLE
+  const rows = t[regime]
+  if (!rows || !num(W) || W <= 0) return null
+  return t.nudgesPerSec.map((nu, k) => ({ nudgesPerSec: nu, returnPerSec: interpCap(t.caps, rows[k], W) / 3600 }))
+}
