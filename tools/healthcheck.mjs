@@ -377,6 +377,27 @@ const WATCHDOG_TIER = 64;
     else note(`work slot: '${owner}' claimed and the game is running ${actual}`);
   }
 }
+// THE STOCK TRADER (stock.js). In BitNode 8 it is the whole income, so a dead
+// or erroring trader is a stalled node, and a live one earning far below what
+// the offline harness promised is an ESTIMATE OFF, not a quiet market.
+{
+  const st = tel["stock.txt"] ?? readTel("stock.txt");
+  const age = ageMin(st?.at);
+  if (state.bitNode === 8) {
+    if (!st) fail("STOCK TRADER MISSING: BitNode 8 and no /tel/stock.txt — the only income is not running");
+    else if (!(age !== null && age < 5)) fail(`STOCK TRADER STALE: /tel/stock.txt is ${age?.toFixed(0) ?? "?"} min old (health ${st.health})`, "stock.js died or the mirror froze — check connected:true first");
+    else if (st.health === "error" || st.health === "stopped") fail(`STOCK TRADER ${String(st.health).toUpperCase()}: ${st.error ?? st.detail ?? st.why ?? ""}`.slice(0, 200));
+  }
+  if (st && age !== null && age < 5) {
+    const rph = num(st.returnPerSec) ? st.returnPerSec * 3600 : null;
+    note(`stock: ${st.mode}, equity $${((st.equity ?? 0) / 1e9).toFixed(2)}b, cash $${((st.cash ?? 0) / 1e9).toFixed(2)}b, return ${rph === null ? "unmeasured" : (rph * 100).toFixed(1) + "%/h"} over the last hour, ${st.counters?.refused ?? 0} refused`);
+    // Offline the shipped rule's median is ~60-95%/h ln-growth below $1e11
+    // (stockplan.RATE_TABLE). A full hour measured below a quarter of that
+    // is outside anything the harness saw as a median.
+    if (rph !== null && (st.counters?.ticks ?? 0) >= 600 && (st.equity ?? 0) + (st.cash ?? 0) < 1e11 && rph < 0.15)
+      fail(`STOCK ESTIMATE OFF: ${(rph * 100).toFixed(1)}%/h measured over the last hour against ~60-95%/h offline`, "the harness is NOT CALIBRATED; read /tel/stock.txt last.refused and diag before trusting RATE_TABLE");
+  }
+}
 
 // THE LAST HANG (trace.js via tel.js): what the previous page was running
 // when it stopped, published after a reload. Reported for a day.

@@ -21,6 +21,8 @@ import { canUseSleeve, sfLevel } from 'sfgate.js'
 import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, covenantSleeveCost, COVENANT, COVENANT_MANDATE } from 'sleeveplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
+// Pure table (0GB): the node's HomeComputerRamCost, which the price carries.
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { reporter } from 'status.js'
 import { spendExitFromRecord } from 'exitplan.js'
 
@@ -73,7 +75,7 @@ function decideAndBuy(ns, flags, note) {
 
   // Budget: what the join, augmentation and home claims leave (budget.js).
   const home = (() => {
-    const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+    const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
     return up ? up.cost : 0
   })()
   const gate = ns.read(GATE_FILE)

@@ -3,7 +3,8 @@
 // stock.js feeds it one observation per market tick (ns.stock.nextUpdate) and
 // executes the orders it returns. tools/sim/stocks/ runs the SAME functions
 // against the game's own market code, which is where every constant below was
-// chosen and where the claims in this header are measured (docs/stocks.md).
+// chosen and where the claims in this header are measured (compare.mjs,
+// diag.mjs, tune.mjs; tools/test/stockstrat.test.mjs pins the comparison).
 //
 // ---------------------------------------------------------------------------
 // THE MARKET, from ~/Repos/bitburner/src/StockMarket (v3.0.2)
@@ -31,12 +32,16 @@
 //    the up/down sequence each stock prints, which is an exact Bernoulli(f)
 //    stream. The estimator knows the one structural fact that makes that
 //    stream tractable: f only jumps at the global cycle boundary. So
-//      - the boundary PHASE is learned once, jointly across all 33 stocks
-//        (a flip in ~45% of them on the same tick is unmistakable), and
-//      - per stock, the belief is a two-component Beta mixture that splits at
-//        each boundary into "same" (0.55) and "flipped" (0.45) and lets the
-//        next ticks decide which, instead of a sliding window that forgets
-//        good data and learns flips late.
+//      - the belief over each stock's f is an exact HMM filter on a 1% grid
+//        (flip 0.45 at the boundary, a little diffusion for otlkMag drift,
+//        prior = the measured stationary distribution of f), and
+//      - the boundary PHASE, shared by all 33 stocks, is inferred jointly:
+//        one filter bank per candidate phase, weighted by its likelihood,
+//        pruned as the posterior concentrates (1-4 cycles, diag.mjs).
+//    Measured against a 51-tick window estimator (prior art's) through the
+//    same decision rule: ~95%/h vs ~60%/h ln-growth at $26m, 96 vs 74 at
+//    $250m (compare.mjs, 10-12 seeds). The Beta-mixture version this replaced
+//    ('beta') is kept selectable for comparison.
 // 2. VOLATILITY. Never read (getVolatility is 2.5GB and 4S-only). The shared v
 //    makes |ln(P_t/P_t-1)| = ln(1+v*mv/100) for every stock at once, so mv is
 //    estimated from the price stream to a few percent within one cycle.

@@ -4,22 +4,29 @@
 // Works with and without 4S, with and without shorting:
 //   - without the 4S TIX API it ESTIMATES each forecast from the up/down ticks
 //     (stockstrat.observe); with it, it reads ns.stock.getForecast;
-//   - it shorts only where the game allows (BitNode 8, or SF8.2 — sfgate);
+//   - it shorts only with --short AND where the game allows (BitNode 8, or
+//     SF8.2 — sfgate); long-only by default until shorts are measured live;
 //   - it buys the 4S TIX API itself when stockplan.buy4SVerdict says the
 //     wealth trajectory with it beats the one without over the remaining life.
 //
 // Money discipline (budget.js): stocks are a LIQUID claimant, last in
 // PRIORITY. Positions are cash one tick away, so the trader may invest money
 // a higher claimant has promised while that claim cannot be paid anyway; the
-// moment wealth covers a claim, it sells until the cash is there. Before an
-// order batch that spends (buyaug/donate/install) it liquidates and stands
-// down — an install destroys every share (Prestige.ts initStockMarket).
+// moment wealth covers a claim, it sells until the cash is there. The sale
+// before a funded batch or an install is act-liquidate.js's (an install
+// destroys every share: Prestige.ts initStockMarket); this script opens
+// nothing while its /tel/stock-hold.txt is fresh (nodeecon.js contract).
 //
 // Telemetry: /tel/stock.txt every tick — health, mode (pre-4S / 4S), phase,
-// wealth, cash, positions with the forecast and edge behind each, the orders
-// sent and any the game refused, the 4S verdict, and the claims it honoured.
+// wealth, cash, positions with the forecast behind each, the orders sent and
+// any the game refused, the 4S verdict, the claims it honoured, and
+// nodeecon.js's record (equity, returnPerSec, capitalCap, incomePerSec, manip).
 //
-// RAM: ~28GB (see the report in /tel/stock.txt `ram` and tools/test/stockstrat.test.mjs).
+// RAM: 28.5GB static (node tools/sim/stocks/ram.mjs; the old 4S-only script
+// was 24.7GB). getVolatility is never referenced (estimated from prices);
+// getForecast (2.5) and buyShort/sellShort (5) are billed in every node — a
+// deliberate trade against a port-fed 4S helper, which would add a second
+// process and a per-tick handoff to save 2.5GB.
 
 import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META } from 'stockstrat.js'
 import { buy4SVerdict } from 'stockplan.js'
@@ -93,7 +100,7 @@ function claimsOf(ns, info) {
   // RAM upgrade only: the cores option needs ns.getServer (2GB) for the core
   // count. The RAM price is the larger claim whenever cores would have been
   // cheaper, so this errs toward holding MORE cash for home, never less.
-  const up = nextHomeUpgrade(ns.getServerMaxRam('home'), Infinity)
+  const up = nextHomeUpgrade(ns.getServerMaxRam('home'), Infinity, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
   return {
     join: joinClaim(gate, info.lastAugReset),
     augmentations: augClaim(gate, info.lastAugReset),

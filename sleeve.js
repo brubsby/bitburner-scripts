@@ -13,13 +13,13 @@
 // merely returned.
 //
 // ---------------------------------------------------------------------------
-// RAMOVERRIDE 2.6GB (raises to 45.75) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery / setToFactionWork, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
+// RAMOVERRIDE 3.25GB (raises to 45.75; 3.25 = base 1.6 + getResetInfo 1.0 + getHostname 0.05 + scp 0.6, because the capability-absent path mirrors its record home and a call past the allocation KILLS the script, NetscriptHelpers.tsx:498-523 — at 2.6 it died off home before saying why) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery / setToFactionWork, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
 //
 // Why this is sound: Netscript bills a script for every ns identifier in its
 // import graph whether or not the call is reachable (RamCalculations.ts:407
 // prices Identifier nodes, findFunc at :225-243 matches bare names), but only
 // CALLING a Source-File-gated function throws. So this file may carry the
-// references, declare 2.6GB, refuse to act when sfgate.js says it cannot, and be
+// references, declare a small floor (3.25GB), refuse to act when sfgate.js says it cannot, and be
 // correct — instead of being unloadable in every BitNode that cannot use it.
 //
 // 2.6 = RamCostConstants.Base (1.6) + ns.getResetInfo (1.0). That is everything
@@ -134,7 +134,7 @@ const CRIME_NAMES = new Set(Object.keys(CRIMES))
 const RAISE_CEILING = (mult) => 45.75 + 0 * mult
 
 export async function main(ns) {
-  ns.ramOverride(2.6)
+  ns.ramOverride(3.25)
 
   const rerrors = []
   const note = reporter(ns, RAMOVERRIDE_STATUS, () => ({ errors: rerrors.slice(-5) }))
@@ -178,7 +178,7 @@ export async function main(ns) {
       needs: 'Source-File 10',
       bitNode: info.currentNode,
       detail:
-        'canUseSleeve() is false for this save, so sleeve.js cannot act. Staying at the 2.6GB floor ' +
+        'canUseSleeve() is false for this save, so sleeve.js cannot act. Staying at the 3.25GB floor ' +
         'instead of reserving its full price. Sleeves need Source-File 10 or BitNode 10 (NetscriptFunctions/Sleeve.ts:51-58). Without it there are no sleeves to task.',
     })
     return

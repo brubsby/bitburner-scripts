@@ -32,11 +32,28 @@
 // reading — a copy that fails leaves the previous copy, whose `at` stamp
 // then reads as stale and refuses.
 //
-// Hacknet SERVERS (BN9 / SF9) are a different economy — hashes — and this
-// file refuses phase 2 there rather than pricing hashes as dollars.
+// HACKNET SERVERS (BitNode 9, or any node with Source-File 9 —
+// sfgate.hasHacknetServers). The same API buys servers that produce HASHES
+// and carry RAM. Both phases run on the server model instead
+// (hacknetplan.js): phase 1 buys the cheapest purchase per unit of a still-
+// short Netburners total (servers count exactly like nodes,
+// FactionJoinCondition.ts iterateHacknet); phase 2 prices each purchase in
+// DOLLARS at the $250k/hash sell floor, so the exit verdict, the payback
+// fallback and budget.js treat it exactly like a node purchase. What the
+// hashes are then spent on is hashspend.js's decision, not this file's.
+// Two more things this file owns in server mode:
+//   - the RAM POLICY (`ramPolicy` in /tel/hacknet.txt): per server, whether
+//     the batcher's $/GB beats the hashes a GB of scripts costs there
+//     (hashRate's 1 - ramUsed/maxRam term). batch.js and seed.js refuse a
+//     hacknet server's RAM unless this says so, fresh.
+//   - CACHE, bought only when hashspend.js reports that the upgrade its exit
+//     simulation chose costs more hashes than the servers can hold.
+// And in both modes it publishes `moneyPerSec` — hacknet production as
+// money (a node's $/s, or hashes at the sell floor) — because it is not
+// script income and progress.js's exit inputs would otherwise never see it.
 
 import { reporter } from 'status.js'
-import { bestUpgrade, verdict, remainingLife } from 'hacknetplan.js'
+import { bestUpgrade, verdict, remainingLife, bestServerUpgrade, netburnersServerStep, ramPolicy, hashRate, cacheCost, hashCapacityOf, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -46,6 +63,9 @@ const NEED = { levels: 100, ram: 8, cores: 4 }
 const STATUS = '/tel/hacknet.txt'
 const GATE_FILE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
+const BATCH_FILE = '/tel/batch.txt'
+/** hashspend.js's report: a capacity-bound choice asks this file for cache. */
+const HASHSPEND_FILE = '/tel/hashspend.txt'
 /** A window older than this is a different life's or a dead planner's. */
 const SCHEDULE_FRESH_MS = 20 * 60 * 1000
 /**
@@ -67,9 +87,29 @@ function totals(ns) {
     levels += s.level
     ram += s.ram
     cores += s.cores
-    nodes.push({ level: s.level, ram: s.ram, cores: s.cores, production: s.production })
+    // name/ramUsed/cache exist only for hacknet SERVERS
+    // (NetscriptFunctions/Hacknet.ts:88-92); production is then hashes/s.
+    nodes.push({ name: s.name, level: s.level, ram: s.ram, cores: s.cores, production: s.production, ramUsed: s.ramUsed, cache: s.cache })
   }
   return { nodes: n, levels, ram, cores, list: nodes, productionPerSec: nodes.reduce((a, b) => a + (b.production ?? 0), 0) }
+}
+
+/**
+ * THE RATE MODEL'S CALIBRATION, every pass: hacknetplan.hashRate against the
+ * game's own hashRate (getNodeStats.production) per server. A model that
+ * prices purchases must reproduce the number the game already shows.
+ */
+function rateCheck(list, mult, nodeMoney) {
+  let worst = 0
+  let n = 0
+  for (const s of list) {
+    const m = hashRate(s.level, s.ramUsed ?? 0, s.ram, s.cores, mult, nodeMoney)
+    if (typeof m !== 'number' || typeof s.production !== 'number') continue
+    n++
+    const err = s.production > 0 ? Math.abs(m / s.production - 1) : m > 0 ? Infinity : 0
+    if (err > worst) worst = err
+  }
+  return { servers: n, maxRelErr: n ? worst : null, verdict: !n ? 'no servers' : worst <= 0.01 ? 'ok' : 'MODEL DISAGREES WITH THE GAME' }
 }
 
 /** Bring a home telemetry file to this host; a no-op on home. */
@@ -129,9 +169,68 @@ function buy(ns, best) {
       return ns.hacknet.upgradeRam(best.index, 1)
     case 'core':
       return ns.hacknet.upgradeCore(best.index, 1)
+    case 'cache':
+      return ns.hacknet.upgradeCache(best.index, 1)
     default:
       return false
   }
+}
+
+/**
+ * The server-mode fields of the report: hash rate and capacity, the rate
+ * model's calibration against the game, and the RAM policy batch.js and
+ * seed.js obey. The batcher's $/GB/s is its own (earnedPerSec over ram.total,
+ * batch.txt, fresh); unreadable leaves every server's RAM to its hashes.
+ */
+function serverReport(ns, t, mults, nodeMoney) {
+  fetchFromHome(ns, BATCH_FILE)
+  let batchPerGBs = null
+  try {
+    const b = JSON.parse(ns.read(BATCH_FILE) || 'null')
+    const fresh = b && Date.now() - Date.parse(b.at) < 5 * 60e3
+    if (fresh && b.totals?.earnedPerSec > 0 && b.ram?.total > 0) batchPerGBs = b.totals.earnedPerSec / b.ram.total
+  } catch {
+    /* unreadable: every hacknet server keeps its RAM for hashes */
+  }
+  return {
+    mode: 'servers',
+    hashesPerSec: t.productionPerSec,
+    // Capacity from cache (HacknetServer.updateHashCapacity: 32 x 2^cache), NOT
+    // stats.hashCapacity: that property name is billed as ns.hacknet.hashCapacity
+    // (0.5GB) by the RAM checker, which prices identifiers by name (invariant B1).
+    hashCap: t.list.reduce((a, x) => a + (hashCapacityOf(x.cache) ?? 0), 0),
+    rateModel: rateCheck(t.list, mults.hacknet_node_money, nodeMoney),
+    ramPolicy: ramPolicy(t.list, mults, nodeMoney, batchPerGBs),
+  }
+}
+
+/**
+ * CACHE, servers only: hashspend.js's exit simulation chose an upgrade whose
+ * hash cost exceeds what the servers can hold (`decision.capacityBound`).
+ * Capacity produces nothing by itself, so it has no payback of its own; it
+ * is bought only for that simulated choice, the cheapest step, through EVERY
+ * claim (`free` is spendable with no exit waiver: the cache's price was not
+ * part of that simulation).
+ */
+function cacheOffer(ns, info, t, capacity, free) {
+  fetchFromHome(ns, HASHSPEND_FILE)
+  let hs = null
+  try {
+    hs = JSON.parse(ns.read(HASHSPEND_FILE) || 'null')
+  } catch {
+    return { buy: false, why: 'hashspend report unreadable' }
+  }
+  if (!hs || hs.lastAugReset !== info.lastAugReset || !(Date.now() - Date.parse(hs.at) < 10 * 60e3)) return { buy: false, why: 'no fresh hashspend report' }
+  const cb = hs.decision?.capacityBound
+  if (!cb || !(cb.cost > capacity)) return { buy: false, why: 'no capacity-bound choice' }
+  let best = null
+  t.list.forEach((x, i) => {
+    const c = cacheCost(x.cache ?? 1, 1)
+    if (isFinite(c) && c > 0 && (!best || c < best.cost)) best = { kind: 'cache', index: i, cost: c }
+  })
+  if (!best) return { buy: false, why: 'every cache is maxed' }
+  const ok = best.cost <= free
+  return { ...best, buy: ok, for: cb.name, why: ok ? `${cb.name} needs ${cb.cost} hashes against capacity ${capacity}` : `cache $${best.cost.toExponential(2)} exceeds the $${Math.round(free)} the claims leave` }
 }
 
 export async function main(ns) {
@@ -140,6 +239,10 @@ export async function main(ns) {
   ns.atExit(() => note.exit('stopped', { detail: 'hacknet.js exited — killed, threw, or an install took it' }), 'status')
 
   const info = ns.getResetInfo()
+  // Servers or nodes is a property of the save for the whole life (the
+  // Source-File set and the node cannot change without killing this script).
+  const servers = hasHacknetServers(info)
+  const nodeMoney = bitNodeMults(info.currentNode)?.HacknetNodeMoney
   let bought = 0
   let lastBuy = null
 
@@ -148,12 +251,34 @@ export async function main(ns) {
       const t = totals(ns)
       const done = t.levels >= NEED.levels && t.ram >= NEED.ram && t.cores >= NEED.cores
       const money = ns.getServerMoneyAvailable('home')
-      const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, nodes: t.nodes, levels: t.levels, ram: t.ram, cores: t.cores, need: NEED, done, productionPerSec: t.productionPerSec, bought, lastBuy }
+      const mults = ns.getPlayer().mults
+      // Hacknet production AS MONEY, for progress.js's exit inputs
+      // (lifeIncome): a node's $/s as the game reports it; a server's hashes
+      // at the sell floor, which is what they are worth at the least.
+      const moneyPerSec = servers ? t.productionPerSec * DOLLARS_PER_HASH : t.productionPerSec
+      const serverFields = servers ? serverReport(ns, t, mults, nodeMoney) : {}
+      const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, nodes: t.nodes, levels: t.levels, ram: t.ram, cores: t.cores, need: NEED, done, productionPerSec: t.productionPerSec, moneyPerSec, bought, lastBuy, ...serverFields }
 
       if (!done) {
         // PHASE 1: the invitation, bought at a tenth of cash so it never
         // starves a real spender — these are hundreds of thousands of dollars.
         publish(ns, { ...base, phase: 'netburners' })
+        if (servers) {
+          // SERVERS: the cheapest purchase per unit of a short total. The
+          // node rule below ("buy 8 nodes") would pay 50k x 3.2^n per server
+          // — the eighth alone $172m — where one server's RAM doublings close
+          // the RAM total for ~$2.3m (the BN9 entry server is already at
+          // level 100 / 10 cores).
+          const step = netburnersServerStep(t.list, NEED, mults)
+          if (step?.best && step.best.cost < money / 10 && buy(ns, step.best)) {
+            bought++
+            lastBuy = { at: new Date().toISOString(), ...step.best, for: 'netburners' }
+            await ns.sleep(100)
+            continue
+          }
+          await ns.sleep(10000)
+          continue
+        }
         if (t.nodes < 8 && ns.hacknet.getPurchaseNodeCost() < money / 10) {
           ns.hacknet.purchaseNode()
           await ns.sleep(100)
@@ -181,15 +306,10 @@ export async function main(ns) {
         continue
       }
 
-      // PHASE 2: the claimant.
-      if (hasHacknetServers(info)) {
-        publish(ns, { ...base, phase: 'refused', why: 'hacknet servers (hashes) are not priced by hacknetplan.js' })
-        await ns.sleep(60000)
-        continue
-      }
-      const nodeMoney = bitNodeMults(info.currentNode)?.HacknetNodeMoney
-      const mults = ns.getPlayer().mults
-      const plan = bestUpgrade(t.list, mults, nodeMoney)
+      // PHASE 2: the claimant. Nodes are priced in dollars directly; servers
+      // in dollars at the hash sell floor (hacknetplan.bestServerUpgrade), so
+      // everything below — exit verdict, payback, budget — is shared.
+      const plan = servers ? bestServerUpgrade(t.list, mults, nodeMoney, DOLLARS_PER_HASH) : bestUpgrade(t.list, mults, nodeMoney)
       const life = remainingLifeH(ns, info.lastAugReset)
       // THE EXIT VERDICT (installgate spendExit.hacknet): the node's exit with
       // this upgrade against without, from progress.js. Used when it is this
@@ -215,7 +335,7 @@ export async function main(ns) {
         join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
         augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
         home: (() => {
-          const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+          const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
           if (!up) return 0
           const ram = ns.getServerMaxRam('home')
           return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
@@ -230,6 +350,7 @@ export async function main(ns) {
       const opts = exitV?.buy ? { exitApproved: true } : plan.best && life.hours !== null ? { payback: { moneyReturn: { cost: plan.best.cost, gainPerSec: plan.best.gainPerSec, horizonSec: life.hours * 3600 } } } : {}
       const free = spendable('hacknet', money, claims, opts)
       const affordable = plan.best ? plan.best.cost <= free : false
+      const cache = servers ? cacheOffer(ns, info, t, serverFields.hashCap, spendable('hacknet', money, claims, {})) : null
       publish(ns, {
             ...base,
             phase: 'claimant',
@@ -240,6 +361,7 @@ export async function main(ns) {
             verdict: v,
             spendable: free,
             affordable,
+            cache,
             claims: { join: claims.join, augmentations: claims.augmentations, home: typeof claims.home === 'object' ? claims.home.amount : claims.home },
       })
       if (v.buy && affordable && buy(ns, plan.best)) {
@@ -248,9 +370,23 @@ export async function main(ns) {
         await ns.sleep(200)
         continue
       }
+      if (cache?.buy && buy(ns, cache)) {
+        bought++
+        lastBuy = { at: new Date().toISOString(), ...cache }
+        await ns.sleep(200)
+        continue
+      }
       await ns.sleep(30000)
     } catch (err) {
       ns.print(`hacknet error: ${err}`)
+      // Say so: a frozen report reads as "nothing worth buying", and in server
+      // mode it also freezes the ramPolicy batch.js and seed.js obey (they
+      // fail closed on its staleness, so the hashes stay safe).
+      try {
+        publish(ns, { at: new Date().toISOString(), lastAugReset: info.lastAugReset, phase: 'error', why: String(err).slice(0, 300) })
+      } catch {
+        /* nothing left to try */
+      }
       await ns.sleep(10000)
     }
   }

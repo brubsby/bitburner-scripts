@@ -96,6 +96,8 @@
 
 // Pure arithmetic, no ns surface, so importing it costs this script nothing.
 import { nextHomeUpgrade } from 'homecost.js'
+// Pure table (0GB): the node's HomeComputerRamCost, which the price carries.
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure data, same deal: the five story servers, shared with backdoor.js so that
 // gating on them needs no copy of the list and no read of backdoor's telemetry.
 import { STORY_SERVERS } from 'storyservers.js'
@@ -105,6 +107,9 @@ import { reporter, describe, record } from 'status.js'
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
 import { singularityRamMultiplier, canAccessFeature, SF_FILE } from 'sfgate.js'
+// Pure: the game's hacknet-server hostname marker. A GB used on one costs that
+// share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
+import { isHacknetServerHost } from 'hacknetplan.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -606,7 +611,7 @@ const WATCHED = [
     // yet and the fallback threshold is just a guess. nextHomeUpgrade is pure
     // arithmetic over state we already hold, so the answer is exact and free.
     trigger: (ns) => {
-      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
       // Published on the job record (jobs['homeup.js'].next) so the planner
       // prices the CURRENT upgrade: homeup.txt's `next` is only as fresh as
       // homeup's last run, and when the hold keeps homeup from running the
@@ -803,7 +808,9 @@ function shareThreads(ns, hosts, frac = 0.8) {
   const homeReserve = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
   let biggest = 0
   for (const h of hosts) {
-    if (!ns.hasRootAccess(h)) continue
+    // Never a hacknet server: share's bonus is not priced against the hashes
+    // its RAM would cost there.
+    if (!ns.hasRootAccess(h) || isHacknetServerHost(h)) continue
     const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h) - (h === 'home' ? homeReserve : 0)
     if (free > biggest) biggest = free
   }
@@ -867,12 +874,15 @@ function placeFor(ns, hosts, script, threads) {
   const need = ns.getScriptRam(script, 'home') * threads
   let best = null
   for (const h of hosts) {
-    if (!ns.hasRootAccess(h) || h === 'home') continue
+    if (!ns.hasRootAccess(h) || h === 'home' || isHacknetServerHost(h)) continue
     const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h)
     if (free >= need && (!best || free < best.free)) best = { host: h, free }
   }
   if (best) return best.host
-  return ns.getServerMaxRam('home') - ns.getServerUsedRam('home') >= need ? 'home' : null
+  if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') >= need) return 'home'
+  // Last resort only: a hacknet server pays for the RAM in hashes.
+  for (const h of hosts) if (isHacknetServerHost(h) && ns.hasRootAccess(h) && ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= need) return h
+  return null
 }
 
 /**
