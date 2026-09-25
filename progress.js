@@ -136,7 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
-import { programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -2222,6 +2222,10 @@ async function act(ns, canJoin, info, note) {
   // measured return is the income in a node where hacking pays nothing.
   stockNow = stockRecordOf(readJson(ns, STOCK_FILE), info?.lastAugReset)
   const stockEquity = stockNow.ok ? stockNow.equity : 0
+  // Read the income split here too, so every pass publishes it — the unplanned
+  // path returns before the gate section re-reads it (progress.txt income was
+  // null for 5.8h in BitNode 8 while the trader earned $4m/s).
+  econNow = incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info) })
   // THE STOCK MARKET ENTRY, priced and — for now — refused with its reason:
   // the expected return needs a 4S forecast this run has not bought, so
   // `edgePerHour` is null and stockplan says so rather than guessing. What
@@ -2287,8 +2291,10 @@ async function act(ns, canJoin, info, note) {
   // step once ordered "travel to Chongqing for Tetrads" and then "gym at
   // Powerhouse" (Sector-12) in the same batch, and the gym refused.
   let cityAfterOrders = player.city
-  const order = (kind, args, why) => {
-    orders.push({ id: orders.length + 1, kind, args, why })
+  // `cost`: dollars the order needs IN CASH (nodeecon.withCashRaise raises
+  // them from the trader's book before the first costed order).
+  const order = (kind, args, why, cost = 0) => {
+    orders.push({ id: orders.length + 1, kind, args, why, ...(cost > 0 ? { cost } : {}) })
     if (kind === 'travel') cityAfterOrders = args[0]
     return true
   }
@@ -2299,11 +2305,10 @@ async function act(ns, canJoin, info, note) {
   // fails nothing after it is bought and nothing is installed — an install
   // with positions open DESTROYS them (the market re-initialises,
   // Prestige.ts:166-170).
-  const withLiquidation = () => {
-    const first = orders.findIndex((o) => o.kind === 'donate' || o.kind === 'buyaug' || o.kind === 'install')
-    if (first < 0 || !(stockEquity > 0) || orders.some((o) => o.kind === 'liquidate')) return orders
-    return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['all'], why: `$${Math.round(stockEquity)} of stock equity funds this batch` }, ...orders.slice(first)]
-  }
+  // SIZED, not 'all': the old prefix sold the whole book for any purchase,
+  // and the book is the only compounding income in BitNode 8. act.js still
+  // sells everything before an install (the market re-initialises).
+  const withLiquidation = () => withCashRaise(orders, ns.getServerMoneyAvailable('home'), stockEquity)
   const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders: withLiquidation() }, null, 2), 'w')
   // THE COVENANT CAMPAIGN'S PATH B, when the simulated exits chose it
   // (covenantExitOf path 'install-batch'): order the combat batch, every
@@ -2458,12 +2463,14 @@ async function act(ns, canJoin, info, note) {
           const city = reqs.find((r) => r?.type === 'city')?.city
           const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
           if (!city) continue
-          if (!((player.money ?? 0) >= moneyReq + 200e3)) {
-            todo.push(`${f}: chosen, needs ${(moneyReq / 1e6).toFixed(0)}m in hand plus the fare`)
+          // Cash plus the book: the money is raised into hand before the travel
+          // (the join order carries the requirement as its cash cost).
+          if (!((player.money ?? 0) + stockEquity >= moneyReq + 200e3)) {
+            todo.push(`${f}: chosen, needs ${(moneyReq / 1e6).toFixed(0)}m in hand plus the fare (cash + stock equity $${Math.round((player.money ?? 0) + stockEquity)})`)
             continue
           }
           if (cityAfterOrders !== city) order('travel', [city], `${f} invites only in ${city}`)
-          order('join', [f], `chosen city set [${pick.chosen.join(', ')}]; invitation follows presence`)
+          order('join', [f], `chosen city set [${pick.chosen.join(', ')}]; invitation follows presence`, moneyReq)
           did.push(`ordered travel to ${city} and join ${f} (chosen city set)`)
         }
       }
@@ -2648,7 +2655,11 @@ async function act(ns, canJoin, info, note) {
     // never bought. eBudget and remainingWindows arrive with the DERIVED
     // weights, so on a flat-weights pass this stays unpriced and says so
     // rather than guessing a coefficient.
-    const liveMoney = ns.getServerMoneyAvailable('home')
+    // Cash PLUS the trader's liquidation value: a purchase batch raises what it
+    // needs from the book (withCashRaise). Planning on cash alone saw ~$80k
+    // against a $60b book (BitNode 8, 2026-09-25): no plan, no install, no
+    // income read, for 5.8h. stockEquity is 0 with no fresh trader record.
+    const liveMoney = ns.getServerMoneyAvailable('home') + stockEquity
     const oneoffBase = {
       money: liveMoney,
       // ownedPrograms is deliberately NOT passed. It would have to be the set
@@ -3614,8 +3625,8 @@ async function act(ns, canJoin, info, note) {
   if (!hasTor) {
     const torOk = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), 'tor', info?.lastAugReset)
     if (!torOk.allowed) todo.push(`TOR held: ${torOk.why}`)
-    else if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > 200e3) {
-      if (order('tor', [], 'gates every port program')) did.push('ordered TOR')
+    else if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > 200e3) {
+      if (order('tor', [], 'gates every port program', 200e3)) did.push('ordered TOR')
     } else todo.push('Buy the TOR router ($200k) — gates every port program.')
   }
   for (const [file, price] of PROGRAMS) {
@@ -3626,8 +3637,8 @@ async function act(ns, canJoin, info, note) {
       todo.push(`${file} held: ${okP.why}`)
       continue
     }
-    if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > price * 2) {
-      if (order('program', [file], 'unlocks a tier of servers')) did.push(`ordered ${file}`)
+    if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > price * 2) {
+      if (order('program', [file], 'unlocks a tier of servers', price)) did.push(`ordered ${file}`)
     } else if (ns.getServerMoneyAvailable('home') > price) {
       todo.push(`Buy ${file} ($${(price / 1e6).toFixed(1)}m) — unlocks a tier of servers to root.`)
     }
@@ -4548,14 +4559,14 @@ async function act(ns, canJoin, info, note) {
             if (short > 0) {
               const fwrgExec = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? 1
               const dollars = Math.ceil(donationForRep(short, player.mults?.faction_rep ?? 1, fwrgExec) * 1.01)
-              if (!order('donate', [item.faction, dollars], `${Math.round(short).toLocaleString()} rep for ${item.name}`)) {
+              if (!order('donate', [item.faction, dollars], `${Math.round(short).toLocaleString()} rep for ${item.name}`, dollars)) {
                 did.push(`DONATION REFUSED: $${ns.format.number(dollars)} to ${item.faction} for ${item.name} — favour or funds short at execution`)
                 break
               }
               did.push(`donated $${ns.format.number(dollars)} to ${item.faction} (${Math.round(short).toLocaleString()} rep) for ${item.name}`)
             }
           }
-          if (!order('buyaug', [item.faction, item.name], `planned at $${plannedAugPrice.toFixed(0)}`)) {
+          if (!order('buyaug', [item.faction, item.name], `planned at $${plannedAugPrice.toFixed(0)}`, live)) {
             // The shipped file ignored this return value entirely, which is how
             // a prerequisite failure stayed invisible.
             did.push(`REFUSED by the game: ${item.name} from ${item.faction} — rep, money or an unmet prerequisite`)
