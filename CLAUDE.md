@@ -541,6 +541,25 @@ out, and how long would it take?** If the answer is "someone eventually notices
 the numbers look wrong", it is not finished. `npm test` encodes as much of this
 as is statically checkable; the rest is a habit.
 
+## A plan is not an outcome — confirm in the game, and leave a check behind
+
+What a script *decided* (progress.txt `did`, orders.txt, installgate verdicts)
+is not what the game is *doing*. On 2026-09-25 four status reports in a row
+were wrong for this reason: a gym order was undone by act.js within two
+minutes, a "~1h" campaign was ~325h, a promised purchase had stalled at zero,
+and an install was blamed on the human (act-history cannot record installs,
+because the script dies first; the lifetimes ledger does).
+
+- Report "ordered" until the game's state confirms it. Confirming means the
+  save digest (`currentWork`, `skills`, `exp`), the page's `Player`, or a
+  count, not a publisher's own record of its intent.
+- Anything promised for hours from now needs a check that FAILS if it isn't
+  happening. `tools/healthcheck.mjs` has two: ORDER NOT HELD (slot owner vs
+  the work actually running) and CAMPAIGN NOT MOVING / ESTIMATE OFF (the
+  trained stat's exp against the estimate's rate). Add to them rather than
+  trusting a plan.
+- Find the record that proves a cause before attributing it to anyone.
+
 ## Decisions compare simulated trajectories — never a shortcut
 
 **Every choice between two ways of playing is priced by simulating BOTH

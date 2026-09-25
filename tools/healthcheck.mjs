@@ -176,6 +176,16 @@ const now = {
   sleeveKarmaYield: tel["sleeve.txt"]?.karmaYield ?? null,
   goRemote: tel["go.txt"]?.remoteMoves ?? null,
   batchPerSec: tel["batch.txt"]?.totals?.earnedPerSec ?? null,
+  // For the promise checks: combat exp, and the Covenant campaign's claimed
+  // stat and rates (installgate covenantExit), so the next run can compare
+  // the progress the plan promised with the progress the game shows.
+  combatExp: state.exp ? { strength: state.exp.strength, defense: state.exp.defense, dexterity: state.exp.dexterity, agility: state.exp.agility } : null,
+  campaign: (() => {
+    const c = tel["installgate.txt"]?.covenantExit;
+    if (!c?.active || c.member) return null;
+    const leg = (c.combatLegs ?? []).find((l) => l.stat === c.trainStat);
+    return leg ? { stat: c.trainStat, rate: (leg.playerRate ?? 0) + (leg.sleeveRate ?? 0) } : null;
+  })(),
 };
 
 if (state.__error) fail("daemon /state unreadable", state.__error);
@@ -206,6 +216,19 @@ if (!prev) {
 } else {
   note(`compared against a sample ${dtMin.toFixed(0)} min old`);
   const moved = (a, b) => a !== null && b !== null && a !== b;
+
+  // A CAMPAIGN'S PROMISED PROGRESS: the stat it trains must rise at roughly
+  // the rate its estimate assumed. Off by more than 2x either way is a broken
+  // estimate (live: '~1h of combat' was really ~325h); no rise at all is a
+  // campaign that is not happening.
+  if (prev.campaign && now.campaign && prev.campaign.stat === now.campaign.stat && prev.combatExp && now.combatExp) {
+    const st = now.campaign.stat;
+    const got = now.combatExp[st] - prev.combatExp[st];
+    const expect = prev.campaign.rate * dtMin * 60;
+    if (!(got > 0)) fail(`CAMPAIGN NOT MOVING: ${st} exp did not rise in ${dtMin.toFixed(0)} min while the Covenant campaign claims to train it`);
+    else if (expect > 0 && (got / expect < 0.5 || got / expect > 2)) fail(`CAMPAIGN ESTIMATE OFF: ${st} gained ${Math.round(got)} exp in ${dtMin.toFixed(0)} min; the estimate assumed ${Math.round(expect)} (${(got / expect).toFixed(2)}x) — its hours are not to be trusted`);
+    else note(`campaign: ${st} +${Math.round(got)} exp in ${dtMin.toFixed(0)} min (${(got / expect).toFixed(2)}x the estimate)`);
+  }
 
   // The batcher must be earning. Zero is the shape of "running but idle".
   if (now.batchPerSec !== null && !(now.batchPerSec > 0)) fail("batch.js reports $0/s earned", "the batcher is running but landing nothing");
@@ -339,6 +362,22 @@ if (!prev) {
 // reason to accept it. So the reason is attached to the failure, never
 // substituted for it.
 const WATCHDOG_TIER = 64;
+// PROMISES AGAINST THE GAME (2026-09-25: "i tell you to do something, you say
+// it's happening, i have to ensure it actually happens, it doesn't"). What the
+// planner CLAIMS is checked against what the save shows, every run, no
+// baseline needed: the work slot's owner must match the work actually running.
+{
+  const pr = tel["progress.txt"];
+  const owner = pr?.slot?.owner ?? null;
+  const ageMin = pr?.at ? (Date.now() - Date.parse(pr.at)) / 60000 : null;
+  const actual = state.currentWork?.type ?? null;
+  const want = { body: ["ClassWork", "CrimeWork"], faction: ["FactionWork"], crime: ["CrimeWork"] }[owner];
+  if (want && ageMin !== null && ageMin < 15) {
+    if (!want.includes(actual)) fail(`ORDER NOT HELD: progress.js claims the work slot for '${owner}' work, but the game is running ${actual ?? "nothing"}`, "something else took the slot (act.js? a stale order?) — the plan is not happening");
+    else note(`work slot: '${owner}' claimed and the game is running ${actual}`);
+  }
+}
+
 // THE PAGE'S HEAP (tel.js heapMB): the renderer died 2026-09-25 after hours
 // of play. Over 3GB of a ~4.4GB limit is a problem; otherwise reported.
 {
