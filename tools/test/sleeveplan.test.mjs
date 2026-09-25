@@ -14,6 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Check } from "./harness.mjs";
 import "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
@@ -817,7 +818,9 @@ export async function run() {
     c19.examined(6);
     const fn = src.slice(src.indexOf("function covenantExitOf"), src.indexOf("function exitInputsOf"));
     if (!/bestExitPolicy\(\{ \.\.\.inputs\(\), covenant: \{/.test(fn)) c19.fail("the campaign trajectory must be the SAME inputs plus `covenant`");
-    if (!/const deltaH = withC\.best\.hours - base\.hours/.test(fn)) c19.fail("the decision must be the difference of the two simulated exits");
+    if (!/const deltaH = \(useB \? pathB\.hours : withC\.best\.hours\) - base\.hours/.test(fn)) c19.fail("the decision must be the difference of simulated exits (the chosen path's against the base)");
+    if (!/const wB = bestExitPolicy\(\{ \.\.\.inputs\(\), firstInstallH: 0, covenant: \{ cost, joinMoney: COVENANT\.joinMoney, combatH: lb\.hours,[^}]*\} \}, 400, 1\)/.test(fn)) c19.fail("path B must be its own simulated exit: install now (firstInstallH 0, at least one install), then the campaign at the post-install combat hours");
+    if (!/const useB = !!pathB && pathB\.hours < withC\.best\.hours/.test(fn)) c19.fail("path B is chosen only when its exit beats path A's");
     if (!/base\.installsFirst !== 0 \|\| withC\.best\.installsFirst !== 0\) return out\(false/.test(fn)) c19.fail("active only in the final window");
     if ((src.match(/covenantExitOf\(ns, info, player, schedule,/g) || []).length < 3) c19.fail("both the planned and the nothing-to-buy path must publish the comparison");
     if (!/const cv = covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\s*if \(!cv\) return null[\s\S]{0,700}const bodyStep = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the campaign is on, ahead of the schedule's own body step");
@@ -992,6 +995,28 @@ export async function run() {
     if (!(lv.hours > 0) || lv.current !== "strength") c27.fail(`at x0.6 effective the same exp is short and strength trains first: ${JSON.stringify(lv)}`);
   }
   checks.push(c27);
+
+  const c28 = new Check("SP28", "path B's batch: combat-level augs with rep met and prerequisites in hand; the post-install person has lifted mults and zero combat exp");
+  {
+    c28.examined(5);
+    const offers = [
+      { name: "Legs", faction: "G", repReq: 10, factionRep: 100, mults: { agility: 1.6 }, prereqs: [] },
+      { name: "Graphene Legs", faction: "G", repReq: 10, factionRep: 100, mults: { agility: 2.5 }, prereqs: ["Legs"] },
+      { name: "Rep-short", faction: "G", repReq: 1000, factionRep: 100, mults: { strength: 2 }, prereqs: [] },
+      { name: "Orphan", faction: "G", repReq: 1, factionRep: 100, mults: { defense: 1.5 }, prereqs: ["Missing"] },
+      { name: "Hack", faction: "G", repReq: 1, factionRep: 100, mults: { hacking: 2 }, prereqs: [] },
+    ];
+    const b = sp.combatBatch(offers, []);
+    const names = (b?.names ?? []).sort().join();
+    if (names !== "Graphene Legs,Legs") c28.fail(`batch: combat-level, rep met, prereqs satisfiable — got ${names}`);
+    if (Math.abs((b?.gains?.agility ?? 0) - 4) > 1e-12) c28.fail("agility gain is the product (1.6 x 2.5)");
+    if (sp.combatBatch(offers, ["Legs", "Graphene Legs"]) !== null) c28.fail("nothing left once owned");
+    const after = sp.afterCombatInstall({ mults: { agility: 2, agility_exp: 1 }, exp: { agility: 5e7, hacking: 9 } }, b);
+    if (after.mults.agility !== 8 || after.exp.agility !== 0 || after.exp.hacking !== 9) c28.fail("post-install: mults x gains, combat exp zeroed, other exp kept");
+    const pr = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../progress.js"), "utf8");
+    if (!/const ready = \[\.\.\.left\]\.filter\(\(n\) => \(sing\.augPrereq\(n\) \?\? \[\]\)\.every\(\(q\) => have\.has\(q\) \|\| seq\.includes\(q\)\)\)/.test(pr)) c28.fail("the batch must be ordered prerequisites-first");
+  }
+  checks.push(c28);
 
   return checks;
 }

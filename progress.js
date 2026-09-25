@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -1676,7 +1676,7 @@ function sleeveAugExitOf(ns, info, schedule, inputs, planFleet, replanAt, pendin
  * AND the final window is now (the best policy installs no more), because
  * that is the only window long enough to hold it.
  */
-function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFleet) {
+function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFleet, offers = null, owned = null) {
   const out = (active, why, extra = {}) => ({ active, why, crossNode: 'not simulated: sleevesFromCovenant persists into every later node (only prestigeSourceFile resets a sleeve, never the count)', ...extra })
   try {
     if (info?.currentNode !== 10) return out(false, 'Covenant sleeves are sold only inside BitNode 10')
@@ -1698,12 +1698,34 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     const perSleeveExp = planFleet?.expToPlayerHackingIfStudying && n > 0 ? planFleet.expToPlayerHackingIfStudying / n : 0
     const withC = bestExitPolicy({ ...inputs(), covenant: { cost, joinMoney: COVENANT.joinMoney, combatH, member, sleeveExpPerSec: perSleeveExp } })
     if (!withC.best) return out(false, `the campaign trajectory could not be priced: ${withC.why}`)
-    const deltaH = withC.best.hours - base.hours
-    const extra = { deltaH, withH: withC.best.hours, withoutH: base.hours, installsWith: withC.best.installsFirst, installsWithout: base.installsFirst, cost, combatH, member, mandated, trainStat: legs?.current ?? null, combatLegs: legs?.legs ?? null }
+    // PATH B, as its own simulated trajectory: buy the combat batch
+    // (sleeveplan.combatBatch — every offered combat-level aug whose rep is
+    // met), install NOW, then train from zero at the lifted multipliers. The
+    // install's cost (money reset, the climb restarting, the sleeves' price
+    // re-earned) is in the exit simulation; the batch's own price is noise
+    // beside it and left out, stated. Chosen when its exit beats path A.
+    let pathB = null
+    if (!member && Array.isArray(offers)) {
+      const batch = combatBatch(offers, owned)
+      const after = batch ? afterCombatInstall(levelledPerson(player, info), batch) : null
+      const lb = after ? covenantCombatHours(after, planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult()) : null
+      if (lb) {
+        const wB = bestExitPolicy({ ...inputs(), firstInstallH: 0, covenant: { cost, joinMoney: COVENANT.joinMoney, combatH: lb.hours, member: false, sleeveExpPerSec: perSleeveExp } }, 400, 1)
+        if (wB.best) pathB = { hours: wB.best.hours, combatH: lb.hours, batch: batch.names, gains: batch.gains }
+      }
+    }
+    const useB = !!pathB && pathB.hours < withC.best.hours
+    const deltaH = (useB ? pathB.hours : withC.best.hours) - base.hours
+    const extra = { deltaH, withH: withC.best.hours, withoutH: base.hours, installsWith: withC.best.installsFirst, installsWithout: base.installsFirst, cost, combatH, member, mandated, trainStat: legs?.current ?? null, combatLegs: legs?.legs ?? null, path: useB ? 'install-batch' : 'train-now', pathB: pathB ? { hours: pathB.hours, combatH: pathB.combatH, batch: pathB.batch } : null }
     const summary = `exit ${withC.best.hours.toFixed(1)}h with the campaign vs ${base.hours.toFixed(1)}h without (${deltaH >= 0 ? '+' : ''}${deltaH.toFixed(1)}h in this node)`
     // THE MANDATE (sleeveplan.COVENANT_MANDATE, the user's decision): the
     // campaign is not optional, so only WHEN is priced — it runs in the
     // window the simulation places it, the final one of its best policy.
+    if (mandated && useB) {
+      // Path B: do not train now (the install resets it); buy the batch and
+      // install. progress.js acts on path === 'install-batch'.
+      return out(false, `MANDATED (${COVENANT_MANDATE.decided}): path B — buy ${pathB.batch.length} combat aug(s) and install now: exit ${pathB.hours.toFixed(1)}h (combat ${pathB.combatH.toFixed(2)}h after) vs ${withC.best.hours.toFixed(1)}h training as-is (${combatH.toFixed(0)}h of combat)`, extra)
+    }
     if (mandated) {
       // Money already in hand for every remaining mandated sleeve: run it
       // NOW. The exit comparison above cannot see the new sleeves' own work
@@ -2136,6 +2158,39 @@ async function act(ns, canJoin, info, note) {
     return true
   }
   const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders }, null, 2), 'w')
+  // THE COVENANT CAMPAIGN'S PATH B, when the simulated exits chose it
+  // (covenantExitOf path 'install-batch'): order the combat batch, every
+  // prerequisite before what needs it and otherwise most expensive first,
+  // then the install. act.js runs the spend-down before installing and skips
+  // the install if a purchase in the chain fails. Returns true when it ordered.
+  const covenantBatchOrders = (cx) => {
+    if (!(cx?.mandated && cx?.path === 'install-batch' && Array.isArray(cx.pathB?.batch) && cx.pathB.batch.length)) return false
+    const have = new Set(allCount.keys())
+    const left = new Set(cx.pathB.batch.filter((n) => !have.has(n)))
+    const seq = []
+    while (left.size) {
+      const ready = [...left].filter((n) => (sing.augPrereq(n) ?? []).every((q) => have.has(q) || seq.includes(q)))
+      if (!ready.length) break
+      const next = ready.sort((a, b) => sing.augPrice(b) - sing.augPrice(a))[0]
+      seq.push(next)
+      left.delete(next)
+    }
+    if (left.size) {
+      did.push(`Covenant path B: could not order ${[...left].join(', ')} (prerequisites unmet) — not installing on a partial batch`)
+      return false
+    }
+    for (const n of seq) {
+      const o = (offers ?? []).find((x) => x.name === n && x.factionRep >= x.repReq)
+      if (!o) {
+        did.push(`Covenant path B: ${n} is no longer offered with its rep met — not installing`)
+        return false
+      }
+      order('buyaug', [o.faction, n], `Covenant path B: combat batch (${cx.why})`)
+    }
+    order('install', ['boot.js'], `Covenant path B: install the combat batch — ${cx.why}`)
+    did.push(`Covenant path B: ordered ${seq.length} combat aug(s) then the install — ${cx.why}`)
+    return true
+  }
 
   // --- 1. accept invitations -------------------------------------------------
   const invites = canJoin ? sing.invitations() : (player.factionInvitations ?? [])
@@ -3498,6 +3553,7 @@ async function act(ns, canJoin, info, note) {
     }
   }
 
+  let unplannedExtras = null
   if (total === 0) {
     // The income sample rides EVERY pass, planned or not. It used to live only
     // on the planned path, so a fresh life — nothing affordable yet — never
@@ -3560,7 +3616,7 @@ async function act(ns, canJoin, info, note) {
           // The Covenant comparison rides this path too: a life with nothing
           // left to buy is very often the final window, which is the only
           // one the campaign can fit in.
-          ...(() => {
+          ...(unplannedExtras = (() => {
             const pf = readFleet(ns, info)
             const inputs = () => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf)
             let base = null
@@ -3574,16 +3630,22 @@ async function act(ns, canJoin, info, note) {
             const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
             return {
               spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home'), (h) => incNow * h * 3600, replanAt, pending, offers),
-              covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf),
+              covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf, offers, [...allCount.keys()]),
               sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home')),
             }
-          })(),
+          })()),
         },
         null,
         2,
       ),
       'w',
     )
+    // Nothing else to buy, but the Covenant campaign's path B may still want
+    // its batch and an install (a final window often has nothing planned).
+    if (canInstall && !flags['no-install'] && !flags.dry && covenantBatchOrders(unplannedExtras?.covenantExit)) {
+      flushOrders()
+      return
+    }
   }
 
   if (total > 0) {
@@ -3796,7 +3858,7 @@ async function act(ns, canJoin, info, note) {
     // exit simulation with the campaign in the final window (exitplan
     // `covenant`), against the one without. It runs only when that is faster
     // AND the final window is now (the best policy installs no more).
-    const covenantExit = covenantExitOf(ns, info, player, schedule, exitPolicy, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet)
+    const covenantExit = covenantExitOf(ns, info, player, schedule, exitPolicy, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet, offers, [...allCount.keys()])
     const sleeveAugExit = sleeveAugExitOf(ns, info, schedule, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet, replanAt, pending, offers, ns.getServerMoneyAvailable('home'))
 
     // DISTINCT augmentations this install would add, NeuroFlux excluded. Hoisted
@@ -4207,6 +4269,10 @@ async function act(ns, canJoin, info, note) {
 
     if (!canInstall || flags['no-install'] || flags.dry) {
       todo.push(`${pending.length} queued + ${plan ? plan.buy.length : 0} planned (M=${M.toFixed(4)}) — ${gate.why}`)
+    } else if (covenantBatchOrders(covenantExit)) {
+      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought: [], installing: true, gate, ordered: orders.length }, null, 2), 'w')
+      flushOrders()
+      return
     } else if (gate.install && terminal?.sprint) {
       // THE FINAL LIFE. Installing would reset the exp climb the sprint is
       // made of; the ladder says more installs reach the target SLOWER than

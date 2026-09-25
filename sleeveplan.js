@@ -969,3 +969,50 @@ export function covenantCombatHours(player, fleetGymAtTm1, trainingMult, target 
   // player and every sleeve stack on the same one (see above).
   return { hours, legs, current: legs.length ? legs[0].stat : null, gym: gym.name, city: gym.city }
 }
+
+/**
+ * THE COMBAT BATCH for the Covenant campaign's install path: every offered,
+ * unowned augmentation that raises a combat LEVEL multiplier, whose
+ * reputation is already met at the offering faction and whose prerequisites
+ * are owned or in the batch. Bought and installed, it multiplies the level
+ * each exp buys — BN10 live: agility x11, strength x17 — so combat 850, which
+ * gym alone priced at ~325h, takes minutes from zero. { names, items (one per
+ * aug, cheapest-faction-first irrelevant: price is per aug), gains } or null.
+ */
+export function combatBatch(offers, owned) {
+  const own = new Set(owned ?? [])
+  const LEVEL = ['strength', 'defense', 'dexterity', 'agility']
+  const byName = new Map()
+  for (const o of offers ?? []) {
+    if (!o?.name || own.has(o.name) || o.name === 'NeuroFlux Governor') continue
+    if (!LEVEL.some((k) => num(o.mults?.[k]) && o.mults[k] > 1)) continue
+    if (!(num(o.factionRep) && num(o.repReq) && o.factionRep >= o.repReq)) continue
+    if (!byName.has(o.name)) byName.set(o.name, o)
+  }
+  // Prerequisites must be owned or in the batch; drop until stable.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [n, o] of byName) {
+      if ((o.prereqs ?? []).some((q) => !own.has(q) && !byName.has(q))) {
+        byName.delete(n)
+        changed = true
+      }
+    }
+  }
+  if (!byName.size) return null
+  const items = [...byName.values()]
+  const gains = {}
+  for (const k of [...LEVEL, 'strength_exp', 'defense_exp', 'dexterity_exp', 'agility_exp']) {
+    gains[k] = items.reduce((g, o) => g * (num(o.mults?.[k]) && o.mults[k] > 0 ? o.mults[k] : 1), 1)
+  }
+  return { names: items.map((o) => o.name), items, gains }
+}
+
+/** The player after installing `batch`: mults lifted, combat exp zeroed. */
+export function afterCombatInstall(player, batch) {
+  if (!player?.mults || !batch?.gains) return null
+  const mults = { ...player.mults }
+  for (const [k, g] of Object.entries(batch.gains)) if (num(mults[k])) mults[k] = mults[k] * g
+  return { ...player, mults, exp: { ...player.exp, strength: 0, defense: 0, dexterity: 0, agility: 0 } }
+}
