@@ -829,5 +829,17 @@ export function run() {
   }
   checks.push(c18);
 
+  const c19 = new Check("IG19", "a mandated hold outranks even The Red Pill's terminal install; without it, terminal still installs");
+  {
+    c19.examined(3);
+    const base = { ageMs: 3 * H, exp: EXP, prev: null, futures: [], M: 1, queued: 3, terminal: true };
+    const held = shouldInstall({ ...base, binding: { destroyedByInstall: true, mandated: true, why: "the mandated Covenant campaign is running" } });
+    if (held.install !== false || !held.mandateHold) c19.fail(`live 2026-09-25 the terminal rule installed through the Covenant campaign: ${held.why}`);
+    if (shouldInstall({ ...base }).install !== true) c19.fail("without a mandate, The Red Pill still installs");
+    // A destructive binding WITHOUT the mandate keeps the old precedence (terminal wins).
+    if (shouldInstall({ ...base, binding: { destroyedByInstall: true, why: "x" } }).install !== true) c19.fail("only a MANDATED hold outranks the terminal install");
+  }
+  checks.push(c19);
+
   return checks;
 }

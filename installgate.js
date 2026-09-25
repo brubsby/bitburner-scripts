@@ -626,7 +626,13 @@ export function shouldInstall(o) {
   const countInstall = countBanks && countWants && !destructive
   // expOk is the rate rule's own guard (enough exp to bank); the simulated
   // exit prices the climb itself, so it does not apply there.
-  const install = terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive)
+  // A HOLD THE USER MANDATED outranks even the terminal install: The Red Pill
+  // stays affordable, and installing mid-campaign resets the combat exp and
+  // membership the campaign is building. Live 2026-09-25 the terminal rule
+  // installed straight through the Covenant campaign (binding.mandated) and
+  // destroyed ~$8.5q plus the campaign's progress.
+  const mandateHold = o.binding?.destroyedByInstall === true && o.binding?.mandated === true
+  const install = !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
 
   return {
     ...base(),
@@ -659,7 +665,10 @@ export function shouldInstall(o) {
     holdForever: neverBest || undefined,
     binding: o.binding ?? null,
     destructive,
-    why: terminal
+    mandateHold: mandateHold || undefined,
+    why: mandateHold
+      ? `hold: ${o.binding?.why ?? 'a mandated campaign is running'} — held even though ${terminal ? 'The Red Pill is queued' : 'the gate would install'}; it installs once the campaign completes`
+      : terminal
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
       : countInstall && !(expOk && netGain && !waitBeats)
       ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs, ` +

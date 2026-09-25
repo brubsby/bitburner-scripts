@@ -3886,7 +3886,7 @@ async function act(ns, canJoin, info, note) {
       // THE COVENANT CAMPAIGN, while it runs, is a gate an install destroys:
       // combat exp and Covenant membership both reset. Hold until the
       // mandated sleeves are bought (covenantExit stops being active then).
-      binding: covenantExit?.active && covenantExit?.mandated ? { destroyedByInstall: true, why: `the mandated Covenant campaign is running (${covenantExit.member ? 'member — buying sleeves' : `combat ${covenantExit.combatH?.toFixed?.(1)}h to go`}); an install resets combat exp and membership` } : bindingGate({
+      binding: covenantExit?.active && covenantExit?.mandated ? { destroyedByInstall: true, mandated: true, why: `the mandated Covenant campaign is running (${covenantExit.member ? 'member — buying sleeves' : `combat ${covenantExit.combatH?.toFixed?.(1)}h to go`}); an install resets combat exp and membership` } : bindingGate({
         // THE SIMULATION. Prices "install k more times, then finish" for every
         // k and hands bindingGate the winner, so the install-vs-hold trade is
         // decided by comparing trajectories rather than by a threshold on the
