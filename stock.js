@@ -110,6 +110,7 @@ export async function main(ns) {
   const flags = ns.flags([
     ['horizon', -1], // hours: override the remaining-life horizon for the 4S verdict
     ['no4s', false], // never buy the 4S TIX API
+    ['long-only', false], // never open shorts even where the node allows them
   ])
   const errors = []
   const counters = { ticks: 0, orders: 0, refused: 0, missedTicks: 0 }
@@ -123,7 +124,10 @@ export async function main(ns) {
   }, 'status')
 
   const info = ns.getResetInfo()
-  const canShort = canShortStock(info)
+  // Shorts where the game allows them (BN8 or SF8.2), unless --long-only.
+  // Existing shorts are still closed normally (decide exits a short when
+  // canShort is false), so the flag is safe to flip on a running book.
+  const canShort = canShortStock(info) && !flags['long-only']
   if (!ns.stock.hasTixApiAccess()) {
     // Not an error: the entry is progress.js's decision (stockplan.verdict).
     // Exit rather than idle at ~28GB; watchdog.js relaunches on the invariant
