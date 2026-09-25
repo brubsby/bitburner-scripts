@@ -3016,6 +3016,8 @@ async function act(ns, canJoin, info, note) {
   // Queued augmentations, hoisted: crime-vs-faction below re-plans the next
   // batch with them, and read `pending` before this block existed (a TDZ
   // ReferenceError every pass, caught and read as 'faction keeps the slot').
+  // Hoisted with the pending block that uses it (a TDZ error otherwise).
+  const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
   let pending = []
   if (canBuyAug) {
     // MULTISET difference, not a Set difference. getOwnedAugmentations(true)
@@ -3424,7 +3426,6 @@ async function act(ns, canJoin, info, note) {
   // at $1,262, so the PLAN is empty and M is 1". That is still true, but it is
   // now a property of the planner rather than of the queue — so it is asserted
   // in tools/staging/augplan/augplan.test.mjs [AP9] instead of left as prose.
-  const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
   // THE SAME OBJECTIVE THE PLAN USES. This called progressFactor with no
   // channels and no weights — the FLAT basket — while plan.M below is priced
   // on the DERIVED weights, and the next line multiplies the two together and
