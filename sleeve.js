@@ -396,6 +396,9 @@ async function act(ns, note) {
 			objective,
 			horizonHours,
 			playerIntelligence: ns.getPlayer?.().skills?.intelligence,
+			// Cash, so the exp objective can refuse classes it cannot pay for
+			// (sleeveplan STUDY_FUND_S). getPlayer is already billed here.
+			money: ns.getPlayer?.().money,
 			// The faction whose reputation the run actually needs, and the
 			// inputs to price it. progress.js publishes the faction only when
 			// the player is already a MEMBER — setToFactionWork throws

@@ -401,6 +401,22 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // exp/s against their own 788/s, i.e. 1.8%. Six hundred times better, and
     // both are small: that is what "the fleet is one sleeve" costs.
     if (objective === 'exp') {
+      // A CLASS COSTS MONEY EVERY SECOND (Work/Formulas.ts:99-119: cost x
+      // location.costMult per second, charged through loseMoney with no
+      // balance check, so it drives cash negative). In BN8 on 2026-09-25 five
+      // sleeves at ZB drained $8k/s from a stock book of ~$2m, and the negative
+      // balance stalled the only income there is. Until the exit model prices
+      // the fee (it tied both arms at ~1e26h there), refuse to study when cash
+      // cannot fund the WHOLE fleet's classes for STUDY_FUND_S, and recover
+      // shock instead — free, and it scales everything the sleeve does later.
+      // Unknown money (o.money not a number) keeps the old behaviour.
+      const zb = [...UNIVERSITIES].sort((a, b) => b.expMult - a.expMult)[0]
+      const fleetFeePerSec = CLASSES.Algorithms.cost * zb.costMult * sleeves.length
+      if (num(o.money) && o.money < fleetFeePerSec * STUDY_FUND_S) {
+        tasks.push('shock')
+        why.push(`sleeve ${i}: study would cost the fleet $${Math.round(fleetFeePerSec)}/s and cash $${Math.round(o.money)} funds under ${STUDY_FUND_S}s of it — recover shock (free) instead`)
+        continue
+      }
       tasks.push('hacking')
       const study = sleeveStudyExpPerSec(s, 'Algorithms', o)
       why.push(
@@ -577,10 +593,13 @@ export function sleevePolicy(sleeve, node, o = {}) {
  * difference between them; ZB is the best in the game and sleeve.js's study
  * branch already travels to Volhaven for it.
  */
+/** Seconds of the fleet's class fees cash must cover before sleeves study (see the exp branch of sleeveAssignments). */
+export const STUDY_FUND_S = 600
+
 export const UNIVERSITIES = [
-  { name: 'ZB Institute of Technology', city: 'Volhaven', expMult: 4 },
-  { name: 'Summit University', city: 'Aevum', expMult: 3 },
-  { name: 'Rothman University', city: 'Sector-12', expMult: 2 },
+  { name: 'ZB Institute of Technology', city: 'Volhaven', expMult: 4, costMult: 5 },
+  { name: 'Summit University', city: 'Aevum', expMult: 3, costMult: 4 },
+  { name: 'Rothman University', city: 'Sector-12', expMult: 2, costMult: 3 },
 ]
 
 /**
