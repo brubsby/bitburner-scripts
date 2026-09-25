@@ -124,7 +124,28 @@ export function repModel(o = {}) {
 export function incomeModel(o = {}) {
   const num = (x) => typeof x === 'number' && isFinite(x) && x > 0
   const { incomePerSec, hacking, hackingExp, hackingMult, expPerSec } = o
-  if (!num(incomePerSec) || !num(hacking) || !num(hackingMult)) return null
+  // BITNODE 8 TERMS (nodeecon.incomeOf), absent by default: `flatPerSec` is
+  // the part of incomePerSec that does not scale with the level, and
+  // {capitalReturnPerSec, capitalCap, money0} is the trader's compounding
+  // return on the balance — r x min(money, cap), from money0 now. With
+  // scripted hacking paying nothing (ScriptHackMoneyGain 0) incomePerSec is 0
+  // and the capital term is the whole income. The capital term is on the
+  // balance BEFORE spending, i.e. an upper bound on a balance that is also
+  // being spent — the caller's money figure carries the spend.
+  const flat = num(o.flatPerSec) ? Math.min(o.flatPerSec, num(incomePerSec) ? incomePerSec : o.flatPerSec) : 0
+  const r = num(o.capitalReturnPerSec) ? o.capitalReturnPerSec : 0
+  const cap = num(o.capitalCap) ? o.capitalCap : Infinity
+  const m0 = typeof o.money0 === 'number' && isFinite(o.money0) && o.money0 > 0 ? o.money0 : 0
+  if (!num(hacking) || !num(hackingMult)) return null
+  if (!num(incomePerSec) && !(r > 0 && m0 > 0)) return null
+  const capitalBy = (T) => {
+    if (!(r > 0) || !(m0 > 0)) return 0
+    if (m0 >= cap) return r * cap * T
+    const tCap = Math.log(cap / m0) / r // seconds to reach the cap
+    return T <= tCap ? m0 * Math.expm1(r * T) : cap - m0 + r * cap * (T - tCap)
+  }
+  const inc = num(incomePerSec) ? incomePerSec : 0
+  const lvlInc = inc - flat
   const grows = num(expPerSec) && typeof hackingExp === 'number' && isFinite(hackingExp) && hackingExp >= 0
   const base = Math.max(1, hacking) + 50
 
@@ -139,11 +160,12 @@ export function incomeModel(o = {}) {
   const moneyBy = (h) => {
     if (!(h > 0)) return 0
     const T = h * 3600
-    if (!grows) return incomePerSec * T
+    const other = flat * T + capitalBy(T)
+    if (!grows) return lvlInc * T + other
     const lvlInt = hackingMult * (32 * intLog(hackingExp, expPerSec, T) - 200 * T)
     // The same level-1 clamp as the rep model, and the flat figure as a hard
     // floor: a growth model must never project LESS than no growth.
-    return (incomePerSec * (Math.max(lvlInt, T) + 50 * T)) / base
+    return (lvlInc * (Math.max(lvlInt, T) + 50 * T)) / base + other
   }
 
   return { moneyBy, factorAt, grows }

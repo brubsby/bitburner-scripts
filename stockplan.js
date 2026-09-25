@@ -138,3 +138,95 @@ export function verdict(o = {}) {
 }
 
 const fmt = (x) => (x >= 1e12 ? `${(x / 1e12).toFixed(2)}t` : x >= 1e9 ? `${(x / 1e9).toFixed(2)}b` : x >= 1e6 ? `${(x / 1e6).toFixed(2)}m` : x.toFixed(0))
+
+// ---------------------------------------------------------------------------
+// THE 4S TIX API AS A TRAJECTORY DECISION
+//
+// Two wealth trajectories from the same wealth W over the same horizon H:
+//   without: W grows at the pre-4S rate g_pre(W) for H hours;
+//   with:    W - cost grows at the 4S rate g_4S(W) for H hours.
+// Buy iff with(H) > without(H). The rates are NOT a formula: they are the
+// median log-growth per hour of the shipped strategy (stockstrat.js) on the
+// game's own market code, by starting capital — tools/sim/stocks/compare.mjs
+// --hours 2 --seeds 10 (burn-in 3000 ticks), 2026-09-25, v3.0.2 source. The
+// capital dependence is real and large: maxShares (20% of a company's
+// shares) and our own forecast damage cap what one stock can absorb, so the
+// rate falls from ~140%/h at $100m to ~15%/h at $10t.
+//
+// NOT CALIBRATED against a live game: nothing in .telemetry has recorded a
+// stock trade yet. stock.js publishes wealth every tick to /tel/stock.txt;
+// tools/sim/stocks/calibrate.mjs compares that realised growth with this
+// table once there is a history to compare.
+//
+// Horizon: the life's remaining hours (hacknetplan.remainingLife). The 4S
+// API survives installs inside a node (only prestigeSourceFile clears it,
+// PlayerObjectGeneralMethods.ts:165), so the within-life comparison
+// UNDER-values it — a purchase that wins here wins across the node too; one
+// that loses here might still win across the node, which is not simulated
+// and is published as such (`notSimulated`).
+
+export const RATE_TABLE = {
+  source: 'tools/sim/stocks/compare.mjs --hours 2 --seeds 10 --burn 3000, median ln-growth/h',
+  caps: [1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 3e12, 1e13],
+  'pre-long': [0.604, 0.808, 0.797, 0.715, 0.552, 0.234, 0.114, 0.036],
+  'pre-ls': [0.798, 0.876, 0.766, 0.734, 0.585, 0.216, 0.101, 0.033],
+  '4S-long': [1.369, 1.422, 1.348, 1.262, 0.904, 0.513, 0.318, 0.122],
+  '4S-ls': [1.433, 1.444, 1.322, 1.218, 0.871, 0.549, 0.363, 0.168],
+}
+
+/**
+ * Log-growth per hour at wealth W for a regime ('pre-long' | 'pre-ls' |
+ * '4S-long' | '4S-ls'): log-linear interpolation in capital. Above the table
+ * the market is saturated (maxShares everywhere), so dollars per hour stay
+ * at the last row's and the rate falls as 1/W; below it the first row holds
+ * (the table starts where commissions stop mattering).
+ */
+export function growthRate(regime, W) {
+  const t = RATE_TABLE
+  const r = t[regime]
+  if (!r || !num(W) || W <= 0) return null
+  const c = t.caps
+  if (W <= c[0]) return r[0]
+  if (W >= c[c.length - 1]) return (r[r.length - 1] * c[c.length - 1]) / W
+  let i = 0
+  while (W > c[i + 1]) i++
+  const x = (Math.log(W) - Math.log(c[i])) / (Math.log(c[i + 1]) - Math.log(c[i]))
+  return r[i] + x * (r[i + 1] - r[i])
+}
+
+/** Integrate dW/dt = g(W) W for `hours` (Euler in log space, 3-minute steps). */
+export function wealthAt(regime, W0, hours, dtH = 0.05) {
+  if (!num(W0) || W0 <= 0 || !num(hours) || hours < 0) return null
+  let lw = Math.log(W0)
+  for (let t = 0; t < hours; t += dtH) {
+    const g = growthRate(regime, Math.exp(lw))
+    if (g === null) return null
+    lw += g * Math.min(dtH, hours - t)
+  }
+  return Math.exp(lw)
+}
+
+/**
+ * Buy the 4S TIX API now or not: `{ wealth, cost, horizonH, canShort }`.
+ * `wealth` is what the trader controls (cash + positions, less claims).
+ */
+export function buy4SVerdict({ wealth, cost, horizonH, canShort = false, why = null } = {}) {
+  if (!num(cost) || cost <= 0) return { buy: false, why: '4S TIX API cost unreadable' }
+  if (!num(wealth)) return { buy: false, why: 'wealth unreadable' }
+  if (!num(horizonH) || horizonH <= 0) return { buy: false, why: `remaining life unmeasured${why ? ` (${why})` : ''} — a 4S purchase cannot be priced without a horizon`, notSimulated: 'across-install value (4S persists through installs)' }
+  if (wealth <= cost) return { buy: false, why: `wealth $${fmt(wealth)} does not cover the $${fmt(cost)} API`, cost }
+  const side = canShort ? 'ls' : 'long'
+  const withW = wealthAt(`4S-${side}`, wealth - cost, horizonH)
+  const withoutW = wealthAt(`pre-${side}`, wealth, horizonH)
+  const buy = withW > withoutW
+  return {
+    buy,
+    decidedBy: 'trajectory',
+    cost,
+    horizonH,
+    withW,
+    withoutW,
+    why: `over ${horizonH.toFixed(2)}h: $${fmt(withW)} with 4S (after $${fmt(cost)}) vs $${fmt(withoutW)} without`,
+    notSimulated: 'value beyond this life (4S persists through installs) — only strengthens a buy',
+  }
+}

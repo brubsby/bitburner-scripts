@@ -134,6 +134,9 @@ import { contractIncome } from 'contractplan.js'
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
+// Pure: which instrument measures income in this node, what an install leaves,
+// and who accepts donations (BitNode 8 changes all three).
+import { incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -1228,6 +1231,9 @@ function gangWorthNow(ns, info, player, inputsFn = null) {
  * tools/sim/gang-vs-nogang.mjs uses. Never another node's number.
  */
 let gangSchedMemo = null
+/** This pass's stock record and split income (nodeecon.js), for exitInputsOf and spendVerdictsOf. */
+let stockNow = null
+let econNow = null
 function gangExitNow(ns, info, inputs, grindHours) {
   const node = info?.currentNode
   const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
@@ -1572,15 +1578,30 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       const p2 = replanAt(Math.max(0, m))
       return installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
     }
-    // Hacknet money (inputs.lifeIncome) arrives until the install too.
+    // Hacknet money (inputs.lifeIncome) arrives until the install too; it is
+    // not in incomePerSec, so it adds to the money at W without double-counting.
     const lifeInc = inputs?.lifeIncome > 0 ? inputs.lifeIncome : 0
     const common = { inputs, W, finalWindow, moneyAt: (h) => liveMoney + moneyBy(h) + lifeInc * h * 3600, gainsAt, eBudget: readJson(ns, '/tel/installgate.txt')?.eBudget }
-    const income = inputs?.incomePerSec
+    // RAM's income response is the level-scaled (script) part only: a flat
+    // realised stock rate is not bought by RAM, and attributing it per GB would
+    // price servers by the trader's income. Hacknet money is not in it either.
+    const income = (inputs?.incomePerSec ?? 0) - (inputs?.flatIncomePerSec ?? 0)
     const ramTotal = readJson(ns, '/tel/batch.txt')?.ram?.total
     const perGB = income > 0 && ramTotal > 0 ? income / ramTotal : null
-    const verdict = (cost, gainPerSec, persists, extra = {}) => {
+    // WHERE HACKING PAYS NOTHING (BitNode 8) RAM's only return is hacking exp,
+    // and home RAM keeps it across installs — so home's verdict carries the
+    // exp its RAM adds to the climb (exitplan.spendExit expGainPerSec). The
+    // script exp rate is tel.js's; per GB against the batcher's RAM. Elsewhere
+    // this stays null and home prices by income alone, as it always has.
+    const expPerGB = (() => {
+      if (econNow?.hackPays !== false || !(ramTotal > 0)) return null
+      const t = readJson(ns, '/tel/status.txt')
+      const age = Date.now() - Date.parse(t?.at ?? '')
+      return age >= 0 && age < 5 * 60e3 && t?.expPerSec > 0 ? t.expPerSec / ramTotal : null
+    })()
+    const verdict = (cost, gainPerSec, persists, extra = {}, expGainPerSec = 0) => {
       if (!(gainPerSec >= 0)) return { buy: false, cost, why: 'income response unreadable', ...extra }
-      const r = spendExit({ ...common, cost, gainPerSec, persists })
+      const r = spendExit({ ...common, cost, gainPerSec, persists, expGainPerSec })
       if (r.deltaH === null) return { buy: false, cost, why: r.why, ...extra }
       return { buy: r.deltaH < 0, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)`, ...extra }
     }
@@ -1591,6 +1612,11 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     if (next?.cost > 0 && perGB !== null && homeRam) {
       const gain = next.kind === 'RAM' ? perGB * homeRam : perGB * homeRam * (1 / (15 + (hu?.cores ?? 1)))
       out.home = verdict(next.cost, gain, true, { kind: next.kind })
+    } else if (next?.cost > 0 && expPerGB !== null && homeRam) {
+      // Cores: hack exp is per thread and cores only speed grow/weaken
+      // (ServerHelpers core bonus), so only a RAM block is priced this way.
+      if (next.kind === 'RAM') out.home = verdict(next.cost, 0, true, { kind: next.kind, channel: 'exp' }, expPerGB * homeRam)
+      else out.home = { buy: false, why: 'cores add no hacking exp and hacking pays no money in this node' }
     } else out.home = { buy: false, why: 'next home upgrade, home RAM or income per GB unreadable' }
     // Hacknet: its own best upgrade (game formula, hacknetplan).
     const hn = readJson(ns, '/tel/hacknet.txt')
@@ -1760,7 +1786,8 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
  * inputs measures the inputs, not the choice.
  */
 /**
- * HACKNET PRODUCTION AS INCOME, from hacknet.js's own report
+ * HACKNET PRODUCTION AS INCOME — nodeecon.hacknetRecordOf, the instrument's one
+ * definition (incomeOf reports the same figure as lifePerSec), from hacknet.js's report
  * (/tel/hacknet.txt `moneyPerSec`: a node's money, or a server's hashes at
  * the $250k sell floor). It is NOT script income — getTotalScriptIncome
  * never sees it — and in BitNode 9, where ScriptHackMoney 0.1 x
@@ -1771,12 +1798,7 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
  * record's `lifeIncomeWhy`.
  */
 function hacknetLifeIncome(ns, info) {
-  const h = readJson(ns, '/tel/hacknet.txt')
-  if (!h) return { perSec: 0, why: 'no /tel/hacknet.txt' }
-  if (h.lastAugReset !== info?.lastAugReset) return { perSec: 0, why: 'hacknet report is from another life' }
-  if (!(Date.now() - Date.parse(h.at) < 15 * 60e3)) return { perSec: 0, why: 'hacknet report is stale' }
-  const v = h.moneyPerSec
-  return typeof v === 'number' && isFinite(v) && v >= 0 ? { perSec: v, why: null } : { perSec: 0, why: 'hacknet report carries no moneyPerSec' }
+  return hacknetRecordOf(readJson(ns, HACKNET_FILE), info?.lastAugReset)
 }
 
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
@@ -1785,7 +1807,10 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
   const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
   const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
   return {
-    money: player.money ?? 0,
+    // Cash plus the trader's open positions at liquidation value: act.js
+    // sells them (act-liquidate.js) before any purchase or install, so they
+    // are money the exit can spend. 0 with no fresh record.
+    money: (player.money ?? 0) + (stockNow?.ok ? stockNow.equity : 0),
     incomePerSec: incomePerSec + contractMoneyPerSec,
     // Hacknet money until the next install (exitplan lifeIncome).
     lifeIncome: hacknetLifeIncome(ns, info).perSec,
@@ -1829,12 +1854,25 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     joinMoney: exitFactionMoneyReq(candidates) ?? 0,
     terminalRep: rp?.baseRep ?? 0,
     donationCost: typeof rp?.donationCost === 'number' ? rp.donationCost : null,
-    // 150 x FavorToDonateToFaction (Faction/formulas/donation.ts:17),
-    // read from the node rather than assumed.
-    favorToDonate: (() => {
-      const f = bitNodeMults(info?.currentNode)?.FavorToDonateToFaction
-      return typeof f === 'number' && isFinite(f) && f > 0 ? 150 * f : null
-    })(),
+    // floor(150 x FavorToDonateToFaction) (Faction/formulas/donation.ts:17),
+    // read from the node rather than assumed. BitNode 8's 0 is a threshold
+    // of zero — donations from the first join — which the old `f > 0` test
+    // turned into "never" (nodeecon.favorToDonateOf).
+    favorToDonate: favorToDonateOf(bitNodeMults(info?.currentNode)),
+    // WHERE THE MONEY COMES FROM (nodeecon.incomeOf, set this pass): the part
+    // of incomePerSec that does not scale with the hacking level, and the
+    // stock trader's compounding return. Zero/absent outside a node whose
+    // income is the trader's, so every other node prices as before.
+    flatIncomePerSec: econNow?.flatPerSec ?? 0,
+    capitalReturnPerSec: econNow?.capitalReturnPerSec ?? 0,
+    capitalCap: econNow?.capitalCap ?? null,
+    // What an install leaves: $1262, or BitNode 8's $250m (Prestige.ts:158).
+    installCash: postInstallMoney(info?.currentNode),
+    // Where donations open at favor 0 (FavorToDonateToFaction 0, BitNode 8)
+    // reputation is bought from the first join, and the work slot's faction
+    // work shrinks what is owed while the money is saved — exitplan prices the
+    // rep leg that way, and gangworth charges the karma grind the slot hours.
+    workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
   }
 }
 
@@ -2113,6 +2151,11 @@ async function act(ns, canJoin, info, note) {
     }
   })()
   const contractMoneyPerSec = contractForecast?.moneyPerSec ?? 0
+  // THE STOCK TRADER'S RECORD (nodeecon.js has the interface): its equity is
+  // money the planner may spend once act-liquidate.js has sold it, and its
+  // measured return is the income in a node where hacking pays nothing.
+  stockNow = stockRecordOf(readJson(ns, STOCK_FILE), info?.lastAugReset)
+  const stockEquity = stockNow.ok ? stockNow.equity : 0
   // THE STOCK MARKET ENTRY, priced and — for now — refused with its reason:
   // the expected return needs a 4S forecast this run has not bought, so
   // `edgePerHour` is null and stockplan says so rather than guessing. What
@@ -2183,7 +2226,19 @@ async function act(ns, canJoin, info, note) {
     if (kind === 'travel') cityAfterOrders = args[0]
     return true
   }
-  const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders }, null, 2), 'w')
+  // THE TRADER'S POSITIONS ARE SOLD BEFORE ANY OF THEIR MONEY IS SPENT. The
+  // planner counts stock equity as money (exitInputsOf, liveCapital), so a
+  // batch that donates, buys or installs is prefixed with a liquidate order
+  // (act-liquidate.js). act.js treats it as part of the purchase chain: if it
+  // fails nothing after it is bought and nothing is installed — an install
+  // with positions open DESTROYS them (the market re-initialises,
+  // Prestige.ts:166-170).
+  const withLiquidation = () => {
+    const first = orders.findIndex((o) => o.kind === 'donate' || o.kind === 'buyaug' || o.kind === 'install')
+    if (first < 0 || !(stockEquity > 0) || orders.some((o) => o.kind === 'liquidate')) return orders
+    return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['all'], why: `$${Math.round(stockEquity)} of stock equity funds this batch` }, ...orders.slice(first)]
+  }
+  const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders: withLiquidation() }, null, 2), 'w')
   // THE COVENANT CAMPAIGN'S PATH B, when the simulated exits chose it
   // (covenantExitOf path 'install-batch'): order the combat batch, every
   // prerequisite before what needs it and otherwise most expensive first,
@@ -2471,15 +2526,24 @@ async function act(ns, canJoin, info, note) {
     const r = BASE_PRICE_MULT // SF11 is not held; genericPriceMultiplier(lvl) when it is
     const unqueue = Math.pow(r, held.filter((a) => !isSoa(a)).length)
 
-    const donateNeed = favorNeededToDonate(1) // BN4 leaves FavorToDonateToFaction at 1
+    // floor(150 x FavorToDonateToFaction), FROM THE NODE. This was
+    // `favorNeededToDonate(1)` — "BN4 leaves it at 1" — i.e. 150 everywhere,
+    // which in BitNode 8 (FavorToDonateToFaction 0, donations from favor 0)
+    // left every reputation wall standing as a grind while the node sold it
+    // for money, and in BitNode 3 (0.5) demanded 150 where 75 opens.
+    const donateNeed = favorToDonateOf(bitNodeMults(info?.currentNode))
     const fwrg = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null
+    // The gang we manage refuses donations whatever the favor (Singularity.ts:903).
+    const gangFactionNow = readJson(ns, '/tel/gang.txt')?.faction ?? null
     for (const f of player.factions) {
       const rep = sing.factionRep(f)
       // Past the donation threshold a rep wall is a PRICE (donation.ts:8) —
       // attached per offer so augplan can charge it as a fixed cost. Left
       // absent below the threshold or with an unreadable BitNode term, and
-      // the wall stands exactly as before.
-      const donatable = sing.factionFavor(f) >= donateNeed && fwrg !== null
+      // the wall stands exactly as before. canDonateTo also refuses the
+      // factions the game never accepts money from (nodeecon.NO_DONATION_FACTIONS)
+      // — unreachable at 150 favor, and a broken purchase chain at BN8's 0.
+      const donatable = canDonateTo(f, sing.factionFavor(f), donateNeed, gangFactionNow) && fwrg !== null
       for (const aug of sing.factionAugs(f)) {
         // NeuroFlux is the only repeatable augmentation (AugmentationHelpers.ts:117-120).
         if (allCount.has(aug) && aug !== NFG) continue
@@ -2532,6 +2596,9 @@ async function act(ns, canJoin, info, note) {
       // focusPenalty() is only paid when work is UNFOCUSED
       // (PlayerObjectGeneralMethods.ts:622).
       unfocused: work?.focused === false,
+      // BitNode 8 REPLACES the balance after the grants are paid (Prestige.ts:158),
+      // so an augmentation's startingMoney is worth nothing there (nodeecon).
+      startingMoneyVoid: !startingMoneySurvives(info?.currentNode),
       // THE KARMA CHANNEL. Combat multipliers are invisible to RATE_CHANNELS
       // and matter in exactly one situation: a gang pending outside BitNode 2,
       // where installs reset the combat skills homicide needs and a better
@@ -2867,12 +2934,21 @@ async function act(ns, canJoin, info, note) {
       // the conversion multipliers, and the money side. Income is read here —
       // cheap, already referenced — because the schedule runs before the
       // futures section reads it for its own purposes.
-      donateAt: favorNeededToDonate(1),
+      // From the node (was favorNeededToDonate(1), i.e. 150 everywhere; BN8's
+      // threshold is 0 and BN3's 75). Null when the table is unreadable,
+      // which disarms the donation terminal rather than guessing.
+      donateAt: favorToDonateOf(bitNodeMults(info?.currentNode)),
       donateRepMult: player.mults?.faction_rep,
       donateNodeMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
       donateIncome: (() => {
-        const inc = ns.getTotalScriptIncome()
-        return (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || (isFinite(inc?.[1]) && inc[1] > 0 ? inc[1] : 0) || null
+        // nodeecon.incomeOf, so BitNode 8's income (the trader's) is seen at
+        // all. repLadder takes a FLAT rate, so the trader's compounding
+        // return enters as its rate on today's capital — a floor, since the
+        // capital grows while the ladder runs.
+        const e = incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info) })
+        const cap = e.capitalReturnPerSec > 0 ? e.capitalReturnPerSec * Math.min(ns.getServerMoneyAvailable('home') + e.equity, e.capitalCap ?? Infinity) : 0
+        // Hacknet money (lifePerSec) is this life's too, and the ladder is.
+        return e.incomePerSec + e.lifePerSec + cap || null
       })(),
       baseRepEstimate: estimateBaseRepPerSec({
         hacking: player.skills?.hacking,
@@ -3736,18 +3812,29 @@ async function act(ns, canJoin, info, note) {
     // So fall back to the average, which is stable, and make the no-income case
     // a POSITIVE statement rather than an empty `futures` array that reads
     // identically to "waiting was considered and bought nothing".
+    //
+    // AND SCRIPT INCOME IS NOT THE ONLY INSTRUMENT. In BitNode 8 scripted
+    // hacking pays nothing (ScriptHackMoneyGain 0) and the money is the stock
+    // trader's, so this read is a TRUE zero all node — and every consequence
+    // above (no futures, install at once, every exit unpriced) followed from
+    // it. nodeecon.incomeOf splits the income by how it evolves: script
+    // income (level-scaled), a flat realised rate, and the trader's
+    // compounding return on the balance. Without a trader record in such a
+    // node it reports UNMEASURED with the reason, never $0/s as a finding.
     const income = ns.getTotalScriptIncome()
-    const incomeNow = isFinite(income?.[0]) && income[0] > 0 ? income[0] : 0
-    const incomeAvg = isFinite(income?.[1]) && income[1] > 0 ? income[1] : 0
-    const incomePerSec = incomeNow || incomeAvg
-    const incomeSource = incomeNow ? 'running-scripts' : incomeAvg ? 'since-last-aug' : 'none'
+    econNow = incomeOf({ scriptIncome: income, mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info) })
+    const incomePerSec = econNow.incomePerSec
+    const incomeSource = econNow.source
+    // Priced when ANY source is measured: the capital return alone suffices.
+    const incomePriced = incomePerSec > 0 || econNow.capitalReturnPerSec > 0
+    const liveCapital = ns.getServerMoneyAvailable('home') + stockEquity
     let futures = []
     let incomeCalibration = null
     let futuresCalibration = null
     let futurePredictions = []
     // The income trajectory, hoisted for the spend verdicts written with the gate.
     let incomeTraj = null
-    if (plan && incomePerSec > 0) {
+    if (plan && incomePriced) {
       // Rebuild the schedule's own trajectory from its persisted inputs — the
       // same calibrated closed form, so the gate and the schedule cannot
       // disagree about what an hour of grinding earns. Unavailable (no
@@ -3775,6 +3862,11 @@ async function act(ns, canJoin, info, note) {
         hackingExp: schedule?.hackingExp,
         hackingMult: effectiveHackingMult(player, info),
         expPerSec: schedule?.expPerSec,
+        // BitNode 8's terms (nodeecon.incomeOf); absent elsewhere.
+        flatPerSec: econNow.flatPerSec,
+        capitalReturnPerSec: econNow.capitalReturnPerSec,
+        capitalCap: econNow.capitalCap,
+        money0: liveCapital,
       }))
       // Two kinds of candidate. The FIXED ladder projects the working
       // faction's rep along its trajectory — ordinary waiting. The HOLD
@@ -3813,7 +3905,7 @@ async function act(ns, canJoin, info, note) {
               if (gangRep !== null && gangCtx && o.faction === gangCtx.faction) rep = Math.max(rep, gangRep)
               return rep !== o.factionRep ? { ...o, factionRep: rep } : o
             }),
-            money: ns.getServerMoneyAvailable('home') + moneyGain,
+            money: liveCapital + moneyGain,
             r: BASE_PRICE_MULT,
             nodeMoneyMult: 1,
             owned: [...installedCount.keys()],
@@ -3932,7 +4024,7 @@ async function act(ns, canJoin, info, note) {
           // ledger in, so the current life sits on the curve it is compared to.
           ageH: typeof since === 'number' && since > 0 ? (Date.now() - since) / 3600000 : null,
           curve: freshCurve(readJson(ns, '/tel/earnings.txt'), info?.currentNode),
-          freshStart: 1262,
+          freshStart: postInstallMoney(info?.currentNode), // $1262, or BN8's $250m (nodeecon)
         })
       } catch (err) {
         return { installNow: null, why: `count timing threw (${String(err).slice(0, 80)}) — the floor stands` }
@@ -4173,7 +4265,7 @@ async function act(ns, canJoin, info, note) {
     // the fleet cannot end up grinding for different reasons.
     {
       const Wg = gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0
-      const mW = Wg === null ? ns.getServerMoneyAvailable('home') : ns.getServerMoneyAvailable('home') + (incomeTraj ? incomeTraj.moneyBy(Wg) : incomePerSec * Wg * 3600) + hacknetLifeIncome(ns, info).perSec * Wg * 3600
+      const mW = Wg === null ? liveCapital : liveCapital + (incomeTraj ? incomeTraj.moneyBy(Wg) : incomePerSec * Wg * 3600) + hacknetLifeIncome(ns, info).perSec * Wg * 3600
       publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), { W: Wg, finalWindow: gate.holdForever === true, moneyAtW: mW, replanAt, pending, offers })
     }
     writeSleevePlan(
@@ -4228,7 +4320,7 @@ async function act(ns, canJoin, info, note) {
             exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet),
             gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0,
             gate.holdForever === true,
-            ns.getServerMoneyAvailable('home'),
+            liveCapital,
             (h) => (incomeTraj ? incomeTraj.moneyBy(h) : incomePerSec * h * 3600),
             replanAt, pending, offers,
           ),
@@ -4356,8 +4448,8 @@ async function act(ns, canJoin, info, note) {
           // The affordability check covers the WHOLE step: the donation is
           // paid right before the purchase, from the same balance.
           const stepCost = live + (item.donation ?? 0)
-          if (ns.getServerMoneyAvailable('home') < stepCost) {
-            did.push(`STOPPED executing the plan at ${item.name}: $${stepCost.toFixed(0)} needed (incl. donation), $${ns.getServerMoneyAvailable('home').toFixed(0)} held — the plan over-spent`)
+          if (ns.getServerMoneyAvailable('home') + stockEquity < stepCost) { // + the positions the liquidate order sells first
+            did.push(`STOPPED executing the plan at ${item.name}: $${stepCost.toFixed(0)} needed (incl. donation), $${(ns.getServerMoneyAvailable('home') + stockEquity).toFixed(0)} held (cash + stock equity) — the plan over-spent`)
             break
           }
           if (item.donation > 0) {
@@ -4478,7 +4570,7 @@ async function act(ns, canJoin, info, note) {
   }
 
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending }, ordered: orders.length, gangFaction }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending }, ordered: orders.length, gangFaction }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 

@@ -185,8 +185,12 @@ const ASSUMPTIONS = [
     tol: 0.05, dangerous: "both", impact: 2,
     mult: "ScriptHackMoneyGain",
     expect: 1,
-    where: "batch.js earnings accounting",
-    breaks: "Money actually received differs from money modelled; target ranking is skewed toward the wrong servers.",
+    where: "batch.js earnings accounting; progress.js income (nodeecon.js incomeOf); buyserv.js claims fallback",
+    breaks:
+      "Money actually received differs from money modelled; target ranking is skewed toward the wrong servers. " +
+      "AT 0 (BitNode 8) scripted hacking pays NOTHING (NetscriptHelpers.tsx:648) while still draining servers, so getTotalScriptIncome reads a true $0/s all node. " +
+      "HANDLED 2026-09-25: progress.js reads income through nodeecon.incomeOf — script income plus the stock trader's measured compounding return (/tel/stock.txt, interface in nodeecon.js) — and reports UNMEASURED with the reason when no trader record exists; exitplan prices a node whose only income is r x min(money, cap); buyserv.js holds every dollar when this is 0 unless an exit verdict (spendExit.servers) is fresh (its fallback spent ~$85m of BN8's $250m opening on servers that earn nothing); spendVerdictsOf prices home RAM by the hacking exp it adds. " +
+      "STILL TRUE: batch.js chooses targets by money drained, not by exp per GB, which is the only thing it produces here.",
   },
   {
     id: "hack-exp",
@@ -213,9 +217,12 @@ const ASSUMPTIONS = [
     // 'both', not 'above': high means nfg.js donates at a faction that cannot accept it, and low means nfg.js's own MIN_FAVOR = 150 blocks donations the game would allow. BN8 sets this to 0, i.e. donations are free from favor 0, and nfg.js would still sit waiting for 150.
     mult: "FavorToDonateToFaction",
     expect: 1,
-    where: "nfg.js MIN_FAVOR = 150; favor.js:65 favorNeededToDonate()",
+    where: "nfg.js MIN_FAVOR = 150 (fallback only); favor.js:65 favorNeededToDonate(); nodeecon.js favorToDonateOf",
     breaks:
-      "HARDCODED. favorNeededToDonate() = floor(150 * this). If it rises, nfg.js will try to donate at a faction that cannot accept donations and report 'donation input not found'.",
+      "favorNeededToDonate() = floor(150 * this). If it rises, nfg.js will try to donate at a faction that cannot accept donations and report 'donation input not found'. " +
+      "AT 0 (BitNode 8) reputation is a PRICE from the first join. FIXED 2026-09-25: progress.js offered donationCost only past a hardcoded 150 ('BN4 leaves it at 1'), exitplan.hoursToRep and exitInputsOf read 0 as 'donations never open' (`f > 0 ? ... : null`), and nfg.js waited for 150 — all now read nodeecon.favorToDonateOf, where 0 is a threshold and null is unknown. " +
+      "At 0 the gang faction and the no-work factions (Bladeburners, Church, Shadows of Anarchy) become 'donatable' by favor but the game refuses them (Singularity.ts:903-910) — nodeecon.canDonateTo excludes them so a donate order cannot break its purchase chain. " +
+      "exitplan also prices the reputation leg as work-while-donating where the threshold is 0 (workWhileDonating), which is what makes the karma grind's hold on the work slot a real cost.",
   },
   {
     id: "daedalus-augs",
@@ -295,6 +302,48 @@ const ASSUMPTIONS = [
     where: "docs/roadmap.md §17",
     breaks: "The 'infiltration is 3.6-7x faction work' verdict changes.",
   },
+  {
+    id: "gang-softcap",
+    tol: 0.05, dangerous: "below", impact: 2,
+    // Below 1 flattens every gang gain toward x^0 = 1; the gang's worth is a trajectory comparison, so the danger is a verdict that cannot see the difference.
+    mult: "GangSoftcap",
+    expect: 1,
+    where: "gangplan.js (soft = (0.2 x territory + 0.8) x GangSoftcap, read per node); gangworth.js gangVerdict (EXIT_RESOLUTION_H)",
+    breaks:
+      "Respect AND money per member per cycle are pow(x, (0.2t+0.8) x GangSoftcap) (Gang/formulas/formulas.ts:27,71); at 0 (BitNode 8) both are exactly 1 — a full gang earns ~$60/s and ~1 respect/cycle/member. gangplan reads the node's value, so the simulated income is right; what broke was the VERDICT: gangExit priced a 54.6h exit 14 seconds shorter with the gang and gangVerdict called that 'WORTH IT', sending the work slot to a -54,000 karma grind. FIXED 2026-09-25: a saving within the planner's one-minute exit resolution is not worth a gate, and where donations open at favor 0 the grind holds the work slot in the simulated final window (exitplan slotBusyH). Still unpriced until the stock trader publishes a return (the exit is then UNMEASURED and actplan leaves the gang pending — see hack-money-gain).",
+  },
+  {
+    id: "crime-money",
+    tol: 0.05, dangerous: "below", impact: 1,
+    mult: "CrimeMoney",
+    expect: 1,
+    where: "bodyplan.js crimeRate money term; sleeveplan.js crime money; actplan.js (node.CrimeMoney)",
+    breaks: "Crime money is multiplied by this (Work/Formulas.ts:73). Every consumer reads the node's value, so at 0 (BitNode 8) crime is priced for karma, kills and exp only — informational.",
+  },
+  {
+    id: "hacknet-money",
+    tol: 0.05, dangerous: "below", impact: 1,
+    mult: "HacknetNodeMoney",
+    expect: 1,
+    where: "hacknetplan.js (refuses at 0), hacknet.js",
+    breaks: "Hacknet production is multiplied by this (Hacknet/formulas/HacknetNodes.ts:10). hacknetplan refuses the claimant phase at 0 with the reason; the Netburners-qualifying phase still buys its few nodes. Informational.",
+  },
+  {
+    id: "company-money",
+    tol: 0.05, dangerous: "below", impact: 1,
+    mult: "CompanyWorkMoney",
+    expect: 1,
+    where: "companyplan.js (salary deliberately unpriced — progress.js:726)",
+    breaks: "Company salary is multiplied by this (Work/Formulas.ts:138). Company work is priced for its reputation only, so 0 (BitNode 8) changes nothing we act on. Informational.",
+  },
+  {
+    id: "infiltration-money",
+    tol: 0.05, dangerous: "below", impact: 1,
+    mult: "InfiltrationMoney",
+    expect: 1,
+    where: "infiltration.js (readBitNodeMults().InfiltrationMoney)",
+    breaks: "Infiltration cash rewards are multiplied by this (Infiltration/formulas/victory.ts:24). Infiltration needs a trusted keypress and is not automated; informational.",
+  },
 ];
 
 /** Structural facts that are not BitNodeMultipliers but are just as load-bearing. */
@@ -304,6 +353,14 @@ const STRUCTURAL = [
   ["Hacknet nodes vs SERVERS (BitNode 9 / SF9)", "SUPPORTED since 2026-09-25, gated on sfgate.hasHacknetServers. hacknet.js runs both phases on the server model (hacknetplan.js: hashRate, bestServerUpgrade priced at the $250k/hash sell floor, netburnersServerStep) and publishes ramPolicy; hashspend.js spends hashes by simulated exit (hashplan.js). A hacknet server's RAM costs hashes (1 - ramUsed/maxRam): batch.js and seed.js use it only when ramPolicy allows, boot/watchdog/act place there last. BN9 entry grants one level-100 / 10-core / cache-5 server (Prestige.ts:329-338) that the FIRST INSTALL destroys and nothing recreates below SF9.3 — installing early in BN9 costs that stream."],
   ["go.cheat requires SF14.2", "go-cheat.js is gated on ns.getResetInfo().ownedSF.get(14) >= 2 and is skipped otherwise. Correct already, but the cheat policy only becomes live there."],
   ["Faction join needs a trusted click", "FactionsRoot.tsx:89 checks event.isTrusted; no in-game script can join a faction in ANY BitNode. This never changes."],
+  [
+    "BitNode 8 REPLACES the balance with $250m at every install (not a multiplier)",
+    "Prestige.ts:38,158-160,293-295 gate on Player.bitNodeN === 8, after the augmentations' startingMoney is paid (Prestige.ts:85-88) — so CashRoot's $1m is overwritten, not added. nodeecon.postInstallMoney is the one copy of that test; exitplan's installCash, countplan's freshStart and objective.oneoffValue (startingMoneyVoid) read it. Every other node opens on $1262.",
+  ],
+  [
+    "An install DESTROYS open stock positions (every node)",
+    "Prestige.ts:166-170 re-initialises the market. act.js runs act-liquidate.js before every install (and progress.js prefixes it to any batch that spends stock equity); the install is skipped when the trader reports equity and the book cannot be confirmed flat. Shorts and limit/stop orders are available in BitNode 8 itself or with SF8.2/8.3 (NetscriptFunctions/StockMarket.ts:47, StockTicker.tsx:274-279).",
+  ],
   ["Purchased servers are single-core", "batch.js reads getServer(h).cpuCores per host rather than assuming, so this adapts. Informational."],
 
   // --- ns.ramOverride floors (invariant C5) --------------------------------

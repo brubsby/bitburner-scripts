@@ -326,7 +326,7 @@ const STACK = [
     // recurs in every gang node because prestigeSourceFile zeroes karma. A
     // sleeve is another actor committing crime, so the grind divides.
     //
-    // 2.60GB declared, raised to 41.15GB at runtime once sfgate says the API
+    // 3.25GB declared (2.60 until 2026-09-25: its capability-absent path died off home), raised to 41.15GB at runtime once sfgate says the API
     // is usable (the ns.sleeve.* surface is 4GB a call and is NOT scaled by
     // Source-File 4). It refuses in telemetry rather than throwing when the
     // capability is absent, so it is safe in the manifest in every node.
@@ -334,7 +334,7 @@ const STACK = [
     where: 'anywhere',
     tier: 64,
     rank: 29,
-    // Declares 2.60GB, raises to this once sfgate confirms the API. Placement
+    // Declares 3.25GB, raises to this once sfgate confirms the API. Placement
     // must use the RAISED figure or the raise is denied on arrival.
     // 41.75 -> 45.75: ns.sleeve.setToFactionWork, so the fleet can work the
     // faction whose reputation gates the exit. Still well inside tier 64.
@@ -343,6 +343,22 @@ const STACK = [
       'sleeves are parallel actors: each one commits crime, trains or works a faction alongside the player, and the ' +
       'karma grind that gates a gang is the single longest work-slot leg of a gang node. Refuses by name in ' +
       '/tel/sleeve.txt without Source-File 10, so it costs 2.60GB and says why in nodes that cannot use it.',
+  },
+  {
+    // THE STOCK TRADER (stock.js + stockstrat.js). Waits in telemetry and
+    // exits where there is no TIX API (watchdog.js relaunches it on the
+    // invariant ns.stock.hasTixApiAccess()). In BitNode 8 WSE+TIX are free
+    // (Prestige.ts canAccessBitNodeFeature(8)) and hacking pays nothing, so
+    // this IS the income; elsewhere it is a liquid claimant, last in
+    // budget.js PRIORITY. ~28.5GB, off home.
+    script: 'stock.js',
+    where: 'anywhere',
+    tier: 32,
+    rank: 31,
+    why:
+      'the stock market is the only income in BitNode 8 (ScriptHackMoneyGain 0) and a liquid use of idle claim money ' +
+      'everywhere else. Pre-4S it estimates forecasts from ticks (tools/sim/stocks: ~0.8 ln/h at $250m on the game\'s ' +
+      'own market code), buys the 4S TIX API when the simulated trajectory says so, shorts where the node allows',
   },
   {
     script: 'hacknet.js',
@@ -367,7 +383,7 @@ const STACK = [
     script: 'hashspend.js',
     where: 'anywhere',
     tier: 32,
-    rank: 31,
+    rank: 32,
     raisesTo: 7.25,
     why:
       'in BitNode 9 hashes are the economy — script hacking is a thousandth of BN1 (ScriptHackMoney 0.1 x ServerMaxMoney 0.01) ' +

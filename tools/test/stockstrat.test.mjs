@@ -1,0 +1,183 @@
+// [ST] the stock trader — stockstrat.js (pure), stock.js (ns I/O), the 4S
+// verdict in stockplan.js — against the game's OWN market code
+// (tools/sim/stocks/market.mjs bundles ~/Repos/bitburner/src/StockMarket).
+//
+// What is pinned, and the failure each prevents:
+//   ST1  the constants and the per-symbol table match game source (a drifted
+//        shareTxForMovement or server map silently mis-sizes / mis-targets).
+//   ST2  THE DECISION: on the same market realisations the shipped rule beats
+//        the pre-rewrite stock.js rule (tools/sim/stocks/legacy.mjs) with 4S,
+//        and the phase-aware pre-4S estimator beats a plain sliding window.
+//        Revert decide()/observe() to either old rule and this goes red.
+//   ST3  the shipped stock.js, run through a fake ns on the real market:
+//        trades, is never refused, publishes the fields readers need, obeys a
+//        pending spend (liquidates, buys nothing) and honours a due claim.
+//   ST4  the 4S purchase is a TRAJECTORY comparison (withW vs withoutW on the
+//        same inputs), and refuses without a horizon.
+
+import fs from "node:fs";
+import path from "node:path";
+import { Check } from "./harness.mjs";
+import "./gameresolve.mjs";
+import { GAME } from "./build-ram.mjs";
+
+const S = await import("../../stockstrat.js");
+const SP = await import("../../stockplan.js");
+const { Market } = await import("../sim/stocks/market.mjs");
+const { runNew, runLegacy } = await import("../sim/stocks/strategies.mjs");
+const { symbolMeta } = await import("../sim/stocks/gen-meta.mjs");
+const { runShipped } = await import("../sim/stocks/shipped.mjs");
+
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+
+export async function run() {
+  const checks = [];
+
+  // -------------------------------------------------------------------
+  const c1 = new Check("ST1", "stockstrat constants and SYMBOL_META match the game source");
+  {
+    const src = (f) => fs.readFileSync(path.join(GAME, "src", f), "utf8");
+    const sm = src("StockMarket/StockMarket.ts");
+    c1.examined(1);
+    if (!/if \(roll < 0\.45\)/.test(sm) || S.FLIP_CHANCE !== 0.45) c1.fail("the cycle flip chance is no longer 0.45 (StockMarket.ts stockMarketCycle)");
+    if (!/TicksPerCycle: 75,/.test(src("StockMarket/data/Constants.ts")) || S.TICKS_PER_CYCLE !== 75) c1.fail("TicksPerCycle is no longer 75");
+    if (!/forecastChangePerPriceMovement = 0\.006;/.test(src("StockMarket/StockMarketHelpers.ts")) || S.IMPACT_PER_MOVE !== 0.006) c1.fail("forecastChangePerPriceMovement changed");
+    if (!/StockForecastInfluenceLimit = 5;/.test(src("StockMarket/Stock.ts")) || S.IMPACT_FLOOR !== 5) c1.fail("StockForecastInfluenceLimit changed");
+    if (!/StockMarketCommission: 100e3/.test(src("StockMarket/data/Constants.ts")) || S.COMMISSION !== 100e3) c1.fail("commission changed");
+    if (!/const v = Math\.random\(\);\s*for \(const name of Object\.keys\(StockMarket\)\)/.test(sm)) c1.fail("v is no longer ONE draw shared by every stock per tick — the volatility estimator's premise");
+    const truth = symbolMeta();
+    for (const [sym, t] of Object.entries(truth)) {
+      c1.examined(1);
+      const m = S.SYMBOL_META[sym];
+      if (!m) c1.fail(`${sym} missing from SYMBOL_META`);
+      else if (m.S !== t.S || JSON.stringify(m.servers) !== JSON.stringify(t.servers)) c1.fail(`${sym}: shipped ${JSON.stringify(m)} vs source ${JSON.stringify(t)}`);
+    }
+    for (const sym of Object.keys(S.SYMBOL_META)) if (!truth[sym]) c1.fail(`${sym} in SYMBOL_META but not in InitStockMetadata`);
+  }
+  checks.push(c1);
+
+  // -------------------------------------------------------------------
+  const c2 = new Check("ST2", "the shipped decision beats the old rules on the game's own market (same seeds)");
+  {
+    const SEEDS = [1, 2, 3, 4, 5, 6, 7];
+    const TICKS = 900; // 1.5h
+    const grow = (fn, cap) =>
+      SEEDS.map((seed) => {
+        const m = new Market({ seed, money: cap, burnInTicks: 3000 });
+        fn(m);
+        return Math.log(m.wealth() / cap) / (TICKS / 600);
+      });
+    const legacy = grow((m) => runLegacy(m, TICKS), 1e10);
+    const new4S = grow((m) => runNew(m, TICKS, { use4S: true }), 1e10);
+    c2.examined(SEEDS.length * 2);
+    const ml = median(legacy);
+    const mn = median(new4S);
+    c2.note(`4S long-only at $10b, ${SEEDS.length} seeds x 1.5h: shipped ${(mn * 100).toFixed(1)}%/h vs pre-rewrite stock.js ${(ml * 100).toFixed(1)}%/h (median ln-growth)`);
+    if (!(mn > ml * 1.15)) c2.fail(`the shipped 4S rule does not beat the pre-rewrite stock.js rule by 15%: ${(mn * 100).toFixed(1)} vs ${(ml * 100).toFixed(1)} %/h`, "stockstrat.decide may have been reverted or broken");
+
+    const pre = grow((m) => runNew(m, TICKS, { canShort: true }), 2.5e8);
+    const win = grow((m) => runNew(m, TICKS, { canShort: true, opt: { estimator: "beta", phaseMargin: Infinity, preWindow: 51, flipExit: false } }), 2.5e8);
+    c2.examined(SEEDS.length * 2);
+    const mp = median(pre);
+    const mw = median(win);
+    c2.note(`pre-4S long+short at $250m (BitNode 8's start): phase-aware ${(mp * 100).toFixed(1)}%/h vs 51-tick window ${(mw * 100).toFixed(1)}%/h`);
+    if (!(mp > 0)) c2.fail(`pre-4S median growth is not positive (${(mp * 100).toFixed(1)}%/h) — in BitNode 8 this is the whole income`);
+    if (!(mp > mw)) c2.fail(`the phase-aware estimator no longer beats a sliding window (${(mp * 100).toFixed(1)} vs ${(mw * 100).toFixed(1)} %/h)`);
+  }
+  checks.push(c2);
+
+  // -------------------------------------------------------------------
+  const c3 = new Check("ST3", "stock.js (shipped, fake ns on the real market): trades, is never refused, publishes, opens nothing under a stock hold, publishes the nodeecon record, honours a due claim");
+  {
+    const m = new Market({ seed: 7, money: 2.5e8, burnInTicks: 3000 });
+    const f = await runShipped(m, 400, {});
+    c3.examined(1);
+    const tel = JSON.parse(f.files["/tel/stock.txt"] || "null");
+    if (!tel) c3.fail("no /tel/stock.txt written");
+    else {
+      for (const k of ["mode", "canShort", "phase", "wealth", "cash", "claims", "held", "last", "buy4S", "counters", "lastAugReset", "equity"]) if (!(k in tel)) c3.fail(`/tel/stock.txt lacks '${k}'`);
+      if (tel.health !== "stopped" || !tel.exited) c3.fail(`the exit was not published (health ${tel.health})`);
+      if (!(tel.counters.orders > 0)) c3.fail("400 ticks at $250m and no order was sent");
+      if (tel.counters.refused > 0) c3.fail(`${tel.counters.refused} order(s) refused by the game`, JSON.stringify(tel.last?.refused?.slice(0, 2)));
+      if (tel.phase === null) c3.warn("the cycle phase was not found in 400 ticks");
+      c3.note(`400 ticks: ${tel.counters.orders} orders, wealth $${(m.wealth() / 1e6).toFixed(0)}m from $250m, phase ${tel.phase}, claims unreadable=${tel.claims?.unreadable}`);
+    }
+
+    // /tel/stock-hold.txt (act-liquidate.js, nodeecon.js contract): while it is
+    // fresh nothing is OPENED. Simulate the liquidator: sell everything, write
+    // the hold, and check no share is held again.
+    c3.examined(1);
+    const m2 = new Market({ seed: 8, money: 2.5e8, burnInTicks: 3000 });
+    let heldBefore = 0;
+    let reopened = 0;
+    await runShipped(m2, 300, {
+      onTick: (n, files) => {
+        if (n === 200) {
+          for (const s of m2.symbols) {
+            const [L, , Sh] = m2.position(s);
+            heldBefore += L + Sh;
+            if (L > 0) m2.sell(s, L);
+            if (Sh > 0) m2.cover(s, Sh);
+          }
+          files["/tel/stock-hold.txt"] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1, by: "act-liquidate.js", why: "install" });
+        } else if (n > 200) reopened += m2.symbols.reduce((a, s) => a + m2.position(s)[0] + m2.position(s)[2], 0);
+      },
+    });
+    if (!(heldBefore > 0)) c3.warn("nothing was held when the hold was injected — the hold path was not exercised");
+    if (reopened > 0) c3.fail("a position was opened while /tel/stock-hold.txt was fresh");
+
+    // The record nodeecon.js reads.
+    c3.examined(1);
+    const { stockRecordOf } = await import("../../nodeecon.js");
+    const rec = stockRecordOf(tel, 1, Date.parse(tel.at));
+    if (!rec.ok) c3.fail(`nodeecon.stockRecordOf refuses /tel/stock.txt: ${rec.why}`);
+    for (const k of ["equity", "returnPerSec", "capitalCap", "incomePerSec", "manip"]) if (!(k in tel)) c3.fail(`/tel/stock.txt lacks nodeecon's '${k}'`);
+    if (tel.canShort !== false) c3.fail("shorts must be opt-in (--short) until measured live");
+    c3.note(`nodeecon record: equity $${(rec.equity / 1e6).toFixed(0)}m, returnPerSec ${rec.returnPerSec?.toExponential(2)}, incomePerSec $${(rec.incomePerSec ?? 0).toFixed(0)}/s, capitalCap $${((rec.capitalCap ?? 0) / 1e12).toFixed(2)}t`);
+
+    // A due claim: with wealth above an augmentation claim, the claim is held as cash.
+    c3.examined(1);
+    const m3 = new Market({ seed: 9, money: 2.5e8, burnInTicks: 3000 });
+    const claim = 1e8;
+    // Home at its maximum RAM, so the home claim is 0 and the reserve is the augmentation claim alone.
+    const h = await runShipped(m3, 300, {
+      homeRam: 2 ** 30,
+      files: { "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: true, plan: { totalCost: claim, buy: [] }, joinClaim: 0 }) },
+    });
+    const t3 = JSON.parse(h.files["/tel/stock.txt"]);
+    // home claim: nextHomeUpgrade(1024GB) — read what the trader itself held.
+    const R = t3.claims?.reserve;
+    if (!(typeof R === "number" && R >= claim)) c3.fail(`the reserve ${R} does not include the $100m augmentation claim`);
+    else if (m3.wealth() >= R && !(m3.money >= R * 0.999)) c3.fail(`wealth $${(m3.wealth() / 1e6).toFixed(0)}m covers the $${(R / 1e6).toFixed(0)}m claim but cash is $${(m3.money / 1e6).toFixed(0)}m`);
+    else c3.note(`claim $${(R / 1e6).toFixed(0)}m: cash $${(m3.money / 1e6).toFixed(0)}m of wealth $${(m3.wealth() / 1e6).toFixed(0)}m`);
+  }
+  checks.push(c3);
+
+  // -------------------------------------------------------------------
+  const c4 = new Check("ST4", "the 4S TIX API purchase is a simulated-trajectory comparison");
+  {
+    c4.examined(1);
+    const none = SP.buy4SVerdict({ wealth: 1e12, cost: 25e9, horizonH: null });
+    if (none.buy || !/horizon/.test(none.why)) c4.fail("with no horizon the verdict must refuse and say why");
+    for (const [W, H] of [[3e10, 1], [5e10, 3], [1e11, 8], [1e12, 1]]) {
+      c4.examined(1);
+      const v = SP.buy4SVerdict({ wealth: W, cost: 25e9, horizonH: H, canShort: true });
+      const withW = SP.wealthAt("4S-ls", W - 25e9, H);
+      const withoutW = SP.wealthAt("pre-ls", W, H);
+      if (v.withW !== withW || v.withoutW !== withoutW || v.buy !== withW > withoutW) c4.fail(`W=${W} H=${H}: verdict is not withW > withoutW on the same inputs`);
+    }
+    const t = SP.RATE_TABLE;
+    for (const k of ["pre-long", "pre-ls", "4S-long", "4S-ls"]) {
+      c4.examined(1);
+      if (t[k].length !== t.caps.length) c4.fail(`${k} row length`);
+    }
+    for (let i = 0; i < t.caps.length; i++) if (!(t["4S-ls"][i] > t["pre-ls"][i])) c4.fail(`at $${t.caps[i]} the 4S rate is not above the pre-4S rate — the table is not what compare.mjs measures`);
+    c4.note(`$50b over 3h: ${SP.buy4SVerdict({ wealth: 5e10, cost: 25e9, horizonH: 3, canShort: true }).why}`);
+  }
+  checks.push(c4);
+
+  return checks;
+}

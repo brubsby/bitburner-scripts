@@ -233,7 +233,8 @@ export function repLadder(repReq, o = {}) {
   // The donation terminal arms only when EVERYTHING it needs is readable —
   // a half-specified donation model must degrade to the grind ladder, not
   // guess at dollar conversion rates.
-  const canDonate = num(donateAt) && donateAt > 0 && num(repMult) && repMult > 0 && num(nodeWorkRepMult) && nodeWorkRepMult > 0 && num(incomePerSec) && incomePerSec > 0
+  // donateAt 0 is a real threshold (BitNode 8: FavorToDonateToFaction 0), not "off".
+  const canDonate = num(donateAt) && donateAt >= 0 && num(repMult) && repMult > 0 && num(nodeWorkRepMult) && nodeWorkRepMult > 0 && num(incomePerSec) && incomePerSec > 0
 
   // This life first: the caller supplies its trajectory-priced hours for the
   // remaining requirement (hoursNow), and how much of this life's window is

@@ -318,6 +318,21 @@ export async function run() {
     if (!/lifeIncome: hacknetLifeIncome\(ns, info\)\.perSec/.test(p)) c.fail("progress.js exitInputsOf no longer carries hacknet money");
     if ((p.match(/hacknetLifeIncome\(ns, info\)\.perSec \* Wg \* 3600|\(incNow \+ hacknetLifeIncome\(ns, info\)\.perSec\) \* W0 \* 3600/g) ?? []).length !== 2) c.fail("both published moneyAtW figures must include the hacknet money until the install");
     if (!/moneyPerSec/.test(code("hacknet.js"))) c.fail("hacknet.js no longer publishes moneyPerSec");
+    // ONE instrument, no double count: nodeecon owns it, reports it as
+    // lifePerSec, and keeps it OUT of incomePerSec (which persists across
+    // installs and is level-scaled) — so it can only enter the exit once.
+    const ne = await import("../../nodeecon.js");
+    const now = Date.parse("2026-09-25T12:00:00Z");
+    const hn = ne.hacknetRecordOf({ at: new Date(now - 60e3).toISOString(), lastAugReset: 3, moneyPerSec: 7e4 }, 3, now);
+    const inc = ne.incomeOf({ scriptIncome: [1e3, 0], mults: {}, stock: null, hacknet: hn });
+    c.examined(3);
+    if (inc.lifePerSec !== 7e4 || inc.incomePerSec !== 1e3 || inc.flatPerSec !== 0) c.fail(`incomeOf must report hacknet as lifePerSec only: ${JSON.stringify(inc)}`);
+    if (ne.hacknetRecordOf({ at: new Date(now - 60e3).toISOString(), lastAugReset: 2, moneyPerSec: 7e4 }, 3, now).perSec !== 0) c.fail("another life's hacknet report must read 0");
+    if (!ne.incomeOf({ scriptIncome: [0, 0], mults: {}, hacknet: hn }).priced) c.fail("hacknet money alone is priced income (BitNode 9's opening)");
+    if (!/function hacknetLifeIncome\(ns, info\) \{\s*return hacknetRecordOf\(/.test(p)) c.fail("progress.js must read hacknet money through nodeecon.hacknetRecordOf, not a parallel parser");
+    if (/incomePerSec: incomePerSec \+ contractMoneyPerSec \+ /.test(p)) c.fail("hacknet money must not be folded into incomePerSec as well as lifeIncome");
+    const onlyLife = xp.exitHours({ ...base, incomePerSec: 0, installsFirst: 0, lifeIncome: 1e6 });
+    if (!(onlyLife.hours > 0)) c.fail(`a hold-to-exit run on hacknet money alone must price: ${onlyLife.why}`);
     checks.push(c);
   }
 

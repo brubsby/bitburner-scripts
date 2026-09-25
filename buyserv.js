@@ -43,7 +43,7 @@ import { reporter, describe, record } from 'status.js'
 // aliased: this file already has a local reserveFor(ns) for per-host reserves.
 import { reserveFor as budgetHold, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
-// Pure table (0GB): the node's HomeComputerRamCost, which the price carries.
+// The node's multiplier table (pure lookup; its main() is not imported code).
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetTarget } from 'fleetshape.js'
 
@@ -163,7 +163,11 @@ function fetchFromHome(ns, file) {
   }
 }
 
+/** Why reserveNow is holding everything, when it is (published as `hold`). */
+let holdWhy = null
+
 function reserveNow(ns) {
+  holdWhy = null
   fetchFromHome(ns, GATE_FILE)
   fetchFromHome(ns, SCHEDULE_FILE)
   // THE EXIT VERDICT, when progress.js published a fresh one this life
@@ -184,6 +188,21 @@ function reserveNow(ns) {
     }
   } catch {
     /* fall through to the claims rule */
+  }
+  // NO FALLBACK WHERE CLOUD RAM EARNS NOTHING. Every rule below prices a
+  // server by the money its hacking brings in. In a node with
+  // ScriptHackMoneyGain = 0 (BitNode 8, BitNode.tsx:773; NetscriptHelpers.tsx
+  // :648) that is a measured zero: the RAM buys hacking exp only, the next
+  // install deletes it, and the dollars it costs are the stock trader's
+  // compounding capital. Live on entering BitNode 8 (2026-09-25 12:52) this
+  // fallback spent ~$85m of the $250m opening on servers in the first
+  // minutes. So only the exit verdict above may spend here — it prices the
+  // spend against the trader's return as a trajectory — and until progress.js
+  // publishes one, everything is held, and says why.
+  const bn = bitNodeMults(ns.getResetInfo().currentNode)
+  if (bn && bn.ScriptHackMoneyGain === 0) {
+    holdWhy = 'scripted hacking pays nothing in this node (ScriptHackMoneyGain 0): cloud servers are bought only on a fresh exit verdict (installgate spendExit.servers), and none is published'
+    return Infinity
   }
   let base = SETTINGS.floorReserve
   for (const p of SETTINGS.programs) {
@@ -454,6 +473,7 @@ export async function main(ns) {
         fleetDollarPerGB: target > 0 ? ns.cloud.getServerCost(target) / target : null,
         money: Math.round(ns.getServerMoneyAvailable('home')),
         reserve,
+        hold: holdWhy,
         owned: fleet.length,
         limit,
         fleetRam: fleet.reduce((a, s) => a + s.ram, 0),
