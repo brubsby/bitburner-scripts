@@ -36,11 +36,18 @@
 import { acquire, release } from 'lock.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
+// Pure lookups: the node's multiplier table and the donation threshold.
+import { bitNodeMults } from 'bitNodeMultipliers.js'
+import { favorToDonateOf } from 'nodeecon.js'
 
 const doc = eval('document')
 const win = eval('window')
 const STATUS = '/tel/nfg.txt'
-const MIN_FAVOR = 150
+// floor(150 x FavorToDonateToFaction) (donation.ts:16-17), from the node's
+// table — NOT the literal 150 this used to be. BitNode 8 sets the multiplier
+// to 0 (donations from favor 0); BitNode 3 to 0.5. Set in main from
+// ns.getResetInfo; an unknown node keeps 150, the value every other node has.
+let MIN_FAVOR = 150
 
 const vis = (sel) => [...doc.querySelectorAll(sel)].filter((e) => e.offsetParent !== null)
 const byText = (sel, text) => vis(sel).find((e) => e.textContent && e.textContent.trim() === text)
@@ -84,6 +91,7 @@ export async function main(ns) {
     ['faction', ''],
   ])
   ns.disableLog('ALL')
+  MIN_FAVOR = favorToDonateOf(bitNodeMults(ns.getResetInfo().currentNode)) ?? 150
   const log = []
   // Cost of the next level in dollars of donation, for a human reading
   // /tel/nfg.txt: "how much more would it have taken?" is otherwise
@@ -162,7 +170,7 @@ export async function main(ns) {
       const txt = (card?.textContent || '').replace(/\s+/g, ' ')
       const fav = parseNum((txt.match(/([\d.,]+)\s*favor/) || [])[1])
       const name = (txt.match(/BitRunners|The Black Hand|NiteSec|Sector-12|CyberSec|Netburners|Tian Di Hui/) || [])[0] || '?'
-      if (flags.faction ? name === flags.faction : fav > best.favor) best = { idx: i, favor: fav, name }
+      if (flags.faction ? name === flags.faction : best.idx < 0 || fav > best.favor) best = { idx: i, favor: fav, name } // best.idx < 0: at a 0 threshold a 0-favor faction qualifies
     })
     if (best.idx < 0 || best.favor < MIN_FAVOR) {
       // 'waiting', NOT 'error'. Favour resets with the BitNode, so EVERY node

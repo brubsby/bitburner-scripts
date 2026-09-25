@@ -12,7 +12,7 @@
 // to exercise the structure, not claims about the game.
 
 import { Check } from "./harness.mjs";
-import "./gameresolve.mjs";
+import { REPO_ROOT } from "./gameresolve.mjs";
 
 const { exitHours, bestExitPolicy, hoursToLevel, hoursToMoney, hoursToRep, expForLevel, levelAt } = await import(
   "../../exitplan.js"
@@ -273,7 +273,7 @@ export async function run() {
     // planner, so every level projection ran on the raw value in eleven
     // BitNodes. No `hackingMult:` feed in progress.js may be the raw field.
     c8.examined(1);
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const raw = [...src.matchAll(/hackingMult:\s*player\.mults\??\.hacking\b/g)].length;
     if (raw) c8.fail(`${raw} \`hackingMult:\` feed(s) in progress.js pass the RAW multiplier into a level curve`, "use effectiveHackingMult(player, info)");
     const eff = [...src.matchAll(/hackingMult:\s*effectiveHackingMult\(/g)].length;
@@ -332,7 +332,7 @@ export async function run() {
     const fs = (await import("node:fs")).default;
     const path = (await import("node:path")).default;
     const { GAME } = await import("./build-ram.mjs");
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const calls = [...src.matchAll(/expPerSecWithFleet\(([^\n]{0,40})/g)];
     c10.examined(calls.length);
     // One feed since every exit simulation shares exitInputsOf (CLAUDE.md: one builder).

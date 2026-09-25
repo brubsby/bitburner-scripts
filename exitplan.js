@@ -86,9 +86,21 @@ export function hoursToLevel(level, mult, exp0, expPerSec) {
  */
 export function hoursToMoney(target, o = {}) {
   const { money0 = 0, incomeAtLevel1, mult, exp0 = 0, expPerSec, maxHours = 1e4, extraAt = null } = o
+  // BITNODE 8 TERMS (nodeecon.incomeOf), each defaulting to "absent", so every
+  // other node integrates exactly what it always did:
+  //   flatPerSec           income that does not move with the hacking level
+  //   capitalReturnPerSec  the stock trader's measured return, paid as
+  //                        r x min(money, capitalCap). It COMPOUNDS on the
+  //                        balance being integrated — after an install it
+  //                        restarts from the post-install balance, not from
+  //                        today's $/s — which is why it cannot be a rate.
+  const flat = num(o.flatPerSec) && o.flatPerSec > 0 ? o.flatPerSec : 0
+  const r = num(o.capitalReturnPerSec) && o.capitalReturnPerSec > 0 ? o.capitalReturnPerSec : 0
+  const cap = num(o.capitalCap) && o.capitalCap > 0 ? o.capitalCap : Infinity
+  const lvlIncome = num(incomeAtLevel1) && incomeAtLevel1 > 0 ? incomeAtLevel1 : 0
   let stepH = o.stepH ?? 1 / 120
   if (!num(target) || target <= money0) return 0
-  if (!pos(incomeAtLevel1) || !pos(mult) || !num(exp0)) return null
+  if (!(lvlIncome > 0 || flat > 0 || r > 0) || !pos(mult) || !num(exp0)) return null
   let money = money0
   let exp = Math.max(0, exp0)
   let h = 0
@@ -100,21 +112,30 @@ export function hoursToMoney(target, o = {}) {
   // is then reported as the maxHours it could not beat.
   {
     const lvl0 = levelAt(exp, mult)
-    const r0 = (incomeAtLevel1 * (lvl0 + 50)) / 51 + (typeof extraAt === 'function' ? extraAt(0) : 0)
+    const r0 = (lvlIncome * (lvl0 + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(0) : 0) + r * Math.min(Math.max(0, money), cap)
     const est = r0 > 0 ? (target - money) / r0 / 3600 : maxHours
     stepH = Math.max(stepH, Math.min(maxHours, est) / 200)
+    // A compounding balance must not be stepped past ~2% growth: the linear
+    // estimate above over-states an exponential leg by orders of magnitude,
+    // and a step of 2/r is not an integration of e^rt. (4000 steps of 2%
+    // still span e^80.) The iteration cap keeps its meaning: maxHours/4000.
+    if (r > 0) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), maxHours / 4000))
   }
   let iter = 0
   while (h < maxHours && iter++ < 4000) {
     const lvl = levelAt(exp, mult)
     // income(level) = incomeAtLevel1 * (level + 50) / 51
-    const rate = (incomeAtLevel1 * (lvl + 50)) / 51 + (typeof extraAt === 'function' ? extraAt(h) : 0)
+    const rate = (lvlIncome * (lvl + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(h) : 0)
+    const dt = stepH * 3600
+    // The capital term over the step: exponential below the cap, linear at it.
+    const capGain = r > 0 ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
+    const add = rate * dt + Math.max(0, capGain)
     // The last step lands exactly: without this the answer is quantised to
     // stepH, and a with/without comparison of a small spend reads as zero
     // (or as a whole step) — noise deciding purchases.
-    if (money + rate * stepH * 3600 >= target) return h + (target - money) / rate / 3600
-    money += rate * stepH * 3600
-    exp += pos(expPerSec) ? expPerSec * stepH * 3600 : 0
+    if (money + add >= target) return h + ((target - money) / add) * stepH
+    money += add
+    exp += pos(expPerSec) ? expPerSec * dt : 0
     h += stepH
   }
   return Infinity
@@ -136,9 +157,14 @@ export function hoursToRep(target, o = {}) {
   // the failure [C5] exists to catch (and did catch, on this very line).
   // Absent, the donation route is simply not offered and the reputation is
   // ground instead: slower, never wrong.
+  //
+  // ZERO IS A THRESHOLD, not an absence: BitNode 8 sets
+  // FavorToDonateToFaction = 0 (BitNode.tsx:776), so every faction accepts
+  // donations from favor 0. This read `pos(favorToDonate)` and so priced every
+  // BN8 reputation leg as a grind while the node sold it for money.
   const { rep0 = 0, repPerSec, donationCost = null, favor = 0, favorToDonate = null, moneyLeg = null } = o
   if (!num(target) || target <= rep0) return { hours: 0, how: 'already held' }
-  if (pos(favorToDonate) && favor >= favorToDonate && pos(donationCost) && typeof moneyLeg === 'function') {
+  if (num(favorToDonate) && favorToDonate >= 0 && favor >= favorToDonate && pos(donationCost) && typeof moneyLeg === 'function') {
     const h = moneyLeg(donationCost)
     if (num(h)) return { hours: h, how: `donated $${Math.round(donationCost)}` }
   }
@@ -253,6 +279,18 @@ export function exitHours(o = {}) {
     eRep = null,
     persistBaseline = null,
     perCycleExtra = null,
+    // WHERE THE MONEY COMES FROM (nodeecon.incomeOf), all optional and all
+    // "absent" by default so every node but BitNode 8 prices exactly as before:
+    //   flatIncomePerSec     the part of incomePerSec that does NOT scale with
+    //                        the hacking level (the rest is scripted hacking)
+    //   capitalReturnPerSec  the stock trader's measured return on the balance,
+    //   capitalCap           paid on min(money, cap) and compounding
+    //   installCash          the balance an install leaves: $1262, or BN8's
+    //                        $250m (nodeecon.postInstallMoney)
+    flatIncomePerSec = 0,
+    capitalReturnPerSec = 0,
+    capitalCap = null,
+    installCash = null,
   } = o
   // SOMETHING EVERY LATER LIFE ALSO BUYS (perCycleExtra {hacking, rep, income,
   // fromInstall}): from install number `fromInstall` on, each install carries
@@ -294,7 +332,13 @@ export function exitHours(o = {}) {
   const repFrom = num(repBoost?.fromH) && repBoost.fromH > 0 ? repBoost.fromH : 0
   const growthAt = (t) => (t >= repFrom ? repLift : 1) * (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
 
-  if (!pos(incomePerSec) || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
+  // Income is priced when ANY source is measured positive. A node whose only
+  // income is the trader's compounding return (BitNode 8: scripted hacking
+  // pays ScriptHackMoneyGain = 0) has incomePerSec 0 and is still priceable.
+  const flatInc = num(flatIncomePerSec) && flatIncomePerSec > 0 ? flatIncomePerSec : 0
+  const capR = num(capitalReturnPerSec) && capitalReturnPerSec > 0 ? capitalReturnPerSec : 0
+  const incomeOk = num(incomePerSec) && incomePerSec >= 0 && (incomePerSec > 0 || capR > 0)
+  if (!incomeOk || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
     return { hours: null, why: 'live state unreadable (income, hacking, multiplier or exit level)' }
   }
   if (!num(installsFirst) || installsFirst < 0) return { hours: null, why: 'installsFirst must be >= 0' }
@@ -305,7 +349,10 @@ export function exitHours(o = {}) {
   // Income at level 1 for THIS fleet, derived from the live pair. Everything
   // downstream of an install starts here, which is what makes the rebuild
   // visible instead of assumed away.
-  let incomeAtLevel1 = (incomePerSec * 51) / (hacking + 50)
+  // Only the level-scaled part: flatIncomePerSec rides beside it unscaled, and
+  // hacking_money augmentations (installGains.income) lift this part alone —
+  // they do nothing for a stock portfolio.
+  let incomeAtLevel1 = (Math.max(0, incomePerSec - flatInc) * 51) / (hacking + 50)
   let repRate = repPerSec
   let donation = donationCost
 
@@ -357,7 +404,10 @@ export function exitHours(o = {}) {
     mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
     for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift * cycleExtraAt(i)
     exp = 0
-    cash = 1262 // PlayerObjectGeneralMethods.ts:102
+    // PlayerObjectGeneralMethods.ts:102 ($1262), or Prestige.ts:158's $250m in
+    // BitNode 8 — which REPLACES the balance, positions included (the market
+    // re-initialises, Prestige.ts:166-170).
+    cash = num(installCash) && installCash >= 0 ? installCash : 1262
     legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
   }
 
@@ -368,7 +418,7 @@ export function exitHours(o = {}) {
   if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
   const moneyLeg = (target) => {
     const t0 = h
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -713,36 +763,50 @@ export function batchHackingGain(multsList) {
 export function spendExit(o = {}) {
   const { inputs, cost, gainPerSec, persists = false, finalWindow = false } = o
   if (!inputs || !pos(cost) || !num(gainPerSec) || gainPerSec < 0) return { deltaH: null, why: 'spend unreadable (cost or gain)' }
+  // HACKING EXP AS THE RETURN (o.expGainPerSec): where scripted hacking pays
+  // nothing (BitNode 8) home RAM's only return is exp, and home survives every
+  // install, so the with-run climbs on expPerSec + this. Only a PERSISTING
+  // spend carries it: exp earned before an install is reset by it
+  // (Prestige.ts), so a destroyed purchase's exp never reaches the climb.
+  // Absent (0) everywhere else, so no other verdict changes.
+  const expGain = persists && num(o.expGainPerSec) && o.expGainPerSec > 0 && num(inputs.expPerSec) ? o.expGainPerSec : 0
+  const withExp = (x) => (expGain > 0 ? { ...x, expPerSec: inputs.expPerSec + expGain } : x)
   if (finalWindow) {
     const without = bestExitPolicy(inputs, 0, 0)
-    const withS = bestExitPolicy({ ...inputs, money: Math.max(0, (inputs.money ?? 0) - cost), incomePerSec: inputs.incomePerSec + gainPerSec }, 0, 0)
+    const withS = bestExitPolicy(withExp({ ...inputs, money: Math.max(0, (inputs.money ?? 0) - cost), incomePerSec: inputs.incomePerSec + gainPerSec }), 0, 0)
     if (!without.best || !withS.best) return { deltaH: null, why: `final window unpriced: ${without.why ?? withS.why}` }
     return { deltaH: withS.best.hours - without.best.hours, withH: withS.best.hours, withoutH: without.best.hours }
   }
   const W = o.W
   if (!num(W) || W < 0 || typeof o.moneyAt !== 'function') return { deltaH: null, why: 'install point or money trajectory unreadable' }
   const m0 = o.moneyAt(W)
-  const m1 = m0 - cost + gainPerSec * W * 3600
+  // Dollars spent now also stop compounding at the trader's return until the
+  // install (BitNode 8's capital term; 0 elsewhere, so m1 is unchanged there).
+  const rCap = num(inputs.capitalReturnPerSec) && inputs.capitalReturnPerSec > 0 ? inputs.capitalReturnPerSec : 0
+  const m1 = m0 - cost - (rCap > 0 ? cost * Math.expm1(rCap * W * 3600) : 0) + gainPerSec * W * 3600
   const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
-  const exitWith = (m, extraIncome) => {
+  const exitWith = (m, extraIncome, exp = false) => {
     const g = m >= 0 ? gainsAt(m) : null
     if (m < 0) return { best: null, why: 'the spend is not affordable by the install' }
-    return bestExitPolicy({ ...inputs, incomePerSec: inputs.incomePerSec + extraIncome, firstInstallH: W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) }, 400, 1)
+    const x = { ...inputs, incomePerSec: inputs.incomePerSec + extraIncome, firstInstallH: W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) }
+    return bestExitPolicy(exp ? withExp(x) : x, 400, 1)
   }
   // Income that persists also buys more augmentations in EVERY later life:
   // the planner measures that response as eBudget = dln(planM)/dln(money)
   // (progress.js, the plan re-run at x1.5 money), so a later life's gain
   // becomes g x K^eBudget at income xK. Unmeasured, it is left out — the
   // verdict is then a floor, and says so.
-  const K = persists && gainPerSec > 0 ? (inputs.incomePerSec + gainPerSec) / inputs.incomePerSec : 1
+  // (incomePerSec 0 is a real input in BitNode 8, where the income is the
+  // trader's return: a ratio against it is undefined, not infinite.)
+  const K = persists && gainPerSec > 0 && pos(inputs.incomePerSec) ? (inputs.incomePerSec + gainPerSec) / inputs.incomePerSec : 1
   const e = num(o.eBudget) && o.eBudget >= 0 ? o.eBudget : null
   const without = exitWith(m0, 0)
   const withS = (() => {
-    const r = exitWith(m1, persists ? gainPerSec : 0)
+    const r = exitWith(m1, persists ? gainPerSec : 0, true)
     if (!(K > 1) || e === null || !pos(inputs.multGainPerCycle)) return r
     const g = inputs.multGainPerCycle * Math.pow(K, e)
     const gAt = m1 >= 0 ? gainsAt(m1) : null
-    return m1 < 0 ? r : bestExitPolicy({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, multGainPerCycle: g, firstInstallH: W, ...(gAt ? { installGains: gAt, nextInstallGain: gAt.hacking } : {}) }, 400, 1)
+    return m1 < 0 ? r : bestExitPolicy(withExp({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, multGainPerCycle: g, firstInstallH: W, ...(gAt ? { installGains: gAt, nextInstallGain: gAt.hacking } : {}) }), 400, 1)
   })()
   if (!without.best || !withS.best) return { deltaH: null, why: `unpriced: ${without.why ?? withS.why}` }
   return {
