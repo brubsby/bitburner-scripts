@@ -21,7 +21,6 @@ try {
 for (const [label, code, name] of [
   ["stock.js (before, ee29130)", old, "stock.js"],
   ["stock.js", fs.readFileSync(`${m.REPO}/stock.js`, "utf8"), "stock.js"],
-  ["act-stocksell.js", fs.readFileSync(`${m.REPO}/act-stocksell.js`, "utf8"), "act-stocksell.js"],
 ]) {
   if (!code) continue;
   const r = price(code, name);

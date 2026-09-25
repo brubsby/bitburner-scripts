@@ -61,8 +61,7 @@ const ACTORS = {
   install: 'act-install.js',
   homeram: 'act-homeram.js',
   graft: 'act-graft.js',
-  // stock.js's positions, sold before a batch that spends (see below).
-  stocksell: 'act-stocksell.js',
+  liquidate: 'act-liquidate.js',
 }
 /** Dynamic snapshots older than this are re-taken before the planner's next pass. */
 const SNAPSHOT_REFRESH_MS = 60 * 1000
@@ -107,7 +106,9 @@ async function runSnapshot(ns, actor) {
 }
 
 /** Orders whose failure ends the purchase chain they belong to. */
-const CHAIN = new Set(['donate', 'buyaug'])
+// liquidate: the sale of the stock positions that fund the purchases after it
+// (progress.js prefixes it) — if it fails, those purchases cannot be paid.
+const CHAIN = new Set(['liquidate', 'donate', 'buyaug'])
 
 function rootedHosts(ns) {
   const seen = new Set(['home'])
@@ -264,7 +265,7 @@ export async function main(ns) {
       // without being pulled, so off home ns.read returned '' and the verdict
       // was undefined — the karma grind carried on with the answer sitting on
       // home, unreachable. Invariant C10 exists for exactly this.
-      for (const f of ['/tel/progress.txt', '/tel/factionplan.txt', '/tel/installgate.txt', '/tel/gang.txt', ORDERS]) fetchFromHome(ns, f)
+      for (const f of ['/tel/progress.txt', '/tel/factionplan.txt', '/tel/installgate.txt', '/tel/gang.txt', '/tel/stock.txt', ORDERS]) fetchFromHome(ns, f)
       const snaps = await refreshSnapshots(ns, info)
 
       // ---- 1. orders from the planner --------------------------------------
@@ -275,15 +276,6 @@ export async function main(ns) {
         const results = []
         let chainFailed = false
         let bought = 0
-        // STOCKS FIRST (stock.js): an install destroys every share
-        // (Prestige.ts initStockMarket) and a purchase needs cash, not
-        // positions. stock.js stands down while this batch is pending; this
-        // makes the sale happen before the first spend rather than on its
-        // next tick. A failed sale is recorded, never blocking.
-        if (batch.orders.some((o) => o.kind === 'buyaug' || o.kind === 'donate' || o.kind === 'install')) {
-          const r = await runActor(ns, 'stocksell', [])
-          results.push({ id: 'stocksell', kind: 'stocksell', ...r })
-        }
         for (const o of batch.orders) {
           if (CHAIN.has(o.kind) && chainFailed) {
             results.push({ id: o.id, kind: o.kind, skipped: 'an earlier purchase in the chain failed' })
@@ -304,9 +296,20 @@ export async function main(ns) {
               results.push({ id: o.id, kind: o.kind, skipped: `a purchase in this batch failed; ${bought} bought of the plan — not installing on a partial plan` })
               continue
             }
+            // SELL THE STOCK POSITIONS FIRST, every install, every node: the
+            // market re-initialises at an install (Prestige.ts:166-170) and an
+            // open position is destroyed. BEFORE the spend-down, so the
+            // proceeds go into home like any other cash. The actor no-ops
+            // without TIX access. If it cannot confirm the book is flat while
+            // the trader reports equity, the install waits for next pass.
+            const liq = await runActor(ns, 'liquidate', ['install'])
+            if (liq.ok !== true && readJson(ns, '/tel/stock.txt')?.equity > 0) {
+              results.push({ id: o.id, kind: o.kind, skipped: `stock positions could not be confirmed sold (${liq.why ?? liq.result?.error ?? 'no result'}) — an install would destroy them`, liquidate: liq })
+              break
+            }
             const sd = await spendDown(ns)
             const r = await runActor(ns, 'install', o.args)
-            results.push({ id: o.id, kind: o.kind, ...r, spendDown: sd })
+            results.push({ id: o.id, kind: o.kind, ...r, spendDown: sd, liquidate: { ok: liq.ok, proceeds: liq.result?.proceeds ?? null } })
             break // the game reloads on success; nothing after this runs
           }
           const r = await runActor(ns, o.kind, o.args)

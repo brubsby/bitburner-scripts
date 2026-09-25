@@ -21,7 +21,7 @@
 //
 // RAM: ~28GB (see the report in /tel/stock.txt `ram` and tools/test/stockstrat.test.mjs).
 
-import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary } from 'stockstrat.js'
+import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META } from 'stockstrat.js'
 import { buy4SVerdict } from 'stockplan.js'
 import { canShortStock } from 'sfgate.js'
 import { reserveFor, augClaim, joinClaim } from 'budget.js'
@@ -29,15 +29,14 @@ import { nextHomeUpgrade } from 'homecost.js'
 import { reporter, record, describe } from 'status.js'
 import { remainingLife } from 'hacknetplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
+// The record this file publishes and the hold it honours are specified in
+// nodeecon.js (the one module that reads them): equity, returnPerSec,
+// capitalCap, incomePerSec, manip; /tel/stock-hold.txt.
+import { STOCK_HOLD_FILE, STOCK_HOLD_MS } from 'nodeecon.js'
 
 const STATUS = '/tel/stock.txt'
 const GATE_FILE = '/tel/installgate.txt'
-const ORDERS = '/tel/orders.txt'
-const ACT = '/tel/act.txt'
 const SCHEDULE = '/tel/factionplan.txt'
-const ORDERS_FRESH_MS = 15 * 60 * 1000 // act.js ORDERS_FRESH_MS
-const SPENDING_ORDERS = new Set(['buyaug', 'donate', 'install'])
-
 function readJson(ns, file) {
   try {
     return JSON.parse(ns.read(file) || 'null')
@@ -55,20 +54,36 @@ function fetchFromHome(ns, file) {
 }
 
 /**
- * Is a spending order batch waiting for act.js? Then money must be cash.
- * Pending = fresh, this life's, contains buyaug/donate/install, and act.js has
- * not yet reported that batch as executed.
+ * /tel/stock-hold.txt (act-liquidate.js writes it before a funded batch and
+ * every install): while fresh and of this life, open NO position — the sale
+ * has happened and an install may be imminent, which destroys every share.
  */
-function spendPending(ns, info) {
-  fetchFromHome(ns, ORDERS)
-  fetchFromHome(ns, ACT)
-  const b = readJson(ns, ORDERS)
-  if (!b || b.lastAugReset !== info.lastAugReset || !(Date.now() - Date.parse(b.at) < ORDERS_FRESH_MS)) return null
-  const kinds = (b.orders ?? []).map((o) => o.kind).filter((k) => SPENDING_ORDERS.has(k))
-  if (!kinds.length) return null
-  const a = readJson(ns, ACT)
-  if (a?.orders?.at === b.at) return null
-  return { at: b.at, kinds }
+function holdOf(ns, info) {
+  fetchFromHome(ns, STOCK_HOLD_FILE)
+  const h = readJson(ns, STOCK_HOLD_FILE)
+  if (!h || h.lastAugReset !== info.lastAugReset) return null
+  const age = Date.now() - Date.parse(h.at ?? '')
+  return age >= 0 && age < STOCK_HOLD_MS ? { at: h.at, by: h.by ?? null, why: h.why ?? null, ageS: Math.round(age / 1000) } : null
+}
+
+/**
+ * Which server's batch should carry {stock: true}, and on which side
+ * (nodeecon.js `manip`): the companies behind our three largest positions —
+ * 'grow' pushes a long's second-order forecast up, 'hack' a short's down
+ * (PlayerInfluencing.ts). Offline, 2 moneyMax-fractions per tick of flagged
+ * grows on the largest position lifted $250m growth from ~96%/h to ~266%/h
+ * (tools/sim/stocks/compare.mjs new-pre-ls+manip2); what the live batcher
+ * delivers is not measured.
+ */
+function manipOf(positions, prices) {
+  const top = Object.entries(positions)
+    .map(([s, [L, , Sh]]) => ({ s, v: (L + Sh) * prices[s], side: L >= Sh ? 'grow' : 'hack' }))
+    .filter((x) => x.v > 0 && SYMBOL_META[x.s]?.servers?.length)
+    .sort((a, b) => b.v - a.v)
+    .slice(0, 3)
+  const out = {}
+  for (const x of top) for (const h of SYMBOL_META[x.s].servers) out[h] = x.side
+  return out
 }
 
 /** The claims budget.js ranks above stocks; null fields are UNREADABLE. */
@@ -110,7 +125,9 @@ export async function main(ns) {
   const flags = ns.flags([
     ['horizon', -1], // hours: override the remaining-life horizon for the 4S verdict
     ['no4s', false], // never buy the 4S TIX API
-    ['long-only', false], // never open shorts even where the node allows them
+    // Shorts are opt-in: long+short and long-only measure alike offline
+    // (tools/sim/stocks/compare.mjs) and nothing live has confirmed either.
+    ['short', false],
   ])
   const errors = []
   const counters = { ticks: 0, orders: 0, refused: 0, missedTicks: 0 }
@@ -124,10 +141,10 @@ export async function main(ns) {
   }, 'status')
 
   const info = ns.getResetInfo()
-  // Shorts where the game allows them (BN8 or SF8.2), unless --long-only.
+  // Shorts only with --short AND where the game allows them (BN8 or SF8.2).
   // Existing shorts are still closed normally (decide exits a short when
   // canShort is false), so the flag is safe to flip on a running book.
-  const canShort = canShortStock(info) && !flags['long-only']
+  const canShort = canShortStock(info) && flags.short === true
   if (!ns.stock.hasTixApiAccess()) {
     // Not an error: the entry is progress.js's decision (stockplan.verdict).
     // Exit rather than idle at ~28GB; watchdog.js relaunches on the invariant
@@ -144,6 +161,22 @@ export async function main(ns) {
   const st = newState(syms)
   let last = { orders: [], refused: [] }
   let v4s = null
+  // Return accounting (nodeecon.js returnPerSec/incomePerSec): each tick's
+  // P&L is the change in post-trade equity plus the cash our own orders moved,
+  // so deposits and withdrawals by other spenders never read as return.
+  let prevEquity = null
+  const ret = [] // [{pnl, capitalSec}] over the last hour of ticks
+  let lifePnl = 0
+  let lifeSec = 0
+  const equityOf = (positions, ask, bid) => {
+    let v = 0
+    for (const s of syms) {
+      const [L, , Sh, shAvg] = positions[s]
+      if (L > 0) v += L * bid[s] - consts.StockMarketCommission
+      if (Sh > 0) v += Sh * (2 * shAvg - ask[s]) - consts.StockMarketCommission
+    }
+    return Math.max(0, v)
+  }
 
   while (true) {
     await ns.stock.nextUpdate()
@@ -167,16 +200,11 @@ export async function main(ns) {
 
       const positions = Object.fromEntries(syms.map((s) => [s, ns.stock.getPosition(s)]))
       const cash = ns.getServerMoneyAvailable('home')
-      let posValue = 0
-      for (const s of syms) {
-        const [L, , Sh, shAvg] = positions[s]
-        if (L > 0) posValue += L * bid[s] - consts.StockMarketCommission
-        if (Sh > 0) posValue += Sh * (2 * shAvg - ask[s]) - consts.StockMarketCommission
-      }
+      const posValue = equityOf(positions, ask, bid)
       const wealth = cash + posValue
 
       // ---- money discipline ------------------------------------------------
-      const pending = spendPending(ns, info)
+      const hold = holdOf(ns, info)
       const claims = claimsOf(ns, info)
       const R = reserveFor('stocks', claims) // Infinity when any claim is unreadable
       // Liquid claimant: a claim is honoured in CASH once wealth covers it; while
@@ -187,8 +215,12 @@ export async function main(ns) {
       // from cash, so the cost of the unknown is one tick of delay, not a spend.
       const claimKnown = isFinite(R)
       const raiseCash = claimKnown && wealth >= R ? R : 0
-      const book = { cash, positions, maxShares, ask, bid, canShort, liquidate: !!pending, raiseCash }
-      const { orders, diag } = decide(st, book)
+      const book = { cash, positions, maxShares, ask, bid, canShort, raiseCash }
+      const decided = decide(st, book)
+      const diag = decided.diag
+      // Under a hold nothing is OPENED; exits and trims still go through.
+      const orders = hold ? decided.orders.filter((o) => o.kind === 'sell' || o.kind === 'cover') : decided.orders
+      const cashBefore = ns.getServerMoneyAvailable('home')
 
       // ---- execute: sells first (decide orders them so), each checked -------
       const refused = []
@@ -209,9 +241,23 @@ export async function main(ns) {
         }
       }
       last = { at: new Date().toISOString(), orders, refused }
+      const flows = ns.getServerMoneyAvailable('home') - cashBefore
+      const posAfter = orders.length ? Object.fromEntries(syms.map((s) => [s, ns.stock.getPosition(s)])) : positions
+      const equity = equityOf(posAfter, ask, bid)
+      if (prevEquity !== null) {
+        const pnl = posValue - prevEquity // this tick's market move on last tick's book
+        const capital = prevEquity + Math.max(0, cash - (claimKnown ? Math.min(R, cash) : 0))
+        ret.push({ pnl, capitalSec: capital * 6 })
+        if (ret.length > 600) ret.shift()
+        lifePnl += pnl + (equity - posValue + flows) // + the spread/commission the trades cost
+        lifeSec += 6
+      }
+      prevEquity = equity
+      const wPnl = ret.reduce((a, b) => a + b.pnl, 0)
+      const wCap = ret.reduce((a, b) => a + b.capitalSec, 0)
 
       // ---- the 4S TIX API: a trajectory decision ----------------------------
-      if (!has4S && !flags.no4s) {
+      if (!has4S && !flags.no4s && !hold) {
         const cost = consts.MarketDataTixApi4SCost * nodeMults.FourSigmaMarketDataApiCost
         const life = flags.horizon >= 0 ? { hours: flags.horizon, why: '--horizon', source: 'flag' } : remainingLifeH(ns, info.lastAugReset)
         v4s = buy4SVerdict({ wealth: wealth - (claimKnown ? R : 0), cost, horizonH: life.hours, canShort, why: life.why })
@@ -242,13 +288,21 @@ export async function main(ns) {
         cash,
         positionsValue: posValue,
         claims: { ...claims, reserve: claimKnown ? R : null, unreadable: !claimKnown, raiseCash },
-        pending,
-        liquidating: !!pending,
+        lastAugReset: info.lastAugReset,
+        equity,
+        // Net return on the capital managed, per second, over the last hour
+        // of ticks (null until 10 ticks). Measured, not the offline table.
+        returnPerSec: ret.length >= 10 && wCap > 0 ? wPnl / wCap : null,
+        // Market capacity: every stock at maxShares, at today's prices.
+        capitalCap: syms.reduce((a, s) => a + maxShares[s] * prices[s], 0),
+        incomePerSec: lifeSec >= 60 ? lifePnl / lifeSec : null,
+        manip: manipOf(positions, prices),
+        hold,
         held,
         last,
         diag,
         buy4S: v4s,
-        why: !claimKnown ? 'a higher claim is UNREADABLE (join/augmentations) — trading anyway, positions are one tick from cash' : pending ? `a spending batch (${pending.kinds.join(',')}) is pending — liquidated, standing down` : null,
+        why: hold ? `stock hold by ${hold.by} (${hold.why}) ${hold.ageS}s old — opening nothing` : !claimKnown ? 'a higher claim is UNREADABLE (join/augmentations) — trading anyway, positions are one tick from cash' : null,
       })
       push()
     } catch (err) {

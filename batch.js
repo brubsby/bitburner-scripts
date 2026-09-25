@@ -71,6 +71,30 @@
 import { reporter, describe, record } from 'status.js'
 // Pure arithmetic over getResetInfo's output; no ns surface of its own.
 import { singularityRamMultiplier } from 'sfgate.js'
+// Pure: the stock trader's record and which side of a batch it wants to move
+// its stock (nodeecon.js documents the /tel/stock.txt `manip` interface).
+import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
+
+/**
+ * STOCK MANIPULATION, as a service to the trader. hack/grow take {stock: true}
+ * (NetscriptHelpers.tsx:668-669, NetscriptFunctions.ts:301-302), which nudges
+ * the server's company forecast down (hack) or up (grow) with chance equal to
+ * the fraction of moneyMax moved. The trader publishes `manip: {host: 'hack'
+ * |'grow'}`; batches against those hosts carry the flag on that ONE side
+ * (h.js/g.js 4th argument). Refreshed with the targets; a stale or other-life
+ * record flags nothing. Hosts the trader wants that this batcher does not
+ * target are published as `unserved`, not silently dropped — the batcher
+ * still chooses targets by its own objective.
+ */
+let stockManip = null
+function refreshStockManip(ns) {
+  try {
+    const rec = stockRecordOf(JSON.parse(ns.read(STOCK_FILE) || 'null'), ns.getResetInfo().lastAugReset)
+    stockManip = rec.ok && rec.manip && Object.keys(rec.manip).length ? rec.manip : null
+  } catch {
+    stockManip = null
+  }
+}
 
 const SETTINGS = {
   workers: { hack: 'h.js', grow: 'g.js', weaken: 'w.js' },
@@ -1247,6 +1271,7 @@ export async function main(ns) {
       // --- choose targets ---------------------------------------------------
       if (now >= nextRetarget || !targets.length) {
         nextRetarget = now + SETTINGS.retargetMs
+        refreshStockManip(ns)
         const level = ns.getHackingLevel()
         const ranked = []
         for (const h of scanAll(ns)) {
@@ -1632,7 +1657,7 @@ export async function main(ns) {
         const pids = []
         let ok = true
         for (const o of placed) {
-          const pid = ns.exec(SETTINGS.workers[o.op], o.host, { threads: o.threads, temporary: true }, host, o.pad, id)
+          const pid = ns.exec(SETTINGS.workers[o.op], o.host, { threads: o.threads, temporary: true }, host, o.pad, id, stockFlagFor(stockManip, host, o.op))
           if (!pid) {
             ok = false
             s.execFails++
@@ -1848,6 +1873,9 @@ export async function main(ns) {
             loops,
           },
           calibration,
+          // The trader's manipulation requests (nodeecon.js): which it asked for,
+          // which this batcher's targets serve, which it does not target at all.
+          stockManip: stockManip ? { requested: stockManip, served: Object.keys(stockManip).filter((h) => targets.includes(h)), unserved: Object.keys(stockManip).filter((h) => !targets.includes(h)) } : null,
           targets: perTarget,
           errors: errors.slice(-5),
         }

@@ -90,7 +90,7 @@ export async function run() {
   checks.push(c2);
 
   // -------------------------------------------------------------------
-  const c3 = new Check("ST3", "stock.js (shipped, fake ns on the real market): trades, is never refused, publishes, liquidates on a pending spend, honours a due claim");
+  const c3 = new Check("ST3", "stock.js (shipped, fake ns on the real market): trades, is never refused, publishes, opens nothing under a stock hold, publishes the nodeecon record, honours a due claim");
   {
     const m = new Market({ seed: 7, money: 2.5e8, burnInTicks: 3000 });
     const f = await runShipped(m, 400, {});
@@ -98,7 +98,7 @@ export async function run() {
     const tel = JSON.parse(f.files["/tel/stock.txt"] || "null");
     if (!tel) c3.fail("no /tel/stock.txt written");
     else {
-      for (const k of ["mode", "canShort", "phase", "wealth", "cash", "claims", "held", "last", "buy4S", "counters"]) if (!(k in tel)) c3.fail(`/tel/stock.txt lacks '${k}'`);
+      for (const k of ["mode", "canShort", "phase", "wealth", "cash", "claims", "held", "last", "buy4S", "counters", "lastAugReset", "equity"]) if (!(k in tel)) c3.fail(`/tel/stock.txt lacks '${k}'`);
       if (tel.health !== "stopped" || !tel.exited) c3.fail(`the exit was not published (health ${tel.health})`);
       if (!(tel.counters.orders > 0)) c3.fail("400 ticks at $250m and no order was sent");
       if (tel.counters.refused > 0) c3.fail(`${tel.counters.refused} order(s) refused by the game`, JSON.stringify(tel.last?.refused?.slice(0, 2)));
@@ -106,23 +106,37 @@ export async function run() {
       c3.note(`400 ticks: ${tel.counters.orders} orders, wealth $${(m.wealth() / 1e6).toFixed(0)}m from $250m, phase ${tel.phase}, claims unreadable=${tel.claims?.unreadable}`);
     }
 
-    // A pending spending batch: positions must go to zero and nothing is bought.
+    // /tel/stock-hold.txt (act-liquidate.js, nodeecon.js contract): while it is
+    // fresh nothing is OPENED. Simulate the liquidator: sell everything, write
+    // the hold, and check no share is held again.
     c3.examined(1);
     const m2 = new Market({ seed: 8, money: 2.5e8, burnInTicks: 3000 });
     let heldBefore = 0;
-    const g = await runShipped(m2, 300, {
+    let reopened = 0;
+    await runShipped(m2, 300, {
       onTick: (n, files) => {
         if (n === 200) {
-          heldBefore = m2.symbols.reduce((a, s) => a + m2.position(s)[0] + m2.position(s)[2], 0);
-          files["/tel/orders.txt"] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1, orders: [{ kind: "buyaug", args: ["x"] }] });
-        }
+          for (const s of m2.symbols) {
+            const [L, , Sh] = m2.position(s);
+            heldBefore += L + Sh;
+            if (L > 0) m2.sell(s, L);
+            if (Sh > 0) m2.cover(s, Sh);
+          }
+          files["/tel/stock-hold.txt"] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1, by: "act-liquidate.js", why: "install" });
+        } else if (n > 200) reopened += m2.symbols.reduce((a, s) => a + m2.position(s)[0] + m2.position(s)[2], 0);
       },
     });
-    const heldAfter = m2.symbols.reduce((a, s) => a + m2.position(s)[0] + m2.position(s)[2], 0);
-    const t2 = JSON.parse(g.files["/tel/stock.txt"]);
-    if (!(heldBefore > 0)) c3.warn("nothing was held when the spend was injected — the liquidation path was not exercised");
-    if (heldAfter !== 0) c3.fail(`a buyaug batch was pending and ${heldAfter} shares are still held`);
-    if (!t2.liquidating) c3.fail("telemetry does not say it is liquidating for the pending batch");
+    if (!(heldBefore > 0)) c3.warn("nothing was held when the hold was injected — the hold path was not exercised");
+    if (reopened > 0) c3.fail("a position was opened while /tel/stock-hold.txt was fresh");
+
+    // The record nodeecon.js reads.
+    c3.examined(1);
+    const { stockRecordOf } = await import("../../nodeecon.js");
+    const rec = stockRecordOf(tel, 1, Date.parse(tel.at));
+    if (!rec.ok) c3.fail(`nodeecon.stockRecordOf refuses /tel/stock.txt: ${rec.why}`);
+    for (const k of ["equity", "returnPerSec", "capitalCap", "incomePerSec", "manip"]) if (!(k in tel)) c3.fail(`/tel/stock.txt lacks nodeecon's '${k}'`);
+    if (tel.canShort !== false) c3.fail("shorts must be opt-in (--short) until measured live");
+    c3.note(`nodeecon record: equity $${(rec.equity / 1e6).toFixed(0)}m, returnPerSec ${rec.returnPerSec?.toExponential(2)}, incomePerSec $${(rec.incomePerSec ?? 0).toFixed(0)}/s, capitalCap $${((rec.capitalCap ?? 0) / 1e12).toFixed(2)}t`);
 
     // A due claim: with wealth above an augmentation claim, the claim is held as cash.
     c3.examined(1);

@@ -509,7 +509,7 @@ const WATCHED = [
   {
     script: 'endgame.js',
     host: 'home',
-    args: ['--next', 10],
+    args: ['--next', 8],
     minIntervalMs: 3600000,
     trigger: () => true,
   },

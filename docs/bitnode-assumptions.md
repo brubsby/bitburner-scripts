@@ -43,6 +43,39 @@ guessing, no waiting to be surprised.
   shape. BN11 sets it to **2**, which makes a 1PB server ~32,000× the flat-rate
   price.
 
+## BitNode 8 — the money is the stock trader's (audited 2026-09-25)
+
+BitNode.tsx:764-793 zeroes every faucet except the market: ScriptHackMoneyGain
+(hacks drain servers, the player gets $0), CrimeMoney, CompanyWorkMoney,
+HacknetNodeMoney, InfiltrationMoney, CodingContractMoney (contracts stop
+offering money), GangSoftcap (a gang earns ~$60/s), and FavorToDonateToFaction
+(donations open at favor 0). Prestige.ts:158 replaces the balance with $250m at
+every install, and every install re-initialises the market (open positions are
+destroyed). Hacking exp is untouched, so the climb to 3000 is unchanged.
+
+What reads these now:
+
+- `nodeecon.js` (pure) — `incomeOf` splits income into script (level-scaled),
+  flat and the trader's compounding return; `postInstallMoney`;
+  `favorToDonateOf` (0 is a threshold, null is unknown); `canDonateTo`;
+  and the **`/tel/stock.txt` interface the trader must publish** (equity,
+  returnPerSec, capitalCap, incomePerSec, manip) plus `/tel/stock-hold.txt`
+  it must honour.
+- `exitplan.js` — prices `r x min(money, cap)` as a compounding term,
+  `installCash`, donation at favor 0, work-while-donating, `slotBusyH`.
+- `progress.js` — income via `incomeOf`, equity counted as money, a
+  `liquidate` order before any spending batch, donation threshold from the node.
+- `act.js` + `act-liquidate.js` — sells every position before every install.
+- `buyserv.js` — no claims fallback where hacking pays nothing.
+- `gangworth.js` — a saving inside the one-minute exit resolution is not worth
+  a karma grind.
+- `batch.js` + `h.js`/`g.js` — `{stock: true}` on the side of a batch the
+  trader asks for.
+
+Until the trader publishes a measured `returnPerSec`, BN8 income reads
+UNMEASURED (never $0/s), every exit verdict refuses, and the gang is left
+pending. That dependency is the biggest remaining risk.
+
 ## Structural assumptions the multipliers do not capture
 
 These are not `BitNodeMultipliers` and `bncheck` only lists them as reminders:
