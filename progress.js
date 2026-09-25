@@ -136,6 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
+import { bestCountExit, ticketLadder } from 'countexit.js'
 import { withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
@@ -1699,6 +1700,30 @@ function programVerdicts(ns, inputs) {
 }
 
 /**
+ * The count model's inputs where money is capital (ScriptHackMoneyGain 0) and
+ * the Daedalus requirement is not yet met: the ticket ladder of distinct
+ * unowned augmentations (later lives priced with their whole reputation
+ * bought where the faction takes donations), NeuroFlux's current price, and
+ * the shortfall (requirement - distinct owned, queued included). Null
+ * elsewhere — every other node prices exactly as before.
+ */
+function countModelOf(mults, offers, allCount, player) {
+  if (mults?.ScriptHackMoneyGain !== 0) return null
+  const need = mults?.DaedalusAugsRequirement
+  if (!(need > 0) || !(allCount instanceof Map)) return null
+  const short = need - allCount.size
+  if (!(short > 0)) return null
+  const fwrg = mults?.FactionWorkRepGain
+  const donatable = favorToDonateOf(mults) === 0
+  const ladder = ticketLadder(offers, new Set(allCount.keys()), {
+    nfgName: NFG,
+    laterDonation: (o) => (donatable && canDonateTo(o.faction, 0, 0) && fwrg > 0 && o.repReq > 0 ? donationForRep(o.repReq, player?.mults?.faction_rep ?? 1, fwrg) : null),
+  })
+  const nfgOffer = (offers ?? []).find((o) => o.name === NFG)
+  return { short, ladder, nfg: nfgOffer?.baseCost > 0 ? { price: nfgOffer.baseCost, level: 0 } : null }
+}
+
+/**
  * SLEEVE AUGMENTATIONS, trajectory against trajectory: the best exit policy
  * after buying a batch now against the best without it, on one input builder.
  * The batch run spends the price (and re-plans the pending augmentations on
@@ -2648,6 +2673,16 @@ async function act(ns, canJoin, info, note) {
     // — degrading to the pure-M objective beats guessing the count gate.
     const daedalusNeed = bitNodeMults(info?.currentNode)?.DaedalusAugsRequirement
     ticketsWanted = daedalusNeed > 0 ? Math.max(0, daedalusNeed - installedCount.size) : 0
+    // THE BATCH COMPOSITION, where money is capital: the count-aware simulated
+    // exit's tickets for this install (the previous pass's installgate record,
+    // same life). The rest of the budget goes where planPurchases puts it —
+    // NeuroFlux and real multipliers. Absent or another life's: the full count
+    // shortfall, as before.
+    if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 && ticketsWanted > 0) {
+      const g0 = readJson(ns, GATE)
+      const c0 = g0?.lastAugReset === info?.lastAugReset ? g0?.countComposition?.firstBatch?.count : null
+      if (typeof c0 === 'number' && c0 >= 1) ticketsWanted = Math.min(ticketsWanted, c0)
+    }
     // Context for augmentations whose value is NOT in their multipliers —
     // money, granted programs, the focus penalty (objective.js ONEOFF_EFFECTS).
     // Without it those score M = 1 and are filed 'no-value' at every price,
@@ -4141,6 +4176,33 @@ async function act(ns, canJoin, info, note) {
         // compares — it happens whichever way the gate chooses.
         const cm = covenantExitOf(ns, info, player, schedule, { best: { hours: 1, installsFirst: 0 } }, () => inputs0, planFleet)
         const inputs = cm?.mandated && typeof cm.combatH === 'number' ? { ...inputs0, covenant: { cost: cm.cost, joinMoney: COVENANT.joinMoney, combatH: cm.combatH, member: cm.member, sleeveExpPerSec: 0 } } : inputs0
+        // WHERE MONEY IS CAPITAL AND THE DAEDALUS COUNT IS SHORT (BitNode 8):
+        // the count-aware exit (countexit.bestCountExit) — tickets per install
+        // as the searched composition, NeuroFlux with the rest, the book reset
+        // to the node's opening at each install. "Never" is not a candidate:
+        // it cannot reach Daedalus. Unpriced -> the ordinary comparison below
+        // and, in installgate, the floor as the named fallback.
+        const countCtx = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
+        if (countCtx) {
+          const nowC = bestCountExit(bestExitPolicy, inputs, countCtx, { firstInstallH: 0 })
+          if (nowC.best) {
+            const waitsC = [0.25, 0.5, 1, 2, 4].map((w) => {
+              const r = bestCountExit(bestExitPolicy, inputs, countCtx, { firstInstallH: w })
+              return { waitMs: w * 3600000, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, n: r.best?.n ?? null }
+            })
+            return {
+              countAware: true,
+              nowH: nowC.best.hours,
+              nowInstalls: nowC.best.installsFirst,
+              neverH: null,
+              neverWhy: `never installing cannot reach Daedalus: ${countCtx.short} distinct augmentation(s) short`,
+              waits: waitsC,
+              composition: { n: nowC.best.n, firstBatch: { count: nowC.best.firstBatch.count, nfgLevels: nowC.best.firstBatch.nfgLevels, cost: Math.round(nowC.best.firstBatch.cost), chosen: nowC.best.firstBatch.chosen }, countInstalls: nowC.best.countInstalls, padded: nowC.best.padded },
+              tried: nowC.tried,
+              why: null,
+            }
+          }
+        }
         const now = bestExitPolicy({ ...inputs, firstInstallH: 0 }, 400, 1)
         const never = bestExitPolicy(inputs, 0, 0)
         const waits = futures.map((f) => {
@@ -4163,8 +4225,8 @@ async function act(ns, canJoin, info, note) {
 
     const gate = shouldInstall({
       exitCompare,
-      // Money is the trader's compounding capital (BitNode 8): the count floor
-      // may not install against the simulated exit (installgate countFloorVetoed).
+      // Money is the trader's compounding capital (BitNode 8): the count batch
+      // installs on the count-aware simulated exit (installgate countBySim).
       capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0,
       ageMs: Date.now() - (info?.lastAugReset ?? 0),
       M,
@@ -4473,6 +4535,9 @@ async function act(ns, canJoin, info, note) {
           // this array was consumed but never published.
           futures,
           plannedM: plan ? plan.M : 1,
+          // The count-aware exit's composition (tickets per install), read back
+          // by the NEXT pass's planner as its ticket count (one pass of lag).
+          countComposition: exitCompare?.composition ?? null,
           plan: plan ? { buy: plan.buy, totalCost: plan.totalCost, exact: plan.exact, stats: plan.stats, skipped: plan.skipped.slice(0, 20) } : null,
           ...gate,
         },

@@ -340,24 +340,43 @@ export async function run() {
 
   // -------------------------------------------------------------------
   // 2026-09-25 20:57: a ~$61b book installed on the COUNT FLOOR ("the timing
-  // is not yet priced"), no trajectory consulted.
-  const m = new Check("B8m", "where money is capital, the count floor may not install against the simulated exit");
+  // is not yet priced"), no trajectory consulted. REPLAY of that pass's state
+  // (tools/test/fixture-bn8-2056.mjs) through the count-aware exit.
+  const m = new Check("B8m", "BN8 install timing and batch composition come from the count-aware exit; never-install is not a candidate while the count is short");
   {
-    m.examined(4);
+    m.examined(8);
+    const C = await import("../../countexit.js");
+    const F = await import("./fixture-bn8-2056.mjs");
     const IG = await import("../../installgate.js");
+    const inputs = { ...F.INPUTS, hackingExp: X.expForLevel(485, 1.3392) };
+    const count = { short: F.COUNT_SHORT, ladder: F.LADDER, nfg: F.NFG };
+    const now = C.bestCountExit(X.bestExitPolicy, inputs, count, { firstInstallH: 0 });
+    const waits = [0.5, 1, 2, 4].map((w) => ({ w, r: C.bestCountExit(X.bestExitPolicy, inputs, count, { firstInstallH: w }) }));
+    if (!now.best) m.fail("the replay's count-aware exit is unpriced", now.why);
+    else {
+      m.note(`replay 20:56: install now ${now.best.hours.toFixed(2)}h (n=${now.best.n}: ${now.best.firstBatch.count} tickets + ${now.best.firstBatch.nfgLevels} NeuroFlux, ${now.best.countInstalls} count installs, ${now.best.installsFirst} total; ${now.best.padded} tickets priced by extrapolation)`);
+      for (const { w, r } of waits) m.note(`  wait ${w}h: ${r.best?.hours?.toFixed(2)}h (n=${r.best?.n}, ${r.best?.firstBatch?.count} tickets + ${r.best?.firstBatch?.nfgLevels} NeuroFlux)`);
+      const bestWait = waits.filter((x) => x.r.best).sort((a, b) => a.r.best.hours - b.r.best.hours)[0];
+      if (!(bestWait && bestWait.r.best.hours < now.best.hours)) m.fail("on the replay a wait should beat installing at once (a bigger batch from a compounding book)");
+      else m.note(`=> the simulation waits ${bestWait.w}h (${bestWait.r.best.hours.toFixed(2)}h vs ${now.best.hours.toFixed(2)}h now)`);
+    }
+    // NEVER is not a policy while the count is short and reachable.
+    if (now.never !== null) m.fail("the count-aware exit offered 'never install' while 30 augmentations are short");
+    if (now.tried.some((t) => typeof t.installs === "number" && t.installs < t.countInstalls)) m.fail("a policy installed fewer times than the count needs");
+    // The gate obeys it (capital node), and falls back to the floor unpriced.
     const H = 3600e3;
     const base = { ageMs: 6 * H, M: 1.0215, queued: 15, exp: 1e9, prev: null, futures: [], countShort: 16, countGain: 14, countTiming: { installNow: null, why: "only 1 completed life" } };
-    const holdEx = { nowH: 50, neverH: 40, waits: [] };
-    const goEx = { nowH: 30, neverH: 40, waits: [] };
-    const bn8Hold = IG.shouldInstall({ ...base, exitCompare: holdEx, capitalNode: true });
-    const bn8Go = IG.shouldInstall({ ...base, exitCompare: goEx, capitalNode: true });
-    const other = IG.shouldInstall({ ...base, exitCompare: holdEx, capitalNode: false });
+    const waitEx = { countAware: true, nowH: 71.24, neverH: null, waits: [{ waitMs: 1 * H, H: 67.56 }] };
+    const goEx = { countAware: true, nowH: 60, neverH: null, waits: [{ waitMs: 1 * H, H: 67.56 }] };
+    const hold = IG.shouldInstall({ ...base, exitCompare: waitEx, capitalNode: true });
+    const go = IG.shouldInstall({ ...base, exitCompare: goEx, capitalNode: true });
+    const other = IG.shouldInstall({ ...base, exitCompare: waitEx, capitalNode: false });
     const unpriced = IG.shouldInstall({ ...base, exitCompare: { nowH: null, why: "x" }, capitalNode: true });
-    if (bn8Hold.install !== false || !bn8Hold.countFloorVetoed) m.fail("the floor installed a capital book the exit says to keep", bn8Hold.why);
-    else m.note(bn8Hold.why);
-    if (bn8Go.install !== true) m.fail("the floor was held although installing now exits sooner", bn8Go.why);
-    if (other.install !== true) m.fail("another node's count floor changed", other.why);
-    if (unpriced.install !== true) m.fail("an unpriced exit must leave the floor as it was", unpriced.why);
+    if (hold.install !== false || hold.countDecidedBy !== "exit-sim") m.fail("the gate installed a count batch the count-aware exit says to wait for", hold.why);
+    else m.note(hold.why);
+    if (go.install !== true || go.countDecidedBy !== "exit-sim") m.fail("the gate held a count batch the count-aware exit says to install now", go.why);
+    if (other.install !== true || other.countDecidedBy !== "floor") m.fail("another node's count floor changed", other.why);
+    if (unpriced.install !== true || unpriced.countDecidedBy !== "floor") m.fail("an unpriced exit must fall back to the floor", unpriced.why);
   }
   checks.push(m);
 

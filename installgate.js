@@ -624,15 +624,19 @@ export function shouldInstall(o) {
   // deadlock the countStalls comment warns about: a hold that cannot state what
   // would end it. The floor above is the anti-thrash guard instead.
   // WHERE MONEY IS CAPITAL (o.capitalNode: ScriptHackMoneyGain 0, BitNode 8)
-  // the FLOOR may not install against the simulated exit. An install there
-  // does not only reset $1262 of hacking cash — it liquidates the trader's
-  // compounding book back to $250m (live 2026-09-25 20:57: a ~$61b book,
-  // installed on the floor of 3 because the count timing was unpriced, with
-  // no trajectory consulted). When the exit comparison is priced and says a
-  // wait (a bigger batch from a bigger book) or never exits sooner, the floor
-  // holds. The PRICED count timing is unchanged, and so is every other node.
-  const countFloorVetoed = o.capitalNode === true && countDecidedBy === 'floor' && exitDecides && waitBeats
-  const countInstall = countBanks && countWants && !destructive && !countFloorVetoed
+  // THE COUNT-AWARE EXIT DECIDES (countexit.bestCountExit, supplied as
+  // exitCompare with `countAware`): the simulated exits of installing now and
+  // after each wait, each with the count gate modelled — tickets per install,
+  // their 1.9^k escalation, NeuroFlux with the rest, and the book reset to the
+  // node's opening at every install. "Never" is not a candidate while the gate
+  // is short (it cannot reach Daedalus). The floor and the count timing remain
+  // only as the named fallback when that exit is unpriced. Live 2026-09-25
+  // 20:57 a ~$61b book installed on the floor with no trajectory consulted;
+  // the replay (tools/test B8m) has the simulation waiting ~1h instead.
+  const countBySim = o.capitalNode === true && exitDecides && ex.countAware === true
+  const countWantsNow = countBySim ? !waitBeats : countWants
+  const countDecidedHow = countBySim ? 'exit-sim' : countDecidedBy
+  const countInstall = countBanks && countWantsNow && !destructive
   // expOk is the rate rule's own guard (enough exp to bank); the simulated
   // exit prices the climb itself, so it does not apply there.
   // A HOLD THE USER MANDATED outranks even the terminal install: The Red Pill
@@ -665,8 +669,7 @@ export function shouldInstall(o) {
     countInstall,
     countFloor,
     countWants,
-    countDecidedBy,
-    countFloorVetoed: countFloorVetoed || undefined,
+    countDecidedBy: countDecidedHow,
     countTimingWhy: timing?.why ?? null,
     decidedBy,
     exitNowH: exitDecides ? ex.nowH : null,
@@ -682,10 +685,10 @@ export function shouldInstall(o) {
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
       : countInstall && !(expOk && netGain && !waitBeats)
       ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs, ` +
-        `decided by the ${countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
+        `decided by the ${countDecidedHow === 'exit-sim' ? `count-aware simulated exit: installing now ${ex.nowH.toFixed(2)}h against the best wait ${exitWait ? exitWait.H.toFixed(2) + 'h' : 'unpriced'}` : countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
         `M=${M.toFixed(4)} is expected for tickets and is NOT a reason to hold.`
-      : countFloorVetoed
-      ? `hold: COUNT BATCH of ${countGain} would install on the floor (timing unpriced), but money is capital here and the simulated exit says ${neverBest ? `never installing (${ex.neverH.toFixed(1)}h)` : `waiting ${(exitWait.waitMs / 3600000).toFixed(1)}h (${exitWait.H.toFixed(1)}h)`} beats installing now (${ex.nowH.toFixed(1)}h) — the install would reset the compounding book to the node's opening balance`
+      : countBySim && countBanks && !countInstall && !destructive
+      ? `hold: COUNT BATCH of ${countGain} — the count-aware simulated exit waits: ${exitWait ? `waiting ${(exitWait.waitMs / 3600000).toFixed(1)}h exits at ${exitWait.H.toFixed(2)}h` : 'a later batch exits sooner'} against ${ex.nowH.toFixed(2)}h installing now (the install resets the compounding book to the node's opening)`
       : countBanks && !countWants && !destructive && !(expOk && netGain && !waitBeats)
       ? `hold: COUNT BATCH of ${countGain} not yet — ` +
         (countDecidedBy === 'priced'
