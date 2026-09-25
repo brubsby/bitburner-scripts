@@ -241,3 +241,35 @@ export function incomeOf({ scriptIncome, mults, stock, hacknet } = {}) {
     why,
   }
 }
+
+// ---------------------------------------------------------------------------
+// MONEY THAT LEAVES EVERY SECOND, UNCHECKED.
+//
+// Every one-off purchase the stack makes is balance-checked by the game
+// (canAfford / money >= cost: augmentations, donations, servers, home, TOR,
+// programs, travel Person.ts:242, sleeve augs Sleeve.ts:373, stock orders).
+// Two sinks are not: CLASS and GYM fees, player and sleeve alike —
+// calculateClassEarnings sets money = -cost x costMult per second
+// (Work/Formulas.ts:101-120, ClassWork.tsx:32-72) and applyWorkStats charges
+// it through loseMoney with no check, so they drive cash negative (BitNode 8,
+// 2026-09-25: five sleeves at ZB, $8k/s, cash to -$2.4m). Hospitalisation is
+// bounded — min(10% of cash, damage x HospitalCostPerHp) and 0 when cash is
+// already negative (Hospital/Hospital.ts:4-10) — so it churns but cannot
+// cross zero. Gang equipment and corporation spend are not reachable here.
+//
+// So every paid class or gym session the stack starts must pass
+// feeFundable: cash on hand covers the fee for FEE_FLOOR_S seconds. That is a
+// FLOOR against our own spending, not a pricing: whether the class is worth it
+// is decided by the exit simulation (exitplan spendPerSec) where one exists.
+// ---------------------------------------------------------------------------
+
+/** Seconds of a fee cash must cover before a paid class/gym session starts. */
+export const FEE_FLOOR_S = 120
+/** ClassWork.tsx:42 (Algorithms, -320/s) and :57-72 (gym, -120/s), before location costMult. */
+export const CLASS_BASE_FEE = { algorithms: 320, leadership: 320, gym: 120 }
+
+/** True when cash covers `feePerSec` for `seconds`; false when it cannot OR cash is unreadable (fail closed). */
+export function feeFundable(cash, feePerSec, seconds = FEE_FLOOR_S) {
+  if (!fin(cash) || !fin(feePerSec) || feePerSec < 0) return false
+  return cash >= feePerSec * seconds
+}

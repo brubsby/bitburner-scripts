@@ -42,6 +42,8 @@ import { COMBAT, crimeLeg, bestCrimeFor } from 'bodyplan.js'
 import { GANG_FACTIONS, KARMA_FOR_GANG } from 'gangplan.js'
 // Pure: a gang whose every channel is zero by the node's multipliers.
 import { gangChannelsDead } from 'gangworth.js'
+// Pure: the floor against our own unchecked fee spending.
+import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 
@@ -67,6 +69,8 @@ export const gangKarmaTarget = (inBitNode2) => (inBitNode2 ? SLUM_SNAKES.karma :
 export const GYM = { name: 'Powerhouse Gym', city: 'Sector-12' }
 export const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 'agi' }
 export const TRAVEL_COST = 200e3
+/** Powerhouse Gym: 120 x costMult 20 per second (ClassWork.tsx:57, bodyplan GYMS). */
+export const GYM_FEE_PER_SEC = CLASS_BASE_FEE.gym * 20
 /** Factions whose invitations arrive from backdoor.js's work; tried in this order. */
 export const HACK_LINE = ['CyberSec', 'NiteSec', 'The Black Hand', 'BitRunners', 'Netburners']
 /** Do not re-try an uninvited join more often than this. */
@@ -209,6 +213,9 @@ export function decide(s = {}) {
     }
     const stat = combatShort[0]
     if (s.work?.kind === 'gym' && s.work.stat === stat) return { kind: 'idle', why: `training ${stat} at ${GYM.name}: ${p.skills[stat]}/${SLUM_SNAKES.combat}` }
+    // The gym fee is charged every second with no balance check
+    // (ClassWork.tsx:57-72): start it only while cash covers FEE_FLOOR_S of it.
+    if (!feeFundable(p.money, GYM_FEE_PER_SEC)) return { kind: 'idle', why: `training ${stat} at ${GYM.name} costs $${GYM_FEE_PER_SEC}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it` }
     return { kind: 'gym', args: [GYM.name, GYM_CLASS[stat]], stat, why: `combat ${stat} ${p.skills?.[stat]}/${SLUM_SNAKES.combat} for Slum Snakes` }
   }
 

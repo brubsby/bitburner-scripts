@@ -78,6 +78,8 @@
 // ---------------------------------------------------------------------------
 import { CRIMES, GYMS, crimeChance, gymRate, hoursToStat, intelligenceBonus, personProblem } from 'bodyplan.js'
 import { skillFromExp } from 'installgate.js'
+// Pure: the floor against our own unchecked fee spending.
+import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 /**
@@ -279,6 +281,16 @@ export function sleeveAssignments(sleeves, node, o = {}) {
   // the gym — its exp transfers to the player — ahead of any other objective.
   if (objective === 'covenant') {
     const st = ['strength', 'defense', 'dexterity', 'agility'].includes(o.trainStat) ? o.trainStat : null
+    // The same fee floor as every paid class (nodeecon.feeFundable): the
+    // campaign is a user mandate, but cash below zero stops everything else.
+    const campaignFee = CLASS_BASE_FEE.gym * Math.max(...GYMS.map((g) => g.costMult)) * sleeves.length
+    if (st && !feeFundable(o.money, campaignFee)) {
+      for (const s of sleeves) {
+        tasks.push('shock')
+        why.push(`sleeve ${s?.index ?? tasks.length - 1}: the Covenant gym campaign costs up to $${campaignFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — recover shock until it does`)
+      }
+      return { tasks, why, breakevenHours: null, objective, horizonHours }
+    }
     for (const s of sleeves) {
       const i = s?.index ?? tasks.length
       tasks.push(st)
@@ -401,20 +413,43 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // exp/s against their own 788/s, i.e. 1.8%. Six hundred times better, and
     // both are small: that is what "the fleet is one sleeve" costs.
     if (objective === 'exp') {
-      // A CLASS COSTS MONEY EVERY SECOND (Work/Formulas.ts:99-119: cost x
+      // A CLASS COSTS MONEY EVERY SECOND (Work/Formulas.ts:101-120: cost x
       // location.costMult per second, charged through loseMoney with no
       // balance check, so it drives cash negative). In BN8 on 2026-09-25 five
-      // sleeves at ZB drained $8k/s from a stock book of ~$2m, and the negative
-      // balance stalled the only income there is. Until the exit model prices
-      // the fee (it tied both arms at ~1e26h there), refuse to study when cash
-      // cannot fund the WHOLE fleet's classes for STUDY_FUND_S, and recover
-      // shock instead — free, and it scales everything the sleeve does later.
-      // Unknown money (o.money not a number) keeps the old behaviour.
+      // sleeves at ZB drained $8k/s from a stock book of ~$2m.
+      //
+      // Two tests, in order:
+      //   1. THE FLOOR (nodeecon.feeFundable): cash must cover the whole
+      //      fleet's fees for FEE_FLOOR_S. Not a pricing — a guarantee that
+      //      our own spending never takes cash below zero. Unreadable cash
+      //      fails it.
+      //   2. THE PRICE, trajectory against trajectory (exitOf): the node's
+      //      exit with this sleeve studying AND paying its fee (exitplan
+      //      spendPerSec) against the exit with it idle. Study only where it
+      //      is shorter. An exit that cannot be priced (or is degenerate —
+      //      sleeveExitOf returns null) prices nothing, so the named fallback
+      //      is the old rule: cash covers STUDY_FUND_S of the fleet's fees.
       const zb = [...UNIVERSITIES].sort((a, b) => b.expMult - a.expMult)[0]
-      const fleetFeePerSec = CLASSES.Algorithms.cost * zb.costMult * sleeves.length
-      if (num(o.money) && o.money < fleetFeePerSec * STUDY_FUND_S) {
+      const feePerSec = CLASSES.Algorithms.cost * zb.costMult
+      const fleetFeePerSec = feePerSec * sleeves.length
+      if (!feeFundable(o.money, fleetFeePerSec)) {
         tasks.push('shock')
-        why.push(`sleeve ${i}: study would cost the fleet $${Math.round(fleetFeePerSec)}/s and cash $${Math.round(o.money)} funds under ${STUDY_FUND_S}s of it — recover shock (free) instead`)
+        why.push(`sleeve ${i}: study would cost the fleet $${Math.round(fleetFeePerSec)}/s and cash ${num(o.money) ? '$' + Math.round(o.money) : 'is unreadable'} does not cover ${FEE_FLOOR_S}s of it (the floor) — recover shock (free) instead`)
+        continue
+      }
+      const studyNow = sleeveStudyExpPerSec(s, 'Algorithms', o)
+      const withStudy = typeof o.exitOf === 'function' && num(studyNow?.perSec) ? o.exitOf('exp', { perSec: studyNow.perSec * (sync / 100), delayH: 0, spendPerSec: feePerSec }) : null
+      const idle = typeof o.exitOf === 'function' ? o.exitOf('exp', { perSec: 0, delayH: 0 }) : null
+      if (num(withStudy) && num(idle)) {
+        if (!(withStudy < idle - 1 / 60)) {
+          tasks.push('shock')
+          why.push(`sleeve ${i}: studying (fee $${feePerSec}/s) exits at ${withStudy.toFixed(2)}h vs ${idle.toFixed(2)}h without — not worth its fee; recover shock`)
+          continue
+        }
+        why.push(`sleeve ${i}: study pays for its $${feePerSec}/s fee: exit ${withStudy.toFixed(2)}h vs ${idle.toFixed(2)}h without`)
+      } else if (!(num(o.money) && o.money >= fleetFeePerSec * STUDY_FUND_S)) {
+        tasks.push('shock')
+        why.push(`sleeve ${i}: the fee's exit cost is unpriced (no fresh or non-degenerate exit) and cash does not cover ${STUDY_FUND_S}s of the fleet's fees (the fallback rule) — recover shock`)
         continue
       }
       tasks.push('hacking')
@@ -438,6 +473,13 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     const wantRep = objective === 'rep' && typeof o.repFaction === 'string' && o.repFaction && !repTaken
     const policy = horizonHours === null ? null : sleevePolicy(s, node, { ...o, objective: wantRep ? 'rep' : objective === 'rep' ? 'money' : objective })
     if (policy && policy.task === 'train') {
+      // Gym fees are the same unchecked sink (ClassWork.tsx:57-72, 120 x
+      // costMult per second): the floor applies before any training starts,
+      // priced at the dearest gym (bodyplan GYMS) for the whole fleet.
+      const gymFee = CLASS_BASE_FEE.gym * Math.max(...GYMS.map((g) => g.costMult)) * sleeves.length
+      if (!feeFundable(o.money, gymFee)) {
+        why.push(`sleeve ${i}: training would cost up to $${gymFee}/s for the fleet and cash does not cover ${FEE_FLOOR_S}s of it — working instead`)
+      } else {
       // The weighted stat this sleeve is furthest behind on. sleeve.js maps the
       // long skill names to GymType members; the shipped gym branch picked the
       // lowest PLAYER combat skill, which is the wrong body entirely.
@@ -445,6 +487,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       tasks.push(stat)
       why.push(`sleeve ${i}: ${policy.why} — training ${stat} first`)
       continue
+      }
     }
     if (wantRep && policy && policy.task === 'faction') {
       const r = sleeveFactionRepPerSec(s, o)
@@ -931,12 +974,17 @@ export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.no
     const sched = steps ?? [{ atH: t.delayH, perSec: t.perSec }]
     const last = sched.reduce((a, b) => (b.atH >= a.atH ? b : a))
     const term = steps ? { steps } : { perSec: t.perSec, delayH: t.delayH }
+    // A per-second fee the choice carries (a class): exitplan spendPerSec.
+    const spend = num(t?.spendPerSec) && t.spendPerSec > 0 ? { spendPerSec: (num(base.spendPerSec) ? base.spendPerSec : 0) + t.spendPerSec } : {}
     let o = null
-    if (objective === 'rep') o = { ...base, sleeveRep: term, ...(num(P) && P > 0 ? { repBoost: { K: (P + last.perSec) / P, e: record.eRep, fromH: last.atH } } : {}) }
-    else if (objective === 'exp') o = { ...base, sleeveExp: term }
-    else if (objective === 'money') o = { ...base, extraIncome: sched, eBudget: record.eBudget }
+    if (objective === 'rep') o = { ...base, ...spend, sleeveRep: term, ...(num(P) && P > 0 ? { repBoost: { K: (P + last.perSec) / P, e: record.eRep, fromH: last.atH } } : {}) }
+    else if (objective === 'exp') o = { ...base, ...spend, sleeveExp: term }
+    else if (objective === 'money') o = { ...base, ...spend, extraIncome: sched, eBudget: record.eBudget }
     if (!o) return null
     const r = bestExitPolicy(o)
+    // A degenerate exit (exitplan DEGENERATE_H) is not a duration: every
+    // choice ties inside it (BitNode 8 read ~1.5e26h for all), so refuse.
+    if (r?.degenerate) return null
     return num(r?.best?.hours) ? r.best.hours : null
   }
 }

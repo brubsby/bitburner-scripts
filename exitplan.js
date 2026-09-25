@@ -97,6 +97,12 @@ export function hoursToMoney(target, o = {}) {
   const flat = num(o.flatPerSec) && o.flatPerSec > 0 ? o.flatPerSec : 0
   const r = num(o.capitalReturnPerSec) && o.capitalReturnPerSec > 0 ? o.capitalReturnPerSec : 0
   const cap = num(o.capitalCap) && o.capitalCap > 0 ? o.capitalCap : Infinity
+  // MONEY GOING OUT EVERY SECOND (o.spendPerSec): class and gym fees, which
+  // the game charges through loseMoney with no balance check
+  // (Work/Formulas.ts calculateClassEarnings: money = -cost x costMult per
+  // second). It slows every money leg, and a balance that the spend drives to
+  // zero with nothing coming in never reaches its target (Infinity).
+  const spend = num(o.spendPerSec) && o.spendPerSec > 0 ? o.spendPerSec : 0
   const lvlIncome = num(incomeAtLevel1) && incomeAtLevel1 > 0 ? incomeAtLevel1 : 0
   let stepH = o.stepH ?? 1 / 120
   if (!num(target) || target <= money0) return 0
@@ -129,7 +135,8 @@ export function hoursToMoney(target, o = {}) {
     const dt = stepH * 3600
     // The capital term over the step: exponential below the cap, linear at it.
     const capGain = r > 0 ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
-    const add = rate * dt + Math.max(0, capGain)
+    const add = rate * dt + Math.max(0, capGain) - spend * dt
+    if (!(add > 0) && money + add <= 0) return Infinity // the spend empties the balance first
     // The last step lands exactly: without this the answer is quantised to
     // stepH, and a with/without comparison of a small spend reads as zero
     // (or as a whole step) — noise deciding purchases.
@@ -141,8 +148,8 @@ export function hoursToMoney(target, o = {}) {
       const T0 = o.targetAt(h)
       const T1 = o.targetAt(h + stepH)
       if (money >= T0) return h
-      if (money + add >= T1) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * stepH
-    } else if (money + add >= target) return h + ((target - money) / add) * stepH
+      if (add > 0 && money + add >= T1) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * stepH
+    } else if (add > 0 && money + add >= target) return h + ((target - money) / add) * stepH
     money += add
     exp += pos(expPerSec) ? expPerSec * dt : 0
     h += stepH
@@ -318,6 +325,11 @@ export function exitHours(o = {}) {
     capitalReturnPerSec = 0,
     capitalCap = null,
     installCash = null,
+    // Money spent every second from now on (class/gym fees): slows every money
+    // leg (hoursToMoney spendPerSec). Legs that need no money are unaffected —
+    // a spend the exit never has to fund does not delay it; keeping cash from
+    // going negative is a floor the spender enforces, not an exit cost.
+    spendPerSec = 0,
     // Hacknet money (nodeecon.incomeOf lifePerSec): NOT part of incomePerSec,
     // and destroyed by the next install — see lifeInc below.
     lifeIncome = null,
@@ -461,7 +473,7 @@ export function exitHours(o = {}) {
     const t0 = h
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt, spendPerSec })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -625,6 +637,9 @@ export function exitHours(o = {}) {
 // Memo: many callers in one pass simulate identical inputs. Keyed on the
 // inputs' JSON (functions excluded, as JSON drops them); bounded.
 const policyMemo = new Map()
+/** Exits longer than this are not durations but "unreachable": comparisons between them decide nothing. */
+export const DEGENERATE_H = 1e5
+
 export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
   let key = null
   try {
@@ -650,7 +665,19 @@ export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
   }
   const out = !best
     ? { best: null, tried, why: tried[0]?.why ?? 'no policy could be priced' }
-    : { best, tried, atSearchEdge: best.installsFirst === maxInstalls, searchedTo: tried[tried.length - 1]?.installsFirst ?? maxInstalls }
+    : {
+        best,
+        tried,
+        atSearchEdge: best.installsFirst === maxInstalls,
+        searchedTo: tried[tried.length - 1]?.installsFirst ?? maxInstalls,
+        // DEGENERATE: the best exit is longer than any node is played (1e5h,
+        // eleven years). Live in BitNode 8 every policy priced ~1.5e26h — no
+        // install cadence was measured, so only "never install" priced, and
+        // its climb to 3000 at mult 1.34 is astronomical. Comparisons between
+        // two such exits are noise, and callers that decide by them must
+        // refuse (exitHoursComparable).
+        ...(best.hours > DEGENERATE_H ? { degenerate: true, degenerateWhy: `best exit ${best.hours.toExponential(2)}h (${best.installsFirst} installs) exceeds ${DEGENERATE_H}h — ${tried.some((t) => t.installsFirst > 0 && t.hours === null) ? `installs unpriced: ${tried.find((t) => t.installsFirst > 0)?.why}` : 'no policy reaches the exit'}` } : {}),
+      }
   if (key !== null) {
     if (policyMemo.size > 500) policyMemo.clear()
     policyMemo.set(key, out)
@@ -946,4 +973,39 @@ export function spendExitFromRecord(record, lastAugReset, cost, gainPerSec, now 
   const withS = bestExitPolicy({ ...runs.with, ...e, extraIncome: [{ atH: 0, perSec: gainPerSec }] }, runs.max, runs.min)?.best?.hours
   if (!num(without) || !num(withS)) return { deltaH: null, why: 'an exit could not be priced' }
   return { deltaH: withS - without, withH: withS, withoutH: without }
+}
+
+/**
+ * THE INSTALL CADENCE, measured in this node or — until it can be — borrowed,
+ * and SAID to be borrowed.
+ *
+ * endpointCycleStats needs three lives in the current node. A fresh node has
+ * none, so no install policy prices, the only priceable exit is "never
+ * install", and its climb is astronomical at a fresh multiplier: BitNode 8
+ * priced every choice at ~1.5e26h and every comparison tied (2026-09-25).
+ *
+ * The prior is the node in the ledger with the most lives' worth of measured
+ * ln(M) growth per hour — a different economy, so it is a STATED assumption,
+ * published as `cadence` with the node it came from, never a silent default;
+ * it is replaced the moment this node has three lives. Null when no node has.
+ * { stats, source: 'measured' | 'prior', node, lives, why }
+ */
+export function installCadence(ledger, node) {
+  const here = endpointCycleStats(ledger, node)
+  if (here) return { stats: here, source: 'measured', node, lives: here.n, why: `measured over ${here.n} lives in BitNode ${node}` }
+  if (!Array.isArray(ledger)) return null
+  const nodes = [...new Set(ledger.map((e) => e?.bitNode).filter((n) => num(n) && n !== node))]
+  let best = null
+  for (const n of nodes) {
+    const st = endpointCycleStats(ledger, n)
+    if (st && (!best || st.n > best.stats.n)) best = { stats: st, n }
+  }
+  if (!best) return null
+  return {
+    stats: best.stats,
+    source: 'prior',
+    node: best.n,
+    lives: best.stats.n,
+    why: `PRIOR: BitNode ${node} has fewer than 3 lives, so the cadence is BitNode ${best.n}'s (${best.stats.n} lives, x${best.stats.multGainPerCycle.toFixed(3)} per ${best.stats.cycleHours.toFixed(2)}h) — a different economy, replaced once this node measures its own`,
+  }
 }

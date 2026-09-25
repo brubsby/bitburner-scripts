@@ -289,7 +289,7 @@ export async function run() {
     // train-or-work one. (A sleeve BELOW 100 past the break-even synchronises
     // first — SP3 — because sync is the exchange rate on everything it later
     // delivers, not only on karma.)
-    const plan = sp.sleeveAssignments([sleeve({ sync: 100 })], NODE1, { objective: "karma", horizonHours: 40, playerIntelligence: 0 });
+    const plan = sp.sleeveAssignments([sleeve({ sync: 100 })], NODE1, { objective: "karma", horizonHours: 40, playerIntelligence: 0, money: 1e12 });
     if (!["strength", "defense", "dexterity", "agility"].includes(plan.tasks[0])) {
       c7.fail(`the emitted task must be a gym stat sleeve.js maps to a GymType, got ${plan.tasks[0]}`);
     }
@@ -659,7 +659,7 @@ export async function run() {
   {
     c15.examined(6);
     const sl = sleeve({ sync: 90.5, skills: { hacking: 1, strength: 77, defense: 77, dexterity: 77, agility: 76, charisma: 1, intelligence: 0 } });
-    const o = { horizonHours: 1000, playerIntelligence: 95, nodeWorkRepMult: 1, sharePower: 1.03 };
+    const o = { horizonHours: 1000, playerIntelligence: 95, nodeWorkRepMult: 1, sharePower: 1.03, money: 1e12 };
 
     // THE EXP OBJECTIVE EXISTS AND NEEDS NO TRAINING. Study exp is flat in the
     // sleeve's own stats, so there is nothing for the train-or-work search to
@@ -863,13 +863,13 @@ export async function run() {
     if (sp.sleeveExitOf({ ...rec, at: new Date(now - 3600e3).toISOString() }, 1, bestExitPolicy, now) !== null) c21.fail("stale inputs refuse");
     // The decisions follow the stub exitOf.
     const sleeve = { index: 0, sync: 40, shock: 0, skills: { hacking: 50, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 1, intelligence: 0 }, exp: { hacking: 1000, strength: 100, defense: 100, dexterity: 100, agility: 100, charisma: 0 }, mults: { hacking_exp: 1, strength_exp: 1, defense_exp: 1, dexterity_exp: 1, agility_exp: 1, charisma_exp: 1, hacking: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, crime_success: 1, crime_money: 1, faction_rep: 1 }, city: "Sector-12", memory: 1 };
-    const favorSync = (k, t) => (t.delayH > 0 ? 10 : 20);
-    const favorNow = (k, t) => (t.delayH > 0 ? 20 : 10);
-    const a1 = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf: favorSync, playerIntelligence: 0 });
+    const favorSync = (k, t) => (t.delayH > 0 ? 10 : 20) + (t.perSec === 0 ? 5 : 0);
+    const favorNow = (k, t) => (t.delayH > 0 ? 20 : 10) + (t.perSec === 0 ? 5 : 0);
+    const a1 = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf: favorSync, playerIntelligence: 0, money: 1e12 });
     if (a1?.tasks?.[0] !== "sync") c21.fail(`exp: a faster exit after synchronising must synchronise: ${a1?.why?.[0]}`);
-    const a2 = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 5000, exitOf: favorNow, playerIntelligence: 0 });
+    const a2 = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 5000, exitOf: favorNow, playerIntelligence: 0, money: 1e12 });
     if (a2?.tasks?.[0] === "sync") c21.fail(`exp: studying now must win when its exit is sooner, whatever the break-even says: ${a2?.why?.[0]}`);
-    const a3 = sp.sleeveAssignments([{ ...sleeve, sync: 100, shock: 50 }], null, { objective: "exp", horizonHours: 5000, exitOf: favorNow, playerIntelligence: 0 });
+    const a3 = sp.sleeveAssignments([{ ...sleeve, sync: 100, shock: 50 }], null, { objective: "exp", horizonHours: 5000, exitOf: favorNow, playerIntelligence: 0, money: 1e12 });
     if (a3?.tasks?.[0] === "shock") c21.fail(`shock: working now must win when its exit is sooner: ${a3?.why?.[0]}`);
   }
   checks.push(c21);
@@ -906,9 +906,9 @@ export async function run() {
   {
     c24.examined(2);
     const calls = [];
-    const exitOf = (k, t) => (calls.push(t), t.steps ? 30 : 31);
+    const exitOf = (k, t) => (calls.push(t), t.steps ? 30 : t.perSec === 0 ? 40 : 31);
     const sleeve = { index: 0, sync: 100, shock: 60, skills: { hacking: 50, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 1, intelligence: 0 }, exp: { hacking: 1000 }, mults: { hacking_exp: 1 }, city: "Sector-12", memory: 1 };
-    const a = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf, playerIntelligence: 0 });
+    const a = sp.sleeveAssignments([sleeve], null, { objective: "exp", horizonHours: 50, exitOf, playerIntelligence: 0, money: 1e12 });
     const withSteps = calls.find((t) => Array.isArray(t.steps));
     if (!withSteps || !(withSteps.steps.length > 2) || !(withSteps.steps[withSteps.steps.length - 1].perSec > withSteps.steps[0].perSec)) c24.fail(`the working side must be a rising schedule: ${JSON.stringify(calls[0])}`);
     if (a?.tasks?.[0] === "shock") c24.fail("with working-now sooner, the sleeve must not recover");
@@ -928,7 +928,7 @@ export async function run() {
     if (helped.current !== "strength" || alone.legs.length !== 4) c25.fail("all four stats are legs, trained in a fixed order");
     const tm2 = sp.covenantCombatHours(player, { strength: P, defense: P, dexterity: P, agility: P }, 2);
     if (Math.abs(tm2.hours - helped.hours / 2) > 1e-9) c25.fail("the training multiplier scales player and fleet alike");
-    const a = sp.sleeveAssignments([{ index: 0, sync: 100 }, { index: 1, sync: 50 }], null, { objective: "covenant", trainStat: "agility" });
+    const a = sp.sleeveAssignments([{ index: 0, sync: 100 }, { index: 1, sync: 50 }], null, { objective: "covenant", trainStat: "agility", money: 1e12 });
     if (a?.tasks?.join() !== "agility,agility") c25.fail(`every sleeve trains the campaign's stat: ${a?.tasks}`);
   }
   checks.push(c25);

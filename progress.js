@@ -136,9 +136,9 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
-import { incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -149,9 +149,9 @@ import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor, karmaGrindAcrossCycles } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles, GYMS } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, endpointCycleStats, installCadence, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1531,7 +1531,12 @@ function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabl
     const k = karmaChannelCtx(ns, info, player)
     const gang = k?.gangPending === true && !k.gangKarmaWaived && typeof k.grindHours === 'function'
     const finish = (inputs, assist) => {
-      if (!gang) return bestExitPolicy(inputs).best?.hours ?? null
+      if (!gang) {
+        // A degenerate exit is "unreachable", not a duration: every candidate
+        // ties inside it (BitNode 8, 1.5e26h each), so it decides nothing.
+        const r = bestExitPolicy(inputs)
+        return r.degenerate ? null : r.best?.hours ?? null
+      }
       const g = gangExitNow(ns, info, inputs, k.grindHours(null, assist))
       return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
     }
@@ -1541,13 +1546,17 @@ function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabl
     // (repBoost) needs the player's measured rate as its denominator, and is
     // simply omitted (a floor) while that rate is only estimated.
     if (repFaction && by.rep > 0) cands.push(['rep', finish({ ...base, sleeveRep: { perSec: by.rep, delayH: 0 }, ...(playerRep > 0 ? { repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } } : {}) }, null)])
-    if (!expDisabled && by.exp > 0) cands.push(['exp', finish({ ...base, expPerSec: (base.expPerSec ?? 0) + by.exp }, null)])
+    // STUDY PAYS A FEE (ClassWork.tsx:42, 320 x ZB's costMult 5 per second per
+    // sleeve, charged unchecked): the exp candidate carries it as a money
+    // outflow on the same trajectory (exitplan spendPerSec).
+    const studyFee = CLASSES.Algorithms.cost * Math.max(...UNIVERSITIES.map((u) => u.costMult)) * (Number.isInteger(fleet.sleeves) ? fleet.sleeves : 1)
+    if (!expDisabled && by.exp > 0) cands.push(['exp', finish({ ...base, expPerSec: (base.expPerSec ?? 0) + by.exp, spendPerSec: studyFee }, null)])
     if (by.money > 0) cands.push(['money', finish({ ...base, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
     // Ties within a minute are ties, not decisions: the earlier-listed
     // objective keeps them (sort is stable), so floating-point noise cannot
     // flip the fleet from pass to pass.
     const priced = cands.filter(([, h]) => typeof h === 'number' && isFinite(h)).sort((a, b) => (Math.abs(a[1] - b[1]) < 1 / 60 ? 0 : a[1] - b[1]))
-    if (!priced.length) return out(null, `no objective could be priced (${cands.map(([o]) => o).join(', ') || 'none viable'})`)
+    if (!priced.length) return out(null, `no objective could be priced (${cands.map(([o]) => o).join(', ') || 'none viable'}) — the exit is unpriced or degenerate (${base.cadence?.why ?? 'no install cadence'})`)
     return out(priced[0][0], `simulated exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}${eRep === null ? ' (eRep unmeasured: rep priced on the exit leg only — a floor)' : ''}`, { exits: Object.fromEntries(priced) })
   } catch (e) {
     return out(null, `objective comparison threw: ${String(e).slice(0, 80)}`)
@@ -1803,7 +1812,11 @@ function hacknetLifeIncome(ns, info) {
 
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   // The endpoint model (exitplan.endpointCycleStats), not cycleStats's median.
-  const cyc = endpointCycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+  // Measured in this node, or a STATED prior from another until it has three
+  // lives (exitplan.installCadence) — without one a fresh node prices only
+  // "never install", whose climb is ~1e26h, and every comparison ties.
+  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+  const cyc = cadence?.stats ?? null
   const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
   const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
   return {
@@ -1873,6 +1886,8 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // work shrinks what is owed while the money is saved — exitplan prices the
     // rep leg that way, and gangworth charges the karma grind the slot hours.
     workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
+    // Where the install cadence came from (measured / prior, and which node).
+    cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, why: cadence.why } : null,
   }
 }
 
@@ -3365,7 +3380,13 @@ async function act(ns, canJoin, info, note) {
     } else {
       const cls = GYM_CLASS[bodyStep.stat]
       const already = work?.type === 'CLASS' && String(work.classType ?? '') === cls && work.location === bodyStep.gym
-      if (!already) {
+      // THE FEE FLOOR (nodeecon.feeFundable): a gym session is charged every
+      // second with no balance check (ClassWork.tsx:57-72), so it starts only
+      // while cash covers FEE_FLOOR_S of it.
+      const gymFee = CLASS_BASE_FEE.gym * (GYMS.find((g) => g.name === bodyStep.gym)?.costMult ?? Math.max(...GYMS.map((g) => g.costMult)))
+      if (!already && !feeFundable(ns.getServerMoneyAvailable('home'), gymFee)) {
+        todo.push(`gym at ${bodyStep.gym} costs $${gymFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it (our spending must not take cash below zero)`)
+      } else if (!already) {
         try {
           if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
           if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`)) {
@@ -3392,7 +3413,10 @@ async function act(ns, canJoin, info, note) {
     workedFaction = null
     if (train && (player.skills?.charisma ?? 0) < train.toCha) {
       const studying = work?.type === 'CLASS' && String(work.classType ?? '') === 'Leadership'
-      if (!studying) {
+      const courseFee = CLASS_BASE_FEE.leadership * Math.max(...UNIVERSITIES.map((u) => u.costMult))
+      if (!studying && !feeFundable(ns.getServerMoneyAvailable('home'), courseFee)) {
+        todo.push(`Leadership at ZB costs $${courseFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it`)
+      } else if (!studying) {
         // ZB Institute is the x4 campus and it is in Volhaven; the class API
         // requires being in the university's city (Singularity.ts checks
         // Player.city per campus). Travel is instant and $200k — seconds of

@@ -220,5 +220,57 @@ export async function run() {
   }
   checks.push(i);
 
+  // -------------------------------------------------------------------
+  // Live 2026-09-25: every sleeve choice priced at ~1.53e26h (tied), the
+  // sleeves studied at $8k/s, cash went to -$2.4m.
+  const j = new Check("B8j", "a fresh node's exit discriminates (stated cadence prior), degenerate exits refuse, fees are a money outflow, paid classes pass a cash floor");
+  {
+    j.examined(9);
+    const SP = await import("../../sleeveplan.js");
+    const ledger = Array.from({ length: 6 }, (_, k) => ({ bitNode: 10, lifeH: 3, hackMult: 1.4 * Math.pow(1.2, k), augs: 10 + k }));
+    const live = { money: 2.5e8, incomePerSec: 0, hacking: 409, hackingExp: 7.3e6, hackingMult: 1.34, expPerSec: 2349, repPerSec: 4.6, exitRep: 0, exitFavor: 0, exitLevel: 3000, joinMoney: 100e9, terminalRep: 0, favorToDonate: 0, capitalReturnPerSec: 1.26e-4, capitalCap: 5.5e12, installCash: 250e6, workWhileDonating: true };
+    // Without a cadence: only "never install" prices, and it is degenerate.
+    const bare = X.bestExitPolicy(live);
+    if (bare.degenerate !== true) j.fail("the no-cadence exit (~1e26h) is not flagged degenerate", String(bare.best?.hours));
+    // With the prior: finite, and it moves with exp.
+    const cad = X.installCadence(ledger, 8);
+    if (cad?.source !== "prior" || cad.node !== 10) j.fail("no stated prior from another node", JSON.stringify(cad));
+    const withC = { ...live, cycleHours: cad.stats.cycleHours, multGainPerCycle: cad.stats.multGainPerCycle };
+    const a = X.bestExitPolicy(withC);
+    const b = X.bestExitPolicy({ ...withC, expPerSec: live.expPerSec + 500 });
+    if (a.degenerate || !(a.best?.hours < X.DEGENERATE_H)) j.fail("the exit with a cadence prior is still degenerate", String(a.best?.hours));
+    else if (!(b.best.hours < a.best.hours - 1 / 60)) j.fail("more exp does not shorten the exit — it still does not discriminate", `${a.best.hours} vs ${b.best.hours}`);
+    else j.note(`${cad.why}; exit ${a.best.hours.toFixed(2)}h, +500 exp/s ${b.best.hours.toFixed(2)}h`);
+    if (X.installCadence(ledger.map((e) => ({ ...e, bitNode: 8 })), 8)?.source !== "measured") j.fail("three lives in this node must replace the prior");
+    // A fee slows a money leg; a fee larger than income never finishes it.
+    const h0 = X.hoursToMoney(1e9, { money0: 1e8, incomeAtLevel1: 0, mult: 1, flatPerSec: 1e5 });
+    const h1 = X.hoursToMoney(1e9, { money0: 1e8, incomeAtLevel1: 0, mult: 1, flatPerSec: 1e5, spendPerSec: 5e4 });
+    const h2 = X.hoursToMoney(1e9, { money0: 1e5, incomeAtLevel1: 0, mult: 1, flatPerSec: 1e3, spendPerSec: 8e3 });
+    if (!(h1 > h0 * 1.9)) j.fail(`spendPerSec does not slow the money leg (${h0} vs ${h1})`);
+    if (h2 !== Infinity) j.fail(`a spend above income must never finish a money leg, got ${h2}`);
+    // sleeveExitOf refuses a degenerate record.
+    const rec = { at: new Date().toISOString(), lastAugReset: 1, inputs: live };
+    if (SP.sleeveExitOf(rec, 1, X.bestExitPolicy)?.("exp", { perSec: 10, delayH: 0 }) !== null) j.fail("sleeveExitOf priced a degenerate exit");
+    // The floor: with cash below 120s of the fleet's fees, no sleeve studies.
+    const sl = { index: 0, sync: 100, shock: 0, skills: { hacking: 50, intelligence: 0 }, exp: { hacking: 0 }, mults: { hacking_exp: 1 }, city: "Volhaven", memory: 1 };
+    const fleet = [0, 1, 2, 3, 4].map((k) => ({ ...sl, index: k }));
+    // An exit that FAVOURS studying, so only the floor can refuse it.
+    const poor = SP.sleeveAssignments(fleet, null, { objective: "exp", horizonHours: 100, money: 5e5, exitOf: (k, t) => (t.perSec > 0 ? 30 : 40), playerIntelligence: 0 });
+    if (poor.tasks.some((t) => t === "hacking")) j.fail("sleeves study on cash that cannot fund 120s of the fleet's fees", poor.why[0]);
+    // Priced: the fee makes the exit longer -> recover; shorter -> study.
+    const exitWorse = (k, t) => (t.spendPerSec ? 50 : 40);
+    const exitBetter = (k, t) => (t.perSec > 0 ? 30 : 40);
+    const w = SP.sleeveAssignments([sl], null, { objective: "exp", horizonHours: 100, money: 1e12, exitOf: exitWorse, playerIntelligence: 0 });
+    const bt = SP.sleeveAssignments([sl], null, { objective: "exp", horizonHours: 100, money: 1e12, exitOf: exitBetter, playerIntelligence: 0 });
+    if (w.tasks[0] !== "shock") j.fail("a fee the exit cannot afford still sends the sleeve to study", w.why[0]);
+    if (bt.tasks[0] !== "hacking") j.fail("a study that shortens the exit is refused", bt.why[0]);
+    // actplan: no gym on cash that cannot fund it.
+    const P = await import("../../actplan.js");
+    if (!(P.GYM_FEE_PER_SEC === 2400)) j.fail("Powerhouse fee is not 120 x 20");
+    const src = code("progress.js");
+    if (!/!already && !feeFundable\(/.test(src) || !/!studying && !feeFundable\(/.test(src)) j.fail("progress.js starts a gym or course without the fee floor");
+  }
+  checks.push(j);
+
   return checks;
 }
