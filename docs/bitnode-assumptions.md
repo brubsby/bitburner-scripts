@@ -95,6 +95,32 @@ These are not `BitNodeMultipliers` and `bncheck` only lists them as reminders:
 - **Joining a faction always needs a trusted click** (`FactionsRoot.tsx:89`).
   This is not BitNode-dependent and never becomes automatable.
 
+## BitNode 9 (Hacktocracy) — audited 2026-09-25
+
+BN9 (`BitNode.tsx` case 9) turns the economy inside out: `ServerMaxMoney 0.01`
+x `ScriptHackMoney 0.1` leave script hacking a thousandth of BN1's,
+`CloudServerLimit 0` removes the purchased fleet, `HomeComputerRamCost 5`
+makes home RAM five times dearer, `HackExpGain 0.05` starves the climb to
+hacking 6000 (`WorldDaemonDifficulty 2`), and the node hands out one hacknet
+SERVER at level 100 / 10 cores / cache 5 on entry (`Prestige.ts:329-338`,
+node entry only — the first install destroys it). Hashes are the money.
+
+What the stack got wrong, and what it does now:
+
+| was | now |
+| --- | --- |
+| `hacknet.js` refused phase 2 with servers; phase 1 bought "8 nodes" (the 8th server alone $172m) | server model in `hacknetplan.js` (rate/costs pinned to the game by `[HS1]`); purchases priced in dollars at the $250k/hash sell floor so the exit verdict, payback and `budget.js` treat them like nodes; Netburners closed by cheapest-per-unit |
+| nothing spent hashes (overflow auto-sells at the same rate, so money arrived, upgrades never) | `hashspend.js` + `hashplan.js`: each upgrade is `exit(with it) - exit(the same hashes sold)` on progress.js's exit inputs; non-simulated upgrades are named and never bought |
+| `batch.js` / `seed.js` / placers treated hacknet servers as free RAM — hashRate carries `1 - ramUsed/maxRam` | `hacknet.js` publishes `ramPolicy` (batch $/GB vs hash $/GB); batch/seed obey it fail-closed; boot/watchdog/act place there last |
+| `buyserv.js` published a $/GB for servers that cannot exist | refuses by name, `fleetDollarPerGB: null` |
+| `homecost.js` left out `HomeComputerRamCost` (x5 here) | every caller passes it |
+| hacknet money was invisible to the exit simulation (not script income) | `lifeIncome` in exitplan + `moneyAtW` |
+| `nodeplan.js` projects BN9 from script income alone | still does, and says so per row (`notModelled`) |
+
+Not handled, named: the post-install hacknet rebuild (a floor in the exit
+simulation), study/gym boosts outside the final window, company favor via
+hashes, and the one-off re-prep a Max Money / Min Security purchase causes.
+
 ## Keeping this honest
 
 `bncheck.mjs` is the source of truth; this file is the narrative. When a script

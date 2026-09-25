@@ -119,8 +119,8 @@ const ASSUMPTIONS = [
     tol: 0.05, dangerous: "both", impact: 1,
     mult: "CloudServerLimit",
     expect: 1,
-    where: "buyserv.js (ns.cloud.getServerLimit is read, so behaviour adapts)",
-    breaks: "Fewer/more servers than 25. Read at runtime, so this is informational only.",
+    where: "buyserv.js (ns.cloud.getServerLimit is read, so behaviour adapts; at 0 it publishes `no-cloud-servers` with fleetDollarPerGB null)",
+    breaks: "Fewer/more servers than 25. Read at runtime. At 0 (BitNode 9) there is no purchased fleet at all: buyserv.js refuses by name instead of publishing a $/GB for servers that cannot be bought (progress.js's spendExit.servers priced a fleet spend on it), and the RAM the stack runs on is home, rooted servers and hacknet servers under hacknet.js's ramPolicy.",
   },
   {
     id: "cloud-limit-pserv",
@@ -197,8 +197,8 @@ const ASSUMPTIONS = [
     tol: 0.05, dangerous: "below", impact: 1,
     mult: "HackExpGain",
     expect: 1,
-    where: "docs, exp-rate reasoning",
-    breaks: "Levelling speed differs from every estimate in docs/roadmap.md.",
+    where: "docs, exp-rate reasoning; nodeplan.js projectExp (reads it); exitplan climbs on MEASURED exp rates, so adapts",
+    breaks: "Levelling speed differs from every estimate in docs/roadmap.md. BN9's 0.05 makes script hacking a twentieth of the exp it is elsewhere while university study (ClassGymExpGain 1) is untouched — the climb to 6000 (WorldDaemonDifficulty 2) leans on study and sleeves, which is why hashspend.js prices Improve Studying on the final window's climb.",
   },
   {
     id: "faction-rep",
@@ -247,14 +247,40 @@ const ASSUMPTIONS = [
   },
   {
     id: "home-ram-cost",
-    tol: 0.05, dangerous: "above", impact: 2,
-    // impact raised from 1: this stopped being "only the reasoning shifts" when
-    // the price moved out of homeup.js's button-reading and into arithmetic.
+    tol: 0.05, dangerous: "above", impact: 1,
+    // impact 2 -> 1 on 2026-09-25 (the BitNode 9 audit): the factor is now
+    // carried. homecost.js takes it as a third argument and every caller
+    // (act.js, homeup.js, watchdog.js, buyserv.js, sleeveaug.js, gang.js,
+    // hacknet.js) passes bitNodeMults(currentNode).HomeComputerRamCost; an
+    // unreadable one (BN12's level-dependent value) is priced x1 AND flagged
+    // `assumed` on the result. What remains is the x1 fallback and prose.
     mult: "HomeComputerRamCost",
     expect: 1,
-    where: "homecost.js ramUpgradeCost = ram * 32000 * 1.58^log2(ram) (homecost.js:34)",
+    where: "homecost.js ramUpgradeCost = ram * 32000 * 1.58^log2(ram) * nodeRamCost (homecost.js) — FIXED, callers pass the node value; BN12 falls back to x1, flagged",
     breaks:
-      "HARDCODED. getUpgradeHomeRamCost (PlayerObjectServerMethods.ts:30) is `ram * BaseCostFor1GBOfRamHome * 1.58^log2(ram) * HomeComputerRamCost`, and homecost.js omits the last factor. This used to be registered against homeup.js on the grounds that homeup read prices off the buttons and therefore adapted — that is no longer true and had already gone stale here: the arithmetic moved to homecost.js precisely because reading the buttons cannot tell 'cannot afford' from 'maxed' (RamButton.tsx:49). watchdog.js's homeup trigger now gates on nextHomeUpgrade(), so in a node where this is not 1 the trigger is wrong by that factor in both directions — too high and homeup never wakes, too low and it wakes every 5 minutes to find it cannot pay.",
+      "WAS HARDCODED (BN9 = 5: every home RAM step priced at a fifth of the game's). getUpgradeHomeRamCost (PlayerObjectServerMethods.ts:30) is `ram * BaseCostFor1GBOfRamHome * 1.58^log2(ram) * HomeComputerRamCost`, and homecost.js omits the last factor. This used to be registered against homeup.js on the grounds that homeup read prices off the buttons and therefore adapted — that is no longer true and had already gone stale here: the arithmetic moved to homecost.js precisely because reading the buttons cannot tell 'cannot afford' from 'maxed' (RamButton.tsx:49). watchdog.js's homeup trigger now gates on nextHomeUpgrade(), so in a node where this is not 1 the trigger is wrong by that factor in both directions — too high and homeup never wakes, too low and it wakes every 5 minutes to find it cannot pay.",
+  },
+  {
+    id: "server-max-money-income",
+    tol: 0.5, dangerous: "below", impact: 2,
+    // tol 0.5: below half, script hacking stops being the income the exit
+    // simulation should be built on alone; BN9's 0.01 is 100x below.
+    mult: "ServerMaxMoney",
+    expect: 1,
+    where: "progress.js exitInputsOf incomePerSec (getTotalScriptIncome) — hacknet money rides separately as lifeIncome from hacknet.js moneyPerSec",
+    breaks:
+      "The exit simulation's income was SCRIPT income only (plus contracts). Hacknet production never appeared in it: a node's money is the 'hacknet' money source and a server's hashes are not money at all until sold. " +
+      "Harmless where hacking dominates; in BitNode 9 (ServerMaxMoney 0.01 x ScriptHackMoney 0.1) the entry hacknet server alone out-earns the batcher, so every money leg, the install gate's money at W and every spend verdict read the node as broke. " +
+      "FIXED: hacknet.js publishes moneyPerSec (hashes at the $250k sell floor), progress.js carries it as exitplan `lifeIncome` (not level-scaled, ends at the next install) and adds it to moneyAtW. The rebuilt hacknet of a later life is not modelled (a floor).",
+  },
+  {
+    id: "hacknet-node-money-hashes",
+    tol: 0.05, dangerous: "below", impact: 1,
+    mult: "HacknetNodeMoney",
+    expect: 1,
+    where: "hacknetplan.js hashRate / moneyRate — the node value is read at run time from bitNodeMults, so it adapts",
+    breaks:
+      "It scales hacknet SERVER hash production exactly as it scales node money (formulas/HacknetServers.ts:16). Read at run time; at 0 (BitNode 8) bestServerUpgrade refuses by name — Source-File 9 there buys servers that hash nothing, and their RAM is then pure RAM.",
   },
   {
     id: "contract-money",
@@ -324,7 +350,7 @@ const ASSUMPTIONS = [
 const STRUCTURAL = [
   ["No Source-File 4", "cmd.js, augbuy.js, torbuy.js, nfg.js, backdoor.js all drive the DOM because ns.singularity throws. With SF4 these could use the API — they will still WORK, but they are needlessly fragile and slow."],
   ["Intelligence is 0 (needs SF5)", "batch.js omits the intelligence terms in calculateHackingChance/percentMoneyHacked, and reputation.ts adds int/3 to work gain. Non-zero intelligence makes every formula in batch.js and every rep estimate low."],
-  ["Hacknet = nodes, not servers (SF9)", "hacknet.js buys Netburners-qualifying nodes. With SF9 they become hacknet SERVERS with different costs, an API change (ns.hacknet.*), and they contribute RAM."],
+  ["Hacknet nodes vs SERVERS (BitNode 9 / SF9)", "SUPPORTED since 2026-09-25, gated on sfgate.hasHacknetServers. hacknet.js runs both phases on the server model (hacknetplan.js: hashRate, bestServerUpgrade priced at the $250k/hash sell floor, netburnersServerStep) and publishes ramPolicy; hashspend.js spends hashes by simulated exit (hashplan.js). A hacknet server's RAM costs hashes (1 - ramUsed/maxRam): batch.js and seed.js use it only when ramPolicy allows, boot/watchdog/act place there last. BN9 entry grants one level-100 / 10-core / cache-5 server (Prestige.ts:329-338) that the FIRST INSTALL destroys and nothing recreates below SF9.3 — installing early in BN9 costs that stream."],
   ["go.cheat requires SF14.2", "go-cheat.js is gated on ns.getResetInfo().ownedSF.get(14) >= 2 and is skipped otherwise. Correct already, but the cheat policy only becomes live there."],
   ["Faction join needs a trusted click", "FactionsRoot.tsx:89 checks event.isTrusted; no in-game script can join a faction in ANY BitNode. This never changes."],
   [
@@ -347,6 +373,7 @@ const STRUCTURAL = [
   [
     "ns.ramOverride floors are 2.6GB, and the raise ceilings are SF4-dependent",
     "healer.js, createProgram.js, training.js, crime.js, faction.js, bladeburner.js, sleeve.js, endgame.js and progress.js each declare " +
+      "(hashspend.js declares ns.ramOverride(3.25): it also mirrors its capability-absent record home, getHostname + scp, and raises to 7.25GB only with hacknet servers) " +
       "`ns.ramOverride(2.6)` as the first statement of main (2.6 = RamCostConstants.Base 1.6 + ns.getResetInfo 1.0) and then " +
       "raise to `nonSing + singBase * singularityRamMultiplier(resetInfo)` before the first gated call. The FLOOR is " +
       "BitNode-independent; the CEILING is not — singBase is multiplied by 1 inside BN4, 16 at SF4.1, 4 at SF4.2, 1 at SF4.3. " +

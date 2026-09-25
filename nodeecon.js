@@ -174,7 +174,26 @@ export function stockFlagFor(manip, host, op) {
  * `priced` is false when nothing positive was measured; `why` then says
  * whether that is a real zero or an absent instrument.
  */
-export function incomeOf({ scriptIncome, mults, stock } = {}) {
+/**
+ * HACKNET PRODUCTION AS MONEY, from hacknet.js's report (/tel/hacknet.txt
+ * `moneyPerSec`: a node's $/s, or a server's hashes at the $250k/hash sell
+ * floor — hacknetplan.DOLLARS_PER_HASH). NOT script income: getTotalScriptIncome
+ * never sees it, and in BitNode 9 it is most of the money there is. The next
+ * install deletes every node and server (PlayerObjectGeneralMethods.ts:130), so
+ * it is income for THIS life only — exitplan's `lifeIncome`, never part of
+ * `incomePerSec` or `flatPerSec` (which persist across installs).
+ * { ok, perSec, why }: stale, other-life or absent -> perSec 0 with the reason.
+ */
+export const HACKNET_FILE = '/tel/hacknet.txt'
+export function hacknetRecordOf(rec, lastAugReset, now = Date.now()) {
+  if (!rec) return { ok: false, perSec: 0, why: 'no /tel/hacknet.txt' }
+  if (rec.lastAugReset !== lastAugReset) return { ok: false, perSec: 0, why: 'hacknet report is from another life' }
+  if (!(now - Date.parse(rec.at) < 15 * 60e3)) return { ok: false, perSec: 0, why: 'hacknet report is stale' }
+  const v = rec.moneyPerSec
+  return fin(v) && v >= 0 ? { ok: true, perSec: v, why: null } : { ok: false, perSec: 0, why: 'hacknet report carries no moneyPerSec' }
+}
+
+export function incomeOf({ scriptIncome, mults, stock, hacknet } = {}) {
   const now = fin(scriptIncome?.[0]) && scriptIncome[0] > 0 ? scriptIncome[0] : 0
   const avg = fin(scriptIncome?.[1]) && scriptIncome[1] > 0 ? scriptIncome[1] : 0
   const levelPerSec = now || avg
@@ -186,7 +205,10 @@ export function incomeOf({ scriptIncome, mults, stock } = {}) {
   if (levelPerSec > 0) sources.push(now ? 'running-scripts' : 'since-last-aug')
   if (r > 0) sources.push('stock-return')
   else if (flatPerSec > 0) sources.push('stock-realised')
-  const priced = levelPerSec > 0 || flatPerSec > 0 || r > 0
+  // Hacknet (hacknetRecordOf): priced, reported, and kept OUT of incomePerSec.
+  const lifePerSec = hacknet?.ok && fin(hacknet.perSec) && hacknet.perSec > 0 ? hacknet.perSec : 0
+  if (lifePerSec > 0) sources.push('hacknet')
+  const priced = levelPerSec > 0 || flatPerSec > 0 || r > 0 || lifePerSec > 0
   let why = null
   if (!priced) {
     why =
@@ -198,6 +220,7 @@ export function incomeOf({ scriptIncome, mults, stock } = {}) {
     incomePerSec: levelPerSec + flatPerSec,
     levelPerSec,
     flatPerSec,
+    lifePerSec,
     capitalReturnPerSec: r,
     capitalCap: s?.capitalCap ?? null,
     equity: s ? s.equity : 0,

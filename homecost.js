@@ -24,14 +24,22 @@
 // Caps: ServerConstants.HomeComputerMaxRam = 2^30 (Server/data/Constants.ts:6),
 // cores at 8 (CoresButton.tsx:18).
 //
-// The RAM cost carries BitNodeMultipliers.HomeComputerRamCost, which is 1 in
-// BN1 and is NOT read here — reading it in-game costs RAM in every script that
-// imports this. Registered in tools/sim/bncheck.mjs as `home-ram-cost`.
+// The RAM cost carries BitNodeMultipliers.HomeComputerRamCost — 1.5 in BN3
+// and BN10, 5 in BN9, 1.02^level in BN12 (BitNode.tsx). It used to be left
+// out ("1 in BN1"), which in BitNode 9 priced every home RAM step at a FIFTH
+// of the game's price: watchdog.js woke homeup.js to buy what it could not
+// pay for, and every budget.js home claim under-held by 5x. Every caller now
+// passes the node's value (bitNodeMults(currentNode).HomeComputerRamCost —
+// a pure table, 0GB); this module still imports nothing, because
+// watchdog.js's relaunch copies imports only one level deep. Registered in
+// tools/sim/bncheck.mjs as `home-ram-cost`.
 
 export const MAX_HOME_RAM = 1073741824 // 2^30
 export const MAX_HOME_CORES = 8
 
-export const ramUpgradeCost = (ram) => ram * 32000 * Math.pow(1.58, Math.log2(ram))
+const okMult = (m) => typeof m === 'number' && isFinite(m) && m > 0
+
+export const ramUpgradeCost = (ram, nodeRamCost) => ram * 32000 * Math.pow(1.58, Math.log2(ram)) * (okMult(nodeRamCost) ? nodeRamCost : 1)
 export const coreUpgradeCost = (cores) => 1e9 * Math.pow(7.5, cores)
 
 /**
@@ -43,10 +51,13 @@ export const coreUpgradeCost = (cores) => 1e9 * Math.pow(7.5, cores)
  * rather than a fixed preference so the caller's "can I afford anything?" test
  * is exact.
  */
-export function nextHomeUpgrade(ram, cores) {
+export function nextHomeUpgrade(ram, cores, nodeRamCost) {
   const options = []
   if (cores < MAX_HOME_CORES) options.push({ kind: 'cores', cost: coreUpgradeCost(cores) })
-  if (ram < MAX_HOME_RAM) options.push({ kind: 'RAM', cost: ramUpgradeCost(ram) })
+  // An unreadable node multiplier (a node missing from bitNodeMultipliers.js,
+  // BN12's level-dependent one) prices RAM at x1 — the old behaviour — and
+  // SAYS SO on the result, so a caller that publishes it publishes the gap.
+  if (ram < MAX_HOME_RAM) options.push({ kind: 'RAM', cost: ramUpgradeCost(ram, nodeRamCost), ...(okMult(nodeRamCost) ? {} : { assumed: 'HomeComputerRamCost unreadable: RAM priced at the BitNode 1 x1' }) })
   if (!options.length) return null
   return options.reduce((a, b) => (b.cost < a.cost ? b : a))
 }

@@ -100,7 +100,7 @@ function claimsOf(ns, info) {
   // RAM upgrade only: the cores option needs ns.getServer (2GB) for the core
   // count. The RAM price is the larger claim whenever cores would have been
   // cheaper, so this errs toward holding MORE cash for home, never less.
-  const up = nextHomeUpgrade(ns.getServerMaxRam('home'), Infinity)
+  const up = nextHomeUpgrade(ns.getServerMaxRam('home'), Infinity, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
   return {
     join: joinClaim(gate, info.lastAugReset),
     augmentations: augClaim(gate, info.lastAugReset),

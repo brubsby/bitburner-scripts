@@ -41,6 +41,8 @@
 
 // Free: status.js references only ns.write (0GB) and ns.atExit is 0GB.
 import { reporter, describe } from 'status.js'
+// Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
+import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
@@ -240,7 +242,29 @@ async function pass(ns, flags) {
   //
   // Every other rooted host is fair game — they have no controllers on them and
   // free RAM there is worth exactly one thing.
-  const hosts = all.filter((h) => h !== 'home' && ns.hasRootAccess(h))
+  //
+  // NOR IS A HACKNET SERVER, unless hacknet.js's ramPolicy says the RAM earns
+  // more running workers than the hashes it costs: its hash rate carries
+  // (1 - ramUsed/maxRam) (Hacknet/formulas/HacknetServers.ts:14), so filling
+  // one with early.js turns its production off. Missing or stale policy:
+  // excluded (hacknetplan.hacknetHostAllowed fails closed).
+  const here = ns.getHostname()
+  if (here !== 'home') {
+    try {
+      ns.scp('/tel/hacknet.txt', here, 'home')
+    } catch {
+      /* the previous copy stays; its stamp decides freshness */
+    }
+  }
+  const hnPolicy = ns.read('/tel/hacknet.txt')
+  const hosts = all.filter((h) => h !== 'home' && ns.hasRootAccess(h) && hacknetHostAllowed(h, hnPolicy))
+  // early.js/hgw.js loop forever, so a worker placed on a hacknet server
+  // before the policy said no would hold its RAM (and the hashes it costs)
+  // indefinitely. Withdraw them.
+  for (const h of all) {
+    if (!isHacknetServerHost(h) || hacknetHostAllowed(h, hnPolicy) || !ns.hasRootAccess(h)) continue
+    for (const p of ns.ps(h)) if (p.filename === EARLY || p.filename === CHEAP) ns.kill(p.pid)
+  }
   for (let i = 0; i < hosts.length; i++) {
     const h = hosts[i]
     const target = flags.target || targets[i % targets.length]
