@@ -367,5 +367,39 @@ export async function run() {
   }
   checks.push(c7);
 
+  // -------------------------------------------------------------------
+  const c8 = new Check("ST8", "concentration is the harness's choice on the TAIL too (p25), and the record separates trading P&L from other spenders' withdrawals");
+  {
+    // Kelly for these walks is ~20x capital per stock (per-tick edge/variance),
+    // so with no leverage log-optimal is all-in on the best edge; the question
+    // is whether estimation/flip risk makes a cap better on the bad seeds.
+    // tools/sim/stocks/tail.mjs (40 seeds x 2h, $200m, mid-market) 2026-09-25:
+    //   uncapped p10/p25/p50 65/77/90 %/h, DDmax 26% | maxFrac 0.5: 59/62/72, DDmax 20%
+    //   | 0.34: 53/56/63 | 0.2: 38/44/49. A cap buys drawdown with growth at
+    //   EVERY percentile. If that ever flips, this fails and asks for the cap.
+    const { tail } = await import("../sim/stocks/tail.mjs");
+    c8.examined(24);
+    const un = tail({}, { seeds: 12, hours: 1.5, cap: 2e8 });
+    const capped = tail({ maxFrac: 0.5 }, { seeds: 12, hours: 1.5, cap: 2e8 });
+    c8.note(`12 seeds x 1.5h, $200m: uncapped p25 ${(un.p25 * 100).toFixed(0)}%/h (DDmax ${(un.ddMax * 100).toFixed(0)}%), maxFrac 0.5 p25 ${(capped.p25 * 100).toFixed(0)}%/h (DDmax ${(capped.ddMax * 100).toFixed(0)}%)`);
+    if (capped.p25 > un.p25 && S.DEFAULTS.maxFrac >= 1) c8.fail("a 50% single-name cap now beats concentration on the 25th percentile — ship the cap (DEFAULTS.maxFrac)");
+    if (un.ddMax > 0.45) c8.warn(`harness max drawdown ${(un.ddMax * 100).toFixed(0)}% — tail risk is growing`);
+
+    // externalFlows: a withdrawal by another spender is not trading P&L.
+    c8.examined(1);
+    const m = new Market({ seed: 31, money: 2e8, burnInTicks: 3000 });
+    const f = await runShipped(m, 300, {
+      onTick: (n) => {
+        if (n === 150) m.player.money -= 5e7; // someone else buys something
+      },
+    });
+    const tel = JSON.parse(f.files["/tel/stock.txt"]);
+    const hist = (f.files["/tel/stock-hist.txt"] || "").trim().split("\n").filter(Boolean);
+    if (!(Math.abs(tel.externalFlows + 5e7) < 2e6)) c8.fail(`a $50m withdrawal reads as externalFlows ${tel.externalFlows?.toFixed(0)}`, "the record must say where the money went");
+    if (!(hist.length >= 20)) c8.fail(`/tel/stock-hist.txt has ${hist.length} rows after 300 ticks`);
+    c8.note(`$50m withdrawn mid-run: externalFlows $${(tel.externalFlows / 1e6).toFixed(1)}m, lifePnl $${(tel.lifePnl / 1e6).toFixed(1)}m, ${hist.length} history rows`);
+  }
+  checks.push(c8);
+
   return checks;
 }

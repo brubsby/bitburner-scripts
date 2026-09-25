@@ -116,8 +116,12 @@ export const DEFAULTS = {
   estimator: 'hmm',
   // hmm: per-tick chance the forecast drifts one grid step (1%) either way.
   diffusion: 0.01,
-  // hmm: a phase bank is dropped when its posterior falls below this.
-  phasePrune: 1e-7,
+  // hmm: a phase bank is dropped when its posterior falls below this (0 =
+  // never: every bank kept, floored at phaseFloorNats behind the best).
+  phasePrune: 0,
+  phaseFloorNats: 25,
+  // hmm: per-tick chance of an off-phase flip in every bank.
+  offPhaseFlip: 0,
   // hmm: phase posterior above which ticksToBoundary trusts the phase.
   phaseTrust: 0.9,
   // hmm: {phase, nats} remembered across a restart (stock.js), or null.
@@ -315,6 +319,7 @@ function observeHmm(st, ups) {
   const H = st.hmm
   const n = st.symbols.length
   const d = st.opt.diffusion
+  const eps = st.opt.offPhaseFlip
   const tmp = new Float64Array(GRID)
   for (const [ph, bank] of H.banks) {
     const P = bank.P
@@ -326,6 +331,12 @@ function observeHmm(st, ups) {
       for (let i = 0; i < GRID; i++) {
         let p = P[o + i]
         if (boundary) p = (1 - FLIP_CHANCE) * p + FLIP_CHANCE * P[o + GRID - 1 - i]
+        // A small flip hazard on EVERY tick: a bank whose phase is wrong, an
+        // otlkMag drifting through 0 (Stock.ts:195-198), or the soft cap
+        // forcing b=false (StockMarket.ts:280-283) all flip f off-phase. With
+        // none, a confident wrong phase makes a flip invisible and the
+        // position is held through the fall.
+        else if (eps > 0) p = (1 - eps) * p + eps * P[o + GRID - 1 - i]
         tmp[i] = p
       }
       let z = 0
@@ -357,13 +368,17 @@ function observeHmm(st, ups) {
   H.post = new Map()
   for (const [ph, b] of H.banks) H.post.set(ph, Math.exp(b.logL - mx) / Z)
   for (const [ph, w] of H.post) {
-    if (w < st.opt.phasePrune && H.banks.size > 1) {
+    if (st.opt.phasePrune > 0 && w < st.opt.phasePrune && H.banks.size > 1) {
       H.banks.delete(ph)
       H.post.delete(ph)
     }
   }
-  // Rebase log-likelihoods so they never overflow.
-  for (const b of H.banks.values()) b.logL -= mx
+  // Rebase log-likelihoods so they never overflow, and FLOOR them: a phase
+  // that fell behind (an early noisy lock, or a restart prior) must be able
+  // to come back once the evidence turns — a pruned or infinitely-behind
+  // true phase is unrecoverable.
+  const floor = st.opt.phaseFloorNats
+  for (const b of H.banks.values()) b.logL = Math.max(b.logL - mx, -floor)
 }
 
 function hmmMoments(st, s) {

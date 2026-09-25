@@ -84,12 +84,16 @@ function manipulate(mkt, capacity, frac = 0.5, servable = null, pick = "servable
 }
 
 /** The new trader. `use4S`, `canShort`, `opt` (stockstrat DEFAULTS overrides), `manip` capacity. */
-export function runNew(mkt, ticks, { use4S = false, canShort = false, opt = {}, manip = 0, servable = null, pick = "servable" } = {}) {
+export function runNew(mkt, ticks, { use4S = false, canShort = false, opt = {}, manip = 0, servable = null, pick = "servable", trackDD = false } = {}) {
   const st = S.newState(mkt.symbols, opt);
   S.observe(st, pricesOf(mkt), use4S ? forecastsOf(mkt) : null);
   const path = [];
   let failed = 0;
   let trades = 0;
+  let peak = mkt.wealth();
+  let maxDD = 0;
+  let concSum = 0;
+  let concN = 0;
   for (let t = 0; t < ticks; t++) {
     mkt.tick();
     S.observe(st, pricesOf(mkt), use4S ? forecastsOf(mkt) : null);
@@ -102,9 +106,20 @@ export function runNew(mkt, ticks, { use4S = false, canShort = false, opt = {}, 
     trades += orders.length;
     failed += execute(mkt, orders);
     manipulate(mkt, manip, 0.5, servable, pick);
+    if (trackDD) {
+      const w = mkt.wealth();
+      if (w > peak) peak = w;
+      if (1 - w / peak > maxDD) maxDD = 1 - w / peak;
+      let top = 0;
+      for (const x of st.symbols) top = Math.max(top, (mkt.position(x)[0] + mkt.position(x)[2]) * mkt.price(x));
+      if (top > 0) {
+        concSum += top / w;
+        concN++;
+      }
+    }
     if (t % 60 === 59) path.push(mkt.wealth());
   }
-  return { path, failed, trades, phase: st.phase };
+  return { path, failed, trades, phase: st.phase, maxDD, conc: concN ? concSum / concN : null };
 }
 
 /** The pre-rewrite stock.js rule (4S), acting every 10.2s of game time. */

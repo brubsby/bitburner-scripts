@@ -217,6 +217,8 @@ export async function main(ns) {
   let prevEquity = null
   const ret = [] // [{pnl, capitalSec}] over the last hour of ticks
   let lifePnl = 0
+  let startWealth = null
+  const HIST = '/tel/stock-hist.txt'
   let lifeSec = 0
   const equityOf = (positions, ask, bid) => {
     let v = 0
@@ -262,6 +264,7 @@ export async function main(ns) {
       const cash = ns.getServerMoneyAvailable('home')
       const posValue = equityOf(positions, ask, bid)
       const wealth = cash + posValue
+      if (startWealth === null) startWealth = wealth
 
       // ---- money discipline ------------------------------------------------
       const hold = holdOf(ns, info)
@@ -363,6 +366,15 @@ export async function main(ns) {
         // Market capacity: every stock at maxShares, at today's prices.
         capitalCap: syms.reduce((a, s) => a + maxShares[s] * prices[s], 0),
         incomePerSec: lifeSec >= 60 ? lifePnl / lifeSec : null,
+        // WHERE THE MONEY WENT. lifePnl is what trading made (market moves,
+        // spread and commission, telescoped per tick); externalFlows is the
+        // rest of the wealth change since this process started — money other
+        // spenders took (negative) or income that arrived (positive). Live
+        // 2026-09-25 a "-47% in 5 min" was $287.2m of darkweb programs
+        // (moneySourceA.other = TOR + all five port openers), not a trade.
+        startWealth,
+        lifePnl,
+        externalFlows: wealth - startWealth - lifePnl,
         manip: manipOf(positions, prices, servable, (s) => forecastOf(st, s)),
         servable: { level: servable.level, syms: [...servable.syms], nudgesPerSec: servable.nu, boostPoints: boostPts, why: servable.why },
         // Return per second at each nudge rate the batcher could deliver, at
@@ -390,6 +402,20 @@ export async function main(ns) {
         buy4S: v4s,
         why: hold ? `stock hold by ${hold.by} (${hold.why}) ${hold.ageS}s old — opening nothing` : !claimKnown ? 'a higher claim is UNREADABLE (join/augmentations) — trading anyway, positions are one tick from cash' : null,
       })
+      // A bounded history for post-mortems (every 10 ticks, last 360 rows = 6h).
+      if (counters.ticks % 10 === 0) {
+        try {
+          const row = JSON.stringify({ at: new Date().toISOString(), t: st.t, wealth: Math.round(wealth), equity: Math.round(equity), cash: Math.round(cash), lifePnl: Math.round(lifePnl), externalFlows: Math.round(wealth - startWealth - lifePnl), phase: st.phase, held: held.map((h) => `${h.sym}:${h.f}±${h.sd}`) })
+          // Off home, start from home's copy (a restart may land on another host).
+          if (counters.ticks === 10) fetchFromHome(ns, HIST)
+          const lines = (ns.read(HIST) || '').split('\n').filter(Boolean)
+          lines.push(row)
+          ns.write(HIST, lines.slice(-360).join('\n') + '\n', 'w')
+          if (ns.getHostname() !== 'home') ns.scp(HIST, 'home', ns.getHostname())
+        } catch {
+          /* history is best-effort; the status file carries the error path */
+        }
+      }
       push()
     } catch (err) {
       const text = record(errors, err)

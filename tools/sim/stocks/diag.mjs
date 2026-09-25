@@ -19,7 +19,7 @@ const TICKS = Math.round(Number(arg("hours", 3)) * 600);
 const opt = JSON.parse(arg("opt", "{}"));
 
 export function diagnose(seed, opt = {}) {
-  const m = new Market({ seed, money: 0, burnInTicks: 3000 });
+  const m = new Market({ seed, money: 0, burnInTicks: Number(arg("burn", 3000)) });
   const st = S.newState(m.symbols, opt);
   S.observe(st, pricesOf(m));
   let truePhase = null;
