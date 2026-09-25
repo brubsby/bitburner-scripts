@@ -28,5 +28,6 @@
 // stray guard call here costs hundreds of GB across a large batch.
 
 export async function main(ns) {
-  await ns.hack(ns.args[0], { additionalMsec: ns.args[1] || 0 })
+  // args[3] === 1: move the server's stock (batch.js, nodeecon.stockFlagFor)
+  await ns.hack(ns.args[0], { additionalMsec: ns.args[1] || 0, stock: ns.args[3] === 1 })
 }

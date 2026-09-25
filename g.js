@@ -6,5 +6,6 @@
 // off first, and why this file has no guards in it.
 
 export async function main(ns) {
-  await ns.grow(ns.args[0], { additionalMsec: ns.args[1] || 0 })
+  // args[3] === 1: move the server's stock (batch.js, nodeecon.stockFlagFor)
+  await ns.grow(ns.args[0], { additionalMsec: ns.args[1] || 0, stock: ns.args[3] === 1 })
 }
