@@ -231,7 +231,13 @@ if (!prev) {
   }
 
   // The batcher must be earning. Zero is the shape of "running but idle".
-  if (now.batchPerSec !== null && !(now.batchPerSec > 0)) fail("batch.js reports $0/s earned", "the batcher is running but landing nothing");
+  // In a node where hacking pays nothing (BN8: ScriptHackMoneyGain 0) batch.js
+  // farms EXP by design and $0/s is correct; there the thing that must move is
+  // hacking exp, so check that instead of crying wolf (2026-09-25).
+  const farming = !!tel["batch.txt"]?.expFarm;
+  if (farming) {
+    if (num(prev.hackingExp) && num(now.hackingExp) && !(now.hackingExp > prev.hackingExp) && !(num(now.lifeMs) && num(prev.lifeMs) && now.lifeMs < prev.lifeMs)) fail(`EXP FARM NOT MOVING: hacking exp flat over ${dtMin.toFixed(0)} min while batch.js is in exp mode`);
+  } else if (now.batchPerSec !== null && !(now.batchPerSec > 0)) fail("batch.js reports $0/s earned", "the batcher is running but landing nothing");
 
   // Go power must climb while go.js is alive; the bonus resets on install, so
   // an install since the last sample legitimately drops it.
