@@ -22,9 +22,11 @@ import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, covenantSlee
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { reporter } from 'status.js'
+import { spendExitFromRecord } from 'exitplan.js'
 
 const STATUS = '/tel/sleeveaug.txt'
 const GATE_FILE = '/tel/installgate.txt'
+const EXIT_INPUTS = '/tel/exitinputs.txt'
 // A telemetry read older than this is not today's rate.
 const FRESH_MS = 10 * 60 * 1000
 
@@ -132,12 +134,55 @@ function decideAndBuy(ns, flags, note) {
         if (k === 0) decisions.push({ sleeve: 'refused', why: r?.message ?? 'purchaseSleeve failed' })
         break
       }
-      bought.push(`Covenant sleeve ($${ns.format.number(ns.sleeve.getSleeveCost ? covenantSleeveCost(sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode) - 1) : another.cost)})`)
+      bought.push(`Covenant sleeve #${sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode)}`)
       if (!another.more) break
       const n2 = sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode)
       if (n2 === null || n2 >= COVENANT_MANDATE.opportunistic) break
       const j2 = joinClaim(ns.read(GATE_FILE), info.lastAugReset)
       if (!(typeof j2 === 'number' && ns.getServerMoneyAvailable('home') - j2 >= ns.sleeve.getSleeveCost())) break
+    }
+  }
+
+  // --- 1b. SLEEVE MEMORY (Covenant, BN10, members only). Memory sets the
+  // sync a sleeve starts every LATER BitNode with (Sleeve.prestige: sync =
+  // max(memory, 1)); it does nothing in this node. Cost per point
+  // $1t x 1.02^(memory-1) (getMemoryUpgradeCost) — ~$305t for 1 -> 100.
+  // Trajectory against trajectory (exitplan.spendExitFromRecord): the exit
+  // with that money gone against not. Its value is all in later nodes, which
+  // this cannot simulate — so it buys only when the in-node cost is under a
+  // minute of exit (money not binding): free here, strictly positive later.
+  // After the mandated sleeves, never before them. Otherwise the verdict and
+  // its cost are published and nothing is bought.
+  const memory = (() => {
+    if (info.currentNode !== COVENANT_MANDATE.node) return { buy: [], why: 'memory is sold only inside BitNode 10' }
+    if (!ns.getPlayer().factions.includes(COVENANT.faction)) return { buy: [], why: `not a ${COVENANT.faction} member` }
+    const from = sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode)
+    if (from === null || from < COVENANT_MANDATE.target) return { buy: [], why: 'the mandated sleeves come first' }
+    const wants = []
+    for (let i = 0; i < ns.sleeve.getNumSleeves(); i++) {
+      const m = ns.sleeve.getSleeve(i).memory
+      if (typeof m === 'number' && m < 100) wants.push({ i, amount: 100 - m, cost: ns.sleeve.getMemoryUpgradeCost(i, 100 - m) })
+    }
+    if (!wants.length) return { buy: [], why: 'every sleeve is at memory 100' }
+    const total = wants.reduce((t, w) => t + w.cost, 0)
+    let rec = null
+    try {
+      rec = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
+    } catch {
+      rec = null
+    }
+    const ex = spendExitFromRecord(rec, info.lastAugReset, total, 0)
+    if (typeof ex.deltaH !== 'number') return { buy: [], total, why: `in-node cost unpriced (${ex.why}) — not buying` }
+    const join = joinClaim(gate, info.lastAugReset)
+    if (!(typeof join === 'number' && ns.getServerMoneyAvailable('home') - join >= total)) return { buy: [], total, deltaH: ex.deltaH, why: 'money does not clear the join claim' }
+    if (!(ex.deltaH < 1 / 60)) return { buy: [], total, deltaH: ex.deltaH, why: `costs this node ${ex.deltaH.toFixed(2)}h of exit — not free; later-node value is unsimulated, so this waits for a decision` }
+    return { buy: wants, total, deltaH: ex.deltaH, why: `$${ns.format.number(total)} costs this node ${(ex.deltaH * 60).toFixed(2)} min of exit; every later node starts these sleeves at sync 100` }
+  })()
+  decisions.push({ memory: { why: memory.why, total: memory.total ?? null, deltaH: memory.deltaH ?? null } })
+  if (memory.buy.length && !flags.dry) {
+    for (const w of memory.buy) {
+      if (ns.sleeve.upgradeMemory(w.i, w.amount)?.success) bought.push(`sleeve ${w.i} memory +${w.amount}`)
+      else break
     }
   }
 

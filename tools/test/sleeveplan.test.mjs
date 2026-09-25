@@ -930,5 +930,50 @@ export async function run() {
   }
   checks.push(c25);
 
+  const c26 = new Check("SP26", "sleeve memory: bought to 100 only when free in this node (< a minute of exit), only after the mandate, only in BN10 as a member");
+  {
+    const { main } = await import("../../sleeveaug.js");
+    const now = new Date().toISOString();
+    const run = async (o = {}) => {
+      // An exit that depends on the next batch: a long climb at a low multiplier.
+      const inputs = { money: 1e16, incomePerSec: 1e12, hacking: 3000, hackingExp: 1e12, hackingMult: 1, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 6000, joinMoney: 100e9, cycleHours: 4, multGainPerCycle: 1.1 };
+      const ladder = [0, 0.5, 0.9, 1, 2].map((f) => ({ money: (o.ladderScale ?? 1e16) * f, gains: { hacking: 1 + (o.ladderSlope ?? 0) * f, rep: 1, income: 1, exp: 1 } }));
+      const files = {
+        "/tel/sleeve.txt": JSON.stringify({ at: now, disableSleeveExp: false, assigned: [] }),
+        "/tel/status.txt": JSON.stringify({ at: now, incomePerSec: 1e12 }),
+        "/tel/factionplan.txt": JSON.stringify({}),
+        "/tel/snap-augstats.txt": JSON.stringify({ data: { stats: {} } }),
+        "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: false, plan: null, joinClaim: 0 }),
+        "/tel/exitinputs.txt": JSON.stringify({ at: now, lastAugReset: 1, W: 2, finalWindow: false, moneyAtW: o.ladderScale ?? 1e16, gainsByMoney: ladder, eRep: 0, eBudget: 0, inputs }),
+      };
+      const log = [];
+      const ns = {
+        args: [], flags: () => ({ dry: false }), disableLog() {}, atExit() {},
+        read: (f) => files[f] ?? "", write: (f, d) => (files[f] = d),
+        getResetInfo: () => ({ currentNode: o.node ?? 10, lastAugReset: 1, ownedSF: new Map() }),
+        getPlayer: () => ({ factions: o.member === false ? [] : ["The Covenant"] }),
+        getServerMoneyAvailable: () => o.money ?? 1e16, getServerMaxRam: () => 2 ** 30, getServer: () => ({ cpuCores: 8 }),
+        format: { number: (x) => String(x) },
+        sleeve: {
+          getNumSleeves: () => o.fleet ?? 5, getSleeveCost: () => 1e17, purchaseSleeve: () => ({ success: false }),
+          getSleeve: () => ({ shock: 0, sync: 100, memory: 1, exp: { hacking: 0 }, mults: { hacking_exp: 1 } }),
+          getSleevePurchasableAugs: () => [], purchaseSleeveAug: () => false,
+          getMemoryUpgradeCost: () => 3.05e14, upgradeMemory: (i, a) => (log.push(`mem ${i} +${a}`), { success: true }),
+        },
+      };
+      await main(ns);
+      return log;
+    };
+    c26.examined(5);
+    const free = await run({});
+    if (free.length !== 5 || free[0] !== "mem 0 +99") c26.fail(`money not binding: every sleeve to 100 — got ${free}`);
+    if ((await run({ fleet: 3 })).length) c26.fail("never before the mandated sleeves (fewer than 4 bought)");
+    if ((await run({ node: 4 })).length) c26.fail("only in BitNode 10");
+    if ((await run({ member: false })).length) c26.fail("only as a Covenant member");
+    // Money binding: the next batch shrinks with the spend -> the exit is slower -> no buy.
+    if ((await run({ ladderScale: 2e15, ladderSlope: 50, money: 2e15 })).length) c26.fail("when the spend costs the node's exit time it must wait for a decision");
+  }
+  checks.push(c26);
+
   return checks;
 }

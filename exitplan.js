@@ -85,13 +85,27 @@ export function hoursToLevel(level, mult, exp0, expPerSec) {
  * scale of the answer and the cost is irrelevant offline.
  */
 export function hoursToMoney(target, o = {}) {
-  const { money0 = 0, incomeAtLevel1, mult, exp0 = 0, expPerSec, maxHours = 1e4, stepH = 1 / 120, extraAt = null } = o
+  const { money0 = 0, incomeAtLevel1, mult, exp0 = 0, expPerSec, maxHours = 1e4, extraAt = null } = o
+  let stepH = o.stepH ?? 1 / 120
   if (!num(target) || target <= money0) return 0
   if (!pos(incomeAtLevel1) || !pos(mult) || !num(exp0)) return null
   let money = money0
   let exp = Math.max(0, exp0)
   let h = 0
-  while (h < maxHours) {
+  // THE STEP IS ADAPTIVE AND THE ITERATIONS ARE CAPPED. This runs on the
+  // game's main thread inside every exit simulation, hundreds of times a
+  // pass: at a fixed 30s step a slow leg was up to 1.2M iterations, and the
+  // game froze (2026-09-25). The step is 1/200 of the leg's length at today's
+  // rate (never below 30s), and the loop stops at 4000 iterations — the leg
+  // is then reported as the maxHours it could not beat.
+  {
+    const lvl0 = levelAt(exp, mult)
+    const r0 = (incomeAtLevel1 * (lvl0 + 50)) / 51 + (typeof extraAt === 'function' ? extraAt(0) : 0)
+    const est = r0 > 0 ? (target - money) / r0 / 3600 : maxHours
+    stepH = Math.max(stepH, Math.min(maxHours, est) / 200)
+  }
+  let iter = 0
+  while (h < maxHours && iter++ < 4000) {
     const lvl = levelAt(exp, mult)
     // income(level) = incomeAtLevel1 * (level + 50) / 51
     const rate = (incomeAtLevel1 * (lvl + 50)) / 51 + (typeof extraAt === 'function' ? extraAt(h) : 0)
@@ -402,24 +416,32 @@ export function exitHours(o = {}) {
       const legStart = h
       const need = terminalRep - exitRep
       const scale = installsFirst > 0 && pos(hacking) ? (e) => levelAt(e, mult) / hacking : () => 1
-      const step = 1 / 30
+      // Adaptive step (1/300 of the leg at today's rate, never below 2 min)
+      // and a hard iteration cap — see hoursToMoney: this froze the game.
+      const r0 = P * scale(exp) + sRep(legStart)
+      const est = r0 > 0 ? need / r0 / 3600 : 1e4
+      const step = Math.max(1 / 30, Math.min(1e4, est) / 300)
       let acc = 0
       let t = 0
       let e = exp
+      let iter = 0
       for (;;) {
-        if (t > 1e4) {
+        if (t > 1e4 || iter++ > 3000) {
           t = Infinity
           break
         }
+        // Land exactly on the sleeve's next rate change inside this step.
+        const nb = sleeveBreaks(fleetOn ? sleeveRep : null, legStart + t)[0]
+        const dt = typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step
         const rate = P * scale(e) + sRep(legStart + t)
-        const add = rate * step * 3600
+        const add = rate * dt * 3600
         if (rate > 0 && acc + add >= need) {
           t += (need - acc) / rate / 3600
           break
         }
         acc += add
-        e += pos(expRate) ? expRate * step * 3600 : 0
-        t += step
+        e += pos(expRate) ? expRate * dt * 3600 : 0
+        t += dt
       }
       r = { hours: t, how: 'ground' }
     }
@@ -483,21 +505,40 @@ export function exitHours(o = {}) {
  * truncated search reads as "this is the optimum" when it may only be the edge
  * of where we looked (CLAUDE.md: no silent caps).
  */
+// Memo: many callers in one pass simulate identical inputs. Keyed on the
+// inputs' JSON (functions excluded, as JSON drops them); bounded.
+const policyMemo = new Map()
 export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
+  let key = null
+  try {
+    key = `${maxInstalls}|${minInstalls}|${JSON.stringify(o)}`
+  } catch {
+    key = null
+  }
+  if (key !== null && policyMemo.has(key)) return policyMemo.get(key)
   const tried = []
   let best = null
+  let worse = 0
   for (let k = minInstalls; k <= maxInstalls; k++) {
     const r = exitHours({ ...o, installsFirst: k })
     tried.push({ installsFirst: k, hours: r.hours, why: r.why ?? null })
-    if (num(r.hours) && (best === null || r.hours < best.hours)) best = { ...r, installsFirst: k }
+    if (num(r.hours) && (best === null || r.hours < best.hours)) {
+      best = { ...r, installsFirst: k }
+      worse = 0
+    } else if (best !== null && num(r.hours)) {
+      // Past the optimum the exit only grows (each install adds a cycle and a
+      // near-constant gain): stop after 15 installs in a row fail to beat it.
+      if (++worse >= 15) break
+    }
   }
-  if (!best) return { best: null, tried, why: tried[0]?.why ?? 'no policy could be priced' }
-  return {
-    best,
-    tried,
-    atSearchEdge: best.installsFirst === maxInstalls,
-    searchedTo: maxInstalls,
+  const out = !best
+    ? { best: null, tried, why: tried[0]?.why ?? 'no policy could be priced' }
+    : { best, tried, atSearchEdge: best.installsFirst === maxInstalls, searchedTo: tried[tried.length - 1]?.installsFirst ?? maxInstalls }
+  if (key !== null) {
+    if (policyMemo.size > 500) policyMemo.clear()
+    policyMemo.set(key, out)
   }
+  return out
 }
 
 /**

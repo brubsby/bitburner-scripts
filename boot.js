@@ -476,7 +476,7 @@ const STACK = [
     kind: 'job',
     tier: 128,
     rank: 30,
-    why: 'watchdog-triggered every 10 min where sleeves exist. Buys sleeve augmentations (baseCost, no x1.9, kept for the whole node) when a batch saves more hours on the sleeve\'s channel than its price takes to earn; ~19GB only while it runs',
+    why: 'watchdog-triggered every 10 min where sleeves exist. Buys sleeve augmentations (baseCost, no x1.9, kept for the whole node) when a batch saves more hours on the sleeve\'s channel than its price takes to earn; ~37GB only while it runs (also Covenant sleeves and memory)',
   },
   {
     script: 'share.js',
