@@ -106,6 +106,13 @@ export function canDonateTo(faction, favor, need, gangFaction = null) {
 //                 (NetscriptFunctions.ts:301-302 -> PlayerInfluencing.ts:47,
 //                 +0.1) when UP. Never both: a batch's grow puts back what its
 //                 hack took, so flagging both cancels in expectation. Optional.
+//   manipCurve    [{nudgesPerSec, returnPerSec}] — the trader's returnPerSec
+//                 at a total nudge rate (fraction of moneyMax moved per
+//                 second on its manip hosts, summed; each moved fraction is a
+//                 forecast nudge with that chance). REQUIRED for manip to be
+//                 served where hacking pays nothing: batch.js prices serving
+//                 against farming exp with that RAM as two exits
+//                 (expfarm.manipVerdict) and serves nothing without it.
 //
 // And it must HONOUR /tel/stock-hold.txt ({at, lastAugReset, by, why}): while
 // that is fresh (STOCK_HOLD_MS) and of this life, open NO new position — the
@@ -127,7 +134,7 @@ const fin = (x) => typeof x === 'number' && isFinite(x)
  * a node with no other income, see incomeOf).
  */
 export function stockRecordOf(rec, lastAugReset, now = Date.now()) {
-  const none = (why) => ({ ok: false, equity: 0, returnPerSec: null, capitalCap: null, incomePerSec: null, manip: null, why })
+  const none = (why) => ({ ok: false, equity: 0, returnPerSec: null, capitalCap: null, incomePerSec: null, manip: null, manipCurve: null, why })
   if (!rec || typeof rec !== 'object') return none('no stock trader record')
   const age = now - Date.parse(rec.at ?? '')
   if (!(age >= 0 && age < STOCK_FRESH_MS)) return none(`stock record stale or undated (${fin(age) ? Math.round(age / 60e3) + ' min' : 'no at'})`)
@@ -141,6 +148,7 @@ export function stockRecordOf(rec, lastAugReset, now = Date.now()) {
     capitalCap: fin(rec.capitalCap) && rec.capitalCap > 0 ? rec.capitalCap : null,
     incomePerSec: fin(rec.incomePerSec) && rec.incomePerSec >= 0 ? rec.incomePerSec : null,
     manip,
+    manipCurve: Array.isArray(rec.manipCurve) ? rec.manipCurve.filter((x) => fin(x?.nudgesPerSec) && x.nudgesPerSec >= 0 && fin(x?.returnPerSec)) : null,
     why: null,
   }
 }

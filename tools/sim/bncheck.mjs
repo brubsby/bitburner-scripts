@@ -154,7 +154,7 @@ const ASSUMPTIONS = [
     // tol 0.10 = SETTINGS.margin (batch.js:84), which already over-provisions weaken threads by 10%. Below 1 is the dangerous direction; above 1 only wastes threads because weaken clamps at minSecurity.
     mult: "ServerWeakenRate",
     expect: 1,
-    where: "batch.js WEAKEN_PER_THREAD = 0.05, archive/superseded/hack.js settings.changes.weaken = 0.05 (archive/superseded/hack.js:22)",
+    where: "batch.js WEAKEN_PER_THREAD = 0.05, expfarm.js WEAKEN_AMOUNT = 0.05 (scaled by the node's ServerWeakenRate, which batch.js passes from bitNodeMults), archive/superseded/hack.js settings.changes.weaken = 0.05 (archive/superseded/hack.js:22)",
     breaks:
       "HARDCODED in both. getWeakenEffect multiplies by ServerWeakenRate, so weaken threads are mis-sized by exactly this factor. >1 (BN11 = 2) merely wastes threads, since weaken clamps at minSecurity. <1 is the dangerous direction: security is never fully removed, hackFraction stays below what the planner assumes, and the pipeline desyncs into permanent re-prep. hack.js carries its own copy in the same table as the hack/grow security ADDITIONS (0.002/0.004), which are NOT multiplier-scaled — so the three numbers look alike and only one of them moves with the node.",
   },
@@ -190,7 +190,7 @@ const ASSUMPTIONS = [
       "Money actually received differs from money modelled; target ranking is skewed toward the wrong servers. " +
       "AT 0 (BitNode 8) scripted hacking pays NOTHING (NetscriptHelpers.tsx:648) while still draining servers, so getTotalScriptIncome reads a true $0/s all node. " +
       "HANDLED 2026-09-25: progress.js reads income through nodeecon.incomeOf — script income plus the stock trader's measured compounding return (/tel/stock.txt, interface in nodeecon.js) — and reports UNMEASURED with the reason when no trader record exists; exitplan prices a node whose only income is r x min(money, cap); buyserv.js holds every dollar when this is 0 unless an exit verdict (spendExit.servers) is fresh (its fallback spent ~$85m of BN8's $250m opening on servers that earn nothing); spendVerdictsOf prices home RAM by the hacking exp it adds. " +
-      "STILL TRUE: batch.js chooses targets by money drained, not by exp per GB, which is the only thing it produces here.",
+      "batch.js and seed.js switch to EXP MODE here (expfarm.js): waves of unpadded hacks on the best exp-per-GB-second target, the HWGW batcher kept only for the trader's manip hosts when expfarm.manipVerdict prices them as the shorter exit (it needs stock.js's manipCurve; without one nothing is served). seed.js ranks by exp and hacks to a 1e-6 money floor.",
   },
   {
     id: "hack-exp",

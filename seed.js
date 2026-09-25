@@ -41,12 +41,17 @@
 
 // Free: status.js references only ns.write (0GB) and ns.atExit is 0GB.
 import { reporter, describe } from 'status.js'
+// Pure: the exp-mode gate and the exp-per-thread rule, and the node table.
+import { expMode, expPerThread } from 'expfarm.js'
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
 /** One complete HGW batch. Below this, the tuned worker is not worth its extra RAM. */
 const MIN_OPS = 4
 const TELEMETRY = '/tel/seed.txt'
+/** Exp mode's money floor: hack until the balance is a millionth of max (any positive balance pays full exp). */
+const EXP_FLOOR = 1e-6
 
 export async function main(ns) {
   const flags = ns.flags([
@@ -163,6 +168,10 @@ async function pass(ns, flags) {
   }
   const all = [...seen]
   const level = ns.getHackingLevel()
+  // Exp mode where hacking pays nothing (expfarm.expMode); the floor drops so
+  // early.js / hgw.js hack whenever the balance is positive.
+  const exp = expMode(bitNodeMults(ns.getResetInfo().currentNode))
+  const floor = exp ? EXP_FLOOR : flags.floor
 
   // Root anything that has become reachable since the last pass.
   const newlyRooted = all.filter((h) => h !== 'home' && root(ns, h))
@@ -205,9 +214,23 @@ async function pass(ns, flags) {
     const wt = Math.max(1, ns.getWeakenTime(h) / 1000)
     return money / ((1 + excess) * wt)
   }
+  // EXP MODE (expfarm.js): where scripted hacking pays nothing (BitNode 8) the
+  // workers' only product is hacking exp, so targets rank by exp per second of
+  // op time — (3 + 0.3 x baseDifficulty) / hack time (Hacking.ts:30-38,
+  // :59-74), with the same security-excess penalty — and the money floor
+  // drops to ~0: a hack pays full exp while ANY money is left
+  // (NetscriptHelpers.tsx:636-641), and a hack holds its RAM a quarter as
+  // long as a weaken, so early.js should hack nearly always. baseDifficulty is
+  // approximated as 3 x minDifficulty (Server.ts: min = max(1, round(base/3)))
+  // to avoid pricing another getter into a worker-sized script.
+  const expRank = (h) => {
+    const excess = Math.max(0, ns.getServerSecurityLevel(h) - ns.getServerMinSecurityLevel(h))
+    const wt = Math.max(1, ns.getWeakenTime(h) / 1000)
+    return expPerThread(3 * ns.getServerMinSecurityLevel(h)) / ((1 + excess) * wt)
+  }
   const targets = all
     .filter((h) => ns.hasRootAccess(h) && ns.getServerMaxMoney(h) > 0 && ns.getServerRequiredHackingLevel(h) <= level)
-    .sort((a, b) => prepScore(b) - prepScore(a))
+    .sort((a, b) => (exp ? expRank(b) - expRank(a) : prepScore(b) - prepScore(a)))
   if (!targets.length) {
     ns.tprint('seed: nothing hackable at this level yet')
     return { level, targets, placed: [], newlyRooted }
@@ -250,7 +273,7 @@ async function pass(ns, flags) {
     // forever — and a host pointed at the WRONG target could never be
     // corrected, which is the whole job of a re-seed.
     const cur = ns.ps(h).find((p) => p.filename === EARLY || p.filename === CHEAP)
-    if (cur && cur.args[0] === target) continue
+    if (cur && cur.args[0] === target && Number(cur.args[1]) === floor) continue
     if (cur) {
       ns.kill(cur.pid)
       await ns.sleep(0) // let the kill settle before reading free RAM
@@ -272,7 +295,7 @@ async function pass(ns, flags) {
     // "6xearly.js (14.40GB of 16.00GB free)" every pass, while hosts that had
     // received the whole collection from boot.js ran the same launch fine.
     if (h !== 'home') ns.scp([script, 'status.js'], h, 'home')
-    const pid = ns.exec(script, h, threads, target, flags.floor)
+    const pid = ns.exec(script, h, threads, target, floor)
     if (pid) placed.push(`${h}:${threads}x${script} -> ${target}`)
     // exec returns 0 on refusal instead of throwing. This branch did not exist,
     // so a host that refused every placement was indistinguishable from a host
@@ -291,5 +314,5 @@ async function pass(ns, flags) {
   // kill path and the nothing-hackable path publish too — both used to return
   // before reaching the write here and leave the file frozen at the last good
   // pass.
-  return { level, targets, placed, refused, newlyRooted }
+  return { level, targets, placed, refused, newlyRooted, expMode: exp, floor }
 }

@@ -74,6 +74,11 @@ import { singularityRamMultiplier } from 'sfgate.js'
 // Pure: the stock trader's record and which side of a batch it wants to move
 // its stock (nodeecon.js documents the /tel/stock.txt `manip` interface).
 import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
+// Pure: exp-per-GB-second scoring, wave sizing and the manip verdict
+// (expfarm.js), the node table, and the exit simulator the verdict runs.
+import { expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+import { bitNodeMults } from 'bitNodeMultipliers.js'
+import { bestExitPolicy } from 'exitplan.js'
 
 /**
  * STOCK MANIPULATION, as a service to the trader. hack/grow take {stock: true}
@@ -87,13 +92,201 @@ import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
  * still chooses targets by its own objective.
  */
 let stockManip = null
+let stockCurve = null
 function refreshStockManip(ns) {
   try {
     const rec = stockRecordOf(JSON.parse(ns.read(STOCK_FILE) || 'null'), ns.getResetInfo().lastAugReset)
     stockManip = rec.ok && rec.manip && Object.keys(rec.manip).length ? rec.manip : null
+    stockCurve = rec.ok ? rec.manipCurve : null
   } catch {
     stockManip = null
+    stockCurve = null
   }
+}
+
+// ---------------------------------------------------------------------------
+// THE EXP FARM (expfarm.js has the game's rules and the derivation). Active
+// only where scripted hacking pays nothing (expMode: ScriptHackMoneyGain 0,
+// BitNode 8); every other node never enters it and batches for money exactly
+// as before. The fleet then runs WAVES on the best exp target — a padded
+// weaken and a 1-thread grow launched early, and hack chunks launched by this
+// loop at L - hackTimeNow with NO pad, so a hack holds RAM for one hack time
+// instead of a weaken time — and the ordinary HWGW batcher runs only on the
+// trader's manip hosts, and only when expfarm.manipVerdict prices serving
+// them as a shorter exit than farming exp with that RAM.
+// ---------------------------------------------------------------------------
+const FARM_GAP_MS = 400 // landing gap between G | H | W of one wave
+const farm = {
+  on: false,
+  weakenRate: 1,
+  target: null,
+  score: 0,
+  waves: [], // { L, hack, launched, skipped }
+  nextCreate: 0,
+  nextPrep: 0,
+  held: [], // { gb, until }
+  hackThreads: 0,
+  hackThreadsWindowStart: Date.now(),
+  launchedWaves: 0,
+  skippedWaves: 0,
+  prepping: false,
+  ranked: [],
+  manip: null,
+  why: null,
+}
+
+/** Launch `want` threads of `op` in processes of at most `chunk` threads; returns threads launched. */
+function spreadChunks(ns, free, ram, op, target, want, chunk, nextId, stockFlag = 0) {
+  let launched = 0
+  const per = ram[op]
+  for (const [host, gb] of [...free.entries()].sort((a, b) => b[1] - a[1])) {
+    let room = gb
+    while (launched < want) {
+      const take = Math.min(want - launched, chunk, Math.floor(room / per))
+      if (take < 1) break
+      const pid = ns.exec(SETTINGS.workers[op], host, { threads: take, temporary: true }, target, 0, nextId(), stockFlag)
+      if (!pid) break
+      room -= take * per
+      launched += take
+    }
+    free.set(host, room)
+    if (launched >= want) break
+  }
+  return launched
+}
+
+/** Rank exp targets (expScore at min security), excluding the trader's manip hosts. */
+function rankExpTargets(ns, readT, level) {
+  const out = []
+  for (const h of scanAll(ns)) {
+    if (!ns.hasRootAccess(h) || h === 'home') continue
+    if (ns.getServerMaxMoney(h) <= 0) continue // grow needs a money pool (ServerHelpers grow)
+    if (ns.getServerRequiredHackingLevel(h) > level) continue
+    if (stockManip && stockManip[h]) continue
+    const t = readT(h)
+    t.baseDifficulty = ns.getServer(h).baseDifficulty
+    const s = expScore(t, farm.weakenRate)
+    if (s > 0) out.push({ t, s })
+  }
+  return out.sort((a, b) => b.s - a.s)
+}
+
+/**
+ * The manip hosts' cost and delivery at saturation (planBatch, the batcher's
+ * own sizing): the nudge rate (fraction of moneyMax moved per second — the
+ * chance per op is moneyMoved/moneyMax, PlayerInfluencing.ts:24-58), the RAM
+ * their pipelines hold, and the exp per GB-ms that RAM earns batched.
+ */
+function manipCost(ns, readT, ram, level, capacity) {
+  let nu = 0
+  let gb = 0
+  let expGbms = 0
+  const hosts = []
+  for (const h of Object.keys(stockManip ?? {})) {
+    if (!ns.hasRootAccess(h) || ns.getServerMaxMoney(h) <= 0 || ns.getServerRequiredHackingLevel(h) > level) continue
+    const t = readT(h)
+    t.baseDifficulty = ns.getServer(h).baseDifficulty
+    const p = planBatch(t, ram, capacity / 4, capacity)
+    if (!p) continue
+    const perSec = 1000 / (4 * SETTINGS.spacing)
+    const held = (p.gb * (t.hackTime * 4)) / (4 * SETTINGS.spacing)
+    nu += p.f * t.chance * perSec
+    gb += held
+    expGbms += batchedScore(t) * held
+    hosts.push(h)
+  }
+  return { hosts, nu, gb, batchRate: gb > 0 ? expGbms / gb : 0 }
+}
+
+/** One tick of the farm: prep, create waves, launch due hacks. */
+function farmTick(ns, free, ram, now, nextId) {
+  const tgt = farm.target
+  if (!tgt) return
+  const sec = ns.getServerSecurityLevel(tgt.host)
+  const minSec = tgt.minSec
+  const hT = ns.getHackTime(tgt.host) // at CURRENT security: the real duration of a launch now
+  farm.held = farm.held.filter((x) => x.until > now)
+  const heldGB = farm.held.reduce((a, x) => a + x.gb, 0)
+  const freeGB = [...free.values()].reduce((a, b) => a + b, 0)
+  const pool = heldGB + freeGB
+  const tol = 0.05
+
+  // PREP: security to the floor first (weaken pays full exp while it does).
+  if (sec > minSec + tol && !farm.waves.length) {
+    farm.prepping = true
+    if (now < farm.nextPrep) return
+    farm.nextPrep = now + hT * 4 + 200
+    const need = Math.ceil(((sec - minSec) / (EXP_WEAKEN * farm.weakenRate)) * 1.1)
+    const all = Math.floor(freeGB / ram.weaken)
+    const n = spreadChunks(ns, free, ram, 'weaken', tgt.host, Math.max(need, all), 1e9, nextId)
+    if (n > 0) farm.held.push({ gb: n * ram.weaken, until: now + hT * 4 })
+    return
+  }
+  farm.prepping = false
+
+  const T = tgt.hackTime
+  const wr = farm.weakenRate
+  const period = wavePeriod({ poolGB: pool, T, phi: tgt.phi, chance: tgt.chance, weakenRate: wr }) ?? 1000
+  const plan = waveSize({ poolGB: pool, T, periodMs: Math.max(period, 3 * FARM_GAP_MS + 300), phi: tgt.phi, chance: tgt.chance, weakenRate: wr })
+  if (!plan) {
+    farm.why = 'pool too small for one hack thread per wave'
+    return
+  }
+  farm.why = null
+
+  // CREATE a wave: its weaken (pad 0, lands at L + gap) and its 1-thread grow
+  // (lands at L - gap), both timed from the CURRENT security's durations, and
+  // only while security is at the floor so those durations are the real ones.
+  if (now >= farm.nextCreate && sec <= minSec + tol) {
+    const wT = hT * 4
+    const L = now + wT - FARM_GAP_MS
+    const last = farm.waves.length ? farm.waves[farm.waves.length - 1].L : -Infinity
+    if (L >= last + plan.periodMs * 0.9) {
+      const w = spreadChunks(ns, free, ram, 'weaken', tgt.host, plan.weaken, 1e9, nextId)
+      if (w > 0) {
+        farm.held.push({ gb: w * ram.weaken, until: now + wT })
+        const gPad = Math.max(0, Math.round(L - FARM_GAP_MS - now - hT * 3.2))
+        for (const [host, gb] of free) {
+          if (gb < ram.grow) continue
+          if (ns.exec(SETTINGS.workers.grow, host, { threads: 1, temporary: true }, tgt.host, gPad, nextId(), 0)) {
+            free.set(host, gb - ram.grow)
+            break
+          }
+        }
+        // The hacks this wave's weaken can cover (0.002 x chance per thread, margined).
+        const cover = Math.floor((w * EXP_WEAKEN * farm.weakenRate) / (EXP_FORTIFY * 1.1))
+        farm.waves.push({ L, hack: Math.min(plan.hack, cover), chunk: plan.chunkMax, launched: 0, skipped: false })
+      }
+      farm.nextCreate = now + plan.periodMs
+    }
+  }
+
+  // LAUNCH due hacks: when now + hackTimeNow reaches L. A wave whose hack would
+  // land outside [L - gap/2, L + gap/2] — security moved, or the loop was late —
+  // is skipped: its weaken and grow still land and still pay.
+  const keep = []
+  for (const wv of farm.waves) {
+    const land = now + hT
+    if (!wv.launched && !wv.skipped) {
+      if (land > wv.L + FARM_GAP_MS / 2) {
+        wv.skipped = true
+        farm.skippedWaves++
+      } else if (land >= wv.L - FARM_GAP_MS / 2) {
+        const n = spreadChunks(ns, free, ram, 'hack', tgt.host, wv.hack, wv.chunk, nextId)
+        wv.launched = n
+        if (n > 0) {
+          farm.held.push({ gb: n * ram.hack, until: land })
+          farm.hackThreads += n
+          farm.launchedWaves++
+        } else {
+          wv.skipped = true
+          farm.skippedWaves++
+        }
+      }
+    }
+    if (wv.L + FARM_GAP_MS > now) keep.push(wv)
+  }
+  farm.waves = keep
 }
 
 const SETTINGS = {
@@ -927,6 +1120,9 @@ export async function main(ns) {
     // knob: with it set the controller is 5x wrong on hack money in BitNode 4
     // and says so in /tel/batch.txt rather than going quiet.
     ['nocal', false],
+    // Rollback switch for the exp farm (expfarm.js): batch for money even
+    // where hacking pays nothing.
+    ['nofarm', false],
     // Ignore any persisted calibration and re-learn from zero. Costs one
     // weakenTime of uncorrected planning; use it if the fingerprint fence is
     // ever suspected of letting a stale value through.
@@ -1269,7 +1465,7 @@ export async function main(ns) {
       }
 
       // --- choose targets ---------------------------------------------------
-      if (now >= nextRetarget || !targets.length) {
+      if (now >= nextRetarget || (!targets.length && !farm.on)) {
         nextRetarget = now + SETTINGS.retargetMs
         refreshStockManip(ns)
         const level = ns.getHackingLevel()
@@ -1305,7 +1501,46 @@ export async function main(ns) {
         }
 
         let want
-        if (Number(flags.targets) > 0) {
+        // EXP MODE (expfarm.js): where hacking pays nothing, money targets
+        // are pointless. The batcher serves only the trader's manip hosts, and
+        // only on a priced verdict; the farm gets the rest of the fleet.
+        const nodeMults = bitNodeMults(ns.getResetInfo().currentNode)
+        farm.on = !flags.nofarm && expMode(nodeMults)
+        farm.weakenRate = nodeMults?.ServerWeakenRate > 0 ? nodeMults.ServerWeakenRate : 1
+        if (farm.on) {
+          const readT = (h) => readTarget(ns, h, yOf())
+          farm.ranked = rankExpTargets(ns, readT, level)
+          const best = farm.ranked[0] ?? null
+          if (!farm.target || !best || farm.target.host !== best.t.host) {
+            farm.waves = []
+            farm.nextCreate = 0
+          }
+          farm.target = best ? best.t : null
+          farm.score = best ? best.s : 0
+          const mc = stockManip ? manipCost(ns, readT, ram, level, totalRam) : null
+          let v = { serve: false, priced: false, why: 'no manip requested' }
+          if (mc && mc.hosts.length) {
+            let rec = null
+            try {
+              rec = JSON.parse(ns.read('/tel/exitinputs.txt') || 'null')
+            } catch {
+              rec = null
+            }
+            const fresh = rec && rec.lastAugReset === ns.getResetInfo().lastAugReset && now - Date.parse(rec.at) < 15 * 60e3
+            v = manipVerdict({
+              bestExitPolicy,
+              inputs: fresh ? rec.inputs : null,
+              curve: stockCurve,
+              nu: mc.nu,
+              manipGB: mc.gb,
+              farmRate: farm.score,
+              batchRate: mc.batchRate,
+              fleetGB: totalRam,
+            })
+          }
+          farm.manip = { ...v, hosts: mc?.hosts ?? [], nudgesPerSec: mc ? Math.round(mc.nu * 1e4) / 1e4 : null, gb: mc ? Math.round(mc.gb) : null }
+          want = v.serve ? mc.hosts : []
+        } else if (Number(flags.targets) > 0) {
           want = ranked.slice(0, Number(flags.targets)).map((r) => r.t.host)
         } else {
           // How many targets to run.
@@ -1411,7 +1646,7 @@ export async function main(ns) {
         // while six megacorps starved in prep. Marking the phase makes the
         // retention mean what it says.
         const keep = targets.filter((h) => !want.includes(h) && now < (S.get(h)?.lastLanding ?? 0))
-        if (want.length) targets = [...new Set([...keep, ...want])]
+        if (want.length || farm.on) targets = [...new Set([...keep, ...want])]
       }
 
       // --- serve each target ------------------------------------------------
@@ -1722,11 +1957,16 @@ export async function main(ns) {
       // it holds the target at the floor, which makes the safe-window gate open
       // more often. Without the reservation above it starves the batcher
       // outright — a spill weaken holds its RAM for a full weakenTime.
-      if (anyBatching && targets.length) {
+      if (!farm.on && anyBatching && targets.length) {
         const idle = [...free.values()].reduce((a, b) => a + b, 0) - reserved
         const threads = Math.floor(idle / ram.weaken)
         if (threads >= 1) spread(ns, free, ram, 'weaken', targets[0], threads, batchId++)
       }
+
+      // --- the exp farm (exp mode only) --------------------------------------
+      // After the manip batches have taken what they need: the farm is the
+      // fleet's spill in a node where the spill is the product.
+      if (farm.on) farmTick(ns, free, ram, now, () => batchId++)
 
       // --- status -----------------------------------------------------------
       if (now >= nextStatus) {
@@ -1875,6 +2115,27 @@ export async function main(ns) {
           calibration,
           // The trader's manipulation requests (nodeecon.js): which it asked for,
           // which this batcher's targets serve, which it does not target at all.
+          // The exp farm (expfarm.js), when this node pays nothing for hacks.
+          // `model.hackThreadsPerSec` x exp/thread is the prediction to hold
+          // against tel.js's measured script exp rate — NOT CALIBRATED yet.
+          expFarm: farm.on
+            ? {
+                target: farm.target?.host ?? null,
+                prepping: farm.prepping,
+                scorePerGBms: farm.score,
+                expPerThread: farm.target ? expPerThread(ns.getServer(farm.target.host).baseDifficulty) : null,
+                chance: farm.target ? Math.round(farm.target.chance * 1e4) / 1e4 : null,
+                hackTimeSec: farm.target ? Math.round(farm.target.hackTime / 100) / 10 : null,
+                wavesInFlight: farm.waves.length,
+                launchedWaves: farm.launchedWaves,
+                skippedWaves: farm.skippedWaves,
+                heldGB: Math.round(farm.held.reduce((a, x) => a + x.gb, 0)),
+                model: { hackThreadsPerSec: Math.round((farm.hackThreads / Math.max(1, (now - farm.hackThreadsWindowStart) / 1000)) * 10) / 10 },
+                runnersUp: farm.ranked.slice(1, 4).map((r) => ({ host: r.t.host, score: r.s })),
+                manip: farm.manip,
+                why: farm.why,
+              }
+            : null,
           stockManip: stockManip ? { requested: stockManip, served: Object.keys(stockManip).filter((h) => targets.includes(h)), unserved: Object.keys(stockManip).filter((h) => !targets.includes(h)) } : null,
           targets: perTarget,
           errors: errors.slice(-5),
