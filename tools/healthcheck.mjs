@@ -339,6 +339,15 @@ if (!prev) {
 // reason to accept it. So the reason is attached to the failure, never
 // substituted for it.
 const WATCHDOG_TIER = 64;
+// THE PAGE'S HEAP (tel.js heapMB): the renderer died 2026-09-25 after hours
+// of play. Over 3GB of a ~4.4GB limit is a problem; otherwise reported.
+{
+  const heap = readTel("status.txt")?.heapMB;
+  if (typeof heap === "number") {
+    if (heap > 3000) fail(`page heap ${heap} MB — near the renderer's limit; a leak will kill the tab`, "reload the tab soon (it resumes from autosave)");
+    else note(`page heap ${heap} MB`);
+  } else note("page heap unreported (tel.js heapMB missing — tel.js not restarted since the field was added?)");
+}
 const GRACE_MIN = 10; // a fresh life legitimately has not booted it yet
 const lifeMin = now.lifeMs !== null ? now.lifeMs / 60000 : null;
 if (now.homeRam !== null && now.homeRam >= WATCHDOG_TIER && (lifeMin === null || lifeMin > GRACE_MIN)) {

@@ -219,6 +219,18 @@ export async function main(ns) {
         // dead was worse than it being absent.
         incomePerSec: Math.round(ns.getTotalScriptIncome()[1] * 100) / 100,
         expPerSec: Math.round(ns.getTotalScriptExpGain() * 100) / 100,
+        // THE PAGE'S JS HEAP, so a slow leak is visible before it kills the
+        // renderer (the tab died 2026-09-25 after hours of play). performance
+        // through eval, so the RAM checker never prices it; null where the
+        // browser does not expose it.
+        heapMB: (() => {
+          try {
+            const m = eval('performance').memory
+            return m ? Math.round(m.usedJSHeapSize / 1e6) : null
+          } catch {
+            return null
+          }
+        })(),
         reachable: hosts.length,
         rooted: servers.length,
         processes,
