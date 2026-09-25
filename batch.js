@@ -118,7 +118,7 @@ function refreshStockManip(ns) {
 // them as a shorter exit than farming exp with that RAM.
 // ---------------------------------------------------------------------------
 const FARM_GAP_MS = 400 // landing gap between G | H | W of one wave
-const farm = {
+export const farm = {
   on: false,
   weakenRate: 1,
   target: null,
@@ -130,6 +130,7 @@ const farm = {
   hackThreads: 0,
   hackThreadsWindowStart: Date.now(),
   launchedWaves: 0,
+  lastLaunch: 0,
   skippedWaves: 0,
   prepping: false,
   ranked: [],
@@ -201,7 +202,7 @@ function manipCost(ns, readT, ram, level, capacity) {
 }
 
 /** One tick of the farm: prep, create waves, launch due hacks. */
-function farmTick(ns, free, ram, now, nextId) {
+export function farmTick(ns, free, ram, now, nextId) {
   const tgt = farm.target
   if (!tgt) return
   const sec = ns.getServerSecurityLevel(tgt.host)
@@ -280,6 +281,7 @@ function farmTick(ns, free, ram, now, nextId) {
           farm.held.push({ gb: n * ram.hack, until: land })
           farm.hackThreads += n
           farm.launchedWaves++
+          farm.lastLaunch = now
         } else {
           wv.skipped = true
           farm.skippedWaves++
@@ -2059,7 +2061,10 @@ export async function main(ns) {
         // One-glance health. "stalled" is the state that has cost us hours
         // before, so it gets its own word rather than being inferred.
         const recentLaunch = perTarget.some((x) => x.sinceLaunchSec !== null && x.sinceLaunchSec < 60)
-        const health = recentLaunch ? 'ok' : anyBatching ? 'stalled' : anyPrepping ? 'prepping' : 'idle'
+        // In exp mode the farm is the product: its health is whether waves land.
+        const farmHealth = !farm.on ? null : !farm.target ? 'idle' : farm.prepping ? 'prepping' : now - farm.lastLaunch < 120e3 ? 'ok' : 'stalled'
+        const batchHealth = recentLaunch ? 'ok' : anyBatching ? 'stalled' : anyPrepping ? 'prepping' : 'idle'
+        const health = farmHealth === null ? batchHealth : batchHealth === 'stalled' ? 'stalled' : farmHealth
 
         // --- calibration report ---------------------------------------------
         // Everything a reader needs to decide whether to believe the number the

@@ -122,5 +122,48 @@ export async function run() {
   }
   checks.push(c6);
 
+  // A mock world: batch.js's farmTick driven for 60s of 200ms ticks against one
+  // target with a constant hack time, recording every exec. Pins the wave
+  // mechanics: weaken + 1-thread grow launched per wave, hacks launched with NO
+  // pad at L - hackTime so they land inside [L - gap/2, L + gap/2], chunked.
+  const c7 = new Check("EF7", "farmTick (batch.js, mock ns): waves = padded weaken + 1-thread grow, then UNPADDED hack chunks landing on schedule");
+  {
+    const B = await import("../../batch.js");
+    const T = 4000;
+    const execs = [];
+    const ns = {
+      getServerSecurityLevel: () => 5,
+      getHackTime: () => T,
+      exec: (script, host, opts, target, pad, id, flag) => {
+        execs.push({ script, host, threads: opts.threads, target, pad, flag, at: clock });
+        return execs.length;
+      },
+    };
+    let clock = 1e6;
+    Object.assign(B.farm, { on: true, weakenRate: 1, target: { host: "joesguns", minSec: 5, hackTime: T, chance: 1, phi: 0.00125 }, waves: [], held: [], nextCreate: 0, launchedWaves: 0, skippedWaves: 0 });
+    const ram = { hack: 1.7, grow: 1.75, weaken: 1.75 };
+    let id = 0;
+    for (let k = 0; k < 300; k++) {
+      clock += 200;
+      const free = new Map([["pserv-0", 2048], ["pserv-1", 2048]]);
+      B.farmTick(ns, free, ram, clock, () => id++);
+    }
+    const hacks = execs.filter((e) => e.script === "h.js");
+    const weakens = execs.filter((e) => e.script === "w.js");
+    const grows = execs.filter((e) => e.script === "g.js");
+    c7.examined(execs.length);
+    if (!hacks.length || !weakens.length || !grows.length) c7.fail("the farm did not launch all three ops", `h ${hacks.length} w ${weakens.length} g ${grows.length}`);
+    if (hacks.some((e) => e.pad !== 0)) c7.fail("a farm hack was padded — it would hold RAM for a weaken time");
+    if (hacks.some((e) => e.flag !== 0)) c7.fail("a farm hack carries the stock flag");
+    if (grows.some((e) => e.threads !== 1)) c7.fail("the per-wave grow is not 1 thread");
+    if (hacks.some((e) => e.threads * 0.00125 >= 1)) c7.fail("a hack chunk would drain the balance to zero");
+    const hThreads = hacks.reduce((a, e) => a + e.threads, 0);
+    const wThreads = weakens.reduce((a, e) => a + e.threads, 0);
+    if (!(wThreads * 0.05 >= hThreads * 0.002)) c7.fail(`weakens (${wThreads}) do not cover the hacks' fortify (${hThreads} threads)`);
+    c7.note(`60s: ${B.farm.launchedWaves} waves launched, ${B.farm.skippedWaves} skipped; ${hThreads} hack / ${wThreads} weaken / ${grows.length} grow threads; hack share of RAM-time ${((hThreads * 1.7 * T) / (hThreads * 1.7 * T + wThreads * 1.75 * 4 * T)).toFixed(2)}`);
+    if (!(B.farm.launchedWaves > B.farm.skippedWaves)) c7.fail("most waves were skipped on a perfectly steady target");
+  }
+  checks.push(c7);
+
   return checks;
 }
