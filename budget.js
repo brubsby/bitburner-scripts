@@ -53,7 +53,12 @@
 // 'sleeveaugs' sits beside home because it survives installs the same way:
 // sleeve augmentations last the whole node (only a BitNode change resets
 // sleeves), so they rank above everything an install destroys.
-export const PRIORITY = ['join', 'augmentations', 'home', 'sleeveaugs', 'servers', 'neuroflux', 'hacknet', 'gang']
+// 'stocks' (stock.js) is last and different in kind: it does not SPEND, it
+// parks money in positions that are cash one market tick away. It holds for
+// every claim above it the same way, but honours a claim by selling once its
+// wealth covers it (stock.js), since money that cannot pay a claim yet earns
+// more in the market than idle (tools/sim/stocks/compare.mjs).
+export const PRIORITY = ['join', 'augmentations', 'home', 'sleeveaugs', 'servers', 'neuroflux', 'hacknet', 'gang', 'stocks']
 
 /**
  * The spenders that publish a COST, and so can be held back for.

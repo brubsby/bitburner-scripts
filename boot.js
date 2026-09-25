@@ -343,6 +343,22 @@ const STACK = [
       '/tel/sleeve.txt without Source-File 10, so it costs 2.60GB and says why in nodes that cannot use it.',
   },
   {
+    // THE STOCK TRADER (stock.js + stockstrat.js). Waits in telemetry and
+    // exits where there is no TIX API (watchdog.js relaunches it on the
+    // invariant ns.stock.hasTixApiAccess()). In BitNode 8 WSE+TIX are free
+    // (Prestige.ts canAccessBitNodeFeature(8)) and hacking pays nothing, so
+    // this IS the income; elsewhere it is a liquid claimant, last in
+    // budget.js PRIORITY. ~28.5GB, off home.
+    script: 'stock.js',
+    where: 'anywhere',
+    tier: 32,
+    rank: 31,
+    why:
+      'the stock market is the only income in BitNode 8 (ScriptHackMoneyGain 0) and a liquid use of idle claim money ' +
+      'everywhere else. Pre-4S it estimates forecasts from ticks (tools/sim/stocks: ~0.8 ln/h at $250m on the game\'s ' +
+      'own market code), buys the 4S TIX API when the simulated trajectory says so, shorts where the node allows',
+  },
+  {
     script: 'hacknet.js',
     where: 'anywhere',
     tier: 32,

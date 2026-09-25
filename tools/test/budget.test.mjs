@@ -32,7 +32,7 @@ export function run() {
     // $477b/h, the balance FELL from $6.02b to $5.10b — buyserv.js converting
     // it into cloud servers as fast as it arrived, because nothing in this
     // file knew the join existed. The gate was not distant, it was unreachable.
-    if (PRIORITY.join(",") !== "join,augmentations,home,sleeveaugs,servers,neuroflux,hacknet,gang") {
+    if (PRIORITY.join(",") !== "join,augmentations,home,sleeveaugs,servers,neuroflux,hacknet,gang,stocks") {
       c1.fail(`PRIORITY is ${PRIORITY.join(",")}`, "the order encodes what survives an install — changing it is a model change, not a tweak");
     }
 

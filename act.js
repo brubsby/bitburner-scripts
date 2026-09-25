@@ -61,6 +61,8 @@ const ACTORS = {
   install: 'act-install.js',
   homeram: 'act-homeram.js',
   graft: 'act-graft.js',
+  // stock.js's positions, sold before a batch that spends (see below).
+  stocksell: 'act-stocksell.js',
 }
 /** Dynamic snapshots older than this are re-taken before the planner's next pass. */
 const SNAPSHOT_REFRESH_MS = 60 * 1000
@@ -273,6 +275,15 @@ export async function main(ns) {
         const results = []
         let chainFailed = false
         let bought = 0
+        // STOCKS FIRST (stock.js): an install destroys every share
+        // (Prestige.ts initStockMarket) and a purchase needs cash, not
+        // positions. stock.js stands down while this batch is pending; this
+        // makes the sale happen before the first spend rather than on its
+        // next tick. A failed sale is recorded, never blocking.
+        if (batch.orders.some((o) => o.kind === 'buyaug' || o.kind === 'donate' || o.kind === 'install')) {
+          const r = await runActor(ns, 'stocksell', [])
+          results.push({ id: 'stocksell', kind: 'stocksell', ...r })
+        }
         for (const o of batch.orders) {
           if (CHAIN.has(o.kind) && chainFailed) {
             results.push({ id: o.id, kind: o.kind, skipped: 'an earlier purchase in the chain failed' })

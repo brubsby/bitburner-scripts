@@ -259,6 +259,11 @@ const WATCHED = [
   // and this is the DOM route (City -> Alpha Enterprises).
   { script: 'torbuy.js', host: 'home', args: [], invariant: (ns) => !ns.hasTorRouter() && !canAccessFeature(ns.getResetInfo(), 4) },
   { script: 'go.js', host: 'home', args: [] },
+  // The stock trader, wherever it fits. DAEMON with the game as its guard: no
+  // TIX API, no business existing (stock.js exits saying so). An install
+  // kills it; its positions are sold first (act.js stocksell) because the
+  // install re-initialises the market and every share is lost.
+  { script: 'stock.js', host: 'anywhere', args: [], invariant: (ns) => ns.stock.hasTixApiAccess() },
   // Multiplies faction reputation gain by 1 + ln(threads)/25. Sized small on
   // purpose: the curve is steeply concave and the rest of the fleet is worth
   // more hacking. Restarted here because batch.js will reclaim the RAM if the

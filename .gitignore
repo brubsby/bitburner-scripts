@@ -10,3 +10,4 @@ tools/staging/contracts/contracts.bundle.mjs
 
 # game-save snapshots (59MB, the whole save): local only
 backups/
+tools/sim/stocks/stocks.bundle.mjs
