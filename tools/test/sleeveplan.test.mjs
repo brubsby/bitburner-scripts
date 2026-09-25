@@ -543,6 +543,16 @@ export async function run() {
     if (factionTasks.length !== 1) c11.fail(`exactly one sleeve may hold a faction, ${factionTasks.length} were given it`);
     if (two.tasks[1] && typeof two.tasks[1] === "object") c11.fail("the second sleeve must fall through to another objective, not idle");
 
+    // THE HOLDER KEEPS IT. Live BN8 2026-09-25: "Sleeve 1 cannot work for
+    // faction Tian Di Hui because Sleeve 3 is already working for them"
+    // (Sleeve.ts:153-163) — the planner gave the faction to the first eligible
+    // sleeve while another still held it, and sleeve.js applies in index order.
+    const holder = { ...trained, index: 1, task: { type: "FACTION", factionName: "Daedalus", factionWorkType: "hacking" } };
+    const held = sp.sleeveAssignments([{ ...trained, index: 0 }, holder], N, opts);
+    const heldFaction = held.tasks.map((x, i) => (x && typeof x === "object" && x.kind === "faction" ? i : -1)).filter((i) => i >= 0);
+    if (!(heldFaction.length === 1 && heldFaction[0] === 1)) c11.fail(`the sleeve already working for the faction must keep it and no other sleeve be given it; faction tasks went to ${JSON.stringify(heldFaction)}`);
+    else c11.note("a sleeve already holding the faction keeps it (sleeve 0 falls through)");
+
     // No faction supplied (not a member): never emit faction work.
     const none = sp.sleeveAssignments([trained], N, { ...opts, repFaction: null });
     if (none.tasks.some((x) => x && typeof x === "object")) c11.fail("with no faction published, nothing may be assigned faction work");

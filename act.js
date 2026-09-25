@@ -113,6 +113,39 @@ async function runSnapshot(ns, actor) {
 // liquidate: the sale of the stock positions that fund the purchases after it
 // (progress.js prefixes it) — if it fails, those purchases cannot be paid.
 const CHAIN = new Set(['liquidate', 'donate', 'buyaug'])
+// Copies of nodeecon.js's INSTALL_HOLD_FILE / STOCK_HOLD_FILE (act.js runs
+// anywhere and imports nothing it does not scp; [B8o] keeps them equal).
+const INSTALL_HOLD_FILE = '/install-hold.txt'
+const STOCK_HOLD_FILE = '/tel/stock-hold.txt'
+// A faction invitation is evaluated every 10 engine cycles of 200ms
+// (engine.tsx:147,171; Constants.ts:19 MilliPerCycle), so a join straight
+// after the raise or the travel that satisfies it finds no invitation yet.
+// Two checks' worth, plus slack.
+const INVITE_WAIT_MS = 4500
+
+/** Read a home file from anywhere: blank the local copy first, so a file
+ *  DELETED on home cannot survive here as a stale copy. */
+function readHomeFile(ns, file) {
+  if (ns.getHostname() !== 'home') {
+    ns.write(file, '', 'w')
+    fetchFromHome(ns, file)
+  }
+  return ns.read(file) || ''
+}
+
+/**
+ * RELEASE THE TRADER the moment the batch that raised cash has run. The
+ * liquidate actor writes a hold so the trader does not re-invest the raised
+ * cash before the purchase; left to expire (10 min) it kept the whole book
+ * idle, because a batch raised nearly every pass (live BN8 2026-09-25: cash
+ * sat at ~$220m of a compounding book). An expired stamp is the release —
+ * nodeecon.stockHold* reads a hold as live only while fresh.
+ */
+function releaseStockHold(ns, info, why) {
+  const here = ns.getHostname()
+  ns.write(STOCK_HOLD_FILE, JSON.stringify({ at: new Date(0).toISOString(), lastAugReset: info.lastAugReset, by: 'act.js', why: `released: ${why}`, releasedAt: new Date().toISOString() }), 'w')
+  if (here !== 'home') ns.scp(STOCK_HOLD_FILE, 'home', here)
+}
 
 function rootedHosts(ns) {
   const seen = new Set(['home'])
@@ -286,6 +319,13 @@ export async function main(ns) {
             continue
           }
           if (o.kind === 'install') {
+            // THE MANUAL HOLD (progress.js's gate honours it too; this catches
+            // a batch written before the file appeared).
+            const hold = readHomeFile(ns, INSTALL_HOLD_FILE)
+            if (hold) {
+              results.push({ id: o.id, kind: o.kind, skipped: `held by ${INSTALL_HOLD_FILE}: ${hold.slice(0, 200)}` })
+              break
+            }
             const queued = (o.requireQueued ?? 0) + bought
             if (!(queued > 0)) {
               results.push({ id: o.id, kind: o.kind, skipped: 'nothing queued to install' })
@@ -316,6 +356,9 @@ export async function main(ns) {
             results.push({ id: o.id, kind: o.kind, ...r, spendDown: sd, liquidate: { ok: liq.ok, proceeds: liq.result?.proceeds ?? null } })
             break // the game reloads on success; nothing after this runs
           }
+          // A join right after the raise or travel that makes its invitation
+          // possible waits for the game's invitation check.
+          if (o.kind === 'join' && results.some((x) => (x.kind === 'liquidate' || x.kind === 'travel') && x.ok === true)) await ns.sleep(INVITE_WAIT_MS)
           const r = await runActor(ns, o.kind, o.args)
           results.push({ id: o.id, kind: o.kind, args: o.args, why: o.why, ...r })
           if (CHAIN.has(o.kind) && r.ok !== true) chainFailed = true
@@ -327,6 +370,15 @@ export async function main(ns) {
             else if (o.kind === 'company' || o.kind === 'course') work = { kind: o.kind, since: r.result.at }
           }
           if (o.kind === 'join') tried[o.args[0]] = Date.now()
+        }
+        // The batch has run: a cash raise's hold has done its job.
+        if (results.some((x) => x.kind === 'liquidate')) {
+          try {
+            releaseStockHold(ns, info, `batch ${batch.at} executed`)
+            results.push({ kind: 'release-hold', ok: true })
+          } catch (e) {
+            results.push({ kind: 'release-hold', ok: false, error: String(e) })
+          }
         }
         ordersReport = { at: batch.at, count: batch.orders.length, results }
         // Every batch's results, appended: the per-batch report is overwritten

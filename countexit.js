@@ -133,8 +133,8 @@ export function moneyAfter(money0, hours, { capitalReturnPerSec = 0, capitalCap 
  * or {installs: null, why} when some install banks nothing (unreachable).
  */
 export function countPhase(o) {
-  const { short, ladder, n, inputs, firstInstallH = 0, nfg = null, maxInstalls = 60 } = o
-  if (!(short > 0)) return { installs: 0, perInstall: [] }
+  const { short, ladder, n, inputs, firstInstallH = 0, nfg = null, maxInstalls = 60, postInstalls = 40 } = o
+  if (!(short > 0)) return { installs: 0, perInstall: [], post: [] }
   let left = short
   let remaining = (ladder ?? []).slice()
   let level = nfg?.level ?? 0
@@ -143,7 +143,7 @@ export function countPhase(o) {
     const budget =
       i === 0
         ? moneyAfter(inputs.money ?? 0, firstInstallH, inputs)
-        : moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, inputs.cycleHours ?? 0, inputs)
+        : moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs) // the trader's warm-up after each install earns nothing
     const b = bankBatch({ budget, ladder: remaining, n: Math.min(n, left), nfg: nfg ? { price: nfg.price * Math.pow(NFG_LEVEL_MULT, level - (nfg.level ?? 0)) } : null, later: i > 0 })
     if (b.count === 0) return { installs: null, why: `install ${i + 1} cannot afford one ticket ($${Math.round(budget)} in hand)`, perInstall: per }
     per.push({ ...b, budget })
@@ -153,7 +153,20 @@ export function countPhase(o) {
     remaining = remaining.filter((t) => !got.has(t.name))
   }
   if (left > 0) return { installs: null, why: `the count is still ${left} short after ${maxInstalls} installs`, perInstall: per }
-  return { installs: per.length, perInstall: per }
+  // AFTER THE COUNT: what each later life's compounded budget buys in
+  // NeuroFlux alone — a FLOOR on that install's multiplier gain (real
+  // augmentations beyond the ladder are not read here). bestCountExit takes
+  // the larger of this and the measured cadence: live 2026-09-25 the cadence
+  // was measured over four count-ticket lives (x1.0067 per 4.1h), which says
+  // nothing about what a compounded book buys once the count is banked.
+  const post = []
+  for (let j = 0; j < postInstalls; j++) {
+    const budget = moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs)
+    const b = bankBatch({ budget, ladder: [], n: 0, nfg: nfg ? { price: nfg.price * Math.pow(NFG_LEVEL_MULT, level - (nfg.level ?? 0)) } : null, later: true })
+    post.push({ gain: b.gain, nfgLevels: b.nfgLevels, budget })
+    level += b.nfgLevels
+  }
+  return { installs: per.length, perInstall: per, post }
 }
 
 /**
@@ -187,24 +200,36 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
   const ns = compositions ?? [...new Set([1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, short])].filter((x) => x >= 1 && x <= short)
   const tried = []
   let best = null
-  for (const n of ns) {
-    const ph = countPhase({ short, ladder, n, inputs, firstInstallH, nfg: count.nfg ?? null })
-    if (ph.installs === null) {
-      tried.push({ n, hours: null, why: ph.why })
-      continue
+  // THE LIFE LENGTH IS SEARCHED TOO. Where money is capital a longer life buys
+  // a bigger batch (the book compounds) and a shorter one pays the trader's
+  // warm-up more often; the measured cadence is only one candidate. The
+  // per-cycle gain after the count phase is rescaled to the candidate length
+  // at the measured ln(M) per hour, so no candidate is credited more growth
+  // per hour than was measured.
+  const c0 = pos(inputs.cycleHours) ? inputs.cycleHours : null
+  const lifeHs = c0 === null ? [null] : [...new Set([c0, 1, 2, 4, 6, 8, 12, 18, 24, 36, 48].map((x) => Math.round(x * 100) / 100))].filter((x) => x > 0)
+  for (const L of lifeHs) {
+    const inp = L === null || L === c0 ? inputs : { ...inputs, cycleHours: L, multGainPerCycle: Math.pow(g, L / c0) }
+    const gL = pos(inp.multGainPerCycle) ? inp.multGainPerCycle : 1
+    for (const n of ns) {
+      const ph = countPhase({ short, ladder, n, inputs: inp, firstInstallH, nfg: count.nfg ?? null })
+      if (ph.installs === null) {
+        tried.push({ n, lifeH: L, hours: null, why: ph.why })
+        continue
+      }
+      // Install j of the count phase multiplies by its batch's own gain: the
+      // first through installGains.hacking (exitHours' firstGain), later ones
+      // as byInstall lifts over the cadence's per-cycle gain they replace.
+      const byInstall = [...ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / gL)), ...(ph.post ?? []).map((b) => Math.max(1, b.gain / gL))]
+      const r = bestExitPolicy(
+        { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain) }, nextInstallGain: null, perCycleExtra: { byInstall } },
+        400,
+        ph.installs,
+      )
+      const h = r.best?.hours ?? null
+      tried.push({ n, lifeH: L, hours: h, installs: r.best?.installsFirst ?? null, countInstalls: ph.installs, first: { count: ph.perInstall[0].count, nfgLevels: ph.perInstall[0].nfgLevels, cost: Math.round(ph.perInstall[0].cost) }, why: r.why ?? null, degenerate: r.degenerate || undefined })
+      if (num(h) && !r.degenerate && (!best || h < best.hours - 1 / 60)) best = { hours: h, installsFirst: r.best.installsFirst, n, lifeH: L, countInstalls: ph.installs, firstBatch: ph.perInstall[0] }
     }
-    // Install j of the count phase multiplies by its batch's own gain: the
-    // first through installGains.hacking (exitHours' firstGain), later ones as
-    // byInstall lifts over the cadence's per-cycle gain they replace.
-    const byInstall = ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / g))
-    const r = bestExitPolicy(
-      { ...inputs, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain) }, nextInstallGain: null, perCycleExtra: { byInstall } },
-      400,
-      ph.installs,
-    )
-    const h = r.best?.hours ?? null
-    tried.push({ n, hours: h, installs: r.best?.installsFirst ?? null, countInstalls: ph.installs, first: { count: ph.perInstall[0].count, nfgLevels: ph.perInstall[0].nfgLevels, cost: Math.round(ph.perInstall[0].cost) }, why: r.why ?? null, degenerate: r.degenerate || undefined })
-    if (num(h) && !r.degenerate && (!best || h < best.hours - 1 / 60)) best = { hours: h, installsFirst: r.best.installsFirst, n, countInstalls: ph.installs, firstBatch: ph.perInstall[0] }
   }
   return best ? { best: { ...best, padded }, tried, never: null, padded } : { best: null, tried, never: null, padded, why: `no composition reaches the count: ${tried.map((t) => `n=${t.n}: ${t.why}`).join('; ')}` }
 }

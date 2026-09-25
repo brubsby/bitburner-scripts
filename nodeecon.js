@@ -121,6 +121,9 @@ export function canDonateTo(faction, favor, need, gangFaction = null) {
 // ---------------------------------------------------------------------------
 
 export const STOCK_FILE = '/tel/stock.txt'
+// THE MANUAL INSTALL HOLD (any content, the reason): progress.js's gate and
+// act.js's install order both refuse while it exists on home.
+export const INSTALL_HOLD_FILE = '/install-hold.txt'
 export const STOCK_HOLD_FILE = '/tel/stock-hold.txt'
 export const STOCK_FRESH_MS = 10 * 60e3
 export const STOCK_HOLD_MS = 10 * 60e3
@@ -308,6 +311,42 @@ export function programSpendAllowed(mults, gateRecord, item, lastAugReset, now =
  * Pure; returns a new array.
  */
 export const TRAVEL_FARE = 200e3 // CONSTANTS.TravelCost
+/**
+ * IS THIS FACTION JOIN READY BUT FOR THE CASH? A raise sells part of the
+ * trader's book and holds the trader; ordering one for an invitation that
+ * cannot arrive (a skill, karma or anything else still short) sells capital
+ * for nothing, and the next pass does it again. Live BN8 2026-09-25: a join
+ * or travel raised nearly every pass and the book sat as ~$220m cash.
+ * `reqs`: the game's requirement list (FactionJoinCondition.ts toJSON); the
+ * money and city legs are what the batch itself supplies. Anything this does
+ * not read is NOT ready (unknown never licenses a sale).
+ * Returns {ready, why}.
+ */
+export function joinReadyButCash(reqs, player) {
+  if (!Array.isArray(reqs)) return { ready: false, why: 'requirements unreadable' }
+  for (const r of reqs) {
+    const t = r?.type
+    if (t === 'money' || t === 'city') continue
+    if (t === 'skills') {
+      for (const [k, v] of Object.entries(r.skills ?? {})) {
+        const have = player?.skills?.[k]
+        if (!(fin(have) && fin(v) && have >= v)) return { ready: false, why: `${k} ${fin(have) ? Math.floor(have) : '?'} of ${v}` }
+      }
+      continue
+    }
+    if (t === 'karma') {
+      if (!(fin(player?.karma) && player.karma <= r.karma)) return { ready: false, why: `karma ${fin(player?.karma) ? Math.round(player.karma) : '?'} of ${r.karma}` }
+      continue
+    }
+    if (t === 'numPeopleKilled') {
+      if (!(fin(player?.numPeopleKilled) && player.numPeopleKilled >= r.numPeopleKilled)) return { ready: false, why: `kills ${player?.numPeopleKilled ?? '?'} of ${r.numPeopleKilled}` }
+      continue
+    }
+    return { ready: false, why: `requirement '${t ?? '?'}' is not read here` }
+  }
+  return { ready: true, why: 'every requirement but the cash and the city is met' }
+}
+
 export function withCashRaise(orders, cash, equity, margin = 0.02) {
   if (!Array.isArray(orders)) return orders
   const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)
@@ -317,4 +356,46 @@ export function withCashRaise(orders, cash, equity, margin = 0.02) {
   if (fin(cash) && cash >= total) return orders
   const target = Math.ceil(total * (1 + margin))
   return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['raise', target], why: `raise $${target} cash from the stock book for this batch ($${Math.round(total)} of orders, $${Math.round(cash ?? 0)} in hand)` }, ...orders.slice(first)]
+}
+
+/**
+ * THE TRADER'S RETURN ACROSS LIVES, as the exit simulation needs it: a
+ * steady-state rate r and a warm-up w after every install during which the
+ * book earns nothing net — the pre-4S estimator relearns from scratch when an
+ * install re-initialises the market (Prestige.ts:166-170), and cash raises
+ * and holds cost it more. Live 2026-09-25: a 6.14h life grew $250m -> $63.5b;
+ * the next two (0.24h, 0.58h) grew nothing, so installing every 35 minutes
+ * threw the capital away, and the simulation — fed the young life's own
+ * instantaneous return (negative, clamped to 0) — agreed that money never
+ * grows and kept installing.
+ *
+ * Model per life: ln(end/start) = r x (T - w). With two or more lives of
+ * different length it is a least-squares line in T (slope r, intercept
+ * -r w); with one it takes r from the trader's modelled steady rate
+ * (`steadyPerSec`, stock.txt calibration.predictedPerSec) and solves w.
+ * lives: [{lifeH, start, end}] (capital at life start and at its install).
+ * Returns {r (per s), warmupH, n, why} or null.
+ */
+export function fitCapital(lives, steadyPerSec = null) {
+  const pts = (lives ?? []).filter((l) => fin(l?.lifeH) && l.lifeH > 0 && fin(l?.start) && l.start > 0 && fin(l?.end) && l.end > 0).map((l) => ({ T: l.lifeH * 3600, y: Math.log(l.end / l.start) }))
+  if (!pts.length) return null
+  const Ts = new Set(pts.map((p) => Math.round(p.T)))
+  if (pts.length >= 2 && Ts.size >= 2) {
+    const n = pts.length
+    const mT = pts.reduce((a, p) => a + p.T, 0) / n
+    const mY = pts.reduce((a, p) => a + p.y, 0) / n
+    const sxx = pts.reduce((a, p) => a + (p.T - mT) ** 2, 0)
+    const sxy = pts.reduce((a, p) => a + (p.T - mT) * (p.y - mY), 0)
+    const r = sxy / sxx
+    if (r > 0) {
+      const w = Math.max(0, (r * mT - mY) / r)
+      return { r, warmupH: w / 3600, n, why: `fitted over ${n} lives: ln(end/start) = r(T - w)` }
+    }
+  }
+  if (fin(steadyPerSec) && steadyPerSec > 0) {
+    const best = pts.reduce((a, p) => (p.T > a.T ? p : a))
+    const w = Math.max(0, best.T - Math.max(0, best.y) / steadyPerSec)
+    return { r: steadyPerSec, warmupH: w / 3600, n: pts.length, why: `steady rate from the trader's model, warm-up solved from the longest life (${(best.T / 3600).toFixed(2)}h)` }
+  }
+  return null
 }

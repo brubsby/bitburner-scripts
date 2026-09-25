@@ -380,5 +380,86 @@ export async function run() {
   }
   checks.push(m);
 
+  // -----------------------------------------------------------------------
+  const n = new Check("B8n", "replay 21:46: the exit runs on the trader's REALISED return (fitted across lives, warm-up per install), and the install cadence it picks is not every 35 minutes");
+  {
+    n.examined(6);
+    const C = await import("../../countexit.js");
+    const F = await import("./fixture-bn8-2146.mjs");
+    const G = await import("./fixture-bn8-2056.mjs");
+    const fit = econ.fitCapital(F.CAPITAL_LIVES, F.STEADY_PER_SEC);
+    if (!fit) n.fail("no capital fit from three recorded lives");
+    else {
+      n.note(`fit: r ${fit.r.toExponential(3)}/s, warm-up ${fit.warmupH.toFixed(3)}h per install (${fit.why})`);
+      // Realised, not the model's steady 2.23e-4 and not the young life's 0.
+      if (!(fit.r > 2e-4 && fit.r < 3.7e-4)) n.fail(`the fitted return ${fit.r} is outside the lives' own range`);
+      if (!(fit.warmupH > 0.1 && fit.warmupH < 1)) n.fail(`the two short lives grew nothing: the warm-up must be positive and under an hour, got ${fit.warmupH}`);
+    }
+    // One life only: the trader's modelled rate, warm-up solved from it.
+    const one = econ.fitCapital([F.CAPITAL_LIVES[0]], F.STEADY_PER_SEC);
+    if (!(one && one.r === F.STEADY_PER_SEC && one.warmupH >= 0)) n.fail("a single life falls back to the trader's steady rate with a solved warm-up");
+    if (econ.fitCapital([], null) !== null) n.fail("nothing to fit must be null (unknown), not a zero return");
+
+    // The count-aware exit (short 12: a proxy ladder from the 20:56 fixture —
+    // 21:46's own ladder is not recorded) on the LIVE inputs was unpriced
+    // (capital 0: no batch is ever affordable) — that is the regression. On
+    // the fitted return it prices, and its life length is hours, not minutes.
+    const count = { short: 12, ladder: G.LADDER.slice(0, 12), nfg: G.NFG };
+    const live = C.bestCountExit(X.bestExitPolicy, F.INPUTS, count, { firstInstallH: 0 });
+    const inputs = { ...F.INPUTS, capitalReturnPerSec: fit?.r ?? 0, capitalWarmupH: fit?.warmupH ?? 0 };
+    const fitted = C.bestCountExit(X.bestExitPolicy, inputs, count, { firstInstallH: 0 });
+    if (live.best) n.note(`(live inputs priced at ${live.best.hours.toFixed(1)}h)`);
+    else n.note(`live inputs (capital return 0): unpriced — ${String(live.why).slice(0, 90)}…`);
+    if (!fitted.best) n.fail("on the realised return the count-aware exit must price", fitted.why);
+    else {
+      n.note(`fitted: exit ${fitted.best.hours.toFixed(1)}h, lives of ${fitted.best.lifeH}h, ${fitted.best.n} ticket(s) per install, ${fitted.best.installsFirst} installs (live pass said 1309.1h, installing every ~35 min)`);
+      if (!(fitted.best.lifeH >= 2)) n.fail(`the simulated cadence installs every ${fitted.best.lifeH}h — a life must outlast the trader's warm-up several times over`);
+      if (!(fitted.best.hours < 0.6 * 1309.1)) n.fail(`the exit on the realised return (${fitted.best.hours.toFixed(1)}h) should be far below the live 1309.1h`);
+    }
+    // Without the warm-up the same exit is no longer (a warm-up only costs).
+    const noWarm = C.bestCountExit(X.bestExitPolicy, { ...inputs, capitalWarmupH: 0 }, count, { firstInstallH: 0 });
+    if (fitted.best && noWarm.best && !(noWarm.best.hours <= fitted.best.hours + 1e-6)) n.fail("the warm-up must cost hours, never save them");
+    // progress.js builds the exit inputs from the fit, and records the capital per life.
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/capitalReturnPerSec: capitalFitOf\(ns, info\)\?\.r \?\?/.test(src)) n.fail("exitInputsOf must take the capital return from the realised fit first");
+    if (!/capitalWarmupH: capitalFitOf\(ns, info\)\?\.warmupH/.test(src)) n.fail("exitInputsOf must pass the per-install warm-up");
+    if (!/capStart:[^\n]*capEnd:/.test(src)) n.fail("the lifetimes ledger must record the capital at each life's start and install");
+  }
+  checks.push(n);
+
+  // -----------------------------------------------------------------------
+  const o = new Check("B8o", "raises do not starve the book (join-ready only, hold released after the batch), income on every status write, the manual install hold");
+  {
+    o.examined(9);
+    const tdh = [{ type: "money", money: 1e6 }, { type: "skills", skills: { hacking: 50 } }, { type: "city", city: "Chongqing" }];
+    if (econ.joinReadyButCash(tdh, { skills: { hacking: 49 } }).ready !== false) o.fail("a join whose skill is short must not raise cash");
+    if (econ.joinReadyButCash(tdh, { skills: { hacking: 50 } }).ready !== true) o.fail("a join short only of cash and city is ready");
+    if (econ.joinReadyButCash([{ type: "backdoorInstalled", server: "CSEC" }], {}).ready !== false) o.fail("an unread requirement never licenses a sale");
+    if (econ.joinReadyButCash([{ type: "karma", karma: -90 }], { karma: -10 }).ready !== false) o.fail("karma short is not ready");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    const act = fs.readFileSync(path.join(REPO_ROOT, "act.js"), "utf8");
+    const chase = prog.slice(prog.indexOf("for (const f of pick.chosen)"), prog.indexOf("order('join', [f], `chosen city set"));
+    if (!/joinReadyButCash\(reqs, player\)/.test(chase) || !/if \(!ready\.ready\)[\s\S]{0,200}continue/.test(chase)) o.fail("the city-faction chase must refuse to order (and so raise for) a join that is not otherwise ready");
+    // The hold is released as soon as the batch that raised has run.
+    const loopEnd = act.indexOf("ordersReport = { at: batch.at");
+    const release = act.lastIndexOf("releaseStockHold(ns, info", loopEnd);
+    if (!(release > 0 && loopEnd - release < 400)) o.fail("act.js must release the stock hold right after a batch with a raise executes");
+    if (!/at: new Date\(0\)\.toISOString\(\)/.test(act)) o.fail("the release must be an expired stamp (stock.js reads a hold as live only while fresh)");
+    if (!/o\.kind === 'join' && results\.some[\s\S]{0,120}await ns\.sleep\(INVITE_WAIT_MS\)/.test(act)) o.fail("a join after its raise/travel must wait for the invitation check");
+    // Income on every status write (healthcheck F4 read null on the install path).
+    const writes = prog.match(/ns\.write\(STATUS, JSON\.stringify\(\{[^\n]*/g) ?? [];
+    const report = /const report = \{[^\n]*income: econNow/.test(prog);
+    const bare = writes.filter((w) => !/income: econNow/.test(w) && !/JSON\.stringify\(report/.test(w));
+    if (!report || bare.length) o.fail(`every progress status write must carry income (${bare.length} without)`, bare.join("\n"));
+    // The manual install hold, in both places, from one file name.
+    if (econ.INSTALL_HOLD_FILE !== "/install-hold.txt") o.fail("the install hold is /install-hold.txt");
+    if (!/const INSTALL_HOLD_FILE = '\/install-hold\.txt'/.test(act) || !/const STOCK_HOLD_FILE = '\/tel\/stock-hold\.txt'/.test(act) || econ.STOCK_HOLD_FILE !== "/tel/stock-hold.txt") o.fail("act.js's copies of the hold file names must equal nodeecon's");
+    const inst = act.slice(act.indexOf("if (o.kind === 'install') {"), act.indexOf("runActor(ns, 'liquidate', ['install'])"));
+    if (!/const hold = readHomeFile\(ns, INSTALL_HOLD_FILE\)\s*\n\s*if \(hold\) \{\s*\n\s*results\.push\(\{[^\n]*skipped: `held by[^\n]*\n\s*break/.test(inst)) o.fail("act.js must refuse an install order while /install-hold.txt exists, before selling the book");
+    if (!/if \(installHold && gate\.install\)[\s\S]{0,200}gate\.install = false/.test(prog) || !/forcedInstall = !installHold/.test(prog)) o.fail("progress.js's gate (and --install-now) must honour /install-hold.txt");
+    if (!/ns\.write\(file, '', 'w'\)\s*\n\s*fetchFromHome\(ns, file\)/.test(act)) o.fail("off home, a hold deleted on home must not survive as a stale local copy");
+  }
+  checks.push(o);
+
   return checks;
 }
