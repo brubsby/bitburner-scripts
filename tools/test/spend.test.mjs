@@ -135,5 +135,16 @@ export async function run() {
   }
   checks.push(c10);
 
+  const c11 = new Check("SE11", "the body step claims the work slot, and `pending` exists before its first reader");
+  {
+    const pr = src("progress.js");
+    c11.examined(2);
+    if (!/if \(bodyStep && canWork && !flags\.dry\) \{\s*workedFaction = null\s*slotOwner = 'body'/.test(pr)) c11.fail("the body step must claim the slot, or act.js puts the player back on faction work (live: gym at 01:09, Daedalus by 01:11)");
+    const decl = pr.indexOf("  let pending = []");
+    const firstUse = pr.indexOf("const crimeAlt = (() => {");
+    if (!(decl > 0 && decl < firstUse)) c11.fail("pending must be declared before crime-vs-faction reads it (a TDZ error every pass)");
+  }
+  checks.push(c11);
+
   return checks;
 }

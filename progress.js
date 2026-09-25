@@ -3013,6 +3013,24 @@ async function act(ns, canJoin, info, note) {
     }
   }
 
+  // Queued augmentations, hoisted: crime-vs-faction below re-plans the next
+  // batch with them, and read `pending` before this block existed (a TDZ
+  // ReferenceError every pass, caught and read as 'faction keeps the slot').
+  let pending = []
+  if (canBuyAug) {
+    // MULTISET difference, not a Set difference. getOwnedAugmentations(true)
+    // returns installed names CONCATENATED with queued names, duplicates
+    // included (Singularity.ts:79-90). NeuroFlux Governor is stackable, so with
+    // a Set every queued NeuroFlux was discarded — four of them (M = 1.1268)
+    // reported as M = 1.0000, and the gate held on evidence it should have
+    // counted.
+    const installed = count(sing.ownedAugs(false))
+    for (const [name, n] of count(sing.ownedAugs(true))) {
+      for (let i = 0; i < n - (installed.get(name) ?? 0); i++) pending.push(name)
+    }
+  }
+
+
   // THE WORK SLOT, PRICED. An hour of the best money crime is worth
   // moneyLn(dollars/h) in the same ln(M) the schedule prices an hour of
   // faction work in (schedule.current.rate). Whichever is larger gets the
@@ -3130,6 +3148,12 @@ async function act(ns, canJoin, info, note) {
   }
   if (bodyStep && canWork && !flags.dry) {
     workedFaction = null
+    // CLAIM THE SLOT. act.js starts faction work in any slot nobody claims
+    // (actplan defers only on a truthy slot.owner), so a gym or crime step
+    // that did not claim it was undone within a minute: live 2026-09-25, the
+    // Covenant campaign's gym order ran at 01:09 and the player was back on
+    // Daedalus work by 01:11.
+    slotOwner = 'body'
     if (bodyStep.kind === 'crime') {
       const already = work?.type === 'CRIME' && String(work.crimeType ?? '') === bodyStep.type
       if (!already) {
@@ -3401,20 +3425,6 @@ async function act(ns, canJoin, info, note) {
   // now a property of the planner rather than of the queue — so it is asserted
   // in tools/staging/augplan/augplan.test.mjs [AP9] instead of left as prose.
   const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
-  let pending = []
-  if (canBuyAug) {
-    // MULTISET difference, not a Set difference. getOwnedAugmentations(true)
-    // returns installed names CONCATENATED with queued names, duplicates
-    // included (Singularity.ts:79-90). NeuroFlux Governor is stackable, so with
-    // a Set every queued NeuroFlux was discarded — four of them (M = 1.1268)
-    // reported as M = 1.0000, and the gate held on evidence it should have
-    // counted.
-    const installed = count(sing.ownedAugs(false))
-    for (const [name, n] of count(sing.ownedAugs(true))) {
-      for (let i = 0; i < n - (installed.get(name) ?? 0); i++) pending.push(name)
-    }
-  }
-
   // THE SAME OBJECTIVE THE PLAN USES. This called progressFactor with no
   // channels and no weights — the FLAT basket — while plan.M below is priced
   // on the DERIVED weights, and the next line multiplies the two together and
