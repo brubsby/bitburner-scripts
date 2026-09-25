@@ -291,6 +291,16 @@ export function nodeHours(o = {}) {
     expRatio: exp.ratio,
     legs: core.legs,
     assumes: 'income scaled by ScriptHackMoney x ServerMaxMoney and experience by HackExpGain; growth-rate and security differences change the batcher shape and are not modelled',
+    // What the projection cannot see in THIS node, named per row so a
+    // comparison across nodes shows which rows are bounds rather than
+    // estimates (CLAUDE.md: not simulated is published, never folded in).
+    notModelled: (() => {
+      const m = bitNodeMults(node)
+      const out = []
+      if (m && m.CloudServerLimit === 0) out.push('no cloud servers here (CloudServerLimit 0): the measured income was earned partly on a purchased fleet this node does not have — an optimistic income')
+      if (node === 9) out.push('hacknet-server hash income, the main money in BitNode 9 (ScriptHackMoney x ServerMaxMoney = 0.001), is not in the projection — a pessimistic income')
+      return out
+    })(),
     why: null,
   }
 }

@@ -253,7 +253,18 @@ export function exitHours(o = {}) {
     eRep = null,
     persistBaseline = null,
     perCycleExtra = null,
+    lifeIncome = null,
   } = o
+  // INCOME THAT THE NEXT INSTALL DESTROYS (lifeIncome, $/s): hacknet
+  // production — hashes sold, or a node's money — from servers/nodes that
+  // prestigeAugmentation deletes (PlayerObjectGeneralMethods.ts:130). It is
+  // NOT hacking income, so it is not scaled by the (level + 50) shape. Under
+  // "hold to the exit" (installsFirst 0) it runs on every money leg; under any
+  // policy with an install it ends at the first one, before any leg this
+  // function simulates — its value there is the money it adds at the install
+  // point, which the caller prices (moneyAtW). The rebuilt hacknet of a later
+  // life is not modelled: a floor.
+  const lifeInc = installsFirst === 0 && pos(lifeIncome) ? lifeIncome : 0
   // SOMETHING EVERY LATER LIFE ALSO BUYS (perCycleExtra {hacking, rep, income,
   // fromInstall}): from install number `fromInstall` on, each install carries
   // these extra gains on top of the measured cadence — k NeuroFlux levels a
@@ -368,7 +379,7 @@ export function exitHours(o = {}) {
   if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
   const moneyLeg = (target) => {
     const t0 = h
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length || lifeInc ? (rel) => (steps.length ? extraAt(t0 + rel) : 0) + lifeInc : null })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -763,9 +774,12 @@ export function spendExit(o = {}) {
  *     ladder's levels.
  * Null when the record carries no install point or ladder.
  */
-export function spendRuns(record, spent) {
+export function spendRuns(record, spent, o = {}) {
   const base = record?.inputs
-  if (!base || !num(spent) || spent < 0) return null
+  // A NEGATIVE spend is money gained (hashplan.js: hashes sold, a contract's
+  // reward) and is refused unless the caller says so, so a sign error in an
+  // existing caller cannot silently price a cost as a windfall.
+  if (!base || !num(spent) || (spent < 0 && o.allowGain !== true)) return null
   if (record.finalWindow === true) return { without: { ...base }, with: { ...base, money: Math.max(0, (base.money ?? 0) - spent) }, max: 0, min: 0 }
   if (!num(record.W) || record.W < 0 || !num(record.moneyAtW) || !Array.isArray(record.gainsByMoney) || !record.gainsByMoney.length) return null
   // Between two ladder levels, interpolated geometrically per channel (gains

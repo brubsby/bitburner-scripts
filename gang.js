@@ -141,7 +141,7 @@ export async function main(ns) {
     join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
     augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
     home: (() => {
-      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
       if (!up) return 0
       const ram = ns.getServerMaxRam('home')
       return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }

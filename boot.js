@@ -79,6 +79,8 @@
 // the only purchases that survive a prestige; money is deleted by it.
 
 import { planStack, MIN_OPS } from 'stack.js'
+// Pure (no ns surface): the game's own hacknet-server hostname marker.
+import { isHacknetServerHost } from 'hacknetplan.js'
 // status.js references only ns.write (0GB) and this file registers ns.atExit
 // (0GB), so invariant C1 costs the launcher nothing.
 import { reporter, describe } from 'status.js'
@@ -359,6 +361,20 @@ const STACK = [
       '2PB home and it never ran at all',
   },
   {
+    // Hashes exist only with hacknet SERVERS (BitNode 9, or Source-File 9).
+    // Declares 3.25GB and returns with `capability-absent` everywhere else;
+    // raises to its full price only where hashes exist.
+    script: 'hashspend.js',
+    where: 'anywhere',
+    tier: 32,
+    rank: 31,
+    raisesTo: 7.25,
+    why:
+      'in BitNode 9 hashes are the economy — script hacking is a thousandth of BN1 (ScriptHackMoney 0.1 x ServerMaxMoney 0.01) ' +
+      'while the entry server alone hashes ~$70k/s at the sell rate. Each hash goes to whichever upgrade shortens the simulated ' +
+      'exit against selling the same hashes (hashplan.js), else it is sold. Off home: it drives no DOM',
+  },
+  {
     script: 'buyserv.js',
     where: 'anywhere',
     tier: 64,
@@ -540,12 +556,18 @@ function spare(ns, host) {
 function placeOff(ns, hosts, need) {
   let best = null
   for (const host of hosts) {
-    if (host === 'home' || !ns.hasRootAccess(host)) continue
+    if (host === 'home' || isHacknetServerHost(host) || !ns.hasRootAccess(host)) continue
     const room = spare(ns, host)
     if (room >= need && (!best || room < best.room)) best = { host, room }
   }
   if (best) return best.host
-  return spare(ns, 'home') >= need ? 'home' : null
+  if (spare(ns, 'home') >= need) return 'home'
+  // LAST RESORT: a hacknet server. Every GB a script holds there costs that
+  // share of the server's hashes (hashRate's 1 - ramUsed/maxRam,
+  // Hacknet/formulas/HacknetServers.ts:14), so it is used only when nothing
+  // else has the room — never picked as a "tight fit" ahead of free RAM.
+  for (const host of hosts) if (isHacknetServerHost(host) && ns.hasRootAccess(host) && spare(ns, host) >= need) return host
+  return null
 }
 
 export async function main(ns) {

@@ -10,3 +10,7 @@ tools/staging/contracts/contracts.bundle.mjs
 
 # game-save snapshots (59MB, the whole save): local only
 backups/
+
+# built by tools/sim/bn9/build.mjs, like tools/sim/game.bundle.mjs
+tools/sim/bn9/game.bundle.mjs
+tools/sim/bn9/.entry.generated.ts

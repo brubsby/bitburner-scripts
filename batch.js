@@ -71,6 +71,8 @@
 import { reporter, describe, record } from 'status.js'
 // Pure arithmetic over getResetInfo's output; no ns surface of its own.
 import { singularityRamMultiplier } from 'sfgate.js'
+// Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
+import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 
 const SETTINGS = {
   workers: { hack: 'h.js', grow: 'g.js', weaken: 'w.js' },
@@ -1131,6 +1133,9 @@ export async function main(ns) {
   }
 
   let hosts = []
+  // Hacknet servers left out this cycle: their RAM costs hashes, and
+  // hacknet.js's ramPolicy did not (freshly) say the batch pays more.
+  let hacknetExcluded = []
   let targets = []
   let nextSlow = 0
   let nextRetarget = 0
@@ -1156,9 +1161,28 @@ export async function main(ns) {
         nextSlow = now + SETTINGS.slowCycleMs
         const all = scanAll(ns)
         for (const h of all) if (!ns.hasRootAccess(h)) tryRoot(ns, h)
-        hosts = all.filter(
-          (h) => ns.hasRootAccess(h) && ns.getServerMaxRam(h) > 0 && (!only.length || only.includes(h)),
-        )
+        // A HACKNET SERVER IS NOT FREE RAM. Its hash rate carries
+        // (1 - ramUsed/maxRam) (Hacknet/formulas/HacknetServers.ts:14), so
+        // every worker placed there takes that share of its hashes. It is
+        // used only when hacknet.js's ramPolicy — the batch's $/GB against
+        // the hashes a GB costs — says so, fresh; otherwise excluded (fail
+        // closed). An explicit --hosts list is obeyed as given.
+        if (self !== 'home') {
+          try {
+            ns.scp('/tel/hacknet.txt', self, 'home')
+          } catch {
+            /* the previous copy stays; its stamp decides freshness */
+          }
+        }
+        const hnPolicy = ns.read('/tel/hacknet.txt')
+        hacknetExcluded = []
+        hosts = all.filter((h) => {
+          if (!ns.hasRootAccess(h) || !(ns.getServerMaxRam(h) > 0)) return false
+          if (only.length) return only.includes(h)
+          if (hacknetHostAllowed(h, hnPolicy)) return true
+          hacknetExcluded.push(h)
+          return false
+        })
         for (const h of hosts) {
           if (h === 'home') continue
           if (!ns.fileExists(SETTINGS.workers.hack, h)) {
@@ -1837,6 +1861,7 @@ export async function main(ns) {
           uptimeSec: Math.round(uptime),
           controller: self,
           hostsUsed: hosts.length,
+          hacknetServers: { used: hosts.filter(isHacknetServerHost).length, excluded: hacknetExcluded.length, why: hacknetExcluded.length ? "hacknet.js's ramPolicy keeps their RAM for hashes (or is not fresh)" : null },
           hackingLevel: ns.getHackingLevel(),
           ram: { total: Math.round(totalRam), used: Math.round(usedRam), utilPct: totalRam ? Math.round((usedRam / totalRam) * 1000) / 10 : 0, reservedForPipelines: Math.round(reserved) },
           totals: {

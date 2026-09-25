@@ -37,6 +37,8 @@
 
 import { acquire, release, setLockTransport, LOCK_FILE } from 'lock.js'
 import { nextHomeUpgrade } from 'homecost.js'
+// Pure table (0GB): the node's HomeComputerRamCost, which the price carries.
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { canUseSingularity } from 'sfgate.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
@@ -304,7 +306,7 @@ async function once(ns, flags) {
   // take the global UI lock, walk to Sector-12 and yank the screen away from
   // whatever the player was doing — every 30 seconds, forever. It is a closed
   // form of (maxRam, cpuCores); see homecost.js.
-  const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+  const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
   let nextCost = next ? next.cost : Infinity
   nextWanted = next ? { kind: next.kind, cost: next.cost } : null
 
@@ -405,7 +407,7 @@ async function once(ns, flags) {
       // the thing we cannot yet afford is exactly the one they refuse to show.
       // Filtering those out published `nextCost: null` = "fully maxed", which
       // is how this ended up gated on a number that meant the opposite.
-      const remaining = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      const remaining = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
       nextCost = remaining ? remaining.cost : Infinity
     }
   } catch (err) {

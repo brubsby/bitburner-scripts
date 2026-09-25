@@ -29,6 +29,10 @@
 
 import { decide, gangKarmaTarget } from 'actplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
+// Pure: hacknet servers sort last — a GB used there costs that share of its
+// hashes (Hacknet/formulas/HacknetServers.ts:14), so an actor lands there only
+// when no other rooted host has the room.
+import { hacknetLast } from 'hacknetplan.js'
 import { canUseSingularity, canUseGang } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 import { nextHomeUpgrade } from 'homecost.js'
@@ -93,7 +97,7 @@ async function runSnapshot(ns, actor) {
   const hosts = rootedHosts(ns)
     .map((h) => ({ h, free: ns.getServerMaxRam(h) - ns.getServerUsedRam(h) }))
     .filter((x) => x.free >= price)
-    .sort((a, b) => b.free - a.free)
+    .sort((a, b) => hacknetLast(a.h, b.h) || b.free - a.free)
   if (!hosts.length) return { ran: false, why: `no rooted host has ${price}GB free` }
   const host = hosts[0].h
   if (host !== 'home') ns.scp([actor, ...ACTOR_DEPS], host, 'home')
@@ -143,7 +147,7 @@ async function runActor(ns, kind, args) {
   const hosts = rootedHosts(ns)
     .map((h) => ({ h, free: ns.getServerMaxRam(h) - ns.getServerUsedRam(h) }))
     .filter((x) => x.free >= price)
-    .sort((a, b) => b.free - a.free)
+    .sort((a, b) => hacknetLast(a.h, b.h) || b.free - a.free)
   if (!hosts.length) return { ran: false, why: `no rooted host has ${price}GB free for ${actor}` }
   const host = hosts[0].h
   if (host !== 'home') ns.scp([actor, ...ACTOR_DEPS], host, 'home')
@@ -168,7 +172,7 @@ async function spendDown(ns) {
   const bought = []
   try {
     for (let i = 0; i < 8; i++) {
-      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
       if (!next || ns.getServerMoneyAvailable('home') < next.cost) break
       const r = await runActor(ns, 'homeram', [next.kind])
       if (r.ok !== true) break
@@ -205,7 +209,7 @@ function backdoorIfRequested(ns) {
   const hosts = rootedHosts(ns)
     .map((h) => ({ h, free: ns.getServerMaxRam(h) - ns.getServerUsedRam(h) }))
     .filter((x) => x.free >= price)
-    .sort((a, b) => b.free - a.free)
+    .sort((a, b) => hacknetLast(a.h, b.h) || b.free - a.free)
   if (!hosts.length) return { target: q.target, ok: false, why: `no rooted host has ${price}GB free for ${BACKDOOR_ACTOR}` }
   const host = hosts[0].h
   if (host !== 'home') ns.scp([BACKDOOR_ACTOR, ...ACTOR_DEPS], host, 'home')

@@ -43,6 +43,8 @@ import { reporter, describe, record } from 'status.js'
 // aliased: this file already has a local reserveFor(ns) for per-host reserves.
 import { reserveFor as budgetHold, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
+// Pure table (0GB): the node's HomeComputerRamCost, which the price carries.
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetTarget } from 'fleetshape.js'
 
 // Where progress.js publishes the augmentation plan and its total cost.
@@ -219,7 +221,7 @@ function reserveNow(ns) {
     // upgrade was a $56.25b core — recreating, through the other door, the
     // exact starvation this exception exists to end.
     home: (() => {
-      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores)
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
       if (!up) return 0
       const ram = ns.getServerMaxRam('home')
       return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
@@ -328,6 +330,19 @@ export async function main(ns) {
       const owned = ns.cloud.getServerNames()
       const limit = ns.cloud.getServerLimit()
       const maxRam = ns.cloud.getRamLimit()
+      // NO CLOUD SERVERS IN THIS NODE. getCloudServerLimit() is
+      // round(25 x CloudServerLimit) (ServerPurchases.ts:92-94), and BitNode 9
+      // sets CloudServerLimit 0. The loop below would simply find no slot
+      // every pass — but it still published `fleetDollarPerGB` from
+      // getServerCost, a price for servers that cannot be bought, and
+      // progress.js's spend verdict (installgate spendExit.servers) priced a
+      // fleet spend on it. Refuse by name instead, with no price to read.
+      if (limit <= 0 && owned.length === 0) {
+        note('waiting', { result: 'no-cloud-servers', limit, fleetDollarPerGB: null, owned: 0, detail: `ns.cloud.getServerLimit() is ${limit} in this BitNode (CloudServerLimit): there is nothing to buy. RAM here is home, rooted servers, and — with hacknet servers — whatever hacknet.js's ramPolicy lends.` })
+        mirror()
+        await ns.sleep(10 * 60e3)
+        continue
+      }
       reserve = flags.reserve >= 0 ? flags.reserve : reserveNow(ns)
 
       // ----------------------------------------------------------------

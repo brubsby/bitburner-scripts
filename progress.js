@@ -1486,6 +1486,8 @@ function publishExitInputs(ns, info, inputs, at = null) {
         W: at && typeof at.W === 'number' ? at.W : null,
         finalWindow: at?.finalWindow === true,
         moneyAtW: at && typeof at.moneyAtW === 'number' ? at.moneyAtW : null,
+        // Why inputs.lifeIncome is 0 when it is (null when it was read).
+        lifeIncomeWhy: hacknetLifeIncome(ns, info).why,
         gainsByMoney: table,
       }),
       'w',
@@ -1570,7 +1572,9 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       const p2 = replanAt(Math.max(0, m))
       return installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
     }
-    const common = { inputs, W, finalWindow, moneyAt: (h) => liveMoney + moneyBy(h), gainsAt, eBudget: readJson(ns, '/tel/installgate.txt')?.eBudget }
+    // Hacknet money (inputs.lifeIncome) arrives until the install too.
+    const lifeInc = inputs?.lifeIncome > 0 ? inputs.lifeIncome : 0
+    const common = { inputs, W, finalWindow, moneyAt: (h) => liveMoney + moneyBy(h) + lifeInc * h * 3600, gainsAt, eBudget: readJson(ns, '/tel/installgate.txt')?.eBudget }
     const income = inputs?.incomePerSec
     const ramTotal = readJson(ns, '/tel/batch.txt')?.ram?.total
     const perGB = income > 0 && ramTotal > 0 ? income / ramTotal : null
@@ -1755,6 +1759,26 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
  * the SAME state. A comparison between two trajectories built from different
  * inputs measures the inputs, not the choice.
  */
+/**
+ * HACKNET PRODUCTION AS INCOME, from hacknet.js's own report
+ * (/tel/hacknet.txt `moneyPerSec`: a node's money, or a server's hashes at
+ * the $250k sell floor). It is NOT script income — getTotalScriptIncome
+ * never sees it — and in BitNode 9, where ScriptHackMoney 0.1 x
+ * ServerMaxMoney 0.01 leave hacking a thousandth of BN1's, it is most of the
+ * money there is. An install destroys it, so it rides the exit as
+ * `lifeIncome` (exitplan) and the money expected at the install point, never
+ * as a persisting rate. Stale, foreign or absent: 0 — a floor, named in the
+ * record's `lifeIncomeWhy`.
+ */
+function hacknetLifeIncome(ns, info) {
+  const h = readJson(ns, '/tel/hacknet.txt')
+  if (!h) return { perSec: 0, why: 'no /tel/hacknet.txt' }
+  if (h.lastAugReset !== info?.lastAugReset) return { perSec: 0, why: 'hacknet report is from another life' }
+  if (!(Date.now() - Date.parse(h.at) < 15 * 60e3)) return { perSec: 0, why: 'hacknet report is stale' }
+  const v = h.moneyPerSec
+  return typeof v === 'number' && isFinite(v) && v >= 0 ? { perSec: v, why: null } : { perSec: 0, why: 'hacknet report carries no moneyPerSec' }
+}
+
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   // The endpoint model (exitplan.endpointCycleStats), not cycleStats's median.
   const cyc = endpointCycleStats(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
@@ -1763,6 +1787,8 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
   return {
     money: player.money ?? 0,
     incomePerSec: incomePerSec + contractMoneyPerSec,
+    // Hacknet money until the next install (exitplan lifeIncome).
+    lifeIncome: hacknetLifeIncome(ns, info).perSec,
     hacking: player.skills?.hacking,
     hackingExp: player.exp?.hacking ?? 0,
     hackingMult: effectiveHackingMult(player, info),
@@ -3579,7 +3605,7 @@ async function act(ns, canJoin, info, note) {
       const byExit = sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
       {
         const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
-        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + incNow * W0 * 3600, replanAt, pending, offers })
+        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + (incNow + hacknetLifeIncome(ns, info).perSec) * W0 * 3600, replanAt, pending, offers })
       }
       writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
@@ -4147,7 +4173,7 @@ async function act(ns, canJoin, info, note) {
     // the fleet cannot end up grinding for different reasons.
     {
       const Wg = gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0
-      const mW = Wg === null ? ns.getServerMoneyAvailable('home') : ns.getServerMoneyAvailable('home') + (incomeTraj ? incomeTraj.moneyBy(Wg) : incomePerSec * Wg * 3600)
+      const mW = Wg === null ? ns.getServerMoneyAvailable('home') : ns.getServerMoneyAvailable('home') + (incomeTraj ? incomeTraj.moneyBy(Wg) : incomePerSec * Wg * 3600) + hacknetLifeIncome(ns, info).perSec * Wg * 3600
       publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), { W: Wg, finalWindow: gate.holdForever === true, moneyAtW: mW, replanAt, pending, offers })
     }
     writeSleevePlan(
