@@ -137,7 +137,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExit, ticketLadder } from 'countexit.js'
-import { withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { INSTALL_HOLD_FILE, fitCapital, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -1724,6 +1724,29 @@ function countModelOf(mults, offers, allCount, player) {
 }
 
 /**
+ * The trader's steady return and per-install warm-up (nodeecon.fitCapital)
+ * from this node's lifetimes-ledger capital columns; with too few lives, the
+ * trader's own modelled steady rate (stock.txt calibration.predictedPerSec).
+ * Null outside a capital node or with nothing to fit.
+ */
+let capitalFitMemo = null
+function capitalFitOf(ns, info) {
+  if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain !== 0) return null
+  if (capitalFitMemo && capitalFitMemo.at === info?.lastAugReset) return capitalFitMemo.fit
+  let fit = null
+  try {
+    const ledger = JSON.parse(ns.read('/tel/lifetimes.txt') || '[]')
+    const lives = ledger.filter((e) => e?.bitNode === info?.currentNode).map((e) => ({ lifeH: e.lifeH, start: e.capStart, end: e.capEnd }))
+    const steady = readJson(ns, STOCK_FILE)?.calibration?.predictedPerSec
+    fit = fitCapital(lives, steady) ?? (typeof steady === 'number' && steady > 0 ? { r: steady, warmupH: null, n: 0, why: "no capital lives recorded: the trader's modelled steady rate, warm-up unmeasured" } : null)
+  } catch {
+    fit = null
+  }
+  capitalFitMemo = { at: info?.lastAugReset, fit }
+  return fit
+}
+
+/**
  * SLEEVE AUGMENTATIONS, trajectory against trajectory: the best exit policy
  * after buying a batch now against the best without it, on one input builder.
  * The batch run spends the price (and re-plans the pending augmentations on
@@ -1952,7 +1975,14 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // stock trader's compounding return. Zero/absent outside a node whose
     // income is the trader's, so every other node prices as before.
     flatIncomePerSec: econNow?.flatPerSec ?? 0,
-    capitalReturnPerSec: econNow?.capitalReturnPerSec ?? 0,
+    // THE TRADER ACROSS LIVES (nodeecon.fitCapital): a steady rate and the
+    // warm-up every install costs, fitted from the lifetimes ledger's capital
+    // columns — not the young life's own return, which was negative for its
+    // first half hour and made the exit read "money never grows" (live
+    // 2026-09-25 21:46: exit 1309h, an install every ~35 min).
+    capitalReturnPerSec: capitalFitOf(ns, info)?.r ?? econNow?.capitalReturnPerSec ?? 0,
+    capitalWarmupH: capitalFitOf(ns, info)?.warmupH ?? 0,
+    capitalFit: capitalFitOf(ns, info)?.why ?? null,
     capitalCap: econNow?.capitalCap ?? null,
     // What an install leaves: $1262, or BitNode 8's $250m (Prestige.ts:158).
     installCash: postInstallMoney(info?.currentNode),
@@ -2488,6 +2518,14 @@ async function act(ns, canJoin, info, note) {
           const city = reqs.find((r) => r?.type === 'city')?.city
           const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
           if (!city) continue
+          // ONLY A JOIN THAT CAN HAPPEN RAISES CASH: every other requirement
+          // must already be met, or the raise sells capital for an invitation
+          // that cannot arrive (nodeecon.joinReadyButCash).
+          const ready = joinReadyButCash(reqs, player)
+          if (!ready.ready) {
+            todo.push(`${f}: chosen, not chased yet — ${ready.why} (no cash raised for an invitation that cannot arrive)`)
+            continue
+          }
           // Cash plus the book: the money is raised into hand before the travel
           // (the join order carries the requirement as its cash cost).
           if (!((player.money ?? 0) + stockEquity >= moneyReq + 200e3)) {
@@ -4366,6 +4404,25 @@ async function act(ns, canJoin, info, note) {
       gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))),
     })
 
+    // THE MANUAL INSTALL HOLD: /install-hold.txt on home (any content, the
+    // reason) vetoes every install until it is deleted, like endgame.js's
+    // /endgame-hold.txt for the exit. The gate still prices and publishes
+    // what it WOULD do; act.js refuses an install order on the same file, so
+    // a batch written before the hold landed cannot slip through either.
+    const installHold = (() => {
+      try {
+        return ns.read(INSTALL_HOLD_FILE) || ''
+      } catch {
+        return ''
+      }
+    })()
+    if (installHold && gate.install) {
+      gate.heldBy = INSTALL_HOLD_FILE
+      gate.wouldInstall = gate.why
+      gate.install = false
+      gate.why = `hold: ${INSTALL_HOLD_FILE}: ${installHold.slice(0, 200)} — the gate would install (${gate.wouldInstall})`
+    }
+
     // ------------------------------------------------------------------
     // THE TERMINAL SPRINT. Once The Red Pill is INSTALLED, the run ends at
     // hacking `gate.target` (9000 here), and the question changes shape:
@@ -4550,12 +4607,12 @@ async function act(ns, canJoin, info, note) {
     // Only meaningful when there is actually something to install: an override
     // that fires on an empty plan would call installAugmentations for nothing
     // and reset the life for zero gain.
-    const forcedInstall = flags['install-now'] && (pending.length > 0 || (plan?.buy?.length ?? 0) > 0)
+    const forcedInstall = !installHold && flags['install-now'] && (pending.length > 0 || (plan?.buy?.length ?? 0) > 0)
 
     if (!canInstall || flags['no-install'] || flags.dry) {
       todo.push(`${pending.length} queued + ${plan ? plan.buy.length : 0} planned (M=${M.toFixed(4)}) — ${gate.why}`)
     } else if (covenantBatchOrders(covenantExit)) {
-      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought: [], installing: true, gate, ordered: orders.length }, null, 2), 'w')
+      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought: [], installing: true, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
       flushOrders()
       return
     } else if (gate.install && terminal?.sprint) {
@@ -4646,7 +4703,7 @@ async function act(ns, canJoin, info, note) {
         }
       }
       const installing = pending.length + bought.length
-      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate }, null, 2), 'w')
+      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, income: econNow }, null, 2), 'w')
       did.push(`bought ${bought.length} of ${plan ? plan.buy.length : 0} planned; installing ${installing} augmentation(s) — ${gate.why}`)
       if (installing === 0) {
         // Nothing to install and nothing bought: do NOT call installAugmentations,
@@ -4704,6 +4761,9 @@ async function act(ns, canJoin, info, note) {
                 // Distinct augmentations INCLUDING what this install lands —
                 // the count trajectory behind Daedalus's 30-aug forecast.
                 augs: allCount.size,
+                // THE TRADER'S CAPITAL over this life (nodeecon.fitCapital reads
+                // these back): its start wealth and its wealth at the install.
+                ...(stockNow?.ok ? { capStart: readJson(ns, STOCK_FILE)?.startWealth ?? undefined, capEnd: Math.round((ns.getServerMoneyAvailable('home') ?? 0) + stockNow.equity) } : {}),
               },
               { g: joinState?.rateGrowthPerCycle, windowH: joinState?.windowH, augsPerWindow: joinState?.augsPerWindow },
             ),
@@ -4720,7 +4780,7 @@ async function act(ns, canJoin, info, note) {
         // in this batch failed but earlier ones are waiting.
         order('install', ['boot.js'], gate.why)
         orders[orders.length - 1].requireQueued = pending.length
-        ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length }, null, 2), 'w')
+        ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
         flushOrders()
         return // act.js installs; the game reloads; boot.js brings the stack back up
       }

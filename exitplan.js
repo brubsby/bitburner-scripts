@@ -103,6 +103,10 @@ export function hoursToMoney(target, o = {}) {
   // second). It slows every money leg, and a balance that the spend drives to
   // zero with nothing coming in never reaches its target (Infinity).
   const spend = num(o.spendPerSec) && o.spendPerSec > 0 ? o.spendPerSec : 0
+  // THE TRADER'S WARM-UP (o.capitalWarmupH): hours from the leg's start during
+  // which the capital earns nothing — after an install the market is
+  // re-initialised and the estimator relearns (nodeecon.fitCapital).
+  const warmH = num(o.capitalWarmupH) && o.capitalWarmupH > 0 ? o.capitalWarmupH : 0
   const lvlIncome = num(incomeAtLevel1) && incomeAtLevel1 > 0 ? incomeAtLevel1 : 0
   let stepH = o.stepH ?? 1 / 120
   if (!num(target) || target <= money0) return 0
@@ -134,7 +138,7 @@ export function hoursToMoney(target, o = {}) {
     const rate = (lvlIncome * (lvl + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(h) : 0)
     const dt = stepH * 3600
     // The capital term over the step: exponential below the cap, linear at it.
-    const capGain = r > 0 ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
+    const capGain = r > 0 && h >= warmH ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
     const add = rate * dt + Math.max(0, capGain) - spend * dt
     if (!(add > 0) && money + add <= 0) return Infinity // the spend empties the balance first
     // The last step lands exactly: without this the answer is quantised to
@@ -330,6 +334,10 @@ export function exitHours(o = {}) {
     // a spend the exit never has to fund does not delay it; keeping cash from
     // going negative is a floor the spender enforces, not an exit cost.
     spendPerSec = 0,
+    // Hours after each install during which the trader's capital earns
+    // nothing (nodeecon.fitCapital). Applied to the money legs of the final
+    // window only when an install precedes them.
+    capitalWarmupH = 0,
     // Hacknet money (nodeecon.incomeOf lifePerSec): NOT part of incomePerSec,
     // and destroyed by the next install — see lifeInc below.
     lifeIncome = null,
@@ -473,7 +481,7 @@ export function exitHours(o = {}) {
     const t0 = h
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt, spendPerSec })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h

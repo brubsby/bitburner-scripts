@@ -298,6 +298,16 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     }
     return { tasks, why, breakevenHours: null, objective, horizonHours }
   }
+  // THE SLEEVE ALREADY HOLDING THE FACTION keeps it. setToFactionWork throws
+  // "Sleeve 1 cannot work for faction X because Sleeve 3 is already working
+  // for them" (Sleeve.ts:153-163) while ANOTHER sleeve still works there, and
+  // sleeve.js applies tasks in index order, so planning a lower-numbered
+  // sleeve onto the faction the holder has not yet left fails every pass
+  // (live BN8 2026-09-25, Tian Di Hui). Only the holder may be given it; if the
+  // holder goes elsewhere this pass, next pass anyone may take it.
+  const repHolder = typeof o.repFaction === 'string' && o.repFaction
+    ? sleeves.find((s) => s?.task?.type === 'FACTION' && s.task.factionName === o.repFaction) ?? null
+    : null
   for (const s of sleeves) {
     const i = s?.index ?? tasks.length
     const sync = num(s?.sync) ? s.sync : null
@@ -470,7 +480,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // THROWS otherwise), so the first sleeve to be assigned it takes it and the
     // rest fall through to the crime objective. Reputation is not sync-scaled,
     // so the sleeve picked is the one with the best stats, not the best sync.
-    const wantRep = objective === 'rep' && typeof o.repFaction === 'string' && o.repFaction && !repTaken
+    const wantRep = objective === 'rep' && typeof o.repFaction === 'string' && o.repFaction && !repTaken && (repHolder === null || repHolder === s)
     const policy = horizonHours === null ? null : sleevePolicy(s, node, { ...o, objective: wantRep ? 'rep' : objective === 'rep' ? 'money' : objective })
     if (policy && policy.task === 'train') {
       // Gym fees are the same unchecked sink (ClassWork.tsx:57-72, 120 x
