@@ -496,6 +496,54 @@ if (!sleevesExpected) {
   }
 }
 
+/* ------------------------------------------- F. is the RUN progressing? */
+// Everything above asks whether each COMPONENT is healthy. On 2026-09-25 the
+// whole of BN8 stalled for 5.8h with every component healthy and this file
+// printing HAPPY PATH: the trader compounded $250m -> $57b while the planner
+// did nothing (income read null, every purchase gated on cash the fully
+// invested trader never held), no aug was bought, no install happened and
+// hacking sat at 485. Component health cannot see that. These checks read the
+// OBJECTIVE — the exit — and fail when the run is not getting closer to it.
+// An unreadable objective is a failure, never a pass.
+{
+  const gate = readTel("installgate.txt");
+  const prog = tel["progress.txt"];
+  const exitH = gate?.objective?.exitSensitivity?.exitH;
+  const windowH = gate?.objective?.windowH;
+  now.exitH = num(exitH) ? exitH : null;
+  now.queued = (state.queuedAugmentations ?? []).length;
+  now.didCount = Array.isArray(prog?.did) ? prog.did.length : null;
+  now.todo0 = Array.isArray(prog?.todo) ? String(prog.todo[0] ?? "") : null;
+  now.working = !!(state.currentWork && (state.currentWork.type ?? state.currentWork.data?.type));
+  const sameNode = prev && prev.bitNode === now.bitNode;
+  const hist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH));
+  now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH }] : [])].slice(-48);
+
+  if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no objective.exitSensitivity.exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
+  else note(`exit ETA ${now.exitH.toFixed(1)}h`);
+
+  // F1: the exit must approach. Over at least an hour of samples in this node,
+  // the projected exit should fall by at least half the wall time that passed.
+  const oldest = now.etaHist.find((h) => (Date.parse(now.at) - Date.parse(h.at)) / 3.6e6 >= 1);
+  if (oldest && now.exitH !== null) {
+    const elapsedH = (Date.parse(now.at) - Date.parse(oldest.at)) / 3.6e6;
+    const gainedH = oldest.exitH - now.exitH;
+    if (gainedH < 0.5 * elapsedH) fail(`EXIT NOT APPROACHING: projected exit ${oldest.exitH.toFixed(1)}h -> ${now.exitH.toFixed(1)}h over ${elapsedH.toFixed(1)}h of wall time`, "the run is spending time without getting closer to the end — find which leg is stuck (progress.txt todo, installgate plan)");
+  }
+  // F2: installs must happen on the cadence the plan itself assumes.
+  const lifeH = num(now.lifeMs) ? now.lifeMs / 3.6e6 : null;
+  if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
+  // F3: the planner must act, or change what it is waiting on.
+  if (prev && sameNode && dtMin >= 30 && now.didCount === 0 && prev.didCount === 0 && now.todo0 !== null && now.todo0 === prev.todo0) fail(`PLANNER IDLE: progress.js did nothing across ${dtMin.toFixed(0)} min, still waiting on: ${now.todo0.slice(0, 160)}`);
+  // F4: a measured income the planner cannot see.
+  if (prog && prog.income == null) {
+    const st = readTel("stock.txt");
+    if (st && num(st.returnPerSec)) fail(`progress.js reads income null while stock.txt publishes returnPerSec ${st.returnPerSec.toExponential(2)}`, "the planner's income path is broken, not the trader");
+  }
+  // F5: the player's work slot must be in use.
+  if (!now.working && prev && sameNode && prev.working === false && dtMin >= MIN_INTERVAL_MIN) fail("PLAYER IDLE: no current work across two samples", "the work slot is the one resource that cannot be bought");
+}
+
 /* ------------------------------------------------------ E. the decision */
 const act = tel["act.txt"];
 if (act && act.decision?.kind === "idle" && !act.decision?.why) fail("act.js is idle with no stated reason");

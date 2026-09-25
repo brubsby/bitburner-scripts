@@ -560,6 +560,31 @@ because the script dies first; the lifetimes ledger does).
   trusting a plan.
 - Find the record that proves a cause before attributing it to anyone.
 
+**Healthy components are not progress, and a check nobody runs does not
+exist.** On 2026-09-25 BN8 stalled for 5.8 hours: the stock trader compounded
+$250m to $57b and every component reported healthy, while the planner did
+nothing (income read null; every purchase waited on cash the fully invested
+trader never held). No aug was bought, there was no install, and hacking sat
+at 485. `tools/healthcheck.mjs` printed HAPPY PATH because it only checked
+components, and nobody was running it anyway. Two rules follow:
+
+- **Watch the objective, not the parts.** Healthcheck section F checks
+  progress toward the exit:
+  - EXIT UNPRICED
+  - EXIT NOT APPROACHING (the projected exit must fall by at least half the
+    wall time that passed)
+  - NO INSTALL (after 3× the plan's own window)
+  - PLANNER IDLE
+  - income null while the trader publishes a return
+  - PLAYER IDLE
+
+  When a new failure mode is found, add it here as an outcome check.
+- **Schedule it.** Any session driving the game runs
+  `bash tools/watch-run.sh 900 12 baseline` in the background. It runs the
+  healthcheck every 15 min and exits, waking the session, on the first NEW
+  problem. Watching one component's numbers (trader wealth, the error log)
+  does not replace it; that is exactly how the stall was missed.
+
 ## Decisions compare simulated trajectories — never a shortcut
 
 **Every choice between two ways of playing is priced by simulating BOTH
