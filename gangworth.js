@@ -127,6 +127,25 @@ export function gangExit(bestExitPolicy, base, schedule, grindHours, eBudget = n
   return { savedH: a - b, withoutH: a, withH: b, why: `exit ${a.toFixed(1)}h without a gang vs ${b.toFixed(1)}h with one after a ${grindHours.toFixed(1)}h karma grind` }
 }
 
+/**
+ * A gang whose every channel is zero by the node's multipliers: null when it
+ * has one, else the reason. GangSoftcap 0 raises both a member's respect and
+ * money gain to the power 0 (Gang/formulas/formulas.ts:27,71): each is exactly
+ * 1 per cycle whatever the member, task or territory — ~$1 and ~1 respect per
+ * member per cycle — and the gang faction's reputation is respect / 75
+ * (Gang.ts:154-155), so no reputation either. Nothing to buy with it:
+ * GangUniqueAugs 0 means the gang factions sell no unique augmentation.
+ * This is the node's structure, not a measurement, so it decides the verdict
+ * without any income reading.
+ */
+export function gangChannelsDead(mults) {
+  if (!mults || typeof mults !== 'object') return null
+  if (mults.GangSoftcap === 0) {
+    return `GangSoftcap is 0 — a member's respect and money are pow(x, 0) = 1 per cycle (Gang/formulas/formulas.ts:27,71), so the gang earns ~$1 and ~1/75 reputation per member per cycle${mults.GangUniqueAugs === 0 ? ', and GangUniqueAugs 0 leaves its factions nothing unique to sell' : ''}: the -54,000 karma gate buys nothing`
+  }
+  return null
+}
+
 /** BitNode 2 grants gang access outright and sells The Red Pill through it. */
 export const GANG_IS_THE_NODE = 2
 
@@ -176,6 +195,13 @@ export function gangVerdict(o = {}) {
     return { worth: true, gainHours: null, grindHours: 0, why: 'BitNode 2 grants gang access outright and sells The Red Pill through the gang catalogue — not a trade-off' }
   }
   if (!mults || typeof mults !== 'object') return keep(`no multiplier table for BitNode ${node} — refusing to price the gang`)
+  // STRUCTURALLY WORTHLESS, whatever the income reads. Checked before the
+  // trajectory comparison because that comparison needs a measured income,
+  // and an UNMEASURED income left the verdict unknown -> gang pending ->
+  // the work slot and the sleeves on Homicide for a 15h karma grind (live in
+  // BitNode 8, 2026-09-25).
+  const dead = gangChannelsDead(mults)
+  if (dead) return { worth: false, gainHours: null, grindHours: num(grindHours) ? grindHours : null, structural: true, why: `NOT worth it in BitNode ${node}: ${dead}` }
   if (!num(grindHours) || grindHours < 0) return keep('no measured karma grind — the gang cannot be priced without what it costs to reach')
   // THE VERDICT IS ONE COMPARISON: gangExit's savedH (the exit with the
   // gang, its income delayed by the grind, against without). It replaced
@@ -220,9 +246,13 @@ export function gangVerdict(o = {}) {
  * being fixed is an unexamined assumption, and inverting it unexamined is the
  * same mistake pointing the other way.
  */
-export function gangIsPending({ canUse, node, inGang, verdict } = {}) {
+export function gangIsPending({ canUse, node, inGang, verdict, mults = null } = {}) {
   if (canUse !== true) return { pending: false, why: 'this save cannot have a gang' }
   if (inGang === true) return { pending: false, why: 'already in a gang — nothing left to buy' }
+  // Structure outranks an unpriced verdict: a gang with every channel at
+  // zero is not pending however the income reads (gangChannelsDead).
+  const dead = node !== GANG_IS_THE_NODE ? gangChannelsDead(mults) : null
+  if (dead) return { pending: false, why: `not pending: ${dead}` }
   if (node === GANG_IS_THE_NODE) return { pending: true, karmaWaived: true, why: 'BitNode 2 grants gang access outright' }
   if (verdict?.worth === false) {
     return { pending: false, why: `the gang is priced NOT worth its karma gate in BitNode ${node}, so combat multipliers buy nothing toward one` }

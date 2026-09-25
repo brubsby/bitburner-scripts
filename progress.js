@@ -137,7 +137,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
-import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome } from 'gangworth.js'
+import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
@@ -1992,6 +1992,7 @@ function karmaChannelCtx(ns, info, player) {
       node: info?.currentNode,
       inGang: live?.lastAugReset === info?.lastAugReset && !!live?.faction,
       verdict: readJson(ns, GATE)?.gangWorth ?? null,
+      mults: bitNodeMults(info?.currentNode),
     })
     if (!pend.pending) return { gangPending: false, gangPendingWhy: pend.why }
     if (pend.karmaWaived) return { gangPending: true, gangKarmaWaived: true, gangPendingWhy: pend.why }
@@ -3135,14 +3136,19 @@ async function act(ns, canJoin, info, note) {
   // joined would hand the slot back to faction work the moment Slum Snakes
   // admits us and starve the grind that actually creates the gang. So the test
   // is simply: is there a gang yet?
-  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang()
+  // NOT where the gang is structurally worthless (gangChannelsDead: GangSoftcap
+  // 0, BitNode 8): yielding there sent the slot to a 15h Homicide loop for a
+  // gang that earns ~$1 per member per cycle, while the verdict sat unpriced.
+  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode))
   // WHO HOLDS THE WORK SLOT THIS PASS. null means nobody here does, and act.js
   // is free to use it. Declared here rather than inside the branch so that
   // every path out of this file publishes a definite answer — an absent field
   // would read as "no claim" to act.js, which is the permissive direction and
   // must therefore be deliberate rather than accidental.
   let slotOwner = null
-  if (canJoin && canUseGang(info) && !ns.gang.inGang() && !player.factions.some((f) => GANG_FACTIONS.includes(f))) {
+  // Not where the gang is structurally worthless: its factions are then ordinary
+  // join candidates, not a bootstrap target (gangChannelsDead).
+  if (canJoin && canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !player.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const pick = (schedule?.joinForecasts ?? [])
       .filter((f) => GANG_FACTIONS.includes(f.name) && typeof f.hours === 'number' && isFinite(f.hours))
       .sort((a, b) => a.hours - b.hours)[0]

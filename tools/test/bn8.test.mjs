@@ -133,7 +133,7 @@ export async function run() {
     d.note(v8.why);
     // The negative control: the same machinery still says yes where the gang earns.
     const s1 = GW.gangIncomeSchedule(sim(1));
-    const v1 = GW.gangVerdict({ node: 8, mults: bitNodeMults(8), grindHours: 20, gangExit: GW.gangExit(X.bestExitPolicy, BN8, s1, 20, null) });
+    const v1 = GW.gangVerdict({ node: 8, mults: { ...bitNodeMults(8), GangSoftcap: 1 }, grindHours: 20, gangExit: GW.gangExit(X.bestExitPolicy, BN8, s1, 20, null) });
     if (v1.worth !== true) d.fail("with GangSoftcap 1 the same comparison should favour the gang — the check is not discriminating", v1.why);
   }
   checks.push(d);
@@ -190,6 +190,35 @@ export async function run() {
     h.note(`BN1-shaped exit ${x.best?.hours?.toFixed(2)}h either way`);
   }
   checks.push(h);
+
+  // -------------------------------------------------------------------
+  const i = new Check("B8i", "GangSoftcap 0: the gang is NOT worth it by structure — no income reading needed, no karma grind, no yielded slot");
+  {
+    i.examined(6);
+    const m8 = bitNodeMults(8);
+    // No exit comparison, no grind hours: exactly the live state (income unmeasured).
+    const v = GW.gangVerdict({ node: 8, mults: m8, grindHours: null, gangExit: null });
+    if (v.worth !== false) i.fail("an unpriced BN8 gang verdict is not 'not worth it'", v.why);
+    else i.note(v.why);
+    const pend = GW.gangIsPending({ canUse: true, node: 8, inGang: false, verdict: null, mults: m8 });
+    if (pend.pending !== false) i.fail("BN8's gang is still pending on an unknown verdict", pend.why);
+    // Other nodes: structure says nothing, the old behaviour stands.
+    if (GW.gangChannelsDead(bitNodeMults(4)) !== null || GW.gangChannelsDead(bitNodeMults(2)) !== null) i.fail("gangChannelsDead fires outside GangSoftcap 0");
+    if (GW.gangIsPending({ canUse: true, node: 4, inGang: false, verdict: null, mults: bitNodeMults(4) }).pending !== true) i.fail("an unpriced BN4 gang stopped being pending");
+    // actplan: the live failure — gangWorth absent, karma -1358, no gang faction.
+    const P = await import("../../actplan.js");
+    const pl = { skills: { hacking: 200, strength: 100, defense: 100, dexterity: 100, agility: 100, charisma: 10, intelligence: 0 }, exp: {}, mults: { crime_success: 1, crime_money: 1 }, karma: -1358, numPeopleKilled: 10, city: "Sector-12", money: 3e8 };
+    for (const k of ["hacking", "strength", "defense", "dexterity", "agility", "charisma"]) { pl.exp[k] = 1e5; pl.mults[k] = 1; pl.mults[`${k}_exp`] = 1; }
+    const s = { now: Date.now(), gangNode: true, gangKarma: -54000, factions: ["CyberSec", "Slum Snakes"], player: pl, progress: null, schedule: null, work: { kind: "crime", type: "Homicide" }, tried: {} };
+    const d8 = P.decide({ ...s, node: { CrimeSuccessRate: 1, CrimeMoney: 0, CrimeExpGain: 1, GangSoftcap: 0, GangUniqueAugs: 0 } });
+    if (/karma|gang/i.test(d8.why ?? "") && (d8.kind === "crime" || /crime loop/.test(d8.why))) i.fail("actplan still runs the karma grind in BN8", JSON.stringify(d8));
+    const d4 = P.decide({ ...s, node: { CrimeSuccessRate: 1, CrimeMoney: 0.2, CrimeExpGain: 1, GangSoftcap: 0.9 } });
+    if (!/karma/.test(d4.why ?? "")) i.fail("the negative control: with GangSoftcap 0.9 and no verdict the karma grind should still run", JSON.stringify(d4));
+    i.note(`BN8 act decision: ${d8.kind} — ${d8.why}`);
+    const src = code("progress.js");
+    if (!/const gangBootstrapPending = canUseGang\(info\) && !ns\.gang\.inGang\(\) && !gangChannelsDead\(/.test(src)) i.fail("progress.js yields the work slot to a structurally worthless gang");
+  }
+  checks.push(i);
 
   return checks;
 }

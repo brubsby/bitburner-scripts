@@ -40,6 +40,8 @@
 
 import { COMBAT, crimeLeg, bestCrimeFor } from 'bodyplan.js'
 import { GANG_FACTIONS, KARMA_FOR_GANG } from 'gangplan.js'
+// Pure: a gang whose every channel is zero by the node's multipliers.
+import { gangChannelsDead } from 'gangworth.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 
@@ -115,10 +117,18 @@ export function decide(s = {}) {
     return { kind: 'idle', why: `progress.js holds the work slot for ${owner} work (${Math.round((s.now - at) / 60000)} min ago)` }
   }
 
+  // THE GANG'S WORTH: progress.js's priced verdict, OVERRIDDEN by the node's
+  // structure when every gang channel is zero (gangworth.gangChannelsDead —
+  // GangSoftcap 0, BitNode 8). That does not wait on a verdict: an unpriced
+  // one (no measured income) used to leave the gang pending and this file
+  // running Homicide toward -54,000 for a gang that earns ~$1/cycle.
+  const deadWhy = gangChannelsDead(s.node)
+  const gw = deadWhy ? { worth: false, structural: true, why: deadWhy } : s.gangWorth
+
   // 1b. In a gang faction already, but the gang's own karma gate is unmet —
   // keep the crime loop running. Outside BitNode 2 this is the long leg of
   // the bootstrap by far, and joining the faction does not end it.
-  if (s.gangNode === true && s.gangWorth?.worth !== false && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
+  if (s.gangNode === true && gw?.worth !== false && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const target = num(s.gangKarma) ? s.gangKarma : SLUM_SNAKES.karma
     if (!(num(p.karma) && p.karma <= target)) {
       const leg = crimeLeg({ karma: target }, p, s.node, { focus: 1 })
@@ -144,7 +154,7 @@ export function decide(s = {}) {
   // behaviour standing rather than silently abandoning the gang — the failure
   // being fixed is an unexamined assumption, and inverting it unexamined would
   // be the same mistake pointing the other way.
-  if (s.gangNode === true && s.gangWorth?.worth === false) {
+  if (s.gangNode === true && gw?.worth === false) {
     // Fall through to the faction/work path below.
   } else if (s.gangNode === true && !s.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const combatShort = COMBAT.filter((st) => !(num(p.skills?.[st]) && p.skills[st] >= SLUM_SNAKES.combat))

@@ -369,7 +369,7 @@ export async function main(ns) {
         gangKarma: gangKarmaTarget(info?.currentNode === 2),
         factions: player.factions ?? [],
         player,
-        node: node ? { CrimeSuccessRate: node.CrimeSuccessRate, CrimeMoney: node.CrimeMoney, CrimeExpGain: node.CrimeExpGain } : null,
+        node: node ? { CrimeSuccessRate: node.CrimeSuccessRate, CrimeMoney: node.CrimeMoney, CrimeExpGain: node.CrimeExpGain, GangSoftcap: node.GangSoftcap, GangUniqueAugs: node.GangUniqueAugs } : null,
         progress: readJson(ns, '/tel/progress.txt'),
         // A schedule from another life (or another BitNode) is not a schedule.
         schedule: (() => {
