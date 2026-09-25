@@ -4163,6 +4163,9 @@ async function act(ns, canJoin, info, note) {
 
     const gate = shouldInstall({
       exitCompare,
+      // Money is the trader's compounding capital (BitNode 8): the count floor
+      // may not install against the simulated exit (installgate countFloorVetoed).
+      capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0,
       ageMs: Date.now() - (info?.lastAugReset ?? 0),
       M,
       queued: total,

@@ -338,5 +338,28 @@ export async function run() {
   }
   checks.push(l);
 
+  // -------------------------------------------------------------------
+  // 2026-09-25 20:57: a ~$61b book installed on the COUNT FLOOR ("the timing
+  // is not yet priced"), no trajectory consulted.
+  const m = new Check("B8m", "where money is capital, the count floor may not install against the simulated exit");
+  {
+    m.examined(4);
+    const IG = await import("../../installgate.js");
+    const H = 3600e3;
+    const base = { ageMs: 6 * H, M: 1.0215, queued: 15, exp: 1e9, prev: null, futures: [], countShort: 16, countGain: 14, countTiming: { installNow: null, why: "only 1 completed life" } };
+    const holdEx = { nowH: 50, neverH: 40, waits: [] };
+    const goEx = { nowH: 30, neverH: 40, waits: [] };
+    const bn8Hold = IG.shouldInstall({ ...base, exitCompare: holdEx, capitalNode: true });
+    const bn8Go = IG.shouldInstall({ ...base, exitCompare: goEx, capitalNode: true });
+    const other = IG.shouldInstall({ ...base, exitCompare: holdEx, capitalNode: false });
+    const unpriced = IG.shouldInstall({ ...base, exitCompare: { nowH: null, why: "x" }, capitalNode: true });
+    if (bn8Hold.install !== false || !bn8Hold.countFloorVetoed) m.fail("the floor installed a capital book the exit says to keep", bn8Hold.why);
+    else m.note(bn8Hold.why);
+    if (bn8Go.install !== true) m.fail("the floor was held although installing now exits sooner", bn8Go.why);
+    if (other.install !== true) m.fail("another node's count floor changed", other.why);
+    if (unpriced.install !== true) m.fail("an unpriced exit must leave the floor as it was", unpriced.why);
+  }
+  checks.push(m);
+
   return checks;
 }
