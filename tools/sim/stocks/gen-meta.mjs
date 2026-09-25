@@ -14,14 +14,20 @@ export function symbolMeta() {
   for (const m of G.InitStockMetadata) {
     const r = m.shareTxForMovement;
     const S = typeof r === "number" ? r : (r.min + r.max) / 2;
-    const servers = G.serverMetadata.filter((s) => s.organizationName === m.name).map((s) => s.hostname);
-    out[m.symbol] = { S, servers };
+    const meta = G.serverMetadata.filter((s) => s.organizationName === m.name);
+    const servers = meta.map((s) => s.hostname);
+    // Required hacking level range over the company's servers (the live value
+    // is drawn in [min, max] per server, Server/data/servers.ts): the lowest
+    // server's range, since serving ANY one of them nudges the forecast.
+    const ranges = meta.map((s) => (typeof s.requiredHackingSkill === "number" ? [s.requiredHackingSkill, s.requiredHackingSkill] : [s.requiredHackingSkill.min, s.requiredHackingSkill.max]));
+    const req = ranges.length ? ranges.reduce((a, b) => (b[1] < a[1] ? b : a)) : null;
+    out[m.symbol] = { S, servers, req };
   }
   return out;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const t = symbolMeta();
-  for (const [k, v] of Object.entries(t)) console.log(`  ${k}: { S: ${v.S}, servers: ${JSON.stringify(v.servers)} },`);
+  for (const [k, v] of Object.entries(t)) console.log(`  ${k}: { S: ${v.S}, servers: ${JSON.stringify(v.servers).replace(/"/g, "'").replace(/,/g, ', ')}, req: ${JSON.stringify(v.req)?.replace(/,/g, ', ') ?? 'null'} },`);
   process.exit(0); // the bundle leaves jsdom timers alive
 }

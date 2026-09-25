@@ -54,17 +54,28 @@ export function execute(mkt, orders) {
 /**
  * Manipulation (BitNode 8 play): `capacity` moneyMax-fractions moved per tick
  * by grow() (longs) / hack() (shorts) with {stock:true}, in ops of `frac`,
- * spent on the largest position whose company has a server.
+ * spent on the largest position whose company has a server — among
+ * `servable` symbols when given (the batcher can only hit servers it has root
+ * on and the hacking level for). `pick` = the target the TRADER requests:
+ *   'largest'  its largest position with a server (stock.js before
+ *              servability — an unservable request delivers nothing)
+ *   'servable' its largest position among the servable companies
  */
-function manipulate(mkt, capacity, frac = 0.5) {
-  if (!(capacity > 0)) return;
+export function manipTarget(mkt, servable = null, pick = "servable") {
   let best = null;
   for (const s of mkt.symbols) {
     if (!S.SYMBOL_META[s]?.servers?.length) continue;
+    if (pick === "servable" && servable && !servable.has(s)) continue;
     const [L, , Sh] = mkt.position(s);
     const v = (L + Sh) * mkt.price(s);
     if (v > 0 && (!best || v > best.v)) best = { s, v, kind: L >= Sh ? "grow" : "hack" };
   }
+  if (best && servable && !servable.has(best.s)) return null; // requested, cannot be served
+  return best;
+}
+function manipulate(mkt, capacity, frac = 0.5, servable = null, pick = "servable") {
+  if (!(capacity > 0)) return;
+  const best = manipTarget(mkt, servable, pick);
   if (!best) return;
   const ops = Math.floor(capacity / frac);
   const rem = capacity - ops * frac;
@@ -73,7 +84,7 @@ function manipulate(mkt, capacity, frac = 0.5) {
 }
 
 /** The new trader. `use4S`, `canShort`, `opt` (stockstrat DEFAULTS overrides), `manip` capacity. */
-export function runNew(mkt, ticks, { use4S = false, canShort = false, opt = {}, manip = 0 } = {}) {
+export function runNew(mkt, ticks, { use4S = false, canShort = false, opt = {}, manip = 0, servable = null, pick = "servable" } = {}) {
   const st = S.newState(mkt.symbols, opt);
   S.observe(st, pricesOf(mkt), use4S ? forecastsOf(mkt) : null);
   const path = [];
@@ -82,10 +93,15 @@ export function runNew(mkt, ticks, { use4S = false, canShort = false, opt = {}, 
   for (let t = 0; t < ticks; t++) {
     mkt.tick();
     S.observe(st, pricesOf(mkt), use4S ? forecastsOf(mkt) : null);
-    const { orders } = S.decide(st, bookOf(mkt, canShort));
+    const book = bookOf(mkt, canShort);
+    // The boost stock.js passes: per servable company, manipBoostPerNudge x
+    // the nudges/s being delivered (capacity per tick / 6).
+    const k = st.opt.manipBoostPerNudge;
+    if (k > 0 && manip > 0) book.boost = Object.fromEntries(mkt.symbols.filter((s) => S.SYMBOL_META[s]?.servers?.length && (!servable || servable.has(s))).map((s) => [s, (k * manip) / 6]));
+    const { orders } = S.decide(st, book);
     trades += orders.length;
     failed += execute(mkt, orders);
-    manipulate(mkt, manip);
+    manipulate(mkt, manip, 0.5, servable, pick);
     if (t % 60 === 59) path.push(mkt.wealth());
   }
   return { path, failed, trades, phase: st.phase };

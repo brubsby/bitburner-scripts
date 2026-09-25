@@ -74,23 +74,61 @@ function holdOf(ns, info) {
 }
 
 /**
- * Which server's batch should carry {stock: true}, and on which side
- * (nodeecon.js `manip`): the company behind our LARGEST position (all its
- * servers) — 'grow' pushes a long's second-order forecast up, 'hack' a
- * short's down (PlayerInfluencing.ts). ONE company, because that is exactly
- * what the harness behind `manipCurve` nudges (tools/sim/stocks/
- * manipcurve.mjs -> strategies.mjs manipulate(): largest position with a
- * server, same side rule); publishing more hosts would let the batcher
- * deliver nudges the curve never priced.
+ * Which companies the batcher can serve NOW, from what batch.js publishes
+ * (/tel/batch.txt, 0GB to read): its `hackingLevel`, and the hosts its last
+ * manip pass named in `expFarm.manip.blocked` ("host: why" — not rooted,
+ * level too low, no batch fits). A company is servable when one of its
+ * servers is certainly within the level (SYMBOL_META.req max <= level) and is
+ * not currently blocked. Unreadable/stale batch.txt -> nothing servable and
+ * no boost (fail closed; `servable.why` says so). No ns call: RAM flat.
  */
-export function manipOf(positions, prices) {
+export function servableOf(batch, now = Date.now()) {
+  const age = now - Date.parse(batch?.at ?? '')
+  const level = batch?.hackingLevel
+  if (!(age >= 0 && age < 5 * 60e3) || typeof level !== 'number') return { syms: new Set(), hosts: {}, level: null, nu: 0, why: 'batch.txt stale or unreadable — no manipulation requested, none credited' }
+  const m = batch.expFarm?.manip ?? {}
+  const blocked = new Set((m.blocked ?? []).map((b) => String(b).split(':')[0].trim()))
+  const syms = new Set()
+  const hosts = {}
+  for (const [sym, meta] of Object.entries(SYMBOL_META)) {
+    if (!meta.req || !(meta.req[1] <= level)) continue
+    const ok = meta.servers.filter((h) => !blocked.has(h))
+    if (!ok.length) continue
+    syms.add(sym)
+    hosts[sym] = ok
+  }
+  // Delivered nudges/s: only what the batcher is actually SERVING.
+  const nu = m.serve === true && typeof m.nudgesPerSec === 'number' && m.nudgesPerSec > 0 ? m.nudgesPerSec : 0
+  return { syms, hosts, level, nu, why: null }
+}
+
+/**
+ * Which server's batch should carry {stock: true}, and on which side
+ * (nodeecon.js `manip`): ONE servable company — the largest position among
+ * the servable ones; with none held, the servable company with the strongest
+ * forecast (so the batcher can price serving it at all — without a request
+ * it reports no nudge rate and the boost below can never start). 'grow' for
+ * a long, 'hack' for a short (PlayerInfluencing.ts). One company because that
+ * is what manipCurve is priced on (tools/sim/stocks/manipcurve.mjs); servable
+ * only because an unservable request delivers nothing (live 2026-09-25:
+ * "vitalife: needs hacking 820, have 300").
+ */
+export function manipOf(positions, prices, servable = null, forecast = null) {
+  const ok = (s) => SYMBOL_META[s]?.servers?.length && (!servable || servable.syms.has(s))
+  const hostsOf = (s) => (servable ? servable.hosts[s] : SYMBOL_META[s].servers)
   const top = Object.entries(positions)
     .map(([s, [L, , Sh]]) => ({ s, v: (L + Sh) * prices[s], side: L >= Sh ? 'grow' : 'hack' }))
-    .filter((x) => x.v > 0 && SYMBOL_META[x.s]?.servers?.length)
-    .sort((a, b) => b.v - a.v)
-    .slice(0, 1)
+    .filter((x) => x.v > 0 && ok(x.s))
+    .sort((a, b) => b.v - a.v)[0]
+  let pick = top ?? null
+  if (!pick && forecast) {
+    const best = Object.keys(positions)
+      .filter((s) => ok(s) && typeof forecast(s) === 'number' && forecast(s) > 0.5)
+      .sort((a, b) => forecast(b) - forecast(a))[0]
+    if (best) pick = { s: best, side: 'grow' }
+  }
   const out = {}
-  for (const x of top) for (const h of SYMBOL_META[x.s].servers) out[h] = x.side
+  if (pick) for (const h of hostsOf(pick.s)) out[h] = pick.side
   return out
 }
 
@@ -213,6 +251,12 @@ export async function main(ns) {
 
       // ---- money discipline ------------------------------------------------
       const hold = holdOf(ns, info)
+      fetchFromHome(ns, '/tel/batch.txt')
+      const servable = servableOf(readJson(ns, '/tel/batch.txt'))
+      // stockstrat DEFAULTS.manipBoostPerNudge x delivered nudges/s, on the
+      // servable companies only (tools/sim/stocks/servable.mjs).
+      const boostPts = st.opt.manipBoostPerNudge * servable.nu
+      const boost = boostPts > 0 ? Object.fromEntries([...servable.syms].map((s) => [s, boostPts])) : null
       const claims = claimsOf(ns, info)
       const R = reserveFor('stocks', claims) // Infinity when any claim is unreadable
       // Liquid claimant: a claim is honoured in CASH once wealth covers it; while
@@ -223,7 +267,7 @@ export async function main(ns) {
       // from cash, so the cost of the unknown is one tick of delay, not a spend.
       const claimKnown = isFinite(R)
       const raiseCash = claimKnown && wealth >= R ? R : 0
-      const book = { cash, positions, maxShares, ask, bid, canShort, raiseCash }
+      const book = { cash, positions, maxShares, ask, bid, canShort, raiseCash, boost }
       const decided = decide(st, book)
       const diag = decided.diag
       // Under a hold nothing is OPENED; exits and trims still go through.
@@ -304,7 +348,8 @@ export async function main(ns) {
         // Market capacity: every stock at maxShares, at today's prices.
         capitalCap: syms.reduce((a, s) => a + maxShares[s] * prices[s], 0),
         incomePerSec: lifeSec >= 60 ? lifePnl / lifeSec : null,
-        manip: manipOf(positions, prices),
+        manip: manipOf(positions, prices, servable, (s) => forecastOf(st, s)),
+        servable: { level: servable.level, syms: [...servable.syms], nudgesPerSec: servable.nu, boostPoints: boostPts, why: servable.why },
         // Return per second at each nudge rate the batcher could deliver, at
         // this wealth and mode (stockplan.MANIP_TABLE, harness, NOT CALIBRATED).
         manipCurve: manipCurveAt(has4S ? '4S-long' : 'pre-long', wealth),

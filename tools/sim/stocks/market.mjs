@@ -55,6 +55,10 @@ function playerStub(money) {
 export class Market {
   constructor({ seed = 1, money = 0, burnInTicks = 0 } = {}) {
     this.rng = mulberry32(seed * 2654435761 + 12345);
+    // hack()/grow() influence draws from its OWN stream, so a run with
+    // manipulation sees the same market realisation as one without (paired
+    // comparison). Statistically the same as the game's single Math.random.
+    this.rngInfluence = mulberry32(seed * 40503 + 977);
     this.player = playerStub(money);
     this.withRng(() => {
       G.setPlayer(this.player);
@@ -171,13 +175,19 @@ export class Market {
   influence(sym, kind, fraction, ops) {
     const s = this.bySym[sym];
     const server = { organizationName: s.name, moneyMax: 1 };
-    this.withRng(() => {
+    const saved = this.rng;
+    this.rng = this.rngInfluence;
+    try {
+      this.withRng(() => {
       for (const k of Object.keys(G.StockMarket)) if (G.StockMarket[k] instanceof G.Stock) delete G.StockMarket[k];
       for (const st of this.stocks) G.StockMarket[st.name] = st;
       for (let i = 0; i < ops; i++) {
         if (kind === "grow") G.influenceStockThroughServerGrow(server, fraction);
         else G.influenceStockThroughServerHack(server, fraction);
       }
-    });
+      });
+    } finally {
+      this.rng = saved;
+    }
   }
 }

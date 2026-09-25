@@ -53,7 +53,7 @@ export async function run() {
       c1.examined(1);
       const m = S.SYMBOL_META[sym];
       if (!m) c1.fail(`${sym} missing from SYMBOL_META`);
-      else if (m.S !== t.S || JSON.stringify(m.servers) !== JSON.stringify(t.servers)) c1.fail(`${sym}: shipped ${JSON.stringify(m)} vs source ${JSON.stringify(t)}`);
+      else if (m.S !== t.S || JSON.stringify(m.servers) !== JSON.stringify(t.servers) || JSON.stringify(m.req) !== JSON.stringify(t.req)) c1.fail(`${sym}: shipped ${JSON.stringify(m)} vs source ${JSON.stringify(t)}`);
     }
     for (const sym of Object.keys(S.SYMBOL_META)) if (!truth[sym]) c1.fail(`${sym} in SYMBOL_META but not in InitStockMetadata`);
   }
@@ -227,6 +227,63 @@ export async function run() {
     if (!tel.calibration || !("predictedPerSec" in tel.calibration)) c5.fail("/tel/stock.txt lacks the live calibration field");
   }
   checks.push(c5);
+
+  // -------------------------------------------------------------------
+  const c6 = new Check("ST6", "manipulation is requested only where the batcher can serve it, and servable companies are priced with the nudges they will get");
+  {
+    const { servableOf, manipOf } = await import("../../stock.js");
+    const now = Date.now();
+    const batch = (o = {}) => ({ at: new Date(now).toISOString(), hackingLevel: 300, expFarm: { manip: { serve: true, nudgesPerSec: 0.5, blocked: ["joesguns: not rooted yet"], ...o } } });
+    c6.examined(1);
+    const sv = servableOf(batch(), now);
+    const want = ["FNS", "SGC", "OMGA"];
+    for (const x of want) if (!sv.syms.has(x)) c6.fail(`${x} should be servable at hacking 300`);
+    for (const x of ["JGN", "VITA", "CTK", "ECP", "WDS"]) if (sv.syms.has(x)) c6.fail(`${x} must not be servable (blocked, level range above 300, or no server)`);
+    if (sv.nu !== 0.5) c6.fail("delivered nudges/s not read from a serving batcher");
+    if (servableOf(batch({ serve: false }), now).nu !== 0) c6.fail("nudges credited while the batcher is NOT serving");
+    const stale = servableOf({ ...batch(), at: new Date(now - 20 * 60e3).toISOString() }, now);
+    if (stale.syms.size || !stale.why) c6.fail("a stale batch.txt must leave nothing servable and say why");
+
+    c6.examined(1);
+    const pos = { VITA: [1e6, 0, 0, 0], FNS: [1e4, 0, 0, 0], SGC: [0, 0, 0, 0] };
+    const mo = manipOf(pos, { VITA: 100, FNS: 100, SGC: 100 }, sv);
+    if (JSON.stringify(mo) !== JSON.stringify({ foodnstuff: "grow" })) c6.fail(`largest position unservable (VITA): manip must name the largest SERVABLE one, got ${JSON.stringify(mo)}`);
+    const mo2 = manipOf({ VITA: [1e6, 0, 0, 0], FNS: [0, 0, 0, 0], SGC: [0, 0, 0, 0] }, { VITA: 100, FNS: 100, SGC: 100 }, sv, (s) => ({ FNS: 0.55, SGC: 0.6 })[s] ?? 0.5);
+    if (JSON.stringify(mo2) !== JSON.stringify({ "sigma-cosmetics": "grow" })) c6.fail(`no servable position held: manip must name the servable company with the best forecast, got ${JSON.stringify(mo2)}`);
+
+    // The pricing, re-measured on paired markets: crediting servable companies
+    // (DEFAULTS.manipBoostPerNudge) beats ignoring manipulability at the same nudges.
+    c6.examined(10);
+    const { servableAt } = await import("../sim/stocks/servable.mjs");
+    const servable = servableAt(300);
+    const g = (opt) =>
+      median(Array.from({ length: 12 }, (_, i) => i + 1).map((seed) => {
+        const mk = new Market({ seed, money: 3e7, burnInTicks: 3000 });
+        runNew(mk, 1200, { manip: 1, servable, opt });
+        return Math.log(mk.wealth() / 3e7) / 2;
+      }));
+    const off = g({ manipBoostPerNudge: 0 });
+    const on = g({});
+    c6.note(`$30m, hacking 300, 1 nudge/tick, 12 seeds x 2h (5 seeds x 1.5h was too noisy: it inverted the 24-seed result): ${(on * 100).toFixed(0)}%/h pricing manipulability (k=${S.DEFAULTS.manipBoostPerNudge}) vs ${(off * 100).toFixed(0)}%/h ignoring it`);
+    if (!(S.DEFAULTS.manipBoostPerNudge > 0)) c6.fail("manipBoostPerNudge is 0 — manipulability is not priced");
+    else if (!(on > off)) c6.fail("pricing manipulability no longer beats ignoring it on paired markets");
+
+    // The shipped script, with a serving batcher: boost published, manip on a servable host.
+    c6.examined(1);
+    const m = new Market({ seed: 12, money: 3e7, burnInTicks: 3000 });
+    const f = await runShipped(m, 200, {
+      onTick: (n, files) => {
+        files["/tel/batch.txt"] = JSON.stringify({ at: new Date().toISOString(), hackingLevel: 300, expFarm: { manip: { serve: true, nudgesPerSec: 0.17, blocked: [] } } });
+      },
+    });
+    const tel = JSON.parse(f.files["/tel/stock.txt"]);
+    if (!(tel.servable?.boostPoints > 0)) c6.fail("stock.js did not credit the served nudges", JSON.stringify(tel.servable));
+    const hosts = Object.keys(tel.manip ?? {});
+    if (!hosts.length) c6.fail("no manip requested although servable companies exist");
+    for (const h of hosts) if (!["foodnstuff", "sigma-cosmetics", "joesguns", "omega-net"].includes(h)) c6.fail(`manip requested on ${h}, not servable at hacking 300`);
+    c6.note(`shipped: servable ${tel.servable?.syms?.join(",")}, boost ${tel.servable?.boostPoints?.toFixed(1)} pts, manip ${JSON.stringify(tel.manip)}`);
+  }
+  checks.push(c6);
 
   return checks;
 }
