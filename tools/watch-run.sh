@@ -18,6 +18,8 @@ except Exception: print('HEALTHCHECK DID NOT ANSWER')")
   if [ "$first" = baseline ]; then seen="$cur"; first=""; echo "baseline: ${cur:-none}"; sleep "$INTERVAL"; continue; fi
   new=$(comm -13 <(printf '%s\n' "$seen" | sort -u) <(printf '%s\n' "$cur" | sort -u) | grep -v '^$')
   if [ -n "$new" ]; then echo "$(date -u +%FT%TZ) NEW PROBLEM(S):"; printf '%s\n' "$new"; echo "--- full:"; printf '%s' "$out" | python3 -c "import json,sys;d=json.load(sys.stdin);[print(' !',p['what'],'|',p.get('detail')) for p in d['problems']]" 2>/dev/null; exit 1; fi
-  seen="$cur"; sleep "$INTERVAL"
+  # Union, not replace: a known problem that flickers off and on (EXIT UNPRICED
+  # around installs) must not re-wake the session.
+  seen=$(printf '%s\n%s\n' "$seen" "$cur" | sort -u); sleep "$INTERVAL"
 done
 echo "$(date -u +%FT%TZ) no new problems in ${2:-12}h"
