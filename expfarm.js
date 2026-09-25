@@ -208,3 +208,27 @@ export function rateAt(curve, nu) {
  * (money mode, the behaviour every other node was measured in).
  */
 export const expMode = (mults) => mults?.ScriptHackMoneyGain === 0
+
+/**
+ * Why a requested manip host cannot be served by the HWGW batcher, or null.
+ * The batcher moves money with an unflagged hack and puts it back with a
+ * flagged grow (or the reverse), so BOTH sides need what hack needs: root
+ * (every op) and the hacking level (netscriptCanHack, Hacking/
+ * netscriptCanHack.ts); a grow-only side stops nudging once the balance is at
+ * max. And a server with moneyMax 0 has nothing to move. `s` is
+ * {exists, root, maxMoney, required, level}.
+ */
+export function manipBlocker(host, s) {
+  if (!s || s.exists === false) return `${host}: no such server`
+  if (!s.root) return `${host}: not rooted yet`
+  if (!(s.maxMoney > 0)) return `${host}: moneyMax is 0 — no money to move`
+  if (s.required > s.level) return `${host}: needs hacking ${s.required}, have ${s.level} — the batch's hack cannot run yet`
+  return null
+}
+
+/** The verdict's reason when requests exist but none can be served. */
+export function manipUnservableWhy(requested, blocked) {
+  const n = Object.keys(requested ?? {}).length
+  if (!n) return 'no manip requested'
+  return `manip requested on ${n} host(s), none servable: ${blocked.join('; ') || 'no batch fits the fleet'}`
+}

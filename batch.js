@@ -78,7 +78,7 @@ import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
 // Pure: exp-per-GB-second scoring, wave sizing and the manip verdict
 // (expfarm.js), the node table, and the exit simulator the verdict runs.
-import { expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+import { expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy } from 'exitplan.js'
 
@@ -185,12 +185,24 @@ function manipCost(ns, readT, ram, level, capacity) {
   let gb = 0
   let expGbms = 0
   const hosts = []
+  const blocked = []
+  const known = new Set(scanAll(ns)) // scan is already billed; serverExists would add 0.1GB
   for (const h of Object.keys(stockManip ?? {})) {
-    if (!ns.hasRootAccess(h) || ns.getServerMaxMoney(h) <= 0 || ns.getServerRequiredHackingLevel(h) > level) continue
+    // Each skip is NAMED (expfarm.manipBlocker): a silent skip published as
+    // "no manip requested" while stock.txt plainly requested vitalife.
+    const exists = known.has(h)
+    const why = manipBlocker(h, exists ? { root: ns.hasRootAccess(h), maxMoney: ns.getServerMaxMoney(h), required: ns.getServerRequiredHackingLevel(h), level } : { exists: false })
+    if (why) {
+      blocked.push(why)
+      continue
+    }
     const t = readT(h)
     t.baseDifficulty = ns.getServer(h).baseDifficulty
     const p = planBatch(t, ram, capacity / 4, capacity)
-    if (!p) continue
+    if (!p) {
+      blocked.push(`${h}: no batch fits the fleet (planBatch)`)
+      continue
+    }
     const perSec = 1000 / (4 * SETTINGS.spacing)
     const held = (p.gb * (t.hackTime * 4)) / (4 * SETTINGS.spacing)
     nu += p.f * t.chance * perSec
@@ -198,7 +210,7 @@ function manipCost(ns, readT, ram, level, capacity) {
     expGbms += batchedScore(t) * held
     hosts.push(h)
   }
-  return { hosts, nu, gb, batchRate: gb > 0 ? expGbms / gb : 0 }
+  return { hosts, blocked, nu, gb, batchRate: gb > 0 ? expGbms / gb : 0 }
 }
 
 /** One tick of the farm: prep, create waves, launch due hacks. */
@@ -1544,7 +1556,7 @@ export async function main(ns) {
           farm.target = best ? best.t : null
           farm.score = best ? best.s : 0
           const mc = stockManip ? manipCost(ns, readT, ram, level, totalRam) : null
-          let v = { serve: false, priced: false, why: 'no manip requested' }
+          let v = { serve: false, priced: false, why: manipUnservableWhy(stockManip, mc?.blocked ?? []) }
           if (mc && mc.hosts.length) {
             let rec = null
             try {
@@ -1564,7 +1576,7 @@ export async function main(ns) {
               fleetGB: totalRam,
             })
           }
-          farm.manip = { ...v, hosts: mc?.hosts ?? [], nudgesPerSec: mc ? Math.round(mc.nu * 1e4) / 1e4 : null, gb: mc ? Math.round(mc.gb) : null }
+          farm.manip = { ...v, hosts: mc?.hosts ?? [], blocked: mc?.blocked ?? [], nudgesPerSec: mc ? Math.round(mc.nu * 1e4) / 1e4 : null, gb: mc ? Math.round(mc.gb) : null }
           want = v.serve ? mc.hosts : []
         } else if (Number(flags.targets) > 0) {
           want = ranked.slice(0, Number(flags.targets)).map((r) => r.t.host)

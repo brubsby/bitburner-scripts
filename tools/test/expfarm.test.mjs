@@ -165,5 +165,23 @@ export async function run() {
   }
   checks.push(c7);
 
+  // Live 2026-09-25: stock.txt requested {vitalife: 'grow'} and batch.txt said
+  // "no manip requested" — the host was skipped silently (vitalife needs 5
+  // ports and hacking 775-900, servers.ts:415-431) and the empty list read as
+  // "no request".
+  const c8 = new Check("EF8", "a requested manip host that cannot be served is NAMED with its reason, never 'no manip requested'");
+  {
+    c8.examined(5);
+    const why = E.manipUnservableWhy({ vitalife: "grow" }, [E.manipBlocker("vitalife", { root: true, maxMoney: 8e8, required: 820, level: 300 })]);
+    if (/no manip requested/.test(why) || !/vitalife: needs hacking 820, have 300/.test(why)) c8.fail("the level blocker is not named", why);
+    c8.note(why);
+    if (!/not rooted/.test(E.manipBlocker("vitalife", { root: false, maxMoney: 8e8, required: 1, level: 5 }))) c8.fail("the root blocker is not named");
+    if (!/no such server/.test(E.manipBlocker("vita", { exists: false }))) c8.fail("an unknown hostname is not named");
+    if (E.manipBlocker("vitalife", { root: true, maxMoney: 8e8, required: 800, level: 900 }) !== null) c8.fail("a servable host was blocked");
+    if (E.manipUnservableWhy({}, []) !== "no manip requested") c8.fail("an empty request must still say so");
+    if (/why: 'no manip requested'/.test(code("batch.js"))) c8.fail("batch.js still hardcodes 'no manip requested' as the verdict reason");
+  }
+  checks.push(c8);
+
   return checks;
 }
