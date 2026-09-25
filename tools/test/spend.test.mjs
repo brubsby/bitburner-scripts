@@ -123,5 +123,17 @@ export async function run() {
   }
   checks.push(c9);
 
+  const c10 = new Check("SE10", "the mandated campaign runs NOW once its money is in hand, and the install gate holds while it runs");
+  {
+    const pr = src("progress.js");
+    const fn = pr.slice(pr.indexOf("function covenantExitOf"), pr.indexOf("function exitInputsOf"));
+    c10.examined(3);
+    if (!/for \(let n = from; n < COVENANT_MANDATE\.target; n\+\+\) need \+= covenantSleeveCost\(n\)/.test(fn) || !/if \(ns\.getServerMoneyAvailable\('home'\) >= need \+ COVENANT\.joinMoney\) \{\s*return out\(true,/.test(fn)) c10.fail("with the mandated sleeves' money in hand, the campaign must be active now");
+    const mIdx = fn.indexOf("need += covenantSleeveCost(n)"), sIdx = fn.indexOf("return withC.best.installsFirst === 0");
+    if (!(mIdx > 0 && mIdx < sIdx)) c10.fail("the money-in-hand rule must come before the final-window schedule");
+    if (!/binding: covenantExit\?\.active && covenantExit\?\.mandated \? \{ destroyedByInstall: true,/.test(pr)) c10.fail("the gate must hold (destroyedByInstall) while the mandated campaign runs");
+  }
+  checks.push(c10);
+
   return checks;
 }

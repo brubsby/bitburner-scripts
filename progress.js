@@ -1702,6 +1702,16 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     // campaign is not optional, so only WHEN is priced — it runs in the
     // window the simulation places it, the final one of its best policy.
     if (mandated) {
+      // Money already in hand for every remaining mandated sleeve: run it
+      // NOW. The exit comparison above cannot see the new sleeves' own work
+      // (each can grind another faction in parallel for every remaining life),
+      // so deferring to the final window only delays that; with the money
+      // leg at zero, the campaign's cost is just the combat legs.
+      let need = 0
+      for (let n = from; n < COVENANT_MANDATE.target; n++) need += covenantSleeveCost(n)
+      if (ns.getServerMoneyAvailable('home') >= need + COVENANT.joinMoney) {
+        return out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}) and the $${need.toExponential(2)} for sleeves #${from + 1}-#${COVENANT_MANDATE.target} is already in hand: run it now (${combatH.toFixed(1)}h of combat)`, extra)
+      }
       return withC.best.installsFirst === 0
         ? out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}): this is the window the simulation places it in; run it now`, extra)
         : out(false, `${summary} — MANDATED (${COVENANT_MANDATE.decided}): scheduled after ${withC.best.installsFirst} more install(s)`, extra)
@@ -3862,7 +3872,10 @@ async function act(ns, canJoin, info, note) {
       // node's own exit requirement, not a forecast: the run has demonstrated
       // it can get there, repeatedly, which is what makes further multiplier
       // worthless and further money essential.
-      binding: bindingGate({
+      // THE COVENANT CAMPAIGN, while it runs, is a gate an install destroys:
+      // combat exp and Covenant membership both reset. Hold until the
+      // mandated sleeves are bought (covenantExit stops being active then).
+      binding: covenantExit?.active && covenantExit?.mandated ? { destroyedByInstall: true, why: `the mandated Covenant campaign is running (${covenantExit.member ? 'member — buying sleeves' : `combat ${covenantExit.combatH?.toFixed?.(1)}h to go`}); an install resets combat exp and membership` } : bindingGate({
         // THE SIMULATION. Prices "install k more times, then finish" for every
         // k and hands bindingGate the winner, so the install-vs-hold trade is
         // decided by comparing trajectories rather than by a threshold on the
