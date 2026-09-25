@@ -285,5 +285,87 @@ export async function run() {
   }
   checks.push(c6);
 
+  // -------------------------------------------------------------------
+  const c7 = new Check("ST7", "no churn: order rate bounded under a draining balance, no order pays more commission than it moves, a negative balance is not chased, and a restart's phase is a prior");
+  {
+    const { churn } = await import("../sim/stocks/churn.mjs");
+    // Live 2026-09-25 (a4fc5ef): ~470 orders/h, $39.4m -> $9.7m in 25 min, the
+    // balance pushed negative between ticks by unchecked spenders. A continuous
+    // $40k/tick drain reproduced it offline (242 orders/h, 4 seeds).
+    c7.examined(3);
+    const rows = [];
+    for (const seed of [1, 2, 3]) rows.push(await churn({ cap: 3e7, seed, hours: 0.5, drain: 40e3, every: 1 }));
+    const worst = Math.max(...rows.map((r) => r.perH));
+    c7.note(`$30m, pre-4S, restart mid-market, $40k/tick outside drain, 3 seeds x 30min: ${rows.map((r) => r.perH.toFixed(0)).join("/")} orders/h (live a4fc5ef: ~470)`);
+    if (worst > 80) c7.fail(`order rate ${worst.toFixed(0)}/h under a draining balance — the churn is back`, "every order costs $100k (BuyingAndSelling.tsx)");
+
+    // A claim that is DUE (wealth covers it) under the same drain: the cash is
+    // raised in lots of at least minOrder, not a sliver per tick.
+    c7.examined(2);
+    const gate = { "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: true, plan: { totalCost: 5e6, buy: [] }, joinClaim: 0 }) };
+    const due = [];
+    for (const seed of [1, 2]) due.push(await churn({ cap: 3e7, seed, hours: 0.5, drain: 40e3, every: 1, files: gate, homeRam: 2 ** 30 }));
+    c7.note(`same drain with a $5m claim due: ${due.map((r) => r.perH.toFixed(0)).join("/")} orders/h`);
+    if (Math.max(...due.map((r) => r.perH)) > 80) c7.fail(`order rate ${Math.max(...due.map((r) => r.perH)).toFixed(0)}/h raising a due claim under a drain — sliver sales`);
+
+    // Without an outside drain the balance must never go below zero through our own orders.
+    c7.examined(3);
+    const clean = [];
+    for (const seed of [4, 5, 6]) clean.push(await churn({ cap: 1e7, seed, hours: 0.5, drain: 0 }));
+    const minCash = Math.min(...clean.map((r) => r.minCash));
+    if (minCash < 0) c7.fail(`home cash went to $${minCash.toFixed(0)} with no other spender — an order was sized past cash or sold below its commission`);
+    const perH = clean.map((r) => r.perH);
+    if (Math.max(...perH) > 60) c7.fail(`order rate ${Math.max(...perH).toFixed(0)}/h at $10m with no drain`);
+    c7.note(`$10m, no drain: ${perH.map((x) => x.toFixed(0)).join("/")} orders/h, min cash $${minCash.toFixed(0)}, ln-growth ${clean.map((r) => (r.lg * 100).toFixed(0)).join("/")} %/h`);
+
+    // decide(): a negative balance with no claim sells nothing.
+    c7.examined(1);
+    const m = new Market({ seed: 3, money: 3e7, burnInTicks: 3000 });
+    runNew(m, 300);
+    const st = S.newState(m.symbols);
+    S.observe(st, Object.fromEntries(m.symbols.map((x) => [x, m.price(x)])));
+    for (let i = 0; i < 100; i++) {
+      m.tick();
+      S.observe(st, Object.fromEntries(m.symbols.map((x) => [x, m.price(x)])));
+    }
+    const { bookOf } = await import("../sim/stocks/strategies.mjs");
+    const book = { ...bookOf(m, false), cash: -45e3 };
+    const held = m.symbols.filter((x) => m.position(x)[0] > 0).length;
+    const orders = S.decide(st, book).orders.filter((q) => !/^exit/.test(q.why));
+    if (held && orders.length) c7.fail(`with cash -$45k and no claim decide() still orders: ${orders.map((q) => q.kind + " " + q.sym + " " + q.shares).join(", ")}`);
+    const small = S.decide(st, { ...bookOf(m, false) }).orders.filter((q) => !/^exit/.test(q.why) && q.shares * m.price(q.sym) < S.DEFAULTS.minOrderCommissions * S.COMMISSION);
+    if (small.length) c7.fail(`orders below the $${S.DEFAULTS.minOrderCommissions * 0.1}m minimum: ${small.map((q) => q.sym + " " + q.shares).join(", ")}`);
+
+    // Restart: a remembered phase is used as a prior, and a wrong one is overturned.
+    c7.examined(3);
+    const found = (prior, seed) => {
+      const mk = new Market({ seed, money: 0, burnInTicks: 3000 });
+      const s2 = S.newState(mk.symbols, prior ? { phasePrior: prior } : {});
+      S.observe(s2, Object.fromEntries(mk.symbols.map((x) => [x, mk.price(x)])));
+      let truth = null;
+      let at = null;
+      for (let i = 0; i < 600; i++) {
+        const before = mk.ticksUntilCycle;
+        mk.tick();
+        if (before === 1 && truth === null) truth = (s2.t + 1) % 75;
+        S.observe(s2, Object.fromEntries(mk.symbols.map((x) => [x, mk.price(x)])));
+        if (at === null && s2.phase !== null) at = s2.t;
+      }
+      return { truth, phase: s2.phase, at };
+    };
+    const base = found(null, 21);
+    const good = found({ phase: base.truth, nats: S.PHASE_PRIOR_NATS }, 21);
+    const bad = found({ phase: (base.truth + 30) % 75, nats: S.PHASE_PRIOR_NATS }, 21);
+    if (good.phase !== base.truth || bad.phase !== base.truth) c7.fail(`phase with prior ${good.phase}, with a wrong prior ${bad.phase}, truth ${base.truth}`);
+    if (!(good.at <= base.at)) c7.fail(`a correct remembered phase did not speed the lock (${good.at} vs ${base.at} ticks)`);
+    c7.note(`phase lock: ${base.at} ticks cold, ${good.at} with the remembered phase, ${bad.at} with a wrong one (all end on the truth)`);
+    // The wall-clock mapping: a boundary recorded at T maps to tick (T - T0)/6000 mod 75.
+    const rec = { boundaryAtMs: 1e6, lastAugReset: 7 };
+    const p = S.phasePriorFrom(rec, 1e6 + 6000 * 10, 7);
+    if (p?.phase !== 65) c7.fail(`phasePriorFrom maps a boundary 10 ticks ago to phase ${p?.phase}, expected 65`);
+    if (S.phasePriorFrom(rec, 1e6 + 6000 * 10, 8) !== null) c7.fail("a phase record from another life (the market re-initialises at install) must be ignored");
+  }
+  checks.push(c7);
+
   return checks;
 }

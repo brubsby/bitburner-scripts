@@ -108,7 +108,9 @@ export async function calibrationLine() {
     const meas = typeof t.returnPerSec === "number" ? t.returnPerSec * 3600 : null;
     const age = (Date.now() - Date.parse(t.at ?? "")) / 60e3;
     const err = pred && meas !== null ? ((100 * (meas - pred)) / pred).toFixed(1) + "%" : "n/a";
-    return `CALIBRATION (live ${f}, ${age.toFixed(0)} min old, ${t.calibration?.ticks ?? "?"} ticks in the window): measured ${meas === null ? "unmeasured" : (meas * 100).toFixed(1) + "%/h"} vs harness ${pred === null ? "n/a" : (pred * 100).toFixed(1) + "%/h"} (${regime} at $${fmt(W)}) — error ${err}. One hour of one market is noisy (seed p25..p75 spans roughly +-40%); a sustained error beyond that means the harness is wrong.`;
+    const oph = t.counters?.ticks > 0 ? t.counters.orders / (t.counters.ticks / 600) : null;
+    const orderLine = oph === null ? "order rate unmeasured" : `orders ${oph.toFixed(0)}/h live vs ~10-40/h in the harness (tools/sim/stocks/churn.mjs, $10-30m pre-4S) — error ${(oph / 25).toFixed(1)}x`;
+    return `${orderLine}\nCALIBRATION (live ${f}, ${age.toFixed(0)} min old, ${t.calibration?.ticks ?? "?"} ticks in the window): measured ${meas === null ? "unmeasured" : (meas * 100).toFixed(1) + "%/h"} vs harness ${pred === null ? "n/a" : (pred * 100).toFixed(1) + "%/h"} (${regime} at $${fmt(W)}) — error ${err}. One hour of one market is noisy (seed p25..p75 spans roughly +-40%); a sustained error beyond that means the harness is wrong.`;
   }
   return "CALIBRATION: NOT CALIBRATED — no live /tel/stock.txt mirror found; every mechanic is the game's own code, the market state and cadence are not";
 }

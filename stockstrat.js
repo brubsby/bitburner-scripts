@@ -120,6 +120,8 @@ export const DEFAULTS = {
   phasePrune: 1e-7,
   // hmm: phase posterior above which ticksToBoundary trusts the phase.
   phaseTrust: 0.9,
+  // hmm: {phase, nats} remembered across a restart (stock.js), or null.
+  phasePrior: null,
   // Phase detection: windows either side of a candidate boundary, and the
   // log-evidence margin (nats) the best phase must hold over the runner-up
   // outside +-3 ticks before it is trusted.
@@ -165,6 +167,14 @@ export const DEFAULTS = {
   // (10 seeds at 0.04 nudges/s: every k within noise of k0.) k=40 best at
   // both rates; k80+ fell back (10 seeds). NOT CALIBRATED live.
   manipBoostPerNudge: 40,
+  // THE CHURN GUARD. Every order except a full exit must move at least this
+  // many commissions' worth of stock ($100k each, BuyingAndSelling.tsx:105
+  // and StockMarketHelpers.ts:446 — one per transaction, whatever its size).
+  // Live on 2026-09-25 the a4fc5ef trader sold 7-share slivers (~$150k)
+  // every tick to cover a cash balance other spenders had pushed negative
+  // (hospital bills: PlayerObjectGeneralMethods.ts:283 has no balance
+  // check): 195 orders in 25 min, $39.4m -> $9.7m. tools/sim/stocks/churn.mjs.
+  minOrderCommissions: 20,
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +249,7 @@ export function newState(symbols, o = {}) {
     st.comps[s] = [{ w: 1, a: opt.prior, b: opt.prior }]
     st.absLnSum[s] = 0
   }
-  if (opt.estimator === 'hmm') st.hmm = newHmm(symbols.length, st.phaseFixed ? [st.phase] : null)
+  if (opt.estimator === 'hmm') st.hmm = newHmm(symbols.length, st.phaseFixed ? [st.phase] : null, opt.phasePrior)
   return st
 }
 
@@ -278,13 +288,25 @@ const PRIOR = (() => {
   return p.map((x) => x / z)
 })()
 
-function newHmm(nSym, phases = null) {
+/**
+ * `prior`: {phase, nats} — a restart's remembered phase (stock.js persists
+ * the wall time of the last boundary). It is a PRIOR, not a fact: `nats` of
+ * log-odds on that phase (half on its neighbours, for the +-1 tick the
+ * wall-clock mapping can be off), which a cycle of contrary evidence
+ * overturns. tools/test/stockstrat.test.mjs ST7 checks both directions.
+ */
+function newHmm(nSym, phases = null, prior = null) {
   const alive = phases ?? Array.from({ length: TICKS_PER_CYCLE }, (_, i) => i)
   const banks = new Map()
   for (const ph of alive) {
     const P = new Float64Array(nSym * GRID)
     for (let j = 0; j < nSym; j++) P.set(PRIOR, j * GRID)
-    banks.set(ph, { P, logL: 0 })
+    let l0 = 0
+    if (prior && Number.isInteger(prior.phase) && prior.nats > 0) {
+      const d = Math.min(mod(ph - prior.phase, TICKS_PER_CYCLE), mod(prior.phase - ph, TICKS_PER_CYCLE))
+      l0 = d === 0 ? prior.nats : d === 1 ? prior.nats / 2 : 0
+    }
+    banks.set(ph, { P, logL: l0 })
   }
   return { banks, post: new Map(alive.map((ph) => [ph, 1 / alive.length])) }
 }
@@ -665,7 +687,13 @@ export function decide(st, book) {
     info[s] = { L, Sh, bid, ask, mid, spread: (ask - bid) / (2 * mid), f, mv, sd, max: book.maxShares[s] }
   }
   diag.wealth = wealth
-  let cash = book.cash - Math.max(0, book.raiseCash ?? 0) - Math.max(0, book.reserve ?? 0)
+  // A NEGATIVE balance is not ours to repay tick by tick (hospital bills and
+  // other unchecked spenders put it there): only a claim (raiseCash/reserve)
+  // makes the trader sell for cash, and then in one lot of at least minOrder.
+  const minOrder = o.minOrderCommissions * COMMISSION
+  const claimDue = Math.max(0, book.raiseCash ?? 0) + Math.max(0, book.reserve ?? 0)
+  let cash = Math.max(0, book.cash) - claimDue
+  diag.cashNegative = book.cash < 0 ? book.cash : null
 
   // ---- 1. exits: a position whose expected edge (posterior MEAN) is now
   // against it is closed. Entry demands the lower bound; exit the mean —
@@ -680,6 +708,10 @@ export function decide(st, book) {
       const M = (side === 'L' ? x.f - 0.5 : 0.5 - x.f) * 100 + (side === (x.f >= 0.5 ? 'L' : 'S') ? boostOf(s) : 0) // signed toward this side
       const e = M > 0 ? marginal(s, side, x.mv, M, n / 2) : tickEdge(x.f, x.mv, side)
       const wrongShort = side === 'S' && !book.canShort
+      // A position worth less than the commission is not sold: the game pays
+      // shares*bid - $100k (StockMarketHelpers.ts:446), a NEGATIVE amount, and
+      // cash would go down. It is left for act-liquidate.js / the install.
+      if (n * x.bid < COMMISSION) continue
       if (!(e - flipPenalty(Math.abs(e)) / hold > 0) || wrongShort) {
         sells.push({ sym: s, kind: side === 'L' ? 'sell' : 'cover', shares: n, why: `exit ${side}: f=${x.f.toFixed(3)}${wrongShort ? ' (shorting not allowed)' : ''}` })
         cash += side === 'L' ? n * x.bid - COMMISSION : n * (2 * (book.positions[s][3]) - x.ask) - COMMISSION
@@ -731,9 +763,9 @@ export function decide(st, book) {
   let hi = 0
   // ---- 3a. a claim that is due (raiseCash/reserve above the cash we hold)
   // is paid by selling the weakest held chunks first.
-  while (cash < 0 && hi < held.length) {
+  while (cash < 0 && claimDue > 0 && hi < held.length) {
     const h = held[hi]
-    const take = Math.min(h.n, Math.ceil((-cash + COMMISSION) / h.px))
+    const take = Math.min(h.n, Math.ceil(Math.max(-cash + COMMISSION, minOrder) / h.px))
     trim[`${h.s}|${h.side}`] = (trim[`${h.s}|${h.side}`] ?? 0) + take
     cash += take * h.px - COMMISSION
     h.n -= take
@@ -754,10 +786,13 @@ export function decide(st, book) {
         need -= n
         continue
       }
-      // No free cash: displace the weakest held chunk if clearly better.
+      // No free cash: displace the weakest held chunk if clearly better —
+      // by the margin per dollar AND in dollars: the switch pays two more
+      // commissions (the sale and the buy) than staying put.
       const h = held[hi]
       if (!h || h.s === c.s || !(c.score - h.score > o.switchMargin)) break
-      const take = Math.min(h.n, Math.ceil(dollars / h.px))
+      const take = Math.min(h.n, Math.ceil(Math.max(dollars, minOrder) / h.px))
+      if (!((c.score - h.score) * take * h.px > 2 * COMMISSION * o.commissionCover)) break
       trim[`${h.s}|${h.side}`] = (trim[`${h.s}|${h.side}`] ?? 0) + take
       cash += take * h.px
       h.n -= take
@@ -769,9 +804,13 @@ export function decide(st, book) {
   // ---- 5. orders, with commission and churn guards.
   for (const [key, n] of Object.entries(trim)) {
     const [s, side] = key.split('|')
+    const x = info[s]
+    const whole = n >= (side === 'L' ? x.L : x.Sh)
+    // A partial sale below minOrder is exactly the sliver the churn was made of.
+    if (!whole && n * x.mid < minOrder) continue
     sells.push({ sym: s, kind: side === 'L' ? 'sell' : 'cover', shares: n, why: `switch out ${side}: f=${info[s].f.toFixed(3)}` })
   }
-  let spend = book.cash - Math.max(0, book.raiseCash ?? 0) - Math.max(0, book.reserve ?? 0)
+  let spend = book.cash - claimDue
   for (const q of sells) {
     const x = info[q.sym]
     spend += q.kind === 'sell' ? q.shares * x.bid - COMMISSION : q.shares * (2 * book.positions[q.sym][3] - x.ask) - COMMISSION
@@ -796,9 +835,34 @@ export function decide(st, book) {
     let n = b.n
     if (n * b.px + COMMISSION > spend) n = Math.floor((spend - COMMISSION) / b.px)
     if (!(n > 0) || n * b.px * (b.e * hold) < 2 * COMMISSION * o.commissionCover) continue
+    if (n * b.px < minOrder) continue
     buys.push({ sym: b.s, kind: b.side === 'L' ? 'buy' : 'short', shares: n, why: `${b.side} f=${info[b.s].f.toFixed(3)}±${info[b.s].sd.toFixed(3)} edge ${(b.e * 1e4).toFixed(2)}bp/tick` })
     spend -= n * b.px + COMMISSION
   }
   diag.cash = cash
   return { orders: [...sells, ...buys], diag }
+}
+
+// ---------------------------------------------------------------------------
+// PHASE ACROSS A RESTART. The 75-tick cycle is one global counter
+// (StockMarket.ts:258-262) that keeps running while stock.js is dead, and a
+// deploy restarts it. stock.js writes the wall time of each boundary it is
+// confident of; a restart maps that back to a tick phase and starts the HMM
+// with it as a PRIOR (phasePrior), never as a fact. Ticks are 6s
+// (msPerStockUpdate) in normal play but can run at 4s while the game spends
+// bonus time (msPerStockUpdateMin), so the record expires after an hour and
+// must be of this life: an install re-initialises the market and its cycle
+// counter (Prestige.ts initStockMarket).
+
+export const PHASE_PRIOR_NATS = 4
+export function phaseRecord(st, nowMs, lastAugReset) {
+  if (st.phase === null || mod(st.t - st.phase, TICKS_PER_CYCLE) !== 0) return null
+  return { boundaryAtMs: nowMs, lastAugReset, t: st.t, phase: st.phase }
+}
+/** `t0Ms`: wall time of the priming observe (st.t = 0). */
+export function phasePriorFrom(rec, t0Ms, lastAugReset, maxAgeMs = 3600e3) {
+  if (!rec || typeof rec.boundaryAtMs !== 'number' || rec.lastAugReset !== lastAugReset) return null
+  const age = t0Ms - rec.boundaryAtMs
+  if (!(age >= 0 && age < maxAgeMs)) return null
+  return { phase: mod(Math.round((rec.boundaryAtMs - t0Ms) / 6000), TICKS_PER_CYCLE), nats: PHASE_PRIOR_NATS }
 }

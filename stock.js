@@ -28,7 +28,7 @@
 // deliberate trade against a port-fed 4S helper, which would add a second
 // process and a per-tick handoff to save 2.5GB.
 
-import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META } from 'stockstrat.js'
+import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META, phaseRecord, phasePriorFrom } from 'stockstrat.js'
 import { buy4SVerdict, manipCurveAt, growthRate } from 'stockplan.js'
 import { canShortStock } from 'sfgate.js'
 import { reserveFor, augClaim, joinClaim } from 'budget.js'
@@ -204,7 +204,11 @@ export async function main(ns) {
   const maxShares = Object.fromEntries(syms.map((s) => [s, ns.stock.getMaxShares(s)]))
   const consts = ns.stock.getConstants()
   const nodeMults = bitNodeMults(info.currentNode)
-  const st = newState(syms)
+  // Created at the first tick (below), so the phase prior from the last run
+  // is mapped against the wall time of the priming read.
+  let st = null
+  const PHASE_FILE = '/tel/stock-phase.txt'
+  let phasePrior = null
   let last = { orders: [], refused: [] }
   let v4s = null
   // Return accounting (nodeecon.js returnPerSec/incomePerSec): each tick's
@@ -241,7 +245,17 @@ export async function main(ns) {
         bid[s] = 2 * p - a
       }
       const forecasts = has4S ? Object.fromEntries(syms.map((s) => [s, ns.stock.getForecast(s)])) : null
+      if (!st) {
+        fetchFromHome(ns, PHASE_FILE)
+        phasePrior = phasePriorFrom(readJson(ns, PHASE_FILE), Date.now(), info.lastAugReset)
+        st = newState(syms, { phasePrior })
+      }
       observe(st, prices, forecasts)
+      const prec = phaseRecord(st, Date.now(), info.lastAugReset)
+      if (prec) {
+        ns.write(PHASE_FILE, JSON.stringify({ at: new Date().toISOString(), ...prec }), 'w')
+        if (ns.getHostname() !== 'home') ns.scp(PHASE_FILE, 'home', ns.getHostname())
+      }
       counters.missedTicks = st.missed
 
       const positions = Object.fromEntries(syms.map((s) => [s, ns.stock.getPosition(s)]))
@@ -334,6 +348,7 @@ export async function main(ns) {
         mode: has4S ? '4S' : 'pre-4S (estimated forecasts)',
         canShort,
         phase: st.phase,
+        phasePrior,
         toBoundary: ticksToBoundary(st),
         ticksSeen: st.t,
         wealth,
