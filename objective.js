@@ -496,7 +496,9 @@ export function oneoffValue(aug, ctx = {}) {
   }
 
   const owned = ctx.ownedPrograms instanceof Set ? ctx.ownedPrograms : new Set(ctx.ownedPrograms ?? [])
-  let grant = num(eff.startingMoney) ? eff.startingMoney : 0
+  // ctx.startingMoneyVoid: the node overwrites the balance after the grant is
+  // paid (BitNode 8, Prestige.ts:85-88 then :158), so the money part is 0.
+  let grant = num(eff.startingMoney) && ctx.startingMoneyVoid !== true ? eff.startingMoney : 0
   for (const p of eff.programs ?? []) {
     if (owned.has(p)) continue // already have it; the grant buys nothing
     const price = PROGRAM_PRICE[p]
