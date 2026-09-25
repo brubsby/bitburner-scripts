@@ -975,5 +975,23 @@ export async function run() {
   }
   checks.push(c26);
 
+  const c27 = new Check("SP27", "combat levels carry the node's LevelMultiplier: exp that reads 850 at x1 is short at BN10's x0.4");
+  {
+    c27.examined(3);
+    // The game's own formula, read rather than remembered.
+    const person = game("src/PersonObjects/Person.ts");
+    for (const [k, key] of [["strength", "StrengthLevelMultiplier"], ["agility", "AgilityLevelMultiplier"]]) {
+      if (!new RegExp(`this\\.mults\\.${k} \\* currentNodeMults\\.${key}`).test(person)) c27.fail(`Person.ts no longer levels ${k} as mults.${k} x ${key}`);
+    }
+    // exp enough for 850 at x1.5 (raw) is far short at x1.5 x 0.4.
+    const exp = Math.exp((850 / 1.5 + 200) / 32);
+    const raw = { exp: { strength: exp, defense: exp, dexterity: exp, agility: exp }, mults: { strength: 1.5, defense: 1.5, dexterity: 1.5, agility: 1.5, strength_exp: 1, defense_exp: 1, dexterity_exp: 1, agility_exp: 1 } };
+    const levelled = { ...raw, mults: { ...raw.mults, strength: 0.6, defense: 0.6, dexterity: 0.6, agility: 0.6 } };
+    if (sp.covenantCombatHours(raw, null, 1).hours !== 0) c27.fail("fixture: at x1.5 raw the exp reaches 850");
+    const lv = sp.covenantCombatHours(levelled, null, 1);
+    if (!(lv.hours > 0) || lv.current !== "strength") c27.fail(`at x0.6 effective the same exp is short and strength trains first: ${JSON.stringify(lv)}`);
+  }
+  checks.push(c27);
+
   return checks;
 }

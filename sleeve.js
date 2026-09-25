@@ -270,12 +270,24 @@ const lowestPlayerUniSkill = (player) => [
 const isAlreadyCommitting = (task, crimeName) =>
 	!!task && task.type === "CRIME" && task.crimeType === crimeName;
 
-const getSleeves = (ns) =>
-	[...Array(ns.sleeve.getNumSleeves()).keys()].map(index => ({
-		...ns.sleeve.getSleeve(index),
-		task: ns.sleeve.getTask(index),
-		index: index,
-	}));
+// Sleeves are Persons: the game levels every skill as
+// calculateSkill(exp, mults.<stat> x the node's <Stat>LevelMultiplier)
+// (Person.ts:61-144). Planning that turns exp into levels (sleeveplan's
+// train-first simulation) must see the product; raw mults overstated every
+// level x2.5 in BN10 (combat 0.4, hacking 0.35).
+const LEVEL_MULTS = { hacking: 'HackingLevelMultiplier', strength: 'StrengthLevelMultiplier', defense: 'DefenseLevelMultiplier', dexterity: 'DexterityLevelMultiplier', agility: 'AgilityLevelMultiplier', charisma: 'CharismaLevelMultiplier' }
+const getSleeves = (ns) => {
+	const node = bitNodeMults(ns.getResetInfo()?.currentNode) ?? null
+	return [...Array(ns.sleeve.getNumSleeves()).keys()].map(index => {
+		const sl = ns.sleeve.getSleeve(index)
+		const mults = { ...sl.mults }
+		for (const [k, key] of Object.entries(LEVEL_MULTS)) {
+			const f = node?.[key]
+			if (typeof f === 'number' && isFinite(f) && f > 0 && typeof mults[k] === 'number') mults[k] = mults[k] * f
+		}
+		return { ...sl, mults, task: ns.sleeve.getTask(index), index }
+	});
+};
 
 // Module scope stays side-effect free: the shipped file read localStorage at
 // IMPORT time, which runs before main() has decided the script may act at all.

@@ -1685,7 +1685,7 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     const member = player.factions.includes(COVENANT.faction)
     // The combat legs with the fleet at the gym beside the player
     // (sleeveplan.covenantCombatHours); the player-alone forecast was ~2x.
-    const legs = member ? null : covenantCombatHours(player, planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
+    const legs = member ? null : covenantCombatHours(levelledPerson(player, info), planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
     const combatH = member ? 0 : legs ? legs.hours : null
     if (combatH === null) return out(false, 'Covenant combat legs unpriced (player or fleet gym rates unreadable)')
     const mandated = covenantMandated(info?.currentNode, from)
@@ -1848,6 +1848,32 @@ function exitExpPerSec(ns, schedule) {
  * null — never the raw value — when either factor is unreadable, so a caller
  * refuses rather than projecting on a multiplier that is 2.86x wrong.
  */
+/**
+ * The player with the BitNode's COMBAT and CHARISMA level multipliers folded
+ * into mults.<stat>, as the game computes a skill (Person.ts:77-144:
+ * calculateSkill(exp, mults.strength x StrengthLevelMultiplier)). Every model
+ * that turns exp into a level (bodyplan hoursToStat, gym legs, the Covenant
+ * campaign) must see this. Live 2026-09-25 in BN10 (x0.4): the campaign read
+ * strength 470 as 850, reported 0h of combat, and stalled with nothing to
+ * train. Hacking is NOT folded here: effectiveHackingMult owns it.
+ */
+function levelledPerson(player, info) {
+  const n = bitNodeMults(info?.currentNode)
+  const f = (k, key) => (typeof n?.[key] === 'number' && isFinite(n[key]) && n[key] > 0 ? (player?.mults?.[k] ?? 1) * n[key] : player?.mults?.[k])
+  if (!player?.mults) return player
+  return {
+    ...player,
+    mults: {
+      ...player.mults,
+      strength: f('strength', 'StrengthLevelMultiplier'),
+      defense: f('defense', 'DefenseLevelMultiplier'),
+      dexterity: f('dexterity', 'DexterityLevelMultiplier'),
+      agility: f('agility', 'AgilityLevelMultiplier'),
+      charisma: f('charisma', 'CharismaLevelMultiplier'),
+    },
+  }
+}
+
 function effectiveHackingMult(player, info) {
   return effectiveHackingMultOf(player?.mults?.hacking, bitNodeMults(info?.currentNode)?.HackingLevelMultiplier)
 }
@@ -1889,7 +1915,7 @@ function karmaChannelCtx(ns, info, player) {
     const person = {
       skills: player?.skills,
       exp: player?.exp,
-      mults: player?.mults,
+      mults: levelledPerson(player, info)?.mults,
       karma: player?.karma,
       numPeopleKilled: player?.numPeopleKilled,
       money: player?.money,
@@ -2787,7 +2813,7 @@ async function act(ns, canJoin, info, note) {
       body: {
         skills: player.skills,
         exp: player.exp,
-        mults: player.mults,
+        mults: levelledPerson(player, info).mults,
         karma: player.karma,
         numPeopleKilled: player.numPeopleKilled,
         city: player.city,
@@ -3101,7 +3127,7 @@ async function act(ns, canJoin, info, note) {
     if (!cv) return null
     // The stat the campaign's legs name, so the player and the fleet stack on
     // the same one (sleeveplan.covenantCombatHours).
-    const legs = covenantCombatHours(player, readFleet(ns, info)?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
+    const legs = covenantCombatHours(levelledPerson(player, info), readFleet(ns, info)?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
     const leg = legs?.legs?.[0]
     return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: COVENANT.faction, stat: leg.stat, to: COVENANT.skill, hours: leg.hours } : null
   })()

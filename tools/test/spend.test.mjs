@@ -146,5 +146,21 @@ export async function run() {
   }
   checks.push(c11);
 
+  const c12 = new Check("SE12", "every exp->level model sees the node's level multipliers (player: levelledPerson; sleeves: folded in getSleeves)");
+  {
+    const pr = src("progress.js");
+    const sl = src("sleeve.js");
+    c12.examined(9);
+    if ((pr.match(/covenantCombatHours\(levelledPerson\(player, info\)/g) || []).length < 2) c12.fail("both Covenant combat-hours calls must use levelledPerson (live: 470 read as 850)");
+    if (!/mults: levelledPerson\(player, info\)\.mults,/.test(pr)) c12.fail("joinState.body (gym legs for invites) must use levelled mults");
+    if (!/mults: levelledPerson\(player, info\)\?\.mults,/.test(pr)) c12.fail("the karma grind's person must use levelled mults");
+    if (!/for \(const \[k, key\] of Object\.entries\(LEVEL_MULTS\)\)/.test(sl)) c12.fail("sleeve.js must fold the node's level multipliers into each sleeve");
+    const lp = pr.slice(pr.indexOf("function levelledPerson"), pr.indexOf("function effectiveHackingMult"));
+    for (const [k, key] of [["strength", "StrengthLevelMultiplier"], ["defense", "DefenseLevelMultiplier"], ["dexterity", "DexterityLevelMultiplier"], ["agility", "AgilityLevelMultiplier"], ["charisma", "CharismaLevelMultiplier"]]) {
+      if (!new RegExp(`${k}: f\\('${k}', '${key}'\\)`).test(lp)) c12.fail(`levelledPerson must fold ${key} into mults.${k}`);
+    }
+  }
+  checks.push(c12);
+
   return checks;
 }
