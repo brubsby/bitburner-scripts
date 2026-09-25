@@ -78,7 +78,7 @@ import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
 // Pure: exp-per-GB-second scoring, wave sizing and the manip verdict
 // (expfarm.js), the node table, and the exit simulator the verdict runs.
-import { expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy } from 'exitplan.js'
 
@@ -161,16 +161,24 @@ function spreadChunks(ns, free, ram, op, target, want, chunk, nextId, stockFlag 
 /** Rank exp targets (expScore at min security), excluding the trader's manip hosts. */
 function rankExpTargets(ns, readT, level) {
   const out = []
+  // Every other server too, scored as if rooted, for the port-opener verdict
+  // (expfarm.portTiers -> progress.js spendExit.programs).
+  const all = []
   for (const h of scanAll(ns)) {
-    if (!ns.hasRootAccess(h) || h === 'home') continue
-    if (ns.getServerMaxMoney(h) <= 0) continue // grow needs a money pool (ServerHelpers grow)
-    if (ns.getServerRequiredHackingLevel(h) > level) continue
-    if (stockManip && stockManip[h]) continue
-    const t = readT(h)
-    t.baseDifficulty = ns.getServer(h).baseDifficulty
-    const s = expScore(t, farm.weakenRate)
-    if (s > 0) out.push({ t, s })
+    if (h === 'home') continue
+    const srv = ns.getServer(h)
+    if (srv.purchasedByPlayer) continue
+    const rooted = ns.hasRootAccess(h)
+    let s = 0
+    if (ns.getServerMaxMoney(h) > 0 && ns.getServerRequiredHackingLevel(h) <= level && !(stockManip && stockManip[h])) {
+      const t = readT(h)
+      t.baseDifficulty = srv.baseDifficulty
+      s = expScore(t, farm.weakenRate)
+      if (rooted && s > 0) out.push({ t, s })
+    }
+    all.push({ host: h, ports: srv.numOpenPortsRequired, ramGB: srv.maxRam, rooted, score: s })
   }
+  farm.servers = all
   return out.sort((a, b) => b.s - a.s)
 }
 
@@ -2174,6 +2182,9 @@ export async function main(ns) {
                 heldGB: Math.round(farm.held.reduce((a, x) => a + x.gb, 0)),
                 model: { hackThreadsPerSec: Math.round((farm.hackThreads / Math.max(1, (now - farm.hackThreadsWindowStart) / 1000)) * 10) / 10 },
                 runnersUp: farm.ranked.slice(1, 4).map((r) => ({ host: r.t.host, score: r.s })),
+                // What each further port opener would add (expfarm.portTiers):
+                // progress.js prices program purchases from this.
+                portTiers: portTiers(farm.servers ?? [], hosts.reduce((a, h) => a + ns.getServerMaxRam(h), 0), ['BruteSSH.exe', 'FTPCrack.exe', 'relaySMTP.exe', 'HTTPWorm.exe', 'SQLInject.exe'].filter((f) => ns.fileExists(f, 'home')).length),
                 manip: farm.manip,
                 why: farm.why,
               }

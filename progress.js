@@ -136,7 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
-import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -151,7 +151,7 @@ import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERM
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, endpointCycleStats, installCadence, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
+import { bestExitPolicy, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -1642,8 +1642,58 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       }
       out.servers = best ?? { buy: false, maxSpend: 0, why: 'no fleet spend shortens the exit' }
     } else out.servers = { buy: false, maxSpend: 0, why: "buyserv's $/GB or income per GB unreadable" }
+    // PORT OPENERS (and TOR), where money is capital (BitNode 8): each prefix
+    // of the unowned openers, bought now and every later life, against not —
+    // exitplan.programExit on the same inputs. The exp it buys is the farm's
+    // measured script exp x the tier's exp multiple (batch.txt
+    // expFarm.portTiers). Every opener in the best prefix that shortens the
+    // exit is licensed; autobuy.js and the program orders read this.
+    if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) out.programs = programVerdicts(ns, inputs)
   } catch (e) {
     out.why = `spend verdicts threw: ${String(e).slice(0, 80)}`
+  }
+  return out
+}
+
+const PORT_OPENERS = [
+  ['BruteSSH.exe', 500e3],
+  ['FTPCrack.exe', 1.5e6],
+  ['relaySMTP.exe', 5e6],
+  ['HTTPWorm.exe', 30e6],
+  ['SQLInject.exe', 250e6],
+]
+
+function programVerdicts(ns, inputs) {
+  const out = {}
+  try {
+    const tiers = readJson(ns, '/tel/batch.txt')?.expFarm?.portTiers
+    const st = readJson(ns, '/tel/status.txt')
+    const scriptExp = st?.expPerSec > 0 && Date.now() - Date.parse(st.at ?? '') < 5 * 60e3 ? st.expPerSec : null
+    const unowned = PORT_OPENERS.filter(([f]) => !ns.fileExists(f, 'home'))
+    const torCost = ns.hasTorRouter() ? 0 : 200e3
+    if (!unowned.length) return { why: 'every opener owned' }
+    if (!tiers?.tiers?.length || scriptExp === null) {
+      for (const [f] of unowned) out[f] = { buy: false, why: `unpriced: ${!tiers?.tiers?.length ? 'no expFarm.portTiers from batch.js' : 'no fresh script exp rate from tel.js'}` }
+      out.tor = { buy: false, why: 'unpriced: see the openers' }
+      return out
+    }
+    let best = null
+    let cost = torCost
+    for (let j = 0; j < unowned.length && j < tiers.tiers.length; j++) {
+      cost += unowned[j][1]
+      const mult = tiers.tiers[j].expMultiple
+      const gain = typeof mult === 'number' && isFinite(mult) ? Math.max(0, scriptExp * (mult - 1)) : null
+      const r = gain === null ? { deltaH: null, why: 'tier exp multiple unreadable' } : programExit(inputs, cost, gain)
+      out[`prefix${j + 1}`] = { cost, expGainPerSec: gain, deltaH: r.deltaH, why: r.why ?? `exit ${r.withH?.toFixed(2)}h with vs ${r.withoutH?.toFixed(2)}h without` }
+      if (typeof r.deltaH === 'number' && r.deltaH < -1 / 60 && (!best || r.deltaH < best.deltaH)) best = { j, deltaH: r.deltaH, cost }
+    }
+    for (let j = 0; j < unowned.length; j++) {
+      const f = unowned[j][0]
+      out[f] = best && j <= best.j ? { buy: true, why: `the first ${best.j + 1} unowned opener(s) shorten the exit by ${(-best.deltaH).toFixed(2)}h for $${Math.round(best.cost)}` } : { buy: false, why: best ? 'beyond the best prefix' : 'no prefix of openers shortens the exit (capital compounding outweighs the exp)' }
+    }
+    out.tor = torCost > 0 ? { buy: !!best, why: best ? 'the openers it gates pay' : 'no opener pays, so neither does TOR' } : { buy: false, why: 'owned' }
+  } catch (e) {
+    out.why = `program verdicts threw: ${String(e).slice(0, 80)}`
   }
   return out
 }
@@ -3562,12 +3612,20 @@ async function act(ns, canJoin, info, note) {
   // The game's own predicate; serverExists('darkweb') is always true.
   const hasTor = ns.hasTorRouter()
   if (!hasTor) {
-    if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > 200e3) {
+    const torOk = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), 'tor', info?.lastAugReset)
+    if (!torOk.allowed) todo.push(`TOR held: ${torOk.why}`)
+    else if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > 200e3) {
       if (order('tor', [], 'gates every port program')) did.push('ordered TOR')
     } else todo.push('Buy the TOR router ($200k) — gates every port program.')
   }
   for (const [file, price] of PROGRAMS) {
     if (ns.fileExists(file, 'home')) continue
+    // Where money is capital, only on a priced verdict (nodeecon.programSpendAllowed).
+    const okP = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), file, info?.lastAugReset)
+    if (!okP.allowed) {
+      todo.push(`${file} held: ${okP.why}`)
+      continue
+    }
     if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') > price * 2) {
       if (order('program', [file], 'unlocks a tier of servers')) did.push(`ordered ${file}`)
     } else if (ns.getServerMoneyAvailable('home') > price) {

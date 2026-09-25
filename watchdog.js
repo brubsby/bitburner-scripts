@@ -641,6 +641,11 @@ const WATCHED = [
       } catch {
         /* fall back to the claims rule */
       }
+      // WHERE MONEY IS CAPITAL (ScriptHackMoneyGain 0, BitNode 8) there is no
+      // claims fallback: cash is the trader's compounding book, and the
+      // ln-per-dollar competition below prices home against hacking income
+      // that does not exist there. Only the exit verdict above may buy.
+      if (bitNodeMults(ns.getResetInfo().currentNode)?.ScriptHackMoneyGain === 0) return false
       // THE ln(M) COMPETITION (budget.js lnCompete): home's own ln per
       // dollar is the planner's figure (objective.homeLn, published as
       // homeLnPerDollar — the plan channel through the measured elasticity

@@ -272,5 +272,41 @@ export async function run() {
   }
   checks.push(j);
 
+  // -------------------------------------------------------------------
+  // Live 2026-09-25: $287.2m of TOR + all five openers (SQLInject $250m) in the
+  // first ~30 minutes, out of the trader's compounding capital.
+  const k = new Check("B8k", "where money is capital, port openers and TOR are bought only on a priced exit verdict; elsewhere unchanged");
+  {
+    k.examined(8);
+    const EF = await import("../../expfarm.js");
+    const servers = [
+      { host: "n00dles", ports: 0, ramGB: 4, rooted: true, score: 1 },
+      { host: "joesguns", ports: 0, ramGB: 16, rooted: true, score: 2 },
+      { host: "iron-gym", ports: 1, ramGB: 32, rooted: false, score: 3 },
+      { host: "phantasy", ports: 2, ramGB: 32, rooted: false, score: 2.5 },
+    ];
+    const pt = EF.portTiers(servers, 100, 0);
+    if (!(pt?.tiers?.[0]?.ramGB === 132 && pt.tiers[0].bestScore === 3 && Math.abs(pt.tiers[0].expMultiple - (132 * 3) / (100 * 2)) < 1e-9)) k.fail("portTiers tier 1 wrong", JSON.stringify(pt?.tiers?.[0]));
+    const L = Array.from({ length: 6 }, (_, q) => ({ bitNode: 10, lifeH: 3, hackMult: 1.4 * Math.pow(1.2, q), augs: 10 + q }));
+    const cad = X.installCadence(L, 8);
+    const inp = { money: 2.5e8, incomePerSec: 0, hacking: 409, hackingExp: 7.3e6, hackingMult: 1.34, expPerSec: 2349, repPerSec: 4.6, exitRep: 0, exitFavor: 0, exitLevel: 3000, joinMoney: 100e9, terminalRep: 0, favorToDonate: 0, capitalReturnPerSec: 1.26e-4, capitalCap: 5.5e12, installCash: 250e6, workWhileDonating: true, cycleHours: cad.stats.cycleHours, multGainPerCycle: cad.stats.multGainPerCycle };
+    const cheap = X.programExit(inp, 700e3, 2349 * 0.5); // BruteSSH + TOR, +50% exp
+    const dear = X.programExit(inp, 250e6, 2349 * 0.001); // SQLInject for a sliver of exp
+    if (!(cheap.deltaH < 0)) k.fail("a cheap opener that adds half the exp does not pay", JSON.stringify(cheap));
+    if (!(dear.deltaH > 0)) k.fail("$250m every life for 0.1% more exp pays", JSON.stringify(dear));
+    k.note(`cheap opener ${cheap.deltaH?.toFixed(2)}h, SQLInject for a sliver +${dear.deltaH?.toFixed(2)}h`);
+    const life = 7;
+    const now = Date.now();
+    const gate = (programs) => ({ spendExit: { at: new Date(now).toISOString(), lastAugReset: life, programs } });
+    if (!econ.programSpendAllowed(bitNodeMults(4), null, "SQLInject.exe", life, now).allowed) k.fail("outside a capital node a program needs no verdict");
+    if (econ.programSpendAllowed(bitNodeMults(8), null, "BruteSSH.exe", life, now).allowed) k.fail("BN8 bought a program with no verdict");
+    if (!econ.programSpendAllowed(bitNodeMults(8), gate({ "BruteSSH.exe": { buy: true } }), "BruteSSH.exe", life, now).allowed) k.fail("a buy verdict was not honoured");
+    if (econ.programSpendAllowed(bitNodeMults(8), gate({ "BruteSSH.exe": { buy: true } }), "BruteSSH.exe", life - 1, now).allowed) k.fail("another life's verdict was honoured");
+    if (!/mayBuy\(TOR_ITEM\)/.test(code("autobuy.js")) || !/if \(!mayBuy\(file\)\) continue/.test(code("autobuy.js"))) k.fail("autobuy.js buys TOR or openers without the verdict");
+    if (!/programSpendAllowed\(bitNodeMults\(info\?\.currentNode\), readJson\(ns, GATE\), file,/.test(code("progress.js"))) k.fail("progress.js orders openers without the verdict");
+    if (!/ScriptHackMoneyGain === 0\) return false/.test(code("watchdog.js"))) k.fail("watchdog's homeup claims fallback still spends capital");
+  }
+  checks.push(k);
+
   return checks;
 }

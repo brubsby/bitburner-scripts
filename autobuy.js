@@ -44,6 +44,10 @@
 // always available — so this file cannot be worse off than before the split.
 
 import { canUseSingularity } from 'sfgate.js'
+// Pure: where money is capital (BitNode 8), a program is bought only on
+// progress.js's priced verdict (nodeecon.programSpendAllowed); the node table.
+import { programSpendAllowed } from 'nodeecon.js'
+import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 
@@ -112,7 +116,9 @@ export async function main(ns) {
   // One 1GB probe for the whole life. Source-File level cannot change without a
   // BitNode reset, and a reset kills every running script, so re-reading this
   // per tick would buy nothing.
-  const useSingularity = canUseSingularity(ns.getResetInfo())
+  const resetInfo = ns.getResetInfo()
+  const useSingularity = canUseSingularity(resetInfo)
+  const nodeMults = bitNodeMults(resetInfo.currentNode)
   ns.tprint(
     `autobuy.js: watching for affordable port programs (${useSingularity ? `singularity via ${SING_HELPER}` : 'terminal bridge'})`,
   )
@@ -160,6 +166,21 @@ export async function main(ns) {
       const money = ns.getServerMoneyAvailable('home')
       const tor = hasTor(ns)
       const now = Date.now()
+      // The priced verdict, read fresh each pass (0GB). Outside a capital
+      // node `allowed` is always true and nothing below changes.
+      const gateRec = (() => {
+        try {
+          return JSON.parse(ns.read('/tel/installgate.txt') || 'null')
+        } catch {
+          return null
+        }
+      })()
+      const held = []
+      const mayBuy = (item) => {
+        const v = programSpendAllowed(nodeMults, gateRec, item, resetInfo.lastAugReset, now)
+        if (!v.allowed) held.push(`${item}: ${v.why}`)
+        return v.allowed
+      }
       // Two shopping lists, and exactly one of them is ever non-empty: `sing`
       // holds arguments for the helper, `wanted` holds terminal `buy` lines.
       const sing = []
@@ -168,7 +189,7 @@ export async function main(ns) {
 
       // Keep a little headroom so this never spends the last dollar out from
       // under something else mid-purchase.
-      if (!tor && money > TOR_COST * 1.5) {
+      if (!tor && money > TOR_COST * 1.5 && mayBuy(TOR_ITEM)) {
         const asked = inFlight.get(TOR_ITEM)
         if (asked === undefined || now - asked >= RETRY_MS) {
           if (useSingularity) {
@@ -208,6 +229,7 @@ export async function main(ns) {
           const asked = inFlight.get(file)
           if (asked !== undefined && now - asked < RETRY_MS) continue
           if (budget < price * 1.5) continue
+          if (!mayBuy(file)) continue
           budget -= price
           inFlight.set(file, now)
           if (useSingularity) sing.push(file)
@@ -247,6 +269,8 @@ export async function main(ns) {
         torRequested: wantTor,
         owned,
         missing: PROGRAMS.length - owned.length,
+        // Items a capital node held for want of a priced verdict, and why.
+        held,
       })
     } catch (err) {
       // ALWAYS surface the failure. The status write was the last statement of

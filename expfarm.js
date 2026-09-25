@@ -232,3 +232,39 @@ export function manipUnservableWhy(requested, blocked) {
   if (!n) return 'no manip requested'
   return `manip requested on ${n} host(s), none servable: ${blocked.join('; ') || 'no batch fits the fleet'}`
 }
+
+/**
+ * WHAT EACH PORT OPENER ADDS TO THE FARM, per tier of open ports.
+ *
+ * servers: [{host, ports, ramGB, rooted, score}] — every non-home, non-bought
+ * server; `score` is expScore where it could be a target (hackable, money > 0)
+ * else 0. Rooting needs `ports` open ports and nothing else (NetscriptFunctions
+ * nuke checks the port count only). The farm's exp is linear in its RAM and in
+ * its best target's score, so tier k (k openers owned) supports
+ *     R_k = fleetGB + sum(ram of unrooted servers with ports <= k)
+ *     S_k = best score among rooted servers or unrooted ones with ports <= k
+ * and the exp multiple of owning k openers against owning `owned` is
+ * (R_k x S_k) / (R_owned x S_owned). NOT CALIBRATED — the same linearity the
+ * farm's model assumes (batch.txt expFarm.model).
+ */
+export function portTiers(servers, fleetGB, owned) {
+  if (!Array.isArray(servers) || !(fleetGB > 0) || !num(owned)) return null
+  const tier = (k) => {
+    let ram = fleetGB
+    let best = 0
+    for (const s of servers) {
+      const open = s.rooted || s.ports <= k
+      if (!open) continue
+      if (!s.rooted) ram += num(s.ramGB) ? s.ramGB : 0
+      if (num(s.score) && s.score > best) best = s.score
+    }
+    return { ports: k, ramGB: Math.round(ram), bestScore: best }
+  }
+  const base = tier(owned)
+  const out = []
+  for (let k = owned + 1; k <= 5; k++) {
+    const t = tier(k)
+    out.push({ ...t, expMultiple: base.bestScore > 0 ? (t.ramGB * t.bestScore) / (base.ramGB * base.bestScore) : null })
+  }
+  return { owned, base, tiers: out }
+}

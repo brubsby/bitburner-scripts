@@ -273,3 +273,20 @@ export function feeFundable(cash, feePerSec, seconds = FEE_FLOOR_S) {
   if (!fin(cash) || !fin(feePerSec) || feePerSec < 0) return false
   return cash >= feePerSec * seconds
 }
+
+/**
+ * Where money is CAPITAL — scripted hacking pays nothing (ScriptHackMoneyGain
+ * 0, BitNode 8) and cash is the trader's compounding book — a spender outside
+ * budget.js's claims (port programs, TOR) may spend only on a fresh priced
+ * verdict from progress.js (installgate spendExit.programs[item]). Elsewhere
+ * nothing changes: allowed, with no verdict needed.
+ * { allowed, why }
+ */
+export function programSpendAllowed(mults, gateRecord, item, lastAugReset, now = Date.now()) {
+  if (mults?.ScriptHackMoneyGain !== 0) return { allowed: true, why: null }
+  const v = gateRecord?.spendExit
+  if (!v || v.lastAugReset !== lastAugReset || !(now - Date.parse(v.at ?? '') < 15 * 60e3)) return { allowed: false, why: `money is capital here and no fresh priced verdict exists for ${item}` }
+  const p = v.programs?.[item]
+  if (!p) return { allowed: false, why: `no priced verdict for ${item} (spendExit.programs)` }
+  return { allowed: p.buy === true, why: p.why ?? null }
+}

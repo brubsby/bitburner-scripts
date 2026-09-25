@@ -1009,3 +1009,35 @@ export function installCadence(ledger, node) {
     why: `PRIOR: BitNode ${node} has fewer than 3 lives, so the cadence is BitNode ${best.n}'s (${best.stats.n} lives, x${best.stats.multGainPerCycle.toFixed(3)} per ${best.stats.cycleHours.toFixed(2)}h) — a different economy, replaced once this node measures its own`,
   }
 }
+
+/**
+ * A PORT OPENER (and TOR, when it is still missing), trajectory against
+ * trajectory, where money is capital (BitNode 8).
+ *
+ * Programs do not survive an install (prestigeHomeComputer clears them,
+ * ServerHelpers.ts:226-239), so buying one is buying it EVERY life: the
+ * with-run pays `cost` now AND out of every later life's opening balance
+ * (installCash - cost), while its script exp rises by `expGainPerSec` all
+ * node. The without-run is the published inputs untouched. The lost
+ * compounding is in both money legs because they compound from the lower
+ * balance. Not simulated, and named: faction invitations that need a
+ * backdoor on a server this opener unlocks, and the in-life effect of a
+ * higher level on reputation before an install.
+ * { deltaH, withH, withoutH } or { deltaH: null, why }.
+ */
+export function programExit(inputs, cost, expGainPerSec) {
+  if (!inputs || !pos(cost) || !num(expGainPerSec) || expGainPerSec < 0) return { deltaH: null, why: 'program cost or exp gain unreadable' }
+  if (!pos(inputs.expPerSec)) return { deltaH: null, why: 'no measured exp rate' }
+  const without = bestExitPolicy(inputs)
+  const withP = bestExitPolicy({
+    ...inputs,
+    money: (inputs.money ?? 0) - cost,
+    expPerSec: inputs.expPerSec + expGainPerSec,
+    ...(num(inputs.installCash) ? { installCash: Math.max(0, inputs.installCash - cost) } : {}),
+  })
+  if (!without.best || without.degenerate) return { deltaH: null, why: `exit unpriced or degenerate without the purchase (${without.why ?? without.degenerateWhy})` }
+  // Priced without it, unreachable with it: the purchase takes the capital the
+  // exit's money legs need (e.g. $250m every life from a $250m opening).
+  if (!withP.best || withP.degenerate) return { deltaH: Infinity, withH: Infinity, withoutH: without.best.hours, why: `the purchase leaves the exit unreachable (${withP.why ?? withP.degenerateWhy})` }
+  return { deltaH: withP.best.hours - without.best.hours, withH: withP.best.hours, withoutH: without.best.hours }
+}
