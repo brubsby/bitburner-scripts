@@ -250,6 +250,21 @@ export async function main(ns) {
   // only: it refuses, it never acts. The count comes from sleeve.js's
   // telemetry (0GB); unreadable or stale refuses too, because leaving on an
   // unknown is irreversible. --waive-covenant overrides, explicitly.
+  // THE DESTINATION HOLD: /endgame-hold.txt on home (any content, the reason)
+  // stops the exit until it is deleted. Leaving is irreversible and the
+  // watchdog's --next is fixed in code, so a pending choice of the next node
+  // must be able to stop it without a watchdog restart (2026-09-25: the user
+  // was choosing a node while --next 10 was minutes from firing).
+  const hold = ns.read('/endgame-hold.txt')
+  if (hold) {
+    report.result = 'held'
+    report.detail = `ready, but /endgame-hold.txt holds the exit: ${hold.slice(0, 200)}`
+    note('ok', report)
+    published = true
+    ns.tprint(`endgame: ${report.detail}`)
+    return
+  }
+
   if (reset?.currentNode === COVENANT_MANDATE.node && !flags['waive-covenant']) {
     let fleet = null
     try {
