@@ -290,3 +290,31 @@ export function programSpendAllowed(mults, gateRecord, item, lastAugReset, now =
   if (!p) return { allowed: false, why: `no priced verdict for ${item} (spendExit.programs)` }
   return { allowed: p.buy === true, why: p.why ?? null }
 }
+
+/**
+ * CASH FOR A BATCH OF ORDERS, raised from the trader's book only as needed.
+ *
+ * The trader keeps its capital invested (cash ~$80k on a $60b book, live
+ * 2026-09-25), so every money-in-hand action — a city faction's "$20m in
+ * hand", travel, a donation, an augmentation — would wait forever on cash
+ * that never arrives. And selling the WHOLE book for a $20m purchase (the old
+ * `liquidate all` prefix) throws away the only compounding income there is.
+ *
+ * So each costed order carries `cost` (dollars it needs in cash), and this
+ * inserts ONE `liquidate ['raise', X]` before the first of them, X = the
+ * batch's total cost x (1 + margin) — cash on hand is what act-liquidate
+ * measures against, so the raise is a target balance, not a sale size.
+ * Nothing is inserted when cash already covers it or no equity exists.
+ * Pure; returns a new array.
+ */
+export const TRAVEL_FARE = 200e3 // CONSTANTS.TravelCost
+export function withCashRaise(orders, cash, equity, margin = 0.02) {
+  if (!Array.isArray(orders)) return orders
+  const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)
+  const first = orders.findIndex((o) => costOf(o) > 0)
+  if (first < 0 || !(equity > 0) || orders.some((o) => o.kind === 'liquidate')) return orders
+  const total = orders.reduce((a, o) => a + costOf(o), 0)
+  if (fin(cash) && cash >= total) return orders
+  const target = Math.ceil(total * (1 + margin))
+  return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['raise', target], why: `raise $${target} cash from the stock book for this batch ($${Math.round(total)} of orders, $${Math.round(cash ?? 0)} in hand)` }, ...orders.slice(first)]
+}

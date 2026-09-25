@@ -308,5 +308,35 @@ export async function run() {
   }
   checks.push(k);
 
+  // -------------------------------------------------------------------
+  // REPLAY of the 2026-09-25 20:37 stall: stock.txt ok (equity $61.5b), cash
+  // $79,597; progress planned nothing (cash-only budget), income read null,
+  // three city joins "need 20m in hand" for 5.8h.
+  const l = new Check("B8l", "a fully-invested book funds purchases: plans count equity, batches raise just their cost, never sell the whole book");
+  {
+    l.examined(7);
+    const rec = { at: new Date().toISOString(), lastAugReset: 1790347700639, equity: 61489192040.85, returnPerSec: 3.71e-4, capitalCap: 6.0e12, incomePerSec: 4125870, wealth: 61489271638.57, cash: 79597.71 };
+    const st = econ.stockRecordOf(rec, 1790347700639);
+    if (!st.ok || !(st.equity > 6e10)) l.fail("the live record is not accepted", JSON.stringify(st));
+    const inc = econ.incomeOf({ scriptIncome: [0, 0], mults: bitNodeMults(8), stock: st });
+    if (!inc.priced) l.fail("the live record prices no income", JSON.stringify(inc));
+    // The city join: travel + join($20m) with $79,597 in hand.
+    const orders = [{ id: 1, kind: "travel", args: ["Chongqing"] }, { id: 2, kind: "join", args: ["Chongqing"], cost: 20e6 }];
+    const out = econ.withCashRaise(orders, rec.cash, st.equity);
+    const raise = out[0];
+    if (raise?.kind !== "liquidate" || raise.args[0] !== "raise") l.fail("no raise before the travel", JSON.stringify(out[0]));
+    else if (!(raise.args[1] >= 20.2e6 && raise.args[1] < 21e6)) l.fail(`the raise is not sized to the batch: ${raise.args[1]}`);
+    else l.note(raise.why);
+    if (out.some((o) => o.kind === "liquidate" && o.args[0] === "all")) l.fail("a purchase batch sells the whole book");
+    if (econ.withCashRaise(orders, 50e6, st.equity).some((o) => o.kind === "liquidate")) l.fail("raised cash that is already in hand");
+    if (econ.withCashRaise(orders, 0, 0).some((o) => o.kind === "liquidate")) l.fail("raised from an empty book");
+    const src = code("progress.js");
+    if (!/const liveMoney = ns\.getServerMoneyAvailable\('home'\) \+ stockEquity/.test(src)) l.fail("the aug plan budgets on cash alone");
+    if (!/\(player\.money \?\? 0\) \+ stockEquity >= moneyReq \+ 200e3/.test(src)) l.fail("city joins wait on cash alone");
+    if (/args: \['all'\], why: `\$\$\{Math\.round\(stockEquity\)\}/.test(src)) l.fail("the whole-book liquidation prefix is back");
+    if (!/String\(ns\.args\[0\] \?\? ''\) === 'raise'/.test(code("act-liquidate.js"))) l.fail("act-liquidate cannot raise a sized amount");
+  }
+  checks.push(l);
+
   return checks;
 }
