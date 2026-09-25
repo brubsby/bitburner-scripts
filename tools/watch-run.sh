@@ -13,7 +13,7 @@ INTERVAL=${1:-900}; MAX=$(( ${2:-12} * 3600 )); seen=""; first=${3:-}
 while [ $SECONDS -lt $MAX ]; do
   out=$(timeout 180 node tools/healthcheck.mjs --json 2>/dev/null)
   cur=$(printf '%s' "$out" | python3 -c "import json,sys
-try: d=json.load(sys.stdin); print('\n'.join(sorted(p['what'].split(':')[0] for p in d['problems'])))
+try: d=json.load(sys.stdin); import re; print('\n'.join(sorted(set(re.sub(r'[-+]?[0-9][0-9.e+-]*','#',p['what'].split(':')[0]) for p in d['problems']))))
 except Exception: print('HEALTHCHECK DID NOT ANSWER')")
   if [ "$first" = baseline ]; then seen="$cur"; first=""; echo "baseline: ${cur:-none}"; sleep "$INTERVAL"; continue; fi
   new=$(comm -13 <(printf '%s\n' "$seen" | sort -u) <(printf '%s\n' "$cur" | sort -u) | grep -v '^$')
