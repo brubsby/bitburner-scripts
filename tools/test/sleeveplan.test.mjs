@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Check } from "./harness.mjs";
-import "./gameresolve.mjs";
+import { REPO_ROOT } from "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
 
 const sp = await import("../../sleeveplan.js");
@@ -575,7 +575,7 @@ export async function run() {
 
     // And the ACTOR must publish the actual one to the field progress.js feeds
     // to the exit climb.
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "sleeve.js"), "utf8");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "sleeve.js"), "utf8");
     const bare = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const expT = bare.match(/const expT = fleetExpToPlayer\([^)]*\)/)?.[0] ?? "";
     if (!/onlyStudying:\s*true/.test(expT)) {
@@ -604,7 +604,7 @@ export async function run() {
   const c13 = new Check("SP13", "the plan says WHERE its horizon came from — priced, capped, carried or none");
   {
     c13.examined(5);
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const fn = src.match(/function writeSleevePlan\([\s\S]*?\n\}/)?.[0] ?? "";
     if (!fn) c13.fail("could not locate writeSleevePlan in progress.js", "a rotted check, not a clean repo");
     const bare = fn.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
@@ -637,7 +637,7 @@ export async function run() {
   const c14 = new Check("SP14", "the fleet record carries the skills that explain its rates");
   {
     c14.examined(2);
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "sleeve.js"), "utf8");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "sleeve.js"), "utf8");
     const bare = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const assigned = bare.match(/assigned:\s*sleeves\.map\([\s\S]*?\)\),/)?.[0] ?? "";
     if (!assigned) c14.fail("could not locate the assigned record in sleeve.js");
@@ -673,7 +673,7 @@ export async function run() {
     if (!sp.SYNC_SCALED.has("exp")) c15.fail("'exp' must be in SYNC_SCALED");
 
     // THE LADDER. money is reachable only when sleeve exp is impossible.
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "progress.js"), "utf8");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const fn = src.match(/function writeSleevePlan\([\s\S]*?\n\}/)?.[0] ?? "";
     const bare = fn.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     if (!fn) c15.fail("could not locate writeSleevePlan", "a rotted check, not a clean repo");

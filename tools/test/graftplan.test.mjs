@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
-import "./gameresolve.mjs";
+import { REPO_ROOT } from "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
 
 const gp = await import("../../graftplan.js");
@@ -198,7 +198,7 @@ export async function run() {
   const c6 = new Check("GP6", "act-graft.js reads the boolean the game refuses with");
   {
     c6.examined(3);
-    const src = fs.readFileSync(path.join(path.resolve(GAME, "../bitburner-scripts"), "act-graft.js"), "utf8");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "act-graft.js"), "utf8");
     if (!/=== true/.test(src)) c6.fail("act-graft.js must test the return value explicitly — graftAugmentation returns false, it does not throw");
     if (!/refused/.test(src)) c6.fail("a refusal must be published as a refusal, not as ok:false with no reason");
     if (!/prerequisites/i.test(src)) c6.fail("the refusal message must name the prerequisite case — the availability list does not filter it");
