@@ -34,6 +34,10 @@
 // ---------------------------------------------------------------------------
 
 import { reporter, describe, record } from 'status.js'
+import { beat, readLastAndReset } from 'trace.js'
+
+// The previous page's black-box record (trace.js), published once per page load.
+const LASTHANG = '/tel/lasthang.txt'
 
 const STATUS = '/tel/status.txt'
 
@@ -174,7 +178,36 @@ export async function main(ns) {
     mirror()
   })
 
+  // THE PREVIOUS PAGE'S RECORD (trace.js): if the page before this one hung,
+  // the sections it entered and never left, and when it was last alive.
+  try {
+    const pageStart = Math.round(eval('performance').timeOrigin)
+    const last = readLastAndReset(pageStart)
+    if (last) {
+      const open = Object.entries(last.sections ?? {})
+        .filter(([, v]) => v?.in && (!v.out || v.out < v.in))
+        .map(([k, v]) => ({ section: k, enteredAt: new Date(v.in).toISOString() }))
+      ns.write(LASTHANG, JSON.stringify({
+        at: new Date().toISOString(),
+        previousPageLoaded: last.page ? new Date(last.page).toISOString() : null,
+        lastAlive: last.alive ? new Date(last.alive).toISOString() : null,
+        visibleAtEnd: last.visible ?? null,
+        visibilityTransitions: (last.transitions ?? []).map((x) => ({ at: new Date(x.at).toISOString(), visible: x.visible })),
+        openSections: open,
+        why: open.length ? `the previous page stopped with ${open.map((o) => o.section).join(', ')} still running` : 'no section was open when the previous page stopped — not one of our instrumented loops',
+      }), 'w')
+      if (self !== 'home') ns.scp(LASTHANG, 'home', self)
+    }
+  } catch {
+    /* the recorder must never stop telemetry */
+  }
+
   while (true) {
+    try {
+      beat(eval('document').visibilityState !== 'hidden')
+    } catch {
+      /* ditto */
+    }
     try {
       const hosts = scanAll(ns)
       const servers = []

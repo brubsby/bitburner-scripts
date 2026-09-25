@@ -34,6 +34,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { sfLevel } from 'sfgate.js'
 import { gangEquipExit } from 'gangworth.js'
 import { bestExitPolicy, spendRuns } from 'exitplan.js'
+import { enter, leave } from 'trace.js'
 
 const STATUS = '/tel/gang.txt'
 
@@ -99,6 +100,14 @@ let lastWindowLife = null
 const NAMES = ['ash', 'bex', 'cid', 'dov', 'eli', 'fay', 'gus', 'hal', 'ivy', 'jax', 'kit', 'lou', 'max', 'nia', 'oz', 'pip']
 
 export async function main(ns) {
+  // Black-box recorder (trace.js): the synchronous work between sleeps is an
+  // open section; a page that hangs inside it leaves the mark behind.
+  enter('gang')
+  const nap = async (ms) => {
+    leave('gang')
+    await ns.sleep(ms)
+    enter('gang')
+  }
   ns.disableLog('ALL')
   const note = reporter(ns, STATUS, {})
   ns.atExit(() => note.exit('stopped', { detail: 'gang.js exited — killed, threw, or an install took it' }), 'status')
@@ -148,24 +157,24 @@ export async function main(ns) {
       const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, allowed }
       if (!allowed.ok) {
         publish(ns, { ...base, phase: 'refused', why: allowed.why })
-        await ns.sleep(60000)
+        await nap(60000)
         continue
       }
       if (!ns.gang.inGang()) {
         const host = GANG_FACTIONS.find((f) => player.factions.includes(f))
         if (!host) {
           publish(ns, { ...base, phase: 'waiting', why: `no gang faction joined yet (${GANG_FACTIONS.join(', ')})` })
-          await ns.sleep(30000)
+          await nap(30000)
           continue
         }
         const ok = ns.gang.createGang(host)
         publish(ns, { ...base, phase: ok ? 'created' : 'create-failed', faction: host })
-        await ns.sleep(2000)
+        await nap(2000)
         continue
       }
       if (!(typeof softcap === 'number' && isFinite(softcap))) {
         publish(ns, { ...base, phase: 'refused', why: 'GangSoftcap unreadable for this node' })
-        await ns.sleep(60000)
+        await nap(60000)
         continue
       }
 
@@ -340,7 +349,7 @@ export async function main(ns) {
       const plan = policy.assignFn(gang, members, { softcap, mode })
       if (!plan) {
         publish(ns, { ...base, phase: 'refused', why: 'assign could not read the gang' })
-        await ns.sleep(30000)
+        await nap(30000)
         continue
       }
       // Warfare, as the search chose: the strongest w-fraction of members
@@ -462,10 +471,10 @@ export async function main(ns) {
             bought,
             budget: { spendable: budget, claims: { join: claims.join, augmentations: claims.augmentations, home: typeof claims.home === 'object' ? claims.home.amount : claims.home } },
       })
-      await ns.sleep(10000)
+      await nap(10000)
     } catch (err) {
       ns.print(`gang error: ${err}`)
-      await ns.sleep(10000)
+      await nap(10000)
     }
   }
 }

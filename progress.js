@@ -152,6 +152,7 @@ import { bestExitPolicy, cycleStats, endpointCycleStats, effectiveHackingMultOf,
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
+import { enter, leave } from 'trace.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -365,7 +366,9 @@ export async function main(ns) {
   }
 
   try {
+    enter('progress') // black box (trace.js): a hang inside the pass leaves this open
     const r = await act(ns, canJoin, info, note)
+    leave('progress')
     finished = true
     return r
   } catch (err) {

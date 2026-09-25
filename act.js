@@ -32,6 +32,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { canUseSingularity, canUseGang } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 import { nextHomeUpgrade } from 'homecost.js'
+import { enter, leave } from 'trace.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -226,6 +227,14 @@ async function homeUpgradeIfBlocked(ns) {
 }
 
 export async function main(ns) {
+  // Black-box recorder (trace.js): the synchronous work between sleeps is an
+  // open section; a page that hangs inside it leaves the mark behind.
+  enter('act')
+  const nap = async (ms) => {
+    leave('act')
+    await ns.sleep(ms)
+    enter('act')
+  }
   ns.disableLog('ALL')
   const info = ns.getResetInfo()
   const here = ns.getHostname()
@@ -314,7 +323,7 @@ export async function main(ns) {
         // The reads the orders just changed — owned, catalogue, reputation, invitations.
         const after = await refreshSnapshots(ns, info, { force: true })
         publish({ health: 'ok', orders: ordersReport, snapshots: after, decision: { kind: 'idle', why: 'executed the planner\'s orders' }, work, last, log: log.slice(-8), tried })
-        await ns.sleep(5000)
+        await nap(5000)
         continue
       }
 
@@ -370,11 +379,11 @@ export async function main(ns) {
         while (log.length > 20) log.shift()
       }
       publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, backdoor, log: log.slice(-8), tried })
-      await ns.sleep(d.kind === 'idle' ? 30000 : 5000)
+      await nap(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)
       publish({ health: 'error', detail: String(err).slice(0, 200) })
-      await ns.sleep(15000)
+      await nap(15000)
     }
   }
 }

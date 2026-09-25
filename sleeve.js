@@ -107,6 +107,7 @@ import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES, GYMS, gymRate } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
+import { enter, leave } from 'trace.js'
 
 const RAMOVERRIDE_STATUS = '/tel/sleeve.txt'
 /** What progress.js wants the fleet doing, and over what horizon. Written on
@@ -295,6 +296,14 @@ let print_tasks = false;
 let sleeveTasks = [];
 
 async function act(ns, note) {
+  // Black-box recorder (trace.js): the synchronous work between sleeps is an
+  // open section; a page that hangs inside it leaves the mark behind.
+  enter('sleeve')
+  const nap = async (ms) => {
+    leave('sleeve')
+    await ns.sleep(ms)
+    enter('sleeve')
+  }
 	let flags = ns.flags([]);
 	sleeveTasks = getItem(sleeve_keys.SLEEVE_TASKS) || [];
 
@@ -688,6 +697,6 @@ async function act(ns, note) {
 				? `${refusals.length} sleeve assignment(s) were refused by the game this tick`
 				: `${sleeves.length} sleeve(s) assigned`,
 		});
-		await ns.sleep(30000);
+		await nap(30000);
 	}
 }

@@ -378,6 +378,16 @@ const WATCHDOG_TIER = 64;
   }
 }
 
+// THE LAST HANG (trace.js via tel.js): what the previous page was running
+// when it stopped, published after a reload. Reported for a day.
+{
+  const h = readTel("lasthang.txt");
+  if (h?.at && Date.now() - Date.parse(h.at) < 24 * 3600e3) {
+    const tr = (h.visibilityTransitions ?? []).map((x) => `${x.at.slice(11, 19)} ${x.visible ? "shown" : "hidden"}`).join(", ");
+    note(`last page stop: alive until ${h.lastAlive ?? "?"}; ${h.why}${tr ? `; visibility: ${tr}` : ""}`);
+  }
+}
+
 // THE PAGE'S HEAP (tel.js heapMB): the renderer died 2026-09-25 after hours
 // of play. Over 3GB of a ~4.4GB limit is a problem; otherwise reported.
 {
