@@ -28,13 +28,14 @@
 
 import { reporter } from 'status.js'
 import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
-import { spendable, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
+import { spendable, reserveFor, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { sfLevel } from 'sfgate.js'
 import { gangEquipExit } from 'gangworth.js'
 import { bestExitPolicy, spendRuns } from 'exitplan.js'
 import { enter, leave } from 'trace.js'
+import { stockRecordFromText, wealthOf, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 
 const STATUS = '/tel/gang.txt'
 
@@ -290,7 +291,10 @@ export async function main(ns) {
         // chosen against real money; the spend is then cut to what the
         // competition allows.
         const claimsNow = readClaims()
-        const contested = spendable('gang', ns.getServerMoneyAvailable('home'), claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0, home: 0 } } })
+        // Priced on WEALTH (cash + the trader's book, nodeecon.wealthOf):
+        // where stock.js trades, cash is ~$0 and the search would see no money.
+        fetchFromHome(ns, STOCK_FILE)
+        const contested = spendable('gang', wealthOf(ns.getServerMoneyAvailable('home'), stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)) ?? 0, claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0, home: 0 } } })
         search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e, m: policy.m } })
         searchBudget = contested
         searchStartedAt = Date.now()
@@ -421,12 +425,28 @@ export async function main(ns) {
       // competition is the named fallback for an unpriced exit.
       const exitCmp = compete?.exitCmp
       const exitPriced = !!exitCmp && typeof exitCmp.deltaH === 'number' && isFinite(exitCmp.deltaH)
+      // An APPROVED exit is priced on WEALTH and its cash is raised from the
+      // trader's book (a raise request act.js serves); the unpriced ln-per-
+      // dollar fallback spends cash in hand only — it never sells the book.
+      fetchFromHome(ns, STOCK_FILE)
+      const stockRec = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
+      const cashNow = ns.getServerMoneyAvailable('home')
+      const approved = exitPriced && exitCmp.deltaH < 0
       const permitted = exitPriced
-        ? exitCmp.deltaH < 0 ? spendable('gang', ns.getServerMoneyAvailable('home'), claims, { exitApproved: true }) : 0
-        : spendable('gang', ns.getServerMoneyAvailable('home'), claims, lnCompete ? { lnCompete } : {})
+        ? approved ? spendable('gang', wealthOf(cashNow, stockRec) ?? 0, claims, { exitApproved: true }) : 0
+        : spendable('gang', cashNow, claims, lnCompete ? { lnCompete } : {})
       if (compete) compete.decidedBy = exitPriced ? 'exit-sim' : 'ln-per-dollar fallback'
       // Spend what the trajectory chose, inside what the competition allows.
       let budget = Math.min(permitted, compete ? compete.cost : permitted * policy.y)
+      let raiseReq = null
+      if (approved && budget > 0) {
+        const cashBudget = spendable('gang', cashNow, claims, { exitApproved: true })
+        if (cashBudget < budget) raiseReq = raiseRequestFor({ cash: cashNow, equity: stockRec.ok ? stockRec.equity : 0, target: reserveFor('gang', claims, { exitApproved: true }) + budget, by: 'gang', why: `gang equipment the exit simulation approved ($${Math.round(budget)})`, lastAugReset: info.lastAugReset })
+        budget = Math.min(budget, cashBudget)
+      }
+      ns.write(raiseFileOf('gang'), JSON.stringify(raiseReq ?? { at: new Date().toISOString(), by: 'gang', target: 0, why: 'no raise needed' }), 'w')
+      if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('gang'), 'home', ns.getHostname())
+      if (compete) compete.raise = raiseReq
       if (compete) compete.rivals = rivalsLn
       if (compete) compete.permitted = permitted
       const disc = discount(g.respect, g.power)

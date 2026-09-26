@@ -25,6 +25,7 @@ import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { reporter } from 'status.js'
 import { spendExitFromRecord } from 'exitplan.js'
+import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 
 const STATUS = '/tel/sleeveaug.txt'
 const GATE_FILE = '/tel/installgate.txt'
@@ -53,7 +54,18 @@ export async function main(ns) {
     if (!settled) note.exit('stopped', { detail: 'sleeveaug.js stopped before finishing — purchases may be partial' })
   }, 'status')
   try {
-    decideAndBuy(ns, flags, note)
+    // CASH vs WEALTH: a priced purchase the stock book must fund posts a raise
+    // request and WAITS for act.js to serve it (the raise's hold lasts
+    // RAISE_HOLD_MS, well inside the 10 minutes to this job's next run), then
+    // decides again on the cash that landed.
+    const first = decideAndBuy(ns, flags, note)
+    if (first?.raise && !flags.dry) {
+      ns.write(raiseFileOf('sleeveaug'), JSON.stringify(first.raise), 'w')
+      const until = Date.now() + 150e3
+      while (Date.now() < until && ns.getServerMoneyAvailable('home') < first.raise.target) await ns.sleep(5000)
+      decideAndBuy(ns, flags, note)
+    }
+    ns.write(raiseFileOf('sleeveaug'), JSON.stringify({ at: new Date().toISOString(), by: 'sleeveaug', target: 0, why: 'no raise pending' }), 'w')
     settled = true
   } catch (e) {
     settled = true
@@ -79,7 +91,21 @@ function decideAndBuy(ns, flags, note) {
     return up ? up.cost : 0
   })()
   const gate = ns.read(GATE_FILE)
-  let budget = spendable('sleeveaugs', ns.getServerMoneyAvailable('home'), {
+  // WEALTH decides, CASH pays (nodeecon.wealthOf): where stock.js holds the
+  // book, cash is ~$0. Each purchase below is AFFORDED on cash + equity; when
+  // only the book covers it, `cashFor` records the balance to raise and the
+  // purchase waits for it (main posts the request to act.js).
+  const stock = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
+  const equity = stock.ok ? stock.equity : 0
+  const wealthNow = () => ns.getServerMoneyAvailable('home') + equity
+  let raise = null
+  const cashFor = (target, why) => {
+    if (ns.getServerMoneyAvailable('home') >= target) return true
+    const r = raiseRequestFor({ cash: ns.getServerMoneyAvailable('home'), equity, target, by: 'sleeveaug', why, lastAugReset: info.lastAugReset })
+    if (r && (!raise || r.target > raise.target)) raise = r
+    return false
+  }
+  let budget = spendable('sleeveaugs', wealthNow(), {
     join: joinClaim(gate, info.lastAugReset),
     augmentations: augClaim(gate, info.lastAugReset),
     home,
@@ -98,7 +124,7 @@ function decideAndBuy(ns, flags, note) {
     if (from === null || from >= COVENANT.maxSleeves) return { buy: false, why: from === null ? 'purchase count unreadable' : 'all Covenant sleeves bought' }
     if (!ns.getPlayer().factions.includes(COVENANT.faction)) return { buy: false, why: `not a ${COVENANT.faction} member (the body step trains for it only when the simulated exit with the campaign is faster)` }
     const cost = ns.sleeve.getSleeveCost()
-    const money = ns.getServerMoneyAvailable('home')
+    const money = wealthNow()
     let g = null
     try {
       g = JSON.parse(gate || 'null')
@@ -114,7 +140,8 @@ function decideAndBuy(ns, flags, note) {
       const room = num(join) ? money - join : null
       if (room === null) return { buy: false, why: 'join claim unreadable — not spending' }
       const why = from < COVENANT_MANDATE.target ? `mandated: sleeve #${from + 1} of ${COVENANT_MANDATE.target} (${COVENANT_MANDATE.decided})` : `opportunistic: sleeve #${from + 1} affordable now without holding`
-      return room >= cost ? { buy: true, cost, why, more: true } : { buy: false, why: `${why} — $${ns.format.number(room)} of $${ns.format.number(cost)} free` }
+      if (!(room >= cost)) return { buy: false, why: `${why} — $${ns.format.number(room)} of $${ns.format.number(cost)} free (cash + equity)` }
+      return cashFor(join + cost, why) ? { buy: true, cost, why, more: true } : { buy: false, why: `${why} — affordable on cash + equity; raising $${ns.format.number(join + cost)} cash from the stock book first` }
     }
     // Only when the simulated exit WITH the campaign beats the one without
     // (progress.js covenantExitOf). That comparison already spent this price
@@ -122,9 +149,8 @@ function decideAndBuy(ns, flags, note) {
     // join claim is still never touched.
     const campaign = covenantActive(g, info.lastAugReset)
     if (!campaign) return { buy: false, why: `the campaign is not on: ${g?.covenantExit?.why ?? 'no comparison published'}` }
-    return num(join) && money - join >= cost
-      ? { buy: true, cost, why: campaign.why }
-      : { buy: false, why: `campaign on; money $${ns.format.number(money)} of $${ns.format.number(cost)} (+ join claim ${join})` }
+    if (!(num(join) && money - join >= cost)) return { buy: false, why: `campaign on; cash + equity $${ns.format.number(money)} of $${ns.format.number(cost)} (+ join claim ${join})` }
+    return cashFor(join + cost, campaign.why) ? { buy: true, cost, why: campaign.why } : { buy: false, why: `campaign on and affordable on cash + equity; raising $${ns.format.number(join + cost)} cash from the stock book first` }
   })()
   decisions.push({ sleeve: another })
   if (another.buy && !flags.dry) {
@@ -176,8 +202,9 @@ function decideAndBuy(ns, flags, note) {
     const ex = spendExitFromRecord(rec, info.lastAugReset, total, 0)
     if (typeof ex.deltaH !== 'number') return { buy: [], total, why: `in-node cost unpriced (${ex.why}) — not buying` }
     const join = joinClaim(gate, info.lastAugReset)
-    if (!(typeof join === 'number' && ns.getServerMoneyAvailable('home') - join >= total)) return { buy: [], total, deltaH: ex.deltaH, why: 'money does not clear the join claim' }
+    if (!(typeof join === 'number' && wealthNow() - join >= total)) return { buy: [], total, deltaH: ex.deltaH, why: 'cash + equity does not clear the join claim' }
     if (!(ex.deltaH < 1 / 60)) return { buy: [], total, deltaH: ex.deltaH, why: `costs this node ${ex.deltaH.toFixed(2)}h of exit — not free; later-node value is unsimulated, so this waits for a decision` }
+    if (!cashFor(join + total, 'sleeve memory')) return { buy: [], total, deltaH: ex.deltaH, why: 'affordable on cash + equity; raising the cash from the stock book first' }
     return { buy: wants, total, deltaH: ex.deltaH, why: `$${ns.format.number(total)} costs this node ${(ex.deltaH * 60).toFixed(2)} min of exit; every later node starts these sleeves at sync 100` }
   })()
   decisions.push({ memory: { why: memory.why, total: memory.total ?? null, deltaH: memory.deltaH ?? null } })
@@ -224,8 +251,12 @@ function decideAndBuy(ns, flags, note) {
       continue
     }
     const total = priced.reduce((t, a) => t + a.cost, 0)
-    if (!(num(join) && ns.getServerMoneyAvailable('home') - join >= total)) {
-      decisions.push({ i, buy: [], why: `batch $${ns.format.number(total)} would touch the join claim (${join})` })
+    if (!(num(join) && wealthNow() - join >= total)) {
+      decisions.push({ i, buy: [], why: `batch $${ns.format.number(total)} would touch the join claim (${join}) — on cash + equity` })
+      continue
+    }
+    if (!cashFor(join + total, `sleeve ${i} augmentation batch (sleeveAugExit)`)) {
+      decisions.push({ i, buy: [], why: `batch $${ns.format.number(total)} affordable on cash + equity; raising the cash from the stock book first` })
       continue
     }
     decisions.push({ i, buy: verdict.buy, why: verdict.why })
@@ -242,5 +273,6 @@ function decideAndBuy(ns, flags, note) {
   if (!verdict) decisions.push({ augs: 'no fresh sleeveAugExit comparison from progress.js yet' })
   else if (!verdict.buy?.length) decisions.push({ augs: verdict.why })
 
-  return note('ok', { result: bought.length ? 'bought' : 'nothing', bought, decisions, budget, offers })
+  note('ok', { result: bought.length ? 'bought' : raise ? 'raising' : 'nothing', bought, decisions, budget, raise, offers })
+  return { raise }
 }

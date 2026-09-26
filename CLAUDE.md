@@ -274,6 +274,19 @@ donate/buyaug stops the rest of that chain; install runs only with something
 queued and after the homeup spend-down. Each batch executes once, keyed by its
 stamp, same life only. Outcomes: `/tel/act.txt` `orders.results`.
 
+**Cash is not wealth.** Wherever stock.js holds the book, cash reads ~$0 on a
+run worth billions. Affordability and pricing use cash + equity
+(`nodeecon.wealthOf`); the purchase itself is preceded by a sized raise — an
+order `cost` (progress.js batches) or a raise request `/tel/raise/<by>.txt`
+that act.js serves (`nodeecon.raiseToServe`, one per 5 min). The trader keeps
+a measured fee reserve (`feeReserveOf`) so a raised class fee is not
+reinvested. act.js also runs the negative-cash escape every pass
+(`softlockStep`: stop a paid class → one raise → install/soft reset only on
+two samples of wealth ≤ 0 with no book in a capital node; `/softlock-hold.txt`
+disables the last step; evidence in `/tel/softlock.txt`). `[W1]` fails on any
+new cash read that is neither combined with the book nor allow-listed with a
+reason in `tools/test/wealth.test.mjs`.
+
 **The planner reads snapshots, not Singularity.** `snapshot.js` turns
 `/tel/snap-*.txt` (written by `snap-*.js`, one read family each, 51-99GB at
 SF4.1, run by act.js every minute and after every order batch) into the view

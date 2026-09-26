@@ -86,12 +86,24 @@ export const PROGRESS_FRESH_MS = 15 * 60 * 1000
  *   schedule: {current: {faction}} | null,   the latest /tel/factionplan.txt
  *   work: {kind, faction?, type?} | null,    what act.js last started this life
  *   tried: {faction: lastAttemptMs},
+ *   equity: number,                          the stock trader's equity (0 without one)
  * }
- * @returns {kind, args, why} with kind in idle|join|work|crime|gym|travel
+ * @returns {kind, args, why} with kind in idle|join|work|crime|gym|travel|liquidate
  */
 export function decide(s = {}) {
   const p = s.player
   if (!p || !Array.isArray(s.factions) || !num(s.now)) return { kind: 'idle', why: 'state unreadable' }
+  // CASH IS NOT WEALTH (nodeecon.wealthOf). Where stock.js holds the book,
+  // cash reads ~$0 while the run is rich: "can we afford it" is cash +
+  // equity, and a purchase that needs cash in hand is preceded by a sized
+  // raise (kind 'liquidate' -> act-liquidate.js raise X). Without a trader
+  // equity is 0 and every gate below reads exactly as it did.
+  const cash = num(p.money) ? p.money : null
+  const wealth = cash === null ? null : cash + (num(s.equity) && s.equity > 0 ? s.equity : 0)
+  const raiseFor = (need, what) =>
+    cash !== null && cash < need && wealth >= need
+      ? { kind: 'liquidate', args: ['raise', Math.ceil(need * 1.02)], why: `${what}: $${Math.round(need)} needed in cash, $${Math.round(cash)} held — raising it from the stock book ($${Math.round(wealth - cash)} of equity)` }
+      : null
 
   // 0. The planner owns the slot only when it says it TOOK it.
   //
@@ -163,7 +175,7 @@ export function decide(s = {}) {
   } else if (s.gangNode === true && !s.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const combatShort = COMBAT.filter((st) => !(num(p.skills?.[st]) && p.skills[st] >= SLUM_SNAKES.combat))
     const karmaShort = !(num(p.karma) && p.karma <= SLUM_SNAKES.karma)
-    const moneyShort = !(num(p.money) && p.money >= SLUM_SNAKES.money)
+    const moneyShort = !(num(wealth) && wealth >= SLUM_SNAKES.money)
     // THE GANG'S KARMA GATE SURVIVES THE FACTION'S. Joining Slum Snakes wants
     // karma -9; the GANG wants -54,000 outside BitNode 2
     // (GangConstants.GangKarmaRequirement), and karma survives an install
@@ -183,6 +195,9 @@ export function decide(s = {}) {
     if (!combatShort.length && !karmaShort && !moneyShort) {
       const last = s.tried?.[SLUM_SNAKES.name] ?? 0
       if (s.now - last < 60e3) return { kind: 'idle', why: `Slum Snakes requirements met; join tried ${Math.round((s.now - last) / 1000)}s ago, waiting for the invitation` }
+      // The invitation wants the $1m IN HAND (FactionJoinCondition money).
+      const r = raiseFor(SLUM_SNAKES.money, 'the Slum Snakes invitation wants $1m in hand')
+      if (r) return r
       return { kind: 'join', args: [SLUM_SNAKES.name], why: 'Slum Snakes requirements met: combat 30, $1m, karma -9' }
     }
     if (karmaShort || moneyShort || gangKarmaShort) {
@@ -208,14 +223,21 @@ export function decide(s = {}) {
     }
     // Combat short, karma and money in hand.
     if (p.city !== GYM.city) {
-      if (!(num(p.money) && p.money >= TRAVEL_COST)) return { kind: 'idle', why: `need $${TRAVEL_COST} to travel to ${GYM.city} for the gym` }
+      if (!(num(wealth) && wealth >= TRAVEL_COST)) return { kind: 'idle', why: `need $${TRAVEL_COST} to travel to ${GYM.city} for the gym` }
+      const r = raiseFor(TRAVEL_COST, `the fare to ${GYM.city}`)
+      if (r) return r
       return { kind: 'travel', args: [GYM.city], why: `combat ${combatShort.join('/')} short; Powerhouse is in ${GYM.city}` }
     }
     const stat = combatShort[0]
     if (s.work?.kind === 'gym' && s.work.stat === stat) return { kind: 'idle', why: `training ${stat} at ${GYM.name}: ${p.skills[stat]}/${SLUM_SNAKES.combat}` }
     // The gym fee is charged every second with no balance check
     // (ClassWork.tsx:57-72): start it only while cash covers FEE_FLOOR_S of it.
-    if (!feeFundable(p.money, GYM_FEE_PER_SEC)) return { kind: 'idle', why: `training ${stat} at ${GYM.name} costs $${GYM_FEE_PER_SEC}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it` }
+    // Afforded on wealth; paid in cash — so below zero nothing starts (the
+    // escape in act.js restores it), and a cash floor the book covers is raised.
+    if (!feeFundable(wealth, GYM_FEE_PER_SEC)) return { kind: 'idle', why: `training ${stat} at ${GYM.name} costs $${GYM_FEE_PER_SEC}/s and cash + equity does not cover ${FEE_FLOOR_S}s of it — not starting it` }
+    if (!(cash >= 0)) return { kind: 'idle', why: `cash $${Math.round(cash ?? NaN)} is below zero — no fee-charging work starts until it is back (act.js negative-cash escape)` }
+    const rg = raiseFor(GYM_FEE_PER_SEC * FEE_FLOOR_S, `${FEE_FLOOR_S}s of the ${GYM.name} fee (charged with no balance check)`)
+    if (rg) return rg
     return { kind: 'gym', args: [GYM.name, GYM_CLASS[stat]], stat, why: `combat ${stat} ${p.skills?.[stat]}/${SLUM_SNAKES.combat} for Slum Snakes` }
   }
 

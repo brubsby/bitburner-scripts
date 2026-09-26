@@ -40,7 +40,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // The record this file publishes and the hold it honours are specified in
 // nodeecon.js (the one module that reads them): equity, returnPerSec,
 // capitalCap, incomePerSec, manip; /tel/stock-hold.txt.
-import { STOCK_HOLD_FILE, STOCK_HOLD_MS } from 'nodeecon.js'
+import { STOCK_HOLD_FILE, STOCK_HOLD_MS, feeReserveOf, FEE_FLOOR_S } from 'nodeecon.js'
 
 const STATUS = '/tel/stock.txt'
 const GATE_FILE = '/tel/installgate.txt'
@@ -221,6 +221,17 @@ export async function main(ns) {
   let startWealth = null
   const HIST = '/tel/stock-hist.txt'
   let lifeSec = 0
+  // THE FEE RESERVE (nodeecon.feeReserveOf): cash that leaves between ticks
+  // with no balance check (class and gym fees, player and sleeves) is measured
+  // as the external flow per second — cash at a tick's start minus cash after
+  // the previous tick's own trades — and twice FEE_FLOOR_S of its median is
+  // kept uninvested (book.reserve). Without it every fee raise was reinvested
+  // at the hold's release and cash ran below zero mid-leg; twice the floor so
+  // the fee payers' own FEE_FLOOR_S start gate does not flap at the edge.
+  const feeFlows = []
+  let cashAfterPrev = null
+  let cashAfterAt = null
+  let feeReserve = { drainPerSec: 0, reserve: 0, n: 0 }
   const equityOf = (positions, ask, bid) => {
     let v = 0
     for (const s of syms) {
@@ -266,6 +277,11 @@ export async function main(ns) {
 
       const positions = Object.fromEntries(syms.map((s) => [s, ns.stock.getPosition(s)]))
       const cash = ns.getServerMoneyAvailable('home')
+      if (cashAfterPrev !== null && Date.now() > cashAfterAt) {
+        feeFlows.push((cash - cashAfterPrev) / ((Date.now() - cashAfterAt) / 1000))
+        if (feeFlows.length > 20) feeFlows.shift()
+      }
+      feeReserve = feeReserveOf(feeFlows, 2 * FEE_FLOOR_S)
       const posValue = equityOf(positions, ask, bid)
       const wealth = cash + posValue
       if (startWealth === null) startWealth = wealth
@@ -288,7 +304,7 @@ export async function main(ns) {
       // from cash, so the cost of the unknown is one tick of delay, not a spend.
       const claimKnown = isFinite(R)
       const raiseCash = claimKnown && wealth >= R ? R : 0
-      const book = { cash, positions, maxShares, ask, bid, canShort, raiseCash, boost }
+      const book = { cash, positions, maxShares, ask, bid, canShort, raiseCash, reserve: feeReserve.reserve, boost }
       const decided = decide(st, book)
       const diag = decided.diag
       // Under a hold nothing is OPENED; exits and trims still go through.
@@ -315,6 +331,8 @@ export async function main(ns) {
       }
       last = { at: new Date().toISOString(), orders, refused }
       const flows = ns.getServerMoneyAvailable('home') - cashBefore
+      cashAfterPrev = cashBefore + flows
+      cashAfterAt = Date.now()
       const posAfter = orders.length ? Object.fromEntries(syms.map((s) => [s, ns.stock.getPosition(s)])) : positions
       const equity = equityOf(posAfter, ask, bid)
       if (prevEquity !== null) {
@@ -362,6 +380,7 @@ export async function main(ns) {
         cash,
         positionsValue: posValue,
         claims: { ...claims, reserve: claimKnown ? R : null, unreadable: !claimKnown, raiseCash },
+        feeReserve,
         lastAugReset: info.lastAugReset,
         equity,
         // Net return on the capital managed, per second, over the last hour
