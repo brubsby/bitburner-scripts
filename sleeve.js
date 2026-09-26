@@ -108,6 +108,7 @@ import { CRIMES, GYMS, gymRate } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { enter, leave } from 'trace.js'
+import { stockRecordFromText, wealthOf, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 
 const RAMOVERRIDE_STATUS = '/tel/sleeve.txt'
 /** What progress.js wants the fleet doing, and over what horizon. Written on
@@ -374,7 +375,12 @@ async function act(ns, note) {
 		if (ns.getHostname() !== 'home') {
 			try { ns.scp(PLAN, ns.getHostname(), 'home') } catch { /* previous copy stands */ }
 			try { ns.scp(EXIT_INPUTS, ns.getHostname(), 'home') } catch { /* previous copy stands */ }
+			try { ns.scp(STOCK_FILE, ns.getHostname(), 'home') } catch { /* previous copy stands; its stamp decides */ }
 		}
+		// CASH vs WEALTH (sleeveplan's fee gates): the trader's book counts for
+		// what the fleet can afford; the fees themselves are paid in cash.
+		const cashNow = ns.getPlayer?.().money
+		const stockNow = stockRecordFromText(ns.read(STOCK_FILE), ns.getResetInfo()?.lastAugReset)
 		let plan = null
 		try { plan = JSON.parse(ns.read(PLAN) || 'null') } catch { plan = null }
 		// A plan from another BitNode is not a plan: prestigeSourceFile calls
@@ -398,7 +404,9 @@ async function act(ns, note) {
 			playerIntelligence: ns.getPlayer?.().skills?.intelligence,
 			// Cash, so the exp objective can refuse classes it cannot pay for
 			// (sleeveplan STUDY_FUND_S). getPlayer is already billed here.
-			money: ns.getPlayer?.().money,
+			money: cashNow,
+			// Cash + the trader's equity: what the fees are AFFORDED on.
+			wealth: wealthOf(cashNow, stockNow),
 			// The faction whose reputation the run actually needs, and the
 			// inputs to price it. progress.js publishes the faction only when
 			// the player is already a MEMBER — setToFactionWork throws
@@ -416,6 +424,14 @@ async function act(ns, note) {
 				}
 			})(),
 		})
+
+		// THE CASH THE FEES NEED, from the book (act.js serves the request).
+		// Always written: a stale request cannot outlive the need for it.
+		{
+			const req = auto?.cashNeed > 0 ? raiseRequestFor({ cash: cashNow, equity: stockNow.ok ? stockNow.equity : 0, target: auto.cashNeed, by: 'sleeve', why: `the fleet's class/gym fees for the fee floor`, lastAugReset: ns.getResetInfo()?.lastAugReset }) : null
+			ns.write(raiseFileOf('sleeve'), JSON.stringify(req ?? { at: new Date().toISOString(), by: 'sleeve', target: 0, why: 'no raise needed' }), 'w')
+			if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('sleeve'), 'home', ns.getHostname())
+		}
 
 		sleeves.forEach((sleeve, index) => {
 			let sleeveTask = sleeveTasks[index] ?

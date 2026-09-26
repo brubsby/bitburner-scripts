@@ -37,6 +37,9 @@ import { canUseSingularity, canUseGang } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { enter, leave } from 'trace.js'
+// Pure (already in this file's closure through actplan.js): wealth, the
+// raise requests act.js serves, and the negative-cash escape.
+import { stockRecordFromText, raiseToServe, raiseFileOf, RAISE_REQUESTERS, RAISE_HOLD_MS, RAISE_COOLDOWN_MS, softlockStep, SOFTLOCK_FILE, SOFTLOCK_HOLD_FILE } from 'nodeecon.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -66,6 +69,10 @@ const ACTORS = {
   homeram: 'act-homeram.js',
   graft: 'act-graft.js',
   liquidate: 'act-liquidate.js',
+  // The negative-cash escape (nodeecon.softlockStep): stop a paid class, and
+  // the soft reset of a life that cannot pay for anything any more.
+  stop: 'act-stop.js',
+  softreset: 'act-softreset.js',
 }
 /** Dynamic snapshots older than this are re-taken before the planner's next pass. */
 const SNAPSHOT_REFRESH_MS = 60 * 1000
@@ -266,6 +273,94 @@ async function homeUpgradeIfBlocked(ns) {
   return { kind: h.next.kind, cost: h.next.cost, ok: r.ok }
 }
 
+// Raises this process served (a spender's request, the negative-cash escape,
+// a bootstrap decision): when, and when their hold is released. In memory: a
+// restart forgets them, which only makes the next raise possible sooner.
+const raiseState = { servedAt: 0, holdUntil: 0, negAt: 0, softSamples: [] }
+
+/**
+ * RAISE REQUESTS (nodeecon.raiseRequestFor): a priced spend outside the
+ * planner's orders — a sleeve's fees, a sleeve augmentation batch, the gang's
+ * approved equipment, an approved fleet or hacknet spend — asks for cash by
+ * writing /tel/raise/<by>.txt on home. Serve the largest fresh one, at most
+ * once per RAISE_COOLDOWN_MS, and release the hold RAISE_HOLD_MS later (the
+ * requester's next loop spends it; the trader keeps a measured fee reserve
+ * after that, stock.js).
+ */
+async function serveRaiseRequests(ns, info, cash, stock) {
+  const now = Date.now()
+  if (raiseState.holdUntil && now >= raiseState.holdUntil) {
+    releaseStockHold(ns, info, 'a served raise had its spend window')
+    raiseState.holdUntil = 0
+  }
+  const reqs = RAISE_REQUESTERS.map((by) => {
+    try {
+      return JSON.parse(readHomeFile(ns, raiseFileOf(by)) || 'null')
+    } catch {
+      return null
+    }
+  })
+  const v = raiseToServe(reqs, { cash, equity: stock.ok ? stock.equity : 0, lastAugReset: info.lastAugReset, lastServedAt: raiseState.servedAt, now })
+  if (!v.serve) return { served: null, why: v.why }
+  raiseState.servedAt = now
+  const r = await runActor(ns, 'liquidate', ['raise', v.serve.target])
+  raiseState.holdUntil = Date.now() + RAISE_HOLD_MS
+  return { served: v.serve.by, target: v.serve.target, ok: r.ok ?? null, why: v.why, error: r.result?.error ?? r.why ?? null }
+}
+
+/**
+ * THE NEGATIVE-CASH ESCAPE (nodeecon.softlockStep has the rule and why).
+ * Publishes /tel/softlock.txt every pass — the evidence precedes any act.
+ */
+async function softlockGuard(ns, info, node, cash, stock) {
+  const now = Date.now()
+  const rep = readSnapshot(ns, 'rep', info)
+  const owned = readSnapshot(ns, 'owned', info)
+  const queued = Array.isArray(owned.data?.purchased) && Array.isArray(owned.data?.owned) ? owned.data.purchased.length - owned.data.owned.length : null
+  const step = softlockStep({
+    cash,
+    stock,
+    work: rep.data ? rep.data.work ?? null : null,
+    queued,
+    hackPays: node?.ScriptHackMoneyGain ?? null,
+    hold: cash < 0 ? readHomeFile(ns, SOFTLOCK_HOLD_FILE) : '',
+    samples: raiseState.softSamples,
+    lastRaiseAt: raiseState.negAt,
+    now,
+  })
+  raiseState.softSamples = step.samples
+  const record = { at: new Date(now).toISOString(), lastAugReset: info.lastAugReset, level: step.level, why: step.why, cash, equity: stock.ok ? stock.equity : null, stock: stock.ok ? 'ok' : stock.why, queued, samples: step.samples, actions: step.actions }
+  const put = () => {
+    ns.write(SOFTLOCK_FILE, JSON.stringify(record, null, 2), 'w')
+    if (ns.getHostname() !== 'home') ns.scp(SOFTLOCK_FILE, 'home', ns.getHostname())
+  }
+  put()
+  const results = []
+  for (const a of step.actions) {
+    if (a.kind === 'stop') results.push({ kind: 'stop', ...(await runActor(ns, 'stop', [])) })
+    else if (a.kind === 'raise') {
+      raiseState.negAt = now
+      results.push({ kind: 'raise', ...(await runActor(ns, 'liquidate', ['raise', a.target])) })
+      raiseState.holdUntil = Date.now() + RAISE_HOLD_MS
+    } else if (a.kind === 'install' || a.kind === 'softreset') {
+      const manual = a.kind === 'install' ? readHomeFile(ns, INSTALL_HOLD_FILE) : ''
+      if (manual) {
+        results.push({ kind: a.kind, ok: false, why: `held by ${INSTALL_HOLD_FILE}: ${manual.slice(0, 120)}` })
+        continue
+      }
+      // Irreversible: the evidence is already on home; say which act follows.
+      record.acting = a
+      put()
+      results.push({ kind: a.kind, ...(await runActor(ns, a.kind, ['boot.js'])) })
+    }
+  }
+  if (results.length) {
+    record.results = results.map((r) => ({ kind: r.kind, ok: r.ok ?? null, why: r.why ?? r.result?.error ?? null }))
+    put()
+  }
+  return { level: step.level, why: step.why, results: record.results ?? [] }
+}
+
 export async function main(ns) {
   // Black-box recorder (trace.js): the synchronous work between sleeps is an
   // open section; a page that hangs inside it leaves the mark behind.
@@ -304,6 +399,11 @@ export async function main(ns) {
       // home, unreachable. Invariant C10 exists for exactly this.
       for (const f of ['/tel/progress.txt', '/tel/factionplan.txt', '/tel/installgate.txt', '/tel/gang.txt', '/tel/stock.txt', ORDERS]) fetchFromHome(ns, f)
       const snaps = await refreshSnapshots(ns, info)
+      // CASH IS NOT WEALTH (nodeecon.wealthOf): the trader's equity counts
+      // for what the bootstrap can afford, and a negative balance is escaped.
+      const cash = ns.getServerMoneyAvailable('home')
+      const stockRec = stockRecordFromText(ns.read('/tel/stock.txt'), info.lastAugReset)
+      const softlock = await softlockGuard(ns, info, node, cash, stockRec)
 
       // ---- 1. orders from the planner --------------------------------------
       const batch = readJson(ns, ORDERS)
@@ -401,6 +501,8 @@ export async function main(ns) {
       const homeUp = await homeUpgradeIfBlocked(ns)
       // ---- 1c. a backdoor backdoor.js asked for (Singularity, no screen) ----
       const backdoor = backdoorIfRequested(ns)
+      // ---- 1d. a priced spender asked for cash from the book ---------------
+      const raise = await serveRaiseRequests(ns, info, ns.getServerMoneyAvailable('home'), stockRec)
 
       // ---- 2. the bootstrap ----------------------------------------------
       const state = {
@@ -421,6 +523,9 @@ export async function main(ns) {
         gangKarma: gangKarmaTarget(info?.currentNode === 2),
         factions: player.factions ?? [],
         player,
+        // The trader's equity: the bootstrap's money gates read cash + this,
+        // and ask for a raise (kind 'liquidate') when only the book covers it.
+        equity: stockRec.ok ? stockRec.equity : 0,
         node: node ? { CrimeSuccessRate: node.CrimeSuccessRate, CrimeMoney: node.CrimeMoney, CrimeExpGain: node.CrimeExpGain, GangSoftcap: node.GangSoftcap, GangUniqueAugs: node.GangUniqueAugs } : null,
         progress: readJson(ns, '/tel/progress.txt'),
         // A schedule from another life (or another BitNode) is not a schedule.
@@ -432,10 +537,15 @@ export async function main(ns) {
         tried,
         gangFaction: ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction ?? null : null,
       }
-      const d = decide(state)
+      let d = decide(state)
+      // A bootstrap raise shares the cooldown and the hold release of every
+      // other raise this process serves (commission and a paused book each).
+      if (d.kind === 'liquidate' && Date.now() - raiseState.servedAt < RAISE_COOLDOWN_MS) d = { kind: 'idle', why: `${d.why} — waiting: a raise was served ${Math.round((Date.now() - raiseState.servedAt) / 1000)}s ago` }
       let outcome = null
       if (d.kind !== 'idle') {
+        if (d.kind === 'liquidate') raiseState.servedAt = Date.now()
         const r = await runActor(ns, d.kind, d.args)
+        if (d.kind === 'liquidate') raiseState.holdUntil = Date.now() + RAISE_HOLD_MS
         outcome = r
         if (d.kind === 'join') tried[d.args[0]] = Date.now()
         if (r.ok === true) {
@@ -448,7 +558,7 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, backdoor, log: log.slice(-8), tried })
+      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, backdoor, raise, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
       await nap(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)

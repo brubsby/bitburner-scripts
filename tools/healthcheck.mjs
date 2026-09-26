@@ -34,6 +34,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { wealthNegativeCheck } from "../nodeecon.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEL = path.join(ROOT, ".telemetry");
@@ -155,7 +156,15 @@ const prev = (() => {
 
 const now = {
   at: new Date().toISOString(),
+  // CASH, from the save — not wealth. Where stock.js holds the book cash
+  // reads ~$0 on a run worth billions; `wealth` below adds the trader's equity.
   money: state.money ?? null,
+  cash: num(state.money) ? state.money : null,
+  equity: (() => {
+    const st = tel["stock.txt"] ?? readTel("stock.txt");
+    const age = ageMin(st?.at);
+    return st && age !== null && age < 10 && num(st.equity) ? st.equity : null;
+  })(),
   karma: state.karma ?? null,
   hacking: state.skills?.hacking ?? null,
   hackingExp: state.exp?.hacking ?? null,
@@ -558,6 +567,13 @@ if (!sleevesExpected) {
     const st = readTel("stock.txt");
     if (st && num(st.returnPerSec)) fail(`progress.js reads income null while stock.txt publishes returnPerSec ${st.returnPerSec.toExponential(2)}`, "the planner's income path is broken, not the trader");
   }
+  // F6: WEALTH NEGATIVE — cash + equity below zero, or cash below zero in two
+  // samples running. Class/gym fees are charged with no balance check; on
+  // 2026-09-25 sleeves at ZB drained a liquidated book to -$2.4m and the life
+  // had to be soft-reset by hand. act.js's escape (nodeecon.softlockStep)
+  // should have caught it; this fails if it did not.
+  now.wealth = num(now.cash) ? now.cash + (num(now.equity) ? now.equity : 0) : null;
+  for (const w of wealthNegativeCheck({ cash: now.cash, equity: now.equity }, prev && sameNode ? { cash: prev.cash } : null)) fail(w, `act.js softlock record: ${String(readTel("softlock.txt")?.why ?? "none").slice(0, 160)}`);
   // F5: the player's work slot must be in use.
   if (!now.working && prev && sameNode && prev.working === false && dtMin >= MIN_INTERVAL_MIN) fail("PLAYER IDLE: no current work across two samples", "the work slot is the one resource that cannot be bought");
 }

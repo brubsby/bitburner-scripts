@@ -617,6 +617,9 @@ function runB711() {
     // act-liquidate.js: act.js runs it before every install and ahead of any
     // batch that spends stock equity (stock TIX calls, not Singularity).
     "act-liquidate.js",
+    // act-stop.js / act-softreset.js: act.js's negative-cash escape
+    // (nodeecon.softlockStep) - stop a paid class; soft-reset a softlocked life.
+    "act-stop.js", "act-softreset.js",
     // act-backdoor.js is launched by act.js from backdoor.js's /tel/backdoor-req.txt,
     // not through ACTORS: it runs for hacking time / 4 and is not waited on.
     "act-backdoor.js",

@@ -57,7 +57,9 @@ export async function run() {
   {
     const gs = src("gang.js");
     c4.examined(2);
-    if (!/const permitted = exitPriced\s*\? exitCmp\.deltaH < 0 \? spendable\('gang', ns\.getServerMoneyAvailable\('home'\), claims, \{ exitApproved: true \}\) : 0\s*: spendable\('gang', ns\.getServerMoneyAvailable\('home'\), claims, lnCompete \? \{ lnCompete \} : \{\}\)/.test(gs)) c4.fail("gang.js must follow the exit comparison before the ln competition");
+    // The approved spend is priced on WEALTH (cash + the trader's book) and
+    // raised from it; the unpriced fallback spends cash only ([W] wealth.test).
+    if (!/const approved = exitPriced && exitCmp\.deltaH < 0/.test(gs) || !/const permitted = exitPriced\s*\? approved \? spendable\('gang', wealthOf\(cashNow, stockRec\) \?\? 0, claims, \{ exitApproved: true \}\) : 0\s*: spendable\('gang', cashNow, claims, lnCompete \? \{ lnCompete \} : \{\}\)/.test(gs)) c4.fail("gang.js must follow the exit comparison before the ln competition");
     if (!/gangEquipExit\(JSON\.parse\(ns\.read\(EXIT_INPUTS\)/.test(gs) || !/fetchFromHome\(ns, EXIT_INPUTS\)/.test(gs)) c4.fail("gang.js must price equipment from progress.js's exit inputs, pulled from home");
   }
   checks.push(c4);
@@ -128,7 +130,7 @@ export async function run() {
     const pr = src("progress.js");
     const fn = pr.slice(pr.indexOf("function covenantExitOf"), pr.indexOf("function exitInputsOf"));
     c10.examined(3);
-    if (!/for \(let n = from; n < COVENANT_MANDATE\.target; n\+\+\) need \+= covenantSleeveCost\(n\)/.test(fn) || !/if \(ns\.getServerMoneyAvailable\('home'\) >= need \+ COVENANT\.joinMoney\) \{\s*return out\(true,/.test(fn)) c10.fail("with the mandated sleeves' money in hand, the campaign must be active now");
+    if (!/for \(let n = from; n < COVENANT_MANDATE\.target; n\+\+\) need \+= covenantSleeveCost\(n\)/.test(fn) || !/if \(\(wealthOf\(ns\.getServerMoneyAvailable\('home'\), stockNow\) \?\? 0\) >= need \+ COVENANT\.joinMoney\) \{\s*return out\(true,/.test(fn)) c10.fail("with the mandated sleeves' money in hand, the campaign must be active now");
     const mIdx = fn.indexOf("need += covenantSleeveCost(n)"), sIdx = fn.indexOf("return withC.best.installsFirst === 0");
     if (!(mIdx > 0 && mIdx < sIdx)) c10.fail("the money-in-hand rule must come before the final-window schedule");
     if (!/binding: covenantExit\?\.active && covenantExit\?\.mandated \? \{ destroyedByInstall: true,/.test(pr)) c10.fail("the gate must hold (destroyedByInstall) while the mandated campaign runs");

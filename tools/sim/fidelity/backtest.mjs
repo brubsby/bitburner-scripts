@@ -47,6 +47,18 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
 const HISTORY = path.join(ROOT, ".telemetry/history.jsonl");
+// `money` in history.jsonl is CASH. Where stock.js holds the book it moves
+// money in and out of positions every tick, so a cash delta is not earnings:
+// say so rather than print a number that means nothing (nodeecon.wealthOf).
+{
+  try {
+    const st = JSON.parse(fs.readFileSync(path.join(ROOT, ".telemetry/stock.txt"), "utf8"));
+    if (Number.isFinite(st?.equity) && st.equity > 0)
+      console.log(`WARNING: stock.js holds $${(st.equity / 1e9).toFixed(2)}b of equity — history 'money' is cash only, so moneyDelta/earnedLowerBound below are NOT earnings in any window the trader traded.`);
+  } catch {
+    /* no trader record: cash is the whole of the money */
+  }
+}
 
 const argv = process.argv.slice(2);
 const flag = (n, d = null) => {

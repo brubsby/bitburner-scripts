@@ -46,6 +46,7 @@ import { nextHomeUpgrade } from 'homecost.js'
 // The node's multiplier table (pure lookup; its main() is not imported code).
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetTarget } from 'fleetshape.js'
+import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 
 // Where progress.js publishes the augmentation plan and its total cost.
 const GATE_FILE = '/tel/installgate.txt'
@@ -184,6 +185,15 @@ function reserveNow(ns) {
       const join = joinClaim(ns.read(GATE_FILE), life)
       if (typeof join !== 'number') return Infinity
       const spend = v.servers.buy && v.servers.maxSpend > 0 ? v.servers.maxSpend : 0
+      // THE APPROVED SPEND NEEDS CASH (nodeecon: wealth decides, cash pays).
+      // The verdict priced it on cash + the trader's book; where the book
+      // holds the money, ask act.js to raise it (a sized raise request).
+      fetchFromHome(ns, STOCK_FILE)
+      const stock = stockRecordFromText(ns.read(STOCK_FILE), life)
+      const target = Math.max(join, SETTINGS.floorReserve) + spend
+      const req = spend > 0 ? raiseRequestFor({ cash: money, equity: stock.ok ? stock.equity : 0, target, by: 'buyserv', why: `fleet spend the exit simulation approved ($${Math.round(spend)})`, lastAugReset: life }) : null
+      ns.write(raiseFileOf('buyserv'), JSON.stringify(req ?? { at: new Date().toISOString(), by: 'buyserv', target: 0, why: 'no raise needed' }), 'w')
+      if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('buyserv'), 'home', ns.getHostname())
       return Math.max(join, money - spend, SETTINGS.floorReserve)
     }
   } catch {

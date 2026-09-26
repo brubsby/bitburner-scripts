@@ -35,6 +35,7 @@
 
 import { reporter, describe, record } from 'status.js'
 import { beat, readLastAndReset } from 'trace.js'
+import { stockRecordFromText, wealthOf, STOCK_FILE } from 'nodeecon.js'
 
 // The previous page's black-box record (trace.js), published once per page load.
 const LASTHANG = '/tel/lasthang.txt'
@@ -241,11 +242,25 @@ export async function main(ns) {
       }
 
       const player = ns.getPlayer()
+      // CASH is not WEALTH: where stock.js holds the book, `money` (cash) reads
+      // ~$0 on a run worth billions. Publish both, labelled (nodeecon.wealthOf;
+      // the trader's record is pulled from home — ns.read is local).
+      if (self !== 'home') {
+        try {
+          ns.scp(STOCK_FILE, self, 'home')
+        } catch {
+          /* the previous copy stands; its stamp decides */
+        }
+      }
+      const stockRec = stockRecordFromText(ns.read(STOCK_FILE), ns.getResetInfo()?.lastAugReset)
       // `at` and `health` are supplied by the reporter, which puts them first.
       const report = {
         source: self,
         hackingLevel: player.skills.hacking,
         money: Math.round(player.money),
+        cash: Math.round(player.money),
+        stockEquity: stockRec.ok ? Math.round(stockRec.equity) : null,
+        wealth: Math.round(wealthOf(player.money, stockRec) ?? NaN),
         // [1] is money earned per second since the last augmentation install.
         // [0] sums the rate over *live* scripts, which reads exactly zero under a
         // batcher however much it earns: its h/g/w workers are one-shot and

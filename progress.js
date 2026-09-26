@@ -137,7 +137,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExit, bestCountRoute, countRoutes, ticketLadder } from 'countexit.js'
-import { INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -1959,7 +1959,9 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
       // leg at zero, the campaign's cost is just the combat legs.
       let need = 0
       for (let n = from; n < COVENANT_MANDATE.target; n++) need += covenantSleeveCost(n)
-      if (ns.getServerMoneyAvailable('home') >= need + COVENANT.joinMoney) {
+      // Cash + the trader's book (nodeecon.wealthOf): sleeveaug.js raises the
+      // purchase from it (a raise request) — cash alone is ~$0 where it trades.
+      if ((wealthOf(ns.getServerMoneyAvailable('home'), stockNow) ?? 0) >= need + COVENANT.joinMoney) {
         return out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}) and the $${need.toExponential(2)} for sleeves #${from + 1}-#${COVENANT_MANDATE.target} is already in hand: run it now (${combatH.toFixed(1)}h of combat)`, extra)
       }
       return withC.best.installsFirst === 0
@@ -2216,7 +2218,9 @@ function karmaChannelCtx(ns, info, player) {
       mults: levelledPerson(player, info)?.mults,
       karma: player?.karma,
       numPeopleKilled: player?.numPeopleKilled,
-      money: player?.money,
+      // Wealth: bodyplan only asks whether the fare is affordable, and the
+      // travel order is raised from the book (withCashRaise's TRAVEL_FARE).
+      money: wealthOf(player?.money, stockNow),
     }
     // THE SLEEVE FLEET, priced by sleeve.js (which owns the ns.sleeve.* budget)
     // and read here as two rates. DERIVED, not a parameter: the last time this
@@ -2385,8 +2389,9 @@ async function act(ns, canJoin, info, note) {
       // (exitplan.spendExitFromRecord); stockVerdict's own rule is the named
       // fallback.
       const edgePerHour = null
-      const exitCmp = edgePerHour !== null && entry?.total > 0 ? spendExitFromRecord(readJson(ns, '/tel/exitinputs.txt'), info?.lastAugReset, entry.total, (player.money * edgePerHour) / 3600) : null
-      return { owned, entry, verdict: stockVerdict({ entry, capital: player.money, edgePerHour, remainingH: null, exitCmp }) }
+      const exitCmp = edgePerHour !== null && entry?.total > 0 ? spendExitFromRecord(readJson(ns, '/tel/exitinputs.txt'), info?.lastAugReset, entry.total, ((wealthOf(player.money, stockNow) ?? 0) * edgePerHour) / 3600) : null
+      // The capital the market would trade is cash + the book already in it.
+      return { owned, entry, verdict: stockVerdict({ entry, capital: wealthOf(player.money, stockNow), edgePerHour, remainingH: null, exitCmp }) }
     } catch (e) {
       return { error: String(e).slice(0, 120) }
     }
@@ -3560,7 +3565,7 @@ async function act(ns, canJoin, info, note) {
       const fav = faction && canJoin ? 1 + Math.max(0, sing.factionFavor(faction)) / 100 : 1
       const repGain = faction && baseRep > 0 ? baseRep * fav * W * 3600 : 0
       const inputs = exitInputsOf(ns, info, player, schedule, incomeNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
-      const m = ns.getServerMoneyAvailable('home') + incomeNow * W * 3600
+      const m = ns.getServerMoneyAvailable('home') + stockEquity + incomeNow * W * 3600
       const gainsOf = (p2) => installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
       const exitAt = (p2) => {
         const gi = gainsOf(p2)
@@ -3725,8 +3730,10 @@ async function act(ns, canJoin, info, note) {
     if (train && (player.skills?.charisma ?? 0) < train.toCha) {
       const studying = work?.type === 'CLASS' && String(work.classType ?? '') === 'Leadership'
       const courseFee = CLASS_BASE_FEE.leadership * Math.max(...UNIVERSITIES.map((u) => u.costMult))
-      if (!studying && !feeFundable(ns.getServerMoneyAvailable('home'), courseFee)) {
-        todo.push(`Leadership at ZB costs $${courseFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it`)
+      // Afforded on cash + equity like the gym; the order's `cost` raises the
+      // course's fees from the book before it starts (withCashRaise).
+      if (!studying && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity, courseFee)) {
+        todo.push(`Leadership at ZB costs $${courseFee}/s and cash + equity does not cover ${FEE_FLOOR_S}s of it — not starting it`)
       } else if (!studying) {
         // ZB Institute is the x4 campus and it is in Volhaven; the class API
         // requires being in the university's city (Singularity.ts checks
@@ -3734,7 +3741,7 @@ async function act(ns, canJoin, info, note) {
         // income against the hours the better campus saves.
         try {
           if (cityAfterOrders !== 'Volhaven') order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')
-          if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`)) {
+          if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`, Math.ceil(courseFee * ((train.hours ?? 0) * 3600 + FEE_FLOOR_S)))) {
             did.push(`studying Leadership at ZB to charisma ${train.toCha} (~${train.hours.toFixed(1)}h) before the ${wantCompany} desk — training beat the plain stint on total hours`)
           } else {
             todo.push(`Could not start the Leadership course at ZB — start it manually (Volhaven > ZB Institute).`)
@@ -3889,7 +3896,7 @@ async function act(ns, canJoin, info, note) {
     }
     if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > price * 2) {
       if (order('program', [file], 'unlocks a tier of servers', price)) did.push(`ordered ${file}`)
-    } else if (ns.getServerMoneyAvailable('home') > price) {
+    } else if (ns.getServerMoneyAvailable('home') + stockEquity > price) {
       todo.push(`Buy ${file} ($${(price / 1e6).toFixed(1)}m) — unlocks a tier of servers to root.`)
     }
   }
@@ -4030,7 +4037,7 @@ async function act(ns, canJoin, info, note) {
       const byExit = sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
       {
         const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
-        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + (incNow + hacknetLifeIncome(ns, info).perSec) * W0 * 3600, replanAt, pending, offers })
+        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + (incNow + hacknetLifeIncome(ns, info).perSec) * W0 * 3600, replanAt, pending, offers })
       }
       writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
@@ -4045,7 +4052,7 @@ async function act(ns, canJoin, info, note) {
           plan: null,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
-          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
+          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: wealthOf(player.money, stockNow) }),
           // THE GANG VERDICT RIDES THIS WRITE TOO, for exactly the reason the
           // objective record below does — and it was missing, which cost ten
           // hours of work slot. A pass with nothing affordable ends here, so a
@@ -4097,9 +4104,9 @@ async function act(ns, canJoin, info, note) {
             // remainder — the median window minus this life's age — stated.
             const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
             return {
-              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home'), (h) => incNow * h * 3600, replanAt, pending, offers),
+              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => incNow * h * 3600, replanAt, pending, offers),
               covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf, offers, [...allCount.keys()]),
-              sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home')),
+              sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home') + stockEquity),
             }
           })()),
         },
@@ -4343,7 +4350,7 @@ async function act(ns, canJoin, info, note) {
     // `covenant`), against the one without. It runs only when that is faster
     // AND the final window is now (the best policy installs no more).
     const covenantExit = covenantExitOf(ns, info, player, schedule, exitPolicy, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet, offers, [...allCount.keys()])
-    const sleeveAugExit = sleeveAugExitOf(ns, info, schedule, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet, replanAt, pending, offers, ns.getServerMoneyAvailable('home'))
+    const sleeveAugExit = sleeveAugExitOf(ns, info, schedule, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), planFleet, replanAt, pending, offers, ns.getServerMoneyAvailable('home') + stockEquity)
 
     // DISTINCT augmentations this install would add, NeuroFlux excluded. Hoisted
     // so the count timing below prices the same batch the gate judges.
@@ -4385,7 +4392,7 @@ async function act(ns, canJoin, info, note) {
           r: BASE_PRICE_MULT,
           kNow: countGainNow,
           remaining: ticketsWanted,
-          moneyNow: player.money ?? 0,
+          moneyNow: wealthOf(player.money, stockNow) ?? 0, // cash + the book: the batch is raised from it
           // Wall-clock since the install — the same clock tel.js records the
           // ledger in, so the current life sits on the curve it is compared to.
           ageH: typeof since === 'number' && since > 0 ? (Date.now() - since) / 3600000 : null,
@@ -4522,7 +4529,7 @@ async function act(ns, canJoin, info, note) {
           const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
           if (!rp) return 0
           const cost = (rp.baseCost ?? 0) + (typeof rp.donationCost === 'number' && isFinite(rp.donationCost) ? rp.donationCost : 0)
-          const have = player.money ?? 0
+          const have = wealthOf(player.money, stockNow) ?? 0 // the purchase is raised from the book
           return cost > have ? cost : 0
         })(),
         exitLevelReached: (() => {
@@ -4725,7 +4732,7 @@ async function act(ns, canJoin, info, note) {
           gangWorth: gangWorthVerdict,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
-          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: player.money }),
+          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: wealthOf(player.money, stockNow) }),
           pending,
           heldM,
           // The income model's inputs, persisted so the NEXT pass can score
