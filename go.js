@@ -223,6 +223,139 @@ export function solverHealth(o = {}) {
   return { health: 'ok', detail: null, solverShare: answered }
 }
 
+// ---------------------------------------------------------------------------
+// THE MOVE WATCHDOG, AND WHY IT COUNTS SCHEDULER TURNS RATHER THAN SECONDS.
+//
+// Incident 2026-09-26: after a restart at 14:26 go.js logged one opponent
+// switch and then, as far as anyone could see, nothing — /tel/go.txt frozen,
+// no new /go/req.txt for 30+ minutes. It looked like an ns.go.makeMove promise
+// that never resolved. It was not. Every in-game write that day landed at
+// hh:mm:54.xxx (errors.txt, status.txt, batch.txt, /go/req.txt ...) and
+// /tel/human.txt said `visible: false`: the game's tab was hidden and Chrome's
+// intensive timer throttling was firing chained timers ONCE A MINUTE. The
+// opponent's reply is a chain of setTimeouts (waitCycle, goAI.ts:877; one per
+// retrieveMoveOption, :849; one per row in findAnyMatchedPatterns,
+// patternMatching.ts:104), so each reply took that many MINUTES — requests
+// landed at 14:42:54 and 14:59:54, 17 minutes apart, the same game. Only a
+// COMPLETED game published, and a 5x5 game at ~17 min a move takes hours.
+//
+// Measured with tools/sim/go-aicost.mjs (30 games per opponent, 5x5, the
+// game's own getMove): Illuminati replies take 6.9 timer hops on average,
+// p99 15, max 15; Daedalus 9.5 / 15 / 15. Visible tab: ~1.4-1.9 s a reply.
+// Hidden tab: ~7-10 minutes, up to 15.
+//
+// So a wall-clock timeout is wrong in BOTH directions: one well above the
+// visible 3s would fire on every hidden-tab move and forfeit every game
+// (resetBoardState resets the win streak), and one above the hidden 15 min
+// would sit for a quarter hour on a real deadlock in a visible tab. The unit
+// that is right in both regimes is the scheduler turn: our own 1s slice timer
+// is throttled exactly like the AI's chain, so "the opponent has not replied
+// in N of our ticks" means the same thing whether a tick is 1s or 60s.
+// Threshold: 60 ticks (4x the measured maximum of 15 hops) AND 60s of wall
+// clock (20x a visible-tab reply).
+//
+// The game source was read for a genuine never-resolves path, and there is
+// one class: handleNextTurn's AI chain (goAI.ts:83-120) returns WITHOUT
+// resolving the waiting player's promise when the board changed underneath it
+// ("Stale game" / "AI move attempted, but the board state has changed"), and
+// swallows any exception into exceptionAlert. Every in-game reset path
+// (resetBoardState, the UI's new-subnet, a save load, prestigeSourceFile)
+// goes through resetAI, which DOES resolve the waiter with gameOver, so with
+// one script driving the board no path was found that strands us — and no
+// CRASH_REPORT_*.txt was on home, so the chain did not throw. The watchdog is
+// here because "no path was found" is not "no path exists", and the cost of
+// being wrong is a farm that waits forever while publishing nothing.
+// ---------------------------------------------------------------------------
+export const MOVE_WATCH = { sliceMs: 1000, maxTicks: 60, minMs: 60000 }
+
+/**
+ * Await an ns.go move promise, but never forever.
+ *
+ * Resolves {ok:true, value, ticks, ms} when the promise settles (rejections
+ * are rethrown — an invalid move is the caller's error, not a stall), or
+ * {ok:false, ticks, ms} once BOTH `maxTicks` slices and `minMs` have passed
+ * without a reply. `onTick(ticks, ms)` runs after each slice: it is where the
+ * caller publishes a heartbeat, because a stalled move is exactly when the
+ * status file must keep moving.
+ *
+ * Uses plain setTimeout, NOT ns.sleep/ns.asleep: those mark the script busy
+ * (ws.runningFn, NetscriptHelpers.tsx:469-481) until they fire, so racing one
+ * against the move and letting the move win would leave a pending sleep that
+ * makes the NEXT ns call fail the concurrency check and kill the script.
+ * ns.go.makeMove does not set runningFn, so ns calls (the heartbeat's
+ * ns.write) are legal while it is pending.
+ */
+export async function awaitMove(pending, opts = {}) {
+  const sliceMs = opts.sliceMs ?? MOVE_WATCH.sliceMs
+  const maxTicks = opts.maxTicks ?? MOVE_WATCH.maxTicks
+  const minMs = opts.minMs ?? MOVE_WATCH.minMs
+  const now = opts.now ?? (() => Date.now())
+  const t0 = now()
+  let settled = null
+  const done = Promise.resolve(pending).then(
+    (value) => (settled = { value }),
+    (error) => (settled = { error }),
+  )
+  let ticks = 0
+  for (;;) {
+    let timer = null
+    const slice = new Promise((resolve) => (timer = setTimeout(resolve, sliceMs)))
+    await Promise.race([done, slice])
+    clearTimeout(timer)
+    if (settled) {
+      if ('error' in settled) throw settled.error
+      return { ok: true, value: settled.value, ticks, ms: now() - t0 }
+    }
+    ticks++
+    const ms = now() - t0
+    if (opts.onTick) opts.onTick(ticks, ms)
+    if (ticks >= maxTicks && ms >= minMs) return { ok: false, ticks, ms }
+  }
+}
+
+/**
+ * Are the page's timers being throttled? Judged from one ns.sleep: asked for
+ * `askedMs`, took `sleptMs`. A visible tab overshoots by milliseconds, a
+ * briefly hidden one aligns to 1s; intensive throttling (hidden 5+ min) aligns
+ * to a minute. 5s and 20x the request separate those cleanly.
+ */
+export function throttleHealth(sleptMs, askedMs) {
+  if (typeof sleptMs !== 'number' || !isFinite(sleptMs) || typeof askedMs !== 'number') return { throttled: false, detail: null }
+  if (sleptMs < 5000 || sleptMs < 20 * askedMs) return { throttled: false, detail: null }
+  return {
+    throttled: true,
+    detail:
+      `page timers are throttled: a ${askedMs}ms sleep took ${(sleptMs / 1000).toFixed(0)}s. The game tab is hidden and ` +
+      `Chrome fires chained timers about once a minute, so each opponent reply (7-15 timer hops, tools/sim/go-aicost.mjs) ` +
+      `takes 7-15 MINUTES and a game takes hours. Not a deadlock. Make the tab visible (or run the game with background ` +
+      `throttling disabled) to get the measured power/hour back.`,
+  }
+}
+
+/**
+ * One health word for /tel/go.txt out of the three things that can be wrong:
+ * the solver (solverHealth), a move that had to be abandoned (the watchdog),
+ * and throttled timers. Any of them is 'warn'; the detail names the first
+ * that applies, and each carries its own counter in the file regardless.
+ * A stall stays a warning for an hour after it happened — long enough for a
+ * reader polling every 30 minutes to see it, short enough that one recovered
+ * stall does not fail every health check for the rest of the life.
+ */
+export function goHealth({ solver, moveStalls = 0, lastStallAt = null, throttle = null, now = Date.now() } = {}) {
+  const recentStall = moveStalls > 0 && typeof lastStallAt === 'number' && now - lastStallAt < 3600e3
+  if (recentStall) {
+    return {
+      health: 'warn',
+      detail:
+        `${moveStalls} move(s) never got an opponent reply within ${MOVE_WATCH.maxTicks} scheduler turns and ` +
+        `${MOVE_WATCH.minMs / 1000}s; the board was reset to recover (that game's win streak is forfeit). See errors.`,
+    }
+  }
+  if (throttle?.throttled) return { health: 'warn', detail: throttle.detail }
+  if (solver && solver.health !== 'ok') return { health: solver.health, detail: solver.detail }
+  return { health: 'ok', detail: null }
+}
+
 export async function main(ns) {
   const flags = ns.flags([
     ['size', SETTINGS.size],
@@ -352,6 +485,19 @@ export async function main(ns) {
   // not firing, which is the silent failure this fix is most exposed to.
   let mirrorPasses = 0
   let passedBehind = 0
+  // The watchdog's record (see MOVE_WATCH). moveStalls counts moves abandoned
+  // because the opponent never replied; the tick/ms pair is the last reply's
+  // cost, which is how a reader tells "slow" (throttled) from "stuck".
+  let moveStalls = 0
+  let lastStallAt = null
+  let lastReply = null
+  let lastSleepMs = null
+  let throttle = { throttled: false, detail: null }
+  // The last completed game's fields, carried on every heartbeat so a
+  // timer-driven write never drops factionRepBonusPct (progress.js reads it).
+  let gameFields = {}
+  let lastPublishAt = 0
+  let phase = 'starting'
 
   const errors = []
   // Counters that move ride on every write via the thunk, so the error and exit
@@ -371,8 +517,41 @@ export async function main(ns) {
     passedBehind,
     games,
     moves,
+    moveStalls,
+    lastStallAt: lastStallAt ? new Date(lastStallAt).toISOString() : null,
+    lastReply,
+    lastSleepMs,
+    throttled: throttle.throttled,
+    phase,
     errors: errors.slice(-5),
   }))
+  const publishAt = (health, fields) => {
+    lastPublishAt = Date.now()
+    return note(health, fields)
+  }
+
+  // PUBLISH ON A TIMER, NOT ONLY PER GAME. The per-game write was the only
+  // one, so a game that takes hours (throttled timers, 2026-09-26) or never
+  // ends (a stranded move) left /tel/go.txt frozen at its start — which reads
+  // exactly like "go.js is dead". Called from the move loop and from every
+  // watchdog tick; it writes at most once a minute. Never throws: a heartbeat
+  // must not be what breaks the loop it reports on.
+  const HEARTBEAT_MS = 60000
+  const heartbeat = () => {
+    if (Date.now() - lastPublishAt < HEARTBEAT_MS) return
+    try {
+      const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), moveStalls, lastStallAt, throttle })
+      publishAt(h.health, { ...gameFields, heartbeat: true, ...(h.detail ? { detail: h.detail } : {}) })
+    } catch (e) {
+      ns.print(`go heartbeat failed: ${describe(e)}`)
+    }
+  }
+  // Every ns.go promise in the move loop goes through here.
+  const watched = async (pending) => {
+    const w = await awaitMove(pending, { onTick: heartbeat })
+    if (w.ok) lastReply = { ticks: w.ticks, ms: w.ms }
+    return w
+  }
 
   // The path no try/catch can reach: killed by the watchdog, caught in a
   // killall, or destroyed by an augmentation install. ns.atExit costs 0GB and
@@ -386,7 +565,7 @@ export async function main(ns) {
     note.exit('stopped', { detail: 'go.js is no longer playing — the faction_rep bonus has stopped growing' })
   }, 'status')
 
-  note('ok', { detail: `starting vs ${opponent} on ${N}x${N}` })
+  publishAt('ok', { detail: `starting vs ${opponent} on ${N}x${N}` })
 
   while (flags.games < 0 || games < flags.games) {
     try {
@@ -399,7 +578,7 @@ export async function main(ns) {
       lastAugReset = reNow
       const pick = pickOpponent(opponent, installed ? 0 : bonusNow)
       if (pick.switched) {
-        note('ok', { detail: `opponent ${opponent} -> ${pick.opponent}: ${pick.why}` })
+        publishAt('ok', { ...gameFields, detail: `opponent ${opponent} -> ${pick.opponent}: ${pick.why}` })
         ns.print(`switching opponent ${opponent} -> ${pick.opponent}`)
       }
       opponent = pick.opponent
@@ -409,8 +588,10 @@ export async function main(ns) {
 
       const komi = ns.go.getGameState()?.komi ?? 5.5
       let done = false
+      let stalled = false
       let guard = 0
       let cheated = !canCheat
+      phase = 'playing'
 
       while (!done && guard++ < 4000) {
         const boardStrings = ns.go.getBoardState()
@@ -460,10 +641,14 @@ export async function main(ns) {
           }
         }
 
-        const res =
-          !ranked || !ranked.length
-            ? await ns.go.passTurn()
-            : await ns.go.makeMove(ranked[0].x, ranked[0].y)
+        const played = await watched(
+          !ranked || !ranked.length ? ns.go.passTurn() : ns.go.makeMove(ranked[0].x, ranked[0].y),
+        )
+        if (!played.ok) {
+          stalled = true
+          break
+        }
+        const res = played.value
         if (ranked && ranked.length) moves++
 
         if (!res || res.type === 'gameOver') done = true
@@ -506,7 +691,12 @@ export async function main(ns) {
           }
           if (ahead === true) {
             mirrorPasses++
-            const end = await ns.go.passTurn()
+            const ended = await watched(ns.go.passTurn())
+            if (!ended.ok) {
+              stalled = true
+              break
+            }
+            const end = ended.value
             // Two passes end it. If the game somehow continues, do NOT assume
             // it ended — let the loop carry on rather than abandon a live board.
             if (!end || end.type === 'gameOver') done = true
@@ -519,7 +709,32 @@ export async function main(ns) {
         // The duty cycle. The opponent AI already sleeps 200ms per move
         // (goAI.ts waitCycle), so idling here costs almost no wall-clock game
         // speed while keeping average CPU low.
+        const slept0 = Date.now()
         await ns.sleep(flags.idle)
+        lastSleepMs = Date.now() - slept0
+        throttle = throttleHealth(lastSleepMs, flags.idle)
+        heartbeat()
+      }
+
+      if (stalled) {
+        // The opponent never answered. Say so everywhere a reader might look,
+        // then recover: resetBoardState -> resetGoPromises -> resetAI resolves
+        // the stranded promise with gameOver (goAI.ts:136-149) and starts a
+        // clean board. It forfeits this game's streak; waiting forever
+        // forfeits everything after it.
+        moveStalls++
+        lastStallAt = Date.now()
+        const msg =
+          `MOVE STALL #${moveStalls}: no opponent reply to our move in ${MOVE_WATCH.maxTicks} scheduler turns ` +
+          `(>= ${MOVE_WATCH.minMs / 1000}s; a normal reply is <= 15 turns) vs ${opponent} — resetting the board`
+        record(errors, new Error(msg))
+        ns.print(`!!!!! ${msg}`)
+        ns.tprint(`go.js: ${msg}`)
+        phase = 'recovering from stall'
+        const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), moveStalls, lastStallAt, throttle })
+        publishAt(h.health, { ...gameFields, detail: h.detail })
+        ns.go.resetBoardState(opponent, N)
+        continue
       }
 
       games++
@@ -542,8 +757,14 @@ export async function main(ns) {
       // The solver alarm rides the same write as everything else, so a reader
       // that already parses /tel/go.txt gets it for free and one that only
       // looks at `health` still sees it.
+      //
+      // goHealth folds in the move watchdog and timer throttling, but the
+      // solver's own verdict is still an input and still wins when it is the
+      // only thing wrong.
       const solver = solverHealth({ remoteMoves, localMoves })
-      note(solver.health, {
+      const h = goHealth({ solver, moveStalls, lastStallAt, throttle })
+      phase = 'between games'
+      gameFields = {
         wins: s.wins ?? 0,
         losses: s.losses ?? 0,
         winStreak: s.winStreak ?? 0,
@@ -552,8 +773,8 @@ export async function main(ns) {
         factionRepMult: Number((1 + bonusPercent / 100).toFixed(4)),
         finalScore,
         solverShare: solver.solverShare,
-        ...(solver.detail ? { detail: solver.detail } : {}),
-      })
+      }
+      publishAt(h.health, { ...gameFields, ...(h.detail ? { detail: h.detail } : {}) })
       ns.print(`game ${games}: ${s.wins ?? 0}W/${s.losses ?? 0}L faction_rep +${bonusPercent.toFixed(2)}%`)
     } catch (err) {
       // ALWAYS surface the failure. The status write was the last statement of
@@ -565,7 +786,7 @@ export async function main(ns) {
       try {
         const detail = record(errors, err)
         ns.print(`go error: ${detail}`)
-        note('error', { detail: describe(err) })
+        publishAt('error', { ...gameFields, detail: describe(err) })
       } catch {
         /* nothing left to try */
       }

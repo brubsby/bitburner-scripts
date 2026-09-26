@@ -48,9 +48,10 @@
 // expensive — one careless call here raises the floor of every importer at
 // once, multiplied by their thread counts.
 //
-// This module references exactly one ns function: `ns.write`, which costs
+// This module references exactly two ns functions: `ns.write`, which costs
 // **0GB** (Netscript/RamCostGenerator.ts:632, next to `read: 0` and
-// `atExit: 0`). Importing it costs 0GB in every importer, forever.
+// `atExit: 0`), and `ns.print` (0GB, :582), used only when both writes of a
+// publish fail. Importing it costs 0GB in every importer, forever.
 //
 // What is deliberately NOT in here:
 //
@@ -128,8 +129,23 @@ export function publish(ns, file, body) {
         ),
         'w',
       )
-    } catch {
-      /* nothing left to try */
+    } catch (err2) {
+      // BOTH writes failed, so the file is stale and nothing in it says so.
+      // Returning false was the whole of the old handling, and no caller
+      // checked it — the one path where silence is certain. Say it where it
+      // can still be seen: the script's own log (ns.print, 0GB) and the
+      // browser console. Each guarded, because this must still never throw.
+      const text = `STATUS WRITE FAILED TWICE for ${file}: ${describe(err)} / fallback: ${describe(err2)}`
+      try {
+        ns.print(`!!!!! ${text}`)
+      } catch {
+        /* the log is gone too */
+      }
+      try {
+        console.error(text)
+      } catch {
+        /* nothing left to try */
+      }
     }
     return false
   }

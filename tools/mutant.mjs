@@ -58,8 +58,11 @@ try {
   // A module that THREW did not test anything: that is "could not run", never
   // "caught" — a sandbox that breaks the suite would otherwise report every
   // mutant as caught.
-  if (/module\(s\) threw/.test(out)) {
-    console.log(`COULD NOT RUN — a test module threw in the sandbox:\n${out.split("\n").filter((l) => /threw|Error/.test(l)).slice(0, 4).join("\n")}`);
+  // Same for a module name that matched nothing: zero checks ran, and that
+  // printed "SURVIVED" (seen 2026-09-26 with `tools/test/go.test.mjs` passed
+  // as a path instead of `go`).
+  if (/module\(s\) threw/.test(out) || /no \*\.test\.mjs in .* matching/.test(out)) {
+    console.log(`COULD NOT RUN — a test module threw, or no module matched, in the sandbox:\n${out.split("\n").filter((l) => /threw|Error|matching/.test(l)).slice(0, 4).join("\n")}`);
     process.exit(2);
   }
   const fails = out.split("\n").filter((l) => /^\s+FAIL /.test(l));

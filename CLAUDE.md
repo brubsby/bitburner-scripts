@@ -54,6 +54,16 @@ for anything else that lives outside the game:
   PRECONDITION, and the report refuses to calibrate at all against a live game
   whose moves came from the fallback.
 
+**A hidden game tab runs every timer once a minute.** After ~5 minutes hidden,
+Chrome's intensive throttling fires chained timers only on minute boundaries —
+the tell is every in-game write stamped at the same `hh:mm:SS` second, with
+`/tel/human.txt` `visible: false`. Anything built from sleeps crawls: the Go
+opponent's reply is 7-15 timer hops (`tools/sim/go-aicost.mjs`), so on
+2026-09-26 each move took ~17 minutes and go.js *looked* deadlocked. go.js now
+reports it (`throttled`, `lastSleepMs`, health `warn`), heartbeats `/tel/go.txt`
+every minute instead of only per game, and its move watchdog counts scheduler
+turns rather than seconds so a slow tab is not mistaken for a stuck move.
+
 Then in-game: Options → Remote API → port `12525` → Connect.
 
 - `tools/rfa-daemon.mjs` serves the Remote File API; **the game connects to us**.

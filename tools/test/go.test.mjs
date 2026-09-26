@@ -112,8 +112,11 @@ export async function run() {
     if (!/const solver = solverHealth\(\{ remoteMoves, localMoves \}\)/.test(src)) {
       c2.fail("go.js no longer computes solverHealth() from its own move counters");
     }
+    // The per-game write goes through goHealth (which also folds in the move
+    // watchdog and timer throttling), and goHealth must take the solver's
+    // verdict as an input — checked behaviourally in GO6, textually here.
     c2.examined(1);
-    if (!/note\(solver\.health, \{/.test(src)) {
+    if (!/const h = goHealth\(\{ solver, /.test(src) || !/publishAt\(h\.health, \{ \.\.\.gameFields/.test(src)) {
       c2.fail("go.js's per-game status write does not carry the solver health — a hardcoded note('ok', ...) is how the outage stayed invisible");
     }
     // The counters the alarm is made of must still exist and still be published.
@@ -249,6 +252,177 @@ export async function run() {
     }
   }
   checks.push(c5);
+
+  /* ------------------------------------------------------------------ GO6 */
+  // THE MOVE WATCHDOG. 2026-09-26: /tel/go.txt froze for 30+ minutes and
+  // go.js looked stuck awaiting ns.go.makeMove. It was a hidden tab (Chrome
+  // fires chained timers once a minute; the opponent's reply is 7-15 timer
+  // hops), but the game source does have reply paths that never resolve the
+  // waiter (goAI.ts handleNextTurn's stale-board returns), and a promise that
+  // never settles must not stop the farm — or its status file — forever.
+  const c6 = new Check("GO6", "a move whose reply never comes is abandoned, reported, and recovered — and slow is not stuck");
+  {
+    const go = await import("../../go.js");
+    const never = new Promise(() => {});
+
+    // Pure helper: a never-settling promise times out after maxTicks slices.
+    c6.examined(1);
+    let ticked = 0;
+    const r = await go.awaitMove(never, { sliceMs: 1, maxTicks: 3, minMs: 0, onTick: () => ticked++ });
+    if (r.ok !== false || r.ticks !== 3) c6.fail(`awaitMove on a never-resolving promise must give up after 3 ticks, got ${JSON.stringify(r)}`);
+    if (ticked !== 3) c6.fail(`onTick (the heartbeat hook) must run on every slice while waiting, ran ${ticked} times`);
+
+    // Resolution wins, and the value comes through.
+    c6.examined(1);
+    const ok = await go.awaitMove(new Promise((res) => setTimeout(() => res({ type: "move", x: 1, y: 2 }), 5)), { sliceMs: 1, maxTicks: 1000, minMs: 0 });
+    if (!ok.ok || ok.value?.type !== "move") c6.fail(`a reply must be returned, got ${JSON.stringify(ok)}`);
+
+    // An invalid move is the caller's error, not a stall.
+    c6.examined(1);
+    let threw = null;
+    try {
+      await go.awaitMove(Promise.reject(new Error("Invalid move")), { sliceMs: 1, maxTicks: 3, minMs: 0 });
+    } catch (e) {
+      threw = e;
+    }
+    if (!threw || !/Invalid move/.test(String(threw))) c6.fail("a rejected move promise must be rethrown, not reported as a stall");
+
+    // BOTH conditions: enough ticks is not enough while the wall-clock floor
+    // has not passed. This is what stops a burst of fast ticks (a briefly
+    // hidden tab aligns timers to 1s, not 60s) from abandoning a live move.
+    c6.examined(1);
+    // A clock that advances 100ms per reading: one reading at the start, one
+    // per tick, so tick t sees t*100ms.
+    let fakeNow = 0;
+    const floor = await go.awaitMove(never, { sliceMs: 1, maxTicks: 2, minMs: 1000, now: () => (fakeNow += 100) });
+    if (floor.ok !== false || floor.ticks !== 10) c6.fail(`with 100ms per tick and a 1000ms floor the watchdog must fire at tick 10, not before; got ${JSON.stringify(floor)}`);
+
+    // The shipped threshold must sit well above the measured reply length in
+    // BOTH units: 15 timer hops max (tools/sim/go-aicost.mjs) and ~3s visible.
+    c6.examined(1);
+    if (!(go.MOVE_WATCH.maxTicks >= 4 * 15)) c6.fail(`MOVE_WATCH.maxTicks ${go.MOVE_WATCH.maxTicks} is under 4x the measured 15-hop worst case — a hidden tab would forfeit games`);
+    if (!(go.MOVE_WATCH.minMs >= 20 * 3000)) c6.fail(`MOVE_WATCH.minMs ${go.MOVE_WATCH.minMs} is under 20x a visible-tab reply`);
+
+    // Throttle detection and the combined health word.
+    c6.examined(1);
+    if (go.throttleHealth(105, 100).throttled) c6.fail("a 105ms sleep for 100ms is not throttling");
+    if (go.throttleHealth(1000, 100).throttled) c6.fail("1s alignment (briefly hidden tab) must not be called throttled");
+    const thr = go.throttleHealth(60000, 100);
+    if (!thr.throttled || !/hidden/.test(thr.detail ?? "")) c6.fail("a 60s sleep for 100ms must be reported as a hidden, throttled tab", JSON.stringify(thr));
+    const okSolver = { health: "ok", detail: null };
+    const badSolver = { health: "warn", detail: "solver X" };
+    if (go.goHealth({ solver: okSolver }).health !== "ok") c6.fail("nothing wrong must be 'ok'");
+    if (go.goHealth({ solver: badSolver }).detail !== "solver X") c6.fail("the solver's warning must survive goHealth");
+    if (go.goHealth({ solver: okSolver, throttle: thr }).health !== "warn") c6.fail("throttled timers must be a warn");
+    const stall = go.goHealth({ solver: okSolver, moveStalls: 1, lastStallAt: 1000, now: 2000 });
+    if (stall.health !== "warn" || !/reset/.test(stall.detail ?? "")) c6.fail("a recent stall must be a warn that says the board was reset", JSON.stringify(stall));
+    if (go.goHealth({ solver: okSolver, moveStalls: 1, lastStallAt: 0, now: 2 * 3600e3 }).health !== "ok") c6.fail("a stall two hours ago must not fail every check for the rest of the life");
+  }
+  checks.push(c6);
+
+  /* ------------------------------------------------------------------ GO7 */
+  // The same, end to end through main() against a mock ns: the first
+  // makeMove never resolves. go.js must NOT wait forever — it must log, put
+  // the stall in /tel/go.txt as health 'warn' with a count, reset the board,
+  // and go on to finish a game.
+  const c7 = new Check("GO7", "go.js main(): a never-resolving makeMove triggers the watchdog, is published, and the farm recovers");
+  {
+    const go = await import("../../go.js");
+    const saved = { ...go.MOVE_WATCH };
+    Object.assign(go.MOVE_WATCH, { sliceMs: 1, maxTicks: 5, minMs: 0 });
+    const writes = [];
+    const prints = [];
+    const calls = { reset: 0, makeMove: 0 };
+    const empty = [".....", ".....", ".....", ".....", "....."];
+    const ns = {
+      flags: () => ({ size: 5, maxms: 5, idle: 1, topk: 8, remotems: 0, games: 1, opponent: "Daedalus" }),
+      disableLog() {},
+      tprint: (m) => prints.push(String(m)),
+      print: (m) => prints.push(String(m)),
+      getResetInfo: () => ({ lastAugReset: 1, currentNode: 1, ownedSF: new Map() }),
+      getHostname: () => "home",
+      scp() {},
+      read: () => "",
+      fileExists: () => false,
+      atExit() {},
+      write: (file, data) => writes.push({ file, data }),
+      sleep: () => new Promise((r) => setTimeout(r, 0)),
+      exec: () => 0,
+      isRunning: () => false,
+      go: {
+        analysis: {
+          getStats: () => ({ Daedalus: { wins: 1, losses: 0, winStreak: 1, highestWinStreak: 1, bonusPercent: 0.5 } }),
+          getValidMoves: () => Array.from({ length: 5 }, () => new Array(5).fill(true)),
+        },
+        resetBoardState: () => {
+          calls.reset++;
+        },
+        getGameState: () => ({ komi: 5.5, blackScore: 10, whiteScore: 5.5 }),
+        getBoardState: () => empty,
+        // First move: the reply never comes. Afterwards: the game ends.
+        makeMove: () => (calls.makeMove++ === 0 ? new Promise(() => {}) : Promise.resolve({ type: "gameOver", x: null, y: null })),
+        passTurn: () => Promise.resolve({ type: "gameOver", x: null, y: null }),
+      },
+    };
+    let finished = false;
+    try {
+      await Promise.race([
+        go.main(ns).then(() => (finished = true)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("main() did not return within 10s — the watchdog did not fire")), 10000)),
+      ]);
+    } catch (e) {
+      c7.fail(String(e.message ?? e));
+    } finally {
+      Object.assign(go.MOVE_WATCH, saved);
+    }
+    const tel = writes.filter((w) => w.file === "/tel/go.txt").map((w) => JSON.parse(w.data));
+    const stalledWrite = tel.find((t) => t.moveStalls === 1 && t.health === "warn");
+    c7.examined(tel.length);
+    if (!finished) c7.fail("main() never finished its one game — the stranded move blocked the farm");
+    if (!stalledWrite) c7.fail("/tel/go.txt never carried moveStalls: 1 with health 'warn'", JSON.stringify(tel.map((t) => [t.health, t.moveStalls])));
+    if (!/MOVE STALL/.test(stalledWrite?.detail ?? "") && !(stalledWrite?.errors ?? []).some((e) => /MOVE STALL/.test(e))) {
+      c7.fail("the stall record must name itself (MOVE STALL) in errors");
+    }
+    if (!prints.some((p) => /MOVE STALL/.test(p))) c7.fail("the stall was not logged");
+    if (calls.reset < 2) c7.fail(`the board must be reset to recover (then again for the next game); resetBoardState ran ${calls.reset} time(s)`);
+    const last = tel[tel.length - 1];
+    if (last?.games !== 1) c7.fail(`after recovering, the next game must complete and publish; last write says games=${last?.games}`);
+    c7.note(`${tel.length} status writes; resets ${calls.reset}; makeMove calls ${calls.makeMove}; final health '${last?.health}' moveStalls ${last?.moveStalls}`);
+  }
+  checks.push(c7);
+
+  /* ------------------------------------------------------------------ GO8 */
+  // A status write that fails twice must not be silent (status.js publish).
+  const c8 = new Check("GO8", "status.publish logs when both its writes fail, instead of returning false into the void");
+  {
+    const { publish } = await import("../../status.js");
+    const printed = [];
+    const origErr = console.error;
+    const consoled = [];
+    console.error = (m) => consoled.push(String(m));
+    let r;
+    try {
+      r = publish({ write: () => { throw new Error("disk says no"); }, print: (m) => printed.push(String(m)) }, "/tel/x.txt", { health: "ok" });
+    } finally {
+      console.error = origErr;
+    }
+    c8.examined(1);
+    if (r !== false) c8.fail(`publish must still return false on failure, got ${r}`);
+    if (!printed.some((p) => /FAILED TWICE.*\/tel\/x\.txt.*disk says no/.test(p))) c8.fail("the double failure did not reach the script log", JSON.stringify(printed));
+    if (!consoled.some((p) => /FAILED TWICE/.test(p))) c8.fail("the double failure did not reach the console");
+    c8.examined(1);
+    let threw = false;
+    console.error = () => {};
+    try {
+      publish({ write: () => { throw new Error("no"); }, print: () => { throw new Error("no log either"); } }, "/tel/x.txt", {});
+    } catch {
+      threw = true;
+    } finally {
+      console.error = origErr;
+    }
+    if (threw) c8.fail("publish must never throw, even when the log is gone too");
+  }
+  checks.push(c8);
 
   return checks;
 }
