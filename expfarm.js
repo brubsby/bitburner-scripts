@@ -161,6 +161,38 @@ export function wavePeriod({ poolGB, T, phi, chance = 1, weakenRate = 1 }) {
  *   o.farmRate, o.batchRate   exp per GB-ms in the farm vs in the batches
  *   o.fleetGB         RAM the farm would otherwise hold (for the exp fraction)
  */
+/**
+ * THE EXP A MANIP BATCH DISPLACES: the farm's rate on the RAM the manip
+ * pipelines hold, less what those batches earn in exp themselves.
+ */
+export function manipLostExp(expPerSec, manipGB, fleetGB, batchRate, farmRate) {
+  if (!pos(expPerSec) || !pos(manipGB) || !pos(fleetGB) || !pos(farmRate) || !num(batchRate)) return null
+  return expPerSec * Math.min(1, manipGB / fleetGB) * Math.max(0, 1 - batchRate / farmRate)
+}
+
+/**
+ * SERVE OR FARM — the one decision, shared by the batcher (manipVerdict) and
+ * the port-opener price (exitplan.programExit): serving the trader's
+ * manipulation is chosen only when the node's exit with it (return r, exp
+ * less what the manip RAM displaces) beats the exit farming exp (return r0)
+ * by more than a minute. Live 2026-09-26 23:14 the opener price credited
+ * manipulation's upside (12.49h vs 14.46h) while the batcher, pricing the
+ * same manipulation with its exp cost, refused it (39.09h vs 13.20h).
+ * Returns {serve, hours, farmH, serveH, why} or {serve: false, hours: null, why}.
+ */
+export function serveOrFarm(bestExitPolicy, inputs, { r0, r, lostExpPerSec }) {
+  if (typeof bestExitPolicy !== 'function' || !inputs) return { serve: false, hours: null, why: 'no exit inputs' }
+  const farm = bestExitPolicy({ ...inputs, ...(num(r0) ? { capitalReturnPerSec: r0 } : {}) })
+  const farmH = farm?.best?.hours
+  if (!num(farmH)) return { serve: false, hours: null, why: `farming exit unpriceable (${farm?.why ?? 'ok'})` }
+  if (!num(r) || !num(lostExpPerSec)) return { serve: false, hours: farmH, farmH, serveH: null, why: 'manipulation unpriced: farming' }
+  const srv = bestExitPolicy({ ...inputs, capitalReturnPerSec: r, expPerSec: Math.max(1e-9, (inputs.expPerSec ?? 0) - lostExpPerSec) })
+  const serveH = srv?.best?.hours
+  if (!num(serveH)) return { serve: false, hours: farmH, farmH, serveH: null, why: `serving exit unpriceable (${srv?.why ?? 'ok'}): farming` }
+  const serve = serveH < farmH - 1 / 60
+  return { serve, hours: serve ? serveH : farmH, farmH, serveH, why: `exit ${serveH.toFixed(2)}h serving manip (r ${r.toExponential(2)}/s, -${lostExpPerSec.toFixed(0)} exp/s) vs ${farmH.toFixed(2)}h farming exp${num(r0) ? ` (r ${r0.toExponential(2)}/s)` : ''}` }
+}
+
 export function manipVerdict(o = {}) {
   const { bestExitPolicy, inputs, curve, nu, manipGB, farmRate, batchRate, fleetGB } = o
   const no = (why) => ({ serve: false, priced: false, why })
@@ -171,20 +203,17 @@ export function manipVerdict(o = {}) {
   const r = rateAt(curve, nu)
   const r0 = rateAt(curve, 0)
   if (r === null || r0 === null) return no('manipCurve unreadable')
-  const lost = inputs.expPerSec * Math.min(1, manipGB / fleetGB) * Math.max(0, 1 - batchRate / farmRate)
-  const without = bestExitPolicy({ ...inputs, capitalReturnPerSec: r0 })
-  const withM = bestExitPolicy({ ...inputs, capitalReturnPerSec: r, expPerSec: Math.max(1e-9, inputs.expPerSec - lost) })
-  const a = without?.best?.hours
-  const b = withM?.best?.hours
-  if (!num(a) || !num(b)) return no(`exit unpriceable (${without?.why ?? 'ok'} / ${withM?.why ?? 'ok'})`)
+  const lost = manipLostExp(inputs.expPerSec, manipGB, fleetGB, batchRate, farmRate)
+  const d = serveOrFarm(bestExitPolicy, inputs, { r0, r, lostExpPerSec: lost })
+  if (!num(d.farmH) || !num(d.serveH)) return no(`exit unpriceable (${d.why})`)
   return {
-    serve: b < a - 1 / 60,
+    serve: d.serve,
     priced: true,
-    withH: b,
-    withoutH: a,
+    withH: d.serveH,
+    withoutH: d.farmH,
     lostExpPerSec: lost,
     returnPerSec: r,
-    why: `exit ${b.toFixed(2)}h serving manip (r ${r.toExponential(2)}/s, -${lost.toFixed(0)} exp/s) vs ${a.toFixed(2)}h farming exp (r ${r0.toExponential(2)}/s)`,
+    why: d.why,
   }
 }
 

@@ -254,15 +254,21 @@ function stockServersOf(ns, readT, ram, level, capacity) {
       const s = { root: ns.hasRootAccess(host), maxMoney: ns.getServerMaxMoney(host), required: ns.getServerRequiredHackingLevel(host), level }
       const why = manipBlocker(host, s)
       let nudgesIfServed = null
+      let gbIfServed = null
+      let expGbmsIfServed = null
       if (s.maxMoney > 0 && s.required <= level) {
         try {
           const m = manipRateOf(ns, readT, ram, capacity, host)
           nudgesIfServed = m ? Math.round(m.nu * 1e5) / 1e5 : null
+          // What serving it costs the farm (expfarm.manipLostExp): the RAM
+          // its pipelines hold and the exp that RAM earns batched.
+          gbIfServed = m ? Math.round(m.gb) : null
+          expGbmsIfServed = m ? m.expGbms : null
         } catch {
           nudgesIfServed = null
         }
       }
-      out.push({ sym, host, rooted: s.root, ports: ns.getServerNumPortsRequired(host), required: s.required, level, moneyMax: s.maxMoney, servable: why === null, why, nudgesIfServed })
+      out.push({ sym, host, rooted: s.root, ports: ns.getServerNumPortsRequired(host), required: s.required, level, moneyMax: s.maxMoney, servable: why === null, why, nudgesIfServed, gbIfServed, expGbmsIfServed })
     }
   }
   return out

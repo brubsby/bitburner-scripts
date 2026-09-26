@@ -805,16 +805,17 @@ export async function run() {
     const curve = Fx.stock.manipCurve;
     const ratio = EF.rateAt(curve, 0.1) / EF.rateAt(curve, 0);
     const expOnly = X.programExit(inputs, 250e6, 0);
-    const withManip = X.programExit(inputs, 250e6, 0, { capitalReturnPerSec: inputs.capitalReturnPerSec * ratio });
+    // The upside alone (no RAM displaced): what 37b4587 credited.
+    const withManip = X.programExit(inputs, 250e6, 0, { manip: { r: inputs.capitalReturnPerSec * ratio, lostExpPerSec: 0 } });
     x8.note(`(batch.txt at the time: ${Fx.batchManip?.why}; stock.txt requested ${Object.keys(Fx.stock.manip ?? {}).join(", ")})`);
     x8.note(`SQLInject ($250m): exp only ${expOnly.deltaH?.toFixed(2)}h; with fulcrum* nudged at 0.1/s (x${ratio.toFixed(2)} on the return) ${withManip.deltaH?.toFixed(2)}h`);
     if (!(typeof withManip.deltaH === "number" && typeof expOnly.deltaH === "number" && withManip.deltaH < expOnly.deltaH)) x8.fail("the manipulation channel must shorten the priced exit");
-    if (!(expOnly.deltaH > 0 && withManip.deltaH < -1 / 60)) x8.fail("on the live state SQLInject is refused on exp alone and pays once 0.1 nudges/s on the trader's holding are priced");
+    if (!(expOnly.deltaH > 0 && withManip.deltaH < -1 / 60)) x8.fail("on the live state the upside alone (no exp displaced) pays for SQLInject — B8y prices its cost");
     const same = X.programExit(inputs, 250e6, 0, {});
     if (same.deltaH !== expOnly.deltaH) x8.fail("without a manipulation term the price is exactly as before");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     if (!/const nuAt = \(k\) => \(stockServers \?\? \[\]\)\.filter\(\(x\) => requested\.includes\(x\.host\)[^\n]*\(x\.rooted \|\| x\.ports <= k\) && x\.required <= x\.level && x\.moneyMax > 0\)/.test(prog)) x8.fail("the opener's manipulation value: the trader's requested hosts that the prefix would make servable (rooted or enough ports, our level, money)");
-    if (!/programExit\(inputs, cost, gain, manip && manip\.ratio > 1 \? \{ capitalReturnPerSec: manip\.capitalReturnPerSec \} : \{\}\)/.test(prog)) x8.fail("the prefix's exit must carry the manipulated return");
+    if (!/programExit\(inputs, cost, gain, withManip \? \{ manip: \{ r: manip\.capitalReturnPerSec, lostExpPerSec: manip\.lostExpPerSec \} \} : \{\}\)/.test(prog)) x8.fail("the prefix's exit must carry the manipulated return AND its exp cost");
     const batch = fs.readFileSync(path.join(REPO_ROOT, "batch.js"), "utf8");
     if (!/for \(const \[sym, meta\] of Object\.entries\(SYMBOL_META\)\)/.test(batch) || !/^\s*stockServers,$/m.test(batch)) x8.fail("batch.txt must publish every company server with a stock (stockServers), not only the requested host");
     const loop = batch.slice(batch.indexOf("THE TRADER'S CURRENT REQUEST, every pass"), batch.indexOf("// --- choose targets"));
@@ -823,6 +824,40 @@ export async function run() {
     if (/refreshStockManip\(ns\)/.test(retarget)) x8.fail("the request must not be read only at retarget");
   }
   checks.push(x8);
+
+  // -----------------------------------------------------------------------
+  const y8 = new Check("B8y", "replay 23:14: the opener's manipulation value is the batcher's own serve-or-farm decision (expfarm.serveOrFarm), with the exp its RAM displaces — SQLInject is refused unless exp access alone pays");
+  {
+    y8.examined(6);
+    const EF = await import("../../expfarm.js");
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-2314.json"), "utf8"));
+    const inputs = F.exitInputs.inputs;
+    const p1 = F.programs.prefix1; // what 37b4587 published: bought on x1.4705
+    const bm = F.batch.expFarm.manip; // the batcher's verdict minutes later: refuse
+    const expOnly = X.programExit(inputs, 250e6, p1.expGainPerSec);
+    const upside = X.programExit(inputs, 250e6, p1.expGainPerSec, { manip: { r: p1.manip.capitalReturnPerSec, lostExpPerSec: 0 } });
+    // The batcher's measured cost share of its farm (lost / farm exp), on the
+    // farm WITH the opener: manip pipelines that size take the fleet.
+    const share = bm.lostExpPerSec / inputs.expPerSec;
+    const lost = (inputs.expPerSec + p1.expGainPerSec) * share;
+    const priced = X.programExit(inputs, 250e6, p1.expGainPerSec, { manip: { r: p1.manip.capitalReturnPerSec, lostExpPerSec: lost } });
+    y8.note(`SQLInject: exp alone ${expOnly.deltaH.toFixed(2)}h; upside only ${upside.deltaH.toFixed(2)}h (the 23:14 purchase); with serving's cost (-${Math.round(lost)} exp/s) ${priced.deltaH.toFixed(2)}h — ${priced.manip?.why}`);
+    y8.note(`batcher at 23:16: ${bm.why}`);
+    if (!(upside.deltaH < -1 / 60)) y8.fail("fixture: the upside alone should have paid (that is the inconsistency)");
+    if (priced.manip?.serve !== false) y8.fail("with the exp it displaces, serving must lose to farming, as the batcher decided");
+    if (Math.abs(priced.deltaH - expOnly.deltaH) > 1e-9) y8.fail("when farming wins, the opener is worth exactly its exp access");
+    if (!(expOnly.deltaH > 0)) y8.fail("on this state exp access alone does not pay: SQLInject is refused");
+    // One rule: manipVerdict IS serveOrFarm with manipLostExp.
+    const curve = F.stock.manipCurve;
+    const mv = EF.manipVerdict({ bestExitPolicy: X.bestExitPolicy, inputs, curve, nu: 0.1549, manipGB: 21720, farmRate: F.batch.expFarm.scorePerGBms, batchRate: F.batch.expFarm.scorePerGBms * (1 - share), fleetGB: 21720 });
+    const so = EF.serveOrFarm(X.bestExitPolicy, inputs, { r0: EF.rateAt(curve, 0), r: EF.rateAt(curve, 0.1549), lostExpPerSec: EF.manipLostExp(inputs.expPerSec, 21720, 21720, F.batch.expFarm.scorePerGBms * (1 - share), F.batch.expFarm.scorePerGBms) });
+    if (!(mv.priced && mv.serve === so.serve && Math.abs(mv.withH - so.serveH) < 1e-9 && Math.abs(mv.withoutH - so.farmH) < 1e-9)) y8.fail("the batcher's verdict and the shared decision must be the same computation");
+    const ex = fs.readFileSync(path.join(REPO_ROOT, "exitplan.js"), "utf8");
+    if (!/manipDecision = serveOrFarm\(bestExitPolicy, withInputs/.test(ex)) y8.fail("programExit must price manipulation through expfarm.serveOrFarm on the with-opener inputs");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const lost = manipLostExp\(expWith, gb, fleetGB/.test(prog) || !/manipOf\(owned \+ j \+ 1, \(inputs\?\.expPerSec \?\? 0\) \+ \(gain \?\? 0\)\)/.test(prog)) y8.fail("the displaced exp is the farm WITH the opener (its exp gain included), via expfarm.manipLostExp");
+  }
+  checks.push(y8);
 
   return checks;
 }

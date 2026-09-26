@@ -136,7 +136,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: the manipCurve interpolation (prices port openers' manipulation channel).
-import { rateAt } from 'expfarm.js'
+import { rateAt, manipLostExp } from 'expfarm.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -1893,12 +1893,27 @@ function programVerdicts(ns, inputs, info) {
     const requested = stockRec.ok && stockRec.manip ? Object.keys(stockRec.manip) : []
     const owned = PORT_OPENERS.length - unowned.length
     const nuAt = (k) => (stockServers ?? []).filter((x) => requested.includes(x.host) && typeof x.nudgesIfServed === 'number' && (x.rooted || x.ports <= k) && x.required <= x.level && x.moneyMax > 0).reduce((a, x) => a + x.nudgesIfServed, 0)
-    const manipOf = (k) => {
+    // Its COST too, on the batcher's own terms (expfarm.manipLostExp): the
+    // RAM the manip pipelines would hold, and the exp farming that RAM
+    // earns beyond what the manip batches earn — so the opener is credited
+    // manipulation only where serving beats farming (expfarm.serveOrFarm,
+    // the decision batch.js makes). Live 23:14 SQLInject was bought on the
+    // upside alone (12.49h vs 14.46h) while the batcher refused to serve it
+    // (39.09h serving vs 13.20h farming).
+    const servableAt = (k) => (stockServers ?? []).filter((x) => requested.includes(x.host) && typeof x.nudgesIfServed === 'number' && (x.rooted || x.ports <= k) && x.required <= x.level && x.moneyMax > 0)
+    const farmRate = batchRec?.expFarm?.scorePerGBms
+    const fleetGB = batchRec?.ram?.total
+    const manipOf = (k, expWith) => {
       if (!stockServers || !Array.isArray(curve) || curve.length < 2 || !requested.length || !(inputs?.capitalReturnPerSec > 0)) return null
       const r0 = rateAt(curve, nuAt(owned))
       const rk = rateAt(curve, nuAt(k))
       if (!(r0 > 0) || !(rk > 0)) return null
-      return { nudgesPerSec: +nuAt(k).toFixed(5), capitalReturnPerSec: inputs.capitalReturnPerSec * (rk / r0), ratio: +(rk / r0).toFixed(4) }
+      const hosts = servableAt(k)
+      const gb = hosts.reduce((a, x) => a + (x.gbIfServed ?? 0), 0)
+      const expGbms = hosts.reduce((a, x) => a + (x.expGbmsIfServed ?? 0), 0)
+      // The farm it displaces is the farm WITH the opener (its exp gain included).
+      const lost = manipLostExp(expWith, gb, fleetGB, gb > 0 ? expGbms / gb : 0, farmRate)
+      return { nudgesPerSec: +nuAt(k).toFixed(5), capitalReturnPerSec: inputs.capitalReturnPerSec * (rk / r0), ratio: +(rk / r0).toFixed(4), lostExpPerSec: lost === null ? null : Math.round(lost), gb: Math.round(gb) }
     }
     out.manipChannel = !stockServers ? 'unpriced: no batch.txt stockServers' : !Array.isArray(curve) ? 'unpriced: stock.js publishes no manipCurve' : !requested.length ? 'the trader requests no manipulation' : `requested ${requested.join(', ')}`
     let best = null
@@ -1907,9 +1922,11 @@ function programVerdicts(ns, inputs, info) {
       cost += unowned[j][1]
       const mult = tiers.tiers[j].expMultiple
       const gain = typeof mult === 'number' && isFinite(mult) ? Math.max(0, scriptExp * (mult - 1)) : null
-      const manip = manipOf(owned + j + 1)
-      const r = gain === null ? { deltaH: null, why: 'tier exp multiple unreadable' } : programExit(inputs, cost, gain, manip && manip.ratio > 1 ? { capitalReturnPerSec: manip.capitalReturnPerSec } : {})
-      out[`prefix${j + 1}`] = { cost, expGainPerSec: gain, manip, deltaH: r.deltaH, why: r.why ?? `exit ${r.withH?.toFixed(2)}h with vs ${r.withoutH?.toFixed(2)}h without${manip && manip.ratio > 1 ? ` (manipulation x${manip.ratio} on the trader's return)` : ''}` }
+      const manip = manipOf(owned + j + 1, (inputs?.expPerSec ?? 0) + (gain ?? 0))
+      // Manipulation enters only with its exp cost; unpriced cost -> not credited.
+      const withManip = manip && manip.ratio > 1 && typeof manip.lostExpPerSec === 'number'
+      const r = gain === null ? { deltaH: null, why: 'tier exp multiple unreadable' } : programExit(inputs, cost, gain, withManip ? { manip: { r: manip.capitalReturnPerSec, lostExpPerSec: manip.lostExpPerSec } } : {})
+      out[`prefix${j + 1}`] = { cost, expGainPerSec: gain, manip: manip ? { ...manip, decision: r.manip ?? (manip.ratio > 1 ? { serve: false, why: 'its exp cost is unpriced (batch.txt lacks the manip RAM or farm rate) — not credited' } : null) } : null, deltaH: r.deltaH, why: r.why ?? `exit ${r.withH?.toFixed(2)}h with vs ${r.withoutH?.toFixed(2)}h without${r.manip ? (r.manip.serve ? ` (serving manipulation: ${r.manip.why})` : ` (farming beats serving: ${r.manip.why})`) : ''}` }
       if (typeof r.deltaH === 'number' && r.deltaH < -1 / 60 && (!best || r.deltaH < best.deltaH)) best = { j, deltaH: r.deltaH, cost }
     }
     for (let j = 0; j < unowned.length; j++) {

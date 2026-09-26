@@ -53,6 +53,9 @@ export const levelAt = (exp, mult) => Math.max(1, Math.floor(mult * (32 * Math.l
 /** exp needed for a level at a multiplier — skill.ts:19 inverted */
 export const expForLevel = (level, mult) => Math.exp((level / mult + 200) / 32) - 534.6
 
+// Pure: the serve-or-farm decision the batcher makes (prices openers' manipulation).
+import { serveOrFarm } from 'expfarm.js'
+
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
 
@@ -1147,22 +1150,29 @@ export function installCadence(ledger, node) {
  * higher level on reputation before an install.
  * { deltaH, withH, withoutH } or { deltaH: null, why }.
  */
-export function programExit(inputs, cost, expGainPerSec, { capitalReturnPerSec = null } = {}) {
+export function programExit(inputs, cost, expGainPerSec, { manip = null } = {}) {
   if (!inputs || !pos(cost) || !num(expGainPerSec) || expGainPerSec < 0) return { deltaH: null, why: 'program cost or exp gain unreadable' }
   if (!pos(inputs.expPerSec)) return { deltaH: null, why: 'no measured exp rate' }
   const without = bestExitPolicy(inputs)
-  const withP = bestExitPolicy({
+  const withInputs = {
     ...inputs,
     money: (inputs.money ?? 0) - cost,
     expPerSec: inputs.expPerSec + expGainPerSec,
-    // The stock-manipulation channel the purchase opens (the trader's return
-    // with the nudges the newly rooted company servers deliver).
-    ...(num(capitalReturnPerSec) && capitalReturnPerSec >= 0 ? { capitalReturnPerSec } : {}),
     ...(num(inputs.installCash) ? { installCash: Math.max(0, inputs.installCash - cost) } : {}),
-  })
+  }
+  // THE STOCK-MANIPULATION CHANNEL the purchase opens, priced as the batcher
+  // would decide it (expfarm.serveOrFarm): with the opener, the better of
+  // farming exp and serving the manipulation (its return r, less the exp its
+  // RAM displaces) — never the upside alone.
+  let manipDecision = null
+  let withP
+  if (manip && num(manip.r) && num(manip.lostExpPerSec)) {
+    manipDecision = serveOrFarm(bestExitPolicy, withInputs, { r0: null, r: manip.r, lostExpPerSec: manip.lostExpPerSec })
+    withP = num(manipDecision.hours) ? { best: { hours: manipDecision.hours } } : bestExitPolicy(withInputs)
+  } else withP = bestExitPolicy(withInputs)
   if (!without.best || without.degenerate) return { deltaH: null, why: `exit unpriced or degenerate without the purchase (${without.why ?? without.degenerateWhy})` }
   // Priced without it, unreachable with it: the purchase takes the capital the
   // exit's money legs need (e.g. $250m every life from a $250m opening).
   if (!withP.best || withP.degenerate) return { deltaH: Infinity, withH: Infinity, withoutH: without.best.hours, why: `the purchase leaves the exit unreachable (${withP.why ?? withP.degenerateWhy})` }
-  return { deltaH: withP.best.hours - without.best.hours, withH: withP.best.hours, withoutH: without.best.hours }
+  return { deltaH: withP.best.hours - without.best.hours, withH: withP.best.hours, withoutH: without.best.hours, ...(manipDecision ? { manip: { serve: manipDecision.serve, why: manipDecision.why } } : {}) }
 }

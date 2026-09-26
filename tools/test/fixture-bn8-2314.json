@@ -1,0 +1,576 @@
+{
+ "note": "BN8 2026-09-26 23:14-23:15 UTC",
+ "exitInputs": {
+  "at": "2026-09-26T23:12:24.105Z",
+  "lastAugReset": 1790459814843,
+  "inputs": {
+   "money": 392846710.5588636,
+   "incomePerSec": 39365.660062011215,
+   "lifeIncome": 0,
+   "hacking": 1680,
+   "hackingExp": 47198032.12330557,
+   "hackingMult": 4.598568879847977,
+   "expPerSec": 9944.38,
+   "repPerSec": 24.147239364536205,
+   "exitRep": 0,
+   "exitFavor": 0,
+   "cycleHours": 2.7211764705882353,
+   "multGainPerCycle": 1.0375688384788753,
+   "nextInstallGain": 1.0303090180067993,
+   "installGains": {
+    "hacking": 1.0303090180067993,
+    "rep": 1.0303090180067993,
+    "income": 1.1191569186724688,
+    "exp": 1.0303090180067993
+   },
+   "persistBaseline": {
+    "hacking": 1.0303090180067993,
+    "rep": 1.0303090180067993,
+    "income": 1.1191569186724688,
+    "exp": 1.0303090180067993
+   },
+   "eRep": 0,
+   "eBudget": 0,
+   "exitLevel": 3000,
+   "joinMoney": 100000000000,
+   "terminalRep": 2500000,
+   "donationCost": 1170658671962.4968,
+   "favorToDonate": 0,
+   "flatIncomePerSec": 0,
+   "capitalReturnPerSec": 0.0002026009326703808,
+   "capitalWarmupH": 0.4040401185245601,
+   "capitalFit": "realised: 2 trader run(s) from their start, 282 points over 6.2h of market ticks — growth index = r(T - w), flows excluded",
+   "capitalCap": 5906797659285.948,
+   "installCash": 250000000,
+   "workWhileDonating": true,
+   "cadence": {
+    "source": "measured",
+    "node": 8,
+    "lives": 18,
+    "why": "measured over 18 lives in BitNode 8"
+   },
+   "finalGrafts": [
+    {
+     "name": "SmartJaw",
+     "cost": 8250000000,
+     "slotH": 1.3761839690716855,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 1.225
+    },
+    {
+     "name": "OmniTek InfoLoad",
+     "cost": 8625000000,
+     "slotH": 0.8336727524955296,
+     "hacking": 1.176,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "nextSENS Gene Modification",
+     "cost": 5775000000,
+     "slotH": 1.556873165200577,
+     "hacking": 1.176,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuronal Densification",
+     "cost": 4125000000,
+     "slotH": 1.0294046578414557,
+     "hacking": 1.127,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "Xanipher",
+     "cost": 12750000000,
+     "slotH": 2.0077652323706294,
+     "hacking": 1.176,
+     "exp": 1.127,
+     "rep": 0.98
+    }
+   ],
+   "graftStartMoney": 83715000000
+  }
+ },
+ "stock": {
+  "at": "2026-09-26T23:16:24.815Z",
+  "manip": {
+   "catalyst": "grow"
+  },
+  "manipCurve": [
+   {
+    "nudgesPerSec": 0,
+    "returnPerSec": 0.0002521702407216486
+   },
+   {
+    "nudgesPerSec": 0.041666666666666664,
+    "returnPerSec": 0.0003227416168242209
+   },
+   {
+    "nudgesPerSec": 0.16666666666666666,
+    "returnPerSec": 0.00043001177338202715
+   },
+   {
+    "nudgesPerSec": 0.5,
+    "returnPerSec": 0.0006098420057703863
+   },
+   {
+    "nudgesPerSec": 1.6666666666666667,
+    "returnPerSec": 0.0007288450017182946
+   }
+  ]
+ },
+ "batch": {
+  "at": "2026-09-26T23:16:23.752Z",
+  "ramTotal": 5244,
+  "expFarm": {
+   "scorePerGBms": 0.006398991275982689,
+   "manip": {
+    "serve": false,
+    "priced": true,
+    "withH": 29.970843038645317,
+    "withoutH": 13.198780378022454,
+    "lostExpPerSec": 9717.80048811934,
+    "returnPerSec": 0.000420056904803388,
+    "why": "exit 29.97h serving manip (r 4.20e-4/s, -9718 exp/s) vs 13.20h farming exp (r 2.52e-4/s)",
+    "hosts": [
+     "catalyst"
+    ],
+    "blocked": [],
+    "nudgesPerSec": 0.1549,
+    "gb": 21720
+   },
+   "portTiers": {
+    "owned": 5,
+    "base": {
+     "ports": 5,
+     "ramGB": 5244,
+     "bestScore": 0.006398991275982689
+    },
+    "tiers": []
+   }
+  },
+  "stockServers": [
+   {
+    "sym": "ECP",
+    "host": "ecorp",
+    "rooted": true,
+    "ports": 5,
+    "required": 1274,
+    "level": 1693,
+    "moneyMax": 1368452540475,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.14072
+   },
+   {
+    "sym": "MGCP",
+    "host": "megacorp",
+    "rooted": true,
+    "ports": 5,
+    "required": 1209,
+    "level": 1693,
+    "moneyMax": 1149679296250,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.16876
+   },
+   {
+    "sym": "BLD",
+    "host": "blade",
+    "rooted": true,
+    "ports": 5,
+    "required": 1097,
+    "level": 1693,
+    "moneyMax": 382433880525,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.14071
+   },
+   {
+    "sym": "CLRK",
+    "host": "clarkinc",
+    "rooted": true,
+    "ports": 5,
+    "required": 1150,
+    "level": 1693,
+    "moneyMax": 460672634275,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.20931
+   },
+   {
+    "sym": "OMTK",
+    "host": "omnitek",
+    "rooted": true,
+    "ports": 5,
+    "required": 1067,
+    "level": 1693,
+    "moneyMax": 473183472150,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.18587
+   },
+   {
+    "sym": "FSIG",
+    "host": "4sigma",
+    "rooted": true,
+    "ports": 5,
+    "required": 950,
+    "level": 1693,
+    "moneyMax": 428345571450,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.11525
+   },
+   {
+    "sym": "KGI",
+    "host": "kuai-gong",
+    "rooted": true,
+    "ports": 5,
+    "required": 1026,
+    "level": 1693,
+    "moneyMax": 622748125750,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.20231
+   },
+   {
+    "sym": "FLCM",
+    "host": "fulcrumtech",
+    "rooted": true,
+    "ports": 5,
+    "required": 1112,
+    "level": 1693,
+    "moneyMax": 37795731225,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.22013
+   },
+   {
+    "sym": "FLCM",
+    "host": "fulcrumassets",
+    "rooted": true,
+    "ports": 5,
+    "required": 1146,
+    "level": 1693,
+    "moneyMax": 25000000,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.01197
+   },
+   {
+    "sym": "STM",
+    "host": "stormtech",
+    "rooted": true,
+    "ports": 5,
+    "required": 1040,
+    "level": 1693,
+    "moneyMax": 28666785825,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.12172
+   },
+   {
+    "sym": "DCOMM",
+    "host": "defcomm",
+    "rooted": true,
+    "ports": 5,
+    "required": 987,
+    "level": 1693,
+    "moneyMax": 23368259975,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.10514
+   },
+   {
+    "sym": "HLS",
+    "host": "helios",
+    "rooted": true,
+    "ports": 5,
+    "required": 883,
+    "level": 1693,
+    "moneyMax": 13902824600,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.11725
+   },
+   {
+    "sym": "VITA",
+    "host": "vitalife",
+    "rooted": true,
+    "ports": 5,
+    "required": 798,
+    "level": 1693,
+    "moneyMax": 18283190750,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.13139
+   },
+   {
+    "sym": "ICRS",
+    "host": "icarus",
+    "rooted": true,
+    "ports": 5,
+    "required": 920,
+    "level": 1693,
+    "moneyMax": 22708099900,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.1119
+   },
+   {
+    "sym": "UNV",
+    "host": "univ-energy",
+    "rooted": true,
+    "ports": 4,
+    "required": 809,
+    "level": 1693,
+    "moneyMax": 27726863675,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.22207
+   },
+   {
+    "sym": "AERO",
+    "host": "aerocorp",
+    "rooted": true,
+    "ports": 5,
+    "required": 902,
+    "level": 1693,
+    "moneyMax": 27551514625,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.11941
+   },
+   {
+    "sym": "OMN",
+    "host": "omnia",
+    "rooted": true,
+    "ports": 5,
+    "required": 925,
+    "level": 1693,
+    "moneyMax": 23737165725,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.10959
+   },
+   {
+    "sym": "SLRS",
+    "host": "solaris",
+    "rooted": true,
+    "ports": 5,
+    "required": 828,
+    "level": 1693,
+    "moneyMax": 20851746250,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.2326
+   },
+   {
+    "sym": "GPH",
+    "host": "global-pharm",
+    "rooted": true,
+    "ports": 4,
+    "required": 766,
+    "level": 1693,
+    "moneyMax": 38232713875,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.23614
+   },
+   {
+    "sym": "NVMD",
+    "host": "nova-med",
+    "rooted": true,
+    "ports": 4,
+    "required": 793,
+    "level": 1693,
+    "moneyMax": 29233405350,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.14329
+   },
+   {
+    "sym": "LXO",
+    "host": "lexo-corp",
+    "rooted": true,
+    "ports": 4,
+    "required": 655,
+    "level": 1693,
+    "moneyMax": 19910104900,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.0763
+   },
+   {
+    "sym": "RHOC",
+    "host": "rho-construction",
+    "rooted": true,
+    "ports": 3,
+    "required": 524,
+    "level": 1693,
+    "moneyMax": 13300428600,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.19816
+   },
+   {
+    "sym": "APHE",
+    "host": "alpha-ent",
+    "rooted": true,
+    "ports": 4,
+    "required": 527,
+    "level": 1693,
+    "moneyMax": 17910362775,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.14205
+   },
+   {
+    "sym": "SYSC",
+    "host": "syscore",
+    "rooted": true,
+    "ports": 4,
+    "required": 578,
+    "level": 1693,
+    "moneyMax": 13690273575,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.13062
+   },
+   {
+    "sym": "CTK",
+    "host": "computek",
+    "rooted": true,
+    "ports": 3,
+    "required": 372,
+    "level": 1693,
+    "moneyMax": 6114428550,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.22117
+   },
+   {
+    "sym": "NTLK",
+    "host": "netlink",
+    "rooted": true,
+    "ports": 3,
+    "required": 383,
+    "level": 1693,
+    "moneyMax": 6875000000,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.1189
+   },
+   {
+    "sym": "OMGA",
+    "host": "omega-net",
+    "rooted": true,
+    "ports": 2,
+    "required": 186,
+    "level": 1693,
+    "moneyMax": 1611660250,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.20709
+   },
+   {
+    "sym": "FNS",
+    "host": "foodnstuff",
+    "rooted": true,
+    "ports": 0,
+    "required": 1,
+    "level": 1693,
+    "moneyMax": 50000000,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.08291
+   },
+   {
+    "sym": "SGC",
+    "host": "sigma-cosmetics",
+    "rooted": true,
+    "ports": 0,
+    "required": 5,
+    "level": 1693,
+    "moneyMax": 57500000,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.11279
+   },
+   {
+    "sym": "JGN",
+    "host": "joesguns",
+    "rooted": true,
+    "ports": 0,
+    "required": 10,
+    "level": 1693,
+    "moneyMax": 62500000,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.14686
+   },
+   {
+    "sym": "CTYS",
+    "host": "catalyst",
+    "rooted": true,
+    "ports": 3,
+    "required": 405,
+    "level": 1693,
+    "moneyMax": 13040391525,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.15489
+   },
+   {
+    "sym": "MDYN",
+    "host": "microdyne",
+    "rooted": true,
+    "ports": 5,
+    "required": 827,
+    "level": 1693,
+    "moneyMax": 12636857900,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.13789
+   },
+   {
+    "sym": "TITN",
+    "host": "titan-labs",
+    "rooted": true,
+    "ports": 5,
+    "required": 827,
+    "level": 1693,
+    "moneyMax": 18824761875,
+    "servable": true,
+    "why": null,
+    "nudgesIfServed": 0.23287
+   }
+  ]
+ },
+ "programs": {
+  "manipChannel": "requested 4sigma",
+  "prefix1": {
+   "cost": 250000000,
+   "expGainPerSec": 13545.858162162163,
+   "manip": {
+    "nudgesPerSec": 0.11411,
+    "capitalReturnPerSec": 0.0002979277035954965,
+    "ratio": 1.4705
+   },
+   "deltaH": -1.9713218702937247,
+   "why": "exit 12.49h with vs 14.46h without (manipulation x1.4705 on the trader's return)"
+  },
+  "SQLInject.exe": {
+   "buy": true,
+   "why": "the first 1 unowned opener(s) shorten the exit by 1.97h for $250000000"
+  },
+  "tor": {
+   "buy": false,
+   "why": "owned"
+  }
+ }
+}
