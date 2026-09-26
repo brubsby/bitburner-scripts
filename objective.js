@@ -367,7 +367,7 @@ export function bindingGate(ctx = {}) {
       gate: 'money',
       destroyedByInstall: true,
       why: short
-        ? `$${Math.round(ctx.joinMoneyShort)} must be IN HAND for the next join, and an install resets money to $1262`
+        ? `$${Math.round(ctx.joinMoneyShort)} must be IN HAND for the next join, and an install resets money to $${Math.round(num(ctx.resetMoney) ? ctx.resetMoney : POST_INSTALL_MONEY)}`
         : `the $${Math.round(ctx.exitFactionMoneyReq)} for the exit faction is ALREADY IN HAND but it is not joined yet — ` +
           `installing now would destroy the money without ever using it`,
     }
@@ -395,7 +395,7 @@ export function bindingGate(ctx = {}) {
       destroyedByInstall: true,
       why:
         `$${Math.round(ctx.terminalShort)} still needed to acquire the augmentation that ends the BitNode, and an ` +
-        `install resets money to $1262, reputation to zero and faction membership with them`,
+        `install resets money to $${Math.round(num(ctx.resetMoney) ? ctx.resetMoney : POST_INSTALL_MONEY)}, reputation to zero and faction membership with them`,
     }
   }
   return { gate: 'none', destroyedByInstall: false, why: 'no exit gate is outstanding' }

@@ -639,7 +639,15 @@ export function shouldInstall(o) {
   // `gate: null` means the caller could not describe the exit state, and that
   // must read as NO OPINION rather than "nothing binds" — the whole failure
   // being fixed is an objective that confidently scored the wrong thing.
-  const destructive = o.binding?.destroyedByInstall === true
+  // THE JOIN-MONEY GATE IS IN THE PLAN'S TRAJECTORY where the plan decided
+  // (ex.bayes) on inputs that model the join (ex.joinModelled: join money
+  // hoarded from the node's post-install money, the join's hacking level):
+  // installing then costs exactly what those trajectories already charge, so
+  // the plan decides and this veto stands aside. Every other destroyed gate
+  // (the terminal purchase's reputation, a mandated campaign) still vetoes,
+  // and so does this one whenever the plan could not decide.
+  const moneyGateInPlan = o.binding?.gate === 'money' && !!bayes && ex?.joinModelled === true
+  const destructive = o.binding?.destroyedByInstall === true && !moneyGateInPlan
 
   // THE COUNT INSTALL. Banks distinct augmentations toward a gate the exit
   // cannot pass without, whatever M is. `destructive` still vetoes it: if the
@@ -674,6 +682,23 @@ export function shouldInstall(o) {
   // destroyed ~$8.5q plus the campaign's progress.
   const mandateHold = o.binding?.destroyedByInstall === true && o.binding?.mandated === true
   const install = !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
+  // THE PLAN AND THIS GATE AGREE, or the gate names why it overrode it.
+  const planOverride =
+    bayes && bayes.install !== install
+      ? mandateHold
+        ? 'a mandated campaign'
+        : terminal
+          ? 'the terminal install'
+          : destructive
+            ? `the ${o.binding?.gate ?? '?'} gate the plan's trajectory does not carry (${o.binding?.why ?? ''})`
+            : countInstall
+              ? 'the count batch rule'
+              : !netGain
+                ? 'no multiplier gain on the batch'
+                : countStalls
+                  ? 'the batch banks zero distinct augmentations'
+                  : null
+      : null
 
   return {
     ...base(),
@@ -709,6 +734,9 @@ export function shouldInstall(o) {
     holdForever: neverBest || undefined,
     // The committed plan's install decision, when it decided (null: the
     // comparison above decided alone, the named fallback).
+    planAgrees: bayes ? bayes.install === install : null,
+    planOverride,
+    moneyGateInPlan: moneyGateInPlan || undefined,
     plan: bayes ? { key: bayes.key, install: bayes.install, meanH: bayes.H, q10: bayes.q10 ?? null, q50: bayes.q50 ?? null, q90: bayes.q90 ?? null, held: bayes.held === true, why: bayes.why ?? null } : null,
     binding: o.binding ?? null,
     destructive,

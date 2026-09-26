@@ -354,6 +354,10 @@ export function exitHours(o = {}) {
     // the gates
     exitLevel,
     joinMoney = 0,
+    // The exit faction's hacking requirement for the INVITATION (Daedalus:
+    // haveSkill hacking 2500, FactionInfo.tsx), which must hold at the same
+    // time as the money in hand: the reputation leg cannot start before it.
+    joinLevel = 0,
     terminalRep = 0,
     donationCost = null,
     favorToDonate = null,
@@ -630,6 +634,18 @@ export function exitHours(o = {}) {
     legs.push({ leg: 'hoard join money', hours: hm, detail: `$${Math.round(joinMoney)} in hand` })
     // The hoard leg also banks exp, which the climb below inherits.
     exp += pos(expRate) ? expRate * hm * 3600 : 0
+  }
+  // THE JOIN'S HACKING LEVEL, concurrent with the hoard (the exp banked
+  // while hoarding counts): the invitation needs the level AND the money in
+  // hand, so only the part of the climb the hoard did not cover is added.
+  // Live 2026-09-26 the plan chose to install while the legacy gate held on
+  // the join money; the plan's trajectory now carries the whole join.
+  if (pos(joinLevel) && joinMoney > 0 && pos(mult) && levelAt(exp, mult) < joinLevel) {
+    const hj = hoursToLevel(joinLevel, mult, exp, expRate)
+    if (!num(hj)) return { hours: null, why: `could not price the climb to the join level ${joinLevel}` }
+    h += hj
+    exp += pos(expRate) ? expRate * hj * 3600 : 0
+    legs.push({ leg: 'climb to join level', hours: hj, detail: `hacking ${joinLevel} with $${Math.round(joinMoney)} in hand` })
   }
 
   if (terminalRep > 0) {

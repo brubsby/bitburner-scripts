@@ -456,7 +456,7 @@ export async function run() {
     if (!/const INSTALL_HOLD_FILE = '\/install-hold\.txt'/.test(act) || !/const STOCK_HOLD_FILE = '\/tel\/stock-hold\.txt'/.test(act) || econ.STOCK_HOLD_FILE !== "/tel/stock-hold.txt") o.fail("act.js's copies of the hold file names must equal nodeecon's");
     const inst = act.slice(act.indexOf("if (o.kind === 'install') {"), act.indexOf("runActor(ns, 'liquidate', ['install'])"));
     if (!/const hold = readHomeFile\(ns, INSTALL_HOLD_FILE\)\s*\n\s*if \(hold\) \{\s*\n\s*results\.push\(\{[^\n]*skipped: `held by[^\n]*\n\s*break/.test(inst)) o.fail("act.js must refuse an install order while /install-hold.txt exists, before selling the book");
-    if (!/if \(installHold && gate\.install\)[\s\S]{0,200}gate\.install = false/.test(prog) || !/forcedInstall = !installHold/.test(prog)) o.fail("progress.js's gate (and --install-now) must honour /install-hold.txt");
+    if (!/if \(installHold && gate\.install\)[\s\S]{0,500}gate\.install = false/.test(prog) || !/forcedInstall = !installHold/.test(prog)) o.fail("progress.js's gate (and --install-now) must honour /install-hold.txt");
     if (!/ns\.write\(file, '', 'w'\)\s*\n\s*fetchFromHome\(ns, file\)/.test(act)) o.fail("off home, a hold deleted on home must not survive as a stale local copy");
   }
   checks.push(o);
@@ -858,6 +858,58 @@ export async function run() {
     if (!/const lost = manipLostExp\(expWith, gb, fleetGB/.test(prog) || !/manipOf\(owned \+ j \+ 1, \(inputs\?\.expPerSec \?\? 0\) \+ \(gain \?\? 0\)\)/.test(prog)) y8.fail("the displaced exp is the farm WITH the opener (its exp gain included), via expfarm.manipLostExp");
   }
   checks.push(y8);
+
+  // -----------------------------------------------------------------------
+  const z8 = new Check("B8z", "the plan's install trajectories carry the Daedalus join (money in hand from the node's post-install money, hacking 2500), the legacy join-money veto defers to them, the final verdict agrees with the plan or names its override, and the message uses the node's reset money");
+  {
+    z8.examined(9);
+    const IG = await import("../../installgate.js");
+    const OB = await import("../../objective.js");
+    const PL = await import("../../plan.js");
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-2314.json"), "utf8"));
+    // (1) The join's hacking level is a leg of the trajectory, concurrent with the hoard.
+    const inputs = { ...F.exitInputs.inputs, joinMoney: 100e9 };
+    const without = X.exitHours({ ...inputs, joinLevel: 0, installsFirst: 1 });
+    const withJ = X.exitHours({ ...inputs, joinLevel: 2500, installsFirst: 1 });
+    const leg = (withJ.legs ?? []).find((l) => l.leg === "climb to join level");
+    z8.note(`install once, then exit: ${without.hours?.toFixed(2)}h without the join level, ${withJ.hours?.toFixed(2)}h with hacking 2500 (${leg ? leg.hours.toFixed(2) + "h beyond the hoard" : "covered by the hoard"})`);
+    if (!(typeof withJ.hours === "number" && withJ.hours >= without.hours)) z8.fail("the join level can only add time");
+    const high = X.exitHours({ ...inputs, joinLevel: 1, installsFirst: 1 });
+    // Where no hoard covers it (the money survives, say), the climb shows.
+    const rich = { ...inputs, installCash: 2e11 };
+    const rNo = X.exitHours({ ...rich, joinLevel: 0, installsFirst: 1 });
+    const rJ = X.exitHours({ ...rich, joinLevel: 2500, installsFirst: 1 });
+    const jl = (rJ.legs ?? []).find((l) => l.leg === "climb to join level");
+    z8.note(`money already in hand after the install: ${rNo.hours?.toFixed(2)}h without the join level, ${rJ.hours?.toFixed(2)}h with it (join-level leg ${jl ? jl.hours.toFixed(3) + "h, before the reputation leg" : "absent"}; the graft slot binds the window here)`);
+    const order = (rJ.legs ?? []).map((l) => l.leg);
+    if (!(jl && jl.hours > 0 && order.indexOf("climb to join level") < order.indexOf("exit reputation") && rJ.hours >= rNo.hours)) z8.fail("with the money in hand, the climb to hacking 2500 must be charged before the reputation leg");
+    if (Math.abs(high.hours - without.hours) > 1e-9) z8.fail("a join level already met adds nothing");
+    // (2) The veto defers to a plan whose trajectories carry the join.
+    const H = 3600e3;
+    const base = { ageMs: 2 * H, M: 1.01, queued: 1, exp: 1e9, prev: { ageMs: H, M: 1.005 }, futures: [], countShort: 0, countGain: 0, capitalNode: true };
+    const money = { gate: "money", destroyedByInstall: true, why: "$100000000000 must be IN HAND for the next join, and an install resets money to $250000000" };
+    const ex = { countAware: true, nowH: 12.5, neverH: 13, waits: [], bayes: { install: true, key: "now", waitMs: 0, H: 12.5, why: "stays on now vs never" } };
+    const deferred = IG.shouldInstall({ ...base, binding: money, exitCompare: { ...ex, joinModelled: true } });
+    const legacy = IG.shouldInstall({ ...base, binding: money, exitCompare: { ...ex, joinModelled: false } });
+    const noPlan = IG.shouldInstall({ ...base, binding: money, exitCompare: { countAware: true, nowH: 12.5, neverH: 13, waits: [], joinModelled: true } });
+    const rep = IG.shouldInstall({ ...base, binding: { gate: "rep", destroyedByInstall: true, why: "terminal rep" }, exitCompare: { ...ex, joinModelled: true } });
+    if (!(deferred.install === true && deferred.planAgrees === true && deferred.moneyGateInPlan === true)) z8.fail("with the join in the plan's trajectory the plan decides (install now), and the gate agrees", deferred.why);
+    if (!(legacy.install === false && legacy.planAgrees === false && /money gate the plan's trajectory does not carry/.test(legacy.planOverride ?? ""))) z8.fail("inputs that do not model the join keep the veto, NAMING it as the plan's override", JSON.stringify({ i: legacy.install, a: legacy.planAgrees, o: legacy.planOverride }));
+    if (noPlan.install !== false) z8.fail("no plan decision: the legacy veto stands (the named fallback)");
+    if (rep.install !== false || !rep.planOverride) z8.fail("a gate outside the plan's trajectory (the terminal rep) still vetoes, named");
+    // (3) The final install verdict is checked against the plan.
+    const plan = { at: new Date().toISOString(), lastAugReset: 1, decisions: { install: { key: "now" } } };
+    const pc1 = PL.planCheck(plan, { gate: { lastAugReset: 1, at: new Date().toISOString(), install: false, planAgrees: false, planOverride: null, plan: { key: "now", install: true }, why: "hold" } });
+    const pc2 = PL.planCheck(plan, { gate: { lastAugReset: 1, at: new Date().toISOString(), install: false, planAgrees: false, planOverride: "the manual hold", plan: { key: "now", install: true } } });
+    if (!pc1.fails.some((f) => /PLAN OVERRIDDEN/.test(f.what))) z8.fail("an unnamed override of the plan must fail the plan check");
+    if (pc2.fails.some((f) => /PLAN OVERRIDDEN/.test(f.what)) || !pc2.notes.some((n) => /overridden by the manual hold/.test(n))) z8.fail("a named override is noted, not failed");
+    // (4) The message states the node's reset money.
+    const g8 = OB.bindingGate({ countShort: 0, joinMoneyShort: 99e9, terminalShort: 0, exitLevelReached: true, resetMoney: 250e6 });
+    if (!/resets money to \$250000000/.test(g8.why ?? "")) z8.fail("BitNode 8's install leaves $250m, and the message must say so", g8.why);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/joinLevel: exitFactionHackReq\(candidates\) \?\? 0/.test(prog) || !/resetMoney: postInstallMoney\(info\?\.currentNode\)/.test(prog)) z8.fail("progress.js must feed the join level into the exit inputs and the node's reset money into the gate");
+  }
+  checks.push(z8);
 
   return checks;
 }

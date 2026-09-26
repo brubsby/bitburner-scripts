@@ -624,6 +624,14 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const c = plan.calibration
   if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
   else if (c) notes.push(`plan calibration: ${c.why ?? 'none'}`)
+  // THE FINAL INSTALL VERDICT agrees with the plan, or the gate names the
+  // rule that overrode it (installgate planOverride). Live 2026-09-26 the plan
+  // said "now" while the legacy join-money veto held, with nothing recording
+  // which decider won or why.
+  if (gate && plan.lastAugReset === gate.lastAugReset && typeof gate.planAgrees === 'boolean') {
+    if (gate.planAgrees === false && !gate.planOverride) fail(`PLAN OVERRIDDEN: the plan says ${gate.plan?.key ?? '?'} (install ${gate.plan?.install}) and the gate ${gate.install ? 'installs' : 'holds'}, naming no rule`, `gate: ${String(gate.why ?? '').slice(0, 200)}`)
+    else if (gate.planAgrees === false) notes.push(`plan install overridden by ${gate.planOverride}`)
+  }
   if (plan.exit) notes.push(`plan exit: mean ${plan.exit.meanH}h, 80% ${plan.exit.q10}-${plan.exit.q90}h (${plan.exit.source})`)
   const d = plan.decisions ?? {}
   if (d.countRoute?.key) notes.push(`plan route: ${d.countRoute.name} at ${d.countRoute.faction} via ${d.countRoute.via}${d.countRoute.held ? ' (held)' : ''} — ${String(d.countRoute.why ?? '').slice(0, 160)}`)

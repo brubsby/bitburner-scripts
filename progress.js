@@ -1071,6 +1071,20 @@ function exitFactionMoneyReq(candidates) {
   return req > 0 ? req : null
 }
 
+/** The exit faction's invitation hacking requirement (the hacking branch of its someCondition), or null. */
+function exitFactionHackReq(candidates) {
+  if (!Array.isArray(candidates)) return null
+  let req = 0
+  const walk = (r) => {
+    if (!r || typeof r !== 'object') return
+    if (Array.isArray(r)) return r.forEach(walk)
+    if (r.type === 'skills' && typeof r.skills?.hacking === 'number' && r.skills.hacking > req) req = r.skills.hacking
+    for (const k of ['conditions', 'condition']) if (r[k]) walk(r[k])
+  }
+  for (const c of candidates) if (c?.name === EXIT_FACTION) walk(c.requirements)
+  return req > 0 ? req : null
+}
+
 /** Every `money` requirement in a (possibly nested) requirement tree. */
 function moneyNeeds(req, out = []) {
   if (!req || typeof req !== 'object') return out
@@ -2505,6 +2519,9 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // itself when the cash is already there, and feeding it a claim
     // that had collapsed to 0 would hide the leg entirely.
     joinMoney: exitFactionMoneyReq(candidates) ?? 0,
+    // The exit faction's invitation hacking level (Daedalus 2500), priced
+    // alongside the join money in hand (exitplan joinLevel).
+    joinLevel: exitFactionHackReq(candidates) ?? 0,
     // THE RED PILL'S REPUTATION. This read the offer's `baseRep`, a field no offer
     // carries (offers have `repReq`), so the 2.5M-rep leg was priced at 0 in
     // EVERY node, joined or not — and before Daedalus is joined there is no
@@ -5079,6 +5096,7 @@ async function act(ns, canJoin, info, note) {
               // options on the shared posterior draws, the committed install
               // time kept unless beaten with P >= PLAN.theta. installgate
               // obeys it (exitCompare.bayes).
+              joinModelled: inputs.joinMoney > 0 && typeof inputs.installCash === 'number' && typeof inputs.joinLevel === 'number',
               bayes: await planInstallOf(ns, info, inputs, countCtx, { now: { hours: nowC.best.hours, n: nowC.best.n, lifeH: nowC.best.lifeH ?? null }, waits: waitsC.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, n: w.n, lifeH: w.lifeH, extra: w.extra, route: w.route ? route : null })) }),
             }
           }
@@ -5097,6 +5115,7 @@ async function act(ns, canJoin, info, note) {
           waits: waits.map(({ gains, ...w }) => w),
           atSearchEdge: now.atSearchEdge === true,
           why: now.best ? null : now.why,
+          joinModelled: inputs.joinMoney > 0 && typeof inputs.installCash === 'number' && typeof inputs.joinLevel === 'number',
           bayes: now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null })), never: { hours: never.best?.hours ?? null } }) : null,
         }
       } catch (e) {
@@ -5186,6 +5205,8 @@ async function act(ns, canJoin, info, note) {
         // the gate and frees the install that destroys it.
         exitFactionJoined: Array.isArray(player?.factions) ? player.factions.includes(EXIT_FACTION) : null,
         exitFactionMoneyReq: exitFactionMoneyReq(candidates),
+        // What an install leaves in THIS node (BitNode 8: $250m, not $1262).
+        resetMoney: postInstallMoney(info?.currentNode),
         countShort: ticketsWanted,
         joinMoneyShort: (() => {
           const c = joinMoneyClaim(candidates, player)
@@ -5295,6 +5316,8 @@ async function act(ns, canJoin, info, note) {
     })()
     if (installHold && gate.install) {
       gate.heldBy = INSTALL_HOLD_FILE
+      gate.planOverride = gate.planOverride ?? (gate.plan?.install ? `the manual hold ${INSTALL_HOLD_FILE}` : null)
+      gate.planAgrees = gate.plan ? gate.plan.install === false : null
       gate.wouldInstall = gate.why
       gate.install = false
       gate.why = `hold: ${INSTALL_HOLD_FILE}: ${installHold.slice(0, 200)} — the gate would install (${gate.wouldInstall})`
