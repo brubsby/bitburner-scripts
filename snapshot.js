@@ -103,6 +103,8 @@ export function snapshotView(ns, info, now = Date.now()) {
     missing,
     ownedAugs: (purchased = false) => (purchased ? need('owned').purchased : need('owned').owned),
     factionAugs: (faction) => pick('catalog', 'augs', faction),
+    // Every augmentation any faction's catalogue lists (the graft candidates).
+    catalogNames: () => [...new Set(Object.values(need('catalog').augs ?? {}).flat())],
     augPrice: (name) => pick('augprice', 'price', name),
     augRepReq: (name) => pick('augprice', 'repReq', name),
     augStats: (name) => pick('augstats', 'stats', name),

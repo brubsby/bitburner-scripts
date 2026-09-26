@@ -20,14 +20,23 @@ import { GAME } from "./build-ram.mjs";
 const gp = await import("../../graftplan.js");
 const game = (rel) => fs.readFileSync(path.join(GAME, rel), "utf8");
 
-/** A priceExit stub with the real shape: hours fall as the multipliers rise. */
+/**
+ * A priceExit stub with the real shape: hours fall as the multipliers rise,
+ * and the grafts (b.finalGrafts, graftSpecOf entries) are legs of the run —
+ * their multipliers act, and their slot hours and money are charged, INSIDE
+ * it (1h per $1b), the way exitplan's final window charges them.
+ */
 function fakeExit() {
   return (b) => {
-    const hm = b.hackingMult ?? 1;
-    const ex = b.expPerSec ?? 1;
-    const rp = b.repPerSec ?? 1;
+    const gs = b.finalGrafts ?? [];
+    const prod = (k) => gs.reduce((a, g) => a * g[k], 1);
+    const hm = (b.hackingMult ?? 1) * prod("hacking");
+    const ex = (b.expPerSec ?? 1) * prod("exp");
+    const rp = (b.repPerSec ?? 1) * prod("rep");
+    const slot = gs.reduce((a, g) => a + g.slotH, 0);
+    const money = gs.reduce((a, g) => a + g.cost, 0) / 1e9;
     // installs + climb + reputation, the three legs that actually move.
-    return 400 / Math.pow(hm, 0.5) + 60 / Math.pow(ex / 300, 0.5) + 200 / (rp / 3.5);
+    return 400 / Math.pow(hm, 0.5) + 60 / Math.pow(ex / 300, 0.5) + 200 / (rp / 3.5) + slot + money;
   };
 }
 const BASE = { hackingMult: 0.53, expPerSec: 316, repPerSec: 3.54 };
@@ -156,20 +165,23 @@ export async function run() {
       c4.fail(`a price-ranked plan takes the junk; a searched one must not: ${names.join(", ")}`);
     }
     if (!(r.netHours > 0)) c4.fail("a plan that does not beat doing nothing must not be returned as the plan");
-    // NET OF THE WORK SLOT, not gross — grafting is player work.
-    if (!(r.slotHours > 0)) c4.fail("the plan must account for the hours grafting occupies");
-    if (Math.abs(r.netHours - (r.baseline - r.exitHours - r.slotHours)) > 1e-6) {
-      c4.fail("netHours must be baseline - exit - slotHours, so the work slot is really subtracted");
+    // THE SLOT IS INSIDE THE RUN, not subtracted beside it: the decision is
+    // the with-run's exit minus the without-run's, recomputed here on the same
+    // inputs with the plan's own grafts and start balance.
+    if (!(r.slotHours > 0)) c4.fail("the plan must report the hours grafting occupies");
+    const wo = exit(BASE);
+    const wi = exit({ ...BASE, finalGrafts: r.grafts.map((g) => g.spec), graftStartMoney: r.startMoney });
+    if (Math.abs(r.deltaH - (wi - wo)) > 1e-9 || Math.abs(r.netHours + r.deltaH) > 1e-9) {
+      c4.fail(`the decision must be withH - withoutH on one input set: deltaH ${r.deltaH} vs ${wi - wo}`);
     }
     // GRAFT NOTHING is a result, not an inexpressible case: junk only.
     const none = gp.chooseGrafts({ candidates: junk, priceExit: exit, base: BASE, money: 3.77e9, intelligence: 95, ownedNames: [] });
     if (none.grafts === null) c4.fail("a pool of bad augs is not an error");
     if (none.grafts.length !== 0) c4.fail(`junk-only must graft NOTHING, got ${none.grafts.map((g) => g.name).join(", ")}`);
     if (!/nothing/.test(none.why)) c4.fail("and it must say so");
-    // Budget is respected.
-    const broke = gp.chooseGrafts({ candidates: good, priceExit: exit, base: BASE, money: 1e6, intelligence: 95, ownedNames: [] });
-    if (broke.grafts.length !== 0) c4.fail("nothing affordable means nothing grafted");
-    if (r.spend > 3.77e9) c4.fail(`the plan must stay inside the budget, spent $${r.spend}`);
+    // Money is a cost INSIDE the run: priced dear enough, nothing is grafted.
+    const dear = gp.chooseGrafts({ candidates: good.map((a) => ({ ...a, baseCost: a.baseCost * 1e3 })), priceExit: exit, base: BASE, intelligence: 95, ownedNames: [] });
+    if (dear.grafts.length !== 0) c4.fail("grafts whose money costs the run more than they save must not be planned");
     c4.note(`searched plan: ${names.join(", ")} — $${(r.spend / 1e6).toFixed(0)}m, ${r.slotHours.toFixed(1)}h slot, net +${r.netHours.toFixed(1)}h`);
   }
   checks.push(c4);
@@ -184,13 +196,12 @@ export async function run() {
       ["no priceExit", { ...ok, priceExit: null }],
       ["no base", { ...ok, base: null }],
       ["no candidates", { ...ok, candidates: null }],
-      ["money unreadable", { ...ok, money: null }],
       ["exit unpriceable", { ...ok, priceExit: () => null }],
     ]) {
       const r = gp.chooseGrafts(o);
       if (r.grafts !== null || !r.why) c5.fail(`${what} must REFUSE by name, got ${JSON.stringify(r).slice(0, 90)}`);
     }
-    c5.note("five unreadable inputs each refuse by name rather than planning a spend");
+    c5.note("four unreadable inputs each refuse by name rather than planning a spend");
   }
   checks.push(c5);
 
@@ -205,6 +216,141 @@ export async function run() {
     c6.note("the actor distinguishes throw (wrong city), refusal (money/prereqs) and success");
   }
   checks.push(c6);
+
+  // ---------------------------------------------------------------------
+  const X = await import("../../exitplan.js");
+  const c7 = new Check("GP7", "exitplan finalGrafts: a graft is paid, slotted and applied INSIDE the final window, and absent it nothing changes");
+  {
+    c7.examined(7);
+    const F = await import("./fixture-bn8-graft.mjs");
+    const I = { ...F.INPUTS };
+    const H = (x, k) => X.exitHours({ ...x, installsFirst: k });
+    const base0 = H(I, 0);
+    const K = X.bestExitPolicy(I).best?.installsFirst ?? 3;
+    const base3 = H(I, K);
+    if (!(base0.hours > 0) || !(base3.hours > 0)) c7.fail("the fixture's exit must price", JSON.stringify([base0.why, base3.why]));
+    // 1. Absent -> byte-identical legs (every other node, every other caller).
+    if (JSON.stringify(H({ ...I, finalGrafts: [] }, K)) !== JSON.stringify(base3)) c7.fail("an empty graft list must price exactly as no grafts");
+    // 2. A graft that buys nothing costs: money, slot and entropy are charged.
+    const dud = { name: "Dud", cost: 5e9, slotH: 1, hacking: 0.98, exp: 0.98, rep: 0.98 };
+    const withDud = H({ ...I, finalGrafts: [dud] }, K);
+    if (!(withDud.hours > base3.hours)) c7.fail(`a graft that only adds entropy must lengthen the exit: ${withDud.hours} vs ${base3.hours}`);
+    // 3. The money: a graft dearer than the window's opening balance is a money leg.
+    if (!withDud.legs.some((l) => l.leg === "graft money")) c7.fail("a graft dearer than the balance must be a money leg of the window");
+    // 4. The slot: the climb waits for the last graft (an install cancels one).
+    const long = { name: "Long", cost: 1e6, slotH: 500, hacking: 2, exp: 2, rep: 1 };
+    const withLong = H({ ...I, finalGrafts: [long] }, K);
+    if (!(withLong.hours >= base3.legs[0].hours + 500)) c7.fail(`a 500h graft must hold the exit past the window start + 500h, got ${withLong.hours}`);
+    // ...and the CLIMB starts after it even where the slot does not bind the
+    // window: a 9h graft ends after the hoard, so the climb runs from +9h.
+    const withNine = H({ ...I, finalGrafts: [{ name: "Nine", cost: 1e6, slotH: 9, hacking: 1, exp: 1, rep: 1 }] }, K);
+    const climbOf = (r) => r.legs.find((l) => l.leg === "climb to exit level")?.hours ?? 0;
+    if (!(withNine.hours >= base3.legs[0].hours + 9 + climbOf(withNine) - 1e-6)) c7.fail(`the climb must wait for the last graft: ${withNine.hours}h`);
+    // 2b. The money: a graft that buys nothing and carries no entropy still costs its price.
+    const priced = H({ ...I, finalGrafts: [{ name: "Priced", cost: 20e9, slotH: 0, hacking: 1, exp: 1, rep: 1 }] }, K);
+    if (!(priced.hours > base3.hours + 0.05)) c7.fail(`a $20b graft must lengthen the money legs: ${priced.hours} vs ${base3.hours}`);
+    // 5. The multiplier: a strong HACKING graft shortens the climb, on the final window only.
+    const strong = { name: "Strong", cost: 1e6, slotH: 0.5, hacking: 1.5 * 0.98, exp: 1, rep: 1 };
+    const withStrong = H({ ...I, finalGrafts: [strong] }, K);
+    const climb = (r) => r.legs.find((l) => l.leg === "climb to exit level")?.hours;
+    if (!(climb(withStrong) < climb(base3))) c7.fail("a hacking graft must shorten the final climb");
+    if (Math.abs(withStrong.legs[0].hours - base3.legs[0].hours) > 1e-9) c7.fail("the lives before the final window keep their measured cadence — a final-window graft must not change them");
+    // 6. The start balance is a real parameter: waiting for more money moves the money leg.
+    const a = H({ ...I, finalGrafts: [dud], graftStartMoney: 0 }, K);
+    const b = H({ ...I, finalGrafts: [dud], graftStartMoney: 50e9 }, K);
+    if (!(b.legs.some((l) => l.leg === "graft start money")) || a.legs.some((l) => l.leg === "graft start money")) c7.fail("graftStartMoney must add the start-balance leg, and 0 must not");
+    // 7. NOT_GRAFTABLE is the game's isSpecial list.
+    const src = game("src/Augmentation/Augmentations.ts");
+    const en = game("src/Augmentation/Enums.ts");
+    const enumMap = {};
+    for (const m of en.matchAll(/^\s*(\w+) = "([^"]+)",/gm)) enumMap[m[1]] = m[2];
+    const special = [];
+    for (const m of src.matchAll(/\[AugmentationName\.(\w+)\]:\s*\{([\s\S]*?)\n    \},/g)) if (/isSpecial:\s*true/.test(m[2])) special.push(enumMap[m[1]] ?? m[1]);
+    if (special.length < 10) c7.fail(`parsed only ${special.length} special augmentations from source — a rotted parser, not a clean list`);
+    const missing = special.filter((n) => !gp.NOT_GRAFTABLE.has(n));
+    const extra = [...gp.NOT_GRAFTABLE].filter((n) => !special.includes(n));
+    if (missing.length || extra.length) c7.fail(`NOT_GRAFTABLE drifted from source isSpecial: missing ${missing.join(", ") || "none"}, extra ${extra.join(", ") || "none"}`);
+    // And the price is divided back to the base the graft cost uses.
+    const cands = gp.graftCandidatesOf({ names: ["A", "The Red Pill"], stats: { A: { hacking: 1.1 }, "The Red Pill": {} }, prereqs: {}, price: { A: 3.61e9, "The Red Pill": 1 }, owned: [], augMoneyCost: 1, queuedNonSoA: 2, sf11: 0 });
+    if (cands.length !== 1 || Math.abs(cands[0].baseCost - 1e9) > 1) c7.fail(`a price at 2 queued (x1.9^2) must divide back to its base: ${JSON.stringify(cands)}`);
+    c7.note(`fixture ${F.AT}: exit at ${K} installs ${base3.hours.toFixed(2)}h; +entropy-only graft ${withDud.hours.toFixed(2)}h; +strong graft climb ${climb(base3).toFixed(2)}h -> ${climb(withStrong).toFixed(2)}h; ${special.length} special augmentations`);
+  }
+  checks.push(c7);
+
+  // ---------------------------------------------------------------------
+  const c8 = new Check("GP8", "the graft decision is the SIMULATED with-vs-without on the live BN8 fixture, not a formula");
+  {
+    c8.examined(4);
+    const F = await import("./fixture-bn8-graft.mjs");
+    const priceExit = (x) => {
+      const r = X.bestExitPolicy(x);
+      return r.degenerate ? null : r.best?.hours ?? null;
+    };
+    const r = gp.chooseGrafts({ candidates: F.CANDIDATES, priceExit, base: F.INPUTS, intelligence: F.INTELLIGENCE, ownedNames: F.OWNED });
+    if (!r.grafts) c8.fail(`the fixture must price: ${r.why}`);
+    else {
+      // The decision, recomputed independently on the SAME inputs.
+      const withoutH = priceExit(F.INPUTS);
+      const withH = priceExit({ ...F.INPUTS, finalGrafts: r.grafts.map((g) => g.spec), graftStartMoney: r.startMoney });
+      if (Math.abs(r.withoutH - withoutH) > 1e-9 || Math.abs(r.withH - withH) > 1e-9 || Math.abs(r.deltaH - (withH - withoutH)) > 1e-9) {
+        c8.fail(`deltaH must be bestExitPolicy(with) - bestExitPolicy(without): ${r.deltaH} vs ${withH - withoutH}`);
+      }
+      // A graft paid in the final window credits the final window only: the
+      // node-wide bump (the replaced shortcut) must price differently.
+      const gH = r.grafts.reduce((a, g) => a * g.spec.hacking, 1);
+      const bumped = priceExit({ ...F.INPUTS, hackingMult: F.INPUTS.hackingMult * gH });
+      if (r.grafts.length && Math.abs(bumped - withH) < 1e-6) c8.fail("the with-run must not be the whole-node multiplier bump");
+      if (!(r.grafts.length > 0 && r.deltaH < 0)) c8.fail(`on the 2026-09-26 BN8 state the search must find a saving (got ${r.why})`);
+      // Starting the grafting later than 'each when affordable' must be searched.
+      if (!(typeof r.startMoney === "number" && r.startMoney >= 0)) c8.fail("the with-run's start balance must be published");
+      c8.note(`BN8 ${F.AT}: ${r.why}; start balance $${(r.startMoney / 1e9).toFixed(1)}b; grafts ${r.grafts.map((g) => g.name).join(", ")}`);
+    }
+  }
+  checks.push(c8);
+
+  // ---------------------------------------------------------------------
+  const c9 = new Check("GP9", "progress.js commits the graft decision through the plan and grafts only in the final window");
+  {
+    c9.examined(7);
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    const fn = src.slice(src.indexOf("function graftDecisionOf("), src.indexOf("function carriedGraftsOf("));
+    if (!/chooseGrafts\(/.test(fn) || !/decideAmong\(/.test(fn)) c9.fail("graftDecisionOf must search with chooseGrafts and commit with plan.decideAmong");
+    if (!/key: 'none', sim:/.test(fn) || !/key: 'grafts', sim:/.test(fn)) c9.fail("the plan's options must be the two trajectories, none and grafts");
+    if (!/canUseGrafting\(info\)/.test(fn)) c9.fail("grafting must be gated on sfgate.canUseGrafting");
+    if (!/\.\.\.\(graftCarry \?\? \{\}\)/.test(src)) c9.fail("exitInputsOf must carry the committed grafts into every decision's trajectory");
+    if (!/d\.finalWindowNow === true && installKey === 'never'/.test(src)) c9.fail("a graft must be ordered only when the committed trajectory's final window is now");
+    if (!/work\?\.type === 'GRAFTING'\) \{[\s\S]{0,400}install HELD/.test(src)) c9.fail("an install must be held while a graft runs (it cancels the graft and keeps its money)");
+    if (!/grafts: pc\.decisions\.grafts \?\? pc\.prev\?\.decisions\?\.grafts/.test(src)) c9.fail("/tel/plan.txt must carry decisions.grafts");
+    if (!/graft: \["GraftingWork"\]/.test(fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8"))) c9.fail("healthcheck ORDER NOT HELD must know the 'graft' slot owner");
+    c9.note("search -> plan.decideAmong(none, grafts) -> exitInputsOf carries it -> ordered only in the final window -> install held while grafting");
+  }
+  checks.push(c9);
+
+  // ---------------------------------------------------------------------
+  const c10 = new Check("GP10", "a compounding money leg lands on its curve: exact against ln(T/m)/r, and split == whole (a graft paid mid-hoard is not flattered)");
+  {
+    c10.examined(3);
+    const F = await import("./fixture-bn8-graft.mjs");
+    const r = F.INPUTS.capitalReturnPerSec;
+    const o = { incomeAtLevel1: 0, mult: 1, exp0: 0, capitalReturnPerSec: r, capitalCap: F.INPUTS.capitalCap, flatPerSec: 0 };
+    const whole = X.hoursToMoney(100e9, { ...o, money0: 250e6 });
+    const exact = Math.log(100e9 / 250e6) / (r * 3600);
+    if (!(Math.abs(whole - exact) < 0.01)) c10.fail(`$250m -> $100b at r=${r}/s: ${whole}h vs exact ${exact}h`);
+    const split = X.hoursToMoney(5e9, { ...o, money0: 250e6 }) + X.hoursToMoney(100e9, { ...o, money0: 5e9 });
+    if (!(Math.abs(split - whole) < 0.01)) c10.fail(`one leg split in two must cost the same: ${split}h vs ${whole}h`);
+    // With a LEVEL-SCALED income beside the capital (the step holds it at its
+    // start-of-step value) the split must still equal the whole.
+    const lv = { ...o, incomeAtLevel1: 2e4, mult: 3, exp0: 0, expPerSec: 8000 };
+    const wholeL = X.hoursToMoney(100e9, { ...lv, money0: 250e6 });
+    const t1 = X.hoursToMoney(5e9, { ...lv, money0: 250e6 });
+    const splitL = t1 + X.hoursToMoney(100e9, { ...lv, money0: 5e9, exp0: 8000 * t1 * 3600 });
+    if (!(Math.abs(splitL - wholeL) < 0.05)) c10.fail(`with level-scaled income, split ${splitL}h must equal whole ${wholeL}h`);
+    // The warm-up ends on its hour: 0.16h of no capital adds ~0.16h, not a whole step.
+    const warm = X.hoursToMoney(100e9, { ...o, money0: 250e6, capitalWarmupH: 0.16 });
+    if (!(Math.abs(warm - whole - 0.16) < 0.02)) c10.fail(`a 0.16h warm-up must add ~0.16h: ${warm - whole}h`);
+    c10.note(`$250m -> $100b: ${whole.toFixed(4)}h (exact ${exact.toFixed(4)}h), split ${split.toFixed(4)}h, +0.16h warm-up ${(warm - whole).toFixed(3)}h`);
+  }
+  checks.push(c10);
 
   return checks;
 }
