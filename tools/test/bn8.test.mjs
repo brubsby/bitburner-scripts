@@ -768,5 +768,30 @@ export async function run() {
   }
   checks.push(v8);
 
+  // -----------------------------------------------------------------------
+  const w8 = new Check("B8w", "every /tel/progress.txt record carries the income (healthcheck F4 read null on the snapshots-missing refusal, 14:24:55)");
+  {
+    w8.examined(4);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    // 1. Direct writes: each must carry income (the final report is built with it).
+    const writes = prog.match(/ns\.write\(STATUS,[^\n]*/g) ?? [];
+    const bare = writes.filter((w) => !/income: econNow/.test(w) && !/JSON\.stringify\(report,/.test(w));
+    if (!writes.length) w8.fail("found no progress.txt writes — the check is not looking");
+    if (bare.length) w8.fail(`${bare.length} progress.txt write(s) without income`, bare.join("\n"));
+    if (!/const report = \{[^\n]*income: econNow/.test(prog)) w8.fail("act()'s final report must carry income");
+    // 2. The reporter (refusals, the error path, the exit hook) evaluates a base carrying income.
+    if (!/const note = reporter\(ns, STATUS, \(\) => \(\{ income: econNow/.test(prog)) w8.fail("the progress.txt reporter's base must carry this pass's income on every note");
+    // 3. The one named exception: ramgrow's ram-raise-denied record, written
+    // before progress.js holds the RAM to read income at all.
+    const other = (prog.match(/[^\n]*\bSTATUS\b[^\n]*/g) ?? []).filter((l) => /\(ns, [^,]*, STATUS|\(ns, STATUS/.test(l) && !/reporter\(ns, STATUS/.test(l) && !/raiseRam\(ns, want, STATUS/.test(l));
+    if (other.length) w8.fail("a new writer is handed STATUS — give it the income or name it here", other.join("\n"));
+    // 4. Nothing else writes the planner's record.
+    for (const f of fs.readdirSync(REPO_ROOT).filter((x) => x.endsWith(".js") && x !== "progress.js")) {
+      const src = fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
+      if (/ns\.write\(\s*['"]\/tel\/progress\.txt['"]/.test(src)) w8.fail(`${f} writes /tel/progress.txt`);
+    }
+  }
+  checks.push(w8);
+
   return checks;
 }

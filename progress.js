@@ -256,7 +256,11 @@ export async function main(ns) {
   ns.ramOverride(2.6)
 
   // This reporter covers the paths that would otherwise produce silence.
-  const note = reporter(ns, STATUS, {})
+  // Every record carries the income (healthcheck F4): the base is evaluated
+  // at each write, so the snapshots-missing refusal, the error path and the
+  // exit hook publish this pass's econNow like act()'s own report (live
+  // 14:24:55 the snapshots-missing record had no income at all).
+  const note = reporter(ns, STATUS, () => ({ income: econNow, ...(econNow ? {} : { incomeWhy: 'income not read yet this pass (the record was written before the income read)' }) }))
 
   // ns.atExit, added when progress.js entered watchdog.js's WATCHED list
   // (invariant C1: every managed script publishes on return, handled error,
