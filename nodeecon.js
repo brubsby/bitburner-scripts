@@ -376,6 +376,106 @@ export function withCashRaise(orders, cash, equity, margin = 0.02) {
  * lives: [{lifeH, start, end}] (capital at life start and at its install).
  * Returns {r (per s), warmupH, n, why} or null.
  */
+/**
+ * THE TRADER'S REALISED RETURN, from its own history (/tel/stock-hist.txt,
+ * one row per 10 ticks: {t, wealth, lifePnl, externalFlows}). Each run of
+ * stock.js is a segment (t restarts); within it the growth index is
+ * sum ln(1 + dPnl / wealth) over intervals with NO external flow — so a
+ * purchase, a raise or the pre-install liquidation (which the trader books as
+ * a flow) neither counts as a loss nor inflates the base. Pooled over every
+ * segment seen from its start (t0 small), least squares of
+ * index = r (T - w), T the trader's own clock (t x 6s per market update,
+ * StockMarket/data/Constants.ts:4 msPerStockUpdate — a page freeze stops it).
+ *
+ * Why not the lifetimes ledger (fitCapital): its capEnd is cash + equity at
+ * the install, AFTER the batch spent the raised cash. Live 2026-09-26 02:08 a
+ * life that traded +$321m on $250m read as +$105m, the fit fell to 3.4e-5/s
+ * and the published exit jumped 113h -> 159h. This history read 1.78e-4/s
+ * with a 0.11h warm-up over the same lives.
+ * Returns {r, warmupH, segments, points, hours, why} or null.
+ */
+export const STOCK_HIST_FILE = '/tel/stock-hist.txt'
+export const STOCK_TICK_S = 6
+export function realisedCapital(rows, { maxStartTicks = 60, minPoints = 8 } = {}) {
+  if (!Array.isArray(rows) || rows.length < 2) return null
+  const segs = []
+  let cur = null
+  for (const r of rows) {
+    if (!(fin(r?.t) && fin(r?.wealth) && fin(r?.lifePnl))) continue
+    if (!cur || r.t < cur[cur.length - 1].t) {
+      cur = []
+      segs.push(cur)
+    }
+    cur.push(r)
+  }
+  const pts = []
+  let used = 0
+  let hours = 0
+  for (const s of segs) {
+    if (s.length < 2 || s[0].t > maxStartTicks) continue // not seen from its start: its index has no origin
+    used++
+    // The first row: growth since the run began (no flow yet, or the flow is
+    // the raise the run opened with — then start from 0 at that row).
+    const S = s[0].wealth - s[0].lifePnl
+    let y = fin(s[0].externalFlows) && s[0].externalFlows === 0 && S > 0 && s[0].wealth > 0 ? Math.log(s[0].wealth / S) : 0
+    pts.push({ T: s[0].t * STOCK_TICK_S, y })
+    for (let i = 1; i < s.length; i++) {
+      const a = s[i - 1]
+      const b = s[i]
+      if (!(a.wealth > 0) || b.externalFlows !== a.externalFlows) continue
+      const g = 1 + (b.lifePnl - a.lifePnl) / a.wealth
+      if (!(g > 0)) continue
+      y += Math.log(g)
+      pts.push({ T: b.t * STOCK_TICK_S, y })
+    }
+    hours += (s[s.length - 1].t * STOCK_TICK_S) / 3600
+  }
+  if (pts.length < minPoints || used < 1) return null
+  const n = pts.length
+  const mT = pts.reduce((a, p) => a + p.T, 0) / n
+  const mY = pts.reduce((a, p) => a + p.y, 0) / n
+  const sxx = pts.reduce((a, p) => a + (p.T - mT) ** 2, 0)
+  const sxy = pts.reduce((a, p) => a + (p.T - mT) * (p.y - mY), 0)
+  if (!(sxx > 0)) return null
+  const r = sxy / sxx
+  if (!(r > 0)) return null
+  const w = Math.max(0, (r * mT - mY) / r)
+  return { r, warmupH: w / 3600, segments: used, points: n, hours: +hours.toFixed(2), why: `realised: ${used} trader run(s) from their start, ${n} points over ${hours.toFixed(1)}h of market ticks — growth index = r(T - w), flows excluded` }
+}
+
+/**
+ * EXIT FORECAST CALIBRATION. A projected exit that is right falls by one hour
+ * per hour of wall time while the plan is followed (predicted drift -1 h/h).
+ * `samples` [{at, exitH, life}] oldest first; pairs within one life (an
+ * install legitimately re-plans) at least `minGapH` apart give the realised
+ * drift. errPerH is the median |realised - predicted|: the forecast error per
+ * hour of waiting, which is the tolerance a simulated wait must beat.
+ * Returns {predictedPerH, realisedPerH, errPerH, pairs, why}.
+ */
+export function exitDrift(samples, { minGapH = 0.2, minPairs = 3 } = {}) {
+  const S = (samples ?? []).filter((x) => fin(x?.exitH) && fin(Date.parse(x?.at)))
+  const pairs = []
+  for (let i = 1; i < S.length; i++) {
+    const a = S[i - 1]
+    const b = S[i]
+    if (a.life !== b.life) continue
+    const dh = (Date.parse(b.at) - Date.parse(a.at)) / 3.6e6
+    if (!(dh >= minGapH)) continue
+    pairs.push({ dh, drift: (b.exitH - a.exitH) / dh })
+  }
+  if (pairs.length < minPairs) return { predictedPerH: -1, realisedPerH: null, errPerH: null, pairs: pairs.length, why: `${pairs.length} same-life pair(s) at least ${minGapH}h apart (need ${minPairs})` }
+  const wsum = pairs.reduce((a, p) => a + p.dh, 0)
+  const realised = pairs.reduce((a, p) => a + p.drift * p.dh, 0) / wsum
+  // MEDIAN absolute error, not RMS: one re-fit of a model input (a single
+  // pass moved the exit 48h) would otherwise set the tolerance for hours.
+  const errs = pairs.map((p) => Math.abs(p.drift + 1)).sort((x, y) => x - y)
+  const err = errs.length % 2 ? errs[(errs.length - 1) / 2] : (errs[errs.length / 2 - 1] + errs[errs.length / 2]) / 2
+  return { predictedPerH: -1, realisedPerH: +realised.toFixed(3), errPerH: +err.toFixed(3), pairs: pairs.length, why: `over ${pairs.length} same-life pairs (${wsum.toFixed(1)}h): the exit moved ${realised.toFixed(2)}h per hour against -1 predicted` }
+}
+
+/** Unmeasured forecast error: a wait must beat installing now by half its own length. */
+export const EXIT_TOL_PRIOR_PER_H = 0.5
+
 export function fitCapital(lives, steadyPerSec = null) {
   const pts = (lives ?? []).filter((l) => fin(l?.lifeH) && l.lifeH > 0 && fin(l?.start) && l.start > 0 && fin(l?.end) && l.end > 0).map((l) => ({ T: l.lifeH * 3600, y: Math.log(l.end / l.start) }))
   if (!pts.length) return null
