@@ -189,6 +189,85 @@ export function countPhase(o) {
 }
 
 /**
+ * The ladder the count phase draws from: the known tickets plus, where the
+ * catalogue is shorter than the gate, `padded` unread ones priced at the
+ * dearest known ticket's later price (a stated extrapolation, see
+ * bestCountExit).
+ */
+export function paddedLadder(count) {
+  const known = count?.ladder ?? []
+  if (!known.length) return { ladder: [], padded: 0 }
+  // THE CATALOGUE IS SHORTER THAN THE GATE. The ladder holds what the joined
+  // factions sell now; the rest of the 30 come from factions joined in later
+  // lives, whose prices are not read yet. They are priced at the dearest known
+  // ticket (no multiplier) and COUNTED in `padded` — a stated extrapolation,
+  // not a measurement, and the verdict says so.
+  const dear = known.reduce((a, t) => (t.laterPrice > a.laterPrice ? t : a), known[0])
+  const padded = Math.max(0, count.short - known.length)
+  return { ladder: [...known, ...Array.from({ length: padded }, (_, i) => ({ name: `unread-${i + 1}`, price: Infinity, laterPrice: dear.laterPrice, hacking: 1 }))], padded }
+}
+
+/** Inputs for a candidate life length L: the per-cycle gain rescaled at the inputs' ln(M) per hour. */
+export function lifeInputs(inputs, L) {
+  const c0 = pos(inputs.cycleHours) ? inputs.cycleHours : null
+  if (L === null || L === undefined || c0 === null || L === c0) return inputs
+  const g = pos(inputs.multGainPerCycle) ? inputs.multGainPerCycle : 1
+  return { ...inputs, cycleHours: L, multGainPerCycle: Math.pow(g, L / c0) }
+}
+
+/**
+ * ONE count-phase policy — composition `n` on `inp` (already at its life
+ * length) — through the policy search. The body bestCountExit loops over, and
+ * the entry point the Monte Carlo (plan.js) calls once per parameter draw.
+ * Returns {hours, installsFirst, countInstalls, firstBatch, degenerate, why}
+ * or {hours: null, phaseWhy} when the count phase cannot complete.
+ */
+export function countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH, nfg) {
+  const ph = countPhase({ short, ladder, n, inputs: inp, firstInstallH, nfg })
+  if (ph.installs === null) return { hours: null, phaseWhy: ph.why }
+  const gL = pos(inp.multGainPerCycle) ? inp.multGainPerCycle : 1
+  // Install j of the count phase multiplies by its batch's own gain: the
+  // first through installGains.hacking (exitHours' firstGain), later ones
+  // as byInstall lifts over the cadence's per-cycle gain they replace.
+  const byInstall = [...ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / gL)), ...(ph.post ?? []).map((b) => Math.max(1, b.gain / gL))]
+  const r = bestExitPolicy(
+    { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall } },
+    400,
+    ph.installs,
+  )
+  return { hours: r.best?.hours ?? null, installsFirst: r.best?.installsFirst ?? null, countInstalls: ph.installs, firstBatch: ph.perInstall[0], degenerate: r.degenerate === true, why: r.why ?? null }
+}
+
+/**
+ * A FIXED count policy {n, lifeH} priced on `inputs` (one parameter draw) —
+ * no search over n or the life length: the Monte Carlo evaluates the policy
+ * the point estimate chose, it does not re-optimise per draw. With the count
+ * met, the ordinary policy search from `firstInstallH`. Returns hours or null.
+ */
+export function countExitFixed(bestExitPolicy, inputs, count, { firstInstallH = 0, n = 1, lifeH = null } = {}) {
+  if (!(count?.short > 0)) return bestExitPolicy({ ...inputs, firstInstallH }, 400, 1).best?.hours ?? null
+  const { ladder } = paddedLadder(count)
+  if (!ladder.length) return null
+  const at = countExitAt(bestExitPolicy, lifeInputs(inputs, lifeH), count.short, ladder, Math.min(n, count.short), firstInstallH, count.nfg ?? null)
+  return num(at.hours) && !at.degenerate ? at.hours : null
+}
+
+/**
+ * ONE ROUTE at a fixed life length on `inputs`: bestCountRoute's pricing of
+ * that route (forced into the first batch, first install no earlier than its
+ * detour), without the search. `detourH` may be a drawn value. Returns hours
+ * or null (unaffordable in the first batch, or unpriced).
+ */
+export function routeExitFixed(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null } = {}) {
+  if (!(count?.short > 0) || !route) return null
+  const d = num(detourH) && detourH >= 0 ? detourH : route.detourH
+  const { ladder } = paddedLadder({ ...count, ladder: [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)] })
+  const at = countExitAt(bestExitPolicy, lifeInputs(inputs, lifeH), count.short, ladder, 1, Math.max(firstInstallH, d), count.nfg ?? null)
+  if (!num(at.hours) || at.degenerate || !at.firstBatch?.chosen?.includes(route.name)) return null
+  return at.hours
+}
+
+/**
  * THE COUNT-AWARE EXIT: for each composition n, the count phase's installs
  * become per-install lifts on the policy search (installs beyond it follow the
  * cadence), with minInstalls = the count phase's length. The soonest exit
@@ -207,15 +286,7 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
   }
   const known = count.ladder ?? []
   if (!known.length) return { best: null, why: 'the count is short and no distinct augmentation can be bought' }
-  // THE CATALOGUE IS SHORTER THAN THE GATE. The ladder holds what the joined
-  // factions sell now; the rest of the 30 come from factions joined in later
-  // lives, whose prices are not read yet. They are priced at the dearest known
-  // ticket (no multiplier) and COUNTED in `padded` — a stated extrapolation,
-  // not a measurement, and the verdict says so.
-  const dear = known.reduce((a, t) => (t.laterPrice > a.laterPrice ? t : a), known[0])
-  const padded = Math.max(0, short - known.length)
-  const ladder = [...known, ...Array.from({ length: padded }, (_, i) => ({ name: `unread-${i + 1}`, price: Infinity, laterPrice: dear.laterPrice, hacking: 1 }))]
-  const g = pos(inputs.multGainPerCycle) ? inputs.multGainPerCycle : 1
+  const { ladder, padded } = paddedLadder(count)
   const ns = compositions ?? [...new Set([1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, short])].filter((x) => x >= 1 && x <= short)
   const tried = []
   let best = null
@@ -228,26 +299,16 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
   const c0 = pos(inputs.cycleHours) ? inputs.cycleHours : null
   const lifeHs = c0 === null ? [null] : [...new Set([c0, 1, 2, 4, 6, 8, 12, 18, 24, 36, 48].map((x) => Math.round(x * 100) / 100))].filter((x) => x > 0)
   for (const L of lifeHs) {
-    const inp = L === null || L === c0 ? inputs : { ...inputs, cycleHours: L, multGainPerCycle: Math.pow(g, L / c0) }
-    const gL = pos(inp.multGainPerCycle) ? inp.multGainPerCycle : 1
+    const inp = lifeInputs(inputs, L)
     for (const n of ns) {
-      const ph = countPhase({ short, ladder, n, inputs: inp, firstInstallH, nfg: count.nfg ?? null })
-      if (ph.installs === null) {
-        tried.push({ n, lifeH: L, hours: null, why: ph.why })
+      const at = countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH, count.nfg ?? null)
+      if (at.phaseWhy) {
+        tried.push({ n, lifeH: L, hours: null, why: at.phaseWhy })
         continue
       }
-      // Install j of the count phase multiplies by its batch's own gain: the
-      // first through installGains.hacking (exitHours' firstGain), later ones
-      // as byInstall lifts over the cadence's per-cycle gain they replace.
-      const byInstall = [...ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / gL)), ...(ph.post ?? []).map((b) => Math.max(1, b.gain / gL))]
-      const r = bestExitPolicy(
-        { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall } },
-        400,
-        ph.installs,
-      )
-      const h = r.best?.hours ?? null
-      tried.push({ n, lifeH: L, hours: h, installs: r.best?.installsFirst ?? null, countInstalls: ph.installs, first: { count: ph.perInstall[0].count, nfgLevels: ph.perInstall[0].nfgLevels, cost: Math.round(ph.perInstall[0].cost) }, why: r.why ?? null, degenerate: r.degenerate || undefined })
-      if (num(h) && !r.degenerate && (!best || h < best.hours - 1 / 60)) best = { hours: h, installsFirst: r.best.installsFirst, n, lifeH: L, countInstalls: ph.installs, firstBatch: ph.perInstall[0] }
+      const h = at.hours
+      tried.push({ n, lifeH: L, hours: h, installs: at.installsFirst, countInstalls: at.countInstalls, first: { count: at.firstBatch.count, nfgLevels: at.firstBatch.nfgLevels, cost: Math.round(at.firstBatch.cost) }, why: at.why, degenerate: at.degenerate || undefined })
+      if (num(h) && !at.degenerate && (!best || h < best.hours - 1 / 60)) best = { hours: h, installsFirst: at.installsFirst, n, lifeH: L, countInstalls: at.countInstalls, firstBatch: at.firstBatch }
     }
   }
   return best ? { best: { ...best, padded }, tried, never: null, padded } : { best: null, tried, never: null, padded, why: `no composition reaches the count: ${tried.map((t) => `n=${t.n}: ${t.why}`).join('; ')}` }
@@ -281,7 +342,7 @@ export function bestCountRoute(bestExitPolicy, inputs, count, routes, { firstIns
     const r = bestCountExit(bestExitPolicy, inputs, { ...count, ladder }, { firstInstallH: Math.max(firstInstallH, route.detourH), compositions: [1] })
     const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
     const hours = r.best && took ? r.best.hours : null
-    tried.push({ name: route.name, faction: route.faction ?? null, via: route.via ?? null, price: Math.round(route.price), detourH: +route.detourH.toFixed(3), hacking: route.hacking, exp: route.exp, rep: route.rep, hours: hours === null ? null : +hours.toFixed(3), why: hours !== null ? null : r.best ? 'not affordable in the first batch' : r.why ?? 'unpriced' })
+    tried.push({ name: route.name, faction: route.faction ?? null, via: route.via ?? null, lifeH: r.best?.lifeH ?? null, price: Math.round(route.price), detourH: +route.detourH.toFixed(3), hacking: route.hacking, exp: route.exp, rep: route.rep, hours: hours === null ? null : +hours.toFixed(3), why: hours !== null ? null : r.best ? 'not affordable in the first batch' : r.why ?? 'unpriced' })
     if (hours !== null && (!best || hours < best.hours)) best = { name: route.name, hours, route, result: r.best }
   }
   tried.sort((a, b) => (a.hours ?? Infinity) - (b.hours ?? Infinity))
@@ -309,13 +370,13 @@ export function countRoutes({ offers = [], candidates = [], owned = new Set(), r
     const g = gainsOf(a.mults)
     const base = { name: a.name, faction, laterPrice: a.baseCost, ...g }
     if (short === 0) {
-      out.push({ ...base, via: joinH > 0 ? 'join' : 'ready', price: a.baseCost, detourH: joinH })
+      out.push({ ...base, via: joinH > 0 ? 'join' : 'ready', price: a.baseCost, detourH: joinH, joinH, grindH: 0 })
       return
     }
     const rate = pos(repPerSec) ? repPerSec * (1 + (num(favor) && favor > 0 ? favor : 0) / 100) : null
-    if (rate) out.push({ ...base, via: 'work', price: a.baseCost, detourH: joinH + short / rate / 3600 })
+    if (rate) out.push({ ...base, via: 'work', price: a.baseCost, detourH: joinH + short / rate / 3600, joinH, grindH: short / rate / 3600 })
     const d = typeof donation === 'function' ? donation(faction, short) : null
-    if (pos(d)) out.push({ ...base, via: 'donation', price: a.baseCost + d, detourH: joinH })
+    if (pos(d)) out.push({ ...base, via: 'donation', price: a.baseCost + d, detourH: joinH, joinH, grindH: 0 })
   }
   for (const o of offers ?? []) add(o.faction, o, o.factionRep, o.favor, 0)
   for (const c of candidates ?? []) {

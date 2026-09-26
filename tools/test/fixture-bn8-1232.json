@@ -1,0 +1,238 @@
+{
+ "note": "BN8 2026-09-26: /tel/installgate.txt countRoute at 12:32:32Z (8 best of 232 routes, price/detour/gains as priced live, recorded exitH) + /tel/exitinputs.txt 12:37:33Z (same life) + installgate exitCalibration samples. Work routes carry no join/grind split live: grindH = detourH (stated). NFG price from the 11:28 fixture (Slum Snakes), stated.",
+ "gateAt": "2026-09-26T12:37:33.210Z",
+ "lastAugReset": 1790421449545,
+ "inputs": {
+  "money": 281715616.39254266,
+  "incomePerSec": 91939.57357085435,
+  "lifeIncome": 0,
+  "hacking": 822,
+  "hackingExp": 36997491.807857074,
+  "hackingMult": 2.29988744775305,
+  "expPerSec": 21265.081630126693,
+  "repPerSec": 13.040893801717226,
+  "exitRep": 0,
+  "exitFavor": 0,
+  "cycleHours": 1.9328571428571428,
+  "multGainPerCycle": 1.0393834465682903,
+  "nextInstallGain": 1.0201052924068645,
+  "installGains": {
+   "hacking": 1.0201052924068645,
+   "rep": 1.0201052924068645,
+   "income": 1.0769626576513525,
+   "exp": 1.0201052924068645
+  },
+  "persistBaseline": {
+   "hacking": 1.0201052924068645,
+   "rep": 1.0201052924068645,
+   "income": 1.0769626576513525,
+   "exp": 1.0201052924068645
+  },
+  "eRep": 0,
+  "eBudget": 0.269,
+  "exitLevel": 3000,
+  "joinMoney": 100000000000,
+  "terminalRep": 0,
+  "donationCost": null,
+  "favorToDonate": 0,
+  "flatIncomePerSec": 0,
+  "capitalReturnPerSec": 0.0001977619967143513,
+  "capitalWarmupH": 0.23681759812136974,
+  "capitalFit": "realised: 5 trader run(s) from their start, 233 points over 4.3h of market ticks — growth index = r(T - w), flows excluded",
+  "capitalCap": 6336629154252.999,
+  "installCash": 250000000,
+  "workWhileDonating": true,
+  "cadence": {
+   "source": "measured",
+   "node": 8,
+   "lives": 15,
+   "why": "measured over 15 lives in BitNode 8"
+  }
+ },
+ "countShort": 1,
+ "nfg": {
+  "price": 38212618.937485,
+  "level": 0
+ },
+ "exitH": 63.56140802820752,
+ "chosen": {
+  "name": "ADR-V2 Pheromone Gene",
+  "faction": "Bachman & Associates",
+  "via": "work",
+  "rankExitH": 57.26,
+  "rankBasis": "previous pass's exit inputs (ranking only)",
+  "gateExitH": 71.59,
+  "detourH": 7.152,
+  "price": 550000000
+ },
+ "routes": [
+  {
+   "name": "ADR-V2 Pheromone Gene",
+   "faction": "Bachman & Associates",
+   "via": "work",
+   "price": 550000000,
+   "detourH": 7.152,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.2,
+   "hours": 57.264,
+   "why": null
+  },
+  {
+   "name": "ADR-V2 Pheromone Gene",
+   "faction": "Four Sigma",
+   "via": "work",
+   "price": 550000000,
+   "detourH": 7.162,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.2,
+   "hours": 57.275,
+   "why": null
+  },
+  {
+   "name": "ADR-V2 Pheromone Gene",
+   "faction": "Clarke Incorporated",
+   "via": "work",
+   "price": 550000000,
+   "detourH": 7.2,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.2,
+   "hours": 57.313,
+   "why": null
+  },
+  {
+   "name": "SmartJaw",
+   "faction": "Bachman & Associates",
+   "via": "work",
+   "price": 2750000000,
+   "detourH": 13.748,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.25,
+   "hours": 57.325,
+   "why": null
+  },
+  {
+   "name": "ADR-V2 Pheromone Gene",
+   "faction": "Bachman & Associates",
+   "via": "donation",
+   "price": 30109208145,
+   "detourH": 5.833,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.2,
+   "hours": 59.655,
+   "why": null
+  },
+  {
+   "name": "ADR-V2 Pheromone Gene",
+   "faction": "Four Sigma",
+   "via": "donation",
+   "price": 30109208145,
+   "detourH": 5.843,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.2,
+   "hours": 59.665,
+   "why": null
+  },
+  {
+   "name": "ADR-V2 Pheromone Gene",
+   "faction": "Clarke Incorporated",
+   "via": "donation",
+   "price": 30109208145,
+   "detourH": 5.881,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.2,
+   "hours": 59.703,
+   "why": null
+  },
+  {
+   "name": "The Shadow's Simulacrum",
+   "faction": "The Syndicate",
+   "via": "work",
+   "price": 400000000,
+   "detourH": 1.251,
+   "hacking": 1,
+   "exp": 1,
+   "rep": 1.15,
+   "hours": 60.102,
+   "why": null
+  }
+ ],
+ "exitSamples": [
+  {
+   "at": "2026-09-26T10:27:21.650Z",
+   "exitH": 57.88,
+   "life": 1790410463598,
+   "source": "count-aware exit, holding"
+  },
+  {
+   "at": "2026-09-26T10:42:20.330Z",
+   "exitH": 60.69,
+   "life": 1790410463598,
+   "source": "count-aware exit, holding"
+  },
+  {
+   "at": "2026-09-26T10:57:21.910Z",
+   "exitH": 60.59,
+   "life": 1790410463598,
+   "source": "count-aware exit, holding"
+  },
+  {
+   "at": "2026-09-26T11:12:20.471Z",
+   "exitH": 61.73,
+   "life": 1790410463598,
+   "source": "count-aware exit, holding"
+  },
+  {
+   "at": "2026-09-26T11:27:31.298Z",
+   "exitH": 88.23,
+   "life": 1790421449545,
+   "source": "exit sensitivity base (the ordinary model)"
+  },
+  {
+   "at": "2026-09-26T11:42:31.597Z",
+   "exitH": 75.74,
+   "life": 1790421449545,
+   "source": "exit sensitivity base (the ordinary model)"
+  },
+  {
+   "at": "2026-09-26T11:57:33.199Z",
+   "exitH": 75.72,
+   "life": 1790421449545,
+   "source": "exit sensitivity base (the ordinary model)"
+  },
+  {
+   "at": "2026-09-26T12:12:31.919Z",
+   "exitH": 68.74,
+   "life": 1790421449545,
+   "source": "exit comparison, holding"
+  },
+  {
+   "at": "2026-09-26T12:27:33.433Z",
+   "exitH": 32.61,
+   "life": 1790421449545,
+   "source": "exit comparison, holding"
+  }
+ ],
+ "countComposition": {
+  "n": 1,
+  "firstBatch": {
+   "count": 1,
+   "nfgLevels": 0,
+   "cost": 225000000,
+   "chosen": [
+    "CRTX42-AA Gene Modification"
+   ]
+  },
+  "countInstalls": 1,
+  "padded": 0
+ },
+ "exitNowH": 63.87570323654306,
+ "exitBestWaitH": null,
+ "waitTolPerH": 12.257
+}
