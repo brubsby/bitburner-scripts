@@ -1621,6 +1621,7 @@ function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabl
  */
 const GRAFT_SEARCH_MS = 250
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
+let redPillRepReq = null // the catalogue's Red Pill requirement this pass (exitInputsOf)
 function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work) {
   const pc = planCtxOf(ns, info)
   if (!canUseGrafting(info)) {
@@ -2379,8 +2380,20 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // itself when the cash is already there, and feeding it a claim
     // that had collapsed to 0 would hide the leg entirely.
     joinMoney: exitFactionMoneyReq(candidates) ?? 0,
-    terminalRep: rp?.baseRep ?? 0,
-    donationCost: typeof rp?.donationCost === 'number' ? rp.donationCost : null,
+    // THE RED PILL'S REPUTATION. This read the offer's `baseRep`, a field no offer
+    // carries (offers have `repReq`), so the 2.5M-rep leg was priced at 0 in
+    // EVERY node, joined or not — and before Daedalus is joined there is no
+    // offer at all. Now: the offer's requirement once joined, else the
+    // catalogue's (snap-augprice repReq, static), with the donation priced
+    // where the node takes donations at the favor Daedalus would start at (0)
+    // — BitNode 8's FavorToDonateToFaction 0 — and ground elsewhere
+    // (hoursToRep without a donation cost).
+    terminalRep: rp ? rp.repReq ?? 0 : redPillRepReq ?? 0,
+    donationCost: typeof rp?.donationCost === 'number'
+      ? rp.donationCost
+      : !rp && redPillRepReq > 0 && favorToDonateOf(bitNodeMults(info?.currentNode)) === 0 && bitNodeMults(info?.currentNode)?.FactionWorkRepGain > 0
+        ? donationForRep(redPillRepReq, player.mults?.faction_rep ?? 1, bitNodeMults(info?.currentNode).FactionWorkRepGain)
+        : null,
     // floor(150 x FavorToDonateToFaction) (Faction/formulas/donation.ts:17),
     // read from the node rather than assumed. BitNode 8's 0 is a threshold
     // of zero — donations from the first join — which the old `f > 0` test
@@ -2643,6 +2656,7 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 async function act(ns, canJoin, info, note) {
   planCtx = null // one plan context per pass (planCtxOf)
   graftCarry = null // set once the snapshots are read (carriedGraftsOf)
+  redPillRepReq = null
   {
     const g = readJson(ns, GATE)?.objective?.growShare
     growShareNow = typeof g === 'number' && isFinite(g) ? g : null
@@ -3084,6 +3098,13 @@ async function act(ns, canJoin, info, note) {
     // The last committed grafts ride every exit this pass until this pass's
     // graft decision (graftDecisionOf) replaces them.
     graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
+    // The Red Pill's requirement from the catalogue, for the exit's rep leg
+    // before Daedalus (and so its offer) exists (exitInputsOf terminalRep).
+    try {
+      redPillRepReq = allCount.has(TERMINAL_AUG) ? 0 : sing.augRepReq(TERMINAL_AUG)
+    } catch {
+      redPillRepReq = null
+    }
     const held = []
     for (const [name, n] of allCount) {
       for (let i = 0; i < n - (installedCount.get(name) ?? 0); i++) held.push(name)

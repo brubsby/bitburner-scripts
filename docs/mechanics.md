@@ -98,7 +98,7 @@ Counts (rows below): **aligned 17 · proxy 13 · unused-but-available 6 · gated
 | mechanic | BN8 gate | script(s) | decided by |
 | --- | --- | --- | --- |
 | Daedalus invite | 30 augs, $100b, hacking 2500 (`FactionInfo.tsx:142`) | progress.js join step | aligned (the join money is an exit leg) |
-| The Red Pill (2.5M rep, $0) | open, donatable | augplan + act-donate | proxy (augplan) — and its rep leg is **missing from the exit** until Daedalus is joined (`exitInputsOf` takes `terminalRep` from the Red Pill OFFER, which exists only once joined): the exit is short by the donation leg (~$1.5t at faction_rep ~1.6) until then |
+| The Red Pill (2.5M rep, $0) | open, donatable | augplan + act-donate | proxy (augplan); its rep leg was **missing from the exit in every node** (field-name bug, and no offer before Daedalus) — fixed, Fix 3 |
 | w0r1d_d43m0n | hacking 3000 x WorldDaemonDifficulty 1 | endgame.js | proxy: acts when the level is met |
 | Illuminati / Covenant | $150b hacking 1500 combat 1200 / $75b 850 850 | — | not on the exit path (Covenant sleeves gated in BN8) |
 
@@ -126,13 +126,20 @@ Counts (rows below): **aligned 17 · proxy 13 · unused-but-available 6 · gated
    bounded by 1/100 of the leg's compounding length: split and whole agree to
    0.04h; the no-graft exit moved 73.7h -> 70.9h.
 
+3. **The Red Pill's rep leg** (`exitInputsOf` `terminalRep`). It read the
+   offer's `baseRep`, a field no offer carries (they have `repReq`), so the
+   2.5M-rep leg priced at **0 in every node**, and before Daedalus is joined
+   there is no offer at all. Now the offer's `repReq`, else the catalogue's
+   (snap-augprice), donated where FavorToDonateToFaction is 0 (BN8) and ground
+   elsewhere. BN8 fixture: 70.9h -> 74.7h — a correction, not a saving — and
+   the reputation channel stops being worth exactly 0h to the exit (a 1.4
+   rep/s sleeve: 0.000h -> 0.011h). **Cross-node:** other nodes now price the
+   Red Pill grind too (it was always really there). Still wrong and not
+   fixed: `exitFavor` reads `rp?.favor`, which offers also do not carry
+   (always 0) — harmless in BN8, a missed donation route elsewhere.
+
 ## Open gaps, ranked (not fixed here)
 
-- **Red Pill rep leg absent before Daedalus is joined** (see Endgame): every
-  exit is short by the donation leg, and every rep-producing choice (share,
-  sleeve rep, contract timing, Go's faction_rep) is valued at ~0 by the exit
-  until then. Pricing it from the catalogue (`snap-catalog` lists Daedalus's
-  augs; the Red Pill's rep requirement is static) fixes the valuation.
 - **Idle sleeves under the 'rep' objective** (four of five in BN8): give them
   the next-best task (study) — worth ~0.03-0.04h on today's inputs (+64 exp/s
   on 7,560), i.e. small.
