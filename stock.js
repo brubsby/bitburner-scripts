@@ -28,6 +28,7 @@
 // deliberate trade against a port-fed 4S helper, which would add a second
 // process and a per-tick handoff to save 2.5GB.
 
+import { enter as traceEnter, leave as traceLeave } from 'trace.js'
 import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META, phaseRecord, phasePriorFrom } from 'stockstrat.js'
 import { buy4SVerdict, manipCurveAt, growthRate } from 'stockplan.js'
 import { canShortStock } from 'sfgate.js'
@@ -231,7 +232,10 @@ export async function main(ns) {
   }
 
   while (true) {
+    traceLeave('stock')
     await ns.stock.nextUpdate()
+    // Black-box section (trace.js): open from the tick until the next wait.
+    traceEnter('stock')
     try {
       counters.ticks++
       const has4S = ns.stock.has4SDataTixApi()
