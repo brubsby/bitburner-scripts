@@ -130,13 +130,25 @@ export function hoursToMoney(target, o = {}) {
     // and a step of 2/r is not an integration of e^rt. (4000 steps of 2%
     // still span e^80.) The iteration cap keeps its meaning: maxHours/4000.
     if (r > 0) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), maxHours / 4000))
+    // ...but maxHours/4000 is 2.5h, which let every ordinary leg take 2.5h
+    // steps — ~x6 of growth, with the level-scaled income held at its
+    // start-of-step value and the warm-up rounded up to a step. So the step
+    // is also bounded by 1/100 of the leg's COMPOUNDING length ln(T/m)/r
+    // (never below the 2% step): a leg of hours takes ~100 steps, and only
+    // a leg too long for that still takes the coarse step.
+    if (r > 0 && money > 0 && target > money) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), Math.log(target / money) / (r * 3600) / 100))
   }
   let iter = 0
   while (h < maxHours && iter++ < 4000) {
     const lvl = levelAt(exp, mult)
     // income(level) = incomeAtLevel1 * (level + 50) / 51
     const rate = (lvlIncome * (lvl + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(h) : 0)
-    const dt = stepH * 3600
+    // THE WARM-UP ENDS ON ITS HOUR, not on the next step boundary: a 2.5h
+    // step starting inside a 0.16h warm-up earned no capital for all of it
+    // (live BN8 2026-09-26: the $250m -> $100b hoard read 10.25h against
+    // 8.66h). The step is cut at the warm-up's end; no capital, no cut.
+    const sH = r > 0 && h < warmH && warmH - h < stepH ? warmH - h : stepH
+    const dt = sH * 3600
     // The capital term over the step: exponential below the cap, linear at it.
     const capGain = r > 0 && h >= warmH ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
     const add = rate * dt + Math.max(0, capGain) - spend * dt
@@ -150,13 +162,49 @@ export function hoursToMoney(target, o = {}) {
     // (hoursToRep, workWhileDonating). Landed by solving the step linearly.
     if (typeof o.targetAt === 'function') {
       const T0 = o.targetAt(h)
-      const T1 = o.targetAt(h + stepH)
+      const T1 = o.targetAt(h + sH)
       if (money >= T0) return h
-      if (add > 0 && money + add >= T1) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * stepH
-    } else if (add > 0 && money + add >= target) return h + ((target - money) / add) * stepH
+      if (add > 0 && money + add >= T1) {
+        if (!(capGain > 0)) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * sH
+        // Compounding: land on the curve against the falling target (below).
+        let lo = 0
+        let hi = dt
+        for (let k = 0; k < 40; k++) {
+          const mid = (lo + hi) / 2
+          const c = money < cap ? Math.min(money * Math.expm1(r * mid), cap - money + r * cap * mid) : r * cap * mid
+          if (money + rate * mid + Math.max(0, c) - spend * mid >= o.targetAt(h + mid / 3600)) hi = mid
+          else lo = mid
+        }
+        return h + hi / 3600
+      }
+    } else if (add > 0 && money + add >= target) {
+      // A COMPOUNDING STEP LANDS ON ITS CURVE, not on the chord. The step is
+      // up to maxHours/4000 = 2.5h, over which a balance at the trader's
+      // ~0.7/h return grows ~x6; interpolating that linearly put the landing
+      // up to most of a step early — 8.03h for $250m -> $100b against the
+      // exact ln(400)/r = 8.50h (live BN8 inputs, 2026-09-26), and a leg
+      // split in two (a graft paid on the way) read ~3h SHORTER than the same
+      // money in one leg. Bisected on the same step expression; a step with
+      // no capital term is linear and keeps the exact chord. Defence in
+      // depth since the step bound above (1/100 of the leg): with it the
+      // chord's error is ~1e-3h, so [GP10] pins the bound, not this.
+      if (!(capGain > 0)) return h + ((target - money) / add) * sH
+      const addOver = (s) => {
+        const c = money < cap ? Math.min(money * Math.expm1(r * s), cap - money + r * cap * s) : r * cap * s
+        return rate * s + Math.max(0, c) - spend * s
+      }
+      let lo = 0
+      let hi = dt
+      for (let k = 0; k < 40; k++) {
+        const mid = (lo + hi) / 2
+        if (money + addOver(mid) >= target) hi = mid
+        else lo = mid
+      }
+      return h + hi / 3600
+    }
     money += add
     exp += pos(expPerSec) ? expPerSec * dt : 0
-    h += stepH
+    h += sH
   }
   return Infinity
 }
@@ -494,6 +542,67 @@ export function exitHours(o = {}) {
   const busyH = installsFirst === 0 && num(o.slotBusyH) && o.slotBusyH > 0 ? o.slotBusyH : 0
   slotH += busyH
 
+  // GRAFTS IN THE FINAL WINDOW (o.finalGrafts [{name, cost, slotH, hacking,
+  // exp, rep}], graftplan.graftSpecOf): each is paid when the balance reaches
+  // its price (a money leg from the balance in hand, which then compounds from
+  // what is left), then occupies the WORK SLOT for its graft time — one at a
+  // time, after anything already holding the slot (busyH). Its multipliers
+  // (entropy's 0.98 per graft already folded in by graftSpecOf) apply to the
+  // final climb, and to the reputation leg, from the window on. The climb
+  // waits for the last graft: the Red Pill install that precedes the climb
+  // cancels a graft in progress and keeps its money (GraftingWork.finish).
+  // A graft persists through every later install (Prestige.ts re-applies
+  // Player.augmentations), which is why the final window is where it is
+  // priced: the lives before it keep their MEASURED cadence (not simulated
+  // here: a graft there would lift them too, and remove the augmentation from
+  // their catalogue). Absent, every node prices exactly as before.
+  let graftDone = finalStart + busyH
+  let graftRep = 1
+  if (Array.isArray(o.finalGrafts) && o.finalGrafts.length) {
+    let gH = 1
+    let gE = 1
+    // WHEN THE GRAFTING STARTS (o.graftStartMoney, the with-run's policy
+    // parameter — graftplan searches it): the first graft waits until the
+    // balance reaches this. Where money is capital (BitNode 8) paying a graft
+    // the moment the balance covers it empties the compounding balance each
+    // time (live 2026-09-26: eight grafts as soon as affordable took 34h of
+    // money legs), while waiting delays the slot. Later grafts are paid at the
+    // hour the previous payment was (the simulator does not advance the
+    // balance to each graft's slot start) — earlier than the game pays them,
+    // so the lost compounding is overstated: a conservative with-run.
+    const startAt = num(o.graftStartMoney) && o.graftStartMoney > cash ? o.graftStartMoney : 0
+    if (startAt > 0) {
+      const hm = moneyLeg(startAt)
+      if (!num(hm)) return { hours: null, why: 'could not price the money the grafting starts at' }
+      h += hm
+      exp += pos(expRate) ? expRate * hm * 3600 : 0
+      cash = startAt
+      legs.push({ leg: 'graft start money', hours: hm, detail: `$${Math.round(startAt)} before the first graft` })
+    }
+    for (const g of o.finalGrafts) {
+      if (!g || !pos(g.cost) || !num(g.slotH) || g.slotH < 0 || !pos(g.hacking) || !pos(g.exp) || !pos(g.rep)) return { hours: null, why: `graft ${g?.name ?? '?'} unpriced (cost, time or multipliers)` }
+      if (g.cost > cash) {
+        const hm = moneyLeg(g.cost)
+        if (!num(hm)) return { hours: null, why: `could not price the money for graft ${g.name}` }
+        h += hm
+        exp += pos(expRate) ? expRate * hm * 3600 : 0
+        cash = g.cost
+        legs.push({ leg: 'graft money', hours: hm, detail: `$${Math.round(g.cost)} for ${g.name}` })
+      }
+      cash -= g.cost
+      graftDone = Math.max(h, graftDone) + g.slotH
+      slotH += g.slotH
+      gH *= g.hacking
+      gE *= g.exp
+      graftRep *= g.rep
+    }
+    mult *= gH
+    if (pos(expRate)) expRate *= gE
+    if (pos(repRate)) repRate *= graftRep
+    if (pos(donation)) donation /= graftRep
+    legs.push({ leg: 'grafts', hours: 0, detail: `${o.finalGrafts.length} graft(s), slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}` })
+  }
+
   if (covenant) {
     if (!pos(covenant.cost) || !num(covenant.combatH) || covenant.combatH < 0) return { hours: null, why: 'covenant campaign unpriced (cost or combat hours)' }
     const target = covenant.member ? covenant.cost : Math.max(covenant.cost, covenant.joinMoney ?? 0)
@@ -538,7 +647,7 @@ export function exitHours(o = {}) {
       moneyLeg,
       workWhileDonating: wwd,
       sleeveRepPerSec: wwd && fleetOn ? sRep(h) : 0,
-      slotFreeAt: Math.max(0, busyH - (h - finalStart)),
+      slotFreeAt: Math.max(0, Math.max(busyH, graftDone - finalStart) - (h - finalStart)),
     })
     if (wwd && r.how === 'ground' && fleetOn) r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: (pos(repRate) ? repRate : 0) + sRep(h) })
     // GROUND REPUTATION AS A TRAJECTORY. Faction-work rep is linear in the
@@ -594,6 +703,11 @@ export function exitHours(o = {}) {
   // The sleeve's exp as its own term (sleeveExp {perSec, delayH}, delayH from
   // NOW): it joins the climb only once its delay has passed — the synchronise,
   // shock recovery or training it spends first. Piecewise, like sleeveRep.
+  // The last graft finishes before the install that starts the climb.
+  if (graftDone > h) {
+    legs.push({ leg: 'grafts finish', hours: graftDone - h, detail: 'the climb waits for the last graft (an install cancels one in progress)' })
+    h = graftDone
+  }
   let climb
   const expOn = !!sleeveExp && (pos(sleeveExp.perSec) || (Array.isArray(sleeveExp.steps) && sleeveExp.steps.some((x) => pos(x?.perSec))))
   if (expOn) {

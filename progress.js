@@ -107,7 +107,8 @@ const SCHEDULE = '/tel/factionplan.txt'
  */
 const WD_BASE_HACKING = 3000
 
-import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
+import { chooseGrafts, graftCandidatesOf, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGang, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
@@ -137,7 +138,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExit, bestCountRoute, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
-import { wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -1598,6 +1599,134 @@ function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabl
 }
 
 /**
+ * GRAFTING, DECIDED BY THE EXIT (graftplan.chooseGrafts on the point inputs,
+ * then plan.decideAmong 'none' vs 'grafts' on the shared posterior draws).
+ *
+ * The two trajectories: the node's exit on exitInputsOf's inputs, against the
+ * SAME inputs plus the searched grafts as legs of the final window
+ * (exitplan `finalGrafts`: paid from that window's money once the balance
+ * reaches `graftStartMoney`, run one at a time on the work slot, entropy
+ * included). The decision is withH - withoutH; nothing is added beside it.
+ * Where it sits: the final window. The lives before it keep their measured
+ * cadence, so a graft is executed only when the committed trajectory's final
+ * window is NOW (its best policy installs 0 more times AND the committed
+ * install decision is 'never') — the graft step in the slot chain below.
+ *
+ * The search (chooseGrafts, budgeted) runs when the plan re-decides (an event,
+ * or no committed graft decision this life); between events the committed
+ * set is re-priced, not re-searched. Not simulated, and published as such:
+ * the grafted augmentation leaving the install catalogue of lives before the
+ * final window (none are grafted there), and travel to New Tokyo ($200k).
+ * Returns the decision record (also pc.decisions.grafts), never throws.
+ */
+const GRAFT_SEARCH_MS = 250
+let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
+function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work) {
+  const pc = planCtxOf(ns, info)
+  if (!canUseGrafting(info)) {
+    pc.decisions.grafts = { key: 'none', why: 'grafting is not accessible here (BitNode 10 or Source-File 10: sfgate.canUseGrafting)', held: false }
+    return pc.decisions.grafts
+  }
+  return planDecide(pc, 'grafts', () => {
+    const t0 = Date.now()
+    const withoutIn = { ...inputsFn() }
+    delete withoutIn.finalGrafts
+    delete withoutIn.graftStartMoney
+    const priceExit = (x) => {
+      const r = bestExitPolicy(x)
+      return r.degenerate ? null : r.best?.hours ?? null
+    }
+    const installed = new Set(sing.ownedAugs(false))
+    const inProgress = work?.type === 'GRAFTING' ? work.augmentation ?? null : null
+    const prev = pc.prev?.decisions?.grafts ?? null
+    const entropy = !installed.has('violet Congruity Implant')
+    const intel = player.skills?.intelligence ?? 0
+    // Re-search on an event (or with nothing committed this life); otherwise
+    // re-price the committed set.
+    let specs = null
+    let startMoney = null
+    let searchWhy = null
+    let truncated = false
+    if (pc.redecide || !prev || prev.key === null || prev.key === undefined) {
+      const names = sing.catalogNames()
+      const safe = (f) => {
+        try {
+          return f()
+        } catch {
+          return null
+        }
+      }
+      const cands = graftCandidatesOf({
+        names,
+        stats: Object.fromEntries(names.map((n) => [n, safe(() => sing.augStats(n))])),
+        prereqs: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrereq(n))])),
+        price: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrice(n))])),
+        owned: new Set([...installed, ...pending]),
+        augMoneyCost: bitNodeMults(info?.currentNode)?.AugmentationMoneyCost,
+        queuedNonSoA: pending.filter((n) => !isSoa(n)).length,
+        sf11: sfLevel(info, 11),
+      })
+      // Resumed from the committed set (same node, any life: grafts are the
+      // node's), so a search the budget stopped grows across re-decisions.
+      const seed = (pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name).filter((n) => typeof n === 'string' && !installed.has(n))
+      const r = chooseGrafts({ candidates: cands, priceExit, base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, seed })
+      if (!r.grafts) return { key: null, why: `graft search refused: ${r.why}`, ms: Date.now() - t0 }
+      specs = r.grafts.map((g) => g.spec)
+      startMoney = r.startMoney
+      truncated = r.truncated === true
+      searchWhy = `${r.why} (${cands.length} candidates)`
+    } else {
+      specs = (prev.grafts ?? []).filter((g) => g && !installed.has(g.name))
+      startMoney = prev.startMoney ?? null
+      searchWhy = 'the committed set, re-priced (no event)'
+    }
+    // Started: a committed graft is owned or running — the threshold is spent.
+    const started = inProgress !== null || (prev?.grafts ?? []).some((g) => installed.has(g?.name))
+    const withIn = specs.length ? { ...withoutIn, finalGrafts: specs, graftStartMoney: started ? 0 : startMoney ?? 0 } : null
+    const options = [{ key: 'none', sim: (d) => priceExit(applyDraw(withoutIn, d)) }]
+    if (withIn) options.push({ key: 'grafts', sim: (d) => priceExit(applyDraw(withIn, d)) })
+    const pointNone = priceExit(withoutIn)
+    const withPolicy = withIn ? bestExitPolicy(withIn) : null
+    const pointWith = withPolicy?.degenerate ? null : withPolicy?.best?.hours ?? null
+    const d = pc.post
+      ? decideAmong({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev, budgetMs: planBudgetLeft(pc), pointOf: (k) => (k === 'none' ? pointNone : pointWith) })
+      : { key: typeof pointWith === 'number' && typeof pointNone === 'number' && pointWith < pointNone ? 'grafts' : 'none', why: 'no posterior: the point comparison' }
+    return {
+      ...d,
+      grafts: d.key === 'grafts' ? specs : [],
+      startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
+      started,
+      inProgress,
+      withoutH: pointNone,
+      withH: pointWith,
+      deltaH: typeof pointWith === 'number' && typeof pointNone === 'number' ? pointWith - pointNone : null,
+      withInstalls: withPolicy?.best?.installsFirst ?? null,
+      finalWindowNow: withPolicy?.best?.installsFirst === 0,
+      searched: searchWhy,
+      truncated,
+      notSimulated: 'the grafted augmentation leaving earlier lives\' install catalogue (none are grafted there); travel to New Tokyo ($200k)',
+      searchMs: Date.now() - t0,
+    }
+  })
+}
+/**
+ * The committed grafts as exit inputs for EVERY decision this pass (the plan
+ * is one trajectory: an install decision that did not know the node will be
+ * finished by grafting would keep installing past the window grafting makes
+ * the last). From this pass's decision once made, else the last pass's, same
+ * node and life; grafts already installed are dropped (they are in the
+ * multiplier now). Null = none.
+ */
+function carriedGraftsOf(pc, installed, work) {
+  const d = pc?.decisions?.grafts ?? pc?.prev?.decisions?.grafts ?? null
+  if (!d || d.key !== 'grafts' || !Array.isArray(d.grafts)) return null
+  const left = d.grafts.filter((g) => g && typeof g.name === 'string' && !installed.has(g.name))
+  if (!left.length) return null
+  const started = work?.type === 'GRAFTING' || d.grafts.some((g) => installed.has(g?.name))
+  return { finalGrafts: left, graftStartMoney: started ? 0 : d.startMoney ?? 0 }
+}
+
+/**
  * THE SPENDERS' VERDICTS, trajectory against trajectory (exitplan.spendExit):
  * for home, hacknet and the cloud fleet, the node's exit if their next
  * purchase is made now against the exit if it is not, on one input builder.
@@ -1940,6 +2069,9 @@ function publishPlan(ns, info, extra = {}) {
         bodyLeg: extra.bodyLeg ?? null,
         sleeveObjective: pc.decisions.sleeveObjective ?? null,
         spends: pc.decisions.spends ?? null,
+        // Carried when this pass did not reach the graft step (an early
+        // return): the commitment must not vanish between passes.
+        grafts: pc.decisions.grafts ?? pc.prev?.decisions?.grafts ?? null,
       },
       posteriors: pc.post ? posteriorSummary(pc.post) : null,
       calibration: pc.post?.calibration ?? null,
@@ -2277,6 +2409,9 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
     // Where the install cadence came from (measured / prior, and which node).
     cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, why: cadence.why } : null,
+    // THE COMMITTED GRAFTS (graftDecisionOf / carriedGraftsOf): legs of the
+    // final window in every decision's trajectory. Absent when none.
+    ...(graftCarry ?? {}),
   }
 }
 
@@ -2507,6 +2642,7 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 
 async function act(ns, canJoin, info, note) {
   planCtx = null // one plan context per pass (planCtxOf)
+  graftCarry = null // set once the snapshots are read (carriedGraftsOf)
   {
     const g = readJson(ns, GATE)?.objective?.growShare
     growShareNow = typeof g === 'number' && isFinite(g) ? g : null
@@ -2945,6 +3081,9 @@ async function act(ns, canJoin, info, note) {
     const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
     installedCount = count(sing.ownedAugs(false))
     allCount = count(sing.ownedAugs(true))
+    // The last committed grafts ride every exit this pass until this pass's
+    // graft decision (graftDecisionOf) replaces them.
+    graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
     const held = []
     for (const [name, n] of allCount) {
       for (let i = 0; i < n - (installedCount.get(name) ?? 0); i++) held.push(name)
@@ -3889,6 +4028,38 @@ async function act(ns, canJoin, info, note) {
     return null
   })()
 
+  // THE GRAFT STEP (graftDecisionOf): the committed grafts, performed only
+  // where the committed trajectory put them — the final window, and only once
+  // it is NOW: the with-grafts exit installs no more (withInstalls 0) and the
+  // committed install decision is 'never' (last pass's; this pass's comes
+  // later). Each graft starts when the balance (cash + the trader's book,
+  // raised by the order's cost) reaches its price — the first one only past
+  // the committed start balance — and holds the work slot until it is done: a
+  // running graft is never interrupted (the install below is held too;
+  // GraftingWork.finish keeps the money of a cancelled graft).
+  const graftDecision = canJoin && canBuyAug ? graftDecisionOf(ns, info, sing, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work) : null
+  if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
+  const graftStep = (() => {
+    if (work?.type === 'GRAFTING') return { running: true, name: work.augmentation ?? '?' }
+    const d = graftDecision
+    if (!d || d.key !== 'grafts' || !Array.isArray(d.grafts) || !d.grafts.length) return null
+    const installKey = planCtxOf(ns, info).prev?.decisions?.install?.key ?? null
+    if (!(d.finalWindowNow === true && installKey === 'never')) {
+      did.push(`grafts committed (${d.grafts.map((g) => g.name).join(', ')}; exit ${d.withH?.toFixed?.(2) ?? '?'}h vs ${d.withoutH?.toFixed?.(2) ?? '?'}h without) — waiting for the final window (with-run installs ${d.withInstalls ?? '?'} more; committed install ${installKey ?? 'none'})`)
+      return null
+    }
+    const installed = new Set(installedCount.keys())
+    const next = d.grafts.find((g) => !installed.has(g.name) && (sing.augPrereq(g.name) ?? []).every((p) => installed.has(p)))
+    if (!next) return null
+    const wealth = ns.getServerMoneyAvailable('home') + stockEquity
+    const need = d.started ? next.cost : Math.max(next.cost, d.startMoney ?? 0)
+    if (!(wealth >= need)) {
+      did.push(`graft ${next.name} ($${Math.round(next.cost).toLocaleString()}) waits for $${Math.round(need).toLocaleString()} in hand (have $${Math.round(wealth).toLocaleString()}) — the committed start balance`)
+      return null
+    }
+    return { running: false, name: next.name, cost: next.cost, slotH: next.slotH }
+  })()
+
   // WHICH FACTION THE NEXT SAMPLE BELONGS TO.
   //
   // planFactionWork records `workingFaction` so the next pass knows which
@@ -3916,7 +4087,42 @@ async function act(ns, canJoin, info, note) {
     // starts one pass later on a measured ranking.
     todo.push(`${wantCompany} desk stint deferred one pass — the ranking that chose it is estimated; working a faction meanwhile to measure it`)
   }
-  if (bodyStep && canWork && !flags.dry) {
+  // THE SCHEDULE'S TARGET IS NOT JOINED and no body leg is left: if only
+  // its cash and city stand between us and the invitation, supply them —
+  // the join carries the money requirement as its cash cost (raised from
+  // the book), travel first when a city is required, and act.js waits for
+  // the game's invitation check before joining. Anything else short is
+  // named and nothing is raised (nodeecon.joinReadyButCash). A step of the
+  // chain below, and ALSO taken beside a graft (a graft holds the slot for
+  // hours; a join needs no slot, and the final window's Daedalus join is
+  // priced in parallel with the grafts).
+  const joinTargetDue = !!(scheduleTarget && canJoin && !flags.dry && !player.factions.includes(scheduleTarget) && !wantCompany)
+  const joinTargetStep = () => {
+    try {
+      const reqs = sing.inviteReqs(scheduleTarget)
+      const ready = joinReadyButCash(reqs, player, { companyRep: joinState?.companyCtx?.repByCompany ?? null })
+      if (!ready.ready) todo.push(`${scheduleTarget}: the schedule's target is not joinable yet — ${ready.why}`)
+      else {
+        const city = reqs.find((r) => r?.type === 'city')?.city
+        const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
+        if (city && cityAfterOrders !== city) order('travel', [city], `${scheduleTarget} invites only in ${city}`)
+        if (order('join', [scheduleTarget], `the schedule's target: every requirement but cash${city ? ' and the city' : ''} is met`, moneyReq)) did.push(`ordered join ${scheduleTarget} (cash ${moneyReq > 0 ? '$' + moneyReq : 'none'} raised for the invitation)`)
+      }
+    } catch (e) {
+      todo.push(`${scheduleTarget}: invitation requirements unreadable (${String(e).slice(0, 60)})`)
+    }
+  }
+  if (graftStep && canWork && !flags.dry) {
+    workedFaction = null
+    slotOwner = 'graft'
+    if (joinTargetDue) joinTargetStep()
+    if (graftStep.running) did.push(`grafting ${graftStep.name} holds the work slot (committed graft plan)`)
+    else {
+      if (cityAfterOrders !== GRAFT_CITY) order('travel', [GRAFT_CITY], `grafting happens only in ${GRAFT_CITY} (Grafting.ts:58)`, TRAVEL_FARE)
+      order('graft', [graftStep.name, true], `committed graft plan: ${graftDecision?.why ?? ''}`.slice(0, 300), graftStep.cost)
+      did.push(`ordered graft ${graftStep.name} ($${Math.round(graftStep.cost).toLocaleString()}, ${graftStep.slotH.toFixed(2)}h of work slot)`)
+    }
+  } else if (bodyStep && canWork && !flags.dry) {
     workedFaction = null
     // CLAIM THE SLOT. act.js starts faction work in any slot nobody claims
     // (actplan defers only on a truthy slot.owner), so a gym or crime step
@@ -3964,26 +4170,8 @@ async function act(ns, canJoin, info, note) {
         }
       }
     }
-  } else if (scheduleTarget && canJoin && !flags.dry && !player.factions.includes(scheduleTarget) && !wantCompany) {
-    // THE SCHEDULE'S TARGET IS NOT JOINED and no body leg is left: if only
-    // its cash and city stand between us and the invitation, supply them —
-    // the join carries the money requirement as its cash cost (raised from
-    // the book), travel first when a city is required, and act.js waits for
-    // the game's invitation check before joining. Anything else short is
-    // named and nothing is raised (nodeecon.joinReadyButCash).
-    try {
-      const reqs = sing.inviteReqs(scheduleTarget)
-      const ready = joinReadyButCash(reqs, player, { companyRep: joinState?.companyCtx?.repByCompany ?? null })
-      if (!ready.ready) todo.push(`${scheduleTarget}: the schedule's target is not joinable yet — ${ready.why}`)
-      else {
-        const city = reqs.find((r) => r?.type === 'city')?.city
-        const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
-        if (city && cityAfterOrders !== city) order('travel', [city], `${scheduleTarget} invites only in ${city}`)
-        if (order('join', [scheduleTarget], `the schedule's target: every requirement but cash${city ? ' and the city' : ''} is met`, moneyReq)) did.push(`ordered join ${scheduleTarget} (cash ${moneyReq > 0 ? '$' + moneyReq : 'none'} raised for the invitation)`)
-      }
-    } catch (e) {
-      todo.push(`${scheduleTarget}: invitation requirements unreadable (${String(e).slice(0, 60)})`)
-    }
+  } else if (joinTargetDue) {
+    joinTargetStep()
   } else if (!deskGuarded && wantCompany && canWork && !flags.dry) {
     // THE TRAINING STEP, when the forecast priced it in. joinplan's blocker
     // carries `train: {toCha, hours}` ONLY when front-loading Leadership study
@@ -5168,6 +5356,11 @@ async function act(ns, canJoin, info, note) {
       did.push(
         `FINAL LIFE: The Red Pill is installed and sprinting to hacking ${terminal.target} takes ~${terminal.sprintH}h this life vs ~${terminal.installLadderH ?? '?'}h through more installs — installs SUPPRESSED.`,
       )
+    } else if ((gate.install || forcedInstall) && work?.type === 'GRAFTING') {
+      // A GRAFT IN PROGRESS IS NEVER INSTALLED THROUGH: the install cancels
+      // the work and the game keeps the graft's money (GraftingWork.finish,
+      // cancelled). The plan priced the grafts as finishing first.
+      did.push(`install HELD: grafting ${work.augmentation ?? '?'} is in progress — an install would cancel it and keep its price (${gate.why})`)
     } else if (gate.install || forcedInstall) {
       if (forcedInstall && !gate.install) {
         did.push(`INSTALL FORCED by --install-now. The gate would have held: ${gate.why}`)

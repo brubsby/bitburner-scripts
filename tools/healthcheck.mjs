@@ -389,7 +389,7 @@ const WATCHDOG_TIER = 64;
   const owner = pr?.slot?.owner ?? null;
   const ageMin = pr?.at ? (Date.now() - Date.parse(pr.at)) / 60000 : null;
   const actual = state.currentWork?.type ?? null;
-  const want = { body: ["ClassWork", "CrimeWork"], faction: ["FactionWork"], crime: ["CrimeWork"] }[owner];
+  const want = { body: ["ClassWork", "CrimeWork"], faction: ["FactionWork"], crime: ["CrimeWork"], graft: ["GraftingWork"] }[owner];
   if (want && ageMin !== null && ageMin < 15) {
     if (!want.includes(actual)) fail(`ORDER NOT HELD: progress.js claims the work slot for '${owner}' work, but the game is running ${actual ?? "nothing"}`, "something else took the slot (act.js? a stale order?) — the plan is not happening");
     else note(`work slot: '${owner}' claimed and the game is running ${actual}`);
