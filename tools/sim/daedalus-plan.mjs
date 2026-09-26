@@ -187,7 +187,12 @@ const hoursToEarn = (dollars) => {
 // throughout. What plan C actually needs is for the money to be in hand by the
 // time the grind ends, so the two overlap and the cost is the LONGER of them,
 // not the sum. Money already banked counts too.
-const MONEY_ON_HAND = player.money ?? 0;
+// CASH + THE TRADER'S BOOK (nodeecon.wealthOf): where stock.js trades, cash
+// is ~$0 on a book worth billions, and the book is what act-liquidate.js
+// raises the donation from. A stale or absent stock.txt counts no equity.
+const STOCK_TEL = telemetry("stock.txt");
+const STOCK_EQUITY = STOCK_TEL && Date.now() - Date.parse(STOCK_TEL.at ?? "") < 10 * 60e3 && Number.isFinite(STOCK_TEL.equity) ? STOCK_TEL.equity : 0;
+const MONEY_ON_HAND = (player.money ?? 0) + STOCK_EQUITY;
 const planCHours = (grindHours, dollars) => {
   const earn = hoursToEarn(Math.max(0, dollars - MONEY_ON_HAND));
   return Math.max(grindHours, earn) + REBUILD_HOURS + FINAL_INSTALL_HOURS;

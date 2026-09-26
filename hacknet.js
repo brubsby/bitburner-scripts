@@ -54,7 +54,8 @@
 
 import { reporter } from 'status.js'
 import { bestUpgrade, verdict, remainingLife, bestServerUpgrade, netburnersServerStep, ramPolicy, hashRate, cacheCost, hashCapacityOf, DOLLARS_PER_HASH } from 'hacknetplan.js'
-import { spendable, augClaim, joinClaim } from 'budget.js'
+import { spendable, reserveFor, augClaim, joinClaim } from 'budget.js'
+import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { hasHacknetServers } from 'sfgate.js'
@@ -350,6 +351,17 @@ export async function main(ns) {
       const opts = exitV?.buy ? { exitApproved: true } : plan.best && life.hours !== null ? { payback: { moneyReturn: { cost: plan.best.cost, gainPerSec: plan.best.gainPerSec, horizonSec: life.hours * 3600 } } } : {}
       const free = spendable('hacknet', money, claims, opts)
       const affordable = plan.best ? plan.best.cost <= free : false
+      // AN APPROVED UPGRADE THE BOOK MUST FUND (nodeecon: wealth decides, cash
+      // pays): the exit verdict priced it on cash + the trader's equity, so a
+      // cash shortfall asks act.js for a sized raise. The payback fallback is
+      // unpriced and never sells the book.
+      {
+        fetchFromHome(ns, STOCK_FILE)
+        const stock = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
+        const req = exitV?.buy && plan.best && !affordable ? raiseRequestFor({ cash: money, equity: stock.ok ? stock.equity : 0, target: reserveFor('hacknet', claims, opts) + plan.best.cost, by: 'hacknet', why: `hacknet upgrade the exit simulation approved ($${Math.round(plan.best.cost)})`, lastAugReset: info.lastAugReset }) : null
+        ns.write(raiseFileOf('hacknet'), JSON.stringify(req ?? { at: new Date().toISOString(), by: 'hacknet', target: 0, why: 'no raise needed' }), 'w')
+        if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('hacknet'), 'home', ns.getHostname())
+      }
       const cache = servers ? cacheOffer(ns, info, t, serverFields.hashCap, spendable('hacknet', money, claims, {})) : null
       publish(ns, {
             ...base,

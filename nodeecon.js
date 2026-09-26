@@ -499,3 +499,202 @@ export function fitCapital(lives, steadyPerSec = null) {
   }
   return null
 }
+
+// ---------------------------------------------------------------------------
+// WEALTH, NOT CASH. "What can we afford" is cash + the trader's equity.
+//
+// Where stock.js holds the book (BitNode 8, and any node with TIX access) it
+// keeps every dollar no claim holds invested, so cash reads ~$0-$80k while
+// the run is worth billions. A gate that asks "can we afford X?" of cash
+// alone starves (2026-09-25: no plan, no install for 5.8h). So:
+//
+//   PRICING / AFFORDABILITY   wealthOf(cash, stock) — cash + equity. With no
+//                             trader record (no TIX, stale, other life) the
+//                             equity is 0 and wealth IS cash: behaviour in a
+//                             node without a trader is unchanged.
+//   THE PURCHASE ITSELF       still needs cash, so it is preceded by a sized
+//                             raise: an order `cost` (withCashRaise, progress
+//                             batches) or a RAISE REQUEST (below) that act.js
+//                             serves with act-liquidate.js raise X.
+//
+// A raise is NOT free: every sale pays StockMarketCommission, sells at the
+// bid, and the hold it writes stops the trader compounding until released.
+// So requests are rate-limited (RAISE_COOLDOWN_MS) and only PRICED spends
+// (an exit verdict, a plan) request one — an unpriced surplus rule never
+// sells the book.
+// ---------------------------------------------------------------------------
+
+/**
+ * cash + the trader's equity (stockRecordOf's `equity`, counted only when the
+ * record is ok). null when cash itself is unreadable — never a silent 0.
+ */
+export function wealthOf(cash, stock) {
+  if (!fin(cash)) return null
+  return cash + (stock?.ok && fin(stock.equity) && stock.equity > 0 ? stock.equity : 0)
+}
+
+/** stockRecordOf from the raw /tel/stock.txt TEXT (ns.read is 0GB); malformed reads as no record. */
+export function stockRecordFromText(text, lastAugReset, now = Date.now()) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    rec = null
+  }
+  return stockRecordOf(rec, lastAugReset, now)
+}
+
+/**
+ * RAISE REQUESTS — how a spender that is not a progress.js order gets cash.
+ * One file per requester (/tel/raise/<by>.txt on home) so two spenders never
+ * overwrite each other: {at, lastAugReset, by, target, why}. `target` is the
+ * CASH BALANCE the purchase needs (its cost plus whatever the spender must
+ * leave untouched) — the absolute form act-liquidate.js `raise` takes.
+ */
+export const RAISE_DIR = '/tel/raise/'
+export const RAISE_REQUESTERS = ['sleeve', 'sleeveaug', 'gang', 'buyserv', 'hacknet']
+export const RAISE_FRESH_MS = 3 * 60e3
+export const RAISE_COOLDOWN_MS = 5 * 60e3
+/** How long act.js leaves a served raise's hold standing: the requester's next loop spends the cash. */
+export const RAISE_HOLD_MS = 2 * 60e3
+export const raiseFileOf = (by) => `${RAISE_DIR}${by}.txt`
+
+/**
+ * The request a spender publishes, or null when none is needed or possible:
+ * cash already covers `target`; nothing is invested; or wealth does not cover
+ * it either (selling the book cannot fund it — the purchase is simply not
+ * affordable, which the caller reports).
+ */
+export function raiseRequestFor({ cash, equity, target, by, why, lastAugReset, now = Date.now(), margin = 0.02 }) {
+  if (!fin(cash) || !fin(target) || !(target > 0) || !(equity > 0)) return null
+  if (cash >= target) return null
+  const t = Math.ceil(target * (1 + margin))
+  if (cash + equity < t) return null
+  return { at: new Date(now).toISOString(), lastAugReset, by, target: t, why: String(why ?? '') }
+}
+
+/**
+ * Which request act.js serves this pass: {serve: req|null, why}. Fresh, this
+ * life, a known requester, still short of cash, fundable from equity, and no
+ * raise served inside the cooldown. The largest target wins — the same sale
+ * covers the smaller ones.
+ */
+export function raiseToServe(reqs, { cash, equity, lastAugReset, lastServedAt = 0, now = Date.now() }) {
+  if (now - lastServedAt < RAISE_COOLDOWN_MS) return { serve: null, why: `a raise was served ${Math.round((now - lastServedAt) / 1000)}s ago (cooldown ${RAISE_COOLDOWN_MS / 1000}s — every sale pays commission and pauses the book)` }
+  if (!fin(cash)) return { serve: null, why: 'cash unreadable' }
+  const age = (r) => now - Date.parse(r?.at ?? '')
+  const live = (reqs ?? []).filter((r) => r && RAISE_REQUESTERS.includes(r.by) && r.lastAugReset === lastAugReset && age(r) >= 0 && age(r) < RAISE_FRESH_MS && fin(r.target) && r.target > cash)
+  if (!live.length) return { serve: null, why: 'no fresh request short of cash' }
+  const best = live.sort((a, b) => b.target - a.target)[0]
+  if (!(equity > 0) || cash + equity < best.target) return { serve: null, why: `${best.by} wants $${Math.round(best.target)} and cash + equity is $${Math.round(cash + (equity > 0 ? equity : 0))} — not fundable` }
+  return { serve: best, why: `${best.by}: ${best.why}` }
+}
+
+// ---------------------------------------------------------------------------
+// NEGATIVE CASH — THE SOFTLOCK ESCAPE (act.js runs it every pass).
+//
+// Class and gym fees are the only unchecked sinks (MONEY THAT LEAVES EVERY
+// SECOND, above). Selling stock needs no balance (StockMarket/
+// BuyingAndSelling.tsx sellStock: no money check before Player.gainMoney),
+// so cash < 0 with equity > 0 is recoverable. cash + equity <= 0 with nothing
+// earning is not: 2026-09-25, sleeves at ZB drained a liquidated book to
+// -$2.4m and the life had to be soft-reset by hand. Escalating:
+//
+//   1 'stop'   cash < 0: fee-charging work stops — the player's class or gym
+//              (act-stop.js); sleeves refuse fees on their own cash floor
+//              (sleeveplan feeFundable on cash) — until cash is back above the
+//              floor. Every node.
+//   2 'raise'  cash < 0 and equity > 0: ONE raise to NEG_CASH_TARGET, at most
+//              once per NEG_RAISE_COOLDOWN_MS (the trader deliberately does
+//              not chase negative cash). Every node.
+//   3 reset    wealth <= 0, a FRESH trader record showing NO book, cash not
+//              rising, held across >= SOFTLOCK_MIN_SAMPLES checks at least
+//              SOFTLOCK_GAP_MS apart: install if augmentations are queued,
+//              else soft reset. IRREVERSIBLE, so only where money is capital
+//              (ScriptHackMoneyGain 0), never while /softlock-hold.txt exists,
+//              and the evidence is written (SOFTLOCK_FILE) before the act.
+// ---------------------------------------------------------------------------
+/** Cash the escape raises to: 120s (FEE_FLOOR_S) of the worst fleet drain seen (five sleeves at ZB, ~$8k/s). */
+export const NEG_CASH_TARGET = 1e6
+export const NEG_RAISE_COOLDOWN_MS = 10 * 60e3
+export const SOFTLOCK_GAP_MS = 2 * 60e3
+export const SOFTLOCK_MIN_SAMPLES = 2
+export const SOFTLOCK_FILE = '/tel/softlock.txt'
+export const SOFTLOCK_HOLD_FILE = '/softlock-hold.txt'
+
+/**
+ * One step of the escape. Pure.
+ *   cash; stock (stockRecordOf); work ({type, classType}: snap-rep's
+ *   getCurrentWork, or null); queued (augmentations bought and not installed,
+ *   null = unknown); hackPays (ScriptHackMoneyGain); hold (the text of
+ *   /softlock-hold.txt, '' when absent); samples ([{at, cash, wealth}] carried
+ *   from earlier passes); lastRaiseAt; now.
+ * Returns {level, actions: [{kind: 'stop'|'raise'|'install'|'softreset', why,
+ *   target?}], samples (carry to the next pass), why}.
+ */
+export function softlockStep({ cash, stock, work = null, queued = null, hackPays = null, hold = '', samples = [], lastRaiseAt = 0, now = Date.now() }) {
+  if (!fin(cash)) return { level: null, actions: [], samples: [], why: 'cash unreadable — nothing decided' }
+  if (cash >= 0) return { level: 0, actions: [], samples: [], why: null }
+  const equity = stock?.ok && fin(stock.equity) ? stock.equity : 0
+  const wealth = cash + equity
+  const actions = []
+  const why = [`cash $${Math.round(cash)} < 0`]
+  if (work && String(work.type ?? '').toUpperCase() === 'CLASS') actions.push({ kind: 'stop', why: `cash $${Math.round(cash)} < 0 and the player is in a paid class (${work.classType ?? '?'}): its fee is charged with no balance check` })
+  if (equity > 0) {
+    if (now - lastRaiseAt >= NEG_RAISE_COOLDOWN_MS) actions.push({ kind: 'raise', target: NEG_CASH_TARGET, why: `cash $${Math.round(cash)} < 0 with $${Math.round(equity)} of equity: raise to $${NEG_CASH_TARGET}` })
+    else why.push(`a negative-cash raise was served ${Math.round((now - lastRaiseAt) / 1000)}s ago (cooldown ${NEG_RAISE_COOLDOWN_MS / 1000}s)`)
+    return { level: 2, actions, samples: [], why: why.join('; ') }
+  }
+  // Level 3 needs POSITIVE evidence of no book: a stale or absent record is
+  // unknown, and unknown never licenses an irreversible act.
+  if (!(stock?.ok && equity === 0)) return { level: 1, actions, samples: [], why: `${why.join('; ')}; no fresh trader record (${stock?.why ?? 'none'}) — a reset needs positive evidence that no book exists` }
+  if (!(wealth <= 0)) return { level: 1, actions, samples: [], why: why.join('; ') }
+  const prev = (samples ?? []).filter((s) => fin(s?.cash) && fin(Date.parse(s?.at)))
+  if (prev.length && cash > prev[0].cash) return { level: 1, actions, samples: [], why: `${why.join('; ')}; cash rising ($${Math.round(prev[0].cash)} -> $${Math.round(cash)}) — something earns, no reset` }
+  const last = prev[prev.length - 1]
+  const kept = (last && now - Date.parse(last.at) < SOFTLOCK_GAP_MS ? prev : [...prev, { at: new Date(now).toISOString(), cash, wealth }]).slice(-4)
+  const base = `${why.join('; ')}; wealth $${Math.round(wealth)} <= 0, no book, cash not rising`
+  if (hackPays !== 0) return { level: 1, actions, samples: kept, why: `${base} — but money is not capital here (ScriptHackMoneyGain ${hackPays}): no reset` }
+  if (hold) return { level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, held by ${SOFTLOCK_HOLD_FILE}: ${String(hold).slice(0, 120)}` }
+  if (kept.length < SOFTLOCK_MIN_SAMPLES) return { level: 3, actions, samples: kept, why: `${base} — sample ${kept.length} of ${SOFTLOCK_MIN_SAMPLES} (>= ${SOFTLOCK_GAP_MS / 1000}s apart) before acting` }
+  if (!fin(queued)) return { level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, but the queued-augmentation count is unreadable: not choosing install vs reset blind` }
+  actions.push(queued > 0 ? { kind: 'install', why: `softlock over ${kept.length} samples: ${base}; ${queued} augmentation(s) queued — install` } : { kind: 'softreset', why: `softlock over ${kept.length} samples: ${base}; nothing queued — soft reset` })
+  return { level: 3, actions, samples: kept, why: base }
+}
+
+/**
+ * Healthcheck section F 'WEALTH NEGATIVE': cash + equity < 0 now, or cash < 0
+ * in this sample AND the previous one. {cash, equity} per sample. Returns the
+ * failure lines (empty = pass; an unreadable cash is not a pass here — the
+ * caller's own unreadable-state check owns that).
+ */
+export function wealthNegativeCheck(nowS, prevS) {
+  const out = []
+  if (!fin(nowS?.cash)) return out
+  const eq = fin(nowS.equity) ? nowS.equity : 0
+  const w = nowS.cash + eq
+  if (w < 0) out.push(`WEALTH NEGATIVE: cash $${Math.round(nowS.cash)} + equity $${Math.round(eq)} = $${Math.round(w)} — a softlock unless something is earning`)
+  if (nowS.cash < 0 && fin(prevS?.cash) && prevS.cash < 0) out.push(`WEALTH NEGATIVE: cash below zero in two samples ($${Math.round(prevS.cash)} -> $${Math.round(nowS.cash)}) — an unchecked fee is draining it and nothing raised it back`)
+  return out
+}
+
+/**
+ * THE TRADER'S FEE RESERVE (stock.js). Cash the trader keeps uninvested
+ * against money that leaves between its ticks with no balance check — class
+ * and gym fees. MEASURED, not declared: `flows` are the per-second external
+ * cash changes it observed between ticks (cash at a tick's start minus cash
+ * after the previous tick's own trades, over the interval). The MEDIAN is the
+ * steady drain: a lumpy purchase (an aug, a raise spent) moves a tick or two
+ * and cannot move the median; hacking income makes it positive, and then no
+ * reserve is kept (income covers the fees). Reserve = drain x FEE_FLOOR_S.
+ * Without it the trader reinvested every fee raise at the hold's release and
+ * cash ran negative mid-leg.
+ */
+export function feeReserveOf(flows, seconds = FEE_FLOOR_S, minSamples = 5) {
+  const xs = (flows ?? []).filter(fin)
+  if (xs.length < minSamples) return { drainPerSec: 0, reserve: 0, n: xs.length }
+  const s = [...xs].sort((a, b) => a - b)
+  const med = s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2
+  const drainPerSec = med < 0 ? -med : 0
+  return { drainPerSec, reserve: Math.ceil(drainPerSec * seconds), n: xs.length }
+}

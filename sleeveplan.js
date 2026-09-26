@@ -276,6 +276,28 @@ export function sleeveAssignments(sleeves, node, o = {}) {
   const tasks = []
   const why = []
   let repTaken = false
+  // CASH vs WEALTH (nodeecon.wealthOf). `o.money` is CASH — what a class or
+  // gym fee is charged against, every second, with no balance check.
+  // `o.wealth` is cash + the stock trader's equity (absent: no trader, and it
+  // is the cash). Whether a paid task is AFFORDABLE is asked of wealth; whether
+  // it may START is asked of cash (the FEE_FLOOR_S floor), and when only the
+  // book covers the floor the fleet asks for a raise (`cashNeed`; sleeve.js
+  // publishes /tel/raise/sleeve.txt, act.js sells) rather than starving —
+  // BitNode 8's cash is ~$0 on a $50b book. A paid task already running
+  // continues while cash >= 0 (the trader keeps a measured fee reserve);
+  // below zero every fee stops (act.js's negative-cash escape, level 1).
+  const wealth = num(o.wealth) ? o.wealth : o.money
+  const cashTxt = num(o.money) ? '$' + Math.round(o.money) : 'unreadable'
+  let cashNeed = 0
+  const affordable = (fee) => feeFundable(wealth, fee) && num(o.money) && o.money >= 0
+  const startable = (fee, running) => {
+    if (running || feeFundable(o.money, fee)) return true
+    cashNeed = Math.max(cashNeed, Math.ceil(fee * FEE_FLOOR_S))
+    return false
+  }
+  const notAffordable = (fee) =>
+    num(o.money) && o.money < 0 ? `cash ${cashTxt} is below zero — no fee-charging work until it is back` : `cash + equity ${num(wealth) ? '$' + Math.round(wealth) : 'is unreadable'} does not cover ${FEE_FLOOR_S}s of $${Math.round(fee)}/s`
+  const raising = (fee) => `cash ${cashTxt} does not cover ${FEE_FLOOR_S}s of $${Math.round(fee)}/s — raising it from the stock book first (cashNeed)`
   const syncDecided = new Set()
   // THE COVENANT CAMPAIGN: every sleeve trains the player's current stat at
   // the gym — its exp transfers to the player — ahead of any other objective.
@@ -284,19 +306,21 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // The same fee floor as every paid class (nodeecon.feeFundable): the
     // campaign is a user mandate, but cash below zero stops everything else.
     const campaignFee = CLASS_BASE_FEE.gym * Math.max(...GYMS.map((g) => g.costMult)) * sleeves.length
-    if (st && !feeFundable(o.money, campaignFee)) {
+    const running = sleeves.some((s) => s?.task?.type === 'CLASS')
+    if (st && (!affordable(campaignFee) || !startable(campaignFee, running))) {
+      const r = affordable(campaignFee) ? raising(campaignFee) : notAffordable(campaignFee)
       for (const s of sleeves) {
         tasks.push('shock')
-        why.push(`sleeve ${s?.index ?? tasks.length - 1}: the Covenant gym campaign costs up to $${campaignFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — recover shock until it does`)
+        why.push(`sleeve ${s?.index ?? tasks.length - 1}: the Covenant gym campaign costs up to $${campaignFee}/s and ${r} — recover shock until it does`)
       }
-      return { tasks, why, breakevenHours: null, objective, horizonHours }
+      return { tasks, why, breakevenHours: null, objective, horizonHours, cashNeed }
     }
     for (const s of sleeves) {
       const i = s?.index ?? tasks.length
       tasks.push(st)
       why.push(st ? `sleeve ${i}: train ${st} for the Covenant campaign (exp transfers to the player)` : `sleeve ${i}: covenant campaign without a stat — no assignment`)
     }
-    return { tasks, why, breakevenHours: null, objective, horizonHours }
+    return { tasks, why, breakevenHours: null, objective, horizonHours, cashNeed }
   }
   // THE SLEEVE ALREADY HOLDING THE FACTION keeps it. setToFactionWork throws
   // "Sleeve 1 cannot work for faction X because Sleeve 3 is already working
@@ -442,9 +466,9 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       const zb = [...UNIVERSITIES].sort((a, b) => b.expMult - a.expMult)[0]
       const feePerSec = CLASSES.Algorithms.cost * zb.costMult
       const fleetFeePerSec = feePerSec * sleeves.length
-      if (!feeFundable(o.money, fleetFeePerSec)) {
+      if (!affordable(fleetFeePerSec)) {
         tasks.push('shock')
-        why.push(`sleeve ${i}: study would cost the fleet $${Math.round(fleetFeePerSec)}/s and cash ${num(o.money) ? '$' + Math.round(o.money) : 'is unreadable'} does not cover ${FEE_FLOOR_S}s of it (the floor) — recover shock (free) instead`)
+        why.push(`sleeve ${i}: study would cost the fleet $${Math.round(fleetFeePerSec)}/s and ${notAffordable(fleetFeePerSec)} (the floor) — recover shock (free) instead`)
         continue
       }
       const studyNow = sleeveStudyExpPerSec(s, 'Algorithms', o)
@@ -457,9 +481,15 @@ export function sleeveAssignments(sleeves, node, o = {}) {
           continue
         }
         why.push(`sleeve ${i}: study pays for its $${feePerSec}/s fee: exit ${withStudy.toFixed(2)}h vs ${idle.toFixed(2)}h without`)
-      } else if (!(num(o.money) && o.money >= fleetFeePerSec * STUDY_FUND_S)) {
+      } else if (!(num(wealth) && wealth >= fleetFeePerSec * STUDY_FUND_S)) {
         tasks.push('shock')
-        why.push(`sleeve ${i}: the fee's exit cost is unpriced (no fresh or non-degenerate exit) and cash does not cover ${STUDY_FUND_S}s of the fleet's fees (the fallback rule) — recover shock`)
+        why.push(`sleeve ${i}: the fee's exit cost is unpriced (no fresh or non-degenerate exit) and cash + equity does not cover ${STUDY_FUND_S}s of the fleet's fees (the fallback rule) — recover shock`)
+        continue
+      }
+      // Worth its fee: now the cash to pay it, which the book may have to supply.
+      if (!startable(fleetFeePerSec, s?.task?.type === 'CLASS')) {
+        tasks.push('shock')
+        why.push(`sleeve ${i}: study is worth its fee but ${raising(fleetFeePerSec)} — recover shock until the cash lands`)
         continue
       }
       tasks.push('hacking')
@@ -487,8 +517,8 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       // costMult per second): the floor applies before any training starts,
       // priced at the dearest gym (bodyplan GYMS) for the whole fleet.
       const gymFee = CLASS_BASE_FEE.gym * Math.max(...GYMS.map((g) => g.costMult)) * sleeves.length
-      if (!feeFundable(o.money, gymFee)) {
-        why.push(`sleeve ${i}: training would cost up to $${gymFee}/s for the fleet and cash does not cover ${FEE_FLOOR_S}s of it — working instead`)
+      if (!affordable(gymFee) || !startable(gymFee, s?.task?.type === 'CLASS')) {
+        why.push(`sleeve ${i}: training would cost up to $${gymFee}/s for the fleet and ${affordable(gymFee) ? raising(gymFee) : notAffordable(gymFee)} — working instead`)
       } else {
       // The weighted stat this sleeve is furthest behind on. sleeve.js maps the
       // long skill names to GymType members; the shipped gym branch picked the
@@ -515,7 +545,7 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     tasks.push(pick.crime)
     why.push(`sleeve ${i}: ${pick.crime} at ${(pick.rates.chance * 100).toFixed(0)}% for ${objective}${policy ? ` — ${policy.why}` : ''}`)
   }
-  return { tasks, why, breakevenHours: breakeven, objective, horizonHours }
+  return { tasks, why, breakevenHours: breakeven, objective, horizonHours, cashNeed }
 }
 
 /**
