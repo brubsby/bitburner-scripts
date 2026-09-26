@@ -456,6 +456,11 @@ export async function run() {
     const kept = P.decideAmong({ options: opts, prev: { key: "rep" }, draws });
     c10.note(`sleeve objective, exp 0.05h better: ${kept.why}`);
     if (kept.key !== "rep") c10.fail("the committed sleeve objective must survive a 0.05h tie");
+    // No event: the committed objective is held and only it is evaluated
+    // (even against a far better alternative — re-deciding waits for an event).
+    let calls = 0;
+    const held = P.decideAmong({ options: [{ key: "rep", sim: () => (calls++, 60) }, { key: "exp", sim: () => (calls++, 40) }], prev: { key: "rep", decidedAt: "2026-09-26T12:00:00Z", why: "x" }, draws, redecide: false });
+    if (!(held.key === "rep" && held.held === true && calls === draws.length)) c10.fail("without an event the committed choice is held and only it is priced", JSON.stringify({ key: held.key, held: held.held, calls }));
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     if (!/const pd = decideSpend\(\{ deltaH: r\.deltaH, withoutH: r\.withoutH/.test(prog) || !/buy: pd \? pd\.buy : r\.deltaH < 0/.test(prog)) c10.fail("every spend verdict must pass through plan.decideSpend (source guard)");
   }
