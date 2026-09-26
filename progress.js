@@ -136,7 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
-import { bestCountExit, ticketLadder } from 'countexit.js'
+import { bestCountExit, bestCountRoute, countRoutes, ticketLadder } from 'countexit.js'
 import { INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
@@ -763,10 +763,15 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
   // THE COUNT GATE'S TICKETS for the value walk (factionplan valueOfWorking):
   // every unowned distinct augmentation on offer, joined or joinable, while
   // the Daedalus count is short (joinCtx.countTickets, capital node only).
+  // The exit-chosen route's augmentation is THE ticket (joinCtx.countRoute);
+  // unpriced, every distinct augmentation carries the flat value (fallback).
   if (joinCtx?.countTickets?.short > 0) {
-    const names = new Set()
-    for (const f of byFaction.values()) for (const a of f.augs ?? []) if (a?.name && a.name !== NFG && !joinCtx.countTickets.owned.has(a.name)) names.add(a.name)
-    hooks.tickets = { names, left: joinCtx.countTickets.short }
+    if (joinCtx.countRoute?.name) hooks.tickets = { names: new Set([joinCtx.countRoute.name]), left: 1 }
+    else {
+      const names = new Set()
+      for (const f of byFaction.values()) for (const a of f.augs ?? []) if (a?.name && a.name !== NFG && !joinCtx.countTickets.owned.has(a.name)) names.add(a.name)
+      hooks.tickets = { names, left: joinCtx.countTickets.short }
+    }
   }
   const plan = planSchedule([...byFaction.values()], baseForPlan, hooks)
 
@@ -2732,6 +2737,8 @@ async function act(ns, canJoin, info, note) {
   // the reason those three carry the note they do. 0 means "no count gate",
   // which is the correct reading when the augmentation path is unavailable.
   let ticketsWanted = 0
+  // The exit-priced route to the next distinct augmentation (published).
+  let countRouteNow = null
   let candidates = []
   let joinState = null
   if (canBuyAug) {
@@ -3342,7 +3349,59 @@ async function act(ns, canJoin, info, note) {
     const short = m.DaedalusAugsRequirement - allCount.size
     return short > 0 ? { short, owned: new Set(allCount.keys()) } : null
   })()
-  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta, gang: gangCtx, gangRepIn, countTickets }) : null
+  // WHICH DISTINCT AUGMENTATION FINISHES THE COUNT, by the node's exit
+  // (countexit.bestCountRoute): every reachable distinct augmentation —
+  // joined factions' offers and joinable factions' catalogues — with its real
+  // gains, its price and its detour (join legs, grind or donation), each
+  // priced as the exit with it forced into the next batch. The cheapest
+  // ticket is one candidate, not the answer. Inputs are the previous pass's
+  // exit inputs (same life, fresh); unpriced -> the flat ticket value over
+  // every distinct augmentation, named as the fallback.
+  const countRoute = (() => {
+    if (!countTickets) return null
+    try {
+      const rec = readJson(ns, '/tel/exitinputs.txt')
+      if (!rec?.inputs || rec.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(rec.at) < 15 * 60e3)) return { best: null, tried: [], why: 'no fresh same-life exit inputs' }
+      const mults = bitNodeMults(info?.currentNode)
+      const cc = countModelOf(mults, offers, allCount, player)
+      if (!cc) return { best: null, tried: [], why: 'count model unpriced' }
+      const prior = readJson(ns, SCHEDULE)
+      const same = prior?.lastAugReset === info?.lastAugReset
+      const repPerSec = same ? prior.measuredBaseRepPerSec ?? prior.estimatedBaseRepPerSec ?? null : null
+      const fwrg = mults?.FactionWorkRepGain
+      const donatable = favorToDonateOf(mults) === 0
+      const gangF = ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction ?? null : null
+      const unqueuedRef = offers.find((o) => o.name !== NFG && o.baseCost > 0)
+      const qf = unqueuedRef ? sing.augPrice(unqueuedRef.name) / unqueuedRef.baseCost : 1
+      const cands = []
+      for (const c of candidates) {
+        const w = joinWait(c.requirements, { ...joinState, expPerSec: same ? prior.expPerSec ?? null : null })
+        if (!w.known || !isFinite(w.hours)) continue
+        cands.push({ name: c.name, joinH: w.hours, rep: c.rep, favor: c.favor, augs: (c.augs ?? []).map((a) => ({ name: a.name, baseCost: sing.augPrice(a.name) / qf, repReq: a.repReq, mults: a.mults, prereqs: sing.augPrereq(a.name) })) })
+      }
+      const routes = countRoutes({
+        offers: offers.map((o) => ({ ...o, favor: sing.factionFavor(o.faction) })),
+        candidates: cands,
+        owned: new Set(allCount.keys()),
+        repPerSec,
+        donation: (f, rep) => (donatable && canDonateTo(f, 0, 0, gangF) && fwrg > 0 ? donationForRep(rep, player?.mults?.faction_rep ?? 1, fwrg) : null),
+        nfgName: NFG,
+      })
+      return { ...bestCountRoute(bestExitPolicy, rec.inputs, cc, routes), routes: routes.length }
+    } catch (e) {
+      return { best: null, tried: [], why: `route pricing threw: ${String(e).slice(0, 80)}` }
+    }
+  })()
+  countRouteNow = countRoute
+    ? {
+        chosen: countRoute.best ? { name: countRoute.best.name, faction: countRoute.best.route.faction, via: countRoute.best.route.via, exitH: +countRoute.best.hours.toFixed(2), detourH: +countRoute.best.route.detourH.toFixed(3), price: Math.round(countRoute.best.route.price) } : null,
+        routes: countRoute.routes ?? null,
+        alternatives: (countRoute.tried ?? []).slice(0, 8),
+        why: countRoute.best ? 'the soonest simulated exit over every reachable distinct augmentation' : `unpriced (${countRoute.why}) — the schedule scores every distinct augmentation at the flat ticket value (fallback)`,
+      }
+    : null
+  if (countRouteNow?.chosen) did.push(`count route: ${countRouteNow.chosen.name} at ${countRouteNow.chosen.faction} via ${countRouteNow.chosen.via} — exit ${countRouteNow.chosen.exitH}h (best of ${countRouteNow.routes} routes)`)
+  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta, gang: gangCtx, gangRepIn, countTickets, countRoute: countRoute?.best ?? null }) : null
   let scheduleTarget = schedule?.current?.faction ?? null
   // THE GANG FACTION FIRST, in a node that allows a gang. Its catalogue
   // grows to almost every augmentation in the game once the gang exists, so
@@ -4018,7 +4077,7 @@ async function act(ns, canJoin, info, note) {
             const cal0 = exitCalibrationOf(ns, info)
             const exitH = decided?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null
             const source = decided?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null)
-            return { objective: unifyObjectiveExit(weightsMeta, decided), exitH, exitSource: source, exitCalibration: withExitSample(cal0, info, exitH, source) }
+            return { objective: unifyObjectiveExit(weightsMeta, decided), exitH, exitSource: source, exitCalibration: withExitSample(cal0, info, exitH, source), countRoute: countRouteNow }
           })(),
           incomeSample: makeIncomeSample(incNow, player, schedule, info),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
@@ -4694,6 +4753,7 @@ async function act(ns, canJoin, info, note) {
           exitH: decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null,
           exitSource: decidedExit?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null),
           exitCalibration: withExitSample(exitCal0, info, decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH, decidedExit?.source ?? 'sensitivity base'),
+          countRoute: countRouteNow,
           // WHAT THE BUDGET MUST ACTUALLY HOLD: the plan's cost NET of what
           // income will deliver before the install happens anyway. Money is
           // only needed AT the install; holding the gross figure starved the

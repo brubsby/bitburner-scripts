@@ -562,7 +562,7 @@ export async function run() {
     if (without?.segments?.[0]?.faction === "Slum Snakes") q.fail("control: without tickets the multiplier walk should not have chosen Slum Snakes (the check would prove nothing)");
     // Other nodes: no tickets passed, schedule unchanged.
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/if \(m\?\.ScriptHackMoneyGain !== 0 \|\| !\(m\?\.DaedalusAugsRequirement > 0\)\) return null/.test(prog) || !/gangRepIn, countTickets \}/.test(prog)) q.fail("the schedule must receive the count gate's tickets where money is capital, and only there");
+    if (!/if \(m\?\.ScriptHackMoneyGain !== 0 \|\| !\(m\?\.DaedalusAugsRequirement > 0\)\) return null/.test(prog) || !/gangRepIn, countTickets, countRoute: countRoute\?\.best \?\? null \}/.test(prog)) q.fail("the schedule must receive the count gate's tickets where money is capital, and only there");
     if (!/money: ns\.getServerMoneyAvailable\('home'\) \+ stockEquity,\s*\n\s*augCount/.test(prog) || !/city: player\.city,\s*\n\s*money: ns\.getServerMoneyAvailable\('home'\) \+ stockEquity/.test(prog)) q.fail("the join forecasts must count the trader's book as money (the fare, the money legs)");
     if (!/feeFundable\(ns\.getServerMoneyAvailable\('home'\) \+ stockEquity, gymFee\)/.test(prog) || !/order\('gym', \[bodyStep\.gym, cls\], [^\n]*, gymCost\)/.test(prog)) q.fail("the gym step must fund its fees from the book (fee floor on cash+equity, the order carrying its cost)");
     if (!/joinReadyButCash\(reqs, player\)\s*\n\s*if \(!ready\.ready\) todo\.push\(`\$\{scheduleTarget\}/.test(prog)) q.fail("an unjoined schedule target ready but for cash must be chased (raise, travel, join)");
@@ -604,6 +604,62 @@ export async function run() {
     if (!/if \(bodyStep && canWork && !flags\.dry\) \{[\s\S]{0,700}slotOwner = 'body'/.test(prog)) r8.fail("the body step must claim the work slot");
   }
   checks.push(r8);
+
+  // -----------------------------------------------------------------------
+  const s8 = new Check("B8s", "replay 11:28: the 30th distinct augmentation is the one whose route minimises the simulated node exit, not the cheapest ticket");
+  {
+    s8.examined(8);
+    const C = await import("../../countexit.js");
+    const BP = await import("../../bodyplan.js");
+    const FP = await import("../../factionplan.js");
+    const FV = await import("../../favor.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const owned = new Set(Fx.owned);
+    const SK = ["strength", "defense", "dexterity", "agility"];
+    const person = { skills: { ...Fx.skills }, exp: { ...Fx.exp }, city: Fx.city, money: 1e9, mults: Object.fromEntries([...SK, "charisma", "hacking"].flatMap((s) => [[s, 1], [`${s}_exp`, 1]])) };
+    const gymH = (to) => BP.gymLegs(Object.fromEntries(SK.map((s) => [s, to])), person, 1).hours;
+    const fwrg = bitNodeMults(8).FactionWorkRepGain;
+    const toAug = (a) => ({ name: a.name, baseCost: a.price, repReq: a.repReq, mults: a.mults, prereqs: a.prereqs ?? [] });
+    const offers = Fx.joined.filter((f) => Fx.factions[f]).flatMap((f) => Fx.factions[f].augs.map((a) => ({ ...toAug(a), faction: f, factionRep: Fx.factions[f].rep, favor: Fx.factions[f].favor })));
+    const candidates = ["Slum Snakes", "Tetrads"].map((f, i) => ({ name: f, joinH: gymH(i ? 75 : 30), rep: 0, favor: Fx.factions[f].favor, augs: Fx.factions[f].augs.map(toAug) }));
+    // Base reputation rate ~4/s at the worked faction (live), favour ~0.5 there.
+    const routes = C.countRoutes({ offers, candidates, owned, repPerSec: 4 / 1.5, donation: (f, rep) => FV.donationForRep(rep, 1, fwrg) });
+    const nfgA = Fx.factions["Slum Snakes"].augs.find((a) => a.name === "NeuroFlux Governor");
+    const count = { short: 30 - owned.size, ladder: [], nfg: { price: nfgA.price, level: 0 } };
+    const r = C.bestCountRoute(X.bestExitPolicy, Fx.exitInputs.inputs, count, routes);
+    const lumin = r.tried.find((t) => t.name === "LuminCloaking-V1 Skin Implant" && t.faction === "Slum Snakes" && t.hours !== null);
+    if (!r.best) s8.fail("the route choice is unpriced on the replay", r.why);
+    else if (!lumin) s8.fail("the LuminCloaking-V1 route must price (it is a candidate)");
+    else {
+      const bestMult = r.tried.find((t) => t.hours !== null && t.hacking > 1);
+      s8.note(`${routes.length} routes; LuminCloaking-V1 (Slum Snakes, ${lumin.via}, $${(lumin.price / 1e6).toFixed(0)}m, detour ${lumin.detourH}h): exit ${lumin.hours}h`);
+      s8.note(`best multiplier-bearing: ${bestMult.name} (${bestMult.faction}, ${bestMult.via}, x${bestMult.hacking} hacking, x${bestMult.exp} exp, $${(bestMult.price / 1e6).toFixed(0)}m, detour ${bestMult.detourH}h): exit ${bestMult.hours}h`);
+      s8.note(`chosen: ${r.best.name} at ${r.best.route.faction} via ${r.best.route.via}, exit ${r.best.hours.toFixed(2)}h (${(lumin.hours - r.best.hours).toFixed(2)}h sooner than the cheapest ticket)`);
+      if (r.tried.some((t) => t.hours !== null && t.hours < r.best.hours - 1e-3)) s8.fail("the chosen route must be the soonest exit priced");
+      if (!(r.best.hours <= lumin.hours)) s8.fail("the chosen route cannot exit later than the cheapest ticket's");
+      if (r.best.name === "LuminCloaking-V1 Skin Implant") s8.note("(on this replay the cheapest ticket is also the exit's choice)");
+      // Gains are the augmentation's real multipliers; a zero-gain ticket stays 1.
+      if (!(lumin.hacking === 1 && bestMult.hacking > 1)) s8.fail("routes must carry each augmentation's real gains");
+      // The schedule then works the chosen route's faction.
+      const facs = Fx.joined.filter((f) => Fx.factions[f]).map((f) => ({ name: f, rep: Fx.factions[f].rep, favor: Fx.factions[f].favor, augs: Fx.factions[f].augs.filter((a) => a.name === "NeuroFlux Governor" || !owned.has(a.name)).map((a) => ({ name: a.name, repReq: a.repReq, mults: a.mults })) }));
+      for (const c of candidates) facs.push({ name: c.name, rep: 0, favor: c.favor, augs: Fx.factions[c.name].augs.filter((a) => !owned.has(a.name)).map((a) => ({ name: a.name, repReq: a.repReq, mults: a.mults })), joinWaitHours: 0, joinWorkHours: c.joinH });
+      const sched = FP.planSchedule(facs, 4 / 1.5, { tickets: { names: new Set([r.best.name]), left: 1 } });
+      const seg = sched?.segments?.find((sg) => sg.unlocks?.includes(r.best.name));
+      if (r.best.route.via === "work" && !seg) s8.fail(`the schedule must grind to the chosen route (${r.best.name})`);
+      else if (seg) s8.note(`schedule: ${seg.faction} ${seg.hours.toFixed(2)}h unlocking ${r.best.name}`);
+    }
+    // The priced route is the one bought: forced into the first batch even
+    // when the ordinary ladder holds a cheaper ticket.
+    const forced = C.bestCountRoute(X.bestExitPolicy, Fx.exitInputs.inputs, { ...count, ladder: [{ name: "Cheap", price: 1e6, laterPrice: 1e6, hacking: 1 }] }, [{ name: "Dear", faction: "F", via: "ready", price: 5e7, laterPrice: 5e7, detourH: 0, hacking: 1.1, exp: 1, rep: 1 }]);
+    if (!forced.best?.result?.firstBatch?.chosen?.includes("Dear")) s8.fail("the route being priced must be in the first batch, not swapped for the cheapest ticket");
+    // A forced route the first batch cannot afford is not priced as if bought.
+    const tooDear = C.bestCountRoute(X.bestExitPolicy, { ...Fx.exitInputs.inputs, money: 1e6, capitalReturnPerSec: 0 }, count, [{ name: "X", faction: "F", via: "ready", price: 1e15, laterPrice: 1e15, detourH: 0, hacking: 2, exp: 1, rep: 1 }]);
+    if (tooDear.best) s8.fail("an unaffordable route must not price");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/if \(joinCtx\.countRoute\?\.name\) hooks\.tickets = \{ names: new Set\(\[joinCtx\.countRoute\.name\]\), left: 1 \}/.test(prog)) s8.fail("the schedule's ticket must be the exit-chosen route's augmentation (flat value only as the fallback)");
+    if ((prog.match(/countRoute: countRouteNow/g) ?? []).length !== 2) s8.fail("both gate writes must publish the route choice");
+  }
+  checks.push(s8);
 
   return checks;
 }

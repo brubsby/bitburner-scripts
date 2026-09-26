@@ -48,6 +48,17 @@ export const NFG_LEVEL_MULT = 1.14 // AugmentationHelpers NeuroFlux level multip
 export const NFG_HACK = 1.01 // NeuroFlux Governor: +1% to every multiplier per level
 
 /**
+ * What one augmentation lifts on the exit's channels: the hacking level
+ * multiplier, the hacking exp rate, and faction reputation (exitplan
+ * installGains {hacking, exp, rep}). Money multipliers are absent: scripted
+ * hacking pays nothing where this model runs (BitNode 8).
+ */
+export function gainsOf(mults) {
+  const g = (k) => (pos(mults?.[k]) ? mults[k] : 1)
+  return { hacking: g('hacking'), exp: g('hacking_exp'), rep: g('faction_rep') }
+}
+
+/**
  * The ticket ladder: distinct unowned augmentations (not NeuroFlux), each with
  * its money price this life (`price`: base + donation for the reputation short
  * now) and in a later life (`laterPrice`: base + the whole requirement bought,
@@ -63,7 +74,7 @@ export function ticketLadder(offers, owned, { nfgName = 'NeuroFlux Governor', la
     const price = short > 0 ? (num(o.donationCost) ? o.baseCost + o.donationCost : null) : o.baseCost
     if (price === null) continue
     const later = typeof laterDonation === 'function' ? laterDonation(o) : null
-    const row = { name: o.name, price, laterPrice: num(later) ? o.baseCost + later : o.baseCost, hacking: pos(o.mults?.hacking) ? o.mults.hacking : 1 }
+    const row = { name: o.name, price, laterPrice: num(later) ? o.baseCost + later : o.baseCost, ...gainsOf(o.mults) }
     const cur = byName.get(o.name)
     if (!cur || row.price < cur.price) byName.set(o.name, row)
   }
@@ -78,7 +89,9 @@ export function ticketLadder(offers, owned, { nfgName = 'NeuroFlux Governor', la
  */
 export function bankBatch({ budget, ladder, n, nfg = null, later = false }) {
   const priceOf = (t) => (later ? t.laterPrice : t.price)
-  const cheapest = (ladder ?? []).slice().sort((a, b) => priceOf(a) - priceOf(b))
+  // A `must` ticket (the route being priced, bestCountRoute) is taken first
+  // whenever it fits; the rest are the cheapest.
+  const cheapest = (ladder ?? []).slice().sort((a, b) => (b.must === true) - (a.must === true) || priceOf(a) - priceOf(b))
   let take = 0
   let chosen = []
   // The largest k <= n whose most-expensive-first cost fits the budget.
@@ -94,9 +107,13 @@ export function bankBatch({ budget, ladder, n, nfg = null, later = false }) {
   }
   let spent = 0
   let gain = 1
+  let expGain = 1
+  let repGain = 1
   for (let i = 0; i < chosen.length; i++) {
     spent += priceOf(chosen[i]) * Math.pow(PRICE_MULT, i)
-    gain *= chosen[i].hacking
+    gain *= pos(chosen[i].hacking) ? chosen[i].hacking : 1
+    expGain *= pos(chosen[i].exp) ? chosen[i].exp : 1
+    repGain *= pos(chosen[i].rep) ? chosen[i].rep : 1
   }
   let levels = 0
   if (nfg && pos(nfg.price)) {
@@ -107,8 +124,10 @@ export function bankBatch({ budget, ladder, n, nfg = null, later = false }) {
       levels++
     }
     gain *= Math.pow(NFG_HACK, levels)
+    expGain *= Math.pow(NFG_HACK, levels)
+    repGain *= Math.pow(NFG_HACK, levels)
   }
-  return { count: take, cost: spent, gain, nfgLevels: levels, chosen: chosen.map((t) => t.name) }
+  return { count: take, cost: spent, gain, expGain, repGain, nfgLevels: levels, chosen: chosen.map((t) => t.name) }
 }
 
 /** Money in hand after `hours` from `money0`: capital r x min(money, cap) compounding plus a flat rate. */
@@ -222,7 +241,7 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
       // as byInstall lifts over the cadence's per-cycle gain they replace.
       const byInstall = [...ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / gL)), ...(ph.post ?? []).map((b) => Math.max(1, b.gain / gL))]
       const r = bestExitPolicy(
-        { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain) }, nextInstallGain: null, perCycleExtra: { byInstall } },
+        { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall } },
         400,
         ph.installs,
       )
@@ -232,4 +251,76 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
     }
   }
   return best ? { best: { ...best, padded }, tried, never: null, padded } : { best: null, tried, never: null, padded, why: `no composition reaches the count: ${tried.map((t) => `n=${t.n}: ${t.why}`).join('; ')}` }
+}
+
+/**
+ * WHICH DISTINCT AUGMENTATION FINISHES THE COUNT — chosen by the node's exit,
+ * not by price. Each route is one candidate augmentation with what it costs to
+ * reach: `price` (base, plus a donation for the reputation where that is the
+ * route), `laterPrice`, its gains (gainsOf), and `detourH` — hours before it
+ * can be bought (a join's gym/crime legs, a reputation grind). Each is priced
+ * by bestCountExit with that augmentation forced into the first batch
+ * (`must`) and the first install no earlier than the detour; the rest of the
+ * count comes from the ordinary ladder. The soonest exit wins. A pricier
+ * augmentation that lifts hacking (or exp, or reputation) can exit sooner
+ * than the cheapest ticket plus its detour; the cheapest ticket is only a
+ * candidate. Returns {best: {name, hours, route, result}, tried: [...]} or
+ * {best: null, why}.
+ */
+export function bestCountRoute(bestExitPolicy, inputs, count, routes, { firstInstallH = 0 } = {}) {
+  if (!count || !(count.short > 0)) return { best: null, tried: [], why: 'the count is met' }
+  if (!Array.isArray(routes) || !routes.length) return { best: null, tried: [], why: 'no route to a distinct augmentation' }
+  const tried = []
+  let best = null
+  for (const route of routes) {
+    if (!pos(route?.price) || !num(route?.detourH) || route.detourH < 0) {
+      tried.push({ name: route?.name ?? null, via: route?.via ?? null, hours: null, why: 'unpriced route (price or detour unreadable)' })
+      continue
+    }
+    const ladder = [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)]
+    const r = bestCountExit(bestExitPolicy, inputs, { ...count, ladder }, { firstInstallH: Math.max(firstInstallH, route.detourH), compositions: [1] })
+    const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
+    const hours = r.best && took ? r.best.hours : null
+    tried.push({ name: route.name, faction: route.faction ?? null, via: route.via ?? null, price: Math.round(route.price), detourH: +route.detourH.toFixed(3), hacking: route.hacking, exp: route.exp, rep: route.rep, hours: hours === null ? null : +hours.toFixed(3), why: hours !== null ? null : r.best ? 'not affordable in the first batch' : r.why ?? 'unpriced' })
+    if (hours !== null && (!best || hours < best.hours)) best = { name: route.name, hours, route, result: r.best }
+  }
+  tried.sort((a, b) => (a.hours ?? Infinity) - (b.hours ?? Infinity))
+  return best ? { best, tried } : { best: null, tried, why: 'no route prices' }
+}
+
+/**
+ * THE CANDIDATE ROUTES to the next distinct augmentation, for bestCountRoute.
+ * Every unowned distinct augmentation whose prerequisites are owned, sold by a
+ * joined faction (`offers`) or a joinable one (`candidates`, with `joinH`, the
+ * join forecast's hours — gym, crime, money legs). Each rep-short augmentation
+ * yields up to two routes: 'work' (detour = join + the grind at `repPerSec`,
+ * the base rate before favour) and 'donation' (detour = join; the reputation
+ * bought, `donation(faction, rep)` dollars or null where the faction takes
+ * none). Returns [{name, faction, via, price, laterPrice, detourH, hacking,
+ * exp, rep}].
+ */
+export function countRoutes({ offers = [], candidates = [], owned = new Set(), repPerSec = null, donation = null, nfgName = 'NeuroFlux Governor' } = {}) {
+  const have = owned instanceof Set ? owned : new Set(owned ?? [])
+  const out = []
+  const add = (faction, a, rep, favor, joinH) => {
+    if (!a || a.name === nfgName || have.has(a.name) || !pos(a.baseCost)) return
+    if ((a.prereqs ?? []).some((p) => !have.has(p))) return
+    const short = Math.max(0, (a.repReq ?? 0) - (rep ?? 0))
+    const g = gainsOf(a.mults)
+    const base = { name: a.name, faction, laterPrice: a.baseCost, ...g }
+    if (short === 0) {
+      out.push({ ...base, via: joinH > 0 ? 'join' : 'ready', price: a.baseCost, detourH: joinH })
+      return
+    }
+    const rate = pos(repPerSec) ? repPerSec * (1 + (num(favor) && favor > 0 ? favor : 0) / 100) : null
+    if (rate) out.push({ ...base, via: 'work', price: a.baseCost, detourH: joinH + short / rate / 3600 })
+    const d = typeof donation === 'function' ? donation(faction, short) : null
+    if (pos(d)) out.push({ ...base, via: 'donation', price: a.baseCost + d, detourH: joinH })
+  }
+  for (const o of offers ?? []) add(o.faction, o, o.factionRep, o.favor, 0)
+  for (const c of candidates ?? []) {
+    if (!num(c?.joinH) || !isFinite(c.joinH) || c.joinH < 0) continue
+    for (const a of c.augs ?? []) add(c.name, a, c.rep ?? 0, c.favor ?? 0, c.joinH)
+  }
+  return out
 }
