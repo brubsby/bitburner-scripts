@@ -524,5 +524,51 @@ export async function run() {
   }
   checks.push(pch);
 
+  // -----------------------------------------------------------------------
+  const q = new Check("B8q", "replay 11:28: one distinct augmentation short, the schedule goes for the cheapest ticket (Slum Snakes, LuminCloaking-V1) instead of grinding BitRunners");
+  {
+    q.examined(8);
+    const FP = await import("../../factionplan.js");
+    const BP = await import("../../bodyplan.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const owned = new Set(Fx.owned);
+    const NFG = "NeuroFlux Governor";
+    const short = 30 - owned.size;
+    if (short !== 1) q.fail(`the fixture should be 1 short, reads ${short}`);
+    const augsOf = (f) => Fx.factions[f].augs.filter((a) => a.name === NFG || !owned.has(a.name)).map((a) => ({ name: a.name, repReq: a.repReq, mults: a.mults }));
+    // The combat legs, priced as joinplan does (mults 1: the save digest has
+    // none; a lower bound on the rate, so an upper bound on the hours).
+    const SK = ["strength", "defense", "dexterity", "agility"];
+    const person = {
+      skills: { ...Fx.skills }, exp: { ...Fx.exp }, city: Fx.city, money: 1e9,
+      mults: Object.fromEntries([...SK, "charisma", "hacking"].flatMap((s) => [[s, 1], [`${s}_exp`, 1]])),
+    };
+    const gym = (to) => BP.gymLegs(Object.fromEntries(SK.map((s) => [s, to])), person, 1);
+    const g30 = gym(30), g75 = gym(75);
+    if (!g30 || !isFinite(g30.hours)) q.fail("the Slum Snakes combat leg must price (it was unpriceable on a cash-only money figure)");
+    const poor = BP.gymLegs(Object.fromEntries(SK.map((s) => [s, 30])), { ...person, city: "Chongqing", money: 51534 }, 1);
+    q.note(`gym to 30: ${g30?.hours?.toFixed(2)}h at ${g30?.gym}; to 75: ${g75?.hours?.toFixed(2)}h; on BN8's $51k cash alone from Chongqing: ${poor ? poor.hours.toFixed(2) + "h" : "unpriceable (no gym in reach of the fare)"}`);
+    const facs = Fx.joined.filter((f) => Fx.factions[f]).map((f) => ({ name: f, rep: Fx.factions[f].rep, favor: Fx.factions[f].favor, augs: augsOf(f) }));
+    facs.push({ name: "Slum Snakes", rep: 0, favor: Fx.factions["Slum Snakes"].favor, augs: augsOf("Slum Snakes"), joinWaitHours: 0, joinWorkHours: g30?.hours ?? 0 });
+    facs.push({ name: "Tetrads", rep: 0, favor: Fx.factions["Tetrads"].favor, augs: augsOf("Tetrads"), joinWaitHours: 0, joinWorkHours: g75?.hours ?? 0 });
+    const base = 4 / 1.5; // ~4 rep/s live at the worked faction's favour
+    const names = new Set();
+    for (const f of facs) for (const a of f.augs) if (a.name !== NFG && !owned.has(a.name)) names.add(a.name);
+    const withT = FP.planSchedule(facs.map((f) => ({ ...f })), base, { tickets: { names, left: short } });
+    const without = FP.planSchedule(facs.map((f) => ({ ...f })), base, {});
+    const first = withT?.segments?.[0];
+    q.note(`with the count gate's tickets: ${first?.faction} for ${first?.hours?.toFixed(2)}h unlocking ${JSON.stringify(first?.unlocks)}; without: ${without?.segments?.[0]?.faction} (${without?.segments?.[0]?.hours?.toFixed(1)}h)`);
+    if (!(first?.faction === "Slum Snakes" && first.unlocks?.includes("LuminCloaking-V1 Skin Implant"))) q.fail("the schedule must take Slum Snakes' LuminCloaking-V1 first when one ticket finishes the gate");
+    if (without?.segments?.[0]?.faction === "Slum Snakes") q.fail("control: without tickets the multiplier walk should not have chosen Slum Snakes (the check would prove nothing)");
+    // Other nodes: no tickets passed, schedule unchanged.
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/if \(m\?\.ScriptHackMoneyGain !== 0 \|\| !\(m\?\.DaedalusAugsRequirement > 0\)\) return null/.test(prog) || !/gangRepIn, countTickets \}/.test(prog)) q.fail("the schedule must receive the count gate's tickets where money is capital, and only there");
+    if (!/money: ns\.getServerMoneyAvailable\('home'\) \+ stockEquity,\s*\n\s*augCount/.test(prog) || !/city: player\.city,\s*\n\s*money: ns\.getServerMoneyAvailable\('home'\) \+ stockEquity/.test(prog)) q.fail("the join forecasts must count the trader's book as money (the fare, the money legs)");
+    if (!/feeFundable\(ns\.getServerMoneyAvailable\('home'\) \+ stockEquity, gymFee\)/.test(prog) || !/order\('gym', \[bodyStep\.gym, cls\], [^\n]*, gymCost\)/.test(prog)) q.fail("the gym step must fund its fees from the book (fee floor on cash+equity, the order carrying its cost)");
+    if (!/joinReadyButCash\(reqs, player\)\s*\n\s*if \(!ready\.ready\) todo\.push\(`\$\{scheduleTarget\}/.test(prog)) q.fail("an unjoined schedule target ready but for cash must be chased (raise, travel, join)");
+    if (/readJson\(ns, '\/tel\/gang\.txt'\)\?\.faction \?\? null(?! :)/.test(prog.replace(/ns\.gang\.inGang\(\) \? readJson\(ns, '\/tel\/gang\.txt'\)\?\.faction \?\? null : null/g, ""))) q.fail("a gang faction is the gang's only when a gang exists (ns.gang.inGang())");
+  }
+  checks.push(q);
+
   return checks;
 }

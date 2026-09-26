@@ -760,6 +760,14 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     /* the sentinel is advisory — a failed bound publishes null, never blocks */
   }
 
+  // THE COUNT GATE'S TICKETS for the value walk (factionplan valueOfWorking):
+  // every unowned distinct augmentation on offer, joined or joinable, while
+  // the Daedalus count is short (joinCtx.countTickets, capital node only).
+  if (joinCtx?.countTickets?.short > 0) {
+    const names = new Set()
+    for (const f of byFaction.values()) for (const a of f.augs ?? []) if (a?.name && a.name !== NFG && !joinCtx.countTickets.owned.has(a.name)) names.add(a.name)
+    hooks.tickets = { names, left: joinCtx.countTickets.short }
+  }
   const plan = planSchedule([...byFaction.values()], baseForPlan, hooks)
 
   // THE CHARISMA PROBE — pricing a channel that transmits through a PATH
@@ -2745,7 +2753,7 @@ async function act(ns, canJoin, info, note) {
     const donateNeed = favorToDonateOf(bitNodeMults(info?.currentNode))
     const fwrg = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null
     // The gang we manage refuses donations whatever the favor (Singularity.ts:903).
-    const gangFactionNow = readJson(ns, '/tel/gang.txt')?.faction ?? null
+    const gangFactionNow = ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction ?? null : null
     for (const f of player.factions) {
       const rep = sing.factionRep(f)
       // Past the donation threshold a rep wall is a PRICE (donation.ts:8) —
@@ -3182,7 +3190,10 @@ async function act(ns, canJoin, info, note) {
         nodeWorkRepMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
         sharePower: ns.getSharePower(),
       }),
-      money: ns.getServerMoneyAvailable('home'),
+      // Cash plus the trader's book (BitNode 8: the book IS the money; a
+      // cash-only figure left bestGym without the fare and priced every
+      // combat leg unpriceable — Slum Snakes vanished from the schedule).
+      money: ns.getServerMoneyAvailable('home') + stockEquity,
       augCount: installedCount.size,
       backdoors,
       serverLevels,
@@ -3202,7 +3213,7 @@ async function act(ns, canJoin, info, note) {
         karma: player.karma,
         numPeopleKilled: player.numPeopleKilled,
         city: player.city,
-        money: ns.getServerMoneyAvailable('home'),
+        money: ns.getServerMoneyAvailable('home') + stockEquity,
       },
       node: bitNodeMults(info?.currentNode) ?? null,
       trainingMult: ns.hacknet.getTrainingMult(),
@@ -3323,7 +3334,15 @@ async function act(ns, canJoin, info, note) {
   // working the wrong faction?") and the body ("which one should we start?")
   // need the same answer. Computing it twice would also write the telemetry
   // twice and could disagree with itself between the two reads.
-  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta, gang: gangCtx, gangRepIn }) : null
+  // Where money is capital (the count-aware exit decides), the schedule
+  // scores the count gate's tickets too; other nodes are unchanged.
+  const countTickets = (() => {
+    const m = bitNodeMults(info?.currentNode)
+    if (m?.ScriptHackMoneyGain !== 0 || !(m?.DaedalusAugsRequirement > 0)) return null
+    const short = m.DaedalusAugsRequirement - allCount.size
+    return short > 0 ? { short, owned: new Set(allCount.keys()) } : null
+  })()
+  const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta, gang: gangCtx, gangRepIn, countTickets }) : null
   let scheduleTarget = schedule?.current?.faction ?? null
   // THE GANG FACTION FIRST, in a node that allows a gang. Its catalogue
   // grows to almost every augmentation in the game once the gang exists, so
@@ -3593,12 +3612,16 @@ async function act(ns, canJoin, info, note) {
       // second with no balance check (ClassWork.tsx:57-72), so it starts only
       // while cash covers FEE_FLOOR_S of it.
       const gymFee = CLASS_BASE_FEE.gym * (GYMS.find((g) => g.name === bodyStep.gym)?.costMult ?? Math.max(...GYMS.map((g) => g.costMult)))
-      if (!already && !feeFundable(ns.getServerMoneyAvailable('home'), gymFee)) {
+      if (!already && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity, gymFee)) {
         todo.push(`gym at ${bodyStep.gym} costs $${gymFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it (our spending must not take cash below zero)`)
       } else if (!already) {
         try {
           if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
-          if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`)) {
+          // The session's fees as the order's cash cost (withCashRaise raises
+          // them from the book): the leg's hours plus the floor, so cash does
+          // not run below zero mid-leg once the trader reinvests.
+          const gymCost = Math.ceil(gymFee * ((bodyStep.hours ?? 0) * 3600 + FEE_FLOOR_S))
+          if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`, gymCost)) {
             did.push(`training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${bodyStep.forFaction ?? scheduleTarget} invitation${bodyStep.forFaction ? ' — the install gate is holding for the Covenant sleeve campaign' : ''}`)
           } else {
             todo.push(`gymWorkout(${bodyStep.gym}, ${cls}) refused — in ${player.city}, needs ${bodyStep.city}`)
@@ -3607,6 +3630,26 @@ async function act(ns, canJoin, info, note) {
           todo.push(`gym step failed: ${String(e).slice(0, 80)}`)
         }
       }
+    }
+  } else if (scheduleTarget && canJoin && !flags.dry && !player.factions.includes(scheduleTarget) && !wantCompany) {
+    // THE SCHEDULE'S TARGET IS NOT JOINED and no body leg is left: if only
+    // its cash and city stand between us and the invitation, supply them —
+    // the join carries the money requirement as its cash cost (raised from
+    // the book), travel first when a city is required, and act.js waits for
+    // the game's invitation check before joining. Anything else short is
+    // named and nothing is raised (nodeecon.joinReadyButCash).
+    try {
+      const reqs = sing.inviteReqs(scheduleTarget)
+      const ready = joinReadyButCash(reqs, player)
+      if (!ready.ready) todo.push(`${scheduleTarget}: the schedule's target is not joinable yet — ${ready.why}`)
+      else {
+        const city = reqs.find((r) => r?.type === 'city')?.city
+        const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
+        if (city && cityAfterOrders !== city) order('travel', [city], `${scheduleTarget} invites only in ${city}`)
+        if (order('join', [scheduleTarget], `the schedule's target: every requirement but cash${city ? ' and the city' : ''} is met`, moneyReq)) did.push(`ordered join ${scheduleTarget} (cash ${moneyReq > 0 ? '$' + moneyReq : 'none'} raised for the invitation)`)
+      }
+    } catch (e) {
+      todo.push(`${scheduleTarget}: invitation requirements unreadable (${String(e).slice(0, 60)})`)
     }
   } else if (!deskGuarded && wantCompany && canWork && !flags.dry) {
     // THE TRAINING STEP, when the forecast priced it in. joinplan's blocker
@@ -3923,7 +3966,7 @@ async function act(ns, canJoin, info, note) {
     // fleet off synchronising every time an unplanned pass ran.
     const gangInputs0 = () => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
     {
-      const repF = sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction)
+      const repF = sleeveRepFaction(player, schedule, ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction : null)
       const expOff = readFleet(ns, info)?.expDisabled === true
       const byExit = sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
       {
@@ -4595,9 +4638,9 @@ async function act(ns, canJoin, info, note) {
       // say which one the plan is standing on.
       exitPolicy?.best?.hours ?? null,
       ns.getSharePower(),
-      sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction),
+      sleeveRepFaction(player, schedule, ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction : null),
       planFleet?.expDisabled === true,
-      sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, pf), sleeveRepFaction(player, schedule, readJson(ns, '/tel/gang.txt')?.faction), planFleet?.expDisabled === true),
+      sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, pf), sleeveRepFaction(player, schedule, ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction : null), planFleet?.expDisabled === true),
     )
 
     // Persist BEFORE acting. An install never returns, so a write afterwards

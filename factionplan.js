@@ -48,7 +48,7 @@
 import { RATE_CHANNELS } from 'installgate.js'
 // Valuation lives in ONE place — see objective.js's header for the three
 // independent scorers this replaces and what each of them got wrong.
-import { augValue } from 'objective.js'
+import { augValue, TICKET_LN } from 'objective.js'
 
 /**
  * The augmentation that ENDS the BitNode, which has no multipliers at all.
@@ -166,8 +166,19 @@ export function valueOfWorking(f, baseRepPerSec, o = {}) {
     }
     return repNeeded / repPerSec / 3600
   }
+  // THE COUNT GATE'S TICKETS (o.tickets = {names: Set, left}): while the
+  // exit's distinct-augmentation count is short, each unowned distinct
+  // augmentation is worth TICKET_LN on top of its multipliers — the same
+  // dominance value augplan buys them by — at most `left` of them per walk.
+  // Without it the schedule scored a ticket by its multipliers alone: live
+  // BN8 2026-09-26, one augmentation short, it ground BitRunners toward 460k
+  // reputation while LuminCloaking-V1 (Slum Snakes, 1,500 rep, $10m) would
+  // have finished the gate.
+  let ticketsLeft = o.tickets && o.tickets.left > 0 ? o.tickets.left : 0
   for (const a of locked) {
-    const v = logValue(a.mults, channels, o.channelWeights ?? null, a.name)
+    const isTicket = ticketsLeft > 0 && o.tickets.names.has(a.name)
+    if (isTicket) ticketsLeft--
+    const v = logValue(a.mults, channels, o.channelWeights ?? null, a.name) + (isTicket ? TICKET_LN : 0)
     // A zero-value augmentation still costs reputation to pass, so it is walked
     // through rather than skipped — otherwise a wall of worthless augmentations
     // in front of a good one would be invisible.
@@ -336,6 +347,10 @@ export function planSchedule(factions, baseRepPerSec, o = {}) {
         ...(best.joinWorkHours > 0 ? { workH: best.joinWorkHours } : {}),
       })
       elapsedH += hours
+      // Tickets this segment unlocks are spent: later segments do not score them again.
+      if (!truncated && o.tickets) {
+        for (const u of best.unlocks) if (o.tickets.names.delete(u)) o.tickets.left--
+      }
       // Advance this faction to the horizon (or truncation point) we just
       // bought, so the next pass prices the tranche after it.
       f.rep += repNeeded
