@@ -15,3 +15,6 @@ backups/
 tools/sim/bn9/game.bundle.mjs
 tools/sim/bn9/.entry.generated.ts
 tools/sim/stocks/stocks.bundle.mjs
+tools/sim/nodechoice/game.bundle.mjs
+tools/sim/nodechoice/.entry.generated.ts
+tools/sim/nodechoice/.cache.json
