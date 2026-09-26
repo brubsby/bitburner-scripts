@@ -793,5 +793,36 @@ export async function run() {
   }
   checks.push(w8);
 
+  // -----------------------------------------------------------------------
+  const x8 = new Check("B8x", "port openers are priced with the stock-manipulation channel they open; batch.txt publishes every company server's servability; batch.js reads the trader's current request every pass");
+  {
+    x8.examined(8);
+    const EF = await import("../../expfarm.js");
+    // Live 22:52: exit inputs, stock.txt's manipCurve and its request
+    // (fulcrumtech/fulcrumassets grow) while batch.txt still served "blade".
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-2252.json"), "utf8"));
+    const inputs = { ...Fx.exitInputs.inputs };
+    const curve = Fx.stock.manipCurve;
+    const ratio = EF.rateAt(curve, 0.1) / EF.rateAt(curve, 0);
+    const expOnly = X.programExit(inputs, 250e6, 0);
+    const withManip = X.programExit(inputs, 250e6, 0, { capitalReturnPerSec: inputs.capitalReturnPerSec * ratio });
+    x8.note(`(batch.txt at the time: ${Fx.batchManip?.why}; stock.txt requested ${Object.keys(Fx.stock.manip ?? {}).join(", ")})`);
+    x8.note(`SQLInject ($250m): exp only ${expOnly.deltaH?.toFixed(2)}h; with fulcrum* nudged at 0.1/s (x${ratio.toFixed(2)} on the return) ${withManip.deltaH?.toFixed(2)}h`);
+    if (!(typeof withManip.deltaH === "number" && typeof expOnly.deltaH === "number" && withManip.deltaH < expOnly.deltaH)) x8.fail("the manipulation channel must shorten the priced exit");
+    if (!(expOnly.deltaH > 0 && withManip.deltaH < -1 / 60)) x8.fail("on the live state SQLInject is refused on exp alone and pays once 0.1 nudges/s on the trader's holding are priced");
+    const same = X.programExit(inputs, 250e6, 0, {});
+    if (same.deltaH !== expOnly.deltaH) x8.fail("without a manipulation term the price is exactly as before");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const nuAt = \(k\) => \(stockServers \?\? \[\]\)\.filter\(\(x\) => requested\.includes\(x\.host\)[^\n]*\(x\.rooted \|\| x\.ports <= k\) && x\.required <= x\.level && x\.moneyMax > 0\)/.test(prog)) x8.fail("the opener's manipulation value: the trader's requested hosts that the prefix would make servable (rooted or enough ports, our level, money)");
+    if (!/programExit\(inputs, cost, gain, manip && manip\.ratio > 1 \? \{ capitalReturnPerSec: manip\.capitalReturnPerSec \} : \{\}\)/.test(prog)) x8.fail("the prefix's exit must carry the manipulated return");
+    const batch = fs.readFileSync(path.join(REPO_ROOT, "batch.js"), "utf8");
+    if (!/for \(const \[sym, meta\] of Object\.entries\(SYMBOL_META\)\)/.test(batch) || !/^\s*stockServers,$/m.test(batch)) x8.fail("batch.txt must publish every company server with a stock (stockServers), not only the requested host");
+    const loop = batch.slice(batch.indexOf("THE TRADER'S CURRENT REQUEST, every pass"), batch.indexOf("// --- choose targets"));
+    if (!/refreshStockManip\(ns\)/.test(loop) || !/nextRetarget = 0/.test(loop)) x8.fail("batch.js must read the trader's request every pass and retarget when it changes");
+    const retarget = batch.slice(batch.indexOf("// --- choose targets"), batch.indexOf("// --- choose targets") + 400);
+    if (/refreshStockManip\(ns\)/.test(retarget)) x8.fail("the request must not be read only at retarget");
+  }
+  checks.push(x8);
+
   return checks;
 }

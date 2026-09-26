@@ -1147,7 +1147,7 @@ export function installCadence(ledger, node) {
  * higher level on reputation before an install.
  * { deltaH, withH, withoutH } or { deltaH: null, why }.
  */
-export function programExit(inputs, cost, expGainPerSec) {
+export function programExit(inputs, cost, expGainPerSec, { capitalReturnPerSec = null } = {}) {
   if (!inputs || !pos(cost) || !num(expGainPerSec) || expGainPerSec < 0) return { deltaH: null, why: 'program cost or exp gain unreadable' }
   if (!pos(inputs.expPerSec)) return { deltaH: null, why: 'no measured exp rate' }
   const without = bestExitPolicy(inputs)
@@ -1155,6 +1155,9 @@ export function programExit(inputs, cost, expGainPerSec) {
     ...inputs,
     money: (inputs.money ?? 0) - cost,
     expPerSec: inputs.expPerSec + expGainPerSec,
+    // The stock-manipulation channel the purchase opens (the trader's return
+    // with the nudges the newly rooted company servers deliver).
+    ...(num(capitalReturnPerSec) && capitalReturnPerSec >= 0 ? { capitalReturnPerSec } : {}),
     ...(num(inputs.installCash) ? { installCash: Math.max(0, inputs.installCash - cost) } : {}),
   })
   if (!without.best || without.degenerate) return { deltaH: null, why: `exit unpriced or degenerate without the purchase (${without.why ?? without.degenerateWhy})` }
