@@ -3511,8 +3511,47 @@ async function act(ns, canJoin, info, note) {
   // PROMOTES on later ones the moment a reputation threshold is crossed
   // (Singularity.ts applies for the best qualifying position), which is what
   // makes companyplan.js's ladder walk real rather than aspirational.
-  const wantCompany =
-    schedule?.current?.workH > 0 ? (MEGACORPS.find((m) => m.faction === schedule.current.faction)?.company ?? null) : null
+  // THE COMMITTED COUNT ROUTE DRIVES THE WORK SLOT. Live 2026-09-26 the
+  // route (ADR-V2 Pheromone Gene at Bachman & Associates) was committed for
+  // three passes while nothing executed it: no company job, slot unclaimed,
+  // the player on The Black Hand's faction work — the general schedule still
+  // chose the work. The route's CURRENT leg decides it now: its faction
+  // becomes the target, so the body step trains its gym/crime legs, the desk
+  // works its company-reputation leg (applyToCompany + workForCompany, slot
+  // 'company'), the join chase supplies its cash/city, and once joined the
+  // faction work is at the route's faction.
+  const routeLead = (() => {
+    const r = countRoute?.best?.route
+    if (!r || !r.faction || allCount.has(r.name) || !canJoin) return null
+    const joined = player.factions.includes(r.faction)
+    const forecast = joined ? null : (schedule?.joinForecasts ?? []).find((f) => f.name === r.faction) ?? null
+    const companyLeg = forecast?.blockers?.find((b) => b.type === 'companyReputation' && b.hours > 0) ?? null
+    const company = companyLeg ? MEGACORPS.find((m) => m.faction === r.faction)?.company ?? companyLeg.detail ?? null : null
+    // The company leg's progress, MEASURED: the company's reputation now
+    // against the invitation's requirement (FactionJoinCondition toJSON), and
+    // the leg's hours from companyplan at the measured rate.
+    let have = null, need = null
+    if (company) {
+      try {
+        need = (sing.inviteReqs(r.faction) ?? []).find((q) => q?.type === 'companyReputation')?.reputation ?? null
+      } catch {
+        need = null
+      }
+      have = joinState?.companyCtx?.repByCompany?.[company] ?? null
+    }
+    const gymLeg = forecast ? nextGymLeg(forecast.blockers, player.skills) : null
+    const kind = joined ? 'faction' : company ? 'company' : gymLeg ? 'body' : 'join'
+    return { ...r, joined, forecast, company, companyLeg: company ? { company, have, need, hoursLeft: companyLeg.holdH ?? companyLeg.hours } : null, kind, target: kind === 'company' ? company : r.faction }
+  })()
+  if (routeLead) {
+    scheduleTarget = routeLead.faction
+    did.push(`route leg: ${routeLead.kind} for ${routeLead.name} at ${routeLead.faction}${routeLead.companyLeg ? ` — ${routeLead.company} reputation ${Math.round(routeLead.companyLeg.have ?? 0).toLocaleString()} of ${routeLead.companyLeg.need?.toLocaleString?.() ?? '?'} (~${(routeLead.companyLeg.hoursLeft ?? 0).toFixed(2)}h at the measured rate)` : ''}`)
+  }
+  const wantCompany = routeLead
+    ? routeLead.company
+    : schedule?.current?.workH > 0 ? (MEGACORPS.find((m) => m.faction === schedule.current.faction)?.company ?? null) : null
+  const deskFaction = routeLead ? routeLead.faction : schedule?.current?.faction
+  const deskH = routeLead ? routeLead.companyLeg?.hoursLeft ?? 0 : schedule?.current?.workH ?? 0
   // Starting employment is deferred until the ranking is MEASURED, not
   // estimated: a stint begun off formula-only rates is how the Four Sigma
   // desk got started and abandoned inside one measuring interval. Five
@@ -3616,7 +3655,8 @@ async function act(ns, canJoin, info, note) {
     }
   })()
   const alreadyAtDesk = work?.type === 'COMPANY' && work.companyName === wantCompany
-  const deskGuarded = wantCompany && schedule?.estimated && !alreadyAtDesk
+  // The route's leg is committed; the estimated-ranking deferral is the schedule's.
+  const deskGuarded = !routeLead && wantCompany && schedule?.estimated && !alreadyAtDesk
 
   // THE BODY STEP: the schedule chose a faction whose invitation needs crime
   // (karma, kills) or a gym (combat stats). Same family as the Leadership
@@ -3640,7 +3680,7 @@ async function act(ns, canJoin, info, note) {
     return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: COVENANT.faction, stat: leg.stat, to: COVENANT.skill, hours: leg.hours } : null
   })()
   const bodyStep = covenantStep ?? (() => {
-    if (!scheduleTarget || wantCompany || !(schedule?.current?.workH > 0)) return null
+    if (!scheduleTarget || wantCompany || !(schedule?.current?.workH > 0 || routeLead)) return null
     if (player.factions.includes(scheduleTarget)) return null
     const f = schedule?.joinForecasts?.find((x) => x.name === scheduleTarget)
     const crime = f?.blockers?.find((b) => b.crime)?.crime
@@ -3739,7 +3779,7 @@ async function act(ns, canJoin, info, note) {
     // named and nothing is raised (nodeecon.joinReadyButCash).
     try {
       const reqs = sing.inviteReqs(scheduleTarget)
-      const ready = joinReadyButCash(reqs, player)
+      const ready = joinReadyButCash(reqs, player, { companyRep: joinState?.companyCtx?.repByCompany ?? null })
       if (!ready.ready) todo.push(`${scheduleTarget}: the schedule's target is not joinable yet — ${ready.why}`)
       else {
         const city = reqs.find((r) => r?.type === 'city')?.city
@@ -3757,8 +3797,11 @@ async function act(ns, canJoin, info, note) {
     // the arithmetic says studying first is faster, and stops firing the pass
     // charisma crosses the bar. No threshold constant to go stale: the
     // trajectory model re-decides every pass as favour banks and augs land.
-    const forecast = schedule?.joinForecasts?.find((f) => f.name === schedule.current.faction)
+    const forecast = schedule?.joinForecasts?.find((f) => f.name === deskFaction)
     const train = forecast?.blockers?.find((b) => b.train)?.train
+    // THE DESK HOLDS THE SLOT (it did not claim it before: act.js was free to
+    // replace a company stint with faction work).
+    slotOwner = 'company'
     // Either arm of this branch — the desk or the classroom — displaces
     // faction work, so no faction reputation accrues until the next pass.
     workedFaction = null
@@ -3788,8 +3831,8 @@ async function act(ns, canJoin, info, note) {
     } else {
       const already = work?.type === 'COMPANY' && work.companyName === wantCompany
       if (!already) {
-        if (order('company', [wantCompany, 'Software'], `${schedule.current.workH.toFixed(1)}h of employment toward ${schedule.current.faction}`)) {
-          did.push(`working at ${wantCompany} (company) toward the ${schedule.current.faction} faction — ${schedule.current.workH.toFixed(1)}h of employment in the plan`)
+        if (order('company', [wantCompany, 'Software'], `${deskH.toFixed(1)}h of employment toward ${deskFaction}`)) {
+          did.push(`working at ${wantCompany} (company) toward the ${deskFaction} faction — ${deskH.toFixed(1)}h of employment in the plan`)
         } else {
           todo.push(`Could not start company work at ${wantCompany} — apply and start it manually (City > ${wantCompany}).`)
         }
@@ -5085,7 +5128,7 @@ async function act(ns, canJoin, info, note) {
   }
 
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending }, ordered: orders.length, gangFaction }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 

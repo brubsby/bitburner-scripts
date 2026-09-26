@@ -322,7 +322,7 @@ export const TRAVEL_FARE = 200e3 // CONSTANTS.TravelCost
  * not read is NOT ready (unknown never licenses a sale).
  * Returns {ready, why}.
  */
-export function joinReadyButCash(reqs, player) {
+export function joinReadyButCash(reqs, player, { companyRep = null } = {}) {
   if (!Array.isArray(reqs)) return { ready: false, why: 'requirements unreadable' }
   for (const r of reqs) {
     const t = r?.type
@@ -336,6 +336,17 @@ export function joinReadyButCash(reqs, player) {
     }
     if (t === 'karma') {
       if (!(fin(player?.karma) && player.karma <= r.karma)) return { ready: false, why: `karma ${fin(player?.karma) ? Math.round(player.karma) : '?'} of ${r.karma}` }
+      continue
+    }
+    // A company faction's legs (FactionJoinCondition employedBy /
+    // companyReputation): the job held, and the company's reputation now.
+    if (t === 'employedBy') {
+      if (!(player?.jobs && typeof player.jobs === 'object' && r.company in player.jobs)) return { ready: false, why: `not employed at ${r.company}` }
+      continue
+    }
+    if (t === 'companyReputation') {
+      const have = companyRep?.[r.company]
+      if (!(fin(have) && fin(r.reputation) && have >= r.reputation)) return { ready: false, why: `${r.company} reputation ${fin(have) ? Math.round(have) : '?'} of ${r.reputation}` }
       continue
     }
     if (t === 'numPeopleKilled') {

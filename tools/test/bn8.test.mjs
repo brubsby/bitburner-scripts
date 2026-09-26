@@ -565,7 +565,7 @@ export async function run() {
     if (!/if \(m\?\.ScriptHackMoneyGain !== 0 \|\| !\(m\?\.DaedalusAugsRequirement > 0\)\) return null/.test(prog) || !/gangRepIn, countTickets, countRoute: countRoute\?\.best \?\? null \}/.test(prog)) q.fail("the schedule must receive the count gate's tickets where money is capital, and only there");
     if (!/money: ns\.getServerMoneyAvailable\('home'\) \+ stockEquity,\s*\n\s*augCount/.test(prog) || !/city: player\.city,\s*\n\s*money: ns\.getServerMoneyAvailable\('home'\) \+ stockEquity/.test(prog)) q.fail("the join forecasts must count the trader's book as money (the fare, the money legs)");
     if (!/feeFundable\(ns\.getServerMoneyAvailable\('home'\) \+ stockEquity, gymFee\)/.test(prog) || !/order\('gym', \[bodyStep\.gym, cls\], [^\n]*, gymCost\)/.test(prog)) q.fail("the gym step must fund its fees from the book (fee floor on cash+equity, the order carrying its cost)");
-    if (!/joinReadyButCash\(reqs, player\)\s*\n\s*if \(!ready\.ready\) todo\.push\(`\$\{scheduleTarget\}/.test(prog)) q.fail("an unjoined schedule target ready but for cash must be chased (raise, travel, join)");
+    if (!/joinReadyButCash\(reqs, player, \{ companyRep: [^\n]*\)\s*\n\s*if \(!ready\.ready\) todo\.push\(`\$\{scheduleTarget\}/.test(prog)) q.fail("an unjoined schedule target ready but for cash must be chased (raise, travel, join)");
     if (/readJson\(ns, '\/tel\/gang\.txt'\)\?\.faction \?\? null(?! :)/.test(prog.replace(/ns\.gang\.inGang\(\) \? readJson\(ns, '\/tel\/gang\.txt'\)\?\.faction \?\? null : null/g, ""))) q.fail("a gang faction is the gang's only when a gang exists (ns.gang.inGang())");
   }
   checks.push(q);
@@ -742,6 +742,31 @@ export async function run() {
     if (!/b\?\.spansInstalls && typeof b\.holdH === 'number'[^\n]*b\.holdH - b\.hours/.test(prog)) u8.fail("a join leg that ladders across installs must be priced as its continuous hold on a route (one install after the detour)");
   }
   checks.push(u8);
+
+  // -----------------------------------------------------------------------
+  const v8 = new Check("B8v", "live 12:40: the committed route's current leg drives the work slot (company desk for Bachman's 400k company rep, slot 'company'), measured progress is published, and the healthcheck fails a route not executed");
+  {
+    v8.examined(9);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    // The state the lead saw: ADR-V2 Pheromone Gene at Bachman & Associates via
+    // work committed, jobs {}, the player on The Black Hand's faction work.
+    const bachman = [{ type: "employedBy", company: "Bachman & Associates" }, { type: "companyReputation", company: "Bachman & Associates", reputation: 400000 }];
+    const noJob = econ.joinReadyButCash(bachman, { jobs: {} }, { companyRep: { "Bachman & Associates": 0 } });
+    if (noJob.ready !== false || !/not employed/.test(noJob.why)) v8.fail("no job at Bachman: the join is not ready and says why", JSON.stringify(noJob));
+    const short = econ.joinReadyButCash(bachman, { jobs: { "Bachman & Associates": "Software Engineer" } }, { companyRep: { "Bachman & Associates": 120000 } });
+    if (short.ready !== false || !/120000 of 400000/.test(short.why)) v8.fail("company rep short: measured have-of-need in the reason", JSON.stringify(short));
+    if (econ.joinReadyButCash(bachman, { jobs: { "Bachman & Associates": "x" } }, { companyRep: { "Bachman & Associates": 400000 } }).ready !== true) v8.fail("the company legs met: ready to join");
+    // Wiring: the route leg decides the work, not the general schedule.
+    if (!/const wantCompany = routeLead\s*\n\s*\? routeLead\.company/.test(prog)) v8.fail("the route's company leg must set the desk (wantCompany)");
+    if (!/if \(routeLead\) \{\s*\n\s*scheduleTarget = routeLead\.faction/.test(prog)) v8.fail("the route's faction must become the target (body step, join chase, faction work)");
+    if (!/!\(schedule\?\.current\?\.workH > 0 \|\| routeLead\)/.test(prog)) v8.fail("the body step must run the route's gym/crime legs");
+    if (!/const deskGuarded = !routeLead && /.test(prog)) v8.fail("a committed route's desk is not deferred by the schedule's estimated-ranking guard");
+    if (!/slotOwner = 'company'/.test(prog)) v8.fail("the desk must claim the work slot as 'company'");
+    if (!/have = joinState\?\.companyCtx\?\.repByCompany\?\.\[company\]/.test(prog) || !/routeLeg: routeLead \? \{ kind: routeLead\.kind, target: routeLead\.target/.test(prog)) v8.fail("progress must publish the route leg with measured company progress (have, need, hours at the measured rate)");
+    if (!/PLAN NOT EXECUTED: \$\{mismatch\}/.test(hc) || !/mismatch && prev\?\.planMismatch/.test(hc)) v8.fail("healthcheck F must fail PLAN NOT EXECUTED on two samples of a route leg the save does not show");
+  }
+  checks.push(v8);
 
   return checks;
 }

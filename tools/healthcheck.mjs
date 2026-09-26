@@ -528,6 +528,26 @@ if (!sleevesExpected) {
   const exitH = num(gate?.exitH) ? gate.exitH : gate?.objective?.exitSensitivity?.exitH;
   // The planner's own forecast calibration (installgate exitCalibration).
   const cal = gate?.exitCalibration;
+  // PLAN NOT EXECUTED: the committed count route's current leg (progress.txt
+  // slot.routeLeg) must be what the player is DOING — the save's currentWork,
+  // and the job for a company leg. Live 2026-09-26 a committed Bachman route
+  // held for three passes with no job, the slot unclaimed and the player on
+  // another faction's work. Two samples in a row, so one pass of travel or a
+  // join in flight is not a failure.
+  {
+    const leg = prog?.slot?.routeLeg ?? null;
+    const cw = state.currentWork ?? null;
+    const type = String(cw?.type ?? cw?.data?.type ?? "");
+    const jobs = state.jobs && typeof state.jobs === "object" ? state.jobs : {};
+    let mismatch = null;
+    if (leg && leg.kind === "company" && !(/Company/i.test(type) && leg.target in jobs)) mismatch = `route leg is company work at ${leg.target}; the save shows ${type || "no work"} and jobs ${JSON.stringify(Object.keys(jobs))}`;
+    else if (leg && leg.kind === "faction" && !(/Faction/i.test(type) && (cw?.faction ?? cw?.data?.factionName) === leg.target)) mismatch = `route leg is faction work at ${leg.target}; the save shows ${type || "no work"}${cw?.faction ? " for " + cw.faction : ""}`;
+    else if (leg && leg.kind === "body" && !/Class|Crime/i.test(type)) mismatch = `route leg is the gym/crime for ${leg.faction}; the save shows ${type || "no work"}`;
+    now.planMismatch = mismatch;
+    if (mismatch && prev?.planMismatch) fail(`PLAN NOT EXECUTED: ${mismatch}`, `previous sample: ${prev.planMismatch} — the committed route (${leg.aug} at ${leg.faction}) is not what the player is doing`);
+    else if (mismatch) note(`route leg not yet executing (one sample): ${mismatch}`);
+    else if (leg) note(`route leg executing: ${leg.kind} ${leg.target}`);
+  }
   // ONE EXIT: the count route's exit on the gate's own inputs is one of the
   // gate's candidates, so the published exit can never be later than it.
   const cr = gate?.countRoute?.chosen;
