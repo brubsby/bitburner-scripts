@@ -324,3 +324,36 @@ export function countRoutes({ offers = [], candidates = [], owned = new Set(), r
   }
   return out
 }
+
+/**
+ * ROUTE COMMITMENT, with hysteresis. The ranking is re-run every pass on
+ * inputs that move by more than the gaps between routes (live 2026-09-26: the
+ * exit forecast's measured error ~8.9h per hour; at 12:12 the route was The
+ * Shadow's Simulacrum at The Syndicate, the body step trained strength 1 ->
+ * 202 for it, and at 12:17 the ranking flipped to SmartJaw at Bachman and
+ * the hour of preparation was dropped). A committed route (this life) keeps
+ * its place unless an alternative beats ITS CURRENT exit — priced from the
+ * current state, so progress already made toward it is credited as a shorter
+ * detour — by more than the forecast can see over the committed route's
+ * remaining detour: tolPerH x max(0.25h, detour). It is dropped at once if it
+ * no longer prices at all (the tried entry says why).
+ * `ranked`: bestCountRoute's result; `routes`: the countRoutes list;
+ * `committed`: {name, faction, via} or null. Returns {best: {name, hours,
+ * route} | null, stayed, switched, why}.
+ */
+export function commitRoute(ranked, routes, committed, { tolPerH = 0.5 } = {}) {
+  const key = (r) => `${r?.name}|${r?.faction}|${r?.via}`
+  const best = ranked?.best ?? null
+  if (!best) return { best: null, stayed: false, switched: false, why: ranked?.why ?? 'no route prices' }
+  const fresh = { name: best.name, hours: best.hours, route: best.route }
+  if (!committed?.name) return { best: fresh, stayed: false, switched: true, why: 'no route committed this life: taking the best' }
+  if (key(committed) === key(best.route)) return { best: fresh, stayed: true, switched: false, why: 'the committed route is still the best' }
+  const cur = (ranked.tried ?? []).find((t) => key(t) === key(committed))
+  if (!cur || !num(cur.hours)) return { best: fresh, stayed: false, switched: true, why: `the committed route (${committed.name} at ${committed.faction} via ${committed.via}) no longer prices: ${cur?.why ?? 'not a candidate any more'}` }
+  const route = (routes ?? []).find((r) => key(r) === key(committed))
+  if (!route) return { best: fresh, stayed: false, switched: true, why: `the committed route's candidate is gone (${committed.name})` }
+  const tol = (pos(tolPerH) ? tolPerH : 0) * Math.max(0.25, num(cur.detourH) ? cur.detourH : 0)
+  const gain = cur.hours - best.hours
+  if (gain > tol) return { best: fresh, stayed: false, switched: true, why: `${best.name} at ${best.route.faction} exits ${gain.toFixed(2)}h sooner than the committed ${committed.name} (${cur.hours.toFixed(2)}h, ${cur.detourH}h of detour left), beyond the ${tol.toFixed(2)}h the forecast can see` }
+  return { best: { name: cur.name, hours: cur.hours, route }, stayed: true, switched: false, why: `kept ${committed.name} at ${committed.faction} (${cur.hours.toFixed(2)}h, ${cur.detourH}h of detour left): ${best.name} is ${gain.toFixed(2)}h sooner, inside the ${tol.toFixed(2)}h forecast tolerance` }
+}

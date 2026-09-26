@@ -702,5 +702,46 @@ export async function run() {
   }
   checks.push(t8);
 
+  // -----------------------------------------------------------------------
+  const u8 = new Check("B8u", "replay 12:12->12:17: a committed count route is kept unless beaten by more than the forecast error over its remaining detour; a route that stops pricing is dropped with its reason");
+  {
+    u8.examined(7);
+    const C = await import("../../countexit.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const inputs = Fx.exitInputs.inputs;
+    const nfgA = Fx.factions["Slum Snakes"].augs.find((a) => a.name === "NeuroFlux Governor");
+    const count = { short: 1, ladder: [], nfg: { price: nfgA.price, level: 0 } };
+    // 12:12: The Syndicate's route, its detour largely spent after an hour of
+    // strength training (def/dex/agi legs and the rep grind left); 12:17: the
+    // ranking's new best, SmartJaw at Bachman by donation behind a company-rep
+    // join held continuously (5.9h).
+    const syndicate = { name: "The Shadow's Simulacrum", faction: "The Syndicate", via: "work", price: 4e8, laterPrice: 4e8, detourH: 0.95, hacking: 1, exp: 1, rep: 1.15 };
+    const smartjaw = { name: "SmartJaw", faction: "Bachman & Associates", via: "donation", price: 1.8e11, laterPrice: 1.8e11, detourH: 5.86, hacking: 1, exp: 1, rep: 1.25 };
+    const routes = [syndicate, smartjaw];
+    const ranked = C.bestCountRoute(X.bestExitPolicy, inputs, count, routes);
+    const hS = ranked.tried.find((t) => t.name === syndicate.name)?.hours, hJ = ranked.tried.find((t) => t.name === smartjaw.name)?.hours;
+    u8.note(`ranked: ${syndicate.name} ${hS}h, SmartJaw ${hJ}h — best ${ranked.best?.name}`);
+    const committed = { name: syndicate.name, faction: syndicate.faction, via: syndicate.via };
+    // Force the case the lead saw: an alternative ranked first by a margin smaller than the error.
+    const flip = { ...ranked, best: { name: smartjaw.name, hours: hS - 3, route: smartjaw } };
+    const kept = C.commitRoute(flip, routes, committed, { tolPerH: 8.9 });
+    if (!(kept.stayed && kept.best?.name === syndicate.name)) u8.fail("a 3h gain inside 8.9h/h x 0.95h of remaining detour must keep the committed route", kept.why);
+    else u8.note(`kept: ${kept.why}`);
+    const clear = C.commitRoute({ ...ranked, best: { name: smartjaw.name, hours: hS - 20, route: smartjaw } }, routes, committed, { tolPerH: 8.9 });
+    if (!(clear.switched && clear.best?.name === smartjaw.name)) u8.fail("a 20h gain beyond the tolerance must switch", clear.why);
+    const gone = C.commitRoute({ ...ranked, best: { name: smartjaw.name, hours: hS + 5, route: smartjaw }, tried: ranked.tried.map((t) => (t.name === syndicate.name ? { ...t, hours: null, why: "join unpriceable" } : t)) }, routes, committed, { tolPerH: 8.9 });
+    if (!(gone.switched && /no longer prices: join unpriceable/.test(gone.why))) u8.fail("a committed route that no longer prices is dropped, naming why", gone.why);
+    const none = C.commitRoute(ranked, routes, null, { tolPerH: 8.9 });
+    if (!(none.switched && none.best?.name === ranked.best.name)) u8.fail("with nothing committed the best is taken");
+    // The committed route's exit is priced from the CURRENT state: a shorter
+    // remaining detour prices a sooner exit (progress credited).
+    const fresh = C.bestCountRoute(X.bestExitPolicy, inputs, count, [{ ...syndicate, detourH: 2.0 }]).best?.hours;
+    if (!(typeof fresh === "number" && fresh > hS)) u8.fail("the same route with more detour left must exit later (the remaining detour, not the full one, is what is priced)");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const cm = commitRoute\(ranked, routes, committed, \{ tolPerH: exitCalibrationOf\(ns, info\)\.tolPerH \}\)/.test(prog) || !/ns\.write\(COUNT_ROUTE_FILE/.test(prog)) u8.fail("progress.js must commit the route through commitRoute with the measured tolerance and persist it this life");
+    if (!/b\?\.spansInstalls && typeof b\.holdH === 'number'[^\n]*b\.holdH - b\.hours/.test(prog)) u8.fail("a join leg that ladders across installs must be priced as its continuous hold on a route (one install after the detour)");
+  }
+  checks.push(u8);
+
   return checks;
 }

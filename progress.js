@@ -136,7 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
-import { bestCountExit, bestCountRoute, countRoutes, ticketLadder } from 'countexit.js'
+import { bestCountExit, bestCountRoute, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 import { wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
@@ -1788,6 +1788,8 @@ function capitalFitOf(ns, info) {
  * into the realised drift and the forecast error per hour, which is the
  * tolerance a simulated wait must beat (installgate waitTolPerH).
  */
+// The committed count route, this life (countexit.commitRoute).
+const COUNT_ROUTE_FILE = '/tel/countroute.txt'
 const EXIT_CAL_MAX = 48
 const EXIT_CAL_GAP_MS = 12 * 60e3
 function exitCalibrationOf(ns, info) {
@@ -3394,7 +3396,14 @@ async function act(ns, canJoin, info, note) {
       for (const c of candidates) {
         const w = joinWait(c.requirements, { ...joinState, expPerSec: same ? prior.expPerSec ?? null : null })
         if (!w.known || !isFinite(w.hours)) continue
-        cands.push({ name: c.name, joinH: w.hours, rep: c.rep, favor: c.favor, augs: (c.augs ?? []).map((a) => ({ name: a.name, baseCost: sing.augPrice(a.name) / qf, repReq: a.repReq, mults: a.mults, prereqs: sing.augPrereq(a.name) })) })
+        // A leg that ladders across installs (company reputation resets each
+        // install: spansInstalls) is priced here as its CONTINUOUS hold
+        // (holdH): the route model installs once, after the detour, so the
+        // laddered figure — which assumes installs in between — is the wrong
+        // basis (live: Bachman's company rep read 12.2h laddered over 11
+        // installs, 5.9h held).
+        const joinH = w.hours + (w.blockers ?? []).reduce((a, b) => a + (b?.spansInstalls && typeof b.holdH === 'number' && typeof b.hours === 'number' ? b.holdH - b.hours : 0), 0)
+        cands.push({ name: c.name, joinH, rep: c.rep, favor: c.favor, augs: (c.augs ?? []).map((a) => ({ name: a.name, baseCost: sing.augPrice(a.name) / qf, repReq: a.repReq, mults: a.mults, prereqs: sing.augPrereq(a.name) })) })
       }
       const routes = countRoutes({
         offers: offers.map((o) => ({ ...o, favor: sing.factionFavor(o.faction) })),
@@ -3404,7 +3413,16 @@ async function act(ns, canJoin, info, note) {
         donation: (f, rep) => (donatable && canDonateTo(f, 0, 0, gangF) && fwrg > 0 ? donationForRep(rep, player?.mults?.faction_rep ?? 1, fwrg) : null),
         nfgName: NFG,
       })
-      return { ...bestCountRoute(bestExitPolicy, rec.inputs, cc, routes), routes: routes.length }
+      const ranked = bestCountRoute(bestExitPolicy, rec.inputs, cc, routes)
+      // COMMITMENT (countexit.commitRoute): this life's route is kept unless
+      // beaten by more than the forecast error over its remaining detour.
+      const committed = (() => {
+        const c = readJson(ns, COUNT_ROUTE_FILE)
+        return c && c.lastAugReset === info?.lastAugReset && !allCount.has(c.name) ? c : null
+      })()
+      const cm = commitRoute(ranked, routes, committed, { tolPerH: exitCalibrationOf(ns, info).tolPerH })
+      if (cm.best) ns.write(COUNT_ROUTE_FILE, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, name: cm.best.name, faction: cm.best.route.faction, via: cm.best.route.via, since: cm.switched || !committed ? new Date().toISOString() : committed.since, why: cm.why }), 'w')
+      return { ...ranked, best: cm.best, commitment: { stayed: cm.stayed, switched: cm.switched, why: cm.why, previous: committed ? `${committed.name} at ${committed.faction} via ${committed.via}` : null }, routes: routes.length }
     } catch (e) {
       return { best: null, tried: [], why: `route pricing threw: ${String(e).slice(0, 80)}` }
     }
@@ -3417,6 +3435,7 @@ async function act(ns, canJoin, info, note) {
         // below), and the gate's exitH is the minimum it chose.
         chosen: countRoute.best ? { name: countRoute.best.name, faction: countRoute.best.route.faction, via: countRoute.best.route.via, rankExitH: +countRoute.best.hours.toFixed(2), rankBasis: "previous pass's exit inputs (ranking only)", gateExitH: null, detourH: +countRoute.best.route.detourH.toFixed(3), price: Math.round(countRoute.best.route.price) } : null,
         routes: countRoute.routes ?? null,
+        commitment: countRoute.commitment ?? null,
         alternatives: (countRoute.tried ?? []).slice(0, 8),
         why: countRoute.best ? 'the soonest simulated exit over every reachable distinct augmentation' : `unpriced (${countRoute.why}) — the schedule scores every distinct augmentation at the flat ticket value (fallback)`,
       }
