@@ -163,7 +163,7 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf } from 'plan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1624,7 +1624,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
 const GRAFT_SEARCH_MS = 250
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
 let redPillRepReq = null // the catalogue's Red Pill requirement this pass (exitInputsOf)
-async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work) {
+async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, countCtx = null) {
   const pc = planCtxOf(ns, info)
   if (!canUseGrafting(info)) {
     pc.decisions.grafts = { key: 'none', why: 'grafting is not accessible here (BitNode 10 or Source-File 10: sfgate.canUseGrafting)', held: false }
@@ -1635,10 +1635,17 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work) 
     const withoutIn = { ...inputsFn() }
     delete withoutIn.finalGrafts
     delete withoutIn.graftStartMoney
-    const priceExit = (x) => {
-      const r = bestExitPolicy(x)
-      return r.degenerate ? null : r.best?.hours ?? null
-    }
+    yield // the inputs builder is its own step (attributable in cpu.sections)
+    // ONE TRAJECTORY BASIS: grafts are priced on the COMMITTED install
+    // decision's trajectory (plan.basisOf / trajectoryOf) — the same function
+    // the install decision prices its options with — so "with grafts" and
+    // "the plan's exit" are one trajectory, not two models (live 17:51: the
+    // install decision's w4 read 23.0h while grafts, priced on the default
+    // policy with no install batch, read 84.9h). No committed install: the
+    // default policy, named in `basis`.
+    const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
+    const priceExit = (x, d = null) => traj(x, d)
     const installed = new Set(sing.ownedAugs(false))
     const inProgress = work?.type === 'GRAFTING' ? work.augmentation ?? null : null
     const prev = pc.prev?.decisions?.grafts ?? null
@@ -1669,6 +1676,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work) 
         queuedNonSoA: pending.filter((n) => !isSoa(n)).length,
         sf11: sfLevel(info, 11),
       })
+      yield // the candidate read is its own step
       // Resumed from the committed set (same node, any life: grafts are the
       // node's), so a search the budget stopped grows across re-decisions.
       const seed = (pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name).filter((n) => typeof n === 'string' && !installed.has(n))
@@ -1686,16 +1694,32 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work) 
     // Started: a committed graft is owned or running — the threshold is spent.
     const started = inProgress !== null || (prev?.grafts ?? []).some((g) => installed.has(g?.name))
     const withIn = specs.length ? { ...withoutIn, finalGrafts: specs, graftStartMoney: started ? 0 : startMoney ?? 0 } : null
-    const options = [{ key: 'none', sim: (d) => priceExit(applyDraw(withoutIn, d)) }]
-    if (withIn) options.push({ key: 'grafts', sim: (d) => priceExit(applyDraw(withIn, d)) })
+    const options = [{ key: 'none', noiseKey: noiseKeyOf(basis, withoutIn), sim: (d) => priceExit(applyDraw(withoutIn, d), d) }]
+    if (withIn) options.push({ key: 'grafts', noiseKey: noiseKeyOf(basis, withIn), sim: (d) => priceExit(applyDraw(withIn, d), d) })
     const pointNone = priceExit(withoutIn)
-    const withPolicy = withIn ? bestExitPolicy(withIn) : null
-    const pointWith = withPolicy?.degenerate ? null : withPolicy?.best?.hours ?? null
+    yield
+    // The with-run's policy (installs before the final window) on the same
+    // basis: the graft step waits for 0 installs left.
+    const withPolicy = withIn ? (countCtx ? bestExitPolicy(withIn) : policyOf(basis, withIn)) : null
+    const pointWith = withIn ? priceExit(withIn) : null
+    yield
+    // Re-pricing on another basis (the install decision may switch later this
+    // pass): the committed choice's options again, same draws.
+    pc.graftReprice = (spec) => {
+      const t2 = trajectoryOf(spec, { count: countCtx, repPoint: pc.repPoint ?? null })
+      const opts2 = [{ key: 'none', noiseKey: noiseKeyOf(spec, withoutIn), sim: (dr) => t2(applyDraw(withoutIn, dr), dr) }]
+      if (withIn) opts2.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, withIn), sim: (dr) => t2(applyDraw(withIn, dr), dr) })
+      return { options: opts2, specs, startMoney: started ? 0 : startMoney }
+    }
     const d = pc.post
       ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => (k === 'none' ? pointNone : pointWith) })
       : { key: typeof pointWith === 'number' && typeof pointNone === 'number' && pointWith < pointNone ? 'grafts' : 'none', why: 'no posterior: the point comparison' }
     return {
       ...d,
+      // The trajectory this was priced on (the committed install's), and its
+      // noise key for the chosen side — what consistencyOf compares.
+      basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null, installAt: basis.installAt ?? null } : { kind: 'default policy (no committed install)' },
+      basisNoiseKey: noiseKeyOf(basis, d.key === 'grafts' ? withIn : withoutIn),
       grafts: d.key === 'grafts' ? specs : [],
       startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
       started,
@@ -2035,7 +2059,7 @@ async function planDecide(pc, name, genFn) {
   enter(`plan-${name}`)
   let d = null
   try {
-    d = await pc.pacer.slices(genFn())
+    d = await pc.pacer.slices(genFn(), `plan-${name}`)
   } catch (e) {
     d = { key: null, why: `${name} decision threw: ${String(e).slice(0, 160)}`, error: true }
   }
@@ -2044,7 +2068,7 @@ async function planDecide(pc, name, genFn) {
   return d
 }
 /** A long search in slices when a pass pacer exists (always await it). */
-const paced = (gen) => (passPacer ? passPacer.slices(gen) : drain(gen))
+const paced = (gen, label) => (passPacer ? passPacer.slices(gen, label) : drain(gen))
 /**
  * GIVE THE PAGE BACK: a MessageChannel round trip — a macrotask the page's
  * input and rendering run between, which Chrome's timer throttling of a
@@ -2104,7 +2128,7 @@ function publishPlan(ns, info, extra = {}) {
       at,
       node: info?.currentNode ?? null,
       lastAugReset: info?.lastAugReset ?? null,
-      health: pc.error || Object.values(pc.decisions).some((d) => d?.error) ? 'error' : blocked ? 'blocked' : 'ok',
+      health: pc.error || Object.values(pc.decisions).some((d) => d?.error) ? 'error' : blocked ? 'blocked' : pc.consistency?.ok === false ? 'inconsistent' : 'ok',
       error: pc.error ?? (Object.values(pc.decisions).find((d) => d?.error)?.why ?? null),
       decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
       events: pc.events,
@@ -2122,10 +2146,20 @@ function publishPlan(ns, info, extra = {}) {
       },
       posteriors: pc.post ? posteriorSummary(pc.post) : null,
       calibration: pc.post?.calibration ?? null,
-      cpu: { cpuMs: st ? Math.round(st.cpuMs) : null, wallMs: Date.now() - passT0, waitMs: st ? Math.round(st.waitMs) : null, maxBlockMs: st ? +st.maxBlockMs.toFixed(1) : null, maxBlockLimitMs: PLAN.maxBlockMs, sliceMs: PLAN.sliceMs, yields: st?.yields ?? null, setupMs: pc.setupMs ?? null, budgetMs: PLAN.budgetMs, blocked, truncated, N: PLAN.N, draws: Math.min(...[route?.n, inst?.n].filter((x) => typeof x === 'number'), PLAN.N) },
+      // Per section (the label each slices() run names): its work, longest
+      // block, and longest single step with its index — a step longer than
+      // the slice is the un-sliced piece, and this says where.
+      cpu: { sections: st ? Object.fromEntries(Object.entries(st.sections).map(([k, v]) => [k, { cpuMs: Math.round(v.cpuMs), maxBlockMs: +v.maxBlockMs.toFixed(1), maxStepMs: +v.maxStepMs.toFixed(1), maxStepAt: v.maxStepAt, steps: v.steps, runs: v.runs }])) : null, cpuMs: st ? Math.round(st.cpuMs) : null, wallMs: Date.now() - passT0, waitMs: st ? Math.round(st.waitMs) : null, maxBlockMs: st ? +st.maxBlockMs.toFixed(1) : null, maxBlockLimitMs: PLAN.maxBlockMs, sliceMs: PLAN.sliceMs, yields: st?.yields ?? null, setupMs: pc.setupMs ?? null, budgetMs: PLAN.budgetMs, blocked, truncated, N: PLAN.N, draws: Math.min(...[route?.n, inst?.n].filter((x) => typeof x === 'number'), PLAN.N) },
       rule: `switch only when P(alternative better net of switch cost) >= ${PLAN.theta} and the expected gain is positive; re-decide on events (${PLAN.maxAgeMin} min max age)`,
       obs,
       points: [...(pc.points ?? []), ...(pc.point ? [pc.point] : [])].slice(-16),
+      // ONE PLAN, ONE EXIT: the install decision's committed trajectory and
+      // the graft decision's committed option, priced on the same basis,
+      // must agree (plan.consistencyOf); `ok: false` is health 'inconsistent'.
+      consistency: pc.consistency ?? null,
+      // A decision that changed under a re-basing this pass: re-decide next
+      // pass (redecideEvents reads it).
+      forceRedecide: pc.forceRedecide ?? null,
     }
     ns.write(PLAN_FILE, JSON.stringify(rec), 'w')
   } catch (e) {
@@ -2184,14 +2218,14 @@ async function countExitNowOf(inputs, countCtx, route = null) {
   let best = null
   let viaRoute = false
   for (const w of [0, 0.25, 0.5, 1, 2, 4]) {
-    const r = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: w }))
+    const r = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: w }), 'count-exit-now')
     if (r.best && (best === null || r.best.hours < best)) best = r.best.hours
   }
   // The exit-chosen route, on these inputs (the planned path's comparison does the same).
   if (route && route.detourH >= 0 && isFinite(route.detourH)) {
     const ladderR = [{ ...route, must: true }, ...(countCtx.ladder ?? []).filter((t) => t.name !== route.name)]
     for (const extra of [0, 0.5, 2]) {
-      const r = await paced(bestCountExitGen(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: route.detourH + extra }))
+      const r = await paced(bestCountExitGen(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: route.detourH + extra }), 'count-exit-now')
       if (r.best?.firstBatch?.chosen?.includes(route.name) && (best === null || r.best.hours < best)) {
         best = r.best.hours
         viaRoute = true
@@ -3802,7 +3836,7 @@ async function act(ns, canJoin, info, note) {
         donation: (f, rep) => (donatable && canDonateTo(f, 0, 0, gangF) && fwrg > 0 ? donationForRep(rep, player?.mults?.faction_rep ?? 1, fwrg) : null),
         nfgName: NFG,
       })
-      const ranked = await paced(bestCountRouteGen(bestExitPolicy, rec.inputs, cc, routes))
+      const ranked = await paced(bestCountRouteGen(bestExitPolicy, rec.inputs, cc, routes), 'count-route-scan')
       const committed = (() => {
         const c = readJson(ns, COUNT_ROUTE_FILE)
         return c && c.lastAugReset === info?.lastAugReset && !allCount.has(c.name) ? c : null
@@ -4106,7 +4140,7 @@ async function act(ns, canJoin, info, note) {
   // the committed start balance — and holds the work slot until it is done: a
   // running graft is never interrupted (the install below is held too;
   // GraftingWork.finish keeps the money of a cancelled graft).
-  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work) : null
+  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
   if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
   const graftStep = (() => {
     if (work?.type === 'GRAFTING') return { running: true, name: work.augmentation ?? '?' }
@@ -4960,11 +4994,11 @@ async function act(ns, canJoin, info, note) {
         // and, in installgate, the floor as the named fallback.
         const countCtx = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
         if (countCtx) {
-          const nowC = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: 0 }))
+          const nowC = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: 0 }), 'count-exit-scan')
           if (nowC.best) {
             const waitsC = []
             for (const w of [0.25, 0.5, 1, 2, 4]) {
-              const r = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: w }))
+              const r = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: w }), 'count-exit-scan')
               waitsC.push({ waitMs: w * 3600000, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, n: r.best?.n ?? null, lifeH: r.best?.lifeH ?? null })
             }
             // THE EXIT-CHOSEN ROUTE is a wait too, on THESE inputs: install
@@ -4978,7 +5012,7 @@ async function act(ns, canJoin, info, note) {
               const ladderR = [{ ...route, must: true }, ...(countCtx.ladder ?? []).filter((t) => t.name !== route.name)]
               for (const extra of [0, 0.5, 2]) {
                 const w = route.detourH + extra
-                const r = await paced(bestCountExitGen(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: w }))
+                const r = await paced(bestCountExitGen(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: w }), 'count-exit-scan')
                 const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
                 waitsC.push({ waitMs: Math.round(w * 3600000), H: took ? r.best.hours : null, installs: took ? r.best.installsFirst : null, n: took ? r.best.n : null, lifeH: took ? r.best.lifeH ?? null : null, extra, route: route.name, via: route.via })
               }
@@ -5025,6 +5059,31 @@ async function act(ns, canJoin, info, note) {
       }
     })()
 
+    // ONE TRAJECTORY BASIS. The graft decision was priced (earlier this pass)
+    // on the install commitment it found; if the install decision just
+    // switched, re-price the graft decision's options on the new committed
+    // trajectory (same draws, same inputs), then check the two decisions'
+    // committed exits agree (plan.consistencyOf).
+    {
+      const pcx = planCtx
+      const inst = pcx?.decisions?.install
+      const gd = pcx?.decisions?.grafts
+      if (pcx?.post && inst?.key && gd?.key && typeof pcx.graftReprice === 'function' && gd.basisNoiseKey !== inst.noiseKey) {
+        const spec = basisOf(inst, Date.now())
+        if (spec) {
+          const rp = pcx.graftReprice(spec)
+          const d2 = await planDecide(pcx, 'graftsRebased', () => decideAmongGen({ options: rp.options, prev: { key: gd.key, decidedAt: gd.decidedAt, why: gd.why }, draws: pcx.draws, redecide: true, budgetMs: planBudgetLeft(pcx), clock: pcx.pacer.cpuNow }))
+          if (d2?.key) {
+            const flipped = d2.key !== gd.key
+            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, rebasedFrom: gd.basis ?? null, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
+            // The install decision priced with the grafts carried before the
+            // flip: one pass stale, re-decided next pass.
+            if (flipped) pcx.forceRedecide = `the graft decision flipped (${gd.key} -> ${d2.key}) when re-priced on the install decision's ${inst.key}`
+          }
+        }
+      }
+      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02 })
+    }
     // The route's exit on THIS pass's inputs, from the gate's own comparison.
     if (countRouteNow?.chosen && exitCompare?.countAware) {
       const hs = (exitCompare.waits ?? []).filter((w) => w.route === countRouteNow.chosen.name && typeof w.H === 'number').map((w) => w.H)

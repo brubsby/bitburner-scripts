@@ -45,40 +45,57 @@ export function drain(gen) {
 /**
  * A pacer for one pass. {sliceMs, yieldFn, now}. Stats accumulate across
  * every slices() call: cpuMs (work), waitMs (yielded), maxBlockMs (the longest
- * stretch of work between yields), yields, runs.
+ * stretch of work between yields), yields, runs — and per LABEL (the section
+ * a slices() call names) the same plus maxStepMs, the longest single step
+ * between two of the generator's own yields, and at which step it was: a step
+ * longer than the slice is a piece of work that does not yield often enough,
+ * and the label says where it is.
  */
 export function makePacer({ sliceMs = 40, yieldFn = null, now = clock } = {}) {
-  const st = { cpuMs: 0, waitMs: 0, maxBlockMs: 0, yields: 0, runs: 0 }
+  const st = { cpuMs: 0, waitMs: 0, maxBlockMs: 0, yields: 0, runs: 0, sections: {} }
   let running = false
   let sliceStart = 0
   const cpuNow = () => st.cpuMs + (running ? now() - sliceStart : 0)
+  let sec = null
   const endSlice = () => {
     const b = now() - sliceStart
     st.cpuMs += b
     if (b > st.maxBlockMs) st.maxBlockMs = b
+    if (sec) {
+      sec.cpuMs += b
+      if (b > sec.maxBlockMs) sec.maxBlockMs = b
+    }
     return b
   }
+  const sectionOf = (label) => (st.sections[label] ??= { cpuMs: 0, maxBlockMs: 0, maxStepMs: 0, maxStepAt: null, steps: 0, runs: 0 })
   return {
     stats: st,
     sliceMs,
     cpuNow,
-    /** Run `gen` in slices; returns its value. A throw inside propagates. */
-    async slices(gen) {
+    /** Run `gen` in slices under `label`; returns its value. A throw inside propagates. */
+    async slices(gen, label = 'unlabelled') {
       if (running) return drain(gen) // nested: the outer run already paces
       st.runs++
       running = true
+      sec = sectionOf(label)
+      sec.runs++
       sliceStart = now()
       try {
         let t = now()
         for (;;) {
           const r = gen.next()
-          if (r.done) return r.value
           // LOOK AHEAD one step: yield when the next step, if it costs what
           // this one did, would carry the block past the slice — so a block
           // ends near sliceMs, not sliceMs + one (possibly slow) step.
           const t2 = now()
           const step = t2 - t
           t = t2
+          sec.steps++
+          if (step > sec.maxStepMs) {
+            sec.maxStepMs = step
+            sec.maxStepAt = sec.steps
+          }
+          if (r.done) return r.value
           if (yieldFn && t2 - sliceStart + step >= sliceMs) {
             endSlice()
             running = false
@@ -94,6 +111,7 @@ export function makePacer({ sliceMs = 40, yieldFn = null, now = clock } = {}) {
       } finally {
         if (running) endSlice()
         running = false
+        sec = null
       }
     },
     /** Account synchronous work done outside slices() (so maxBlockMs sees it). */

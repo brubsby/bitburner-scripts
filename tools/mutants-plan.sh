@@ -21,3 +21,5 @@ run plan.js '  if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < P
 run coop.js '          if (yieldFn && t2 - sliceStart + step >= sliceMs) {' '          if (false) {'
 run coop.js '  const cpuNow = () => st.cpuMs + (running ? now() - sliceStart : 0)' '  const cpuNow = () => now()'
 run graftplan.js '      const h = yield* withRun([...chosen, ...bundle])' '      const h = drain(withRun([...chosen, ...bundle]))'
+run progress.js '    const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())' '    const basis = null'
+run plan.js '      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null)' '      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.key) : null)'

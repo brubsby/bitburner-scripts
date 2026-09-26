@@ -402,7 +402,7 @@ export async function run() {
       [/bayes: await planInstallOf\(ns, info, inputs, countCtx,/, "the count-aware exit comparison carries the plan's install decision"],
       [/bayes: now\.best \? await planInstallOf\(ns, info, inputs, null,/, "the ordinary exit comparison carries the plan's install decision"],
       [/const b = exitCompare\?\.bayes\s*\n\s*if \(b && typeof b\.q50 === 'number'\) return \{ exitH: b\.q50/, "the published exit is the plan's median"],
-      [/enter\(`plan-\$\{name\}`\)[\s\S]{0,200}d = await pc\.pacer\.slices\(genFn\(\)\)[\s\S]{0,200}leave\(`plan-\$\{name\}`\)/, "each Monte Carlo is bracketed by trace.js and run in the pacer's slices"],
+      [/enter\(`plan-\$\{name\}`\)[\s\S]{0,200}d = await pc\.pacer\.slices\(genFn\(\), `plan-\$\{name\}`\)[\s\S]{0,200}leave\(`plan-\$\{name\}`\)/, "each Monte Carlo is bracketed by trace.js and run in the pacer's slices"],
       [/const ranked = await paced\(bestCountRouteGen\(/, "the count-route scan runs in slices"],
       [/const nowC = await paced\(bestCountExitGen\(/, "the count-aware exit scan runs in slices"],
     ];
@@ -415,7 +415,7 @@ export async function run() {
   // -----------------------------------------------------------------------
   const c9 = new Check("BY9", "healthcheck F reads the plan: missing / stale / broken / over budget / miscalibrated each FAIL loud; a sound plan passes with its interval and calibration noted");
   {
-    c9.examined(10);
+    c9.examined(11);
     const now = Date.parse("2026-09-26T13:00:00Z");
     const at = new Date(now - 5 * 60e3).toISOString();
     const good = { at, lastAugReset: 1, health: "ok", cpu: { cpuMs: 900, wallMs: 1400, waitMs: 20, maxBlockMs: 41.2, maxBlockLimitMs: 50, yields: 22, budgetMs: 1200, blocked: false, truncated: false, N: 24, draws: 24 }, calibration: { n: 20, cover80: 0.8, why: "20 sequential one-step predictions" }, exit: { meanH: 64, q10: 57, q50: 63, q90: 71, source: "install decision (now)" }, decisions: {} };
@@ -431,6 +431,9 @@ export async function run() {
     // The page-freeze metric is the longest block, not the total: 900ms of
     // work in 41ms slices passes; one 120ms block fails.
     if (!chk({ ...good, cpu: { ...good.cpu, maxBlockMs: 120, blocked: true } }, "PLAN BLOCKED THE PAGE")) c9.fail("a 120ms synchronous block must fail");
+    const named = P.planCheck({ ...good, cpu: { ...good.cpu, maxBlockMs: 150, blocked: true, sections: { "plan-grafts": { maxStepMs: 148, maxStepAt: 1, steps: 90 }, "plan-install": { maxStepMs: 6, maxStepAt: 3, steps: 200 } } } }, { gate, progress: prog, now }).fails.find((f) => f.what.startsWith("PLAN BLOCKED"));
+    c9.note(`attributed: ${named?.what}`);
+    if (!/'plan-grafts' \(step 1 of 90\)/.test(named?.what ?? "")) c9.fail("the blocked-page failure must name the section and step that held the page");
     if (chk({ ...good, cpu: { ...good.cpu, cpuMs: 5000 } }, "PLAN")) c9.fail("a large total in short slices is not a page freeze");
     if (!chk({ ...good, cpu: { ...good.cpu, draws: 4, truncated: true } }, "PLAN UNDER-SAMPLED")) c9.fail("4 of 24 draws must fail as under-sampled");
     if (!chk({ ...good, cpu: { ms: 900, budgetMs: 400, overBudget: true } }, "PLAN OVER CPU BUDGET")) c9.fail("a pre-slicing record over its total budget still fails");
@@ -536,7 +539,10 @@ export async function run() {
     // (2) The live budgets: the longest synchronous block, work vs wall.
     const pacer = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)) });
     const w0 = performance.now();
-    await pacer.slices(pass(pacer.cpuNow, 250, P.PLAN.budgetMs));
+    await pacer.slices(pass(pacer.cpuNow, 250, P.PLAN.budgetMs), "live-pass");
+    const sec = pacer.stats.sections["live-pass"];
+    c11.note(`section 'live-pass': ${sec?.steps} steps, longest step ${sec?.maxStepMs?.toFixed(1)}ms (step ${sec?.maxStepAt}), longest block ${sec?.maxBlockMs?.toFixed(1)}ms`);
+    if (!(sec && sec.steps > 100 && sec.maxStepMs > 0 && sec.maxStepMs < P.PLAN.maxBlockMs && Math.abs(sec.cpuMs - pacer.stats.cpuMs) < 1)) c11.fail("the pacer must attribute work, steps and the longest step to the section that ran them");
     const wall = performance.now() - w0;
     const st = pacer.stats;
     c11.note(`live-size pass in node: ${st.cpuMs.toFixed(0)}ms work over ${wall.toFixed(0)}ms wall, ${st.yields} yields, longest block ${st.maxBlockMs.toFixed(1)}ms (limit ${P.PLAN.maxBlockMs}ms, slice ${P.PLAN.sliceMs}ms)`);
@@ -566,6 +572,67 @@ export async function run() {
     if (!(counted === 40 && slowPacer.stats.cpuMs < 200 && slowPacer.stats.waitMs > 100)) c11.fail("the pacer's work clock must exclude the time spent yielded");
   }
   checks.push(c11);
+
+  // -----------------------------------------------------------------------
+  const c12 = new Check("BY12", "ONE TRAJECTORY: the graft decision prices on the committed install's trajectory, so the two decisions' committed exits agree (live 17:51 they read 23.0h and 84.9h); and the MC mean vs point gap is the ln(M)/h posterior's convexity");
+  {
+    c12.examined(6);
+    const X = await import("../../exitplan.js");
+    const GP = await import("../../graftplan.js");
+    const G = await import("./fixture-bn8-graft.mjs");
+    const rows = fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-stockhist.txt"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const post = P.posteriorsOf({ stockRows: rows, warmupH: 0.16, exitSamples: JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1232.json"), "utf8")).exitSamples });
+    // The live 17:51 ln(M)/h posterior: 0.0185 ± 0.0093 per hour (NIG, df 20).
+    post.lnGain = { post: { m: 0.0185, k: 1, a: 10, b: 7.78e-4 }, mean: 0.0185, sd: 0.0093 };
+    const draws = P.makeDraws(post, P.PLAN.N, 17);
+    const now = Date.parse(G.AT);
+    const inputs = G.INPUTS;
+    const specs = ["Embedded Netburner Module Core Implant", "Embedded Netburner Module Core V2 Upgrade", "Embedded Netburner Module Core V3 Upgrade", "Xanipher"].map((n) => GP.graftSpecOf(G.CANDIDATES.find((c) => c.name === n), G.INTELLIGENCE, { entropy: true }));
+    const withG = (x) => ({ ...x, finalGrafts: specs, graftStartMoney: 9.375e10 });
+    // The install options as progress.js builds them (no count gate): now,
+    // waits with their batch's gains (a 4h batch lifting hacking x1.94, as
+    // live), never.
+    const g4 = { hacking: 1.94, rep: 1.02, income: 4.74, exp: 1.35 };
+    const pointOf = (x) => ({
+      now: { hours: X.bestExitPolicy({ ...x, firstInstallH: 0 }, 400, 1).best?.hours },
+      waits: [{ waitH: 1, hours: X.bestExitPolicy({ ...x, firstInstallH: 1 }, 400, 1).best?.hours }, { waitH: 4, installGains: g4, hours: X.bestExitPolicy({ ...x, firstInstallH: 4, installGains: g4, nextInstallGain: g4.hacking }, 400, 1).best?.hours }],
+      never: { hours: X.bestExitPolicy(x, 0, 0).best?.hours },
+    });
+    // Pass 1: the install decision (inputs without grafts yet).
+    const inst1 = P.decideInstall({ inputs, point: pointOf(inputs), draws, now, budgetMs: 1e9 });
+    // The graft decision, on inst1's trajectory (as graftDecisionOf).
+    const basis = P.basisOf(inst1, now);
+    const traj = P.trajectoryOf(basis, {});
+    const gd = P.decideAmong({ options: [{ key: "none", noiseKey: P.noiseKeyOf(basis, inputs), sim: (d) => traj(P.applyDraw(inputs, d), d) }, { key: "grafts", noiseKey: P.noiseKeyOf(basis, withG(inputs)), sim: (d) => traj(P.applyDraw(withG(inputs), d), d) }], draws, budgetMs: 1e9 });
+    const gdRec = { ...gd, basisNoiseKey: P.noiseKeyOf(basis, gd.key === "grafts" ? withG(inputs) : inputs) };
+    // Pass 2: the install decision on inputs carrying the committed grafts, held.
+    const carried = gd.key === "grafts" ? withG(inputs) : inputs;
+    const inst2 = P.decideInstall({ inputs: carried, point: pointOf(carried), prev: inst1, draws, now, redecide: false, budgetMs: 1e9 });
+    const cons = P.consistencyOf(inst2, gdRec, { si: post.jitter?.si ?? 0.02 });
+    c12.note(`install ${inst1.key} (mean ${inst1.meanH}h); grafts '${gd.key}' on that basis: none ${gd.options.find((o) => o.key === "none")?.meanH}h, grafts ${gd.options.find((o) => o.key === "grafts")?.meanH}h; install held with the grafts: ${inst2.meanH}h — ${cons.why}`);
+    if (cons.ok !== true) c12.fail("the committed install and graft decisions must agree on one basis", JSON.stringify(cons));
+    // Same trajectory, same draws, same noise key: not merely within noise — identical.
+    if (!(cons.diffH === 0)) c12.fail(`one trajectory priced by two decisions must draw the same noise (identical exits), got a ${cons.diffH}h difference`);
+    // Negative control: the pre-fix graft pricing (the default policy, no
+    // install batch) claimed against the same basis must read INCONSISTENT.
+    const legacy = P.decideAmong({ options: [{ key: gd.key, noiseKey: gdRec.basisNoiseKey, sim: (d) => { const r = X.bestExitPolicy(P.applyDraw(carried, d)); return r.degenerate ? null : r.best?.hours ?? null; } }], draws, budgetMs: 1e9 });
+    const bad = P.consistencyOf(inst2, { ...gdRec, meanH: legacy.meanH });
+    c12.note(`the pre-fix basis (default policy): ${legacy.meanH}h against the install's ${inst2.meanH}h — ${bad.why}`);
+    if (bad.ok !== false) c12.fail("fixture: the default-policy pricing must be caught as inconsistent (else the check proves nothing)");
+    // MC mean vs point: the grafts option's point, mean and median; and with
+    // the ln(M)/h posterior removed (point cadence), the mean falls to the point.
+    const gOpt = gd.options.find((o) => o.key === "grafts");
+    const gPoint = traj(withG(inputs));
+    const noLn = P.makeDraws({ ...post, lnGain: null }, P.PLAN.N, 17);
+    const gd0 = P.decideAmong({ options: [{ key: "grafts", sim: (d) => traj(P.applyDraw(withG(inputs), d), d) }], draws: noLn, budgetMs: 1e9 });
+    c12.note(`grafts option: point ${gPoint?.toFixed(1)}h, MC mean ${gOpt?.meanH}h / median ${gOpt?.q50}h / q90 ${gOpt?.q90}h; without the ln(M)/h uncertainty: mean ${gd0.meanH}h / median ${gd0.q50}h — the right tail is draws of a slow multiplier (exit hours ~ 1/(ln M per h), convex)`);
+    if (!(gOpt && gd0.meanH < gOpt.meanH)) c12.fail("the ln(M)/h posterior should be what lifts the mean above the point (convexity)");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const basis = basisOf\(pc\.prev\?\.decisions\?\.install \?\? null, Date\.now\(\)\)\s*\n\s*const traj = trajectoryOf\(basis,/.test(prog)) c12.fail("graftDecisionOf must price on the committed install's trajectory (source guard)");
+    if (!/pcx\.consistency = consistencyOf\(pcx\.decisions\.install, pcx\.decisions\.grafts/.test(prog)) c12.fail("progress.js must check the install and graft decisions' consistency every pass (source guard)");
+    if (!/const spec = basisOf\(inst, Date\.now\(\)\)[\s\S]{0,200}pcx\.graftReprice\(spec\)/.test(prog)) c12.fail("progress.js must re-price the graft decision when the install decision switched this pass (source guard)");
+  }
+  checks.push(c12);
 
   return checks;
 }

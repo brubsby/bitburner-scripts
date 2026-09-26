@@ -83,6 +83,11 @@ yields, longest block ~40ms. Published `cpu`: cpuMs, wallMs, waitMs,
 maxBlockMs, yields; healthcheck F fails PLAN BLOCKED THE PAGE when maxBlockMs
 exceeds `PLAN.maxBlockMs` (50ms), and PLAN UNDER-SAMPLED when the Monte
 Carlo's work budget (`PLAN.budgetMs` 1200ms) left fewer than 8 draws.
+`cpu.sections` attributes it: per labelled run (`plan-grafts`,
+`plan-install`, `count-route-scan`, ...) its work, longest block and longest
+single step with the step's index; PLAN BLOCKED THE PAGE names the section
+and step. A long step that stays in one section is code to split; one that
+moves between sections from pass to pass is a GC pause.
 NOT sliced: the rest of progress.js's pass (spend verdicts, gang and
 Covenant exits) still runs synchronously; only the plan's sections are
 measured.
@@ -102,6 +107,25 @@ Re-decide only on an EVENT: new life, committed option gone/finished, invite
 set changed, posterior moved materially (trader mean by > 1 posterior sd, s by
 > 1.5x), or 30 min since the last decision. Otherwise the committed plan is
 re-published with `held: 'no event'` and the MC is skipped.
+
+### One trajectory basis
+
+Every option is a trajectory SPEC priced by one function
+(`plan.trajectoryOf`): install after a wait with that wait's batch, hold to
+the exit, or a count route. The install decision prices its options with it;
+the graft decision prices "none" and "grafts" on the COMMITTED install's spec
+(`basisOf`, its remaining wait); if the install decision switches later in
+the pass, the graft options are re-priced on the new spec. Structural noise
+is keyed by the trajectory (`noiseKeyOf`: install point + grafts carried),
+not by the option label, so the same trajectory in two decisions draws the
+same noise and their committed exits agree exactly; `consistencyOf` checks it
+every pass (health 'inconsistent', healthcheck PLAN INCONSISTENT). Live 17:51
+the two read 23.0h (install w4, a batch lifting hacking x1.94) and 84.9h
+(grafts on the default policy, no batch): two trajectories, not one plan.
+On the default-policy basis the exit leans on ~20 installs of per-life
+ln(M) growth, whose posterior (0.0185 ± 0.0093 /h) gives a long right tail
+(exit ~ 1/ln M per h), hence mean 85h vs point 63h; on the w4 basis the batch
+dominates and the grafts option reads ~21h with a tight interval (BY12).
 
 ### One plan
 

@@ -177,7 +177,10 @@ export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = c
         h = null
       }
       raw[o.key].push(fin(h) ? h : null)
-      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.key) : null)
+      // The structural noise belongs to the TRAJECTORY (o.noiseKey), not the
+      // option's label: the same trajectory priced by two decisions gets the
+      // same draws of it, so their exits agree exactly (consistencyOf).
+      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null)
       yield
     }
     n++
@@ -280,6 +283,7 @@ export function redecideEvents(prev, cur, o = {}) {
   if (prev.lastAugReset !== cur.lastAugReset) ev.push('new life (install)')
   if (!prev.decidedAt || (cur.now - Date.parse(prev.decidedAt)) / 60e3 >= P.maxAgeMin) ev.push(`${P.maxAgeMin} min since the last decision`)
   if (cur.committedAvailable === false) ev.push('the committed option is gone (bought, finished or unpriced)')
+  if (prev.forceRedecide) ev.push(prev.forceRedecide)
   if (prev.invitesKey !== undefined && cur.invitesKey !== undefined && prev.invitesKey !== cur.invitesKey) ev.push('the invitation/joined set changed')
   const pt = prev.posteriors?.trader
   if (pt && cur.trader && Math.abs(cur.trader.perSec.mean - pt.mean) > P.traderMoveSd * Math.max(pt.sd, 1e-12)) ev.push(`trader posterior moved ${((cur.trader.perSec.mean - pt.mean) / pt.sd).toFixed(1)} sd`)
@@ -382,29 +386,29 @@ export function decideInstall(o = {}) {
 /** The generator decideInstall drains (yields inside the Monte Carlo). */
 export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock } = {}) {
   const opts = []
-  const simAt = (w, n, lifeH, g) => (d) => {
-    const inp = applyDraw(inputs, d)
-    if (count) return countExitFixed(bestExitPolicy, inp, count, { firstInstallH: w, n: n ?? 1, lifeH: lifeH ?? null })
-    return bestExitPolicy({ ...inp, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1).best?.hours ?? null
+  const ctx = { count, repPoint }
+  // Every option is a TRAJECTORY SPEC (trajectoryOf): the same spec prices the
+  // same trajectory wherever it is used — here, and as the basis of every
+  // other decision this plan makes (the graft decision prices on the
+  // committed install's spec).
+  const add = (key, spec, pointH, extra = {}) => {
+    const f = trajectoryOf(spec, ctx)
+    opts.push({ key, spec, pointH, noiseKey: noiseKeyOf(spec, inputs), sim: (d) => f(applyDraw(inputs, d), d), ...extra })
   }
   const P0 = point ?? {}
-  if (P0.now && fin(P0.now.hours)) opts.push({ key: 'now', waitH: 0, fixed: { n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null }, pointH: P0.now.hours, sim: simAt(0, P0.now.n, P0.now.lifeH, null) })
+  if (P0.now && fin(P0.now.hours)) add('now', { kind: 'wait', installAt: now, waitH: 0, n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null, gains: null }, P0.now.hours)
   for (const w of P0.waits ?? []) {
     if (!(fin(w?.waitH) && w.waitH > 0 && fin(w.hours))) continue
     if (w.route && count) {
       // INSTALL ONCE THE ROUTE'S DETOUR IS DONE (+ extra): the wait is the
       // drawn detour, so the route's own uncertainty rides this option.
       const extra = fin(w.extra) ? w.extra : 0
-      const route = w.route
-      opts.push({ key: `r${extra}`, waitH: w.waitH, routeKey: routeKey(route), extra, fixed: { n: 1, lifeH: w.lifeH ?? null }, pointH: w.hours, sim: (d) => {
-        const det = detourOf(route, d, repPoint)
-        return routeExitFixed(bestExitPolicy, applyDraw(inputs, d), count, route, { firstInstallH: det + extra, lifeH: w.lifeH ?? null, detourH: det })
-      } })
+      add(`r${extra}`, { kind: 'route', route: w.route, routeKey: routeKey(w.route), extra, lifeH: w.lifeH ?? null }, w.hours, { routeKey: routeKey(w.route), extra })
       continue
     }
-    opts.push({ key: `w${w.waitH}`, waitH: w.waitH, fixed: { n: w.n ?? null, lifeH: w.lifeH ?? null }, pointH: w.hours, gains: w.installGains ?? null, sim: simAt(w.waitH, w.n, w.lifeH, w.installGains ?? null) })
+    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null }, w.hours)
   }
-  if (!count && P0.never && fin(P0.never.hours)) opts.push({ key: 'never', waitH: Infinity, fixed: null, pointH: P0.never.hours, sim: (d) => bestExitPolicy(applyDraw(inputs, d), 0, 0).best?.hours ?? null })
+  if (!count && P0.never && fin(P0.never.hours)) add('never', { kind: 'never' }, P0.never.hours)
   // The committed install time, on its remaining wait. A route option is
   // relative to its own detour, so it is committed by key while the route
   // is the same.
@@ -413,11 +417,10 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   else if (sameLife && prev && (fin(prev.installAt) || prev.key === 'never')) {
     if (prev.key === 'never') committedKey = opts.some((o) => o.key === 'never') ? 'never' : null
     else {
-      const rem = Math.max(0, (prev.installAt - now) / 3.6e6)
-      if (rem <= 0.05) committedKey = opts.some((o) => o.key === 'now') ? 'now' : null
-      else {
-        const f = prev.fixed ?? {}
-        opts.push({ key: 'committed', waitH: rem, fixed: f, pointH: null, gains: prev.gains ?? null, sim: simAt(rem, f.n, f.lifeH, prev.gains ?? null) })
+      const spec = basisOf(prev, now)
+      if (spec && spec.waitH <= 0.05) committedKey = opts.some((o) => o.key === 'now') ? 'now' : null
+      else if (spec) {
+        add('committed', spec, null)
         committedKey = 'committed'
       }
     }
@@ -429,13 +432,105 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const rows = optionRows(use, stats, (o) => o.pointH)
   const record = (key, extra) => {
     const o = opts.find((x) => x.key === key)
-    const installAt = key === 'committed' ? prev.installAt : key === 'never' ? null : now + o.waitH * 3.6e6
-    return { key: key === 'committed' ? `w${r3(o.waitH)}` : key, install: key === 'now', installAt, waitH: key === 'never' ? null : r3(o.waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: o.fixed, gains: o.gains ?? null, ...stats[key], ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+    const sp = o.spec
+    const installAt = sp.kind === 'wait' ? sp.installAt : null
+    const waitH = sp.kind === 'wait' ? sp.waitH : sp.kind === 'route' ? o.pointH : null
+    const { route, ...specOut } = sp
+    return { key: key === 'committed' ? `w${r3(sp.waitH)}` : key, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, spec: specOut, noiseKey: o.noiseKey, ...stats[key], ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
   if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${prev?.why ?? ''}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows })
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
   if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows })
+}
+
+/**
+ * A TRAJECTORY, priced: the one function every decision uses for "the node's
+ * exit if the plan installs like THIS" — so the install decision and every
+ * decision priced on its basis (grafts, and whatever follows) price the same
+ * trajectory from the same inputs, not two models of it.
+ *   {kind: 'wait', waitH, n, lifeH, gains}  install after waitH (gains: that
+ *     batch's multipliers), then the policy search; the count-aware fixed
+ *     policy where the count gate is short
+ *   {kind: 'never'}                          hold to the exit
+ *   {kind: 'route', route, extra, lifeH}     install once the route's detour
+ *     (drawn, where `d` is given) is done
+ * Returns (inputs, d?) => hours | null.
+ */
+export function trajectoryOf(spec, { count = null, repPoint = null } = {}) {
+  if (!spec) return (x) => bestExitPolicy(x).best?.hours ?? null
+  if (spec.kind === 'never') return (x) => bestExitPolicy(x, 0, 0).best?.hours ?? null
+  if (spec.kind === 'route') {
+    return (x, d = null) => {
+      const det = d ? detourOf(spec.route, d, repPoint) : spec.route?.detourH
+      return count ? routeExitFixed(bestExitPolicy, x, count, spec.route, { firstInstallH: det + (spec.extra ?? 0), lifeH: spec.lifeH ?? null, detourH: det }) : null
+    }
+  }
+  const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0
+  const g = spec.gains ?? null
+  if (count) return (x) => countExitFixed(bestExitPolicy, x, count, { firstInstallH: w, n: spec.n ?? 1, lifeH: spec.lifeH ?? null })
+  return (x) => {
+    const r = bestExitPolicy({ ...x, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
+    return r.degenerate ? null : r.best?.hours ?? null
+  }
+}
+
+/** The policy (installs first) of a no-count trajectory, for callers that need more than the hours. */
+export function policyOf(spec, x) {
+  if (spec?.kind === 'never') return bestExitPolicy(x, 0, 0)
+  if (spec?.kind === 'wait') {
+    const g = spec.gains ?? null
+    return bestExitPolicy({ ...x, firstInstallH: Math.max(0, spec.waitH ?? 0), ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
+  }
+  return bestExitPolicy(x)
+}
+
+/**
+ * The structural-noise key of a trajectory: the install point (to the
+ * minute) or 'never' or the route, and whether the inputs carry committed
+ * grafts. Equal trajectories share noise draws, whichever decision prices them.
+ */
+export function noiseKeyOf(spec, inputs) {
+  const g = Array.isArray(inputs?.finalGrafts) && inputs.finalGrafts.length ? `g${inputs.finalGrafts.length}` : 'g0'
+  if (!spec) return `default|${g}`
+  if (spec.kind === 'never') return `never|${g}`
+  if (spec.kind === 'route') return `route:${spec.routeKey ?? routeKey(spec.route)}|${spec.extra ?? 0}|${g}`
+  return `at:${Math.round((spec.installAt ?? 0) / 60e3)}|${g}`
+}
+
+/**
+ * THE COMMITTED INSTALL AS A BASIS: the spec of a committed install record on
+ * its REMAINING wait now. null when nothing is committed (the caller prices on
+ * the default policy and says so).
+ */
+export function basisOf(rec, now = Date.now()) {
+  if (!rec || !rec.key) return null
+  if (rec.key === 'never') return { kind: 'never' }
+  const sp = rec.spec ?? null
+  if (sp?.kind === 'route') return null // a route basis needs this pass's route object: priced by the install decision only
+  if (!fin(rec.installAt)) return null
+  return { kind: 'wait', installAt: rec.installAt, waitH: Math.max(0, (rec.installAt - now) / 3.6e6), n: rec.fixed?.n ?? sp?.n ?? null, lifeH: rec.fixed?.lifeH ?? sp?.lifeH ?? null, gains: rec.gains ?? sp?.gains ?? null }
+}
+
+/**
+ * ONE PLAN, ONE EXIT: the install decision's committed option and the graft
+ * decision's committed option are the SAME trajectory when the graft decision
+ * was priced on the install's basis and its choice is what the install's
+ * inputs carried. Their exits must then agree within Monte Carlo noise (they
+ * share draws and noise keys, so in fact exactly). Returns {ok, installH,
+ * graftsH, diffH, tolH, sameBasis, why}.
+ */
+export function consistencyOf(install, grafts, { si = 0.02 } = {}) {
+  if (!install?.key || !fin(install.meanH)) return { ok: null, why: 'no install decision this pass' }
+  if (!grafts?.key || !grafts.basisNoiseKey) return { ok: null, why: 'no graft decision priced on a basis this pass' }
+  const sameBasis = grafts.basisNoiseKey === install.noiseKey
+  const gH = grafts.meanH
+  const N = Math.max(1, Math.min(install.n ?? 1, grafts.n ?? 1))
+  const tolH = Math.max(0.02 * install.meanH, (4 * Math.SQRT2 * si * install.meanH) / Math.sqrt(N))
+  if (!sameBasis) return { ok: null, sameBasis, installH: install.meanH, graftsH: gH, why: `the graft decision was priced on ${grafts.basisNoiseKey}, the install committed ${install.noiseKey}: not comparable this pass (re-priced on the next)` }
+  const diffH = +(gH - install.meanH).toFixed(3)
+  const ok = Math.abs(diffH) <= tolH
+  return { ok, sameBasis, installH: install.meanH, graftsH: gH, diffH, tolH: +tolH.toFixed(3), why: ok ? `install and graft decisions price one trajectory: ${install.meanH}h vs ${gH}h` : `INCONSISTENT: the install decision's committed exit ${install.meanH}h and the graft decision's ${gH}h differ by ${diffH}h (tolerance ${tolH.toFixed(2)}h) on the same basis` }
 }
 
 /**
@@ -515,10 +610,17 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   // the searches yield between slices. A record from before the slicing (cpu
   // without maxBlockMs) is judged on its total, as it was then.
   const cpu = plan.cpu
-  if (cpu && fin(cpu.maxBlockMs) && cpu.maxBlockMs > (cpu.maxBlockLimitMs ?? PLAN.maxBlockMs)) fail(`PLAN BLOCKED THE PAGE: a ${cpu.maxBlockMs}ms synchronous block against ${cpu.maxBlockLimitMs ?? PLAN.maxBlockMs}ms`, 'a search ran without yielding (coop.js slices) — find the section in the page trace (trace.js plan-*) and make it a generator run through the pass pacer')
+  // The section that holds the longest single step (cpu.sections): where the
+  // un-sliced work is.
+  const worst = cpu?.sections ? Object.entries(cpu.sections).sort((a, b) => (b[1].maxStepMs ?? 0) - (a[1].maxStepMs ?? 0))[0] : null
+  const where = worst ? ` — longest step ${worst[1].maxStepMs}ms in '${worst[0]}' (step ${worst[1].maxStepAt} of ${worst[1].steps})` : ''
+  if (cpu && fin(cpu.maxBlockMs) && cpu.maxBlockMs > (cpu.maxBlockLimitMs ?? PLAN.maxBlockMs)) fail(`PLAN BLOCKED THE PAGE: a ${cpu.maxBlockMs}ms synchronous block against ${cpu.maxBlockLimitMs ?? PLAN.maxBlockMs}ms${where}`, 'a piece of work ran without yielding (coop.js slices): split that section\'s step with more yields, or speed it; a step that moves between sections from pass to pass is a GC pause, not code')
+  else if (worst) notes.push(`plan longest step: ${worst[1].maxStepMs}ms in '${worst[0]}'`)
   else if (cpu && !('maxBlockMs' in cpu) && cpu.overBudget) fail(`PLAN OVER CPU BUDGET: ${cpu.ms}ms against ${cpu.budgetMs}ms`, 'the Monte Carlo runs on the game\'s main thread (the page has frozen before) — lower PLAN.N or PLAN.topK')
   if (cpu && cpu.truncated) notes.push(`plan Monte Carlo truncated at its ${cpu.budgetMs}ms work budget (${cpu.draws} of ${cpu.N} draws)`)
   if (cpu && fin(cpu.draws) && cpu.draws < 8 && fin(cpu.N)) fail(`PLAN UNDER-SAMPLED: ${cpu.draws} of ${cpu.N} draws`, 'the work budget stopped the Monte Carlo before its probabilities mean anything — the decision rests on too few paired draws')
+  if (plan.consistency?.ok === false) fail(`PLAN INCONSISTENT: ${plan.consistency.why}`, 'two decisions of the one plan price its committed trajectory differently — they are not reading the same basis (plan.basisOf / trajectoryOf)')
+  else if (plan.consistency?.why) notes.push(`plan consistency: ${plan.consistency.why}`)
   const c = plan.calibration
   if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
   else if (c) notes.push(`plan calibration: ${c.why ?? 'none'}`)
