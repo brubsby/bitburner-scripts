@@ -82,6 +82,8 @@ import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
 import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy } from 'exitplan.js'
+// Pure (stock.js's brain, read-only here): which servers move which symbol.
+import { SYMBOL_META } from 'stockstrat.js'
 
 /**
  * STOCK MANIPULATION, as a service to the trader. hack/grow take {stock: true}
@@ -96,6 +98,9 @@ import { bestExitPolicy } from 'exitplan.js'
  */
 let stockManip = null
 let stockCurve = null
+// Every company server with a stock, servable or not, for the trader to read
+// (batch.txt stockServers): published whatever it currently requests.
+let stockServers = null
 function refreshStockManip(ns) {
   try {
     const rec = stockRecordOf(JSON.parse(ns.read(STOCK_FILE) || 'null'), ns.getResetInfo().lastAugReset)
@@ -189,6 +194,17 @@ function rankExpTargets(ns, readT, level) {
  * chance per op is moneyMoved/moneyMax, PlayerInfluencing.ts:24-58), the RAM
  * their pipelines hold, and the exp per GB-ms that RAM earns batched.
  */
+/** One host's manip delivery at saturation (planBatch sizing), or null when no batch fits. */
+function manipRateOf(ns, readT, ram, capacity, h) {
+  const t = readT(h)
+  t.baseDifficulty = ns.getServer(h).baseDifficulty
+  const p = planBatch(t, ram, capacity / 4, capacity)
+  if (!p) return null
+  const perSec = 1000 / (4 * SETTINGS.spacing)
+  const held = (p.gb * (t.hackTime * 4)) / (4 * SETTINGS.spacing)
+  return { nu: p.f * t.chance * perSec, gb: held, expGbms: batchedScore(t) * held }
+}
+
 function manipCost(ns, readT, ram, level, capacity) {
   let nu = 0
   let gb = 0
@@ -205,21 +221,51 @@ function manipCost(ns, readT, ram, level, capacity) {
       blocked.push(why)
       continue
     }
-    const t = readT(h)
-    t.baseDifficulty = ns.getServer(h).baseDifficulty
-    const p = planBatch(t, ram, capacity / 4, capacity)
-    if (!p) {
+    const m = manipRateOf(ns, readT, ram, capacity, h)
+    if (!m) {
       blocked.push(`${h}: no batch fits the fleet (planBatch)`)
       continue
     }
-    const perSec = 1000 / (4 * SETTINGS.spacing)
-    const held = (p.gb * (t.hackTime * 4)) / (4 * SETTINGS.spacing)
-    nu += p.f * t.chance * perSec
-    gb += held
-    expGbms += batchedScore(t) * held
+    nu += m.nu
+    gb += m.gb
+    expGbms += m.expGbms
     hosts.push(h)
   }
   return { hosts, blocked, nu, gb, batchRate: gb > 0 ? expGbms / gb : 0 }
+}
+
+/**
+ * EVERY COMPANY SERVER WITH A STOCK (stockstrat SYMBOL_META), whether the
+ * trader requests it or not: rooted, the ports it needs, its level against
+ * ours, money > 0, servable now (expfarm.manipBlocker) and the nudge rate a
+ * batch on it would deliver at saturation (nudgesIfServed; null where our
+ * level cannot hack it at all). The trader reads it to hold what can be
+ * moved; progress.js prices port openers by the hosts they would root.
+ */
+function stockServersOf(ns, readT, ram, level, capacity) {
+  const known = new Set(scanAll(ns))
+  const out = []
+  for (const [sym, meta] of Object.entries(SYMBOL_META)) {
+    for (const host of meta.servers ?? []) {
+      if (!known.has(host)) {
+        out.push({ sym, host, exists: false, servable: false, why: `${host}: no such server` })
+        continue
+      }
+      const s = { root: ns.hasRootAccess(host), maxMoney: ns.getServerMaxMoney(host), required: ns.getServerRequiredHackingLevel(host), level }
+      const why = manipBlocker(host, s)
+      let nudgesIfServed = null
+      if (s.maxMoney > 0 && s.required <= level) {
+        try {
+          const m = manipRateOf(ns, readT, ram, capacity, host)
+          nudgesIfServed = m ? Math.round(m.nu * 1e5) / 1e5 : null
+        } catch {
+          nudgesIfServed = null
+        }
+      }
+      out.push({ sym, host, rooted: s.root, ports: ns.getServerNumPortsRequired(host), required: s.required, level, moneyMax: s.maxMoney, servable: why === null, why, nudgesIfServed })
+    }
+  }
+  return out
 }
 
 /** One tick of the farm: prep, create waves, launch due hacks. */
@@ -1514,10 +1560,19 @@ export async function main(ns) {
         if (avail >= ram.hack) free.set(h, avail)
       }
 
+      // THE TRADER'S CURRENT REQUEST, every pass (ns.read is free): a request
+      // read only at retarget served the old holding for up to 30s after the
+      // trader switched (live: megacorp requested while stock.txt said
+      // fulcrum*), and every worker launched meanwhile carried the old flag.
+      // A changed request retargets at once.
+      {
+        const before = JSON.stringify(stockManip)
+        refreshStockManip(ns)
+        if (JSON.stringify(stockManip) !== before) nextRetarget = 0
+      }
       // --- choose targets ---------------------------------------------------
       if (now >= nextRetarget || (!targets.length && !farm.on)) {
         nextRetarget = now + SETTINGS.retargetMs
-        refreshStockManip(ns)
         const level = ns.getHackingLevel()
         const ranked = []
         for (const h of scanAll(ns)) {
@@ -1568,6 +1623,11 @@ export async function main(ns) {
           farm.target = best ? best.t : null
           farm.score = best ? best.s : 0
           const mc = stockManip ? manipCost(ns, readT, ram, level, totalRam) : null
+          try {
+            stockServers = stockServersOf(ns, readT, ram, level, totalRam)
+          } catch (e) {
+            stockServers = { error: String(e).slice(0, 120) }
+          }
           let v = { serve: false, priced: false, why: manipUnservableWhy(stockManip, mc?.blocked ?? []) }
           if (mc && mc.hosts.length) {
             let rec = null
@@ -2193,6 +2253,7 @@ export async function main(ns) {
                 why: farm.why,
               }
             : null,
+          stockServers,
           stockManip: stockManip ? { requested: stockManip, served: Object.keys(stockManip).filter((h) => targets.includes(h)), unserved: Object.keys(stockManip).filter((h) => !targets.includes(h)) } : null,
           targets: perTarget,
           errors: errors.slice(-5),

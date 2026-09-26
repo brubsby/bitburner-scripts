@@ -1,0 +1,137 @@
+{
+ "note": "BN8 2026-09-26 22:52 UTC: exitinputs, stock.txt manipCurve + manip request, batch.txt expFarm.manip (stale request)",
+ "exitInputs": {
+  "at": "2026-09-26T22:52:23.175Z",
+  "lastAugReset": 1790459814843,
+  "inputs": {
+   "money": 310997073.20610243,
+   "incomePerSec": 40818.912951171915,
+   "lifeIncome": 0,
+   "hacking": 1638,
+   "hackingExp": 35527760.17334875,
+   "hackingMult": 4.598568879847977,
+   "expPerSec": 10555.81,
+   "repPerSec": 7.453751999248494,
+   "exitRep": 0,
+   "exitFavor": 0,
+   "cycleHours": 2.7211764705882353,
+   "multGainPerCycle": 1.0375688384788753,
+   "nextInstallGain": 1.0201052924068645,
+   "installGains": {
+    "hacking": 1.0201052924068645,
+    "rep": 1.0201052924068645,
+    "income": 1.0779385140220694,
+    "exp": 1.0201052924068645
+   },
+   "persistBaseline": {
+    "hacking": 1.0201052924068645,
+    "rep": 1.0201052924068645,
+    "income": 1.0779385140220694,
+    "exp": 1.0201052924068645
+   },
+   "eRep": 0,
+   "eBudget": 0.1473,
+   "exitLevel": 3000,
+   "joinMoney": 100000000000,
+   "terminalRep": 2500000,
+   "donationCost": 1170658671962.4968,
+   "favorToDonate": 0,
+   "flatIncomePerSec": 0,
+   "capitalReturnPerSec": 0.00020359207713321632,
+   "capitalWarmupH": 0.3697864065846154,
+   "capitalFit": "realised: 2 trader run(s) from their start, 272 points over 5.9h of market ticks — growth index = r(T - w), flows excluded",
+   "capitalCap": 5837313758950.956,
+   "installCash": 250000000,
+   "workWhileDonating": true,
+   "cadence": {
+    "source": "measured",
+    "node": 8,
+    "lives": 18,
+    "why": "measured over 18 lives in BitNode 8"
+   },
+   "finalGrafts": [
+    {
+     "name": "SmartJaw",
+     "cost": 8250000000,
+     "slotH": 1.3761839690716855,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 1.225
+    },
+    {
+     "name": "OmniTek InfoLoad",
+     "cost": 8625000000,
+     "slotH": 0.8336727524955296,
+     "hacking": 1.176,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "nextSENS Gene Modification",
+     "cost": 5775000000,
+     "slotH": 1.556873165200577,
+     "hacking": 1.176,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuronal Densification",
+     "cost": 4125000000,
+     "slotH": 1.0294046578414557,
+     "hacking": 1.127,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "Xanipher",
+     "cost": 12750000000,
+     "slotH": 2.0077652323706294,
+     "hacking": 1.176,
+     "exp": 1.127,
+     "rep": 0.98
+    }
+   ],
+   "graftStartMoney": 83715000000
+  }
+ },
+ "stock": {
+  "at": "2026-09-26T22:54:54.734Z",
+  "manip": {
+   "fulcrumtech": "grow",
+   "fulcrumassets": "grow"
+  },
+  "manipCurve": [
+   {
+    "nudgesPerSec": 0,
+    "returnPerSec": 0.00025248387993063813
+   },
+   {
+    "nudgesPerSec": 0.041666666666666664,
+    "returnPerSec": 0.00030494259171406565
+   },
+   {
+    "nudgesPerSec": 0.16666666666666666,
+    "returnPerSec": 0.0004261696930719055
+   },
+   {
+    "nudgesPerSec": 0.5,
+    "returnPerSec": 0.0005911020630332625
+   },
+   {
+    "nudgesPerSec": 1.6666666666666667,
+    "returnPerSec": 0.0007006174729092378
+   }
+  ]
+ },
+ "batchManip": {
+  "serve": false,
+  "priced": false,
+  "why": "manip requested on 1 host(s), none servable: blade: not rooted yet",
+  "hosts": [],
+  "blocked": [
+   "blade: not rooted yet"
+  ],
+  "nudgesPerSec": 0,
+  "gb": 0
+ }
+}

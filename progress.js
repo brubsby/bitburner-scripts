@@ -135,6 +135,8 @@ import { contractIncome } from 'contractplan.js'
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
+// Pure: the manipCurve interpolation (prices port openers' manipulation channel).
+import { rateAt } from 'expfarm.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -1842,7 +1844,7 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     // measured script exp x the tier's exp multiple (batch.txt
     // expFarm.portTiers). Every opener in the best prefix that shortens the
     // exit is licensed; autobuy.js and the program orders read this.
-    if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) out.programs = programVerdicts(ns, inputs)
+    if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) out.programs = programVerdicts(ns, inputs, info)
     // Recorded in the one plan (what each spender may buy, and how sure).
     const pc = planCtxOf(ns, info)
     if (pc) pc.decisions.spends = Object.fromEntries(['home', 'hacknet', 'servers'].map((k) => [k, out[k] ? { buy: out[k].buy === true, pBuy: out[k].pBuy ?? null, deltaH: typeof out[k].deltaH === 'number' ? +out[k].deltaH.toFixed(3) : null } : null]))
@@ -1860,7 +1862,7 @@ const PORT_OPENERS = [
   ['SQLInject.exe', 250e6],
 ]
 
-function programVerdicts(ns, inputs) {
+function programVerdicts(ns, inputs, info) {
   const out = {}
   try {
     const tiers = readJson(ns, '/tel/batch.txt')?.expFarm?.portTiers
@@ -1874,14 +1876,40 @@ function programVerdicts(ns, inputs) {
       out.tor = { buy: false, why: 'unpriced: see the openers' }
       return out
     }
+    // THE STOCK-MANIPULATION CHANNEL. A port opener also roots company
+    // servers, and a rooted company server at our level is one the batcher
+    // can nudge the trader's stock on (batch.txt stockServers: every company
+    // server with a stock, its ports, level, and the nudge rate a batch on it
+    // delivers). Live 2026-09-26 SQLInject was refused on exp alone while the
+    // trader held FLCM and fulcrum* sat unrooted — manipulation, worth ~2x
+    // the trader's return on its own curve, was never priced. Here the
+    // trader's requested hosts (stock.txt manip) that a prefix would make
+    // servable add their nudges; the return moves along stock.js's
+    // manipCurve (expfarm.rateAt), scaling the realised return the exit uses.
+    const batchRec = readJson(ns, '/tel/batch.txt')
+    const stockServers = Array.isArray(batchRec?.stockServers) ? batchRec.stockServers : null
+    const stockRec = stockRecordOf(readJson(ns, STOCK_FILE), info?.lastAugReset)
+    const curve = stockRec.ok ? stockRec.manipCurve : null
+    const requested = stockRec.ok && stockRec.manip ? Object.keys(stockRec.manip) : []
+    const owned = PORT_OPENERS.length - unowned.length
+    const nuAt = (k) => (stockServers ?? []).filter((x) => requested.includes(x.host) && typeof x.nudgesIfServed === 'number' && (x.rooted || x.ports <= k) && x.required <= x.level && x.moneyMax > 0).reduce((a, x) => a + x.nudgesIfServed, 0)
+    const manipOf = (k) => {
+      if (!stockServers || !Array.isArray(curve) || curve.length < 2 || !requested.length || !(inputs?.capitalReturnPerSec > 0)) return null
+      const r0 = rateAt(curve, nuAt(owned))
+      const rk = rateAt(curve, nuAt(k))
+      if (!(r0 > 0) || !(rk > 0)) return null
+      return { nudgesPerSec: +nuAt(k).toFixed(5), capitalReturnPerSec: inputs.capitalReturnPerSec * (rk / r0), ratio: +(rk / r0).toFixed(4) }
+    }
+    out.manipChannel = !stockServers ? 'unpriced: no batch.txt stockServers' : !Array.isArray(curve) ? 'unpriced: stock.js publishes no manipCurve' : !requested.length ? 'the trader requests no manipulation' : `requested ${requested.join(', ')}`
     let best = null
     let cost = torCost
     for (let j = 0; j < unowned.length && j < tiers.tiers.length; j++) {
       cost += unowned[j][1]
       const mult = tiers.tiers[j].expMultiple
       const gain = typeof mult === 'number' && isFinite(mult) ? Math.max(0, scriptExp * (mult - 1)) : null
-      const r = gain === null ? { deltaH: null, why: 'tier exp multiple unreadable' } : programExit(inputs, cost, gain)
-      out[`prefix${j + 1}`] = { cost, expGainPerSec: gain, deltaH: r.deltaH, why: r.why ?? `exit ${r.withH?.toFixed(2)}h with vs ${r.withoutH?.toFixed(2)}h without` }
+      const manip = manipOf(owned + j + 1)
+      const r = gain === null ? { deltaH: null, why: 'tier exp multiple unreadable' } : programExit(inputs, cost, gain, manip && manip.ratio > 1 ? { capitalReturnPerSec: manip.capitalReturnPerSec } : {})
+      out[`prefix${j + 1}`] = { cost, expGainPerSec: gain, manip, deltaH: r.deltaH, why: r.why ?? `exit ${r.withH?.toFixed(2)}h with vs ${r.withoutH?.toFixed(2)}h without${manip && manip.ratio > 1 ? ` (manipulation x${manip.ratio} on the trader's return)` : ''}` }
       if (typeof r.deltaH === 'number' && r.deltaH < -1 / 60 && (!best || r.deltaH < best.deltaH)) best = { j, deltaH: r.deltaH, cost }
     }
     for (let j = 0; j < unowned.length; j++) {
