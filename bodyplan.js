@@ -425,6 +425,29 @@ export function hoursToStat(stat, target, person, ratePerSec) {
  * reads it, because assuming 1 would be wrong in exactly the node that sells
  * the upgrade.
  */
+/**
+ * THE NEXT GYM LEG of a join forecast, across EVERY gym blocker. joinplan
+ * reports one blocker per `skills` requirement — Slum Snakes' combat 30 is
+ * four blockers, one stat each — so taking the first blocker with a gym
+ * (the old body step) returned null the moment strength reached 30: the
+ * step stopped claiming the work slot and faction work took it back with
+ * defense, dexterity and agility still at 1 (live BN8 2026-09-26 11:47).
+ * Legs are taken in requirement order (strength, defense, dexterity,
+ * agility); a blocker whose gym carries a `why` (does not fit the window)
+ * disqualifies the whole step, as before. Returns {gym, city, stat, to,
+ * hours} or null when every leg is met.
+ */
+export function nextGymLeg(blockers, skills) {
+  const gyms = (blockers ?? []).map((b) => b?.gym).filter(Boolean)
+  if (gyms.some((g) => g.why)) return null
+  for (const g of gyms) {
+    for (const l of g.legs ?? []) {
+      if ((skills?.[l.stat] ?? 0) < l.to) return { gym: g.gym, city: g.city, stat: l.stat, to: l.to, hours: l.hours }
+    }
+  }
+  return null
+}
+
 export function gymLegs(targets, person, trainingMult) {
   if (personProblem(person)) return null
   const gym = bestGym(person)

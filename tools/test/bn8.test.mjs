@@ -570,5 +570,40 @@ export async function run() {
   }
   checks.push(q);
 
+  // -----------------------------------------------------------------------
+  const r8 = new Check("B8r", "a join's combat legs hold the work slot until ALL four stats reach the target, str -> def -> dex -> agi (live 11:47: strength done, slot released, defense 1 of 30)");
+  {
+    r8.examined(6);
+    const BP = await import("../../bodyplan.js");
+    const SK = ["strength", "defense", "dexterity", "agility"];
+    // joinplan's shape: ONE blocker per skills requirement, each with its own gym leg.
+    const blockers = [
+      ...SK.map((s) => ({ type: "skills", hours: 0.02, gym: { hours: 0.02, gym: "Powerhouse Gym", city: "Sector-12", legs: [{ stat: s, to: 30, hours: 0.02 }] } })),
+      { type: "money", hours: 0 },
+      { type: "karma", hours: 0 },
+    ];
+    const skills = { strength: 1, defense: 1, dexterity: 1, agility: 1 };
+    const seen = [];
+    for (let pass = 0; pass < 12; pass++) {
+      const leg = BP.nextGymLeg(blockers, skills);
+      if (!leg) break;
+      seen.push(leg.stat);
+      skills[leg.stat] = Math.min(30, skills[leg.stat] + 15); // a pass trains 15 levels
+    }
+    const order = [...new Set(seen)];
+    r8.note(`passes: ${seen.join(" ")}`);
+    if (order.join(",") !== SK.join(",")) r8.fail(`the legs must run strength, defense, dexterity, agility; ran ${order.join(",")}`);
+    if (SK.some((s) => skills[s] < 30)) r8.fail("the claim released before every stat reached 30", JSON.stringify(skills));
+    if (BP.nextGymLeg(blockers, skills) !== null) r8.fail("with every stat at 30 there is no leg (the slot is released)");
+    // The old rule (first gym blocker only) released after strength — the regression.
+    const old = blockers.find((b) => b.gym)?.gym?.legs?.find((l) => ({ strength: 30, defense: 1 })[l.stat] < l.to);
+    if (old) r8.fail("fixture: the old first-blocker rule should have found nothing after strength");
+    if (BP.nextGymLeg([{ gym: { why: "does not fit", legs: [{ stat: "strength", to: 30 }] } }], { strength: 1 }) !== null) r8.fail("a gym leg that does not fit the window disqualifies the step");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const leg = nextGymLeg\(f\?\.blockers, player\.skills\)/.test(prog)) r8.fail("the body step must take its gym leg from every blocker");
+    if (!/if \(bodyStep && canWork && !flags\.dry\) \{[\s\S]{0,700}slotOwner = 'body'/.test(prog)) r8.fail("the body step must claim the work slot");
+  }
+  checks.push(r8);
+
   return checks;
 }

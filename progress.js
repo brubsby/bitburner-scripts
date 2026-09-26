@@ -150,7 +150,7 @@ import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor, karmaGrindAcrossCycles, GYMS } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -3550,9 +3550,9 @@ async function act(ns, canJoin, info, note) {
       const killsShort = typeof crime.kills === 'number' && player.numPeopleKilled < crime.kills
       if (karmaShort || killsShort) return { kind: 'crime', type: crime.type, hours: crime.hours, karmaShort, killsShort }
     }
-    const gym = f?.blockers?.find((b) => b.gym)?.gym
-    const leg = gym?.legs?.find((l) => (player.skills?.[l.stat] ?? 0) < l.to)
-    if (gym && !gym.why && leg) return { kind: 'gym', gym: gym.gym, city: gym.city, ...leg }
+    // Every gym blocker, not the first: one per stat (bodyplan.nextGymLeg).
+    const leg = nextGymLeg(f?.blockers, player.skills)
+    if (leg) return { kind: 'gym', ...leg }
     return null
   })()
 
