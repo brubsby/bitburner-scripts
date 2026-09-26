@@ -27,7 +27,7 @@ re-initialised market at every install (`Prestige.ts:38,158-170`). So the
 only money is the stock trader's compounding return, and reputation is a
 price.
 
-Counts (rows below): **aligned 17 · proxy 13 · unused-but-available 6 · gated 11.**
+Counts (48 rows below; a row can carry two verdicts, e.g. aug batch = proxy, install timing = aligned): **aligned ~16 (grafting included, after Fix 1) · proxy ~17 · unused-but-available 6 · gated ~12.**
 
 ## Money
 
