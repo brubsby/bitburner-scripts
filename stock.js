@@ -210,12 +210,15 @@ export async function main(ns) {
   let st = null
   const PHASE_FILE = '/tel/stock-phase.txt'
   let phasePrior = null
+  let freshTicks = null
+  let phaseLockTick = null
   let last = { orders: [], refused: [] }
   let v4s = null
   // Return accounting (nodeecon.js returnPerSec/incomePerSec): each tick's
   // P&L is the change in post-trade equity plus the cash our own orders moved,
   // so deposits and withdrawals by other spenders never read as return.
   let prevEquity = null
+  let prevPos = null // the book as THIS script left it last tick
   const ret = [] // [{pnl, capitalSec}] over the last hour of ticks
   let lifePnl = 0
   let startWealth = null
@@ -265,7 +268,14 @@ export async function main(ns) {
       if (!st) {
         fetchFromHome(ns, PHASE_FILE)
         phasePrior = phasePriorFrom(readJson(ns, PHASE_FILE), Date.now(), info.lastAugReset)
-        st = newState(syms, { phasePrior })
+        // A market initialised by this life's install / node entry
+        // (Prestige.ts initStockMarket at lastAugReset) starts at the known
+        // InitStockMetadata forecasts: the HMM starts there instead of at
+        // the stationary prior (tools/sim/stocks/warmup.mjs: first-hour P&L
+        // p10/p25/p50 47/67/98% -> 72/105/134% on fresh markets).
+        const ticksSinceInit = Math.round((Date.now() - info.lastAugReset) / 6000)
+        freshTicks = ticksSinceInit >= 0 && ticksSinceInit <= 150 ? ticksSinceInit : null
+        st = newState(syms, { phasePrior, freshTicks })
       }
       observe(st, prices, forecasts)
       const prec = phaseRecord(st, Date.now(), info.lastAugReset)
@@ -336,7 +346,13 @@ export async function main(ns) {
       const posAfter = orders.length ? Object.fromEntries(syms.map((s) => [s, ns.stock.getPosition(s)])) : positions
       const equity = equityOf(posAfter, ask, bid)
       if (prevEquity !== null) {
-        const pnl = posValue - prevEquity // this tick's market move on last tick's book
+        // The market move on the book AS WE LEFT IT: last tick's positions at
+        // this tick's prices. NOT posValue - prevEquity: shares another script
+        // sold in between (act-liquidate.js raise/install, raise_*) are an
+        // external flow, and booking them as P&L read every raise as a loss —
+        // live 2026-09-26 13:23 a $72.8m JGN raise showed as lifePnl -$68m,
+        // and every post-install "warm-up loss" in stock-hist.txt had this in it.
+        const pnl = equityOf(prevPos, ask, bid) - prevEquity
         const capital = prevEquity + Math.max(0, cash - (claimKnown ? Math.min(R, cash) : 0))
         ret.push({ pnl, capitalSec: capital * 6 })
         if (ret.length > 600) ret.shift()
@@ -344,6 +360,7 @@ export async function main(ns) {
         lifeSec += 6
       }
       prevEquity = equity
+      prevPos = posAfter
       const wPnl = ret.reduce((a, b) => a + b.pnl, 0)
       const wCap = ret.reduce((a, b) => a + b.capitalSec, 0)
 
@@ -374,6 +391,16 @@ export async function main(ns) {
         canShort,
         phase: st.phase,
         phasePrior,
+        // THE WARM-UP, measured (plan.js reads realisedCapital from
+        // stock-hist.txt; this is the same run's summary): how this run
+        // started, when the phase locked, and the P&L (flows excluded) so far.
+        warmup: {
+          prior: st.fresh ? 'init-forecast' : phasePrior ? 'phase-prior' : 'stationary',
+          freshTicks,
+          phaseLockTick: (phaseLockTick = phaseLockTick ?? (st.phase !== null ? st.t : null)),
+          pnlFrac: startWealth > 0 ? lifePnl / startWealth : null,
+          hours: (st.t * 6) / 3600,
+        },
         toBoundary: ticksToBoundary(st),
         ticksSeen: st.t,
         wealth,

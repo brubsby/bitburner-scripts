@@ -23,7 +23,7 @@ const arg = (k, d) => {
 
 class Stop extends Error {}
 
-export function fakeNs(mkt, { ticks, node = 8, files = {}, onTick = null, sfs = new Map(), has4S = false, homeRam = 1024 } = {}) {
+export function fakeNs(mkt, { ticks, node = 8, files = {}, onTick = null, sfs = new Map(), has4S = false, homeRam = 1024, lastAugReset = 1 } = {}) {
   const fs = { ...files };
   let n = 0;
   let exitFn = null;
@@ -38,7 +38,7 @@ export function fakeNs(mkt, { ticks, node = 8, files = {}, onTick = null, sfs = 
     scp: () => true,
     read: (f) => fs[f] ?? "",
     write: (f, d, mode) => (fs[f] = mode === "a" ? (fs[f] ?? "") + d : d),
-    getResetInfo: () => ({ currentNode: node, lastAugReset: 1, ownedSF: sfs }),
+    getResetInfo: () => ({ currentNode: node, lastAugReset, ownedSF: sfs }),
     getServerMaxRam: () => homeRam,
     getServerMoneyAvailable: () => mkt.money,
     sleep: async () => {},

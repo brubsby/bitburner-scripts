@@ -21,13 +21,13 @@ export function symbolMeta() {
     // server's range, since serving ANY one of them nudges the forecast.
     const ranges = meta.map((s) => (typeof s.requiredHackingSkill === "number" ? [s.requiredHackingSkill, s.requiredHackingSkill] : [s.requiredHackingSkill.min, s.requiredHackingSkill.max]));
     const req = ranges.length ? ranges.reduce((a, b) => (b[1] < a[1] ? b : a)) : null;
-    out[m.symbol] = { S, servers, req };
+    out[m.symbol] = { S, servers, req, init: [m.b ? 1 : -1, m.otlkMag] };
   }
   return out;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const t = symbolMeta();
-  for (const [k, v] of Object.entries(t)) console.log(`  ${k}: { S: ${v.S}, servers: ${JSON.stringify(v.servers).replace(/"/g, "'").replace(/,/g, ', ')}, req: ${JSON.stringify(v.req)?.replace(/,/g, ', ') ?? 'null'} },`);
+  for (const [k, v] of Object.entries(t)) console.log(`  ${k}: { S: ${v.S}, servers: ${JSON.stringify(v.servers).replace(/"/g, "'").replace(/,/g, ', ')}, req: ${JSON.stringify(v.req)?.replace(/,/g, ', ') ?? 'null'}, init: [${v.init.join(', ')}] },`);
   process.exit(0); // the bundle leaves jsdom timers alive
 }

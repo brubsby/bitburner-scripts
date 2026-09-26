@@ -53,7 +53,7 @@ export async function run() {
       c1.examined(1);
       const m = S.SYMBOL_META[sym];
       if (!m) c1.fail(`${sym} missing from SYMBOL_META`);
-      else if (m.S !== t.S || JSON.stringify(m.servers) !== JSON.stringify(t.servers) || JSON.stringify(m.req) !== JSON.stringify(t.req)) c1.fail(`${sym}: shipped ${JSON.stringify(m)} vs source ${JSON.stringify(t)}`);
+      else if (m.S !== t.S || JSON.stringify(m.servers) !== JSON.stringify(t.servers) || JSON.stringify(m.req) !== JSON.stringify(t.req) || JSON.stringify(m.init) !== JSON.stringify(t.init)) c1.fail(`${sym}: shipped ${JSON.stringify(m)} vs source ${JSON.stringify(t)}`);
     }
     for (const sym of Object.keys(S.SYMBOL_META)) if (!truth[sym]) c1.fail(`${sym} in SYMBOL_META but not in InitStockMetadata`);
   }
@@ -400,6 +400,61 @@ export async function run() {
     c8.note(`$50m withdrawn mid-run: externalFlows $${(tel.externalFlows / 1e6).toFixed(1)}m, lifePnl $${(tel.lifePnl / 1e6).toFixed(1)}m, ${hist.length} history rows`);
   }
   checks.push(c8);
+
+  // -------------------------------------------------------------------
+  const c9 = new Check("ST9", "the warm-up: raises by other scripts are flows, not losses; a fresh market starts from its known forecasts");
+  {
+    // (1) Another script sells half the book mid-run (act-liquidate raise):
+    // trading P&L must not jump, externalFlows must carry the spend.
+    c9.examined(1);
+    const m = new Market({ seed: 41, money: 2.5e8, burnInTicks: 3000 });
+    let pnlBefore = null;
+    let sold = 0;
+    const f = await runShipped(m, 200, {
+      onTick: (n, files) => {
+        if (n === 150) {
+          for (const x of m.symbols) {
+            const [L] = m.position(x);
+            if (L > 1) {
+              const px = m.bid(x);
+              if (m.sell(x, Math.floor(L / 2))) sold += Math.floor(L / 2) * px;
+            }
+          }
+          m.player.money -= sold; // ...and the batch spends what was raised
+          files["/tel/stock-hold.txt"] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1, by: "act-liquidate.js", why: "raise" });
+        }
+        if (n === 149) pnlBefore = JSON.parse(files["/tel/stock.txt"]).lifePnl;
+      },
+    });
+    const tel = JSON.parse(f.files["/tel/stock.txt"]);
+    const jump = tel.lifePnl - pnlBefore;
+    c9.note(`external raise of $${(sold / 1e6).toFixed(0)}m at tick 150: lifePnl moved $${(jump / 1e6).toFixed(1)}m over the next 50 ticks, externalFlows $${(tel.externalFlows / 1e6).toFixed(0)}m`);
+    if (!(sold > 0)) c9.warn("nothing was held at tick 150 — the raise path was not exercised");
+    else {
+      if (Math.abs(jump) > 0.5 * sold) c9.fail(`a $${(sold / 1e6).toFixed(0)}m raise by another script moved trading P&L by $${(jump / 1e6).toFixed(0)}m — raises are being booked as losses`);
+      if (!(tel.externalFlows < -0.8 * sold)) c9.fail(`externalFlows $${(tel.externalFlows / 1e6).toFixed(0)}m does not carry the $${(sold / 1e6).toFixed(0)}m spend`);
+    }
+
+    // (2) Fresh market: the init-forecast prior beats the stationary prior on
+    // the first hour (same seeds), at p25 and p50.
+    c9.examined(16);
+    const { warmup, VARIANTS } = await import("../sim/stocks/warmup.mjs");
+    const before = warmup(VARIANTS["before (no prior, trades pre-phase)"], { seeds: 16 });
+    const after = warmup(VARIANTS["init-forecast prior"], { seeds: 16 });
+    c9.note(`fresh market, 16 seeds, first hour P&L p10/p25/p50: stationary prior ${[before.h1.p10, before.h1.p25, before.h1.p50].map((x) => (x * 100).toFixed(0)).join("/")}%, init-forecast prior ${[after.h1.p10, after.h1.p25, after.h1.p50].map((x) => (x * 100).toFixed(0)).join("/")}%`);
+    if (!(after.h1.p25 > before.h1.p25 && after.h1.p50 > before.h1.p50)) c9.fail("the init-forecast prior no longer beats the stationary prior on a fresh market");
+
+    // (3) stock.js uses it when the life is minutes old, and says so.
+    c9.examined(1);
+    const m3 = new Market({ seed: 42, money: 2.5e8, burnInTicks: 5 });
+    const g = await runShipped(m3, 30, { lastAugReset: Date.now() - 5 * 6000 });
+    const t3 = JSON.parse(g.files["/tel/stock.txt"]);
+    if (t3.warmup?.prior !== "init-forecast" || t3.warmup?.freshTicks !== 5) c9.fail(`a 5-tick-old market was not started from its init forecasts: ${JSON.stringify(t3.warmup)}`);
+    const m4 = new Market({ seed: 43, money: 2.5e8, burnInTicks: 3000 });
+    const h = await runShipped(m4, 10, {});
+    if (JSON.parse(h.files["/tel/stock.txt"]).warmup?.prior === "init-forecast") c9.fail("an old market (life hours old) was treated as fresh");
+  }
+  checks.push(c9);
 
   return checks;
 }
