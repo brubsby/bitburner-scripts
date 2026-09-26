@@ -76,6 +76,7 @@ export function fakeNs(mkt, { ticks, node = 8, files = {}, onTick = null, sfs = 
         if (n >= ticks) throw new Stop("done");
         mkt.tick();
         n++;
+        VCLOCK.t += 6000; // one market update of game time (msPerStockUpdate)
         onTick?.(n, fs);
         return 6000;
       },
@@ -84,13 +85,35 @@ export function fakeNs(mkt, { ticks, node = 8, files = {}, onTick = null, sfs = 
   return { ns, files: fs, player, exit: () => exitFn?.(), ticks: () => n };
 }
 
+// THE CLOCK. stock.js times things in wall-clock ms (hold ages, the fee
+// reserve's drain per second, the phase record). Offline a tick takes
+// milliseconds, so the real clock would make a $40k/tick drain read as
+// $40k per millisecond. runShipped installs a virtual Date that advances
+// 6000ms per market update — the game's own cadence — and restores the
+// real one afterwards.
+const VCLOCK = { t: 0 };
+const RealDate = Date;
+class VirtualDate extends RealDate {
+  constructor(...a) {
+    if (a.length) super(...a);
+    else super(VCLOCK.t);
+  }
+  static now() {
+    return VCLOCK.t;
+  }
+}
+
 export async function runShipped(mkt, ticks, opts = {}) {
   const { main } = await import("../../../stock.js");
+  VCLOCK.t = RealDate.now();
+  globalThis.Date = VirtualDate;
   const f = fakeNs(mkt, { ticks, ...opts });
   try {
     await main(f.ns);
   } catch (e) {
     if (!(e instanceof Stop)) throw e;
+  } finally {
+    globalThis.Date = RealDate;
   }
   f.exit();
   return f;
