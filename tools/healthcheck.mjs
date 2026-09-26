@@ -593,7 +593,18 @@ if (!sleevesExpected) {
   // (EXIT NOT APPROACHING) still covers it if that simulation is wrong.
   // First fired falsely on 2026-09-26 01:03 against a 0.4h window prior while
   // the sim priced a 4h wait.
-  const pricedHold = gate?.countDecidedBy === "exit-sim";
+  // The Bayesian plan's install decision (/tel/plan.txt decisions.install,
+  // install:false) is also a priced hold, and since 2026-09-26 the one that
+  // decides; the NO INSTALL window prior (0.4-1.2h) knows nothing of it.
+  const planInstall = (() => {
+    try {
+      const p = JSON.parse(fs.readFileSync(path.join(TEL, "plan.txt"), "utf8"));
+      return p?.decisions?.install ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const pricedHold = gate?.countDecidedBy === "exit-sim" || planInstall?.install === false;
   if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0 && pricedHold) note(`install held by the simulated exit (life ${lifeH.toFixed(1)}h): ${String(gate?.countTimingWhy ?? "").slice(0, 120)}`);
   else if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
   // F3: the planner must act, or change what it is waiting on.
