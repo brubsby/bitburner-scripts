@@ -234,8 +234,9 @@ export const PRIORS = {
   rateSdLn: 0.3,
   // gym formula residual (NOT CALIBRATED: no live residual feed).
   gymSdLn: 0.1,
-  // correlation of the structural error between options (NOT identifiable).
-  rho: 0.95,
+  // option-specific share of the structural error (jitterPosterior): 2%
+  // until measured from the ranking's own pass-to-pass jitter.
+  jitter: { a: 2, b: 0.02 * 0.02 },
 }
 
 export const STOCK_TICK_S = 6 // StockMarket/data/Constants.ts:4 msPerStockUpdate
@@ -357,6 +358,33 @@ export function driftCalibration(samples, prior = PRIORS.drift) {
 }
 
 /**
+ * THE OPTION-SPECIFIC PART OF THE STRUCTURAL ERROR, measured: how much the
+ * simulator's RANKING of the same options jitters between consecutive passes
+ * of one life. Model: each option's forecast is truth x exp(e_common +
+ * e_i), e_i ~ N(0, si^2) independently per pass, so for two options a, b
+ * present in consecutive passes x = [d ln(Ha/Hb)] / 2 ~ N(0, si^2). Each
+ * pass pair contributes the options it shares against one reference option.
+ * `points` [{at, life, h: {key: hours}}] oldest first. IG, known mean 0.
+ * Returns {a, b, si (posterior mean), n, why}.
+ */
+export function jitterPosterior(points, prior = PRIORS.jitter) {
+  const P = (points ?? []).filter((p) => p && p.h && typeof p.h === 'object')
+  const xs = []
+  for (let i = 1; i < P.length; i++) {
+    if (P[i].life !== P[i - 1].life) continue
+    const A = P[i - 1].h
+    const B = P[i].h
+    const common = Object.keys(A).filter((k) => fin(A[k]) && A[k] > 0 && fin(B[k]) && B[k] > 0)
+    if (common.length < 2) continue
+    const ref = common[0]
+    for (const k of common.slice(1)) xs.push((Math.log(B[k] / B[ref]) - Math.log(A[k] / A[ref])) / 2)
+  }
+  const p = igUpdate(prior, xs)
+  const si = Math.sqrt(p.b / (p.a - 1))
+  return { a: p.a, b: p.b, si, n: xs.length, why: `${xs.length} option pair(s) over consecutive passes: option-specific error ${(100 * si).toFixed(2)}% (prior ${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(1)}%)` }
+}
+
+/**
  * ln(M) PER HOUR OF A LIFE, from the lifetimes ledger (same node): each life
  * x_j = ln(M_j / M_{j-1}) / L_j, weight L_j — the weighted mean is exactly
  * exitplan.endpointCycleStats' lnPerHour. Returns {post, mean, sd, lives} or null.
@@ -376,19 +404,28 @@ export function lnGainPosterior(ledger, bitNode) {
 }
 
 /**
- * AN OBSERVED RATE (exp/s, rep/s): ln(rate) observations at least `minGapH`
- * apart (a pass re-reads an overlapping window; nearer observations are not
- * independent), NIG with the prior centred on the first and sd PRIORS.rateSdLn.
- * Returns {post, mean (of ln), sd, n} or null with no observation.
+ * AN OBSERVED RATE (exp/s, rep/s): ln(rate) per pass, averaged within
+ * `binH` bins (passes re-read overlapping windows, so observations nearer
+ * than that are not independent — a bin is one observation), NIG with the
+ * prior centred on the first bin and sd PRIORS.rateSdLn. Returns {post,
+ * mean (of ln), sd, n (bins), passes} or null with no observation.
  */
-export function logRatePosterior(obs, { minGapH = 0.5 } = {}) {
+export function logRatePosterior(obs, { binH = 0.5 } = {}) {
   const S = (obs ?? []).filter((o) => fin(o?.v) && o.v > 0 && fin(Date.parse(o?.at)))
   if (!S.length) return null
-  const kept = []
-  for (const o of S) if (!kept.length || (Date.parse(o.at) - Date.parse(kept[kept.length - 1].at)) / 3.6e6 >= minGapH) kept.push(o)
+  const t0 = Date.parse(S[0].at)
+  const bins = new Map()
+  for (const o of S) {
+    const b = Math.floor((Date.parse(o.at) - t0) / 3.6e6 / binH)
+    const cur = bins.get(b) ?? { s: 0, n: 0 }
+    cur.s += Math.log(o.v)
+    cur.n++
+    bins.set(b, cur)
+  }
+  const xs = [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v.s / v.n)
   const sd0 = PRIORS.rateSdLn
-  const prior = { m: Math.log(kept[0].v), k: 1, a: 2, b: sd0 * sd0 }
-  const post = nigUpdate(prior, kept.slice(1).map((o) => Math.log(o.v)))
+  const prior = { m: xs[0], k: 1, a: 2, b: sd0 * sd0 }
+  const post = nigUpdate(prior, xs.slice(1))
   const mm = nigMeanMarginal(post)
-  return { post, mean: post.m, sd: mm.sd, n: kept.length }
+  return { post, mean: post.m, sd: mm.sd, n: xs.length, passes: S.length }
 }

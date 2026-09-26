@@ -848,10 +848,12 @@ export async function run() {
     const fn = src.slice(src.indexOf("function sleeveObjectiveByExit"), src.indexOf("function spendVerdictsOf"));
     c20.examined(6);
     if (!/const base = inputsFn\(\{ expToPlayerHacking: 0, factionRepPerSec: 0 \}\)/.test(fn)) c20.fail("the base must be the shared builder with the fleet removed");
-    if (!/if \(repFaction && by\.rep > 0\) cands\.push\(\['rep', finish\(\{ \.\.\.base, sleeveRep: \{ perSec: by\.rep, delayH: 0 \}, \.\.\.\(playerRep > 0 \? \{ repBoost: \{ K: \(playerRep \+ by\.rep\) \/ playerRep, e: eRep \} \} : \{\}\) \}/.test(fn)) c20.fail("rep: the sleeve's rep on the exit leg always; repBoost only with a measured player rate (it vanished whenever the rate was estimated)");
-    if (!/\['money', finish\(\{ \.\.\.base, extraIncome: \[\{ atH: 0, perSec: by\.money \}\], eBudget: eB \}/.test(fn)) c20.fail("money: crime income from now through eBudget");
-    if (!/\['karma', finish\(base, \{ karmaPerSec: by\.karma/.test(fn)) c20.fail("karma: the fleet's karma shortening the gang's grind");
+    if (!/if \(repFaction && by\.rep > 0\) fns\.push\(\['rep', \(b\) => finish\(\{ \.\.\.b, sleeveRep: \{ perSec: by\.rep, delayH: 0 \}, \.\.\.\(playerRep > 0 \? \{ repBoost: \{ K: \(playerRep \+ by\.rep\) \/ playerRep, e: eRep \} \} : \{\}\) \}/.test(fn)) c20.fail("rep: the sleeve's rep on the exit leg always; repBoost only with a measured player rate (it vanished whenever the rate was estimated)");
+    if (!/\['money', \(b\) => finish\(\{ \.\.\.b, extraIncome: \[\{ atH: 0, perSec: by\.money \}\], eBudget: eB \}/.test(fn)) c20.fail("money: crime income from now through eBudget");
+    if (!/\['karma', \(b\) => finish\(b, \{ karmaPerSec: by\.karma/.test(fn)) c20.fail("karma: the fleet's karma shortening the gang's grind");
     if (!/\.sort\(\(a, b\) => \(Math\.abs\(a\[1\] - b\[1\]\) < 1 \/ 60 \? 0 : a\[1\] - b\[1\]\)\)/.test(fn)) c20.fail("the soonest exit must win (ties within a minute keep the earlier-listed objective)");
+    // Each candidate is a trajectory of the base, run on the point AND on every posterior draw (the plan's commitment rule).
+    if (!/const cands = fns\.map\(\(\[o, f\]\) => \[o, f\(base\)\]\)/.test(fn) || !/decideAmong\(\{ options: fns/.test(fn)) c20.fail("the objective must be priced on the base and committed through plan.decideAmong on the shared draws");
     if (!/objectiveDecidedBy: byExit\?\.objective === 'covenant' \? 'covenant-mandate' : byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
   }
   checks.push(c20);

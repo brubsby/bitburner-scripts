@@ -738,7 +738,7 @@ export async function run() {
     const fresh = C.bestCountRoute(X.bestExitPolicy, inputs, count, [{ ...syndicate, detourH: 2.0 }]).best?.hours;
     if (!(typeof fresh === "number" && fresh > hS)) u8.fail("the same route with more detour left must exit later (the remaining detour, not the full one, is what is priced)");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/const cm = commitRoute\(ranked, routes, committed, \{ tolPerH: exitCalibrationOf\(ns, info\)\.tolPerH \}\)/.test(prog) || !/ns\.write\(COUNT_ROUTE_FILE/.test(prog)) u8.fail("progress.js must commit the route through commitRoute with the measured tolerance and persist it this life");
+    if (!/commitRoute\(ranked, routes, committed, \{ tolPerH: exitCalibrationOf\(ns, info\)\.tolPerH \}\)/.test(prog) || !/ns\.write\(COUNT_ROUTE_FILE/.test(prog)) u8.fail("progress.js must commit the route through commitRoute with the measured tolerance and persist it this life");
     if (!/b\?\.spansInstalls && typeof b\.holdH === 'number'[^\n]*b\.holdH - b\.hours/.test(prog)) u8.fail("a join leg that ladders across installs must be priced as its continuous hold on a route (one install after the detour)");
   }
   checks.push(u8);

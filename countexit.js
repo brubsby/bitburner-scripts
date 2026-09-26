@@ -258,14 +258,23 @@ export function countExitFixed(bestExitPolicy, inputs, count, { firstInstallH = 
  * detour), without the search. `detourH` may be a drawn value. Returns hours
  * or null (unaffordable in the first batch, or unpriced).
  */
-export function routeExitFixed(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null } = {}) {
+export function routeExitFixed(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null, affordWaits = ROUTE_AFFORD_WAITS } = {}) {
   if (!(count?.short > 0) || !route) return null
   const d = num(detourH) && detourH >= 0 ? detourH : route.detourH
   const { ladder } = paddedLadder({ ...count, ladder: [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)] })
-  const at = countExitAt(bestExitPolicy, lifeInputs(inputs, lifeH), count.short, ladder, 1, Math.max(firstInstallH, d), count.nfg ?? null)
-  if (!num(at.hours) || at.degenerate || !at.firstBatch?.chosen?.includes(route.name)) return null
-  return at.hours
+  const inp = lifeInputs(inputs, lifeH)
+  // A draw whose detour ends before the money for the augmentation is in
+  // hand installs when it is (the first of these extra waits that affords
+  // it), rather than reading as "infeasible": the route's policy is "buy it
+  // as soon as both the detour and the money allow".
+  for (const extra of affordWaits) {
+    const at = countExitAt(bestExitPolicy, inp, count.short, ladder, 1, Math.max(firstInstallH, d) + extra, count.nfg ?? null)
+    if (num(at.hours) && !at.degenerate && at.firstBatch?.chosen?.includes(route.name)) return at.hours
+  }
+  return null
 }
+/** The extra waits routeExitFixed tries after the detour (hours). */
+export const ROUTE_AFFORD_WAITS = [0, 0.25, 0.5, 1, 2, 4, 8]
 
 /**
  * THE COUNT-AWARE EXIT: for each composition n, the count phase's installs
