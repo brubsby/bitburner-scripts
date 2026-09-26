@@ -517,7 +517,7 @@ export async function run() {
     const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
     if ((prog.match(/objective: unifyObjectiveExit\(weightsMeta, decided/g) ?? []).length !== 2 || /objective: weightsMeta,/.test(prog)) pch.fail("both gate writes must publish the unified exit into the objective record");
     if ((prog.match(/exitCalibration: withExitSample\(/g) ?? []).length !== 2) pch.fail("both gate writes must carry the exit calibration");
-    if (!/const decidedExit = decidedExitOf\(exitCompare, gate\)/.test(prog)) pch.fail("the planned write's exit must be the deciding comparison's");
+    if (!/return decidedExitOf\(exitCompare, gate\)/.test(prog)) pch.fail("the planned write's exit must be the deciding comparison's");
     if (!/waitTolPerH: exitCal0\.tolPerH/.test(prog)) pch.fail("the count-aware comparison must carry the measured tolerance");
     if (!/const exitH = num\(gate\?\.exitH\) \? gate\.exitH/.test(hc)) pch.fail("healthcheck F must watch the one published exit");
     if (!/realisedCapital\(rows\)/.test(prog)) pch.fail("capitalFitOf must fit the trader's history, not the ledger");
@@ -660,6 +660,88 @@ export async function run() {
     if ((prog.match(/countRoute: countRouteNow/g) ?? []).length !== 2) s8.fail("both gate writes must publish the route choice");
   }
   checks.push(s8);
+
+  // -----------------------------------------------------------------------
+  const t8 = new Check("B8t", "one exit: the chosen count route re-enters the gate's comparison on the gate's inputs (live 12:12: exitH 68.7h beside a route 'exit 27.3h'); the gym legs match the live gym rate");
+  {
+    t8.examined(7);
+    const C = await import("../../countexit.js");
+    const BP = await import("../../bodyplan.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const inputs = Fx.exitInputs.inputs;
+    const nfgA = Fx.factions["Slum Snakes"].augs.find((a) => a.name === "NeuroFlux Governor");
+    const count = { short: 1, ladder: [], nfg: { price: nfgA.price, level: 0 } };
+    const route = { name: "R", faction: "F", via: "work", price: 4e8, laterPrice: 4e8, detourH: 1.48, hacking: 1, exp: 1, rep: 1.15 };
+    // Same inputs, same forced batch, same install time: the ranking's hours
+    // and the gate's route wait are one number.
+    const ranked = C.bestCountRoute(X.bestExitPolicy, inputs, count, [route]);
+    const gateWait = C.bestCountExit(X.bestExitPolicy, inputs, { ...count, ladder: [{ ...route, must: true }] }, { firstInstallH: route.detourH });
+    if (!(ranked.best && gateWait.best && Math.abs(ranked.best.hours - gateWait.best.hours) < 1e-9)) t8.fail("the route's ranked exit and the gate's route wait must be the same computation on the same inputs", `${ranked.best?.hours} vs ${gateWait.best?.hours}`);
+    else t8.note(`route exit ${ranked.best.hours.toFixed(2)}h both ways`);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/waitsC\.push\(\{ waitMs: Math\.round\(w \* 3600000\), H: took \? r\.best\.hours : null[^\n]*route: route\.name/.test(prog)) t8.fail("the chosen route must enter the count-aware comparison as a wait");
+    if (!/countExitNowOf\(gangInputs0\(\), cc, countRoute\?\.best\?\.route \?\? null\)/.test(prog)) t8.fail("the unplanned path's exit must include the chosen route too");
+    if (!/if \(!exitCompare\?\.countAware && countTickets\) \{[\s\S]{0,400}countExitNowOf\(exitInputsOf\([^\n]*countRoute\?\.best\?\.route \?\? null\)/.test(prog)) t8.fail("with the count short, a non-count-aware comparison must not publish the ordinary model's exit (the live 68.7h)");
+    if (/chosen: countRoute\.best \? \{[^\n]* exitH:/.test(prog) || !/rankExitH: [^\n]*rankBasis:/.test(prog)) t8.fail("the route record must not publish a second 'exitH': its ranking figure is rankExitH with its basis named");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if (!/TWO EXITS: installgate exitH/.test(hc)) t8.fail("healthcheck must fail when the published exit is later than the chosen route's gate exit");
+    // THE GYM LEGS, against the live game (history.jsonl, 2026-09-26): at
+    // Powerhouse Gym strength exp went 8413.62 -> 8941.38 over 20.8s of play
+    // (25.37/s), and strength read 165 at exp 8058.40 and 171 at 8941.38.
+    // bodyplan's formula (Work/Formulas.ts:108-121: classInfo.strExp 1 x
+    // location.expMult 10 x person.strength_exp per second; skill.ts:13) with
+    // those mults reproduces the published leg: 0.0757h from 8058 to 200.
+    const measured = (8941.376 - 8413.622) / 20.8;
+    const levelMult = 171 / (32 * Math.log(8941.376 + 534.6) - 200);
+    const person = { skills: { strength: 165, defense: 1, dexterity: 2, agility: 1, charisma: 2, hacking: 782, intelligence: 112 }, exp: { strength: 8058.4, defense: 0, dexterity: 0, agility: 0, charisma: 0, hacking: 0 }, city: "Sector-12", money: 1e12, mults: { strength: levelMult, strength_exp: measured / 10, defense: 1, defense_exp: 1, dexterity: 1, dexterity_exp: 1, agility: 1, agility_exp: 1, charisma: 1, charisma_exp: 1, hacking: 1, hacking_exp: 1 } };
+    const rate = BP.gymRate(BP.GYMS.find((g) => g.name === "Powerhouse Gym"), "strength", person, 1);
+    const h = BP.hoursToStat("strength", 200, person, rate);
+    const err = Math.abs(h - 0.0757) / 0.0757;
+    t8.note(`gym: measured ${measured.toFixed(2)} str exp/s (x${(measured / 10).toFixed(3)} strength_exp at Powerhouse's x10), level mult ${levelMult.toFixed(3)}; strength 165 -> 200: ${h.toFixed(4)}h vs the published 0.0757h (${(err * 100).toFixed(1)}% apart); from level 1 with mults 1 it would be ${BP.hoursToStat("strength", 200, { ...person, exp: { ...person.exp, strength: 0 }, mults: { ...person.mults, strength: 1, strength_exp: 1 } }, 10).toFixed(2)}h`);
+    if (!(err < 0.1)) t8.fail(`the gym leg must reproduce the live game within 10% (${(err * 100).toFixed(1)}%)`);
+  }
+  checks.push(t8);
+
+  // -----------------------------------------------------------------------
+  const u8 = new Check("B8u", "replay 12:12->12:17: a committed count route is kept unless beaten by more than the forecast error over its remaining detour; a route that stops pricing is dropped with its reason");
+  {
+    u8.examined(7);
+    const C = await import("../../countexit.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const inputs = Fx.exitInputs.inputs;
+    const nfgA = Fx.factions["Slum Snakes"].augs.find((a) => a.name === "NeuroFlux Governor");
+    const count = { short: 1, ladder: [], nfg: { price: nfgA.price, level: 0 } };
+    // 12:12: The Syndicate's route, its detour largely spent after an hour of
+    // strength training (def/dex/agi legs and the rep grind left); 12:17: the
+    // ranking's new best, SmartJaw at Bachman by donation behind a company-rep
+    // join held continuously (5.9h).
+    const syndicate = { name: "The Shadow's Simulacrum", faction: "The Syndicate", via: "work", price: 4e8, laterPrice: 4e8, detourH: 0.95, hacking: 1, exp: 1, rep: 1.15 };
+    const smartjaw = { name: "SmartJaw", faction: "Bachman & Associates", via: "donation", price: 1.8e11, laterPrice: 1.8e11, detourH: 5.86, hacking: 1, exp: 1, rep: 1.25 };
+    const routes = [syndicate, smartjaw];
+    const ranked = C.bestCountRoute(X.bestExitPolicy, inputs, count, routes);
+    const hS = ranked.tried.find((t) => t.name === syndicate.name)?.hours, hJ = ranked.tried.find((t) => t.name === smartjaw.name)?.hours;
+    u8.note(`ranked: ${syndicate.name} ${hS}h, SmartJaw ${hJ}h — best ${ranked.best?.name}`);
+    const committed = { name: syndicate.name, faction: syndicate.faction, via: syndicate.via };
+    // Force the case the lead saw: an alternative ranked first by a margin smaller than the error.
+    const flip = { ...ranked, best: { name: smartjaw.name, hours: hS - 3, route: smartjaw } };
+    const kept = C.commitRoute(flip, routes, committed, { tolPerH: 8.9 });
+    if (!(kept.stayed && kept.best?.name === syndicate.name)) u8.fail("a 3h gain inside 8.9h/h x 0.95h of remaining detour must keep the committed route", kept.why);
+    else u8.note(`kept: ${kept.why}`);
+    const clear = C.commitRoute({ ...ranked, best: { name: smartjaw.name, hours: hS - 20, route: smartjaw } }, routes, committed, { tolPerH: 8.9 });
+    if (!(clear.switched && clear.best?.name === smartjaw.name)) u8.fail("a 20h gain beyond the tolerance must switch", clear.why);
+    const gone = C.commitRoute({ ...ranked, best: { name: smartjaw.name, hours: hS + 5, route: smartjaw }, tried: ranked.tried.map((t) => (t.name === syndicate.name ? { ...t, hours: null, why: "join unpriceable" } : t)) }, routes, committed, { tolPerH: 8.9 });
+    if (!(gone.switched && /no longer prices: join unpriceable/.test(gone.why))) u8.fail("a committed route that no longer prices is dropped, naming why", gone.why);
+    const none = C.commitRoute(ranked, routes, null, { tolPerH: 8.9 });
+    if (!(none.switched && none.best?.name === ranked.best.name)) u8.fail("with nothing committed the best is taken");
+    // The committed route's exit is priced from the CURRENT state: a shorter
+    // remaining detour prices a sooner exit (progress credited).
+    const fresh = C.bestCountRoute(X.bestExitPolicy, inputs, count, [{ ...syndicate, detourH: 2.0 }]).best?.hours;
+    if (!(typeof fresh === "number" && fresh > hS)) u8.fail("the same route with more detour left must exit later (the remaining detour, not the full one, is what is priced)");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const cm = commitRoute\(ranked, routes, committed, \{ tolPerH: exitCalibrationOf\(ns, info\)\.tolPerH \}\)/.test(prog) || !/ns\.write\(COUNT_ROUTE_FILE/.test(prog)) u8.fail("progress.js must commit the route through commitRoute with the measured tolerance and persist it this life");
+    if (!/b\?\.spansInstalls && typeof b\.holdH === 'number'[^\n]*b\.holdH - b\.hours/.test(prog)) u8.fail("a join leg that ladders across installs must be priced as its continuous hold on a route (one install after the detour)");
+  }
+  checks.push(u8);
 
   return checks;
 }

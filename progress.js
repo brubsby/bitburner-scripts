@@ -136,7 +136,7 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
-import { bestCountExit, bestCountRoute, countRoutes, ticketLadder } from 'countexit.js'
+import { bestCountExit, bestCountRoute, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 import { wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
@@ -1788,6 +1788,8 @@ function capitalFitOf(ns, info) {
  * into the realised drift and the forecast error per hour, which is the
  * tolerance a simulated wait must beat (installgate waitTolPerH).
  */
+// The committed count route, this life (countexit.commitRoute).
+const COUNT_ROUTE_FILE = '/tel/countroute.txt'
 const EXIT_CAL_MAX = 48
 const EXIT_CAL_GAP_MS = 12 * 60e3
 function exitCalibrationOf(ns, info) {
@@ -1818,14 +1820,26 @@ function decidedExitOf(exitCompare, gate) {
   return { exitH: chosen, source: ex.countAware ? 'count-aware exit, holding' : 'exit comparison, holding' }
 }
 /** The unplanned path has no comparison: the count-aware exit from now if it prices. */
-function countExitNowOf(inputs, countCtx) {
+function countExitNowOf(inputs, countCtx, route = null) {
   if (!countCtx || !inputs) return null
   let best = null
+  let viaRoute = false
   for (const w of [0, 0.25, 0.5, 1, 2, 4]) {
     const r = bestCountExit(bestExitPolicy, inputs, countCtx, { firstInstallH: w })
     if (r.best && (best === null || r.best.hours < best)) best = r.best.hours
   }
-  return best === null ? null : { exitH: best, source: 'count-aware exit (nothing queued)' }
+  // The exit-chosen route, on these inputs (the planned path's comparison does the same).
+  if (route && route.detourH >= 0 && isFinite(route.detourH)) {
+    const ladderR = [{ ...route, must: true }, ...(countCtx.ladder ?? []).filter((t) => t.name !== route.name)]
+    for (const extra of [0, 0.5, 2]) {
+      const r = bestCountExit(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: route.detourH + extra })
+      if (r.best?.firstBatch?.chosen?.includes(route.name) && (best === null || r.best.hours < best)) {
+        best = r.best.hours
+        viaRoute = true
+      }
+    }
+  }
+  return best === null ? null : { exitH: best, source: viaRoute ? `count-aware exit via the chosen route (${route.name})` : 'count-aware exit (nothing queued)' }
 }
 function unifyObjectiveExit(meta, decided) {
   if (!meta?.exitSensitivity) return meta
@@ -3382,7 +3396,14 @@ async function act(ns, canJoin, info, note) {
       for (const c of candidates) {
         const w = joinWait(c.requirements, { ...joinState, expPerSec: same ? prior.expPerSec ?? null : null })
         if (!w.known || !isFinite(w.hours)) continue
-        cands.push({ name: c.name, joinH: w.hours, rep: c.rep, favor: c.favor, augs: (c.augs ?? []).map((a) => ({ name: a.name, baseCost: sing.augPrice(a.name) / qf, repReq: a.repReq, mults: a.mults, prereqs: sing.augPrereq(a.name) })) })
+        // A leg that ladders across installs (company reputation resets each
+        // install: spansInstalls) is priced here as its CONTINUOUS hold
+        // (holdH): the route model installs once, after the detour, so the
+        // laddered figure — which assumes installs in between — is the wrong
+        // basis (live: Bachman's company rep read 12.2h laddered over 11
+        // installs, 5.9h held).
+        const joinH = w.hours + (w.blockers ?? []).reduce((a, b) => a + (b?.spansInstalls && typeof b.holdH === 'number' && typeof b.hours === 'number' ? b.holdH - b.hours : 0), 0)
+        cands.push({ name: c.name, joinH, rep: c.rep, favor: c.favor, augs: (c.augs ?? []).map((a) => ({ name: a.name, baseCost: sing.augPrice(a.name) / qf, repReq: a.repReq, mults: a.mults, prereqs: sing.augPrereq(a.name) })) })
       }
       const routes = countRoutes({
         offers: offers.map((o) => ({ ...o, favor: sing.factionFavor(o.faction) })),
@@ -3392,20 +3413,34 @@ async function act(ns, canJoin, info, note) {
         donation: (f, rep) => (donatable && canDonateTo(f, 0, 0, gangF) && fwrg > 0 ? donationForRep(rep, player?.mults?.faction_rep ?? 1, fwrg) : null),
         nfgName: NFG,
       })
-      return { ...bestCountRoute(bestExitPolicy, rec.inputs, cc, routes), routes: routes.length }
+      const ranked = bestCountRoute(bestExitPolicy, rec.inputs, cc, routes)
+      // COMMITMENT (countexit.commitRoute): this life's route is kept unless
+      // beaten by more than the forecast error over its remaining detour.
+      const committed = (() => {
+        const c = readJson(ns, COUNT_ROUTE_FILE)
+        return c && c.lastAugReset === info?.lastAugReset && !allCount.has(c.name) ? c : null
+      })()
+      const cm = commitRoute(ranked, routes, committed, { tolPerH: exitCalibrationOf(ns, info).tolPerH })
+      if (cm.best) ns.write(COUNT_ROUTE_FILE, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, name: cm.best.name, faction: cm.best.route.faction, via: cm.best.route.via, since: cm.switched || !committed ? new Date().toISOString() : committed.since, why: cm.why }), 'w')
+      return { ...ranked, best: cm.best, commitment: { stayed: cm.stayed, switched: cm.switched, why: cm.why, previous: committed ? `${committed.name} at ${committed.faction} via ${committed.via}` : null }, routes: routes.length }
     } catch (e) {
       return { best: null, tried: [], why: `route pricing threw: ${String(e).slice(0, 80)}` }
     }
   })()
   countRouteNow = countRoute
     ? {
-        chosen: countRoute.best ? { name: countRoute.best.name, faction: countRoute.best.route.faction, via: countRoute.best.route.via, exitH: +countRoute.best.hours.toFixed(2), detourH: +countRoute.best.route.detourH.toFixed(3), price: Math.round(countRoute.best.route.price) } : null,
+        // rankExitH ranks the routes on the PREVIOUS pass's exit inputs; it
+        // is not the published exit. The route re-enters the gate's own
+        // comparison as a wait on this pass's inputs (gateExitH, filled
+        // below), and the gate's exitH is the minimum it chose.
+        chosen: countRoute.best ? { name: countRoute.best.name, faction: countRoute.best.route.faction, via: countRoute.best.route.via, rankExitH: +countRoute.best.hours.toFixed(2), rankBasis: "previous pass's exit inputs (ranking only)", gateExitH: null, detourH: +countRoute.best.route.detourH.toFixed(3), price: Math.round(countRoute.best.route.price) } : null,
         routes: countRoute.routes ?? null,
+        commitment: countRoute.commitment ?? null,
         alternatives: (countRoute.tried ?? []).slice(0, 8),
         why: countRoute.best ? 'the soonest simulated exit over every reachable distinct augmentation' : `unpriced (${countRoute.why}) — the schedule scores every distinct augmentation at the flat ticket value (fallback)`,
       }
     : null
-  if (countRouteNow?.chosen) did.push(`count route: ${countRouteNow.chosen.name} at ${countRouteNow.chosen.faction} via ${countRouteNow.chosen.via} — exit ${countRouteNow.chosen.exitH}h (best of ${countRouteNow.routes} routes)`)
+  if (countRouteNow?.chosen) did.push(`count route: ${countRouteNow.chosen.name} at ${countRouteNow.chosen.faction} via ${countRouteNow.chosen.via} — ranked best of ${countRouteNow.routes} routes (${countRouteNow.chosen.rankExitH}h on the previous pass's inputs)`)
   const schedule = canJoin && (workable?.length || candidates.length) ? planFactionWork(ns, sing, workable ?? [], offers, info, { candidates, state: joinState, channelWeights, channels: channelsUsed, weightsMeta, gang: gangCtx, gangRepIn, countTickets, countRoute: countRoute?.best ?? null }) : null
   let scheduleTarget = schedule?.current?.faction ?? null
   // THE GANG FACTION FIRST, in a node that allows a gang. Its catalogue
@@ -4077,7 +4112,8 @@ async function act(ns, canJoin, info, note) {
             let decided = null
             try {
               const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
-              if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = countExitNowOf(gangInputs0(), cc)
+              if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
+              if (countRouteNow?.chosen && decided?.source?.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +decided.exitH.toFixed(2)
             } catch {
               decided = null
             }
@@ -4430,6 +4466,22 @@ async function act(ns, canJoin, info, note) {
               const r = bestCountExit(bestExitPolicy, inputs, countCtx, { firstInstallH: w })
               return { waitMs: w * 3600000, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, n: r.best?.n ?? null }
             })
+            // THE EXIT-CHOSEN ROUTE is a wait too, on THESE inputs: install
+            // once its detour is done, with its augmentation forced into the
+            // batch (countexit.bestCountRoute ranked it on the previous
+            // pass's inputs). Without it the comparison — and the published
+            // exitH — priced only today's cheapest ladder while countRoute
+            // published the route's exit: two exits (live 12:12, 68.7h vs 27.3h).
+            const route = countRoute?.best?.route ?? null
+            if (route && route.detourH >= 0 && isFinite(route.detourH)) {
+              const ladderR = [{ ...route, must: true }, ...(countCtx.ladder ?? []).filter((t) => t.name !== route.name)]
+              for (const extra of [0, 0.5, 2]) {
+                const w = route.detourH + extra
+                const r = bestCountExit(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: w })
+                const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
+                waitsC.push({ waitMs: Math.round(w * 3600000), H: took ? r.best.hours : null, installs: took ? r.best.installsFirst : null, n: took ? r.best.n : null, route: route.name, via: route.via })
+              }
+            }
             return {
               countAware: true,
               // The forecast error per hour of waiting (exitCalibrationOf).
@@ -4466,6 +4518,11 @@ async function act(ns, canJoin, info, note) {
       }
     })()
 
+    // The route's exit on THIS pass's inputs, from the gate's own comparison.
+    if (countRouteNow?.chosen && exitCompare?.countAware) {
+      const hs = (exitCompare.waits ?? []).filter((w) => w.route === countRouteNow.chosen.name && typeof w.H === 'number').map((w) => w.H)
+      countRouteNow.chosen.gateExitH = hs.length ? +Math.min(...hs).toFixed(2) : null
+    }
     const gate = shouldInstall({
       exitCompare,
       // Money is the trader's compounding capital (BitNode 8): the count batch
@@ -4628,7 +4685,27 @@ async function act(ns, canJoin, info, note) {
       gate.why = `hold: ${INSTALL_HOLD_FILE}: ${installHold.slice(0, 200)} — the gate would install (${gate.wouldInstall})`
     }
     // THE ONE PUBLISHED EXIT: the exit of the model that just decided.
-    const decidedExit = decidedExitOf(exitCompare, gate)
+    // Where the count gate is short and the comparison could not run
+    // count-aware (nothing affordable banks a ticket now), the ORDINARY
+    // comparison's exit ignores the gate entirely — a different model from
+    // the route's. Live 12:12: exitH 68.7h ("exit comparison") beside the
+    // route's 27.3h. The published exit is then the count-aware exit from
+    // now, the chosen route included, on this pass's inputs.
+    const decidedExit = (() => {
+      if (!exitCompare?.countAware && countTickets) {
+        try {
+          const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
+          const viaCount = cc ? countExitNowOf(exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), cc, countRoute?.best?.route ?? null) : null
+          if (viaCount) {
+            if (countRouteNow?.chosen && viaCount.source.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +viaCount.exitH.toFixed(2)
+            return viaCount
+          }
+        } catch {
+          /* falls back to the comparison's own exit */
+        }
+      }
+      return decidedExitOf(exitCompare, gate)
+    })()
 
     // ------------------------------------------------------------------
     // THE TERMINAL SPRINT. Once The Red Pill is INSTALLED, the run ends at
