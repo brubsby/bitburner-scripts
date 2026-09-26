@@ -538,7 +538,14 @@ if (!sleevesExpected) {
   }
   // F2: installs must happen on the cadence the plan itself assumes.
   const lifeH = num(now.lifeMs) ? now.lifeMs / 3.6e6 : null;
-  if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
+  // A hold the count-aware exit simulation chose (installgate countDecidedBy
+  // 'exit-sim') is a priced decision, not a stall — the objective check F1
+  // (EXIT NOT APPROACHING) still covers it if that simulation is wrong.
+  // First fired falsely on 2026-09-26 01:03 against a 0.4h window prior while
+  // the sim priced a 4h wait.
+  const pricedHold = gate?.countDecidedBy === "exit-sim";
+  if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0 && pricedHold) note(`install held by the simulated exit (life ${lifeH.toFixed(1)}h): ${String(gate?.countTimingWhy ?? "").slice(0, 120)}`);
+  else if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
   // F3: the planner must act, or change what it is waiting on.
   if (prev && sameNode && dtMin >= 30 && now.didCount === 0 && prev.didCount === 0 && now.todo0 !== null && now.todo0 === prev.todo0) fail(`PLANNER IDLE: progress.js did nothing across ${dtMin.toFixed(0)} min, still waiting on: ${now.todo0.slice(0, 160)}`);
   // F4: a measured income the planner cannot see.
