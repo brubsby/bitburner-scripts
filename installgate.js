@@ -571,8 +571,18 @@ export function shouldInstall(o) {
     if (clear === null && exitWait.H < ex.nowH) tieWait = exitWait
     exitWait = clear
   }
-  const neverBest = exitDecides && typeof ex.neverH === 'number' && isFinite(ex.neverH) && ex.neverH < ex.nowH && !(exitWait && exitWait.H <= ex.neverH)
-  const exitWaitBeats = exitDecides && exitWait !== null && exitWait.H < ex.nowH
+  // THE COMMITTED PLAN DECIDES WHEN IT CAN (plan.decideInstall, supplied as
+  // ex.bayes by progress.js): the install options on shared posterior draws,
+  // the committed install time kept unless an alternative is better with
+  // P >= theta. It replaces both the exact argmin and the tolerance above;
+  // those remain only when the plan could not decide (ex.bayes null).
+  const bayes = exitDecides && ex.bayes && typeof ex.bayes.install === 'boolean' ? ex.bayes : null
+  if (bayes) {
+    tieWait = null
+    exitWait = bayes.install || bayes.key === 'never' ? null : { waitMs: typeof bayes.waitMs === 'number' ? bayes.waitMs : 0, H: bayes.H, key: bayes.key }
+  }
+  const neverBest = bayes ? bayes.key === 'never' : exitDecides && typeof ex.neverH === 'number' && isFinite(ex.neverH) && ex.neverH < ex.nowH && !(exitWait && exitWait.H <= ex.neverH)
+  const exitWaitBeats = bayes ? !bayes.install && bayes.key !== 'never' : exitDecides && exitWait !== null && exitWait.H < ex.nowH
   if (exitDecides) {
     bestWait = exitWait ? (o.futures ?? []).find((f) => f.waitMs === exitWait.waitMs) ?? null : null
   }
@@ -697,6 +707,9 @@ export function shouldInstall(o) {
     waitTolWhy: waitTolPerH ? ex.waitTolWhy ?? null : null,
     tieWait: tieWait ? { waitH: tieWait.waitMs / 3600000, H: tieWait.H, savedH: ex.nowH - tieWait.H, tolH: waitTolPerH * (tieWait.waitMs / 3600000) } : null,
     holdForever: neverBest || undefined,
+    // The committed plan's install decision, when it decided (null: the
+    // comparison above decided alone, the named fallback).
+    plan: bayes ? { key: bayes.key, install: bayes.install, meanH: bayes.H, q10: bayes.q10 ?? null, q50: bayes.q50 ?? null, q90: bayes.q90 ?? null, held: bayes.held === true, why: bayes.why ?? null } : null,
     binding: o.binding ?? null,
     destructive,
     mandateHold: mandateHold || undefined,

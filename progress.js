@@ -157,6 +157,10 @@ import { measureFromLedger, installRecord, ledgerScores, achievableRate } from '
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
 import { enter, leave } from 'trace.js'
+// THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
+// the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
+// the commitment rule. Pure: free to import.
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRoute, decideInstall, decideAmong, decideSpend, applyDraw, seedOf, withObs, routeKey } from 'plan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1554,23 +1558,35 @@ function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabl
       const g = gangExitNow(ns, info, inputs, k.grindHours(null, assist))
       return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
     }
-    const cands = []
-    if (gang && by.karma > 0) cands.push(['karma', finish(base, { karmaPerSec: by.karma, killsPerSec: 0 })])
+    // Each candidate as a trajectory of the base inputs, so the plan can run
+    // it on every posterior draw (applyDraw) as well as on the point.
+    const fns = []
+    if (gang && by.karma > 0) fns.push(['karma', (b) => finish(b, { karmaPerSec: by.karma, killsPerSec: 0 })])
     // The sleeve's rep prices on the exit leg by itself; the life-to-life lift
     // (repBoost) needs the player's measured rate as its denominator, and is
     // simply omitted (a floor) while that rate is only estimated.
-    if (repFaction && by.rep > 0) cands.push(['rep', finish({ ...base, sleeveRep: { perSec: by.rep, delayH: 0 }, ...(playerRep > 0 ? { repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } } : {}) }, null)])
+    if (repFaction && by.rep > 0) fns.push(['rep', (b) => finish({ ...b, sleeveRep: { perSec: by.rep, delayH: 0 }, ...(playerRep > 0 ? { repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } } : {}) }, null)])
     // STUDY PAYS A FEE (ClassWork.tsx:42, 320 x ZB's costMult 5 per second per
     // sleeve, charged unchecked): the exp candidate carries it as a money
     // outflow on the same trajectory (exitplan spendPerSec).
     const studyFee = CLASSES.Algorithms.cost * Math.max(...UNIVERSITIES.map((u) => u.costMult)) * (Number.isInteger(fleet.sleeves) ? fleet.sleeves : 1)
-    if (!expDisabled && by.exp > 0) cands.push(['exp', finish({ ...base, expPerSec: (base.expPerSec ?? 0) + by.exp, spendPerSec: studyFee }, null)])
-    if (by.money > 0) cands.push(['money', finish({ ...base, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
+    if (!expDisabled && by.exp > 0) fns.push(['exp', (b) => finish({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, spendPerSec: studyFee }, null)])
+    if (by.money > 0) fns.push(['money', (b) => finish({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
+    const cands = fns.map(([o, f]) => [o, f(base)])
     // Ties within a minute are ties, not decisions: the earlier-listed
     // objective keeps them (sort is stable), so floating-point noise cannot
     // flip the fleet from pass to pass.
     const priced = cands.filter(([, h]) => typeof h === 'number' && isFinite(h)).sort((a, b) => (Math.abs(a[1] - b[1]) < 1 / 60 ? 0 : a[1] - b[1]))
     if (!priced.length) return out(null, `no objective could be priced (${cands.map(([o]) => o).join(', ') || 'none viable'}) — the exit is unpriced or degenerate (${base.cadence?.why ?? 'no install cadence'})`)
+    // COMMITTED BY THE PLAN (plan.decideAmong): the priced objectives on the
+    // shared posterior draws; the fleet's current objective is kept unless
+    // another is better with P >= PLAN.theta and a positive expected gain.
+    const pc = planCtxOf(ns, info)
+    if (pc?.post && priced.length > 1) {
+      const pointH = Object.fromEntries(priced)
+      const d = planDecide(pc, 'sleeveObjective', () => decideAmong({ options: fns.filter(([o]) => o in pointH).map(([o, f]) => ({ key: o, sim: (dr) => f(applyDraw(base, dr)) })), prev: pc.prev?.decisions?.sleeveObjective ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), pointOf: (k) => pointH[k] }))
+      if (d?.key) return out(d.key, `plan: ${d.why} — point exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}`, { exits: pointH, plan: { meanH: d.meanH, q10: d.q10, q90: d.q90, held: d.held === true } })
+    }
     return out(priced[0][0], `simulated exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}${eRep === null ? ' (eRep unmeasured: rep priced on the exit leg only — a floor)' : ''}`, { exits: Object.fromEntries(priced) })
   } catch (e) {
     return out(null, `objective comparison threw: ${String(e).slice(0, 80)}`)
@@ -1626,7 +1642,11 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       if (!(gainPerSec >= 0)) return { buy: false, cost, why: 'income response unreadable', ...extra }
       const r = spendExit({ ...common, cost, gainPerSec, persists, expGainPerSec })
       if (r.deltaH === null) return { buy: false, cost, why: r.why, ...extra }
-      return { buy: r.deltaH < 0, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)`, ...extra }
+      // THE PLAN'S RULE FOR A PURCHASE (plan.decideSpend): buy only when the
+      // saving beats the simulator's measured option-specific error with
+      // P >= PLAN.theta — a 0.01h "saving" is a tie, not a verdict.
+      const pd = decideSpend({ deltaH: r.deltaH, withoutH: r.withoutH, si: planCtxOf(ns, info)?.post?.jitter?.si ?? null })
+      return { buy: pd ? pd.buy : r.deltaH < 0, pBuy: pd?.pBuy ?? null, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)${pd ? ` — plan: ${pd.why}` : ''}`, ...extra }
     }
     // Home: the next upgrade homeup.js / the watchdog priced.
     const hu = readJson(ns, '/tel/homeup.txt')
@@ -1663,6 +1683,9 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     // expFarm.portTiers). Every opener in the best prefix that shortens the
     // exit is licensed; autobuy.js and the program orders read this.
     if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) out.programs = programVerdicts(ns, inputs)
+    // Recorded in the one plan (what each spender may buy, and how sure).
+    const pc = planCtxOf(ns, info)
+    if (pc) pc.decisions.spends = Object.fromEntries(['home', 'hacknet', 'servers'].map((k) => [k, out[k] ? { buy: out[k].buy === true, pBuy: out[k].pBuy ?? null, deltaH: typeof out[k].deltaH === 'number' ? +out[k].deltaH.toFixed(3) : null } : null]))
   } catch (e) {
     out.why = `spend verdicts threw: ${String(e).slice(0, 80)}`
   }
@@ -1772,6 +1795,159 @@ function capitalFitOf(ns, info) {
   }
   capitalFitMemo = { at: info?.lastAugReset, t: Date.now(), fit }
   return fit
+}
+
+/**
+ * THE PASS'S PLAN CONTEXT (plan.js): the previous committed plan (same node
+ * and life, else none), the posteriors from the data files, the events that
+ * license a re-decision, and the seeded draws every decision of this pass
+ * shares. Built once per pass (planCtx, reset at the top of act()); the CPU
+ * it and every Monte Carlo spend is metered against PLAN.budgetMs and
+ * published. Built in every node; a decision with no options records none.
+ */
+let planCtx = null
+function planCtxOf(ns, info) {
+  if (planCtx) return planCtx
+  const t0 = Date.now()
+  enter('plan')
+  try {
+    let prev = null
+    try {
+      prev = JSON.parse(ns.read(PLAN_FILE) || 'null')
+    } catch {
+      prev = null
+    }
+    if (prev && prev.node !== info?.currentNode) prev = null
+    const sameLife = prev?.lastAugReset === info?.lastAugReset
+    const rows = (ns.read(STOCK_HIST_FILE) || '')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l)
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+    const fit = capitalFitOf(ns, info)
+    const cal = exitCalibrationOf(ns, info)
+    let ledger = null
+    try {
+      ledger = JSON.parse(ns.read('/tel/lifetimes.txt') || '[]')
+    } catch {
+      ledger = null
+    }
+    const obs = sameLife ? prev.obs ?? {} : {}
+    // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
+    // point exits of the top routes each pass, this life.
+    const points = sameLife && Array.isArray(prev.points) ? prev.points : []
+    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, ledger, bitNode: info?.currentNode, obs, optionPoints: points })
+    const committedAvailable = null // set by the route decision
+    const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
+    const seed = seedOf(info?.lastAugReset, info?.currentNode)
+    const draws = makeDraws(post, PLAN.N, seed)
+    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, decisions: {}, ms: 0, error: null }
+  } catch (e) {
+    planCtx = { t0, prev: null, post: null, events: [], redecide: false, draws: [], decisions: {}, ms: 0, error: `plan context threw: ${String(e).slice(0, 160)}` }
+  }
+  planCtx.ms += Date.now() - t0
+  leave('plan')
+  return planCtx
+}
+/**
+ * The install decision through the plan, reduced to what installgate reads:
+ * {install, key, waitMs, H (expected exit of the choice), q10, q50, q90,
+ * held, why}. Null when the plan cannot decide (installgate then keeps its
+ * own comparison, named as the fallback there).
+ */
+function planInstallOf(ns, info, inputs, count, point) {
+  const pc = planCtxOf(ns, info)
+  if (!pc.post) return null
+  pc.obsInputs = inputs
+  const d = planDecide(pc, 'install', () => decideInstall({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), sameLife: !!pc.prev }))
+  if (!d?.key || typeof d.meanH !== 'number') return null
+  return { install: d.install === true, key: d.key, waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why }
+}
+/**
+ * The decisions DERIVED from the committed route, recorded in the plan so a
+ * reader sees one plan: the faction schedule works the route's faction (its
+ * ticket is the committed augmentation) and the body step trains that join's
+ * legs. They are not re-decided here; they follow the route.
+ */
+function planExtrasOf(scheduleTarget, bodyStep, countRoute) {
+  return {
+    factionTarget: scheduleTarget ? { faction: scheduleTarget, follows: countRoute?.best ? `the committed count route (${countRoute.best.name} at ${countRoute.best.route?.faction})` : 'the faction schedule (no count route)' } : null,
+    bodyLeg: bodyStep ? { kind: bodyStep.kind ?? null, stat: bodyStep.stat ?? null, to: bodyStep.to ?? null, gym: bodyStep.gym ?? null, hours: typeof bodyStep.hours === 'number' ? +bodyStep.hours.toFixed(3) : null, follows: 'the committed route\'s join legs (joinplan blockers)' } : null,
+  }
+}
+/** Remaining Monte Carlo budget this pass (ms). */
+const planBudgetLeft = (pc) => Math.max(20, PLAN.budgetMs - pc.ms)
+/** Run one decision under the trace bracket and the CPU meter; a throw is recorded, never silent. */
+function planDecide(pc, name, fn) {
+  const t0 = Date.now()
+  enter(`plan-${name}`)
+  let d = null
+  try {
+    d = fn()
+  } catch (e) {
+    d = { key: null, why: `${name} decision threw: ${String(e).slice(0, 160)}`, error: true }
+  }
+  leave(`plan-${name}`)
+  pc.ms += Date.now() - t0
+  pc.decisions[name] = d
+  return d
+}
+/**
+ * /tel/plan.txt — ONE record, every pass that reached a decision. Carries each
+ * committed choice with its distribution, the posteriors, the calibration,
+ * the CPU spent and whether it broke the budget, and the observation buffers
+ * the next pass's rate posteriors read.
+ */
+function publishPlan(ns, info, extra = {}) {
+  const pc = planCtx
+  if (!pc) return
+  try {
+    const at = new Date().toISOString()
+    const inp = extra.inputs ?? pc.obsInputs ?? null
+    const obs = pc.post
+      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at), rep: withObs(pc.obs?.rep, inp?.repPerSec, at) }
+      : pc.obs ?? {}
+    const route = pc.decisions.countRoute ?? null
+    const inst = pc.decisions.install ?? null
+    // THE PLAN'S EXIT: the committed install option's distribution (it
+    // includes the committed route where one exists), else the route's.
+    const ex = inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : null
+    const overBudget = pc.ms > PLAN.budgetMs || [route, inst].some((d) => d?.overBudget === true)
+    const redecided = pc.redecide && Object.values(pc.decisions).some((d) => d && d.held === false)
+    const rec = {
+      at,
+      node: info?.currentNode ?? null,
+      lastAugReset: info?.lastAugReset ?? null,
+      health: pc.error || Object.values(pc.decisions).some((d) => d?.error) ? 'error' : overBudget ? 'over-budget' : 'ok',
+      error: pc.error ?? (Object.values(pc.decisions).find((d) => d?.error)?.why ?? null),
+      decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
+      events: pc.events,
+      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === inst ? `install decision (${inst.key})` : `count route (${route.name})` } : null,
+      decisions: {
+        install: inst,
+        countRoute: route,
+        factionTarget: extra.factionTarget ?? null,
+        bodyLeg: extra.bodyLeg ?? null,
+        sleeveObjective: pc.decisions.sleeveObjective ?? null,
+        spends: pc.decisions.spends ?? null,
+      },
+      posteriors: pc.post ? posteriorSummary(pc.post) : null,
+      calibration: pc.post?.calibration ?? null,
+      cpu: { ms: pc.ms, budgetMs: PLAN.budgetMs, overBudget, N: PLAN.N, draws: Math.min(...[route?.n, inst?.n].filter((x) => typeof x === 'number'), PLAN.N) },
+      rule: `switch only when P(alternative better net of switch cost) >= ${PLAN.theta} and the expected gain is positive; re-decide on events (${PLAN.maxAgeMin} min max age)`,
+      obs,
+      points: [...(pc.points ?? []), ...(pc.point ? [pc.point] : [])].slice(-16),
+    }
+    ns.write(PLAN_FILE, JSON.stringify(rec), 'w')
+  } catch (e) {
+    ns.write(PLAN_FILE, JSON.stringify({ at: new Date().toISOString(), node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null, health: 'error', error: `publishPlan threw: ${String(e).slice(0, 200)}` }), 'w')
+  }
 }
 
 /**
@@ -2326,6 +2502,7 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 }
 
 async function act(ns, canJoin, info, note) {
+  planCtx = null // one plan context per pass (planCtxOf)
   {
     const g = readJson(ns, GATE)?.objective?.growShare
     growShareNow = typeof g === 'number' && isFinite(g) ? g : null
@@ -3414,15 +3591,27 @@ async function act(ns, canJoin, info, note) {
         nfgName: NFG,
       })
       const ranked = bestCountRoute(bestExitPolicy, rec.inputs, cc, routes)
-      // COMMITMENT (countexit.commitRoute): this life's route is kept unless
-      // beaten by more than the forecast error over its remaining detour.
       const committed = (() => {
         const c = readJson(ns, COUNT_ROUTE_FILE)
         return c && c.lastAugReset === info?.lastAugReset && !allCount.has(c.name) ? c : null
       })()
-      const cm = commitRoute(ranked, routes, committed, { tolPerH: exitCalibrationOf(ns, info).tolPerH })
+      // COMMITMENT BY THE PLAN (plan.decideRoute): the top routes and the
+      // committed one on the shared posterior draws; the committed route is
+      // kept unless an alternative is better net of its switch cost with
+      // probability >= PLAN.theta and a positive expected gain. Re-decided
+      // on events only. The interim hysteresis (countexit.commitRoute) is the
+      // named fallback when the plan cannot decide.
+      const pc = planCtxOf(ns, info)
+      pc.repPoint = repPerSec
+      pc.point = { at: new Date().toISOString(), life: info?.lastAugReset ?? null, h: Object.fromEntries((ranked.tried ?? []).filter((t) => typeof t.hours === 'number').slice(0, 8).map((t) => [routeKey(t), t.hours])) }
+      if (!pc.obsInputs) pc.obsInputs = rec.inputs
+      const bay = pc.post ? planDecide(pc, 'countRoute', () => decideRoute({ inputs: rec.inputs, count: cc, routes, point: ranked, repPoint: repPerSec, prev: pc.prev?.decisions?.countRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc) })) : null
+      const bayRoute = bay?.key ? routes.find((r) => routeKey(r) === bay.key) ?? null : null
+      const cm = bayRoute
+        ? { best: { name: bayRoute.name, hours: bay.q50 ?? bay.meanH, route: bayRoute }, stayed: bay.held === true || bay.stays === true, switched: bay.switched === true, why: `plan: ${bay.why}` }
+        : { ...commitRoute(ranked, routes, committed, { tolPerH: exitCalibrationOf(ns, info).tolPerH }), fallback: `the plan could not decide (${bay?.why ?? pc.error ?? 'no posterior'}): interim hysteresis` }
       if (cm.best) ns.write(COUNT_ROUTE_FILE, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, name: cm.best.name, faction: cm.best.route.faction, via: cm.best.route.via, since: cm.switched || !committed ? new Date().toISOString() : committed.since, why: cm.why }), 'w')
-      return { ...ranked, best: cm.best, commitment: { stayed: cm.stayed, switched: cm.switched, why: cm.why, previous: committed ? `${committed.name} at ${committed.faction} via ${committed.via}` : null }, routes: routes.length }
+      return { ...ranked, best: cm.best, commitment: { stayed: cm.stayed, switched: cm.switched, why: cm.why, fallback: cm.fallback ?? null, previous: committed ? `${committed.name} at ${committed.faction} via ${committed.via}` : null }, plan: bay?.key ? { meanH: bay.meanH, q10: bay.q10, q50: bay.q50, q90: bay.q90, pBest: bay.pBest, held: bay.held === true, draws: bay.n } : null, routes: routes.length }
     } catch (e) {
       return { best: null, tried: [], why: `route pricing threw: ${String(e).slice(0, 80)}` }
     }
@@ -3436,6 +3625,7 @@ async function act(ns, canJoin, info, note) {
         chosen: countRoute.best ? { name: countRoute.best.name, faction: countRoute.best.route.faction, via: countRoute.best.route.via, rankExitH: +countRoute.best.hours.toFixed(2), rankBasis: "previous pass's exit inputs (ranking only)", gateExitH: null, detourH: +countRoute.best.route.detourH.toFixed(3), price: Math.round(countRoute.best.route.price) } : null,
         routes: countRoute.routes ?? null,
         commitment: countRoute.commitment ?? null,
+        plan: countRoute.plan ?? null,
         alternatives: (countRoute.tried ?? []).slice(0, 8),
         why: countRoute.best ? 'the soonest simulated exit over every reachable distinct augmentation' : `unpriced (${countRoute.why}) — the schedule scores every distinct augmentation at the flat ticket value (fallback)`,
       }
@@ -4155,7 +4345,12 @@ async function act(ns, canJoin, info, note) {
             let decided = null
             try {
               const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
-              if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
+              // THE PLAN'S EXIT where it decided a route this pass (nothing
+              // is queued, so there is no install decision): the committed
+              // route's median over the posterior draws.
+              const pr = planCtx?.decisions?.countRoute
+              if (pr?.key && typeof pr.q50 === 'number') decided = { exitH: pr.q50, source: `plan: median over the posterior via the committed route (${pr.name}), 80% interval ${pr.q10}-${pr.q90}h` }
+              else if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
               if (countRouteNow?.chosen && decided?.source?.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +decided.exitH.toFixed(2)
             } catch {
               decided = null
@@ -4197,6 +4392,7 @@ async function act(ns, canJoin, info, note) {
     // Nothing else to buy, but the Covenant campaign's path B may still want
     // its batch and an install (a final window often has nothing planned).
     if (canInstall && !flags['no-install'] && !flags.dry && covenantBatchOrders(unplannedExtras?.covenantExit)) {
+      publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
       flushOrders()
       return
     }
@@ -4507,7 +4703,7 @@ async function act(ns, canJoin, info, note) {
           if (nowC.best) {
             const waitsC = [0.25, 0.5, 1, 2, 4].map((w) => {
               const r = bestCountExit(bestExitPolicy, inputs, countCtx, { firstInstallH: w })
-              return { waitMs: w * 3600000, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, n: r.best?.n ?? null }
+              return { waitMs: w * 3600000, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, n: r.best?.n ?? null, lifeH: r.best?.lifeH ?? null }
             })
             // THE EXIT-CHOSEN ROUTE is a wait too, on THESE inputs: install
             // once its detour is done, with its augmentation forced into the
@@ -4522,7 +4718,7 @@ async function act(ns, canJoin, info, note) {
                 const w = route.detourH + extra
                 const r = bestCountExit(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: w })
                 const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
-                waitsC.push({ waitMs: Math.round(w * 3600000), H: took ? r.best.hours : null, installs: took ? r.best.installsFirst : null, n: took ? r.best.n : null, route: route.name, via: route.via })
+                waitsC.push({ waitMs: Math.round(w * 3600000), H: took ? r.best.hours : null, installs: took ? r.best.installsFirst : null, n: took ? r.best.n : null, lifeH: took ? r.best.lifeH ?? null : null, extra, route: route.name, via: route.via })
               }
             }
             return {
@@ -4538,6 +4734,11 @@ async function act(ns, canJoin, info, note) {
               composition: { n: nowC.best.n, firstBatch: { count: nowC.best.firstBatch.count, nfgLevels: nowC.best.firstBatch.nfgLevels, cost: Math.round(nowC.best.firstBatch.cost), chosen: nowC.best.firstBatch.chosen }, countInstalls: nowC.best.countInstalls, padded: nowC.best.padded },
               tried: nowC.tried,
               why: null,
+              // THE COMMITTED INSTALL DECISION (plan.decideInstall): these
+              // options on the shared posterior draws, the committed install
+              // time kept unless beaten with P >= PLAN.theta. installgate
+              // obeys it (exitCompare.bayes).
+              bayes: planInstallOf(ns, info, inputs, countCtx, { now: { hours: nowC.best.hours, n: nowC.best.n, lifeH: nowC.best.lifeH ?? null }, waits: waitsC.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, n: w.n, lifeH: w.lifeH, extra: w.extra, route: w.route ? route : null })) }),
             }
           }
         }
@@ -4546,15 +4747,16 @@ async function act(ns, canJoin, info, note) {
         const waits = futures.map((f) => {
           const g = installGainsOf([...(f.buy ?? []), ...pending], offers)
           const r = bestExitPolicy({ ...inputs, firstInstallH: f.waitMs / 3600000, installGains: g, nextInstallGain: g?.hacking ?? null }, 400, 1)
-          return { waitMs: f.waitMs, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null }
+          return { waitMs: f.waitMs, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, gains: g }
         })
         return {
           nowH: now.best?.hours ?? null,
           nowInstalls: now.best?.installsFirst ?? null,
           neverH: never.best?.hours ?? null,
-          waits,
+          waits: waits.map(({ gains, ...w }) => w),
           atSearchEdge: now.atSearchEdge === true,
           why: now.best ? null : now.why,
+          bayes: now.best ? planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null })), never: { hours: never.best?.hours ?? null } }) : null,
         }
       } catch (e) {
         return { nowH: null, why: `exit comparison threw: ${String(e).slice(0, 80)}` }
@@ -4565,6 +4767,10 @@ async function act(ns, canJoin, info, note) {
     if (countRouteNow?.chosen && exitCompare?.countAware) {
       const hs = (exitCompare.waits ?? []).filter((w) => w.route === countRouteNow.chosen.name && typeof w.H === 'number').map((w) => w.H)
       countRouteNow.chosen.gateExitH = hs.length ? +Math.min(...hs).toFixed(2) : null
+      // Where the plan decides, the published exit is the plan's median; the
+      // route's figure is the plan's too when its choice is a route option
+      // (one exit, one model).
+      if (exitCompare.bayes) countRouteNow.chosen.gateExitH = exitCompare.bayes.key?.startsWith('r') && typeof exitCompare.bayes.q50 === 'number' ? +exitCompare.bayes.q50.toFixed(2) : null
     }
     const gate = shouldInstall({
       exitCompare,
@@ -4735,6 +4941,10 @@ async function act(ns, canJoin, info, note) {
     // route's 27.3h. The published exit is then the count-aware exit from
     // now, the chosen route included, on this pass's inputs.
     const decidedExit = (() => {
+      // THE PLAN'S EXIT (plan.decideInstall): the committed option's median
+      // over the posterior draws, its 80% interval beside it.
+      const b = exitCompare?.bayes
+      if (b && typeof b.q50 === 'number') return { exitH: b.q50, source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h` }
       if (!exitCompare?.countAware && countTickets) {
         try {
           const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
@@ -4944,6 +5154,7 @@ async function act(ns, canJoin, info, note) {
       todo.push(`${pending.length} queued + ${plan ? plan.buy.length : 0} planned (M=${M.toFixed(4)}) — ${gate.why}`)
     } else if (covenantBatchOrders(covenantExit)) {
       ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought: [], installing: true, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
+      publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
       flushOrders()
       return
     } else if (gate.install && terminal?.sprint) {
@@ -5112,6 +5323,7 @@ async function act(ns, canJoin, info, note) {
         order('install', ['boot.js'], gate.why)
         orders[orders.length - 1].requireQueued = pending.length
         ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
+        publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
         flushOrders()
         return // act.js installs; the game reloads; boot.js brings the stack back up
       }
@@ -5127,6 +5339,7 @@ async function act(ns, canJoin, info, note) {
     }
   }
 
+  publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
   flushOrders()
   const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')

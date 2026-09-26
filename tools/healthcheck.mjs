@@ -35,6 +35,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { wealthNegativeCheck } from "../nodeecon.js";
+// Root modules import each other by bare name ('bayes.js'), as the game
+// resolves them; this hook resolves those under node (plan.js below).
+import "./test/gameresolve.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEL = path.join(ROOT, ".telemetry");
@@ -553,6 +556,15 @@ if (!sleevesExpected) {
   const cr = gate?.countRoute?.chosen;
   if (cr && num(cr.gateExitH) && num(gate?.exitH) && gate.exitH > cr.gateExitH + 0.01) fail(`TWO EXITS: installgate exitH ${gate.exitH.toFixed(2)}h is later than its own chosen count route's ${cr.gateExitH.toFixed(2)}h`, "the route was ranked but never entered the gate's comparison — the published exit and the plan disagree");
   if (cal && num(cal.realisedPerH)) note(`exit forecast: ${cal.realisedPerH.toFixed(2)}h/h realised vs ${cal.predictedPerH}h/h predicted, error ${num(cal.errPerH) ? cal.errPerH.toFixed(2) : "?"}h/h over ${cal.pairs} pairs`);
+  // THE COMMITTED PLAN (plan.js, /tel/plan.txt): present, same life as the
+  // gate, not broken, inside its CPU budget, and its predictive intervals
+  // calibrated (planCheck in plan.js, shared with the suite).
+  {
+    const { planCheck } = await import("../plan.js");
+    const r = planCheck(readTel("plan.txt"), { gate, progress: prog, now: Date.now() });
+    for (const f of r.fails) fail(f.what, f.detail);
+    for (const n of r.notes) note(n);
+  }
   const windowH = gate?.objective?.windowH;
   now.exitH = num(exitH) ? exitH : null;
   now.queued = (state.queuedAugmentations ?? []).length;
