@@ -519,6 +519,10 @@ if (!sleevesExpected) {
   const exitH = num(gate?.exitH) ? gate.exitH : gate?.objective?.exitSensitivity?.exitH;
   // The planner's own forecast calibration (installgate exitCalibration).
   const cal = gate?.exitCalibration;
+  // ONE EXIT: the count route's exit on the gate's own inputs is one of the
+  // gate's candidates, so the published exit can never be later than it.
+  const cr = gate?.countRoute?.chosen;
+  if (cr && num(cr.gateExitH) && num(gate?.exitH) && gate.exitH > cr.gateExitH + 0.01) fail(`TWO EXITS: installgate exitH ${gate.exitH.toFixed(2)}h is later than its own chosen count route's ${cr.gateExitH.toFixed(2)}h`, "the route was ranked but never entered the gate's comparison — the published exit and the plan disagree");
   if (cal && num(cal.realisedPerH)) note(`exit forecast: ${cal.realisedPerH.toFixed(2)}h/h realised vs ${cal.predictedPerH}h/h predicted, error ${num(cal.errPerH) ? cal.errPerH.toFixed(2) : "?"}h/h over ${cal.pairs} pairs`);
   const windowH = gate?.objective?.windowH;
   now.exitH = num(exitH) ? exitH : null;

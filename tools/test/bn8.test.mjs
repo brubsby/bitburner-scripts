@@ -517,7 +517,7 @@ export async function run() {
     const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
     if ((prog.match(/objective: unifyObjectiveExit\(weightsMeta, decided/g) ?? []).length !== 2 || /objective: weightsMeta,/.test(prog)) pch.fail("both gate writes must publish the unified exit into the objective record");
     if ((prog.match(/exitCalibration: withExitSample\(/g) ?? []).length !== 2) pch.fail("both gate writes must carry the exit calibration");
-    if (!/const decidedExit = decidedExitOf\(exitCompare, gate\)/.test(prog)) pch.fail("the planned write's exit must be the deciding comparison's");
+    if (!/return decidedExitOf\(exitCompare, gate\)/.test(prog)) pch.fail("the planned write's exit must be the deciding comparison's");
     if (!/waitTolPerH: exitCal0\.tolPerH/.test(prog)) pch.fail("the count-aware comparison must carry the measured tolerance");
     if (!/const exitH = num\(gate\?\.exitH\) \? gate\.exitH/.test(hc)) pch.fail("healthcheck F must watch the one published exit");
     if (!/realisedCapital\(rows\)/.test(prog)) pch.fail("capitalFitOf must fit the trader's history, not the ledger");
@@ -660,6 +660,47 @@ export async function run() {
     if ((prog.match(/countRoute: countRouteNow/g) ?? []).length !== 2) s8.fail("both gate writes must publish the route choice");
   }
   checks.push(s8);
+
+  // -----------------------------------------------------------------------
+  const t8 = new Check("B8t", "one exit: the chosen count route re-enters the gate's comparison on the gate's inputs (live 12:12: exitH 68.7h beside a route 'exit 27.3h'); the gym legs match the live gym rate");
+  {
+    t8.examined(7);
+    const C = await import("../../countexit.js");
+    const BP = await import("../../bodyplan.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const inputs = Fx.exitInputs.inputs;
+    const nfgA = Fx.factions["Slum Snakes"].augs.find((a) => a.name === "NeuroFlux Governor");
+    const count = { short: 1, ladder: [], nfg: { price: nfgA.price, level: 0 } };
+    const route = { name: "R", faction: "F", via: "work", price: 4e8, laterPrice: 4e8, detourH: 1.48, hacking: 1, exp: 1, rep: 1.15 };
+    // Same inputs, same forced batch, same install time: the ranking's hours
+    // and the gate's route wait are one number.
+    const ranked = C.bestCountRoute(X.bestExitPolicy, inputs, count, [route]);
+    const gateWait = C.bestCountExit(X.bestExitPolicy, inputs, { ...count, ladder: [{ ...route, must: true }] }, { firstInstallH: route.detourH });
+    if (!(ranked.best && gateWait.best && Math.abs(ranked.best.hours - gateWait.best.hours) < 1e-9)) t8.fail("the route's ranked exit and the gate's route wait must be the same computation on the same inputs", `${ranked.best?.hours} vs ${gateWait.best?.hours}`);
+    else t8.note(`route exit ${ranked.best.hours.toFixed(2)}h both ways`);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/waitsC\.push\(\{ waitMs: Math\.round\(w \* 3600000\), H: took \? r\.best\.hours : null[^\n]*route: route\.name/.test(prog)) t8.fail("the chosen route must enter the count-aware comparison as a wait");
+    if (!/countExitNowOf\(gangInputs0\(\), cc, countRoute\?\.best\?\.route \?\? null\)/.test(prog)) t8.fail("the unplanned path's exit must include the chosen route too");
+    if (!/if \(!exitCompare\?\.countAware && countTickets\) \{[\s\S]{0,400}countExitNowOf\(exitInputsOf\([^\n]*countRoute\?\.best\?\.route \?\? null\)/.test(prog)) t8.fail("with the count short, a non-count-aware comparison must not publish the ordinary model's exit (the live 68.7h)");
+    if (/chosen: countRoute\.best \? \{[^\n]* exitH:/.test(prog) || !/rankExitH: [^\n]*rankBasis:/.test(prog)) t8.fail("the route record must not publish a second 'exitH': its ranking figure is rankExitH with its basis named");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if (!/TWO EXITS: installgate exitH/.test(hc)) t8.fail("healthcheck must fail when the published exit is later than the chosen route's gate exit");
+    // THE GYM LEGS, against the live game (history.jsonl, 2026-09-26): at
+    // Powerhouse Gym strength exp went 8413.62 -> 8941.38 over 20.8s of play
+    // (25.37/s), and strength read 165 at exp 8058.40 and 171 at 8941.38.
+    // bodyplan's formula (Work/Formulas.ts:108-121: classInfo.strExp 1 x
+    // location.expMult 10 x person.strength_exp per second; skill.ts:13) with
+    // those mults reproduces the published leg: 0.0757h from 8058 to 200.
+    const measured = (8941.376 - 8413.622) / 20.8;
+    const levelMult = 171 / (32 * Math.log(8941.376 + 534.6) - 200);
+    const person = { skills: { strength: 165, defense: 1, dexterity: 2, agility: 1, charisma: 2, hacking: 782, intelligence: 112 }, exp: { strength: 8058.4, defense: 0, dexterity: 0, agility: 0, charisma: 0, hacking: 0 }, city: "Sector-12", money: 1e12, mults: { strength: levelMult, strength_exp: measured / 10, defense: 1, defense_exp: 1, dexterity: 1, dexterity_exp: 1, agility: 1, agility_exp: 1, charisma: 1, charisma_exp: 1, hacking: 1, hacking_exp: 1 } };
+    const rate = BP.gymRate(BP.GYMS.find((g) => g.name === "Powerhouse Gym"), "strength", person, 1);
+    const h = BP.hoursToStat("strength", 200, person, rate);
+    const err = Math.abs(h - 0.0757) / 0.0757;
+    t8.note(`gym: measured ${measured.toFixed(2)} str exp/s (x${(measured / 10).toFixed(3)} strength_exp at Powerhouse's x10), level mult ${levelMult.toFixed(3)}; strength 165 -> 200: ${h.toFixed(4)}h vs the published 0.0757h (${(err * 100).toFixed(1)}% apart); from level 1 with mults 1 it would be ${BP.hoursToStat("strength", 200, { ...person, exp: { ...person.exp, strength: 0 }, mults: { ...person.mults, strength: 1, strength_exp: 1 } }, 10).toFixed(2)}h`);
+    if (!(err < 0.1)) t8.fail(`the gym leg must reproduce the live game within 10% (${(err * 100).toFixed(1)}%)`);
+  }
+  checks.push(t8);
 
   return checks;
 }
