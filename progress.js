@@ -137,7 +137,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExit, ticketLadder } from 'countexit.js'
-import { INSTALL_HOLD_FILE, fitCapital, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
+import { INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -1724,26 +1724,101 @@ function countModelOf(mults, offers, allCount, player) {
 }
 
 /**
- * The trader's steady return and per-install warm-up (nodeecon.fitCapital)
- * from this node's lifetimes-ledger capital columns; with too few lives, the
+ * The trader's steady return and per-install warm-up (nodeecon.realisedCapital, from the trader's history)
+ * of every trader run seen from its start (flows excluded); with none, the
  * trader's own modelled steady rate (stock.txt calibration.predictedPerSec).
  * Null outside a capital node or with nothing to fit.
  */
 let capitalFitMemo = null
 function capitalFitOf(ns, info) {
   if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain !== 0) return null
-  if (capitalFitMemo && capitalFitMemo.at === info?.lastAugReset) return capitalFitMemo.fit
+  // Re-fit every 10 minutes: the history grows through the life.
+  if (capitalFitMemo && capitalFitMemo.at === info?.lastAugReset && Date.now() - capitalFitMemo.t < 600e3) return capitalFitMemo.fit
   let fit = null
   try {
-    const ledger = JSON.parse(ns.read('/tel/lifetimes.txt') || '[]')
-    const lives = ledger.filter((e) => e?.bitNode === info?.currentNode).map((e) => ({ lifeH: e.lifeH, start: e.capStart, end: e.capEnd }))
+    // THE TRADER'S OWN HISTORY, flows excluded (nodeecon.realisedCapital).
+    // The lifetimes ledger's capEnd is taken AFTER the install batch spent
+    // its cash, so a ledger fit reads purchases as losses (live 2026-09-26
+    // 02:08: 1.78e-4/s realised read as 3.4e-5/s; the exit jumped 113h ->
+    // 159h). The ledger columns stay recorded; they are not a return.
+    const rows = (ns.read(STOCK_HIST_FILE) || '')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l)
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
     const steady = readJson(ns, STOCK_FILE)?.calibration?.predictedPerSec
-    fit = fitCapital(lives, steady) ?? (typeof steady === 'number' && steady > 0 ? { r: steady, warmupH: null, n: 0, why: "no capital lives recorded: the trader's modelled steady rate, warm-up unmeasured" } : null)
+    fit = realisedCapital(rows) ?? (typeof steady === 'number' && steady > 0 ? { r: steady, warmupH: null, n: 0, why: "no trader run seen from its start in the history: the trader's modelled steady rate, warm-up unmeasured" } : null)
   } catch {
     fit = null
   }
-  capitalFitMemo = { at: info?.lastAugReset, fit }
+  capitalFitMemo = { at: info?.lastAugReset, t: Date.now(), fit }
   return fit
+}
+
+/**
+ * THE ONE PUBLISHED EXIT and its calibration. Two exits used to be published
+ * at once (live 2026-09-26): the gate held on the count-aware simulation's
+ * 114h while objective.exitSensitivity.exitH carried the ordinary model's
+ * ~159h, and the healthcheck watched the one the decision did not use. Now
+ * every gate write carries `exitH` = the exit of the model that decides
+ * (the count-aware simulation where it prices, else the ordinary one), and
+ * the sensitivity record keeps its own base as `baseH`.
+ *
+ * CALIBRATION: each published exit is a sample; a right forecast falls 1h per
+ * hour while the plan is followed. nodeecon.exitDrift turns same-life pairs
+ * into the realised drift and the forecast error per hour, which is the
+ * tolerance a simulated wait must beat (installgate waitTolPerH).
+ */
+const EXIT_CAL_MAX = 48
+const EXIT_CAL_GAP_MS = 12 * 60e3
+function exitCalibrationOf(ns, info) {
+  let prev = null
+  try {
+    prev = readJson(ns, GATE)?.exitCalibration ?? null
+  } catch {
+    prev = null
+  }
+  const samples = Array.isArray(prev?.samples) && prev.node === info?.currentNode ? prev.samples : []
+  const d = exitDrift(samples)
+  return { node: info?.currentNode ?? null, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
+}
+function withExitSample(cal, info, exitH, source) {
+  const last = cal.samples[cal.samples.length - 1]
+  const due = typeof exitH === 'number' && isFinite(exitH) && (!last || Date.now() - Date.parse(last.at) >= EXIT_CAL_GAP_MS || last.life !== info?.lastAugReset)
+  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), life: info?.lastAugReset ?? null, source }].slice(-EXIT_CAL_MAX) : cal.samples
+  const d = exitDrift(samples)
+  return { node: cal.node, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
+}
+/** The exit of the model that decides, from a gate's exit comparison. */
+function decidedExitOf(exitCompare, gate) {
+  const ex = exitCompare
+  if (!ex || typeof ex.nowH !== 'number' || !isFinite(ex.nowH)) return null
+  if (gate?.install) return { exitH: ex.nowH, source: ex.countAware ? 'count-aware exit, installing now' : 'exit comparison, installing now' }
+  const opts = [ex.nowH, ...(ex.waits ?? []).map((w) => w?.H), ex.neverH].filter((h) => typeof h === 'number' && isFinite(h))
+  const chosen = typeof gate?.exitBestWaitH === 'number' && gate?.waitTolPerH ? gate.exitBestWaitH : Math.min(...opts)
+  return { exitH: chosen, source: ex.countAware ? 'count-aware exit, holding' : 'exit comparison, holding' }
+}
+/** The unplanned path has no comparison: the count-aware exit from now if it prices. */
+function countExitNowOf(inputs, countCtx) {
+  if (!countCtx || !inputs) return null
+  let best = null
+  for (const w of [0, 0.25, 0.5, 1, 2, 4]) {
+    const r = bestCountExit(bestExitPolicy, inputs, countCtx, { firstInstallH: w })
+    if (r.best && (best === null || r.best.hours < best)) best = r.best.hours
+  }
+  return best === null ? null : { exitH: best, source: 'count-aware exit (nothing queued)' }
+}
+function unifyObjectiveExit(meta, decided) {
+  if (!meta?.exitSensitivity) return meta
+  const es = meta.exitSensitivity
+  const baseH = es.baseH ?? es.exitH ?? null
+  return { ...meta, exitSensitivity: { ...es, baseH, exitH: decided?.exitH ?? baseH, exitSource: decided?.source ?? 'exit sensitivity base (the ordinary model)' } }
 }
 
 /**
@@ -1975,7 +2050,7 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // stock trader's compounding return. Zero/absent outside a node whose
     // income is the trader's, so every other node prices as before.
     flatIncomePerSec: econNow?.flatPerSec ?? 0,
-    // THE TRADER ACROSS LIVES (nodeecon.fitCapital): a steady rate and the
+    // THE TRADER ACROSS LIVES (nodeecon.realisedCapital): a steady rate and the
     // warm-up every install costs, fitted from the lifetimes ledger's capital
     // columns — not the young life's own return, which was negative for its
     // first half hour and made the exit read "money never grows" (live
@@ -3884,7 +3959,24 @@ async function act(ns, canJoin, info, note) {
           // derivation runs whether or not anything is affordable, and a
           // refusal on this path was invisible (2026-09-20 01:10 — the
           // home figure read "elasticity not measured" with no why).
-          objective: weightsMeta,
+          ...(() => {
+            // THE ONE PUBLISHED EXIT on the unplanned path: the count-aware
+            // exit from now where the count gate is short and it prices,
+            // else the sensitivity base — the same model the planned path's
+            // gate decides on, so the published figure does not switch
+            // families between passes.
+            let decided = null
+            try {
+              const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
+              if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = countExitNowOf(gangInputs0(), cc)
+            } catch {
+              decided = null
+            }
+            const cal0 = exitCalibrationOf(ns, info)
+            const exitH = decided?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null
+            const source = decided?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null)
+            return { objective: unifyObjectiveExit(weightsMeta, decided), exitH, exitSource: source, exitCalibration: withExitSample(cal0, info, exitH, source) }
+          })(),
           incomeSample: makeIncomeSample(incNow, player, schedule, info),
           incomeCalibration: scoreIncome(prevIncome0, incNow),
           // The Covenant comparison rides this path too: a life with nothing
@@ -4207,6 +4299,7 @@ async function act(ns, canJoin, info, note) {
     // node's exit if the queue installs now, if it installs after each
     // candidate wait (with that wait's batch), and if nothing is installed
     // again — all on one input builder, so only the choice differs.
+    const exitCal0 = exitCalibrationOf(ns, info)
     const exitCompare = (() => {
       try {
         const inputs0 = exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
@@ -4230,6 +4323,9 @@ async function act(ns, canJoin, info, note) {
             })
             return {
               countAware: true,
+              // The forecast error per hour of waiting (exitCalibrationOf).
+              waitTolPerH: exitCal0.tolPerH,
+              waitTolWhy: exitCal0.tolSource,
               nowH: nowC.best.hours,
               nowInstalls: nowC.best.installsFirst,
               neverH: null,
@@ -4422,6 +4518,8 @@ async function act(ns, canJoin, info, note) {
       gate.install = false
       gate.why = `hold: ${INSTALL_HOLD_FILE}: ${installHold.slice(0, 200)} — the gate would install (${gate.wouldInstall})`
     }
+    // THE ONE PUBLISHED EXIT: the exit of the model that just decided.
+    const decidedExit = decidedExitOf(exitCompare, gate)
 
     // ------------------------------------------------------------------
     // THE TERMINAL SPRINT. Once The Red Pill is INSTALLED, the run ends at
@@ -4549,7 +4647,10 @@ async function act(ns, canJoin, info, note) {
           // The objective the plan was priced under — derived per pass from
           // measured elasticities, or 'flat' when derivation refused. A
           // weight jump between passes is visible here, not silent.
-          objective: weightsMeta,
+          objective: unifyObjectiveExit(weightsMeta, decidedExit),
+          exitH: decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null,
+          exitSource: decidedExit?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null),
+          exitCalibration: withExitSample(exitCal0, info, decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH, decidedExit?.source ?? 'sensitivity base'),
           // WHAT THE BUDGET MUST ACTUALLY HOLD: the plan's cost NET of what
           // income will deliver before the install happens anyway. Money is
           // only needed AT the install; holding the gross figure starved the
@@ -4761,8 +4862,8 @@ async function act(ns, canJoin, info, note) {
                 // Distinct augmentations INCLUDING what this install lands —
                 // the count trajectory behind Daedalus's 30-aug forecast.
                 augs: allCount.size,
-                // THE TRADER'S CAPITAL over this life (nodeecon.fitCapital reads
-                // these back): its start wealth and its wealth at the install.
+                // THE TRADER'S CAPITAL over this life (recorded for audit; NOT a return — the batch has spent
+                // its cash by now): its start wealth and its wealth at the install.
                 ...(stockNow?.ok ? { capStart: readJson(ns, STOCK_FILE)?.startWealth ?? undefined, capEnd: Math.round((ns.getServerMoneyAvailable('home') ?? 0) + stockNow.equity) } : {}),
               },
               { g: joinState?.rateGrowthPerCycle, windowH: joinState?.windowH, augsPerWindow: joinState?.augsPerWindow },

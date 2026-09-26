@@ -396,7 +396,7 @@ export function withCashRaise(orders, cash, equity, margin = 0.02) {
  */
 export const STOCK_HIST_FILE = '/tel/stock-hist.txt'
 export const STOCK_TICK_S = 6
-export function realisedCapital(rows, { maxStartTicks = 60, minPoints = 8 } = {}) {
+export function realisedCapital(rows, { maxStartTicks = 150, minPoints = 8 } = {}) {
   if (!Array.isArray(rows) || rows.length < 2) return null
   const segs = []
   let cur = null

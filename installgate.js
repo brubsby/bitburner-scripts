@@ -553,6 +553,24 @@ export function shouldInstall(o) {
       if (typeof w?.H === 'number' && isFinite(w.H) && (exitWait === null || w.H < exitWait.H)) exitWait = w
     }
   }
+  // A WAIT MUST BEAT INSTALLING NOW BY MORE THAN THE FORECAST CAN SEE.
+  // ex.waitTolPerH (supplied where the count-aware exit decides, BitNode 8):
+  // the measured error of the projected exit per hour of wall time
+  // (nodeecon.exitDrift), or a stated prior. A wait of w hours wins only if
+  // it saves more than tol x w. Live 2026-09-26 the gate held a one-ticket
+  // batch 4h on a 0.14h saving of a 114h exit whose forecast moved ~17h per
+  // hour — a tie read as a decision. Absent (every other node): exact
+  // comparison, as before.
+  const waitTolPerH = exitDecides && typeof ex.waitTolPerH === 'number' && isFinite(ex.waitTolPerH) && ex.waitTolPerH > 0 ? ex.waitTolPerH : 0
+  let tieWait = null
+  if (waitTolPerH > 0 && exitWait) {
+    let clear = null
+    for (const w of ex.waits ?? []) {
+      if (typeof w?.H === 'number' && isFinite(w.H) && ex.nowH - w.H > waitTolPerH * (w.waitMs / 3600000) && (clear === null || w.H < clear.H)) clear = w
+    }
+    if (clear === null && exitWait.H < ex.nowH) tieWait = exitWait
+    exitWait = clear
+  }
   const neverBest = exitDecides && typeof ex.neverH === 'number' && isFinite(ex.neverH) && ex.neverH < ex.nowH && !(exitWait && exitWait.H <= ex.neverH)
   const exitWaitBeats = exitDecides && exitWait !== null && exitWait.H < ex.nowH
   if (exitDecides) {
@@ -675,6 +693,9 @@ export function shouldInstall(o) {
     exitNowH: exitDecides ? ex.nowH : null,
     exitBestWaitH: exitWait?.H ?? null,
     exitNeverH: exitDecides && typeof ex.neverH === 'number' ? ex.neverH : null,
+    waitTolPerH: waitTolPerH || null,
+    waitTolWhy: waitTolPerH ? ex.waitTolWhy ?? null : null,
+    tieWait: tieWait ? { waitH: tieWait.waitMs / 3600000, H: tieWait.H, savedH: ex.nowH - tieWait.H, tolH: waitTolPerH * (tieWait.waitMs / 3600000) } : null,
     holdForever: neverBest || undefined,
     binding: o.binding ?? null,
     destructive,
@@ -685,7 +706,7 @@ export function shouldInstall(o) {
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
       : countInstall && !(expOk && netGain && !waitBeats)
       ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs, ` +
-        `decided by the ${countDecidedHow === 'exit-sim' ? `count-aware simulated exit: installing now ${ex.nowH.toFixed(2)}h against the best wait ${exitWait ? exitWait.H.toFixed(2) + 'h' : 'unpriced'}` : countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
+        `decided by the ${countDecidedHow === 'exit-sim' ? `count-aware simulated exit: installing now ${ex.nowH.toFixed(2)}h against the best wait ${exitWait ? exitWait.H.toFixed(2) + 'h' : tieWait ? `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting, ${ex.waitTolWhy ?? 'stated'})` : 'unpriced'}` : countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
         `M=${M.toFixed(4)} is expected for tickets and is NOT a reason to hold.`
       : countBySim && countBanks && !countInstall && !destructive
       ? `hold: COUNT BATCH of ${countGain} — the count-aware simulated exit waits: ${exitWait ? `waiting ${(exitWait.waitMs / 3600000).toFixed(1)}h exits at ${exitWait.H.toFixed(2)}h` : 'a later batch exits sooner'} against ${ex.nowH.toFixed(2)}h installing now (the install resets the compounding book to the node's opening)`
@@ -695,7 +716,7 @@ export function shouldInstall(o) {
           ? `the priced timing says a bigger batch is faster: ${timing?.why ?? ''}`
           : `below the floor of ${countFloor}, and the timing is not yet priced (${timing?.why ?? 'no timing supplied'})`)
       : install && exitDecides
-      ? `install: ${queued} aug(s) — the simulated exit installing now is ${ex.nowH.toFixed(1)}h, the best wait ${exitWait ? exitWait.H.toFixed(1) + 'h (' + (exitWait.waitMs / 3600000).toFixed(1) + 'h wait)' : 'unpriced'}, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}`
+      ? `install: ${queued} aug(s) — the simulated exit installing now is ${ex.nowH.toFixed(1)}h, the best wait ${exitWait ? exitWait.H.toFixed(1) + 'h (' + (exitWait.waitMs / 3600000).toFixed(1) + 'h wait)' : tieWait ? `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting: ${ex.waitTolWhy ?? 'stated'})` : 'unpriced'}, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}`
       : !install && exitDecides && waitBeats && !destructive && !countStalls
       ? neverBest
         ? `hold: never installing again exits sooner (${ex.neverH.toFixed(1)}h) than installing now (${ex.nowH.toFixed(1)}h) — this is the final window`

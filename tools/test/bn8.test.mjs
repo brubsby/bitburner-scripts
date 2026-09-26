@@ -461,5 +461,68 @@ export async function run() {
   }
   checks.push(o);
 
+  // -----------------------------------------------------------------------
+  const pch = new Check("B8p", "EXIT NOT APPROACHING: the capital leg is the trader's realised history (flows excluded), one exit is published, waits beat the measured forecast error, and the drift is calibrated");
+  {
+    pch.examined(10);
+    const IG = await import("../../installgate.js");
+    // (1) THE LEG THAT DIVERGED: capital. The live history (04:11-10:14 UTC,
+    // 2026-09-26) against what the exit was fed (1.12e-4/s, the lifetimes
+    // ledger fit, whose capEnd is taken after the install batch spent).
+    const rows = fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-stockhist.txt"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const real = econ.realisedCapital(rows);
+    if (!real) pch.fail("the trader's history yields no realised return");
+    else {
+      pch.note(`realised ${real.r.toExponential(3)}/s (${(real.r * 3600 * 100).toFixed(0)}%/h), warm-up ${real.warmupH.toFixed(2)}h — ${real.why}; the exit was fed 1.121e-4/s (ledger fit) and before that 2.23e-4/s (the trader's model)`);
+      if (!(real.r > 1.3e-4 && real.r < 2.3e-4)) pch.fail(`realised return ${real.r} outside the history's own range`);
+      if (!(real.warmupH >= 0 && real.warmupH < 0.5)) pch.fail(`warm-up ${real.warmupH}h`);
+    }
+    // A purchase (external flow) is not a trading loss.
+    const synth = [];
+    let w = 250e6, pnl = 0, flows = 0;
+    for (let t = 9; t <= 1209; t += 10) {
+      if (t === 609) { w -= 200e6; flows -= 200e6; } // the batch spends $200m
+      // The trader books a sale to cash as a flow and takes it out of lifePnl
+      // (live 20:56 it moved 63.5b between them, wealth unchanged; either sign).
+      if (t === 909) { pnl += 300e6; flows -= 300e6; }
+      const g = w * 1e-4 * 60; w += g; pnl += g;
+      synth.push({ t, wealth: w, lifePnl: pnl, externalFlows: flows });
+    }
+    const rs = econ.realisedCapital(synth);
+    if (!(rs && Math.abs(rs.r - 1e-4) / 1e-4 < 0.05)) pch.fail(`a $200m spend mid-run must not bend the realised return (got ${rs?.r})`);
+    // (4) CALIBRATION: predicted -1h/h vs realised, pairs within one life only.
+    const H = 3600e3, t0 = Date.parse("2026-09-26T00:00:00Z");
+    const samp = (h, exitH, life) => ({ at: new Date(t0 + h * H).toISOString(), exitH, life });
+    const cal = econ.exitDrift([samp(0, 100, 1), samp(0.5, 99.5, 1), samp(1, 99, 1), samp(1.5, 98.5, 1), samp(2, 300, 2)]);
+    if (!(cal.realisedPerH === -1 && cal.errPerH === 0 && cal.pairs === 3)) pch.fail(`a forecast falling 1h/h is calibrated (error 0) and an install's jump is not a pair, got ${JSON.stringify(cal)}`);
+    const noisy = econ.exitDrift([samp(0, 150.9, 1), samp(1, 144.8, 1), samp(2, 145.2, 1), samp(3, 130.4, 1), samp(4, 158.9, 1)]);
+    if (!(noisy.errPerH > 3)) pch.fail("a forecast that moves 5-28h per hour must read a large error");
+    else pch.note(`calibration on the live-shaped series: ${noisy.why}, error ${noisy.errPerH}h/h`);
+    if (econ.exitDrift([samp(0, 100, 1)]).errPerH !== null) pch.fail("one sample is unmeasured (null), not zero error");
+    // (3) TOLERANCE: the 0.14h / 4h near-tie installs; a 10h saving still waits.
+    const base = { ageMs: 2 * H, M: 1.01, queued: 1, exp: 1e9, prev: null, futures: [], countShort: 1, countGain: 1, countTiming: { installNow: true, why: "the 1 ticket(s) in hand finish the gate" }, capitalNode: true };
+    const tie = { countAware: true, nowH: 114.54, neverH: null, waits: [{ waitMs: 4 * H, H: 114.4 }] };
+    const tieGate = IG.shouldInstall({ ...base, exitCompare: { ...tie, waitTolPerH: econ.EXIT_TOL_PRIOR_PER_H, waitTolWhy: "prior" } });
+    if (tieGate.install !== true) pch.fail("a 0.14h saving on a 4h wait is inside the forecast error: install", tieGate.why);
+    else pch.note(tieGate.why);
+    const clear = IG.shouldInstall({ ...base, exitCompare: { countAware: true, nowH: 75.17, neverH: null, waits: [{ waitMs: 4 * H, H: 64.78 }], waitTolPerH: 0.5 } });
+    if (clear.install !== false) pch.fail("a 10.4h saving beats 0.5h/h x 4h: hold", clear.why);
+    const measured = IG.shouldInstall({ ...base, exitCompare: { countAware: true, nowH: 75.17, neverH: null, waits: [{ waitMs: 4 * H, H: 64.78 }], waitTolPerH: noisy.errPerH } });
+    if (measured.install !== true) pch.fail(`at the measured ${noisy.errPerH}h/h error a 10.4h saving over 4h is not clear: install`, measured.why);
+    const exact = IG.shouldInstall({ ...base, exitCompare: tie });
+    if (exact.install !== false) pch.fail("without a tolerance (every other node) the comparison stays exact");
+    // (2) ONE EXIT: every gate write carries exitH + exitCalibration from the
+    // deciding model, and the healthcheck watches that figure.
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if ((prog.match(/objective: unifyObjectiveExit\(weightsMeta, decided/g) ?? []).length !== 2 || /objective: weightsMeta,/.test(prog)) pch.fail("both gate writes must publish the unified exit into the objective record");
+    if ((prog.match(/exitCalibration: withExitSample\(/g) ?? []).length !== 2) pch.fail("both gate writes must carry the exit calibration");
+    if (!/const decidedExit = decidedExitOf\(exitCompare, gate\)/.test(prog)) pch.fail("the planned write's exit must be the deciding comparison's");
+    if (!/waitTolPerH: exitCal0\.tolPerH/.test(prog)) pch.fail("the count-aware comparison must carry the measured tolerance");
+    if (!/const exitH = num\(gate\?\.exitH\) \? gate\.exitH/.test(hc)) pch.fail("healthcheck F must watch the one published exit");
+    if (!/realisedCapital\(rows\)/.test(prog)) pch.fail("capitalFitOf must fit the trader's history, not the ledger");
+  }
+  checks.push(pch);
+
   return checks;
 }

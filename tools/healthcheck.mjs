@@ -514,7 +514,12 @@ if (!sleevesExpected) {
 {
   const gate = readTel("installgate.txt");
   const prog = tel["progress.txt"];
-  const exitH = gate?.objective?.exitSensitivity?.exitH;
+  // The ONE published exit (progress.js exitH: the model that decides);
+  // the sensitivity record's copy for records written before it existed.
+  const exitH = num(gate?.exitH) ? gate.exitH : gate?.objective?.exitSensitivity?.exitH;
+  // The planner's own forecast calibration (installgate exitCalibration).
+  const cal = gate?.exitCalibration;
+  if (cal && num(cal.realisedPerH)) note(`exit forecast: ${cal.realisedPerH.toFixed(2)}h/h realised vs ${cal.predictedPerH}h/h predicted, error ${num(cal.errPerH) ? cal.errPerH.toFixed(2) : "?"}h/h over ${cal.pairs} pairs`);
   const windowH = gate?.objective?.windowH;
   now.exitH = num(exitH) ? exitH : null;
   now.queued = (state.queuedAugmentations ?? []).length;
@@ -525,7 +530,7 @@ if (!sleevesExpected) {
   const hist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH));
   now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH }] : [])].slice(-48);
 
-  if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no objective.exitSensitivity.exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
+  if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
   else note(`exit ETA ${now.exitH.toFixed(1)}h`);
 
   // F1: the exit must approach. Over at least an hour of samples in this node,
