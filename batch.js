@@ -68,6 +68,7 @@
 // this can be left running unattended.
 
 // Free to import: status.js references only ns.write (0GB). See its header.
+import { enter as traceEnter, leave as traceLeave } from 'trace.js'
 import { reporter, describe, record } from 'status.js'
 // Pure arithmetic over getResetInfo's output; no ns surface of its own.
 import { singularityRamMultiplier } from 'sfgate.js'
@@ -1389,6 +1390,9 @@ export async function main(ns) {
 
   while (true) {
     loops++
+    // Black-box section (trace.js): open while this iteration runs, so a page
+    // that freezes inside the batcher names it after the reload.
+    traceEnter('batch')
     const now = Date.now()
     // How long this tick's read window is. The sampler refuses to attribute a
     // money drop when it is too wide to contain exactly one landing, so it is
@@ -2247,6 +2251,7 @@ export async function main(ns) {
       }
     }
 
+    traceLeave('batch')
     await ns.sleep(SETTINGS.loopMs)
   }
 }

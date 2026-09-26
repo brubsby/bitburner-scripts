@@ -194,6 +194,9 @@ export async function main(ns) {
         visibleAtEnd: last.visible ?? null,
         visibilityTransitions: (last.transitions ?? []).map((x) => ({ at: new Date(x.at).toISOString(), visible: x.visible })),
         openSections: open,
+        // Longest completed run of each section on that page (trace.js maxMs):
+        // a slow loop is visible here before it freezes anything.
+        slowest: Object.entries(last.sections ?? {}).map(([k, v]) => ({ section: k, maxMs: v?.maxMs ?? null, lastMs: v?.lastMs ?? null })).sort((a, b) => (b.maxMs ?? 0) - (a.maxMs ?? 0)).slice(0, 8),
         why: open.length ? `the previous page stopped with ${open.map((o) => o.section).join(', ')} still running` : 'no section was open when the previous page stopped — not one of our instrumented loops',
       }), 'w')
       if (self !== 'home') ns.scp(LASTHANG, 'home', self)
