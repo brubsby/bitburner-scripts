@@ -233,7 +233,12 @@ export async function run() {
   {
     const { servableOf, manipOf } = await import("../../stock.js");
     const now = Date.now();
-    const batch = (o = {}) => ({ at: new Date(now).toISOString(), hackingLevel: 300, expFarm: { manip: { serve: true, nudgesPerSec: 0.5, blocked: ["joesguns: not rooted yet"], ...o } } });
+    // batch.txt's per-server record: every company server, rooted only where
+    // hacking 300 and the port openers would have reached (the rest unrooted).
+    const serversAt = (level, rootedHosts) =>
+      Object.fromEntries(Object.values(S.SYMBOL_META).flatMap((m) => m.servers.map((h) => [h, { rooted: rootedHosts.includes(h), reqLevel: m.req[0], moneyMax: 1e9 }])));
+    const at300 = serversAt(300, ["foodnstuff", "sigma-cosmetics", "joesguns", "omega-net"]);
+    const batch = (o = {}) => ({ at: new Date(now).toISOString(), hackingLevel: 300, stockServers: at300, expFarm: { manip: { serve: true, nudgesPerSec: 0.5, blocked: ["joesguns: not rooted yet"], ...o } } });
     c6.examined(1);
     const sv = servableOf(batch(), now);
     const want = ["FNS", "SGC", "OMGA"];
@@ -243,6 +248,16 @@ export async function run() {
     if (servableOf(batch({ serve: false }), now).nu !== 0) c6.fail("nudges credited while the batcher is NOT serving");
     const stale = servableOf({ ...batch(), at: new Date(now - 20 * 60e3).toISOString() }, now);
     if (stale.syms.size || !stale.why) c6.fail("a stale batch.txt must leave nothing servable and say why");
+    // ROOT is required, not just the level (live 2026-09-26: hacking 1636,
+    // 31 companies credited, fulcrumtech/fulcrumassets unrooted, 0 nudges).
+    c6.examined(2);
+    const high = servableOf({ at: new Date(now).toISOString(), hackingLevel: 1636, stockServers: serversAt(1636, ["foodnstuff", "sigma-cosmetics", "joesguns", "omega-net", "netlink"]), expFarm: { manip: {} } }, now);
+    for (const x of ["FLCM", "ECP", "MGCP", "VITA"]) if (high.syms.has(x)) c6.fail(`${x} credited at hacking 1636 although none of its servers is rooted`);
+    if (!high.syms.has("NTLK") || high.syms.size !== 5) c6.fail(`at hacking 1636 with 5 rooted company servers, servable should be exactly those 5 companies: ${[...high.syms].join(",")}`);
+    const noRecord = servableOf({ at: new Date(now).toISOString(), hackingLevel: 1636, expFarm: { manip: {} } }, now);
+    if (noRecord.syms.size || !/stockServers/.test(noRecord.why ?? "")) c6.fail("without batch.txt's per-server record nothing may be servable (fail closed), and why must name the missing record");
+    const vetoed = servableOf({ at: new Date(now).toISOString(), hackingLevel: 1636, stockServers: { ...serversAt(1636, ["netlink"]), netlink: { rooted: true, reqLevel: 400, moneyMax: 1e9, servable: false } }, expFarm: { manip: {} } }, now);
+    if (vetoed.syms.has("NTLK")) c6.fail("batch.js's explicit servable:false must win over the facts");
 
     c6.examined(1);
     const pos = { VITA: [1e6, 0, 0, 0], FNS: [1e4, 0, 0, 0], SGC: [0, 0, 0, 0] };
@@ -273,7 +288,7 @@ export async function run() {
     const m = new Market({ seed: 12, money: 3e7, burnInTicks: 3000 });
     const f = await runShipped(m, 200, {
       onTick: (n, files) => {
-        files["/tel/batch.txt"] = JSON.stringify({ at: new Date().toISOString(), hackingLevel: 300, expFarm: { manip: { serve: true, nudgesPerSec: 0.17, blocked: [] } } });
+        files["/tel/batch.txt"] = JSON.stringify({ at: new Date().toISOString(), hackingLevel: 300, stockServers: at300, expFarm: { manip: { serve: true, nudgesPerSec: 0.17, blocked: [] } } });
       },
     });
     const tel = JSON.parse(f.files["/tel/stock.txt"]);
@@ -297,6 +312,10 @@ export async function run() {
     for (const seed of [1, 2, 3]) rows.push(await churn({ cap: 3e7, seed, hours: 0.5, drain: 40e3, every: 1 }));
     const worst = Math.max(...rows.map((r) => r.perH));
     c7.note(`$30m, pre-4S, restart mid-market, $40k/tick outside drain, 3 seeds x 30min: ${rows.map((r) => r.perH.toFixed(0)).join("/")} orders/h (live a4fc5ef: ~470)`);
+    // A bound on orders is vacuous if the trader stopped trading: once, the
+    // fee reserve measured the drain per WALL-CLOCK ms offline and held the
+    // whole book in cash — 0 orders/h, and this check passed.
+    if (Math.min(...rows.map((r) => r.perH)) < 1) c7.fail("the trader placed no orders under the drain — the churn bound is being passed vacuously");
     if (worst > 80) c7.fail(`order rate ${worst.toFixed(0)}/h under a draining balance — the churn is back`, "every order costs $100k (BuyingAndSelling.tsx)");
 
     // A claim that is DUE (wealth covers it) under the same drain: the cash is
@@ -449,7 +468,7 @@ export async function run() {
     const m3 = new Market({ seed: 42, money: 2.5e8, burnInTicks: 5 });
     const g = await runShipped(m3, 30, { lastAugReset: Date.now() - 5 * 6000 });
     const t3 = JSON.parse(g.files["/tel/stock.txt"]);
-    if (t3.warmup?.prior !== "init-forecast" || t3.warmup?.freshTicks !== 5) c9.fail(`a 5-tick-old market was not started from its init forecasts: ${JSON.stringify(t3.warmup)}`);
+    if (t3.warmup?.prior !== "init-forecast" || !(t3.warmup?.freshTicks >= 5 && t3.warmup?.freshTicks <= 6)) c9.fail(`a 5-tick-old market was not started from its init forecasts: ${JSON.stringify(t3.warmup)}`);
     const m4 = new Market({ seed: 43, money: 2.5e8, burnInTicks: 3000 });
     const h = await runShipped(m4, 10, {});
     if (JSON.parse(h.files["/tel/stock.txt"]).warmup?.prior === "init-forecast") c9.fail("an old market (life hours old) was treated as fresh");

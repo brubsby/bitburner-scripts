@@ -75,32 +75,52 @@ function holdOf(ns, info) {
 }
 
 /**
- * Which companies the batcher can serve NOW, from what batch.js publishes
- * (/tel/batch.txt, 0GB to read): its `hackingLevel`, and the hosts its last
- * manip pass named in `expFarm.manip.blocked` ("host: why" — not rooted,
- * level too low, no batch fits). A company is servable when one of its
- * servers is certainly within the level (SYMBOL_META.req max <= level) and is
- * not currently blocked. Unreadable/stale batch.txt -> nothing servable and
- * no boost (fail closed; `servable.why` says so). No ns call: RAM flat.
+ * Which companies the batcher can serve NOW. Per company SERVER, from what
+ * batch.js publishes (/tel/batch.txt, 0GB to read):
+ *
+ *   stockServers: { <hostname>: { rooted, reqLevel, moneyMax, servable?, why? } }
+ *
+ * A server is servable when batch.js says `servable: true`, or — if it only
+ * publishes the facts — when it is ROOTED, its required hacking level is
+ * within batch.txt `hackingLevel`, and it has money to move (moneyMax > 0).
+ * Hosts named in expFarm.manip.blocked are excluded as well. A company is
+ * servable when any one of its servers is.
+ *
+ * FAIL CLOSED: a stale or unreadable batch.txt, or one without the
+ * per-server record, leaves NOTHING servable — no manip request, no
+ * manipulability credit — and `why` says which. The level-only rule this
+ * replaces (SYMBOL_META.req max <= level) credited 31 companies live on
+ * 2026-09-26 at hacking 1636 while most of their servers were unrooted (4 of
+ * 5 port openers): FLCM held, fulcrumtech/fulcrumassets requested, 0 nudges.
+ * No ns call: RAM flat.
  */
 export function servableOf(batch, now = Date.now()) {
+  const none = (why, level = null) => ({ syms: new Set(), hosts: {}, level, nu: 0, why })
   const age = now - Date.parse(batch?.at ?? '')
   const level = batch?.hackingLevel
-  if (!(age >= 0 && age < 5 * 60e3) || typeof level !== 'number') return { syms: new Set(), hosts: {}, level: null, nu: 0, why: 'batch.txt stale or unreadable — no manipulation requested, none credited' }
+  if (!(age >= 0 && age < 5 * 60e3) || typeof level !== 'number') return none('batch.txt stale or unreadable — no manipulation requested, none credited')
+  const table = batch.stockServers
+  if (!table || typeof table !== 'object' || Array.isArray(table)) return none('batch.txt has no per-server stockServers record (rooted/level/money) — no manipulation requested, none credited', level)
   const m = batch.expFarm?.manip ?? {}
   const blocked = new Set((m.blocked ?? []).map((b) => String(b).split(':')[0].trim()))
+  const okHost = (h) => {
+    const r = table[h]
+    if (!r || typeof r !== 'object' || blocked.has(h)) return false
+    if (typeof r.servable === 'boolean') return r.servable
+    const req = r.reqLevel ?? r.level ?? r.requiredHackingLevel
+    return r.rooted === true && typeof req === 'number' && req <= level && typeof r.moneyMax === 'number' && r.moneyMax > 0
+  }
   const syms = new Set()
   const hosts = {}
   for (const [sym, meta] of Object.entries(SYMBOL_META)) {
-    if (!meta.req || !(meta.req[1] <= level)) continue
-    const ok = meta.servers.filter((h) => !blocked.has(h))
+    const ok = meta.servers.filter(okHost)
     if (!ok.length) continue
     syms.add(sym)
     hosts[sym] = ok
   }
   // Delivered nudges/s: only what the batcher is actually SERVING.
   const nu = m.serve === true && typeof m.nudgesPerSec === 'number' && m.nudgesPerSec > 0 ? m.nudgesPerSec : 0
-  return { syms, hosts, level, nu, why: null }
+  return { syms, hosts, level, nu, why: syms.size ? null : 'no stock company server is rooted and within the hacking level' }
 }
 
 /**
