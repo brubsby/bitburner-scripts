@@ -236,7 +236,7 @@ export async function run() {
     // batch.txt's per-server record: every company server, rooted only where
     // hacking 300 and the port openers would have reached (the rest unrooted).
     const serversAt = (level, rootedHosts) =>
-      Object.fromEntries(Object.values(S.SYMBOL_META).flatMap((m) => m.servers.map((h) => [h, { rooted: rootedHosts.includes(h), reqLevel: m.req[0], moneyMax: 1e9 }])));
+      Object.entries(S.SYMBOL_META).flatMap(([sym, m]) => m.servers.map((host) => ({ sym, host, rooted: rootedHosts.includes(host), required: m.req[0], level, moneyMax: 1e9 })));
     const at300 = serversAt(300, ["foodnstuff", "sigma-cosmetics", "joesguns", "omega-net"]);
     const batch = (o = {}) => ({ at: new Date(now).toISOString(), hackingLevel: 300, stockServers: at300, expFarm: { manip: { serve: true, nudgesPerSec: 0.5, blocked: ["joesguns: not rooted yet"], ...o } } });
     c6.examined(1);
@@ -256,8 +256,14 @@ export async function run() {
     if (!high.syms.has("NTLK") || high.syms.size !== 5) c6.fail(`at hacking 1636 with 5 rooted company servers, servable should be exactly those 5 companies: ${[...high.syms].join(",")}`);
     const noRecord = servableOf({ at: new Date(now).toISOString(), hackingLevel: 1636, expFarm: { manip: {} } }, now);
     if (noRecord.syms.size || !/stockServers/.test(noRecord.why ?? "")) c6.fail("without batch.txt's per-server record nothing may be servable (fail closed), and why must name the missing record");
-    const vetoed = servableOf({ at: new Date(now).toISOString(), hackingLevel: 1636, stockServers: { ...serversAt(1636, ["netlink"]), netlink: { rooted: true, reqLevel: 400, moneyMax: 1e9, servable: false } }, expFarm: { manip: {} } }, now);
+    const vetoed = servableOf({ at: new Date(now).toISOString(), hackingLevel: 1636, stockServers: [...serversAt(1636, []), { sym: "NTLK", host: "netlink", rooted: true, required: 400, moneyMax: 1e9, servable: false, why: "netlink: no batch fits" }], expFarm: { manip: {} } }, now);
     if (vetoed.syms.has("NTLK")) c6.fail("batch.js's explicit servable:false must win over the facts");
+    // The publisher's shape, from batch.js itself: the keys servableOf reads.
+    c6.examined(1);
+    const bsrc = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "../../batch.js"), "utf8");
+    const pushLine = bsrc.split("\n").find((l) => /out\.push\(\{ sym, host, rooted/.test(l)) ?? "";
+    for (const k of ["host", "rooted", "required", "moneyMax", "servable"]) if (!new RegExp(`\\b${k}\\b`).test(pushLine)) c6.fail(`batch.js stockServersOf no longer publishes '${k}' — servableOf would fail closed on every row`);
+    if (!/stockServers,/.test(bsrc)) c6.fail("batch.js no longer writes stockServers into batch.txt");
 
     c6.examined(1);
     const pos = { VITA: [1e6, 0, 0, 0], FNS: [1e4, 0, 0, 0], SGC: [0, 0, 0, 0] };

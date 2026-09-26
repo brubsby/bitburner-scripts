@@ -78,7 +78,7 @@ function holdOf(ns, info) {
  * Which companies the batcher can serve NOW. Per company SERVER, from what
  * batch.js publishes (/tel/batch.txt, 0GB to read):
  *
- *   stockServers: { <hostname>: { rooted, reqLevel, moneyMax, servable?, why? } }
+ *   stockServers: [{ sym, host, rooted, required, moneyMax, servable, why, nudgesIfServed }]
  *
  * A server is servable when batch.js says `servable: true`, or — if it only
  * publishes the facts — when it is ROOTED, its required hacking level is
@@ -99,15 +99,19 @@ export function servableOf(batch, now = Date.now()) {
   const age = now - Date.parse(batch?.at ?? '')
   const level = batch?.hackingLevel
   if (!(age >= 0 && age < 5 * 60e3) || typeof level !== 'number') return none('batch.txt stale or unreadable — no manipulation requested, none credited')
-  const table = batch.stockServers
-  if (!table || typeof table !== 'object' || Array.isArray(table)) return none('batch.txt has no per-server stockServers record (rooted/level/money) — no manipulation requested, none credited', level)
+  // batch.js publishes an ARRAY of {sym, host, rooted, required, moneyMax,
+  // servable, why, nudgesIfServed} (batch.js stockServersOf), or {error};
+  // a {host: {...}} map is accepted too.
+  let table = batch.stockServers
+  if (Array.isArray(table)) table = Object.fromEntries(table.filter((r) => r && typeof r.host === 'string').map((r) => [r.host, r]))
+  if (!table || typeof table !== 'object' || table.error || !Object.keys(table).length) return none(`batch.txt has no per-server stockServers record (rooted/level/money)${table?.error ? ` — batch.js: ${table.error}` : ''} — no manipulation requested, none credited`, level)
   const m = batch.expFarm?.manip ?? {}
   const blocked = new Set((m.blocked ?? []).map((b) => String(b).split(':')[0].trim()))
   const okHost = (h) => {
     const r = table[h]
     if (!r || typeof r !== 'object' || blocked.has(h)) return false
     if (typeof r.servable === 'boolean') return r.servable
-    const req = r.reqLevel ?? r.level ?? r.requiredHackingLevel
+    const req = r.required ?? r.reqLevel ?? r.requiredHackingLevel
     return r.rooted === true && typeof req === 'number' && req <= level && typeof r.moneyMax === 'number' && r.moneyMax > 0
   }
   const syms = new Set()
