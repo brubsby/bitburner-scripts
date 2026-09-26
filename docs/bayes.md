@@ -67,9 +67,25 @@ through `countexit.countExitAt` (the same inner body `bestCountExit` loops
 over; not a fork). Options: install now / wait w / the committed install time;
 the top-K (6) count routes by point estimate plus the committed one.
 
-CPU: bracketed by trace.js `bayes-plan`; measured ms per pass is published
-(`cpu`). A budget (400ms) is enforced by stopping further draws; hitting it is
-`cpu.overBudget: true` and healthcheck F fails (PLAN OVER CPU BUDGET).
+CPU — THE PASS YIELDS (`coop.js`). Every long search is a generator that
+yields after each exit simulation: the Monte Carlo (`plan.*Gen`), the graft
+search (`graftplan.chooseGraftsGen`), and the count-route / count-exit scans
+(`countexit.bestCountRouteGen` / `bestCountExitGen`). progress.js runs them
+through one pacer per pass: it yields whenever the next step would carry the
+current block past `PLAN.sliceMs` (40ms), with a MessageChannel round trip — a
+macrotask the page renders and takes input between, which a hidden tab's timer
+throttling does not touch (a `ns.sleep(0)` per slice would cost up to a minute
+each when hidden). The sync APIs drain the same generators, so results are
+identical (BY11 asserts it). Budgets inside use the pacer's WORK clock, so a
+pause never truncates a search. Measured on a live-size pass in node (232
+routes, install scans, both Monte Carlos, graft search): ~700ms of work, 17
+yields, longest block ~40ms. Published `cpu`: cpuMs, wallMs, waitMs,
+maxBlockMs, yields; healthcheck F fails PLAN BLOCKED THE PAGE when maxBlockMs
+exceeds `PLAN.maxBlockMs` (50ms), and PLAN UNDER-SAMPLED when the Monte
+Carlo's work budget (`PLAN.budgetMs` 1200ms) left fewer than 8 draws.
+NOT sliced: the rest of progress.js's pass (spend verdicts, gang and
+Covenant exits) still runs synchronously; only the plan's sections are
+measured.
 
 ### Decision rule (plan.js decide)
 

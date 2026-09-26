@@ -40,6 +40,8 @@
 // NOT CALIBRATED: the per-life budget is the trader's measured return
 // compounded, the same model the exit's money legs use.
 
+import { drain } from 'coop.js'
+
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
 
@@ -286,7 +288,14 @@ export const ROUTE_AFFORD_WAITS = [0, 0.25, 0.5, 1, 2, 4, 8]
  * `never` is null while the count is short — never installing cannot reach
  * Daedalus at all.
  */
-export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0, compositions = null } = {}) {
+export function bestCountExit(bestExitPolicy, inputs, count, opts = {}) {
+  return drain(bestCountExitGen(bestExitPolicy, inputs, count, opts))
+}
+/**
+ * The generator bestCountExit drains: yields after each composition priced,
+ * so progress.js can run it in slices (coop.js) and give the page back.
+ */
+export function* bestCountExitGen(bestExitPolicy, inputs, count, { firstInstallH = 0, compositions = null } = {}) {
   if (typeof bestExitPolicy !== 'function' || !inputs || !count) return { best: null, why: 'no count model inputs' }
   const short = count.short
   if (!(short > 0)) {
@@ -311,6 +320,7 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
     const inp = lifeInputs(inputs, L)
     for (const n of ns) {
       const at = countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH, count.nfg ?? null)
+      yield
       if (at.phaseWhy) {
         tried.push({ n, lifeH: L, hours: null, why: at.phaseWhy })
         continue
@@ -337,7 +347,11 @@ export function bestCountExit(bestExitPolicy, inputs, count, { firstInstallH = 0
  * candidate. Returns {best: {name, hours, route, result}, tried: [...]} or
  * {best: null, why}.
  */
-export function bestCountRoute(bestExitPolicy, inputs, count, routes, { firstInstallH = 0 } = {}) {
+export function bestCountRoute(bestExitPolicy, inputs, count, routes, opts = {}) {
+  return drain(bestCountRouteGen(bestExitPolicy, inputs, count, routes, opts))
+}
+/** The generator bestCountRoute drains (yields inside each route's pricing). */
+export function* bestCountRouteGen(bestExitPolicy, inputs, count, routes, { firstInstallH = 0 } = {}) {
   if (!count || !(count.short > 0)) return { best: null, tried: [], why: 'the count is met' }
   if (!Array.isArray(routes) || !routes.length) return { best: null, tried: [], why: 'no route to a distinct augmentation' }
   const tried = []
@@ -348,7 +362,7 @@ export function bestCountRoute(bestExitPolicy, inputs, count, routes, { firstIns
       continue
     }
     const ladder = [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)]
-    const r = bestCountExit(bestExitPolicy, inputs, { ...count, ladder }, { firstInstallH: Math.max(firstInstallH, route.detourH), compositions: [1] })
+    const r = yield* bestCountExitGen(bestExitPolicy, inputs, { ...count, ladder }, { firstInstallH: Math.max(firstInstallH, route.detourH), compositions: [1] })
     const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
     const hours = r.best && took ? r.best.hours : null
     tried.push({ name: route.name, faction: route.faction ?? null, via: route.via ?? null, lifeH: r.best?.lifeH ?? null, price: Math.round(route.price), detourH: +route.detourH.toFixed(3), hacking: route.hacking, exp: route.exp, rep: route.rep, hours: hours === null ? null : +hours.toFixed(3), why: hours !== null ? null : r.best ? 'not affordable in the first batch' : r.why ?? 'unpriced' })

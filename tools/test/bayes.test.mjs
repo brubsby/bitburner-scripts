@@ -397,12 +397,14 @@ export async function run() {
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const need = [
       [/from 'plan\.js'/, "progress.js imports plan.js"],
-      [/decideRoute\(\{ inputs: rec\.inputs, count: cc, routes, point: ranked, repPoint: repPerSec, prev: pc\.prev\?\.decisions\?\.countRoute/, "the count route is decided by the plan against its committed choice"],
+      [/await planDecide\(pc, 'countRoute', \(\) => decideRouteGen\(\{ inputs: rec\.inputs, count: cc, routes, point: ranked, repPoint: repPerSec, prev: pc\.prev\?\.decisions\?\.countRoute/, "the count route is decided by the plan against its committed choice"],
       [/const cm = bayRoute\s*\n?\s*\?/, "the schedule's route (countRoute.best) is the plan's choice, the interim rule only its fallback"],
-      [/bayes: planInstallOf\(ns, info, inputs, countCtx,/, "the count-aware exit comparison carries the plan's install decision"],
-      [/bayes: now\.best \? planInstallOf\(ns, info, inputs, null,/, "the ordinary exit comparison carries the plan's install decision"],
+      [/bayes: await planInstallOf\(ns, info, inputs, countCtx,/, "the count-aware exit comparison carries the plan's install decision"],
+      [/bayes: now\.best \? await planInstallOf\(ns, info, inputs, null,/, "the ordinary exit comparison carries the plan's install decision"],
       [/const b = exitCompare\?\.bayes\s*\n\s*if \(b && typeof b\.q50 === 'number'\) return \{ exitH: b\.q50/, "the published exit is the plan's median"],
-      [/enter\(`plan-\$\{name\}`\)[\s\S]{0,200}leave\(`plan-\$\{name\}`\)/, "each Monte Carlo is bracketed by trace.js"],
+      [/enter\(`plan-\$\{name\}`\)[\s\S]{0,200}d = await pc\.pacer\.slices\(genFn\(\)\)[\s\S]{0,200}leave\(`plan-\$\{name\}`\)/, "each Monte Carlo is bracketed by trace.js and run in the pacer's slices"],
+      [/const ranked = await paced\(bestCountRouteGen\(/, "the count-route scan runs in slices"],
+      [/const nowC = await paced\(bestCountExitGen\(/, "the count-aware exit scan runs in slices"],
     ];
     for (const [re, what] of need) if (!re.test(prog)) c8.fail(`${what} (source guard)`);
     const pubs = (prog.match(/publishPlan\(ns, info, planExtrasOf\(scheduleTarget, bodyStep, countRoute\)\)/g) ?? []).length;
@@ -413,10 +415,10 @@ export async function run() {
   // -----------------------------------------------------------------------
   const c9 = new Check("BY9", "healthcheck F reads the plan: missing / stale / broken / over budget / miscalibrated each FAIL loud; a sound plan passes with its interval and calibration noted");
   {
-    c9.examined(7);
+    c9.examined(10);
     const now = Date.parse("2026-09-26T13:00:00Z");
     const at = new Date(now - 5 * 60e3).toISOString();
-    const good = { at, lastAugReset: 1, health: "ok", cpu: { ms: 120, budgetMs: 400, overBudget: false, draws: 24 }, calibration: { n: 20, cover80: 0.8, why: "20 sequential one-step predictions" }, exit: { meanH: 64, q10: 57, q50: 63, q90: 71, source: "install decision (now)" }, decisions: {} };
+    const good = { at, lastAugReset: 1, health: "ok", cpu: { cpuMs: 900, wallMs: 1400, waitMs: 20, maxBlockMs: 41.2, maxBlockLimitMs: 50, yields: 22, budgetMs: 1200, blocked: false, truncated: false, N: 24, draws: 24 }, calibration: { n: 20, cover80: 0.8, why: "20 sequential one-step predictions" }, exit: { meanH: 64, q10: 57, q50: 63, q90: 71, source: "install decision (now)" }, decisions: {} };
     const prog = { at };
     const gate = { at, lastAugReset: 1 };
     const chk = (plan, what) => P.planCheck(plan, { gate, progress: prog, now }).fails.some((f) => f.what.startsWith(what));
@@ -426,7 +428,12 @@ export async function run() {
     if (!chk(null, "PLAN MISSING")) c9.fail("no plan while progress.js runs must fail");
     if (!chk({ ...good, at: new Date(now - 90 * 60e3).toISOString() }, "PLAN STALE")) c9.fail("a 90-min-old plan must fail");
     if (!chk({ ...good, health: "error", error: "route decision threw" }, "PLAN BROKEN")) c9.fail("a plan that recorded an error must fail");
-    if (!chk({ ...good, cpu: { ms: 900, budgetMs: 400, overBudget: true } }, "PLAN OVER CPU BUDGET")) c9.fail("over budget must fail");
+    // The page-freeze metric is the longest block, not the total: 900ms of
+    // work in 41ms slices passes; one 120ms block fails.
+    if (!chk({ ...good, cpu: { ...good.cpu, maxBlockMs: 120, blocked: true } }, "PLAN BLOCKED THE PAGE")) c9.fail("a 120ms synchronous block must fail");
+    if (chk({ ...good, cpu: { ...good.cpu, cpuMs: 5000 } }, "PLAN")) c9.fail("a large total in short slices is not a page freeze");
+    if (!chk({ ...good, cpu: { ...good.cpu, draws: 4, truncated: true } }, "PLAN UNDER-SAMPLED")) c9.fail("4 of 24 draws must fail as under-sampled");
+    if (!chk({ ...good, cpu: { ms: 900, budgetMs: 400, overBudget: true } }, "PLAN OVER CPU BUDGET")) c9.fail("a pre-slicing record over its total budget still fails");
     if (!chk({ ...good, calibration: { n: 20, cover80: 0.4, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("40% coverage of an 80% interval must fail");
     if (!chk({ ...good, calibration: { n: 20, cover80: 1.0, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("100% coverage of an 80% interval (underconfident) must fail");
     if (chk({ ...good, calibration: { n: 5, cover80: 0.2, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("five pairs are too few to call miscalibration");
@@ -465,6 +472,100 @@ export async function run() {
     if (!/const pd = decideSpend\(\{ deltaH: r\.deltaH, withoutH: r\.withoutH/.test(prog) || !/buy: pd \? pd\.buy : r\.deltaH < 0/.test(prog)) c10.fail("every spend verdict must pass through plan.decideSpend (source guard)");
   }
   checks.push(c10);
+
+  // -----------------------------------------------------------------------
+  const c11 = new Check("BY11", "YIELDING: a live-size pass (232 count routes, the install scans, the route + install Monte Carlo, the graft search on the 14:47 live inputs) never holds the page for more than 50ms in node, and slicing changes no result");
+  {
+    c11.examined(5);
+    const X = await import("../../exitplan.js");
+    const C = await import("../../countexit.js");
+    const GP = await import("../../graftplan.js");
+    const CO = await import("../../coop.js");
+    const FV = await import("../../favor.js");
+    const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+    const BP = await import("../../bodyplan.js");
+    const Fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1128.json"), "utf8"));
+    const G = await import("./fixture-bn8-graft.mjs");
+    const rows = fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-stockhist.txt"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    // The 11:28 routes (50, as B8s builds them), replicated under distinct
+    // faction names to the live pass's 232, each replica's detour moved by a
+    // few seconds so exitplan's memo cannot answer it for free — the same
+    // per-route cost as a distinct route.
+    const owned = new Set(Fx.owned);
+    const SK = ["strength", "defense", "dexterity", "agility"];
+    const person = { skills: { ...Fx.skills }, exp: { ...Fx.exp }, city: Fx.city, money: 1e9, mults: Object.fromEntries([...SK, "charisma", "hacking"].flatMap((s) => [[s, 1], [`${s}_exp`, 1]])) };
+    const gymH = (to) => BP.gymLegs(Object.fromEntries(SK.map((s) => [s, to])), person, 1).hours;
+    const toAug = (a) => ({ name: a.name, baseCost: a.price, repReq: a.repReq, mults: a.mults, prereqs: a.prereqs ?? [] });
+    const offers = Fx.joined.filter((f) => Fx.factions[f]).flatMap((f) => Fx.factions[f].augs.map((a) => ({ ...toAug(a), faction: f, factionRep: Fx.factions[f].rep, favor: Fx.factions[f].favor })));
+    const candidates = ["Slum Snakes", "Tetrads"].map((f, i) => ({ name: f, joinH: gymH(i ? 75 : 30), rep: 0, favor: Fx.factions[f].favor, augs: Fx.factions[f].augs.map(toAug) }));
+    const base50 = C.countRoutes({ offers, candidates, owned, repPerSec: 4 / 1.5, donation: (f, rep) => FV.donationForRep(rep, 1, bitNodeMults(8).FactionWorkRepGain) });
+    const routes = [];
+    for (let k = 0; routes.length < 232; k++) for (const r of base50) if (routes.length < 232) routes.push({ ...r, faction: `${r.faction}#${k}`, detourH: r.detourH + k * 0.001, joinH: (r.joinH ?? 0) + k * 0.001 });
+    const inputs = Fx.exitInputs.inputs;
+    const nfgA = Fx.factions["Slum Snakes"].augs.find((a) => a.name === "NeuroFlux Governor");
+    const count = { short: 1, ladder: [], nfg: { price: nfgA.price, level: 0 } };
+    // The install scans price the count gate's ladder (the cheapest ticket, as BY7).
+    const countI = { short: 1, ladder: [{ name: "CRTX42-AA Gene Modification", price: 2.25e8, laterPrice: 2.25e8, hacking: 1.08, exp: 1.15 }], nfg: count.nfg };
+    const post = P.posteriorsOf({ stockRows: rows, warmupH: 0.15, exitSamples: JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1232.json"), "utf8")).exitSamples });
+    const draws = P.makeDraws(post, P.PLAN.N, 5);
+    const priceExit = (x) => {
+      const r = X.bestExitPolicy(x);
+      return r.degenerate ? null : r.best?.hours ?? null;
+    };
+    // The pass, as progress.js runs it: every step a generator.
+    function* pass(clock, graftBudgetMs, mcBudgetMs) {
+      const ranked = yield* C.bestCountRouteGen(X.bestExitPolicy, inputs, count, routes);
+      const route = yield* P.decideRouteGen({ inputs, count, routes, point: ranked, repPoint: 4 / 1.5, draws, budgetMs: mcBudgetMs, clock, now: 0 });
+      const nowC = yield* C.bestCountExitGen(X.bestExitPolicy, inputs, countI, { firstInstallH: 0 });
+      const waits = [];
+      for (const w of [0.25, 0.5, 1, 2, 4]) {
+        const r = yield* C.bestCountExitGen(X.bestExitPolicy, inputs, countI, { firstInstallH: w });
+        waits.push({ waitH: w, hours: r.best?.hours ?? null, n: r.best?.n ?? null, lifeH: r.best?.lifeH ?? null });
+      }
+      const install = yield* P.decideInstallGen({ inputs, count: countI, point: { now: { hours: nowC.best?.hours ?? null, n: nowC.best?.n, lifeH: nowC.best?.lifeH ?? null }, waits }, repPoint: 4 / 1.5, draws, budgetMs: mcBudgetMs, clock, now: 0 });
+      const grafts = yield* GP.chooseGraftsGen({ candidates: G.CANDIDATES, priceExit, base: G.INPUTS, intelligence: G.INTELLIGENCE, ownedNames: G.OWNED, budgetMs: graftBudgetMs, now: clock, maxGrafts: graftBudgetMs === Infinity ? 2 : 12 });
+      return { ranked: ranked.tried.length, routeKey: route.key, routeStats: [route.meanH, route.q10, route.q90, route.pBest], install: [install.key, install.meanH, install.q10, install.q90], grafts: (grafts.grafts ?? []).map((g) => g.name), graftH: grafts.withH };
+    }
+    // (1) Identical results: drained synchronously vs sliced (no budgets bind).
+    const sync = CO.drain(pass(() => 0, Infinity, Infinity));
+    const pacer0 = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)) });
+    const sliced = await pacer0.slices(pass(pacer0.cpuNow, Infinity, Infinity));
+    if (sync.install[0] === null || sync.routeKey === null) c11.fail("fixture: the install and route decisions must price", JSON.stringify(sync));
+    if (JSON.stringify(sync) !== JSON.stringify(sliced)) c11.fail("slicing must not change any result (CRN, same work order)", `${JSON.stringify(sync)}\nvs\n${JSON.stringify(sliced)}`);
+    else c11.note(`sync == sliced: route ${sync.routeKey.split("|").slice(0, 2).join(" @ ")}, install ${sync.install[0]} (mean ${sync.install[1]}h), grafts [${sync.grafts.join(", ")}] (${sync.ranked} routes ranked)`);
+    // (2) The live budgets: the longest synchronous block, work vs wall.
+    const pacer = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)) });
+    const w0 = performance.now();
+    await pacer.slices(pass(pacer.cpuNow, 250, P.PLAN.budgetMs));
+    const wall = performance.now() - w0;
+    const st = pacer.stats;
+    c11.note(`live-size pass in node: ${st.cpuMs.toFixed(0)}ms work over ${wall.toFixed(0)}ms wall, ${st.yields} yields, longest block ${st.maxBlockMs.toFixed(1)}ms (limit ${P.PLAN.maxBlockMs}ms, slice ${P.PLAN.sliceMs}ms)`);
+    if (!(st.maxBlockMs <= P.PLAN.maxBlockMs)) c11.fail(`a ${st.maxBlockMs.toFixed(1)}ms synchronous block exceeds ${P.PLAN.maxBlockMs}ms`);
+    if (!(st.yields >= Math.floor(st.cpuMs / (P.PLAN.maxBlockMs + 10)))) c11.fail("the pacer must yield about once per slice of work");
+    // (3) Unsliced, the same pass is one block — the check can see the fault.
+    const t0 = performance.now();
+    CO.drain(pass(() => performance.now() - t0, 250, P.PLAN.budgetMs));
+    const whole = performance.now() - t0;
+    c11.note(`the same pass drained without yielding: one ${whole.toFixed(0)}ms block`);
+    if (!(whole > P.PLAN.maxBlockMs)) c11.fail("fixture: the unsliced pass should exceed the block limit (else this check proves nothing)");
+    // (4) The work clock excludes the pauses: a slow yield does not truncate a budgeted search.
+    const slowPacer = CO.makePacer({ sliceMs: 5, yieldFn: () => new Promise((r) => setTimeout(r, 30)) });
+    let seen = 0;
+    const counted = await slowPacer.slices((function* () {
+      const t = slowPacer.cpuNow();
+      for (let i = 0; i < 40; i++) {
+        const e = performance.now() + 1;
+        while (performance.now() < e);
+        seen++;
+        if (slowPacer.cpuNow() - t > 150) break; // a budget in WORK ms: ~40ms of work, ~300ms of wall
+        yield;
+      }
+      return seen;
+    })());
+    c11.note(`work clock: 40 x 1ms of work across ${slowPacer.stats.yields} 30ms pauses read ${slowPacer.stats.cpuMs.toFixed(0)}ms of work, ${slowPacer.stats.waitMs.toFixed(0)}ms waiting`);
+    if (!(counted === 40 && slowPacer.stats.cpuMs < 200 && slowPacer.stats.waitMs > 100)) c11.fail("the pacer's work clock must exclude the time spent yielded");
+  }
+  checks.push(c11);
 
   return checks;
 }

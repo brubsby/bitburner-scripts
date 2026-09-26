@@ -38,6 +38,8 @@
 // (progress.js graftDecisionOf) and executed only when the final window is
 // now.
 // ---------------------------------------------------------------------------
+import { drain } from 'coop.js'
+
 const num = (v) => typeof v === 'number' && isFinite(v)
 
 /** CONSTANTS.AugmentationGraftingCostMult. */
@@ -169,6 +171,15 @@ const moves = (a) => ['hacking', 'hacking_exp', 'faction_rep'].some((k) => num(a
  * as `truncated`.
  */
 export function chooseGrafts(o = {}) {
+  return drain(chooseGraftsGen(o))
+}
+/**
+ * The generator chooseGrafts drains: yields after every exit simulation, so
+ * progress.js can run the search in slices (coop.js) and give the page back.
+ * `o.now` is the budget's clock (the pacer's work clock there: a pause does
+ * not count against budgetMs).
+ */
+export function* chooseGraftsGen(o = {}) {
   const { candidates, priceExit, base, intelligence, ownedNames } = o
   const maxGrafts = num(o.maxGrafts) && o.maxGrafts > 0 ? o.maxGrafts : 12
   const entropy = o.entropy !== false
@@ -180,6 +191,7 @@ export function chooseGrafts(o = {}) {
   const without = { ...base }
   delete without.finalGrafts
   const baseline = priceExit(without)
+  yield
   if (!num(baseline)) return { grafts: null, why: 'the exit could not be priced without grafting — nothing to compare against' }
 
   const owned = new Set(Array.isArray(ownedNames) ? ownedNames : [])
@@ -196,17 +208,20 @@ export function chooseGrafts(o = {}) {
   // must hold in all (the join money plus every graft). 0 = as soon as each
   // is affordable; 1 = after the whole hoard.
   const join = num(without.joinMoney) && without.joinMoney > 0 ? without.joinMoney : 0
-  const withRunAt = (set) => {
+  const withRunAt = function* (set) {
     const specs = set.map((a) => graftSpecOf(a, intelligence, { entropy }))
     const total = join + specs.reduce((x, g) => x + g.cost, 0)
     let best = null
     for (const f of GRAFT_START_FRACTIONS) {
       const hours = priceExit({ ...without, finalGrafts: specs, graftStartMoney: f * total })
+      yield
       if (num(hours) && (!best || hours < best.h)) best = { h: hours, startMoney: f * total, fraction: f }
     }
     return best
   }
-  const withRun = (set) => withRunAt(set)?.h ?? null
+  const withRun = function* (set) {
+    return (yield* withRunAt(set))?.h ?? null
+  }
   const chosen = []
   let bestH = baseline
   let truncated = false
@@ -222,7 +237,7 @@ export function chooseGrafts(o = {}) {
       if (!a || !prereqsMet(a, new Set([...owned, ...seeded.map((s) => s.name)]))) break
       seeded.push(a)
     }
-    const h = seeded.length ? withRun(seeded) : null
+    const h = seeded.length ? yield* withRun(seeded) : null
     if (h !== null && h < baseline) {
       chosen.push(...seeded)
       bestH = h
@@ -246,7 +261,7 @@ export function chooseGrafts(o = {}) {
       if (chain === null) continue
       const bundle = [...chain, a]
       if (!bundle.every((x, i) => prereqsMet(x, new Set([...willOwn, ...bundle.slice(0, i).map((y) => y.name)])))) continue
-      const h = withRun([...chosen, ...bundle])
+      const h = yield* withRun([...chosen, ...bundle])
       if (h === null) continue
       if (!best || h < best.h) best = { bundle, h }
     }
@@ -259,7 +274,7 @@ export function chooseGrafts(o = {}) {
   const specs = chosen.map((a) => graftSpecOf(a, intelligence, { entropy }))
   const spend = specs.reduce((x, g) => x + g.cost, 0)
   const slotHours = specs.reduce((x, g) => x + g.slotH, 0)
-  const start = withRunAt(chosen)
+  const start = yield* withRunAt(chosen)
   return {
     startMoney: start?.startMoney ?? null,
     startFraction: start?.fraction ?? null,

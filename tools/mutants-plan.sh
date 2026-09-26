@@ -18,3 +18,6 @@ run plan.js '  const buy = deltaH < 0 && pBuy >= theta' '  const buy = deltaH < 
 run plan.js '  const buy = deltaH < 0 && pBuy >= theta' '  const buy = pBuy >= 0.5'
 run plan.js '  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], held: true' '  if (false) return { key: committedKey, ...stats[committedKey], held: true'
 run plan.js '  if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi))' '  if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo))'
+run coop.js '          if (yieldFn && t2 - sliceStart + step >= sliceMs) {' '          if (false) {'
+run coop.js '  const cpuNow = () => st.cpuMs + (running ? now() - sliceStart : 0)' '  const cpuNow = () => now()'
+run graftplan.js '      const h = yield* withRun([...chosen, ...bundle])' '      const h = drain(withRun([...chosen, ...bundle]))'

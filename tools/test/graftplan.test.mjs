@@ -314,7 +314,7 @@ export async function run() {
     c9.examined(7);
     const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const fn = src.slice(src.indexOf("function graftDecisionOf("), src.indexOf("function carriedGraftsOf("));
-    if (!/chooseGrafts\(/.test(fn) || !/decideAmong\(/.test(fn)) c9.fail("graftDecisionOf must search with chooseGrafts and commit with plan.decideAmong");
+    if (!/yield\* chooseGraftsGen\(/.test(fn) || !/yield\* decideAmongGen\(/.test(fn)) c9.fail("graftDecisionOf must search with chooseGrafts and commit with plan.decideAmong, both run in the pass pacer's slices (generators)");
     if (!/key: 'none', sim:/.test(fn) || !/key: 'grafts', sim:/.test(fn)) c9.fail("the plan's options must be the two trajectories, none and grafts");
     if (!/canUseGrafting\(info\)/.test(fn)) c9.fail("grafting must be gated on sfgate.canUseGrafting");
     if (!/\.\.\.\(graftCarry \?\? \{\}\)/.test(src)) c9.fail("exitInputsOf must carry the committed grafts into every decision's trajectory");

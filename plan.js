@@ -21,6 +21,7 @@
 
 import { rngOf, hashOf, normalOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, lnGainPosterior, logRatePosterior, jitterPosterior } from 'bayes.js'
 import { routeExitFixed, countExitFixed } from 'countexit.js'
+import { drain } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
@@ -29,7 +30,14 @@ export const PLAN_FILE = '/tel/plan.txt'
 export const PLAN = {
   N: 24, // draws per decision (cap; the budget may stop earlier)
   theta: 0.8, // P(alternative better net of switch cost) needed to switch
-  budgetMs: 400, // CPU per pass for the Monte Carlo (main thread)
+  // WORK time per pass for the Monte Carlo decisions together (the draws stop
+  // there, all options at the same N). It no longer bounds a page freeze —
+  // the searches run in slices (coop.js) — only how long a pass takes: at
+  // 40ms slices, 1200ms is ~30 yields, each a MessageChannel round trip
+  // (not timer-throttled in a hidden tab).
+  budgetMs: 1200,
+  sliceMs: 40, // work between yields (the pacer yields once a slice is spent)
+  maxBlockMs: 50, // the longest synchronous block a pass may hold (healthcheck F)
   maxAgeMin: 30, // re-decide at least this often even without an event
   switchCostH: 0.05, // a re-order's own cost (stated); travel/commission added per option
   topK: 6, // routes carried into the Monte Carlo besides the committed one
@@ -142,7 +150,15 @@ export function discrepancyOf(d, key) {
  * options at the same N (still paired). options [{key, sim: (d) => hours|null}].
  * Returns {samples: {key: (number|null)[]}, n, ms, overBudget, raw}.
  */
-export function evaluate(options, draws, { budgetMs = PLAN.budgetMs, now = clock } = {}) {
+export function evaluate(options, draws, opts = {}) {
+  return drain(evaluateGen(options, draws, opts))
+}
+/**
+ * The generator evaluate drains: yields after every simulation, so the
+ * caller can run it in slices (coop.js). `now` is the budget's clock — the
+ * pacer's WORK clock in progress.js, so a pause never truncates the draws.
+ */
+export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = clock } = {}) {
   const t0 = now()
   const samples = Object.fromEntries(options.map((o) => [o.key, []]))
   const raw = Object.fromEntries(options.map((o) => [o.key, []]))
@@ -162,6 +178,7 @@ export function evaluate(options, draws, { budgetMs = PLAN.budgetMs, now = clock
       }
       raw[o.key].push(fin(h) ? h : null)
       samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.key) : null)
+      yield
     }
     n++
   }
@@ -317,7 +334,11 @@ const pick = (r) => (r ? { name: r.name, faction: r.faction ?? null, via: r.via 
  * route's detour is its REMAINING detour from the current state). Returns the
  * decision record for /tel/plan.txt.
  */
-export function decideRoute({ inputs, count, routes, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, topK = PLAN.topK, theta = PLAN.theta, now = Date.now() } = {}) {
+export function decideRoute(o = {}) {
+  return drain(decideRouteGen(o))
+}
+/** The generator decideRoute drains (yields inside the Monte Carlo). */
+export function* decideRouteGen({ inputs, count, routes, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, topK = PLAN.topK, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock } = {}) {
   const byKey = new Map((routes ?? []).map((r) => [routeKey(r), r]))
   const lifeOf = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.lifeH ?? null]))
   const pointH = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.hours]))
@@ -335,7 +356,7 @@ export function decideRoute({ inputs, count, routes, point, repPoint = null, pre
   }
   if (!keys.length) return { key: null, why: `no priced route (${point?.why ?? 'none'})`, decidedAt: prev?.decidedAt ?? null }
   const options = keys.map((k) => ({ key: k, sim: sim(byKey.get(k)) }))
-  const ev = evaluate(options, draws, { budgetMs })
+  const ev = yield* evaluateGen(options, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
   const rows = optionRows(options, stats, (o) => pointH.get(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
@@ -355,7 +376,11 @@ export function decideRoute({ inputs, count, routes, point, repPoint = null, pre
  * is its own option, priced on its REMAINING wait. Returns {key, install
  * (true = now), installAt, ...stats, why}.
  */
-export function decideInstall({ inputs, count = null, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true } = {}) {
+export function decideInstall(o = {}) {
+  return drain(decideInstallGen(o))
+}
+/** The generator decideInstall drains (yields inside the Monte Carlo). */
+export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock } = {}) {
   const opts = []
   const simAt = (w, n, lifeH, g) => (d) => {
     const inp = applyDraw(inputs, d)
@@ -399,7 +424,7 @@ export function decideInstall({ inputs, count = null, point, repPoint = null, pr
   }
   if (!opts.length) return { key: null, install: false, why: 'no install option priced', decidedAt: prev?.decidedAt ?? null }
   const use = !redecide && committedKey ? opts.filter((o) => o.key === committedKey) : opts
-  const ev = evaluate(use, draws, { budgetMs })
+  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
   const rows = optionRows(use, stats, (o) => o.pointH)
   const record = (key, extra) => {
@@ -419,12 +444,16 @@ export function decideInstall({ inputs, count = null, point, repPoint = null, pr
  * previous record's key is the incumbent. Same rule and record shape as the
  * route decision.
  */
-export function decideAmong({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null } = {}) {
+export function decideAmong(o = {}) {
+  return drain(decideAmongGen(o))
+}
+/** The generator decideAmong drains (yields inside the Monte Carlo). */
+export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock } = {}) {
   const keys = new Set((options ?? []).map((o) => o.key))
   const committedKey = prev?.key && keys.has(prev.key) ? prev.key : null
   const use = !redecide && committedKey ? options.filter((o) => o.key === committedKey) : options
   if (!use?.length) return { key: null, why: 'no option', decidedAt: prev?.decidedAt ?? null }
-  const ev = evaluate(use, draws, { budgetMs })
+  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
   const rows = optionRows(use, stats, (o) => pointOf(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
@@ -482,7 +511,14 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   if (!(age < PLAN_CAL.staleMin)) fail(`PLAN STALE: /tel/plan.txt is ${fin(age) ? age.toFixed(0) : '?'} min old`, 'progress.js has not reached a decision pass since — find where the pass returns early')
   if (gate && gate.lastAugReset !== undefined && plan.lastAugReset !== gate.lastAugReset && Date.parse(plan.at) < Date.parse(gate.at)) fail('PLAN FROM ANOTHER LIFE: plan.txt lastAugReset differs from the gate\'s', 'a reader would follow a previous life\'s commitment')
   if (plan.health === 'error') fail(`PLAN BROKEN: ${plan.error ?? 'health error'}`, 'a decision threw or the context could not be built; the named fallbacks decide meanwhile')
-  if (plan.cpu?.overBudget) fail(`PLAN OVER CPU BUDGET: ${plan.cpu.ms}ms against ${plan.cpu.budgetMs}ms`, 'the Monte Carlo runs on the game\'s main thread (the page has frozen before) — lower PLAN.N or PLAN.topK')
+  // THE PAGE-FREEZE CHECK is the longest synchronous block, not the total:
+  // the searches yield between slices. A record from before the slicing (cpu
+  // without maxBlockMs) is judged on its total, as it was then.
+  const cpu = plan.cpu
+  if (cpu && fin(cpu.maxBlockMs) && cpu.maxBlockMs > (cpu.maxBlockLimitMs ?? PLAN.maxBlockMs)) fail(`PLAN BLOCKED THE PAGE: a ${cpu.maxBlockMs}ms synchronous block against ${cpu.maxBlockLimitMs ?? PLAN.maxBlockMs}ms`, 'a search ran without yielding (coop.js slices) — find the section in the page trace (trace.js plan-*) and make it a generator run through the pass pacer')
+  else if (cpu && !('maxBlockMs' in cpu) && cpu.overBudget) fail(`PLAN OVER CPU BUDGET: ${cpu.ms}ms against ${cpu.budgetMs}ms`, 'the Monte Carlo runs on the game\'s main thread (the page has frozen before) — lower PLAN.N or PLAN.topK')
+  if (cpu && cpu.truncated) notes.push(`plan Monte Carlo truncated at its ${cpu.budgetMs}ms work budget (${cpu.draws} of ${cpu.N} draws)`)
+  if (cpu && fin(cpu.draws) && cpu.draws < 8 && fin(cpu.N)) fail(`PLAN UNDER-SAMPLED: ${cpu.draws} of ${cpu.N} draws`, 'the work budget stopped the Monte Carlo before its probabilities mean anything — the decision rests on too few paired draws')
   const c = plan.calibration
   if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
   else if (c) notes.push(`plan calibration: ${c.why ?? 'none'}`)
@@ -490,7 +526,7 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const d = plan.decisions ?? {}
   if (d.countRoute?.key) notes.push(`plan route: ${d.countRoute.name} at ${d.countRoute.faction} via ${d.countRoute.via}${d.countRoute.held ? ' (held)' : ''} — ${String(d.countRoute.why ?? '').slice(0, 160)}`)
   if (d.install?.key) notes.push(`plan install: ${d.install.key}${d.install.held ? ' (held)' : ''} — ${String(d.install.why ?? '').slice(0, 160)}`)
-  if (plan.cpu) notes.push(`plan cpu: ${plan.cpu.ms}ms of ${plan.cpu.budgetMs}ms, ${plan.cpu.draws} draws`)
+  if (cpu) notes.push(fin(cpu.maxBlockMs) ? `plan cpu: ${cpu.cpuMs}ms work over ${cpu.wallMs}ms wall, longest block ${cpu.maxBlockMs}ms (${cpu.yields} yields), ${cpu.draws} draws` : `plan cpu: ${cpu.ms}ms of ${cpu.budgetMs}ms, ${cpu.draws} draws`)
   return { fails, notes }
 }
 
