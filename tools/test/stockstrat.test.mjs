@@ -138,21 +138,38 @@ export async function run() {
     if (tel.canShort !== false) c3.fail("shorts must be opt-in (--short) until measured live");
     c3.note(`nodeecon record: equity $${(rec.equity / 1e6).toFixed(0)}m, returnPerSec ${rec.returnPerSec?.toExponential(2)}, incomePerSec $${(rec.incomePerSec ?? 0).toFixed(0)}/s, capitalCap $${((rec.capitalCap ?? 0) / 1e12).toFixed(2)}t`);
 
-    // A due claim: with wealth above an augmentation claim, the claim is held as cash.
+    // CLAIMS: raisable ones stay invested; a raise already ORDERED, and claims
+    // whose purchase cannot raise (join, home), are held as cash.
+    const gateOf = (aug, join) => JSON.stringify({ lastAugReset: 1, planned: true, plan: { totalCost: aug, buy: [] }, joinClaim: join });
+    // (1) an augmentation claim with no purchase ordered: invested.
     c3.examined(1);
     const m3 = new Market({ seed: 9, money: 2.5e8, burnInTicks: 3000 });
-    const claim = 1e8;
-    // Home at its maximum RAM, so the home claim is 0 and the reserve is the augmentation claim alone.
-    const h = await runShipped(m3, 300, {
-      homeRam: 2 ** 30,
-      files: { "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: true, plan: { totalCost: claim, buy: [] }, joinClaim: 0 }) },
-    });
+    const h = await runShipped(m3, 300, { homeRam: 2 ** 30, files: { "/tel/installgate.txt": gateOf(1e8, 0) } });
     const t3 = JSON.parse(h.files["/tel/stock.txt"]);
-    // home claim: nextHomeUpgrade(1024GB) — read what the trader itself held.
-    const R = t3.claims?.reserve;
-    if (!(typeof R === "number" && R >= claim)) c3.fail(`the reserve ${R} does not include the $100m augmentation claim`);
-    else if (m3.wealth() >= R && !(m3.money >= R * 0.999)) c3.fail(`wealth $${(m3.wealth() / 1e6).toFixed(0)}m covers the $${(R / 1e6).toFixed(0)}m claim but cash is $${(m3.money / 1e6).toFixed(0)}m`);
-    else c3.note(`claim $${(R / 1e6).toFixed(0)}m: cash $${(m3.money / 1e6).toFixed(0)}m of wealth $${(m3.wealth() / 1e6).toFixed(0)}m`);
+    if (!(t3.claims?.reserve >= 1e8)) c3.fail(`the $100m augmentation claim is not read (reserve ${t3.claims?.reserve})`);
+    if (m3.money > 5e7) c3.fail(`a $100m augmentation claim with nothing ordered is held as cash ($${(m3.money / 1e6).toFixed(0)}m) — it must stay invested and be raised on demand`);
+    c3.note(`augmentation claim $100m, nothing ordered: cash $${(m3.money / 1e6).toFixed(1)}m of wealth $${(m3.wealth() / 1e6).toFixed(0)}m (held: ${JSON.stringify(t3.claims?.heldAsCash)})`);
+    // (2) the same claim with its raise ORDERED (orders.txt newer than act.txt): held.
+    c3.examined(1);
+    const m5 = new Market({ seed: 9, money: 2.5e8, burnInTicks: 3000 });
+    const h5 = await runShipped(m5, 300, {
+      homeRam: 2 ** 30,
+      onTick: (n, files) => {
+        if (n === 200) files["/tel/orders.txt"] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1, orders: [{ kind: "liquidate", args: ["raise", 1e8] }, { kind: "buyaug", args: ["x"] }] });
+      },
+      files: { "/tel/installgate.txt": gateOf(1e8, 0), "/tel/act.txt": JSON.stringify({ orders: { at: "2026-01-01T00:00:00.000Z" } }) },
+    });
+    const t5 = JSON.parse(h5.files["/tel/stock.txt"]);
+    if (!(t5.claims?.dueRaise === 1e8)) c3.fail(`an ordered $100m raise is not read as due (${t5.claims?.dueRaise})`);
+    else if (m5.wealth() >= 1e8 && !(m5.money >= 1e8 * 0.999)) c3.fail(`a $100m raise is ordered and wealth covers it, but cash is $${(m5.money / 1e6).toFixed(0)}m`);
+    // (3) a join claim (money in hand, nothing to raise in front of): held.
+    c3.examined(1);
+    const m6 = new Market({ seed: 9, money: 2.5e8, burnInTicks: 3000 });
+    const h6 = await runShipped(m6, 300, { homeRam: 2 ** 30, files: { "/tel/installgate.txt": gateOf(0, 1e8) } });
+    const t6 = JSON.parse(h6.files["/tel/stock.txt"]);
+    if (m6.wealth() >= 1e8 && !(m6.money >= 1e8 * 0.999)) c3.fail(`the $100m join claim (cash in hand) is not held: cash $${(m6.money / 1e6).toFixed(0)}m`);
+    if (!(t6.claims?.heldAsCash ?? []).includes("join")) c3.fail(`heldAsCash does not name join: ${JSON.stringify(t6.claims?.heldAsCash)}`);
+    c3.note(`join claim $100m: cash $${(m6.money / 1e6).toFixed(0)}m; ordered $100m raise: cash $${(m5.money / 1e6).toFixed(0)}m`);
   }
   checks.push(c3);
 
@@ -327,7 +344,8 @@ export async function run() {
     // A claim that is DUE (wealth covers it) under the same drain: the cash is
     // raised in lots of at least minOrder, not a sliver per tick.
     c7.examined(2);
-    const gate = { "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: true, plan: { totalCost: 5e6, buy: [] }, joinClaim: 0 }) };
+    // A claim held as cash (join: money in hand) under the drain.
+    const gate = { "/tel/installgate.txt": JSON.stringify({ lastAugReset: 1, planned: true, plan: { totalCost: 0, buy: [] }, joinClaim: 5e6 }) };
     const due = [];
     for (const seed of [1, 2]) due.push(await churn({ cap: 3e7, seed, hours: 0.5, drain: 40e3, every: 1, files: gate, homeRam: 2 ** 30 }));
     c7.note(`same drain with a $5m claim due: ${due.map((r) => r.perH.toFixed(0)).join("/")} orders/h`);

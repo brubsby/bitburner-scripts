@@ -157,6 +157,56 @@ export function manipOf(positions, prices, servable = null, forecast = null) {
   return out
 }
 
+/**
+ * WHICH CLAIMS ARE HELD AS CASH. Since 9f0e1fe every purchase that spends the
+ * book is preceded by a sized raise (progress.js orders carry `cost` and a
+ * liquidate('raise') step; spenders post /tel/raise/<by>.txt that act.js
+ * serves), so a claim that can be raised on demand stays INVESTED until its
+ * purchase runs. Held in cash, in priority order while wealth covers them:
+ *
+ *   (a) the fee reserve — passed separately (book.reserve);
+ *   (b) a raise already ORDERED and not yet executed (orders.txt liquidate
+ *       'raise' amount, batch newer than act.txt's last) — due within minutes;
+ *   (c) claims whose purchase path cannot raise, named in NON_RAISABLE:
+ *       join — a faction's money requirement is checked against cash in hand
+ *              by the invitation pass (Faction/FactionHelpers), not bought:
+ *              there is no purchase to put a raise in front of;
+ *       home — homeup.js buys RAM/cores through the UI from cash and posts no
+ *              raise request.
+ *
+ * tools/sim/stocks/idleclaim.mjs (24 seeds, $105b claim covered 1.05x, the
+ * game's own market): keeping the claim invested and raising at purchase time
+ * beats holding it idle by a median $1.2b at a 6-minute wait, $7.5b at 15 min,
+ * $67b at 1h, $448b at 3h. The risk is the purchase slipping: P(the book is
+ * below the claim when it runs) 8% at 6 min, 4% at 15 min, 0% at 1h+ with 5%
+ * cover; 0% at every wait with 30% cover.
+ */
+export const NON_RAISABLE = ['join', 'home']
+export function cashHoldOf(claims, wealth, dueRaise = 0) {
+  let hold = Math.max(0, dueRaise || 0)
+  const held = []
+  for (const k of NON_RAISABLE) {
+    const v = claims?.[k]
+    if (typeof v !== 'number' || !isFinite(v) || v <= 0) continue
+    if (wealth >= hold + v) {
+      hold += v
+      held.push(k)
+    }
+  }
+  return { hold, held }
+}
+
+/** The raise act.js is about to run: orders.txt newer than act.txt's last batch. */
+export function dueRaiseOf(orders, act, lastAugReset, now = Date.now()) {
+  if (!orders || orders.lastAugReset !== lastAugReset || !(now - Date.parse(orders.at ?? '') < 15 * 60e3)) return 0
+  if (act?.orders?.at && act.orders.at >= orders.at) return 0
+  let due = 0
+  for (const o of orders.orders ?? []) {
+    if (o?.kind === 'liquidate' && o.args?.[0] === 'raise' && typeof o.args[1] === 'number' && o.args[1] > 0) due += o.args[1]
+  }
+  return due
+}
+
 /** The claims budget.js ranks above stocks; null fields are UNREADABLE. */
 function claimsOf(ns, info) {
   fetchFromHome(ns, GATE_FILE)
@@ -337,7 +387,13 @@ export async function main(ns) {
       // all — say so (health 'warn'), keep trading: the positions stay one tick
       // from cash, so the cost of the unknown is one tick of delay, not a spend.
       const claimKnown = isFinite(R)
-      const raiseCash = claimKnown && wealth >= R ? R : 0
+      // Only the claims that cannot be raised on demand (and a raise already
+      // ordered) are held as cash; the rest stays invested (cashHoldOf).
+      fetchFromHome(ns, '/tel/orders.txt')
+      fetchFromHome(ns, '/tel/act.txt')
+      const dueRaise = dueRaiseOf(readJson(ns, '/tel/orders.txt'), readJson(ns, '/tel/act.txt'), info.lastAugReset)
+      const cashHold = claimKnown ? cashHoldOf(claims, wealth, dueRaise) : { hold: 0, held: [] }
+      const raiseCash = cashHold.hold
       const book = { cash, positions, maxShares, ask, bid, canShort, raiseCash, reserve: feeReserve.reserve, boost }
       const decided = decide(st, book)
       const diag = decided.diag
@@ -430,7 +486,7 @@ export async function main(ns) {
         wealth,
         cash,
         positionsValue: posValue,
-        claims: { ...claims, reserve: claimKnown ? R : null, unreadable: !claimKnown, raiseCash },
+        claims: { ...claims, reserve: claimKnown ? R : null, unreadable: !claimKnown, raiseCash, heldAsCash: cashHold.held, dueRaise, invested: 'every claim not in heldAsCash is raised on demand (act-liquidate)' },
         feeReserve,
         lastAugReset: info.lastAugReset,
         equity,
