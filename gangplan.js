@@ -1244,7 +1244,9 @@ export function* policySearch(g, members, o = {}) {
 /** Run a policySearch to completion synchronously (tests, tools). */
 export function runSearch(g, members, o = {}) {
   const it = policySearch(g, members, o)
-  for (;;) {
+  // Capped: a generator that never finished would spin the page thread.
+  for (let steps = 0; ; steps++) {
+    if (steps > 2e6) throw new Error('runSearch: policySearch did not finish in 2e6 steps')
     const r = it.next()
     if (r.done) return r.value
   }

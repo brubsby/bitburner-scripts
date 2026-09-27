@@ -26,3 +26,9 @@ run plan.js '      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey 
 run bayes.js '    if (a.ver !== b.ver) {' '    if (false) {'
 run bayes.js '    w = xs.map((x) => (nu + 1) / (nu + (x * x) / s2))' '    w = xs.map(() => 1)'
 run progress.js 'life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PLANNER_BOOT }' 'life: info?.lastAugReset ?? null, source }'
+# loop guards (module 'loops'): each mutant is caught by LP1 (static) or LP3 (behaviour)
+runl() { echo "== $1: $2"; node tools/mutant.mjs "$1" "$2" "$3" loops 2>&1 | head -3; }
+runl bayes.js "  if (!(typeof u === 'number' && u >= 0 && u < 1)) throw" "  if (false) throw"
+runl bayes.js "      if (j >= SAMPLER_CAP.gammaInner) throw new SamplingError" "      if (false) throw new SamplingError"
+runl coop.js "    if (steps > cap) throw new LoopCapError" "    if (false) throw new LoopCapError"
+runl countexit.js "      if (spent + p > budget || levels > 200) break" "      if (spent + p > budget) break"

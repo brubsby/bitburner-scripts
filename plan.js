@@ -660,6 +660,8 @@ export function modelVersionFrom(readFn, root = 'progress.js') {
   const parts = []
   const visit = (file) => {
     if (seen.has(file)) return
+    // A graph is finite; a cap still names a runaway (a reader that invents paths).
+    if (seen.size >= 500) throw new Error(`modelVersionFrom: more than 500 modules under ${root}`)
     seen.add(file)
     const src = String(readFn(file) ?? '')
     parts.push(`${file}:${src.length ? hashOf(src) : 'unreadable'}`)

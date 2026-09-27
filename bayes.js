@@ -20,8 +20,35 @@ const fin = (x) => typeof x === 'number' && isFinite(x)
 // and every pass of a life (common random numbers).
 // ---------------------------------------------------------------------------
 
-/** mulberry32: a small, good-enough 32-bit PRNG. Returns () => [0,1). */
+/**
+ * A SAMPLER THAT CANNOT SPIN. Every loop that draws until a condition holds
+ * (the normal's u > 0, the gamma's rejection step) is capped, and every
+ * uniform it reads is checked: finite and in [0, 1). A NaN or a stuck uniform
+ * would otherwise make a rejection loop run forever on the game's page thread
+ * — the planner shares it with the whole game (2026-09-27: the page froze at
+ * 100% CPU after a planner deploy; an unbounded `for (;;)` in gammaOf was the
+ * prime suspect). Breaking a cap throws SamplingError, which the plan catches
+ * and publishes (health 'error'), never a hang.
+ */
+export class SamplingError extends Error {
+  constructor(msg) {
+    super(msg)
+    this.name = 'SamplingError'
+  }
+}
+/** Loop caps (each far beyond what a valid uniform source ever needs). */
+export const SAMPLER_CAP = { normal: 64, gamma: 1000, gammaInner: 64 }
+/** A checked uniform: throws unless rand() returns a finite number in [0, 1). */
+export function uniformOf(rand) {
+  if (typeof rand !== 'function') throw new SamplingError('no uniform source (rand is not a function)')
+  const u = rand()
+  if (!(typeof u === 'number' && u >= 0 && u < 1)) throw new SamplingError(`uniform source returned ${u} (must be a finite number in [0, 1))`)
+  return u
+}
+
+/** mulberry32: a small, good-enough 32-bit PRNG. Returns () => [0,1). The seed must be a finite number. */
 export function rngOf(seed) {
+  if (!(typeof seed === 'number' && isFinite(seed))) throw new SamplingError(`rngOf: seed ${seed} is not a finite number`)
   let a = seed >>> 0
   return () => {
     a = (a + 0x6d2b79f5) >>> 0
@@ -46,29 +73,37 @@ export function hashOf(s) {
 /** Standard normal from a uniform source (Box-Muller, one of the pair). */
 export function normalOf(rand) {
   let u = 0
-  while (u <= 1e-300) u = rand()
-  const v = rand()
+  for (let it = 0; u <= 1e-300; it++) {
+    if (it >= SAMPLER_CAP.normal) throw new SamplingError(`normalOf: ${SAMPLER_CAP.normal} uniforms in a row were 0 (a stuck source)`)
+    u = uniformOf(rand)
+  }
+  const v = uniformOf(rand)
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
 }
 
 /** Gamma(shape, 1) — Marsaglia & Tsang, with the shape < 1 boost. */
 export function gammaOf(shape, rand) {
-  if (!(shape > 0)) throw new Error(`gammaOf: shape ${shape}`)
-  if (shape < 1) return gammaOf(shape + 1, rand) * Math.pow(rand() || 1e-300, 1 / shape)
+  if (!(typeof shape === 'number' && isFinite(shape) && shape > 0)) throw new SamplingError(`gammaOf: shape ${shape} (must be a finite number > 0)`)
+  if (shape < 1) return gammaOf(shape + 1, rand) * Math.pow(uniformOf(rand) || 1e-300, 1 / shape)
   const d = shape - 1 / 3
   const c = 1 / Math.sqrt(9 * d)
-  for (;;) {
-    let x
-    let v
-    do {
+  // Marsaglia-Tsang accepts > 95% of proposals for shape >= 1; the caps are
+  // never reached by a valid source.
+  for (let it = 0; it < SAMPLER_CAP.gamma; it++) {
+    let x = 0
+    let v = 0
+    for (let j = 0; ; j++) {
+      if (j >= SAMPLER_CAP.gammaInner) throw new SamplingError(`gammaOf: ${SAMPLER_CAP.gammaInner} proposals with 1 + c x <= 0`)
       x = normalOf(rand)
       v = 1 + c * x
-    } while (v <= 0)
+      if (v > 0) break
+    }
     v = v * v * v
-    const u = rand()
+    const u = uniformOf(rand)
     if (u < 1 - 0.0331 * x * x * x * x) return d * v
     if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v
   }
+  throw new SamplingError(`gammaOf(${shape}): no acceptance in ${SAMPLER_CAP.gamma} proposals (a degenerate uniform source)`)
 }
 
 // ---------------------------------------------------------------------------

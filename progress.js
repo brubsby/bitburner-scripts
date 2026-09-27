@@ -260,7 +260,11 @@ const RAISE_CEILING = (mult) => 8.45 + 0 * mult
 export async function main(ns) {
   ns.ramOverride(2.6)
   PLANNER_BOOT = Date.now()
+  // Bracketed: this runs before the pass's own 'progress' section, and the
+  // 2026-09-27 freeze left no open section — so anything here must be visible.
+  enter('plan-version')
   MODEL_VERSION = modelVersionOf(ns)
+  leave('plan-version')
 
   // This reporter covers the paths that would otherwise produce silence.
   // Every record carries the income (healthcheck F4): the base is evaluated

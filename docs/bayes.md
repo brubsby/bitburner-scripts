@@ -63,6 +63,17 @@ ONE pass (05:32 read 108.5h between 16.1h and 12.7h); robust, s = 6.2%, and
 Cost: after a deploy or restart s rests on its prior (10%) until same-version
 pairs accumulate (one per ~15 min).
 
+### Nothing may spin the page
+
+The planner shares the game's main thread; a loop that never ends freezes the
+page with no signal (2026-09-27 11:17, after the c688e2c deploy). Every
+sampling loop is capped and every uniform is checked (`bayes.uniformOf`,
+`SAMPLER_CAP`): a NaN or stuck source throws `SamplingError`, a generator past
+`coop.STEP_CAP` throws `LoopCapError`; the plan publishes either as health
+'error'. `[LP1]` fails on any open-ended loop in progress.js's import graph
+that neither awaits nor compares an incremented counter to a bound on a
+break/return/throw path; `[LP3]` feeds the samplers broken sources.
+
 ### Structural discrepancy
 
 H_i,d = sim_i(θ_d) · exp(s_c,d z_d + s_i,d z_i,d − s_d²/2), s_c² = s² − s_i².

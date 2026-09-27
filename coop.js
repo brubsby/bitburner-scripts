@@ -34,9 +34,24 @@ const clock = () => {
   }
 }
 
+/**
+ * NO GENERATOR RUNS FOREVER. A generator that never finishes would spin the
+ * page thread (drain) or yield forever (slices); past STEP_CAP steps both
+ * throw LoopCapError, which the plan catches and publishes. The largest real
+ * run (a live-size pass, 232 routes) is ~3,400 steps.
+ */
+export const STEP_CAP = 2e6
+export class LoopCapError extends Error {
+  constructor(msg) {
+    super(msg)
+    this.name = 'LoopCapError'
+  }
+}
+
 /** Run a generator to completion synchronously; its yields are ignored. */
-export function drain(gen) {
-  for (;;) {
+export function drain(gen, cap = STEP_CAP) {
+  for (let steps = 0; ; steps++) {
+    if (steps > cap) throw new LoopCapError(`drain: the generator did not finish in ${cap} steps`)
     const r = gen.next()
     if (r.done) return r.value
   }
@@ -82,7 +97,8 @@ export function makePacer({ sliceMs = 40, yieldFn = null, now = clock } = {}) {
       sliceStart = now()
       try {
         let t = now()
-        for (;;) {
+        for (let steps = 0; ; steps++) {
+          if (steps > STEP_CAP) throw new LoopCapError(`slices(${label}): the generator did not finish in ${STEP_CAP} steps`)
           const r = gen.next()
           // LOOK AHEAD one step: yield when the next step, if it costs what
           // this one did, would carry the block past the slice — so a block
