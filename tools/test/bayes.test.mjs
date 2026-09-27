@@ -115,7 +115,7 @@ export async function run() {
   checks.push(c2);
 
   // -----------------------------------------------------------------------
-  const c3 = new Check("BY3", "structural error: the posterior learns s, and the sequential calibration covers ~80% when the model is right");
+  const c3 = new Check("BY3", "structural error: the (Student-t) posterior learns s, and the sequential calibration covers ~80% when the model is right");
   {
     c3.examined(4);
     const rand = B.rngOf(23);
@@ -124,7 +124,10 @@ export async function run() {
       const out = [];
       for (let i = 0; i < n; i++) {
         const truth = 100 - i * 0.25;
-        out.push({ at: new Date(t0 + i * 0.25 * 3.6e6).toISOString(), exitH: truth * Math.exp(s * B.normalOf(rand)), life: 1 });
+        // The model's own error: Student-t (nu 4) with scale s — a normal over
+        // a Gamma(2, 2) mixture weight.
+        const lam = B.gammaOf(2, rand) / 2;
+        out.push({ at: new Date(t0 + i * 0.25 * 3.6e6).toISOString(), exitH: truth * Math.exp((s * B.normalOf(rand)) / Math.sqrt(lam)), life: 1, ver: "v1", boot: 1 });
       }
       return out;
     };
@@ -633,6 +636,74 @@ export async function run() {
     if (!/const spec = basisOf\(inst, Date\.now\(\)\)[\s\S]{0,200}pcx\.graftReprice\(spec\)/.test(prog)) c12.fail("progress.js must re-price the graft decision when the install decision switched this pass (source guard)");
   }
   checks.push(c12);
+
+  // -----------------------------------------------------------------------
+  const c13 = new Check("BY13", "FORECAST ERROR IS ONE MODEL'S ERROR: pairs across a model version, a restart or an install are excluded (and counted); the version is the planner's whole import graph; one mis-priced pass is down-weighted (Student-t) — replayed on the live 2026-09-27 sample history");
+  {
+    c13.examined(8);
+    const t0 = Date.parse("2026-09-27T00:00:00Z");
+    const at = (h) => new Date(t0 + h * 3.6e6).toISOString();
+    // A forecast that is right (falls 1h/h, 3% noise) except that a deploy
+    // every 5 samples re-prices it (x1.3 / x0.75 alternately, as ~15 deploys
+    // a node do): version-tagged, the jumps are not forecast error.
+    const rand = B.rngOf(3);
+    const S = [];
+    for (let i = 0; i < 40; i++) {
+      const h = i * 0.25;
+      const k = Math.floor(i / 5);
+      S.push({ at: at(h), exitH: (60 - h) * (k % 2 ? 1.3 : 1) * Math.exp(0.03 * B.normalOf(rand)), life: 1, ver: `v${k}`, boot: 1 });
+    }
+    const tagged = B.driftPosterior(S);
+    const blind = B.driftPosterior(S.map((x) => ({ ...x, ver: "same" })));
+    c13.note(`7 deploys re-pricing x1.3/x0.77: version-blind s ${(100 * blind.s).toFixed(1)}% (${blind.pairs} pairs) vs version-aware ${(100 * tagged.s).toFixed(1)}% (${tagged.pairs} pairs, excluded ${JSON.stringify(tagged.excluded)})`);
+    if (!(tagged.excluded.version === 7 && tagged.s < 0.06 && blind.s > 1.5 * tagged.s)) c13.fail("the pairs across the deploys must be excluded, leaving the model's own ~3% (and the version-blind fit must read more)");
+    const reboot = B.driftPosterior(S.map((x, i) => ({ ...x, ver: "A", boot: i < 22 ? 1 : 2 })));
+    if (reboot.excluded.boot !== 1) c13.fail("a pair across a planner restart must be excluded");
+    const legacy = B.driftPosterior(S.map(({ ver, boot, ...x }) => x));
+    if (!(legacy.pairs === 0 && legacy.excluded.untagged === 39)) c13.fail("untagged pairs cannot be told apart from a deploy: excluded (and counted), never trusted");
+    // The model version: every module in the planner's import graph.
+    const read = (f) => {
+      try {
+        return fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
+      } catch {
+        return "";
+      }
+    };
+    const v0 = P.modelVersionFrom(read, "progress.js");
+    const vMod = P.modelVersionFrom((f) => (f === "exitplan.js" ? read(f) + "\n// changed" : read(f)), "progress.js");
+    const vDeep = P.modelVersionFrom((f) => (f === "coop.js" ? read(f) + "\n// changed" : read(f)), "progress.js");
+    const vOut = P.modelVersionFrom((f) => (f === "go.js" ? read(f) + "\n// changed" : read(f)), "progress.js");
+    c13.note(`model version ${v0} (modules in progress.js's import graph); exitplan edited -> ${vMod}; coop.js (imported by countexit/graftplan) edited -> ${vDeep}; go.js (not imported) edited -> ${vOut}`);
+    if (!(Number(v0.split(".")[1]) > 20)) c13.fail("the version must cover the planner's whole import graph", v0);
+    if (vMod === v0 || vDeep === v0) c13.fail("an edit to any module in the graph, however deep, must change the version");
+    if (vOut !== v0) c13.fail("a module outside the graph must not change the version");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/exitH: \+exitH\.toFixed\(2\), life: info\?\.lastAugReset \?\? null, source, ver: MODEL_VERSION, boot: PLANNER_BOOT \}/.test(prog)) c13.fail("every exit sample must carry the model version and the planner boot (source guard)");
+    if (!/MODEL_VERSION = modelVersionOf\(ns\)/.test(prog) || !/PLANNER_BOOT = Date\.now\(\)/.test(prog)) c13.fail("the version and boot must be taken at planner start (source guard)");
+    // REPLAY on the live history (untagged; the commits of planner modules
+    // are the known deploys — a lower bound).
+    const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-exitcal-0927.json"), "utf8"));
+    const dep = L.deploys.map(Date.parse);
+    const byCommit = L.samples.map((x) => ({ ...x, ver: dep.filter((d) => d <= Date.parse(x.at)).length, boot: 1 }));
+    const gauss = (() => {
+      const pr = B.driftPairs(L.samples.map((x) => ({ ...x, ver: 0, boot: 1 })));
+      const p = B.igUpdate(B.PRIORS.drift, pr.map((x) => x.r / Math.SQRT2));
+      return Math.sqrt(p.b / (p.a - 1));
+    })();
+    const robustAll = B.driftPosterior(L.samples.map((x) => ({ ...x, ver: 0, boot: 1 })));
+    const robustVer = B.driftPosterior(byCommit);
+    const calOld = B.driftCalibration(L.samples.map((x) => ({ ...x, ver: 0, boot: 1 })), B.PRIORS.drift, 1e6);
+    const calNew = B.driftCalibration(byCommit);
+    const iv = (s, H) => `${(H * Math.exp(-1.2816 * s)).toFixed(1)}-${(H * Math.exp(1.2816 * s)).toFixed(1)}h`;
+    const H = L.livePlan.exit.q50;
+    c13.note(`live history (${L.samples.length} samples): Gaussian, all pairs (as live): s ${(100 * gauss).toFixed(1)}% -> structural 80% on the ${H}h median ${iv(gauss, H)} (live plan ${L.livePlan.exit.q10}-${L.livePlan.exit.q90}h)`);
+    c13.note(`  Student-t, all pairs: s ${(100 * robustAll.s).toFixed(1)}% (${robustAll.outliers} outlier pair(s)) -> ${iv(robustAll.s, H)}; + excluding the ${robustVer.excluded.version} pair(s) across the ${L.deploys.length} committed deploys: s ${(100 * robustVer.s).toFixed(1)}% -> ${iv(robustVer.s, H)}`);
+    c13.note(`  calibration: Gaussian-like ${calOld.why}; new ${calNew.why}`);
+    c13.note(`  the 60% was one pass: 05:32 read 108.5h between 16.1h and 12.7h (r = +5.7 then -0.9); with it down-weighted the rest of the node's forecasts err ~${(100 * robustAll.s).toFixed(0)}%`);
+    if (!(gauss > 0.5 && robustAll.s < 0.15)) c13.fail("fixture: the Gaussian fit should read the blip as ~60% error and the robust fit should not");
+    if (!(Math.abs(calNew.cover80 - 0.8) <= Math.abs(calOld.cover80 - 0.8) + 0.02)) c13.fail("the robust, version-aware predictive must be at least as well calibrated as the old one on the live history", `${calOld.cover80} -> ${calNew.cover80}`);
+  }
+  checks.push(c13);
 
   return checks;
 }
