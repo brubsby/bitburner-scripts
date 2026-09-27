@@ -52,6 +52,7 @@ export const ALLOW = [
   { file: "act.js", has: "ns.getServerMoneyAvailable('home') < h.next.cost) return null", cls: "a", why: "homeup's purchase: stock.js holds the home claim in cash whenever wealth covers the claims" },
   { file: "act.js", has: "const cash = ns.getServerMoneyAvailable('home')", cls: "a", why: "the escape and the bootstrap split cash from equity (stockRec) themselves" },
   { file: "act.js", has: "serveRaiseRequests(ns, info, ns.getServerMoneyAvailable('home')", cls: "a", why: "a raise is sized against cash" },
+  { file: "act.js", has: "cash: ns.getServerMoneyAvailable('home'),", cls: "a", why: "bootstrapHome passes cash and the book's equity separately: bootstrapHomeStep affords on both (batchFits) and raises first" },
   { file: "actplan.js", has: "const cash = num(p.money) ? p.money : null", cls: "a", why: "split into cash and wealth right here (wealth = cash + s.equity)" },
   { file: "actplan.js", has: "crime loop (${crime}) already running", cls: "d", why: "progress display of the $1m gate" },
   { file: "autobuy.js", has: "const money = ns.getServerMoneyAvailable('home')", cls: "a", why: "purchase site: where money is capital it buys only on a priced verdict, and the planner's own TOR/program orders carry a cost the batch raises" },

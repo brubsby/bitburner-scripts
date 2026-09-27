@@ -39,7 +39,7 @@ import { nextHomeUpgrade } from 'homecost.js'
 import { enter, leave } from 'trace.js'
 // Pure (already in this file's closure through actplan.js): wealth, the
 // raise requests act.js serves, and the negative-cash escape.
-import { stockRecordFromText, raiseToServe, raiseFileOf, RAISE_REQUESTERS, RAISE_HOLD_MS, RAISE_COOLDOWN_MS, softlockStep, SOFTLOCK_FILE, SOFTLOCK_HOLD_FILE } from 'nodeecon.js'
+import { bootstrapHomeStep, stockRecordFromText, raiseToServe, raiseFileOf, RAISE_REQUESTERS, RAISE_HOLD_MS, RAISE_COOLDOWN_MS, softlockStep, SOFTLOCK_FILE, SOFTLOCK_HOLD_FILE } from 'nodeecon.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -264,6 +264,50 @@ function backdoorIfRequested(ns) {
  * homeup.js decided a purchase and either could not reach Alpha Enterprises or,
  * with Singularity, handed it here by design (viaActor): make it from here.
  */
+/**
+ * Home RAM the stack needs before anything can approve it (no planner verdict
+ * this life, home below the tier boot defers watchdog/progress/homeup at):
+ * bought now, raising from the book first when cash is short. Live BN1
+ * 2026-09-27: 2.6h at 64GB while the book grew to $456m.
+ */
+async function bootstrapHome(ns, info, stockRec) {
+  const homeRam = ns.getServerMaxRam('home')
+  const v = bootstrapHomeStep({
+    homeRam,
+    boot: (() => {
+      try {
+        return JSON.parse(readHomeFile(ns, '/tel/boot.txt') || 'null')
+      } catch {
+        return null
+      }
+    })(),
+    gate: (() => {
+      try {
+        return JSON.parse(readHomeFile(ns, '/tel/installgate.txt') || 'null')
+      } catch {
+        return null
+      }
+    })(),
+    lastAugReset: info.lastAugReset,
+    cash: ns.getServerMoneyAvailable('home'),
+    equity: stockRec?.ok ? stockRec.equity : 0,
+    ramCost: nextHomeUpgrade(homeRam, Infinity, bitNodeMults(info.currentNode)?.HomeComputerRamCost)?.cost ?? null,
+  })
+  if (v.step === 'raise-buy') {
+    const r = await runActor(ns, 'liquidate', ['raise', Math.ceil(v.cost * 1.02)])
+    releaseStockHold(ns, info, 'bootstrap home raise')
+    if (r.ok !== true) return { ...v, ok: false, error: r.result?.error ?? r.why ?? null }
+  }
+  if (v.step === 'buy' || v.step === 'raise-buy') {
+    const r = await runActor(ns, 'homeram', ['RAM'])
+    // RE-ENTER boot.js on the bigger home: homeup.js --watch normally does it,
+    // and homeup.js is one of the entries the small home deferred.
+    const bootPid = r.ok === true ? ns.exec('boot.js', 'home', 1) : null
+    return { ...v, ok: r.ok, bootPid, ...(bootPid === 0 ? { warn: 'boot.js exec refused on home after the purchase' } : {}) }
+  }
+  return v.required ? v : null
+}
+
 async function homeUpgradeIfBlocked(ns) {
   fetchFromHome(ns, '/tel/homeup.txt')
   const h = readJson(ns, '/tel/homeup.txt')
@@ -552,6 +596,8 @@ export async function main(ns) {
 
       // ---- 1b. a home upgrade homeup.js decided but could not perform ----
       const homeUp = await homeUpgradeIfBlocked(ns)
+      // ---- 1b'. BOOTSTRAP-REQUIRED home RAM (nodeecon.bootstrapHomeStep) ----
+      const bootHome = await bootstrapHome(ns, info, stockRec)
       // ---- 1c. a backdoor backdoor.js asked for (Singularity, no screen) ----
       const backdoor = backdoorIfRequested(ns)
       // ---- 1d. a priced spender asked for cash from the book ---------------
@@ -611,7 +657,7 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, backdoor, raise, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
+      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
       await nap(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)

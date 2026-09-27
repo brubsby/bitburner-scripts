@@ -452,6 +452,59 @@ export function traderPlacement({ wealth, tix = false, r = TRADER_PRIOR_R, floor
   return { place, withH, withoutH, rEff, why: `next milestone $${Math.round(target)}: ${f(withH)} with the trader (r ${(rEff * 3600 * 100).toFixed(0)}%/h at $${Math.round(wealth)}, the fleet ${(100 * (1 - I1 / (I0 || 1))).toFixed(0)}% smaller) vs ${f(withoutH)} with every GB farming` }
 }
 
+/**
+ * THE STACK'S HOME TIER, read from boot.js's own deferrals: the home size at
+ * which the entries that SUPERVISE and PLAN (watchdog, progress, homeup) fit
+ * next to what boot already placed. Each deferral says "needs XGB, only YGB
+ * of home is left"; the tier is the next power of two >= home - Y + sum(X).
+ * Live BN1 2026-09-27: 64GB home, 0.2GB left, watchdog 8.95 + progress 2.6 +
+ * homeup 7.6 -> 128GB. Null when boot defers none of them.
+ */
+export const BOOTSTRAP_STACK = ['watchdog.js', 'progress.js', 'homeup.js']
+export function stackTierFromBoot(boot, homeRam) {
+  if (!boot || !Array.isArray(boot.defer) || !fin(homeRam)) return null
+  let need = 0
+  let left = null
+  for (const d of boot.defer) {
+    if (!BOOTSTRAP_STACK.includes(d?.script)) continue
+    const m = String(d.why ?? '').match(/needs ([\d.]+)GB, only ([\d.]+)GB of home is left/)
+    if (!m) continue
+    need += Number(m[1])
+    left = left === null ? Number(m[2]) : Math.min(left, Number(m[2]))
+  }
+  if (!(need > 0) || left === null) return null
+  // The defers were measured against boot's OWN home size: a record from a
+  // smaller home (boot has not re-run since a purchase) still names the tier
+  // it needed, and a bigger current home satisfies it.
+  const at = fin(boot.homeRam) && boot.homeRam > 0 ? boot.homeRam : homeRam
+  const want = at - left + need
+  let tier = at
+  while (tier < want) tier *= 2
+  return tier
+}
+
+/**
+ * BOOTSTRAP-REQUIRED HOME RAM. With no planner verdict this life (progress.js
+ * deferred, spendExit absent or stale) and home below the stack's tier,
+ * nothing can approve a home purchase — and nothing else buys it: live BN1
+ * 2026-09-27 home sat at 64GB for 2.6h while the trader grew $20m -> $456m.
+ * Then the next RAM tier is a REQUIRED purchase, independent of the exit;
+ * once the planner publishes, its verdict governs.
+ * Returns {required, step: 'buy' | 'raise-buy' | 'wait' | null, cost, why}.
+ */
+export function bootstrapHomeStep({ homeRam, boot, gate, lastAugReset, now = Date.now(), cash, equity = 0, ramCost } = {}) {
+  const tier = stackTierFromBoot(boot, homeRam)
+  const se = gate?.spendExit
+  const plannerFresh = !!se && gate?.lastAugReset === lastAugReset && now - Date.parse(se.at ?? '') < 15 * 60e3
+  if (plannerFresh) return { required: false, step: null, cost: null, why: 'the planner publishes a verdict this life: it governs home purchases' }
+  if (tier === null || !(homeRam < tier)) return { required: false, step: null, cost: null, why: tier === null ? 'boot defers none of the stack' : `home ${homeRam}GB is at the stack's tier` }
+  if (!fin(ramCost) || !(ramCost > 0)) return { required: true, step: null, cost: null, why: 'next home RAM price unreadable' }
+  const base = `bootstrap: home ${homeRam}GB is below the ${tier}GB the stack needs (boot defers ${BOOTSTRAP_STACK.join('/')}) and no planner verdict exists this life`
+  if (fin(cash) && cash >= ramCost) return { required: true, step: 'buy', cost: ramCost, tier, why: `${base} — buying the next RAM tier ($${Math.round(ramCost)})` }
+  if (batchFits(cash, equity, ramCost)) return { required: true, step: 'raise-buy', cost: ramCost, tier, why: `${base} — raising $${Math.round(ramCost * (1 + RAISE_MARGIN))} from the book for the next RAM tier` }
+  return { required: true, step: 'wait', cost: ramCost, tier, why: `${base} — $${Math.round(ramCost)} not yet covered by cash + book` }
+}
+
 export function withCashRaise(orders, cash, equity, margin = 0.02) {
   if (!Array.isArray(orders)) return orders
   const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)

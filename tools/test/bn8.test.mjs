@@ -1082,5 +1082,40 @@ export async function run() {
   }
   checks.push(af);
 
+  // -----------------------------------------------------------------------
+  const ag = new Check("B8ag", "BN1 bootstrap: with no planner verdict this life and home below the tier boot needs for watchdog/progress/homeup, the next home RAM tier is REQUIRED (raise from the book, buy) — replay of 64GB with a $456m book; healthcheck fails BOOTSTRAP STALLED after 30 min");
+  {
+    ag.examined(6);
+    const HC = await import("../../homecost.js");
+    // Live /tel/boot.txt defer reasons, BN1 2026-09-27 (64GB home).
+    const boot = { homeRam: 64, defer: [
+      { script: "watchdog.js", why: "needs 8.95GB, only 2.4GB of home is left after the entries above it" },
+      { script: "progress.js", why: "needs 2.6GB, only 0.2GB of home is left after the entries above it" },
+      { script: "homeup.js", why: "needs 7.6GB, only 0.2GB of home is left after the entries above it" },
+    ] };
+    const tier = econ.stackTierFromBoot(boot, 64);
+    if (tier !== 128) ag.fail(`stack tier from the live defer list must be 128GB, got ${tier}`);
+    const ramCost = HC.ramUpgradeCost(64, 1);
+    const now = Date.parse("2026-09-27T12:00:00Z");
+    const live = econ.bootstrapHomeStep({ homeRam: 64, boot, gate: null, lastAugReset: 1, now, cash: 0.4e6, equity: 456e6, ramCost });
+    ag.note(`64GB, $0.4m cash + $456m book, next tier $${(ramCost / 1e6).toFixed(1)}m: ${live.step} — ${live.why}`);
+    if (!(live.required === true && live.step === "raise-buy" && live.cost === ramCost)) ag.fail("the replayed deadlock must order a raise and the home RAM purchase");
+    if (econ.bootstrapHomeStep({ homeRam: 64, boot, gate: null, lastAugReset: 1, now, cash: 40e6, equity: 0, ramCost }).step !== "buy") ag.fail("cash covering the tier: buy directly");
+    const staleGate = { lastAugReset: 1, spendExit: { at: new Date(now - 3600e3).toISOString(), home: { buy: false } } };
+    if (econ.bootstrapHomeStep({ homeRam: 64, boot, gate: staleGate, lastAugReset: 1, now, cash: 0, equity: 456e6, ramCost }).step !== "raise-buy") ag.fail("a stale spendExit is no verdict: the bootstrap still governs");
+    const fresh = { lastAugReset: 1, spendExit: { at: new Date(now - 60e3).toISOString(), home: { buy: false } } };
+    if (econ.bootstrapHomeStep({ homeRam: 64, boot, gate: fresh, lastAugReset: 1, now, cash: 0, equity: 456e6, ramCost }).required) ag.fail("a fresh planner verdict this life governs: not bootstrap-required");
+    if (econ.bootstrapHomeStep({ homeRam: 64, boot, gate: { ...fresh, lastAugReset: 0 }, lastAugReset: 1, now, cash: 0, equity: 456e6, ramCost }).step !== "raise-buy") ag.fail("a verdict from the last life is no verdict");
+    if (econ.bootstrapHomeStep({ homeRam: 128, boot, gate: null, lastAugReset: 1, now, cash: 0, equity: 456e6, ramCost }).required) ag.fail("at the stack tier the bootstrap is done");
+    if (econ.bootstrapHomeStep({ homeRam: 64, boot, gate: null, lastAugReset: 1, now, cash: 0, equity: 20e6, ramCost }).step !== "wait") ag.fail("wealth short of the tier: wait, do not sell");
+    const actSrc = fs.readFileSync(path.join(REPO_ROOT, "act.js"), "utf8");
+    if (!/const bootHome = await bootstrapHome\(ns, info, stockRec\)/.test(actSrc) || !/bootstrapHome: bootHome/.test(actSrc)) ag.fail("act.js must run bootstrapHome every pass and publish it");
+    if (!/v\.step === 'raise-buy'\) \{\s*const r = await runActor\(ns, 'liquidate', \['raise'/.test(actSrc) || !/runActor\(ns, 'homeram', \['RAM'\]\)/.test(actSrc)) ag.fail("act.js bootstrapHome must raise from the book and then buy RAM");
+    if (!/const bootPid = r\.ok === true \? ns\.exec\('boot\.js', 'home', 1\)/.test(actSrc)) ag.fail("after a bootstrap purchase act.js re-enters boot.js (homeup.js, which normally does, is deferred)");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if (!/if \(forMin > 30\) fail\(`BOOTSTRAP STALLED:/.test(hc) || !/now\.homeRam < tier && covered/.test(hc)) ag.fail("healthcheck F must fail BOOTSTRAP STALLED after 30 minutes below the stack tier with wealth covering it");
+  }
+  checks.push(ag);
+
   return checks;
 }

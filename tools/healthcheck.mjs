@@ -34,7 +34,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { wealthNegativeCheck } from "../nodeecon.js";
+import { wealthNegativeCheck, stackTierFromBoot } from "../nodeecon.js";
+import { ramUpgradeCost } from "../homecost.js";
+import { bitNodeMults } from "../bitNodeMultipliers.js";
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
 import "./test/gameresolve.mjs";
@@ -650,6 +652,24 @@ if (!sleevesExpected) {
   // should have caught it; this fails if it did not.
   now.wealth = num(now.cash) ? now.cash + (num(now.equity) ? now.equity : 0) : null;
   for (const w of wealthNegativeCheck({ cash: now.cash, equity: now.equity }, prev && sameNode ? { cash: prev.cash } : null)) fail(w, `act.js softlock record: ${String(readTel("softlock.txt")?.why ?? "none").slice(0, 160)}`);
+  // BOOTSTRAP STALLED: home below the tier boot.js needs to admit the stack
+  // (watchdog/progress/homeup) for more than 30 minutes while cash + book
+  // cover the next RAM tier. Live BN1 2026-09-27: 64GB for 2.6h while the
+  // trader grew $20m -> $456m, because nothing that could approve a home
+  // purchase was running (act.js bootstrapHome / nodeecon.bootstrapHomeStep).
+  {
+    const tier = now.homeRam !== null ? stackTierFromBoot(readTel("boot.txt"), now.homeRam) : null;
+    const nextCost = now.homeRam !== null ? ramUpgradeCost(now.homeRam, bitNodeMults(now.bitNode)?.HomeComputerRamCost) : null;
+    const covered = num(now.wealth) && num(nextCost) && now.wealth >= nextCost;
+    const stalled = tier !== null && now.homeRam < tier && covered;
+    now.bootstrapSince = stalled ? (prev && sameNode ? (prev.bootstrapSince ?? now.at) : now.at) : null;
+    if (stalled) {
+      const forMin = (Date.parse(now.at) - Date.parse(now.bootstrapSince)) / 60e3;
+      const msg = `home ${now.homeRam}GB is below the ${tier}GB the stack needs and wealth $${(now.wealth / 1e6).toFixed(1)}m covers the next tier ($${(nextCost / 1e6).toFixed(1)}m)`;
+      if (forMin > 30) fail(`BOOTSTRAP STALLED: ${msg} — for ${forMin.toFixed(0)} min`, `act.js bootstrapHome should raise and buy it: ${JSON.stringify(tel["act.txt"]?.bootstrapHome ?? null).slice(0, 200)}`);
+      else note(`bootstrap: ${msg} (${forMin.toFixed(0)} min)`);
+    }
+  }
   // F5: the player's work slot must be in use.
   if (!now.working && prev && sameNode && prev.working === false && dtMin >= MIN_INTERVAL_MIN) fail("PLAYER IDLE: no current work across two samples", "the work slot is the one resource that cannot be bought");
 }
