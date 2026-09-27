@@ -23,6 +23,3 @@ run coop.js '  const cpuNow = () => st.cpuMs + (running ? now() - sliceStart : 0
 run graftplan.js '      const h = yield* withRun([...chosen, ...bundle])' '      const h = drain(withRun([...chosen, ...bundle]))'
 run progress.js '    const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())' '    const basis = null'
 run plan.js '      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null)' '      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.key) : null)'
-run bayes.js '    if (a.ver !== b.ver) {' '    if (false) {'
-run bayes.js '    w = xs.map((x) => (nu + 1) / (nu + (x * x) / s2))' '    w = xs.map(() => 1)'
-run progress.js 'life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PLANNER_BOOT }' 'life: info?.lastAugReset ?? null, source }'

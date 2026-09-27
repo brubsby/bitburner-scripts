@@ -228,9 +228,6 @@ export const PRIORS = {
   traderTauFrac: 0.5,
   // structural relative error of the exit forecast: 10%, worth 2 pairs.
   drift: { a: 2, b: 0.1 * 0.1 },
-  // tail weight of the forecast error (Student-t): one pass can mis-price
-  // badly; stated, not fitted.
-  driftNu: 4,
   // ln(M) per hour of a life: vague.
   lnGain: { m: 0, k: 0.1, a: 1, b: 1e-4 },
   // ln(rate) of an observed rate: sd 0.3 until measured.
@@ -306,122 +303,58 @@ export function traderPosterior(rows, { warmupH = 0, minPoints = 4 } = {}) {
   }
 }
 
-/**
- * Same-life pairs of exit samples: relative residual against the predicted
- * -1h/h. A pair counts only when BOTH ends were produced by the same model
- * and the same process:
- *   life  the same life (an install legitimately re-plans);
- *   ver   the same model version (a hash of the exit-relevant sources,
- *         progress.js modelVersionOf) — a deploy's re-pricing is a model
- *         change, not forecast error;
- *   boot  the same planner process (a page reload or restart).
- * Untagged samples (written before the tags existed) are excluded: whether
- * they straddle a deploy cannot be told, and "cannot tell" is not "fine".
- * Returns the kept pairs; `excluded` {life, version, boot, untagged, gap}
- * rides on the array.
- */
+/** Same-life pairs of exit samples: relative residual against the predicted -1h/h. */
 export function driftPairs(samples, { minGapH = 0.2 } = {}) {
   const S = (samples ?? []).filter((x) => fin(x?.exitH) && x.exitH > 0 && fin(Date.parse(x?.at)))
   const out = []
-  const excluded = { life: 0, version: 0, boot: 0, untagged: 0, gap: 0 }
   for (let i = 1; i < S.length; i++) {
     const a = S[i - 1]
     const b = S[i]
-    if (a.life !== b.life) {
-      excluded.life++
-      continue
-    }
+    if (a.life !== b.life) continue
     const dh = (Date.parse(b.at) - Date.parse(a.at)) / 3.6e6
-    if (!(dh >= minGapH)) {
-      excluded.gap++
-      continue
-    }
-    if (a.ver === undefined || b.ver === undefined || a.boot === undefined || b.boot === undefined) {
-      excluded.untagged++
-      continue
-    }
-    if (a.ver !== b.ver) {
-      excluded.version++
-      continue
-    }
-    if (a.boot !== b.boot) {
-      excluded.boot++
-      continue
-    }
+    if (!(dh >= minGapH)) continue
     out.push({ at: b.at, dh, a: a.exitH, b: b.exitH, r: (b.exitH - (a.exitH - dh)) / a.exitH })
   }
-  out.excluded = excluded
   return out
 }
 
 /**
- * THE ROBUST FIT: x_i ~ t_nu(0, s) as a normal scale mixture
- * (x_i | lam_i ~ N(0, s^2 / lam_i), lam_i ~ Gamma(nu/2, nu/2)); EM for the
- * weights at the posterior mode, then the IG update with them. One blip (live
- * 2026-09-27 05:32: one pass read 108h between 16h and 13h) moves s by its
- * share, not by its square: the Gaussian fit read 60% from that pass alone.
- */
-function robustIG(prior, xs, nu) {
-  if (!xs.length) return { a: prior.a, b: prior.b, weights: [] }
-  let p = igUpdate(prior, xs)
-  let w = xs.map(() => 1)
-  for (let it = 0; it < 40; it++) {
-    const s2 = p.b / (p.a - 1)
-    w = xs.map((x) => (nu + 1) / (nu + (x * x) / s2))
-    const q = igUpdate(prior, xs.map((x, i) => x * Math.sqrt(w[i])))
-    if (Math.abs(q.b - p.b) < 1e-12 * p.b) {
-      p = q
-      break
-    }
-    p = q
-  }
-  return { a: p.a, b: p.b, weights: w }
-}
-
-/**
  * THE SIMULATOR'S STRUCTURAL ERROR. Model: each published exit is the truth
- * times exp(e), e ~ t_nu(0, s) independently per sample (heavy-tailed: a
- * single pass can mis-price badly), so the relative residual of a same-life,
- * same-model pair r = (E_b - (E_a - dh)) / E_a has r/sqrt(2) ~ t_nu(0, s).
- * s^2 ~ IG (robust EM weights, known mean 0). Returns {a, b, s (posterior
- * mean of s), nu, pairs, excluded, outliers, why}.
+ * times exp(e), e ~ N(0, s^2) independently per sample, so the relative
+ * residual of a same-life pair r = (E_b - (E_a - dh)) / E_a ~ N(0, 2 s^2).
+ * s^2 ~ IG, known mean 0. Returns {a, b, s (posterior mean of s), pairs, why}.
  */
-export function driftPosterior(samples, prior = PRIORS.drift, nu = PRIORS.driftNu) {
+export function driftPosterior(samples, prior = PRIORS.drift) {
   const pairs = driftPairs(samples)
-  const r = robustIG(prior, pairs.map((x) => x.r / Math.SQRT2), nu)
-  const s = Math.sqrt(r.b / (r.a - 1))
-  const ex = pairs.excluded
-  const nEx = ex.version + ex.boot + ex.untagged
-  const outliers = r.weights.filter((w) => w < 0.3).length
-  return { a: r.a, b: r.b, s, nu, pairs: pairs.length, excluded: ex, outliers, why: `${pairs.length} same-life, same-model pair(s): relative forecast error s = ${(100 * s).toFixed(1)}% (t, nu ${nu}; ${outliers} outlier pair(s) down-weighted; excluded ${nEx}: ${ex.version} across a model version, ${ex.boot} across a restart, ${ex.untagged} untagged; IG prior a=${prior.a}, E[s^2] = (${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(0)}%)^2)` }
+  const p = igUpdate(prior, pairs.map((x) => x.r / Math.SQRT2))
+  const s = Math.sqrt(p.b / (p.a - 1))
+  return { a: p.a, b: p.b, s, pairs: pairs.length, why: `${pairs.length} same-life pair(s): relative forecast error s = ${(100 * s).toFixed(1)}% (IG prior a=${prior.a}, E[s^2] = (${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(0)}%)^2)` }
 }
 
 /**
  * CALIBRATION OF THAT PREDICTIVE, sequentially: pair p is predicted from the
- * robust posterior of the pairs BEFORE it (the prior for the first), as it
- * stood when the forecast was published: r/sqrt(2) ~ t_df(0, sqrt(b/a)),
- * df = min(nu, 2a). The same exclusions as driftPosterior.
- * Returns {n, cover80, pitMean, pitVar, ks, excluded, why}; cover80 null below 1 pair.
+ * posterior of the pairs BEFORE it (the prior for the first), as the posterior
+ * stood when the forecast was published. r/sqrt(2) ~ t_{2a}(0, sqrt(b/a)).
+ * Returns {n, cover80, pitMean, pitVar, ks, why}; cover80 null below 1 pair.
  */
-export function driftCalibration(samples, prior = PRIORS.drift, nu = PRIORS.driftNu) {
+export function driftCalibration(samples, prior = PRIORS.drift) {
   const pairs = driftPairs(samples)
   const us = []
-  const xs = []
+  let p = { a: prior.a, b: prior.b }
   for (const x of pairs) {
-    const r = robustIG(prior, xs, nu)
-    const z = x.r / Math.SQRT2 / Math.sqrt(r.b / r.a)
-    us.push(tCdf(z, Math.min(nu, 2 * r.a)))
-    xs.push(x.r / Math.SQRT2)
+    const z = x.r / Math.SQRT2 / Math.sqrt(p.b / p.a)
+    us.push(tCdf(z, 2 * p.a))
+    p = igUpdate(p, [x.r / Math.SQRT2])
   }
   const n = us.length
-  if (!n) return { n: 0, cover80: null, pitMean: null, pitVar: null, ks: null, excluded: pairs.excluded, why: 'no same-life, same-model pair yet' }
+  if (!n) return { n: 0, cover80: null, pitMean: null, pitVar: null, ks: null, why: 'no same-life pair yet' }
   const cover = us.filter((u) => u > 0.1 && u < 0.9).length / n
   const mean = us.reduce((s, u) => s + u, 0) / n
   const v = us.reduce((s, u) => s + (u - mean) ** 2, 0) / n
   const sorted = [...us].sort((x, y) => x - y)
   let ks = 0
   for (let i = 0; i < n; i++) ks = Math.max(ks, Math.abs(sorted[i] - (i + 1) / n), Math.abs(sorted[i] - i / n))
-  return { n, cover80: +cover.toFixed(3), pitMean: +mean.toFixed(3), pitVar: +v.toFixed(4), ks: +ks.toFixed(3), excluded: pairs.excluded, why: `${n} sequential one-step predictions: ${(cover * 100).toFixed(0)}% inside the 80% interval (PIT mean ${mean.toFixed(2)} vs 0.5, var ${v.toFixed(3)} vs 0.083)` }
+  return { n, cover80: +cover.toFixed(3), pitMean: +mean.toFixed(3), pitVar: +v.toFixed(4), ks: +ks.toFixed(3), why: `${n} sequential one-step predictions: ${(cover * 100).toFixed(0)}% inside the 80% interval (PIT mean ${mean.toFixed(2)} vs 0.5, var ${v.toFixed(3)} vs 0.083)` }
 }
 
 /**
@@ -439,9 +372,6 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
   const xs = []
   for (let i = 1; i < P.length; i++) {
     if (P[i].life !== P[i - 1].life) continue
-    // Same model version and process only (as driftPairs): a deploy's
-    // re-pricing is not jitter.
-    if (P[i].ver === undefined || P[i].ver !== P[i - 1].ver || P[i].boot !== P[i - 1].boot) continue
     const A = P[i - 1].h
     const B = P[i].h
     const common = Object.keys(A).filter((k) => fin(A[k]) && A[k] > 0 && fin(B[k]) && B[k] > 0)

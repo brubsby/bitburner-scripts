@@ -45,24 +45,6 @@ The draw for a posterior is a draw of the MEAN (the simulator runs many lives
 on one rate; per-life scatter averages out), except the discrepancy, which is
 a draw of s² then ε ~ N(0, s²) (Student-t marginal).
 
-### Forecast error is one model's error
-
-Every exit sample (and every rate observation and route ranking) is tagged
-`ver` — a hash of every module in progress.js's import graph as it stood
-when the planner started (`plan.modelVersionFrom`; nothing to bump, so
-nothing to forget) — and `boot`, the planner process's start. A pair counts
-toward s and toward the calibration score only when both ends share life,
-version and process; the rest are excluded and COUNTED (`driftExcluded`,
-`calibration.excluded`; untagged legacy samples are excluded too — whether
-they straddle a deploy cannot be told). The likelihood is Student-t (nu 4,
-stated): one mis-priced pass is down-weighted, not squared. Live replay
-(2026-09-27, 48 samples): the Gaussian fit read s = 59.8% — almost all of it
-ONE pass (05:32 read 108.5h between 16.1h and 12.7h); robust, s = 6.2%, and
-6.1% with the 3 pairs across the 4 committed deploys excluded; calibration
-89% -> 79% inside the 80% interval (PIT var 0.038 -> 0.061 vs 0.083).
-Cost: after a deploy or restart s rests on its prior (10%) until same-version
-pairs accumulate (one per ~15 min).
-
 ### Structural discrepancy
 
 H_i,d = sim_i(θ_d) · exp(s_c,d z_d + s_i,d z_i,d − s_d²/2), s_c² = s² − s_i².
