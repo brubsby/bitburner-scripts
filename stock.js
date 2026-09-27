@@ -218,7 +218,23 @@ function claimsOf(ns, info) {
   return {
     join: joinClaim(gate, info.lastAugReset),
     augmentations: augClaim(gate, info.lastAugReset),
-    home: up ? up.cost : 0,
+    // Only a home purchase the exit has APPROVED (installgate spendExit.home
+    // .buy, this life) is a claim. Reserving the next upgrade's price
+    // unconditionally held $317b idle as cash in BN8's final minutes while
+    // the exit said "hold: +1.39h" and The Red Pill still needed $507b
+    // (2026-09-27 18:38).
+    home: up && homeApproved(gate, info.lastAugReset) ? up.cost : 0,
+  }
+}
+
+/** installgate spendExit.home.buy === true for this life (fail closed: no claim). */
+function homeApproved(gateText, lastAugReset) {
+  try {
+    const g = JSON.parse(gateText || 'null')
+    const h = g?.spendExit?.home
+    return g?.lastAugReset === lastAugReset && h?.buy === true
+  } catch {
+    return false
   }
 }
 
