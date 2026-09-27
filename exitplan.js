@@ -358,6 +358,16 @@ export function exitHours(o = {}) {
     // haveSkill hacking 2500, FactionInfo.tsx), which must hold at the same
     // time as the money in hand: the reputation leg cannot start before it.
     joinLevel = 0,
+    // AFTER THE TERMINAL INSTALL (The Red Pill must be INSTALLED before
+    // w0r1d_d43m0n exists, ServerHelpers.ts:342): money is reset to the
+    // node's post-install balance and every program with it, and the daemon
+    // needs 5 open ports (servers.ts: numOpenPortsRequired 5) — finalRootCost
+    // is what re-buying the openers (and TOR) costs, priced from installCash
+    // at the trader's return, concurrent with the climb. freshExpLagH: the
+    // MEASURED ramp of a fresh life's exp (hours behind a constant rate while
+    // the fleet is re-rooted and only low targets are hackable).
+    finalRootCost = 0,
+    freshExpLagH = 0,
     terminalRep = 0,
     donationCost = null,
     favorToDonate = null,
@@ -755,8 +765,21 @@ export function exitHours(o = {}) {
     }
   } else climb = hoursToLevel(exitLevel, mult, 0, expRate)
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
-  h += climb
-  legs.push({ leg: 'climb to exit level', hours: climb, detail: `hacking ${exitLevel} at mult ${mult.toFixed(2)}` })
+  // The climb starts in a FRESH life: exp reset, fleet re-rooted, low targets
+  // first — its measured lag behind a constant rate is charged once.
+  const lagH = climb > 0 && num(freshExpLagH) && freshExpLagH > 0 ? freshExpLagH : 0
+  h += climb + lagH
+  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})` })
+  // Rooting w0r1d_d43m0n: the openers bought again from the reset balance,
+  // concurrent with the climb — only the excess binds.
+  if (pos(finalRootCost)) {
+    const money0 = num(installCash) && installCash >= 0 ? installCash : 1262
+    const rootH = finalRootCost <= money0 ? 0 : hoursToMoney(finalRootCost, { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 })
+    if (!num(rootH)) return { hours: null, why: 'could not price re-buying the port openers after the terminal install' }
+    const extra = Math.max(0, rootH - (climb + lagH))
+    legs.push({ leg: 'root w0r1d_d43m0n', hours: extra, detail: `$${Math.round(finalRootCost)} of openers from $${Math.round(money0)} after the install: ${rootH.toFixed(2)}h, concurrent with the climb` })
+    h += extra
+  }
 
   // The work slot can bind the window: the passive legs overlap it, a ground
   // reputation leg and the Covenant gym legs do not overlap each other.

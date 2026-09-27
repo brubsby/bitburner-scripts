@@ -1071,6 +1071,21 @@ function exitFactionMoneyReq(candidates) {
   return req > 0 ? req : null
 }
 
+/**
+ * THE FRESH-LIFE EXP RAMP, measured on this life: hours behind a constant
+ * rate at the current exp rate (age - exp / rate). A life starts with the
+ * fleet unrooted and only low targets hackable, so a climb from a reset runs
+ * slower than today's rate says. Measured live 2026-09-27: 0.912h into the
+ * life, 67.9M exp at 23.8k/s now — 0.12h behind. Null before half an hour
+ * (the ramp is not over) or without a rate; never negative.
+ */
+function freshExpLagOf(player, info, expPerSec) {
+  const ageH = (Date.now() - (info?.lastAugReset ?? Date.now())) / 3.6e6
+  const exp = player?.exp?.hacking
+  if (!(ageH >= 0.5) || !(expPerSec > 0) || !(typeof exp === 'number' && exp >= 0)) return 0
+  return Math.max(0, Math.min(ageH, ageH - exp / expPerSec / 3600))
+}
+
 /** The exit faction's invitation hacking requirement (the hacking branch of its someCondition), or null. */
 function exitFactionHackReq(candidates) {
   if (!Array.isArray(candidates)) return null
@@ -2522,6 +2537,10 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // The exit faction's invitation hacking level (Daedalus 2500), priced
     // alongside the join money in hand (exitplan joinLevel).
     joinLevel: exitFactionHackReq(candidates) ?? 0,
+    // After The Red Pill's install: the 5 openers (and TOR) again from the
+    // reset balance, and the measured fresh-life exp ramp (exitplan).
+    finalRootCost: PORT_OPENERS.reduce((a, [, c]) => a + c, 0) + 200e3, // + TOR (darkweb, CONSTANTS.TorRouterCost $200k)
+    freshExpLagH: freshExpLagOf(player, info, exitExpPerSec(ns, schedule)),
     // THE RED PILL'S REPUTATION. This read the offer's `baseRep`, a field no offer
     // carries (offers have `repReq`), so the 2.5M-rep leg was priced at 0 in
     // EVERY node, joined or not — and before Daedalus is joined there is no

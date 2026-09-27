@@ -1,0 +1,209 @@
+{
+ "note": "BN8 2026-09-27 00:42 UTC exitinputs + plan.txt (never + 5 grafts)",
+ "exitInputs": {
+  "at": "2026-09-27T00:47:44.621Z",
+  "lastAugReset": 1790466762031,
+  "inputs": {
+   "money": 548598248.2785108,
+   "incomePerSec": 83503.67131241824,
+   "lifeIncome": 0,
+   "hacking": 1769,
+   "hackingExp": 68340168.3777542,
+   "hackingMult": 4.691024451830426,
+   "expPerSec": 23911.91995924669,
+   "repPerSec": 30.34251097201947,
+   "exitRep": 0,
+   "exitFavor": 0,
+   "cycleHours": 2.677222222222222,
+   "multGainPerCycle": 1.0709406488998607,
+   "nextInstallGain": 1.0303090180067993,
+   "installGains": {
+    "hacking": 1.0303090180067993,
+    "rep": 1.0303090180067993,
+    "income": 1.1191569186724688,
+    "exp": 1.0303090180067993
+   },
+   "persistBaseline": {
+    "hacking": 1.0303090180067993,
+    "rep": 1.0303090180067993,
+    "income": 1.1191569186724688,
+    "exp": 1.0303090180067993
+   },
+   "eRep": 0,
+   "eBudget": 0,
+   "exitLevel": 3000,
+   "joinMoney": 100000000000,
+   "joinLevel": 2500,
+   "terminalRep": 2500000,
+   "donationCost": 871115842457.225,
+   "favorToDonate": 0,
+   "flatIncomePerSec": 0,
+   "capitalReturnPerSec": 0.0001950321776264478,
+   "capitalWarmupH": 0.001402889634595774,
+   "capitalFit": "realised: 3 trader run(s) from their start, 153 points over 2.8h of market ticks — growth index = r(T - w), flows excluded",
+   "capitalCap": 5382876688859.318,
+   "installCash": 250000000,
+   "workWhileDonating": true,
+   "cadence": {
+    "source": "measured",
+    "node": 8,
+    "lives": 19,
+    "why": "measured over 19 lives in BitNode 8"
+   },
+   "finalGrafts": [
+    {
+     "name": "SmartJaw",
+     "cost": 8250000000,
+     "slotH": 1.3761839690716855,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 1.225
+    },
+    {
+     "name": "OmniTek InfoLoad",
+     "cost": 8625000000,
+     "slotH": 0.8336727524955296,
+     "hacking": 1.176,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "nextSENS Gene Modification",
+     "cost": 5775000000,
+     "slotH": 1.556873165200577,
+     "hacking": 1.176,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuronal Densification",
+     "cost": 4125000000,
+     "slotH": 1.0294046578414557,
+     "hacking": 1.127,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "Xanipher",
+     "cost": 12750000000,
+     "slotH": 2.0077652323706294,
+     "hacking": 1.176,
+     "exp": 1.127,
+     "rep": 0.98
+    }
+   ],
+   "graftStartMoney": 83715000000
+  }
+ },
+ "plan": {
+  "at": "2026-09-27T00:47:44.642Z",
+  "exit": {
+   "meanH": 13.698,
+   "q10": 11.218,
+   "q50": 13.511,
+   "q90": 17.05,
+   "source": "install decision (never)"
+  },
+  "install": {
+   "key": "never",
+   "why": "held (no event): held (no event): held (no event): held (no event): stays on never: the best alternative now is expected -0.12h later net of a 0.05h switch cost and better in 25% of 24 paired draws (needs a positive gain and 80%)"
+  },
+  "grafts": {
+   "key": "grafts",
+   "pFeasible": 1,
+   "meanH": 13.698,
+   "q10": 11.218,
+   "q50": 13.511,
+   "q90": 17.05,
+   "pBest": 1,
+   "held": true,
+   "why": "held (no event): held (no event): held (no event): held (no event): stays on grafts: the best alternative none is expected -3745.06h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)",
+   "decidedAt": "2026-09-27T00:27:44.256Z",
+   "options": [
+    {
+     "key": "grafts",
+     "pointH": 13.549,
+     "pFeasible": 1,
+     "meanH": 13.063,
+     "q10": 10.742,
+     "q50": 13.164,
+     "q90": 15.167,
+     "pBest": 1
+    },
+    {
+     "key": "none",
+     "pointH": 3148.114,
+     "pFeasible": 1,
+     "meanH": 3758.076,
+     "q10": 2121.548,
+     "q50": 2841.009,
+     "q90": 4203.083,
+     "pBest": 0
+    }
+   ],
+   "n": 24,
+   "ms": 1.6,
+   "overBudget": false,
+   "basis": {
+    "kind": "never",
+    "waitH": null,
+    "installAt": null
+   },
+   "basisNoiseKey": "never|g5",
+   "grafts": [
+    {
+     "name": "SmartJaw",
+     "cost": 8250000000,
+     "slotH": 1.3761839690716855,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 1.225
+    },
+    {
+     "name": "OmniTek InfoLoad",
+     "cost": 8625000000,
+     "slotH": 0.8336727524955296,
+     "hacking": 1.176,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "nextSENS Gene Modification",
+     "cost": 5775000000,
+     "slotH": 1.556873165200577,
+     "hacking": 1.176,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuronal Densification",
+     "cost": 4125000000,
+     "slotH": 1.0294046578414557,
+     "hacking": 1.127,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "Xanipher",
+     "cost": 12750000000,
+     "slotH": 2.0077652323706294,
+     "hacking": 1.176,
+     "exp": 1.127,
+     "rep": 0.98
+    }
+   ],
+   "startMoney": 83715000000,
+   "started": false,
+   "inProgress": null,
+   "withoutH": 2980.923974357863,
+   "withH": 13.410880160624279,
+   "deltaH": -2967.5130941972384,
+   "withInstalls": 0,
+   "finalWindowNow": true,
+   "searched": "the committed set, re-priced (no event)",
+   "truncated": false,
+   "notSimulated": "the grafted augmentation leaving earlier lives' install catalogue (none are grafted there); travel to New Tokyo ($200k)",
+   "searchMs": 3
+  }
+ }
+}

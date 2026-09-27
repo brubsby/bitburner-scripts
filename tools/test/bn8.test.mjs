@@ -911,5 +911,47 @@ export async function run() {
   }
   checks.push(z8);
 
+  // -----------------------------------------------------------------------
+  const aa = new Check("B8aa", "end to end (live 00:42, never + 5 grafts): every leg to w0r1d_d43m0n is priced — grafts (cost x3, slot hours, entropy on every channel), the join, the donated 2.5M rep, the TERMINAL install (Red Pill installed: exp reset, fresh-life ramp) and re-rooting the daemon from the reset money");
+  {
+    aa.examined(10);
+    const GP = await import("../../graftplan.js");
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-0042.json"), "utf8"));
+    const inp = F.exitInputs.inputs;
+    // Graft legs from game source: cost baseCost x3 (Constants.ts:96), time
+    // (3.6e6 x log2(sum of non-1 mults) + 1.8e6)/2 ms / int bonus
+    // (GraftableAugmentation.ts, GraftingHelpers.ts:23-29), entropy 0.98 per
+    // graft on EVERY multiplier (EntropyAccumulation.ts, GraftingWork.tsx:61-63).
+    const spec = GP.graftSpecOf({ name: "t", baseCost: 1e9, mults: { hacking: 1.1, hacking_exp: 1.2 } }, 0);
+    const ms = (3.6e6 * Math.log2(2.3) + 1.8e6) / 2;
+    if (!(spec.cost === 3e9 && Math.abs(spec.slotH - ms / 3.6e6) < 1e-12 && Math.abs(spec.hacking - 1.1 * 0.98) < 1e-12 && Math.abs(spec.exp - 1.2 * 0.98) < 1e-12 && Math.abs(spec.rep - 0.98) < 1e-12)) aa.fail("graftSpecOf must match the game's cost, time and entropy", JSON.stringify(spec));
+    for (const g of inp.finalGrafts) if (!(g.hacking < 1 || g.exp < 1 || g.rep < 1 || [g.hacking, g.exp, g.rep].every((x) => x > 1))) aa.fail(`live graft ${g.name}: a channel it does not lift must carry the entropy nerf`);
+    // The whole trajectory, with the terminal legs.
+    const withT = { ...inp, installsFirst: 0, finalRootCost: 287e6 + 200e3, freshExpLagH: 0.12 };
+    const r = X.exitHours(withT);
+    const names = r.legs.map((l) => l.leg);
+    aa.note(`never + grafts: ${r.hours.toFixed(2)}h — ${r.legs.map((l) => `${l.leg} ${l.hours.toFixed(2)}h`).join("; ")}`);
+    for (const need of ["graft start money", "grafts", "exit reputation", "climb to exit level", "root w0r1d_d43m0n"]) if (!names.includes(need)) aa.fail(`the trajectory has no '${need}' leg`);
+    const repLeg = r.legs.find((l) => l.leg === "exit reputation");
+    if (!/2500000 rep, donated/.test(repLeg?.detail ?? "")) aa.fail("the 2.5M rep is bought by donation at favour 0 (FavorToDonateToFaction 0)");
+    const climb = r.legs.find((l) => l.leg === "climb to exit level");
+    if (!/fresh life/.test(climb.detail) || !/\+0\.12h measured fresh-life ramp/.test(climb.detail)) aa.fail("the climb after the terminal install runs from a reset with the measured ramp");
+    // Each terminal term moves the exit the right way.
+    const noLag = X.exitHours({ ...withT, freshExpLagH: 0 });
+    if (Math.abs(r.hours - noLag.hours - 0.12) > 1e-9) aa.fail("the fresh-life ramp adds exactly its measured hours to the climb");
+    const dearRoot = X.exitHours({ ...withT, finalRootCost: 5e12 });
+    const rootLeg = dearRoot.legs.find((l) => l.leg === "root w0r1d_d43m0n");
+    if (!(rootLeg.hours > 0 && dearRoot.hours > r.hours)) aa.fail("re-rooting beyond what the climb covers must bind (money reset by the terminal install)");
+    const cheapRoot = X.exitHours({ ...withT, finalRootCost: 1e6 });
+    if (Math.abs(cheapRoot.hours - noLag.hours - 0.12) > 1e-9) aa.fail("openers the reset balance covers cost no time");
+    // The graft decision still holds: without them the climb at today's multiplier is thousands of hours.
+    const noGrafts = X.exitHours({ ...withT, finalGrafts: null, graftStartMoney: null });
+    aa.note(`without the grafts: ${noGrafts.hours.toFixed(0)}h — the grafts decision holds`);
+    if (!(noGrafts.hours > 10 * r.hours)) aa.fail("the grafts should dominate on the live state");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/finalRootCost: PORT_OPENERS\.reduce\(\(a, \[, c\]\) => a \+ c, 0\) \+ 200e3/.test(prog) || !/freshExpLagH: freshExpLagOf\(player, info, exitExpPerSec\(ns, schedule\)\)/.test(prog)) aa.fail("progress.js must feed the terminal-install terms into the exit inputs");
+  }
+  checks.push(aa);
+
   return checks;
 }
