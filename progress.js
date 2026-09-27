@@ -165,7 +165,7 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, modelVersionFrom } from 'plan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -259,6 +259,8 @@ const RAISE_CEILING = (mult) => 8.45 + 0 * mult
 
 export async function main(ns) {
   ns.ramOverride(2.6)
+  PLANNER_BOOT = Date.now()
+  MODEL_VERSION = modelVersionOf(ns)
 
   // This reporter covers the paths that would otherwise produce silence.
   // Every record carries the income (healthcheck F4): the base is evaluated
@@ -2040,6 +2042,28 @@ function capitalFitOf(ns, info) {
  * published. Built in every node; a decision with no options records none.
  */
 let planCtx = null
+// THE MODEL VERSION every published forecast is tagged with (modelVersionOf),
+// and this planner process's start: a pair of forecasts from different
+// versions or processes is a re-pricing, not forecast error (bayes.driftPairs).
+let MODEL_VERSION = null
+let PLANNER_BOOT = null
+/**
+ * The hash of every module in progress.js's import graph, as the files stood
+ * when this process started (the code it is running): read by following the
+ * `from '<x>.js'` imports from progress.js itself. Nothing to bump by hand, so
+ * nothing to forget — a new module in the graph is in the hash the moment it
+ * is imported. Any change to the planner's code is a new version; an
+ * unreadable file reads as its own name (a fixed marker), never as silence.
+ */
+function modelVersionOf(ns) {
+  return modelVersionFrom((file) => {
+    try {
+      return ns.read(file) || ''
+    } catch {
+      return ''
+    }
+  }, 'progress.js')
+}
 // The pass's pacer (coop.makePacer): every long search this pass runs in its
 // slices, and its stats (work, wall, longest block) are the plan's CPU record.
 let passPacer = null
@@ -2076,10 +2100,14 @@ function planCtxOf(ns, info) {
     } catch {
       ledger = null
     }
-    const obs = sameLife ? prev.obs ?? {} : {}
+    // Rate observations and route rankings from another model version or
+    // process are a different model's numbers: dropped (and counted).
+    const sameModel = (o) => o?.ver === MODEL_VERSION && o?.boot === PLANNER_BOOT
+    const obsAll = sameLife ? prev.obs ?? {} : {}
+    const obs = Object.fromEntries(Object.entries(obsAll).map(([k, v]) => [k, Array.isArray(v) ? v.filter(sameModel) : []]))
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
-    const points = sameLife && Array.isArray(prev.points) ? prev.points : []
+    const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
     const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, ledger, bitNode: info?.currentNode, obs, optionPoints: points })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
@@ -2182,7 +2210,7 @@ function publishPlan(ns, info, extra = {}) {
     const at = new Date().toISOString()
     const inp = extra.inputs ?? pc.obsInputs ?? null
     const obs = pc.post
-      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at), rep: withObs(pc.obs?.rep, inp?.repPerSec, at) }
+      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }), rep: withObs(pc.obs?.rep, inp?.repPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }) }
       : pc.obs ?? {}
     const route = pc.decisions.countRoute ?? null
     const inst = pc.decisions.install ?? null
@@ -2273,7 +2301,7 @@ function exitCalibrationOf(ns, info) {
 function withExitSample(cal, info, exitH, source) {
   const last = cal.samples[cal.samples.length - 1]
   const due = typeof exitH === 'number' && isFinite(exitH) && (!last || Date.now() - Date.parse(last.at) >= EXIT_CAL_GAP_MS || last.life !== info?.lastAugReset)
-  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), life: info?.lastAugReset ?? null, source }].slice(-EXIT_CAL_MAX) : cal.samples
+  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PLANNER_BOOT }].slice(-EXIT_CAL_MAX) : cal.samples
   const d = exitDrift(samples)
   return { node: cal.node, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
 }
@@ -3930,7 +3958,7 @@ async function act(ns, canJoin, info, note) {
       // named fallback when the plan cannot decide.
       const pc = planCtxOf(ns, info)
       pc.repPoint = repPerSec
-      pc.point = { at: new Date().toISOString(), life: info?.lastAugReset ?? null, h: Object.fromEntries((ranked.tried ?? []).filter((t) => typeof t.hours === 'number').slice(0, 8).map((t) => [routeKey(t), t.hours])) }
+      pc.point = { at: new Date().toISOString(), life: info?.lastAugReset ?? null, ver: MODEL_VERSION, boot: PLANNER_BOOT, h: Object.fromEntries((ranked.tried ?? []).filter((t) => typeof t.hours === 'number').slice(0, 8).map((t) => [routeKey(t), t.hours])) }
       if (!pc.obsInputs) pc.obsInputs = rec.inputs
       const bay = pc.post ? await planDecide(pc, 'countRoute', () => decideRouteGen({ inputs: rec.inputs, count: cc, routes, point: ranked, repPoint: repPerSec, prev: pc.prev?.decisions?.countRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow })) : null
       const bayRoute = bay?.key ? routes.find((r) => routeKey(r) === bay.key) ?? null : null

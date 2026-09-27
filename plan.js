@@ -19,7 +19,7 @@
 // the alternative is better net of it is at least THETA — an expected-regret
 // rule whose scale comes from the posterior, not a hand-set hour tolerance.
 
-import { rngOf, hashOf, normalOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, lnGainPosterior, logRatePosterior, jitterPosterior } from 'bayes.js'
+import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, lnGainPosterior, logRatePosterior, jitterPosterior } from 'bayes.js'
 import { routeExitFixed, countExitFixed } from 'countexit.js'
 import { drain } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
@@ -90,7 +90,12 @@ export function makeDraws(post, N, seed) {
     // another component's z: draw i stays draw i as posteriors come and go.
     const st = (name) => rngOf((seed ^ hashOf(name) ^ Math.imul(i + 1, 0x9e3779b1)) >>> 0)
     const zT = normalOf(st('trader'))
-    const s2 = igDraw(post.drift, st('drift'))
+    // The forecast error is Student-t (bayes.driftPosterior): s^2 from its
+    // IG, then this draw's mixture weight lam ~ Gamma(nu/2, nu/2), so the
+    // error drawn is s z / sqrt(lam) — heavy tails in the interval as in the fit.
+    const nu = post.drift.nu ?? PRIORS.driftNu
+    const lam = gammaOf(nu / 2, st('driftLam')) / (nu / 2)
+    const s2 = igDraw(post.drift, st('drift')) / lam
     const si2 = igDraw(post.jitter ?? PRIORS.jitter, st('jitter'))
     const zc = normalOf(st('common'))
     const ln = post.lnGain ? nigDraw(post.lnGain.post, st('lnGain')).mu : null
@@ -299,6 +304,8 @@ export function posteriorSummary(post) {
     trader: post.trader ? { mean: post.trader.perSec.mean, sd: post.trader.perSec.sd, perHour: +post.trader.perHour.mean.toFixed(4), lives: post.trader.lives, why: post.trader.why } : null,
     s: post.drift.s,
     driftWhy: post.drift.why,
+    driftExcluded: post.drift.excluded ?? null,
+    driftNu: post.drift.nu ?? null,
     lnGain: post.lnGain ? { mean: post.lnGain.mean, sd: post.lnGain.sd } : null,
     exp: post.exp ? { n: post.exp.n, sdLn: post.exp.sd } : null,
     rep: post.rep ? { n: post.rep.n, sdLn: post.rep.sd } : null,
@@ -310,9 +317,9 @@ export function posteriorSummary(post) {
 }
 
 /** Append an observation {at, v} to a same-life buffer, capped. */
-export function withObs(buf, v, at, max = 48) {
+export function withObs(buf, v, at, max = 48, tags = {}) {
   const b = Array.isArray(buf) ? buf : []
-  return fin(v) && v > 0 ? [...b, { at, v }].slice(-max) : b
+  return fin(v) && v > 0 ? [...b, { at, v, ...tags }].slice(-max) : b
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +645,28 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   if (d.install?.key) notes.push(`plan install: ${d.install.key}${d.install.held ? ' (held)' : ''} — ${String(d.install.why ?? '').slice(0, 160)}`)
   if (cpu) notes.push(fin(cpu.maxBlockMs) ? `plan cpu: ${cpu.cpuMs}ms work over ${cpu.wallMs}ms wall, longest block ${cpu.maxBlockMs}ms (${cpu.yields} yields), ${cpu.draws} draws` : `plan cpu: ${cpu.ms}ms of ${cpu.budgetMs}ms, ${cpu.draws} draws`)
   return { fails, notes }
+}
+
+/**
+ * THE MODEL VERSION: a hash of every module in `root`'s import graph
+ * (following `from '<x>.js'`), read through `readFn(file) -> source`. Nothing
+ * to bump by hand, so nothing to forget: a change to any module the planner
+ * imports — or a new module it starts importing — is a new version. An
+ * unreadable file hashes as 'unreadable' (a fixed marker, never silence).
+ * Returns '<hash>.<modules>'.
+ */
+export function modelVersionFrom(readFn, root = 'progress.js') {
+  const seen = new Set()
+  const parts = []
+  const visit = (file) => {
+    if (seen.has(file)) return
+    seen.add(file)
+    const src = String(readFn(file) ?? '')
+    parts.push(`${file}:${src.length ? hashOf(src) : 'unreadable'}`)
+    for (const m of src.matchAll(/from\s+'([^']+\.js)'/g)) visit(m[1].replace(/^\//, ''))
+  }
+  visit(root)
+  return `${hashOf(parts.sort().join('|')).toString(36)}.${parts.length}`
 }
 
 /** A per-life seed: the same draws for every pass of one life (CRN across passes). */
