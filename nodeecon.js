@@ -285,7 +285,14 @@ export function feeFundable(cash, feePerSec, seconds = FEE_FLOOR_S) {
  * nothing changes: allowed, with no verdict needed.
  * { allowed, why }
  */
-export function programSpendAllowed(mults, gateRecord, item, lastAugReset, now = Date.now()) {
+export function programSpendAllowed(mults, gateRecord, item, lastAugReset, now = Date.now(), { exitRoot = false } = {}) {
+  // THE EXIT NEEDS THEM. Once The Red Pill is installed, w0r1d_d43m0n needs
+  // root — five open ports (servers.ts numOpenPortsRequired 5) — and the
+  // install took every program and TOR with it. They are REQUIRED purchases
+  // then, in every node, not investments priced against exp (live BN8
+  // 2026-09-27: the exit stalled 1h46m on "not rooted — missing BruteSSH.exe,
+  // HTTPWorm.exe, SQLInject.exe" while the exp-priced gate held them).
+  if (exitRoot) return { allowed: true, why: 'required: w0r1d_d43m0n needs five open ports and The Red Pill is installed' }
   if (mults?.ScriptHackMoneyGain !== 0) return { allowed: true, why: null }
   const v = gateRecord?.spendExit
   if (!v || v.lastAugReset !== lastAugReset || !(now - Date.parse(v.at ?? '') < 15 * 60e3)) return { allowed: false, why: `money is capital here and no fresh priced verdict exists for ${item}` }
@@ -391,6 +398,12 @@ export function batchOutcomeLine(act, lastAugReset) {
   const head = `last batch (${o.at}): ${ok.length} of ${r.length} order(s) done (${buys} bought, ${donations} donated)`
   if (failed) return `${head} — ${failed.kind} FAILED (${String(failed.result?.error ?? failed.why ?? failed.error ?? 'no reason').slice(0, 120)})${skipped ? `, ${skipped} skipped after it` : ''}`
   return skipped ? `${head}, ${skipped} skipped` : head
+}
+
+/** The exit needs root on w0r1d_d43m0n: The Red Pill is INSTALLED (getResetInfo().ownedAugs). */
+export function exitRootRequired(ownedAugs) {
+  if (!ownedAugs) return false
+  return typeof ownedAugs.has === 'function' ? ownedAugs.has('The Red Pill') : Array.isArray(ownedAugs) ? ownedAugs.includes('The Red Pill') : false
 }
 
 export function withCashRaise(orders, cash, equity, margin = 0.02) {

@@ -46,7 +46,7 @@
 import { canUseSingularity } from 'sfgate.js'
 // Pure: where money is capital (BitNode 8), a program is bought only on
 // progress.js's priced verdict (nodeecon.programSpendAllowed); the node table.
-import { programSpendAllowed } from 'nodeecon.js'
+import { programSpendAllowed, exitRootRequired } from 'nodeecon.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
@@ -177,7 +177,7 @@ export async function main(ns) {
       })()
       const held = []
       const mayBuy = (item) => {
-        const v = programSpendAllowed(nodeMults, gateRec, item, resetInfo.lastAugReset, now)
+        const v = programSpendAllowed(nodeMults, gateRec, item, resetInfo.lastAugReset, now, { exitRoot: exitRootRequired(resetInfo.ownedAugs) })
         if (!v.allowed) held.push(`${item}: ${v.why}`)
         return v.allowed
       }

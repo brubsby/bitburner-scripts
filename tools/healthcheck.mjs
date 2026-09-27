@@ -551,6 +551,24 @@ if (!sleevesExpected) {
     else if (mismatch) note(`route leg not yet executing (one sample): ${mismatch}`);
     else if (leg) note(`route leg executing: ${leg.kind} ${leg.target}`);
   }
+  // EXIT BLOCKED: The Red Pill is installed and endgame.js has not been ready
+  // for more than 10 minutes (or has not reported at all). Live BN8
+  // 2026-09-27 the exit sat 1h46m on "not rooted — missing BruteSSH.exe,
+  // HTTPWorm.exe, SQLInject.exe" with nothing failing.
+  {
+    const augs = Array.isArray(state.augmentations) ? state.augmentations.map((a) => (typeof a === "string" ? a : a?.name)) : [];
+    const eg = readTel("endgame.txt");
+    const redPill = augs.includes("The Red Pill");
+    const egAgeMin = eg?.at ? (Date.parse(now.at) - Date.parse(eg.at)) / 60e3 : Infinity;
+    const notReady = redPill && !(eg && eg.bitNode === now.bitNode && eg.ready === true && egAgeMin < 10);
+    now.exitBlockedSince = notReady ? (prev?.exitBlockedSince ?? now.at) : null;
+    if (notReady) {
+      const forMin = (Date.parse(now.at) - Date.parse(now.exitBlockedSince)) / 60e3;
+      const why = !eg || eg.bitNode !== now.bitNode ? "endgame.js has not reported in this node" : egAgeMin >= 10 ? `endgame.txt is ${egAgeMin.toFixed(0)} min old` : String(eg.detail ?? eg.result ?? "not ready");
+      if (forMin > 10) fail(`EXIT BLOCKED: The Red Pill is installed and the exit has not been ready for ${forMin.toFixed(0)} min — ${why}`, "w0r1d_d43m0n needs root (five port openers, re-bought after the install) and the hacking level; endgame.js runs every 2 min once The Red Pill is installed");
+      else note(`exit not ready yet (${forMin.toFixed(0)} min): ${why}`);
+    }
+  }
   // ONE EXIT: the count route's exit on the gate's own inputs is one of the
   // gate's candidates, so the published exit can never be later than it.
   const cr = gate?.countRoute?.chosen;

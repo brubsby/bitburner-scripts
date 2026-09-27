@@ -1035,5 +1035,28 @@ export async function run() {
   }
   checks.push(ad);
 
+  // -----------------------------------------------------------------------
+  const ae = new Check("B8ae", "post-mortem BN8 19:04-20:50: once The Red Pill is installed, TOR and the five openers are REQUIRED purchases in every node, endgame.js runs every 2 minutes, and the healthcheck fails EXIT BLOCKED after 10 minutes not ready");
+  {
+    ae.examined(8);
+    const nm8 = bitNodeMults(8), nm1 = bitNodeMults(1);
+    const stale = { spendExit: { at: new Date().toISOString(), lastAugReset: 5, programs: { "SQLInject.exe": { buy: false, why: "no prefix of openers shortens the exit" } } } };
+    const held = econ.programSpendAllowed(nm8, stale, "SQLInject.exe", 5);
+    const req = econ.programSpendAllowed(nm8, stale, "SQLInject.exe", 5, Date.now(), { exitRoot: true });
+    if (held.allowed !== false) ae.fail("fixture: the exp-priced verdict held SQLInject (the stall)");
+    if (req.allowed !== true || !/required/.test(req.why)) ae.fail("with The Red Pill installed the opener is required, whatever the exp price", JSON.stringify(req));
+    if (econ.programSpendAllowed(nm1, null, "SQLInject.exe", 5).allowed !== true) ae.fail("other nodes: unchanged");
+    if (econ.exitRootRequired(new Map([["The Red Pill", 1]])) !== true || econ.exitRootRequired(new Map([["NeuroFlux Governor", 1]])) !== false || econ.exitRootRequired(null) !== false) ae.fail("exitRootRequired reads the INSTALLED augmentations");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const exitRoot = exitRootRequired\(info\?\.ownedAugs\)/.test(prog) || (prog.match(/\{ exitRoot \}\)/g) ?? []).length < 2) ae.fail("progress.js orders TOR and the openers as required once The Red Pill is installed");
+    const ab = fs.readFileSync(path.join(REPO_ROOT, "autobuy.js"), "utf8");
+    if (!/\{ exitRoot: exitRootRequired\(resetInfo\.ownedAugs\) \}/.test(ab)) ae.fail("autobuy.js honours the exit requirement too");
+    const wd = fs.readFileSync(path.join(REPO_ROOT, "watchdog.js"), "utf8");
+    if (!/script: 'endgame\.js',[\s\S]{0,400}minIntervalMs: \(ns\) => \(ns\.getResetInfo\(\)\?\.ownedAugs\?\.has\?\.\('The Red Pill'\) \? 120000 : 3600000\)/.test(wd) || !/typeof entry\.minIntervalMs === 'function' \? entry\.minIntervalMs\(ns\)/.test(wd)) ae.fail("endgame.js must run every 2 minutes once The Red Pill is installed");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if (!/EXIT BLOCKED: The Red Pill is installed/.test(hc) || !/if \(forMin > 10\) fail\(/.test(hc)) ae.fail("healthcheck F must fail EXIT BLOCKED after 10 minutes not ready");
+  }
+  checks.push(ae);
+
   return checks;
 }

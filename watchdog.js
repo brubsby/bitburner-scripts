@@ -515,7 +515,10 @@ const WATCHED = [
     script: 'endgame.js',
     host: 'home',
     args: ['--next', 1],
-    minIntervalMs: 3600000,
+    // Hourly while it can only report the gap; every 2 minutes once The Red
+    // Pill is installed — the exit is then minutes away and waiting an hour
+    // for the next run cost BN8 up to 60 min (2026-09-27).
+    minIntervalMs: (ns) => (ns.getResetInfo()?.ownedAugs?.has?.('The Red Pill') ? 120000 : 3600000),
     trigger: () => true,
   },
   // Converts money into NeuroFlux levels via donations. NFG is +1% to every
@@ -1081,7 +1084,8 @@ export async function main(ns) {
           // whose trigger is *still* true is the "work impossible, retry forever"
           // pattern, and the clock is the only thing that can bound it. See
           // JOB_MIN_INTERVAL for why the number is what it is.
-          const floor = entry.minIntervalMs ?? JOB_MIN_INTERVAL
+          // A function interval: the job decides how urgent it is now (endgame).
+          const floor = typeof entry.minIntervalMs === 'function' ? entry.minIntervalMs(ns) : entry.minIntervalMs ?? JOB_MIN_INTERVAL
           if (kind === JOB && lastLaunch[script] && Date.now() - lastLaunch[script] < floor) {
             const waitS = Math.ceil((floor - (Date.now() - lastLaunch[script])) / 1000)
             rec.state = `cooling down: ${waitS}s`

@@ -141,7 +141,7 @@ import { rateAt, manipLostExp } from 'expfarm.js'
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain } from 'coop.js'
-import { batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
+import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -4565,23 +4565,27 @@ async function act(ns, canJoin, info, note) {
   ]
   // The game's own predicate; serverExists('darkweb') is always true.
   const hasTor = ns.hasTorRouter()
+  // AFTER THE RED PILL'S INSTALL, TOR and all five openers are REQUIRED for
+  // the exit (nodeecon.exitRootRequired / programSpendAllowed): ordered with
+  // a raise as soon as the balance and book cover them, not priced against exp.
+  const exitRoot = exitRootRequired(info?.ownedAugs)
   if (!hasTor) {
-    const torOk = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), 'tor', info?.lastAugReset)
+    const torOk = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), 'tor', info?.lastAugReset, Date.now(), { exitRoot })
     if (!torOk.allowed) todo.push(`TOR held: ${torOk.why}`)
     else if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > 200e3) {
-      if (order('tor', [], 'gates every port program', 200e3)) did.push('ordered TOR')
+      if (order('tor', [], exitRoot ? 'required: the exit needs the port openers TOR gates' : 'gates every port program', 200e3)) did.push(exitRoot ? 'ordered TOR (required for the exit)' : 'ordered TOR')
     } else todo.push('Buy the TOR router ($200k) — gates every port program.')
   }
   for (const [file, price] of PROGRAMS) {
     if (ns.fileExists(file, 'home')) continue
-    // Where money is capital, only on a priced verdict (nodeecon.programSpendAllowed).
-    const okP = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), file, info?.lastAugReset)
+    // Where money is capital, only on a priced verdict (nodeecon.programSpendAllowed) — unless the exit requires it.
+    const okP = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), file, info?.lastAugReset, Date.now(), { exitRoot })
     if (!okP.allowed) {
       todo.push(`${file} held: ${okP.why}`)
       continue
     }
-    if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > price * 2) {
-      if (order('program', [file], 'unlocks a tier of servers', price)) did.push(`ordered ${file}`)
+    if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > (exitRoot ? price : price * 2)) {
+      if (order('program', [file], exitRoot ? 'required: w0r1d_d43m0n needs five open ports' : 'unlocks a tier of servers', price)) did.push(exitRoot ? `ordered ${file} (required for the exit)` : `ordered ${file}`)
     } else if (ns.getServerMoneyAvailable('home') + stockEquity > price) {
       todo.push(`Buy ${file} ($${(price / 1e6).toFixed(1)}m) — unlocks a tier of servers to root.`)
     }
