@@ -309,6 +309,27 @@ const PRIOR = (() => {
   return p.map((x) => x / z)
 })()
 
+/** The init forecasts as point masses, drifted through fresh.k unseen ticks (no flips). */
+function freshBase(fresh, nSym) {
+  const P = new Float64Array(nSym * GRID)
+  const tmp = new Float64Array(GRID)
+  for (let j = 0; j < nSym; j++) {
+    const [b, mag] = fresh.init[j]
+    const c = Math.round(50 + b * mag)
+    const o = j * GRID
+    for (const [di, w] of [[-1, 0.2], [0, 0.6], [1, 0.2]]) P[o + Math.max(0, Math.min(GRID - 1, c + di))] += w
+    for (let step = 0; step < fresh.k; step++) {
+      for (let i = 0; i < GRID; i++) tmp[i] = P[o + i]
+      for (let i = 0; i < GRID; i++) {
+        const l = i > 0 ? tmp[i - 1] : tmp[i]
+        const r = i < GRID - 1 ? tmp[i + 1] : tmp[i]
+        P[o + i] = (1 - 2 * fresh.diffusion) * tmp[i] + fresh.diffusion * (l + r)
+      }
+    }
+  }
+  return P
+}
+
 /**
  * `prior`: {phase, nats} — a restart's remembered phase (stock.js persists
  * the wall time of the last boundary). It is a PRIOR, not a fact: `nats` of
@@ -323,24 +344,21 @@ function newHmm(nSym, phases = null, prior = null, fresh = null) {
     const P = new Float64Array(nSym * GRID)
     if (fresh) {
       // Point mass at the init forecast (+-1 grid step), then the k ticks the
-      // trader did not see: this bank's boundary flips and the drift.
+      // trader did not see: the drift and this bank's boundary flips. The
+      // drift kernel is mirror-symmetric, so it commutes with the flip: the
+      // drifted point mass is computed ONCE (freshBase) and each bank is a
+      // mix of it and its mirror by how many of its boundaries fell in the
+      // window. Stepping every bank through k ticks instead cost 75 x k x 33
+      // x 101 x 2 operations — 207ms in node at k=150, and a 4011ms tick in
+      // the live page (trace.js, 2026-09-27).
+      const base = fresh.base ?? (fresh.base = freshBase(fresh, nSym))
+      let nb = 0
+      for (let tau = 1 - fresh.k; tau <= 0; tau++) if (mod(tau - ph, TICKS_PER_CYCLE) === 0) nb++
+      // P(an even number of flips) after nb independent 0.45 chances.
+      const same = (1 + Math.pow(1 - 2 * FLIP_CHANCE, nb)) / 2
       for (let j = 0; j < nSym; j++) {
-        const [b, mag] = fresh.init[j]
-        const c = Math.round(50 + b * mag)
-        for (const [di, w] of [[-1, 0.2], [0, 0.6], [1, 0.2]]) P[j * GRID + Math.max(0, Math.min(GRID - 1, c + di))] += w
-      }
-      const tmp = new Float64Array(GRID)
-      for (let tau = 1 - fresh.k; tau <= 0; tau++) {
-        const boundary = mod(tau - ph, TICKS_PER_CYCLE) === 0
-        for (let j = 0; j < nSym; j++) {
-          const o = j * GRID
-          for (let i = 0; i < GRID; i++) tmp[i] = boundary ? (1 - FLIP_CHANCE) * P[o + i] + FLIP_CHANCE * P[o + GRID - 1 - i] : P[o + i]
-          for (let i = 0; i < GRID; i++) {
-            const l = i > 0 ? tmp[i - 1] : tmp[i]
-            const r = i < GRID - 1 ? tmp[i + 1] : tmp[i]
-            P[o + i] = (1 - 2 * fresh.diffusion) * tmp[i] + fresh.diffusion * (l + r)
-          }
-        }
+        const o = j * GRID
+        for (let i = 0; i < GRID; i++) P[o + i] = same * base[o + i] + (1 - same) * base[o + GRID - 1 - i]
       }
     } else for (let j = 0; j < nSym; j++) P.set(PRIOR, j * GRID)
     let l0 = 0

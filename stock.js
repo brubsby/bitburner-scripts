@@ -319,11 +319,28 @@ export async function main(ns) {
     return Math.max(0, v)
   }
 
+  // Per-tick compute time (performance.now, 0GB): the tick is synchronous
+  // between nextUpdate and the next wait, so this is exactly how long it held
+  // the page. Published as tickMs {last, max, over50} so a slow tick is seen
+  // in telemetry, not only in trace.js. Live 2026-09-27: 4011ms, from the
+  // fresh-market prior (fixed; ST10 bounds it).
+  const tickMs = { last: null, max: 0, over50: 0, maxAt: null }
+  let tickStart = null
+  const endTick = () => {
+    if (tickStart === null) return
+    const ms = performance.now() - tickStart
+    tickStart = null
+    tickMs.last = +ms.toFixed(1)
+    if (ms > tickMs.max) (tickMs.max = +ms.toFixed(1)), (tickMs.maxAt = new Date().toISOString())
+    if (ms > 50) tickMs.over50++
+  }
   while (true) {
+    endTick()
     traceLeave('stock')
     await ns.stock.nextUpdate()
     // Black-box section (trace.js): open from the tick until the next wait.
     traceEnter('stock')
+    tickStart = performance.now()
     try {
       counters.ticks++
       const has4S = ns.stock.has4SDataTixApi()
@@ -471,6 +488,7 @@ export async function main(ns) {
         canShort,
         phase: st.phase,
         phasePrior,
+        tickMs,
         // THE WARM-UP, measured (plan.js reads realisedCapital from
         // stock-hist.txt; this is the same run's summary): how this run
         // started, when the phase locked, and the P&L (flows excluded) so far.
@@ -552,7 +570,12 @@ export async function main(ns) {
       ns.print(`stock.js error: ${text}`)
       note('error', { error: describe(err), last })
       push()
+      // The error back-off is a WAIT, not tick work: close the tick (and the
+      // trace section) first, or every error reads as a 1000ms blocking tick.
+      endTick()
+      traceLeave('stock')
       await ns.sleep(1000)
+      traceEnter('stock')
     }
   }
 }

@@ -499,5 +499,73 @@ export async function run() {
   }
   checks.push(c9);
 
+  // -------------------------------------------------------------------
+  const c10 = new Check("ST10", "a stock tick is bounded: the worst-case state (fresh-market restart, all 75 phase banks alive) builds and ticks in milliseconds, and stock.js publishes its tick time");
+  {
+    const { pricesOf, bookOf } = await import("../sim/stocks/strategies.mjs");
+    // Live 2026-09-27 trace.js: one stock tick held the page 4011ms. The
+    // fresh-market prior stepped all 75 banks through k<=150 unseen ticks
+    // (207ms in node; seconds in a busy page).
+    c10.examined(1);
+    const m = new Market({ seed: 3, money: 1e11, burnInTicks: 150 });
+    const t0 = performance.now();
+    const st = S.newState(m.symbols, { freshTicks: 150 });
+    const build = performance.now() - t0;
+    S.observe(st, pricesOf(m));
+    let worst = 0;
+    for (let i = 0; i < 20; i++) {
+      m.tick();
+      const a = performance.now();
+      S.observe(st, pricesOf(m));
+      S.decide(st, bookOf(m, false));
+      worst = Math.max(worst, performance.now() - a);
+    }
+    c10.note(`worst case (freshTicks 150, 75 banks): newState ${build.toFixed(1)}ms, worst of 20 ticks (observe+decide) ${worst.toFixed(1)}ms`);
+    if (build > 50) c10.fail(`newState with a fresh-market prior took ${build.toFixed(0)}ms (budget 50ms in node; the page is ~10x slower)`);
+    if (worst > 150) c10.fail(`a tick took ${worst.toFixed(0)}ms with all phase banks alive (budget 150ms in node, first ticks include JIT warm-up)`);
+
+    // The shortcut (drift once, mix by boundary parity) is EXACT: compare a
+    // bank against the step-by-step propagation it replaced.
+    c10.examined(3);
+    const ref = (ph, k, j) => {
+      const [b, mag] = S.SYMBOL_META[m.symbols[j]].init;
+      const G = 101;
+      let P = new Float64Array(G);
+      const c = Math.round(50 + b * mag);
+      for (const [di, w] of [[-1, 0.2], [0, 0.6], [1, 0.2]]) P[Math.max(0, Math.min(G - 1, c + di))] += w;
+      const d = S.DEFAULTS.diffusion;
+      for (let tau = 1 - k; tau <= 0; tau++) {
+        const boundary = (((tau - ph) % 75) + 75) % 75 === 0;
+        const tmp = new Float64Array(G);
+        for (let i = 0; i < G; i++) tmp[i] = boundary ? 0.55 * P[i] + 0.45 * P[G - 1 - i] : P[i];
+        const nx = new Float64Array(G);
+        for (let i = 0; i < G; i++) nx[i] = (1 - 2 * d) * tmp[i] + d * ((i > 0 ? tmp[i - 1] : tmp[i]) + (i < G - 1 ? tmp[i + 1] : tmp[i]));
+        P = nx;
+      }
+      return P;
+    };
+    const st2 = S.newState(m.symbols, { freshTicks: 120 });
+    let maxErr = 0;
+    for (const [ph, j] of [[0, 0], [37, 5], [74, 20]]) {
+      const P = st2.hmm.banks.get(ph).P.subarray(j * 101, j * 101 + 101);
+      const R = ref(ph, 120, j);
+      for (let i = 0; i < 101; i++) maxErr = Math.max(maxErr, Math.abs(P[i] - R[i]));
+    }
+    c10.note(`fast fresh prior vs step-by-step reference: max |diff| ${maxErr.toExponential(1)}`);
+    if (!(maxErr < 1e-9)) c10.fail(`the fast fresh prior differs from the step-by-step propagation by ${maxErr}`);
+
+    // stock.js publishes its tick time.
+    c10.examined(1);
+    const m2 = new Market({ seed: 4, money: 2.5e8, burnInTicks: 150 });
+    const g = await runShipped(m2, 40, { lastAugReset: Date.now() - 150 * 6000 });
+    const tel = JSON.parse(g.files["/tel/stock.txt"]);
+    if (!(tel.tickMs && typeof tel.tickMs.max === "number")) c10.fail("/tel/stock.txt has no tickMs");
+    else {
+      c10.note(`shipped stock.js on a fresh market (k=150): tickMs max ${tel.tickMs.max}ms, last ${tel.tickMs.last}ms, ${tel.tickMs.over50} tick(s) over 50ms`);
+      if (tel.tickMs.max > 300) c10.fail(`a shipped stock.js tick took ${tel.tickMs.max}ms`);
+    }
+  }
+  checks.push(c10);
+
   return checks;
 }
