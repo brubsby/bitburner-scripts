@@ -949,3 +949,22 @@ export function carryPredictions(prev, futures, baselineM, now, cap = 40) {
     }))
   return [...pending, ...fresh].slice(-cap)
 }
+
+
+/**
+ * THE INSTALL, DECIDED ON THE BATCH ACTUALLY ORDERED (not the plan it was
+ * trimmed from). Live 2026-09-27 ~14:02 an install ran in the final window
+ * with five queued augmentations and no Red Pill: the gate had priced "The
+ * Red Pill is in the plan -> terminal install" and the raise trim dropped it.
+ *   terminal     the gate priced a terminal install (The Red Pill in plan/queue)
+ *   ordered      names the batch actually ordered; pending: already queued
+ *   planKey      the plan's install decision; capitalNode: money is capital
+ *   forced       --install-now
+ * Returns {refused: why | null}.
+ */
+export function installOfOrderedBatch({ terminal = false, ordered = [], pending = [], planKey = null, capitalNode = false, forced = false, redPill = 'The Red Pill' } = {}) {
+  const has = ordered.includes(redPill) || pending.includes(redPill)
+  if (terminal && !has) return { refused: `the terminal install was priced with ${redPill} but the ordered batch does not carry it (${ordered.length} ordered, ${pending.length} queued) — no install, and the batch withdrawn` }
+  if (!terminal && planKey === 'never' && capitalNode && !forced) return { refused: `the plan's install decision is 'never' (the final window: only the terminal install) and this batch is not terminal` }
+  return { refused: null }
+}

@@ -426,6 +426,24 @@ export async function main(ns) {
               results.push({ id: o.id, kind: o.kind, skipped: `held by ${INSTALL_HOLD_FILE}: ${hold.slice(0, 200)}` })
               break
             }
+            // NO STRAY NON-TERMINAL INSTALL IN THE FINAL WINDOW. Where money
+            // is capital and the committed plan says 'never' (only The Red
+            // Pill's install remains), a non-terminal install order is refused
+            // whatever wrote it (live 2026-09-27 ~14:02: five augmentations
+            // installed, no Red Pill, $455.8b and 690k Daedalus rep destroyed).
+            const planInstall = (() => {
+              try {
+                fetchFromHome(ns, '/tel/plan.txt')
+                const p = readJson(ns, '/tel/plan.txt')
+                return p && p.lastAugReset === info.lastAugReset ? p.decisions?.install?.key ?? null : null
+              } catch {
+                return null
+              }
+            })()
+            if (o.terminal !== true && planInstall === 'never' && bitNodeMults(info.currentNode)?.ScriptHackMoneyGain === 0 && !o.override) {
+              results.push({ id: o.id, kind: o.kind, skipped: `refused: the plan's install decision is 'never' (final window) and this install is not terminal — only The Red Pill's install may run` })
+              break
+            }
             const queued = (o.requireQueued ?? 0) + bought
             if (!(queued > 0)) {
               results.push({ id: o.id, kind: o.kind, skipped: 'nothing queued to install' })
@@ -439,6 +457,41 @@ export async function main(ns) {
             if (chainFailed) {
               results.push({ id: o.id, kind: o.kind, skipped: `a purchase in this batch failed; ${bought} bought of the plan — not installing on a partial plan` })
               continue
+            }
+            // THE INSTALL IS RECORDED BEFORE IT RUNS (nothing runs after a
+            // prestige): the batch, the reason, and what act-install will check.
+            try {
+              ns.write('/tel/install-last.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: info.lastAugReset, batchAt: batch.at, why: o.why ?? null, terminal: o.terminal === true, planInstall, batch: o.batch ?? null, bought, results: results.map((x) => ({ kind: x.kind, ok: x.ok ?? null, skipped: x.skipped ?? null })) }), 'w')
+              if (ns.getHostname() !== 'home') ns.scp('/tel/install-last.txt', 'home', ns.getHostname())
+            } catch {
+              /* the record must not block the install; act-install writes its own */
+            }
+            // A TERMINAL INSTALL REQUIRES THE RED PILL IN THE GAME'S QUEUE, read
+            // fresh at this moment (snap-owned.js: getOwnedAugmentations with
+            // and without purchased) — not the batch's own record of what it
+            // bought. Unreadable is a refusal: installing without it is the
+            // costliest mistake this run can make.
+            if (o.terminal === true) {
+              const fresh = await runSnapshot(ns, SNAPSHOTS.owned.actor)
+              fetchFromHome(ns, SNAPSHOTS.owned.file)
+              const snap = readSnapshot(ns, 'owned', info)
+              const recent = snap?.at && Date.now() - Date.parse(snap.at) < 60e3
+              const installedSet = new Set(snap?.data?.owned ?? [])
+              const queuedNow = (snap?.data?.purchased ?? []).filter((x) => !installedSet.has(x))
+              try {
+                ns.write('/tel/install-last-queue.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: info.lastAugReset, snapshotAt: snap?.at ?? null, fresh: fresh.ran === true && recent, queued: queuedNow }), 'w')
+                if (ns.getHostname() !== 'home') ns.scp('/tel/install-last-queue.txt', 'home', ns.getHostname())
+              } catch {
+                /* the check below still decides */
+              }
+              if (!(fresh.ran === true && recent && snap?.data)) {
+                results.push({ id: o.id, kind: o.kind, skipped: `refused: the terminal install could not read the game's queue (${fresh.why ?? 'snapshot not fresh'}) — not installing blind` })
+                break
+              }
+              if (!queuedNow.includes('The Red Pill')) {
+                results.push({ id: o.id, kind: o.kind, skipped: `refused: a terminal install without The Red Pill in the game's queue (queued: ${queuedNow.join(', ') || 'nothing'})` })
+                break
+              }
             }
             // SELL THE STOCK POSITIONS FIRST, every install, every node: the
             // market re-initialises at an install (Prestige.ts:166-170) and an

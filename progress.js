@@ -123,8 +123,7 @@ import {
   expForSkill,
   scoreFutures,
   discountFutures,
-  carryPredictions,
-} from 'installgate.js'
+  carryPredictions, installOfOrderedBatch } from 'installgate.js'
 import { planSchedule, bestCompatibleSet, holdCandidates, logValue } from 'factionplan.js'
 import { joinWait, timeToMeet } from 'joinplan.js'
 import { snapshotView } from 'snapshot.js'
@@ -5635,6 +5634,9 @@ async function act(ns, canJoin, info, note) {
       // plan never priced.
       const bought = []
       let orderedSpend = 0
+      // Where this batch's purchase orders begin: a terminal batch that cannot
+      // carry The Red Pill is withdrawn whole (below).
+      const firstPlanOrder = orders.length
       // THE SNAPSHOT PRICE IS PRE-BATCH. Every queued purchase multiplies the
       // next one by MultipleAugMultiplier (x1.9, less the SF11 discount), and
       // each NeuroFlux level by another 1.14 — the plan priced exactly that,
@@ -5709,10 +5711,27 @@ async function act(ns, canJoin, info, note) {
           if (item.name === NFG) batchNfg++
         }
       }
-      const installing = pending.length + bought.length
+      // THE INSTALL IS DECIDED ON THE BATCH ACTUALLY ORDERED, not the plan it
+      // was trimmed from. Live 2026-09-27 ~14:02 an install ran with five
+      // augmentations and NO Red Pill in the final window (plan 'never'):
+      // $455.8b of book and 690k Daedalus reputation destroyed. The gate had
+      // priced "THE RED PILL is in the plan -> terminal install", and the
+      // trim (batchFits) had dropped it. A terminal install is ordered only
+      // when The Red Pill is in the ordered batch (its donation included) or
+      // already queued; otherwise nothing in this batch is ordered at all —
+      // money spent on lesser augmentations is money the Red Pill needs.
+      const installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.plan?.key ?? null, capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
+      if (installRefused) {
+        orders.length = firstPlanOrder
+        did.push(`install NOT ordered: ${installRefused}`)
+        bought.length = 0
+      }
+      const installing = installRefused ? 0 : pending.length + bought.length
       ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, income: econNow }, null, 2), 'w')
       did.push(`ordered ${bought.length} of ${plan ? plan.buy.length : 0} planned purchase(s); install ordered for ${installing} augmentation(s) if act.js completes the chain — ${gate.why}`)
-      if (installing === 0) {
+      if (installRefused) {
+        todo.push(`install refused: ${installRefused}`)
+      } else if (installing === 0) {
         // Nothing to install and nothing bought: do NOT call installAugmentations,
         // which would prestige for no gain. Say so instead.
         todo.push('the gate fired but no augmentation could be bought — check /tel/installgate.txt for the plan and why each purchase was refused')
@@ -5768,6 +5787,10 @@ async function act(ns, canJoin, info, note) {
                 // Distinct augmentations INCLUDING what this install lands —
                 // the count trajectory behind Daedalus's 30-aug forecast.
                 augs: allCount.size,
+                // WHY this install ran, and whether it was the terminal one.
+                installWhy: String(gate.why ?? '').slice(0, 300),
+                terminal: gate.terminal === true,
+                installBatch: [...bought],
                 // THE TRADER'S CAPITAL over this life (recorded for audit; NOT a return — the batch has spent
                 // its cash by now): its start wealth and its wealth at the install.
                 ...(stockNow?.ok ? { capStart: readJson(ns, STOCK_FILE)?.startWealth ?? undefined, capEnd: Math.round((ns.getServerMoneyAvailable('home') ?? 0) + stockNow.equity) } : {}),
@@ -5787,6 +5810,12 @@ async function act(ns, canJoin, info, note) {
         // in this batch failed but earlier ones are waiting.
         order('install', ['boot.js'], gate.why)
         orders[orders.length - 1].requireQueued = pending.length
+        // act.js / act-install.js refuse a terminal install whose queue (read
+        // from the game at the install) lacks The Red Pill, and any
+        // non-terminal install while the plan says 'never' in a capital node.
+        orders[orders.length - 1].terminal = gate.terminal === true
+        orders[orders.length - 1].planInstall = gate.plan?.key ?? null
+        orders[orders.length - 1].batch = [...pending, ...bought]
         ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
         publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
         flushOrders()

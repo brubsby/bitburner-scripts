@@ -1000,5 +1000,40 @@ export async function run() {
   }
   checks.push(ab);
 
+  // -----------------------------------------------------------------------
+  const ad = new Check("B8ad", "live ~14:02: no install without The Red Pill in the final window — the install is decided on the ORDERED batch, act.js refuses a stray non-terminal install under plan 'never' and a terminal one whose game queue lacks The Red Pill, and the install is recorded before it runs");
+  {
+    ad.examined(10);
+    const IG = await import("../../installgate.js");
+    // 14:0x: the Red Pill's donation does not fit what the book can raise, so
+    // the trim orders nothing of the plan; five augmentations sit queued.
+    const equity = 442.5e9 / 0.97;
+    const redPill = 460e9;
+    const fits = econ.batchFits(0, equity, redPill);
+    const ordered = fits ? ["The Red Pill"] : [];
+    const pending = ["NeuroFlux Governor", "a", "b", "c", "d"];
+    const v = IG.installOfOrderedBatch({ terminal: true, ordered, pending, planKey: "never", capitalNode: true });
+    ad.note(`the Red Pill's $${redPill / 1e9}b fits a ~$${(econ.raisable(0, equity) / 1e9).toFixed(1)}b raise: ${fits}; install: ${v.refused ? "REFUSED — " + v.refused : "ordered"}`);
+    if (!v.refused) ad.fail("a terminal install whose ordered batch lacks The Red Pill must not be ordered (the 14:02 install)");
+    if (IG.installOfOrderedBatch({ terminal: true, ordered: ["The Red Pill"], pending, planKey: "never", capitalNode: true }).refused) ad.fail("with The Red Pill ordered, the terminal install goes ahead");
+    if (IG.installOfOrderedBatch({ terminal: true, ordered: [], pending: ["The Red Pill"], planKey: "never", capitalNode: true }).refused) ad.fail("The Red Pill already queued also carries it");
+    if (!IG.installOfOrderedBatch({ terminal: false, ordered: ["x"], pending: [], planKey: "never", capitalNode: true }).refused) ad.fail("a non-terminal install under plan 'never' in a capital node is refused");
+    if (IG.installOfOrderedBatch({ terminal: false, ordered: ["x"], pending: [], planKey: "now", capitalNode: true }).refused) ad.fail("an ordinary install the plan chose is not refused");
+    if (IG.installOfOrderedBatch({ terminal: false, ordered: ["x"], pending: [], planKey: "never", capitalNode: false }).refused) ad.fail("other nodes: unchanged");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const installRefused = installOfOrderedBatch\(\{ terminal: gate\.terminal === true, ordered: bought, pending/.test(prog) || !/if \(installRefused\) \{\s*\n\s*orders\.length = firstPlanOrder/.test(prog)) ad.fail("progress.js must decide the install on the ordered batch and withdraw a batch that cannot carry the Red Pill");
+    if (!/orders\[orders\.length - 1\]\.terminal = gate\.terminal === true/.test(prog)) ad.fail("the install order must say whether it is terminal");
+    if (!/installWhy: String\(gate\.why/.test(prog)) ad.fail("the lifetimes ledger records why each install ran");
+    const act = fs.readFileSync(path.join(REPO_ROOT, "act.js"), "utf8");
+    const liq = act.indexOf("const liq = await runActor(ns, 'liquidate', ['install'])");
+    const never = act.indexOf("if (o.terminal !== true && planInstall === 'never'");
+    const queueCheck = act.indexOf("if (!queuedNow.includes('The Red Pill'))");
+    const record = act.indexOf("ns.write('/tel/install-last.txt'");
+    if (!(never > 0 && never < liq)) ad.fail("act.js must refuse a non-terminal install under plan 'never' before selling the book");
+    if (!(queueCheck > 0 && queueCheck < liq && /const snap = readSnapshot\(ns, 'owned', info\)/.test(act))) ad.fail("act.js must read the game's queue fresh and refuse a terminal install without The Red Pill, before selling the book");
+    if (!(record > 0 && record < liq)) ad.fail("the install is recorded (/tel/install-last.txt) before it runs");
+  }
+  checks.push(ad);
+
   return checks;
 }
