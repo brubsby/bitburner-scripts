@@ -1058,5 +1058,29 @@ export async function run() {
   }
   checks.push(ae);
 
+  // -----------------------------------------------------------------------
+  const af = new Check("B8af", "BN1 opening with SF8.1: the trader's RAM is a priced decision (trajectory to the next home tier, with vs without it), seed.js evicts workers for it when it wins, and the watchdog deferral is accepted only within a bound");
+  {
+    af.examined(8);
+    const HC = await import("../../homecost.js");
+    // Live BN1 21:45 (55 min in): $14.3m, $3,853/s from ~220GB of early.js/hgw.js, home 64GB, stock.js 28.5GB.
+    const target = HC.ramUpgradeCost(64, 1);
+    const live = econ.traderPlacement({ wealth: 14.3e6, tix: true, incomePerSec: 3853, fleetGB: 220, traderGB: 28.5, target });
+    af.note(`next home tier $${(target / 1e6).toFixed(1)}m: ${live.why} -> ${live.place ? "PLACE" : "keep farming"}`);
+    if (!(live.place && live.withH < live.withoutH)) af.fail("on the live opening the trader reaches the next home tier sooner: place it");
+    const poor = econ.traderPlacement({ wealth: 2e6, tix: true, incomePerSec: 3853, fleetGB: 220, traderGB: 28.5, target });
+    if (poor.place) af.fail("below the commission floor (~$5m) the trader earns nothing and must not displace workers");
+    if (econ.traderPlacement({ wealth: 14.3e6, tix: false, incomePerSec: 3853, fleetGB: 220, traderGB: 28.5, target }).place) af.fail("no TIX: no trader");
+    const tinyFleet = econ.traderPlacement({ wealth: 6e6, tix: true, incomePerSec: 3853, fleetGB: 30, traderGB: 28.5, target });
+    af.note(`$6m on a 30GB fleet: ${tinyFleet.why} -> ${tinyFleet.place ? "PLACE" : "keep farming"}`);
+    if (tinyFleet.place) af.fail("when the trader would take nearly the whole fleet at barely-above-floor capital, farming wins");
+    const seed = fs.readFileSync(path.join(REPO_ROOT, "seed.js"), "utf8");
+    if (!/const traderHost = await placeTrader\(ns, all, hosts\)/.test(seed) || !/if \(h === traderHost\) continue/.test(seed)) af.fail("seed.js must place the trader before the workers and leave its host alone");
+    if (!/for \(const p of ns\.ps\(host\)\) if \(p\.filename === EARLY \|\| p\.filename === CHEAP\) ns\.kill\(p\.pid\)/.test(seed) || !/ns\.scp\(importClosure\(ns, TRADER\), host, 'home'\)/.test(seed)) af.fail("seed.js evicts the host's workers and copies the trader's whole import graph");
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if (!/if \(deferWhy && now\.homeRam < WATCHDOG_DEFER_MAX_GB && lifeMin !== null && lifeMin < WATCHDOG_DEFER_MAX_MIN\)/.test(hc)) af.fail("the healthcheck accepts boot's watchdog deferral only within its bound (home < 128GB, life < 2h)");
+  }
+  checks.push(af);
+
   return checks;
 }

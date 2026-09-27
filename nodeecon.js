@@ -406,6 +406,52 @@ export function exitRootRequired(ownedAugs) {
   return typeof ownedAugs.has === 'function' ? ownedAugs.has('The Red Pill') : Array.isArray(ownedAugs) ? ownedAugs.includes('The Red Pill') : false
 }
 
+/**
+ * PLACE THE STOCK TRADER EARLY, OR KEEP THE RAM FOR EARLY.JS — priced as
+ * trajectories to the next milestone (the next home RAM tier), not by a
+ * fixed manifest. Live BN1 2026-09-27 with SF8.1 (TIX from minute one): the
+ * fleet was full of early.js/hgw.js threads and stock.js "planned 28.5GB but
+ * no host had it free" for the whole opening.
+ *   without: money(t) = W + I t                         (every GB farming)
+ *   with:    money(t) = W e^{r t} + I' (e^{r t} - 1) / r  (the trader holds
+ *            the balance and every dollar the fleet earns; the fleet earns
+ *            I' = I (1 - traderGB / fleetGB))
+ * r is the trader's return at THIS capital: r x (1 - floor / W), floor =
+ * TRADER_FLOOR_WEALTH — below ~$5m commissions eat the edge (min order 20 x
+ * the $100k commission, stockstrat minOrderCommissions; the harness's small-
+ * capital runs). NOT CALIBRATED at small capital: r defaults to BN8's
+ * realised 1.8e-4/s (the only measured return) unless the caller has this
+ * node's. Place iff the milestone comes sooner by more than a minute.
+ * Returns {place, withH, withoutH, rEff, why}.
+ */
+export const TRADER_FLOOR_WEALTH = 5e6
+export const TRADER_PRIOR_R = 1.8e-4
+export function traderPlacement({ wealth, tix = false, r = TRADER_PRIOR_R, floor = TRADER_FLOOR_WEALTH, incomePerSec, fleetGB, traderGB, target } = {}) {
+  if (!tix) return { place: false, withH: null, withoutH: null, rEff: null, why: 'no TIX API access (Source-File 8 or BitNode 8, or bought)' }
+  if (!fin(wealth) || !fin(incomePerSec) || incomePerSec < 0 || !fin(fleetGB) || !(fleetGB > 0) || !fin(traderGB) || !(traderGB > 0) || !fin(target)) return { place: false, withH: null, withoutH: null, rEff: null, why: 'unpriced: wealth, fleet income, fleet size, trader RAM or milestone unreadable' }
+  const rEff = fin(r) && r > 0 && wealth > floor ? r * (1 - floor / wealth) : 0
+  const I0 = incomePerSec
+  const I1 = incomePerSec * Math.max(0, 1 - traderGB / fleetGB)
+  const need = Math.max(0, target - wealth)
+  const withoutH = need === 0 ? 0 : I0 > 0 ? need / I0 / 3600 : Infinity
+  const at = (tS) => (rEff > 0 ? wealth * Math.exp(rEff * tS) + (I1 * (Math.exp(rEff * tS) - 1)) / rEff : wealth + I1 * tS)
+  let withH
+  if (need === 0) withH = 0
+  else if (at(48 * 3600) < target) withH = Infinity
+  else {
+    let lo = 0, hi = 48 * 3600
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2
+      if (at(mid) >= target) hi = mid
+      else lo = mid
+    }
+    withH = hi / 3600
+  }
+  const place = withH < withoutH - 1 / 60
+  const f = (h) => (isFinite(h) ? `${h.toFixed(2)}h` : 'never (48h)')
+  return { place, withH, withoutH, rEff, why: `next milestone $${Math.round(target)}: ${f(withH)} with the trader (r ${(rEff * 3600 * 100).toFixed(0)}%/h at $${Math.round(wealth)}, the fleet ${(100 * (1 - I1 / (I0 || 1))).toFixed(0)}% smaller) vs ${f(withoutH)} with every GB farming` }
+}
+
 export function withCashRaise(orders, cash, equity, margin = 0.02) {
   if (!Array.isArray(orders)) return orders
   const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)

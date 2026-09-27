@@ -380,6 +380,14 @@ if (!prev) {
 // reason to accept it. So the reason is attached to the failure, never
 // substituted for it.
 const WATCHDOG_TIER = 64;
+// A DEFERRAL BOOT JUSTIFIES, BOUNDED. boot.js may defer the watchdog on a
+// small home with a stated reason (its 7.80GB is workers in the opening);
+// that is accepted — as a note — only while home is under
+// WATCHDOG_DEFER_MAX_GB and the life is under WATCHDOG_DEFER_MAX_MIN. Past
+// either bound the deferral is the BitNode 10 deadlock shape again (home
+// never grows because nothing supervises the ratchet) and it FAILS.
+const WATCHDOG_DEFER_MAX_GB = 128;
+const WATCHDOG_DEFER_MAX_MIN = 120;
 // PROMISES AGAINST THE GAME (2026-09-25: "i tell you to do something, you say
 // it's happening, i have to ensure it actually happens, it doesn't"). What the
 // planner CLAIMS is checked against what the save shows, every run, no
@@ -443,11 +451,14 @@ if (now.homeRam !== null && now.homeRam >= WATCHDOG_TIER && (lifeMin === null ||
   const absent = !wdTel || staleFromLastLife.has("watchdog.txt");
   if (absent) {
     const boot = readTel("boot.txt");
+    const deferWhy = (boot?.defer ?? []).find((d) => /watchdog\.js/.test(String(d?.script ?? "")))?.why ?? null;
     const why =
-      (boot?.defer ?? []).find((d) => /watchdog\.js/.test(String(d?.script ?? "")))?.why ??
+      deferWhy ??
       (boot?.failed ?? []).find((x) => /^watchdog\.js:/.test(String(x))) ??
       "boot.js records neither a defer nor a failure for it";
-    fail(
+    if (deferWhy && now.homeRam < WATCHDOG_DEFER_MAX_GB && lifeMin !== null && lifeMin < WATCHDOG_DEFER_MAX_MIN)
+      note(`watchdog deferred by boot.js (accepted until home ${WATCHDOG_DEFER_MAX_GB}GB or ${WATCHDOG_DEFER_MAX_MIN} min of life; now ${now.homeRam}GB, ${lifeMin.toFixed(0)} min): ${String(deferWhy).slice(0, 160)}`);
+    else fail(
       `home is ${now.homeRam}GB but watchdog.js has not published this life`,
       `nothing is reviving dead scripts or running jobs, and the home-RAM ratchet retires in its favour — this is the shape that froze BitNode 10 for 4.5h. boot.js says: ${String(why).slice(0, 220)}`,
     );

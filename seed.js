@@ -41,6 +41,10 @@
 
 // Free: status.js references only ns.write (0GB) and ns.atExit is 0GB.
 import { reporter, describe } from 'status.js'
+// Pure: the trader's placement priced as trajectories (nodeecon), the home tier's price (homecost).
+import { traderPlacement } from 'nodeecon.js'
+import { canAccessFeature } from 'sfgate.js'
+import { ramUpgradeCost } from 'homecost.js'
 // Pure: the exp-mode gate and the exp-per-thread rule, and the node table.
 import { expMode, expPerThread } from 'expfarm.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -288,8 +292,14 @@ async function pass(ns, flags) {
     if (!isHacknetServerHost(h) || hacknetHostAllowed(h, hnPolicy) || !ns.hasRootAccess(h)) continue
     for (const p of ns.ps(h)) if (p.filename === EARLY || p.filename === CHEAP) ns.kill(p.pid)
   }
+  // THE TRADER'S BLOCK (nodeecon.traderPlacement): where TIX is owned and
+  // the trader is not running anywhere, place it on the smallest rooted
+  // host that holds it — evicting that host's workers — when the priced
+  // trajectory to the next home tier says it wins.
+  const traderHost = await placeTrader(ns, all, hosts)
   for (let i = 0; i < hosts.length; i++) {
     const h = hosts[i]
+    if (h === traderHost) continue
     const target = flags.target || targets[i % targets.length]
 
     // Check what is running BEFORE looking at free RAM. A host already running
@@ -338,5 +348,87 @@ async function pass(ns, flags) {
   // kill path and the nothing-hackable path publish too — both used to return
   // before reaching the write here and leave the file frozen at the last good
   // pass.
-  return { level, targets, placed, refused, newlyRooted, expMode: exp, floor }
+  return { level, targets, placed, refused, newlyRooted, expMode: exp, floor, trader: lastTrader }
+}
+
+let lastTrader = null
+const TRADER = 'stock.js'
+
+/** Every file a script imports, transitively (import lines read free, ns.read). */
+function importClosure(ns, root) {
+  const here = ns.getHostname()
+  const out = new Set([root])
+  const queue = [root]
+  while (queue.length) {
+    const f = queue.shift()
+    let src = ns.read(f)
+    if (!src && here !== 'home') {
+      try {
+        ns.scp(f, here, 'home')
+      } catch {
+        /* reported by the exec */
+      }
+      src = ns.read(f)
+    }
+    for (const m of String(src || '').matchAll(/from\s+['"]([^'"]+\.js)['"]/g)) {
+      if (!out.has(m[1])) {
+        out.add(m[1])
+        queue.push(m[1])
+      }
+    }
+  }
+  return [...out]
+}
+
+/** Place stock.js on its own block when the trader verdict says so; returns the host (skip it for workers) or null. */
+async function placeTrader(ns, all, hosts) {
+  const reset = ns.getResetInfo()
+  // TIX from minute one where BitNode 8's feature is accessible (Prestige.ts:161-164).
+  const tix = canAccessFeature(reset, 8)
+  if (!tix) {
+    lastTrader = { place: false, why: 'no TIX API access' }
+    return null
+  }
+  for (const h of all) {
+    if (ns.hasRootAccess(h) && ns.ps(h).some((p) => p.filename === TRADER)) {
+      lastTrader = { place: true, host: h, running: true, why: 'running' }
+      return h
+    }
+  }
+  const traderGB = ns.getScriptRam(TRADER, 'home')
+  const fleetGB = hosts.reduce((a, h) => a + ns.getServerMaxRam(h), 0)
+  const here = ns.getHostname()
+  if (here !== 'home') {
+    try {
+      ns.scp('/tel/status.txt', here, 'home')
+    } catch {
+      /* stale copy stays; its stamp decides */
+    }
+  }
+  let income = null
+  try {
+    const st = JSON.parse(ns.read('/tel/status.txt') || 'null')
+    if (st && Date.now() - Date.parse(st.at) < 5 * 60e3 && typeof st.incomePerSec === 'number') income = st.incomePerSec
+  } catch {
+    income = null
+  }
+  // No book yet: the trader is not running, so cash is the whole wealth.
+  const wealth = ns.getServerMoneyAvailable('home')
+  const target = ramUpgradeCost(ns.getServerMaxRam('home'), bitNodeMults(reset.currentNode)?.HomeComputerRamCost)
+  const v = traderPlacement({ wealth, tix, incomePerSec: income, fleetGB, traderGB, target })
+  lastTrader = { ...v, traderGB, fleetGB, incomePerSec: income, wealth: Math.round(wealth), target: Math.round(target) }
+  if (!v.place) return null
+  // The smallest rooted host that holds it (least farming displaced).
+  const fits = hosts.filter((h) => ns.getServerMaxRam(h) >= traderGB).sort((a, b) => ns.getServerMaxRam(a) - ns.getServerMaxRam(b))
+  const host = fits[0] ?? null
+  if (!host) {
+    lastTrader = { ...lastTrader, place: false, why: `${v.why} — but no rooted host has ${traderGB}GB` }
+    return null
+  }
+  for (const p of ns.ps(host)) if (p.filename === EARLY || p.filename === CHEAP) ns.kill(p.pid)
+  await ns.sleep(0)
+  if (host !== 'home') ns.scp(importClosure(ns, TRADER), host, 'home')
+  const pid = ns.exec(TRADER, host, 1)
+  lastTrader = { ...lastTrader, host, pid, why: pid ? `placed on ${host}: ${v.why}` : `exec of ${TRADER} refused on ${host}` }
+  return pid ? host : null
 }
