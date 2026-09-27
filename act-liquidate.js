@@ -39,6 +39,30 @@ export async function main(ns) {
       res.note = 'no TIX API access: no scripted position can be open, none can be sold'
     } else {
       const syms = ns.stock.getSymbols()
+      // A RAISE THAT CANNOT REACH ITS TARGET SELLS NOTHING. Live 2026-09-27
+      // 13:37 a $451.46b raise sold the whole book to reach $442.50b: the
+      // purchases after it were skipped anyway and the trader re-bought
+      // (commissions, and its estimator relearning). The book's value at the
+      // mid, less the sale haircut (nodeecon RAISE_SALE_HAIRCUT, copied: this
+      // actor imports nothing), must cover it before one share is sold.
+      const raiseAsk = String(ns.args[0] ?? '') === 'raise' ? Number(ns.args[1]) : null
+      if (raiseAsk !== null && raiseAsk > 0 && isFinite(raiseAsk)) {
+        let bookValue = 0
+        for (const sym of syms) {
+          const [long, , short] = ns.stock.getPosition(sym)
+          bookValue += (long + short) * ns.stock.getPrice(sym)
+        }
+        const reach = ns.getServerMoneyAvailable('home') + bookValue * 0.97
+        if (reach < raiseAsk) {
+          res.target = raiseAsk
+          res.cash = ns.getServerMoneyAvailable('home')
+          res.reach = Math.round(reach)
+          res.ok = false
+          res.error = `refused: the book reaches ~$${Math.round(reach)} of $${Math.round(raiseAsk)} after the sale haircut — nothing sold`
+          put('/tel/act-result.txt', res)
+          return
+        }
+      }
       // Resting orders exist only in BN8 or with SF8.3; getOrders throws otherwise.
       try {
         const orders = ns.stock.getOrders()

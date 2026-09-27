@@ -358,6 +358,41 @@ export function joinReadyButCash(reqs, player, { companyRep = null } = {}) {
   return { ready: true, why: 'every requirement but the cash and the city is met' }
 }
 
+/**
+ * WHAT A RAISE CAN ACTUALLY REACH. Selling a book returns less than the mid
+ * price it is valued at: live 2026-09-27 13:37 a raise for $451.46b sold the
+ * whole book and reached $442.50b (98.0%) — every purchase after it was
+ * skipped and the book had to be re-bought. A batch is ordered only when
+ * cash + equity x RAISE_SALE_HAIRCUT covers its total with the raise margin.
+ */
+export const RAISE_SALE_HAIRCUT = 0.97
+export const RAISE_MARGIN = 0.02
+export function raisable(cash, equity) {
+  return (fin(cash) ? cash : 0) + (fin(equity) && equity > 0 ? equity * RAISE_SALE_HAIRCUT : 0)
+}
+export function batchFits(cash, equity, total) {
+  return fin(total) && raisable(cash, equity) >= total * (1 + RAISE_MARGIN)
+}
+
+/**
+ * The previous order batch's OUTCOME, from act.js's record (/tel/act.txt
+ * `orders`): one line for the planner's report, so an order is never left
+ * reading as done. Null when there is no record of this life.
+ */
+export function batchOutcomeLine(act, lastAugReset) {
+  const o = act?.orders
+  if (!o || !Array.isArray(o.results) || act.lastAugReset !== lastAugReset) return null
+  const r = o.results
+  const failed = r.find((x) => x && x.ok === false && x.kind !== 'release-hold')
+  const skipped = r.filter((x) => x && x.skipped).length
+  const ok = r.filter((x) => x && x.ok === true)
+  const buys = ok.filter((x) => x.kind === 'buyaug').length
+  const donations = ok.filter((x) => x.kind === 'donate').length
+  const head = `last batch (${o.at}): ${ok.length} of ${r.length} order(s) done (${buys} bought, ${donations} donated)`
+  if (failed) return `${head} — ${failed.kind} FAILED (${String(failed.result?.error ?? failed.why ?? failed.error ?? 'no reason').slice(0, 120)})${skipped ? `, ${skipped} skipped after it` : ''}`
+  return skipped ? `${head}, ${skipped} skipped` : head
+}
+
 export function withCashRaise(orders, cash, equity, margin = 0.02) {
   if (!Array.isArray(orders)) return orders
   const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)

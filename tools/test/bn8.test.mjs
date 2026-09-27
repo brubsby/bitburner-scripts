@@ -953,5 +953,52 @@ export async function run() {
   }
   checks.push(aa);
 
+  // -----------------------------------------------------------------------
+  const ab = new Check("B8ab", "live 13:37: an ordered action never reads as done, the next pass reports the batch's real outcome, a batch is ordered only up to what a raise can reach, and a raise that cannot reach its target sells nothing");
+  {
+    ab.examined(8);
+    // The 13:37 book: a raise for $451.46b reached $442.50b (98.0%).
+    const equity = 442.5e9 / 0.97, cash = 0;
+    const redPill = 389.009e9, nfg = [30e9, 12e9, 11.6e9];
+    const total = redPill + nfg.reduce((a, b) => a + b, 0);
+    if (econ.batchFits(cash, equity, total)) ab.fail("the whole 13:37 batch must not fit what the book can raise");
+    // Most-expensive-first, trimmed at the first item that does not fit: The Red Pill's donation stays.
+    let spend = 0, kept = [];
+    for (const [n, c] of [["The Red Pill (donation)", redPill], ...nfg.map((c, i) => [`NFG ${i + 1}`, c])]) {
+      if (!econ.batchFits(cash, equity, spend + c)) break;
+      spend += c;
+      kept.push(n);
+    }
+    ab.note(`book raises ~$${(econ.raisable(cash, equity) / 1e9).toFixed(1)}b; the $${(total / 1e9).toFixed(1)}b batch trims to [${kept.join(", ")}] = $${(spend / 1e9).toFixed(1)}b`);
+    if (kept[0] !== "The Red Pill (donation)" || kept.length === 4) ab.fail("trimming keeps the head (The Red Pill's donation) and drops trailing items");
+    // The outcome line from act.txt's record.
+    const act = { lastAugReset: 7, orders: { at: "2026-09-27T13:37:00Z", count: 11, results: [
+      { id: 0, kind: "liquidate", ok: false, result: { error: "raised to $442500000000 of $451460000000 — the book cannot cover it" } },
+      { id: 1, kind: "donate", skipped: "an earlier purchase in the chain failed" },
+      { id: 2, kind: "buyaug", skipped: "an earlier purchase in the chain failed" },
+      { id: 3, kind: "install", skipped: "a purchase in this batch failed; 0 bought of the plan — not installing on a partial plan" },
+    ] } };
+    const line = econ.batchOutcomeLine(act, 7);
+    ab.note(line);
+    if (!/0 of 4 order\(s\) done \(0 bought, 0 donated\) — liquidate FAILED \(raised to \$442500000000 of \$451460000000/.test(line ?? "") || !/3 skipped/.test(line)) ab.fail("the outcome line must name the failed raise and the skipped orders", line);
+    if (econ.batchOutcomeLine(act, 8) !== null) ab.fail("another life's record says nothing");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const line = batchOutcomeLine\(readJson\(ns, '\/tel\/act\.txt'\), info\?\.lastAugReset\)\s*\n\s*if \(line\) did\.push\(line\)/.test(prog)) ab.fail("every pass reports the previous batch's outcome");
+    if (!/if \(!batchFits\(ns\.getServerMoneyAvailable\('home'\), stockEquity, orderedSpend \+ stepCost\)\)/.test(prog)) ab.fail("the plan must be ordered only up to what a raise can reach, cumulatively");
+    // Ordered-wording: every did line written right after an order(...) call.
+    const bad = [];
+    const re = /order\('(join|work|crime|gym|travel|company|course|donate|buyaug|graft)'[^\n]*\n?[^\n]*?did\.push\(`([^`]{0,40})/g;
+    let m;
+    while ((m = re.exec(prog))) if (!/^(ordered|[A-Z ]*REFUSED|Could not|could not|STOPPED)/.test(m[2])) bad.push(`${m[1]}: "${m[2]}"`);
+    // And the phrases that read as done must not come back.
+    for (const phrase of ["did.push(`donated $", "did.push(`bought ${bought.length}", "did.push(`travelled to", "did.push(`working at ${wantCompany}", "did.push(`studying Leadership", "did.push(`training ${bodyStep", "did.push(`committing "]) if (prog.includes(phrase)) bad.push(phrase);
+    if (bad.length) ab.fail("an ordered action is phrased as done", bad.join("; "));
+    const liq = fs.readFileSync(path.join(REPO_ROOT, "act-liquidate.js"), "utf8");
+    const refusal = liq.indexOf("A RAISE THAT CANNOT REACH ITS TARGET SELLS NOTHING");
+    if (!(refusal > 0 && refusal < liq.indexOf("ns.stock.cancelOrder") && refusal < liq.indexOf("ns.stock.sellStock") && /const reach = ns\.getServerMoneyAvailable\('home'\) \+ bookValue \* 0\.97/.test(liq) && /if \(reach < raiseAsk\) \{[\s\S]{0,400}?res\.ok = false[\s\S]{0,300}?return\s*\n\s*\}/.test(liq))) ab.fail("act-liquidate must refuse an unreachable raise before cancelling or selling anything");
+    if (econ.RAISE_SALE_HAIRCUT !== 0.97) ab.fail("act-liquidate's haircut copy must equal nodeecon.RAISE_SALE_HAIRCUT");
+  }
+  checks.push(ab);
+
   return checks;
 }

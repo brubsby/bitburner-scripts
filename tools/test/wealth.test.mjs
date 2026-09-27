@@ -47,6 +47,7 @@ export const ALLOW = [
   { file: "act-liquidate.js", has: "ns.getServerMoneyAvailable('home') < raise", cls: "a", why: "the raise measures the cash balance it is raising" },
   { file: "act-liquidate.js", has: "const need = raise - ns.getServerMoneyAvailable('home')", cls: "a", why: "the raise sizes each sale against cash" },
   { file: "act-liquidate.js", has: "res.cash = ns.getServerMoneyAvailable('home')", cls: "a", why: "read back: did the raise land in cash" },
+  { file: "act-liquidate.js", has: "const reach = ns.getServerMoneyAvailable('home') + bookValue * 0.97", cls: "a", why: "cash plus the book at the sale haircut: what a raise can reach, checked before selling anything" },
   { file: "act.js", has: "ns.getServerMoneyAvailable('home') < next.cost) break", cls: "a", why: "spend-down before an install: the book was just sold, cash is everything" },
   { file: "act.js", has: "ns.getServerMoneyAvailable('home') < h.next.cost) return null", cls: "a", why: "homeup's purchase: stock.js holds the home claim in cash whenever wealth covers the claims" },
   { file: "act.js", has: "const cash = ns.getServerMoneyAvailable('home')", cls: "a", why: "the escape and the bootstrap split cash from equity (stockRec) themselves" },

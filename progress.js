@@ -142,7 +142,7 @@ import { rateAt, manipLostExp } from 'expfarm.js'
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain } from 'coop.js'
-import { wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
+import { batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -2879,6 +2879,17 @@ async function act(ns, canJoin, info, note) {
 
   const todo = []
   const did = []
+  // WHAT THE LAST BATCH ACTUALLY DID (act.js's record): an ordered action is
+  // never reported as done by this file; this line says what happened to it.
+  // Live 2026-09-27 13:37 progress.txt read "donated $389b ... bought 9 of 9;
+  // installing 9" while act.txt showed the raise had failed and every order
+  // after it was skipped.
+  try {
+    const line = batchOutcomeLine(readJson(ns, '/tel/act.txt'), info?.lastAugReset)
+    if (line) did.push(line)
+  } catch {
+    /* no record: nothing to report */
+  }
 
   const player = ns.getPlayer()
   // THE CONTRACT STREAM, forecast rather than measured: one every ~13 minutes
@@ -4125,7 +4136,7 @@ async function act(ns, canJoin, info, note) {
     if (dest && player.city !== dest && !player.factions.includes(scheduleTarget)) {
       try {
         if (order('travel', [dest], `${scheduleTarget}'s only unmet requirement is location`)) {
-          did.push(`travelled to ${dest} for the ${scheduleTarget} invitation (its only unmet requirement was location; $200k, no time)`)
+          did.push(`ordered travel to ${dest} for the ${scheduleTarget} invitation (its only unmet requirement is location; $200k, no time)`)
         } else {
           todo.push(`could not travel to ${dest} for ${scheduleTarget} — needs $200k on hand`)
         }
@@ -4354,7 +4365,7 @@ async function act(ns, canJoin, info, note) {
           // attempt; the game repeats it (CrimeWork.process loops) until the
           // work is replaced, so this is a start, not a per-attempt call.
           const ms = order('crime', [bodyStep.type], `${bodyStep.karmaShort ? 'karma' : 'kills'} short for ${scheduleTarget}`) ? 1 : 0
-          if (ms > 0) did.push(`committing ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
+          if (ms > 0) did.push(`ordered ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
           else todo.push(`commitCrime(${bodyStep.type}) did not start`)
         } catch (e) {
           todo.push(`crime step failed: ${String(e).slice(0, 80)}`)
@@ -4377,7 +4388,7 @@ async function act(ns, canJoin, info, note) {
           // not run below zero mid-leg once the trader reinvests.
           const gymCost = Math.ceil(gymFee * ((bodyStep.hours ?? 0) * 3600 + FEE_FLOOR_S))
           if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`, gymCost)) {
-            did.push(`training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${bodyStep.forFaction ?? scheduleTarget} invitation${bodyStep.forFaction ? ' — the install gate is holding for the Covenant sleeve campaign' : ''}`)
+            did.push(`ordered training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${bodyStep.forFaction ?? scheduleTarget} invitation${bodyStep.forFaction ? ' — the install gate is holding for the Covenant sleeve campaign' : ''}`)
           } else {
             todo.push(`gymWorkout(${bodyStep.gym}, ${cls}) refused — in ${player.city}, needs ${bodyStep.city}`)
           }
@@ -4418,7 +4429,7 @@ async function act(ns, canJoin, info, note) {
         try {
           if (cityAfterOrders !== 'Volhaven') order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')
           if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`, Math.ceil(courseFee * ((train.hours ?? 0) * 3600 + FEE_FLOOR_S)))) {
-            did.push(`studying Leadership at ZB to charisma ${train.toCha} (~${train.hours.toFixed(1)}h) before the ${wantCompany} desk — training beat the plain stint on total hours`)
+            did.push(`ordered Leadership at ZB to charisma ${train.toCha} (~${train.hours.toFixed(1)}h) before the ${wantCompany} desk — training beat the plain stint on total hours`)
           } else {
             todo.push(`Could not start the Leadership course at ZB — start it manually (Volhaven > ZB Institute).`)
           }
@@ -4430,7 +4441,7 @@ async function act(ns, canJoin, info, note) {
       const already = work?.type === 'COMPANY' && work.companyName === wantCompany
       if (!already) {
         if (order('company', [wantCompany, 'Software'], `${deskH.toFixed(1)}h of employment toward ${deskFaction}`)) {
-          did.push(`working at ${wantCompany} (company) toward the ${deskFaction} faction — ${deskH.toFixed(1)}h of employment in the plan`)
+          did.push(`ordered company work at ${wantCompany} toward the ${deskFaction} faction — ${deskH.toFixed(1)}h of employment in the plan`)
         } else {
           todo.push(`Could not start company work at ${wantCompany} — apply and start it manually (City > ${wantCompany}).`)
         }
@@ -4507,7 +4518,7 @@ async function act(ns, canJoin, info, note) {
         did.push(`crime loop (${crimeAlt.crime}) holds the work slot: ${crimeAlt.why}`)
       } else if (order('crime', [crimeAlt.crime], crimeAlt.why)) {
         slotOwner = 'crime'
-        did.push(`committing ${crimeAlt.crime} for money (${Math.round(crimeAlt.perHour / 3600)}/s): ${crimeAlt.why}`)
+        did.push(`ordered ${crimeAlt.crime} for money (${Math.round(crimeAlt.perHour / 3600)}/s): ${crimeAlt.why}`)
       } else todo.push(`commitCrime(${crimeAlt.crime}) did not start`)
     } else if (canWork && !flags.dry) {
       if (order('work', [target, 'hacking'], crimeAlt ? crimeAlt.why : "schedule's current faction")) {
@@ -5623,6 +5634,7 @@ async function act(ns, canJoin, info, note) {
       // it has drifted, rather than silently buying something else at a rank the
       // plan never priced.
       const bought = []
+      let orderedSpend = 0
       // THE SNAPSHOT PRICE IS PRE-BATCH. Every queued purchase multiplies the
       // next one by MultipleAugMultiplier (x1.9, less the SF11 discount), and
       // each NeuroFlux level by another 1.14 — the plan priced exactly that,
@@ -5659,10 +5671,18 @@ async function act(ns, canJoin, info, note) {
           // The affordability check covers the WHOLE step: the donation is
           // paid right before the purchase, from the same balance.
           const stepCost = live + (item.donation ?? 0)
-          if (ns.getServerMoneyAvailable('home') + stockEquity < stepCost) { // + the positions the liquidate order sells first
-            did.push(`STOPPED executing the plan at ${item.name}: $${stepCost.toFixed(0)} needed (incl. donation), $${(ns.getServerMoneyAvailable('home') + stockEquity).toFixed(0)} held (cash + stock equity) — the plan over-spent`)
+          // CUMULATIVE, and at what a raise can REACH (nodeecon.batchFits:
+          // equity x the sale haircut, plus the raise margin): the whole
+          // batch's cash is raised in ONE sale before its first order, so a
+          // batch that overshoots by 2% fails every order in it (live 13:37:
+          // $451.46b asked, $442.50b reached, nothing bought). The plan is
+          // most-expensive-first, so trimming here drops the trailing,
+          // cheapest items and keeps the head (The Red Pill's donation).
+          if (!batchFits(ns.getServerMoneyAvailable('home'), stockEquity, orderedSpend + stepCost)) {
+            did.push(`STOPPED ordering the plan at ${item.name}: the batch would need $${(orderedSpend + stepCost).toFixed(0)} (incl. donations) and a raise reaches ~$${raisable(ns.getServerMoneyAvailable('home'), stockEquity).toFixed(0)} (cash + equity after the sale haircut) — ordering the ${bought.length} item(s) before it`)
             break
           }
+          orderedSpend += stepCost
           if (item.donation > 0) {
             // The plan priced the donation conservatively (full shortfall per
             // item); donate only what is STILL short at execution time — an
@@ -5675,7 +5695,7 @@ async function act(ns, canJoin, info, note) {
                 did.push(`DONATION REFUSED: $${ns.format.number(dollars)} to ${item.faction} for ${item.name} — favour or funds short at execution`)
                 break
               }
-              did.push(`donated $${ns.format.number(dollars)} to ${item.faction} (${Math.round(short).toLocaleString()} rep) for ${item.name}`)
+              did.push(`ordered a donation of $${ns.format.number(dollars)} to ${item.faction} (${Math.round(short).toLocaleString()} rep) for ${item.name} — act.js executes it; the next pass reports the outcome`)
             }
           }
           if (!order('buyaug', [item.faction, item.name], `planned at $${plannedAugPrice.toFixed(0)}`, live)) {
@@ -5691,7 +5711,7 @@ async function act(ns, canJoin, info, note) {
       }
       const installing = pending.length + bought.length
       ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, income: econNow }, null, 2), 'w')
-      did.push(`bought ${bought.length} of ${plan ? plan.buy.length : 0} planned; installing ${installing} augmentation(s) — ${gate.why}`)
+      did.push(`ordered ${bought.length} of ${plan ? plan.buy.length : 0} planned purchase(s); install ordered for ${installing} augmentation(s) if act.js completes the chain — ${gate.why}`)
       if (installing === 0) {
         // Nothing to install and nothing bought: do NOT call installAugmentations,
         // which would prestige for no gain. Say so instead.
