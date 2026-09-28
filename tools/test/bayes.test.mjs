@@ -1001,5 +1001,42 @@ export async function run() {
   }
   checks.push(c18);
 
+  // -----------------------------------------------------------------------
+  const c19 = new Check("BY19", "THE PACER PREDICTS A STEP FROM WHAT THAT STEP COST BEFORE: a cheap run followed by one 32ms step (live BN9 'plan-gang' step 20 of 25, a 59.1ms block) — the first pass blocks past 50ms, every later pass yields before the slow step");
+  {
+    c19.examined(4);
+    const CO = await import("../../coop.js");
+    let T = 0;
+    const costs = [...Array(19).fill(1), 32, ...Array(5).fill(1)];
+    function* work() {
+      for (const c of costs) {
+        T += c;
+        yield;
+      }
+      return "done";
+    }
+    const memory = new Map();
+    const run = async () => {
+      const p = CO.makePacer({ sliceMs: 40, yieldFn: async () => {}, now: () => T, memory });
+      const v = await p.slices(work(), "plan-gang");
+      return { v, maxBlock: p.stats.maxBlockMs, yields: p.stats.yields };
+    };
+    const first = await run();
+    const second = await run();
+    const third = await run();
+    c19.note(`pass 1 (nothing recorded): longest block ${first.maxBlock}ms, ${first.yields} yield(s); pass 2: ${second.maxBlock}ms, ${second.yields}; pass 3: ${third.maxBlock}ms`);
+    if (!(first.v === "done" && second.v === "done")) c19.fail("the generator must complete");
+    if (!(first.maxBlock > 50)) c19.fail("fixture: without a record the slow step should overrun (else the test proves nothing)");
+    if (!(second.maxBlock <= 40 && third.maxBlock <= 40)) c19.fail(`with the step's cost recorded the pacer must yield before it (blocks ${second.maxBlock}ms, ${third.maxBlock}ms)`);
+    // The record decays: a step that became cheap stops forcing yields.
+    for (let i = 0; i < 12; i++) {
+      costs[19] = 1;
+      await run();
+    }
+    const cheap = await run();
+    if (!(cheap.yields === 0)) c19.fail(`a step that became cheap must stop forcing yields (${cheap.yields})`);
+  }
+  checks.push(c19);
+
   return checks;
 }

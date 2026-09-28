@@ -66,7 +66,28 @@ export function drain(gen, cap = STEP_CAP) {
  * longer than the slice is a piece of work that does not yield often enough,
  * and the label says where it is.
  */
-export function makePacer({ sliceMs = 40, yieldFn = null, now = clock } = {}) {
+/**
+ * WHAT EACH STEP COST LAST TIME, per section label and step index, across
+ * passes (the pacer is per pass; this is the process's). The look-ahead
+ * predicted the next step from the one just run — live BN9 (main b95c33e) a
+ * 32ms step 20 of 25 in 'plan-gang' followed cheap ones, and the block ran
+ * to 59.1ms against 50. The prediction is now the larger of the step just
+ * run and what this step index cost before (decayed x0.75 a run, so one slow
+ * pass fades). Bounded: 64 labels, 20,000 indices each.
+ */
+export const STEP_MEMORY = new Map()
+const MEM_LABELS = 64
+const MEM_STEPS = 20000
+function memoryOf(memory, label) {
+  let m = memory.get(label)
+  if (!m) {
+    if (memory.size >= MEM_LABELS) memory.delete(memory.keys().next().value)
+    m = []
+    memory.set(label, m)
+  }
+  return m
+}
+export function makePacer({ sliceMs = 40, yieldFn = null, now = clock, memory = STEP_MEMORY } = {}) {
   const st = { cpuMs: 0, waitMs: 0, maxBlockMs: 0, yields: 0, runs: 0, sections: {} }
   let running = false
   let sliceStart = 0
@@ -95,6 +116,7 @@ export function makePacer({ sliceMs = 40, yieldFn = null, now = clock } = {}) {
       sec = sectionOf(label)
       sec.runs++
       sliceStart = now()
+      const mem = memoryOf(memory, label)
       try {
         let t = now()
         for (let steps = 0; ; steps++) {
@@ -111,8 +133,12 @@ export function makePacer({ sliceMs = 40, yieldFn = null, now = clock } = {}) {
             sec.maxStepMs = step
             sec.maxStepAt = sec.steps
           }
+          if (steps < MEM_STEPS) mem[steps] = Math.max(step, 0.75 * (mem[steps] ?? 0))
           if (r.done) return r.value
-          if (yieldFn && t2 - sliceStart + step >= sliceMs) {
+          // The next step's predicted cost: the one just run, or what that
+          // step index cost before, whichever is larger.
+          const next = Math.max(step, steps + 1 < MEM_STEPS ? mem[steps + 1] ?? 0 : 0)
+          if (yieldFn && t2 - sliceStart + next >= sliceMs) {
             endSlice()
             running = false
             const w0 = now()

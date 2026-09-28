@@ -66,3 +66,6 @@ run lifeplan.js "  const rate = (f) => repPerHour0 * (1 + (state.favor?.[f] ?? 0
 run lifeplan.js "      if (!h || usedH() + h.extra > L + 1e-9) continue" "      if (!h) continue"
 run lifeplan.js "      if (rq > repBest || batchCost([...prices, p]) > money || levels > 200) break" "      if (batchCost([...prices, p]) > money || levels > 200) break"
 run plan.js "  if (inputs.cadenceFrom === 'purchase model') {" "  if (false) {"
+# the pacer predicts a step from its recorded cost (BY19)
+run coop.js "          const next = Math.max(step, steps + 1 < MEM_STEPS ? mem[steps + 1] ?? 0 : 0)" "          const next = step"
+run coop.js "          if (steps < MEM_STEPS) mem[steps] = Math.max(step, 0.75 * (mem[steps] ?? 0))" "          if (steps < MEM_STEPS) mem[steps] = Math.max(step, mem[steps] ?? 0)"
