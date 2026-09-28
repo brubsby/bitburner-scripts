@@ -350,6 +350,8 @@ export async function main(ns) {
           planned: false,
           pending: [],
           plan: null,
+          // Explicit zero, not absence: nothing planned holds nothing ([C9]).
+          budgetClaim: 0,
           // joinClaim is NOT optional here, and omitting it rebuilt the very
           // deadlock described above one claimant to the left.
           //
@@ -4888,6 +4890,8 @@ async function act(ns, canJoin, info, note) {
           planned: false,
           pending: [],
           plan: null,
+          // Explicit zero, not absence: nothing planned holds nothing ([C9]).
+          budgetClaim: 0,
           joinClaim: joinMoneyClaim(candidates, player),
           joinValueLn: joinValueLn(candidates, channelWeights),
           ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: wealthOf(player.money, stockNow) }),
@@ -5549,8 +5553,8 @@ async function act(ns, canJoin, info, note) {
     })()
     if (installHold && gate.install) {
       gate.heldBy = INSTALL_HOLD_FILE
-      gate.planOverride = gate.planOverride ?? (gate.plan?.install ? `the manual hold ${INSTALL_HOLD_FILE}` : null)
-      gate.planAgrees = gate.plan ? gate.plan.install === false : null
+      gate.planOverride = gate.planOverride ?? (gate.planDecision?.install ? `the manual hold ${INSTALL_HOLD_FILE}` : null)
+      gate.planAgrees = gate.planDecision ? gate.planDecision.install === false : null
       gate.wouldInstall = gate.why
       gate.install = false
       gate.why = `hold: ${INSTALL_HOLD_FILE}: ${installHold.slice(0, 200)} — the gate would install (${gate.wouldInstall})`
@@ -5892,7 +5896,7 @@ async function act(ns, canJoin, info, note) {
       // when The Red Pill is in the ordered batch (its donation included) or
       // already queued; otherwise nothing in this batch is ordered at all —
       // money spent on lesser augmentations is money the Red Pill needs.
-      const installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.plan?.key ?? null, capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
+      const installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.planDecision?.key ?? null, capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
       if (installRefused) {
         orders.length = firstPlanOrder
         did.push(`install NOT ordered: ${installRefused}`)
@@ -5986,7 +5990,7 @@ async function act(ns, canJoin, info, note) {
         // from the game at the install) lacks The Red Pill, and any
         // non-terminal install while the plan says 'never' in a capital node.
         orders[orders.length - 1].terminal = gate.terminal === true
-        orders[orders.length - 1].planInstall = gate.plan?.key ?? null
+        orders[orders.length - 1].planInstall = gate.planDecision?.key ?? null
         orders[orders.length - 1].batch = [...pending, ...bought]
         ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
         publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))

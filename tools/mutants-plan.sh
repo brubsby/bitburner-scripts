@@ -48,3 +48,8 @@ run bayes.js "    const c = typeof covOf === 'function' ? covOf(n) : 0" "    con
 run plan.js "  if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH" "  if (false) o.cycleHours = d.cycleH"
 run plan.js "    const ln = cad && fin(cad.rate?.mean) && fin(cad.rate?.sd) ? Math.exp(cad.rate.mean + cad.rate.sd * normalOf(st('cadenceRate'))) : null" "    const ln = cad && fin(cad.rate?.mean) ? Math.exp(cad.rate.mean) : null"
 run progress.js "cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })" "cadence: null })"
+# the aug claim survives every installgate write (structure C9b)
+runs() { echo "== $1: $2"; node tools/mutant.mjs "$1" "$2" "$3" structure 2>&1 | head -3; }
+runs installgate.js "    planDecision: bayes ? { key: bayes.key," "    plan: bayes ? { key: bayes.key,"
+runs watchdog.js "        if (!Number.isFinite(augClaim(claimSrc, claimLife))) unreadable.push" "        if (!isFinite(augClaim(claimSrc, claimLife))) unreadable.push"
+runs watchdog.js "          return Number.isFinite(join) &&" "          return isFinite(join) &&"

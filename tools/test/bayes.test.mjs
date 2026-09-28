@@ -394,7 +394,7 @@ export async function run() {
     const planHold = IG.shouldInstall({ ...base, exitCompare: { ...ex, waits: [], bayes: { install: false, key: "w2", waitMs: 2 * H, H: 69, q10: 60, q50: 69, q90: 80, why: "switch" } } });
     c8.note(`point comparison alone: install ${alone.install}; plan says now: install ${planInstall.install}; plan says wait 2h: install ${planHold.install} (${planHold.why.slice(0, 90)})`);
     if (alone.install !== false) c8.fail("fixture: the point comparison alone should hold");
-    if (planInstall.install !== true || planInstall.plan?.key !== "now") c8.fail("installgate must obey the plan's install-now decision (and publish it)");
+    if (planInstall.install !== true || planInstall.planDecision?.key !== "now") c8.fail("installgate must obey the plan's install-now decision (and publish it)");
     if (planHold.install !== false) c8.fail("installgate must obey the plan's hold even when no point wait beats now");
     if (planHold.exitBestWaitH !== 69) c8.fail("the gate must publish the plan's chosen wait and its expected exit", String(planHold.exitBestWaitH));
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");

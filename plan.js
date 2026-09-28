@@ -650,7 +650,7 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   // said "now" while the legacy join-money veto held, with nothing recording
   // which decider won or why.
   if (gate && plan.lastAugReset === gate.lastAugReset && typeof gate.planAgrees === 'boolean') {
-    if (gate.planAgrees === false && !gate.planOverride) fail(`PLAN OVERRIDDEN: the plan says ${gate.plan?.key ?? '?'} (install ${gate.plan?.install}) and the gate ${gate.install ? 'installs' : 'holds'}, naming no rule`, `gate: ${String(gate.why ?? '').slice(0, 200)}`)
+    if (gate.planAgrees === false && !gate.planOverride) fail(`PLAN OVERRIDDEN: the plan says ${gate.planDecision?.key ?? '?'} (install ${gate.planDecision?.install}) and the gate ${gate.install ? 'installs' : 'holds'}, naming no rule`, `gate: ${String(gate.why ?? '').slice(0, 200)}`)
     else if (gate.planAgrees === false) notes.push(`plan install overridden by ${gate.planOverride}`)
   }
   if (plan.exit) notes.push(`plan exit: mean ${plan.exit.meanH}h, 80% ${plan.exit.q10}-${plan.exit.q90}h (${plan.exit.source})`)

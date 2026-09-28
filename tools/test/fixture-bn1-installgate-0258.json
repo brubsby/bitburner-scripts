@@ -1,0 +1,958 @@
+{
+  "at": "2026-09-28T02:58:49.287Z",
+  "lastAugReset": 1790559854171,
+  "planned": true,
+  "gangWorth": {
+    "worth": true,
+    "arm": "fleet",
+    "playerSlot": false,
+    "decidedBy": "plan",
+    "gainHours": 0.03532317700232923,
+    "grindHours": 6.736988387026688,
+    "withH": 30.057290477950296,
+    "withoutH": 30.092613654952626,
+    "arms": {
+      "fleet": {
+        "grindH": 6.736988387026688,
+        "withH": 30.057290477950296
+      },
+      "player": {
+        "grindH": 5.518695529719177,
+        "withH": 35.47103797778695,
+        "lowerH": 30.04693648898116
+      }
+    },
+    "repSource": "measured",
+    "decision": {
+      "key": "fleet",
+      "meanH": 30.765,
+      "pWin": 0.542,
+      "held": false,
+      "why": "stays on fleet: the best alternative none is expected 0.11h sooner net of a 0.05h switch cost and better in 54% of 24 paired draws (needs a positive gain and 80%)"
+    },
+    "why": "WORTH IT (the sleeves grind; the work slot keeps its plan) in BitNode 1: the plan commits 'fleet' (stays on fleet: the best alternative none is expected 0.11h sooner net of a 0.05h switch cost and better in 54% of 24 pa); point: exit 30.1h without a gang; with: fleet (grind 6.7h) 30.1h, player (grind 5.5h) 35.5h [slot free: 30.0h] -> fleet",
+    "grind": {
+      "fleetH": 6.736988387026688,
+      "playerH": 5.518695529719177,
+      "fleetKarmaPerSecNow": 1.4564807931663908,
+      "fleetKarmaPerSecEnd": 2.560342592102976,
+      "crimes": [
+        "Homicide",
+        "Homicide",
+        "Homicide",
+        "Homicide",
+        "Homicide"
+      ]
+    }
+  },
+  "joinClaim": 100000000000,
+  "joinValueLn": 10.805528230268653,
+  "homeLnPerDollar": 0,
+  "homeValueLn": 0,
+  "homeValueWhy": null,
+  "homeLnJoin": 0,
+  "homeLnPlan": 0,
+  "eBudget": 0,
+  "remainingWindows": 36.5,
+  "probeMoney": 154334367027.68903,
+  "pending": [],
+  "heldM": 1,
+  "incomeSample": {
+    "at": "2026-09-28T02:58:49.287Z",
+    "incomePerSec": 30770145.07125099,
+    "hacking": 488,
+    "hackingExp": 4539740.822876983,
+    "hackingMult": 1.6820532727061264,
+    "expPerSec": 1250.5301699338868
+  },
+  "incomeCalibration": {
+    "overHours": 0.08,
+    "predicted": 31065518,
+    "actual": 30770145,
+    "actualOverPredicted": 0.99
+  },
+  "futuresCalibration": {
+    "samples": [
+      {
+        "waitMs": 629601.9311470021,
+        "predictedM": 1.2408204408151806,
+        "baselineM": 1.1177418233090222,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.10446238585223731,
+        "realisedGain": 0.4706754120448995,
+        "ratio": 1
+      },
+      {
+        "waitMs": 482938.555923301,
+        "predictedM": 1.67581638319132,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.24915171073526438,
+        "realisedGain": 0.31483710408276694,
+        "ratio": 1
+      },
+      {
+        "waitMs": 542550.0202629539,
+        "predictedM": 1.7915615640123068,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.31593889292387517,
+        "realisedGain": 0.31483710408276694,
+        "ratio": 0.996512652079927
+      },
+      {
+        "waitMs": 550289.8994601902,
+        "predictedM": 1.7915615640123068,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.31593889292387517,
+        "realisedGain": 0.31483710408276694,
+        "ratio": 0.996512652079927
+      },
+      {
+        "waitMs": 564422.020556791,
+        "predictedM": 1.7915615640123068,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.31593889292387517,
+        "realisedGain": 0.31483710408276694,
+        "ratio": 0.996512652079927
+      },
+      {
+        "waitMs": 568808.2595656387,
+        "predictedM": 1.7915615640123068,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.31593889292387517,
+        "realisedGain": 0.31483710408276694,
+        "ratio": 0.996512652079927
+      },
+      {
+        "waitMs": 571108.3027076055,
+        "predictedM": 1.7915615640123068,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.789588728496573,
+        "predictedGain": 0.31593889292387517,
+        "realisedGain": 0.31483710408276694,
+        "ratio": 0.996512652079927
+      },
+      {
+        "waitMs": 900000,
+        "predictedM": 1.9153010257208993,
+        "baselineM": 1.306234706545171,
+        "actualM": 1.4997669823740112,
+        "predictedGain": 0.38272607511248596,
+        "realisedGain": 0.13816102220243165,
+        "ratio": 0.3609919239545545
+      }
+    ],
+    "trust": 0.996512652079927,
+    "source": "median delivery over 8 matured projection(s), 1 new this pass"
+  },
+  "covenantExit": {
+    "active": false,
+    "why": "Covenant sleeves are sold only inside BitNode 10",
+    "crossNode": "not simulated: sleevesFromCovenant persists into every later node (only prestigeSourceFile resets a sleeve, never the count)"
+  },
+  "sleeveAugExit": {
+    "at": "2026-09-28T02:58:47.937Z",
+    "buy": [],
+    "why": "nothing priced (base exit 30.4h)",
+    "withoutH": 30.38942800903819
+  },
+  "spendExit": {
+    "at": "2026-09-28T02:58:49.288Z",
+    "lastAugReset": 1790559854171,
+    "W": 0,
+    "finalWindow": false,
+    "home": {
+      "buy": false,
+      "pBuy": 0.528,
+      "cost": 31724513419.032978,
+      "gainPerSec": 1192623.0799919723,
+      "deltaH": -0.05625740313831784,
+      "withH": 28.511358317271505,
+      "withoutH": 28.567615720409822,
+      "why": "exit 28.51h with vs 28.57h without (-0.056h) — plan: hold: the exit shortens by 0.056h against a 0.81h option-specific error — P(better) 53% (needs 80%; parameter uncertainty not propagated for spends)",
+      "kind": "RAM"
+    },
+    "hacknet": {
+      "buy": false,
+      "pBuy": 0.5,
+      "cost": 286.52481334590993,
+      "gainPerSec": 5.611502706692016,
+      "deltaH": 0,
+      "withH": 28.567615720409822,
+      "withoutH": 28.567615720409822,
+      "why": "exit 28.57h with vs 28.57h without (+0.000h) — plan: hold: the exit lengthens by 0.000h against a 0.81h option-specific error — P(better) 50% (needs 80%; parameter uncertainty not propagated for spends)",
+      "kind": "level",
+      "index": 5
+    },
+    "servers": {
+      "buy": false,
+      "maxSpend": 0,
+      "why": "no fleet spend shortens the exit"
+    }
+  },
+  "futurePredictions": [
+    {
+      "madeAt": 1790563125984,
+      "dueAt": 1790564925984,
+      "waitMs": 1800000,
+      "predictedM": 1.5259337571390739,
+      "baselineM": 1.1177418233090222
+    },
+    {
+      "madeAt": 1790563125984,
+      "dueAt": 1790566725984,
+      "waitMs": 3600000,
+      "predictedM": 1.5689931809695903,
+      "baselineM": 1.1177418233090222
+    },
+    {
+      "madeAt": 1790563125984,
+      "dueAt": 1790570325984,
+      "waitMs": 7200000,
+      "predictedM": 1.6132676732602818,
+      "baselineM": 1.1177418233090222
+    },
+    {
+      "madeAt": 1790563125984,
+      "dueAt": 1790577525984,
+      "waitMs": 14400000,
+      "predictedM": 1.705599979953415,
+      "baselineM": 1.1177418233090222
+    },
+    {
+      "madeAt": 1790563125984,
+      "dueAt": 1790594338252.6184,
+      "waitMs": 31212268.618366834,
+      "predictedM": 1.8541006595193559,
+      "baselineM": 1.1177418233090222
+    },
+    {
+      "madeAt": 1790563426002,
+      "dueAt": 1790565226002,
+      "waitMs": 1800000,
+      "predictedM": 2.3826977840744803,
+      "baselineM": 1.306234706545171
+    },
+    {
+      "madeAt": 1790563426002,
+      "dueAt": 1790567026002,
+      "waitMs": 3600000,
+      "predictedM": 2.547265805145068,
+      "baselineM": 1.306234706545171
+    },
+    {
+      "madeAt": 1790563426002,
+      "dueAt": 1790570626002,
+      "waitMs": 7200000,
+      "predictedM": 2.7232001999706927,
+      "baselineM": 1.306234706545171
+    },
+    {
+      "madeAt": 1790563426002,
+      "dueAt": 1790577826002,
+      "waitMs": 14400000,
+      "predictedM": 3.2708298440775807,
+      "baselineM": 1.306234706545171
+    },
+    {
+      "madeAt": 1790563426002,
+      "dueAt": 1790564404321.269,
+      "waitMs": 978319.2690220409,
+      "predictedM": 2.047586916807917,
+      "baselineM": 1.306234706545171
+    },
+    {
+      "madeAt": 1790563726121,
+      "dueAt": 1790564626121,
+      "waitMs": 900000,
+      "predictedM": 1.4370259485141579,
+      "baselineM": 1.4370259485141579
+    },
+    {
+      "madeAt": 1790563726121,
+      "dueAt": 1790565526121,
+      "waitMs": 1800000,
+      "predictedM": 1.4370259485141579,
+      "baselineM": 1.4370259485141579
+    },
+    {
+      "madeAt": 1790563726121,
+      "dueAt": 1790567326121,
+      "waitMs": 3600000,
+      "predictedM": 1.4370259485141579,
+      "baselineM": 1.4370259485141579
+    },
+    {
+      "madeAt": 1790563726121,
+      "dueAt": 1790570926121,
+      "waitMs": 7200000,
+      "predictedM": 1.4370259485141579,
+      "baselineM": 1.4370259485141579
+    },
+    {
+      "madeAt": 1790563726121,
+      "dueAt": 1790578126121,
+      "waitMs": 14400000,
+      "predictedM": 1.4370259485141579,
+      "baselineM": 1.4370259485141579
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564926148,
+      "waitMs": 900000,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790565826148,
+      "waitMs": 1800000,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790567626148,
+      "waitMs": 3600000,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790571226148,
+      "waitMs": 7200000,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790578426148,
+      "waitMs": 14400000,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564411377.8828,
+      "waitMs": 385229.88293278543,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564447700.7944,
+      "waitMs": 421552.7944698977,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564543776.4114,
+      "waitMs": 517628.4114093161,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564543823.6106,
+      "waitMs": 517675.6106915588,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564578697.8633,
+      "waitMs": 552549.8633605698,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564580803.1135,
+      "waitMs": 554655.113459022,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564026148,
+      "dueAt": 1790564593275.7292,
+      "waitMs": 567127.7292721929,
+      "predictedM": 1.789588728496573,
+      "baselineM": 1.789588728496573
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790565227933,
+      "waitMs": 900000,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790566127933,
+      "waitMs": 1800000,
+      "predictedM": 1.793436355526447,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790567927933,
+      "waitMs": 3600000,
+      "predictedM": 2.2357713426339263,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790571527933,
+      "waitMs": 7200000,
+      "predictedM": 2.501257626804233,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790578727933,
+      "waitMs": 14400000,
+      "predictedM": 2.914177925408597,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564798878.9146,
+      "waitMs": 470945.9146183833,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564897330.763,
+      "waitMs": 569397.7629230875,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564904639.8354,
+      "waitMs": 576706.835344726,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564924360.982,
+      "waitMs": 596427.981982956,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564926613.4688,
+      "waitMs": 598680.4686339021,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564930446.197,
+      "waitMs": 602513.1970681179,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790564934479.8855,
+      "waitMs": 606546.8855208579,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    },
+    {
+      "madeAt": 1790564327933,
+      "dueAt": 1790565383735.5725,
+      "waitMs": 1055802.5724533177,
+      "predictedM": 1.4997669823740112,
+      "baselineM": 1.4997669823740112
+    }
+  ],
+  "objective": {
+    "source": "exit-sensitivity",
+    "exitSensitivity": {
+      "hoursPerLn": {
+        "hacking": 21.053515229954485,
+        "rep": 86.68208752969491,
+        "income": 0,
+        "exp": 0.9464281905181338
+      },
+      "exitH": 24.194,
+      "W": 0,
+      "baseH": 37.5628889601568,
+      "exitSource": "plan: median over the posterior (w0.068), 80% interval 20.888-29.753h"
+    },
+    "eBudget": 0,
+    "eRep": 0.4418,
+    "remainingWindows": 36.5,
+    "windowH": 0.348,
+    "probeMoney": 154334367027.68903,
+    "probedAtProjected": false,
+    "chanceObs": 0.96875,
+    "growShare": 0.652557319223986,
+    "calSource": "live",
+    "weights": {
+      "hacking": 1,
+      "faction_rep": 4.1172,
+      "hacking_money": 0,
+      "hacking_speed": 0,
+      "hacking_chance": 0,
+      "hacking_grow": 0,
+      "hacking_exp": 0.045
+    }
+  },
+  "exitH": 24.194,
+  "exitSource": "plan: median over the posterior (w0.068), 80% interval 20.888-29.753h",
+  "exitCalibration": {
+    "node": 1,
+    "samples": [
+      {
+        "at": "2026-09-28T00:38:30.802Z",
+        "exitH": 142.94,
+        "life": 1790554105402,
+        "source": "plan: median over the posterior (w0.1750221854456278), 80% interval 125.918-152.866h — reputation from the formula estimate (no faction work measured this life): 2.409/s base",
+        "ver": "18u7koh.35",
+        "boot": 1790555906926
+      },
+      {
+        "at": "2026-09-28T00:53:30.149Z",
+        "exitH": 157.41,
+        "life": 1790554105402,
+        "source": "plan: median over the posterior (now, held), 80% interval 142.453-169.747h — reputation from the formula estimate (no faction work measured this life): 2.861/s base",
+        "ver": "18u7koh.35",
+        "boot": 1790556807017
+      },
+      {
+        "at": "2026-09-28T01:08:31.316Z",
+        "exitH": 126.62,
+        "life": 1790554105402,
+        "source": "plan: median over the posterior (now, held), 80% interval 115.282-136.148h",
+        "ver": "b1miw2.35",
+        "boot": 1790557707151
+      },
+      {
+        "at": "2026-09-28T01:13:46.669Z",
+        "exitH": 85.09,
+        "life": 1790557722444,
+        "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 59.583-100.25h — reputation from the formula estimate (no faction work measured this life): 2.720/s base",
+        "ver": "b1miw2.35",
+        "boot": 1790558023574
+      },
+      {
+        "at": "2026-09-28T01:28:46.489Z",
+        "exitH": 127.53,
+        "life": 1790557722444,
+        "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 96.397-186.712h",
+        "ver": "1b87u52.35",
+        "boot": 1790558923706
+      },
+      {
+        "at": "2026-09-28T01:43:44.251Z",
+        "exitH": 37.16,
+        "life": 1790557722444,
+        "source": "plan: median over the posterior (w2), 80% interval 23.209-63.919h",
+        "ver": "1b87u52.35",
+        "boot": 1790559823820
+      },
+      {
+        "at": "2026-09-28T01:48:49.333Z",
+        "exitH": 75.86,
+        "life": 1790559854171,
+        "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 44.931-145.459h — reputation from the formula estimate (no faction work measured this life): 3.523/s base",
+        "ver": "1b87u52.35",
+        "boot": 1790560125569
+      },
+      {
+        "at": "2026-09-28T02:03:45.829Z",
+        "exitH": 45.55,
+        "life": 1790559854171,
+        "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 32.274-76.275h — reputation from the formula estimate (no faction work measured this life): 6.562/s base",
+        "ver": "1b87u52.35",
+        "boot": 1790561025671
+      },
+      {
+        "at": "2026-09-28T02:18:50.789Z",
+        "exitH": 108.02,
+        "life": 1790559854171,
+        "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 70.667-129.846h",
+        "ver": "1b87u52.35",
+        "boot": 1790561925779
+      },
+      {
+        "at": "2026-09-28T02:33:46.477Z",
+        "exitH": 31.98,
+        "life": 1790559854171,
+        "source": "plan: median over the posterior (w0.48534842881386414), 80% interval 27.676-45.41h",
+        "ver": "1b87u52.35",
+        "boot": 1790562825879
+      },
+      {
+        "at": "2026-09-28T02:48:47.077Z",
+        "exitH": 46.68,
+        "life": 1790559854171,
+        "source": "plan: median over the posterior (w0.235, held), 80% interval 39.691-68.168h",
+        "ver": "1xn6sk5.35",
+        "boot": 1790563726033
+      }
+    ],
+    "predictedPerH": -1,
+    "realisedPerH": -46.742,
+    "errPerH": 146.397,
+    "pairs": 8,
+    "why": "over 8 same-life pairs (2.0h): the exit moved -46.74h per hour against -1 predicted",
+    "tolPerH": 146.397,
+    "tolSource": "measured: over 8 same-life pairs (2.0h): the exit moved -46.74h per hour against -1 predicted"
+  },
+  "countRoute": null,
+  "budgetClaim": 0,
+  "futures": [
+    {
+      "waitMs": 900000,
+      "M": 1.4997669823740112,
+      "repProjected": 6948,
+      "moneyProjected": 77622169883,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 1800000,
+      "M": 1.7923182800866015,
+      "repProjected": 14046,
+      "moneyProjected": 171724162390,
+      "buy": [
+        "Embedded Netburner Module",
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.793436355526447,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 3600000,
+      "M": 2.232660384769309,
+      "repProjected": 28603,
+      "moneyProjected": 431130112315,
+      "buy": [
+        "Embedded Netburner Module",
+        "Cranial Signal Processors - Gen I",
+        "Cranial Signal Processors - Gen II",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 2.2357713426339263,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 7200000,
+      "M": 2.496800054432834,
+      "repProjected": 58781,
+      "moneyProjected": 1514920305963,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "Cranial Signal Processors - Gen II",
+        "Cranial Signal Processors - Gen III",
+        "Embedded Netburner Module",
+        "CRTX42-AA Gene Modification",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 2.501257626804233,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 14400000,
+      "M": 2.907434845896921,
+      "repProjected": 121946,
+      "moneyProjected": 10858785407187,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "Cranial Signal Processors - Gen II",
+        "Cranial Signal Processors - Gen III",
+        "Embedded Netburner Module",
+        "CRTX42-AA Gene Modification",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 2.914177925408597,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 470945.9146183833,
+      "M": 1.4997669823740112,
+      "repProjected": 3615,
+      "holdFor": "Tian Di Hui",
+      "holdRepTarget": 5288,
+      "moneyProjected": 38817855597,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 569397.7629230875,
+      "M": 1.4997669823740112,
+      "repProjected": 4376,
+      "holdFor": "New Tokyo",
+      "holdRepTarget": 5288,
+      "moneyProjected": 47416207899,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 576706.835344726,
+      "M": 1.4997669823740112,
+      "repProjected": 4433,
+      "holdFor": "Chongqing",
+      "holdRepTarget": 5288,
+      "moneyProjected": 48061587916,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 596427.981982956,
+      "M": 1.4997669823740112,
+      "repProjected": 4586,
+      "holdFor": "The Black Hand",
+      "holdRepTarget": 5288,
+      "moneyProjected": 49807847036,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 598680.4686339021,
+      "M": 1.4997669823740112,
+      "repProjected": 4603,
+      "holdFor": "Slum Snakes",
+      "holdRepTarget": 5288,
+      "moneyProjected": 50007756540,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 602513.1970681179,
+      "M": 1.4997669823740112,
+      "repProjected": 4633,
+      "holdFor": "Ishima",
+      "holdRepTarget": 5288,
+      "moneyProjected": 50348129464,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 606546.8855208579,
+      "M": 1.4997669823740112,
+      "repProjected": 4664,
+      "holdFor": "Tetrads",
+      "holdRepTarget": 6714,
+      "moneyProjected": 50706643242,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    },
+    {
+      "waitMs": 1055802.5724533177,
+      "M": 1.4997669823740112,
+      "repProjected": 8166,
+      "holdFor": "NiteSec",
+      "holdRepTarget": 10000,
+      "moneyProjected": 92610728731,
+      "buy": [
+        "Cranial Signal Processors - Gen I",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor",
+        "NeuroFlux Governor"
+      ],
+      "MUndiscounted": 1.4997669823740112,
+      "trustApplied": 0.996512652079927
+    }
+  ],
+  "plannedM": 1.4997669823740112,
+  "countComposition": null,
+  "plan": {
+    "key": "w0.068",
+    "install": false,
+    "meanH": 24.763,
+    "q10": 20.888,
+    "q50": 24.194,
+    "q90": 29.753,
+    "held": false,
+    "why": "stays on committed: the best alternative w2 is expected 0.17h sooner net of a 0.05h switch cost and better in 58% of 24 paired draws (needs a positive gain and 80%)"
+  },
+  "M": 1.4997669823740112,
+  "queued": 8,
+  "ageMs": 4474049,
+  "exp": 4539740.822876983,
+  "target": 3000,
+  "rateNow": 0.3538875059870747,
+  "rho": 0.24651753769382706,
+  "rhoSource": "median of 4 completed BitNode 1 life/lives",
+  "sample": {
+    "ageMs": 4474049,
+    "M": 1.4997669823740112
+  },
+  "install": true,
+  "terminal": false,
+  "marginal": -2.1058563351748893,
+  "expOk": true,
+  "f": 290.5119434882998,
+  "goBonusPct": 33.895,
+  "favorGain": 1.0351005731470975,
+  "Meff": 1.5524096630424318,
+  "rateWait": 0.3735044063123613,
+  "bestWait": null,
+  "marginal1": 0.3978841211133192,
+  "countShort": 15,
+  "countGain": 1,
+  "countStalls": false,
+  "countBanks": true,
+  "countInstall": true,
+  "countFloor": 3,
+  "countWants": true,
+  "countDecidedBy": "priced",
+  "countTimingWhy": "every obtainable ticket (1) is already in the batch — waiting cannot add one",
+  "decidedBy": "exit-sim",
+  "exitNowH": 28.56724072040982,
+  "exitBestWaitH": 24.763,
+  "exitNeverH": 116.82624291344487,
+  "waitTolPerH": null,
+  "waitTolWhy": null,
+  "tieWait": null,
+  "planAgrees": false,
+  "planOverride": "the count batch rule",
+  "binding": {
+    "gate": "multiplier",
+    "destroyedByInstall": false,
+    "source": "simulated",
+    "why": "simulated: installing 3 more time(s) then finishing takes 30.09h against 116.83h for holding — the multiplier is still worth more than the cash"
+  },
+  "destructive": false,
+  "why": "install: COUNT BATCH — 1 distinct augmentation(s) toward the 15 the exit still needs, decided by the priced timing: every obtainable ticket (1) is already in the batch — waiting cannot add one. M=1.4998 is expected for tickets and is NOT a reason to hold."
+}

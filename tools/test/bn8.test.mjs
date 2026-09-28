@@ -901,8 +901,8 @@ export async function run() {
     if (rep.install !== false || !rep.planOverride) z8.fail("a gate outside the plan's trajectory (the terminal rep) still vetoes, named");
     // (3) The final install verdict is checked against the plan.
     const plan = { at: new Date().toISOString(), lastAugReset: 1, decisions: { install: { key: "now" } } };
-    const pc1 = PL.planCheck(plan, { gate: { lastAugReset: 1, at: new Date().toISOString(), install: false, planAgrees: false, planOverride: null, plan: { key: "now", install: true }, why: "hold" } });
-    const pc2 = PL.planCheck(plan, { gate: { lastAugReset: 1, at: new Date().toISOString(), install: false, planAgrees: false, planOverride: "the manual hold", plan: { key: "now", install: true } } });
+    const pc1 = PL.planCheck(plan, { gate: { lastAugReset: 1, at: new Date().toISOString(), install: false, planAgrees: false, planOverride: null, planDecision: { key: "now", install: true }, why: "hold" } });
+    const pc2 = PL.planCheck(plan, { gate: { lastAugReset: 1, at: new Date().toISOString(), install: false, planAgrees: false, planOverride: "the manual hold", planDecision: { key: "now", install: true } } });
     if (!pc1.fails.some((f) => /PLAN OVERRIDDEN/.test(f.what))) z8.fail("an unnamed override of the plan must fail the plan check");
     if (pc2.fails.some((f) => /PLAN OVERRIDDEN/.test(f.what)) || !pc2.notes.some((n) => /overridden by the manual hold/.test(n))) z8.fail("a named override is noted, not failed");
     // (4) The message states the node's reset money.

@@ -737,7 +737,12 @@ export function shouldInstall(o) {
     planAgrees: bayes ? bayes.install === install : null,
     planOverride,
     moneyGateInPlan: moneyGateInPlan || undefined,
-    plan: bayes ? { key: bayes.key, install: bayes.install, meanH: bayes.H, q10: bayes.q10 ?? null, q50: bayes.q50 ?? null, q90: bayes.q90 ?? null, held: bayes.held === true, why: bayes.why ?? null } : null,
+    // NOT `plan`: progress.js spreads this object into /tel/installgate.txt
+    // after the aug-purchase `plan` that budget.js reads (augClaim,
+    // marginalLnPerDollar: plan.buy / plan.totalCost), and a `plan` here
+    // replaced it — live BN1 2026-09-28 02:58 the claim file carried the
+    // Bayesian decision where the purchase plan belonged ([C9]).
+    planDecision: bayes ? { key: bayes.key, install: bayes.install, meanH: bayes.H, q10: bayes.q10 ?? null, q50: bayes.q50 ?? null, q90: bayes.q90 ?? null, held: bayes.held === true, why: bayes.why ?? null } : null,
     binding: o.binding ?? null,
     destructive,
     mandateHold: mandateHold || undefined,

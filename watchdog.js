@@ -639,7 +639,7 @@ const WATCHED = [
         if (x && x.lastAugReset === claimLife && Date.now() - Date.parse(x.at) < 15 * 60e3 && v?.cost > 0 && v.kind === next.kind && Math.abs(v.cost / next.cost - 1) < 0.01) {
           if (!v.buy) return false
           const join = joinClaim(claimSrc, claimLife)
-          return isFinite(join) && ns.getServerMoneyAvailable('home') >= next.cost + join
+          return Number.isFinite(join) && ns.getServerMoneyAvailable('home') >= next.cost + join
         }
       } catch {
         /* fall back to the claims rule */
@@ -685,8 +685,11 @@ const WATCHED = [
         // reader's time disproving it. Recomputed here rather than threaded out
         // of budgetHold so this stays a pure reporting path.
         const unreadable = []
-        if (!isFinite(joinClaim(claimSrc, claimLife))) unreadable.push('joinClaim (join money)')
-        if (!isFinite(augClaim(claimSrc, claimLife))) unreadable.push('augClaim (augmentation plan)')
+        // Number.isFinite, not the global: isFinite(null) is TRUE, so a null
+        // (unreadable) claim passed as readable and the block was blamed on
+        // 'budgetHold itself' (live BN1 2026-09-28, 11 cycles).
+        if (!Number.isFinite(joinClaim(claimSrc, claimLife))) unreadable.push('joinClaim (join money)')
+        if (!Number.isFinite(augClaim(claimSrc, claimLife))) unreadable.push('augClaim (augmentation plan)')
         return {
           blocked:
             `/tel/installgate.txt does not yield a usable claim: ${unreadable.join(' and ') || 'budgetHold itself'} ` +

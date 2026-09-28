@@ -39,6 +39,8 @@
 // is the ground truth for them. C6 is the check that keeps the *other* files
 // calibrated.
 
+import "./gameresolve.mjs";
+import { REPO_ROOT } from "./gameresolve.mjs";
 import { Check } from "./harness.mjs";
 import { read, lines, rootScripts, allFiles, grepRepo, dedupeAdjacent } from "./acd-sources.mjs";
 import fs from "node:fs";
@@ -703,6 +705,106 @@ function c9() {
   return c;
 }
 
+/**
+ * C9b — the AUGMENTATION claim survives every write, and nothing spread into
+ * the record can replace it.
+ *
+ * Live BN1 2026-09-28 02:58: the planned:true write set `plan` to the
+ * aug-purchase plan (buy, totalCost) and then spread installgate's verdict
+ * (`...gate`) after it — and the verdict carried the Bayesian install decision
+ * under the same name, `plan`. The file read `plan: {key 'w0.068', install
+ * false, meanH 24.76, ...}`: budget.js's marginalLnPerDollar found no
+ * plan.buy, augClaim leaned on budgetClaim alone, and homeup.js sat BLOCKED
+ * behind a watchdog diagnostic that blamed "budgetHold itself" (its readability
+ * test used the global isFinite, which is TRUE for null).
+ *
+ * So, per write of the gate file in progress.js:
+ *  - planned: true  -> `plan:` and a `budgetClaim:` are written, and every spread
+ *    AFTER `plan:` is one whose keys are proven below not to collide;
+ *  - planned: false -> explicit `plan: null` and `budgetClaim: 0`.
+ * Behaviourally: installgate.shouldInstall's verdict (the `...gate` spread),
+ * with and without a plan decision, carries none of the claim fields. And the
+ * live 02:58 record replays: its `plan` is not a purchase plan (the shape
+ * check this suite would have caught it with), and the watchdog names an
+ * unreadable claim instead of blaming budgetHold.
+ */
+async function c9b() {
+  const c = new Check("C9b", "the aug claim survives every /tel/installgate.txt write: planned writes carry plan + budgetClaim, empty ones explicit zeros, and no spread replaces a claim field (replay BN1 02:58)");
+  const CLAIM_FIELDS = ["plan", "planned", "budgetClaim", "joinClaim", "joinValueLn", "homeLnPerDollar", "lastAugReset", "pending"];
+  const src = read("progress.js");
+  let found = 0;
+  for (let i = src.indexOf("ns.write("); i >= 0; i = src.indexOf("ns.write(", i + 1)) {
+    if (!/ns\.write\(\s*GATE\b/.test(src.slice(i, i + 40))) continue;
+    found++;
+    let depth = 0;
+    let end = i;
+    for (let j = src.indexOf("(", i); j < src.length; j++) {
+      if (src[j] === "(") depth++;
+      else if (src[j] === ")") {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    const bare = src.slice(i, end + 1).replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const line = src.slice(0, i).split("\n").length;
+    c.examined(1);
+    const planned = /\bplanned:\s*true\b/.test(bare) ? true : /\bplanned:\s*false\b/.test(bare) ? false : null;
+    if (planned === null) {
+      c.fail(`progress.js:${line} writes the claim file without a literal planned: true/false`, "the reader cannot tell 'nothing planned' from 'unknown'");
+      continue;
+    }
+    const planAt = bare.search(/\bplan:\s*/);
+    if (planAt < 0) {
+      c.fail(`progress.js:${line} writes the claim file without \`plan\``, "augClaim reads plan (null + planned:false is the known zero)");
+      continue;
+    }
+    if (planned) {
+      if (!/\bbudgetClaim:/.test(bare)) c.fail(`progress.js:${line} planned write without budgetClaim`, "augClaim's net claim must be published on every planned write");
+      // Every spread after `plan:` must be a verdict proven collision-free below.
+      for (const m of bare.slice(planAt).matchAll(/\.\.\.\s*([A-Za-z_$][\w$.]*)/g)) {
+        if (m[1] !== "gate") c.fail(`progress.js:${line} spreads \`...${m[1]}\` after \`plan:\``, "a spread after the claim fields can replace them; spread before `plan:`, or prove its keys here");
+      }
+    } else {
+      if (!/\bplan:\s*null\b/.test(bare) || !/\bbudgetClaim:\s*0\b/.test(bare)) c.fail(`progress.js:${line} empty write without explicit plan: null and budgetClaim: 0`, "nothing planned is a known zero, published, never absence");
+    }
+  }
+  if (!found) c.fail("no ns.write(GATE, ...) found in progress.js", "the parser looked and found nothing");
+  // The `...gate` spread: installgate's verdict carries no claim field.
+  const IG = await import(path.join(REPO_ROOT, "installgate.js"));
+  const H = 3600e3;
+  const base = { ageMs: 2 * H, M: 1.01, queued: 1, exp: 1e9, prev: null, futures: [], countShort: 1, countGain: 1, countTiming: { installNow: true, why: "x" }, capitalNode: true };
+  const ex = { countAware: true, nowH: 70, neverH: null, waits: [{ waitMs: 4 * H, H: 60 }], waitTolPerH: 0.5 };
+  const verdicts = [IG.shouldInstall(base), IG.shouldInstall({ ...base, exitCompare: ex }), IG.shouldInstall({ ...base, exitCompare: { ...ex, bayes: { install: false, key: "w0.068", waitMs: 0.068 * H, H: 24.76, q10: 20.9, q50: 24.2, q90: 29.8, why: "stays on committed" } } })];
+  for (const v of verdicts) {
+    c.examined(1);
+    const bad = Object.keys(v ?? {}).filter((k) => CLAIM_FIELDS.includes(k));
+    if (bad.length) c.fail(`installgate.shouldInstall's verdict carries claim field(s) ${bad.join(", ")}`, "progress.js spreads it after the claims: it would replace them");
+  }
+  if (!verdicts[2]?.planDecision || verdicts[2].planDecision.key !== "w0.068") c.fail("the Bayesian install decision must still be published (as planDecision)");
+  // Replay the live record.
+  const B = await import(path.join(REPO_ROOT, "budget.js"));
+  const text = fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn1-installgate-0258.json"), "utf8");
+  const rec = JSON.parse(text);
+  const purchasePlan = (d) => d.plan === null ? d.planned === false : Array.isArray(d.plan?.buy) && Number.isFinite(d.plan?.totalCost);
+  c.examined(1);
+  if (purchasePlan(rec)) c.fail("fixture: the 02:58 record's plan should be the Bayesian decision (the collision), not a purchase plan");
+  else c.note(`replay 02:58: plan = {${Object.keys(rec.plan).join(", ")}} — not a purchase plan; marginalLnPerDollar.augmentations = ${B.marginalLnPerDollar(text, rec.lastAugReset).augmentations}`);
+  const fixed = { ...rec, planDecision: rec.plan, plan: { buy: [{ name: "x", price: 1e9, m: 1.05 }], totalCost: 1e9 } };
+  if (!purchasePlan(fixed) || !Number.isFinite(B.augClaim(JSON.stringify(fixed), rec.lastAugReset)) || !Number.isFinite(B.marginalLnPerDollar(JSON.stringify(fixed), rec.lastAugReset).augmentations)) c.fail("the record with the decision under planDecision must yield a finite aug claim and rival figure");
+  // After the install at 02:59:13 the same record is another life's: both
+  // claims unreadable, and the watchdog must NAME them (Number.isFinite).
+  const nextLife = 1790564353723;
+  if (B.augClaim(text, nextLife) !== null || B.joinClaim(text, nextLife) !== null) c.fail("fixture: the old life's record must read unknown in the next life");
+  if (isFinite(B.augClaim(text, nextLife)) !== true) c.note("(global isFinite(null) is no longer true?)");
+  const wd = read("watchdog.js");
+  if (!/if \(!Number\.isFinite\(joinClaim\(claimSrc, claimLife\)\)\) unreadable\.push/.test(wd) || !/if \(!Number\.isFinite\(augClaim\(claimSrc, claimLife\)\)\) unreadable\.push/.test(wd)) c.fail("watchdog.js must test claim readability with Number.isFinite (isFinite(null) is true: an unreadable claim was blamed on 'budgetHold itself')");
+  if (/return isFinite\(join\)/.test(wd)) c.fail("watchdog.js spendExit path: isFinite(join) passes a null join claim as zero");
+  return c;
+}
+
 
 /* ======================================================================== */
 /**
@@ -1144,7 +1246,7 @@ function c11() {
 
 export async function run() {
   const managed = managedSet();
-  return [c1(managed), c2(), c3(), c4(), c6(), c7(), c8(), c9(), c10(), c11(), c12()];
+  return [c1(managed), c2(), c3(), c4(), c6(), c7(), c8(), c9(), await c9b(), c10(), c11(), c12()];
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
