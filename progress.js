@@ -166,6 +166,7 @@ import { enter, leave } from 'trace.js'
 // the commitment rule. Pure: free to import.
 import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, modelVersionFrom } from 'plan.js'
 import { incomePrior } from 'bayes.js'
+import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1718,6 +1719,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
  */
 const GRAFT_SEARCH_MS = 250
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
+let ownedAugsNow = new Set() // this pass's owned + queued augmentations (the purchase model's prerequisites)
 let redPillRepReq = null // the catalogue's Red Pill requirement this pass (exitInputsOf)
 async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, countCtx = null) {
   const pc = planCtxOf(ns, info)
@@ -2631,7 +2633,45 @@ function incomePriorOf(ns, info, player) {
 function cadenceOptsOf(player) {
   return { hackMultNow: player?.mults?.hacking ?? null, covOf: (n) => (bitNodeMults(n) ? Math.log(bitNodeMults(n).AugmentationMoneyCost * bitNodeMults(n).AugmentationRepCost) : 0) }
 }
+// THE LIFE'S LENGTH, CHOSEN (lifeplan.cadenceByPurchases): what a life of
+// each length buys — reputation reset at every install, favour banked, the
+// 1.9x money escalation — priced as the exit's cycle, the soonest exit's
+// length taken. Once per pass and life (3ms offline); null without offers or
+// a reputation rate, and the measured cadence stands, named.
+let purchaseCadenceMemo = null
+function purchaseCadenceOf(ns, info, base, offers, owned) {
+  const key = `${info?.lastAugReset}|${planCtx?.decidedAt ?? ''}|${Math.floor(Date.now() / 300e3)}`
+  if (purchaseCadenceMemo?.key === key) return purchaseCadenceMemo.value
+  let value = null
+  try {
+    const catal = catalogueFromOffers(offers, owned)
+    const rph = typeof base.repPerSec === 'number' && base.repPerSec > 0 ? base.repPerSec * 3600 : null
+    if (catal.items.length && rph) {
+      const ms = moneyScaleOf(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
+      const r = cadenceByPurchases({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy })
+      value = r ? { ...r, moneyScale: ms.scale, moneyCalibration: ms.why } : null
+    }
+  } catch (e) {
+    value = { error: String(e).slice(0, 120) }
+  }
+  purchaseCadenceMemo = { key, value }
+  return value
+}
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
+  const out = exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+  // The life's length is a decision: where the purchase model prices it, the
+  // exit's cycle is the length it chose (and what that length buys), not the
+  // measured mean life — a policy-chosen short life is not evidence that
+  // lives must be short (live BN1 2026-09-28: one-ticket lives of ~25 min
+  // had become the cadence). The measured rate still scales the draws
+  // (plan.applyDraw, cadenceRateMedian).
+  const pc = Array.isArray(offers) && offers.length ? purchaseCadenceOf(ns, info, out, offers, ownedAugsNow) : null
+  if (pc && !pc.error && typeof pc.cycleHours === 'number' && pc.multGainPerCycle > 1) {
+    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle, cadenceFrom: 'purchase model', cadenceRateMedian: out.cadence?.rateMedian ?? null, cadence: { ...(out.cadence ?? {}), source: 'purchase model', why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration } }
+  }
+  return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
+}
+function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   // A posterior, hierarchical over nodes (exitplan.installCadence): this
   // node's lives dominate, other nodes only shrink toward the cross-node
   // mean, stall lives excluded — without a cadence a fresh node prices only
@@ -2752,7 +2792,7 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // rep leg that way, and gangworth charges the karma grind the slot hours.
     workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
     // The install cadence's posterior (own lives, their weight, stalls excluded).
-    cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, stalls: cadence.stalls, weight: cadence.weight, why: cadence.why } : null,
+    cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, stalls: cadence.stalls, weight: cadence.weight, rateMedian: cadence.stats?.lnPerHour ?? null, why: cadence.why } : null,
     // THE COMMITTED GRAFTS (graftDecisionOf / carriedGraftsOf): legs of the
     // final window in every decision's trajectory. Absent when none.
     ...(graftCarry ?? {}),
@@ -3463,6 +3503,7 @@ async function act(ns, canJoin, info, note) {
     const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
     installedCount = count(sing.ownedAugs(false))
     allCount = count(sing.ownedAugs(true))
+    ownedAugsNow = new Set(allCount.keys())
     // The last committed grafts ride every exit this pass until this pass's
     // graft decision (graftDecisionOf) replaces them.
     graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
@@ -3513,6 +3554,9 @@ async function act(ns, canJoin, info, note) {
             : {}),
           mults: sing.augStats(aug),
           prereqs: sing.augPrereq(aug),
+          // The faction's favour: every later life's reputation rate is
+          // (1 + favor/100) of the base (lifeplan's purchase model).
+          favor: sing.factionFavor(f),
           // The live NFG price already carries 1.14^getLevel(), so the planner
           // starts its own chain at 0 rather than double-counting the level.
           nfgLevel: 0,
@@ -5147,13 +5191,21 @@ async function act(ns, canJoin, info, note) {
       // gang faction's reputation along that trajectory below, since it
       // accrues during any wait whatever the work slot is doing.
       const gangUnlockWaits = (schedule?.gang?.unlocks ?? []).filter((u) => typeof u.atH === 'number' && u.atH > 0 && u.atH <= 12).map((u) => ({ waitH: u.atH, gangUnlock: u.name }))
+      // THE LIFE THE PURCHASE MODEL CHOSE (lifeplan.cadenceByPurchases, via
+      // exitInputsOf this pass): installing when this life reaches that
+      // length is a wait like any other, priced with what it buys — so the
+      // plan can choose it for THIS life too, not only for later ones.
+      const lifeTargetH = purchaseCadenceMemo?.value?.cycleHours
+      const lifeAgeH = typeof info?.lastAugReset === 'number' ? (Date.now() - info.lastAugReset) / 3600000 : null
+      const lifeWaits = typeof lifeTargetH === 'number' && typeof lifeAgeH === 'number' && lifeTargetH - lifeAgeH > 4 ? [{ waitH: +(lifeTargetH - lifeAgeH).toFixed(2), lifeTarget: lifeTargetH }] : []
       const candidates = [
         ...[0.25, 0.5, 1, 2, 4].map((waitH) => ({ waitH })),
         ...holds.map((h) => ({ waitH: h.holdH, hold: h })),
         ...gangUnlockWaits,
+        ...lifeWaits,
       ]
       for (const cand of candidates) {
-        const { waitH, hold, gangUnlock } = cand
+        const { waitH, hold, gangUnlock, lifeTarget } = cand
         const waitMs = waitH * 3600000
         try {
           const repGain = ftraj ? ftraj.repBetween(0, waitH, favMult) : 0
@@ -5186,6 +5238,7 @@ async function act(ns, canJoin, info, note) {
               ...(hold ? { holdFor: hold.faction, holdRepTarget: Math.round(hold.repTarget) } : {}),
               ...(gangRep !== null ? { gangRepProjected: Math.round(gangRep) } : {}),
               ...(gangUnlock ? { gangUnlock } : {}),
+              ...(lifeTarget ? { lifeTarget } : {}),
               moneyProjected: Math.round(moneyGain),
               buy: (f.buy ?? []).map((b) => b.name),
             })

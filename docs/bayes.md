@@ -216,17 +216,29 @@ read 30.6h -> 42.4h). installgate now lets the plan decide (countDecidedBy
 plan's choice was w1.917 (30.1h, 80% 26.5-33.0h) while the rule would have
 installed again (held only by the lead's /install-hold.txt).
 
-NOT FIXED, and why: the exit's cycle model multiplies by a constant ln(M)
-per hour with no per-install cost, so at the measured rate a SHORTER life is
-never worse (live 03:54 inputs: 0.25h lives exit 38.1h, 1.48h 39.4h, 16h
-54.9h). A money-only concave model (what a life's money buys at the 1.9x
-per-purchase escalation) makes it worse, not better — the escalation resets
-at every install, so it rewards short lives more. What makes an install
-costly in BN1 is the reset of faction reputation (augmentations need it) and
-of the book; the cadence needs a per-life purchase model with reputation
-earned at repPerSec against each augmentation's requirement. Until then the
-exit's cycle length is not a decision the plan makes — it chooses only when
-to install the batch in hand.
+### The life's length is a decision (lifeplan.js)
+
+The exit's cycle model multiplied by a constant ln(M) per hour with no
+per-install cost, so a shorter life was never worse (03:54 inputs: 0.25h
+lives exit 38.1h, 16h 54.9h). lifeplan prices what a life of each length
+BUYS: reputation earned at base x (1 + favor/100) per hour at one faction at
+a time against each augmentation's requirement (reset at every install), the
+favour the life banks (favor.addRepToFavor, raising every later life's
+rate), money from the exit model's fresh-life income (scaled to the earnings
+ledger's completed lives: x185 on the 06:09 inputs, printed) at the 1.9x
+step, NeuroFlux at x1.14 price and requirement per level. Lives of each
+length run in sequence over a 48h horizon (the catalogue depleting); the
+mean ln(M) per life is the exit's multGainPerCycle at that cycle length; the
+soonest exit's length is the cadence (exitInputsOf, cadenceFrom 'purchase
+model'); installing when THIS life reaches that length is offered to the
+plan as a wait; the draws keep the length and scale the gain by the drawn
+rate. Replay (BY18, 06:10 snapshots, owned reconstructed from the ledger's
+batches, today's favour): at 02:58 16h lives exit 48.6h against 120.3h for
+0.5h lives (0.031 vs 0.008 ln(M)/h); at 03:24 16h, 50.8h against 158.4h.
+With reputation unbounded the choice falls to 3h lives — the requirement is
+what makes short lives poor. NOT MODELLED: donations (no faction at 150
+favour yet), faction_rep rising across lives, sleeves on factions, new
+joins, the count gate's value of a distinct augmentation.
 
 ### One trajectory basis
 

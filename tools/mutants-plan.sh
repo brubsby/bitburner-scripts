@@ -61,3 +61,8 @@ run bayes.js "    else if (l.regime === 'count') b.count++" "    else if (false)
 run progress.js "          const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)" "          const rp = pcx.graftReprice(spec)"
 run progress.js "(gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey))" "(gd.basisNoiseKey !== inst.noiseKey)"
 run plan.js "  if (sameBasis && install.inputsKey && grafts.inputsKey && install.inputsKey !== grafts.inputsKey) {" "  if (false) {"
+# the life's length from what a life buys (BY18)
+run lifeplan.js "  const rate = (f) => repPerHour0 * (1 + (state.favor?.[f] ?? 0) / 100)" "  const rate = (f) => repPerHour0"
+run lifeplan.js "      if (!h || usedH() + h.extra > L + 1e-9) continue" "      if (!h) continue"
+run lifeplan.js "      if (rq > repBest || batchCost([...prices, p]) > money || levels > 200) break" "      if (batchCost([...prices, p]) > money || levels > 200) break"
+run plan.js "  if (inputs.cadenceFrom === 'purchase model') {" "  if (false) {"

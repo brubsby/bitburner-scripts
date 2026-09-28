@@ -935,5 +935,71 @@ export async function run() {
   }
   checks.push(c17);
 
+  // -----------------------------------------------------------------------
+  const c18 = new Check("BY18", "THE LIFE'S LENGTH IS CHOSEN FROM WHAT A LIFE BUYS (lifeplan): reputation reset at every install against each augmentation's requirement, favour banked, the 1.9x money step — replay the 02:58 and 03:24 lives: the exit prefers long lives over the ~25-min ones the count rule ran");
+  {
+    c18.examined(8);
+    const LP = await import("../../lifeplan.js");
+    const X = await import("../../exitplan.js");
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn1-lifeplan-0610.json"), "utf8"));
+    const I = F.exitInputs.inputs;
+    const ms = LP.moneyScaleOf(F.earnings, 1, I);
+    c18.note(`calibration: ${ms.why}`);
+    const at = (T) => {
+      const owned = new Set(F.owned);
+      let back = 0;
+      for (const e of F.lifetimes) if (Date.parse(e.at) >= Date.parse(T) && Array.isArray(e.installBatch)) for (const n of e.installBatch) (n === LP.NFG ? back++ : owned.delete(n));
+      const catalogue = LP.catalogueOf({ catalog: F.catalog, price: F.price, repReq: F.repReq, stats: F.stats, prereq: F.prereq, owned: [...owned], joined: F.factions });
+      if (catalogue.nfg) {
+        catalogue.nfg.price /= Math.pow(LP.NFG_LEVEL_MULT, back);
+        catalogue.nfg.repReq /= Math.pow(LP.NFG_LEVEL_MULT, back);
+      }
+      return { owned, catalogue };
+    };
+    const run = (T, o = {}) => {
+      const { owned, catalogue } = at(T);
+      return LP.cadenceByPurchases({ inputs: I, catalogue, favor: F.favor, owned: [...owned], repPerHour0: (o.repPerHour0 ?? I.repPerSec * 3600), moneyScale: ms.scale, bestExitPolicy: X.bestExitPolicy });
+    };
+    for (const [T, lifeH] of [["2026-09-28T02:58:00Z", 1.24], ["2026-09-28T03:24:00Z", 0.42]]) {
+      const r = run(T);
+      if (!r) {
+        c18.fail(`${T}: the purchase model priced no life length`);
+        continue;
+      }
+      const row = (L) => r.table.find((x) => x.L === L);
+      c18.note(`${T.slice(11, 16)} (the rule's life was ${lifeH}h): ${r.why.split(" — ")[0]}; per length: ${r.table.map((x) => `${x.L}h ${x.perHour}/h exit ${x.H}h`).join(", ")}`);
+      if (!(r.cycleHours >= 4)) c18.fail(`${T}: with reputation reset at every install a sub-4h life must not be the soonest exit, chose ${r.cycleHours}h`);
+      if (!(row(0.5).H > r.exitH + 10 && row(0.5).perHour < row(r.cycleHours).perHour)) c18.fail(`${T}: half-hour lives must buy less per hour and exit later`);
+      const { owned, catalogue } = at(T);
+      const b = LP.lifeBatch({ items: catalogue.items, nfg: catalogue.nfg, state: { owned, favor: { ...F.favor }, nfgLevel: 0 }, L: lifeH, money: LP.freshLifeMoney(I, lifeH, ms.scale), repPerHour0: I.repPerSec * 3600 });
+      c18.note(`  a ${lifeH}h life then buys ${b.chosen.length} augmentation(s) + ${b.nfgLevels} NeuroFlux (x${b.gain.toFixed(3)}): ${b.chosen.join(", ") || "none"}`);
+    }
+    // The mechanism: with reputation never binding (the old model's blind
+    // spot), short lives look free again — the ranking must move toward them.
+    const free = run("2026-09-28T03:24:00Z", { repPerHour0: 1e12 });
+    const bound = run("2026-09-28T03:24:00Z");
+    c18.note(`reputation unbounded: ${free.cycleHours}h lives (${free.table.find((x) => x.L === 0.5).perHour}/h at 0.5h); bounded: ${bound.cycleHours}h (${bound.table.find((x) => x.L === 0.5).perHour}/h)`);
+    if (!(free.table.find((x) => x.L === 0.5).perHour > bound.table.find((x) => x.L === 0.5).perHour * 2)) c18.fail("the reputation requirement must be what makes short lives poor (unbounded, 0.5h lives buy far more)");
+    // Favour accrues across lives.
+    const { owned, catalogue } = at("2026-09-28T03:24:00Z");
+    const seq = LP.lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor: F.favor, owned: [...owned], L: 8, lives: 3, moneyAt: (L) => LP.freshLifeMoney(I, L, ms.scale), repPerHour0: I.repPerSec * 3600 });
+    if (!(seq.length === 3 && seq.every((s) => Number.isFinite(s.lnGain)))) c18.fail("lifeSequence must price every life");
+    const st0 = { owned: new Set(owned), favor: { ...F.favor }, nfgLevel: 0 };
+    const b1 = LP.lifeBatch({ items: catalogue.items, nfg: catalogue.nfg, state: st0, L: 2, money: LP.freshLifeMoney(I, 2, ms.scale), repPerHour0: I.repPerSec * 3600 });
+    const hi = { ...st0, favor: Object.fromEntries(Object.entries(F.favor).map(([k, v]) => [k, v + 100])) };
+    const b2 = LP.lifeBatch({ items: catalogue.items, nfg: catalogue.nfg, state: hi, L: 2, money: LP.freshLifeMoney(I, 2, ms.scale), repPerHour0: I.repPerSec * 3600 });
+    if (!(b2.lnGain > b1.lnGain)) c18.fail("more favour must buy more in the same life (the rate is base x (1 + favor/100))");
+    // NeuroFlux needs its reputation too (x1.14 a level): money alone buys none.
+    const poor = LP.lifeBatch({ items: catalogue.items, nfg: catalogue.nfg, state: { ...st0, favor: { ...F.favor } }, L: 1, money: 1e15, repPerHour0: 1 });
+    if (poor.nfgLevels !== 0) c18.fail(`NeuroFlux bought without its reputation (${poor.nfgLevels} levels on ~1 rep)`);
+    // The draws keep the chosen length.
+    const inp = { ...I, cycleHours: 8, multGainPerCycle: 1.25, cadenceFrom: "purchase model", cadenceRateMedian: 0.03 };
+    const o = P.applyDraw(inp, { lnPerHour: 0.06, cycleH: 1.2 });
+    if (!(o.cycleHours === 8 && Math.abs(Math.log(o.multGainPerCycle) - 2 * Math.log(1.25)) < 1e-12)) c18.fail("a draw must keep the purchase model's life length and scale what it buys by the drawn rate", JSON.stringify({ c: o.cycleHours, g: o.multGainPerCycle }));
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/return \{ \.\.\.out, cycleHours: pc\.cycleHours, multGainPerCycle: pc\.multGainPerCycle, cadenceFrom: 'purchase model'/.test(prog)) c18.fail("exitInputsOf must take the purchase model's life length (source guard)");
+  }
+  checks.push(c18);
+
   return checks;
 }

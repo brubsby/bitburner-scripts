@@ -128,8 +128,15 @@ export function makeDraws(post, N, seed) {
 export function applyDraw(inputs, d) {
   const o = { ...inputs }
   if (fin(d.r)) o.capitalReturnPerSec = d.r
-  if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
-  if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
+  if (inputs.cadenceFrom === 'purchase model') {
+    // The life's length is the purchase model's DECISION (lifeplan), not a
+    // random input: kept. What a life buys is scaled by this draw's measured
+    // rate against its median — the posterior's spread, on the model's level.
+    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cadenceRateMedian) && inputs.cadenceRateMedian > 0 && fin(inputs.multGainPerCycle) && inputs.multGainPerCycle > 1) o.multGainPerCycle = Math.exp((Math.log(inputs.multGainPerCycle) * d.lnPerHour) / inputs.cadenceRateMedian)
+  } else {
+    if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
+    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
+  }
   if (fin(inputs.expPerSec)) o.expPerSec = inputs.expPerSec * d.expMult
   if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
   // An income this life could not measure yet is a draw from earlier lives.
