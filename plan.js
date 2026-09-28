@@ -541,10 +541,37 @@ export function basisOf(rec, now = Date.now()) {
  * share draws and noise keys, so in fact exactly). Returns {ok, installH,
  * graftsH, diffH, tolH, sameBasis, why}.
  */
+/**
+ * THE INPUTS a decision priced, as a key: the exit inputs without the grafts
+ * a graft option adds (finalGrafts, graftStartMoney), hashed. Two decisions
+ * with the same basis noise key and the same inputs key price one trajectory
+ * from one state.
+ */
+export function inputsKeyOf(inputs) {
+  if (!inputs || typeof inputs !== 'object') return null
+  const { finalGrafts, graftStartMoney, ...rest } = inputs
+  void finalGrafts
+  void graftStartMoney
+  let s = null
+  try {
+    s = JSON.stringify(rest)
+  } catch {
+    return null
+  }
+  return `i${(hashOf(s) >>> 0).toString(36)}`
+}
 export function consistencyOf(install, grafts, { si = 0.02 } = {}) {
   if (!install?.key || !fin(install.meanH)) return { ok: null, why: 'no install decision this pass' }
   if (!grafts?.key || !grafts.basisNoiseKey) return { ok: null, why: 'no graft decision priced on a basis this pass' }
   const sameBasis = grafts.basisNoiseKey === install.noiseKey
+  // ONE BASIS IS A TRAJECTORY AND ITS INPUTS. Both keys known and different:
+  // the two decisions priced the same trajectory from two input builds (the
+  // graft decision's, early in the pass, and the install decision's) — the
+  // rebase that puts them on one did not run. Named, and it fails.
+  if (sameBasis && install.inputsKey && grafts.inputsKey && install.inputsKey !== grafts.inputsKey) {
+    const d = fin(grafts.meanH) ? +(grafts.meanH - install.meanH).toFixed(3) : null
+    return { ok: false, sameBasis, sameInputs: false, installH: install.meanH, graftsH: grafts.meanH, diffH: d, why: `INCONSISTENT INPUTS: the install decision (${install.meanH}h) and the graft decision (${grafts.meanH}h) priced one trajectory from different inputs (${install.inputsKey} vs ${grafts.inputsKey}) — the rebase onto the install decision's inputs did not run` }
+  }
   const gH = grafts.meanH
   const N = Math.max(1, Math.min(install.n ?? 1, grafts.n ?? 1))
   const tolH = Math.max(0.02 * install.meanH, (4 * Math.SQRT2 * si * install.meanH) / Math.sqrt(N))

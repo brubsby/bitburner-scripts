@@ -164,7 +164,7 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, modelVersionFrom } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, modelVersionFrom } from 'plan.js'
 import { incomePrior } from 'bayes.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
@@ -1800,11 +1800,23 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     yield
     // Re-pricing on another basis (the install decision may switch later this
     // pass): the committed choice's options again, same draws.
-    pc.graftReprice = (spec) => {
+    // ...and on the install decision's INPUTS when given: the graft decision
+    // builds its inputs early in the pass, the install decision later, and
+    // right after an install the two builds differ (income measured vs from
+    // the prior, the ramp between the reads) — live BN1 2026-09-28 06:04, 4
+    // minutes into a life: the same trajectory read 19.23h and 18.56h.
+    pc.graftReprice = (spec, inputs = null) => {
       const t2 = trajectoryOf(spec, { count: countCtx, repPoint: pc.repPoint ?? null })
-      const opts2 = [{ key: 'none', noiseKey: noiseKeyOf(spec, withoutIn), sim: (dr) => t2(applyDraw(withoutIn, dr), dr) }]
-      if (withIn) opts2.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, withIn), sim: (dr) => t2(applyDraw(withIn, dr), dr) })
-      return { options: opts2, specs, startMoney: started ? 0 : startMoney }
+      let wo = withoutIn
+      if (inputs) {
+        wo = { ...inputs }
+        delete wo.finalGrafts
+        delete wo.graftStartMoney
+      }
+      const wi = specs.length ? { ...wo, finalGrafts: specs, graftStartMoney: started ? 0 : startMoney ?? 0 } : null
+      const opts2 = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr) }]
+      if (wi) opts2.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr) })
+      return { options: opts2, specs, startMoney: started ? 0 : startMoney, inputsKey: inputsKeyOf(wo) }
     }
     const d = pc.post
       ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => (k === 'none' ? pointNone : pointWith) })
@@ -1815,6 +1827,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       // noise key for the chosen side — what consistencyOf compares.
       basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null, installAt: basis.installAt ?? null } : { kind: 'default policy (no committed install)' },
       basisNoiseKey: noiseKeyOf(basis, d.key === 'grafts' ? withIn : withoutIn),
+      inputsKey: inputsKeyOf(withoutIn),
       grafts: d.key === 'grafts' ? specs : [],
       startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
       started,
@@ -2202,6 +2215,10 @@ async function planInstallOf(ns, info, inputs, count, point) {
   if (inputs?.incomeFromPrior) pc.incomeFromPrior = inputs.incomeSource
   if (inputs?.repFromEstimate) pc.repFromEstimate = inputs.repSource
   const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, sameLife: !!pc.prev }))
+  // The inputs this decision priced: the graft decision is rebased onto them
+  // (one trajectory from one state), and consistencyOf compares the keys.
+  pc.installInputs = inputs
+  if (d && typeof d === 'object') d.inputsKey = inputsKeyOf(inputs)
   if (!d?.key || typeof d.meanH !== 'number') return null
   return { install: d.install === true, key: d.key, waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why }
 }
@@ -5375,14 +5392,16 @@ async function act(ns, canJoin, info, note) {
       const pcx = planCtx
       const inst = pcx?.decisions?.install
       const gd = pcx?.decisions?.grafts
-      if (pcx?.post && inst?.key && gd?.key && typeof pcx.graftReprice === 'function' && gd.basisNoiseKey !== inst.noiseKey) {
+      // Rebased when the basis differs OR the inputs do (the graft decision's
+      // build is earlier in the pass than the install decision's).
+      if (pcx?.post && inst?.key && gd?.key && typeof pcx.graftReprice === 'function' && (gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey))) {
         const spec = basisOf(inst, Date.now())
         if (spec) {
-          const rp = pcx.graftReprice(spec)
+          const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)
           const d2 = await planDecide(pcx, 'graftsRebased', () => decideAmongGen({ options: rp.options, prev: { key: gd.key, decidedAt: gd.decidedAt, why: gd.why }, draws: pcx.draws, redecide: true, budgetMs: planBudgetLeft(pcx), clock: pcx.pacer.cpuNow }))
           if (d2?.key) {
             const flipped = d2.key !== gd.key
-            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, rebasedFrom: gd.basis ?? null, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
+            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
             // The install decision priced with the grafts carried before the
             // flip: one pass stale, re-decided next pass.
             if (flipped) pcx.forceRedecide = `the graft decision flipped (${gd.key} -> ${d2.key}) when re-priced on the install decision's ${inst.key}`

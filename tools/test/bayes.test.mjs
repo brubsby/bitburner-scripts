@@ -639,7 +639,7 @@ export async function run() {
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     if (!/const basis = basisOf\(pc\.prev\?\.decisions\?\.install \?\? null, Date\.now\(\)\)\s*\n\s*const traj = trajectoryOf\(basis,/.test(prog)) c12.fail("graftDecisionOf must price on the committed install's trajectory (source guard)");
     if (!/pcx\.consistency = consistencyOf\(pcx\.decisions\.install, pcx\.decisions\.grafts/.test(prog)) c12.fail("progress.js must check the install and graft decisions' consistency every pass (source guard)");
-    if (!/const spec = basisOf\(inst, Date\.now\(\)\)[\s\S]{0,200}pcx\.graftReprice\(spec\)/.test(prog)) c12.fail("progress.js must re-price the graft decision when the install decision switched this pass (source guard)");
+    if (!/const spec = basisOf\(inst, Date\.now\(\)\)[\s\S]{0,200}pcx\.graftReprice\(spec(, pcx\.installInputs \?\? null)?\)/.test(prog)) c12.fail("progress.js must re-price the graft decision when the install decision switched this pass (source guard)");
   }
   checks.push(c12);
 
@@ -891,6 +891,49 @@ export async function run() {
     if (/^\s*if \(bitNodeMults\(info\?\.currentNode\)\?\.ScriptHackMoneyGain !== 0\) return null/m.test(fitSrc) || !/realisedCapital\(rows\) \?\? \(capitalNode &&/.test(fitSrc)) c16.fail("capitalFitOf must fit the trader wherever it has history (the steady-rate stand-in only where money is capital) — source guard");
   }
   checks.push(c16);
+
+  // -----------------------------------------------------------------------
+  const c17 = new Check("BY17", "ONE BASIS IS A TRAJECTORY AND ITS INPUTS: the graft decision's inputs are built earlier in the pass than the install decision's; right after an install they differ, and a rebase onto the install's trajectory alone read 18.56h vs 19.23h (live BN1 06:04) — the rebase takes the install decision's inputs too, and consistencyOf names differing inputs");
+  {
+    c17.examined(6);
+    const X = await import("../../exitplan.js");
+    const GP = await import("../../graftplan.js");
+    const G = await import("./fixture-bn8-graft.mjs");
+    const rows = fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-stockhist.txt"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const post = P.posteriorsOf({ stockRows: rows, warmupH: 0.16, exitSamples: JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1232.json"), "utf8")).exitSamples });
+    const draws = P.makeDraws(post, P.PLAN.N, 17);
+    const now = Date.parse(G.AT);
+    const specs = ["Embedded Netburner Module Core Implant", "Embedded Netburner Module Core V2 Upgrade"].map((n) => GP.graftSpecOf(G.CANDIDATES.find((c) => c.name === n), G.INTELLIGENCE, { entropy: true }));
+    const withG = (x) => ({ ...x, finalGrafts: specs, graftStartMoney: 9.375e10 });
+    // A: the graft decision's build (early in the pass). B: the install
+    // decision's (later): the book has grown half again in between — the
+    // shape of a fresh life's ramp between two reads.
+    const A = G.INPUTS;
+    const B = { ...A, expPerSec: A.expPerSec * 1.5, capitalReturnPerSec: A.capitalReturnPerSec * 1.3 };
+    const pointOf = (x) => ({ now: { hours: X.bestExitPolicy({ ...x, firstInstallH: 0 }, 400, 1).best?.hours }, waits: [{ waitH: 1, hours: X.bestExitPolicy({ ...x, firstInstallH: 1 }, 400, 1).best?.hours }], never: { hours: X.bestExitPolicy(x, 0, 0).best?.hours } });
+    const inst = P.decideInstall({ inputs: withG(B), point: pointOf(withG(B)), draws, now, budgetMs: 1e9 });
+    inst.inputsKey = P.inputsKeyOf(withG(B));
+    const spec = P.basisOf(inst, now);
+    const traj = P.trajectoryOf(spec, {});
+    const priced = (inp) => {
+      const d = P.decideAmong({ options: [{ key: "none", noiseKey: P.noiseKeyOf(spec, inp), sim: (dr) => traj(P.applyDraw(inp, dr), dr) }, { key: "grafts", noiseKey: P.noiseKeyOf(spec, withG(inp)), sim: (dr) => traj(P.applyDraw(withG(inp), dr), dr) }], prev: { key: "grafts" }, redecide: false, draws, budgetMs: 1e9 });
+      return { ...d, basisNoiseKey: P.noiseKeyOf(spec, withG(inp)), inputsKey: P.inputsKeyOf(inp) };
+    };
+    const oldRebase = priced(A); // the trajectory rebased, the inputs the graft decision's own
+    const newRebase = priced(B); // trajectory AND inputs the install decision's
+    const cOld = P.consistencyOf(inst, oldRebase, { si: 0.02 });
+    const cOldBlind = P.consistencyOf({ ...inst, inputsKey: undefined }, { ...oldRebase, inputsKey: undefined }, { si: 0.02 });
+    const cNew = P.consistencyOf(inst, newRebase, { si: 0.02 });
+    c17.note(`install ${inst.key} on B: ${inst.meanH}h; grafts rebased on its trajectory with A's inputs: ${oldRebase.meanH}h (${cOldBlind.why}); with B's: ${newRebase.meanH}h (${cNew.why})`);
+    if (!(cOld.ok === false && cOld.sameInputs === false)) c17.fail("a graft decision priced from other inputs on the same trajectory must be named as such", JSON.stringify(cOld));
+    if (!(cNew.ok === true && cNew.diffH === 0)) c17.fail("rebased on the install decision's trajectory and inputs, the two decisions must price one exit exactly", JSON.stringify(cNew));
+    if (!(Math.abs(oldRebase.meanH - inst.meanH) > 0.01)) c17.fail("fixture: different inputs should move the exit (else the check proves nothing)");
+    if (P.inputsKeyOf(withG(A)) !== P.inputsKeyOf(A)) c17.fail("the inputs key must ignore the grafts a graft option adds");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/\(gd\.basisNoiseKey !== inst\.noiseKey \|\| \(inst\.inputsKey && gd\.inputsKey !== inst\.inputsKey\)\)/.test(prog) || !/pcx\.graftReprice\(spec, pcx\.installInputs \?\? null\)/.test(prog)) c17.fail("progress.js must rebase the graft decision onto the install decision's inputs when they differ (source guard)");
+    if (!/pc\.installInputs = inputs\s*\n\s*if \(d && typeof d === 'object'\) d\.inputsKey = inputsKeyOf\(inputs\)/.test(prog)) c17.fail("the install decision must record the inputs it priced (source guard)");
+  }
+  checks.push(c17);
 
   return checks;
 }

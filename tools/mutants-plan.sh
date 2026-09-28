@@ -57,3 +57,7 @@ runs watchdog.js "          return Number.isFinite(join) &&" "          return i
 run installgate.js "  const countByPlan = !countBySim && exitDecides && !!bayes && bayes.key !== 'never'" "  const countByPlan = false"
 run installgate.js "  const countByPlan = !countBySim && exitDecides && !!bayes && bayes.key !== 'never'" "  const countByPlan = !countBySim && exitDecides && !!bayes"
 run bayes.js "    else if (l.regime === 'count') b.count++" "    else if (false) b.count++"
+# one basis is a trajectory and its inputs (BY17)
+run progress.js "          const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)" "          const rp = pcx.graftReprice(spec)"
+run progress.js "(gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey))" "(gd.basisNoiseKey !== inst.noiseKey)"
+run plan.js "  if (sameBasis && install.inputsKey && grafts.inputsKey && install.inputsKey !== grafts.inputsKey) {" "  if (false) {"
