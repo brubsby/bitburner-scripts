@@ -37,6 +37,21 @@ if (n !== 1) {
 // the PAIR: <root>/bitburner-scripts (the copy) beside <root>/bitburner (a
 // link to the real game source).
 const root = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), "mutant-"));
+// CLEANUP MUST SURVIVE process.exit. The verdicts below used to call
+// process.exit() inside the try, which ends the process on the spot — the
+// `finally` never ran, and every run leaked a full repo copy: 307 sandboxes
+// (15GB) sat in /tmp on 2026-09-28 and KDE's file indexer ate ~4GB of RAM
+// indexing them. So the sandbox is removed on every way out: the exit hook
+// (process.exit, normal end) and SIGINT/SIGTERM (a caller's timeout).
+const cleanup = () => {
+  try {
+    fs.rmSync(root, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+};
+process.on("exit", cleanup);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => process.exit(128 + 2));
 const dir = path.join(root, path.basename(REPO));
 fs.mkdirSync(dir);
 const GAME_REAL = path.resolve(REPO, "../bitburner");
@@ -73,5 +88,5 @@ try {
   console.log(`SURVIVED — no check failed:\n${out.split("\n").slice(-2).join("\n")}`);
   process.exit(1);
 } finally {
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup();
 }
