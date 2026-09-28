@@ -266,8 +266,22 @@ export const PRIORS = {
   // tail weight of the forecast error (Student-t): one pass can mis-price
   // badly; stated, not fitted.
   driftNu: 4,
-  // ln(M) per hour of a life: vague.
-  lnGain: { m: 0, k: 0.1, a: 1, b: 1e-4 },
+  // THE INSTALL CADENCE (cadencePosterior), on the log scale. rate = ln of
+  // ln(M) gained per life-hour; life = ln of hours per life. mu0/smu: the
+  // cross-node mean before any node is seen (ln(M) 0.05/h, 3h lives, x4.5
+  // either way); tau: between-node spread (x2.7 rate, x2 length) - stated,
+  // two nodes cannot fit it; beta: per unit ln(aug money x rep cost), stated.
+  // sigma: one life's scatter around its node (IG, ~1 in ln for the rate).
+  // stallLn: a life whose install moved M by < 1% is a stall, not a cycle.
+  cadence: {
+    rate: { mu0: Math.log(0.05), smu: 1.5, tau: 1.0, beta0: -0.5, sbeta: 0.5 },
+    life: { mu0: Math.log(3), smu: 1.5, tau: 0.7, beta0: 0.3, sbeta: 0.5 },
+    sigma: { a: 2, b: 1 },
+    sigmaLife: { a: 2, b: 0.5 },
+    stallLn: 0.01,
+    dupTolH: 0.05,
+    z90: 1.2816,
+  },
   // ln(rate) of an observed rate: sd 0.3 until measured.
   rateSdLn: 0.3,
   // income from previous lives: the spread of one life's income around the
@@ -498,22 +512,187 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
 }
 
 /**
- * ln(M) PER HOUR OF A LIFE, from the lifetimes ledger (same node): each life
- * x_j = ln(M_j / M_{j-1}) / L_j, weight L_j — the weighted mean is exactly
- * exitplan.endpointCycleStats' lnPerHour. Returns {post, mean, sd, lives} or null.
+ * THE LIVES OF THE LEDGER, cleaned. installgate appends an entry every pass
+ * that ORDERS an install; when act.js does not complete it, the next pass
+ * appends the same life again, longer (BN8 2026-09-27 13:22-14:02: nine
+ * entries of one 14h life). One life = one start (at - lifeH), kept once
+ * (its last, longest record). Each life's gain is ln(M_next / M) — `hackMult`
+ * is read BEFORE the install, so the augmentations a life bought show in the
+ * NEXT life's entry, and are credited to the life that bought them. The last
+ * life in the current node takes `hackMultNow` as its successor; a life whose
+ * next entry is another node (the node's terminal life) has none.
+ * [{node, at, start, lifeH, hackMult, records, next, g}] (g null without a
+ * successor), `.dups` the merged re-records.
  */
-export function lnGainPosterior(ledger, bitNode) {
-  const lives = (ledger ?? []).filter((e) => e && e.bitNode === bitNode && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
-  if (lives.length < 3) return null
-  const xs = []
-  const ws = []
-  for (let i = 1; i < lives.length; i++) {
-    xs.push(Math.log(lives[i].hackMult / lives[i - 1].hackMult) / lives[i].lifeH)
-    ws.push(lives[i].lifeH)
+export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
+  const rows = (Array.isArray(ledger) ? ledger : []).filter((e) => e && fin(e.bitNode) && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
+  const lives = []
+  let dups = 0
+  for (const e of rows) {
+    // No timestamp (a hand-built ledger): no start, so never merged.
+    const start = fin(Date.parse(e.at)) ? Date.parse(e.at) / 3.6e6 - e.lifeH : null
+    const prev = lives[lives.length - 1]
+    if (prev && prev.node === e.bitNode && start !== null && prev.start !== null && Math.abs(prev.start - start) <= dupTolH) {
+      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, records: prev.records + 1 })
+      dups++
+      continue
+    }
+    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, records: 1 })
   }
-  const post = nigUpdate(PRIORS.lnGain, xs, ws)
-  const mm = nigMeanMarginal(post)
-  return { post, mean: post.m, sd: mm.sd, lives: lives.length, why: `${lives.length} lives: ln(M) ${post.m.toFixed(4)}/h ± ${mm.sd.toFixed(4)}` }
+  for (let i = 0; i < lives.length; i++) {
+    const nx = lives[i + 1]
+    const next = nx ? (nx.node === lives[i].node ? nx.hackMult : null) : lives[i].node === node && fin(hackMultNow) && hackMultNow > 0 ? hackMultNow : null
+    lives[i].next = next
+    lives[i].g = next === null ? null : Math.log(next / lives[i].hackMult)
+  }
+  lives.dups = dups
+  return lives
+}
+
+/**
+ * THE INSTALL CADENCE OF A NODE, as a posterior — hierarchical over nodes.
+ *
+ * Two quantities per node n: the rate r_n = ln(M) gained per hour of a life
+ * (the long-run Sum g / Sum L, what an exit spanning many lives compounds on),
+ * and the life length L_n (mean hours per install cycle). Each is modelled on
+ * the log scale as a random effect around a cross-node mean with a covariate:
+ *   theta_n = mu + beta * c_n + u_n,  u_n ~ N(0, tau^2)
+ * so another node's lives inform this one only through (mu, beta) and are
+ * shrunk by tau, while this node's own lives enter with their own precision
+ * and dominate once they are more precise than tau (one or two lives).
+ *
+ *  - A node's own estimate: y_n = ln(Sum g / Sum L) with sampling variance
+ *    sigma^2 / n_eff (n_eff = (Sum L)^2 / Sum L^2: an hour-weighted mean of
+ *    per-life rates, so a 20-minute life does not count as much as a 14h one);
+ *    y_n = ln(mean L) with sigma_L^2 / n for the length. sigma^2 is one life's
+ *    scatter of ln(g_j / L_j) around y_n, POOLED over nodes (conjugate IG,
+ *    PRIORS.cadence.sigma) and taken at its posterior mean.
+ *  - STALL LIVES ARE A DIFFERENT STATE, not slow cycles: a life whose install
+ *    moved the multiplier by < PRIORS.cadence.stallLn (count tickets, a
+ *    favour-banking life) is excluded from both quantities and counted
+ *    (`own.stalls`, `own.stallShare`) — the count route prices those lives
+ *    itself (countexit), and the multiplier cadence is the multiplier cycles'.
+ *  - (mu, beta): Gaussian prior (PRIORS.cadence.rate/life: mu0, smu, beta0,
+ *    sbeta), updated by the OTHER nodes' y_m ~ N(mu + beta c_m, v_m + tau^2)
+ *    (conjugate, 2x2); this node's prior is then N(mu + beta c_n, q + tau^2)
+ *    and its own y_n updates it — exact for the Gaussian model, the node's
+ *    own data entering once.
+ *  - The covariate c_n = ln(AugmentationMoneyCost x AugmentationRepCost) of
+ *    the node (`covOf`, from bitNodeMults): dearer augmentations slow a life's
+ *    buying (beta0 < 0 on the rate) and lengthen the life (beta0 > 0 on L).
+ *    STATED, not fitted: the nodes played so far cannot identify it (BN1 and
+ *    BN8 both have c = 0); its prior only moves a node with dearer
+ *    augmentations (BN10: c = 2.3) and widens the transfer to it.
+ *  - tau is stated (PRIORS.cadence.*.tau): two nodes cannot estimate a
+ *    between-node spread.
+ *
+ * Returns { node, rate: {mean, sd, prior, weight} (ln of ln(M)/h), life: {...}
+ * (ln h), lnPerHour, cycleHours, multGainPerCycle (at the posterior medians),
+ * own: {lives, gained, stalls, stallShare, weight (own data's share of the
+ * rate's precision)}, nodes: {n: {...}}, dups, sigma, source: 'posterior', why }
+ * or null when no node has a life with a measured gain.
+ */
+export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = null } = {}) {
+  const C = PRIORS.cadence
+  const lives = ledgerLives(ledger, { node, hackMultNow })
+  const byNode = new Map()
+  for (const l of lives) {
+    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0 })
+    const b = byNode.get(l.node)
+    if (l.g === null) b.open++
+    else if (!(l.g >= C.stallLn)) b.stalls++
+    else b.gained.push(l)
+  }
+  const stats = new Map()
+  const resid = { rate: { a: C.sigma.a, b: C.sigma.b }, life: { a: C.sigmaLife.a, b: C.sigmaLife.b } }
+  for (const [n, b] of byNode) {
+    const G = b.gained
+    if (!G.length) continue
+    const H = G.reduce((t, l) => t + l.lifeH, 0)
+    const H2 = G.reduce((t, l) => t + l.lifeH * l.lifeH, 0)
+    const yR = Math.log(G.reduce((t, l) => t + l.g, 0) / H)
+    const yL = Math.log(H / G.length)
+    // Hour weights normalised to mean 1, so the residual sum counts lives.
+    let sr = 0
+    let sl = 0
+    for (const l of G) {
+      sr += ((l.lifeH * G.length) / H) * (Math.log(l.g / l.lifeH) - yR) ** 2
+      sl += (Math.log(l.lifeH) - yL) ** 2
+    }
+    resid.rate.a += (G.length - 1) / 2
+    resid.rate.b += sr / 2
+    resid.life.a += (G.length - 1) / 2
+    resid.life.b += sl / 2
+    stats.set(n, { lives: G.length + b.stalls + b.open, gained: G.length, stalls: b.stalls, yR, yL, nEff: (H * H) / H2, n: G.length })
+  }
+  if (!stats.size) return null
+  const s2R = resid.rate.b / (resid.rate.a - 1)
+  const s2L = resid.life.b / (resid.life.a - 1)
+  const cov = (n) => {
+    const c = typeof covOf === 'function' ? covOf(n) : 0
+    return fin(c) ? c : 0
+  }
+  // theta_node | everything: other nodes -> (mu, beta) -> node prior; own data last.
+  const one = (P, key, vOf) => {
+    let a11 = 1 / (P.smu * P.smu)
+    let a12 = 0
+    let a22 = 1 / (P.sbeta * P.sbeta)
+    let b1 = P.mu0 * a11
+    let b2 = P.beta0 * a22
+    for (const [m, st] of stats) {
+      if (m === node) continue
+      const w = 1 / (vOf(st) + P.tau * P.tau)
+      const c = cov(m)
+      a11 += w
+      a12 += w * c
+      a22 += w * c * c
+      b1 += w * st[key]
+      b2 += w * c * st[key]
+    }
+    const det = a11 * a22 - a12 * a12
+    const muH = (a22 * b1 - a12 * b2) / det
+    const beH = (a11 * b2 - a12 * b1) / det
+    const c = cov(node)
+    const q = (a22 - 2 * c * a12 + c * c * a11) / det
+    const pm = muH + beH * c
+    const pv = q + P.tau * P.tau
+    const prior = { mean: pm, sd: Math.sqrt(pv) }
+    const own = stats.get(node)
+    if (!own) return { mean: pm, sd: Math.sqrt(pv), prior, weight: 0 }
+    const v = vOf(own)
+    const prec = 1 / pv + 1 / v
+    return { mean: (pm / pv + own[key] / v) / prec, sd: Math.sqrt(1 / prec), prior, weight: 1 / v / prec }
+  }
+  const rate = one(C.rate, 'yR', (st) => s2R / st.nEff)
+  const life = one(C.life, 'yL', (st) => s2L / st.n)
+  const lnPerHour = Math.exp(rate.mean)
+  const cycleHours = Math.exp(life.mean)
+  const b = byNode.get(node)
+  const st = stats.get(node)
+  const gained = st?.gained ?? 0
+  const stalls = b?.stalls ?? 0
+  const own = { lives: st?.lives ?? (b ? b.stalls + b.open : 0), gained, stalls, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
+  const nodes = Object.fromEntries([...stats].map(([n, x]) => [n, { lives: x.lives, gained: x.gained, stalls: x.stalls, perHour: Math.exp(x.yR), cycleHours: Math.exp(x.yL), sdRate: Math.sqrt(s2R / x.nEff) }]))
+  const others = [...stats.keys()].filter((n) => n !== node)
+  const pct = (x) => `${Math.round(100 * x)}%`
+  return {
+    node,
+    rate,
+    life,
+    lnPerHour,
+    cycleHours,
+    multGainPerCycle: Math.exp(lnPerHour * cycleHours),
+    own,
+    nodes,
+    dups: lives.dups,
+    sigma: { rate: Math.sqrt(s2R), life: Math.sqrt(s2L) },
+    source: 'posterior',
+    why:
+      `cadence posterior for BitNode ${node}: ln(M) ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%), ${cycleHours.toFixed(2)}h a life -> x${Math.exp(lnPerHour * cycleHours).toFixed(3)} a cycle; ` +
+      `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''} carry ${pct(rate.weight)} of the rate` +
+      (others.length ? `, BitNode ${others.join(', ')} shrink${others.length === 1 ? 's' : ''} it toward the cross-node mean` : ', no other node') +
+      (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : ''),
+  }
 }
 
 /**

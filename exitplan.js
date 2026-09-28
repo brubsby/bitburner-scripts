@@ -55,6 +55,7 @@ export const expForLevel = (level, mult) => Math.exp((level / mult + 200) / 32) 
 
 // Pure: the serve-or-farm decision the batcher makes (prices openers' manipulation).
 import { serveOrFarm } from 'expfarm.js'
+import { cadencePosterior } from 'bayes.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -1140,37 +1141,35 @@ export function spendExitFromRecord(record, lastAugReset, cost, gainPerSec, now 
 }
 
 /**
- * THE INSTALL CADENCE, measured in this node or — until it can be — borrowed,
- * and SAID to be borrowed.
+ * THE INSTALL CADENCE: a posterior, never a borrowed node.
  *
- * endpointCycleStats needs three lives in the current node. A fresh node has
- * none, so no install policy prices, the only priceable exit is "never
- * install", and its climb is astronomical at a fresh multiplier: BitNode 8
- * priced every choice at ~1.5e26h and every comparison tied (2026-09-25).
- *
- * The prior is the node in the ledger with the most lives' worth of measured
- * ln(M) growth per hour — a different economy, so it is a STATED assumption,
- * published as `cadence` with the node it came from, never a silent default;
- * it is replaced the moment this node has three lives. Null when no node has.
- * { stats, source: 'measured' | 'prior', node, lives, why }
+ * This used to be "measured in this node once it has three lives, else the
+ * node with the most lives". BN1's first lives therefore priced on BN8's
+ * cadence (x1.103 per 9.31h, dragged by BN8's 14h life and a count-ticket
+ * stall) — an exit of ~250h against ~50h on BN1's own two lives. Now
+ * bayes.cadencePosterior: per-node rate and life length as random effects
+ * around a cross-node mean (covariate: the node's augmentation price), stall
+ * lives excluded, re-recorded ledger entries merged — a node's own lives
+ * dominate within one or two, other nodes only shrink toward the mean. The
+ * point inputs are its medians; plan.makeDraws draws both in every Monte
+ * Carlo draw. `hackMultNow` (this life's multiplier, raw) lets the last
+ * finished life's gain count; `covOf(node)` the covariate.
+ * { stats: {cycleHours, multGainPerCycle, lnPerHour, n}, source: 'posterior',
+ * node, lives, weight, posterior, why } or null when no life in any node has
+ * a measured gain.
  */
-export function installCadence(ledger, node) {
-  const here = endpointCycleStats(ledger, node)
-  if (here) return { stats: here, source: 'measured', node, lives: here.n, why: `measured over ${here.n} lives in BitNode ${node}` }
-  if (!Array.isArray(ledger)) return null
-  const nodes = [...new Set(ledger.map((e) => e?.bitNode).filter((n) => num(n) && n !== node))]
-  let best = null
-  for (const n of nodes) {
-    const st = endpointCycleStats(ledger, n)
-    if (st && (!best || st.n > best.stats.n)) best = { stats: st, n }
-  }
-  if (!best) return null
+export function installCadence(ledger, node, { hackMultNow = null, covOf = null } = {}) {
+  const c = cadencePosterior(ledger, node, { hackMultNow, covOf })
+  if (!c) return null
   return {
-    stats: best.stats,
-    source: 'prior',
-    node: best.n,
-    lives: best.stats.n,
-    why: `PRIOR: BitNode ${node} has fewer than 3 lives, so the cadence is BitNode ${best.n}'s (${best.stats.n} lives, x${best.stats.multGainPerCycle.toFixed(3)} per ${best.stats.cycleHours.toFixed(2)}h) — a different economy, replaced once this node measures its own`,
+    stats: { cycleHours: c.cycleHours, multGainPerCycle: c.multGainPerCycle, lnPerHour: c.lnPerHour, n: c.own.lives },
+    source: 'posterior',
+    node,
+    lives: c.own.gained,
+    stalls: c.own.stalls,
+    weight: c.own.weight,
+    posterior: c,
+    why: c.why,
   }
 }
 

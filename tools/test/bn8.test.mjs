@@ -234,14 +234,16 @@ export async function run() {
     if (bare.degenerate !== true) j.fail("the no-cadence exit (~1e26h) is not flagged degenerate", String(bare.best?.hours));
     // With the prior: finite, and it moves with exp.
     const cad = X.installCadence(ledger, 8);
-    if (cad?.source !== "prior" || cad.node !== 10) j.fail("no stated prior from another node", JSON.stringify(cad));
+    // A node with no lives of its own: the cross-node posterior (BN10's lives
+    // shrunk toward the mean), own weight 0 — a posterior, never a borrowed node.
+    if (cad?.source !== "posterior" || cad.weight !== 0 || !cad.posterior?.nodes?.[10]) j.fail("no cross-node cadence posterior for a node without lives", JSON.stringify(cad));
     const withC = { ...live, cycleHours: cad.stats.cycleHours, multGainPerCycle: cad.stats.multGainPerCycle };
     const a = X.bestExitPolicy(withC);
     const b = X.bestExitPolicy({ ...withC, expPerSec: live.expPerSec + 500 });
     if (a.degenerate || !(a.best?.hours < X.DEGENERATE_H)) j.fail("the exit with a cadence prior is still degenerate", String(a.best?.hours));
     else if (!(b.best.hours < a.best.hours - 1 / 60)) j.fail("more exp does not shorten the exit — it still does not discriminate", `${a.best.hours} vs ${b.best.hours}`);
     else j.note(`${cad.why}; exit ${a.best.hours.toFixed(2)}h, +500 exp/s ${b.best.hours.toFixed(2)}h`);
-    if (X.installCadence(ledger.map((e) => ({ ...e, bitNode: 8 })), 8)?.source !== "measured") j.fail("three lives in this node must replace the prior");
+    if (!(X.installCadence(ledger.map((e) => ({ ...e, bitNode: 8 })), 8)?.weight > 0.5)) j.fail("this node's own lives must dominate its cadence");
     // A fee slows a money leg; a fee larger than income never finishes it.
     const h0 = X.hoursToMoney(1e9, { money0: 1e8, incomeAtLevel1: 0, mult: 1, flatPerSec: 1e5 });
     const h1 = X.hoursToMoney(1e9, { money0: 1e8, incomeAtLevel1: 0, mult: 1, flatPerSec: 1e5, spendPerSec: 5e4 });

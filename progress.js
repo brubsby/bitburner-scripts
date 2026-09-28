@@ -2153,7 +2153,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
-    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, ledger, bitNode: info?.currentNode, obs, optionPoints: points, income: incomePriorOf(ns, info, ns.getPlayer()) })
+    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePriorOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
@@ -2584,12 +2584,19 @@ function incomePriorOf(ns, info, player) {
   }
   return incomePriorMemo
 }
+// THE INSTALL CADENCE's inputs (bayes.cadencePosterior via
+// exitplan.installCadence): this life's raw hacking multiplier, so the last
+// finished life's gain counts, and the node covariate — the augmentation
+// price, ln(money cost x rep cost).
+function cadenceOptsOf(player) {
+  return { hackMultNow: player?.mults?.hacking ?? null, covOf: (n) => (bitNodeMults(n) ? Math.log(bitNodeMults(n).AugmentationMoneyCost * bitNodeMults(n).AugmentationRepCost) : 0) }
+}
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
-  // The endpoint model (exitplan.endpointCycleStats), not cycleStats's median.
-  // Measured in this node, or a STATED prior from another until it has three
-  // lives (exitplan.installCadence) — without one a fresh node prices only
+  // A posterior, hierarchical over nodes (exitplan.installCadence): this
+  // node's lives dominate, other nodes only shrink toward the cross-node
+  // mean, stall lives excluded — without a cadence a fresh node prices only
   // "never install", whose climb is ~1e26h, and every comparison ties.
-  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode)
+  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, cadenceOptsOf(player))
   const cyc = cadence?.stats ?? null
   const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
   const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
@@ -2704,8 +2711,8 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // work shrinks what is owed while the money is saved — exitplan prices the
     // rep leg that way, and gangworth charges the karma grind the slot hours.
     workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
-    // Where the install cadence came from (measured / prior, and which node).
-    cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, why: cadence.why } : null,
+    // The install cadence's posterior (own lives, their weight, stalls excluded).
+    cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, stalls: cadence.stalls, weight: cadence.weight, why: cadence.why } : null,
     // THE COMMITTED GRAFTS (graftDecisionOf / carriedGraftsOf): legs of the
     // final window in every decision's trajectory. Absent when none.
     ...(graftCarry ?? {}),

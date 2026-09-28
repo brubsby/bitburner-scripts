@@ -577,7 +577,7 @@ export async function run() {
   checks.push(c11);
 
   // -----------------------------------------------------------------------
-  const c12 = new Check("BY12", "ONE TRAJECTORY: the graft decision prices on the committed install's trajectory, so the two decisions' committed exits agree (live 17:51 they read 23.0h and 84.9h); and the MC mean vs point gap is the ln(M)/h posterior's convexity");
+  const c12 = new Check("BY12", "ONE TRAJECTORY: the graft decision prices on the committed install's trajectory, so the two decisions' committed exits agree (live 17:51 they read 23.0h and 84.9h); and a trajectory with no further install cycles does not swing with the cadence draw");
   {
     c12.examined(6);
     const X = await import("../../exitplan.js");
@@ -585,8 +585,9 @@ export async function run() {
     const G = await import("./fixture-bn8-graft.mjs");
     const rows = fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-stockhist.txt"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     const post = P.posteriorsOf({ stockRows: rows, warmupH: 0.16, exitSamples: JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-1232.json"), "utf8")).exitSamples });
-    // The live 17:51 ln(M)/h posterior: 0.0185 ± 0.0093 per hour (NIG, df 20).
-    post.lnGain = { post: { m: 0.0185, k: 1, a: 10, b: 7.78e-4 }, mean: 0.0185, sd: 0.0093 };
+    // The live 17:51 ln(M)/h posterior: 0.0185 ± 0.0093 per hour, as a
+    // cadence posterior (ln scale), the life length held at the inputs'.
+    post.cadence = { rate: { mean: Math.log(0.0185), sd: 0.0093 / 0.0185 }, life: { mean: Math.log(G.INPUTS.cycleHours), sd: 0 } };
     const draws = P.makeDraws(post, P.PLAN.N, 17);
     const now = Date.parse(G.AT);
     const inputs = G.INPUTS;
@@ -626,10 +627,15 @@ export async function run() {
     // the ln(M)/h posterior removed (point cadence), the mean falls to the point.
     const gOpt = gd.options.find((o) => o.key === "grafts");
     const gPoint = traj(withG(inputs));
-    const noLn = P.makeDraws({ ...post, lnGain: null }, P.PLAN.N, 17);
+    const noLn = P.makeDraws({ ...post, cadence: null }, P.PLAN.N, 17);
     const gd0 = P.decideAmong({ options: [{ key: "grafts", sim: (d) => traj(P.applyDraw(withG(inputs), d), d) }], draws: noLn, budgetMs: 1e9 });
-    c12.note(`grafts option: point ${gPoint?.toFixed(1)}h, MC mean ${gOpt?.meanH}h / median ${gOpt?.q50}h / q90 ${gOpt?.q90}h; without the ln(M)/h uncertainty: mean ${gd0.meanH}h / median ${gd0.q50}h — the right tail is draws of a slow multiplier (exit hours ~ 1/(ln M per h), convex)`);
-    if (!(gOpt && gd0.meanH < gOpt.meanH)) c12.fail("the ln(M)/h posterior should be what lifts the mean above the point (convexity)");
+    c12.note(`grafts option: point ${gPoint?.toFixed(1)}h, MC mean ${gOpt?.meanH}h / median ${gOpt?.q50}h / 80% ${gOpt?.q10}-${gOpt?.q90}h; without the cadence uncertainty: mean ${gd0.meanH}h / median ${gd0.q50}h / 80% ${gd0.q10}-${gd0.q90}h — the tails are draws of a slow or fast multiplier (the cadence rate is drawn lognormal around its median, so the MC median sits near the point)`);
+    // (The cadence draw's reach into the interval is BY15's: this committed
+    // trajectory installs its 4h batch and climbs, so the between-install
+    // cadence barely moves it — the mean-vs-point gap here is the rest of the
+    // posterior, and the cadence is no longer drawn on a linear scale that
+    // put draws at ~0 ln(M)/h.)
+    if (!(gOpt && Math.abs(gOpt.meanH - gd0.meanH) < 0.05 * gd0.meanH)) c12.fail("a trajectory with no further install cycles must not swing with the cadence draw");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     if (!/const basis = basisOf\(pc\.prev\?\.decisions\?\.install \?\? null, Date\.now\(\)\)\s*\n\s*const traj = trajectoryOf\(basis,/.test(prog)) c12.fail("graftDecisionOf must price on the committed install's trajectory (source guard)");
     if (!/pcx\.consistency = consistencyOf\(pcx\.decisions\.install, pcx\.decisions\.grafts/.test(prog)) c12.fail("progress.js must check the install and graft decisions' consistency every pass (source guard)");
@@ -754,9 +760,98 @@ export async function run() {
     if (P.applyDraw({ ...withRep, incomePerSec: 5 }, d0).incomePerSec !== 5) c14.fail("a measured income must not be replaced by the prior's draw");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     if (!/if \(incomePerSec \+ contractMoneyPerSec > 0 \|\| \(capitalFitOf\(ns, info\)\?\.r \?\? econNow\?\.capitalReturnPerSec \?\? 0\) > 0\) return \{\}\s*\n\s*const pr = incomePriorOf\(ns, info, player\)\s*\n\s*return pr \? \{ incomePerSec: pr\.perSec, incomeFromPrior: true, incomeSource: pr\.label \} : \{\}/.test(prog)) c14.fail("exitInputsOf must take an unmeasurable income from the prior, marked (source guard)");
-    if (!/repFromEstimate: true, repSource:/.test(prog) || !/income: incomePriorOf\(ns, info, ns\.getPlayer\(\)\) \}\)/.test(prog)) c14.fail("the reputation estimate and the income prior must reach the inputs and the posteriors (source guard)");
+    if (!/repFromEstimate: true, repSource:/.test(prog) || !/income: incomePriorOf\(ns, info, ns\.getPlayer\(\)\)[,} ]/.test(prog)) c14.fail("the reputation estimate and the income prior must reach the inputs and the posteriors (source guard)");
   }
   checks.push(c14);
+
+  // -----------------------------------------------------------------------
+  const c15 = new Check("BY15", "THE INSTALL CADENCE IS A POSTERIOR, hierarchical over nodes: a node's own lives dominate within one or two, other nodes only shrink toward the cross-node mean, stall lives and re-recorded entries excluded, both rate and life length drawn in the Monte Carlo (replay: BN1 00:58, cadence borrowed from BN8's x1.103 per 9.31h)");
+  {
+    c15.examined(10);
+    const X = await import("../../exitplan.js");
+    const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn1-cadence-0058.json"), "utf8"));
+    const L = F.lifetimes;
+    const live = F.exitInputs.inputs;
+    const covOf = (n) => (bitNodeMults(n) ? Math.log(bitNodeMults(n).AugmentationMoneyCost * bitNodeMults(n).AugmentationRepCost) : 0);
+    const now1 = live.hackingMult / (bitNodeMults(1).HackingLevelMultiplier ?? 1);
+    const z = 1.2816;
+    const band = (m) => `${Math.exp(m.mean - z * m.sd).toFixed(4)}-${Math.exp(m.mean + z * m.sd).toFixed(4)}`;
+    // (a) The ledger, cleaned: one 14h BN8 life was recorded nine times, one
+    // 8.6h life twice; gains credited to the life that bought them.
+    const lives = B.ledgerLives(L, { node: 1, hackMultNow: now1 });
+    const b8 = lives.filter((l) => l.node === 8);
+    if (lives.dups !== 9 || b8.length !== 9) c15.fail(`re-recorded ledger entries must merge (9 duplicates, 9 BN8 lives), got ${lives.dups} / ${b8.length}`);
+    const long = b8.find((l) => Math.abs(l.lifeH - 14.16) < 1e-9);
+    if (!(long && long.records === 9 && Math.abs(long.g - Math.log(10.681849819777456 / 7.1652662366001305)) < 1e-9)) c15.fail("the 14h life's gain is its successor's multiplier over its own (credited to the life that bought it)", JSON.stringify(long));
+    if (b8[b8.length - 1].g !== null) c15.fail("the node's terminal life (next entry another node) has no measured gain");
+    const b1 = lives.filter((l) => l.node === 1);
+    if (!(b1.length === 2 && Math.abs(b1[1].g - Math.log(now1 / b1[1].hackMult)) < 1e-9)) c15.fail("the last finished life of the current node takes this life's multiplier as its successor");
+    // (b) The posteriors, BN1 and BN8.
+    const c1 = B.cadencePosterior(L, 1, { hackMultNow: now1, covOf });
+    const c8 = B.cadencePosterior(L, 8, { covOf });
+    c15.note(`BN1: ${c1.why}; ln(M)/h 80% ${band(c1.rate)}, life ${c1.cycleHours.toFixed(2)}h (80% ${Math.exp(c1.life.mean - z * c1.life.sd).toFixed(2)}-${Math.exp(c1.life.mean + z * c1.life.sd).toFixed(2)}h); own lives alone ${c1.nodes[1].perHour.toFixed(4)}/h over ${c1.nodes[1].cycleHours.toFixed(2)}h`);
+    c15.note(`BN8: ${c8.why}; ln(M)/h 80% ${band(c8.rate)}, own lives alone ${c8.nodes[8].perHour.toFixed(4)}/h over ${c8.nodes[8].cycleHours.toFixed(2)}h`);
+    if (!(c1.own.weight > 0.5)) c15.fail(`two of BN1's own lives must carry most of its rate, got ${c1.own.weight}`);
+    const own1 = Math.log(c1.nodes[1].perHour);
+    const own8 = Math.log(c8.nodes[8].perHour);
+    if (!(c1.rate.mean > own1 && c1.rate.mean < own8)) c15.fail("BN1's rate must be its own shrunk toward the cross-node mean (between its own and BN8's)");
+    if (!(Math.abs(c1.rate.mean - own1) < Math.abs(c1.rate.mean - own8))) c15.fail("BN1's own lives must dominate: its posterior nearer its own rate than BN8's");
+    if (!(c8.own.stalls === 1 && c8.own.gained === 7)) c15.fail(`BN8: the count-ticket life (multiplier unchanged) is a stall, excluded and counted — got ${c8.own.stalls} stalls / ${c8.own.gained} gaining`);
+    // The node's own lives enter ONCE: with no other node, its prior is the
+    // stated hyperprior exactly (they must not also move the cross-node mean).
+    const solo = B.cadencePosterior(L.filter((e) => e.bitNode === 1), 1, { hackMultNow: now1, covOf });
+    const H = B.PRIORS.cadence.rate;
+    if (!(Math.abs(solo.rate.prior.mean - H.mu0) < 1e-12 && Math.abs(solo.rate.prior.sd - Math.hypot(H.smu, H.tau)) < 1e-12)) c15.fail("a node's own lives must not inform its own prior (double counting)", JSON.stringify(solo.rate.prior));
+    // (c) Stalls are a separate state: adding stall lives moves nothing but their count.
+    const stalled = [...L, ...[1, 2, 3].map((k) => ({ at: new Date(Date.parse(L[L.length - 1].at) + k * 3.6e6).toISOString(), bitNode: 1, lifeH: 0.9, hackMult: now1 }))];
+    const cs = B.cadencePosterior(stalled, 1, { hackMultNow: now1, covOf });
+    if (!(cs.own.stalls === 3 && Math.abs(cs.rate.mean - c1.rate.mean) < 1e-9 && Math.abs(cs.life.mean - c1.life.mean) < 1e-9)) c15.fail("stall lives (multiplier unmoved) must not enter the rate or life length", `${cs.own.stalls} stalls, rate ${cs.rate.mean} vs ${c1.rate.mean}`);
+    // (d) Own lives dominate: a node with five lives at 5x the others' rate lands near its own.
+    const fast = [...L, ...[0, 1, 2, 3, 4, 5].map((k) => ({ at: new Date(Date.parse("2026-10-01T00:00:00Z") + k * 3 * 3.6e6).toISOString(), bitNode: 5, lifeH: 3, hackMult: Math.exp(0.25 * 3 * k) }))];
+    const c5 = B.cadencePosterior(fast, 5, { covOf });
+    if (!(Math.abs(c5.rate.mean - Math.log(0.25)) < 0.3 && c5.own.weight > 0.8)) c15.fail(`five own lives must dominate the cross-node mean: ${c5.lnPerHour}/h vs own 0.25/h (weight ${c5.own.weight})`);
+    // (e) A node with no life: the cross-node mean, own weight 0, wider than any node's own.
+    const c2 = B.cadencePosterior(L, 2, { covOf });
+    if (!(c2.own.weight === 0 && c2.rate.sd > c1.rate.sd && c2.rate.sd > c8.rate.sd && c2.rate.sd >= B.PRIORS.cadence.rate.tau)) c15.fail("a node without lives takes the cross-node mean, wider than tau");
+    // (f) The covariate: dearer augmentations (BN10, ln(5x2)) -> a slower prior rate and longer lives.
+    const c10 = B.cadencePosterior(L, 10, { covOf });
+    if (!(c10.rate.mean < c2.rate.mean && c10.life.mean > c2.life.mean)) c15.fail("the aug-price covariate must slow the prior rate and lengthen the prior life of a dearer node");
+    c15.note(`no-life nodes: BN2 (c=0) ${c2.lnPerHour.toFixed(4)}/h x/÷${Math.exp(z * c2.rate.sd).toFixed(1)}, BN10 (c=${covOf(10).toFixed(2)}) ${c10.lnPerHour.toFixed(4)}/h, ${c10.cycleHours.toFixed(1)}h lives`);
+    // (g) The installCadence wrapper: medians as point inputs, never a borrowed node.
+    const cad = X.installCadence(L, 1, { hackMultNow: now1, covOf });
+    if (!(cad.source === "posterior" && cad.node === 1 && Math.abs(cad.stats.cycleHours - c1.cycleHours) < 1e-12 && Math.abs(cad.stats.multGainPerCycle - Math.exp(c1.lnPerHour * c1.cycleHours)) < 1e-12)) c15.fail("installCadence must publish the posterior's medians for this node", JSON.stringify(cad.stats));
+    // (h) Drawn: every draw carries its own rate and life, paired across seeds.
+    const post = P.posteriorsOf({ exitSamples: [], cadence: c1 });
+    const draws = P.makeDraws(post, P.PLAN.N, 5);
+    const again = P.makeDraws(post, P.PLAN.N, 5);
+    const rates = draws.map((d) => d.lnPerHour);
+    const lens = draws.map((d) => d.cycleH);
+    if (!(new Set(rates).size === draws.length && new Set(lens).size === draws.length)) c15.fail("the cadence rate and life length must be drawn per draw");
+    if (!draws.every((d, i) => d.lnPerHour === again[i].lnPerHour && d.cycleH === again[i].cycleH)) c15.fail("cadence draws must be common random numbers (same seed, same draw)");
+    const o = P.applyDraw(live, draws[0]);
+    if (!(o.cycleHours === draws[0].cycleH && Math.abs(o.multGainPerCycle - Math.exp(draws[0].lnPerHour * draws[0].cycleH)) < 1e-12)) c15.fail("applyDraw must set the cycle and its gain from the same draw");
+    // (i) The replay: BN1's exit on its own cadence posterior, drawn.
+    const exitOf = (x) => {
+      const r = X.bestExitPolicy(x);
+      return r.degenerate ? null : r.best?.hours ?? null;
+    };
+    const mc = (inp, p) => P.decideAmong({ options: [{ key: "plan", sim: (d) => exitOf(P.applyDraw(inp, d)) }], draws: P.makeDraws(p, P.PLAN.N, 5), budgetMs: 1e9 });
+    const post0 = P.posteriorsOf({ exitSamples: [] });
+    const withCad = { ...live, cycleHours: cad.stats.cycleHours, multGainPerCycle: cad.stats.multGainPerCycle };
+    const borrowed = mc(live, post0);
+    const pointOnly = mc(withCad, post0);
+    const drawn = mc(withCad, post);
+    c15.note(`BN1 exit, as live (BN8's cadence borrowed, x${live.multGainPerCycle.toFixed(3)} per ${live.cycleHours.toFixed(2)}h): median ${borrowed.q50}h, 80% ${borrowed.q10}-${borrowed.q90}h`);
+    c15.note(`BN1 exit on its cadence posterior (x${cad.stats.multGainPerCycle.toFixed(3)} per ${cad.stats.cycleHours.toFixed(2)}h), drawn: median ${drawn.q50}h, 80% ${drawn.q10}-${drawn.q90}h (the medians as a point: ${pointOnly.q10}-${pointOnly.q90}h)`);
+    if (!(Number.isFinite(drawn.q50) && drawn.q50 < borrowed.q10)) c15.fail("BN1's own faster cadence must bring the exit below the borrowed BN8 interval");
+    if (!(drawn.q90 - drawn.q10 > 1.5 * (pointOnly.q90 - pointOnly.q10))) c15.fail("the cadence posterior must be drawn (its spread must reach the interval)");
+    // (j) Wired (source guards).
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const cadence = installCadence\(JSON\.parse\(ns\.read\('\/tel\/lifetimes\.txt'\) \|\| '\[\]'\), info\?\.currentNode, cadenceOptsOf\(player\)\)/.test(prog)) c15.fail("exitInputsOf must take the cadence posterior with this life's multiplier and the covariate (source guard)");
+    if (!/cadence: installCadence\(ledger, info\?\.currentNode, cadenceOptsOf\(ns\.getPlayer\(\)\)\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior (source guard)");
+  }
+  checks.push(c15);
 
   return checks;
 }

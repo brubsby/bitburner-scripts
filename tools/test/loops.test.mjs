@@ -191,7 +191,7 @@ export async function run() {
     // and progress.js builds the draws inside planCtxOf's try, which
     // publishes the error as health 'error'.
     const P = await import("../../plan.js");
-    throwsSampling(() => P.makeDraws({ drift: { a: NaN, b: 0.01, nu: 4 }, trader: null, lnGain: null, exp: null, rep: null, gymSdLn: 0.1, jitter: null }, 4, 1), "makeDraws(a NaN drift posterior)");
+    throwsSampling(() => P.makeDraws({ drift: { a: NaN, b: 0.01, nu: 4 }, trader: null, cadence: null, exp: null, rep: null, gymSdLn: 0.1, jitter: null }, 4, 1), "makeDraws(a NaN drift posterior)");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const ctx = prog.slice(prog.indexOf("function planCtxOf("), prog.indexOf("function planInstallOf("));
     if (!/try \{[\s\S]*const draws = makeDraws\([\s\S]*\} catch \(e\) \{\s*\n\s*planCtx = \{[^\n]*error: `plan context threw/.test(ctx)) c3.fail("planCtxOf must build the draws inside its try and publish a throw as the plan's error (source guard)");

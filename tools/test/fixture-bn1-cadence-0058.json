@@ -1,0 +1,641 @@
+{
+ "note": "live BN1 2026-09-28T00:58Z: /tel/exitinputs.txt (cadence borrowed from BN8: x1.103 per 9.31h) and /tel/lifetimes.txt (BN8 lives incl. 9 re-records and a stall, BN1 two lives); hackingMult is effective (BN1 HackingLevelMultiplier 1, so also raw)",
+ "exitInputs": {
+  "at": "2026-09-28T01:03:28.251Z",
+  "lastAugReset": 1790554105402,
+  "bitNode": 1,
+  "inputs": {
+   "money": 23735798179.3749,
+   "incomePerSec": 7136449.890939034,
+   "lifeIncome": 548.6279493309502,
+   "hacking": 314,
+   "hackingExp": 458940.61856114626,
+   "hackingMult": 1.4501917948951488,
+   "expPerSec": 270.85611094195133,
+   "repPerSec": 3.0228846649071697,
+   "repFromEstimate": true,
+   "repSource": "reputation from the formula estimate (no faction work measured this life): 3.023/s base",
+   "exitRep": 0,
+   "exitFavor": 0,
+   "cycleHours": 9.308235294117646,
+   "multGainPerCycle": 1.1027299873635081,
+   "nextInstallGain": 1.0510236820832555,
+   "installGains": {
+    "hacking": 1.0510236820832555,
+    "rep": 1.0510236820832555,
+    "income": 1.1973777083835042,
+    "exp": 1.0510236820832555
+   },
+   "persistBaseline": {
+    "hacking": 1.0510236820832555,
+    "rep": 1.0510236820832555,
+    "income": 1.1973777083835042,
+    "exp": 1.0510236820832555
+   },
+   "eRep": 0.4418,
+   "eBudget": 0,
+   "exitLevel": 3000,
+   "joinMoney": 100000000000,
+   "joinLevel": 2500,
+   "finalRootCost": 287200000,
+   "freshExpLagH": 0.4467887574247378,
+   "terminalRep": 2500000,
+   "donationCost": null,
+   "favorToDonate": 150,
+   "flatIncomePerSec": 0,
+   "capitalReturnPerSec": 0.00026649129727468154,
+   "capitalWarmupH": 0,
+   "capitalFit": null,
+   "capitalCap": 5693036098915.888,
+   "installCash": 1262,
+   "workWhileDonating": false,
+   "cadence": {
+    "source": "prior",
+    "node": 8,
+    "lives": 18,
+    "why": "PRIOR: BitNode 1 has fewer than 3 lives, so the cadence is BitNode 8's (18 lives, x1.103 per 9.31h) \u2014 a different economy, replaced once this node measures its own"
+   },
+   "finalGrafts": [
+    {
+     "name": "QLink",
+     "cost": 75000000000000,
+     "slotH": 1.790409956433644,
+     "hacking": 1.7149999999999999,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module",
+     "cost": 750000000,
+     "slotH": 0.28359865118703287,
+     "hacking": 1.0584,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core Implant",
+     "cost": 7500000000,
+     "slotH": 1.3487615067418466,
+     "hacking": 1.0486,
+     "exp": 1.0486,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core V2 Upgrade",
+     "cost": 13500000000,
+     "slotH": 1.3892070824786145,
+     "hacking": 1.0584,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core V3 Upgrade",
+     "cost": 22500000000,
+     "slotH": 1.4205730789205508,
+     "hacking": 1.078,
+     "exp": 1.225,
+     "rep": 0.98
+    }
+   ],
+   "graftStartMoney": 75144250000000
+  },
+  "eRep": 0.4418,
+  "eBudget": 0,
+  "W": 0,
+  "finalWindow": false,
+  "moneyAtW": 23735798179.3749,
+  "lifeIncomeWhy": null,
+  "gainsByMoney": [
+   {
+    "money": 0,
+    "gains": null
+   },
+   {
+    "money": 5933949544.843725,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 11867899089.68745,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 17801848634.531174,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 21362218361.437412,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 23735798179.3749,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 29669747724.218628,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 35603697269.06235,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   },
+   {
+    "money": 47471596358.7498,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1973777083835042,
+     "exp": 1.0510236820832555
+    }
+   }
+  ]
+ },
+ "lifetimes": [
+  {
+   "at": "2026-09-26T03:38:30.661Z",
+   "lifeH": 0.91,
+   "hackMult": 2.0261440830383406,
+   "bitNode": 8,
+   "lnM": 0.1327678880322813,
+   "exitFavor": 0,
+   "augs": 25,
+   "capStart": 249592172.53907228,
+   "capEnd": 239249385,
+   "predicted": {
+    "nextMult": 2.1138511966878575,
+    "nextLifeH": 0.5008795497788838,
+    "nextAugs": 27.4
+   },
+   "scores": {
+    "mult": 1.054,
+    "lifeH": 1.847,
+    "augs": 0.941
+   }
+  },
+  {
+   "at": "2026-09-26T04:03:54.166Z",
+   "lifeH": 0.42,
+   "hackMult": 2.0875545205355195,
+   "bitNode": 8,
+   "lnM": 0.09381060884868993,
+   "exitFavor": 0,
+   "augs": 26,
+   "capStart": 249604169.7647987,
+   "capEnd": 342878648,
+   "predicted": {
+    "nextMult": 2.174503208904642,
+    "nextLifeH": 0.5367202612714921,
+    "nextAugs": 28.272727272727273
+   },
+   "scores": {
+    "mult": 0.988,
+    "lifeH": 0.839,
+    "augs": 0.949
+   }
+  },
+  {
+   "at": "2026-09-26T08:14:05.677Z",
+   "lifeH": 4.17,
+   "hackMult": 2.2545588821783613,
+   "bitNode": 8,
+   "lnM": 0.4564987682677843,
+   "exitFavor": 0,
+   "augs": 27,
+   "capStart": 249604169.7647987,
+   "capEnd": 1558476123,
+   "predicted": {
+    "nextMult": 2.358502324050341,
+    "nextLifeH": 0.5323551837132633,
+    "nextAugs": 29.166666666666668
+   },
+   "scores": {
+    "mult": 1.037,
+    "lifeH": 7.769,
+    "augs": 0.955
+   }
+  },
+  {
+   "at": "2026-09-26T11:17:20.552Z",
+   "lifeH": 3.05,
+   "hackMult": 2.29988744775305,
+   "bitNode": 8,
+   "lnM": 0.6667844683299528,
+   "exitFavor": 0,
+   "augs": 28,
+   "capStart": 429561097.4192012,
+   "capEnd": 491443670,
+   "predicted": {
+    "nextMult": 2.422164481240532,
+    "nextLifeH": 0.6274146994891745,
+    "nextAugs": 30.076923076923077
+   },
+   "scores": {
+    "mult": 0.975,
+    "lifeH": 5.729,
+    "augs": 0.96
+   }
+  },
+  {
+   "at": "2026-09-26T13:17:34.641Z",
+   "lifeH": 2,
+   "hackMult": 2.29988744775305,
+   "bitNode": 8,
+   "lnM": 1.025181128213397,
+   "exitFavor": 0,
+   "augs": 29,
+   "capStart": 427602727.0849088,
+   "capEnd": 574796240,
+   "predicted": {
+    "nextMult": 2.4152863737167976,
+    "nextLifeH": 1.1088657114554608,
+    "nextAugs": 31
+   },
+   "scores": {
+    "mult": 0.95,
+    "lifeH": 3.188,
+    "augs": 0.964
+   }
+  },
+  {
+   "at": "2026-09-26T21:51:29.579Z",
+   "lifeH": 8.56,
+   "hackMult": 2.5068773180508255,
+   "bitNode": 8,
+   "lnM": 0.8177777414182178,
+   "exitFavor": 0,
+   "augs": 30,
+   "capStart": 317889934.65486157,
+   "capEnd": 25595114025,
+   "predicted": {
+    "nextMult": 2.6032482569610456,
+    "nextLifeH": 1.18229087512356,
+    "nextAugs": 31.933333333333334
+   },
+   "scores": {
+    "mult": 1.038,
+    "lifeH": 7.72,
+    "augs": 0.968
+   }
+  },
+  {
+   "at": "2026-09-26T21:56:29.270Z",
+   "lifeH": 8.64,
+   "hackMult": 2.5068773180508255,
+   "bitNode": 8,
+   "lnM": 0.7333172853322159,
+   "exitFavor": 0,
+   "augs": 30,
+   "capStart": 317889934.65486157,
+   "capEnd": 31262412879,
+   "predicted": {
+    "nextMult": 2.620548661578966,
+    "nextLifeH": 1.274,
+    "nextAugs": 31.875
+   },
+   "scores": {
+    "mult": 0.963,
+    "lifeH": 7.308,
+    "augs": 0.939
+   }
+  },
+  {
+   "at": "2026-09-26T23:52:26.486Z",
+   "lifeH": 1.93,
+   "hackMult": 4.598568879847977,
+   "bitNode": 8,
+   "lnM": 0.08799417574937593,
+   "exitFavor": 0,
+   "augs": 37,
+   "capStart": 217366150.25241375,
+   "capEnd": 184121999,
+   "predicted": {
+    "nextMult": 4.807085467043976,
+    "nextLifeH": 2.8,
+    "nextAugs": 38.76470588235294
+   },
+   "scores": {
+    "mult": 1.755,
+    "lifeH": 1.515,
+    "augs": 1.161
+   }
+  },
+  {
+   "at": "2026-09-27T13:22:19.788Z",
+   "lifeH": 13.49,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 0.5747931162275908,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 421844572745,
+   "predicted": {
+    "nextMult": 8.055317643662061,
+    "nextLifeH": 2.8,
+    "nextAugs": 43.05555555555556
+   },
+   "scores": {
+    "mult": 1.491,
+    "lifeH": 4.818,
+    "augs": 1.058
+   }
+  },
+  {
+   "at": "2026-09-27T13:27:19.759Z",
+   "lifeH": 13.58,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 1.2555383940429223,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 435515255850,
+   "predicted": {
+    "nextMult": 8.545664383948475,
+    "nextLifeH": 4.27,
+    "nextAugs": 43.1578947368421
+   },
+   "scores": {
+    "mult": 0.89,
+    "lifeH": 4.85,
+    "augs": 0.952
+   }
+  },
+  {
+   "at": "2026-09-27T13:32:19.767Z",
+   "lifeH": 13.66,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 1.4796831309365803,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 443593948313,
+   "predicted": {
+    "nextMult": 8.452224239071276,
+    "nextLifeH": 5.837999999999999,
+    "nextAugs": 43.1578947368421
+   },
+   "scores": {
+    "mult": 0.838,
+    "lifeH": 3.199,
+    "augs": 0.95
+   }
+  },
+  {
+   "at": "2026-09-27T13:37:19.683Z",
+   "lifeH": 13.74,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 1.788696811215406,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 443529910578,
+   "predicted": {
+    "nextMult": 8.42822285205512,
+    "nextLifeH": 11.984,
+    "nextAugs": 43.1578947368421
+   },
+   "scores": {
+    "mult": 0.848,
+    "lifeH": 2.354,
+    "augs": 0.95
+   }
+  },
+  {
+   "at": "2026-09-27T13:42:20.619Z",
+   "lifeH": 13.83,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 2.316598753341528,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 436263833063,
+   "predicted": {
+    "nextMult": 8.42822285205512,
+    "nextLifeH": 12.096,
+    "nextAugs": 42.36842105263158
+   },
+   "scores": {
+    "mult": 0.85,
+    "lifeH": 1.154,
+    "augs": 0.95
+   }
+  },
+  {
+   "at": "2026-09-27T13:47:20.117Z",
+   "lifeH": 13.91,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 2.3533016666904913,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 453942693999,
+   "predicted": {
+    "nextMult": 8.325098253310824,
+    "nextLifeH": 18.886,
+    "nextAugs": 42.31578947368421
+   },
+   "scores": {
+    "mult": 0.85,
+    "lifeH": 1.15,
+    "augs": 0.968
+   }
+  },
+  {
+   "at": "2026-09-27T13:52:20.104Z",
+   "lifeH": 13.99,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 2.3071953774769067,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 447345031870,
+   "predicted": {
+    "nextMult": 8.325098253310824,
+    "nextLifeH": 19.012,
+    "nextAugs": 42.31578947368421
+   },
+   "scores": {
+    "mult": 0.861,
+    "lifeH": 0.741,
+    "augs": 0.969
+   }
+  },
+  {
+   "at": "2026-09-27T13:57:20.443Z",
+   "lifeH": 14.08,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 2.3425002342902914,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 446340559325,
+   "predicted": {
+    "nextMult": 7.633926851274848,
+    "nextLifeH": 19.124,
+    "nextAugs": 42.1578947368421
+   },
+   "scores": {
+    "mult": 0.861,
+    "lifeH": 0.741,
+    "augs": 0.969
+   }
+  },
+  {
+   "at": "2026-09-27T14:02:21.027Z",
+   "lifeH": 14.16,
+   "hackMult": 7.1652662366001305,
+   "bitNode": 8,
+   "lnM": 2.2954975958133215,
+   "exitFavor": 81.27395867035231,
+   "augs": 41,
+   "capStart": 137796265642.0509,
+   "capEnd": 455826722325,
+   "predicted": {
+    "nextMult": 7.1652662366001305,
+    "nextLifeH": 19.236,
+    "nextAugs": 42.10526315789474
+   },
+   "scores": {
+    "mult": 0.939,
+    "lifeH": 0.74,
+    "augs": 0.973
+   }
+  },
+  {
+   "at": "2026-09-27T19:04:13.739Z",
+   "lifeH": 5.03,
+   "hackMult": 10.681849819777456,
+   "bitNode": 8,
+   "lnM": 5.1687313236230015,
+   "exitFavor": 177.1723929938903,
+   "augs": 47,
+   "installWhy": "install: THE RED PILL is in the plan (13 aug(s)) \u2014 the augmentation that ends the BitNode carries no multiplier, so M=17.7178 is expected and is NOT a reason to hold. Installing.",
+   "terminal": true,
+   "installBatch": [
+    "Embedded Netburner Module Core V3 Upgrade",
+    "Embedded Netburner Module Direct Memory Access Upgrade",
+    "Embedded Netburner Module Analyze Engine",
+    "ECorp HVMind Implant",
+    "PC Direct-Neural Interface",
+    "PC Direct-Neural Interface Optimization Submodule",
+    "Neuralstimulator",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "The Red Pill"
+   ],
+   "capStart": 320722094119.35364,
+   "capEnd": 1240613437679,
+   "predicted": {
+    "nextMult": 10.681849819777456,
+    "nextLifeH": 19.362,
+    "nextAugs": 48
+   },
+   "scores": {
+    "mult": 1.491,
+    "lifeH": 0.261,
+    "augs": 1.116
+   }
+  },
+  {
+   "at": "2026-09-27T23:33:13.016Z",
+   "lifeH": 2.72,
+   "hackMult": 1.3392000000000002,
+   "bitNode": 1,
+   "lnM": 0.10217722605019126,
+   "exitFavor": 0,
+   "augs": 0,
+   "installWhy": "install: COUNT BATCH \u2014 5 distinct augmentation(s) toward the 30 the exit still needs, decided by the floor of 3 (the timing is not yet priced: only 0 completed life/lives recorded in BitNode 1 (need 3) \u2014 the fresh ramp is not yet measured). M=1.1074 is expected for tickets and is NOT a reason to hol",
+   "terminal": false,
+   "installBatch": [
+    "Hacknet Node Core Direct-Neural Interface",
+    "Hacknet Node Kernel Direct-Neural Interface",
+    "Hacknet Node CPU Architecture Neural-Upload",
+    "Hacknet Node Cache Architecture Neural-Upload",
+    "Hacknet Node NIC Architecture Neural-Upload",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 17127800.746653505,
+   "capEnd": 447268650,
+   "predicted": {
+    "nextMult": 1.3847328000000003,
+    "nextLifeH": 1.72
+   }
+  },
+  {
+   "at": "2026-09-28T00:08:17.832Z",
+   "lifeH": 0.58,
+   "hackMult": 1.3797898369147057,
+   "bitNode": 1,
+   "lnM": 0.18858141270605086,
+   "exitFavor": 0,
+   "augs": 6,
+   "installWhy": "install: 8 aug(s), M=1.2075 -> 1.2075 with the x1.0000 favour gain (Go bonus 18.8% regrows, so it is not charged). Installing now accumulates 0.3277 ln(M)/h; nothing reachable beats it (best wait 0.3h -> M=1.2581 = 0.2782/h)",
+   "terminal": false,
+   "installBatch": [
+    "Synaptic Enhancement Implant",
+    "Neurotrainer I",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 1262,
+   "capEnd": 371622839,
+   "predicted": {
+    "nextMult": 1.4267026913698058,
+    "nextLifeH": 1.72
+   },
+   "scores": {
+    "mult": 0.996,
+    "lifeH": 0.337
+   }
+  }
+ ]
+}

@@ -34,7 +34,7 @@ plan.js  decide(): expected exit + switch cost, commitment (regret rule)
 | --- | --- | --- | --- |
 | trader return r (/s) | per interval of Δt ticks after the warm-up: x = ln(1+ΔPnl/wealth)/Δt_h ~ N(μ_j, σ²/Δt_h) within life j (weighted NIG); lives pooled by random effects μ_j ~ N(μ, τ²) (DerSimonian–Laird τ²) | NIG m0 = 0.5%/h, k0 = 0.05h, a0 = 1, b0 = var 1%²/h | `/tel/stock-hist.txt` (flows excluded exactly as `nodeecon.realisedCapital`) |
 | structural error s² | relative forecast residual per same-life pair r = (E_b − (E_a − Δh))/E_a ~ N(0, 2s²) (Inverse-Gamma, known mean 0) | IG(a0 = 2, b0 = 2·0.1²) — 10% prior | `exitCalibration.samples` |
-| ln M per hour (install cadence gain) | per life ln(M_j/M_{j−1})/L_j ~ N(λ, σ²/L_j) (weighted NIG) | vague: k0 = 0.1h | lifetimes ledger |
+| install cadence: ln M per life-hour r_n and life length L_n | per node y_n = ln(Σg/ΣL) ~ N(θ_n, σ²/n_eff) and ln(mean L) ~ N(θ_n, σ_L²/n); θ_n = μ + β·c_n + u_n, u_n ~ N(0, τ²) (random effect per node, covariate c = ln aug money × rep cost); σ² pooled over nodes (IG) | μ ~ N(ln 0.05/h, 1.5²), N(ln 3h, 1.5²); τ 1.0 / 0.7; β ~ N(−0.5, 0.5²) / N(+0.3, 0.5²) — all stated | lifetimes ledger, re-records merged, stall lives excluded (see below) |
 | hacking exp rate, faction rep rate | mean ln(rate) per 30-min bin ~ N(μ, σ²) (NIG); rep drawn ABSOLUTE (a noisy pass — live 13.04→10.72→13.41 rep/s — moves it by its share), exp as the current point × its spread (it trends with the level) | σ_ln prior 0.3 | this life's pass observations, kept in plan.txt `obs` |
 | option-specific structural error s_i | per consecutive same-life passes, x = Δln(H_a/H_b)/2 ~ N(0, s_i²) over the options both rank (IG) | 2% | the top-8 route exits each pass, kept in plan.txt `points` |
 | gym rate | bodyplan formula (calibrated exactly 2026-09-19) × residual exp(N(0, 0.1²)) | prior only — NOT CALIBRATED (no live residual feed yet) | — |
@@ -156,6 +156,47 @@ Re-decide only on an EVENT: new life, committed option gone/finished, invite
 set changed, posterior moved materially (trader mean by > 1 posterior sd, s by
 > 1.5x), or 30 min since the last decision. Otherwise the committed plan is
 re-published with `held: 'no event'` and the MC is skipped.
+
+### The install cadence is a posterior, not a borrowed node
+
+`bayes.cadencePosterior` (via `exitplan.installCadence`). The old rule priced a
+node on its own lives once it had three, else on the node with the most lives:
+BN1's first lives priced on BN8's cadence (x1.103 per 9.31h — BN8's 14h life
+and a count-ticket stall in it) and read a ~150-250h exit.
+
+- The ledger is cleaned first (`ledgerLives`). installgate appends an entry
+  every pass that orders an install, so an install act.js does not complete is
+  recorded again 5 minutes later, longer: BN8's 14h life is nine entries. One
+  start (at − lifeH) is one life. `hackMult` is read before the install, so a
+  life's gain g = ln(M_next/M) shows in the next entry and is credited to the
+  life that bought it; the current node's last finished life takes this
+  life's multiplier as its successor; a node's terminal life has none.
+- Stall lives are a different state, not slow cycles: an install that moved
+  the multiplier < 1% (count tickets, favour banking) is excluded from rate
+  and length and counted (`own.stalls`, `stallShare`); the count route prices
+  those lives itself.
+- Per node, the rate is ln(Σg/ΣL) (what an exit over many lives compounds on)
+  with sampling variance σ²/n_eff (hour-weighted, n_eff = (ΣL)²/ΣL²); σ², one
+  life's scatter around its node, is pooled over nodes (IG). The node effect
+  θ_n = μ + β·c_n + u_n: other nodes update (μ, β) (Gaussian, 2×2), giving this
+  node the prior N(μ + β·c_n, q + τ²), which its own lives update — exact,
+  the node's own data entering once. With σ ≈ 1.1 and τ = 1.0 two of a node's
+  own lives already carry ~2/3 of the precision.
+- The covariate is the augmentation price, c = ln(AugmentationMoneyCost ×
+  AugmentationRepCost). Stated, not fitted: BN1 and BN8 both have c = 0, so
+  nothing can identify β yet; it moves a dearer node's prior (BN10: c = 2.3,
+  rate x0.3, longer lives) and widens the transfer. τ is stated for the same
+  reason (two nodes).
+- Drawn: each Monte Carlo draw takes the node's rate and life length from
+  their posteriors (the node mean — the exit spans many lives), and
+  `applyDraw` sets `cycleHours` and `multGainPerCycle = exp(r·L)` from the
+  same draw. The point inputs are the posterior medians.
+
+Replay, live ledger 2026-09-28 00:58 (BY15): BN1 ln M 0.0307/h (80%
+0.011-0.083; its own two lives alone 0.024/h), 2.45h lives, own weight 68%;
+BN8 0.0461/h (80% 0.023-0.093; own alone 0.052/h), 4.34h lives, one stall
+excluded, own weight 86%. The BN1 exit: borrowed BN8 cadence median 152h
+(80% 132-184h) -> own posterior median 74h (80% 42-118h).
 
 ### One trajectory basis
 

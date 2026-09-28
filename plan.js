@@ -19,7 +19,7 @@
 // the alternative is better net of it is at least THETA — an expected-regret
 // rule whose scale comes from the posterior, not a hand-set hour tolerance.
 
-import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, lnGainPosterior, logRatePosterior, jitterPosterior } from 'bayes.js'
+import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, logRatePosterior, jitterPosterior } from 'bayes.js'
 import { routeExitFixed, countExitFixed } from 'countexit.js'
 import { drain } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
@@ -61,20 +61,19 @@ const clock = () => {
  * Each is null when its data is absent — and then the draw keeps the point
  * input (named in `missing`), never a silent zero.
  */
-export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, ledger = null, bitNode = null, obs = {}, optionPoints = null, income = null } = {}) {
+export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null } = {}) {
   const jitter = jitterPosterior(optionPoints ?? [])
   const trader = stockRows ? traderPosterior(stockRows, { warmupH }) : null
   const drift = driftPosterior(exitSamples ?? [])
   const calibration = driftCalibration(exitSamples ?? [])
-  const lnGain = ledger ? lnGainPosterior(ledger, bitNode) : null
   const exp = logRatePosterior(obs?.exp)
   const rep = logRatePosterior(obs?.rep)
   const missing = []
   if (!trader) missing.push('trader return (no stock history past warm-up): point input kept')
-  if (!lnGain) missing.push('ln(M)/h (fewer than 3 lives in the ledger): point cadence kept')
+  if (!cadence) missing.push('install cadence (no life in any node with a measured gain): point cadence kept')
   if (!exp) missing.push('exp rate (no observation): point kept')
   if (!rep) missing.push('rep rate (no observation): point kept')
-  return { trader, drift, calibration, lnGain, exp, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
+  return { trader, drift, calibration, cadence, exp, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
 }
 
 /**
@@ -98,7 +97,12 @@ export function makeDraws(post, N, seed) {
     const s2 = igDraw(post.drift, st('drift')) / lam
     const si2 = igDraw(post.jitter ?? PRIORS.jitter, st('jitter'))
     const zc = normalOf(st('common'))
-    const ln = post.lnGain ? nigDraw(post.lnGain.post, st('lnGain')).mu : null
+    // The install cadence (bayes.cadencePosterior, hierarchical over nodes):
+    // this draw's node-level ln(M)/h and life length — the exit spans many
+    // lives, so it is the node's mean that is uncertain, not one life's.
+    const cad = post.cadence
+    const ln = cad && fin(cad.rate?.mean) && fin(cad.rate?.sd) ? Math.exp(cad.rate.mean + cad.rate.sd * normalOf(st('cadenceRate'))) : null
+    const cycleH = cad && fin(cad.life?.mean) && fin(cad.life?.sd) ? Math.exp(cad.life.mean + cad.life.sd * normalOf(st('cadenceLife'))) : null
     const e = post.exp ? nigDraw(post.exp.post, st('exp')).mu - post.exp.mean : 0
     const repLn = post.rep ? nigDraw(post.rep.post, st('rep')).mu : null
     const gym = post.gymSdLn * normalOf(st('gym'))
@@ -108,7 +112,7 @@ export function makeDraws(post, N, seed) {
     const repResid = Math.exp(PRIORS.repEstimateSdLn * normalOf(st('repEstimate')))
     const incomeLn = post.income && fin(post.income.mean) && fin(post.income.sd) ? post.income.mean + post.income.sd * normalOf(st('income')) : null
     const r = post.trader ? Math.max(1e-9, post.trader.perSec.mean + post.trader.perSec.sd * zT) : null
-    out.push({ i, seed, r, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    out.push({ i, seed, r, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, cycleH, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -124,7 +128,8 @@ export function makeDraws(post, N, seed) {
 export function applyDraw(inputs, d) {
   const o = { ...inputs }
   if (fin(d.r)) o.capitalReturnPerSec = d.r
-  if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours)
+  if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
+  if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
   if (fin(inputs.expPerSec)) o.expPerSec = inputs.expPerSec * d.expMult
   if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
   // An income this life could not measure yet is a draw from earlier lives.
@@ -314,7 +319,7 @@ export function posteriorSummary(post) {
     driftWhy: post.drift.why,
     driftExcluded: post.drift.excluded ?? null,
     driftNu: post.drift.nu ?? null,
-    lnGain: post.lnGain ? { mean: post.lnGain.mean, sd: post.lnGain.sd } : null,
+    cadence: post.cadence ? { lnPerHour: post.cadence.lnPerHour, rateSdLn: post.cadence.rate.sd, cycleHours: post.cadence.cycleHours, lifeSdLn: post.cadence.life.sd, ownWeight: post.cadence.own.weight, ownLives: post.cadence.own.gained, stalls: post.cadence.own.stalls, dups: post.cadence.dups, why: post.cadence.why } : null,
     exp: post.exp ? { n: post.exp.n, sdLn: post.exp.sd } : null,
     rep: post.rep ? { n: post.rep.n, sdLn: post.rep.sd } : null,
     gymSdLn: post.gymSdLn,
