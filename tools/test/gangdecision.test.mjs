@@ -137,5 +137,62 @@ export async function run() {
     if (!/persons: sleeves\.map\(\(x\) => \(\{ i: x\.index, sync: x\.sync, shock: x\.shock, skills: x\.skills, exp: x\.exp, mults: x\.mults \}\)\)/.test(src("sleeve.js"))) g3.fail("sleeve.js publishes the persons the grind is computed from");
   }
   checks.push(g3);
+
+  // ---------------------------------------------------------------------
+  // GD4 — live 02:28-02:32Z: the plan committed 'fleet' (held since 01:48),
+  // installgate gangWorth re-derived 'none' from the point, the sleeve
+  // objective fell to 'exp', and all five sleeves sat in RECOVERY (shock 73,
+  // combat 53) with karma flat at -3265.
+  const g4 = new Check("GD4", "one gang decider: the verdict IS the plan's decisions.gang; under it the fleet grinds as simulated (best karma crime now, no recovery/sync/training first); the grind is sliced");
+  {
+    g4.examined(9);
+    const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn1-gang-0232.json"), "utf8"));
+    const lw = L.gangWorthLive;
+    const point = { best: "none", savedH: lw.gainHours, withoutH: lw.withoutH, withH: lw.withH, arms: lw.arms, why: "point" };
+    const v = GW.gangVerdict({ node: 1, mults: node, inGang: false, grindHours: lw.grindHours, gangExit: point, decision: { key: L.planGang.key, why: L.planGang.why } });
+    g4.note(v.why.slice(0, 220));
+    if (!(v.worth === true && v.arm === "fleet" && v.decidedBy === "plan")) g4.fail(`the plan committed '${L.planGang.key}': the verdict must be worth/fleet by the plan (got worth ${v.worth}, arm ${v.arm})`);
+    const vNone = GW.gangVerdict({ node: 1, mults: node, inGang: false, grindHours: 7, gangExit: { ...point, best: "fleet", savedH: 3 }, decision: { key: "none" } });
+    if (vNone.worth !== false) g4.fail("a plan that commits 'none' cancels the gang whatever the point says");
+    // The fleet as it was: shock 73, combat ~53, sync 100.
+    const fleet = L.sleeves.map((s) => {
+      const skills = { hacking: s.skills.hack, strength: s.skills.str, defense: s.skills.def, dexterity: s.skills.dex, agility: s.skills.agi, charisma: 1, intelligence: 0 };
+      return { index: s.i, skills, exp: Object.fromEntries(SK.map((k) => [k, Math.max(0, IG.expForSkill(skills[k], 1))])), mults: unitMults(1), sync: s.sync, shock: s.shock, task: { type: s.task } };
+    });
+    const flat = () => 43.07;
+    const asLive = SP.sleeveAssignments(fleet, node, { objective: "exp", horizonHours: L.sleeveplan.horizonHours, playerIntelligence: 121, money: 5e6, wealth: 5e6, exitOf: flat });
+    g4.note(`as live (objective exp): ${asLive.tasks.join("/")}`);
+    if (!asLive.tasks.every((t) => t === "shock")) g4.fail("the replay must reproduce the live RECOVERY (objective exp, study not worth its fee)");
+    const grind = SP.sleeveAssignments(fleet, node, { objective: "karma", gangGrind: true, horizonHours: L.sleeveplan.horizonHours, playerIntelligence: 121, money: 5e6, wealth: 5e6, exitOf: flat });
+    g4.note(`under the gang decision: ${grind.tasks.join("/")} — ${grind.why[0]}`);
+    if (!grind.tasks.every((t) => t && SP.bestSleeveCrime(fleet[0], node, "karma")?.crime === t)) g4.fail("under the gang decision every sleeve commits its best karma crime now");
+    if (grind.tasks.some((t) => t === "shock" || t === "sync" || ["strength", "defense", "dexterity", "agility"].includes(t))) g4.fail("the grind was simulated with no recovery, sync or training first — none may be assigned");
+    // The grind from this state, and it is sliced.
+    const o = { karmaTarget: -54000, karma: L.karma, cycleHours: 9.31 };
+    const gen = SP.fleetKarmaGrindGen(fleet, node, o);
+    let r;
+    let yields = 0;
+    let maxMs = 0;
+    for (;;) {
+      const t0 = performance.now();
+      r = gen.next();
+      maxMs = Math.max(maxMs, performance.now() - t0);
+      if (r.done) break;
+      yields++;
+    }
+    g4.note(`grind from karma ${Math.round(L.karma)}: ${r.value.hours.toFixed(1)}h (${r.value.karmaPerSecNow.toFixed(2)} -> ${r.value.karmaPerSecEnd.toFixed(2)} karma/s), ${yields} slices, longest ${maxMs.toFixed(1)}ms`);
+    if (!(yields >= 10)) g4.fail("the grind must yield (coop), not run as one step");
+    if (!(maxMs < 40)) g4.fail(`a grind slice took ${maxMs.toFixed(1)}ms (limit ~40ms)`);
+    if (Math.abs(r.value.hours - SP.fleetKarmaGrind(fleet, node, o).hours) > 1e-9) g4.fail("the sliced grind and the drained one must agree");
+    const src = (f) => fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
+    const prog = src("progress.js");
+    if (!/await paced\(fleetKarmaGrindGen\(fleet\.persons, node, o\), 'gang-grind'\)/.test(prog)) g4.fail("progress.js runs the grind through the pass pacer");
+    if (!/gangGrind: byExit\?\.gang === true/.test(prog) || !/gangGrind: plan\?\.gangGrind === true/.test(src("sleeve.js"))) g4.fail("sleeveplan.txt carries gangGrind and sleeve.js passes it to sleeveAssignments");
+    if (!/if \(!grindByAssist\.has\(gk\)\)/.test(prog)) g4.fail("the sleeve objective prices the grind once per assist, not per draw");
+    if (!/kctx = karmaChannelCtx\(ns, info, player, \{ reprice: true \}\)/.test(prog) || !/verdict: reprice \? null : readJson\(ns, GATE\)\?\.gangWorth \?\? null/.test(prog)) g4.fail("the gang decision re-prices the grind after a NOT-worth verdict (no none -> unpriced oscillation)");
+    const hc = src("tools/healthcheck.mjs");
+    if (!/GANG TWO DECIDERS/.test(hc) || !/GANG GRIND NOT RUNNING/.test(hc)) g4.fail("healthcheck checks one gang decider and that the fleet grinds under it");
+  }
+  checks.push(g4);
   return checks;
 }

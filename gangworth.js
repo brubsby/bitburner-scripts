@@ -287,6 +287,29 @@ export function gangVerdict(o = {}) {
   // the fleet and the work slot. `playerSlot` is what act.js/progress.js
   // read to give the slot to the grind; false keeps it on the plan.
   if (ex.arms) {
+    // THE PLAN'S COMMITTED DECISION IS THE VERDICT (decisions.gang): one
+    // decider. The point comparison is published beside it, never instead —
+    // live 2026-09-28 the plan committed 'fleet' while this re-derived 'none'
+    // from the point and every consumer read 'NOT worth it'.
+    const dk = o.decision?.key
+    if (dk === 'none' || dk === 'fleet' || dk === 'player') {
+      const worthD = dk !== 'none'
+      const gD = worthD ? ex.arms[dk]?.grindH : null
+      return {
+        worth: worthD,
+        arm: dk,
+        playerSlot: dk === 'player',
+        decidedBy: 'plan',
+        gainHours: ex.savedH,
+        grindHours: num(gD) ? gD : grindHours,
+        withH: ex.withH ?? null,
+        withoutH: ex.withoutH ?? null,
+        arms: ex.arms,
+        repSource: ex.repSource ?? null,
+        decision: o.decision,
+        why: `${worthD ? `WORTH IT (${dk === 'player' ? 'sleeves and the work slot grind' : 'the sleeves grind; the work slot keeps its plan'})` : 'NOT worth it — the partial grind stops'} in BitNode ${node}: the plan commits '${dk}' (${String(o.decision?.why ?? '').slice(0, 120)}); point: ${ex.why}`,
+      }
+    }
     const worth = ex.best !== 'none' && ex.savedH > EXIT_RESOLUTION_H
     const g = worth ? ex.arms[ex.best]?.grindH : null
     return {
@@ -298,6 +321,7 @@ export function gangVerdict(o = {}) {
       withH: ex.withH ?? null,
       withoutH: ex.withoutH ?? null,
       arms: ex.arms,
+      decidedBy: 'point',
       repSource: ex.repSource ?? null,
       ...(o.decision ? { decision: o.decision } : {}),
       why: `${worth ? `WORTH IT (${ex.best === 'player' ? 'sleeves and the work slot grind' : 'the sleeves grind; the work slot keeps its plan'})` : 'NOT worth it — the partial grind stops'} in BitNode ${node}: ${ex.why} (${ex.savedH >= 0 ? 'saves' : 'costs'} ${Math.abs(ex.savedH).toFixed(1)}h, grind included)`,

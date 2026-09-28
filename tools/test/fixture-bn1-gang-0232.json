@@ -1,0 +1,188 @@
+{
+ "source": "live BN1 2026-09-28 02:28-02:32Z: plan decisions.gang fleet (held), installgate gangWorth none, all 5 sleeves RECOVERY shock 73, karma flat (gangWorthLive transcribed from the 02:28:50Z installgate.txt read; the 02:3x file later went unpriced)",
+ "karma": -3264.7,
+ "playerSkills": {
+  "hacking": 463,
+  "strength": 78,
+  "defense": 81,
+  "dexterity": 83,
+  "agility": 79,
+  "charisma": 21,
+  "intelligence": 122
+ },
+ "playerExp": {
+  "hacking": 2853473.3112691343,
+  "strength": 2145.0986955881563,
+  "defense": 2338.3672682015176,
+  "dexterity": 2225.5800140975134,
+  "agility": 2002.6586805048216,
+  "charisma": 168.6082413276982,
+  "intelligence": 22920.62062238947
+ },
+ "sleeves": [
+  {
+   "i": 0,
+   "sync": 100,
+   "shock": 73,
+   "task": "CLASS",
+   "skills": {
+    "str": 53,
+    "def": 53,
+    "dex": 52,
+    "agi": 52,
+    "hack": 106
+   }
+  },
+  {
+   "i": 1,
+   "sync": 100,
+   "shock": 73.1,
+   "task": "CLASS",
+   "skills": {
+    "str": 53,
+    "def": 53,
+    "dex": 53,
+    "agi": 51,
+    "hack": 106
+   }
+  },
+  {
+   "i": 2,
+   "sync": 100,
+   "shock": 73.1,
+   "task": "CLASS",
+   "skills": {
+    "str": 53,
+    "def": 53,
+    "dex": 53,
+    "agi": 51,
+    "hack": 106
+   }
+  },
+  {
+   "i": 3,
+   "sync": 100,
+   "shock": 73.1,
+   "task": "CLASS",
+   "skills": {
+    "str": 53,
+    "def": 53,
+    "dex": 53,
+    "agi": 51,
+    "hack": 106
+   }
+  },
+  {
+   "i": 4,
+   "sync": 100,
+   "shock": 73.1,
+   "task": "CLASS",
+   "skills": {
+    "str": 53,
+    "def": 53,
+    "dex": 52,
+    "agi": 52,
+    "hack": 106
+   }
+  }
+ ],
+ "sleevePlan": [
+  "sleeve 0: work through shock 73.0: exit 41.62h vs 41.61h after recovering",
+  "sleeve 0: study pays for its $1600/s fee: exit 41.68h vs 41.71h without",
+  "sleeve 0: study Algorithms at ZB Institute of Technology \u2014 4.3 hacking exp/s to the player at sync 100.0 (study exp does not scale with the sleeve's own stats, so there is nothing to train first)",
+  "sleeve 1: work through shock 73.1: exit 41.62h vs 41.61h after recovering",
+  "sleeve 1: study pays for its $1600/s fee: exit 41.68h vs 41.71h without",
+  "sleeve 1: study Algorithms at ZB Institute of Technology \u2014 4.3 hacking exp/s to the player at sync 100.0 (study exp does not scale with the sleeve's own stats, so there is nothing to train first)",
+  "sleeve 2: work through shock 73.1: exit 41.62h vs 41.61h after recovering",
+  "sleeve 2: study pays for its $1600/s fee: exit 41.68h vs 41.71h without",
+  "sleeve 2: study Algorithms at ZB Institute of Technology \u2014 4.3 hacking exp/s to the player at sync 100.0 (study exp does not scale with the sleeve's own stats, so there is nothing to train first)",
+  "sleeve 3: work through shock 73.1: exit 41.62h vs 41.61h after recovering",
+  "sleeve 3: study pays for its $1600/s fee: exit 41.68h vs 41.71h without",
+  "sleeve 3: study Algorithms at ZB Institute of Technology \u2014 4.3 hacking exp/s to the player at sync 100.0 (study exp does not scale with the sleeve's own stats, so there is nothing to train first)",
+  "sleeve 4: work through shock 73.1: exit 41.62h vs 41.61h after recovering",
+  "sleeve 4: study pays for its $1600/s fee: exit 41.68h vs 41.71h without",
+  "sleeve 4: study Algorithms at ZB Institute of Technology \u2014 4.3 hacking exp/s to the player at sync 100.0 (study exp does not scale with the sleeve's own stats, so there is nothing to train first)"
+ ],
+ "gangWorthLive": {
+  "at": "2026-09-28T02:28:50.237Z",
+  "worth": false,
+  "arm": "none",
+  "playerSlot": false,
+  "gainHours": 0,
+  "grindHours": 7.003655053693355,
+  "withH": 42.51901008997099,
+  "withoutH": 42.51901008997099,
+  "arms": {
+   "fleet": {
+    "grindH": 7.003655053693355,
+    "withH": 42.51901008997099
+   },
+   "player": {
+    "grindH": 5.743345311058573,
+    "withH": 48.262355401029566,
+    "lowerH": 42.51901008997099
+   }
+  },
+  "repSource": "measured",
+  "decision": {
+   "key": "fleet",
+   "meanH": 61.975,
+   "pWin": null,
+   "held": true
+  },
+  "why": "NOT worth it \u2014 the partial grind stops in BitNode 1: exit 42.5h without a gang; with: fleet (grind 7.0h) 42.5h, player (grind 5.7h) 48.3h [slot free: 42.5h] -> none; plan commits fleet: held (no event) ... (saves 0.0h, grind included)"
+ },
+ "planGang": {
+  "key": "fleet",
+  "pFeasible": 1,
+  "meanH": 61.975,
+  "q10": 35.625,
+  "q50": 57.559,
+  "q90": 95.753,
+  "pBest": 1,
+  "held": true,
+  "why": "held (no event): held (no event): held (no event): held (no event): held (no event): no committed option: the least expected exit (77.335h, P(best) 1)",
+  "decidedAt": "2026-09-28T01:48:49.286Z",
+  "options": [
+   {
+    "key": "fleet",
+    "pointH": 51.089,
+    "pFeasible": 1,
+    "meanH": 77.335,
+    "q10": 43.194,
+    "q50": 67.47,
+    "q90": 122.038,
+    "pBest": 1
+   },
+   {
+    "key": "player",
+    "pointH": 57.541,
+    "pFeasible": 1,
+    "meanH": 83.86,
+    "q10": 49.888,
+    "q50": 74.42,
+    "q90": 127.636,
+    "pBest": 0
+   },
+   {
+    "key": "none",
+    "pointH": 63.927,
+    "pFeasible": 1,
+    "meanH": 92.299,
+    "q10": 48.111,
+    "q50": 88.024,
+    "q90": 143.91,
+    "pBest": 0
+   }
+  ],
+  "n": 5,
+  "ms": 22.2,
+  "overBudget": true
+ },
+ "sleeveplan": {
+  "objective": "exp",
+  "objectiveDecidedBy": "exit-sim",
+  "horizonHours": 41.26626985339892,
+  "repFaction": "CyberSec"
+ }
+}

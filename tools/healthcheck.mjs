@@ -292,6 +292,18 @@ if (!prev) {
     // past with it. The verdict is read from the same file act.js gates on, so
     // the monitor and the actor cannot disagree about what the run is doing.
     const verdict = readTel("installgate.txt")?.gangWorth ?? null;
+    // ONE GANG DECIDER: the verdict every consumer reads (installgate
+    // gangWorth) must be the plan's committed decisions.gang. Live
+    // 2026-09-28 the plan held 'fleet' while gangWorth read 'none'.
+    {
+      const pl = readTel("plan.txt");
+      const pk = pl?.decisions?.gang?.key ?? null;
+      const gateLife = readTel("installgate.txt")?.lastAugReset;
+      if (pk && verdict && pl.lastAugReset === gateLife && verdict.arm && verdict.arm !== pk) fail(`GANG TWO DECIDERS: plan.txt decisions.gang is '${pk}' but installgate gangWorth says '${verdict.arm}' (worth ${verdict.worth})`, "the gang verdict every consumer reads must be the plan's committed decision (gangworth.gangVerdict decision)");
+      // THE FLEET FOLLOWS IT: a 'fleet'/'player' decision with no sleeve on crime is the grind not happening.
+      const sl = readTel("sleeve.txt");
+      if (verdict?.worth === true && Array.isArray(sl?.assigned) && sl.assigned.length && !sl.assigned.some((x) => x?.task === "CRIME")) fail(`GANG GRIND NOT RUNNING: the gang decision is '${verdict.arm}' but no sleeve is committing a crime (${sl.assigned.map((x) => x?.task).join("/")})`, `sleeveplan objective '${readTel("sleeveplan.txt")?.objective}' (${String(readTel("sleeveplan.txt")?.objectiveDecidedBy ?? "").slice(0, 80)})`);
+    }
     const karmaIsTheGate = verdict?.worth !== false;
     if (!karmaIsTheGate) {
       note(`karma flat at ${Math.round(now.karma ?? 0)} and that is CORRECT — the gang is priced NOT worth its gate in this node, so the work slot is elsewhere`);

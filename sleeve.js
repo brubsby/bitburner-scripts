@@ -414,6 +414,8 @@ async function act(ns, note) {
 			repFaction: typeof plan?.repFaction === 'string' ? plan.repFaction : null,
 			// The Covenant campaign's stat (objective 'covenant').
 			trainStat: typeof plan?.trainStat === 'string' ? plan.trainStat : null,
+			// The gang decision's grind: each sleeve on its best karma crime now.
+			gangGrind: plan?.gangGrind === true,
 			nodeWorkRepMult: node?.FactionWorkRepGain,
 			sharePower: typeof plan?.sharePower === 'number' && isFinite(plan.sharePower) && plan.sharePower > 0 ? plan.sharePower : 1,
 			exitOf: (() => {

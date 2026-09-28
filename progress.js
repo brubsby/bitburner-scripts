@@ -143,7 +143,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 import { makePacer, drain } from 'coop.js'
 import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrind, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -1270,11 +1270,16 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
     const live = readJson(ns, '/tel/gang.txt')
     const inGang = live?.lastAugReset === info?.lastAugReset && !!live?.faction
     let arms = null
+    let kctx = null
+    try {
+      kctx = karmaChannelCtx(ns, info, player, { reprice: true })
+    } catch {
+      kctx = null
+    }
+    if (typeof kctx?.grindArms === 'function') arms = await kctx.grindArms()
     const grindHours = (() => {
       try {
-        const k = karmaChannelCtx(ns, info, player)
-        if (typeof k?.grindArms === 'function') arms = k.grindArms()
-        return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
+        return typeof kctx?.grindHours === 'function' ? kctx.grindHours(null) : null
       } catch {
         return null
       }
@@ -1423,7 +1428,7 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
   if (cv) byExit = { objective: 'covenant', why: `the mandated Covenant campaign is running: train ${cv.trainStat} beside the player`, trainStat: cv.trainStat }
   // THE GANG DECISION GOVERNS THE FLEET while it says grind: its arms were
   // priced WITH the sleeves on their best karma crime (gangworth.gangArms).
-  else if (verdict?.worth === true && verdict?.gatePaid !== true && verdict?.arm && verdict.arm !== 'none') byExit = { objective: 'karma', gang: true, why: `follows decisions.gang (${verdict.arm}): ${String(verdict.why ?? '').slice(0, 240)}` }
+  else if (verdict?.worth === true && verdict?.gatePaid !== true && verdict?.arm && verdict.arm !== 'none') byExit = { objective: 'karma', gang: true, why: `follows decisions.gang (${verdict.arm}): each sleeve on its best karma crime now, as the grind was simulated (no synchronise, training or shock recovery first — the ramp prices none of them) — ${String(verdict.why ?? '').slice(0, 200)}` }
   ns.write(
     '/tel/sleeveplan.txt',
     JSON.stringify({
@@ -1461,6 +1466,11 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
       objectiveDecidedBy: byExit?.objective === 'covenant' ? 'covenant-mandate' : byExit?.gang ? 'gang-decision' : byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
       objectiveWhy: byExit?.why ?? null,
       trainStat: byExit?.trainStat ?? null,
+      // THE GRIND AS SIMULATED (gangworth.gangArms / sleeveplan.fleetKarmaGrind):
+      // sleeve.js assigns each sleeve its best karma crime at its current
+      // stats and nothing first. Shock is not a karma term
+      // (SleeveCrimeWork.ts:47 credits crime.karma x syncBonus only).
+      gangGrind: byExit?.gang === true,
       objective: byExit?.objective ? byExit.objective :
         verdict?.worth === true && verdict?.gatePaid !== true
           ? 'karma'
@@ -1633,6 +1643,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     const playerRep = base.repPerSec
     const k = karmaChannelCtx(ns, info, player)
     const gang = k?.gangPending === true && !k.gangKarmaWaived && typeof k.grindHours === 'function'
+    const grindByAssist = new Map()
     const finish = (inputs, assist) => {
       if (!gang) {
         // A degenerate exit is "unreachable", not a duration: every candidate
@@ -1640,7 +1651,11 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
         const r = bestExitPolicy(inputs)
         return r.degenerate ? null : r.best?.hours ?? null
       }
-      const g = gangExitNow(ns, info, inputs, k.grindHours(null, assist))
+      // The grind does not depend on a posterior draw: priced once per
+      // assist, not once per option per draw (live: 182ms blocks).
+      const gk = assist ? `${assist.karmaPerSec}` : 'alone'
+      if (!grindByAssist.has(gk)) grindByAssist.set(gk, k.grindHours(null, assist))
+      const g = gangExitNow(ns, info, inputs, grindByAssist.get(gk))
       return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
     }
     // Each candidate as a trajectory of the base inputs, so the plan can run
@@ -2821,7 +2836,7 @@ function effectiveHackingMult(player, info) {
  * never see it. A parameter whose only correct value is a pure function of
  * another parameter is a parameter that can only be got wrong.
  */
-function karmaChannelCtx(ns, info, player) {
+function karmaChannelCtx(ns, info, player, { reprice = false } = {}) {
   try {
     const fin = (v) => typeof v === 'number' && isFinite(v)
     const node = bitNodeMults(info?.currentNode) ?? null
@@ -2834,7 +2849,10 @@ function karmaChannelCtx(ns, info, player) {
       canUse: canUseGang(info),
       node: info?.currentNode,
       inGang: live?.lastAugReset === info?.lastAugReset && !!live?.faction,
-      verdict: readJson(ns, GATE)?.gangWorth ?? null,
+      // reprice: the gang decision itself (gangWorthNow) must price the grind
+      // even after a NOT-worth verdict, or the next pass reads it unpriced and
+      // the verdict oscillates none -> null -> none (live 2026-09-28 02:3x).
+      verdict: reprice ? null : readJson(ns, GATE)?.gangWorth ?? null,
       mults: bitNodeMults(info?.currentNode),
     })
     if (!pend.pending) return { gangPending: false, gangPendingWhy: pend.why }
@@ -2893,18 +2911,27 @@ function karmaChannelCtx(ns, info, player) {
     // best karma crime, training as it goes, alone ('fleet') or with the work
     // slot on crime too ('player'). Null (unpriced) without the fleet's
     // persons — never the constant-rate grind in disguise.
-    const grindArms = () => {
+    // SLICED (coop): each grind runs through the pass pacer, yielding every
+    // GRIND_YIELD_EVERY steps — live 2026-09-28 it blocked the page 182ms as
+    // one step. Once per pass (grindArmsMemo): it does not depend on a draw.
+    const grindArms = async () => {
       if (cycleHours === null || !Array.isArray(fleet.persons)) return { fleet: null, player: null, why: cycleHours === null ? 'no install cycle length' : `no sleeve persons in /tel/sleeve.txt (${fleet.why})` }
+      if (grindArmsMemo && grindArmsMemo.lastAugReset === info?.lastAugReset && Date.now() - grindArmsMemo.at < 60e3) return grindArmsMemo.arms
       const o = { karmaTarget: KARMA_FOR_GANG, karma: player?.karma, cycleHours, focus: 1 }
-      const f = fleetKarmaGrind(fleet.persons, node, o)
-      const p = fleetKarmaGrind(fleet.persons, node, { ...o, player: person })
-      return { fleet: f && isFinite(f.hours) ? f.hours : null, player: p && isFinite(p.hours) ? p.hours : null, fleetDetail: f, playerDetail: p }
+      const f = await paced(fleetKarmaGrindGen(fleet.persons, node, o), 'gang-grind')
+      const p = await paced(fleetKarmaGrindGen(fleet.persons, node, { ...o, player: person }), 'gang-grind')
+      const arms = { fleet: f && isFinite(f.hours) ? f.hours : null, player: p && isFinite(p.hours) ? p.hours : null, fleetDetail: f, playerDetail: p }
+      grindArmsMemo = { lastAugReset: info?.lastAugReset, at: Date.now(), arms }
+      return arms
     }
     return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, grindArms, gangExitH, hoursPerLn, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
   } catch {
     return { gangPending: false }
   }
 }
+
+/** One ramping-grind simulation per pass (karmaChannelCtx.grindArms). */
+let grindArmsMemo = null
 
 function measureWindow(ns, info = null) {
   // All logic lives in scorecard.js (pure, SC1-SC3 tested — including the

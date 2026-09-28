@@ -201,6 +201,23 @@ const GRIND_SKILLS = ['hacking', 'strength', 'defense', 'dexterity', 'agility', 
  * inputs; hours is Infinity past `o.maxHours` (default 2000).
  */
 export function fleetKarmaGrind(sleeves, node, o = {}) {
+  const g = fleetKarmaGrindGen(sleeves, node, o)
+  let r = g.next()
+  while (!r.done) r = g.next()
+  return r.value
+}
+
+/** Iterations between yields of fleetKarmaGrindGen: each slice stays well under the plan's ~40ms block. */
+export const GRIND_YIELD_EVERY = 40
+
+/**
+ * fleetKarmaGrind as a GENERATOR that yields every GRIND_YIELD_EVERY steps,
+ * so progress.js runs it through the pass pacer (coop) instead of blocking the
+ * page: live 2026-09-28 the plan's longest step was 182ms. The crime choice is
+ * memoised on the integer skills (and sync), which change far more slowly
+ * than the step — the same answer bestSleeveCrime / crimeRates give.
+ */
+export function* fleetKarmaGrindGen(sleeves, node, o = {}) {
   if (!Array.isArray(sleeves)) return null
   const target = num(o.karmaTarget) ? o.karmaTarget : null
   const karma0 = num(o.karma) ? o.karma : null
@@ -222,6 +239,31 @@ export function fleetKarmaGrind(sleeves, node, o = {}) {
   const relevel = (p) => {
     for (const k of GRIND_SKILLS) p.skills[k] = skillFromExp(p.exp[k], p.mults[k])
   }
+  const keyOf = (p, extra = '') => `${p.skills.hacking}|${p.skills.strength}|${p.skills.defense}|${p.skills.dexterity}|${p.skills.agility}|${p.skills.charisma}|${p.skills.intelligence}|${extra}`
+  const sleeveMemo = fleet.map(() => ({ key: null, pick: null }))
+  const pickFor = (sl, idx) => {
+    const k = keyOf(sl, sl.sync)
+    const m = sleeveMemo[idx]
+    if (m.key !== k) {
+      m.key = k
+      m.pick = bestSleeveCrime(sl, node, 'karma')
+    }
+    return m.pick
+  }
+  const playerMemo = { key: null, best: null }
+  const playerBest = () => {
+    const k = keyOf(player)
+    if (playerMemo.key !== k) {
+      let best = null
+      for (const name of Object.keys(CRIMES)) {
+        const r = crimeRates(name, player, node, focus)
+        if (r && (!best || r.karma > best.karma)) best = r
+      }
+      playerMemo.key = k
+      playerMemo.best = best
+    }
+    return playerMemo.best
+  }
   let karma = karma0
   if (karma <= target) return { hours: 0, karmaPerSecNow: 0, karmaPerSecEnd: 0, crimes: [] }
   let sec = 0
@@ -229,13 +271,15 @@ export function fleetKarmaGrind(sleeves, node, o = {}) {
   let first = null
   let last = 0
   let crimes = []
+  const shockEnd = () => (fleet.length ? fleet.reduce((q, x) => q + x.shock, 0) / fleet.length : null)
   for (let i = 0; i < 200000; i++) {
+    if (i % GRIND_YIELD_EVERY === GRIND_YIELD_EVERY - 1) yield
     const step = Math.max(1, Math.min(120, sec / 200))
     let kps = 0
     const gains = fleet.map(() => null)
     crimes = []
     fleet.forEach((sl, idx) => {
-      const pick = bestSleeveCrime(sl, node, 'karma')
+      const pick = pickFor(sl, idx)
       if (!pick) return
       const c = CRIMES[pick.crime]
       const perSec = 1000 / c.time
@@ -247,16 +291,8 @@ export function fleetKarmaGrind(sleeves, node, o = {}) {
       kps += pick.rates.karma
       crimes.push(pick.crime)
     })
-    let pr = null
-    if (player) {
-      let best = null
-      for (const name of Object.keys(CRIMES)) {
-        const r = crimeRates(name, player, node, focus)
-        if (r && (!best || r.karma > best.karma)) best = r
-      }
-      pr = best
-      if (pr) kps += pr.karma
-    }
+    const pr = player ? playerBest() : null
+    if (pr) kps += pr.karma
     if (first === null) first = kps
     last = kps
     // Apply the step: own gains, the share to every other sleeve and to the player.
@@ -277,15 +313,15 @@ export function fleetKarmaGrind(sleeves, node, o = {}) {
     if (player) relevel(player)
     karma -= kps * step
     sec += step
-    if (karma <= target) return { hours: sec / 3600, karmaPerSecNow: first, karmaPerSecEnd: last, crimes, shockEnd: fleet.length ? fleet.reduce((q, x) => q + x.shock, 0) / fleet.length : null }
+    if (karma <= target) return { hours: sec / 3600, karmaPerSecNow: first, karmaPerSecEnd: last, crimes, shockEnd: shockEnd() }
     if (player && sec >= nextInstall) {
       for (const k of GRIND_SKILLS) player.exp[k] = 0
       relevel(player)
       nextInstall += cycleHours * 3600
     }
-    if (sec / 3600 > maxHours) return { hours: Infinity, karmaPerSecNow: first, karmaPerSecEnd: last, crimes }
+    if (sec / 3600 > maxHours) return { hours: Infinity, karmaPerSecNow: first, karmaPerSecEnd: last, crimes, shockEnd: shockEnd() }
   }
-  return { hours: Infinity, karmaPerSecNow: first, karmaPerSecEnd: last, crimes }
+  return { hours: Infinity, karmaPerSecNow: first, karmaPerSecEnd: last, crimes, shockEnd: shockEnd() }
 }
 
 /** The crime that maximises `objective` ('karma' | 'kills' | 'money') for this
@@ -471,6 +507,17 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // Priced live on 2026-09-22: the exp transfer that sync does multiply is
     // worth 0.63h of a 687h exit, while the reputation leg it was delaying is
     // worth 56h. Synchronising ahead of it was the wrong lever by ~90x.
+    // THE GANG GRIND AS SIMULATED (o.gangGrind, progress.js's gang decision):
+    // the ramp model (fleetKarmaGrind) put each sleeve on its best karma crime
+    // at its current stats from now, and priced no synchronise, training or
+    // shock recovery before it — so none is done here. Karma is not
+    // shock-scaled (SleeveCrimeWork.ts:47).
+    if (o.gangGrind === true && objective === 'karma') {
+      const pick = bestSleeveCrime(s, node, 'karma')
+      tasks.push(pick ? pick.crime : null)
+      why.push(pick ? `sleeve ${i}: ${pick.crime} at ${(pick.rates.chance * 100).toFixed(0)}% — the gang decision's grind, as simulated (no recovery, sync or training first)` : `sleeve ${i}: cannot price any crime — refusing to assign one`)
+      continue
+    }
     if (!SYNC_SCALED.has(objective) && sync < 100) {
       why.push(`sleeve ${i}: sync ${sync.toFixed(1)} left alone — sync scales karma and the exp transfer, neither of which is the ${objective} objective`)
     }
