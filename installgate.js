@@ -670,8 +670,22 @@ export function shouldInstall(o) {
   // 20:57 a ~$61b book installed on the floor with no trajectory consulted;
   // the replay (tools/test B8m) has the simulation waiting ~1h instead.
   const countBySim = o.capitalNode === true && exitDecides && ex.countAware === true
-  const countWantsNow = countBySim ? !waitBeats : countWants
-  const countDecidedHow = countBySim ? 'exit-sim' : countDecidedBy
+  // EVERY OTHER NODE: WHERE THE COMMITTED PLAN DECIDED, IT DECIDES THE COUNT
+  // BATCH TOO. Its options are the install now and the waits, each with the
+  // batch that wait buys (futures: more tickets as reputation and money grow,
+  // the trader's book compounding) — the trajectory comparison. The count
+  // timing (countplan) sees only the tickets affordable NOW and the fresh-life
+  // curve, and its 'exhausted' reason ("waiting cannot add one") is false
+  // whenever reputation is still rising: live BN1 2026-09-28 02:58 the plan
+  // chose w0.068 (24.8h) over installing (28.6h), the 30-minute future held a
+  // second ticket, and the count rule installed one ticket anyway — twice in
+  // an hour, each destroying the book and faction reputation (the exit read
+  // 30.6h -> 42.4h). The count rule remains the fallback when the plan could
+  // not decide, or chose 'never' (its trajectory does not model the
+  // Daedalus count, so 'never' cannot be allowed to bank nothing forever).
+  const countByPlan = !countBySim && exitDecides && !!bayes && bayes.key !== 'never'
+  const countWantsNow = countBySim ? !waitBeats : countByPlan ? bayes.install === true : countWants
+  const countDecidedHow = countBySim ? 'exit-sim' : countByPlan ? 'plan' : countDecidedBy
   const countInstall = countBanks && countWantsNow && !destructive
   // expOk is the rate rule's own guard (enough exp to bank); the simulated
   // exit prices the climb itself, so it does not apply there.
@@ -723,6 +737,7 @@ export function shouldInstall(o) {
     countFloor,
     countWants,
     countDecidedBy: countDecidedHow,
+    countTimingWants: countWants,
     countTimingWhy: timing?.why ?? null,
     decidedBy,
     exitNowH: exitDecides ? ex.nowH : null,
@@ -752,8 +767,10 @@ export function shouldInstall(o) {
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
       : countInstall && !(expOk && netGain && !waitBeats)
       ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs, ` +
-        `decided by the ${countDecidedHow === 'exit-sim' ? `count-aware simulated exit: installing now ${ex.nowH.toFixed(2)}h against the best wait ${exitWait ? exitWait.H.toFixed(2) + 'h' : tieWait ? `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting, ${ex.waitTolWhy ?? 'stated'})` : 'unpriced'}` : countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
+        `decided by the ${countDecidedHow === 'plan' ? `committed plan (${bayes.key}: ${bayes.why ?? ''})` : countDecidedHow === 'exit-sim' ? `count-aware simulated exit: installing now ${ex.nowH.toFixed(2)}h against the best wait ${exitWait ? exitWait.H.toFixed(2) + 'h' : tieWait ? `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting, ${ex.waitTolWhy ?? 'stated'})` : 'unpriced'}` : countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +
         `M=${M.toFixed(4)} is expected for tickets and is NOT a reason to hold.`
+      : countByPlan && countBanks && !countInstall && !destructive
+      ? `hold: COUNT BATCH of ${countGain} — the committed plan waits (${bayes.key}, expected exit ${typeof bayes.H === 'number' ? bayes.H.toFixed(2) + 'h' : '?'}: ${bayes.why ?? ''}); the count timing alone would ${countWants ? 'install' : 'hold'} (${timing?.why ?? 'unpriced'})`
       : countBySim && countBanks && !countInstall && !destructive
       ? `hold: COUNT BATCH of ${countGain} — the count-aware simulated exit waits: ${exitWait ? `waiting ${(exitWait.waitMs / 3600000).toFixed(1)}h exits at ${exitWait.H.toFixed(2)}h` : 'a later batch exits sooner'} against ${ex.nowH.toFixed(2)}h installing now (the install resets the compounding book to the node's opening)`
       : countBanks && !countWants && !destructive && !(expOk && netGain && !waitBeats)

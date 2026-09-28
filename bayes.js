@@ -524,6 +524,10 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
  * [{node, at, start, lifeH, hackMult, records, next, g}] (g null without a
  * successor), `.dups` the merged re-records.
  */
+// A life the COUNT RULE ended (installgate's "install: COUNT BATCH" — a
+// ticket batch installed for the Daedalus count, its length the rule's
+// choice, not the economics') is its own regime.
+const regimeOf = (e) => (typeof e?.installWhy === 'string' && /^install: COUNT BATCH/.test(e.installWhy) ? 'count' : 'multiplier')
 export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
   const rows = (Array.isArray(ledger) ? ledger : []).filter((e) => e && fin(e.bitNode) && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
   const lives = []
@@ -533,11 +537,11 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH =
     const start = fin(Date.parse(e.at)) ? Date.parse(e.at) / 3.6e6 - e.lifeH : null
     const prev = lives[lives.length - 1]
     if (prev && prev.node === e.bitNode && start !== null && prev.start !== null && Math.abs(prev.start - start) <= dupTolH) {
-      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, records: prev.records + 1 })
+      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, records: prev.records + 1, regime: regimeOf(e) })
       dups++
       continue
     }
-    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, records: 1 })
+    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, records: 1, regime: regimeOf(e) })
   }
   for (let i = 0; i < lives.length; i++) {
     const nx = lives[i + 1]
@@ -567,6 +571,11 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH =
  *    y_n = ln(mean L) with sigma_L^2 / n for the length. sigma^2 is one life's
  *    scatter of ln(g_j / L_j) around y_n, POOLED over nodes (conjugate IG,
  *    PRIORS.cadence.sigma) and taken at its posterior mean.
+ *  - COUNT-RULE LIVES ARE A DIFFERENT STATE too: a life installgate ended
+ *    with "install: COUNT BATCH" (one ticket for the Daedalus count, ~25
+ *    minutes, live BN1 2026-09-28) measures the count rule's choice, not what
+ *    a life of the node buys — fed back as the cadence it taught the exit
+ *    that lives are 1.5h. Excluded and counted (`own.countLives`).
  *  - STALL LIVES ARE A DIFFERENT STATE, not slow cycles: a life whose install
  *    moved the multiplier by < PRIORS.cadence.stallLn (count tickets, a
  *    favour-banking life) is excluded from both quantities and counted
@@ -597,9 +606,10 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
   const lives = ledgerLives(ledger, { node, hackMultNow })
   const byNode = new Map()
   for (const l of lives) {
-    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0 })
+    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0, count: 0 })
     const b = byNode.get(l.node)
     if (l.g === null) b.open++
+    else if (l.regime === 'count') b.count++
     else if (!(l.g >= C.stallLn)) b.stalls++
     else b.gained.push(l)
   }
@@ -623,7 +633,7 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     resid.rate.b += sr / 2
     resid.life.a += (G.length - 1) / 2
     resid.life.b += sl / 2
-    stats.set(n, { lives: G.length + b.stalls + b.open, gained: G.length, stalls: b.stalls, yR, yL, nEff: (H * H) / H2, n: G.length })
+    stats.set(n, { lives: G.length + b.stalls + b.open + b.count, gained: G.length, stalls: b.stalls, countLives: b.count, yR, yL, nEff: (H * H) / H2, n: G.length })
   }
   if (!stats.size) return null
   const s2R = resid.rate.b / (resid.rate.a - 1)
@@ -671,7 +681,8 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
   const st = stats.get(node)
   const gained = st?.gained ?? 0
   const stalls = b?.stalls ?? 0
-  const own = { lives: st?.lives ?? (b ? b.stalls + b.open : 0), gained, stalls, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
+  const countLives = b?.count ?? 0
+  const own = { lives: st?.lives ?? (b ? b.stalls + b.open + b.count : 0), gained, stalls, countLives, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
   const nodes = Object.fromEntries([...stats].map(([n, x]) => [n, { lives: x.lives, gained: x.gained, stalls: x.stalls, perHour: Math.exp(x.yR), cycleHours: Math.exp(x.yL), sdRate: Math.sqrt(s2R / x.nEff) }]))
   const others = [...stats.keys()].filter((n) => n !== node)
   const pct = (x) => `${Math.round(100 * x)}%`
@@ -689,7 +700,7 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     source: 'posterior',
     why:
       `cadence posterior for BitNode ${node}: ln(M) ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%), ${cycleHours.toFixed(2)}h a life -> x${Math.exp(lnPerHour * cycleHours).toFixed(3)} a cycle; ` +
-      `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''} carry ${pct(rate.weight)} of the rate` +
+      `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded: their length was the rule's)` : ''} carry ${pct(rate.weight)} of the rate` +
       (others.length ? `, BitNode ${others.join(', ')} shrink${others.length === 1 ? 's' : ''} it toward the cross-node mean` : ', no other node') +
       (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : ''),
   }

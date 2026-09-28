@@ -795,8 +795,13 @@ export async function run() {
     if (!(c1.own.weight > 0.5)) c15.fail(`two of BN1's own lives must carry most of its rate, got ${c1.own.weight}`);
     const own1 = Math.log(c1.nodes[1].perHour);
     const own8 = Math.log(c8.nodes[8].perHour);
-    if (!(c1.rate.mean > own1 && c1.rate.mean < own8)) c15.fail("BN1's rate must be its own shrunk toward the cross-node mean (between its own and BN8's)");
-    if (!(Math.abs(c1.rate.mean - own1) < Math.abs(c1.rate.mean - own8))) c15.fail("BN1's own lives must dominate: its posterior nearer its own rate than BN8's");
+    const pri1 = c1.rate.prior.mean;
+    if (!(c1.rate.mean > Math.min(own1, pri1) && c1.rate.mean < Math.max(own1, pri1))) c15.fail("BN1's rate must be its own shrunk toward the cross-node mean (between its own and the prior from the other nodes)");
+    if (!(Math.abs(c1.rate.mean - own1) < Math.abs(c1.rate.mean - pri1))) c15.fail("BN1's own lives must dominate: its posterior nearer its own rate than the cross-node prior");
+    void own8;
+    // The count rule's lives are their own regime: the 23:33 life ended by
+    // "install: COUNT BATCH" is excluded and counted, not averaged in.
+    if (c1.own.countLives !== 1) c15.fail(`BN1's count-rule life must be excluded and counted, got ${c1.own.countLives}`);
     if (!(c8.own.stalls === 1 && c8.own.gained === 7)) c15.fail(`BN8: the count-ticket life (multiplier unchanged) is a stall, excluded and counted — got ${c8.own.stalls} stalls / ${c8.own.gained} gaining`);
     // The node's own lives enter ONCE: with no other node, its prior is the
     // stated hyperprior exactly (they must not also move the cross-node mean).
@@ -852,6 +857,40 @@ export async function run() {
     if (!/cadence: installCadence\(ledger, info\?\.currentNode, cadenceOptsOf\(ns\.getPlayer\(\)\)\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior (source guard)");
   }
   checks.push(c15);
+
+  // -----------------------------------------------------------------------
+  const c16 = new Check("BY16", "THE COMMITTED PLAN DECIDES THE COUNT BATCH outside capital nodes: replay BN1 02:58 — the plan chose w0.068 (24.8h) over installing (28.6h), the 30-min future held a second ticket, and the count rule's 'waiting cannot add one' installed one ticket anyway");
+  {
+    c16.examined(5);
+    const IG = await import("../../installgate.js");
+    const R = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn1-installgate-0258.json"), "utf8"));
+    const d = R.plan; // the Bayesian decision, published under `plan` at the time (the collision fixed in c86b4d4)
+    const H = 3600e3;
+    const bayes = { install: d.install, key: d.key, waitMs: 0.068 * H, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, why: d.why };
+    const exitCompare = { nowH: R.exitNowH, neverH: R.exitNeverH, waits: [{ waitMs: 0.068 * H, H: R.exitBestWaitH }], bayes, joinModelled: true };
+    const base = { ageMs: R.ageMs, M: R.M, queued: R.queued, exp: 1e9, prev: null, futures: R.futures, countShort: R.countShort, countGain: R.countGain, countTiming: { installNow: true, reason: "exhausted", why: R.countTimingWhy }, capitalNode: false, binding: R.binding, exitCompare };
+    const g = IG.shouldInstall(base);
+    const more = (R.futures ?? []).find((f) => (f.buy ?? []).filter((n) => n !== "NeuroFlux Governor").length > 1);
+    c16.note(`recorded: install ${R.install} by ${R.planOverride}; ${more ? `the ${more.waitMs / 60000}-min future buys ${more.buy.filter((n) => n !== "NeuroFlux Governor").join(" + ")}` : "no future adds a ticket"}`);
+    c16.note(`replayed: install ${g.install}, count decided by ${g.countDecidedBy} — ${g.why.slice(0, 220)}`);
+    if (!more) c16.fail("fixture: the 02:58 futures should show waiting adds a ticket");
+    if (g.install !== false || g.countDecidedBy !== "plan" || g.planAgrees !== true) c16.fail("with the plan waiting, the count batch must wait (the plan decides, and agrees with the gate)", JSON.stringify({ i: g.install, by: g.countDecidedBy, a: g.planAgrees, o: g.planOverride }));
+    // The plan says install: the count batch installs, the plan's reason named.
+    const gNow = IG.shouldInstall({ ...base, exitCompare: { ...exitCompare, bayes: { ...bayes, install: true, key: "now", waitMs: 0, H: R.exitNowH } } });
+    if (gNow.install !== true || gNow.countDecidedBy !== "plan") c16.fail("with the plan installing now, the count batch installs by the plan");
+    // The plan chose 'never' (its trajectory has no Daedalus count): the count rule stands.
+    const gNever = IG.shouldInstall({ ...base, exitCompare: { ...exitCompare, bayes: { ...bayes, install: false, key: "never" } } });
+    if (gNever.install !== true || gNever.countDecidedBy === "plan") c16.fail("a plan that says 'never' must not stop the count from banking — the count rule is the fallback");
+    // No plan: the count rule, as before.
+    const gNo = IG.shouldInstall({ ...base, exitCompare: { ...exitCompare, bayes: undefined } });
+    if (gNo.install !== true || gNo.countDecidedBy !== "priced") c16.fail("without a plan the count timing decides, as before");
+    // The trader's realised fit (return + per-install warm-up) is used in EVERY
+    // node where the history measures it, not only where money is capital.
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    const fitSrc = prog.slice(prog.indexOf("function capitalFitOf(ns, info) {"), prog.indexOf("function capitalFitOf(ns, info) {") + 3500);
+    if (/^\s*if \(bitNodeMults\(info\?\.currentNode\)\?\.ScriptHackMoneyGain !== 0\) return null/m.test(fitSrc) || !/realisedCapital\(rows\) \?\? \(capitalNode &&/.test(fitSrc)) c16.fail("capitalFitOf must fit the trader wherever it has history (the steady-rate stand-in only where money is capital) — source guard");
+  }
+  checks.push(c16);
 
   return checks;
 }

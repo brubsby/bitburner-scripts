@@ -171,6 +171,10 @@ and a count-ticket stall in it) and read a ~150-250h exit.
   life's gain g = ln(M_next/M) shows in the next entry and is credited to the
   life that bought it; the current node's last finished life takes this
   life's multiplier as its successor; a node's terminal life has none.
+- Count-rule lives are their own regime too: a life installgate ended with
+  "install: COUNT BATCH" (live BN1 2026-09-28: one ticket every ~25 min)
+  measures the rule's choice, not what a life of the node buys; fed back, it
+  taught the exit that lives are 1.5h. Excluded and counted (`countLives`).
 - Stall lives are a different state, not slow cycles: an install that moved
   the multiplier < 1% (count tickets, favour banking) is excluded from rate
   and length and counted (`own.stalls`, `stallShare`); the count route prices
@@ -197,6 +201,32 @@ Replay, live ledger 2026-09-28 00:58 (BY15): BN1 ln M 0.0307/h (80%
 BN8 0.0461/h (80% 0.023-0.093; own alone 0.052/h), 4.34h lives, one stall
 excluded, own weight 86%. The BN1 exit: borrowed BN8 cadence median 152h
 (80% 132-184h) -> own posterior median 74h (80% 42-118h).
+
+### The plan decides the count batch (every node)
+
+Outside capital nodes the count batch used to install on countplan's timing
+whatever the committed plan said. Its "every obtainable ticket is already in
+the batch — waiting cannot add one" is false while reputation rises: live
+BN1 02:58 the plan chose w0.068 (24.8h) over installing (28.6h), the 30-min
+future bought a second ticket, and the rule installed one ticket — twice in
+an hour, each resetting the ~$40-65b book and faction reputation (the exit
+read 30.6h -> 42.4h). installgate now lets the plan decide (countDecidedBy
+'plan'); the rule remains the fallback without a plan or when the plan says
+'never' (its trajectory has no Daedalus count). Replay BY16. At 03:54 the
+plan's choice was w1.917 (30.1h, 80% 26.5-33.0h) while the rule would have
+installed again (held only by the lead's /install-hold.txt).
+
+NOT FIXED, and why: the exit's cycle model multiplies by a constant ln(M)
+per hour with no per-install cost, so at the measured rate a SHORTER life is
+never worse (live 03:54 inputs: 0.25h lives exit 38.1h, 1.48h 39.4h, 16h
+54.9h). A money-only concave model (what a life's money buys at the 1.9x
+per-purchase escalation) makes it worse, not better — the escalation resets
+at every install, so it rewards short lives more. What makes an install
+costly in BN1 is the reset of faction reputation (augmentations need it) and
+of the book; the cadence needs a per-life purchase model with reputation
+earned at repPerSec against each augmentation's requirement. Until then the
+exit's cycle length is not a decision the plan makes — it chooses only when
+to install the batch in hand.
 
 ### One trajectory basis
 

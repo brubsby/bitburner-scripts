@@ -663,7 +663,7 @@ if (!sleevesExpected) {
       return null;
     }
   })();
-  const pricedHold = gate?.countDecidedBy === "exit-sim" || planInstall?.install === false;
+  const pricedHold = gate?.countDecidedBy === "exit-sim" || gate?.countDecidedBy === "plan" || planInstall?.install === false;
   if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0 && pricedHold) note(`install held by the simulated exit (life ${lifeH.toFixed(1)}h): ${String(gate?.countTimingWhy ?? "").slice(0, 120)}`);
   else if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
   // F3: the planner must act, or change what it is waiting on.

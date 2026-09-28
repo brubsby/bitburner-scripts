@@ -2065,7 +2065,13 @@ function countModelOf(mults, offers, allCount, player) {
  */
 let capitalFitMemo = null
 function capitalFitOf(ns, info) {
-  if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain !== 0) return null
+  // EVERY NODE WITH A TRADER, not only where money is capital: stock.js runs
+  // wherever SF8 is owned, and every install re-initialises the market and
+  // resets the book to the node's opening in every node (Prestige.ts). The
+  // realised fit (return + per-install warm-up) is used wherever the history
+  // measures it; the trader's modelled steady rate stands in for it only where
+  // money IS capital (elsewhere nodeecon's live measured return stays).
+  const capitalNode = bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0
   // Re-fit every 10 minutes: the history grows through the life.
   if (capitalFitMemo && capitalFitMemo.at === info?.lastAugReset && Date.now() - capitalFitMemo.t < 600e3) return capitalFitMemo.fit
   let fit = null
@@ -2087,7 +2093,7 @@ function capitalFitOf(ns, info) {
       })
       .filter(Boolean)
     const steady = readJson(ns, STOCK_FILE)?.calibration?.predictedPerSec
-    fit = realisedCapital(rows) ?? (typeof steady === 'number' && steady > 0 ? { r: steady, warmupH: null, n: 0, why: "no trader run seen from its start in the history: the trader's modelled steady rate, warm-up unmeasured" } : null)
+    fit = realisedCapital(rows) ?? (capitalNode && typeof steady === 'number' && steady > 0 ? { r: steady, warmupH: null, n: 0, why: "no trader run seen from its start in the history: the trader's modelled steady rate, warm-up unmeasured" } : null)
   } catch {
     fit = null
   }
@@ -2170,7 +2176,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
-    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePriorOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })
+    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 || capitalFitOf(ns, info) ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePriorOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)

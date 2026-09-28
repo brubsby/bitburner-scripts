@@ -53,3 +53,7 @@ runs() { echo "== $1: $2"; node tools/mutant.mjs "$1" "$2" "$3" structure 2>&1 |
 runs installgate.js "    planDecision: bayes ? { key: bayes.key," "    plan: bayes ? { key: bayes.key,"
 runs watchdog.js "        if (!Number.isFinite(augClaim(claimSrc, claimLife))) unreadable.push" "        if (!isFinite(augClaim(claimSrc, claimLife))) unreadable.push"
 runs watchdog.js "          return Number.isFinite(join) &&" "          return isFinite(join) &&"
+# the committed plan decides the count batch; count-rule lives are their own regime (BY16, BY15)
+run installgate.js "  const countByPlan = !countBySim && exitDecides && !!bayes && bayes.key !== 'never'" "  const countByPlan = false"
+run installgate.js "  const countByPlan = !countBySim && exitDecides && !!bayes && bayes.key !== 'never'" "  const countByPlan = !countBySim && exitDecides && !!bayes"
+run bayes.js "    else if (l.regime === 'count') b.count++" "    else if (false) b.count++"
