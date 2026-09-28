@@ -640,8 +640,10 @@ if (!sleevesExpected) {
   now.todo0 = Array.isArray(prog?.todo) ? String(prog.todo[0] ?? "") : null;
   now.working = !!(state.currentWork && (state.currentWork.type ?? state.currentWork.data?.type));
   const sameNode = prev && prev.bitNode === now.bitNode;
-  const hist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH));
-  now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH }] : [])].slice(-48);
+  // Entries carry their node, so a node change can never leak an old node's
+  // exit into the comparison (BN1's 0.1h vs BN9's 327.8h, 2026-09-28).
+  const hist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH) && h.node === now.bitNode);
+  now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH, node: now.bitNode }] : [])].slice(-48);
 
   if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
   else note(`exit ETA ${now.exitH.toFixed(1)}h`);
