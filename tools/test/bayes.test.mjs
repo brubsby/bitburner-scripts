@@ -1035,6 +1035,29 @@ export async function run() {
     }
     const cheap = await run();
     if (!(cheap.yields === 0)) c19.fail(`a step that became cheap must stop forcing yields (${cheap.yields})`);
+    // ACROSS A PROCESS RESTART (progress.js is a fresh process every pass):
+    // the memory rides the page's storage — a new process, a new in-module
+    // Map, the same localStorage.
+    costs[19] = 32;
+    const kv = new Map();
+    const storage = { getItem: (k) => (kv.has(k) ? kv.get(k) : null), setItem: (k, v) => kv.set(k, String(v)) };
+    const runProc = async () => {
+      const p = CO.makePacer({ sliceMs: 40, yieldFn: async () => {}, now: () => T, memory: new Map(), store: CO.stepMemoryStore(storage) });
+      await p.slices(work(), "plan-gang");
+      return p.stats.maxBlockMs;
+    };
+    const proc1 = await runProc();
+    const proc2 = await runProc();
+    const saved = kv.get(CO.STEP_MEMORY_KEY) ?? "";
+    c19.note(`process 1: ${proc1}ms; process 2 (fresh memory, same page storage): ${proc2}ms; stored ${saved.length} bytes: ${saved.slice(0, 80)}`);
+    if (!(proc1 > 50 && proc2 <= 40)) c19.fail(`the step-cost memory must survive a process restart (blocks ${proc1}ms then ${proc2}ms)`);
+    if (!(saved.length < 200 && !/\[0,/.test(saved))) c19.fail("only the costly steps are persisted (the cheap ones are predicted from the step just run)");
+    // A storage that throws is a no-op, never an error.
+    const bad = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("quota"); } };
+    const pb = CO.makePacer({ sliceMs: 40, yieldFn: async () => {}, now: () => T, memory: new Map(), store: CO.stepMemoryStore(bad) });
+    if ((await pb.slices(work(), "plan-gang")) !== "done") c19.fail("a failing storage must not break the pacer");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/makePacer\(\{ sliceMs: PLAN\.sliceMs, yieldFn: pageYieldOf\(ns\), store: stepMemoryStore\(pageStorage\(\)\) \}\)/.test(prog)) c19.fail("progress.js's pass pacer must persist its step memory (source guard)");
   }
   checks.push(c19);
 

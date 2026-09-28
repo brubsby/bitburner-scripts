@@ -69,3 +69,6 @@ run plan.js "  if (inputs.cadenceFrom === 'purchase model') {" "  if (false) {"
 # the pacer predicts a step from its recorded cost (BY19)
 run coop.js "          const next = Math.max(step, steps + 1 < MEM_STEPS ? mem[steps + 1] ?? 0 : 0)" "          const next = step"
 run coop.js "          if (steps < MEM_STEPS) mem[steps] = Math.max(step, 0.75 * (mem[steps] ?? 0))" "          if (steps < MEM_STEPS) mem[steps] = Math.max(step, mem[steps] ?? 0)"
+# the step memory survives a process restart (BY19)
+run coop.js "        if (store) store.save(memory)" "        void store"
+run coop.js "  if (store) store.load(memory)" "  void store"

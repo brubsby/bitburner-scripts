@@ -87,7 +87,69 @@ function memoryOf(memory, label) {
   }
   return m
 }
-export function makePacer({ sliceMs = 40, yieldFn = null, now = clock, memory = STEP_MEMORY } = {}) {
+/**
+ * THE MEMORY OUTLIVES THE PROCESS. progress.js is a watchdog JOB — a fresh
+ * process every pass — so an in-module memory is empty every pass and every
+ * pass was a first pass (lead, after 2d19c15). A store {load(memory),
+ * save(memory)} carries it across: stepMemoryStore over the page's
+ * localStorage (0GB through eval, as trace.js), one key. Only the steps that
+ * matter are kept (>= MEM_PERSIST_MS, at most MEM_PERSIST_PER_LABEL per
+ * label), rounded to 0.1ms, so the record stays a few KB; the fade and the
+ * caps are the in-memory ones (a loaded cost fades with the runs that follow).
+ * A storage that is missing or throws is a no-op, never an error.
+ */
+export const MEM_PERSIST_MS = 2
+export const MEM_PERSIST_PER_LABEL = 500
+export const STEP_MEMORY_KEY = 'bbStepMemory'
+export function pageStorage() {
+  try {
+    return eval('localStorage')
+  } catch {
+    return null
+  }
+}
+export function stepMemoryStore(storage, key = STEP_MEMORY_KEY) {
+  return {
+    load(memory) {
+      let n = 0
+      try {
+        const raw = storage?.getItem?.(key)
+        if (!raw) return 0
+        const obj = JSON.parse(raw)
+        for (const [label, pairs] of Object.entries(obj ?? {})) {
+          if (!Array.isArray(pairs)) continue
+          const m = memoryOf(memory, label)
+          for (const pr of pairs.slice(0, MEM_PERSIST_PER_LABEL)) {
+            const [i, ms] = Array.isArray(pr) ? pr : []
+            if (Number.isInteger(i) && i >= 0 && i < MEM_STEPS && typeof ms === 'number' && isFinite(ms) && ms > 0) {
+              m[i] = Math.max(m[i] ?? 0, ms)
+              n++
+            }
+          }
+        }
+      } catch {
+        return n
+      }
+      return n
+    },
+    save(memory) {
+      try {
+        const obj = {}
+        for (const [label, arr] of memory) {
+          const pairs = []
+          for (let i = 0; i < arr.length && pairs.length < MEM_PERSIST_PER_LABEL; i++) if (arr[i] >= MEM_PERSIST_MS) pairs.push([i, Math.round(arr[i] * 10) / 10])
+          if (pairs.length) obj[label] = pairs
+        }
+        storage?.setItem?.(key, JSON.stringify(obj))
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+}
+export function makePacer({ sliceMs = 40, yieldFn = null, now = clock, memory = STEP_MEMORY, store = null } = {}) {
+  if (store) store.load(memory)
   const st = { cpuMs: 0, waitMs: 0, maxBlockMs: 0, yields: 0, runs: 0, sections: {} }
   let running = false
   let sliceStart = 0
@@ -154,6 +216,7 @@ export function makePacer({ sliceMs = 40, yieldFn = null, now = clock, memory = 
         if (running) endSlice()
         running = false
         sec = null
+        if (store) store.save(memory)
       }
     },
     /** Account synchronous work done outside slices() (so maxBlockMs sees it). */

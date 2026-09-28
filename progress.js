@@ -140,7 +140,7 @@ import { rateAt, manipLostExp } from 'expfarm.js'
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
-import { makePacer, drain } from 'coop.js'
+import { makePacer, drain, stepMemoryStore, pageStorage } from 'coop.js'
 import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
@@ -3050,7 +3050,9 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 async function act(ns, canJoin, info, note) {
   planCtx = null // one plan context per pass (planCtxOf)
   incomePriorMemo = undefined // one income prior per pass (incomePriorOf)
-  passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns) })
+  // The step-cost memory across passes (a fresh process each): the page's
+  // localStorage, 0GB (coop.stepMemoryStore).
+  passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns), store: stepMemoryStore(pageStorage()) })
   passT0 = Date.now()
   graftCarry = null // set once the snapshots are read (carriedGraftsOf)
   redPillRepReq = null
