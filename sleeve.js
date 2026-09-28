@@ -702,6 +702,11 @@ async function act(ns, note) {
 			// what every crime weights, so they are the four that explain the
 			// rate — and sleeveplan's whole train-or-work search is a claim
 			// about them that nothing could previously check against the game.
+			// THE FLEET AS PERSONS, for progress.js's karma-grind trajectory
+			// (sleeveplan.fleetKarmaGrind): each sleeve's skills, exp and
+			// multipliers (level mults already x the node's), sync and shock —
+			// what its crime chance and training ramp are computed from.
+			persons: sleeves.map((x) => ({ i: x.index, sync: x.sync, shock: x.shock, skills: x.skills, exp: x.exp, mults: x.mults })),
 			assigned: sleeves.map((x) => ({
 				i: x.index,
 				sync: +x.sync.toFixed(1),

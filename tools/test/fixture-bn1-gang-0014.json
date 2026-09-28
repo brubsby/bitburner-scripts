@@ -1,0 +1,145 @@
+{
+ "source": "live BN1 2026-09-28 00:13-00:14Z (.telemetry exitinputs.txt, state.json, sleeve.txt, installgate.txt gangWorth)",
+ "exitInputs": {
+  "money": 4207204.461517104,
+  "incomePerSec": 132291.66666666666,
+  "lifeIncome": 548.6279493309502,
+  "hacking": 142,
+  "hackingExp": 10585.945400409526,
+  "hackingMult": 1.4501917948951488,
+  "expPerSec": 27.43025300241777,
+  "repPerSec": null,
+  "exitRep": 0,
+  "exitFavor": 0,
+  "cycleHours": 9.308235294117646,
+  "multGainPerCycle": 1.1027299873635081,
+  "nextInstallGain": null,
+  "installGains": null,
+  "persistBaseline": null,
+  "eRep": 0,
+  "eBudget": 0,
+  "exitLevel": 3000,
+  "joinMoney": 100000000000,
+  "joinLevel": 2500,
+  "finalRootCost": 287200000,
+  "freshExpLagH": 0,
+  "terminalRep": 2500000,
+  "donationCost": null,
+  "favorToDonate": 150,
+  "flatIncomePerSec": 0,
+  "capitalReturnPerSec": 3.882557619280311e-05,
+  "capitalWarmupH": 0,
+  "capitalFit": null,
+  "capitalCap": 5723890188999.2,
+  "installCash": 1262,
+  "workWhileDonating": false,
+  "cadence": {
+   "source": "prior",
+   "node": 8,
+   "lives": 18,
+   "why": "PRIOR: BitNode 1 has fewer than 3 lives, so the cadence is BitNode 8's (18 lives, x1.103 per 9.31h) \u2014 a different economy, replaced once this node measures its own"
+  }
+ },
+ "eBudget": 0,
+ "player": {
+  "skills": {
+   "hacking": 161,
+   "strength": 99,
+   "defense": 85,
+   "dexterity": 7,
+   "agility": 7,
+   "charisma": 1,
+   "intelligence": 121
+  },
+  "exp": {
+   "hacking": 16199.492819269157,
+   "strength": 4697.748614843058,
+   "defense": 3256.150549102811,
+   "dexterity": 83.45316671549409,
+   "agility": 83.45316671549409,
+   "charisma": 0,
+   "intelligence": 22355.674041731312
+  },
+  "karma": -576.375000000001,
+  "numPeopleKilled": 3
+ },
+ "sleeves": [
+  {
+   "i": 0,
+   "sync": 100,
+   "shock": 81.3,
+   "task": "RECOVERY",
+   "skills": {
+    "str": 1,
+    "def": 1,
+    "dex": 2,
+    "agi": 2,
+    "hack": 61
+   }
+  },
+  {
+   "i": 1,
+   "sync": 100,
+   "shock": 81.3,
+   "task": "RECOVERY",
+   "skills": {
+    "str": 1,
+    "def": 1,
+    "dex": 2,
+    "agi": 2,
+    "hack": 61
+   }
+  },
+  {
+   "i": 2,
+   "sync": 100,
+   "shock": 81.3,
+   "task": "RECOVERY",
+   "skills": {
+    "str": 1,
+    "def": 1,
+    "dex": 2,
+    "agi": 2,
+    "hack": 61
+   }
+  },
+  {
+   "i": 3,
+   "sync": 100,
+   "shock": 81.3,
+   "task": "RECOVERY",
+   "skills": {
+    "str": 1,
+    "def": 1,
+    "dex": 2,
+    "agi": 2,
+    "hack": 61
+   }
+  },
+  {
+   "i": 4,
+   "sync": 100,
+   "shock": 81.3,
+   "task": "RECOVERY",
+   "skills": {
+    "str": 1,
+    "def": 1,
+    "dex": 2,
+    "agi": 2,
+    "hack": 61
+   }
+  }
+ ],
+ "sleeveByObjective": {
+  "karma": 0.04106675900682742,
+  "money": 1275.4692331357396,
+  "rep": 0.08619229318113754,
+  "exp": 14.939494564674586
+ },
+ "gangWorthLive": {
+  "worth": null,
+  "gainHours": null,
+  "grindHours": 36.219442175672384,
+  "why": "no simulated exit comparison: exit unpriceable (could not price the reputation leg: no measured reputation rate / could not price the reputation leg: no measured reputation rate)"
+ }
+}

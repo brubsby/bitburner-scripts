@@ -76,7 +76,7 @@
 // 10 alone capping shock at 25 and flooring sync at 25
 // (PlayerObjectGeneralMethods.ts:142-152). The COUNT persists across nodes.
 // ---------------------------------------------------------------------------
-import { CRIMES, GYMS, crimeChance, gymRate, hoursToStat, intelligenceBonus, personProblem } from 'bodyplan.js'
+import { CRIMES, GYMS, crimeChance, crimeRates, gymRate, hoursToStat, intelligenceBonus, personProblem } from 'bodyplan.js'
 import { skillFromExp } from 'installgate.js'
 // Pure: the floor against our own unchecked fee spending.
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
@@ -168,6 +168,124 @@ export function sleeveCrimeRates(sleeve, node, crime = 'Homicide') {
     // (SleeveCrimeWork.getExp -> scaleWorkStats(..., shockBonus)).
     money: c.money * (sleeve.mults?.crime_money ?? 1) * (node?.CrimeMoney ?? 1) * chance * perSec * ((100 - (num(sleeve.shock) ? sleeve.shock : 0)) / 100),
   }
+}
+
+const GRIND_SKILLS = ['hacking', 'strength', 'defense', 'dexterity', 'agility', 'charisma']
+
+/**
+ * THE KARMA GRIND WITH THE FLEET RAMPING — the trajectory, not a snapshot.
+ *
+ * karmaGrindAcrossCycles holds the fleet's karma CONSTANT at what it delivers
+ * today. Live BN1 2026-09-28 that is 0.041 karma/s for five fresh sleeves
+ * (combat 1-2, shock 82), which prices the -54,000 gate at hundreds of hours —
+ * but every attempt trains the sleeve, and its exp is also handed to every
+ * other sleeve and the player (Sleeve/Work/Work.ts:16-24):
+ *
+ *   the working sleeve   gains x (success ? 1 : 0.25)           (applySleeveGains)
+ *   each other sleeve    the same x sync/100 x its own shockBonus
+ *   the player           the same x sync/100 (no exp mults — "no double dipping")
+ *
+ * where gains = crime exp x the sleeve's *_exp mults x CrimeExpGain x its own
+ * shockBonus (SleeveCrimeWork.getExp, Work/Formulas.ts:58). Karma is paid on
+ * SUCCESS only, x sync/100 (SleeveCrimeWork.ts:47). Shock falls passively
+ * while working (Sleeve.ts:270, sleeveplan.shockPerSec). Each sleeve commits
+ * the crime that pays it the most karma at its CURRENT stats, re-picked every
+ * step (bestSleeveCrime), which is what sleeve.js does.
+ *
+ * `o.player`: the player's person when the WORK SLOT joins the grind (its
+ * own best karma crime at `o.focus`, bodyplan.crimeRates), else null. Player
+ * skills reset at each install every `o.cycleHours` (karmaGrindAcrossCycles);
+ * sleeves keep theirs (prestigeAugmentation never calls sleeve.prestige()).
+ * `o.karma`: the player's karma now (<= 0). Returns
+ * `{hours, karmaPerSecNow, karmaPerSecEnd, crimes}` or null on unreadable
+ * inputs; hours is Infinity past `o.maxHours` (default 2000).
+ */
+export function fleetKarmaGrind(sleeves, node, o = {}) {
+  if (!Array.isArray(sleeves)) return null
+  const target = num(o.karmaTarget) ? o.karmaTarget : null
+  const karma0 = num(o.karma) ? o.karma : null
+  const cycleHours = num(o.cycleHours) && o.cycleHours > 0 ? o.cycleHours : null
+  if (target === null || karma0 === null || cycleHours === null) return null
+  if (!num(node?.CrimeExpGain) || !num(node?.CrimeSuccessRate)) return null
+  const focus = num(o.focus) ? o.focus : 1
+  const maxHours = num(o.maxHours) ? o.maxHours : 2000
+  const fleet = []
+  for (const s of sleeves) {
+    if (personProblem(s) || !num(s.sync) || !num(s.shock)) return null
+    fleet.push({ skills: { ...s.skills }, exp: { ...s.exp }, mults: s.mults, sync: s.sync, shock: s.shock })
+  }
+  let player = null
+  if (o.player) {
+    if (personProblem(o.player)) return null
+    player = { skills: { ...o.player.skills }, exp: { ...o.player.exp }, mults: o.player.mults }
+  }
+  const relevel = (p) => {
+    for (const k of GRIND_SKILLS) p.skills[k] = skillFromExp(p.exp[k], p.mults[k])
+  }
+  let karma = karma0
+  if (karma <= target) return { hours: 0, karmaPerSecNow: 0, karmaPerSecEnd: 0, crimes: [] }
+  let sec = 0
+  let nextInstall = cycleHours * 3600
+  let first = null
+  let last = 0
+  let crimes = []
+  for (let i = 0; i < 200000; i++) {
+    const step = Math.max(1, Math.min(120, sec / 200))
+    let kps = 0
+    const gains = fleet.map(() => null)
+    crimes = []
+    fleet.forEach((sl, idx) => {
+      const pick = bestSleeveCrime(sl, node, 'karma')
+      if (!pick) return
+      const c = CRIMES[pick.crime]
+      const perSec = 1000 / c.time
+      const m = pick.rates.chance + 0.25 * (1 - pick.rates.chance)
+      const sb = (100 - sl.shock) / 100
+      const g = {}
+      for (const k of GRIND_SKILLS) g[k] = (c.exp[k] ?? 0) * (sl.mults[`${k}_exp`] ?? 1) * node.CrimeExpGain * sb * m * perSec
+      gains[idx] = { g, sync: sl.sync / 100 }
+      kps += pick.rates.karma
+      crimes.push(pick.crime)
+    })
+    let pr = null
+    if (player) {
+      let best = null
+      for (const name of Object.keys(CRIMES)) {
+        const r = crimeRates(name, player, node, focus)
+        if (r && (!best || r.karma > best.karma)) best = r
+      }
+      pr = best
+      if (pr) kps += pr.karma
+    }
+    if (first === null) first = kps
+    last = kps
+    // Apply the step: own gains, the share to every other sleeve and to the player.
+    gains.forEach((x, idx) => {
+      if (!x) return
+      fleet.forEach((sl, j) => {
+        const f = j === idx ? 1 : x.sync * ((100 - sl.shock) / 100)
+        for (const k of GRIND_SKILLS) sl.exp[k] += x.g[k] * f * step
+      })
+      if (player) for (const k of GRIND_SKILLS) player.exp[k] += x.g[k] * x.sync * step
+    })
+    if (player && pr) for (const k of GRIND_SKILLS) player.exp[k] += (pr.exp[k] ?? 0) * step
+    for (const sl of fleet) {
+      const d = shockPerSec(sl.skills.intelligence, false)
+      if (num(d)) sl.shock = Math.max(0, sl.shock - d * step)
+      relevel(sl)
+    }
+    if (player) relevel(player)
+    karma -= kps * step
+    sec += step
+    if (karma <= target) return { hours: sec / 3600, karmaPerSecNow: first, karmaPerSecEnd: last, crimes, shockEnd: fleet.length ? fleet.reduce((q, x) => q + x.shock, 0) / fleet.length : null }
+    if (player && sec >= nextInstall) {
+      for (const k of GRIND_SKILLS) player.exp[k] = 0
+      relevel(player)
+      nextInstall += cycleHours * 3600
+    }
+    if (sec / 3600 > maxHours) return { hours: Infinity, karmaPerSecNow: first, karmaPerSecEnd: last, crimes }
+  }
+  return { hours: Infinity, karmaPerSecNow: first, karmaPerSecEnd: last, crimes }
 }
 
 /** The crime that maximises `objective` ('karma' | 'kills' | 'money') for this

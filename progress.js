@@ -142,8 +142,8 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain } from 'coop.js'
 import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
-import { gangVerdict, gangExit, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
+import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
+import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrind, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -1235,6 +1235,7 @@ function readFleet(ns, info) {
       // from it (sleeveplan.sleevesFromCovenant); absent, it refuses.
       sleeves: Number.isInteger(f.sleeves) ? f.sleeves : null,
       byObjective: f.byObjective && typeof f.byObjective === 'object' ? f.byObjective : null,
+      persons: Array.isArray(f.persons) ? f.persons : null,
       gymToPlayerAtTm1: f.gymToPlayerAtTm1 && typeof f.gymToPlayerAtTm1 === 'object' ? f.gymToPlayerAtTm1 : null,
       expToPlayerHackingIfStudying: fin(f.expToPlayerHackingIfStudying) ? f.expToPlayerHackingIfStudying : null,
       why: `${f.contributing ?? '?'} of ${f.sleeves ?? '?'} sleeve(s) delivering ${f.karmaPerSec.toFixed(4)} karma/s`,
@@ -1263,26 +1264,77 @@ function readFleet(ns, info) {
  * back to the node's income scale, which is the term the comparison turns on
  * and is known from the multiplier table alone — a weaker claim that says so.
  */
-function gangWorthNow(ns, info, player, inputsFn = null) {
+async function gangWorthNow(ns, info, player, inputsFn = null) {
   try {
     const live = readJson(ns, '/tel/gang.txt')
     const inGang = live?.lastAugReset === info?.lastAugReset && !!live?.faction
+    let arms = null
     const grindHours = (() => {
       try {
         const k = karmaChannelCtx(ns, info, player)
+        if (typeof k?.grindArms === 'function') arms = k.grindArms()
         return typeof k?.grindHours === 'function' ? k.grindHours(null) : null
       } catch {
         return null
       }
     })()
-    // THE COMPARISON (gangworth.gangExit): only while a gang is still a
-    // choice — not in one, not BitNode 2, gangs reachable — and only where the
-    // caller can build the exit's inputs.
-    const exitCmp = !inGang && info?.currentNode !== 2 && canUseGang(info) && typeof inputsFn === 'function' ? gangExitNow(ns, info, inputsFn(), grindHours) : null
-    return gangVerdict({ node: info?.currentNode, mults: bitNodeMults(info?.currentNode), inGang, grindHours, gangExit: exitCmp })
+    // THE COMPARISON: only while a gang is still a choice — not in one, not
+    // BitNode 2, gangs reachable — and only where the caller can build the
+    // exit's inputs. With the fleet's persons it is gangworth.gangArms (none /
+    // the fleet grinds / the fleet and the slot grind, each grind a ramping
+    // trajectory), decided by the plan on the shared draws (decisions.gang);
+    // without them the constant-rate gangExit, named.
+    const open = !inGang && info?.currentNode !== 2 && canUseGang(info) && typeof inputsFn === 'function'
+    let exitCmp = null
+    let decision = null
+    if (open && arms && (arms.fleet !== null || arms.player !== null)) {
+      const base = inputsFn()
+      const sched = gangScheduleNow(ns, info)
+      const eB = readJson(ns, GATE)?.eBudget
+      const eBudget = typeof eB === 'number' && isFinite(eB) ? eB : null
+      exitCmp = gangArms(bestExitPolicy, base, sched, { fleet: arms.fleet, player: arms.player }, eBudget)
+      const pc = planCtxOf(ns, info)
+      if (pc?.post && exitCmp?.best) {
+        const { inputs: b0 } = withRepEstimate(base)
+        const armH = (k, b) => {
+          const r = gangArms(bestExitPolicy, b, sched, k === 'none' ? {} : { [k]: arms[k] }, eBudget)
+          return k === 'none' ? r.withoutH : r.arms?.[k]?.withH ?? null
+        }
+        const keys = ['none', ...Object.keys(exitCmp.arms ?? {}).filter((k) => typeof exitCmp.arms[k]?.withH === 'number')]
+        const pointH = { none: exitCmp.withoutH, ...Object.fromEntries(keys.filter((k) => k !== 'none').map((k) => [k, exitCmp.arms[k].withH])) }
+        decision = await planDecide(pc, 'gang', () => decideAmongGen({ options: keys.map((k) => ({ key: k, sim: (dr) => armH(k, applyDraw(b0, dr)) })), prev: pc.prev?.decisions?.gang ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
+        // THE PLAN'S COMMITMENT GOVERNS: its key replaces the point argmin.
+        if (decision?.key && decision.key !== exitCmp.best) {
+          const h = pointH[decision.key]
+          exitCmp = { ...exitCmp, best: decision.key, withH: h, savedH: exitCmp.withoutH - h, why: `${exitCmp.why}; plan commits ${decision.key}: ${String(decision.why ?? '').slice(0, 160)}` }
+        }
+      }
+      exitCmp = { ...exitCmp, grind: { fleet: arms.fleetDetail ?? null, player: arms.playerDetail ?? null } }
+    } else if (open) {
+      exitCmp = gangExitNow(ns, info, inputsFn(), grindHours)
+      if (arms?.why) exitCmp = { ...exitCmp, why: `${exitCmp?.why ?? ''} (grind held constant: ${arms.why})` }
+    }
+    const v = gangVerdict({ node: info?.currentNode, mults: bitNodeMults(info?.currentNode), inGang, grindHours: arms?.fleet ?? grindHours, gangExit: exitCmp, decision: decision ? { key: decision.key, meanH: decision.meanH ?? null, pWin: decision.pWin ?? null, held: decision.held === true, why: String(decision.why ?? '').slice(0, 200) } : null })
+    if (v && exitCmp?.grind) v.grind = { fleetH: arms.fleet, playerH: arms.player, fleetKarmaPerSecNow: exitCmp.grind.fleet?.karmaPerSecNow ?? null, fleetKarmaPerSecEnd: exitCmp.grind.fleet?.karmaPerSecEnd ?? null, crimes: exitCmp.grind.fleet?.crimes ?? null }
+    return v
   } catch {
     return null
   }
+}
+
+/** The gang's income trajectory for this node: measured, else a simulated fresh gang (memoised 10 min). */
+function gangScheduleNow(ns, info) {
+  const node = info?.currentNode
+  const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
+  if (remembered.perSec) return [{ atH: 0, perSec: remembered.perSec }]
+  if (gangSchedMemo && gangSchedMemo.node === node && Date.now() - gangSchedMemo.at < 600e3) return gangSchedMemo.sched
+  const softcap = bitNodeMults(node)?.GangSoftcap
+  const G = { faction: 'Slum Snakes', isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false }
+  const rivals = Object.fromEntries(['Tetrads', 'The Syndicate', 'The Dark Army', 'Speakers for the Dead', 'NiteSec', 'The Black Hand'].map((n) => [n, { power: 1, territory: 1 / 7 }]))
+  const sim = typeof softcap === 'number' ? simulateGang(G, [], { softcap, horizonH: 100, stepSec: 300, mode: 'money', assignFn: trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } }) : null
+  const sched = gangIncomeSchedule(sim)
+  gangSchedMemo = { node, at: Date.now(), sched }
+  return sched
 }
 
 /**
@@ -1296,21 +1348,7 @@ let gangSchedMemo = null
 let stockNow = null
 let econNow = null
 function gangExitNow(ns, info, inputs, grindHours) {
-  const node = info?.currentNode
-  const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
-  let sched = remembered.perSec ? [{ atH: 0, perSec: remembered.perSec }] : null
-  // The fresh-gang simulation is the same for every caller in a pass (the
-  // sleeve objective choice asks up to four times): computed once per node
-  // per 10 minutes.
-  if (!sched && gangSchedMemo && gangSchedMemo.node === node && Date.now() - gangSchedMemo.at < 600e3) sched = gangSchedMemo.sched
-  if (!sched) {
-    const softcap = bitNodeMults(node)?.GangSoftcap
-    const G = { faction: 'Slum Snakes', isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false }
-    const rivals = Object.fromEntries(['Tetrads', 'The Syndicate', 'The Dark Army', 'Speakers for the Dead', 'NiteSec', 'The Black Hand'].map((n) => [n, { power: 1, territory: 1 / 7 }]))
-    const sim = typeof softcap === 'number' ? simulateGang(G, [], { softcap, horizonH: 100, stepSec: 300, mode: 'money', assignFn: trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } }) : null
-    sched = gangIncomeSchedule(sim)
-    gangSchedMemo = { node, at: Date.now(), sched }
-  }
+  const sched = gangScheduleNow(ns, info)
   const eB = readJson(ns, '/tel/installgate.txt')?.eBudget
   return gangExit(bestExitPolicy, inputs, sched, grindHours, typeof eB === 'number' && isFinite(eB) ? eB : null)
 }
@@ -1382,6 +1420,9 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
     }
   })()
   if (cv) byExit = { objective: 'covenant', why: `the mandated Covenant campaign is running: train ${cv.trainStat} beside the player`, trainStat: cv.trainStat }
+  // THE GANG DECISION GOVERNS THE FLEET while it says grind: its arms were
+  // priced WITH the sleeves on their best karma crime (gangworth.gangArms).
+  else if (verdict?.worth === true && verdict?.gatePaid !== true && verdict?.arm && verdict.arm !== 'none') byExit = { objective: 'karma', gang: true, why: `follows decisions.gang (${verdict.arm}): ${String(verdict.why ?? '').slice(0, 240)}` }
   ns.write(
     '/tel/sleeveplan.txt',
     JSON.stringify({
@@ -1416,7 +1457,7 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
       //   money  only when sleeve exp is impossible outright
       // The simulated-exit choice when it priced; the old ladder only as the
       // named fallback (objectiveDecidedBy).
-      objectiveDecidedBy: byExit?.objective === 'covenant' ? 'covenant-mandate' : byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
+      objectiveDecidedBy: byExit?.objective === 'covenant' ? 'covenant-mandate' : byExit?.gang ? 'gang-decision' : byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
       objectiveWhy: byExit?.why ?? null,
       trainStat: byExit?.trainStat ?? null,
       objective: byExit?.objective ? byExit.objective :
@@ -2244,6 +2285,9 @@ function publishPlan(ns, info, extra = {}) {
         factionTarget: extra.factionTarget ?? null,
         bodyLeg: extra.bodyLeg ?? null,
         sleeveObjective: pc.decisions.sleeveObjective ?? null,
+        // The gang: none / the fleet grinds / the fleet and the slot grind
+        // (gangWorthNow). Carried when this pass did not reach it.
+        gang: pc.decisions.gang ?? pc.prev?.decisions?.gang ?? null,
         spends: pc.decisions.spends ?? null,
         // Carried when this pass did not reach the graft step (an early
         // return): the commitment must not vanish between passes.
@@ -2540,6 +2584,9 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // takes a max, not a sum, and summing here would overstate the
     // longest leg in the node by the whole fleet size.
     repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, planFleet?.factionRepPerSec),
+    // The formula estimate while no rate is measured: used ONLY by
+    // comparisons whose arms all take it (gangworth.withRepEstimate).
+    repPerSecEstimate: schedule?.estimated ? repPerSecWithFleet(schedule?.estimatedBaseRepPerSec, planFleet?.factionRepPerSec) : null,
     exitRep: rp?.factionRep ?? 0,
     exitFavor: rp?.favor ?? 0,
     cycleHours: cyc?.cycleHours,
@@ -2790,7 +2837,18 @@ function karmaChannelCtx(ns, info, player) {
         }
       : null
     const hoursPerLn = readJson(ns, GATE)?.objective?.exitSensitivity?.hoursPerLn?.hacking ?? null
-    return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, gangExitH, hoursPerLn, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
+    // THE GRIND AS A TRAJECTORY (sleeveplan.fleetKarmaGrind): the fleet on its
+    // best karma crime, training as it goes, alone ('fleet') or with the work
+    // slot on crime too ('player'). Null (unpriced) without the fleet's
+    // persons — never the constant-rate grind in disguise.
+    const grindArms = () => {
+      if (cycleHours === null || !Array.isArray(fleet.persons)) return { fleet: null, player: null, why: cycleHours === null ? 'no install cycle length' : `no sleeve persons in /tel/sleeve.txt (${fleet.why})` }
+      const o = { karmaTarget: KARMA_FOR_GANG, karma: player?.karma, cycleHours, focus: 1 }
+      const f = fleetKarmaGrind(fleet.persons, node, o)
+      const p = fleetKarmaGrind(fleet.persons, node, { ...o, player: person })
+      return { fleet: f && isFinite(f.hours) ? f.hours : null, player: p && isFinite(p.hours) ? p.hours : null, fleetDetail: f, playerDetail: p }
+    }
+    return { gangPending: true, gangPendingWhy: pend.why, gangIncomeWhy: inc.why, gangIncomePerSec, grindHours, grindArms, gangExitH, hoursPerLn, fleet: fleet.assist, fleetExpToPlayerHacking: fleet.expToPlayerHacking, fleetWhy: fleet.why }
   } catch {
     return { gangPending: false }
   }
@@ -4040,7 +4098,17 @@ async function act(ns, canJoin, info, note) {
   // NOT where the gang is structurally worthless (gangChannelsDead: GangSoftcap
   // 0, BitNode 8): yielding there sent the slot to a 15h Homicide loop for a
   // gang that earns ~$1 per member per cycle, while the verdict sat unpriced.
-  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode))
+  // AND NOT WHERE THE GANG DECISION SAYS OTHERWISE (last pass's verdict, this
+  // life): 'none' releases the slot and the gang factions entirely (the
+  // partial grind stops); 'fleet' keeps the slot on the plan once the gang
+  // faction is joined — the sleeves grind. Unpriced keeps the bootstrap.
+  const gangPrev = (() => {
+    const g = readJson(ns, GATE)
+    return g?.lastAugReset === info?.lastAugReset ? g?.gangWorth ?? null : null
+  })()
+  const gangCancelled = gangPrev?.worth === false
+  const inGangFaction = player.factions.some((f) => GANG_FACTIONS.includes(f))
+  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !gangCancelled && !(inGangFaction && gangPrev?.playerSlot === false)
   // WHO HOLDS THE WORK SLOT THIS PASS. null means nobody here does, and act.js
   // is free to use it. Declared here rather than inside the branch so that
   // every path out of this file publishes a definite answer — an absent field
@@ -4049,7 +4117,7 @@ async function act(ns, canJoin, info, note) {
   let slotOwner = null
   // Not where the gang is structurally worthless: its factions are then ordinary
   // join candidates, not a bootstrap target (gangChannelsDead).
-  if (canJoin && canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !player.factions.some((f) => GANG_FACTIONS.includes(f))) {
+  if (canJoin && canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !gangCancelled && !inGangFaction) {
     const pick = (schedule?.joinForecasts ?? [])
       .filter((f) => GANG_FACTIONS.includes(f.name) && typeof f.hours === 'number' && isFinite(f.hours))
       .sort((a, b) => a.hours - b.hours)[0]
@@ -4729,7 +4797,7 @@ async function act(ns, canJoin, info, note) {
         const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
         publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + (incNow + hacknetLifeIncome(ns, info).perSec) * W0 * 3600, replanAt, pending, offers })
       }
-      writeSleevePlan(ns, info, gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
+      writeSleevePlan(ns, info, await gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
     ns.write(
       GATE,
@@ -4753,7 +4821,7 @@ async function act(ns, canJoin, info, note) {
           // gangGainHours is null here: the two exit-policy searches that
           // price it are too heavy for a path that exists to be cheap. The
           // verdict falls back to the node's income scale and says so.
-          gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, gangInputs0)),
+          gangWorth: (gangWorthVerdict = await gangWorthNow(ns, info, player, gangInputs0)),
           // The objective record rides the unplanned write too: the
           // derivation runs whether or not anything is affordable, and a
           // refusal on this path was invisible (2026-09-20 01:10 — the
@@ -5364,7 +5432,7 @@ async function act(ns, canJoin, info, note) {
       // the gang's measured income advantage and is null until a gang in THIS
       // node has demonstrated one — so the verdict refuses rather than
       // assuming, which is what leaves the bootstrap alone by default.
-      gangWorth: (gangWorthVerdict = gangWorthNow(ns, info, player, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))),
+      gangWorth: (gangWorthVerdict = await gangWorthNow(ns, info, player, () => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))),
     })
 
     // THE MANUAL INSTALL HOLD: /install-hold.txt on home (any content, the

@@ -128,6 +128,81 @@ export function gangExit(bestExitPolicy, base, schedule, grindHours, eBudget = n
 }
 
 /**
+ * AN UNMEASURED REPUTATION RATE, for a comparison whose two arms share it.
+ * exitInputsOf publishes repPerSec null until a faction's rate is measured
+ * (a fresh life, no faction joined) — which left every exit, and so the gang,
+ * unpriced (live BN1 2026-09-28: "could not price the reputation leg: no
+ * measured reputation rate"). Where both trajectories take the same rate, the
+ * formula estimate (trajectory.estimateBaseRepPerSec, from the player's
+ * hacking and faction_rep) prices the leg in both, and the record says so.
+ */
+export function withRepEstimate(base) {
+  if (!base || typeof base !== 'object') return { inputs: base, repSource: null }
+  if (num(base.repPerSec) && base.repPerSec > 0) return { inputs: base, repSource: 'measured' }
+  if (num(base.repPerSecEstimate) && base.repPerSecEstimate > 0) return { inputs: { ...base, repPerSec: base.repPerSecEstimate }, repSource: `estimated ${base.repPerSecEstimate.toFixed(3)} rep/s (formula, no faction rate measured yet) — shared by every arm` }
+  return { inputs: base, repSource: null }
+}
+
+/**
+ * THE GANG DECISION'S ARMS, trajectory against trajectory on one base
+ * (CLAUDE.md): the exit WITHOUT a gang, against the exit with the gang's
+ * income arriving when the karma grind ends, for each way to grind:
+ *   fleet    the sleeves grind (their karma ramping as they train —
+ *            sleeveplan.fleetKarmaGrind); the work slot keeps its plan
+ *   player   the sleeves AND the work slot grind (a shorter grind); the slot's
+ *            hours are charged as an UPPER bound — every leg of the exit waits
+ *            for them (grind hours + the exit with the gang from the start) —
+ *            because the slot's use in lives before the final window moves
+ *            the install cadence, which exitplan holds at its measured rate.
+ *            The slot joins only if it wins under that bound ("if it pays").
+ * Not simulated, stated: the fleet's own alternative (its exp transfer or
+ * reputation) during the grind — lives before the final window, whose
+ * cadence the model holds at its measured rate; the gang faction's
+ * reputation and augmentations. `grinds` {fleet, player}: hours or null.
+ * Returns {best: 'none'|'fleet'|'player', savedH, withoutH, arms, why}.
+ */
+export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget = null, maxInstalls = 400) {
+  if (typeof bestExitPolicy !== 'function' || !base0) return { best: null, savedH: null, why: 'no exit policy or inputs' }
+  if (!Array.isArray(schedule) || !schedule.length) return { best: null, savedH: null, why: 'no gang income trajectory (measured or simulated)' }
+  const { inputs: base, repSource } = withRepEstimate(base0)
+  const without = bestExitPolicy({ ...base }, maxInstalls)
+  const a = without?.best?.hours
+  if (!num(a) || without?.degenerate) return { best: null, savedH: null, repSource, why: `exit unpriceable without the gang (${without?.why ?? 'degenerate'})` }
+  const shifted = (H) => schedule.map((x) => ({ atH: x.atH + H, perSec: x.perSec }))
+  const exitWithExtra = (extra) => bestExitPolicy({ ...base, ...extra, eBudget }, maxInstalls)?.best?.hours
+  const arms = {}
+  const gF = grinds.fleet
+  if (num(gF) && gF >= 0) {
+    const h = exitWithExtra({ extraIncome: shifted(gF) })
+    arms.fleet = { grindH: gF, withH: num(h) ? h : null }
+  }
+  const gP = grinds.player
+  if (num(gP) && gP >= 0) {
+    const lower = exitWithExtra({ extraIncome: shifted(gP), slotBusyH: gP })
+    const fromStart = exitWithExtra({ extraIncome: shifted(0) })
+    arms.player = { grindH: gP, withH: num(fromStart) ? gP + fromStart : null, lowerH: num(lower) ? lower : null }
+  }
+  let best = 'none'
+  let bestH = a
+  for (const [k, v] of Object.entries(arms)) {
+    if (num(v.withH) && v.withH < bestH - EXIT_RESOLUTION_H) {
+      best = k
+      bestH = v.withH
+    }
+  }
+  const armWhy = Object.entries(arms).map(([k, v]) => `${k} (grind ${v.grindH.toFixed(1)}h) ${num(v.withH) ? v.withH.toFixed(1) + 'h' : 'unpriced'}${num(v.lowerH) ? ` [slot free: ${v.lowerH.toFixed(1)}h]` : ''}`).join(', ')
+  return {
+    best,
+    savedH: a - bestH,
+    withoutH: a,
+    withH: bestH,
+    arms,
+    repSource,
+    why: `exit ${a.toFixed(1)}h without a gang; with: ${armWhy || 'no grind priced'} -> ${best}${repSource && repSource !== 'measured' ? ` (${repSource})` : ''}`,
+  }
+}
+
+/**
  * A gang whose every channel is zero by the node's multipliers: null when it
  * has one, else the reason. GangSoftcap 0 raises both a member's respect and
  * money gain to the power 0 (Gang/formulas/formulas.ts:27,71): each is exactly
@@ -212,6 +287,26 @@ export function gangVerdict(o = {}) {
   // gangplan.simulateGang's trajectory for a fresh gang in this node).
   const ex = o.gangExit
   if (!ex || !num(ex.savedH)) return keep(`no simulated exit comparison: ${ex?.why ?? 'none supplied'}`)
+  // THE ARMS (gangArms): which grind the gang wins with — the fleet alone, or
+  // the fleet and the work slot. `playerSlot` is what act.js/progress.js
+  // read to give the slot to the grind; false keeps it on the plan.
+  if (ex.arms) {
+    const worth = ex.best !== 'none' && ex.savedH > EXIT_RESOLUTION_H
+    const g = worth ? ex.arms[ex.best]?.grindH : null
+    return {
+      worth,
+      arm: worth ? ex.best : 'none',
+      playerSlot: worth && ex.best === 'player',
+      gainHours: ex.savedH,
+      grindHours: num(g) ? g : grindHours,
+      withH: ex.withH ?? null,
+      withoutH: ex.withoutH ?? null,
+      arms: ex.arms,
+      repSource: ex.repSource ?? null,
+      ...(o.decision ? { decision: o.decision } : {}),
+      why: `${worth ? `WORTH IT (${ex.best === 'player' ? 'sleeves and the work slot grind' : 'the sleeves grind; the work slot keeps its plan'})` : 'NOT worth it — the partial grind stops'} in BitNode ${node}: ${ex.why} (${ex.savedH >= 0 ? 'saves' : 'costs'} ${Math.abs(ex.savedH).toFixed(1)}h, grind included)`,
+    }
+  }
   // A saving inside the planner's own exit resolution is not a saving. The
   // objective comparison in progress.js treats two simulated exits within a
   // minute as equal (EXIT_RESOLUTION_H), and a gate that costs a karma grind

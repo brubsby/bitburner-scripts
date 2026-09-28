@@ -140,11 +140,16 @@ export function decide(s = {}) {
   // running Homicide toward -54,000 for a gang that earns ~$1/cycle.
   const deadWhy = gangChannelsDead(s.node)
   const gw = deadWhy ? { worth: false, structural: true, why: deadWhy } : s.gangWorth
+  // THE WORK SLOT JOINS THE KARMA GRIND only where the gang decision priced
+  // it in (gangworth.gangArms 'player'): with the 'fleet' arm the sleeves
+  // grind and the slot keeps its plan. A verdict without arms (older
+  // publisher, unpriced) keeps the old behaviour.
+  const slotGrinds = gw?.playerSlot !== false
 
   // 1b. In a gang faction already, but the gang's own karma gate is unmet —
   // keep the crime loop running. Outside BitNode 2 this is the long leg of
   // the bootstrap by far, and joining the faction does not end it.
-  if (s.gangNode === true && gw?.worth !== false && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
+  if (s.gangNode === true && gw?.worth !== false && slotGrinds && s.gangKarma !== undefined && s.factions.some((f) => GANG_FACTIONS.includes(f))) {
     const target = num(s.gangKarma) ? s.gangKarma : SLUM_SNAKES.karma
     if (!(num(p.karma) && p.karma <= target)) {
       const leg = crimeLeg({ karma: target }, p, s.node, { focus: 1 })
@@ -191,7 +196,7 @@ export function decide(s = {}) {
     // 0.0173 karma/s against Homicide's 0.2565 — a 15x worse rate on the one
     // axis still gating the gang, while Homicide pays that karma AND the
     // combat exp the join needs AND money.
-    const gangKarmaShort = s.gangKarma !== undefined && num(s.gangKarma) && !(num(p.karma) && p.karma <= s.gangKarma)
+    const gangKarmaShort = slotGrinds && s.gangKarma !== undefined && num(s.gangKarma) && !(num(p.karma) && p.karma <= s.gangKarma)
     if (!combatShort.length && !karmaShort && !moneyShort) {
       const last = s.tried?.[SLUM_SNAKES.name] ?? 0
       if (s.now - last < 60e3) return { kind: 'idle', why: `Slum Snakes requirements met; join tried ${Math.round((s.now - last) / 1000)}s ago, waiting for the invitation` }
