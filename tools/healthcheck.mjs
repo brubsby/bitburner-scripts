@@ -34,12 +34,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { wealthNegativeCheck, stackTierFromBoot } from "../nodeecon.js";
-import { ramUpgradeCost } from "../homecost.js";
-import { bitNodeMults } from "../bitNodeMultipliers.js";
+
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
 import "./test/gameresolve.mjs";
+// Game modules import each other by bare in-game names ('sfgate.js'), which
+// only resolve through gameresolve.mjs. Static imports are linked BEFORE any
+// module body runs, so they must be dynamic and come after the resolver —
+// three static imports here broke the healthcheck outright (2026-09-27:
+// "Cannot find package 'sfgate.js'"), and the scheduled watcher read that as
+// a new problem it could not describe. [TL1] enforces this.
+const { wealthNegativeCheck, stackTierFromBoot } = await import("../nodeecon.js");
+const { ramUpgradeCost } = await import("../homecost.js");
+const { bitNodeMults } = await import("../bitNodeMultipliers.js");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEL = path.join(ROOT, ".telemetry");
