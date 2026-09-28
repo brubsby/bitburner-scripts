@@ -32,3 +32,8 @@ runl bayes.js "  if (!(typeof u === 'number' && u >= 0 && u < 1)) throw" "  if (
 runl bayes.js "      if (j >= SAMPLER_CAP.gammaInner) throw new SamplingError" "      if (false) throw new SamplingError"
 runl coop.js "    if (steps > cap) throw new LoopCapError" "    if (false) throw new LoopCapError"
 runl countexit.js "      if (spent + p > budget || levels > 200) break" "      if (spent + p > budget) break"
+# a fresh life is not blind (BY14)
+run plan.js "  if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = Math.exp(d.incomeLn)" "  if (false) o.incomePerSec = Math.exp(d.incomeLn)"
+run plan.js "  if (inputs.repFromEstimate === true && fin(inputs.repPerSec) && fin(d.repResid)) o.repPerSec = inputs.repPerSec * d.repResid" "  if (false) o.repPerSec = inputs.repPerSec * d.repResid"
+run bayes.js "  const sd = Math.sqrt(sdMean * sdMean + sLife2 + extra * extra)" "  const sd = Math.sqrt(sdMean * sdMean + extra * extra)"
+run progress.js "      return pr ? { incomePerSec: pr.perSec, incomeFromPrior: true, incomeSource: pr.label } : {}" "      return {}"

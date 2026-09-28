@@ -165,6 +165,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, modelVersionFrom } from 'plan.js'
+import { incomePrior } from 'bayes.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -2152,7 +2153,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
-    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, ledger, bitNode: info?.currentNode, obs, optionPoints: points })
+    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, ledger, bitNode: info?.currentNode, obs, optionPoints: points, income: incomePriorOf(ns, info, ns.getPlayer()) })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
@@ -2175,6 +2176,8 @@ async function planInstallOf(ns, info, inputs, count, point) {
   const pc = planCtxOf(ns, info)
   if (!pc.post) return null
   pc.obsInputs = inputs
+  if (inputs?.incomeFromPrior) pc.incomeFromPrior = inputs.incomeSource
+  if (inputs?.repFromEstimate) pc.repFromEstimate = inputs.repSource
   const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, sameLife: !!pc.prev }))
   if (!d?.key || typeof d.meanH !== 'number') return null
   return { install: d.install === true, key: d.key, waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why }
@@ -2254,13 +2257,14 @@ function publishPlan(ns, info, extra = {}) {
     const at = new Date().toISOString()
     const inp = extra.inputs ?? pc.obsInputs ?? null
     const obs = pc.post
-      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }), rep: withObs(pc.obs?.rep, inp?.repPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }) }
+      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }), rep: withObs(pc.obs?.rep, inp?.repFromEstimate ? null : inp?.repPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }) }
       : pc.obs ?? {}
     const route = pc.decisions.countRoute ?? null
     const inst = pc.decisions.install ?? null
     // THE PLAN'S EXIT: the committed install option's distribution (it
     // includes the committed route where one exists), else the route's.
-    const ex = inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : null
+    const pex = pc.decisions.exit ?? null
+    const ex = inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
     // THE PAGE-FREEZE METRIC is the longest stretch of work between yields
     // (maxBlockMs), not the total: the searches run in slices, so a pass may
     // spend seconds of work while never holding the page for more than a
@@ -2278,7 +2282,7 @@ function publishPlan(ns, info, extra = {}) {
       error: pc.error ?? (Object.values(pc.decisions).find((d) => d?.error)?.why ?? null),
       decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
       events: pc.events,
-      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === inst ? `install decision (${inst.key})` : `count route (${route.name})` } : null,
+      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       decisions: {
         install: inst,
         countRoute: route,
@@ -2554,6 +2558,32 @@ function hacknetLifeIncome(ns, info) {
   return hacknetRecordOf(readJson(ns, HACKNET_FILE), info?.lastAugReset)
 }
 
+/**
+ * INCOME WHILE THIS LIFE CANNOT MEASURE IT (bayes.incomePrior): what earlier
+ * lives earned at this point of a life, from tel.js's earnings ledger and the
+ * lifetimes ledger, scaled by the multiplier — so a batcher prepping after an
+ * install (script income $0/s for up to an hour) does not leave the exit
+ * unpriced and every trajectory decision blind. Once per pass; null with no
+ * earlier life anywhere (the exit stays unpriced, and says why).
+ */
+let incomePriorMemo
+function incomePriorOf(ns, info, player) {
+  if (incomePriorMemo !== undefined) return incomePriorMemo
+  incomePriorMemo = null
+  try {
+    const earnings = JSON.parse(ns.read('/tel/earnings.txt') || 'null')
+    const ledger = JSON.parse(ns.read('/tel/lifetimes.txt') || '[]')
+    const since = info?.lastAugReset
+    const ageH = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 3.6e6) : 0
+    const node = info?.currentNode
+    const pr = incomePrior({ earnings, ledger, node, ageH, hackMultNow: player?.mults?.hacking ?? null, shm: (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney) })
+    const lifeN = (Array.isArray(ledger) ? ledger.filter((e) => e?.bitNode === node).length : 0) + 1
+    incomePriorMemo = pr ? { ...pr, lifeN, label: `income from prior (life ${lifeN} measuring): ${pr.why}` } : null
+  } catch {
+    incomePriorMemo = null
+  }
+  return incomePriorMemo
+}
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   // The endpoint model (exitplan.endpointCycleStats), not cycleStats's median.
   // Measured in this node, or a STATED prior from another until it has three
@@ -2569,6 +2599,14 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // are money the exit can spend. 0 with no fresh record.
     money: (player.money ?? 0) + (stockNow?.ok ? stockNow.equity : 0),
     incomePerSec: incomePerSec + contractMoneyPerSec,
+    // THIS LIFE'S INCOME NOT MEASURABLE YET (nothing earning, no trader
+    // return): the previous-lives prior's median here, and a draw from it in
+    // every Monte Carlo draw (plan.applyDraw), marked so every reader knows.
+    ...(() => {
+      if (incomePerSec + contractMoneyPerSec > 0 || (capitalFitOf(ns, info)?.r ?? econNow?.capitalReturnPerSec ?? 0) > 0) return {}
+      const pr = incomePriorOf(ns, info, player)
+      return pr ? { incomePerSec: pr.perSec, incomeFromPrior: true, incomeSource: pr.label } : {}
+    })(),
     // Hacknet money until the next install (exitplan lifeIncome).
     lifeIncome: hacknetLifeIncome(ns, info).perSec,
     hacking: player.skills?.hacking,
@@ -2584,9 +2622,16 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
     // takes a max, not a sum, and summing here would overstate the
     // longest leg in the node by the whole fleet size.
     repPerSec: schedule?.estimated ? null : repPerSecWithFleet(schedule?.measuredBaseRepPerSec, planFleet?.factionRepPerSec),
-    // The formula estimate while no rate is measured: used ONLY by
-    // comparisons whose arms all take it (gangworth.withRepEstimate).
-    repPerSecEstimate: schedule?.estimated ? repPerSecWithFleet(schedule?.estimatedBaseRepPerSec, planFleet?.factionRepPerSec) : null,
+    // NO FACTION WORK MEASURED THIS LIFE YET: the game-formula estimate
+    // (trajectory.estimateBaseRepPerSec, [TJ6] matches getHackingWorkRepGain),
+    // marked, with a stated residual drawn in every Monte Carlo draw
+    // (plan.applyDraw: PRIORS.repEstimateSdLn) — not null, which left the
+    // reputation leg, and so the whole exit, unpriced for the first part of
+    // every life (live BN1 2026-09-28 00:18: "could not price the reputation
+    // leg: no measured reputation rate").
+    ...(schedule?.estimated && typeof schedule?.estimatedBaseRepPerSec === 'number' && schedule.estimatedBaseRepPerSec > 0
+      ? { repPerSec: repPerSecWithFleet(schedule.estimatedBaseRepPerSec, planFleet?.factionRepPerSec), repFromEstimate: true, repSource: `reputation from the formula estimate (no faction work measured this life): ${schedule.estimatedBaseRepPerSec.toFixed(3)}/s base` }
+      : {}),
     exitRep: rp?.factionRep ?? 0,
     exitFavor: rp?.favor ?? 0,
     cycleHours: cyc?.cycleHours,
@@ -2905,6 +2950,7 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 
 async function act(ns, canJoin, info, note) {
   planCtx = null // one plan context per pass (planCtxOf)
+  incomePriorMemo = undefined // one income prior per pass (incomePriorOf)
   passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns) })
   passT0 = Date.now()
   graftCarry = null // set once the snapshots are read (carriedGraftsOf)
@@ -4845,6 +4891,26 @@ async function act(ns, canJoin, info, note) {
             } catch {
               decided = null
             }
+            // NOTHING QUEUED, NO ROUTE: the plan's exit is the committed
+            // trajectory (plan.basisOf, or the default policy) over the
+            // posterior draws — with the income prior's spread when this
+            // life cannot measure its income yet.
+            if (!decided) {
+              try {
+                const pc = planCtxOf(ns, info)
+                if (pc.post) {
+                  const inp = gangInputs0()
+                  if (inp?.incomeFromPrior) pc.incomeFromPrior = inp.incomeSource
+                  if (inp?.repFromEstimate) pc.repFromEstimate = inp.repSource
+                  const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+                  const traj = trajectoryOf(basis, {})
+                  const d = await planDecide(pc, 'exit', () => decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow }))
+                  if (d?.key && typeof d.q50 === 'number') decided = { exitH: d.q50, source: `plan: median over the posterior (${basis ? `committed install ${basis.kind}` : 'default policy'}, nothing queued), 80% interval ${d.q10}-${d.q90}h${inp?.incomeFromPrior ? ` — ${inp.incomeSource}` : ''}${inp?.repFromEstimate ? ` — ${inp.repSource}` : ''}` }
+                }
+              } catch {
+                /* the sensitivity base below, named */
+              }
+            }
             const cal0 = exitCalibrationOf(ns, info)
             const exitH = decided?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null
             const source = decided?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null)
@@ -5466,7 +5532,7 @@ async function act(ns, canJoin, info, note) {
       // THE PLAN'S EXIT (plan.decideInstall): the committed option's median
       // over the posterior draws, its 80% interval beside it.
       const b = exitCompare?.bayes
-      if (b && typeof b.q50 === 'number') return { exitH: b.q50, source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h` }
+      if (b && typeof b.q50 === 'number') return { exitH: b.q50, source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h${planCtx?.incomeFromPrior ? ` — ${planCtx.incomeFromPrior}` : ''}${planCtx?.repFromEstimate ? ` — ${planCtx.repFromEstimate}` : ''}` }
       if (!exitCompare?.countAware && countTickets) {
         try {
           const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)

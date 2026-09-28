@@ -128,19 +128,15 @@ export function gangExit(bestExitPolicy, base, schedule, grindHours, eBudget = n
 }
 
 /**
- * AN UNMEASURED REPUTATION RATE, for a comparison whose two arms share it.
- * exitInputsOf publishes repPerSec null until a faction's rate is measured
- * (a fresh life, no faction joined) — which left every exit, and so the gang,
- * unpriced (live BN1 2026-09-28: "could not price the reputation leg: no
- * measured reputation rate"). Where both trajectories take the same rate, the
- * formula estimate (trajectory.estimateBaseRepPerSec, from the player's
- * hacking and faction_rep) prices the leg in both, and the record says so.
+ * WHERE THE REPUTATION RATE CAME FROM, for the verdict. exitInputsOf fills an
+ * unmeasured rate with the formula estimate itself (repFromEstimate, the
+ * plan's labelled prior; plan.applyDraw draws its residual) — ONE mechanism,
+ * shared by every arm and every draw. This only reads the label.
  */
 export function withRepEstimate(base) {
   if (!base || typeof base !== 'object') return { inputs: base, repSource: null }
-  if (num(base.repPerSec) && base.repPerSec > 0) return { inputs: base, repSource: 'measured' }
-  if (num(base.repPerSecEstimate) && base.repPerSecEstimate > 0) return { inputs: { ...base, repPerSec: base.repPerSecEstimate }, repSource: `estimated ${base.repPerSecEstimate.toFixed(3)} rep/s (formula, no faction rate measured yet) — shared by every arm` }
-  return { inputs: base, repSource: null }
+  if (base.repFromEstimate === true) return { inputs: base, repSource: base.repSource ?? 'reputation from the formula estimate (no faction work measured this life)' }
+  return { inputs: base, repSource: num(base.repPerSec) && base.repPerSec > 0 ? 'measured' : null }
 }
 
 /**
@@ -198,7 +194,7 @@ export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget =
     withH: bestH,
     arms,
     repSource,
-    why: `exit ${a.toFixed(1)}h without a gang; with: ${armWhy || 'no grind priced'} -> ${best}${repSource && repSource !== 'measured' ? ` (${repSource})` : ''}`,
+    why: `exit ${a.toFixed(1)}h without a gang; with: ${armWhy || 'no grind priced'} -> ${best}${repSource && repSource !== 'measured' ? ` (${repSource}; every arm)` : ''}`,
   }
 }
 

@@ -258,7 +258,16 @@ if (!prev) {
   const farming = !!tel["batch.txt"]?.expFarm;
   if (farming) {
     if (num(prev.hackingExp) && num(now.hackingExp) && !(now.hackingExp > prev.hackingExp) && !(num(now.lifeMs) && num(prev.lifeMs) && now.lifeMs < prev.lifeMs)) fail(`EXP FARM NOT MOVING: hacking exp flat over ${dtMin.toFixed(0)} min while batch.js is in exp mode`);
-  } else if (now.batchPerSec !== null && !(now.batchPerSec > 0)) fail("batch.js reports $0/s earned", "the batcher is running but landing nothing");
+  } else if (now.batchPerSec !== null && !(now.batchPerSec > 0)) {
+    // Preparing a target (grow to max money, weaken to min security) earns $0
+    // by design; early in a life that is the normal state, not a stall. It is
+    // a stall only if preparation outlasts PREP_BUDGET_MIN of the life.
+    const PREP_BUDGET_MIN = 90;
+    const prepping = tel["batch.txt"]?.health === "prepping";
+    const lifeMin = num(now.lifeMs) ? now.lifeMs / 60000 : null;
+    if (prepping && lifeMin !== null && lifeMin < PREP_BUDGET_MIN) note(`batch.js is preparing ${(tel["batch.txt"]?.targets ?? []).map((t) => t.host).join(", ") || "a target"} ($0/s by design, life ${lifeMin.toFixed(0)} min)`);
+    else fail("batch.js reports $0/s earned", prepping ? `still preparing ${lifeMin?.toFixed(0) ?? "?"} min into the life (budget ${PREP_BUDGET_MIN}) — preparation that never finishes is a stall` : "the batcher is running but landing nothing");
+  }
 
   // Go power must climb while go.js is alive; the bonus resets on install, so
   // an install since the last sample legitimately drops it.

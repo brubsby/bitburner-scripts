@@ -63,6 +63,26 @@ ONE pass (05:32 read 108.5h between 16.1h and 12.7h); robust, s = 6.2%, and
 Cost: after a deploy or restart s rests on its prior (10%) until same-version
 pairs accumulate (one per ~15 min).
 
+### A fresh life is not blind
+
+Early in a life two exit inputs can be unmeasurable: income (the batcher
+prepping its target reads $0/s for up to an hour) and the faction reputation
+rate (no faction work yet — live BN1 00:18 the exit read "could not price the
+reputation leg"). Each now comes from a prior instead of leaving the exit
+unpriced, marked in the inputs and in plan.txt `exit.income` / `exit.rep` /
+`exitSource`:
+- income: `bayes.incomePrior` — earlier completed lives in this node (tel.js
+  earnings ledger), each one's income rate over the half hour from this age,
+  scaled by M now / M then; the predictive for this life (node mean's
+  uncertainty + one life's scatter, prior sd ln 0.7). A node's first life
+  borrows other nodes whose scripts earn, scaled by ScriptHackMoney and widened
+  (sd ln 1.0); none -> still unpriced, named. NOT implemented: a RAM-based
+  batcher model for a save's very first life.
+- reputation: the game-formula estimate (factionplan `estimatedBaseRepPerSec`,
+  [TJ6]) with a stated residual (sd ln 0.3, NOT CALIBRATED).
+Both are drawn per Monte Carlo draw, so the exit's interval widens with them
+(BY14, BN1 00:18 replay: exit 80% 229-457h with both priors; the income prior alone ~2.5x the width of a measured income).
+
 ### Nothing may spin the page
 
 The planner shares the game's main thread; a loop that never ends freezes the

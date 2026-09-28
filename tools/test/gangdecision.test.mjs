@@ -91,9 +91,10 @@ export async function run() {
     g2.examined(6);
     const sched = gangSchedule();
     const est = T.estimateBaseRepPerSec({ hacking: FIX.player.skills.hacking, intelligence: FIX.player.skills.intelligence, factionRepMult: 1, nodeWorkRepMult: 1, sharePower: 1 });
-    const base = { ...FIX.exitInputs, repPerSecEstimate: est };
+    // The plan's fresh-life prior as exitInputsOf publishes it (repFromEstimate).
+    const base = { ...FIX.exitInputs, repPerSec: est, repFromEstimate: true, repSource: `reputation from the formula estimate (no faction work measured this life): ${est.toFixed(3)}/s base` };
     const unpriced = GW.gangArms(X.bestExitPolicy, FIX.exitInputs, sched, { fleet: fleet.hours, player: both.hours }, FIX.eBudget);
-    if (unpriced.best !== null) g2.fail("with no measured rate and no estimate the exit is unpriced: refuse");
+    if (unpriced.best !== null) g2.fail("with no rate at all the exit is unpriced: refuse");
     arms = GW.gangArms(X.bestExitPolicy, base, sched, { fleet: fleet.hours, player: both.hours }, FIX.eBudget);
     g2.note(arms.why);
     if (!arms.arms?.fleet || !arms.arms?.player) {
@@ -101,10 +102,10 @@ export async function run() {
       checks.push(g2);
       return checks;
     }
-    if (!/estimated/.test(arms.repSource ?? "")) g2.fail("the estimate must be labelled on the verdict");
-    const none = X.bestExitPolicy({ ...base, repPerSec: est }, 400).best.hours;
+    if (!/formula estimate/.test(arms.repSource ?? "") || !/formula estimate/.test(arms.why)) g2.fail("the plan's estimate label must ride the verdict");
+    const none = X.bestExitPolicy({ ...base }, 400).best.hours;
     if (Math.abs(arms.withoutH - none) > 1e-9) g2.fail("the WITHOUT arm is the plain exit on the same inputs");
-    const withF = X.bestExitPolicy({ ...base, repPerSec: est, eBudget: FIX.eBudget, extraIncome: sched.map((x) => ({ atH: x.atH + fleet.hours, perSec: x.perSec })) }, 400).best.hours;
+    const withF = X.bestExitPolicy({ ...base, eBudget: FIX.eBudget, extraIncome: sched.map((x) => ({ atH: x.atH + fleet.hours, perSec: x.perSec })) }, 400).best.hours;
     if (Math.abs(arms.arms.fleet.withH - withF) > 1e-9) g2.fail("the fleet arm is the exit with the gang's income from the end of the fleet's grind");
     if (arms.best !== "fleet" || !(arms.savedH > 0)) g2.fail(`on the replay the gang wins with the fleet grinding (got ${arms.best}, ${arms.savedH}h)`);
     if (!(arms.arms.player.withH >= arms.arms.player.grindH + 0)) g2.fail("the slot arm carries its hours as an upper bound");
