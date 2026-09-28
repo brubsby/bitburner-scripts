@@ -133,6 +133,15 @@ for (const [name, budget] of Object.entries(FRESH)) {
     continue;
   }
   const age = ageMin(d.at);
+  // Born before this life began = from a stack that no longer exists, whether
+  // or not it is past its staleness budget yet. The movement checks must skip
+  // such a file too: go.txt written 13s before the BN1→BN9 exit (2026-09-28)
+  // was inside its 30-min budget, so "no new solver moves" fired on a go.js
+  // that had simply not started in the new node.
+  {
+    const ls = num(state.playtimeSinceLastAug) ? Date.now() - state.playtimeSinceLastAug : null;
+    if (ls !== null && num(Date.parse(d.at)) && Date.parse(d.at) < ls) staleFromLastLife.add(name);
+  }
   if (age === null) fail(`/tel/${name} has no readable timestamp`);
   else if (age > budget) {
     // A file left behind by the previous BitNode is not a stalled component,
