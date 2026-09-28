@@ -136,8 +136,15 @@ export function incomeModel(o = {}) {
   const r = num(o.capitalReturnPerSec) ? o.capitalReturnPerSec : 0
   const cap = num(o.capitalCap) ? o.capitalCap : Infinity
   const m0 = typeof o.money0 === 'number' && isFinite(o.money0) && o.money0 > 0 ? o.money0 : 0
+  // THIS LIFE'S OTHER INCOME (`lifePerSec`, nodeecon.incomeOf): hacknet
+  // production, NOT in incomePerSec and not level-scaled. Every moneyBy(h)
+  // here is money within this life (the install's batch, a wait option's
+  // purchases, the spend verdicts' money at W), so it counts in full — it was
+  // absent, and in BitNode 9 it is most of the money: every install option
+  // and every spend priced without it.
+  const life = num(o.lifePerSec) ? o.lifePerSec : 0
   if (!num(hacking) || !num(hackingMult)) return null
-  if (!num(incomePerSec) && !(r > 0 && m0 > 0)) return null
+  if (!num(incomePerSec) && !(r > 0 && m0 > 0) && !(life > 0)) return null
   const capitalBy = (T) => {
     if (!(r > 0) || !(m0 > 0)) return 0
     if (m0 >= cap) return r * cap * T
@@ -160,7 +167,7 @@ export function incomeModel(o = {}) {
   const moneyBy = (h) => {
     if (!(h > 0)) return 0
     const T = h * 3600
-    const other = flat * T + capitalBy(T)
+    const other = (flat + life) * T + capitalBy(T)
     if (!grows) return lvlInc * T + other
     const lvlInt = hackingMult * (32 * intLog(hackingExp, expPerSec, T) - 200 * T)
     // The same level-1 clamp as the rep model, and the flat figure as a hard

@@ -244,7 +244,25 @@ export function exitAfter(record, effect, fns, covenant = null, baseEffect = nul
     return bestExitPolicy(inp, 0, 0)?.best?.hours ?? null
   }
   if (!num(record.W)) return null
-  const net = e.money + e.incomePerSec * record.W * 3600
+  // EXP BEFORE THE INSTALL is reset by it, but not wasted: a higher level
+  // this life raises the batcher's income on the way to W (income scales
+  // with level + 50 — trajectory.incomeModel, the same model the gate's
+  // money at W uses). So a study boost prices as the extra money at W from
+  // exp arriving faster. Its reputation effect (faction work is linear in
+  // the level) is not simulated: a floor. No incomeModel supplied: 0, named
+  // by the caller.
+  const im = fns.incomeModel
+  const expDelta = (e.expPerSec ?? 0) - (b.expPerSec ?? 0)
+  const expMoney = (() => {
+    if (typeof im !== 'function' || !(expDelta > 0) || !(record.W > 0)) return 0
+    const flat = num(base.flatIncomePerSec) ? base.flatIncomePerSec : 0
+    const m = (xps) => im({ incomePerSec: Math.max(0, (base.incomePerSec ?? 0) - flat), hacking: base.hacking, hackingExp: base.hackingExp, hackingMult: base.hackingMult, expPerSec: xps })?.moneyBy(record.W)
+    const x0 = (base.expPerSec ?? 0) + (b.expPerSec ?? 0)
+    const a = m(x0 + expDelta)
+    const z = m(x0)
+    return num(a) && num(z) ? Math.max(0, a - z) : 0
+  })()
+  const net = e.money + e.incomePerSec * record.W * 3600 + expMoney
   const runs = spendRuns(record, -net, { allowGain: true })
   if (!runs) return null
   return bestExitPolicy({ ...runs.with, ...x }, runs.max, runs.min)?.best?.hours ?? null

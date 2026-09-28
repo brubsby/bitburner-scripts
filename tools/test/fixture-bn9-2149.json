@@ -1,0 +1,546 @@
+{
+ "about": "Live BitNode 9 state, 2026-09-28 21:48-21:52 UTC: /tel/exitinputs.txt (whole), plan.txt decisions.install, hacknet.txt, installgate spendExit, hashspend decision. Servers reconstructed from hacknet.txt totals/ramPolicy: server-0 = the BN9 entry server (level 100, 10 cores, cache 5) at 4GB; server-1 = the Netburners buy (level 1, 1 core) at 4GB. Player hacknet mults from the observed rates/prices: money 1.28 (0.41033 h/s at level 100/4GB/10 cores), costs 1/1.28 (the 4GB->8GB RAM price $1.225m).",
+ "exitinputs": {
+  "at": "2026-09-28T21:53:37.474Z",
+  "lastAugReset": 1790620681588,
+  "bitNode": 9,
+  "inputs": {
+   "money": 4620487388.788777,
+   "incomePerSec": 272553.06158248894,
+   "lifeIncome": 102949.40800000002,
+   "hacking": 133,
+   "hackingExp": 212352.54008308993,
+   "hackingMult": 0.6912,
+   "expPerSec": 29.052364652047437,
+   "repPerSec": 1.8514287226300865,
+   "repFromEstimate": true,
+   "repSource": "reputation from the formula estimate (no faction work measured this life): 1.851/s base",
+   "exitRep": 0,
+   "exitFavor": 0,
+   "cycleHours": 16,
+   "multGainPerCycle": 1.2390270784400628,
+   "nextInstallGain": 1.0721548205380789,
+   "installGains": {
+    "hacking": 1.0721548205380789,
+    "rep": 1.0721548205380789,
+    "income": 1.273314234173939,
+    "exp": 1.1793703025918867
+   },
+   "persistBaseline": {
+    "hacking": 1.0721548205380789,
+    "rep": 1.0721548205380789,
+    "income": 1.273314234173939,
+    "exp": 1.1793703025918867
+   },
+   "eRep": 0,
+   "eBudget": 0.0729,
+   "exitLevel": 6000,
+   "joinMoney": 100000000000,
+   "joinLevel": 2500,
+   "finalRootCost": 287200000,
+   "freshExpLagH": 1.2296046842181858,
+   "terminalRep": 2500000,
+   "donationCost": null,
+   "favorToDonate": 150,
+   "flatIncomePerSec": 0,
+   "capitalReturnPerSec": 0.0002449434304201728,
+   "capitalWarmupH": 0,
+   "capitalFit": null,
+   "capitalCap": 5238231120937.813,
+   "installCash": 1262,
+   "workWhileDonating": false,
+   "cadence": {
+    "source": "purchase model",
+    "node": 9,
+    "lives": 0,
+    "stalls": 0,
+    "weight": 0,
+    "rateMedian": 0.06586152242137135,
+    "why": "life length chosen by the exit over what each length buys: 16h lives (x1.239 a life, 0.0134 ln(M)/h) exit 164.3h \u2014 reputation reset at every install (base 1.88/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x1.00 calibrated); not modelled: donations, rising faction_rep, sleeves, new joins, the count's value",
+    "measured": "cadence posterior for BitNode 9: ln(M) 0.0659/h (x4.75 either way at 80%), 3.30h a life -> x1.243 a cycle; 0 own gaining lives carry 0% of the rate, BitNode 8, 1 shrink it toward the cross-node mean; 6 re-recorded ledger entries merged",
+    "table": [
+     {
+      "L": 0.5,
+      "lives": 96,
+      "money": 431204343,
+      "gain": 1.0024,
+      "perHour": 0.0048,
+      "first": 0,
+      "firstNfg": 9,
+      "H": 2694.07
+     },
+     {
+      "L": 1,
+      "lives": 48,
+      "money": 1204374463,
+      "gain": 1.0079,
+      "perHour": 0.0078,
+      "first": 1,
+      "firstNfg": 10,
+      "H": 240.63
+     },
+     {
+      "L": 2,
+      "lives": 24,
+      "money": 4387648475,
+      "gain": 1.0208,
+      "perHour": 0.0103,
+      "first": 2,
+      "firstNfg": 11,
+      "H": 197.25
+     },
+     {
+      "L": 3,
+      "lives": 16,
+      "money": 12145296772,
+      "gain": 1.0333,
+      "perHour": 0.0109,
+      "first": 3,
+      "firstNfg": 11,
+      "H": 189.27
+     },
+     {
+      "L": 4,
+      "lives": 12,
+      "money": 30869274366,
+      "gain": 1.0463,
+      "perHour": 0.0113,
+      "first": 3,
+      "firstNfg": 13,
+      "H": 184.33
+     },
+     {
+      "L": 6,
+      "lives": 8,
+      "money": 184457659145,
+      "gain": 1.0743,
+      "perHour": 0.0119,
+      "first": 3,
+      "firstNfg": 15,
+      "H": 177.95
+     },
+     {
+      "L": 8,
+      "lives": 6,
+      "money": 1073002944613,
+      "gain": 1.1039,
+      "perHour": 0.0124,
+      "first": 3,
+      "firstNfg": 18,
+      "H": 173.5
+     },
+     {
+      "L": 12,
+      "lives": 4,
+      "money": 15332207897071,
+      "gain": 1.1686,
+      "perHour": 0.013,
+      "first": 3,
+      "firstNfg": 22,
+      "H": 169.22
+     },
+     {
+      "L": 16,
+      "lives": 3,
+      "money": 33719354333280,
+      "gain": 1.239,
+      "perHour": 0.0134,
+      "first": 3,
+      "firstNfg": 24,
+      "H": 164.32
+     },
+     {
+      "L": 24,
+      "lives": 2,
+      "money": 70519102415233,
+      "gain": 1.3792,
+      "perHour": 0.0134,
+      "first": 3,
+      "firstNfg": 25,
+      "H": 167.27
+     }
+    ],
+    "moneyCalibration": "UNCALIBRATED: no completed life in the earnings ledger \u2014 the exit model's fresh-life income taken as it is"
+   },
+   "finalGrafts": [
+    {
+     "name": "OmniTek InfoLoad",
+     "cost": 8625000000,
+     "slotH": 0.8305153026531141,
+     "hacking": 1.176,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module",
+     "cost": 750000000,
+     "slotH": 0.28306337654186614,
+     "hacking": 1.0584,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen I",
+     "cost": 210000000,
+     "slotH": 0.7146378689546223,
+     "hacking": 1.029,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen II",
+     "cost": 375000000,
+     "slotH": 0.9963526678693064,
+     "hacking": 1.0486,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen III",
+     "cost": 1650000000,
+     "slotH": 1.0214181997672203,
+     "hacking": 1.0682,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen IV",
+     "cost": 3300000000,
+     "slotH": 1.0631406680615823,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen V",
+     "cost": 6750000000,
+     "slotH": 1.2064722603117857,
+     "hacking": 1.274,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "QLink",
+     "cost": 75000000000000,
+     "slotH": 1.7870306700720142,
+     "hacking": 1.7149999999999999,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "nextSENS Gene Modification",
+     "cost": 5775000000,
+     "slotH": 1.5509766681453374,
+     "hacking": 1.176,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core Implant",
+     "cost": 7500000000,
+     "slotH": 1.346215804095117,
+     "hacking": 1.0486,
+     "exp": 1.0486,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core V2 Upgrade",
+     "cost": 13500000000,
+     "slotH": 1.3865850413475147,
+     "hacking": 1.0584,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core V3 Upgrade",
+     "cost": 22500000000,
+     "slotH": 1.417891836440836,
+     "hacking": 1.078,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "Unstable Circadian Modulator",
+     "cost": 15000000000,
+     "slotH": 0.9984777438944127,
+     "hacking": 1.127,
+     "exp": 1.96,
+     "rep": 0.98
+    },
+    {
+     "name": "SPTN-97 Gene Modification",
+     "cost": 14625000000,
+     "slotH": 1.633808141980706,
+     "hacking": 1.127,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Xanipher",
+     "cost": 12750000000,
+     "slotH": 2.0001610279659885,
+     "hacking": 1.176,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuronal Densification",
+     "cost": 4125000000,
+     "slotH": 1.0255058935302153,
+     "hacking": 1.127,
+     "exp": 1.078,
+     "rep": 0.98
+    }
+   ],
+   "graftStartMoney": 7521743500000,
+   "cadenceFrom": "purchase model",
+   "cadenceRateMedian": 0.06586152242137135
+  },
+  "eRep": 0,
+  "eBudget": 0.0729,
+  "W": 0,
+  "finalWindow": false,
+  "moneyAtW": 4620487388.788777,
+  "lifeIncomeWhy": null,
+  "gainsByMoney": [
+   {
+    "money": 0,
+    "gains": null
+   },
+   {
+    "money": 1155121847.1971943,
+    "gains": {
+     "hacking": 1.0510236820832555,
+     "rep": 1.0510236820832555,
+     "income": 1.1883763375356289,
+     "exp": 1.156126050291581
+    }
+   },
+   {
+    "money": 2310243694.3943887,
+    "gains": {
+     "hacking": 1.0615366725861353,
+     "rep": 1.0615366725861353,
+     "income": 1.2301123957344753,
+     "exp": 1.1676903398447487
+    }
+   },
+   {
+    "money": 3465365541.5915833,
+    "gains": {
+     "hacking": 1.0615366725861353,
+     "rep": 1.1676903398447487,
+     "income": 1.2301123957344753,
+     "exp": 1.1676903398447487
+    }
+   },
+   {
+    "money": 4158438649.9098997,
+    "gains": {
+     "hacking": 1.0721548205380789,
+     "rep": 1.0721548205380789,
+     "income": 1.273314234173939,
+     "exp": 1.1793703025918867
+    }
+   },
+   {
+    "money": 4620487388.788777,
+    "gains": {
+     "hacking": 1.0721548205380789,
+     "rep": 1.0721548205380789,
+     "income": 1.273314234173939,
+     "exp": 1.1793703025918867
+    }
+   },
+   {
+    "money": 5775609235.985971,
+    "gains": {
+     "hacking": 1.0721548205380789,
+     "rep": 1.0721548205380789,
+     "income": 1.273314234173939,
+     "exp": 1.1793703025918867
+    }
+   },
+   {
+    "money": 6930731083.1831665,
+    "gains": {
+     "hacking": 1.0615366725861353,
+     "rep": 1.3428438908214606,
+     "income": 1.2301123957344753,
+     "exp": 1.1676903398447487
+    }
+   },
+   {
+    "money": 9240974777.577555,
+    "gains": {
+     "hacking": 1.0828791777890896,
+     "rep": 1.0828791777890896,
+     "income": 1.3180333314029422,
+     "exp": 1.1911670955679985
+    }
+   }
+  ]
+ },
+ "planInstall": {
+  "key": "w20.74",
+  "install": false,
+  "installAt": 1790707080810,
+  "waitH": 20.74,
+  "decidedAt": "2026-09-28T21:38:36.810Z"
+ },
+ "planAt": "2026-09-28T21:53:38.829Z",
+ "planLastAugReset": 1790620681588,
+ "hacknet": {
+  "at": "2026-09-28T21:55:46.737Z",
+  "lastAugReset": 1790620681588,
+  "nodes": 2,
+  "levels": 101,
+  "ram": 8,
+  "cores": 11,
+  "hashesPerSec": 0.4117976320000001,
+  "moneyPerSec": 102949.40800000002,
+  "best": {
+   "kind": "ram",
+   "index": 0,
+   "cost": 1224999.9999999998,
+   "hashGainPerSec": 0.028723251199999966,
+   "gainPerSec": 7180.8127999999915,
+   "paybackH": 0.047387083782183835
+  },
+  "remainingLifeH": 0.04779916666666666,
+  "verdict": {
+   "buy": false,
+   "why": "exit-sim: exit 157.54h with vs 157.54h without (+0.000h) \u2014 plan: hold: the exit lengthens by 0.000h against a 4.46h option-specific error \u2014 P(better) 50% (needs 80%; parameter uncertainty not propagated for spends)",
+   "decidedBy": "exit-sim"
+  },
+  "claims": {
+   "join": 100000000000,
+   "augmentations": 3524059285.0576963,
+   "home": 503418951.7267667
+  },
+  "ramPolicy": {
+   "hacknet-server-0": {
+    "allow": false,
+    "maxRam": 4,
+    "hashPerGBs": 25645.760000000002,
+    "batchPerGBs": 1.254296455424275,
+    "why": "hashes $2.56e+4/GB/s beat batch $1.25/GB/s"
+   },
+   "hacknet-server-1": {
+    "allow": false,
+    "maxRam": 4,
+    "hashPerGBs": 91.59200000000001,
+    "batchPerGBs": 1.254296455424275,
+    "why": "hashes $91.6/GB/s beat batch $1.25/GB/s"
+   }
+  }
+ },
+ "gateSpendExit": {
+  "at": "2026-09-28T21:53:38.816Z",
+  "lastAugReset": 1790620681588,
+  "W": 0,
+  "finalWindow": false,
+  "home": {
+   "buy": false,
+   "pBuy": 0.575,
+   "cost": 503418951.7267667,
+   "gainPerSec": 9368.096638710684,
+   "deltaH": -0.8426475211474269,
+   "withH": 156.697919152507,
+   "withoutH": 157.54056667365444,
+   "why": "exit 156.70h with vs 157.54h without (-0.843h) \u2014 plan: hold: the exit shortens by 0.843h against a 4.46h option-specific error \u2014 P(better) 57% (needs 80%; parameter uncertainty not propagated for spends)",
+   "kind": "RAM"
+  },
+  "hacknet": {
+   "buy": false,
+   "pBuy": 0.5,
+   "cost": 1224999.9999999998,
+   "gainPerSec": 7180.8127999999915,
+   "deltaH": 0,
+   "withH": 157.54056667365444,
+   "withoutH": 157.54056667365444,
+   "why": "exit 157.54h with vs 157.54h without (+0.000h) \u2014 plan: hold: the exit lengthens by 0.000h against a 4.46h option-specific error \u2014 P(better) 50% (needs 80%; parameter uncertainty not propagated for spends)",
+   "kind": "ram",
+   "index": 0
+  },
+  "servers": {
+   "buy": false,
+   "maxSpend": 0,
+   "why": "buyserv's $/GB or income per GB unreadable"
+  }
+ },
+ "cash": 3558608.624013561,
+ "hashspend": {
+  "at": "2026-09-28T21:55:42.283Z",
+  "hashes": 15.197753702388884,
+  "capacity": 1088,
+  "decision": {
+   "action": "sell",
+   "count": 3,
+   "why": "no upgrade shortens the exit against selling the same hashes (3 simulated)",
+   "decidedBy": "exit-sim",
+   "skipped": [
+    {
+     "name": "Sell for Corporation Funds",
+     "why": "no corporation on the exit trajectory"
+    },
+    {
+     "name": "Exchange for Corporation Research",
+     "why": "no corporation on the exit trajectory"
+    },
+    {
+     "name": "Exchange for Bladeburner Rank",
+     "why": "no Bladeburner on the exit trajectory"
+    },
+    {
+     "name": "Exchange for Bladeburner SP",
+     "why": "no Bladeburner on the exit trajectory"
+    },
+    {
+     "name": "Company Favor",
+     "why": "company favor persists into the next BitNode and company reputation is not on the exit trajectory"
+    },
+    {
+     "name": "Improve Studying",
+     "why": "an install is coming: exp is reset by it, and before it study moves nothing the exit simulator sees"
+    },
+    {
+     "name": "Improve Gym Training",
+     "why": "an install is coming: gym exp is reset by it"
+    }
+   ],
+   "exits": [
+    {
+     "name": "Increase Maximum Money",
+     "target": "sigma-cosmetics",
+     "cost": 50,
+     "withH": 157.65022153306634,
+     "sellH": 157.65022153306634,
+     "deltaH": 0,
+     "perHash": 0,
+     "note": "x1.0200 on $4670/s"
+    },
+    {
+     "name": "Reduce Minimum Security",
+     "target": "sigma-cosmetics",
+     "cost": 50,
+     "withH": 157.65022153306634,
+     "sellH": 157.65022153306634,
+     "deltaH": 0,
+     "perHash": 0,
+     "note": "x1.0038 on $4670/s (RAM-bound)"
+    },
+    {
+     "name": "Generate Coding Contract",
+     "target": null,
+     "cost": 125,
+     "withH": 157.65022153306634,
+     "sellH": 157.65022153306634,
+     "deltaH": 0,
+     "perHash": 0,
+     "note": "expected $2.65e+7 (its 2646 reputation is not simulated)"
+    }
+   ]
+  }
+ }
+}

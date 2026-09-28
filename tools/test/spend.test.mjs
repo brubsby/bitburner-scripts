@@ -37,7 +37,11 @@ export async function run() {
     const hu = wd.slice(wd.indexOf("script: 'homeup.js'"), wd.indexOf("script: 'homeup.js'") + 3000);
     if (!(hu.indexOf("spendExit") > 0 && hu.indexOf("spendExit") < hu.indexOf("marginalLnPerDollar(claimSrc"))) c2.fail("the homeup trigger must follow the verdict before the ln competition");
     const pr = src("progress.js");
-    if (!/gate\.install \? 0 : gate\.holdForever \? null : gate\.bestWait\?\.waitMs > 0 \? gate\.bestWait\.waitMs \/ 3600000 : 0,\s*gate\.holdForever === true,/.test(pr)) c2.fail("progress.js must price spends at the gate's own install point");
+    // The install point is the COMMITTED plan's, then the gate's own
+    // (hacknetplan.installPointH via progress.js installPointOf) — the gate
+    // alone read a missing bestWait as 0 and priced every spend's income over
+    // zero hours (BitNode 9, 2026-09-28; tools/test/bn9life.test.mjs [HL1]).
+    if (!/installPointOf\(ns, info, gate\)\.W,\s*gate\.holdForever === true,/.test(pr)) c2.fail("progress.js must price spends at the committed install point (installPointOf)");
   }
   checks.push(c2);
 

@@ -152,6 +152,8 @@ import { freshCurve, countTiming } from 'countplan.js'
 const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 'agi' }
 import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
+// Pure: the install point (committed plan, then gate) every "until the install" price uses.
+import { installPointH } from 'hacknetplan.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg } from 'bodyplan.js'
@@ -1887,10 +1889,10 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       const p2 = replanAt(Math.max(0, m))
       return installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
     }
-    // Hacknet money (inputs.lifeIncome) arrives until the install too; it is
-    // not in incomePerSec, so it adds to the money at W without double-counting.
-    const lifeInc = inputs?.lifeIncome > 0 ? inputs.lifeIncome : 0
-    const common = { inputs, W, finalWindow, moneyAt: (h) => liveMoney + moneyBy(h) + lifeInc * h * 3600, gainsAt, eBudget: readJson(ns, '/tel/installgate.txt')?.eBudget }
+    // `moneyBy` is the CALLER's money trajectory and already carries this
+    // life's hacknet money (incomeModel lifePerSec, or the fallback's
+    // incomePerSec + lifePerSec) — added here as well it was counted twice.
+    const common = { inputs, W, finalWindow, moneyAt: (h) => liveMoney + moneyBy(h), gainsAt, eBudget: readJson(ns, '/tel/installgate.txt')?.eBudget }
     // RAM's income response is the level-scaled (script) part only: a flat
     // realised stock rate is not bought by RAM, and attributing it per GB would
     // price servers by the trader's income. Hacknet money is not in it either.
@@ -1915,7 +1917,13 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       // THE PLAN'S RULE FOR A PURCHASE (plan.decideSpend): buy only when the
       // saving beats the simulator's measured option-specific error with
       // P >= PLAN.theta — a 0.01h "saving" is a tie, not a verdict.
-      const pd = decideSpend({ deltaH: r.deltaH, withoutH: r.withoutH, si: planCtxOf(ns, info)?.post?.jitter?.si ?? null })
+      // Money-dominant (plan.decideSpend): repaid before the install point W
+      // and MORE money there — spendExit's own m1 > m0, which carries the
+      // trader's compounding on both the cost and the income. Not in the
+      // final window (no W).
+      const mw = r.moneyAtW
+      const dominant = !finalWindow && W > 0 && gainPerSec > 0 && mw && mw.m1 > mw.m0 ? { paybackH: cost / gainPerSec / 3600, W } : null
+      const pd = decideSpend({ deltaH: r.deltaH, withoutH: r.withoutH, si: planCtxOf(ns, info)?.post?.jitter?.si ?? null, dominant })
       return { buy: pd ? pd.buy : r.deltaH < 0, pBuy: pd?.pBuy ?? null, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)${pd ? ` — plan: ${pd.why}` : ''}`, ...extra }
     }
     // Home: the next upgrade homeup.js / the watchdog priced.
@@ -2596,6 +2604,22 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
  * as a persisting rate. Stale, foreign or absent: 0 — a floor, named in the
  * record's `lifeIncomeWhy`.
  */
+/**
+ * WHERE THIS LIFE ENDS, for everything priced "until the install": the
+ * committed plan's install time (this pass's decision, else /tel/plan.txt),
+ * then the gate's own answer (hacknetplan.installPointH). Was the gate alone,
+ * with 0 whenever it named no best wait — so while the plan held w20.99 in
+ * BitNode 9 (2026-09-28) every spend verdict priced its income over ZERO
+ * hours: a $1.22m hacknet upgrade paying back in 3 minutes read "exit 156.54h
+ * with vs 156.54h without".
+ */
+function installPointOf(ns, info, gate) {
+  const inPass = planCtx?.decisions?.install ?? null
+  if (inPass) return installPointH({ gate, planInstall: inPass, planOpts: { lastAugReset: info?.lastAugReset } })
+  const rec = readJson(ns, PLAN_FILE)
+  return installPointH({ gate, planInstall: rec?.decisions?.install ?? null, planOpts: { lastAugReset: info?.lastAugReset, planLastAugReset: rec?.lastAugReset, at: rec?.at ?? '' } })
+}
+
 function hacknetLifeIncome(ns, info) {
   return hacknetRecordOf(readJson(ns, HACKNET_FILE), info?.lastAugReset)
 }
@@ -5041,7 +5065,7 @@ async function act(ns, canJoin, info, note) {
             // remainder — the median window minus this life's age — stated.
             const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
             return {
-              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => incNow * h * 3600, replanAt, pending, offers),
+              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => (incNow + hacknetLifeIncome(ns, info).perSec) * h * 3600, replanAt, pending, offers),
               covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf, offers, [...allCount.keys()]),
               sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home') + stockEquity),
             }
@@ -5137,7 +5161,7 @@ async function act(ns, canJoin, info, note) {
     const incomePerSec = econNow.incomePerSec
     const incomeSource = econNow.source
     // Priced when ANY source is measured: the capital return alone suffices.
-    const incomePriced = incomePerSec > 0 || econNow.capitalReturnPerSec > 0
+    const incomePriced = incomePerSec > 0 || econNow.capitalReturnPerSec > 0 || econNow.lifePerSec > 0
     const liveCapital = ns.getServerMoneyAvailable('home') + stockEquity
     let futures = []
     let incomeCalibration = null
@@ -5178,6 +5202,9 @@ async function act(ns, canJoin, info, note) {
         capitalReturnPerSec: econNow.capitalReturnPerSec,
         capitalCap: econNow.capitalCap,
         money0: liveCapital,
+        // Hacknet money until the install (nodeecon lifePerSec): every wait
+        // option's purchases and the money at W include it from here.
+        lifePerSec: econNow.lifePerSec,
       }))
       // Two kinds of candidate. The FIXED ladder projects the working
       // faction's rep along its trajectory — ordinary waiting. The HOLD
@@ -5728,8 +5755,10 @@ async function act(ns, canJoin, info, note) {
     // gates its own karma grind on, read from the same place, so the player and
     // the fleet cannot end up grinding for different reasons.
     {
-      const Wg = gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0
-      const mW = Wg === null ? liveCapital : liveCapital + (incomeTraj ? incomeTraj.moneyBy(Wg) : incomePerSec * Wg * 3600) + hacknetLifeIncome(ns, info).perSec * Wg * 3600
+      const Wg = installPointOf(ns, info, gate).W
+      // incomeTraj.moneyBy carries the hacknet money (lifePerSec); only the
+      // flat fallback needs it added.
+      const mW = Wg === null ? liveCapital : liveCapital + (incomeTraj ? incomeTraj.moneyBy(Wg) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * Wg * 3600)
       publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), { W: Wg, finalWindow: gate.holdForever === true, moneyAtW: mW, replanAt, pending, offers })
     }
     writeSleevePlan(
@@ -5782,10 +5811,10 @@ async function act(ns, canJoin, info, note) {
           spendExit: spendVerdictsOf(
             ns, info,
             exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet),
-            gate.install ? 0 : gate.holdForever ? null : gate.bestWait?.waitMs > 0 ? gate.bestWait.waitMs / 3600000 : 0,
+            installPointOf(ns, info, gate).W,
             gate.holdForever === true,
             liveCapital,
-            (h) => (incomeTraj ? incomeTraj.moneyBy(h) : incomePerSec * h * 3600),
+            (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600),
             replanAt, pending, offers,
           ),
           futurePredictions,

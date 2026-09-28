@@ -630,8 +630,20 @@ export function phi(z) {
  * stated in the verdict. Buy iff the saving is positive and
  * P(with < without) = Phi(-delta / (sqrt 2 si H)) >= theta.
  */
-export function decideSpend({ deltaH, withoutH, si, theta = PLAN.theta } = {}) {
+export function decideSpend({ deltaH, withoutH, si, theta = PLAN.theta, dominant = null } = {}) {
   if (!fin(deltaH) || !fin(withoutH) || !(withoutH > 0)) return null
+  // A MONEY-DOMINANT SPEND (`dominant`: {paybackH, W, surplus} from the
+  // caller): it returns its cost before the install point W and leaves
+  // strictly more money there. With and without are then the same trajectory
+  // but for more money at W, and the exit is non-increasing in that money
+  // (the planner buys a superset batch), so the pair is ordered in EVERY
+  // draw: the simulator's option-specific error — the jitter between
+  // DIFFERENT trajectories — does not apply. Live in BitNode 9 (2026-09-28)
+  // the 4.43h error bar refused a hacknet upgrade paying back in 3 minutes of
+  // a 21h life; no small income purchase could ever clear it.
+  if (dominant && fin(dominant.paybackH) && fin(dominant.W) && dominant.paybackH < dominant.W && deltaH <= 0) {
+    return { buy: true, pBuy: 1, sdH: 0, dominant: true, why: `buy: money-dominant — repays its cost in ${dominant.paybackH < 1 ? `${(dominant.paybackH * 60).toFixed(1)}min` : `${dominant.paybackH.toFixed(2)}h`} of the ${dominant.W.toFixed(2)}h to the install and leaves more money there (exit ${deltaH === 0 ? 'unchanged' : `${Math.abs(deltaH).toFixed(3)}h sooner`}; ordered in every draw, so no error bar applies)` }
+  }
   const sd = Math.SQRT2 * (fin(si) && si > 0 ? si : Math.sqrt(PRIORS.jitter.b / (PRIORS.jitter.a - 1))) * withoutH
   const pBuy = phi(-deltaH / sd)
   const buy = deltaH < 0 && pBuy >= theta

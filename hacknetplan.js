@@ -180,6 +180,42 @@ export function verdict(best, remainingH) {
 
 const fmtH = (h) => (h === Infinity ? 'never' : h < 1 ? `${(h * 60).toFixed(1)}min` : `${h.toFixed(2)}h`)
 
+/** How fresh the committed plan (/tel/plan.txt) must be to set the install point. */
+export const PLAN_FRESH_MS = 20 * 60 * 1000
+
+/**
+ * Hours until the COMMITTED install, from the plan's install decision
+ * (progress.js publishPlan: /tel/plan.txt decisions.install, or the pass's
+ * own planCtx.decisions.install): 0 when it says install now, the time to its
+ * `installAt` otherwise. Null when the decision is absent, from another life,
+ * stale (`at` older than PLAN_FRESH_MS; pass `at: null` for an in-pass
+ * decision) or carries no install time — the caller then falls back, named.
+ */
+export function committedInstallH(install, { lastAugReset, planLastAugReset, at = null, now = Date.now() } = {}) {
+  if (!install || typeof install !== 'object') return null
+  if (planLastAugReset !== undefined && planLastAugReset !== lastAugReset) return null
+  if (at !== null && !(now - Date.parse(at) < PLAN_FRESH_MS)) return null
+  if (install.install === true) return 0
+  if (num(install.installAt)) return Math.max(0, (install.installAt - now) / 3600000)
+  return null
+}
+
+/**
+ * The install point every "until the install" pricing uses, in hours: the
+ * committed plan first; else the gate's own answer (install now -> 0, hold
+ * forever -> null = the final window, a positive best wait); else 0 with the
+ * reason. { W, source, why }.
+ */
+export function installPointH({ gate, planInstall, planOpts } = {}) {
+  if (gate?.install === true) return { W: 0, source: 'gate', why: 'the gate installs now' }
+  if (gate?.holdForever === true) return { W: null, source: 'gate', why: 'the gate holds to the exit: the final window' }
+  const c = committedInstallH(planInstall, planOpts)
+  if (c !== null) return { W: c, source: 'plan', why: `the committed plan installs at ${planInstall?.key ?? '?'}` }
+  const w = gate?.bestWait?.waitMs
+  if (num(w) && w > 0) return { W: w / 3600000, source: 'gate', why: 'the gate best wait' }
+  return { W: 0, source: 'fallback', why: 'no committed install time and no gate wait: priced as an install now' }
+}
+
 // ===========================================================================
 // HACKNET SERVERS (BitNode 9, or any node with Source-File 9)
 // ===========================================================================
@@ -486,7 +522,14 @@ export const hacknetLast = (a, b) => (isHacknetServerHost(a) ? 1 : 0) - (isHackn
  * the horizon. A gate that says install means 0. Neither readable means null,
  * and verdict() refuses on null.
  */
-export function remainingLife({ ledger, gate } = {}) {
+export function remainingLife({ ledger, gate, plan } = {}) {
+  // THE COMMITTED PLAN IS THE AUTHORITY (plan: {hours}, from committedInstallH
+  // below). The ledger window is a median of PAST lives and the gate's hold is
+  // a floor; neither is when this life ends once the plan has committed an
+  // install time. Live in BitNode 9 on 2026-09-28 the plan held w20.99 while
+  // this read the ledger's 0.07h: every hacknet purchase — a 3-minute payback
+  // among them — was refused as outliving a life with 21 hours left.
+  if (plan && num(plan.hours) && plan.hours >= 0) return { hours: plan.hours, why: null, source: 'plan' }
   if (gate && gate.install === true) return { hours: 0, why: 'the install gate says install', source: 'gate' }
   const ledgerH = ledger && num(ledger.windowH) && ledger.windowH > 0 ? Math.max(0, ledger.windowH - (num(ledger.lifeAgeH) ? ledger.lifeAgeH : 0) - (num(ledger.ageMs) ? ledger.ageMs : 0) / 3600000) : null
   const holdMs = gate && gate.install === false ? Math.max(num(gate.waitMs) && gate.waitMs > 0 ? gate.waitMs : 0, num(gate.passMs) && gate.passMs > 0 ? gate.passMs : 0) : 0

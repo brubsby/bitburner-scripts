@@ -39,6 +39,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy, spendRuns } from 'exitplan.js'
 import { decideHashSpend, batchIncomeRatio, minSecAfter, maxMoneyAfter, NOT_SIMULATED } from 'hashplan.js'
 import { expectedReward } from 'contractplan.js'
+import { incomeModel } from 'trajectory.js'
 import { covenantActive, COVENANT } from 'sleeveplan.js'
 
 const STATUS = '/tel/hashspend.txt'
@@ -167,13 +168,17 @@ function pass(ns, info) {
     }
   }
 
-  // --- exp and gym: only the final window carries them (an install resets exp)
+  // --- exp and gym: study before the install via the money at W, both in the final window
   const studyMult = ns.hacknet.getStudyMult()
   const trainingMult = ns.hacknet.getTrainingMult()
   let baseEffect = null
   const fleetExp1 = freshWithin(sleeve, 10 * 60e3) && fin(sleeve.expToPlayerHacking) && sleeve.expToPlayerHacking > 0 ? sleeve.expToPlayerHacking : null
-  if (!finalWindow) skipped.push({ name: 'Improve Studying', why: 'an install is coming: exp is reset by it, and before it study moves nothing the exit simulator sees' })
-  else if (fleetExp1 === null) skipped.push({ name: 'Improve Studying', why: 'the fleet is not handing the player study exp (sleeve.txt expToPlayerHacking)' })
+  // BEFORE THE INSTALL TOO (was: skipped whenever an install was coming —
+  // with the committed install 21h out that threw away a day of exp).
+  // Exp resets at the install, but a higher level on the way there raises the
+  // money at W (hashplan.exitAfter, trajectory.incomeModel); in the final
+  // window it carries the climb. The horizon is the published W.
+  if (fleetExp1 === null) skipped.push({ name: 'Improve Studying', why: 'the fleet is not handing the player study exp (sleeve.txt expToPlayerHacking)' })
   else {
     // sleeve.js prices study at multiplier 1 (sleeveplan.js studyExp default),
     // and the game applies HashManager.getStudyMult on top (Work/Formulas.ts).
@@ -182,7 +187,7 @@ function pass(ns, info) {
   }
   const cov = covenantActive(gate, info.lastAugReset)
   let covenant = null
-  if (!finalWindow || !cov || cov.member || !(cov.combatH > 0)) skipped.push({ name: 'Improve Gym Training', why: !finalWindow ? 'an install is coming: gym exp is reset by it' : 'no Covenant combat leg is running — the only gym leg on the exit trajectory (other body legs are priced by joinplan, not the exit simulator)' })
+  if (!finalWindow || !cov || cov.member || !(cov.combatH > 0)) skipped.push({ name: 'Improve Gym Training', why: !finalWindow ? `the install is ${fin(record0?.W) ? `${record0.W.toFixed(1)}h out` : 'coming'} and resets combat exp; before it gym exp moves only body legs for joins, which joinplan prices and the exit simulator does not carry (the Covenant campaign is simulated in the final window only)` : 'no Covenant combat leg is running — the only gym leg on the exit trajectory (other body legs are priced by joinplan, not the exit simulator)' })
   else {
     covenant = { cost: cov.cost, joinMoney: COVENANT.joinMoney, combatH: cov.combatH, member: false, sleeveExpPerSec: 0 }
     options.push({ name: 'Improve Gym Training', target: null, cost: ns.hacknet.hashCost('Improve Gym Training', 1), effect: { covenantHScale: trainingMult / (trainingMult + 0.2) }, why: `combat ${cov.combatH.toFixed(1)}h x${(trainingMult / (trainingMult + 0.2)).toFixed(3)}` })
@@ -197,7 +202,7 @@ function pass(ns, info) {
     else skipped.push({ name: 'Generate Coding Contract', why: 'no expected money (CodingContractMoney 0, or unreadable)' })
   }
 
-  const decision = decideHashSpend({ hashes, capacity, record: record0, lastAugReset: info.lastAugReset, fns: { bestExitPolicy, spendRuns }, options, skipped, covenant, baseEffect })
+  const decision = decideHashSpend({ hashes, capacity, record: record0, lastAugReset: info.lastAugReset, fns: { bestExitPolicy, spendRuns, incomeModel }, options, skipped, covenant, baseEffect })
   const did = act(ns, decision, hashes)
   return { result: 'decided', lastAugReset: info.lastAugReset, bitNode: info.currentNode, hashes, capacity, studyMult, trainingMult, decision, did }
 }

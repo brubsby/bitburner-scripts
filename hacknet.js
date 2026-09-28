@@ -53,7 +53,7 @@
 // script income and progress.js's exit inputs would otherwise never see it.
 
 import { reporter } from 'status.js'
-import { bestUpgrade, verdict, remainingLife, bestServerUpgrade, netburnersServerStep, ramPolicy, hashRate, cacheCost, hashCapacityOf, DOLLARS_PER_HASH } from 'hacknetplan.js'
+import { bestUpgrade, verdict, remainingLife, committedInstallH, bestServerUpgrade, netburnersServerStep, ramPolicy, hashRate, cacheCost, hashCapacityOf, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { spendable, reserveFor, augClaim, joinClaim } from 'budget.js'
 import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 import { nextHomeUpgrade } from 'homecost.js'
@@ -64,6 +64,8 @@ const NEED = { levels: 100, ram: 8, cores: 4 }
 const STATUS = '/tel/hacknet.txt'
 const GATE_FILE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
+/** progress.js's committed plan: its install decision is when this life ends. */
+const PLAN_FILE = '/tel/plan.txt'
 const BATCH_FILE = '/tel/batch.txt'
 /** hashspend.js's report: a capacity-bound choice asks this file for cache. */
 const HASHSPEND_FILE = '/tel/hashspend.txt'
@@ -148,7 +150,17 @@ function remainingLifeH(ns, lastAugReset) {
   }
   const sched = readFresh(SCHEDULE)
   const gate = readFresh(GATE_FILE)
+  // The committed plan's install time outranks both (hacknetplan.remainingLife).
+  fetchFromHome(ns, PLAN_FILE)
+  let planH = null
+  try {
+    const p = JSON.parse(ns.read(PLAN_FILE) || 'null')
+    planH = committedInstallH(p?.decisions?.install, { lastAugReset, planLastAugReset: p?.lastAugReset, at: p?.at ?? '' })
+  } catch {
+    /* unreadable: the ledger and the gate decide, as before */
+  }
   return remainingLife({
+    plan: planH === null ? null : { hours: planH },
     ledger: sched ? { windowH: sched.windowH, lifeAgeH: sched.lifeAgeH, ageMs: sched.ageMs } : null,
     gate: gate ? { install: gate.install, waitMs: gate.bestWait?.waitMs, ageMs: gate.ageMs, passMs: PLANNER_PASS_MS } : null,
   })
@@ -348,7 +360,11 @@ export async function main(ns) {
       // An exit verdict already re-planned the augmentations on the money this
       // leaves, so it may spend through the augmentation and home claims —
       // never the join's (budget.js exitApproved).
-      const opts = exitV?.buy ? { exitApproved: true } : plan.best && life.hours !== null ? { payback: { moneyReturn: { cost: plan.best.cost, gainPerSec: plan.best.gainPerSec, horizonSec: life.hours * 3600 } } } : {}
+      // Both, when both hold: the exit waiver for the augmentation and home
+      // claims, and the money return (payback inside the life) for the home
+      // and — while the join money is not yet in hand — the join claim.
+      const payback = plan.best && life.hours !== null ? { payback: { moneyReturn: { cost: plan.best.cost, gainPerSec: plan.best.gainPerSec, horizonSec: life.hours * 3600 } } } : {}
+      const opts = exitV?.buy ? { exitApproved: true, ...payback } : payback
       const free = spendable('hacknet', money, claims, opts)
       const affordable = plan.best ? plan.best.cost <= free : false
       // AN APPROVED UPGRADE THE BOOK MUST FUND (nodeecon: wealth decides, cash

@@ -106,6 +106,24 @@ export function reserveFor(spender, claims = {}, o = {}) {
     if (o.exitApproved === true && (key === 'augmentations' || key === 'home')) continue
     let v = claims[key]
 
+    // THE JOIN CLAIM AND A SPEND THAT PAYS ITSELF BACK. The join claim holds
+    // money a faction invite needs IN HAND; it exists so a spender cannot
+    // leave the balance short at the moment the invite would come. A
+    // money-returning spend (opts.payback.moneyReturn, as for home below)
+    // whose return beats its cost strictly inside the horizon, made while the
+    // join money is NOT yet in hand (opts.money < the claim, so the invite
+    // cannot come before the balance first climbs past it), delays reaching
+    // the join money by at most its payback and advances it afterwards.
+    // Live in BitNode 9 (2026-09-28) the $100b Daedalus claim held every
+    // dollar of a $4.3b balance against a hacknet upgrade that paid back in
+    // 3 minutes, with the install 21 hours away. Same fail-closed shape: every
+    // input measured, positive and strict, or the full hold stands. [BU14].
+    if (key === 'join') {
+      const mr = o.payback?.moneyReturn
+      const fin = (x) => typeof x === 'number' && isFinite(x) && x > 0
+      if (mr && fin(mr.cost) && fin(mr.gainPerSec) && fin(mr.horizonSec) && mr.gainPerSec * mr.horizonSec > mr.cost && typeof v === 'number' && isFinite(v) && fin(o.money) && o.money < v) continue
+    }
+
     // ------------------------------------------------------------------
     // THE PAYBACK EXCEPTION — the one condition under which a lower-priority
     // spender may spend through the HOME claim, and why it is not a hole in
@@ -257,7 +275,8 @@ export function marginalLnPerDollar(text, lastAugReset) {
 /** What is actually spendable by this spender right now. Never negative. */
 export function spendable(spender, money, claims = {}, o = {}) {
   if (typeof money !== 'number' || !isFinite(money) || money <= 0) return 0
-  const reserve = reserveFor(spender, claims, o)
+  // The balance travels to reserveFor for the join claim's money-return test.
+  const reserve = reserveFor(spender, claims, { ...o, money })
   return isFinite(reserve) ? Math.max(0, money - reserve) : 0
 }
 

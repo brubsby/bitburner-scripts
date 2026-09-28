@@ -1019,6 +1019,33 @@ export function batchHackingGain(multsList) {
  * augmentations, and so is priced by re-planning, not by a claim.
  * Returns { deltaH, withH, withoutH } or { deltaH: null, why }.
  */
+/**
+ * What $1 now, and $1/s from now, are worth at W hours with the trader's book
+ * compounding at r = inputs.capitalReturnPerSec on min(balance, capitalCap)
+ * (hoursToMoney's capital term), from inputs.money, after capitalWarmupH.
+ *   lump    the factor on a dollar held from now to W
+ *   stream  seconds-equivalent of $1/s reinvested from now to W
+ * The book compounds only until it reaches the cap (a dollar above it earns
+ * nothing), so both stop growing there. r = 0: lump 1, stream W x 3600.
+ */
+export function capitalFutureValue(inputs, W) {
+  const T = Math.max(0, num(W) ? W : 0) * 3600
+  const r = num(inputs?.capitalReturnPerSec) && inputs.capitalReturnPerSec > 0 ? inputs.capitalReturnPerSec : 0
+  if (!(r > 0) || !(T > 0)) return { lump: 1, stream: T }
+  const warm = Math.min(T, num(inputs.capitalWarmupH) && inputs.capitalWarmupH > 0 ? inputs.capitalWarmupH * 3600 : 0)
+  const m = num(inputs.money) && inputs.money > 0 ? inputs.money : 0
+  const cap = num(inputs.capitalCap) && inputs.capitalCap > 0 ? inputs.capitalCap : Infinity
+  // Seconds of compounding the book has before it caps (or W ends it).
+  const toCap = m > 0 && isFinite(cap) ? (m >= cap ? 0 : Math.log(cap / m) / r) : Infinity
+  const end = Math.min(T, warm + toCap)
+  const span = Math.max(0, end - warm)
+  const lump = Math.exp(r * span)
+  // A dollar arriving at t compounds over [max(t, warm), end]: before warm the
+  // full span, inside it the remainder, after `end` not at all.
+  const stream = warm * lump + (span > 0 ? Math.expm1(r * span) / r : 0) + Math.max(0, T - end)
+  return { lump, stream }
+}
+
 export function spendExit(o = {}) {
   const { inputs, cost, gainPerSec, persists = false, finalWindow = false } = o
   if (!inputs || !pos(cost) || !num(gainPerSec) || gainPerSec < 0) return { deltaH: null, why: 'spend unreadable (cost or gain)' }
@@ -1039,10 +1066,18 @@ export function spendExit(o = {}) {
   const W = o.W
   if (!num(W) || W < 0 || typeof o.moneyAt !== 'function') return { deltaH: null, why: 'install point or money trajectory unreadable' }
   const m0 = o.moneyAt(W)
-  // Dollars spent now also stop compounding at the trader's return until the
-  // install (BitNode 8's capital term; 0 elsewhere, so m1 is unchanged there).
-  const rCap = num(inputs.capitalReturnPerSec) && inputs.capitalReturnPerSec > 0 ? inputs.capitalReturnPerSec : 0
-  const m1 = m0 - cost - (rCap > 0 ? cost * Math.expm1(rCap * W * 3600) : 0) + gainPerSec * W * 3600
+  // THE TRADER'S RETURN ON BOTH SIDES (capitalFutureValue): dollars spent now
+  // stop compounding until W — and the spend's income, reinvested as it
+  // arrives, compounds from when it arrives. Both only until the book reaches
+  // its cap (above it an extra dollar earns nothing) and only after the
+  // warm-up. This charged the cost e^(rW) UNCAPPED and let the income earn
+  // nothing: in BitNode 9 (r 2.3e-4/s, 82%/h) a 3-minute-payback hacknet
+  // upgrade was charged e^19 = 1.6e8 times its price over a 21h life, while
+  // the book reaches its $5.3t cap in ~9h. With r = 0 (every node without a
+  // trader) both factors are exactly 1 and m1 is unchanged.
+  const fv = capitalFutureValue(inputs, W)
+  const m1 = m0 - cost * fv.lump + gainPerSec * fv.stream
+  const moneyAtW = { m0, m1, lumpFactor: fv.lump, streamSec: fv.stream }
   const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
   const exitWith = (m, extraIncome, exp = false) => {
     const g = m >= 0 ? gainsAt(m) : null
@@ -1067,11 +1102,12 @@ export function spendExit(o = {}) {
     const gAt = m1 >= 0 ? gainsAt(m1) : null
     return m1 < 0 ? r : bestExitPolicy(withExp({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, multGainPerCycle: g, firstInstallH: W, ...(gAt ? { installGains: gAt, nextInstallGain: gAt.hacking } : {}) }), 400, 1)
   })()
-  if (!without.best || !withS.best) return { deltaH: null, why: `unpriced: ${without.why ?? withS.why}` }
+  if (!without.best || !withS.best) return { deltaH: null, why: `unpriced: ${without.why ?? withS.why}`, moneyAtW }
   return {
     deltaH: withS.best.hours - without.best.hours,
     withH: withS.best.hours,
     withoutH: without.best.hours,
+    moneyAtW,
     ...(persists && K > 1 && e === null ? { floor: 'later lives priced without the augmentation-growth response (eBudget unmeasured)' } : {}),
   }
 }
