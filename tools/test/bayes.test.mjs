@@ -705,5 +705,58 @@ export async function run() {
   }
   checks.push(c13);
 
+  // -----------------------------------------------------------------------
+  const c14 = new Check("BY14", "A FRESH LIFE IS NOT BLIND: an income or reputation rate this life cannot measure yet comes from earlier lives (earnings ledger x multiplier) or the game-formula estimate, drawn in every Monte Carlo draw — the exit prices, marked, with the wider interval that implies (replay: BN1 00:18, batcher prepping)");
+  {
+    c14.examined(8);
+    const X = await import("../../exitplan.js");
+    const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn1-freshlife-0018.json"), "utf8"));
+    const live = F.exitInputs.inputs;
+    const exitOf = (x) => {
+      const r = X.bestExitPolicy(x);
+      return r.degenerate ? null : r.best?.hours ?? null;
+    };
+    // (a) As live: no measured reputation rate -> the whole exit unpriced.
+    const asLive = X.bestExitPolicy(live);
+    c14.note(`as live 00:18: exit ${asLive.best?.hours ?? "UNPRICED"} (${asLive.why ?? ""})`);
+    if (asLive.best) c14.fail("fixture: the live inputs should reproduce the unpriced exit");
+    const withRep = { ...live, repPerSec: F.estimatedBaseRepPerSec, repFromEstimate: true, repSource: "formula estimate" };
+    // (b) The lead's case: this life's income not measurable either (batcher prepping, no trader return).
+    const noIncome = { ...withRep, incomePerSec: 0, capitalReturnPerSec: 0 };
+    if (exitOf(noIncome) !== null) c14.fail("fixture: with no income the exit must be unpriced");
+    const ageH = (Date.parse(F.exitInputs.at) - F.exitInputs.lastAugReset) / 3.6e6;
+    const pr = B.incomePrior({ earnings: F.earnings, ledger: F.lifetimes, node: 1, ageH, hackMultNow: live.hackingMult / (bitNodeMults(1).HackingLevelMultiplier ?? 1), shm: (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney) });
+    if (!pr) c14.fail("the earnings ledger holds completed BN1 lives: the income prior must exist");
+    else c14.note(pr.why);
+    const fromPrior = pr ? { ...noIncome, incomePerSec: pr.perSec, incomeFromPrior: true, incomeSource: pr.why } : noIncome;
+    const post = P.posteriorsOf({ exitSamples: [], income: pr });
+    const draws = P.makeDraws(post, P.PLAN.N, 5);
+    const mc = (inp) => P.decideAmong({ options: [{ key: "plan", sim: (d) => exitOf(P.applyDraw(inp, d)) }], draws, budgetMs: 1e9 });
+    const a = mc(fromPrior);
+    // Each source's own spread, the other held measured.
+    const incomeOnly = mc({ ...fromPrior, repFromEstimate: false });
+    const measured = mc({ ...fromPrior, repFromEstimate: false, incomeFromPrior: false });
+    const repOnly = mc({ ...fromPrior, incomeFromPrior: false });
+    c14.note(`widths: income prior alone ${(incomeOnly.q90 - incomeOnly.q10).toFixed(1)}h, rep estimate alone ${(repOnly.q90 - repOnly.q10).toFixed(1)}h, both measured ${(measured.q90 - measured.q10).toFixed(1)}h`);
+    if (!(incomeOnly.q90 - incomeOnly.q10 > 1.2 * (measured.q90 - measured.q10))) c14.fail("the income prior must be drawn (its spread must reach the interval)");
+    if (!(repOnly.q90 - repOnly.q10 > (measured.q90 - measured.q10))) c14.fail("the reputation estimate's residual must be drawn");
+    if (pr && !(pr.sd > pr.sdLife)) c14.fail("the prior for THIS life is the predictive (node mean's uncertainty + one life's scatter), wider than one life's scatter");
+    c14.note(`income from prior + rep from the estimate: exit median ${a.q50}h, 80% ${a.q10}-${a.q90}h (width ${(a.q90 - a.q10).toFixed(1)}h); the same median income taken as MEASURED: ${measured.q10}-${measured.q90}h (width ${(measured.q90 - measured.q10).toFixed(1)}h)`);
+    if (!(Number.isFinite(a.q50) && a.q50 > 0)) c14.fail("the fresh life must publish a finite exit");
+    if (!(a.q90 - a.q10 > 1.2 * (measured.q90 - measured.q10))) c14.fail("an income drawn from earlier lives must widen the interval over a measured one");
+    // Cross-node: a node's first life borrows other nodes' lives, wider still.
+    const first = B.incomePrior({ earnings: { lives: Object.fromEntries(Object.entries(F.earnings.lives).filter(([, L]) => L.node !== 1)) }, ledger: F.lifetimes, node: 1, ageH, hackMultNow: 1.3, shm: (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney) });
+    c14.note(first ? `a node's first life: ${first.why}` : "a node's first life: no other node's scripts earned (BN8 pays nothing) — no prior, the exit stays unpriced and says so");
+    if (first && !(first.sd > pr.sd)) c14.fail("borrowing another node's lives must be wider than this node's own");
+    // Nothing leaks where income IS measured: the draw leaves a measured income alone.
+    const d0 = draws[0];
+    if (P.applyDraw({ ...withRep, incomePerSec: 5 }, d0).incomePerSec !== 5) c14.fail("a measured income must not be replaced by the prior's draw");
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/if \(incomePerSec \+ contractMoneyPerSec > 0 \|\| \(capitalFitOf\(ns, info\)\?\.r \?\? econNow\?\.capitalReturnPerSec \?\? 0\) > 0\) return \{\}\s*\n\s*const pr = incomePriorOf\(ns, info, player\)\s*\n\s*return pr \? \{ incomePerSec: pr\.perSec, incomeFromPrior: true, incomeSource: pr\.label \} : \{\}/.test(prog)) c14.fail("exitInputsOf must take an unmeasurable income from the prior, marked (source guard)");
+    if (!/repFromEstimate: true, repSource:/.test(prog) || !/income: incomePriorOf\(ns, info, ns\.getPlayer\(\)\) \}\)/.test(prog)) c14.fail("the reputation estimate and the income prior must reach the inputs and the posteriors (source guard)");
+  }
+  checks.push(c14);
+
   return checks;
 }

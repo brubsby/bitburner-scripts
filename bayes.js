@@ -270,6 +270,14 @@ export const PRIORS = {
   lnGain: { m: 0, k: 0.1, a: 1, b: 1e-4 },
   // ln(rate) of an observed rate: sd 0.3 until measured.
   rateSdLn: 0.3,
+  // income from previous lives: the spread of one life's income around the
+  // node's (ln), before any life is seen; and the extra spread of borrowing
+  // another node's lives (scaled by ScriptHackMoney) — both stated.
+  incomeLifeSdLn: 0.7,
+  incomeCrossNodeSdLn: 1.0,
+  // the game-formula reputation estimate's residual before any faction work
+  // is measured this life (NOT CALIBRATED: a stated prior).
+  repEstimateSdLn: 0.3,
   // gym formula residual (NOT CALIBRATED: no live residual feed).
   gymSdLn: 0.1,
   // option-specific share of the structural error (jitterPosterior): 2%
@@ -533,4 +541,94 @@ export function logRatePosterior(obs, { binH = 0.5 } = {}) {
   const post = nigUpdate(prior, xs.slice(1))
   const mm = nigMeanMarginal(post)
   return { post, mean: post.m, sd: mm.sd, n: xs.length, passes: S.length }
+}
+
+/**
+ * INCOME WHILE THE CURRENT LIFE CANNOT MEASURE IT (a batcher prepping its
+ * target after an install reads $0/s for up to an hour, and an exit with no
+ * income is unpriced — every trajectory decision blind). The prior is what
+ * earlier lives earned AT THIS POINT OF A LIFE: from tel.js's fresh-life
+ * earnings ledger (/tel/earnings.txt, cumulative money since install per
+ * life), each completed life's income rate over the half hour from
+ * max(age now, its own first earning) — the same stage of the ramp, so a
+ * comparable hacking level — scaled by the multiplier ratio (M now / M then,
+ * lifetimes ledger; income rises with the level, the level with M: an
+ * approximation, stated). ln(rate) over lives: NIG with a wide prior
+ * (PRIORS.incomeLifeSdLn); a draw takes the predictive for THIS life, not the
+ * node mean. No completed life in this node: other nodes' lives, scaled by
+ * ScriptHackMoney and widened by PRIORS.incomeCrossNodeSdLn.
+ *
+ * earnings {lives: {<lastAugReset>: {node, complete, samples: [[ageH, earned]]}}}
+ * ledger   [{at, lifeH, hackMult, bitNode}] (lifetimes)
+ * Returns {mean, sd (of ln income/s), perSec (median), lives, source, why} or null.
+ */
+export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow = null, shm = null, windowH = 0.5 } = {}) {
+  const lives = Object.entries(earnings?.lives ?? {}).filter(([, L]) => L && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2)
+  const multAt = (startMs) => {
+    // The lifetimes entry whose life started at startMs (at - lifeH), within 15 min.
+    let best = null
+    for (const e of ledger ?? []) {
+      if (!(fin(e?.lifeH) && fin(e?.hackMult) && fin(Date.parse(e?.at)))) continue
+      const st = Date.parse(e.at) - e.lifeH * 3.6e6
+      const d = Math.abs(st - startMs)
+      if (d < 15 * 60e3 && (!best || d < best.d)) best = { d, m: e.hackMult }
+    }
+    return best?.m ?? null
+  }
+  const rateOf = (L) => {
+    const pts = L.samples.filter((q) => Array.isArray(q) && fin(q[0]) && fin(q[1])).map((q) => [q[0], q[1]]).sort((a, b) => a[0] - b[0])
+    if (pts.length < 2) return null
+    let hi = 0
+    for (const q of pts) hi = q[1] = Math.max(hi, q[1])
+    const end = pts[pts.length - 1][0]
+    const first = pts.find((q) => q[1] > 0)?.[0]
+    if (!fin(first)) return null
+    const at = (h) => {
+      if (h <= pts[0][0]) return pts[0][1]
+      for (let i = 1; i < pts.length; i++) if (h <= pts[i][0]) return pts[i - 1][1] + ((pts[i][1] - pts[i - 1][1]) * (h - pts[i - 1][0])) / (pts[i][0] - pts[i - 1][0] || 1)
+      return pts[pts.length - 1][1]
+    }
+    const a0 = Math.min(Math.max(ageH, first), Math.max(first, end - windowH))
+    const a1 = Math.min(end, a0 + windowH)
+    if (!(a1 > a0)) return null
+    const r = (at(a1) - at(a0)) / ((a1 - a0) * 3600)
+    return r > 0 ? r : null
+  }
+  const collect = (sameNode) => {
+    const out = []
+    for (const [k, L] of lives) {
+      if ((L.node === node) !== sameNode) continue
+      const r = rateOf(L)
+      if (!r) continue
+      const m = multAt(Number(k))
+      const multRatio = fin(hackMultNow) && fin(m) && m > 0 ? hackMultNow / m : 1
+      let nodeRatio = 1
+      if (!sameNode) {
+        const a = typeof shm === 'function' ? shm(node) : null
+        const b = typeof shm === 'function' ? shm(L.node) : null
+        if (!(fin(a) && fin(b) && a > 0 && b > 0)) continue // a node whose scripts earn nothing says nothing
+        nodeRatio = a / b
+      }
+      out.push({ ln: Math.log(r * multRatio * nodeRatio), life: k, rate: r, multRatio })
+    }
+    return out
+  }
+  let obs = collect(true)
+  let source = `${obs.length} earlier life/lives in BitNode ${node}`
+  let extra = 0
+  if (!obs.length) {
+    obs = collect(false)
+    source = `${obs.length} life/lives in other nodes, scaled by ScriptHackMoney (none in BitNode ${node} yet)`
+    extra = PRIORS.incomeCrossNodeSdLn
+  }
+  if (!obs.length) return null
+  const sd0 = PRIORS.incomeLifeSdLn
+  const xs = obs.map((o) => o.ln)
+  const post = nigUpdate({ m: xs[0], k: 1, a: 2, b: sd0 * sd0 }, xs.slice(1))
+  // The PREDICTIVE for this life: the node mean's uncertainty plus one life's
+  // own scatter (and the cross-node spread when borrowed).
+  const sLife2 = post.b / (post.a - 1)
+  const sdMean = Math.sqrt(sLife2 / post.k)
+  const sd = Math.sqrt(sdMean * sdMean + sLife2 + extra * extra)
+  return { mean: post.m, sd, sdLife: Math.sqrt(sLife2), perSec: Math.exp(post.m), lives: obs.length, source, why: `income from prior: ${source} at age ${ageH.toFixed(2)}h, median $${Math.exp(post.m).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80%` }
 }

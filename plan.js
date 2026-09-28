@@ -61,7 +61,7 @@ const clock = () => {
  * Each is null when its data is absent — and then the draw keeps the point
  * input (named in `missing`), never a silent zero.
  */
-export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, ledger = null, bitNode = null, obs = {}, optionPoints = null } = {}) {
+export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, ledger = null, bitNode = null, obs = {}, optionPoints = null, income = null } = {}) {
   const jitter = jitterPosterior(optionPoints ?? [])
   const trader = stockRows ? traderPosterior(stockRows, { warmupH }) : null
   const drift = driftPosterior(exitSamples ?? [])
@@ -74,7 +74,7 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
   if (!lnGain) missing.push('ln(M)/h (fewer than 3 lives in the ledger): point cadence kept')
   if (!exp) missing.push('exp rate (no observation): point kept')
   if (!rep) missing.push('rep rate (no observation): point kept')
-  return { trader, drift, calibration, lnGain, exp, rep, gymSdLn: PRIORS.gymSdLn, jitter, missing }
+  return { trader, drift, calibration, lnGain, exp, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
 }
 
 /**
@@ -102,8 +102,13 @@ export function makeDraws(post, N, seed) {
     const e = post.exp ? nigDraw(post.exp.post, st('exp')).mu - post.exp.mean : 0
     const repLn = post.rep ? nigDraw(post.rep.post, st('rep')).mu : null
     const gym = post.gymSdLn * normalOf(st('gym'))
+    // Income drawn from the previous-lives prior (bayes.incomePrior) — used
+    // only where this life's income is not measurable yet (inputs.incomeFromPrior).
+    // The reputation estimate's residual (inputs.repFromEstimate only).
+    const repResid = Math.exp(PRIORS.repEstimateSdLn * normalOf(st('repEstimate')))
+    const incomeLn = post.income && fin(post.income.mean) && fin(post.income.sd) ? post.income.mean + post.income.sd * normalOf(st('income')) : null
     const r = post.trader ? Math.max(1e-9, post.trader.perSec.mean + post.trader.perSec.sd * zT) : null
-    out.push({ i, seed, r, s2, si2, zc, lnPerHour: ln, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    out.push({ i, seed, r, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -122,6 +127,9 @@ export function applyDraw(inputs, d) {
   if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours)
   if (fin(inputs.expPerSec)) o.expPerSec = inputs.expPerSec * d.expMult
   if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
+  // An income this life could not measure yet is a draw from earlier lives.
+  if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = Math.exp(d.incomeLn)
+  if (inputs.repFromEstimate === true && fin(inputs.repPerSec) && fin(d.repResid)) o.repPerSec = inputs.repPerSec * d.repResid
   return o
 }
 
@@ -310,6 +318,7 @@ export function posteriorSummary(post) {
     exp: post.exp ? { n: post.exp.n, sdLn: post.exp.sd } : null,
     rep: post.rep ? { n: post.rep.n, sdLn: post.rep.sd } : null,
     gymSdLn: post.gymSdLn,
+    income: post.income ? { perSec: post.income.perSec, sdLn: +post.income.sd.toFixed(3), lives: post.income.lives, why: post.income.why } : null,
     optionErr: post.jitter ? { si: post.jitter.si, n: post.jitter.n, why: post.jitter.why } : null,
     stated: 'priors in bayes.js PRIORS / docs/bayes.md; the gym residual is NOT CALIBRATED (a stated prior)',
     missing: post.missing,
