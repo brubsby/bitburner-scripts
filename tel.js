@@ -33,6 +33,7 @@
 //      try/finally can reach, and for this script it is the most likely one.
 // ---------------------------------------------------------------------------
 
+import { isHacknetServerHost } from 'hacknetplan.js'
 import { reporter, describe, record } from 'status.js'
 import { beat, readLastAndReset } from 'trace.js'
 import { stockRecordFromText, wealthOf, STOCK_FILE } from 'nodeecon.js'
@@ -226,6 +227,8 @@ export async function main(ns) {
         }
 
         if (!rooted && !host.startsWith('pserv-')) continue
+        // Money/security reads THROW on a hacknet server (BN9/SF9).
+        if (isHacknetServerHost(host)) continue
 
         const maxMoney = ns.getServerMaxMoney(host)
         servers.push({

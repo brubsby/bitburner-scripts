@@ -235,7 +235,7 @@ async function pass(ns, flags) {
     return expPerThread(3 * ns.getServerMinSecurityLevel(h)) / ((1 + excess) * wt)
   }
   const targets = all
-    .filter((h) => ns.hasRootAccess(h) && ns.getServerMaxMoney(h) > 0 && ns.getServerRequiredHackingLevel(h) <= level)
+    .filter((h) => !isHacknetServerHost(h) && ns.hasRootAccess(h) && ns.getServerMaxMoney(h) > 0 && ns.getServerRequiredHackingLevel(h) <= level)
     .sort((a, b) => (exp ? expRank(b) - expRank(a) : prepScore(b) - prepScore(a)))
   if (!targets.length) {
     ns.tprint('seed: nothing hackable at this level yet')

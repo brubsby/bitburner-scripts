@@ -1582,6 +1582,10 @@ export async function main(ns) {
         const level = ns.getHackingLevel()
         const ranked = []
         for (const h of scanAll(ns)) {
+          // Hacknet servers are in the scan in BN9/SF9 and every money/security
+          // read THROWS on them ("Cannot be executed on hacknet-server-0",
+          // 2026-09-28) — they are never targets.
+          if (isHacknetServerHost(h)) continue
           if (!ns.hasRootAccess(h)) continue
           if (ns.getServerMaxMoney(h) <= 0) continue
           if (ns.getServerRequiredHackingLevel(h) > level) continue
