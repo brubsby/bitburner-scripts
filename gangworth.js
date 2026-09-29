@@ -432,3 +432,51 @@ export function gangEquipExit(record, lastAugReset, bestExitPolicy, withSim, bar
   if (!num(a) || !num(b)) return { deltaH: null, why: 'an exit could not be priced' }
   return { deltaH: a - b, withH: a, withoutH: b, why: `exit ${a.toFixed(2)}h with the equipment vs ${b.toFixed(2)}h without` }
 }
+
+/**
+ * THE LIVE GANG'S INCOME, as the exit should carry it (progress.js
+ * gangCarriedNow): the trajectory the gang is actually running — its own
+ * published forecast (/tel/gang.txt `forecast`: the ADOPTED policy's
+ * simulation from its real members, multipliers, respect, wanted penalty,
+ * money split and only the equipment the spend allowed) — from the
+ * forecast's age on; past the forecast's end, the fresh-gang schedule
+ * entered where its respect reaches the forecast's final respect, never
+ * below the forecast's last hour (a gang does not get weaker by waiting).
+ *
+ * The fresh-gang schedule entered at the live RESPECT alone (the previous
+ * carry) knew nothing of the gang's mode, split or ascensions: live BN9
+ * 2026-09-29 20:40Z the gang farmed respect ($0/s, m=0) while the carry
+ * credited it ~$0.5m/s from its "hour 7.7", and an ascension round (respect
+ * 1.8m -> 1.04m) moved that entry hour backwards.
+ *
+ * `live`: the gang.txt record; `fresh`: [{atH, perSec}] hourly;
+ * `respectPath`: [[h, respect]] of the fresh simulation; `now` in ms.
+ * Returns {steps, why, source} or null when the forecast is unusable (the
+ * caller then keeps its respect-matched fallback, named).
+ */
+export const GANG_FORECAST_MAX_AGE_MS = 30 * 60e3
+export function gangCarriedSchedule(live, fresh, respectPath, now = Date.now()) {
+  const fc = live?.forecast
+  const at = Date.parse(fc?.at ?? '')
+  if (!fc || !Array.isArray(fc.samples) || fc.samples.length < 2 || !num(at) || now < at || !(now - at < GANG_FORECAST_MAX_AGE_MS)) return null
+  const own = gangIncomeSchedule({ samples: fc.samples })
+  if (!own) return null
+  const ageH = (now - at) / 3600e3
+  const last = fc.samples[fc.samples.length - 1]
+  const endH = Math.max(0, last.h - ageH)
+  // The forecast's hours still ahead (gangIncomeSchedule steps are whole hours).
+  const steps = own.filter((x) => x.atH + 1 > ageH).map((x) => ({ atH: Math.max(0, x.atH - ageH), perSec: x.perSec }))
+  const floor = own[own.length - 1].perSec
+  let tailWhy = 'held at its last hour'
+  if (Array.isArray(fresh) && fresh.length && Array.isArray(respectPath) && respectPath.length && num(last.respect)) {
+    const hit = respectPath.find(([, r]) => r >= last.respect)
+    const entry = hit ? hit[0] : respectPath[respectPath.length - 1][0]
+    const tail = fresh.filter((x) => x.atH >= entry).map((x) => ({ atH: endH + (x.atH - entry), perSec: Math.max(floor, x.perSec) }))
+    if (tail.length) {
+      steps.push(...tail)
+      tailWhy = `then the fresh gang from its hour ${entry.toFixed(1)} (respect ${last.respect.toExponential(2)}), never below $${(floor / 1e6).toFixed(2)}m/s`
+    }
+  }
+  if (!steps.length) return null
+  return { steps, source: 'forecast', why: `the gang's adopted policy (${fc.policy ?? '?'}) forecast ${last.h.toFixed(1)}h from ${fc.at}, ${ageH.toFixed(2)}h old; ${tailWhy}` }
+}

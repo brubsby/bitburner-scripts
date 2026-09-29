@@ -142,7 +142,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain, stepMemoryStore, pageStorage } from 'coop.js'
 import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
-import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead } from 'gangworth.js'
+import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
@@ -1380,13 +1380,18 @@ function gangCarriedNow(ns, info) {
   if (!live?.faction || live.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(live.at ?? '') < 15 * 60e3)) return { steps: null, why: 'not in a gang this life (no fresh /tel/gang.txt)' }
   const sched = gangScheduleNow(ns, info)
   if (!Array.isArray(sched) || !sched.length) return { steps: null, why: 'in a gang, but its income schedule could not be simulated (no GangSoftcap)' }
-  if (sched.length === 1) return { steps: sched, why: `in ${live.faction}: the income a gang measured in this node` }
+  // THE GANG'S OWN TRAJECTORY FIRST (gangworth.gangCarriedSchedule): the
+  // adopted policy's forecast carries its mode, split, members, ascensions
+  // and wanted penalty; the respect-matched fresh gang below is the fallback.
+  const own = gangCarriedSchedule(live, sched.length > 1 ? sched : null, sched.length > 1 ? gangSchedMemo?.respectPath ?? null : null)
+  if (own) return { steps: own.steps, why: `in ${live.faction}: ${own.why}` }
+  if (sched.length === 1) return { steps: sched, why: `in ${live.faction}: the income a gang measured in this node (no fresh forecast in gang.txt)` }
   const path = gangSchedMemo?.respectPath ?? null
   const r = typeof live.respect === 'number' ? live.respect : 0
   const hit = path ? path.find(([, x]) => x >= r) : null
   const age = hit ? hit[0] : path?.length ? path[path.length - 1][0] : 0
   const steps = sched.filter((x) => x.atH + 1 > age).map((x) => ({ atH: Math.max(0, x.atH - age), perSec: x.perSec }))
-  return { steps: steps.length ? steps : [sched[sched.length - 1]], why: `in ${live.faction} (respect ${r.toExponential(2)}, ${live.members?.length ?? live.members ?? '?'} members): the fresh gang's simulated income from its hour ${age.toFixed(1)} (the hour its respect reaches the live gang's) on` }
+  return { steps: steps.length ? steps : [sched[sched.length - 1]], why: `in ${live.faction} (respect ${r.toExponential(2)}, ${live.members?.length ?? live.members ?? '?'} members, no fresh forecast in gang.txt): the fresh gang's simulated income from its hour ${age.toFixed(1)} (the hour its respect reaches the live gang's) on` }
 }
 
 /**

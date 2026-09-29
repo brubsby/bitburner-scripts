@@ -209,5 +209,62 @@ export async function run() {
   }
   checks.push(c6);
 
+  const c7 = new Check("GV7", "the exit carries the live gang's OWN trajectory (its adopted forecast), not a fresh money-mode gang entered at its respect: $0 while it farms respect, the realised rate at hour 0 when it farms money");
+  {
+    const GW = await import("../../gangworth.js");
+    const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+    const MONEY = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-gangmoney-2100.json"), "utf8"));
+    // progress.js gangScheduleNow's fresh gang, verbatim.
+    const G = { faction: "Slum Snakes", isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false };
+    const rivals = Object.fromEntries(["Tetrads", "The Syndicate", "The Dark Army", "Speakers for the Dead", "NiteSec", "The Black Hand"].map((n) => [n, { power: 1, territory: 1 / 7 }]));
+    const fsim = GP.simulateGang(G, [], { softcap: bitNodeMults(9).GangSoftcap, horizonH: 100, stepSec: 300, mode: "money", assignFn: GP.trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } });
+    const fresh = GW.gangIncomeSchedule(fsim);
+    const rpath = fsim.samples.map((x) => [x.h, x.respect]);
+    // The previous carry: the fresh schedule from the hour its respect reaches the live gang's.
+    const byRespect = (r) => {
+      const hit = rpath.find(([, x]) => x >= r);
+      const age = hit ? hit[0] : rpath.at(-1)[0];
+      return fresh.filter((x) => x.atH + 1 > age).map((x) => ({ atH: Math.max(0, x.atH - age), perSec: x.perSec }));
+    };
+    const rateAt = (steps, h) => steps.filter((x) => x.atH <= h + 1e-9).at(-1)?.perSec ?? 0;
+
+    // 19:45: respect mode (m=0), every forecast sample at $0.
+    c7.examined(1);
+    const nowR = Date.parse(FX.tel.at);
+    const ownR = GW.gangCarriedSchedule(FX.tel, fresh, rpath, nowR);
+    if (!ownR) c7.fail("the 19:45 forecast (1 min old) must be carried");
+    else {
+      const endH = FX.tel.forecast.samples.at(-1).h;
+      for (const h of [0, 1, 3, 6]) if (h < endH - 0.1 && rateAt(ownR.steps, h) !== 0) c7.fail(`respect mode: the gang's own forecast earns $0/s, the carry says $${rateAt(ownR.steps, h)}/s at +${h}h`);
+    }
+    // 21:00: money mode (m=1) just adopted; the game reads $/cycle.
+    c7.examined(1);
+    const nowM = Date.parse(MONEY.at);
+    const realised = MONEY.rates.gameMoneyPerCycle / GP.CYCLE_SEC;
+    const ownM = GW.gangCarriedSchedule(MONEY, fresh, rpath, nowM);
+    const oldM = byRespect(MONEY.respect);
+    if (!ownM) c7.fail("the 21:00 forecast (2 min old) must be carried");
+    else {
+      const own0 = rateAt(ownM.steps, 0);
+      const old0 = rateAt(oldM, 0);
+      // Tolerance: the first carried hour is the forecast's hour-0 AVERAGE, and
+      // the gang is ramping, so it may sit above the instantaneous rate — but
+      // not by the 5x the respect-matched carry did.
+      if (!(own0 <= 2.5 * realised && own0 >= 0.5 * realised)) c7.fail(`carried hour 0 $${own0.toExponential(2)}/s vs realised $${realised.toExponential(2)}/s — outside 0.5-2.5x`);
+      if (!(old0 > own0)) c7.fail(`the respect-matched carry ($${old0.toExponential(2)}/s) must be shown above the gang's own ($${own0.toExponential(2)}/s) — that is the overstatement being fixed`);
+      const tailStart = ownM.steps.find((x) => x.atH >= MONEY.forecast.samples.at(-1).h - (nowM - Date.parse(MONEY.forecast.at)) / 3600e3 - 1e-6);
+      if (!tailStart) c7.fail("past the forecast the fresh gang's path must continue the schedule");
+      c7.note(`21:00 money mode: realised $${(realised / 1e3).toFixed(0)}k/s; carried hour 0 now $${(own0 / 1e3).toFixed(0)}k/s, respect-matched $${(old0 / 1e3).toFixed(0)}k/s (${(old0 / realised).toFixed(1)}x realised); +6h $${(rateAt(ownM.steps, 6) / 1e6).toFixed(2)}m/s vs $${(rateAt(oldM, 6) / 1e6).toFixed(2)}m/s; max over the schedule $${(Math.max(...ownM.steps.map((x) => x.perSec)) / 1e6).toFixed(2)}m/s vs $${(Math.max(...oldM.map((x) => x.perSec)) / 1e6).toFixed(2)}m/s`);
+      c7.note(ownM.why);
+    }
+    // Stale or absent forecasts are refused (the caller keeps the named fallback).
+    c7.examined(1);
+    if (GW.gangCarriedSchedule(MONEY, fresh, rpath, nowM + 31 * 60e3) !== null) c7.fail("a forecast over 30 min old must not be carried");
+    if (GW.gangCarriedSchedule({ ...MONEY, forecast: null }, fresh, rpath, nowM) !== null) c7.fail("no forecast must return null");
+    const PJ = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const own = gangCarriedSchedule\(live, /.test(PJ)) c7.fail("progress.js gangCarriedNow must carry gangworth.gangCarriedSchedule first");
+  }
+  checks.push(c7);
+
   return checks;
 }
