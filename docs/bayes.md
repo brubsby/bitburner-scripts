@@ -35,7 +35,12 @@ plan.js  decide(): expected exit + switch cost, commitment (regret rule)
 | trader return r (/s) | per interval of Δt ticks after the warm-up: x = ln(1+ΔPnl/wealth)/Δt_h ~ N(μ_j, σ²/Δt_h) within life j (weighted NIG); lives pooled by random effects μ_j ~ N(μ, τ²) (DerSimonian–Laird τ²) | NIG m0 = 0.5%/h, k0 = 0.05h, a0 = 1, b0 = var 1%²/h | `/tel/stock-hist.txt` (flows excluded exactly as `nodeecon.realisedCapital`) |
 | structural error s² | relative forecast residual per same-life pair r = (E_b − (E_a − Δh))/E_a ~ N(0, 2s²) (Inverse-Gamma, known mean 0) | IG(a0 = 2, b0 = 2·0.1²) — 10% prior | `exitCalibration.samples` |
 | install cadence: ln M per life-hour r_n and life length L_n | per node y_n = ln(Σg/ΣL) ~ N(θ_n, σ²/n_eff) and ln(mean L) ~ N(θ_n, σ_L²/n); θ_n = μ + β·c_n + u_n, u_n ~ N(0, τ²) (random effect per node, covariate c = ln aug money × rep cost); σ² pooled over nodes (IG) | μ ~ N(ln 0.05/h, 1.5²), N(ln 3h, 1.5²); τ 1.0 / 0.7; β ~ N(−0.5, 0.5²) / N(+0.3, 0.5²) — all stated | lifetimes ledger, re-records merged, stall lives excluded (see below) |
-| hacking exp rate, faction rep rate | mean ln(rate) per 30-min bin ~ N(μ, σ²) (NIG); rep drawn ABSOLUTE (a noisy pass — live 13.04→10.72→13.41 rep/s — moves it by its share), exp as the current point × its spread (it trends with the level) | σ_ln prior 0.3 | this life's pass observations, kept in plan.txt `obs` |
+| fresh-life hacking income (prior) | per life y = ln(Σ realised / Σ formula) over its 0.5h windows; y = θ_n + u (t, ν 4), θ_n = μ + v_n (node effect), σ² pooled (IG) | freshlife.js's simulated fresh life at this age × exp(E θ_n); μ ~ N(0, ln 10²·2) (formula unbiased, stated), τ 0.5 stated below 3 other nodes | 7 lives (history.jsonl + earnings ledger, `FRESH_CALIBRATION`) + every life tel.js records with its inputs (`/tel/freshcal.txt`) |
+| script exp rate (prior) | the same, on exp | freshlife.js's exp/s at this age × exp(E θ_n); stated scatter ln 3 | 37 lives |
+| this life's income / exp | ln(rate) measured with sd 0.3·√(1h / hours) (normal–normal, `ratePosterior`) | the formula prior above | this life's hacking stream (earnings ledger / nodeecon) and tel.js's script exp |
+| hacking exp rate, faction rep rate | mean ln(rate) per 30-min bin ~ N(μ, σ²) (NIG); rep drawn ABSOLUTE (a noisy pass — live 13.04→10.72→13.41 rep/s — moves it by its share), exp as the current point × its spread (it trends with the level) — superseded for exp by the formula posterior where it prices | σ_ln prior 0.3 | this life's pass observations, kept in plan.txt `obs` |
+| install cadence under the purchase model | the node's own gaining lives y_n (as above) update a node prior N(ln r_model, s_m²) | r_model = lifeplan's ln(M)/h at the length it chose; s_m IG(2, 0.5²) — sd 0.5 STATED, updated by other nodes' lives recorded with the model's rate (`cadenceModel`) | lifetimes ledger |
+| count batch's fresh-life earnings | per completed node life y = ln(earned / model) at its end (t) | lifeplan.freshLifeMoney (the formula's hacking stream + trader + flat) from the install; scale 1, x3 stated | tel.js earnings ledger |
 | option-specific structural error s_i | per consecutive same-life passes, x = Δln(H_a/H_b)/2 ~ N(0, s_i²) over the options both rank (IG) | 2% | the top-8 route exits each pass, kept in plan.txt `points` |
 | gym rate | bodyplan formula (calibrated exactly 2026-09-19) × residual exp(N(0, 0.1²)) | prior only — NOT CALIBRATED (no live residual feed yet) | — |
 | prices given the count | deterministic (1.9^k, 1.14^L) | — | — |
@@ -71,13 +76,13 @@ rate (no faction work yet — live BN1 00:18 the exit read "could not price the
 reputation leg"). Each now comes from a prior instead of leaving the exit
 unpriced, marked in the inputs and in plan.txt `exit.income` / `exit.rep` /
 `exitSource`:
-- income: `bayes.incomePrior` — earlier completed lives in this node (tel.js
-  earnings ledger), each one's income rate over the half hour from this age,
-  scaled by M now / M then; the predictive for this life (node mean's
-  uncertainty + one life's scatter, prior sd ln 0.7). A node's first life
-  borrows other nodes whose scripts earn, scaled by ScriptHackMoney and widened
-  (sd ln 1.0); none -> still unpriced, named. NOT implemented: a RAM-based
-  batcher model for a save's very first life.
+- income: THE GAME'S FORMULAS (see "Structural priors" below) — freshlife.js's
+  fresh life at this age, times the formula's error posterior. It replaced
+  `bayes.incomePrior` (earlier lives at this age scaled by M, a node's first
+  life borrowing other nodes' lives scaled by ScriptHackMoney): BN9's second
+  life read $5.95e7/s x/÷ 159 from four BN1 lives and measured $2.5e3/s
+  (x23,000: ServerMaxMoney 0.01 is not ScriptHackMoney). `incomePrior` and
+  its legacy reconstruction are kept for the calibration's legacy windows.
   It is the HACKING stream only (tel.js's third sample element). A life
   recorded before that column existed (2026-09-29) is reconstructed per
   window as total less an upper bound on every other source
@@ -95,6 +100,97 @@ unpriced, marked in the inputs and in plan.txt `exit.income` / `exit.rep` /
   [TJ6]) with a stated residual (sd ln 0.3, NOT CALIBRATED).
 Both are drawn per Monte Carlo draw, so the exit's interval widens with them
 (BY14, BN1 00:18 replay: exit 80% 229-457h with both priors; the income prior alone ~2.5x the width of a measured income).
+
+### Structural priors from the game's formulas (freshlife.js)
+
+Three inputs used to wait for finished lives to stand in for a model: the
+fresh-life hacking income (earlier lives rescaled), the exp ramp (today's
+constant rate plus a measured lag), and the count batch's earnings curve
+(countplan refused with "only N completed life/lives recorded in BitNode 9
+(need 3) — the fresh ramp is not yet measured"). Each is now a STRUCTURAL
+PRIOR from the game's formulas, and the lives are the evidence on its error.
+
+- `freshlife.simulateFreshLife`: the network (servers.ts, [FL1]) at its
+  expected stats under the node's multipliers, the ported formulas (hack,
+  grow, weaken times; chance; percent; grow log; exp per op; the level curve
+  — [FL2] against the game bundle, worst error 4e-16), batch.js's own target
+  choice and income model (targetScore, planBatch, the n-target argmax, the
+  spill), the prep of each target (weaken to the floor, grow to the max, a
+  weaken time per round), the exp farm's share of the fleet (batch.txt), the
+  network re-rooted as the openers are re-bought (`FRESH_PORTS`, stated from
+  BN9's two lives), home RAM less progress.js's raise and the resident stack.
+  ~5ms for 24h; cached in `/tel/freshprior.txt` by its inputs.
+- Its error: `bayes.formulaErrorPosterior`, per life y = ln(Σ realised /
+  Σ model) over 0.5h windows (the ratio of what the life earned to what the
+  formula said, not a mean of logs — BN9's farm-mode hacking lands in spikes
+  with $0.6/s between them), hierarchical over nodes like the cadence, the
+  Student-t likelihood of the drift. The prior for a new life is formula ×
+  exp(E θ_node), spread the predictive for one life. Nothing switches: no life
+  → the stated prior; each life adds its precision.
+- The same replay code scores lives offline (`tools/sim/freshcal.mjs`, lives
+  rebuilt from history.jsonl: exp, home RAM, purchased servers, the rooted
+  count; multipliers rebuilt from the installed augmentations × Source-Files ×
+  NeuroFlux^k, k pinned by the life's own (level, exp) pairs) and in the game
+  (`freshlife.scoreRecordedLife` over what tel.js now records: exp, home /
+  purchased / network RAM and the farm share per sample, the multipliers once
+  per life; one new life scored per pass into `/tel/freshcal.txt`).
+- Within a life the prior is updated by the life's own measurement
+  (`ratePosterior`: sd 0.3·√(1h / hours)) — income as before, exp now too.
+
+Held out (`node tools/sim/freshcal.mjs`, [FL3]; THEN = the prior from the lives
+that had FINISHED when this one began, i.e. what the plan would have said at
+its install; ln realised / prior):
+
+| life | raw formula | THEN prior (x/÷ 80%) | error | in 80% |
+| --- | --- | --- | --- | --- |
+| exp, BN9 2026-09-28 18:38 (ended 05:42, 11.1h) | x1.92 | x0.90 (3.5) | x2.15 | yes |
+| exp, BN9 2026-09-29 05:42 (running) | x1.80 | x1.55 (2.4) | x1.16 | yes |
+| exp, BN1 2026-09-28 13:01 (5.6h, to level 7095) | x5.89 | x1.06 (2.0) | x5.52 | NO |
+| exp, BN1 2026-09-28 03:24 (2.6h) | x0.72 | x1.09 (2.1) | x0.66 | yes |
+| exp, BN8 2026-09-26 13:17 (8.7h, farm) | x0.22 | x0.48 (2.1) | x0.46 | NO |
+| exp, BN8 2026-09-25 23:37 (2.2h, farm) | x0.41 | x0.61 (2.6) | x0.68 | yes |
+| exp, all 37 lives (BN1/8/9/10) | rms x3.35 | | rms x2.89 | 81% (LOO 65%) |
+| income, BN9 2026-09-28 18:38 (ended 05:42) | x0.76 | x1.57 (19) | x0.49 | yes |
+| income, BN9 2026-09-29 05:42 (running) | x0.25 | x1.22 (16) | x0.20 | yes |
+| income, BN1 2026-09-28 13:01 | x1.26 | x1.92 (28) | x0.66 | yes |
+| income, all 7 lives (BN1/9) | rms x12.5 | | rms x12.4 | 86% |
+
+The exp formula misses by node (BN8's farm over-predicts x0.4-0.5, BN9's
+under-predicts x1.9 — the farm share and placement losses), which the node
+effect absorbs after one or two lives; high-level BN1/BN10 lives with PB of
+home RAM run x6-30 above it (the spill's target is not the one modelled).
+Income is 7 lives with one legacy x490 window (down-weighted): wide, stated.
+Against the prior it replaced ([FL4], live BN9 05:46, 0.08h in): the old
+prior read $4.19e5/s (x84 over the $5.0e3/s the next half hour earned, z
+-4.5); the one it read later, $5.95e7/s x/÷159 (x2e4 over the life, z -2.5);
+the formula prior $7.0e3/s x/÷16 (error x0.71, z -0.2).
+
+THE EXP RATE RISES WITH THE LEVEL (`exitplan.expRateShape`, inputs
+`expScalesWithLevel`): an op's exp is fixed and its time ∝ 1 / (level + 50),
+so a fleet's rate goes as (level + 50) — the exit integrates every leg that
+way from today's rate at today's level (`hoursToLevelShaped`, `expAfterHours`:
+chunks of 1% of the level), the sleeves' transfer flat beside it, and the
+freshLagH of the formula's fresh life (re-rooting, prep) replaces the
+measured lag. On the 01:40 BN9 inputs the climb to 6000 was 218h at the
+level-156 rate and is 10h shaped ([FL5]): the rate at 6000 is x29 today's.
+
+THE CADENCE'S PRIOR IS THE PURCHASE MODEL (`cadencePosterior` `modelPrior`):
+under the purchase model the node's rate prior is N(ln r_model, s_m²) instead
+of the cross-node mean, s_m stated 0.5 and updated by lives other nodes
+recorded with the model's rate (`cadenceModel` in the lifetimes ledger, from
+2026-09-29); this node's own gaining lives update it by their precision. The
+point input is the posterior's median at the model's life length, the draws
+its rate at that length ([EX4]). It replaced scaling the model's gain by
+(drawn measured rate / median)^w.
+
+THE COUNT CURVE IS A PRIOR THE LIVES SCALE (`countplan.freshCurve` `prior`,
+progress.js `countCurveOf`): lifeplan.freshLifeMoney on the exit inputs (the
+formula's hacking stream, the trader from the install's cash, the flat
+streams; hacknet's rebuild left out, a floor) is the curve; each completed
+node life's ln(earned / model) updates its scale ([CP2]). It prices from the
+node's first life; the floor remains only where no model can be built.
+lifeplan's `moneyScaleOf` is the same posterior (it was the median of the
+last four lives' ratios).
 
 ### Nothing may spin the page
 

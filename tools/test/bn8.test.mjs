@@ -951,7 +951,7 @@ export async function run() {
     aa.note(`without the grafts: ${noGrafts.hours.toFixed(0)}h — the grafts decision holds`);
     if (!(noGrafts.hours > 10 * r.hours)) aa.fail("the grafts should dominate on the live state");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/finalRootCost: PORT_OPENERS\.reduce\(\(a, \[, c\]\) => a \+ c, 0\) \+ 200e3/.test(prog) || !/freshExpLagH: freshExpLagOf\(player, info, exitExpPerSec\(ns, schedule\)\)/.test(prog)) aa.fail("progress.js must feed the terminal-install terms into the exit inputs");
+    if (!/finalRootCost: PORT_OPENERS\.reduce\(\(a, \[, c\]\) => a \+ c, 0\) \+ 200e3/.test(prog) || !/freshExpLagH: [^\n]*freshExpLagOf\(player, info, exitExpPerSec\(ns, schedule\)\)/.test(prog)) aa.fail("progress.js must feed the terminal-install terms into the exit inputs");
   }
   checks.push(aa);
 

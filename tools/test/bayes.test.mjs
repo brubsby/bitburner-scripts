@@ -865,7 +865,7 @@ export async function run() {
     // (j) Wired (source guards).
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     if (!/const cadence = installCadence\(JSON\.parse\(ns\.read\('\/tel\/lifetimes\.txt'\) \|\| '\[\]'\), info\?\.currentNode, cadenceOptsOf\(player\)\)/.test(prog)) c15.fail("exitInputsOf must take the cadence posterior with this life's multiplier and the covariate (source guard)");
-    if (!/cadence: installCadence\(ledger, info\?\.currentNode, cadenceOptsOf\(ns\.getPlayer\(\)\)\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior (source guard)");
+    if (!/cadence: installCadence\(ledger, info\?\.currentNode, \{ \.\.\.cadenceOptsOf\(ns\.getPlayer\(\)\), modelPrior: cadenceModelPriorOf\(ns, info\) \}\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior, on the purchase model's prior where it priced (source guard)");
   }
   checks.push(c15);
 
@@ -1003,12 +1003,13 @@ export async function run() {
     // NeuroFlux needs its reputation too (x1.14 a level): money alone buys none.
     const poor = LP.lifeBatch({ items: catalogue.items, nfg: catalogue.nfg, state: { ...st0, favor: { ...F.favor } }, L: 1, money: 1e15, repPerHour0: 1 });
     if (poor.nfgLevels !== 0) c18.fail(`NeuroFlux bought without its reputation (${poor.nfgLevels} levels on ~1 rep)`);
-    // The draws keep the chosen length.
+    // The draws keep the chosen length, and what a life of it buys is the
+    // drawn rate of the posterior whose prior IS the purchase model.
     const inp = { ...I, cycleHours: 8, multGainPerCycle: 1.25, cadenceFrom: "purchase model", cadenceRateMedian: 0.03 };
     const o = P.applyDraw(inp, { lnPerHour: 0.06, cycleH: 1.2 });
-    if (!(o.cycleHours === 8 && Math.abs(Math.log(o.multGainPerCycle) - 2 * Math.log(1.25)) < 1e-12)) c18.fail("a draw must keep the purchase model's life length and scale what it buys by the drawn rate", JSON.stringify({ c: o.cycleHours, g: o.multGainPerCycle }));
+    if (!(o.cycleHours === 8 && Math.abs(Math.log(o.multGainPerCycle) - 0.06 * 8) < 1e-12)) c18.fail("a draw must keep the purchase model's life length and buy the drawn rate over it", JSON.stringify({ c: o.cycleHours, g: o.multGainPerCycle }));
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/return \{ \.\.\.out, cycleHours: pc\.cycleHours, multGainPerCycle: pc\.multGainPerCycle, cadenceFrom: 'purchase model'/.test(prog)) c18.fail("exitInputsOf must take the purchase model's life length (source guard)");
+    if (!/return \{ \.\.\.out, cycleHours: pc\.cycleHours, multGainPerCycle: Math\.exp\(r \* pc\.cycleHours\), cadenceFrom: 'purchase model'/.test(prog)) c18.fail("exitInputsOf must take the purchase model's life length, the gain the model-prior posterior's rate over it (source guard)");
   }
   checks.push(c18);
 

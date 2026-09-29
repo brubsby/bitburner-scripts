@@ -281,6 +281,12 @@ export const PRIORS = {
     stallLn: 0.01,
     dupTolH: 0.05,
     z90: 1.2816,
+    // THE PURCHASE MODEL AS THE PRIOR (cadencePosterior modelPrior): its
+    // structural error on ln(rate), IG(a, b) — sd 0.5 (x1.9 either way at
+    // 80%), STATED: no life has been recorded with the model's prediction
+    // before 2026-09-29; each life recorded since (lifetimes `cadenceModel`)
+    // in ANOTHER node updates it (Student-t, as driftPosterior).
+    model: { a: 2, b: 0.5 * 0.5 },
   },
   // ln(rate) of an observed rate: sd 0.3 until measured.
   rateSdLn: 0.3,
@@ -310,6 +316,27 @@ export const PRIORS = {
   // option-specific share of the structural error (jitterPosterior): 2%
   // until measured from the ranking's own pass-to-pass jitter.
   jitter: { a: 2, b: 0.02 * 0.02 },
+  // THE FRESH-LIFE FORMULA'S ERROR (formulaErrorPosterior), before any life:
+  // per life, ln(realised / freshlife.js) = node bias + that life's scatter.
+  // Stated vague priors: the formula unbiased (m), the scatter's IG (a, b:
+  // x10 income / x3 exp either way at one sd; b / (a - 1) is also the sd of
+  // the cross-node mean's prior) — which the recorded lives dominate
+  // (tools/sim/freshcal.mjs, docs/bayes.md). k is unused (the hierarchy sets
+  // the mean's precision). lifeH0: a life of h hours weighs h / (h + lifeH0)
+  // (a 0.5h life a third of a long one): its windows are few, its ramp all
+  // prep.
+  // count: the fresh-life MONEY model (lifeplan.freshLifeMoney, every stream)
+  // against the node's completed lives (countplan.freshCurve, lifeplan
+  // moneyScaleOf) — x3 either way before a life.
+  formula: {
+    income: { m: 0, k: 1, a: 2, b: Math.log(10) ** 2 },
+    exp: { m: 0, k: 1, a: 2, b: Math.log(3) ** 2 },
+    count: { m: 0, k: 1, a: 2, b: Math.log(3) ** 2 },
+    lifeH0: 1,
+    // between-node sd of the formula's bias while fewer than 3 other nodes
+    // have lives (x1.9 either way at 80%): stated.
+    tau: 0.5,
+  },
 }
 
 export const STOCK_TICK_S = 6 // StockMarket/data/Constants.ts:4 msPerStockUpdate
@@ -545,6 +572,9 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
 // A life the COUNT RULE ended (installgate's "install: COUNT BATCH" — a
 // ticket batch installed for the Daedalus count, its length the rule's
 // choice, not the economics') is its own regime.
+// The purchase model's ln(M) per hour this life was priced at (progress.js
+// records it at the install: `cadenceModel`), or null.
+const modelOf = (e) => (fin(e?.cadenceModel?.lnPerHour) && e.cadenceModel.lnPerHour > 0 ? e.cadenceModel.lnPerHour : null)
 const regimeOf = (e) => (typeof e?.installWhy === 'string' && /^install: COUNT BATCH/.test(e.installWhy) ? 'count' : 'multiplier')
 export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
   const rows = (Array.isArray(ledger) ? ledger : []).filter((e) => e && fin(e.bitNode) && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
@@ -555,11 +585,11 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH =
     const start = fin(Date.parse(e.at)) ? Date.parse(e.at) / 3.6e6 - e.lifeH : null
     const prev = lives[lives.length - 1]
     if (prev && prev.node === e.bitNode && start !== null && prev.start !== null && Math.abs(prev.start - start) <= dupTolH) {
-      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, records: prev.records + 1, regime: regimeOf(e) })
+      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, records: prev.records + 1, regime: regimeOf(e), model: modelOf(e) ?? prev.model })
       dups++
       continue
     }
-    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, records: 1, regime: regimeOf(e) })
+    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, records: 1, regime: regimeOf(e), model: modelOf(e) })
   }
   for (let i = 0; i < lives.length; i++) {
     const nx = lives[i + 1]
@@ -619,7 +649,7 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH =
  * rate's precision)}, nodes: {n: {...}}, dups, sigma, source: 'posterior', why }
  * or null when no node has a life with a measured gain.
  */
-export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = null } = {}) {
+export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = null, modelPrior = null } = {}) {
   const C = PRIORS.cadence
   const lives = ledgerLives(ledger, { node, hackMultNow })
   const byNode = new Map()
@@ -653,7 +683,8 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     resid.life.b += sl / 2
     stats.set(n, { lives: G.length + b.stalls + b.open + b.count, gained: G.length, stalls: b.stalls, countLives: b.count, yR, yL, nEff: (H * H) / H2, n: G.length })
   }
-  if (!stats.size) return null
+  const mp = modelPrior && fin(modelPrior.lnPerHour) && modelPrior.lnPerHour > 0 ? modelPrior : null
+  if (!stats.size && !mp) return null
   const s2R = resid.rate.b / (resid.rate.a - 1)
   const s2L = resid.life.b / (resid.life.a - 1)
   const cov = (n) => {
@@ -691,8 +722,34 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     const prec = 1 / pv + 1 / v
     return { mean: (pm / pv + own[key] / v) / prec, sd: Math.sqrt(1 / prec), prior, weight: 1 / v / prec }
   }
-  const rate = one(C.rate, 'yR', (st) => s2R / st.nEff)
-  const life = one(C.life, 'yL', (st) => s2L / st.n)
+  // THE PURCHASE MODEL AS THE NODE'S PRIOR (modelPrior {lnPerHour, cycleHours,
+  // why}: lifeplan.cadenceByPurchases, what a life of the chosen length buys
+  // from THIS node's catalogue). The rate's node prior is then N(ln model,
+  // s_m^2) instead of the cross-node mean: s_m^2 the model's structural error
+  // (PRIORS.cadence.model, IG) updated, Student-t, by lives OTHER nodes
+  // recorded with the model's prediction (ln(g/L) - ln(model rate)). This
+  // node's own gaining lives then update it exactly as they updated the
+  // cross-node prior — the measured cadence never stands in for the model,
+  // it moves it by its precision.
+  let modelErr = null
+  const oneModel = (vOf) => {
+    const xs = lives.filter((l) => l.node !== node && fin(l.model) && l.g !== null && l.regime !== 'count' && l.g >= C.stallLn).map((l) => Math.log(l.g / l.lifeH) - Math.log(l.model))
+    const ig = robustIG(C.model, xs, PRIORS.driftNu)
+    const sm2 = ig.b / (ig.a - 1)
+    modelErr = { sd: Math.sqrt(sm2), residuals: xs.length, source: xs.length ? `${xs.length} li${xs.length === 1 ? 'fe' : 'ves'} in other nodes recorded with the model's prediction` : 'stated (no life recorded with the model\'s prediction in another node)' }
+    const pm = Math.log(mp.lnPerHour)
+    const pv = sm2
+    const prior = { mean: pm, sd: Math.sqrt(pv), source: 'purchase model' }
+    const own = stats.get(node)
+    if (!own) return { mean: pm, sd: Math.sqrt(pv), prior, weight: 0 }
+    const v = vOf(own)
+    const prec = 1 / pv + 1 / v
+    return { mean: (pm / pv + own.yR / v) / prec, sd: Math.sqrt(1 / prec), prior, weight: 1 / v / prec }
+  }
+  const rate = mp ? oneModel((st) => s2R / st.nEff) : one(C.rate, 'yR', (st) => s2R / st.nEff)
+  // The life's LENGTH under the model is the model's decision (kept by the
+  // caller); its posterior is still the measured one, for the record.
+  const life = stats.size ? one(C.life, 'yL', (st) => s2L / st.n) : { mean: Math.log(mp.cycleHours > 0 ? mp.cycleHours : 3), sd: C.life.smu, prior: null, weight: 0 }
   const lnPerHour = Math.exp(rate.mean)
   const cycleHours = Math.exp(life.mean)
   const b = byNode.get(node)
@@ -715,12 +772,145 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     nodes,
     dups: lives.dups,
     sigma: { rate: Math.sqrt(s2R), life: Math.sqrt(s2L) },
-    source: 'posterior',
-    why:
-      `cadence posterior for BitNode ${node}: ln(M) ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%), ${cycleHours.toFixed(2)}h a life -> x${Math.exp(lnPerHour * cycleHours).toFixed(3)} a cycle; ` +
+    source: mp ? 'posterior (purchase-model prior)' : 'posterior',
+    modelPrior: mp ? { lnPerHour: mp.lnPerHour, cycleHours: mp.cycleHours ?? null, err: modelErr } : null,
+    why: mp
+      ? `cadence posterior for BitNode ${node} on the purchase model's prior: model ln(M) ${mp.lnPerHour.toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * modelErr.sd).toFixed(2)} at 80%, ${modelErr.source}) -> ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%); ` +
+        `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded)` : ''} carry ${pct(rate.weight)} of the rate` +
+        (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : '')
+      : `cadence posterior for BitNode ${node}: ln(M) ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%), ${cycleHours.toFixed(2)}h a life -> x${Math.exp(lnPerHour * cycleHours).toFixed(3)} a cycle; ` +
       `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded: their length was the rule's)` : ''} carry ${pct(rate.weight)} of the rate` +
       (others.length ? `, BitNode ${others.join(', ')} shrink${others.length === 1 ? 's' : ''} it toward the cross-node mean` : ', no other node') +
       (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : ''),
+  }
+}
+
+/**
+ * THE FRESH-LIFE FORMULA'S STRUCTURAL ERROR, over the lives recorded —
+ * hierarchical over nodes.
+ *
+ * freshlife.js prices a fresh life from the game's formulas; each completed
+ * life with its inputs recorded gives one residual y = ln(realised / model)
+ * (what the life earned over what the formula said at the same ages:
+ * tools/sim/freshcal.mjs, progress.js freshResidualsOf). What the formula
+ * misses is partly the node's (BN8's farm over-predicts exp x0.4, BN9's
+ * under-predicts x1.9 — the farm share and placement losses differ by node)
+ * and partly the life's. So, as the cadence:
+ *   y_j = theta_n + u_j,   u_j ~ t_nu(0, sigma)   (one life's scatter, pooled)
+ *   theta_n = mu + v_n,    v_n ~ N(0, tau^2)      (the node's own bias)
+ *   mu ~ N(m0, sigma0^2)                          (the formula unbiased: stated)
+ * sigma^2 pooled over nodes (IG from PRIORS.formula[kind], the within-node
+ * sums of squares; Student-t EM weights down-weight an unlike life). tau^2:
+ * DerSimonian-Laird over the OTHER nodes when there are >= 3 of them, else
+ * PRIORS.formula.tau (stated). The node's prior N(mu-hat, q + tau^2) from the
+ * other nodes, then its own lives — exact for the Gaussian model, each life
+ * entering once, each weighted h / (h + lifeH0) by its hours.
+ *
+ * The PRIOR for a new life of `node` is formula x exp(mean), spread `sd` the
+ * predictive for one life (the node bias's uncertainty + sigma), Student-t
+ * df 2a. Nothing switches: no life anywhere -> the stated prior (unbiased,
+ * x/÷ e^sigma0); the node's first life -> the cross-node mean and tau; each
+ * own life adds precision. `weight` is the node's OWN lives' share of the
+ * bias's precision, `dataWeight` all lives' share against the stated prior.
+ *
+ * residuals [{ln, hours, node, life?}]. Returns {kind, node, mean, sd,
+ * sdLife, df, n, own, weight, dataWeight, mu, tau, outliers, nodes, why}.
+ */
+export function formulaErrorPosterior(residuals, kind = 'income', { node = null, prior = PRIORS.formula[kind], nu = PRIORS.driftNu } = {}) {
+  const P = prior ?? PRIORS.formula.income
+  const h0 = PRIORS.formula.lifeH0
+  const R = (residuals ?? []).filter((r) => fin(r?.ln) && fin(r?.hours) && r.hours > 0)
+  const hw = R.map((r) => r.hours / (r.hours + h0))
+  const s0 = Math.sqrt(P.b / (P.a - 1)) // the stated scatter, also mu's prior sd
+  const groupsOf = (tw) => {
+    const g = new Map()
+    R.forEach((r, i) => {
+      const k = r.node ?? '?'
+      if (!g.has(k)) g.set(k, { W: 0, S: 0, n: 0, idx: [] })
+      const x = g.get(k)
+      const w = hw[i] * tw[i]
+      x.W += w
+      x.S += w * r.ln
+      x.n++
+      x.idx.push(i)
+    })
+    for (const x of g.values()) x.mean = x.W > 0 ? x.S / x.W : 0
+    return g
+  }
+  let tw = R.map(() => 1)
+  let g = groupsOf(tw)
+  let s2 = s0 * s0
+  let A = P.a
+  for (let it = 0; it < 40; it++) {
+    // sigma^2 | groups: IG(a0 + (n - groups)/2, b0 + within-node SS / 2).
+    let ss = 0
+    let dof = 0
+    for (const x of g.values()) {
+      for (const i of x.idx) ss += hw[i] * tw[i] * (R[i].ln - x.mean) ** 2
+      dof += x.n - 1
+    }
+    A = P.a + dof / 2
+    const B = P.b + ss / 2
+    const next = B / (A - 1)
+    const tw2 = R.map((r, i) => (nu + 1) / (nu + (r.ln - g.get(r.node ?? '?').mean) ** 2 / next))
+    const done = Math.abs(next - s2) < 1e-10 * s2
+    s2 = next
+    tw = tw2
+    g = groupsOf(tw)
+    if (done) break
+  }
+  const key = node ?? '?'
+  const others = [...g.entries()].filter(([k]) => k !== key).map(([k, x]) => ({ node: k, est: x.mean, v: s2 / x.W, n: x.n }))
+  const re = others.length >= 3 ? randomEffects(others) : null
+  const tau2 = re ? re.tau2 : PRIORS.formula.tau ** 2
+  // mu | other nodes: N(m0, s0^2) prior, each node N(mu, v + tau^2).
+  let prec = 1 / (s0 * s0)
+  let acc = P.m / (s0 * s0)
+  for (const o of others) {
+    prec += 1 / (o.v + tau2)
+    acc += o.est / (o.v + tau2)
+  }
+  const muHat = acc / prec
+  const q = 1 / prec
+  const pm = muHat
+  const pv = q + tau2
+  const own = g.get(key)
+  let mean = pm
+  let v = pv
+  let weight = 0
+  if (own && own.W > 0) {
+    const vo = s2 / own.W
+    const pr = 1 / pv + 1 / vo
+    mean = (pm / pv + own.mean / vo) / pr
+    v = 1 / pr
+    weight = 1 / vo / pr
+  }
+  const df = 2 * A
+  const tf = df > 2 ? df / (df - 2) : 3
+  const sd = Math.sqrt((v + s2) * tf)
+  const dataWeight = 1 - (1 / (s0 * s0 + tau2)) / (1 / v)
+  const outliers = tw.filter((w) => w < 0.5).length
+  const nodes = [...g.keys()].filter((k) => k !== '?')
+  return {
+    kind,
+    node,
+    mean,
+    sd,
+    sdLife: Math.sqrt(s2 * tf),
+    df,
+    n: R.length,
+    own: own?.n ?? 0,
+    weight,
+    dataWeight: Math.max(0, Math.min(1, dataWeight)),
+    mu: muHat,
+    tau: Math.sqrt(tau2),
+    tauSource: re ? 'DerSimonian-Laird over the other nodes' : 'stated (fewer than 3 other nodes)',
+    outliers,
+    nodes: Object.fromEntries([...g.entries()].map(([k, x]) => [k, { lives: x.n, bias: +x.mean.toFixed(3) }])),
+    why:
+      `${kind} formula error${node !== null ? ` for BitNode ${node}` : ''}: ln(realised/model) ${mean >= 0 ? '+' : ''}${mean.toFixed(2)} (x${Math.exp(mean).toFixed(2)}), one life x/÷ ${Math.exp(1.2816 * sd).toFixed(2)} at 80% (t, df ${df.toFixed(0)}); ` +
+      `${own?.n ?? 0} own li${(own?.n ?? 0) === 1 ? 'fe' : 'ves'} carry ${Math.round(100 * weight)}% of the node's bias, ${others.reduce((a, o) => a + o.n, 0)} li${others.reduce((a, o) => a + o.n, 0) === 1 ? 'fe' : 'ves'} in ${others.length} other node(s) the cross-node mean x${Math.exp(muHat).toFixed(2)} (between nodes x/÷ ${Math.exp(1.2816 * Math.sqrt(tau2)).toFixed(2)}, ${re ? 'fitted' : 'stated'}); ` +
+      `one life's scatter x/÷ ${Math.exp(1.2816 * Math.sqrt(s2)).toFixed(2)}; ${outliers} li${outliers === 1 ? 'fe' : 'ves'} down-weighted as unlike the rest; stated prior: unbiased, x/÷ ${Math.exp(1.2816 * s0).toFixed(1)}`,
   }
 }
 
@@ -1010,6 +1200,12 @@ export function legacyHackingWindow(pts, a0, a1, { cash0 = 0, hackCap = Infinity
   const hi = Math.min(total, hackCap >= 0 ? hackCap : Infinity)
   const minShare = lo / hi
   const tag = `total $${(total / dt).toExponential(2)}/s over ${a0.toFixed(2)}-${a1.toFixed(2)}h, trader <= $${stockMax.toExponential(2)}, other <= $${otherMax.toExponential(2)}${hi < total ? `, hacking <= $${(hi / dt).toExponential(2)}/s (a later split sample)` : ''}`
+  // THE BOUNDS CONTRADICT (lo > hi): hacking would have to be at least lo and
+  // at most hi — the bound on every other source was too small for this
+  // window (BN9 2026-09-28 at 7h: the total less that bound read $2.8b in half
+  // an hour against $184m hacked in the whole life). Not separable; an upper
+  // bound only. Found by tools/sim/freshcal.mjs, which read $1.5e6/s here.
+  if (lo > hi) return { ok: false, minShare, hi: hi / dt, why: `${tag}: the bounds contradict (total less the other sources exceeds the hacking cap) — the other sources' bound is too small here` }
   if (!(hi > 0 && minShare >= minHackShare)) return { ok: false, minShare, hi: hi / dt, why: `${tag}: hacking only >= ${(100 * Math.max(0, minShare)).toFixed(0)}% of its bound guaranteed` }
   const perSec = Math.sqrt(lo * hi) / dt
   return { ok: true, perSec, lo: lo / dt, hi: hi / dt, minShare, bracketLn: Math.log(hi / lo), why: `${tag}: hacking ${(100 * minShare).toFixed(0)}-100% of its bound` }
@@ -1055,8 +1251,19 @@ export function lifeHackingObservation(samples, ageH, { nowPerSec = null, window
  * Returns the prior's shape {mean, sd, perSec, ...} with `measuredWeight`.
  */
 export function incomePosterior(prior, obs) {
+  return ratePosterior(prior, obs, { what: 'income', none: 'a prepping batcher earns $0/s by design' })
+}
+
+/**
+ * THE SAME UPDATE FOR ANY RATE WITH A PRIOR: a prior {mean, sd (of ln rate),
+ * perSec, why} and this life's measurement {perSec, hours, source}, weighted
+ * sd PRIORS.rateSdLn x sqrt(1h / hours). exp/s uses it (expPosterior) with
+ * the formula's exp prior.
+ */
+export function ratePosterior(prior, obs, { what = 'rate', none = 'nothing measured' } = {}) {
   if (!prior || !fin(prior.mean) || !(prior.sd > 0)) return null
-  if (!obs || !(obs.perSec > 0) || !(obs.hours > 0)) return { ...prior, measuredWeight: 0, why: `${prior.why}; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone` }
+  const $ = what === 'income' ? '$' : ''
+  if (!obs || !(obs.perSec > 0) || !(obs.hours > 0)) return { ...prior, measuredWeight: 0, why: `${prior.why}; nothing measured this life yet (${none}): the prior alone` }
   const sm = PRIORS.rateSdLn * Math.sqrt(1 / obs.hours)
   const wp = 1 / (prior.sd * prior.sd)
   const wm = 1 / (sm * sm)
@@ -1070,6 +1277,52 @@ export function incomePosterior(prior, obs) {
     perSec: Math.exp(mean),
     measuredWeight: w,
     measured: obs,
-    why: `income posterior: prior $${prior.perSec.toExponential(2)}/s (x/÷ ${Math.exp(1.2816 * prior.sd).toFixed(1)}) updated by this life's $${obs.perSec.toExponential(2)}/s over ${obs.hours.toFixed(2)}h (${obs.source}; weight ${(100 * w).toFixed(0)}%) -> median $${Math.exp(mean).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80% [${prior.why}]`,
+    why: `${what} posterior: prior ${$}${prior.perSec.toExponential(2)}/s (x/÷ ${Math.exp(1.2816 * prior.sd).toFixed(1)}) updated by this life's ${$}${obs.perSec.toExponential(2)}/s over ${obs.hours.toFixed(2)}h (${obs.source}; weight ${(100 * w).toFixed(0)}%) -> median ${$}${Math.exp(mean).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80% [${prior.why}]`,
+  }
+}
+
+/**
+ * A FORMULA PRIOR FOR A RATE AT AN AGE OF THE LIFE: freshlife.js's
+ * simulated fresh life (`pts`, a series with `key` cumulative — 'cum' the
+ * hacking stream's $, 'exp' the hacking exp) over [a0, a0 + windowH], a0 =
+ * max(ageH, the first age the formula earns), times the formula's error
+ * posterior (formulaErrorPosterior: exp(mean), predictive sd). Null when the
+ * formula says the stream is zero at every age (scripted hacking paying
+ * nothing, BitNode 8; a farm holding the whole fleet) — no prior, said so by
+ * the caller. Returns {mean, sd, perSec, modelPerSec, source: 'formula',
+ * err, why}.
+ */
+export function formulaRatePrior(pts, ageH, err, { key = 'cum', windowH = 0.5, what = 'income' } = {}) {
+  if (!Array.isArray(pts) || pts.length < 2 || !err || !fin(err.mean) || !(err.sd > 0)) return null
+  const at = (h) => {
+    if (h <= pts[0].h) return pts[0][key]
+    for (let i = 1; i < pts.length; i++) if (h <= pts[i].h) return pts[i - 1][key] + ((pts[i][key] - pts[i - 1][key]) * (h - pts[i - 1].h)) / (pts[i].h - pts[i - 1].h || 1)
+    const n = pts.length
+    const slope = (pts[n - 1][key] - pts[n - 2][key]) / (pts[n - 1].h - pts[n - 2].h || 1)
+    return pts[n - 1][key] + slope * (h - pts[n - 1].h)
+  }
+  let first = null
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i][key] > pts[i - 1][key]) {
+      first = pts[i - 1].h
+      break
+    }
+  }
+  if (first === null) return null
+  const a0 = Math.max(fin(ageH) ? ageH : 0, first)
+  const rate = (at(a0 + windowH) - at(a0)) / (windowH * 3600)
+  if (!(rate > 0)) return null
+  const mean = Math.log(rate) + err.mean
+  const $ = what === 'income' ? '$' : ''
+  return {
+    mean,
+    sd: err.sd,
+    perSec: Math.exp(mean),
+    modelPerSec: rate,
+    source: 'formula',
+    stream: what === 'income' ? 'hacking' : what,
+    lives: err.n,
+    err: { mean: err.mean, sd: err.sd, n: err.n, own: err.own, weight: err.weight },
+    why: `${what} from the formula (freshlife.js) at age ${a0.toFixed(2)}h: ${$}${rate.toExponential(2)}/s x ${Math.exp(err.mean).toFixed(2)} (${err.why}) -> median ${$}${Math.exp(mean).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * err.sd).toFixed(1)} at 80%`,
   }
 }

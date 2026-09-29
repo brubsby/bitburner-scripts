@@ -25,31 +25,38 @@
 // DP[i+b]. Eleven tickets is 66 transitions.
 //
 // ---------------------------------------------------------------------------
-// THE INPUT THAT DECIDES EVERYTHING, AND WHY IT MUST BE MEASURED.
+// THE INPUT THAT DECIDES EVERYTHING: HOW FAST A FRESH LIFE EARNS.
 //
-// How fast a FRESH life earns. The first version fed trajectory.incomeModel a
-// fresh-start income of $400k/s; measured on 2026-09-24, a fresh life earned
-// ~$0.2k-9k/s for its first several minutes against $11.87m/s at maturity —
-// the batcher restarts, servers regrow from 4% of max, hacking relevels. A
-// 100x-optimistic ramp is what made one-ticket installs look optimal, and a
-// policy built on it would thrash through a ramp every few minutes.
+// The first version fed trajectory.incomeModel a fresh-start income of
+// $400k/s; measured on 2026-09-24, a fresh life earned ~$0.2k-9k/s for its
+// first several minutes against $11.87m/s at maturity — the batcher restarts,
+// servers regrow from 4% of max, hacking relevels. A 100x-optimistic ramp is
+// what made one-ticket installs look optimal.
 //
-// So the curve comes from `ns.getMoneySources().sinceInstall` — gross earnings
-// since the last install, which the game zeroes on every install
-// (PlayerObjectGeneralMethods.ts:128) and which spending cannot corrupt, unlike
-// the money balance. tel.js records it as a per-life ledger. Until enough
-// completed lives are recorded, this REFUSES (installNow: null) and the gate
-// falls back to the floor, saying so. An uncalibrated model driving an
-// irreversible install is precisely the failure CLAUDE.md is written against.
+// The second version measured it instead: the median of the node's completed
+// lives in tel.js's ledger (ns.getMoneySources().sinceInstall, zeroed at every
+// install), and REFUSED until three were recorded — "only N completed
+// life/lives recorded in BitNode 9 (need 3) — the fresh ramp is not yet
+// measured" — so the count batch sat on COUNT_MIN_BATCH for the first three
+// lives of every node, the lives where the count matters most.
+//
+// Now the curve is a STRUCTURAL PRIOR with the lives as evidence (freshCurve's
+// `prior`): the exit model's fresh-life money (lifeplan.freshLifeMoney — the
+// hacking stream from the game's formulas, freshlife.js, beside the trader's
+// compounding and the flat streams) from the install on, times a scale whose
+// posterior the node's completed lives update (bayes.formulaErrorPosterior on
+// ln(earned / prior) per life, Student-t: a windfall life is down-weighted,
+// not a median's accident). No life: the prior as it stands, said so. Nothing
+// switches from the prior to the measured.
 //
 // Batch cost is priced in the optimal order (most expensive first). augplan's
 // DP already buys tickets that way — this was checked, after a claim that it
 // did not turned out to be wrong.
 // ---------------------------------------------------------------------------
+import { formulaErrorPosterior } from 'bayes.js'
+
 const num = (v) => typeof v === 'number' && isFinite(v)
 
-/** Completed lives needed before the curve is trusted to drive an install. */
-export const MIN_LIVES = 3
 
 /** Cost of buying these prices in one cycle, most expensive first (optimal). */
 export function batchCost(prices, r) {
@@ -79,55 +86,45 @@ export function hoursToAfford(need, moneyBy, maxH = 200) {
 }
 
 /**
- * THE FRESH-LIFE EARNINGS CURVE, from recorded lives.
+ * THE FRESH-LIFE EARNINGS CURVE: a structural prior, scaled by the lives.
  *
- * `ledger.lives` maps a life's lastAugReset to `{node, complete, samples:
- * [[ageH, earned], ...]}`. Only COMPLETED lives in `node` are used — a life in
- * progress has not shown its tail. At each age the curve is the MEDIAN of the
- * lives that reached it, which is what keeps one odd life (a contract windfall,
- * a sleep) from bending the whole policy.
+ * `o.prior` {moneyBy(h), why}: money a fresh life has earned by age h (from
+ * the install), the model's (progress.js: lifeplan.freshLifeMoney on the exit
+ * inputs). `ledger.lives` maps a life's lastAugReset to `{node, complete,
+ * samples: [[ageH, earned], ...]}`; each COMPLETED life in `node` gives
+ * y = ln(earned at its last sample / prior at that age), its hours that age.
+ * The scale is exp(posterior mean) of bayes.formulaErrorPosterior (kind
+ * 'count', this node's lives only: the prior is this node's model), so it
+ * moves with every life, by the life's weight, from 1.
  *
- * Returns `{ moneyBy(h), lives, horizonH }` or `{ moneyBy: null, why }`.
- * Past the longest recorded life it extends at that life's final slope — and
- * reports `horizonH` so a caller can see where measurement stops.
+ * Returns `{ moneyBy(h), lives, scale, sd, weight, why }`, or `{ moneyBy:
+ * null, why }` when no prior is supplied — refused as UNPRICED, never a
+ * guess. Monotone by construction (the prior is).
  */
 export function freshCurve(ledger, node, o = {}) {
-  const need = num(o.minLives) ? o.minLives : MIN_LIVES
-  const lives = Object.values(ledger?.lives ?? {}).filter(
-    (L) => L && L.node === node && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2,
-  )
-  if (lives.length < need) {
-    return { moneyBy: null, lives: lives.length, why: `only ${lives.length} completed life/lives recorded in BitNode ${node} (need ${need}) — the fresh ramp is not yet measured` }
-  }
-  // Each life as a monotone piecewise-linear function of age.
-  const fns = lives.map((L) => {
+  const prior = o.prior
+  if (!prior || typeof prior.moneyBy !== 'function') return { moneyBy: null, lives: 0, why: `no fresh-life model supplied for BitNode ${node} — the timing is unpriced` }
+  const lives = Object.entries(ledger?.lives ?? {}).filter(([, L]) => L && L.node === node && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2)
+  const res = []
+  for (const [k, L] of lives) {
     const pts = L.samples.filter((p) => Array.isArray(p) && num(p[0]) && num(p[1])).sort((a, b) => a[0] - b[0])
-    let hi = 0
-    for (const p of pts) hi = p[1] = Math.max(hi, p[1]) // enforce monotone
-    return { pts, end: pts[pts.length - 1][0] }
-  })
-  const at = (f, h) => {
-    const { pts } = f
-    if (h <= pts[0][0]) return pts[0][1] * (pts[0][0] > 0 ? Math.max(0, h) / pts[0][0] : 1)
-    for (let i = 1; i < pts.length; i++) {
-      if (h <= pts[i][0]) {
-        const [a0, e0] = pts[i - 1]
-        const [a1, e1] = pts[i]
-        return e0 + ((e1 - e0) * (h - a0)) / (a1 - a0 || 1)
-      }
-    }
-    const n = pts.length
-    const slope = (pts[n - 1][1] - pts[n - 2][1]) / (pts[n - 1][0] - pts[n - 2][0] || 1)
-    return pts[n - 1][1] + slope * (h - pts[n - 1][0])
+    if (pts.length < 2) continue
+    const end = pts[pts.length - 1]
+    const earned = Math.max(0, ...pts.map((p) => p[1]))
+    const model = prior.moneyBy(end[0])
+    if (earned > 0 && model > 0 && end[0] > 0) res.push({ ln: Math.log(earned / model), hours: end[0], node, life: k })
   }
-  const horizonH = Math.max(...fns.map((f) => f.end))
-  const moneyBy = (h) => {
-    if (!(h > 0)) return 0
-    const v = fns.map((f) => at(f, h)).sort((a, b) => a - b)
-    const m = v.length >> 1
-    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2
+  const post = formulaErrorPosterior(res, 'count', { node })
+  const scale = Math.exp(post.mean)
+  const moneyBy = (h) => (h > 0 ? Math.max(0, prior.moneyBy(h)) * scale : 0)
+  return {
+    moneyBy,
+    lives: res.length,
+    scale,
+    sd: post.sd,
+    weight: post.weight,
+    why: `fresh-life money model x${scale.toFixed(2)} (${res.length} completed BitNode ${node} li${res.length === 1 ? 'fe' : 'ves'} carry ${Math.round(100 * post.weight)}% of the scale; one life x/÷ ${Math.exp(1.2816 * post.sd).toFixed(1)} at 80%) — ${prior.why ?? 'the model'}`,
   }
-  return { moneyBy, lives: lives.length, horizonH, why: `median of ${lives.length} completed BitNode ${node} lives, measured to ${horizonH.toFixed(1)}h` }
 }
 
 /**
@@ -169,8 +166,8 @@ export function planBatches({ pool, r, remaining, freshMoneyBy, freshStart = 0 }
  * where wait(k) is how long THIS life — the same measured curve, shifted to its
  * current age — needs to earn batchCost(k) - moneyNow. Install iff no wait wins.
  *
- * installNow is NULL when the curve is not yet measured; the caller must fall
- * back and say so rather than read null as either answer.
+ * installNow is NULL when no curve could be built (no fresh-life model); the
+ * caller must fall back and say so rather than read null as either answer.
  */
 export function countTiming(o = {}) {
   const { prices, r, kNow, remaining, moneyNow, ageH, curve } = o
@@ -182,7 +179,7 @@ export function countTiming(o = {}) {
   if (!num(remaining) || remaining < 0) return refuse('remaining count unreadable')
   if (!num(moneyNow) || moneyNow < 0) return refuse('money unreadable')
   if (!num(ageH) || ageH < 0) return refuse('life age unreadable')
-  if (!curve || typeof curve.moneyBy !== 'function') return refuse(curve?.why ?? 'no measured fresh-life curve')
+  if (!curve || typeof curve.moneyBy !== 'function') return refuse(curve?.why ?? 'no fresh-life curve supplied')
 
   if (kNow < 1) return { installNow: false, why: 'nothing in the batch yet' }
   const P = [...prices].filter((p) => num(p) && p >= 0).sort((a, b) => a - b)

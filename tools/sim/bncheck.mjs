@@ -154,7 +154,7 @@ const ASSUMPTIONS = [
     // tol 0.10 = SETTINGS.margin (batch.js:84), which already over-provisions weaken threads by 10%. Below 1 is the dangerous direction; above 1 only wastes threads because weaken clamps at minSecurity.
     mult: "ServerWeakenRate",
     expect: 1,
-    where: "batch.js WEAKEN_PER_THREAD = 0.05, expfarm.js WEAKEN_AMOUNT = 0.05 (scaled by the node's ServerWeakenRate, which batch.js passes from bitNodeMults), archive/superseded/hack.js settings.changes.weaken = 0.05 (archive/superseded/hack.js:22)",
+    where: "batch.js WEAKEN_PER_THREAD = 0.05, expfarm.js WEAKEN_AMOUNT = 0.05 (scaled by the node's ServerWeakenRate, which batch.js passes from bitNodeMults), freshlife.js SERVER.weakenAmt = 0.05 (times bn.ServerWeakenRate at every use: planOf, prepHoursOf), archive/superseded/hack.js settings.changes.weaken = 0.05 (archive/superseded/hack.js:22)",
     breaks:
       "HARDCODED in both. getWeakenEffect multiplies by ServerWeakenRate, so weaken threads are mis-sized by exactly this factor. >1 (BN11 = 2) merely wastes threads, since weaken clamps at minSecurity. <1 is the dangerous direction: security is never fully removed, hackFraction stays below what the planner assumes, and the pipeline desyncs into permanent re-prep. hack.js carries its own copy in the same table as the hack/grow security ADDITIONS (0.002/0.004), which are NOT multiplier-scaled — so the three numbers look alike and only one of them moves with the node.",
   },

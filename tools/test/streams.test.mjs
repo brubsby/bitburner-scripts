@@ -203,7 +203,7 @@ export async function run() {
     if (!/flatIncomePerSec: \(econNow\?\.flatPerSec \?\? 0\) \+ \(contractMoneyPerSec > 0 \? contractMoneyPerSec : 0\)/.test(prog)) c.fail("contract money is flat income in the exit inputs (not hacking-level scaled)");
     if (!/hackScriptIncome\(ns\.getTotalScriptIncome\(\), stockRecordFromText\(/.test(strip(code("buyserv.js")))) c.fail("buyserv.js's income per GB must be the hacking stream (hackScriptIncome)");
     if (!/scriptIncome: \(\(\) => \{\s*try \{\s*const perSec = ns\.getScriptIncome\(ns\.getScriptName\(\), ns\.getHostname\(\), \.\.\.ns\.args\)/.test(strip(code("stock.js")))) c.fail("stock.js must publish its own script income (scriptIncome)");
-    if (!/L\.samples\.push\(\[Math\.round\(ageH \* 1e4\) \/ 1e4, Math\.round\(earned\), Math\.round\(hackEarned\)\]\)/.test(strip(code("tel.js")))) c.fail("tel.js must record the hacking stream as the earnings sample's third element");
+    if (!/L\.samples\.push\(\[Math\.round\(ageH \* 1e4\) \/ 1e4, Math\.round\(earned\), Math\.round\(hackEarned\),/.test(strip(code("tel.js")))) c.fail("tel.js must record the hacking stream as the earnings sample's third element");
     checks.push(c);
   }
 

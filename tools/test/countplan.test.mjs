@@ -8,8 +8,9 @@
 // "install after every single ticket" because it re-used the cheapest ticket
 // forever, when each is consumed.
 //
-// So what is pinned: optimal batch cost, a depleting-pool DP, a curve that
-// REFUSES until measured, and the mature-life decision that the floor got wrong.
+// So what is pinned: optimal batch cost, a depleting-pool DP, a curve that is
+// a structural prior scaled by the lives (priced from the first life, refused
+// only without a model), and the mature-life decision the floor got wrong.
 
 import { Check } from "./harness.mjs";
 const cp = await import("../../countplan.js");
@@ -28,6 +29,9 @@ function life(scale, node = 10, complete = true) {
   return { node, complete, samples };
 }
 const LEDGER = { lives: { a: life(1.0), b: life(0.9), c: life(1.1) } };
+/** The structural prior with the same shape (life(1)'s integral, closed form). */
+const PRIOR = { moneyBy: (h) => (h > 0 ? (5e3 * h + 12e6 * (h - 1.5 * (1 - Math.exp(-h / 1.5)))) * 3600 : 0), why: "test prior" };
+const CURVE = (ledger = LEDGER) => cp.freshCurve(ledger, 10, { prior: PRIOR });
 const PRICES = [40, 55, 80, 120, 150, 200, 285, 400, 550, 800, 1200].map((c) => c * 1e6);
 
 export async function run() {
@@ -52,35 +56,37 @@ export async function run() {
   checks.push(c1);
 
   // ---------------------------------------------------------------------
-  const c2 = new Check("CP2", "the fresh-life curve is MEASURED or refused — never guessed");
+  const c2 = new Check("CP2", "the fresh-life curve is a STRUCTURAL PRIOR the lives scale — priced from the first life, refused only without a model");
   {
-    c2.examined(6);
-    // THE REASON: a 100x-optimistic guessed ramp made one-ticket installs look
-    // optimal. Too few lives must refuse, and say how many it has.
-    const two = cp.freshCurve({ lives: { a: life(1), b: life(1) } }, 10);
-    if (two.moneyBy !== null) c2.fail(`${cp.MIN_LIVES} lives are required; two must refuse`);
-    if (!/2 completed/.test(two.why)) c2.fail("the refusal must say how many lives it has");
+    c2.examined(7);
+    // No model: refused as UNPRICED, never guessed.
+    const none = cp.freshCurve(LEDGER, 10);
+    if (none.moneyBy !== null || !/no fresh-life model/.test(none.why)) c2.fail(`without a prior the curve must refuse, naming the model: ${none.why}`);
+    // NO LIFE: the prior as it stands (the old version refused until three).
+    const zero = cp.freshCurve({ lives: {} }, 10, { prior: PRIOR });
+    if (typeof zero.moneyBy !== "function" || Math.abs(zero.moneyBy(3) - PRIOR.moneyBy(3)) > 1e-6 * PRIOR.moneyBy(3)) c2.fail("with no life the curve is the prior, unscaled");
+    if (zero.lives !== 0 || zero.weight !== 0) c2.fail("and it must say no life carries any weight");
+    // Lives earning 2x the prior pull the scale toward 2 — more with more lives.
+    const twice = (n) => cp.freshCurve({ lives: Object.fromEntries(Array.from({ length: n }, (_, i) => [String(i), life(2)])) }, 10, { prior: PRIOR });
+    const s1 = twice(1).scale;
+    const s3 = twice(3).scale;
+    if (!(s1 > 1 && s3 > s1 && s3 < 2.05)) c2.fail(`the scale must move from 1 toward the lives' 2x, further with more lives: 1 life x${s1.toFixed(2)}, 3 lives x${s3.toFixed(2)}`);
+    if (!(twice(3).weight > twice(1).weight)) c2.fail("more lives, more weight");
     // Only COMPLETED lives in THIS node count.
-    const mixed = cp.freshCurve({ lives: { a: life(1), b: life(1), c: life(1, 10, false), d: life(1, 4) } }, 10);
-    if (mixed.moneyBy !== null) c2.fail("an in-progress life and another node's life must not count toward the minimum");
-    const ok = cp.freshCurve(LEDGER, 10);
-    if (typeof ok.moneyBy !== "function") c2.fail(`three completed lives must produce a curve: ${ok.why}`);
-    else {
-      // Monotone, zero at zero.
-      if (ok.moneyBy(0) !== 0) c2.fail("earned by age 0 is 0");
-      let prev = -1;
-      for (const h of [0.1, 0.5, 1, 2, 5, 12]) {
-        const v = ok.moneyBy(h);
-        if (!(v >= prev)) c2.fail(`the curve must be monotone: ${h}h gave ${v} after ${prev}`);
-        prev = v;
-      }
-      // MEDIAN, so one windfall life cannot bend the policy.
-      const skew = cp.freshCurve({ lives: { a: life(1), b: life(1), c: life(50) } }, 10);
-      if (!(Math.abs(skew.moneyBy(2) - ok.moneyBy(2)) / ok.moneyBy(2) < 0.2)) {
-        c2.fail("one life earning 50x must not move a median of three much");
-      }
+    const mixed = cp.freshCurve({ lives: { c: life(2, 10, false), d: life(2, 4) } }, 10, { prior: PRIOR });
+    if (mixed.lives !== 0) c2.fail("an in-progress life and another node's life must not count");
+    const ok = CURVE();
+    if (ok.moneyBy(0) !== 0) c2.fail("earned by age 0 is 0");
+    let prev = -1;
+    for (const h of [0.1, 0.5, 1, 2, 5, 12]) {
+      const v = ok.moneyBy(h);
+      if (!(v >= prev)) c2.fail(`the curve must be monotone: ${h}h gave ${v} after ${prev}`);
+      prev = v;
     }
-    c2.note(`${cp.MIN_LIVES} completed same-node lives required; median across them; ${ok.why}`);
+    // A windfall life (50x) is down-weighted (Student-t), not a median's accident.
+    const skew = cp.freshCurve({ lives: { a: life(1), b: life(1), c: life(50) } }, 10, { prior: PRIOR });
+    if (!(skew.scale < 5)) c2.fail(`one life earning 50x must not drag the scale with it: x${skew.scale.toFixed(2)}`);
+    c2.note(`no life: the prior; 1 life at 2x -> x${s1.toFixed(2)}, 3 -> x${s3.toFixed(2)}; windfall-skewed x${skew.scale.toFixed(2)}; ${ok.why}`);
   }
   checks.push(c2);
 
@@ -88,7 +94,7 @@ export async function run() {
   const c3 = new Check("CP3", "the remaining count is PARTITIONED over a depleting pool");
   {
     c3.examined(3);
-    const curve = cp.freshCurve(LEDGER, 10);
+    const curve = CURVE();
     const plan = cp.planBatches({ pool: PRICES, r: 1.9, remaining: 11, freshMoneyBy: curve.moneyBy, freshStart: 1262 });
     const sum = plan.batches.reduce((a, b) => a + b, 0);
     if (sum !== 11) c3.fail(`the partition must bank exactly the remaining 11, got ${JSON.stringify(plan.batches)} = ${sum}`);
@@ -108,7 +114,7 @@ export async function run() {
   const c4 = new Check("CP4", "in a MATURE life it fills the batch the floor would have cut at three");
   {
     c4.examined(5);
-    const curve = cp.freshCurve(LEDGER, 10);
+    const curve = CURVE();
     const at = (k, ageH = 3) =>
       cp.countTiming({ prices: PRICES, r: 1.9, kNow: k, remaining: 11, moneyNow: cp.batchCost(PRICES.slice(0, k), 1.9), ageH, curve, freshStart: 1262 });
     // THE FLOOR'S MISTAKE. At three tickets, deep in a life earning fast, a

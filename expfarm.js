@@ -50,6 +50,11 @@
 export const FORTIFY = 0.002 // ServerConstants.ServerFortifyAmount
 export const WEAKEN_AMOUNT = 0.05 // ServerConstants.ServerWeakenAmount (x ServerWeakenRate)
 export const RAM = { hack: 1.7, grow: 1.75, weaken: 1.75 }
+// The same figures as plain names for the arithmetic below: a member access
+// named like an ns function (`RAM.hack`, `RAM.weaken`) is billed by the RAM
+// calculator to every importer that reaches it (freshlife.js paid 0.25GB).
+const RAM_HACK = 1.7
+const RAM_WEAKEN = 1.75
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -77,14 +82,14 @@ export function expScore(t, weakenRate = 1, margin = 1.1) {
   if (!(e > 0) || !pos(T) || p === null || !pos(weakenRate)) return 0
   const k = (FORTIFY * p * margin) / (WEAKEN_AMOUNT * weakenRate)
   const exp = e * (p + (1 - p) / 4) + e * k
-  const gbms = RAM.hack * T + k * RAM.weaken * 4 * T
+  const gbms = RAM_HACK * T + k * RAM_WEAKEN * 4 * T
   return exp / gbms
 }
 
 /** Weaken-only exp per GB-ms on the same server — the floor a desync degrades to. */
 export function weakenScore(t) {
   const e = expPerThread(t?.baseDifficulty)
-  return e > 0 && pos(t?.hackTime) ? e / (RAM.weaken * 4 * t.hackTime) : 0
+  return e > 0 && pos(t?.hackTime) ? e / (RAM_WEAKEN * 4 * t.hackTime) : 0
 }
 
 /** HWGW (every op padded to weaken time) exp per GB-ms — what batch.js earns as a side effect. */
@@ -107,7 +112,7 @@ export function batchedScore(t) {
 export function waveSize({ poolGB, T, periodMs, phi, chance = 1, weakenRate = 1, margin = 1.1, chunkFrac = 0.5 }) {
   if (!pos(poolGB) || !pos(T) || !pos(periodMs) || !pos(phi)) return null
   const k = (FORTIFY * chance * margin) / (WEAKEN_AMOUNT * weakenRate)
-  const perHackGBms = RAM.hack * T + k * RAM.weaken * 4 * T
+  const perHackGBms = RAM_HACK * T + k * RAM_WEAKEN * 4 * T
   // Capped where a wave would decay the balance past ~e^-500 (see below):
   // the RAM beyond it is left to the next wave rather than paid e/4.
   const hackN = Math.min(Math.floor((poolGB * periodMs) / perHackGBms), Math.floor(500 / phi))

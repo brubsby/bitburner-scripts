@@ -169,8 +169,11 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, modelVersionFrom } from 'plan.js'
-import { incomePrior, incomePosterior, lifeHackingObservation } from 'bayes.js'
-import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases, nodeFactionsOf } from 'lifeplan.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, PRIORS as BAYES_PRIORS } from 'bayes.js'
+// THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
+// the hacking income, the exp ramp and the count batch's earnings curve.
+import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
+import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases, nodeFactionsOf, freshLifeMoney } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -2245,7 +2248,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
-    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 || capitalFitOf(ns, info) ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })
+    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 || capitalFitOf(ns, info) ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
@@ -2747,30 +2750,144 @@ function cashPerSecOf(e, wealth) {
 }
 
 /**
- * INCOME WHILE THIS LIFE CANNOT MEASURE IT (bayes.incomePrior): what earlier
- * lives earned at this point of a life, from tel.js's earnings ledger and the
- * lifetimes ledger, scaled by the multiplier — so a batcher prepping after an
- * install (script income $0/s for up to an hour) does not leave the exit
- * unpriced and every trajectory decision blind. Once per pass; null with no
- * earlier life anywhere (the exit stays unpriced, and says why).
+ * THE FRESH LIFE FROM THE GAME'S FORMULAS (freshlife.simulateFreshLife): this
+ * node's servers at their expected stats, this life's multipliers and
+ * intelligence, home RAM less the reserves, the network re-rooted as the
+ * openers are re-bought (freshlife.FRESH_PORTS), the exp farm's share of the
+ * fleet (batch.txt when fresh; the whole fleet in exp mode; 0 in money mode).
+ * The simulation (~10-20ms) is CACHED in /tel/freshprior.txt by its inputs,
+ * so a pass re-runs it only when they change (a new life, home RAM, the farm).
+ * Returns {pts, levelMult, key, why, inputs} or null (and the prior is then
+ * unpriced, named).
+ */
+const FRESH_PRIOR_FILE = '/tel/freshprior.txt'
+const FRESH_CAL_FILE = '/tel/freshcal.txt'
+let freshPriorMemo
+function freshPriorOf(ns, info, player) {
+  if (freshPriorMemo !== undefined) return freshPriorMemo
+  freshPriorMemo = null
+  try {
+    const node = info?.currentNode
+    const bn = bitNodeMults(node)
+    if (!bn || !player?.mults) return null
+    const homeRam = Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0)
+    const homeGB = Math.max(0, homeRam - homeReserveGb(singularityRamMultiplier(info)))
+    const b = readJson(ns, '/tel/batch.txt')
+    const bFresh = b && Date.now() - Date.parse(b.at) < 10 * 60e3
+    const farmOn = bn.ScriptHackMoneyGain === 0 || (bFresh && !!b.expFarm)
+    const held = bFresh ? b.expFarm?.heldGB ?? 0 : 0
+    const pipes = bFresh ? b.ram?.reservedForPipelines ?? 0 : 0
+    // The farm's MEASURED share when the batcher publishes one; the farm's
+    // intent (the whole fleet) when it is on and unmeasured; else none.
+    const farmShare = bn.ScriptHackMoneyGain === 0 ? 1 : farmOn ? (held + pipes > 0 ? Math.round((20 * held) / (held + pipes)) / 20 : 1) : 0
+    const m = player.mults
+    const mults = { hacking: m.hacking, hacking_exp: m.hacking_exp, hacking_speed: m.hacking_speed, hacking_money: m.hacking_money, hacking_grow: m.hacking_grow, hacking_chance: m.hacking_chance }
+    const int = player.skills?.intelligence ?? 0
+    const key = JSON.stringify([node, Object.values(mults).map((x) => +Number(x).toFixed(4)), int, Math.round(homeGB), farmShare, 'v1'])
+    const cached = readJson(ns, FRESH_PRIOR_FILE)
+    if (cached?.key === key && Array.isArray(cached.pts)) {
+      freshPriorMemo = { pts: expandPts(cached.pts, cached.levelMult), levelMult: cached.levelMult, key, why: cached.why, inputs: cached.inputs, cached: true }
+      return freshPriorMemo
+    }
+    const r = simulateFreshLife({ bn, mults, intelligence: int, homeGB, farmShare, horizonH: 24 })
+    const inputs = { node, homeRam, homeGB, farmShare, farmMeasured: held + pipes > 0, int, mults }
+    ns.write(FRESH_PRIOR_FILE, JSON.stringify({ at: new Date().toISOString(), key, lastAugReset: info?.lastAugReset, levelMult: r.levelMult, inputs, why: r.why, pts: compactPts(r.pts) }), 'w')
+    freshPriorMemo = { pts: r.pts, levelMult: r.levelMult, key, why: r.why, inputs, cached: false }
+  } catch (e) {
+    freshPriorMemo = { error: String(e).slice(0, 160) }
+  }
+  return freshPriorMemo
+}
+
+/**
+ * THE FORMULA'S ERROR, UPDATED BY THE LIVES (bayes.formulaErrorPosterior over
+ * freshlife.calibrationResiduals): the seed lives (tools/sim/freshcal.mjs) and
+ * every completed life tel.js recorded with its inputs, scored here once and
+ * cached in /tel/freshcal.txt — at most one new life per pass (a replay is a
+ * simulation). The running life is never in it: its own measurement enters
+ * through the within-life posterior. {income, exp, residuals} or null.
+ */
+let freshErrMemo
+function freshErrOf(ns, info) {
+  if (freshErrMemo !== undefined) return freshErrMemo
+  freshErrMemo = null
+  try {
+    const cache = readJson(ns, FRESH_CAL_FILE) ?? { lives: {} }
+    if (!cache.lives || typeof cache.lives !== 'object') cache.lives = {}
+    const earnings = readJson(ns, '/tel/earnings.txt')
+    const todo = Object.entries(earnings?.lives ?? {}).find(([k, L]) => L?.complete === true && L.inputs && !cache.lives[k])
+    if (todo) {
+      const [k, L] = todo
+      const bnL = bitNodeMults(L.node)
+      const sc = bnL ? scoreRecordedLife(L, bnL, homeReserveGb(singularityRamMultiplier(info)), { windowFn: legacyHackingWindow, bounds: BAYES_PRIORS.legacyNonHack, lifeSd: BAYES_PRIORS.incomeLifeSdLn }) : null
+      cache.lives[k] = { node: L.node, at: new Date().toISOString(), exp: sc?.exp ?? null, income: sc?.income ?? null, endH: sc?.endH ?? null, why: sc ? 'scored' : 'not scoreable (too few samples with inputs)' }
+      ns.write(FRESH_CAL_FILE, JSON.stringify(cache), 'w')
+    }
+    const res = calibrationResiduals(cache, { exclude: info?.lastAugReset })
+    const node = info?.currentNode
+    freshErrMemo = { income: formulaErrorPosterior(res.income, 'income', { node }), exp: formulaErrorPosterior(res.exp, 'exp', { node }), residuals: { seed: res.seedLives, ledger: res.ledgerLives } }
+  } catch (e) {
+    freshErrMemo = { error: String(e).slice(0, 160) }
+  }
+  return freshErrMemo
+}
+
+/**
+ * INCOME WHILE THIS LIFE CANNOT MEASURE IT — AND THE PRIOR EVEN WHEN IT CAN:
+ * the formula's hacking stream at this age of a fresh life
+ * (bayes.formulaRatePrior over freshPriorOf), times its error posterior
+ * (freshErrOf). It replaced earlier lives rescaled by ScriptHackMoney (BN9's
+ * first fresh life: $5.95e7/s from four BN1 lives, x/÷ 159, against a
+ * measured $2.5e3/s). Once per pass; null when the formula says scripted
+ * hacking pays nothing here or could not run (the exit then prices the
+ * measured income as it is, and `incomeSource` says why).
  */
 let incomePriorMemo
 function incomePriorOf(ns, info, player) {
   if (incomePriorMemo !== undefined) return incomePriorMemo
   incomePriorMemo = null
   try {
-    const earnings = JSON.parse(ns.read('/tel/earnings.txt') || 'null')
-    const ledger = JSON.parse(ns.read('/tel/lifetimes.txt') || '[]')
     const since = info?.lastAugReset
     const ageH = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 3.6e6) : 0
     const node = info?.currentNode
-    const pr = incomePrior({ earnings, ledger, node, ageH, hackMultNow: player?.mults?.hacking ?? null, shm: (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney) })
+    const fp = freshPriorOf(ns, info, player)
+    const err = freshErrOf(ns, info)
+    const pr = fp?.pts && err?.income ? formulaRatePrior(fp.pts, ageH, err.income, { key: 'cum', what: 'income' }) : null
+    const ledger = JSON.parse(ns.read('/tel/lifetimes.txt') || '[]')
     const lifeN = (Array.isArray(ledger) ? ledger.filter((e) => e?.bitNode === node).length : 0) + 1
-    incomePriorMemo = pr ? { ...pr, lifeN, label: `income from prior (life ${lifeN} measuring): ${pr.why}` } : null
+    incomePriorMemo = pr ? { ...pr, lifeN, label: `income from the formula (life ${lifeN} measuring): ${pr.why}` } : null
   } catch {
     incomePriorMemo = null
   }
   return incomePriorMemo
+}
+
+/**
+ * THIS LIFE'S SCRIPT EXP RATE, A POSTERIOR: the formula's exp/s at this age
+ * (freshPriorOf x freshErrOf.exp) updated by tel.js's measured script exp
+ * rate (getTotalScriptExpGain), weighted by the hours this life has run
+ * (bayes.ratePosterior: sd 0.3 x sqrt(1h / hours)). Early in a life the
+ * formula carries it; hours in, the measurement. Null without either.
+ */
+let expPostMemo
+function expPostOf(ns, info, player) {
+  if (expPostMemo !== undefined) return expPostMemo
+  expPostMemo = null
+  try {
+    const since = info?.lastAugReset
+    const ageH = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 3.6e6) : 0
+    const fp = freshPriorOf(ns, info, player)
+    const err = freshErrOf(ns, info)
+    const pr = fp?.pts && err?.exp ? formulaRatePrior(fp.pts, ageH, err.exp, { key: 'exp', what: 'exp' }) : null
+    if (!pr) return null
+    const t = readJson(ns, '/tel/status.txt')
+    const age = Date.now() - Date.parse(t?.at ?? '')
+    const obs = age >= 0 && age < 5 * 60e3 && t?.expPerSec > 0 && ageH > 0 ? { perSec: t.expPerSec, hours: ageH, source: 'the running scripts\' exp (tel.js getTotalScriptExpGain)' } : null
+    expPostMemo = ratePosterior(pr, obs, { what: 'exp', none: 'no fresh script exp rate' })
+  } catch {
+    expPostMemo = null
+  }
+  return expPostMemo
 }
 /**
  * THIS LIFE'S HACKING INCOME, A POSTERIOR (bayes.incomePosterior): the prior
@@ -2832,6 +2949,53 @@ function purchaseCadenceOf(ns, info, base, offers, owned) {
   purchaseCadenceMemo = { key, value }
   return value
 }
+/**
+ * THE COUNT BATCH'S FRESH-LIFE EARNINGS CURVE (countplan.freshCurve): the
+ * exit model's fresh-life money (lifeplan.freshLifeMoney on these inputs —
+ * the formula's hacking stream when freshHackCum is present, the trader
+ * compounding from the install's cash after its warm-up, the flat streams),
+ * earned since the install, on a grid to 200h, as the PRIOR; the node's
+ * completed lives in tel.js's ledger update its scale. The hacknet rebuild is
+ * left out (a floor: it only adds money; freshLifeMoney's rebuild plans a
+ * batch per step, too slow for a 19-point curve every pass).
+ */
+function countCurveOf(ns, info, inputs) {
+  const cash0 = typeof inputs?.installCash === 'number' ? inputs.installCash : 1262
+  const base = { ...inputs, hacknet: null }
+  const grid = [0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 36, 48, 72, 100, 150, 200]
+  let hi = 0
+  const pts = [[0, 0]]
+  for (const h of grid) {
+    const m = freshLifeMoney(base, h, 1)
+    if (typeof m !== 'number' || !isFinite(m)) return freshCurve(readJson(ns, '/tel/earnings.txt'), info?.currentNode, {})
+    hi = Math.max(hi, m - cash0)
+    pts.push([h, hi])
+  }
+  const moneyBy = (h) => {
+    if (!(h > 0)) return 0
+    for (let i = 1; i < pts.length; i++) if (h <= pts[i][0]) return pts[i - 1][1] + ((pts[i][1] - pts[i - 1][1]) * (h - pts[i - 1][0])) / (pts[i][0] - pts[i - 1][0])
+    const n = pts.length
+    return pts[n - 1][1] + ((pts[n - 1][1] - pts[n - 2][1]) / (pts[n - 1][0] - pts[n - 2][0])) * (h - pts[n - 1][0])
+  }
+  const src = Array.isArray(inputs?.freshHackCum) ? 'the hacking stream from the game\'s formulas (freshlife.js)' : 'the level-scaled hacking income'
+  return freshCurve(readJson(ns, '/tel/earnings.txt'), info?.currentNode, { prior: { moneyBy, why: `prior: the exit model's fresh-life money (lifeplan.freshLifeMoney: ${src}, the trader from $${Math.round(cash0)}, the flat streams; the hacknet rebuild left out — a floor)` } })
+}
+
+// The purchase model's prior this pass (exitInputsOf), for the plan's
+// posterior draws (cadenceModelPriorOf).
+let cadenceModelNow = null
+/**
+ * THE PURCHASE MODEL'S PRIOR FOR THE PLAN'S CADENCE DRAWS: this pass's
+ * (exitInputsOf), else the one the last published exit inputs carry (same
+ * life, < 15 min) — the plan can be built before exitInputsOf runs in a pass.
+ */
+function cadenceModelPriorOf(ns, info) {
+  if (cadenceModelNow && cadenceModelNow.lastAugReset === info?.lastAugReset) return cadenceModelNow.modelPrior
+  const rec = readJson(ns, '/tel/exitinputs.txt')
+  const m = rec?.inputs?.cadence?.model
+  if (rec?.lastAugReset === info?.lastAugReset && Date.now() - Date.parse(rec.at ?? '') < 15 * 60e3 && m?.lnPerHour > 0) return { lnPerHour: m.lnPerHour, cycleHours: m.cycleHours, why: 'the purchase model (last published exit inputs)' }
+  return null
+}
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   const out = exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
   // The life's length is a decision: where the purchase model prices it, the
@@ -2844,7 +3008,18 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
   const cOffers = cadenceOffersNow?.length ? cadenceOffersNow : offers
   const pc = Array.isArray(cOffers) && cOffers.length ? purchaseCadenceOf(ns, info, out, cOffers, ownedAugsNow) : null
   if (pc && !pc.error && typeof pc.cycleHours === 'number' && pc.multGainPerCycle > 1) {
-    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle, cadenceFrom: 'purchase model', cadenceRateMedian: out.cadence?.rateMedian ?? null, cadence: { ...(out.cadence ?? {}), source: 'purchase model', why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration, catalogue: cadenceKeptWhy ?? 'this life\'s offers' } }
+    // THE MODEL IS THE CADENCE POSTERIOR'S PRIOR (bayes.cadencePosterior
+    // modelPrior): its ln(M) per hour at the length it chose, with its stated
+    // structural error, updated by this node's own gaining lives by their
+    // precision — the measured cadence moves the model, it does not stand in
+    // for it (and no longer scales the draws by a power of its own weight).
+    // The point is the posterior's median at the model's length; the draws
+    // take the posterior's rate at that length (plan.applyDraw).
+    const modelPrior = { lnPerHour: Math.log(pc.multGainPerCycle) / pc.cycleHours, cycleHours: pc.cycleHours, why: pc.why }
+    cadenceModelNow = { lastAugReset: info?.lastAugReset, modelPrior }
+    const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player), modelPrior })
+    const r = cm?.stats?.lnPerHour > 0 ? cm.stats.lnPerHour : modelPrior.lnPerHour
+    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: Math.exp(r * pc.cycleHours), cadenceFrom: 'purchase model', cadenceRateMedian: r, cadence: { ...(out.cadence ?? {}), source: 'purchase model', model: { lnPerHour: modelPrior.lnPerHour, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle }, rateMedian: r, posterior: cm?.why ?? null, why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration, catalogue: cadenceKeptWhy ?? 'this life\'s offers' } }
   }
   return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
 }
@@ -2892,7 +3067,33 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // only: a null player rate stays null (exitplan refuses), because
     // the fleet's few exp/s alone is not a conservative estimate of a
     // climb, it is a different trajectory that happens to be a number.
-    expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule), planFleet?.expToPlayerHacking),
+    expPerSec: expPerSecWithFleet(exitExpPerSec(ns, schedule, expPostOf(ns, info, player)?.perSec ?? null), planFleet?.expToPlayerHacking),
+    // THE EXP RATE RISES WITH THE LEVEL (exitplan.expRateShape): the rate
+    // above is today's, at today's level; every leg integrates it as
+    // (level + 50) — the game's op times (freshlife.js) — with the sleeves'
+    // transfer flat beside it. Only where the formula prior priced (the
+    // shape is the formula's).
+    ...(expPostOf(ns, info, player)
+      ? { expScalesWithLevel: true, expFlatPerSec: planFleet?.expToPlayerHacking > 0 ? planFleet.expToPlayerHacking : 0, expSource: expPostOf(ns, info, player).why }
+      : {}),
+    // THE HACKING STREAM OF A FRESH LIFE FROM THE FORMULAS, [[ageH, $]]
+    // (freshPriorOf x the income error's median), for lifeplan.freshLifeMoney
+    // (the purchase model, the count curve): prep, re-rooting and the level
+    // ramp as the game's formulas run them.
+    ...(() => {
+      const fp = freshPriorOf(ns, info, player)
+      const err = freshErrOf(ns, info)
+      if (!fp?.pts || !err?.income) return {}
+      const k = Math.exp(err.income.mean)
+      const grid = [0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 20, 24]
+      const at = (h) => {
+        const P = fp.pts
+        for (let i = 1; i < P.length; i++) if (h <= P[i].h) return P[i - 1].cum + ((P[i].cum - P[i - 1].cum) * (h - P[i - 1].h)) / (P[i].h - P[i - 1].h || 1)
+        return P[P.length - 1].cum
+      }
+      const cum = grid.map((h) => [h, Math.round(at(h) * k)])
+      return cum[cum.length - 1][1] > 0 ? { freshHackCum: cum } : {}
+    })(),
     // ONE sleeve's worth, because only one sleeve may work a faction
     // (setToFactionWork throws otherwise) — fleetFactionRepPerSec
     // takes a max, not a sum, and summing here would overstate the
@@ -2939,7 +3140,10 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // After The Red Pill's install: the 5 openers (and TOR) again from the
     // reset balance, and the measured fresh-life exp ramp (exitplan).
     finalRootCost: PORT_OPENERS.reduce((a, [, c]) => a + c, 0) + 200e3, // + TOR (darkweb, CONSTANTS.TorRouterCost $200k)
-    freshExpLagH: freshExpLagOf(player, info, exitExpPerSec(ns, schedule)),
+    // The fresh life's exp LAG behind the level-shaped rate: the formula's
+    // (re-rooting, prep: freshlife.freshLagH) where the rate is shaped — the
+    // climb from level 1 is then in the shape itself; else the measured lag.
+    freshExpLagH: expPostOf(ns, info, player) && freshPriorOf(ns, info, player)?.pts ? freshLagH(freshPriorOf(ns, info, player).pts, freshPriorOf(ns, info, player).levelMult) : freshExpLagOf(player, info, exitExpPerSec(ns, schedule)),
     // THE RED PILL'S REPUTATION. This read the offer's `baseRep`, a field no offer
     // carries (offers have `repReq`), so the 2.5M-rep leg was priced at 0 in
     // EVERY node, joined or not — and before Daedalus is joined there is no
@@ -3007,10 +3211,14 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
  * there. A stale tel.js record is refused — a rate from before an install is
  * the mature batcher's, and the climb after one starts from a restart.
  */
-function exitExpPerSec(ns, schedule) {
+function exitExpPerSec(ns, schedule, scriptPosterior = null) {
   const fin = (v) => typeof v === 'number' && isFinite(v) && v > 0
   const sched = fin(schedule?.expPerSec) ? schedule.expPerSec : null
   let script = null
+  // THE SCRIPT RATE AS A POSTERIOR (expPostOf: the formula's prior updated by
+  // tel.js's measurement, weighted by the life's hours) when there is one: the
+  // raw tel.js rate is its observation, not the value.
+  if (fin(scriptPosterior)) return sched === null ? scriptPosterior : Math.max(sched, scriptPosterior)
   try {
     const t = JSON.parse(ns.read('/tel/status.txt') || 'null')
     const age = Date.now() - Date.parse(t?.at ?? '')
@@ -3241,6 +3449,9 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 async function act(ns, canJoin, info, note) {
   planCtx = null // one plan context per pass (planCtxOf)
   incomePriorMemo = undefined // one income prior per pass (incomePriorOf)
+  freshPriorMemo = undefined // one formula fresh life per pass (freshPriorOf)
+  freshErrMemo = undefined // one formula-error posterior per pass (freshErrOf)
+  expPostMemo = undefined // one exp posterior per pass (expPostOf)
   incomePostMemo = undefined // and one posterior (incomePostOf)
   // The step-cost memory across passes (a fresh process each): the page's
   // localStorage, 0GB (coop.stepMemoryStore).
@@ -5599,11 +5810,12 @@ async function act(ns, canJoin, info, note) {
       return n
     })()
 
-    // WHEN TO INSTALL A COUNT BATCH, priced against measured lives
-    // (countplan.js). Replaces installgate's COUNT_MIN_BATCH floor as soon as
-    // tel.js has recorded enough completed lives to measure a fresh life's
-    // earnings ramp; until then installNow is null and the gate keeps the floor,
-    // naming why. The prices are every ticket still obtainable — base price
+    // WHEN TO INSTALL A COUNT BATCH (countplan.js), on a fresh life's earnings
+    // curve that is a STRUCTURAL PRIOR (countCurveOf: the exit model's
+    // fresh-life money, the hacking stream from the game's formulas) scaled
+    // by the node's completed lives as evidence — priced from the node's first
+    // life; installgate's COUNT_MIN_BATCH floor only when the model cannot be
+    // built at all (named). The prices are every ticket still obtainable — base price
     // (already live, node multiplier included) plus the donation a rep-short
     // one needs, which is what the ticket path would actually pay.
     const countTimingNow = (() => {
@@ -5630,7 +5842,7 @@ async function act(ns, canJoin, info, note) {
           // Wall-clock since the install — the same clock tel.js records the
           // ledger in, so the current life sits on the curve it is compared to.
           ageH: typeof since === 'number' && since > 0 ? (Date.now() - since) / 3600000 : null,
-          curve: freshCurve(readJson(ns, '/tel/earnings.txt'), info?.currentNode),
+          curve: countCurveOf(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)),
           freshStart: postInstallMoney(info?.currentNode), // $1262, or BN8's $250m (nodeecon)
         })
       } catch (err) {
@@ -6357,6 +6569,15 @@ async function act(ns, canJoin, info, note) {
                 augs: allCount.size,
                 // WHY this install ran, and whether it was the terminal one.
                 installWhy: String(gate.why ?? '').slice(0, 300),
+                // THE PURCHASE MODEL'S ln(M)/h this life was priced at (the
+                // exit inputs' cadence.model): the life's measured gain
+                // scores it (bayes.cadencePosterior's model error, from
+                // lives in other nodes).
+                cadenceModel: (() => {
+                  const r = readJson(ns, '/tel/exitinputs.txt')
+                  const m = r?.lastAugReset === info?.lastAugReset ? r?.inputs?.cadence?.model : null
+                  return m?.lnPerHour > 0 ? { lnPerHour: m.lnPerHour, cycleHours: m.cycleHours } : undefined
+                })(),
                 terminal: gate.terminal === true,
                 installBatch: [...bought],
                 // THE TRADER'S CAPITAL over this life (recorded for audit; NOT a return — the batch has spent

@@ -45,8 +45,9 @@
  * reputation rate is the published one (the formula estimate early in a life).
  */
 import { favorToRep, repToFavor } from 'favor.js'
-import { levelAt } from 'exitplan.js'
+import { levelAt, expRateShape } from 'exitplan.js'
 import { planHacknetBatch, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
+import { formulaErrorPosterior } from 'bayes.js'
 
 /** Hacknet purchase decisions per simulated fresh life (freshLifeMoney). */
 export const HACKNET_DECISIONS = 12
@@ -152,10 +153,25 @@ export function freshLifeMoney(inputs, L, scale = 1) {
   const cap = pos(inputs.capitalCap) ? inputs.capitalCap : Infinity
   const warmH = pos(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0
   const xps = pos(inputs.expPerSec) ? inputs.expPerSec : 0
+  // The exp rate rising with the level (exitplan.expRateShape), as the exit
+  // integrates it, when the inputs say so; else constant.
+  const xpsAt = expRateShape(xps, { scales: inputs.expScalesWithLevel === true, ref: inputs.hacking, flat: inputs.expFlatPerSec ?? 0 })
   let money = cash0
   let exp = 0
   const steps = 200
   const dt = (L * 3600) / steps
+  // THE HACKING STREAM FROM THE GAME'S FORMULAS (inputs.freshHackCum
+  // [[ageH, $ since the install]], freshlife.js x its error posterior —
+  // progress.js exitInputsOf), when supplied: the prep, the re-rooting and the
+  // level ramp as the formulas run them. Past its last point it continues at
+  // its last slope. Absent: the level-scaled rate below, as before.
+  const fh = Array.isArray(inputs.freshHackCum) && inputs.freshHackCum.length >= 2 ? inputs.freshHackCum : null
+  const fhAt = (h) => {
+    if (h <= fh[0][0]) return fh[0][1]
+    for (let i = 1; i < fh.length; i++) if (h <= fh[i][0]) return fh[i - 1][1] + ((fh[i][1] - fh[i - 1][1]) * (h - fh[i - 1][0])) / (fh[i][0] - fh[i - 1][0] || 1)
+    const n = fh.length
+    return fh[n - 1][1] + ((fh[n - 1][1] - fh[n - 2][1]) / (fh[n - 1][0] - fh[n - 2][0] || 1)) * (h - fh[n - 1][0])
+  }
   // THE HACKNET REBUILD (inputs.hacknet {mults, nodeMoney}, hacknet SERVERS
   // only): an install deletes the fleet (PlayerObjectGeneralMethods.ts:130)
   // and, outside node entry, nothing grants one back (Prestige.ts:329 runs in
@@ -181,17 +197,22 @@ export function freshLifeMoney(inputs, L, scale = 1) {
     }
     const lvl = levelAt(exp, inputs.hackingMult)
     const cg = r > 0 && h >= warmH ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
-    money += ((lvlIncome * (lvl + 50)) / 51 + flat + hashPerSec * DOLLARS_PER_HASH) * dt + Math.max(0, cg)
-    exp += xps * dt
+    const hackStep = fh ? Math.max(0, fhAt(h + dt / 3600) - fhAt(h)) : ((lvlIncome * (lvl + 50)) / 51) * dt
+    money += hackStep + (flat + hashPerSec * DOLLARS_PER_HASH) * dt + Math.max(0, cg)
+    exp += xpsAt(lvl) * dt
   }
   return cash0 + (money - cash0) * (pos(scale) ? scale : 1)
 }
 
 /**
- * THE MONEY MODEL'S CALIBRATION: earned-at-end over modelled-at-the-same-age
- * for the node's most recent completed lives in tel.js's earnings ledger
- * (/tel/earnings.txt), median. {scale, lives, ratios, why} — scale 1 with a
- * stated reason when nothing is measured.
+ * THE MONEY MODEL'S CALIBRATION, a posterior: the node's completed lives in
+ * tel.js's earnings ledger (/tel/earnings.txt), each y = ln(earned at its end
+ * / modelled at that age), update a scale that starts at 1 (the model as it
+ * stands) — bayes.formulaErrorPosterior (kind 'count', Student-t), each life
+ * weighing by its hours. It was the median of the last four lives' ratios:
+ * one life stood in for the model outright (live BN9: x1.056 from one). The
+ * `recent` window is kept (lives from an older catalogue say less). {scale,
+ * sd, lives, weight, ratios, why}.
  */
 export function moneyScaleOf(earnings, node, inputs, { recent = 4 } = {}) {
   const lives = Object.entries(earnings?.lives ?? {})
@@ -199,16 +220,20 @@ export function moneyScaleOf(earnings, node, inputs, { recent = 4 } = {}) {
     .sort((a, b) => Number(a[0]) - Number(b[0]))
     .slice(-recent)
   const ratios = []
-  for (const [, L] of lives) {
+  const res = []
+  for (const [k, L] of lives) {
     const [h, earned] = L.samples[L.samples.length - 1]
     const m = freshLifeMoney(inputs, h, 1)
     const cash0 = num(inputs?.installCash) ? inputs.installCash : 1262
-    if (pos(h) && pos(earned) && pos(m - cash0)) ratios.push(earned / (m - cash0))
+    if (pos(h) && pos(earned) && pos(m - cash0)) {
+      ratios.push(earned / (m - cash0))
+      res.push({ ln: Math.log(earned / (m - cash0)), hours: h, node, life: k })
+    }
   }
-  if (!ratios.length) return { scale: 1, lives: 0, ratios, why: 'UNCALIBRATED: no completed life in the earnings ledger — the exit model\'s fresh-life income taken as it is' }
-  const s = [...ratios].sort((a, b) => a - b)
-  const scale = s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2
-  return { scale, lives: ratios.length, ratios: ratios.map((x) => +x.toFixed(3)), why: `money model scaled x${scale.toFixed(3)} to the last ${ratios.length} completed lives' earnings (each life earned/modelled: ${ratios.map((x) => x.toFixed(2)).join(', ')})` }
+  const post = formulaErrorPosterior(res, 'count', { node })
+  const scale = Math.exp(post.mean)
+  if (!ratios.length) return { scale: 1, sd: post.sd, lives: 0, weight: 0, ratios, why: `no completed life in the earnings ledger yet: the money model as it stands (x/÷ ${Math.exp(1.2816 * post.sd).toFixed(1)} at 80%, stated)` }
+  return { scale, sd: post.sd, lives: ratios.length, weight: post.weight, ratios: ratios.map((x) => +x.toFixed(3)), why: `money model x${scale.toFixed(3)}: ${ratios.length} completed li${ratios.length === 1 ? 'fe' : 'ves'} (earned/modelled ${ratios.map((x) => x.toFixed(2)).join(', ')}) carry ${Math.round(100 * post.weight)}% of the scale` }
 }
 
 /**

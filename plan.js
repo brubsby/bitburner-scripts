@@ -61,7 +61,7 @@ const clock = () => {
  * Each is null when its data is absent — and then the draw keeps the point
  * input (named in `missing`), never a silent zero.
  */
-export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null } = {}) {
+export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null, expPost = null } = {}) {
   const jitter = jitterPosterior(optionPoints ?? [])
   const trader = stockRows ? traderPosterior(stockRows, { warmupH }) : null
   const drift = driftPosterior(exitSamples ?? [])
@@ -71,9 +71,9 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
   const missing = []
   if (!trader) missing.push('trader return (no stock history past warm-up): point input kept')
   if (!cadence) missing.push('install cadence (no life in any node with a measured gain): point cadence kept')
-  if (!exp) missing.push('exp rate (no observation): point kept')
+  if (!exp && !expPost) missing.push('exp rate (no observation): point kept')
   if (!rep) missing.push('rep rate (no observation): point kept')
-  return { trader, drift, calibration, cadence, exp, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
+  return { trader, drift, calibration, cadence, exp, expPost, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
 }
 
 // A held decision's reason: the decision's own, once — not re-prefixed every
@@ -107,7 +107,10 @@ export function makeDraws(post, N, seed) {
     const cad = post.cadence
     const ln = cad && fin(cad.rate?.mean) && fin(cad.rate?.sd) ? Math.exp(cad.rate.mean + cad.rate.sd * normalOf(st('cadenceRate'))) : null
     const cycleH = cad && fin(cad.life?.mean) && fin(cad.life?.sd) ? Math.exp(cad.life.mean + cad.life.sd * normalOf(st('cadenceLife'))) : null
-    const e = post.exp ? nigDraw(post.exp.post, st('exp')).mu - post.exp.mean : 0
+    // The script exp rate: the formula prior's posterior (bayes.ratePosterior,
+    // updated by this life's measurement) when there is one — its spread
+    // around the median the inputs carry; else the pass observations' own.
+    const e = post.expPost && fin(post.expPost.sd) ? post.expPost.sd * normalOf(st('exp')) : post.exp ? nigDraw(post.exp.post, st('exp')).mu - post.exp.mean : 0
     const repLn = post.rep ? nigDraw(post.rep.post, st('rep')).mu : null
     const gym = post.gymSdLn * normalOf(st('gym'))
     // Income drawn from the previous-lives prior (bayes.incomePrior) — used
@@ -134,19 +137,13 @@ export function applyDraw(inputs, d) {
   if (fin(d.r)) o.capitalReturnPerSec = d.r
   if (inputs.cadenceFrom === 'purchase model') {
     // The life's length is the purchase model's DECISION (lifeplan), not a
-    // random input: kept. What a life buys is scaled by this draw's measured
-    // rate against its median — the posterior's spread, on the model's level.
-    //
-    // ONLY BY THIS NODE'S OWN EVIDENCE (d.cadOwnW, the posterior's own-node
-    // weight): the purchase model's gain comes from THIS node's catalogue,
-    // money and reputation, so the cross-node spread of other nodes' cadences
-    // (x4.75 either way at 80% with no life here) is not its uncertainty.
-    // Applied in full it made the Monte Carlo mean ~1.2-2x the point exit
-    // (live BN9 2026-09-29: this draw alone, mean 130h, q90 211h, point
-    // 108h). With w = 0 the model's gain stands; the draws' spread then comes
-    // from the rates the model is fed (exp, rep, the trader), as it should.
-    const w = fin(d.cadOwnW) ? Math.min(1, Math.max(0, d.cadOwnW)) : 1
-    if (w > 0 && fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cadenceRateMedian) && inputs.cadenceRateMedian > 0 && fin(inputs.multGainPerCycle) && inputs.multGainPerCycle > 1) o.multGainPerCycle = Math.exp(Math.log(inputs.multGainPerCycle) * Math.pow(d.lnPerHour / inputs.cadenceRateMedian, w))
+    // random input: kept. What a life of that length buys is this draw's
+    // rate from the cadence posterior whose PRIOR is the purchase model
+    // (bayes.cadencePosterior modelPrior, its stated structural error) and
+    // whose evidence is this node's own gaining lives — the measured cadence
+    // moves the model by its precision, it no longer scales the model's gain
+    // by a power of its own weight.
+    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours)
   } else {
     if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
     if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
@@ -341,11 +338,11 @@ export function posteriorSummary(post) {
     driftWhy: post.drift.why,
     driftExcluded: post.drift.excluded ?? null,
     driftNu: post.drift.nu ?? null,
-    cadence: post.cadence ? { lnPerHour: post.cadence.lnPerHour, rateSdLn: post.cadence.rate.sd, cycleHours: post.cadence.cycleHours, lifeSdLn: post.cadence.life.sd, ownWeight: post.cadence.own.weight, ownLives: post.cadence.own.gained, stalls: post.cadence.own.stalls, dups: post.cadence.dups, why: post.cadence.why } : null,
-    exp: post.exp ? { n: post.exp.n, sdLn: post.exp.sd } : null,
+    cadence: post.cadence ? { lnPerHour: post.cadence.lnPerHour, rateSdLn: post.cadence.rate.sd, cycleHours: post.cadence.cycleHours, lifeSdLn: post.cadence.life.sd, ownWeight: post.cadence.own.weight, ownLives: post.cadence.own.gained, stalls: post.cadence.own.stalls, dups: post.cadence.dups, modelPrior: post.cadence.modelPrior ?? null, why: post.cadence.why } : null,
+    exp: post.expPost ? { perSec: post.expPost.perSec, sdLn: +post.expPost.sd.toFixed(3), measuredWeight: post.expPost.measuredWeight ?? 0, why: post.expPost.why } : post.exp ? { n: post.exp.n, sdLn: post.exp.sd } : null,
     rep: post.rep ? { n: post.rep.n, sdLn: post.rep.sd } : null,
     gymSdLn: post.gymSdLn,
-    income: post.income ? { perSec: post.income.perSec, sdLn: +post.income.sd.toFixed(3), lives: post.income.lives, why: post.income.why } : null,
+    income: post.income ? { perSec: post.income.perSec, sdLn: +post.income.sd.toFixed(3), lives: post.income.lives, source: post.income.source ?? null, measuredWeight: post.income.measuredWeight ?? 0, why: post.income.why } : null,
     optionErr: post.jitter ? { si: post.jitter.si, n: post.jitter.n, why: post.jitter.why } : null,
     stated: 'priors in bayes.js PRIORS / docs/bayes.md; the gym residual is NOT CALIBRATED (a stated prior)',
     missing: post.missing,

@@ -340,9 +340,9 @@ export async function run() {
     // The builder is exitInputsOf over exitInputsBaseOf (the purchase-model
     // cadence wraps the base): the feed lives in the base.
     const builder = src.slice(src.indexOf("function exitInputsBaseOf"), src.indexOf("function exitInputsBaseOf") + 2500);
-    if (!/expPerSecWithFleet\(exitExpPerSec\(ns, schedule\),/.test(builder)) c10.fail("exitInputsOf must feed the exit from exitExpPerSec");
+    if (!/expPerSecWithFleet\(exitExpPerSec\(ns, schedule(, expPostOf\(ns, info, player\)\?\.perSec \?\? null)?\),/.test(builder)) c10.fail("exitInputsOf must feed the exit from exitExpPerSec");
     for (const m of calls) {
-      if (!/^\s*exitExpPerSec\(ns, schedule\),/.test(m[1])) c10.fail(`exit exp rate fed from '${m[1].trim()}' — schedule.expPerSec alone is 0 while the batcher is not training and prices the climb at ~1e45h`);
+      if (!/^\s*exitExpPerSec\(ns, schedule[,)]/.test(m[1])) c10.fail(`exit exp rate fed from '${m[1].trim()}' — schedule.expPerSec alone is 0 while the batcher is not training and prices the climb at ~1e45h`);
     }
   }
   checks.push(c10);

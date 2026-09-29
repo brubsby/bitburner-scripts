@@ -76,6 +76,83 @@ export function hoursToLevel(level, mult, exp0, expPerSec) {
   return (need - exp0) / expPerSec / 3600
 }
 
+// ---------------------------------------------------------------------------
+// THE EXP RATE RISES WITH THE LEVEL (inputs.expScalesWithLevel).
+//
+// A thread's exp is fixed per op (Hacking.ts:30-38: (3 + 0.3 baseDifficulty) x
+// hacking_exp x HackExpGain) and an op lasts a time proportional to
+// 1 / (level + 50) (Hacking.ts:60-81), so a fleet of fixed RAM on its best exp
+// target earns exp at a rate proportional to (level + 50) — freshlife.js
+// simulates it, and at constant RAM its rate tracks (L + 50) to <1% (BN9 inputs:
+// 462 -> 501 exp/s from level 200 to 222, (272/250) = 1.088). The constant
+// rate the exit used was the rate AT TODAY'S LEVEL applied from level 1 after
+// every install: too fast at the bottom of a fresh life (the measured
+// "fresh-life lag" patched that) and far too slow at the top — the climb to
+// hacking 6000 ran at the level-200 rate. `rateAt(level)` gives exp/s at a
+// (continuous) level; the level follows the exp by calculateSkill (skill.ts:7).
+// ---------------------------------------------------------------------------
+
+/** The continuous level of an exp at a multiplier (calculateSkill without the floor). */
+const contLevel = (exp, mult) => mult * (32 * Math.log(Math.max(0, exp) + 534.6) - 200)
+const EXP_CHUNK = 0.01 // level chunk: 1% of (level + 50)
+const EXP_ITER_CAP = 5000
+
+/**
+ * Hours from `exp0` to the exp of `level` when the rate is `rateAt(level)`:
+ * chunks of 1% of (level + 50), each at its mid-level rate. Infinity when
+ * the rate is zero on the way; null on bad input.
+ */
+export function hoursToLevelShaped(level, mult, exp0, rateAt) {
+  if (!pos(mult) || !num(exp0) || exp0 < 0 || typeof rateAt !== 'function') return null
+  const need = expForLevel(level, mult)
+  if (need <= exp0) return 0
+  let E = exp0
+  let t = 0
+  for (let it = 0; E < need && it < EXP_ITER_CAP; it++) {
+    const l = contLevel(E, mult)
+    const dl = Math.max(0.5, EXP_CHUNK * (l + 50))
+    const E2 = Math.min(need, expForLevel(l + dl, mult))
+    const r = rateAt(l + dl / 2)
+    if (!(r > 0)) return Infinity
+    t += Math.max(0, E2 - E) / r
+    E = Math.max(E2, E + 1e-9)
+  }
+  return E >= need ? t / 3600 : Infinity
+}
+
+/** The exp after `hours` at `rateAt(level)`, from `exp0` (the chunks above, the last one partial). */
+export function expAfterHours(exp0, hours, mult, rateAt) {
+  if (!(hours > 0) || !pos(mult) || typeof rateAt !== 'function') return exp0
+  let E = Math.max(0, exp0)
+  let left = hours * 3600
+  for (let it = 0; left > 0 && it < EXP_ITER_CAP; it++) {
+    const l = contLevel(E, mult)
+    const dl = Math.max(0.5, EXP_CHUNK * (l + 50))
+    const E2 = expForLevel(l + dl, mult)
+    const r = rateAt(l + dl / 2)
+    if (!(r > 0)) return E
+    const need = Math.max(0, E2 - E) / r
+    if (need >= left) return E + r * left
+    left -= need
+    E = Math.max(E2, E + 1e-9)
+  }
+  return E
+}
+
+/**
+ * The exp-rate shape an exit run uses: constant (the old model, and the
+ * default) or rising with the level. `rate` is the rate at the reference
+ * level `ref` (today's), `flat` the part that does not move with the level
+ * (the sleeves' exp transfer). Returns rateAt(level).
+ */
+export function expRateShape(rate, { scales = false, ref = null, flat = 0 } = {}) {
+  const R = pos(rate) ? rate : 0
+  if (!scales || !pos(ref)) return () => R
+  const F = Math.min(R, pos(flat) ? flat : 0)
+  const k = (R - F) / (ref + 50)
+  return (level) => F + k * (Math.max(1, level) + 50)
+}
+
 /**
  * Hours to accumulate `target` money from `money0`, with income RISING as the
  * hacking level rises.
@@ -208,7 +285,9 @@ export function hoursToMoney(target, o = {}) {
       return h + hi / 3600
     }
     money += add
-    exp += pos(expPerSec) ? expPerSec * dt : 0
+    // o.expRateAt(level): the exp rate rising with the level (expRateShape),
+    // at the step's opening level; absent, the constant rate.
+    exp += typeof o.expRateAt === 'function' ? Math.max(0, o.expRateAt(lvl)) * dt : pos(expPerSec) ? expPerSec * dt : 0
     h += sH
   }
   return Infinity
@@ -415,6 +494,13 @@ export function exitHours(o = {}) {
     // Under any policy with an install it ends before any leg simulated here,
     // so it does nothing. Default 1: every other caller prices as before.
     preInstallExpMult = 1,
+    // THE EXP RATE RISES WITH THE LEVEL (expRateShape): expPerSec is the rate
+    // at today's level `hacking`, and every leg integrates it as (level + 50)
+    // (freshlife.js, the game's hack/grow/weaken times). expFlatPerSec is the
+    // part that does not (the sleeves' exp transfer). Absent: the constant
+    // rate, exactly as before.
+    expScalesWithLevel = false,
+    expFlatPerSec = 0,
   } = o
   // INCOME THAT THE NEXT INSTALL DESTROYS (lifeIncome, $/s): hacknet
   // production — hashes sold, or a node's money — from servers/nodes that
@@ -555,11 +641,19 @@ export function exitHours(o = {}) {
   // climb whatever is added to the rate in between (a Covenant sleeve).
   let preExpBoost = installsFirst === 0 && pos(preInstallExpMult) && preInstallExpMult !== 1 && pos(expRate) ? expRate * (preInstallExpMult - 1) : 0
   expRate += preExpBoost
+  // The exp model of every leg below: constant, or rising with the level
+  // from today's rate at today's level (expRateShape). The flat part (the
+  // sleeves', a Covenant sleeve's) does not rise.
+  const shaped = expScalesWithLevel === true && pos(hacking)
+  let expFlat = shaped && pos(expFlatPerSec) ? expFlatPerSec : 0
+  const expAt = () => expRateShape(expRate, { scales: shaped, ref: hacking, flat: expFlat })
+  const expAdv = (e, hours) => (shaped ? expAfterHours(e, hours, mult, expAt()) : e + (pos(expRate) ? expRate * hours * 3600 : 0))
+  const climbTo = (level, e) => (shaped ? hoursToLevelShaped(level, mult, e, expAt()) : hoursToLevel(level, mult, e, expRate))
   const moneyLeg = (target, targetAt = null) => {
     const t0 = h
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -605,7 +699,7 @@ export function exitHours(o = {}) {
       const hm = moneyLeg(startAt)
       if (!num(hm)) return { hours: null, why: 'could not price the money the grafting starts at' }
       h += hm
-      exp += pos(expRate) ? expRate * hm * 3600 : 0
+      exp = expAdv(exp, hm)
       cash = startAt
       legs.push({ leg: 'graft start money', hours: hm, detail: `$${Math.round(startAt)} before the first graft` })
     }
@@ -615,7 +709,7 @@ export function exitHours(o = {}) {
         const hm = moneyLeg(g.cost)
         if (!num(hm)) return { hours: null, why: `could not price the money for graft ${g.name}` }
         h += hm
-        exp += pos(expRate) ? expRate * hm * 3600 : 0
+        exp = expAdv(exp, hm)
         cash = g.cost
         legs.push({ leg: 'graft money', hours: hm, detail: `$${Math.round(g.cost)} for ${g.name}` })
       }
@@ -641,13 +735,16 @@ export function exitHours(o = {}) {
       const hm = moneyLeg(target)
       if (!num(hm)) return { hours: null, why: 'could not price the Covenant money leg' }
       h += hm
-      exp += pos(expRate) ? expRate * hm * 3600 : 0
+      exp = expAdv(exp, hm)
       cash = target
       legs.push({ leg: 'covenant money', hours: hm, detail: `$${Math.round(target)} in hand` })
     }
     cash -= covenant.cost
     slotH += covenant.member ? 0 : covenant.combatH
-    if (pos(covenant.sleeveExpPerSec)) expRate = (pos(expRate) ? expRate : 0) + covenant.sleeveExpPerSec
+    if (pos(covenant.sleeveExpPerSec)) {
+      expRate = (pos(expRate) ? expRate : 0) + covenant.sleeveExpPerSec
+      expFlat += shaped ? covenant.sleeveExpPerSec : 0
+    }
   }
 
   if (joinMoney > cash) {
@@ -657,7 +754,7 @@ export function exitHours(o = {}) {
     cash = joinMoney
     legs.push({ leg: 'hoard join money', hours: hm, detail: `$${Math.round(joinMoney)} in hand` })
     // The hoard leg also banks exp, which the climb below inherits.
-    exp += pos(expRate) ? expRate * hm * 3600 : 0
+    exp = expAdv(exp, hm)
   }
   // THE JOIN'S HACKING LEVEL, concurrent with the hoard (the exp banked
   // while hoarding counts): the invitation needs the level AND the money in
@@ -665,10 +762,10 @@ export function exitHours(o = {}) {
   // Live 2026-09-26 the plan chose to install while the legacy gate held on
   // the join money; the plan's trajectory now carries the whole join.
   if (pos(joinLevel) && joinMoney > 0 && pos(mult) && levelAt(exp, mult) < joinLevel) {
-    const hj = hoursToLevel(joinLevel, mult, exp, expRate)
+    const hj = climbTo(joinLevel, exp)
     if (!num(hj)) return { hours: null, why: `could not price the climb to the join level ${joinLevel}` }
     h += hj
-    exp += pos(expRate) ? expRate * hj * 3600 : 0
+    exp = expAdv(exp, hj)
     legs.push({ leg: 'climb to join level', hours: hj, detail: `hacking ${joinLevel} with $${Math.round(joinMoney)} in hand` })
   }
 
@@ -729,7 +826,7 @@ export function exitHours(o = {}) {
           break
         }
         acc += add
-        e += pos(expRate) ? expRate * dt * 3600 : 0
+        e = expAdv(e, dt)
         t += dt
       }
       r = { hours: t, how: 'ground' }
@@ -738,7 +835,7 @@ export function exitHours(o = {}) {
     h += r.hours
     if (r.how === 'ground') slotH += r.hours
     legs.push({ leg: 'exit reputation', hours: r.hours, detail: `${Math.round(terminalRep)} rep, ${r.how}` })
-    exp += pos(expRate) ? expRate * r.hours * 3600 : 0
+    exp = expAdv(exp, r.hours)
   }
 
   // The final install: skills reset, and the climb runs on the multiplier we
@@ -763,7 +860,27 @@ export function exitHours(o = {}) {
     const sExp = sleeveRateFn(sleeveExp)
     if (!pos(mult)) climb = null
     else if (need <= 0) climb = 0
-    else {
+    else if (shaped) {
+      // Rising with the level: per segment the player's shaped rate plus the
+      // sleeve's constant one, the level chunks of hoursToLevelShaped.
+      let acc = 0
+      let t = h
+      climb = Infinity
+      const base = expAt()
+      for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
+        const s = sExp(t)
+        const rateAt = (l) => base(l) + s
+        const span = b - t
+        const tn = hoursToLevelShaped(exitLevel, mult, acc, rateAt)
+        if (num(tn) && tn <= span) {
+          climb = t - h + tn
+          break
+        }
+        if (!isFinite(span)) break
+        acc = expAfterHours(acc, span, mult, rateAt)
+        t = b
+      }
+    } else {
       let acc = 0
       let t = h
       climb = Infinity
@@ -779,7 +896,7 @@ export function exitHours(o = {}) {
         t = b
       }
     }
-  } else climb = hoursToLevel(exitLevel, mult, 0, expRate)
+  } else climb = climbTo(exitLevel, 0)
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
   // The climb starts in a FRESH life: exp reset, fleet re-rooted, low targets
   // first — its measured lag behind a constant rate is charged once.
@@ -790,7 +907,7 @@ export function exitHours(o = {}) {
   // concurrent with the climb — only the excess binds.
   if (pos(finalRootCost)) {
     const money0 = num(installCash) && installCash >= 0 ? installCash : 1262
-    const rootH = finalRootCost <= money0 ? 0 : hoursToMoney(finalRootCost, { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 })
+    const rootH = finalRootCost <= money0 ? 0 : hoursToMoney(finalRootCost, { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 })
     if (!num(rootH)) return { hours: null, why: 'could not price re-buying the port openers after the terminal install' }
     const extra = Math.max(0, rootH - (climb + lagH))
     legs.push({ leg: 'root w0r1d_d43m0n', hours: extra, detail: `$${Math.round(finalRootCost)} of openers from $${Math.round(money0)} after the install: ${rootH.toFixed(2)}h, concurrent with the climb` })
@@ -1197,8 +1314,8 @@ export function spendExitFromRecord(record, lastAugReset, cost, gainPerSec, now 
  * node, lives, weight, posterior, why } or null when no life in any node has
  * a measured gain.
  */
-export function installCadence(ledger, node, { hackMultNow = null, covOf = null } = {}) {
-  const c = cadencePosterior(ledger, node, { hackMultNow, covOf })
+export function installCadence(ledger, node, { hackMultNow = null, covOf = null, modelPrior = null } = {}) {
+  const c = cadencePosterior(ledger, node, { hackMultNow, covOf, modelPrior })
   if (!c) return null
   return {
     stats: { cycleHours: c.cycleHours, multGainPerCycle: c.multGainPerCycle, lnPerHour: c.lnPerHour, n: c.own.lives },

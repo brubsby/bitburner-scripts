@@ -103,7 +103,30 @@ const EARN_LIVES = 8
 /** Income sources only — every expense source is left out on purpose. */
 const INCOME_SOURCES = ['hacking', 'hacknet', 'gang', 'codingcontract', 'crime', 'work', 'stock', 'infiltration', 'sleeves', 'corporation', 'bladeburner', 'darknet']
 
-function recordEarnings(ns, self) {
+/**
+ * THE FRESH-LIFE FORMULA'S INPUTS, recorded with the earnings (freshlife.js
+ * replays each completed life on its own inputs and scores the formula
+ * against what it earned — bayes.formulaErrorPosterior). Per sample: the
+ * player's hacking exp and the RAM the batcher had — home, purchased servers,
+ * the rooted network — and the exp farm's share of it (batch.txt, when fresh).
+ * Per life, once: the hacking multipliers and intelligence the formulas take.
+ * `fleet` {homeRam, pservGB, netGB} from this pass's scan; `player` getPlayer().
+ */
+function farmShareNow(ns, self) {
+  try {
+    if (self !== 'home') ns.scp('/tel/batch.txt', self, 'home')
+    const b = JSON.parse(ns.read('/tel/batch.txt') || 'null')
+    if (!b || !(Date.now() - Date.parse(b.at) < 10 * 60e3)) return null
+    if (!b.expFarm) return 0
+    const held = b.expFarm.heldGB ?? 0
+    const pipes = b.ram?.reservedForPipelines ?? 0
+    return held + pipes > 0 ? Math.round((held / (held + pipes)) * 1000) / 1000 : null
+  } catch {
+    return null
+  }
+}
+
+function recordEarnings(ns, self, fleet = null, player = null) {
   const info = ns.getResetInfo()
   const src = ns.getMoneySources()?.sinceInstall ?? {}
   const earned = INCOME_SOURCES.reduce((sum, k) => sum + Math.max(0, typeof src[k] === 'number' && isFinite(src[k]) ? src[k] : 0), 0)
@@ -140,7 +163,14 @@ function recordEarnings(ns, self) {
   // streams (exitplan capitalReturnPerSec, lifeIncome) — in the total they
   // were counted twice.
   const hackEarned = typeof src.hacking === 'number' && isFinite(src.hacking) ? Math.max(0, src.hacking) : 0
-  L.samples.push([Math.round(ageH * 1e4) / 1e4, Math.round(earned), Math.round(hackEarned)])
+  // [.., hackExp, homeRam, pservGB, netGB, farmShare]: the formula's inputs
+  // at this age (freshlife.replayLife). null where unread — never a zero.
+  const fin = (v) => (typeof v === 'number' && isFinite(v) ? v : null)
+  L.samples.push([Math.round(ageH * 1e4) / 1e4, Math.round(earned), Math.round(hackEarned), fin(player?.exp?.hacking) === null ? null : Math.round(player.exp.hacking), fin(fleet?.homeRam), fin(fleet?.pservGB), fin(fleet?.netGB), farmShareNow(ns, self)])
+  if (!L.inputs && player?.mults) {
+    const m = player.mults
+    L.inputs = { mults: { hacking: m.hacking, hacking_exp: m.hacking_exp, hacking_speed: m.hacking_speed, hacking_money: m.hacking_money, hacking_grow: m.hacking_grow, hacking_chance: m.hacking_chance }, intelligence: player.skills?.intelligence ?? 0 }
+  }
   const keys = Object.keys(led.lives).sort((a, b) => Number(a) - Number(b))
   while (keys.length > EARN_LIVES) delete led.lives[keys.shift()]
   ns.write(EARN, JSON.stringify(led), 'w')
@@ -308,7 +338,13 @@ export async function main(ns) {
       // exists to publish.
       if (Date.now() - lastEarnAt >= EARN_EVERY_MS) {
         try {
-          recordEarnings(ns, self)
+          const fleet = { homeRam: 0, pservGB: 0, netGB: 0 }
+          for (const x of report.servers) {
+            if (x.host === 'home') fleet.homeRam = x.maxRam
+            else if (x.host.startsWith('pserv-')) fleet.pservGB += x.maxRam
+            else fleet.netGB += x.maxRam
+          }
+          recordEarnings(ns, self, fleet, player)
           lastEarnAt = Date.now()
         } catch (err) {
           ns.print(`tel: earnings ledger not written: ${describe(err)}`)
