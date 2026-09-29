@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
+import { DirWatcher, PushLedger, TRACKED_EXT } from "./pushwatch.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RFA_PORT = Number(process.env.RFA_PORT ?? 12525);
@@ -27,6 +28,12 @@ const SAVE_POLL_MS = Number(process.env.SAVE_POLL_MS ?? 30_000);
 // DRIFT_SWEEP_EVERY polls it also checks the copies on other servers.
 const DRIFT_FULL_EVERY = Number(process.env.DRIFT_FULL_EVERY ?? 10); // ~5 min
 const DRIFT_SWEEP_EVERY = Number(process.env.DRIFT_SWEEP_EVERY ?? 20); // ~10 min
+// Disk rescan against the push ledger — the safety net under the file watcher
+// (see tools/pushwatch.mjs). Disk-only: ~140 stat() calls, no RPC unless a
+// file actually changed and was not pushed. The grace keeps it from racing a
+// watcher push that is merely in its 150ms debounce.
+const SCAN_MS = Number(process.env.PUSH_SCAN_MS ?? 5_000);
+const SCAN_GRACE_MS = Number(process.env.PUSH_SCAN_GRACE_MS ?? 2_000);
 
 // Directories we never sync into the game.
 const SKIP_DIRS = new Set(["node_modules", "tools", "variants", "archive", "min", ".git", ".telemetry", ".idea"]);
@@ -156,9 +163,22 @@ async function propagate(remote, content) {
   return targets.length;
 }
 
-async function pushFile({ local, remote }, { verify = true } = {}) {
+// What was last delivered per file, and what is on disk now — published on
+// /status as `push` so a silent gap is visible from outside (healthcheck).
+const ledger = new PushLedger();
+const inflight = new Set();
+
+async function pushFile({ local, remote }, { verify = true, via = "watch" } = {}) {
   const content = fs.readFileSync(local, "utf8");
-  await rpc("pushFile", { filename: remote, content, server: "home" });
+  inflight.add(remote);
+  try {
+    await rpc("pushFile", { filename: remote, content, server: "home" });
+  } catch (e) {
+    ledger.recordError(remote, e.message ?? e);
+    throw e;
+  } finally {
+    inflight.delete(remote);
+  }
   let ram = null;
   if (/\.(js|jsx|ts|tsx)$/.test(remote)) {
     ram = await rpc("calculateRam", { filename: remote, server: "home" }).catch((e) => String(e.message ?? e));
@@ -172,7 +192,8 @@ async function pushFile({ local, remote }, { verify = true } = {}) {
   // catches it at the moment it happens rather than two debugging sessions
   // later. syncAll passes verify:false and checks the whole set once at the end
   // instead, so a 66-file sync does not double its RPC count.
-  if (verify) await readback(remote, content, "home");
+  if (!verify || (await readback(remote, content, "home"))) ledger.recordPush(remote, local, content, via);
+  else ledger.recordError(remote, "readback mismatch after push");
   // Only scripts get copied around in-game, and only worth doing once we have
   // seen the server list at least once.
   if (/\.(js|jsx|ts|tsx)$/.test(remote) && knownHosts.size > 1) await propagate(remote, content);
@@ -189,7 +210,7 @@ async function syncAll() {
   const invalid = [];
   for (const f of files) {
     try {
-      const ram = await pushFile(f, { verify: false });
+      const ram = await pushFile(f, { verify: false, via: "sync" });
       ok++;
       if (typeof ram === "string") invalid.push(f);
     } catch (e) {
@@ -223,6 +244,8 @@ async function syncAll() {
  * the class of surprise this project does not need.
  */
 let lastDriftKey = "";
+let lastDriftCount = 0;
+let driftSince = null;
 
 async function driftCheck({ sweepOthers = false, full = false } = {}) {
   if (!socket || socket.readyState !== socket.OPEN) return null;
@@ -297,6 +320,9 @@ async function driftCheck({ sweepOthers = false, full = false } = {}) {
     log("deploy back in sync");
   }
   lastDriftKey = key;
+  lastDriftCount = problems.length;
+  if (!problems.length) driftSince = null;
+  else driftSince ??= new Date().toISOString();
   return problems;
 }
 
@@ -493,15 +519,26 @@ setInterval(async () => {
 }, SAVE_POLL_MS);
 
 /* ------------------------------------------------------------ file watcher */
+//
+// NOT `fs.watch(ROOT, { recursive: true })`. On Linux Node implements that in
+// JS with one inotify watch per FILE inode, keyed by path, and never re-watches
+// a path whose inode was replaced — so after one atomic save (write temp,
+// rename over) a file is deaf for the rest of the daemon's life. That is what
+// left go.js and objective.js undelivered for 20+ minutes on 2026-09-28 while
+// goplan.js, edited in place, kept working. Full account in
+// tools/pushwatch.mjs. DirWatcher watches directories instead, which report
+// children by name and cannot be orphaned by an inode swap; the ledger scan
+// below catches anything it still misses.
 
 const debounce = new Map();
-fs.watch(ROOT, { recursive: true }, (_event, filename) => {
-  if (!filename) return;
-  const rel = filename.split(path.sep).join("/");
-  if (rel.split("/").some((seg) => SKIP_DIRS.has(seg)) || rel.startsWith(".")) return;
-  if (!/\.(js|jsx|ts|tsx|txt|script)$/.test(rel)) return;
-  if (rel === "NetscriptDefinitions.d.ts") return;
+const isTrackedRel = (rel) => {
+  if (rel.split("/").some((seg) => SKIP_DIRS.has(seg)) || rel.startsWith(".")) return false;
+  if (!TRACKED_EXT.test(rel)) return false;
+  return rel !== "NetscriptDefinitions.d.ts";
+};
 
+function onDiskChange(rel) {
+  if (!isTrackedRel(rel)) return;
   clearTimeout(debounce.get(rel));
   debounce.set(
     rel,
@@ -510,7 +547,10 @@ fs.watch(ROOT, { recursive: true }, (_event, filename) => {
       const local = path.join(ROOT, rel);
       if (!fs.existsSync(local)) {
         await rpc("deleteFile", { filename: rel, server: "home" }).then(
-          () => log(`delete ${rel}`),
+          () => {
+            ledger.recordDelete(rel);
+            log(`delete ${rel}`);
+          },
           (e) => log(`delete ${rel} failed: ${e.message ?? e}`),
         );
         return;
@@ -518,7 +558,47 @@ fs.watch(ROOT, { recursive: true }, (_event, filename) => {
       await pushFile({ local, remote: rel }).catch((e) => log(`push ${rel} failed: ${e.message ?? e}`));
     }, 150),
   );
-});
+}
+
+const watcher = new DirWatcher({
+  root: ROOT,
+  skipDir: (rel, name) => SKIP_DIRS.has(name) || name.startsWith("."),
+  onChange: onDiskChange,
+  onError: (dir, e) => log(`watcher error on ${dir || "."}: ${e.message ?? e} — will re-watch on the next scan`),
+}).sync();
+log(`watching ${watcher.watchers.size} director(ies) for changes`);
+
+// The safety net. A watcher that stops firing produces no event and therefore
+// no log line — the push path cannot notice its own absence. This scan can: it
+// compares disk with what was last pushed, and anything changed-but-unpushed
+// for longer than the grace is pushed and reported as a WATCHER MISS. It never
+// touches a file the game changed (disk unchanged => not pending), so it is not
+// drift repair; driftCheck still only reports.
+let scanning = false;
+setInterval(async () => {
+  if (scanning) return;
+  scanning = true;
+  try {
+    watcher.sync();
+    const pend = ledger.scan(trackedFiles());
+    if (!pend.length || !socket || socket.readyState !== socket.OPEN) return;
+    const missed = pend.filter((p) => p.ageMs >= SCAN_GRACE_MS && !debounce.has(p.remote) && !inflight.has(p.remote));
+    if (!missed.length) return;
+    loud([
+      `WATCHER MISS: ${missed.length} file(s) changed on disk and were never pushed`,
+      ...missed.map((p) => `  ${p.remote} — unpushed for ${(p.ageMs / 1000).toFixed(0)}s`),
+      `  pushing them now from the disk scan; watcher: ${JSON.stringify(watcher.state())}`,
+    ]);
+    ledger.recordMiss(missed.map((p) => p.remote));
+    for (const p of missed) {
+      await pushFile(p, { via: "scan" }).catch((e) => log(`push ${p.remote} failed: ${e.message ?? e}`));
+    }
+  } catch (e) {
+    log(`push scan error: ${e.message ?? e}`);
+  } finally {
+    scanning = false;
+  }
+}, SCAN_MS);
 
 /* ----------------------------------------------------------- go solver */
 //
@@ -628,6 +708,10 @@ http
             connected: !!socket && socket.readyState === socket.OPEN,
             tracked: trackedFiles().length,
             lastTelemetry: lastDigest?.at ?? null,
+            // Auto-push delivery, so "is it actually pushing?" has an answer
+            // other than waiting for drift. tools/healthcheck.mjs reads this and
+            // shouts AUTO-PUSH NOT DELIVERING when anything stays pending.
+            push: { ...ledger.state(), watcher: watcher.state(), drift: { files: lastDriftCount, since: driftSince } },
             // Published so "is the solver alive?" is answerable without ps.
             // go.js can see its own remoteMoves but not why they stopped.
             goSolver: !GO_SOLVER

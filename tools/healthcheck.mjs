@@ -34,6 +34,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoPushVerdict } from "./pushwatch.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -109,6 +110,40 @@ else if (verify.error) {
 } else if (!verify.ok) {
   const list = verify.problems ?? [];
   fail(`${list.length} file(s) differ between disk and the game`, list.slice(0, 5).join("; "));
+}
+
+// A difference that PERSISTS is a different finding from one that exists: a
+// save seconds ago is legitimately in flight, but on 2026-09-28 go.js sat
+// "STALE on home" for 20+ minutes with every component reporting healthy —
+// the daemon's watcher had gone deaf to it (tools/pushwatch.mjs). So remember
+// when each host:file difference was first seen, across runs, and combine it
+// with the daemon's own push ledger (/status .push).
+if (!status.__error) {
+  const DRIFT_SEEN = path.join(TEL, "healthcheck-drift.json");
+  const AUTO_PUSH_MAX_MIN = 5;
+  const verifiable = !verify.__error && !verify.error;
+  let firstSeen = {};
+  try {
+    firstSeen = JSON.parse(fs.readFileSync(DRIFT_SEEN, "utf8"));
+  } catch {
+    /* first run */
+  }
+  const v = autoPushVerdict({
+    status,
+    problems: verifiable ? verify.problems ?? [] : [],
+    firstSeen: verifiable ? firstSeen : {},
+    now: Date.now(),
+    maxMin: AUTO_PUSH_MAX_MIN,
+  });
+  for (const f of v.fails) fail(f.what, f.detail);
+  for (const n of v.notes) note(n);
+  if (verifiable) {
+    try {
+      fs.writeFileSync(DRIFT_SEEN, JSON.stringify(v.firstSeen, null, 1));
+    } catch {
+      /* non-fatal: the daemon-side pending clock still works */
+    }
+  }
 }
 
 /* ------------------------------------------------- C. liveness + health */

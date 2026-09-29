@@ -181,6 +181,18 @@ catches the case where the file watcher never fired at all and no push-path
 code ran to notice. Both log a `!!!!!` banner naming the file. Mismatches are
 reported, never auto-fixed.
 
+**Root cause found 2026-09-28** (go.js/objective.js undelivered for 20+ min):
+`fs.watch(ROOT, {recursive:true})` on Linux is Node's JS emulation — one inotify
+watch per file *inode*, never re-armed when a save replaces the inode (write
+temp + rename). One atomic save and that file is deaf for the daemon's life.
+The daemon now watches *directories* (`tools/pushwatch.mjs` DirWatcher) and
+rescans disk every 5s against a push ledger; anything changed-but-unpushed is
+pushed with a `WATCHER MISS` banner. `/status` publishes `push` (last push,
+pending count, oldest pending, misses, watcher state), and
+`tools/healthcheck.mjs` fails with **AUTO-PUSH NOT DELIVERING** when a home file
+differs from disk for >= 5 min. A daemon without `push` on `/status` predates
+the fix and needs a restart.
+
 Editing a file does **not** restart it. A running script keeps its old code until
 killed; `watchdog.js` revives anything in its list within 30s, so the usual way
 to reload something is to kill it and let the watchdog bring it back.
