@@ -30,6 +30,12 @@
 //        the same inputs — every step under 10ms, each the same answer as its
 //        synchronous form, and the install decision after them still prices
 //        all 24 draws (the search is not charged to the draws' budget)
+//   PP5  THE 21:12Z RE-DECISION (fixture-bn9-redecide-2112: PLAN UNDER-
+//        SAMPLED, install 5 of 24 draws on the 784ms the graft and 4S draws
+//        left, 26 options on 21 grafts): the options screened by point (the
+//        incumbent always, the best PLAN.installTopK within reach) and the
+//        budget floored at PLAN.installFloorMs — 24/24 draws; the screen keeps
+//        the unscreened decision's choice
 //   PP4  PLAN INCONSISTENT (13:56, 71.683h vs 74.324h, both n = 24): the
 //        install decision re-plans its committed batch while the graft
 //        decision priced the last pass's — same noise and inputs keys, another
@@ -391,6 +397,53 @@ export async function run() {
     if (!/chooseGraftsGen\(\{ candidates: cands, priceExit, priceExitGen: \(x\) => trajGen\(x\),/.test(prog)) c.fail("progress.js must price the graft search as generators (chooseGraftsGen priceExitGen: trajGen)");
     if (!/await paced\(exitInputsGen\(/.test(prog) || !/yield\* purchaseCadenceGen\(/.test(prog) || !/yield\* cadenceByPurchasesGen\(/.test(prog)) c.fail("progress.js must build the pass's first exit inputs in slices (exitInputsGen -> purchaseCadenceGen -> cadenceByPurchasesGen)");
     if (!/const withoutIn = \{ \.\.\.\(yield\* inputsGen\(\)\) \}/.test(prog)) c.fail("the graft decision must build its inputs as a generator");
+    checks.push(c);
+  }
+
+  // ---------------------------------------------------------------------
+  {
+    const c = new Check("PP5", "THE INSTALL DECISION GETS ITS DRAWS: the live 21:12Z re-decision (26 options, 784ms left: 5 of 24 draws) replayed — screened by point and floored, all 24 draws; the incumbent always in the draws");
+    const R = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-redecide-2112.json"), "utf8"));
+    const RI = R.exitinputs;
+    const at = Date.parse(R.at);
+    const g = R.install.gains;
+    const draws = P.makeDraws(postOf(R.posteriors), P.PLAN.N, P.seedOf(R.lastAugReset, R.node));
+    // The live waits (their keys); their batches are not in the record, so a wait from 2h on carries the batch the
+    // decision chose and a shorter one none (as PP3's gainsFromH), and every point is priced HERE on those specs —
+    // the screen and the draws read one model.
+    const H = (spec) => P.trajectoryOf(spec)(RI);
+    const waits = R.install.options.filter((o) => /^w[\d.]+$/.test(o.key)).map((o) => {
+      const w = +o.key.slice(1);
+      const gw = w >= 2 ? g : null;
+      return { waitH: w, hours: H({ kind: "wait", waitH: w, gains: gw }), installGains: gw };
+    });
+    const point = { now: { hours: H({ kind: "wait", waitH: 0 }) }, waits, never: { hours: H({ kind: "never" }) }, committedGains: R.prev.gains };
+    const run = async (budgetMs, extra = {}) => {
+      const pacer = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)), memory: new Map() });
+      const d = await pacer.slices(P.decideInstallGen({ inputs: RI, point, prev: R.prev, draws, redecide: true, budgetMs, clock: pacer.cpuNow, now: at, reachSd: R.posteriors.s, ...extra }), "plan-install");
+      return { d, sec: pacer.stats.sections["plan-install"], block: pacer.stats.maxBlockMs };
+    };
+    const left = R.install.budgetLeftMs;
+    const fixed = await run(Math.max(left, P.PLAN.installFloorMs));
+    const all = await run(1e9, { installTopK: Infinity, installReach: Infinity });
+    const optsN = (fixed.d.options?.length ?? 0) + (fixed.d.screened?.length ?? 0);
+    c.examined(3);
+    c.note(`live 21:12Z: ${R.install.key} ${R.install.meanH}h on ${R.install.n}/24 draws, ${R.install.options.length} options, ${R.install.ms}ms (overBudget ${R.install.overBudget})`);
+    c.note(`screened + floored (${Math.max(left, P.PLAN.installFloorMs)}ms): ${fixed.d.key} ${fixed.d.meanH}h on ${fixed.d.n}/24, ${fixed.d.options?.length} of ${optsN} options (${fixed.d.screen}), ${fixed.d.ms}ms work, longest step ${fixed.sec.maxStepMs.toFixed(1)}ms`);
+    c.note(`every option, unbounded: ${all.d.key} ${all.d.meanH}h on ${all.d.n}/24, ${all.d.options?.length} options, ${all.d.ms}ms work (x${(all.d.ms / fixed.d.ms).toFixed(1)})`);
+    if (!(fixed.d.n === P.PLAN.N && fixed.d.overBudget === false)) c.fail(`the install decision must price all ${P.PLAN.N} draws on the 21:12Z re-decision (${fixed.d.n}, over budget ${fixed.d.overBudget})`);
+    if (!(optsN === R.install.options.length)) c.fail(`fixture: the replay must offer the live ${R.install.options.length} options (${optsN})`);
+    if (!(fixed.d.options.some((o) => o.key === "committed"))) c.fail("the committed incumbent must always be in the draws");
+    if (!(fixed.d.options.length <= P.PLAN.installTopK + 1)) c.fail(`at most the incumbent and ${P.PLAN.installTopK} challengers (${fixed.d.options.length})`);
+    if (!(fixed.d.key === all.d.key)) c.fail(`the screen must not change the choice here: ${fixed.d.key} vs every option's ${all.d.key}`);
+    if (!(fixed.d.ms <= 0.67 * P.PLAN.installFloorMs)) c.fail(`the screened decision must fit its floor with margin on the dev machine (live 21:12Z priced ~6ms a simulation, as here): ${fixed.d.ms}ms of ${P.PLAN.installFloorMs}ms`);
+    if (!(fixed.sec.maxStepMs < 10)) c.fail(`a ${fixed.sec.maxStepMs.toFixed(1)}ms step`);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/budgetMs: Math\.max\(planBudgetLeft\(pc\), PLAN\.installFloorMs\)/.test(prog) || !/reachSd: pc\.post\?\.drift\?\.s/.test(prog)) c.fail("progress.js must floor the install decision's budget and pass the structural error to its screen");
+    // The screen itself: the incumbent kept even when its point is the worst; unpriced points only as the incumbent.
+    const mk = (key, pointH) => ({ key, pointH });
+    const sc = P.installScreenOf([mk("a", 10), mk("b", 10.5), mk("c", 11), mk("d", 20), mk("committed", 30), mk("e", null)], "committed", { topK: 2, reach: 3, sd: 0.1 });
+    if (!(sc.use.map((o) => o.key).join() === "a,b,committed" && sc.screened.map((o) => o.key).join() === "c,d,e")) c.fail("installScreenOf: the incumbent and the best topK within reach", JSON.stringify(sc));
     checks.push(c);
   }
 

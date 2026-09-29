@@ -43,6 +43,17 @@ export const PLAN = {
   maxAgeMin: 30, // re-decide at least this often even without an event
   switchCostH: 0.05, // a re-order's own cost (stated); travel/commission added per option
   topK: 6, // routes carried into the Monte Carlo besides the committed one
+  // THE INSTALL DECISION ACTS, so it always gets its draws. On a re-decision
+  // it prices every wait the batch planner offers (26 options live BN9
+  // 2026-09-29 21:12Z, on a 21-graft set) after the graft and 4S draws had
+  // spent the pass's budget: 5 of 24 draws (PLAN UNDER-SAMPLED). Now the
+  // options are SCREENED by their point (installScreenOf: the committed
+  // incumbent always, then the best installTopK within installReach
+  // structural errors of the best point), and the decision's budget has a
+  // floor (installFloorMs) whatever the decisions before it spent.
+  installTopK: 3,
+  installReach: 3,
+  installFloorMs: 1000,
   traderMoveSd: 1, // posterior mean moved by this many sds = an event
   driftMoveFactor: 1.5, // structural error scale moved by this factor = an event
 }
@@ -610,7 +621,7 @@ export function decideInstall(o = {}) {
   return drain(decideInstallGen(o))
 }
 /** The generator decideInstall drains (yields inside the Monte Carlo). */
-export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock } = {}) {
+export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null } = {}) {
   const opts = []
   const ctx = { count, repPoint }
   // Every option is a TRAJECTORY SPEC (trajectoryOf): the same spec prices the
@@ -693,7 +704,8 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     }
   }
   if (!opts.length) return { key: null, install: false, why: 'no install option priced', decidedAt: prev?.decidedAt ?? null }
-  const use = !redecide && committedKey ? opts.filter((o) => o.key === committedKey) : opts
+  const screen = !redecide && committedKey ? null : installScreenOf(opts, committedKey, { topK: installTopK, reach: installReach, sd: reachSd })
+  const use = screen ? screen.use : opts.filter((o) => o.key === committedKey)
   const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
@@ -722,8 +734,38 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
   const prevH = committedKey ? (fin(prev?.commitment?.meanH) ? prev.commitment.meanH : fin(prev?.meanH) ? prev.meanH : null) : null
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
-  if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt })
+  const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
+  if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, ...screened }
+  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+}
+
+/**
+ * WHICH INSTALL OPTIONS ENTER THE DRAWS on a re-decision: the committed
+ * incumbent always (it is what a switch is measured against), then the
+ * options by point, best first, up to `topK` of them, each within `reach`
+ * structural errors of the best point (`sd`, the drift posterior's scale;
+ * 0.1 where none) — as a graft challenger enters only if its point could win
+ * (progress.js graftDecisionOf). An option whose point is unpriced enters only
+ * as the incumbent. Returns {use, screened [{key, pointH}], why}.
+ */
+export function installScreenOf(opts, committedKey = null, { topK = PLAN.installTopK, reach = PLAN.installReach, sd = null } = {}) {
+  const s = fin(sd) && sd > 0 ? sd : 0.1
+  const priced = opts.filter((o) => fin(o.pointH)).sort((a, b) => a.pointH - b.pointH)
+  const best = priced.length ? priced[0].pointH : null
+  const limit = fin(best) ? best * (1 + reach * s) : null
+  const keep = new Set()
+  if (committedKey && opts.some((o) => o.key === committedKey)) keep.add(committedKey)
+  let taken = 0
+  for (const o of priced) {
+    if (taken >= topK || !(o.pointH <= limit)) break
+    if (!keep.has(o.key)) keep.add(o.key)
+    taken++
+  }
+  if (!keep.size && opts.length) keep.add(opts[0].key)
+  const use = opts.filter((o) => keep.has(o.key))
+  const screened = opts.filter((o) => !keep.has(o.key)).map((o) => ({ key: o.key, pointH: fin(o.pointH) ? r3(o.pointH) : null }))
+  const why = `${use.length} of ${opts.length} options in the draws: ${committedKey ? `the incumbent '${committedKey}' and ` : ''}the best ${taken} by point within ${(reach * s * 100).toFixed(0)}% of the best (${fin(best) ? best.toFixed(2) : '?'}h)`
+  return { use, screened, why }
 }
 
 /**

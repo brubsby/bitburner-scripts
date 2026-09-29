@@ -2729,7 +2729,11 @@ async function planInstallOf(ns, info, inputs, count, point) {
   }
   if (inputs?.incomeFromPrior) pc.incomeFromPrior = inputs.incomeSource
   if (inputs?.repFromEstimate) pc.repFromEstimate = inputs.repSource
-  const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, sameLife: !!pc.prev }))
+  // THE DECISION THAT ACTS GETS ITS DRAWS: a floor on its budget
+  // (PLAN.installFloorMs) whatever the decisions before it spent, and its
+  // options screened by point against the structural error (plan.
+  // installScreenOf). Live 21:12Z it was left 784ms for 26 options: 5 draws.
+  const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: Math.max(planBudgetLeft(pc), PLAN.installFloorMs), clock: pc.pacer.cpuNow, sameLife: !!pc.prev, reachSd: pc.post?.drift?.s ?? null }))
   // The inputs this decision priced: the graft decision is rebased onto them
   // (one trajectory from one state), and consistencyOf compares the keys.
   pc.installInputs = inputs
