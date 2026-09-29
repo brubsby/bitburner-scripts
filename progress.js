@@ -155,6 +155,8 @@ import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 // Pure: the install point (committed plan, then gate) every "until the install" price uses.
 import { installPointH } from 'hacknetplan.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
+// Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
+import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -3836,6 +3838,44 @@ async function act(ns, canJoin, info, note) {
         // The exit context one-off grants are valued through (objective
         // grantValue): the published inputs and this pass's hours per ln.
         oneoffExit = byExit ? { record: readJson(ns, '/tel/exitinputs.txt'), hoursPerLn: byExit.sensitivities.hacking, bestExitPolicy, lastAugReset: info?.lastAugReset } : null
+        // THE GO OPPONENT'S WEIGHTS ARE NOT THESE (goweights.js). exitWeights
+        // prices an augmentation: a gain on the whole income stream (mostly
+        // the trader's realised trades) that lasts every later life. A Go
+        // bonus multiplies one stream — hack()'s money, the scripts' speed,
+        // hacknet production, the player's faction rep — and dies at the next
+        // install (Go/Go.ts:34-47). So go.js reads its own weights, simulated
+        // with and without the bonus over its life on the plan's draws
+        // (common random numbers). A refusal is published with its reason.
+        let goPub = null
+        try {
+          const fresh = (x) => !!x && Date.now() - Date.parse(x.at) < 5 * 60e3
+          const plans = (bt?.targets ?? []).map((t) => t?.plan).filter((q) => q && q.h + q.g + q.w1 + q.w2 > 0)
+          const hackShare = plans.length ? plans.reduce((a, q) => a + (q.h + q.w1) / (q.h + q.g + q.w1 + q.w2), 0) / plans.length : null
+          const st = readJson(ns, '/tel/status.txt')
+          const pcGo = planCtxOf(ns, info)
+          const gw = await paced(
+            goWeightsGen(readJson(ns, '/tel/exitinputs.txt'), {
+              lastAugReset: info?.lastAugReset,
+              bestExitPolicy,
+              spendRuns,
+              applyDraw,
+              draws: pcGo?.draws ?? null,
+              batchMoneyPerSec: fresh(bt) && typeof bt.totals?.earnedPerSec === 'number' ? bt.totals.earnedPerSec : null,
+              hackShare,
+              scriptExpPerSec: fresh(st) && typeof st.expPerSec === 'number' ? st.expPerSec : null,
+              ageH: typeof info?.lastAugReset === 'number' ? Math.max(0, (Date.now() - info.lastAugReset) / 3.6e6) : null,
+              budgetMs: 150,
+              clock: passPacer ? passPacer.cpuNow : undefined,
+            }),
+            'goweights',
+          )
+          const r4 = (v) => (typeof v === 'number' && isFinite(v) ? +v.toPrecision(4) : v)
+          goPub = gw?.weights
+            ? { weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])), unit: gw.unit, horizon: gw.horizon, n: gw.n, ms: gw.ms, streams: gw.streams, detail: gw.detail, why: null }
+            : { weights: null, why: gw?.why ?? 'goweights returned nothing' }
+        } catch (e) {
+          goPub = { weights: null, why: `goweights threw: ${String(e).slice(0, 160)}` }
+        }
         const derived = byExit ? { weights: byExit.weights, raw: byExit.sensitivities, indirect: null, source: 'exit-sensitivity' } : deriveWeights({
           remainingWindows,
           eBudget,
@@ -3894,6 +3934,8 @@ async function act(ns, canJoin, info, note) {
             oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed, exit: oneoffExit },
           })
         }
+        // Published on whichever objective this pass ships (derived or flat).
+        weightsMeta = { ...weightsMeta, goWeights: goPub }
       } catch (err) {
         // Any failure keeps the flat plan — and NAMES the failure. A silent
         // catch here hid a thrown probe for a whole evening (2026-09-20).

@@ -51,14 +51,35 @@ export const POWER_PER_HOUR = {
   Tetrads: 3295,
 }
 
-/** effect.ts:16-22 bonusPower, and the channel each opponent feeds. */
+/**
+ * effect.ts:16-22 bonusPower, the channel each opponent feeds, and `game`:
+ * the GoOpponent ENUM VALUE (Go/Enums.ts:1-10) — what ns.go.resetBoardState
+ * accepts and what getStats() is keyed by. The keys here are identifiers;
+ * two of them differ from the game's value ("The Black Hand", "Slum Snakes"),
+ * and passing the key threw "goOpponent should be a GoOpponent enum member"
+ * the first time the pricing chose TheBlackHand (2026-09-29, the farm down).
+ * Always cross the boundary through gameName / keyOfGame.
+ */
 export const OPPONENTS = {
-  Daedalus: { power: 1.1, channel: 'faction_rep' },
-  Illuminati: { power: 0.7, channel: 'hacking_speed' },
-  TheBlackHand: { power: 0.9, channel: 'hacking_money' },
-  SlumSnakes: { power: 1.2, channel: 'crime_success' },
-  Netburners: { power: 1.3, channel: 'hacknet_node_money' },
-  Tetrads: { power: 0.7, channel: 'combat' },
+  Daedalus: { power: 1.1, channel: 'faction_rep', game: 'Daedalus' },
+  Illuminati: { power: 0.7, channel: 'hacking_speed', game: 'Illuminati' },
+  TheBlackHand: { power: 0.9, channel: 'hacking_money', game: 'The Black Hand' },
+  SlumSnakes: { power: 1.2, channel: 'crime_success', game: 'Slum Snakes' },
+  Netburners: { power: 1.3, channel: 'hacknet_node_money', game: 'Netburners' },
+  Tetrads: { power: 0.7, channel: 'combat', game: 'Tetrads' },
+}
+
+/** Our key -> the game's GoOpponent value (resetBoardState, getStats keys). Null for an unknown key. */
+export function gameName(key) {
+  return OPPONENTS[key]?.game ?? null
+}
+
+/** The game's GoOpponent value (or one of our keys) -> our key. Null when neither. */
+export function keyOfGame(name) {
+  if (typeof name !== 'string') return null
+  if (OPPONENTS[name]) return name
+  for (const [k, m] of Object.entries(OPPONENTS)) if (m.game === name) return k
+  return null
 }
 
 /**
@@ -86,10 +107,10 @@ export const WIN_RATE = {
 export const PRICEABLE = ['faction_rep', 'hacking_speed', 'hacking_money']
 
 /**
- * Priced when the objective carries a weight for it, skipped BY NAME when it
- * does not. objective.exitWeights prices hacknet_node_money as the exit's
- * sensitivity to hacknet production until the next install (the life of a
- * Go bonus); deriveWeights, the fallback, has no such channel.
+ * Priced when the weights carry it, skipped BY NAME when they do not.
+ * goweights.js prices hacknet_node_money as the exit's sensitivity to hacknet
+ * production until the next install (the life of a Go bonus), 0 with no
+ * hacknet stream.
  */
 export const OPTIONAL = ['hacknet_node_money']
 
@@ -249,8 +270,9 @@ export const MEASURED_BOARD = 5
  *     pauses while another opponent is played.
  *
  * So the next game should go wherever the NEXT unit of node power buys the
- * most objective. The objective is sum_c w_c * ln(mult_c) (the same derived
- * weights the window-mean pricing used), so per opponent o:
+ * most objective. The objective is sum_c w_c * ln(mult_c), w_c the exit hours
+ * one ln of the Go bonus on channel c saves over the bonus's life
+ * (goweights.js), so per opponent o:
  *
  *     marginal_o = w_o * (d ln E_o / dn)(n_o) * rate_o
  *                = w_o * E'_o(n_o) / E_o(n_o) * rate_o        [ln-objective / hour]
@@ -278,7 +300,11 @@ export const MEASURED_BOARD = 5
  * games and returns when play comes back (streaks pause, they do not reset).
  *
  * @param {object} o
- * @param {object} o.weights    derived channel weights (objective.deriveWeights). REQUIRED.
+ * @param {object} o.weights    the Go bonus's channel weights (goweights.js via progress.js
+ *                              objective.goWeights: exit hours per ln, the multiplier on the
+ *                              stream it moves, until the next install). REQUIRED. Not
+ *                              objective.weights — those price an augmentation (whole income,
+ *                              every later life). Any consistent unit ranks the same.
  * @param {number} o.windowH    hours in one install window. REQUIRED — a Go bonus is
  *                              destroyed by every install, so without a window it has no price.
  * @param {string} o.incumbent  the opponent currently being played.
@@ -366,7 +392,7 @@ export function chooseOpponent(o = {}) {
     return keep(`every priceable channel weighs 0 (${scored.map((s) => `${s.channel}=${s.weight}`).join(', ')}) — nothing to choose between, so the incumbent stands`)
   }
   const head =
-    `${best.name} (${best.channel}) marginal ${best.marginal.toExponential(3)}/h = weight ${best.weight.toFixed(4)} x dlnE/dn ` +
+    `${best.name} (${best.channel}) marginal ${best.marginal.toExponential(3)}/h = weight ${best.weight.toPrecision(3)} x dlnE/dn ` +
     `${(best.marginal / best.weight / best.powerPerHour).toExponential(3)} @n=${Math.round(best.nodePower)} x ${Math.round(best.powerPerHour)}/h` +
     (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of the measured ${table[best.name]})` : '')
   const inc = scored.find((s) => s.name === incumbent)

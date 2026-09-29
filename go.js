@@ -87,7 +87,7 @@
 
 import { chooseMove } from 'golib.js'
 import { canUseGoCheat, sfLevel } from 'sfgate.js'
-import { chooseOpponent, nodePowerFromBonus, OPPONENTS } from 'goplan.js'
+import { chooseOpponent, nodePowerFromBonus, OPPONENTS, gameName, keyOfGame } from 'goplan.js'
 // Pure data module (no ns surface): the BitNode table, for GoPower.
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
@@ -443,7 +443,8 @@ export async function main(ns) {
   const nodePowerOf = (stats) => {
     const out = {}
     for (const [name, meta] of Object.entries(OPPONENTS)) {
-      const pct = stats?.[name]?.bonusPercent
+      // getStats() is keyed by the game's enum value ("The Black Hand"), not our key.
+      const pct = stats?.[meta.game]?.bonusPercent
       out[name] = pct === undefined ? 0 : nodePowerFromBonus(pct, meta.power, goPower, sf14)
     }
     return out
@@ -451,23 +452,31 @@ export async function main(ns) {
   /** { opponent: current winStreak } — each resumes from its own paused streak. */
   const streaksOf = (stats) => {
     const out = {}
-    for (const name of Object.keys(OPPONENTS)) out[name] = stats?.[name]?.winStreak ?? 0
+    for (const [name, meta] of Object.entries(OPPONENTS)) out[name] = stats?.[meta.game]?.winStreak ?? 0
     return out
   }
   const pickOpponent = (current, stats, dwellH) => {
     try {
       if (ns.getHostname() !== 'home') ns.scp(GATE_FILE, ns.getHostname(), 'home')
       const gate = JSON.parse(ns.read(GATE_FILE) || 'null')
-      // `weights` and `windowH` live on the DERIVED objective only
-      // (progress.js:1761); a refusing pass publishes neither, and
-      // chooseOpponent treats that as "cannot tell the channels apart" and
-      // keeps the incumbent. That is the intended path, not a defect.
+      // THE WEIGHTS ARE THE GO BONUS'S OWN (goweights.js, published by
+      // progress.js as objective.goWeights): exit hours per ln of each
+      // channel with the multiplier applied only to the stream it moves
+      // (hack() income, not the trader's; hacknet; the player's rep; script
+      // exp) and only until the next install, which zeroes it. NOT
+      // objective.weights: those price an augmentation — the whole income,
+      // every later life — and overstated hacking_speed ~10^5x (2026-09-29).
+      // Another life's gate, or a refusing pass, publishes no weights, and
+      // chooseOpponent keeps the incumbent and says why. That is the
+      // intended path, not a defect.
+      const sameLife = gate?.lastAugReset === reset?.lastAugReset
+      const gw = sameLife ? gate?.objective?.goWeights ?? null : null
       //
       // goPower comes from the BitNode table, which is the authority — the
       // gate file never carried it, and defaulting to 1 would under-price
       // every opponent by 4x in BitNode 14.
       const pick = chooseOpponent({
-        weights: gate?.objective?.weights ?? null,
+        weights: gw?.weights ?? null,
         windowH: gate?.objective?.windowH ?? null,
         incumbent: current,
         nodePower: nodePowerOf(stats),
@@ -478,13 +487,15 @@ export async function main(ns) {
         goPower,
         sf14,
       })
-      if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why: pick.why, switched: false }
+      const why = pick.refused && !gw?.weights ? `${pick.why} (goWeights: ${sameLife ? gw?.why ?? 'not published' : 'gate is from another life'})` : pick.why
+      if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why, switched: false }
       return { opponent: pick.opponent, why: pick.why, switched: true }
     } catch (e) {
       return { opponent: current, why: `opponent pricing failed: ${String(e).slice(0, 80)}`, switched: false }
     }
   }
-  let opponent = flags.opponent
+  // Our key internally (goplan.OPPONENTS); the flag may carry either spelling.
+  let opponent = keyOfGame(flags.opponent) ?? 'Daedalus'
   let opponentWhy = 'startup default'
   const canCheat = canUseGoCheat(reset) && ns.fileExists('go-cheat.js', 'home')
 
@@ -630,7 +641,8 @@ export async function main(ns) {
           ns.print(`switching opponent ${was} -> ${opponent}`)
         }
       }
-      ns.go.resetBoardState(opponent, N)
+      // The game's enum value, never our key: "TheBlackHand" throws (Go/Enums.ts).
+      ns.go.resetBoardState(gameName(opponent), N)
       await ns.sleep(100)
 
       const komi = ns.go.getGameState()?.komi ?? 5.5
@@ -780,7 +792,7 @@ export async function main(ns) {
         phase = 'recovering from stall'
         const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), moveStalls, lastStallAt, throttle })
         publishAt(h.health, { ...gameFields, detail: h.detail })
-        ns.go.resetBoardState(opponent, N)
+        ns.go.resetBoardState(gameName(opponent), N)
         continue
       }
 
@@ -800,7 +812,7 @@ export async function main(ns) {
       // exactly like "the bot banks nothing" — it cost an hour of chasing a
       // gameplay problem that did not exist.
       const all = ns.go.analysis.getStats()
-      const s = all[opponent] || {}
+      const s = all[gameName(opponent)] || {}
       // factionRepBonusPct is DAEDALUS's bonus, whoever is being played:
       // progress.js and installgate read it as the faction_rep multiplier, and
       // Daedalus is the only opponent that feeds faction_rep (effect.ts:92-95).

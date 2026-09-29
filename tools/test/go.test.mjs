@@ -426,6 +426,37 @@ export async function run() {
   }
   checks.push(c9);
 
+  /* ------------------------------------------------------------------ GO10 */
+  // THE ENUM BOUNDARY. goplan's keys are identifiers; the game's GoOpponent
+  // values are display names (Go/Enums.ts). 2026-09-29: the pricing chose
+  // TheBlackHand, go.js passed the key to resetBoardState, the game threw
+  // "goOpponent should be a GoOpponent enum member. Provided value:
+  // TheBlackHand" and the farm stopped. getStats() is keyed the same way, so
+  // TheBlackHand's and SlumSnakes' node power also read as 0.
+  const c10 = new Check("GO10", "every opponent key maps to a real GoOpponent enum value, and go.js crosses the boundary only through that map");
+  {
+    const gp = await import("../../goplan.js");
+    const enumSrc = fs.readFileSync(path.resolve(REPO, "../bitburner/src/Go/Enums.ts"), "utf8");
+    const block = enumSrc.match(/export enum GoOpponent \{([\s\S]*?)\}/);
+    const values = block ? [...block[1].matchAll(/=\s*"([^"]*)"/g)].map((m) => m[1]) : [];
+    if (values.length < 6) c10.fail(`could not read the GoOpponent enum from game source (${values.length} values)`);
+    for (const [key, meta] of Object.entries(gp.OPPONENTS)) {
+      c10.examined(1);
+      if (!values.includes(meta.game)) c10.fail(`${key}.game = ${JSON.stringify(meta.game)} is not a GoOpponent value (${values.join(", ")})`);
+      if (gp.gameName(key) !== meta.game) c10.fail(`gameName(${key}) must be ${meta.game}`);
+      if (gp.keyOfGame(meta.game) !== key || gp.keyOfGame(key) !== key) c10.fail(`keyOfGame must invert gameName for ${key}`);
+    }
+    if (gp.gameName("nobody") !== null || gp.keyOfGame("nobody") !== null) c10.fail("an unknown opponent maps to null, never a guess");
+    const src = read("go.js");
+    c10.examined(1);
+    const resets = [...src.matchAll(/resetBoardState\(([^,)]*)/g)].map((m) => m[1].trim());
+    if (!resets.length) c10.fail("go.js no longer resets the board — the check cannot see the boundary");
+    for (const arg of resets) if (!/^gameName\(/.test(arg)) c10.fail(`go.js passes ${arg} to resetBoardState — it must be gameName(<key>), the game's enum value`);
+    if (/stats\?\.\[name\]/.test(src) || /all\[opponent\]/.test(src)) c10.fail("go.js indexes getStats() by our key — the game keys it by the enum value (meta.game / gameName)");
+    c10.note(`${Object.keys(gp.OPPONENTS).length} keys -> ${Object.values(gp.OPPONENTS).map((m) => JSON.stringify(m.game)).join(", ")}; ${resets.length} resetBoardState call(s) via gameName`);
+  }
+  checks.push(c10);
+
   /* ------------------------------------------------------------------ GO6 */
   // THE MOVE WATCHDOG. 2026-09-26: /tel/go.txt froze for 30+ minutes and
   // go.js looked stuck awaiting ns.go.makeMove. It was a hidden tab (Chrome

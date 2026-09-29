@@ -408,6 +408,13 @@ export function exitHours(o = {}) {
     // Hacknet money (nodeecon.incomeOf lifePerSec): NOT part of incomePerSec,
     // and destroyed by the next install — see lifeInc below.
     lifeIncome = null,
+    // A MULTIPLIER ON THE EXP RATE THAT THE NEXT INSTALL DESTROYS (an IPvGO
+    // hacking_speed bonus, goweights.js): under "hold to the exit" it scales
+    // every exp accrual before the terminal install and is gone for the climb
+    // after it (Go.prestigeAugmentation zeroes node power, Go/Go.ts:34-47).
+    // Under any policy with an install it ends before any leg simulated here,
+    // so it does nothing. Default 1: every other caller prices as before.
+    preInstallExpMult = 1,
   } = o
   // INCOME THAT THE NEXT INSTALL DESTROYS (lifeIncome, $/s): hacknet
   // production — hashes sold, or a node's money — from servers/nodes that
@@ -544,6 +551,10 @@ export function exitHours(o = {}) {
   let expRate = expPerSec
   // The batch's hacking_exp scales the player's own exp from the install on.
   if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
+  // preInstallExpMult: added as an AMOUNT, so it is removed exactly before the
+  // climb whatever is added to the rate in between (a Covenant sleeve).
+  let preExpBoost = installsFirst === 0 && pos(preInstallExpMult) && preInstallExpMult !== 1 && pos(expRate) ? expRate * (preInstallExpMult - 1) : 0
+  expRate += preExpBoost
   const moneyLeg = (target, targetAt = null) => {
     const t0 = h
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
@@ -617,6 +628,7 @@ export function exitHours(o = {}) {
     }
     mult *= gH
     if (pos(expRate)) expRate *= gE
+    preExpBoost *= gE
     if (pos(repRate)) repRate *= graftRep
     if (pos(donation)) donation /= graftRep
     legs.push({ leg: 'grafts', hours: 0, detail: `${o.finalGrafts.length} graft(s), slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}` })
@@ -735,6 +747,8 @@ export function exitHours(o = {}) {
   // NOW): it joins the climb only once its delay has passed — the synchronise,
   // shock recovery or training it spends first. Piecewise, like sleeveRep.
   // The last graft finishes before the install that starts the climb.
+  // The terminal install ends a pre-install exp bonus: the climb runs without it.
+  if (preExpBoost !== 0) expRate = Math.max(0, expRate - preExpBoost)
   if (graftDone > h) {
     legs.push({ leg: 'grafts finish', hours: graftDone - h, detail: 'the climb waits for the last graft (an install cancels one in progress)' })
     h = graftDone
