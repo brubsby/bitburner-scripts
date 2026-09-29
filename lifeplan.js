@@ -48,6 +48,7 @@ import { favorToRep, repToFavor } from 'favor.js'
 import { levelAt, expRateShape } from 'exitplan.js'
 import { planHacknetBatch, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { formulaErrorPosterior } from 'bayes.js'
+import { capitalOf, capitalGain } from 'traderw.js'
 
 /** Hacknet purchase decisions per simulated fresh life (freshLifeMoney). */
 export const HACKNET_DECISIONS = 12
@@ -152,6 +153,7 @@ export function freshLifeMoney(inputs, L, scale = 1) {
   const r = pos(inputs.capitalReturnPerSec) ? inputs.capitalReturnPerSec : 0
   const cap = pos(inputs.capitalCap) ? inputs.capitalCap : Infinity
   const warmH = pos(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0
+  const capC = capitalOf(inputs)
   const xps = pos(inputs.expPerSec) ? inputs.expPerSec : 0
   // The exp rate rising with the level (exitplan.expRateShape), as the exit
   // integrates it, when the inputs say so; else constant.
@@ -188,7 +190,7 @@ export function freshLifeMoney(inputs, L, scale = 1) {
   for (let i = 0; i < steps; i++) {
     const h = (i * dt) / 3600
     if (hn && i % every === 0 && L - h > 0 && money > 0) {
-      const b = planHacknetBatch({ servers: fleet, mults: hn.mults, nodeMoney: hn.nodeMoney, W: L - h, capital: r > 0 ? { capitalReturnPerSec: r, capitalCap: cap, capitalWarmupH: Math.max(0, warmH - h), money } : null, budget: money, maxItems: 60 })
+      const b = planHacknetBatch({ servers: fleet, mults: hn.mults, nodeMoney: hn.nodeMoney, W: L - h, capital: r > 0 ? { capitalReturnPerSec: r, capitalCap: cap, capitalScaleW: inputs.capitalScaleW ?? null, capitalShape: inputs.capitalShape ?? null, capitalWarmupH: Math.max(0, warmH - h), money } : null, budget: money, maxItems: 60 })
       if (b.items.length) {
         money -= b.cost
         fleet = b.servers
@@ -196,7 +198,8 @@ export function freshLifeMoney(inputs, L, scale = 1) {
       }
     }
     const lvl = levelAt(exp, inputs.hackingMult)
-    const cg = r > 0 && h >= warmH ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
+    // The book's return at its own size (traderw.capitalGain: the curve r(W), or the flat r x min(W, cap)).
+    const cg = r > 0 && h >= warmH ? capitalGain(money, dt, capC) : 0
     const hackStep = fh ? Math.max(0, fhAt(h + dt / 3600) - fhAt(h)) : ((lvlIncome * (lvl + 50)) / 51) * dt
     money += hackStep + (flat + hashPerSec * DOLLARS_PER_HASH) * dt + Math.max(0, cg)
     exp += xpsAt(lvl) * dt

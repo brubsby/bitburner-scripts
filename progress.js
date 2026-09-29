@@ -168,8 +168,9 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
+import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf } from 'plan.js'
-import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, PRIORS as BAYES_PRIORS } from 'bayes.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
@@ -2268,12 +2269,47 @@ function stockHistRowsOf(ns) {
  * with no trader history — the caller then keeps this life's live return,
  * named. Once per pass.
  */
+/**
+ * THE CURVE'S LEDGER (/tel/stock-rw.txt): the trader's flow-free intervals by
+ * run and book bin (bayes.rwLedgerOf), folded in once per pass from the rows
+ * it has not seen. Unreadable or absent: rebuilt from the rows in hand (the
+ * 6h window), and said so in the file (`rebuilt`).
+ */
+export const STOCK_RW_FILE = '/tel/stock-rw.txt'
+function stockRwLedgerNow(ns, rows, info) {
+  let prev = null
+  let rebuilt = null
+  try {
+    prev = JSON.parse(ns.read(STOCK_RW_FILE) || 'null')
+    if (prev && prev.v !== 1) {
+      rebuilt = `unknown ledger version ${prev.v}`
+      prev = null
+    }
+  } catch (e) {
+    rebuilt = `unreadable: ${e?.message ?? e}`
+    prev = null
+  }
+  if (!prev && !rebuilt) rebuilt = 'no ledger yet'
+  const led = rwLedgerOf(prev, rows, { priors: RW_PRIOR, node: info?.currentNode ?? null })
+  try {
+    ns.write(STOCK_RW_FILE, JSON.stringify({ ...led, at: new Date().toISOString(), ...(rebuilt ? { rebuilt } : {}) }), 'w')
+  } catch {
+    /* the belief still prices on this pass's ledger */
+  }
+  return led
+}
 let traderBeliefMemo
 function traderBeliefNow(ns, info) {
   if (traderBeliefMemo !== undefined) return traderBeliefMemo
   traderBeliefMemo = null
   try {
-    traderBeliefMemo = traderBeliefOf(stockHistRowsOf(ns))
+    // The curve's regime from the trader's own mode (stock.txt: pre-4S / 4S; traderw.js).
+    // Its evidence is the persistent ledger (bayes.rwLedgerOf): stock-hist
+    // keeps 6h of rows, and the big books' hours — the only evidence on the
+    // knee — scroll out of it within a life.
+    const rows = stockHistRowsOf(ns)
+    const ledger = stockRwLedgerNow(ns, rows, info)
+    traderBeliefMemo = traderBeliefOf(rows, { regime: rwRegimeOf(stockNow?.mode), ledger })
     if (!traderBeliefMemo) {
       const fit = capitalFitOf(ns, info)
       if (fit && typeof fit.r === 'number' && fit.r > 0) traderBeliefMemo = { r: fit.r, sd: null, warmupH: typeof fit.warmupH === 'number' ? fit.warmupH : 0, post: null, fit, source: 'steady', why: fit.why }
@@ -3352,6 +3388,12 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     capitalWarmupH: traderBeliefNow(ns, info)?.warmupH ?? 0,
     capitalFit: traderBeliefNow(ns, info)?.why ?? (econNow?.capitalReturnPerSec ? "no trader history to pool: this life's live return (stock.js returnPerSec)" : null),
     capitalCap: econNow?.capitalCap ?? null,
+    // THE CURVE r(W) (traderw.js, the same belief): the trader's return at its
+    // own book — nothing below ~$2.2m (commissions), the plateau, then the
+    // market's capacity past the knee W*. capitalReturnPerSec above is its
+    // level r0. Null (the flat rate) where the belief is not the curve's.
+    capitalScaleW: traderBeliefNow(ns, info)?.Wstar ?? null,
+    capitalShape: traderBeliefNow(ns, info)?.shape ?? null,
     // What an install leaves: $1262, or BitNode 8's $250m (Prestige.ts:158).
     // ...plus every owned (or queued) augmentation's startingMoney
     // (Prestige.ts:85-88 — CashRoot's $1m), where the node keeps it: live BN9

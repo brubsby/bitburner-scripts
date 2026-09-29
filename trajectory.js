@@ -38,6 +38,7 @@
 // from unreadable inputs — the standing rule about unknowns applies to
 // trajectories too.
 
+import { isShaped, capitalAfter } from 'traderw.js'
 /** ∫₀ᵀ ln(exp0 + r·t + 534.6) dt, the exact primitive above. */
 const intLog = (exp0, r, T) => {
   const a = exp0 + 534.6
@@ -147,6 +148,8 @@ export function incomeModel(o = {}) {
   if (!num(incomePerSec) && !(r > 0 && m0 > 0) && !(life > 0)) return null
   const capitalBy = (T) => {
     if (!(r > 0) || !(m0 > 0)) return 0
+    // THE CURVE r(W) (traderw.js): the book at its own size's rate.
+    if (isShaped(o)) return capitalAfter(m0, T, o) - m0
     if (m0 >= cap) return r * cap * T
     const tCap = Math.log(cap / m0) / r // seconds to reach the cap
     return T <= tCap ? m0 * Math.expm1(r * T) : cap - m0 + r * cap * (T - tCap)

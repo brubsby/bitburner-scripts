@@ -47,6 +47,7 @@
 // itself converts overflow hashes to money at exactly that rate
 // (HacknetHelpers.tsx processAllHacknetServerEarnings, wastedHashes).
 
+import { isShaped, capitalMarginalFV } from 'traderw.js'
 const num = (x) => typeof x === 'number' && isFinite(x)
 
 /** Hacknet/data/Constants.ts:1-17. */
@@ -427,6 +428,10 @@ export function capitalFV(capital, W) {
   if (!(r > 0) || !(T > 0)) return { lump: 1, stream: T }
   const warm = Math.min(T, num(capital.capitalWarmupH) && capital.capitalWarmupH > 0 ? capital.capitalWarmupH * 3600 : 0)
   const m = num(capital.money) && capital.money > 0 ? capital.money : 0
+  // THE CURVE r(W) (traderw.js): a marginal dollar compounds at d(r(W) W)/dW
+  // along the book's own path — less than the average dollar once the market
+  // saturates, nothing below the commission threshold.
+  if (isShaped(capital)) return capitalMarginalFV(m, T, warm, capital)
   const cap = num(capital.capitalCap) && capital.capitalCap > 0 ? capital.capitalCap : Infinity
   const toCap = m > 0 && isFinite(cap) ? (m >= cap ? 0 : Math.log(cap / m) / r) : Infinity
   const end = Math.min(T, warm + toCap)

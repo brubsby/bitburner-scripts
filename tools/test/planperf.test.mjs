@@ -54,6 +54,15 @@ function postOf(ps) {
 const POST = postOf(F.posteriors1341);
 const DRAWS = P.makeDraws(POST, P.PLAN.N, P.seedOf(1790660521043, 9));
 const INPUTS = { ...F.exitinputs, cadenceFrom: F.exitinputs.cadenceFrom ?? "purchase model" };
+const DRAWS0 = DRAWS;
+const INPUTS0 = INPUTS;
+// THE CURVE r(W) as progress.js now passes it (traderw.js; plan.traderBeliefOf
+// on the prior — no rows past the first hour): capitalReturnPerSec = r0,
+// capitalScaleW = W*, capitalShape; the draws move both.
+const CURVE_BELIEF = (() => {
+  const b = P.traderBeliefOf([{ t: 0, wealth: 1e6, lifePnl: 0 }, { t: 10, wealth: 1e6, lifePnl: 0 }]);
+  return { inputs: { capitalReturnPerSec: b.r, capitalScaleW: b.Wstar, capitalShape: b.shape }, draws: P.makeDraws({ ...POST, trader: b.post }, P.PLAN.N, P.seedOf(1790660521043, 9)), belief: b };
+})();
 const NOW = Date.parse(F.at1341);
 
 /** The 13:41 install decision's point, as progress.js builds it (the waits from 2h on carry the planned batch). */
@@ -221,8 +230,10 @@ export async function run() {
   }
 
   // ---------------------------------------------------------------------
-  {
-    const c = new Check("PP3", "CPU GUARD, a full re-deciding plan pass replayed on the live BN9 inputs in coop.js slices at the live budgets: install (10 options), grafts, the graft rebase, gang (3 arms) and sleeve objective (4) — every decision all 24 draws inside the one work budget with margin, no step near the slice");
+  for (const [ID, CURVE] of [["PP3", null], ["PP3c", CURVE_BELIEF]]) {
+    const INPUTS = CURVE ? { ...INPUTS0, ...CURVE.inputs } : INPUTS0;
+    const DRAWS = CURVE ? CURVE.draws : DRAWS0;
+    const c = new Check(ID, (CURVE ? "ON THE CURVE r(W) (traderw.js: the trader's return at its own book, level and knee drawn): " : "") + "CPU GUARD, a full re-deciding plan pass replayed on the live BN9 inputs in coop.js slices at the live budgets: install (10 options), grafts, the graft rebase, gang (3 arms) and sleeve objective (4) — every decision all 24 draws inside the one work budget with margin, no step near the slice");
     const gains = F.install1341.gains;
     const point = pointOf(INPUTS, gains);
     const prev = { key: F.install1341.key, installAt: F.install1341.installAt, gains, spec: { kind: "wait", installAt: F.install1341.installAt, waitH: 4, gains }, decidedAt: F.at1341, why: "fixture" };
@@ -263,7 +274,7 @@ export async function run() {
     decisions.install = await pacer.slices(P.decideInstallGen({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow, now: NOW }), "plan-install");
     decisions.graftsRebased = await pacer.slices(P.decideAmongGen({ options: graftOpts(basisOf(F.install1356.gains)), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-graftsRebased");
     // The gang and sleeve decisions on the 14:16 pass's inputs (the 13:41 ones price the default policy degenerate: no gang arm would run).
-    const I2 = F.exitinputs1416;
+    const I2 = CURVE ? { ...F.exitinputs1416, ...CURVE.inputs } : F.exitinputs1416;
     const { inputs: b0 } = GW.withRepEstimate(I2);
     decisions.gang = await pacer.slices(P.decideAmongGen({ options: ["none", "fleet", "player"].map((k) => ({ key: k, sim: (dr) => armH(k, P.applyDraw(b0, dr)) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-gang");
     decisions.sleeveObjective = await pacer.slices(P.decideAmongGen({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-sleeveObjective");

@@ -32,7 +32,7 @@ plan.js  decide(): expected exit + switch cost, commitment (regret rule)
 
 | input | likelihood | prior | data |
 | --- | --- | --- | --- |
-| trader return r (/s) | per interval of Δt ticks after the warm-up: x = ln(1+ΔPnl/wealth)/Δt_h ~ N(μ_j, σ²/Δt_h) within life j (weighted NIG); lives pooled by random effects μ_j ~ N(μ, τ²) (DerSimonian–Laird τ²) | NIG m0 = 0.5%/h, k0 = 0.05h, a0 = 1, b0 = var 1%²/h | `/tel/stock-hist.txt` (flows excluded exactly as `nodeecon.realisedCapital`) |
+| trader return r(W) (/s) = r0 s(W/W*) | per interval of Δt ticks past each life's first hour: x = ln(1+ΔPnl/W)/Δt_h ~ N(r0 (1+d_j) s(W; W*), κ² σ(W)²/Δt_h) at the book W it started from; the life's level d_j ~ N(0, τ²) integrated out in closed form; grid posterior on (ln r0, ln W*) (`bayes.traderRwPosterior`) | the shipped trader on the game's market (`traderw.RW_PRIOR`, tools/sim/stocks/rw.mjs + rwfit.mjs): pre-4S r0 0.798/h, W* $2.68e11, sd ln 0.4 / 0.8 (stated), τ 0.22 and σ(W) from the sim, κ² ~ IG(3, 2) | `/tel/stock-hist.txt` (flows excluded exactly as `nodeecon.realisedCapital`; 4S rows `s4` are the 4S curve's) |
 | structural error s² | relative forecast residual per same-life pair r = (E_b − (E_a − Δh))/E_a ~ N(0, 2s²) (Inverse-Gamma, known mean 0) | IG(a0 = 2, b0 = 2·0.1²) — 10% prior | `exitCalibration.samples` |
 | install cadence: ln M per life-hour r_n and life length L_n | per node y_n = ln(Σg/ΣL) ~ N(θ_n, σ²/n_eff) and ln(mean L) ~ N(θ_n, σ_L²/n); θ_n = μ + β·c_n + u_n, u_n ~ N(0, τ²) (random effect per node, covariate c = ln aug money × rep cost); σ² pooled over nodes (IG) | μ ~ N(ln 0.05/h, 1.5²), N(ln 3h, 1.5²); τ 1.0 / 0.7; β ~ N(−0.5, 0.5²) / N(+0.3, 0.5²) — all stated | lifetimes ledger, re-records merged, stall lives excluded (see below) |
 | fresh-life hacking income (prior) | per life y = ln(Σ realised / Σ formula) over its 0.5h windows; y = θ_n + u (t, ν 4), θ_n = μ + v_n (node effect), σ² pooled (IG) | freshlife.js's simulated fresh life at this age × exp(E θ_n); μ ~ N(0, ln 10²·2) (formula unbiased, stated), τ 0.5 stated below 3 other nodes | 7 lives (history.jsonl + earnings ledger, `FRESH_CALIBRATION`) + every life tel.js records with its inputs (`/tel/freshcal.txt`) |
@@ -100,6 +100,34 @@ unpriced, marked in the inputs and in plan.txt `exit.income` / `exit.rep` /
   [TJ6]) with a stated residual (sd ln 0.3, NOT CALIBRATED).
 Both are drawn per Monte Carlo draw, so the exit's interval widens with them
 (BY14, BN1 00:18 replay: exit 80% 229-457h with both priors; the income prior alone ~2.5x the width of a measured income).
+
+### The trader's return depends on its book (traderw.js)
+
+One pooled rate read a $1m book, a $3b one and a $194b one as noisy
+measurements of one number (0.38-0.53/h live BN9 2026-09-29), and the exit
+compounded every book at it. The game says otherwise (v3 source):
+
+- $100k commission per order: stockstrat opens a position only when its edge
+  covers two round trips, so below ~$2.2m the trader never trades (r = 0);
+  just above, ~0.5/h, rising to the plateau (~0.8/h pre-4S) by ~$1e8.
+- maxShares (20% of outstanding) and the forecast damage every
+  shareTxForMovement shares traded do (0.006 otlkMag) — no price impact in
+  v3 — cap what the market absorbs: E(W) = r(W) W saturates at r0 W*
+  (~$2e11/h pre-4S in the sim, ~$1.1e12/h with 4S).
+
+Shape (fixed, from the sim): `s(W) = gate(W ≥ Wmin) · (hLo + (1-hLo)/(1+(Wr/W)^k)) ·
+(1+(W/W*)^n)^(-1/n)`. The posterior updates r0 and W*; the point is their
+means, the draws (plan.makeDraws) r0 and ln W* with their correlation. Every
+money leg integrates dW/dt = r(W) W + income: exitplan.hoursToMoney (steps
+bounded by 1/100 of the leg's compounding length ∫dlnW/r and 25% growth at
+the current rate; the capital starts where the income carries the book over
+the threshold), countexit.moneyAfter, lifeplan.freshLifeMoney,
+trajectory.incomeModel, and hacknetplan.capitalFV (a marginal dollar compounds
+at dE/dW, not r(W)). s(W) is read from a per-(W*, shape) table (0.02 decade;
+< 0.03% error) — planperf PP3c guards the pass's CPU. A life's first hour is
+not the curve's (the sim drops it; a fresh market's first cycle is known to
+the trader, so young books earn above the curve) — it is the warm-up.
+[RW1-4] traderrw.test.mjs.
 
 ### Structural priors from the game's formulas (freshlife.js)
 

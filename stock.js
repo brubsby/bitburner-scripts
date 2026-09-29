@@ -586,7 +586,7 @@ export async function main(ns) {
       // A bounded history for post-mortems (every 10 ticks, last 360 rows = 6h).
       if (counters.ticks % 10 === 0) {
         try {
-          const row = JSON.stringify({ at: new Date().toISOString(), t: st.t, wealth: Math.round(wealth), equity: Math.round(equity), cash: Math.round(cash), lifePnl: Math.round(lifePnl), externalFlows: Math.round(wealth - startWealth - lifePnl), phase: st.phase, held: held.map((h) => `${h.sym}:${h.f}±${h.sd}`) })
+          const row = JSON.stringify({ at: new Date().toISOString(), t: st.t, wealth: Math.round(wealth), equity: Math.round(equity), cash: Math.round(cash), lifePnl: Math.round(lifePnl), externalFlows: Math.round(wealth - startWealth - lifePnl), phase: st.phase, held: held.map((h) => `${h.sym}:${h.f}±${h.sd}`), ...(has4S ? { s4: true } : {}) }) // s4: a 4S row (plan.traderBeliefOf: another curve's evidence)
           // Off home, start from home's copy (a restart may land on another host).
           if (counters.ticks === 10) fetchFromHome(ns, HIST)
           const lines = (ns.read(HIST) || '').split('\n').filter(Boolean)

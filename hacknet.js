@@ -293,7 +293,7 @@ async function serverBatchPass(ns, { info, t, mults, nodeMoney, money, base, sta
       const r = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
       if (!r?.inputs || r.lastAugReset !== info.lastAugReset || !(Date.now() - Date.parse(r.at) < 15 * 60e3)) return null
       const x = r.inputs
-      return { capitalReturnPerSec: x.capitalReturnPerSec, capitalCap: x.capitalCap, capitalWarmupH: x.capitalWarmupH, money: x.money }
+      return { capitalReturnPerSec: x.capitalReturnPerSec, capitalCap: x.capitalCap, capitalScaleW: x.capitalScaleW ?? null, capitalShape: x.capitalShape ?? null, capitalWarmupH: x.capitalWarmupH, money: x.money }
     } catch {
       return null
     }

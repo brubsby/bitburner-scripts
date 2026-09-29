@@ -19,11 +19,12 @@
 // the alternative is better net of it is at least THETA — an expected-regret
 // rule whose scale comes from the posterior, not a hand-set hour tolerance.
 
-import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, logRatePosterior, jitterPosterior } from 'bayes.js'
+import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderRwPosterior, rwLedgerOf, driftPosterior, driftCalibration, logRatePosterior, jitterPosterior } from 'bayes.js'
 import { routeExitFixed, countExitFixed } from 'countexit.js'
 import { drain } from 'coop.js'
 import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
 import { realisedCapital } from 'nodeecon.js'
+import { RW_PRIOR, rwShape } from 'traderw.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -67,7 +68,7 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
   // THE TRADER'S RETURN: the belief the exit inputs' point was taken from
   // (traderBeliefOf), so the point and the draws are one distribution; the
   // rows path is kept for callers that have no belief.
-  const trader = traderBelief ? traderBelief.post ?? null : stockRows ? traderPosterior(stockRows, { warmupH }) : null
+  const trader = traderBelief ? traderBelief.post ?? null : stockRows ? traderBeliefOf(stockRows, { warmupH })?.post ?? null : null
   const drift = driftPosterior(exitSamples ?? [])
   const calibration = driftCalibration(exitSamples ?? [])
   const exp = logRatePosterior(obs?.exp)
@@ -94,10 +95,21 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
  * trajectory at 94.1h (point 1.75/h, draws 0.38/h) — EXIT JUMP AT INSTALL.
  * Now: the posterior (pooled over every run by random effects) is the point
  * (its mean) and the draws; the fit supplies only the warm-up; the fit's rate
- * stands in only where no run has a posterior. Returns {r, sd, warmupH, post,
- * fit, source, why} or null (no trader history).
+ * stands in only where no run has a posterior.
+ *
+ * AND THE RETURN DEPENDS ON THE BOOK (traderw.js, 2026-09-29): one pooled
+ * rate read a $1m book, a $3b one and a $194b one as noisy measurements of
+ * one number (0.38-0.53/h), and the exit compounded every book at it — from
+ * the final life's ~$1m (where the trader cannot pay its commissions and
+ * earns nothing) to the $75t QLink (where the market absorbs ~2% of it an
+ * hour). The belief is now the curve r(W) = r0 s(W/W*): the posterior on r0
+ * and W* (bayes.traderRwPosterior; prior: the shipped strategy on the game's
+ * market, tools/sim/stocks/rw.mjs) is the point (r = r0's mean, Wstar =
+ * exp(ln W*'s mean)) and the draws. `regime`: 'pre-long' | '4S-long' (the
+ * trader's stock.txt mode). Returns {r, sd, Wstar, shape, regime, warmupH,
+ * post, fit, source, why} or null (no trader history).
  */
-export function traderBeliefOf(rows) {
+export function traderBeliefOf(rows, { regime = 'pre-long', warmupH: warmIn = null, ledger = null } = {}) {
   if (!Array.isArray(rows) || rows.length < 2) return null
   let fit = null
   try {
@@ -105,12 +117,19 @@ export function traderBeliefOf(rows) {
   } catch {
     fit = null
   }
-  const warmupH = fin(fit?.warmupH) ? fit.warmupH : 0
-  const post = traderPosterior(rows, { warmupH })
+  const warmupH = fin(warmIn) ? warmIn : fin(fit?.warmupH) ? fit.warmupH : 0
+  // THE CURVE r(W) = r0 s(W/W*) (traderw.js, the game's market simulated):
+  // the posterior on r0 and W* is the point (its means) and the draws
+  // (makeDraws: r0 and ln W*, correlated). Runs of the other regime (a 4S
+  // life, stock.js s4) are not this curve's evidence. `ledger`: the
+  // persistent evidence (bayes.rwLedgerOf, progress.js /tel/stock-rw.txt) —
+  // the rows' 6h window alone loses the big books' hours as they scroll out.
+  const reg = RW_PRIOR[regime] ? regime : 'pre-long'
+  const prior = RW_PRIOR[reg]
+  const post = traderRwPosterior(rows, { warmupH, prior, regime: reg, ledger: ledger ?? rwLedgerOf(null, rows, { priors: RW_PRIOR, warmupH }), shape: (W, Ws) => rwShape(W, Ws, prior.shape) })
   if (post && fin(post.perSec?.mean) && post.perSec.mean > 0) {
-    return { r: post.perSec.mean, sd: post.perSec.sd, warmupH, post, fit, source: 'posterior', why: `trader posterior (the draws' own distribution, its mean the point): ${(post.perHour.mean * 100).toFixed(1)}%/h +- ${(post.perHour.sd * 100).toFixed(1)} — ${post.why}${fit ? `; warm-up ${warmupH.toFixed(3)}h from the realised fit (${(fit.r * 360000).toFixed(1)}%/h on the young runs alone, not the point)` : ''}` }
+    return { r: post.perSec.mean, sd: post.perSec.sd, Wstar: post.Wstar, shape: prior.shape, regime: reg, warmupH, post, fit, source: post.source, why: `trader r(W) ${post.source} (the draws' own distribution, its means the point): ${post.why}${fit ? `; warm-up ${warmupH.toFixed(3)}h from the realised fit (${(fit.r * 360000).toFixed(1)}%/h on the young runs alone, not the point)` : ''}` }
   }
-  if (fit && fin(fit.r) && fit.r > 0) return { r: fit.r, sd: null, warmupH, post: null, fit, source: 'fit', why: `no trader posterior (too few flow-free intervals): the realised fit — ${fit.why}` }
   return null
 }
 
@@ -157,7 +176,12 @@ export function makeDraws(post, N, seed) {
     const repResid = Math.exp(PRIORS.repEstimateSdLn * normalOf(st('repEstimate')))
     const incomeLn = post.income && fin(post.income.mean) && fin(post.income.sd) ? post.income.mean + post.income.sd * normalOf(st('income')) : null
     const r = post.trader ? Math.max(1e-9, post.trader.perSec.mean + post.trader.perSec.sd * zT) : null
-    out.push({ i, seed, r, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    // The curve's knee, correlated with the level as the posterior has it
+    // (bayes.traderRwPosterior rho); its own sub-stream, so no other z moves.
+    const tw = post.trader?.lnWstar
+    const rho = fin(post.trader?.rho) ? post.trader.rho : 0
+    const Wstar = tw && fin(tw.mean) && fin(tw.sd) ? Math.exp(tw.mean + tw.sd * (rho * zT + Math.sqrt(1 - rho * rho) * normalOf(st('traderW')))) : null
+    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -173,6 +197,8 @@ export function makeDraws(post, N, seed) {
 export function applyDraw(inputs, d) {
   const o = { ...inputs }
   if (fin(d.r)) o.capitalReturnPerSec = d.r
+  // The knee only where the inputs carry the curve (a flat-rate input stays flat).
+  if (fin(d.Wstar) && d.Wstar > 0 && fin(inputs.capitalScaleW)) o.capitalScaleW = d.Wstar
   if (inputs.cadenceFrom === 'purchase model') {
     // The life's length is the purchase model's DECISION (lifeplan), not a
     // random input: kept. What a life of that length buys is this draw's
@@ -404,6 +430,13 @@ export function redecideEvents(prev, cur, o = {}) {
   const pt = prev.posteriors?.trader
   if (pt && cur.trader && Math.abs(cur.trader.perSec.mean - pt.mean) > P.traderMoveSd * Math.max(pt.sd, 1e-12)) ev.push(`trader posterior moved ${((cur.trader.perSec.mean - pt.mean) / pt.sd).toFixed(1)} sd`)
   if (!pt !== !cur.trader) ev.push('trader posterior appeared/vanished')
+  // THE CURVE'S KNEE (traderw.js): the exit's money legs past ~$1e11 move
+  // with W* while r0 stays put — a move of it is an event as the level's is.
+  const lw = cur.trader?.lnWstar
+  if (pt && lw && fin(lw.mean)) {
+    if (!fin(pt.Wstar)) ev.push("the trader's r(W) curve appeared (the return at the book's own size)")
+    else if (Math.abs(lw.mean - Math.log(pt.Wstar)) > P.traderMoveSd * Math.max(fin(pt.lnWstarSd) ? pt.lnWstarSd : lw.sd, 1e-6)) ev.push(`trader curve's knee W* moved $${pt.Wstar.toExponential(2)} -> $${Math.exp(lw.mean).toExponential(2)}`)
+  }
   const sPrev = prev.posteriors?.s
   if (fin(sPrev) && cur.drift && (cur.drift.s / sPrev > P.driftMoveFactor || sPrev / cur.drift.s > P.driftMoveFactor)) ev.push(`structural error moved ${(100 * sPrev).toFixed(0)}% -> ${(100 * cur.drift.s).toFixed(0)}%`)
   return ev
@@ -412,7 +445,7 @@ export function redecideEvents(prev, cur, o = {}) {
 /** The posterior summary a plan record carries (and redecideEvents compares). */
 export function posteriorSummary(post) {
   return {
-    trader: post.trader ? { mean: post.trader.perSec.mean, sd: post.trader.perSec.sd, perHour: +post.trader.perHour.mean.toFixed(4), lives: post.trader.lives, why: post.trader.why } : null,
+    trader: post.trader ? { mean: post.trader.perSec.mean, sd: post.trader.perSec.sd, perHour: +post.trader.perHour.mean.toFixed(4), Wstar: fin(post.trader.Wstar) ? +post.trader.Wstar.toPrecision(4) : null, lnWstarSd: fin(post.trader.lnWstar?.sd) ? +post.trader.lnWstar.sd.toFixed(3) : null, rho: post.trader.rho ?? null, rw: post.trader.table ?? null, source: post.trader.source ?? null, lives: post.trader.lives, why: post.trader.why } : null,
     s: post.drift.s,
     driftWhy: post.drift.why,
     driftExcluded: post.drift.excluded ?? null,

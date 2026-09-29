@@ -41,6 +41,7 @@
 // compounded, the same model the exit's money legs use.
 
 import { drain } from 'coop.js'
+import { capitalOf, isShaped, capitalRateAt, capitalGain, capitalEarnAt } from 'traderw.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -132,12 +133,40 @@ export function bankBatch({ budget, ladder, n, nfg = null, later = false }) {
   return { count: take, cost: spent, gain, expGain, repGain, nfgLevels: levels, chosen: chosen.map((t) => t.name) }
 }
 
-/** Money in hand after `hours` from `money0`: capital r x min(money, cap) compounding plus a flat rate. */
-export function moneyAfter(money0, hours, { capitalReturnPerSec = 0, capitalCap = Infinity, flatPerSec = 0 } = {}) {
+/** Money in hand after `hours` from `money0`: capital r x min(money, cap) — or the curve r(W) W (traderw.js) — compounding plus a flat rate. */
+export function moneyAfter(money0, hours, o = {}) {
+  const { capitalReturnPerSec = 0, capitalCap = Infinity, flatPerSec = 0 } = o
   const T = Math.max(0, hours) * 3600
   let m = Math.max(0, money0)
   const r = pos(capitalReturnPerSec) ? capitalReturnPerSec : 0
   const cap = pos(capitalCap) ? capitalCap : Infinity
+  // THE CURVE r(W) (traderw.js): the book compounds at its own book's rate,
+  // the flat income arriving as it goes (steps of <= 5% growth). Absent, the
+  // closed form below.
+  if (r > 0 && isShaped(o)) {
+    const c = capitalOf(o)
+    const f = pos(flatPerSec) ? flatPerSec : 0
+    let t = 0
+    for (let i = 0; i < 2000 && t < T; i++) {
+      const gate = c.sh?.Wmin > 0 ? c.sh.Wmin * 1.0001 : 0
+      const rn = capitalRateAt(Math.max(m, gate), c) // below the commission threshold: bounded as just past it
+      // <= 5% growth from the capital, <= 10% from the income (the capital
+      // compounds on it as it arrives), and a stop where the income carries
+      // the book over the commission threshold.
+      let dt = Math.min(T - t, rn > 0 ? 0.05 / rn : T, T / 20)
+      if (f > 0) dt = Math.min(dt, Math.max(1, (0.1 * m) / f), m < gate ? Math.max(1, (gate - m) / f) : Infinity)
+      // dW/dt = r W + f with r the step's midpoint rate: W e^(r dt) + (f/r)(e^(r dt) - 1)
+      // — the capital compounds on the income as it arrives (second order).
+      if (m >= c.cap || !(f > 0)) m += capitalGain(m, dt, c) + f * dt
+      else {
+        const r1 = capitalRateAt(m, c)
+        const r2 = capitalRateAt(Math.min(c.cap, m + ((r1 * m + f) * dt) / 2), c)
+        m = r2 > 0 ? Math.min(m + (m + f / r2) * Math.expm1(r2 * dt), Math.max(c.cap, m) + (capitalEarnAt(c.cap, c) + f) * dt) : m + f * dt
+      }
+      t += dt
+    }
+    return m + (t < T ? (capitalEarnAt(m, c) + f) * (T - t) : 0)
+  }
   if (r > 0) {
     if (m >= cap) m += r * cap * T
     else {

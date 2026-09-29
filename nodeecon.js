@@ -158,6 +158,8 @@ export function stockRecordOf(rec, lastAugReset, now = Date.now()) {
     scriptMade: fin(rec.scriptIncome?.made) ? rec.scriptIncome.made : null,
     manip,
     manipCurve: Array.isArray(rec.manipCurve) ? rec.manipCurve.filter((x) => fin(x?.nudgesPerSec) && x.nudgesPerSec >= 0 && fin(x?.returnPerSec)) : null,
+    // The trader's mode ('4S' | 'pre-4S ...'): which r(W) curve it trades on (traderw.rwRegimeOf).
+    mode: typeof rec.mode === 'string' ? rec.mode : null,
     why: null,
   }
 }

@@ -58,6 +58,7 @@ import { serveOrFarm } from 'expfarm.js'
 import { cadencePosterior } from 'bayes.js'
 import { capitalFV } from 'hacknetplan.js'
 import { drain } from 'coop.js'
+import { capitalOf, isShaped, capitalEarnAt, capitalRateAt, capitalGain, capitalStepFn, rateTab } from 'traderw.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -391,6 +392,12 @@ export function hoursToMoney(target, o = {}) {
   const flat = num(o.flatPerSec) && o.flatPerSec > 0 ? o.flatPerSec : 0
   const r = num(o.capitalReturnPerSec) && o.capitalReturnPerSec > 0 ? o.capitalReturnPerSec : 0
   const cap = num(o.capitalCap) && o.capitalCap > 0 ? o.capitalCap : Infinity
+  // THE RETURN DEPENDS ON THE BOOK (traderw.js): with capitalScaleW /
+  // capitalShape the capital earns r0 s(W) W — nothing below the commission
+  // threshold, the plateau, then the market's capacity — not r x min(W, cap).
+  // Absent, capitalGain is exactly the flat closed form below.
+  const capC = capitalOf(o)
+  const shapedCap = r > 0 && isShaped(o)
   // MONEY GOING OUT EVERY SECOND (o.spendPerSec): class and gym fees, which
   // the game charges through loseMoney with no balance check
   // (Work/Formulas.ts calculateClassEarnings: money = -cost x costMult per
@@ -416,21 +423,57 @@ export function hoursToMoney(target, o = {}) {
   // is then reported as the maxHours it could not beat.
   {
     const lvl0 = levelAt(exp, mult)
-    const r0 = (lvlIncome * (lvl0 + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(0) : 0) + r * Math.min(Math.max(0, money), cap)
+    const r0 = (lvlIncome * (lvl0 + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(0) : 0) + capitalEarnAt(Math.max(0, money), capC)
     const est = r0 > 0 ? (target - money) / r0 / 3600 : maxHours
     stepH = Math.max(stepH, Math.min(maxHours, est) / 200)
     // A compounding balance must not be stepped past ~2% growth: the linear
     // estimate above over-states an exponential leg by orders of magnitude,
     // and a step of 2/r is not an integration of e^rt. (4000 steps of 2%
     // still span e^80.) The iteration cap keeps its meaning: maxHours/4000.
-    if (r > 0) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), maxHours / 4000))
+    if (r > 0 && !shapedCap) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), maxHours / 4000))
     // ...but maxHours/4000 is 2.5h, which let every ordinary leg take 2.5h
     // steps — ~x6 of growth, with the level-scaled income held at its
     // start-of-step value and the warm-up rounded up to a step. So the step
     // is also bounded by 1/100 of the leg's COMPOUNDING length ln(T/m)/r
     // (never below the 2% step): a leg of hours takes ~100 steps, and only
     // a leg too long for that still takes the coarse step.
-    if (r > 0 && money > 0 && target > money) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), Math.log(target / money) / (r * 3600) / 100))
+    if (r > 0 && !shapedCap && money > 0 && target > money) stepH = Math.min(stepH, Math.max(0.02 / (r * 3600), Math.log(target / money) / (r * 3600) / 100))
+  }
+  // THE SAME BOUNDS ON A CURVE. r(W) spans x40 from $1e11 to $1e13, so one
+  // rate for the leg either crawls (the plateau's 2% on a saturated book) or
+  // overshoots (the saturated rate on the plateau). The leg's compounding
+  // length is the integral of dlnW / r(W) (16 points in log W, once per leg;
+  // the flat rate's ln(T/m)/r), and 1/100 of it bounds the step as for the
+  // flat rate — and each step is also held to <= 25% growth at the book's
+  // CURRENT rate, so the plateau is stepped finely and the saturated tail
+  // coarsely. A book below the commission threshold earns nothing until the
+  // other income carries it over: its rate is read just past the threshold,
+  // so one income-sized step cannot leave it idle for the leg's 1/200th (a
+  // 50h step at $1m read 248h against 204h with a 0.013h warm-up).
+  const gateW = shapedCap && pos(capC.sh?.Wmin) ? capC.sh.Wmin * 1.0001 : 0
+  let legH = stepH
+  if (shapedCap && target > money) {
+    const la = Math.log(Math.max(money, gateW, 1))
+    const lb = Math.log(target)
+    let len = 0
+    let rMax = 0
+    if (lb > la) {
+      const K = 16
+      const d = (lb - la) / K
+      for (let k = 0; k < K; k++) {
+        const W = Math.exp(la + (k + 0.5) * d)
+        const rn = capC.tab ? rateTab(capC, W) : capitalRateAt(W, capC)
+        if (rn > rMax) rMax = rn
+        len += d / Math.max(rn, 1e-15)
+      }
+    }
+    if (rMax > 0) legH = Math.min(stepH, Math.max(0.02 / (rMax * 3600), len / 3600 / 50))
+  }
+  let rNow = 0 // the book's rate at the step's start (stepAt sets it; capitalGain reuses it)
+  const stepAt = (m) => {
+    rNow = !(m > 0) ? 0 : capC.tab ? rateTab(capC, m) : capitalRateAt(m, capC)
+    const rn = m < gateW ? capitalRateAt(gateW, capC) : rNow
+    return rn > 0 ? Math.min(legH, 0.25 / (rn * 3600)) : legH
   }
   let iter = 0
   while (h < maxHours && iter++ < 4000) {
@@ -441,10 +484,25 @@ export function hoursToMoney(target, o = {}) {
     // step starting inside a 0.16h warm-up earned no capital for all of it
     // (live BN8 2026-09-26: the $250m -> $100b hoard read 10.25h against
     // 8.66h). The step is cut at the warm-up's end; no capital, no cut.
-    const sH = r > 0 && h < warmH && warmH - h < stepH ? warmH - h : stepH
+    // Below the commission threshold the step ends where the income carries
+    // the book over it: the capital starts then, not a step later.
+    // (Income-driven growth is not step-bounded, as for the flat rate: the
+    // capital misses the income arriving inside a step — <= 2% on a leg,
+    // tools/test/traderrw.test.mjs RW3, the flat rate's own 1.7%.)
+    let stepNow = stepH
+    if (shapedCap) {
+      stepNow = stepAt(money)
+      const inc = rate - spend
+      if (inc > 0 && money < gateW) stepNow = Math.min(stepNow, Math.max(1e-4, (gateW - money) / inc / 3600))
+    }
+    const sH = r > 0 && h < warmH && warmH - h < stepNow ? warmH - h : stepNow
     const dt = sH * 3600
-    // The capital term over the step: exponential below the cap, linear at it.
-    const capGain = r > 0 && h >= warmH ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
+    // The capital term over the step: exponential below the cap, linear at
+    // it (traderw.capitalGain; on a curve, at the step's midpoint rate).
+    const capGain = !(r > 0 && h >= warmH) ? 0 : shapedCap ? capitalGain(money, dt, capC, rNow) : money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt
+    // A landing bisected inside a curved step reads the step's own rate (traderw.capitalStepFn).
+    // The flat rate's own closed form otherwise (no capital in the warm-up).
+    const stepFn = () => (!(r > 0 && h >= warmH) ? () => 0 : shapedCap ? capitalStepFn(money, dt, capC, rNow) : money < cap ? (x) => Math.min(money * Math.expm1(r * x), cap - money + r * cap * x) : (x) => r * cap * x)
     const add = rate * dt + Math.max(0, capGain) - spend * dt
     if (!(add > 0) && money + add <= 0) return Infinity // the spend empties the balance first
     // The last step lands exactly: without this the answer is quantised to
@@ -461,11 +519,12 @@ export function hoursToMoney(target, o = {}) {
       if (add > 0 && money + add >= T1) {
         if (!(capGain > 0)) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * sH
         // Compounding: land on the curve against the falling target (below).
+        const stepGain = stepFn()
         let lo = 0
         let hi = dt
         for (let k = 0; k < 40; k++) {
           const mid = (lo + hi) / 2
-          const c = money < cap ? Math.min(money * Math.expm1(r * mid), cap - money + r * cap * mid) : r * cap * mid
+          const c = stepGain(mid)
           if (money + rate * mid + Math.max(0, c) - spend * mid >= o.targetAt(h + mid / 3600)) hi = mid
           else lo = mid
         }
@@ -483,8 +542,9 @@ export function hoursToMoney(target, o = {}) {
       // depth since the step bound above (1/100 of the leg): with it the
       // chord's error is ~1e-3h, so [GP10] pins the bound, not this.
       if (!(capGain > 0)) return h + ((target - money) / add) * sH
+      const stepGain = stepFn()
       const addOver = (s) => {
-        const c = money < cap ? Math.min(money * Math.expm1(r * s), cap - money + r * cap * s) : r * cap * s
+        const c = stepGain(s)
         return rate * s + Math.max(0, c) - spend * s
       }
       let lo = 0
@@ -715,6 +775,10 @@ export function exitHours(o = {}) {
     flatIncomePerSec = 0,
     capitalReturnPerSec = 0,
     capitalCap = null,
+    // THE CURVE r(W) (traderw.js): the knee W* and the fixed shape; absent,
+    // the flat r x min(W, cap).
+    capitalScaleW = null,
+    capitalShape = null,
     installCash = null,
     // Money spent every second from now on (class/gym fees): slows every money
     // leg (hoursToMoney spendPerSec). Legs that need no money are unaffected —
@@ -1030,7 +1094,7 @@ export function exitHours(o = {}) {
     const t0 = h
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, capitalScaleW, capitalShape, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -1300,7 +1364,7 @@ export function exitHours(o = {}) {
   // concurrent with the climb — only the excess binds.
   if (pos(finalRootCost)) {
     const money0 = num(installCash) && installCash >= 0 ? installCash : 1262
-    const rootH = finalRootCost <= money0 ? 0 : hoursToMoney(finalRootCost, { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 })
+    const rootH = finalRootCost <= money0 ? 0 : hoursToMoney(finalRootCost, { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, capitalScaleW, capitalShape, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 })
     if (!num(rootH)) return { hours: null, why: 'could not price re-buying the port openers after the terminal install' }
     const extra = Math.max(0, rootH - (climb + lagH))
     legs.push({ leg: 'root w0r1d_d43m0n', hours: extra, detail: `$${Math.round(finalRootCost)} of openers from $${Math.round(money0)} after the install: ${rootH.toFixed(2)}h, concurrent with the climb` })

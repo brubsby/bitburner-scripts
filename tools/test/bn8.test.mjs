@@ -430,7 +430,7 @@ export async function run() {
     // the fit (else the trader's steady rate) where no run has a posterior.
     if (!/capitalReturnPerSec: traderBeliefNow\(ns, info\)\?\.r \?\?/.test(src)) n.fail("exitInputsOf must take the capital return from the realised trader belief first");
     if (!/capitalWarmupH: traderBeliefNow\(ns, info\)\?\.warmupH/.test(src)) n.fail("exitInputsOf must pass the per-install warm-up");
-    if (!/traderBeliefMemo = traderBeliefOf\(stockHistRowsOf\(ns\)\)[\s\S]{0,200}capitalFitOf\(ns, info\)/.test(src)) n.fail("traderBeliefNow must fall back to the realised fit / the trader's steady rate");
+    if (!/traderBeliefMemo = traderBeliefOf\((stockHistRowsOf\(ns\)|rows)(, \{ regime: rwRegimeOf\(stockNow\?\.mode\)(, ledger)? \})?\)[\s\S]{0,200}capitalFitOf\(ns, info\)/.test(src)) n.fail("traderBeliefNow must fall back to the realised fit / the trader's steady rate");
     if (!/capStart:[^\n]*capEnd:/.test(src)) n.fail("the lifetimes ledger must record the capital at each life's start and install");
   }
   checks.push(n);

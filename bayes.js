@@ -409,6 +409,243 @@ export function traderPosterior(rows, { warmupH = 0, minPoints = 4 } = {}) {
 }
 
 /**
+ * THE TRADER'S RETURN AS A FUNCTION OF ITS BOOK, r(W) = r0 s(W; W*): the
+ * posterior on the level r0 and the knee W*, with the curve's shape (s,
+ * traderw.js rwShape — passed in, this module imports nothing) fixed from the
+ * game's own market (tools/sim/stocks/rw.mjs). traderPosterior pooled every
+ * interval into ONE rate, so a $1m book, a $3b one and a $194b one were read
+ * as noisy measurements of the same number (0.38-0.53/h live BN9 2026-09-29),
+ * and the exit compounded every book at it.
+ *
+ * The data: /tel/stock-hist.txt, each flow-free interval past the warm-up
+ * x_i = ln(1 + dPnl / W_i) / dt_i at the book W_i it started from (as
+ * traderPosterior). The model, per run (life) l:
+ *   x_i = r0 (1 + d_l) s(W_i; W*) + e_i,  e_i ~ N(0, kappa^2 sigma(W_i)^2 / dt_i)
+ *   d_l ~ N(0, tauRel^2)  (one life's level around the node's; the sim's spread)
+ * d_l integrated out in closed form (rank one: Sherman-Morrison), so a life
+ * of many intervals counts as one life, not as many independent ones.
+ * sigma(W): the sim's interval noise at book W; kappa^2 its scale on this
+ * ledger (IG(3, 2) around 1, re-estimated at the posterior mean once).
+ *
+ * The prior (prior = traderw.RW_PRIOR[regime]): ln r0 ~ N(ln r0Sim, sdLnR0),
+ * ln W* ~ N(ln W*Sim, sdLnWstar) — the sim's fit and a STATED structural
+ * error. The posterior on a 33 x 33 grid in (ln r0, ln W*): exact up to the
+ * grid, CPU ~1ms for 360 rows. Returned as moments — r0 per hour (mean, sd),
+ * ln W* (mean, sd), their correlation — which the plan's draws use
+ * (plan.makeDraws), plus r(W) at a table of books (mean, sd).
+ *
+ * The evidence is a ledger (rwLedgerOf: per-run, per-book-bin sufficient
+ * statistics kept across the rolling history), `ledger` when the caller keeps
+ * one, else built from `rows`; only runs of `regime` count.
+ *
+ * Returns the prior itself (source 'prior', points 0) when no interval
+ * survives (or no rows); null only without a prior or a shape.
+ */
+export const RW_LEDGER = { binDec: 0.1, maxRuns: 60 }
+/** sigma(W) per sqrt(hour) of the prior (the sim's interval noise at book W). */
+function rwSigmaOf(prior, W) {
+  const s = prior?.sigma
+  return s ? s.sigma0 * Math.pow(1 + Math.pow(W / s.sWstar, s.n), -1 / s.n) : 0.2
+}
+/**
+ * THE LEDGER OF THE CURVE'S EVIDENCE, kept across the rolling history.
+ * /tel/stock-hist.txt holds the last 360 rows (6h): a big book's hours scroll
+ * out of it within one life, and with them the only evidence on the knee W*
+ * (live 2026-09-29 18:17-18:27Z: r0 0.68 -> 0.64, W* 7.0e11 -> 6.7e11 in ten
+ * minutes as the $1e11-1e12 rows fell off, the exit +11%). So each pass folds
+ * the rows it has not seen (row.at past lastRow.at) into per-run, per-book-bin
+ * sufficient statistics (0.1 decade; P = sum dt/sig^2, X = sum x dt/sig^2,
+ * XX = sum x^2 dt/sig^2, LW = sum log10 W dt/sig^2, n, h) — the posterior is
+ * exact in them up to the bin's book (s varies ~2% across a bin at the knee).
+ * A run is a stretch of rows with t rising (stock.js restarts t), carried
+ * across passes by lastRow; the regime (s4) is part of the run. Pure: returns
+ * a new ledger {v, lastRow, next, runs: [{id, node, regime, firstAt, bins}]}.
+ */
+export function rwLedgerOf(prev, rows, { prior = null, priors = null, warmupH = 0, node = null } = {}) {
+  const led = prev && prev.v === 1 && Array.isArray(prev.runs) ? { v: 1, lastRow: prev.lastRow ?? null, next: prev.next ?? prev.runs.length, runs: prev.runs.map((r) => ({ ...r, bins: { ...r.bins } })) } : { v: 1, lastRow: null, next: 0, runs: [] }
+  if (!Array.isArray(rows)) return led
+  const priorOf = (reg) => (priors ? priors[reg] : prior) ?? prior
+  let a = led.lastRow
+  let seg = a ? led.runs.find((r) => r.id === a.seg) ?? null : null
+  for (const b of rows) {
+    if (!(fin(b?.t) && fin(b?.wealth) && fin(b?.lifePnl))) continue
+    if (a && typeof b.at === 'string' && typeof a.at === 'string' && b.at <= a.at) continue
+    const reg = b.s4 === true ? '4S-long' : 'pre-long'
+    if (!a || !seg || b.t < a.t || reg !== seg.regime) {
+      seg = { id: led.next++, node, regime: reg, firstAt: b.at ?? null, bins: {} }
+      led.runs.push(seg)
+      a = { at: b.at, t: b.t, wealth: b.wealth, lifePnl: b.lifePnl, externalFlows: b.externalFlows, seg: seg.id }
+      continue
+    }
+    const pr = priorOf(reg)
+    const warmS = Math.max(fin(warmupH) && warmupH > 0 ? warmupH : 0, fin(pr?.skipH) ? pr.skipH : 0) * 3600
+    const flowOk = b.externalFlows === a.externalFlows || (fin(a.externalFlows) && fin(b.externalFlows) && Math.abs(b.externalFlows - a.externalFlows) <= FLOW_TOL_FRAC * a.wealth)
+    const dtH = ((b.t - a.t) * STOCK_TICK_S) / 3600
+    const g = a.wealth > 0 ? 1 + (b.lifePnl - a.lifePnl) / a.wealth : 0
+    if (a.wealth > 0 && flowOk && a.t * STOCK_TICK_S >= warmS && dtH > 0 && g > 0) {
+      const x = Math.log(g) / dtH
+      const sg = rwSigmaOf(pr, a.wealth)
+      const p = dtH / (sg * sg)
+      const lw = Math.log10(a.wealth)
+      const k = String(Math.round(lw / RW_LEDGER.binDec))
+      const c = seg.bins[k] ?? [0, 0, 0, 0, 0, 0]
+      seg.bins[k] = [c[0] + p, c[1] + x * p, c[2] + x * x * p, c[3] + lw * p, c[4] + 1, c[5] + dtH]
+    }
+    a = { at: b.at, t: b.t, wealth: b.wealth, lifePnl: b.lifePnl, externalFlows: b.externalFlows, seg: seg.id }
+  }
+  led.lastRow = a
+  // Bounded: the newest runs with evidence (and the current one).
+  const keep = led.runs.filter((r) => Object.keys(r.bins).length > 0 || r.id === a?.seg)
+  led.runs = keep.slice(-RW_LEDGER.maxRuns)
+  return led
+}
+
+export function traderRwPosterior(rows, { warmupH = 0, prior = null, shape = null, grid = 33, ledger = null, regime = 'pre-long', books = [1e6, 3e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14] } = {}) {
+  if (!prior || typeof shape !== 'function') return null
+  if (!ledger && !Array.isArray(rows)) return null
+  // The evidence: the ledger's runs of this regime (rows folded in fresh when no ledger is given).
+  const led = ledger ?? rwLedgerOf(null, rows, { prior, warmupH })
+  const warmH = Math.max(fin(warmupH) && warmupH > 0 ? warmupH : 0, fin(prior.skipH) ? prior.skipH : 0)
+  const lives = led.runs
+    .filter((r) => (r.regime ?? 'pre-long') === regime)
+    .map((r) => {
+      const bins = Object.values(r.bins).filter((c) => c[0] > 0)
+      return { W: bins.map((c) => Math.pow(10, c[3] / c[0])), P: bins.map((c) => c[0]), X: bins.map((c) => c[1]), XX: bins.map((c) => c[2]), n: bins.reduce((q, c) => q + c[4], 0), h: bins.reduce((q, c) => q + c[5], 0) }
+    })
+    .filter((l) => l.P.length > 0)
+  let points = 0
+  let hours = 0
+  for (const l of lives) {
+    points += l.n
+    hours += l.h
+  }
+  const used = lives
+  const G = Math.max(5, grid | 0)
+  const muU = Math.log(prior.r0PerHour)
+  const muW = Math.log(prior.Wstar)
+  const sdU = prior.sdLnR0
+  const sdW = prior.sdLnWstar
+  const us = Array.from({ length: G }, (_, i) => muU + sdU * (-4 + (8 * i) / (G - 1)))
+  const wsG = Array.from({ length: G }, (_, j) => muW + sdW * (-4 + (8 * j) / (G - 1)))
+  const tau2 = (prior.tauRel ?? 0.2) ** 2
+  // Per W* value and life: S2 = sum s^2 dt / sig^2, SX = sum s x dt / sig^2,
+  // C = sum x^2 dt / sig^2 (kappa^2 applied at use). s depends on W* only.
+  const stats = wsG.map((lw) => {
+    const Ws = Math.exp(lw)
+    return used.map((l) => {
+      let S2 = 0
+      let SX = 0
+      let C = 0
+      for (let i = 0; i < l.P.length; i++) {
+        const s = shape(l.W[i], Ws)
+        S2 += s * s * l.P[i]
+        SX += s * l.X[i]
+        C += l.XX[i]
+      }
+      return { S2, SX, C }
+    })
+  })
+  const logPost = (k2) => {
+    const lp = []
+    for (let j = 0; j < G; j++) {
+      for (let i = 0; i < G; i++) {
+        const r0 = Math.exp(us[i])
+        let ll = -0.5 * ((us[i] - muU) / sdU) ** 2 - 0.5 * ((wsG[j] - muW) / sdW) ** 2
+        for (const st of stats[j]) {
+          const A = (r0 * r0 * st.S2) / k2
+          const B = (r0 * st.SX) / k2
+          const Q = st.C / k2 - 2 * B + A
+          const D = B - A
+          ll += -0.5 * (Q - (tau2 * D * D) / (1 + tau2 * A)) - 0.5 * Math.log(1 + tau2 * A)
+        }
+        lp.push(ll)
+      }
+    }
+    return lp
+  }
+  const momentsOf = (lp) => {
+    const mx = Math.max(...lp)
+    let Z = 0
+    let m1 = 0
+    let m2 = 0
+    let n1 = 0
+    let n2 = 0
+    let c12 = 0
+    const wts = lp.map((v) => Math.exp(v - mx))
+    for (let j = 0; j < G; j++) {
+      for (let i = 0; i < G; i++) {
+        const w = wts[j * G + i]
+        const r0 = Math.exp(us[i])
+        Z += w
+        m1 += w * r0
+        m2 += w * r0 * r0
+        n1 += w * wsG[j]
+        n2 += w * wsG[j] * wsG[j]
+        c12 += w * r0 * wsG[j]
+      }
+    }
+    m1 /= Z
+    n1 /= Z
+    const v1 = Math.max(0, m2 / Z - m1 * m1)
+    const v2 = Math.max(0, n2 / Z - n1 * n1)
+    const cov = c12 / Z - m1 * n1
+    return { wts, Z, r0: { mean: m1, sd: Math.sqrt(v1) }, lnW: { mean: n1, sd: Math.sqrt(v2) }, rho: v1 > 0 && v2 > 0 ? Math.max(-0.99, Math.min(0.99, cov / Math.sqrt(v1 * v2))) : 0 }
+  }
+  // kappa^2: the ledger's noise scale on the sim's, IG(3, 2) (mean 1) updated
+  // by the residuals at the prior's curve, then once more at the posterior's.
+  const kappaAt = (r0, Ws) => {
+    let Q = 0
+    for (const l of used) {
+      for (let i = 0; i < l.P.length; i++) {
+        const m = r0 * shape(l.W[i], Ws)
+        Q += l.XX[i] - 2 * m * l.X[i] + m * m * l.P[i]
+      }
+    }
+    return (2 + Q / 2) / (3 + points / 2 - 1)
+  }
+  let k2 = points ? kappaAt(prior.r0PerHour, prior.Wstar) : 1
+  let mo = momentsOf(logPost(k2))
+  if (points) {
+    k2 = kappaAt(mo.r0.mean, Math.exp(mo.lnW.mean))
+    mo = momentsOf(logPost(k2))
+  }
+  // r(W) at the table's books, under the grid posterior.
+  const table = books.map((W) => {
+    let a = 0
+    let b = 0
+    for (let j = 0; j < G; j++) {
+      const s = shape(W, Math.exp(wsG[j]))
+      for (let i = 0; i < G; i++) {
+        const w = mo.wts[j * G + i]
+        const v = Math.exp(us[i]) * s
+        a += w * v
+        b += w * v * v
+      }
+    }
+    a /= mo.Z
+    return { W, mean: +a.toFixed(4), sd: +Math.sqrt(Math.max(0, b / mo.Z - a * a)).toFixed(4) }
+  })
+  const Wstar = Math.exp(mo.lnW.mean)
+  const at = (W) => table.find((t) => t.W === W)
+  const fmtW = (W) => (W >= 1e12 ? `$${W / 1e12}t` : W >= 1e9 ? `$${W / 1e9}b` : `$${W / 1e6}m`)
+  return {
+    perHour: { mean: mo.r0.mean, sd: mo.r0.sd },
+    perSec: { mean: mo.r0.mean / 3600, sd: mo.r0.sd / 3600 },
+    lnWstar: { mean: mo.lnW.mean, sd: mo.lnW.sd },
+    Wstar,
+    rho: +mo.rho.toFixed(4),
+    kappa2: +k2.toFixed(3),
+    table,
+    lives: used.length,
+    points,
+    hours: +hours.toFixed(2),
+    source: points ? 'posterior' : 'prior',
+    prior: { r0PerHour: prior.r0PerHour, Wstar: prior.Wstar, sdLnR0: sdU, sdLnWstar: sdW, tauRel: prior.tauRel },
+    why: `r(W) = r0 s(W/W*): r0 ${(mo.r0.mean * 100).toFixed(1)}%/h +- ${(mo.r0.sd * 100).toFixed(1)}, W* $${Wstar.toExponential(2)} x/÷ ${Math.exp(mo.lnW.sd).toFixed(2)} (prior ${(prior.r0PerHour * 100).toFixed(1)}%/h, $${prior.Wstar.toExponential(2)}, the sim's) — ${[1e6, 1e9, 1e11, 1e13].map((W) => `${fmtW(W)} ${((at(W)?.mean ?? 0) * 100).toFixed(1)}%/h`).join(', ')}; ${points ? `${used.length} run(s), ${points} intervals over ${hours.toFixed(1)}h past each life's first ${warmH.toFixed(2)}h, noise x${Math.sqrt(k2).toFixed(2)} the sim's` : 'no flow-free interval: the prior'}`,
+  }
+}
+
+/**
  * Same-life pairs of exit samples: relative residual against the predicted
  * -1h/h. A pair counts only when BOTH ends were produced by the same model
  * and the same process:

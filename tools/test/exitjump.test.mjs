@@ -98,9 +98,9 @@ function preInputs(over = {}) {
     ...over,
   };
 }
-/** Price one side: its point and its mean over 24 paired draws (trader: {perSec} or null = no trader draws). */
+/** Price one side: its point and its mean over 24 paired draws (trader: {mean, sd} per second, a whole posterior (the curve's, with lnWstar), or null = no trader draws). */
 function price(inputs, { now, trader, seed }) {
-  const draws = P.makeDraws({ ...basePost(), trader: trader ? { perSec: trader } : null }, 24, seed);
+  const draws = P.makeDraws({ ...basePost(), trader: trader ? (trader.perSec ? trader : { perSec: trader }) : null }, 24, seed);
   const f = (x) => {
     const r = now ? E.bestExitPolicy({ ...x, firstInstallH: 0 }, 400, 1) : E.bestExitPolicy(x);
     return r.degenerate ? null : r.best?.hours ?? null;
@@ -170,8 +170,8 @@ export async function run() {
     c.note(`posteriorsOf(traderBelief): draws' mean return ${(rMean * 3600).toFixed(3)}/h against the point ${(bPost.r * 3600).toFixed(3)}/h`);
     if (pp.trader !== bPost.post || Math.abs(rMean - bPost.r) > 0.1 * bPost.r) c.fail("posteriorsOf must draw the trader's return from the belief the point was taken from");
     const cash = N.postInstallMoney(9) + O.ONEOFF_EFFECTS["CashRoot Starter Kit"].startingMoney;
-    const pre = price(preInputs({ capitalReturnPerSec: bPre.r, capitalWarmupH: bPre.warmupH, installCash: cash }), { now: true, trader: bPre.post.perSec, seed: SEED_PRE });
-    const post = price({ ...POST, capitalReturnPerSec: bPost.r, capitalWarmupH: bPost.warmupH, installCash: cash }, { now: false, trader: bPost.post.perSec, seed: SEED_POST });
+    const pre = price(preInputs({ capitalReturnPerSec: bPre.r, capitalScaleW: bPre.Wstar, capitalShape: bPre.shape, capitalWarmupH: bPre.warmupH, installCash: cash }), { now: true, trader: bPre.post, seed: SEED_PRE });
+    const post = price({ ...POST, capitalReturnPerSec: bPost.r, capitalScaleW: bPost.Wstar, capitalShape: bPost.shape, capitalWarmupH: bPost.warmupH, installCash: cash }, { now: false, trader: bPost.post, seed: SEED_POST });
     const gap = post.mean - (pre.mean - ELAPSED_H);
     // On common random numbers (one seed for both sides) the state is the
     // only difference left: the gap must be small. Across the two lives'
@@ -182,8 +182,8 @@ export async function run() {
     // life batched money until something was planned (EJ4 wires the farm
     // verdict onto that path). With the farm's rate on the post side too the
     // two are one state.
-    const preC = price(preInputs({ capitalReturnPerSec: bPre.r, capitalWarmupH: bPre.warmupH, installCash: cash }), { now: true, trader: bPre.post.perSec, seed: SEED_POST });
-    const postFarm = price({ ...POST, expPerSec: (F.pre.expPerSec * (POST.hacking + 50)) / (F.pre.hacking + 50), capitalReturnPerSec: bPost.r, capitalWarmupH: bPost.warmupH, installCash: cash }, { now: false, trader: bPost.post.perSec, seed: SEED_POST });
+    const preC = price(preInputs({ capitalReturnPerSec: bPre.r, capitalScaleW: bPre.Wstar, capitalShape: bPre.shape, capitalWarmupH: bPre.warmupH, installCash: cash }), { now: true, trader: bPre.post, seed: SEED_POST });
+    const postFarm = price({ ...POST, expPerSec: (F.pre.expPerSec * (POST.hacking + 50)) / (F.pre.hacking + 50), capitalReturnPerSec: bPost.r, capitalScaleW: bPost.Wstar, capitalShape: bPost.shape, capitalWarmupH: bPost.warmupH, installCash: cash }, { now: false, trader: bPost.post, seed: SEED_POST });
     const gapC = post.mean - (preC.mean - ELAPSED_H);
     const gapF = postFarm.mean - (preC.mean - ELAPSED_H);
     c.note(`common draws: pre mean ${preC.mean.toFixed(2)}h; post (money mode) gap ${gapC >= 0 ? "+" : ""}${gapC.toFixed(2)}h (${((100 * gapC) / preC.mean).toFixed(1)}%), post at the farm's exp gap ${gapF >= 0 ? "+" : ""}${gapF.toFixed(2)}h (${((100 * gapF) / preC.mean).toFixed(1)}%)`);
