@@ -2370,6 +2370,10 @@ function publishPlan(ns, info, extra = {}) {
       // A decision that changed under a re-basing this pass: re-decide next
       // pass (redecideEvents reads it).
       forceRedecide: pc.forceRedecide ?? null,
+      // The exit model this was priced on (modelVersionOf). The healthcheck's
+      // EXIT NOT APPROACHING compares exits within one version only: a model
+      // correction moves the forecast without the run moving.
+      ver: MODEL_VERSION,
     }
     ns.write(PLAN_FILE, JSON.stringify(rec), 'w')
   } catch (e) {

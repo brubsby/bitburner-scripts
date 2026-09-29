@@ -677,8 +677,22 @@ if (!sleevesExpected) {
   const sameNode = prev && prev.bitNode === now.bitNode;
   // Entries carry their node, so a node change can never leak an old node's
   // exit into the comparison (BN1's 0.1h vs BN9's 327.8h, 2026-09-28).
-  const hist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH) && h.node === now.bitNode);
-  now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH, node: now.bitNode }] : [])].slice(-48);
+  //
+  // Entries also carry the exit model's version (plan.txt `ver`). A model
+  // correction moves the projection without the run moving — the stock
+  // double-count fix took it 53.9h -> 69.7h (2026-09-29) and this fired — so
+  // only same-version samples are compared, and a reset is said out loud.
+  const modelVer = (() => {
+    try {
+      return readTel("plan.txt")?.ver ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const nodeHist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH) && h.node === now.bitNode);
+  const hist = nodeHist.filter((h) => (h.ver ?? null) === modelVer);
+  if (hist.length < nodeHist.length) note(`exit history restarted: the exit model changed (${modelVer ?? "untagged"}); ${nodeHist.length - hist.length} older sample(s) priced on another model are not compared`);
+  now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH, node: now.bitNode, ver: modelVer }] : [])].slice(-48);
 
   if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
   else note(`exit ETA ${now.exitH.toFixed(1)}h`);
