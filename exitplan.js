@@ -625,6 +625,35 @@ function sleeveBreaks(term, from) {
   return num(term.delayH) && term.delayH > from ? [term.delayH] : []
 }
 
+/**
+ * THE GRAFT SCHEDULE OF THE LIVES BEFORE THE FINAL WINDOW, against one
+ * policy's install count: o.lifeGrafts is [{life, ...graftSpecOf}] with life 1
+ * the current life (it ends at the next install). Lives 1..installsFirst come
+ * before the final window; a graft scheduled in a later life than the policy
+ * has is grafted in the final window instead (`spill`, in schedule order,
+ * ahead of finalGrafts). Returns {byLife: Map<life, specs>, spill, lastLife,
+ * bad} — `bad` names an unreadable entry (a refusal, not a skip).
+ */
+export function lifeGraftsOf(list, installsFirst) {
+  const byLife = new Map()
+  const spill = []
+  let lastLife = 0
+  if (!Array.isArray(list) || !list.length) return { byLife, spill, lastLife, bad: null }
+  const rows = list.map((x, idx) => ({ x, idx }))
+  for (const { x } of rows) if (!x || !Number.isInteger(x.life) || x.life < 1) return { byLife, spill, lastLife, bad: `life graft ${x?.name ?? '?'} has no life index (an integer >= 1)` }
+  rows.sort((a, b) => a.x.life - b.x.life || a.idx - b.idx)
+  for (const { x } of rows) {
+    if (x.life > installsFirst) {
+      spill.push(x)
+      continue
+    }
+    if (!byLife.has(x.life)) byLife.set(x.life, [])
+    byLife.get(x.life).push(x)
+    lastLife = Math.max(lastLife, x.life)
+  }
+  return { byLife, spill, lastLife, bad: null }
+}
+
 export function exitHours(o = {}) {
   const {
     installsFirst = 0,
@@ -817,8 +846,60 @@ export function exitHours(o = {}) {
   let exp = hackingExp
   let cash = money
 
+  // ONE LIFE'S GRAFTS, before the final window (lifeGrafts): the life first
+  // earns the grafts' price from its opening balance (a money leg on that
+  // life's multiplier — the balance a graft is paid from, GraftingWork.tsx:33,
+  // resets at the install, so a life can only graft what it earns), then
+  // holds the work slot for their graft time, and still has its OWN length
+  // left for its batch: lifeH = moneyH + max(slotH, baseH). The grafts must
+  // finish before the install that ends the life — an install cancels a graft
+  // in progress and keeps its price (prestigeAugmentation -> finishWork(true),
+  // PlayerObjectGeneralMethods.ts:137; GraftingWork.finish applies nothing
+  // when cancelled). The batch is held at its planned gain: the money paid
+  // for the grafts is re-earned after them (conservative — the batch's
+  // money restarts from ~0 rather than from the opening balance).
+  const lifeGraftLeg = (specs, { baseH, money0, mult: m, exp0, first, atH = 0 }) => {
+    let cost = 0
+    let slot = 0
+    const g = { hacking: 1, exp: 1, rep: 1, money: 1 }
+    for (const x of specs) {
+      if (!x || !(pos(x.cost) || (x.paid === true && x.cost === 0)) || !num(x.slotH) || x.slotH < 0 || !pos(x.hacking) || !pos(x.exp) || !pos(x.rep)) return { lifeH: null, why: `graft ${x?.name ?? '?'} (life ${x?.life ?? '?'}) unpriced (cost, time or multipliers)` }
+      cost += x.cost
+      slot += x.slotH
+      g.hacking *= x.hacking
+      g.exp *= x.exp
+      g.rep *= x.rep
+      g.money *= pos(x.money) ? x.money : 1
+    }
+    const shapedHere = expScalesWithLevel === true && pos(hacking)
+    const moneyH = cost <= money0 ? 0 : hoursToMoney(cost, { money0, incomeAtLevel1, mult: m, exp0, expPerSec, expRateAt: shapedHere ? expRateShape(expPerSec, { scales: true, ref: hacking, flat: pos(expFlatPerSec) ? expFlatPerSec : 0 }) : null, extraAt: steps.length ? (rel) => extraAt(atH + rel) : null, flatPerSec: flatInc + (first && pos(lifeIncome) ? lifeIncome : 0), capitalReturnPerSec: capR, capitalCap, capitalScaleW: o.capitalScaleW, capitalShape: o.capitalShape, spendPerSec, capitalWarmupH: !first && num(capitalWarmupH) ? capitalWarmupH : 0 })
+    if (!num(moneyH)) return { lifeH: null, why: `could not price the money for ${specs.length} graft(s) in an earlier life ($${Math.round(cost)})` }
+    const lifeH = moneyH + Math.max(slot, baseH)
+    return { lifeH, extraH: lifeH - baseH, moneyH, slotH: slot, cost, n: specs.length, g }
+  }
+
+  // GRAFTS IN THE LIVES BEFORE THE FINAL WINDOW (o.lifeGrafts [{life, ...graftSpecOf}]).
+  // Resolved against this policy's install count: a graft scheduled in a life
+  // the policy does not have (life > installsFirst) is grafted in the final
+  // window instead, ahead of o.finalGrafts (lifeGraftsOf).
+  const lifeSched = lifeGraftsOf(o.lifeGrafts, installsFirst)
+  if (lifeSched.bad) return { hours: null, why: lifeSched.bad }
+  const finalGrafts = [...lifeSched.spill, ...(Array.isArray(o.finalGrafts) ? o.finalGrafts : [])]
+  // What the earlier lives' grafts did to the player's multipliers: exp and
+  // the reputation/donation rates act from the final window on (below).
+  let lifeGE = 1
+  let lifeLegsOut = []
   if (installsFirst > 0) {
-    const firstH = num(firstInstallH) && firstInstallH >= 0 ? firstInstallH : cycleHours
+    const firstH0 = num(firstInstallH) && firstInstallH >= 0 ? firstInstallH : cycleHours
+    // A LIFE THAT GRAFTS IS LONGER (lifeGraftLeg): its own length, after the
+    // grafts' money is earned from the life's opening balance.
+    let firstH = firstH0
+    let g1 = null
+    if (lifeSched.byLife.has(1)) {
+      g1 = lifeGraftLeg(lifeSched.byLife.get(1), { baseH: firstH0, money0: money, mult: hackingMult, exp0: hackingExp, first: true })
+      if (!num(g1.lifeH)) return { hours: null, why: g1.why }
+      firstH = g1.lifeH
+    }
     h += firstH + (installsFirst - 1) * cycleHours
     // THE FIRST INSTALL IS NOT A MEDIAN ONE. multGainPerCycle is the median
     // ratio across recent lives, which predicts a typical future cycle — and is
@@ -857,12 +938,58 @@ export function exitHours(o = {}) {
       (num(eBudget) && eBudget > 0 ? Math.pow(ratio('income'), eBudget) : 1)
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
+    // A GRAFT PERSISTS THROUGH EVERY LATER INSTALL (it is pushed onto
+    // Player.augmentations, AugmentationHelpers.ts:65, which Prestige.ts:122
+    // re-applies; its entropy stack too, Prestige.ts:128). So a graft in life
+    // j multiplies the multiplier from then on, its hacking_money the
+    // level-scaled income, and its reputation (and income, where the batch
+    // responds to money: eBudget) lifts every LATER life's batch by the same
+    // measured K^e responses persistLift uses — from the install after the
+    // grafting life (the life that grafts earns its batch's reputation with
+    // the slot partly held by the grafting).
+    let graftLift = 1
+    const applyLifeGrafts = (leg) => {
+      mult *= leg.g.hacking
+      lifeGE *= leg.g.exp
+      incomeAtLevel1 *= leg.g.money
+      if (pos(repRate)) repRate *= leg.g.rep
+      if (pos(donation)) donation /= leg.g.rep
+      graftLift *= (num(eRep) && eRep > 0 ? Math.pow(leg.g.rep, eRep) : 1) * (num(eBudget) && eBudget > 0 ? Math.pow(leg.g.money, eBudget) : 1)
+    }
+    if (g1) applyLifeGrafts(g1)
+    const lifeLegs = g1 ? [{ life: 1, ...g1 }] : []
     // Nothing varies by cycle (no later income, no delayed rep lift, no
     // per-install extra): one power, not a loop — the policy search prices
     // k = 1..400 and the loop made it quadratic (live BN9 2026-09-29, 0.5h
-    // cycles, the optimum at ~325 installs).
-    if (!perCycleExtra && !steps.length && !(repFrom > 0)) mult *= Math.pow(multGainPerCycle * growthAt(0) * persistLift, Math.max(0, installsFirst - 1))
-    else for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift * cycleExtraAt(i)
+    // cycles, the optimum at ~325 installs). Lives that graft are walked one
+    // by one up to the last of them, and the power covers the rest.
+    const cycleAt = (i, t) => multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * graftLift
+    const flat = !perCycleExtra && !steps.length && !(repFrom > 0)
+    const lastGraftLife = lifeSched.lastLife
+    let t = firstH
+    let i = 1
+    for (; i < installsFirst && (!flat || i < lastGraftLife); i++) {
+      const life = i + 1
+      // Install `life` ends this life: its batch is lifted by the grafts of
+      // the lives before it, not by this life's own.
+      const liftBefore = graftLift
+      let len = cycleHours
+      if (lifeSched.byLife.has(life)) {
+        const leg = lifeGraftLeg(lifeSched.byLife.get(life), { baseH: cycleHours, money0: num(installCash) && installCash >= 0 ? installCash : 1262, mult, exp0: 0, first: false, atH: t })
+        if (!num(leg.lifeH)) return { hours: null, why: leg.why }
+        len = leg.lifeH
+        h += len - cycleHours
+        applyLifeGrafts(leg)
+        lifeLegs.push({ life, ...leg })
+      }
+      mult *= multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * liftBefore
+      t += len
+    }
+    if (i < installsFirst) mult *= Math.pow(cycleAt(i, 0), installsFirst - i)
+    lifeLegsOut = lifeLegs
+    if (lifeLegs.length) {
+      legs.push({ leg: 'grafts in earlier lives', hours: lifeLegs.reduce((a, l) => a + l.extraH, 0), detail: lifeLegs.map((l) => `life ${l.life}: ${l.n} graft(s) $${(l.cost / 1e9).toFixed(2)}b, ${l.slotH.toFixed(2)}h slot, money ${l.moneyH.toFixed(2)}h, life ${l.lifeH.toFixed(2)}h (+${l.extraH.toFixed(2)}h), hacking x${l.g.hacking.toFixed(3)}`).join('; ') })
+    }
     exp = 0
     // PlayerObjectGeneralMethods.ts:102 ($1262), or Prestige.ts:158's $250m in
     // BitNode 8 — which REPLACES the balance, positions included (the market
@@ -874,6 +1001,8 @@ export function exitHours(o = {}) {
   // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
   // legs read this rather than the input.
   let expRate = expPerSec
+  // Earlier lives' grafts' hacking_exp (lifeGrafts), from the final window on.
+  if (lifeGE !== 1 && pos(expRate)) expRate *= lifeGE
   // The batch's hacking_exp scales the player's own exp from the install on.
   if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
   // preInstallExpMult: added as an AMOUNT, so it is removed exactly before the
@@ -924,13 +1053,17 @@ export function exitHours(o = {}) {
   // waits for the last graft: the Red Pill install that precedes the climb
   // cancels a graft in progress and keeps its money (GraftingWork.finish).
   // A graft persists through every later install (Prestige.ts re-applies
-  // Player.augmentations), which is why the final window is where it is
-  // priced: the lives before it keep their MEASURED cadence (not simulated
-  // here: a graft there would lift them too, and remove the augmentation from
-  // their catalogue). Absent, every node prices exactly as before.
+  // Player.augmentations), so it can equally be made in a life BEFORE the
+  // final window — o.lifeGrafts, priced above (lifeGraftLeg: that life's own
+  // money and slot, lengthening it) — and those scheduled in a life this
+  // policy does not have land here, first. Not simulated: the grafted
+  // augmentation leaving the later lives' purchase catalogue (the measured
+  // cadence is held). hacking_money (x entropy, `money`) scales the
+  // level-scaled income from the window on; specs without it price as
+  // before. Absent, every node prices exactly as before.
   let graftDone = finalStart + busyH
   let graftRep = 1
-  if (Array.isArray(o.finalGrafts) && o.finalGrafts.length) {
+  if (finalGrafts.length) {
     let gH = 1
     let gE = 1
     // WHEN THE GRAFTING STARTS (o.graftStartMoney, the with-run's policy
@@ -951,8 +1084,9 @@ export function exitHours(o = {}) {
       cash = startAt
       legs.push({ leg: 'graft start money', hours: hm, detail: `$${Math.round(startAt)} before the first graft` })
     }
-    for (const g of o.finalGrafts) {
-      if (!g || !pos(g.cost) || !num(g.slotH) || g.slotH < 0 || !pos(g.hacking) || !pos(g.exp) || !pos(g.rep)) return { hours: null, why: `graft ${g?.name ?? '?'} unpriced (cost, time or multipliers)` }
+    let gM = 1
+    for (const g of finalGrafts) {
+      if (!g || !(pos(g.cost) || (g.paid === true && g.cost === 0)) || !num(g.slotH) || g.slotH < 0 || !pos(g.hacking) || !pos(g.exp) || !pos(g.rep)) return { hours: null, why: `graft ${g?.name ?? '?'} unpriced (cost, time or multipliers)` }
       if (g.cost > cash) {
         const hm = moneyLeg(g.cost)
         if (!num(hm)) return { hours: null, why: `could not price the money for graft ${g.name}` }
@@ -967,13 +1101,16 @@ export function exitHours(o = {}) {
       gH *= g.hacking
       gE *= g.exp
       graftRep *= g.rep
+      gM *= pos(g.money) ? g.money : 1
     }
     mult *= gH
+    // hacking_money and its entropy: the level-scaled income from the window on.
+    incomeAtLevel1 *= gM
     if (pos(expRate)) expRate *= gE
     preExpBoost *= gE
     if (pos(repRate)) repRate *= graftRep
     if (pos(donation)) donation /= graftRep
-    legs.push({ leg: 'grafts', hours: 0, detail: `${o.finalGrafts.length} graft(s), slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}` })
+    legs.push({ leg: 'grafts', hours: 0, detail: `${finalGrafts.length} graft(s)${lifeSched.spill.length ? ` (${lifeSched.spill.length} scheduled in lives this policy does not have)` : ''}, slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}` })
   }
 
   if (covenant) {
@@ -1177,7 +1314,9 @@ export function exitHours(o = {}) {
     h = finalStart + slotH
   }
 
-  return { hours: h, legs, mult }
+  // The earlier lives' grafting legs, for the executor: life 1's length is
+  // how long the current life is held open for its grafts.
+  return { hours: h, legs, mult, ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
 }
 
 /**

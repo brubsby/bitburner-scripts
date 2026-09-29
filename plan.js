@@ -676,7 +676,9 @@ export function policyOf(spec, x) {
  * grafts. Equal trajectories share noise draws, whichever decision prices them.
  */
 export function noiseKeyOf(spec, inputs) {
-  const g = Array.isArray(inputs?.finalGrafts) && inputs.finalGrafts.length ? `g${inputs.finalGrafts.length}` : 'g0'
+  // Every committed graft, wherever the schedule puts it (final window or an earlier life).
+  const nG = (Array.isArray(inputs?.finalGrafts) ? inputs.finalGrafts.length : 0) + (Array.isArray(inputs?.lifeGrafts) ? inputs.lifeGrafts.length : 0)
+  const g = `g${nG}`
   if (!spec) return `default|${g}`
   if (spec.kind === 'never') return `never|${g}`
   if (spec.kind === 'route') return `route:${spec.routeKey ?? routeKey(spec.route)}|${spec.extra ?? 0}|${g}`
@@ -723,9 +725,10 @@ export function samplesOf(xs) {
  */
 export function inputsKeyOf(inputs) {
   if (!inputs || typeof inputs !== 'object') return null
-  const { finalGrafts, graftStartMoney, ...rest } = inputs
+  const { finalGrafts, graftStartMoney, lifeGrafts, ...rest } = inputs
   void finalGrafts
   void graftStartMoney
+  void lifeGrafts
   let s = null
   try {
     s = JSON.stringify(rest)
@@ -1010,7 +1013,7 @@ export function graftCarryCheckOf({ install = null, installInputs = null, grafts
   if (!install?.key || !installInputs) return { ok: null, why: 'no install decision priced this pass' }
   const own = new Set(installed instanceof Set ? installed : Array.isArray(installed) ? installed : [])
   const names = (xs) => (Array.isArray(xs) ? xs : []).map((g) => (typeof g === 'string' ? g : g?.name)).filter((n) => typeof n === 'string' && !own.has(n))
-  const carried = names(installInputs.finalGrafts)
+  const carried = [...names(installInputs.finalGrafts), ...names(installInputs.lifeGrafts)]
   let expected = null
   let source = null
   if (grafts?.key === 'grafts') {

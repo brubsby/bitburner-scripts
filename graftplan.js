@@ -143,7 +143,160 @@ export function graftSpecOf(aug, intelligence, { entropy = true } = {}) {
   if (cost === null || !(cost > 0) || ms === null) return null
   const e = entropy ? ENTROPY_EFFECT : 1
   const m = (k) => (num(aug.mults[k]) && aug.mults[k] > 0 ? aug.mults[k] : 1)
-  return { name: aug.name, cost, slotH: ms / 3600000, hacking: m('hacking') * e, exp: m('hacking_exp') * e, rep: m('faction_rep') * e }
+  return { name: aug.name, cost, slotH: ms / 3600000, hacking: m('hacking') * e, exp: m('hacking_exp') * e, rep: m('faction_rep') * e, money: m('hacking_money') * e }
+}
+
+/**
+ * GRAFTS IN THE LIVES BEFORE THE FINAL WINDOW — the schedule of a chosen set.
+ *
+ * A graft is installed the moment it finishes (GraftingWork.finish ->
+ * applyAugmentation, GraftingWork.tsx:51; AugmentationHelpers.ts:65 pushes it
+ * onto Player.augmentations) and every install re-applies that list
+ * (Prestige.ts:122) with its entropy (Prestige.ts:128) — so a graft made in
+ * ANY life rides through every later install. The final window was the only
+ * place the exit simulator put grafts until 2026-09-29; the money a graft
+ * costs is the life's own (the balance resets at every install), and its
+ * slot hours hold the life open (an install cancels a graft in progress and
+ * keeps its price: prestigeAugmentation -> finishWork(true)).
+ *
+ * The families searched, each a prefix moved out of the final window
+ * (exitplan `lifeGrafts`, life 1 = the current life):
+ *   cheapest     -> life 1   ascending price, prerequisites first — what the
+ *                            current balance already covers
+ *   set order    -> life 1   the greedy's own order (strongest first)
+ *   set order    -> life 2   the next life
+ * each at prefix sizes 1,2,3,4,6,8,12,16,24,... until two sizes in a row do
+ * not improve on it; the rest stays in the final window at the set's start
+ * fraction. The trajectory with the schedule against the same set in the
+ * final window alone is withH - withoutH like every other choice here. Returns
+ * {h, lifeGrafts [{name, life}], order (indices into chosen: life grafts first,
+ * then the final window's in set order), startMoney, summary}.
+ */
+export const SCHEDULE_MS = 100
+export const SCHEDULE_MIN_GAIN = { hours: 0.25, rel: 0.005 }
+const PREFIXES = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48]
+export function* scheduleGen({ chosen, specs, priceExit, without, join = 0, fraction = 0, finalH, deadline = () => false }) {
+  const n = chosen.length
+  const idx = chosen.map((_, i) => i)
+  // Cheapest first, prerequisites (within the set) before what needs them.
+  const cheap = []
+  {
+    const left = new Set(idx)
+    while (left.size) {
+      const ready = [...left].filter((i) => (Array.isArray(chosen[i].prereqs) ? chosen[i].prereqs : []).every((p) => !chosen.some((c, j) => c.name === p && left.has(j))))
+      if (!ready.length) break
+      ready.sort((a, b) => specs[a].cost - specs[b].cost || a - b)
+      cheap.push(ready[0])
+      left.delete(ready[0])
+    }
+    if (cheap.length < n) cheap.length = 0
+  }
+  const families = [
+    ...(cheap.length ? [{ name: 'cheapest first, current life', order: cheap, life: 1 }] : []),
+    { name: 'set order, current life', order: idx, life: 1 },
+    { name: 'set order, next life', order: idx, life: 2 },
+  ]
+  let best = { h: finalH, lifeGrafts: [], order: idx, startMoney: null, family: 'final window only', c: 0 }
+  const tried = []
+  let truncated = false
+  for (const fam of families) {
+    let famBest = Infinity
+    let worse = 0
+    for (const c of [...PREFIXES.filter((k) => k < n), n]) {
+      if (deadline()) {
+        truncated = true
+        break
+      }
+      const early = new Set(fam.order.slice(0, c))
+      const lifeGrafts = fam.order.slice(0, c).map((i) => ({ ...specs[i], life: fam.life }))
+      const rest = idx.filter((i) => !early.has(i))
+      const restCost = rest.reduce((a, i) => a + specs[i].cost, 0)
+      const startMoney = rest.length ? fraction * (join + restCost) : 0
+      const h = priceExit({ ...without, lifeGrafts, finalGrafts: rest.map((i) => specs[i]), graftStartMoney: startMoney })
+      yield
+      tried.push({ family: fam.name, c, h: num(h) ? +h.toFixed(3) : null })
+      if (num(h) && h < best.h) best = { h, lifeGrafts: lifeGrafts.map((g) => ({ name: g.name, life: fam.life })), order: [...fam.order.slice(0, c), ...rest], startMoney, family: fam.name, c }
+      if (num(h) && h < famBest) {
+        famBest = h
+        worse = 0
+      } else if (++worse >= 2) break
+    }
+    if (truncated) break
+  }
+  return {
+    ...best,
+    summary: {
+      family: best.family,
+      early: best.lifeGrafts.length,
+      lives: [...new Set(best.lifeGrafts.map((x) => x.life))],
+      h: num(best.h) ? +best.h.toFixed(3) : null,
+      finalOnlyH: num(finalH) ? +finalH.toFixed(3) : null,
+      tried,
+      truncated,
+    },
+  }
+}
+
+/**
+ * A committed graft list as exit inputs: the grafts carrying a `life` (the
+ * schedule's earlier lives) as exitplan `lifeGrafts`, the rest as
+ * `finalGrafts` with the start balance. Null for an empty list.
+ */
+export function graftInputsOf(specs, startMoney) {
+  const all = (Array.isArray(specs) ? specs : []).filter(Boolean)
+  if (!all.length) return null
+  const lifeGrafts = all.filter((g) => Number.isInteger(g.life) && g.life >= 1)
+  const finalGrafts = all.filter((g) => !(Number.isInteger(g.life) && g.life >= 1))
+  return { finalGrafts, ...(lifeGrafts.length ? { lifeGrafts } : {}), graftStartMoney: num(startMoney) ? startMoney : 0 }
+}
+
+/**
+ * THE RUNNING GRAFT AS THE SIMULATOR TAKES IT: already paid (its price left
+ * the balance when the work started, GraftingWork.tsx:33) and only its
+ * remaining slot time left. A cycle is 200ms of real time (CONSTANTS.
+ * MilliPerCycle) and graftSpecOf's slotH is already the real time at focus
+ * (GraftingWork.process: MilliPerCycle x graftingIntBonus x focusPenalty per
+ * cycle against the aug's time), so cyclesWorked x 200ms is what is done;
+ * unfocused work (x0.8) finishes later than this. `work` is getCurrentWork's
+ * record ({type 'GRAFTING', augmentation, cyclesWorked}). Every other spec
+ * is returned unchanged.
+ */
+// eslint-disable-next-line no-unused-vars
+export function inProgressSpecsOf(specs, work, intelligence = 0) {
+  const list = Array.isArray(specs) ? specs : []
+  if (work?.type !== 'GRAFTING' || typeof work.augmentation !== 'string') return list
+  const doneH = num(work.cyclesWorked) && work.cyclesWorked > 0 ? (work.cyclesWorked * 200) / 3600000 : 0
+  return list.map((g) => (g?.name === work.augmentation && num(g.slotH) ? { ...g, cost: 0, paid: true, slotH: Math.max(0, g.slotH - doneH) } : g))
+}
+
+/** Same graft names, in any order and whatever their schedule. */
+export function sameGraftSet(a, b) {
+  const n = (xs) => new Set((Array.isArray(xs) ? xs : []).map((g) => g?.name).filter((x) => typeof x === 'string'))
+  const A = n(a)
+  const B = n(b)
+  return A.size === B.size && [...A].every((x) => B.has(x))
+}
+
+/**
+ * THE BEST GRAFT SET ON ONE TRAJECTORY: `sets` [{from, specs, startMoney,
+ * inputs}] each priced by `price(inputs)` (the trajectory's point); the
+ * least finite exit wins, ties to the first (this pass's). Returns {set,
+ * priced: [{from, n, h}]}; set null when none is priced.
+ */
+export function graftSetOn(price, sets) {
+  let best = null
+  const priced = []
+  for (const a of Array.isArray(sets) ? sets : []) {
+    let h = null
+    try {
+      h = price(a.inputs)
+    } catch {
+      h = null
+    }
+    priced.push({ from: a.from, n: a.specs?.length ?? 0, h: num(h) ? +h.toFixed(3) : null })
+    if (num(h) && (!best || h < best.h)) best = { h, a }
+  }
+  return { set: best ? best.a : null, priced }
 }
 
 /** The graft-start balances the with-run searches, as fractions of join money + every graft's cost. */
@@ -244,6 +397,8 @@ export function* chooseGraftsGen(o = {}) {
   let bestH = baseline
   let truncated = false
   const t0 = clock()
+  // The greedy leaves the schedule stage its slice (SCHEDULE_MS) of the budget.
+  const greedyMs = Number.isFinite(budgetMs) ? Math.max(budgetMs / 2, budgetMs - SCHEDULE_MS) : budgetMs
   // RESUME FROM A KNOWN SET (o.seeds, each a list of names in graft order;
   // o.seed is one): a search the CPU budget stopped continues from where the
   // plan stands next time, instead of restarting and stopping at the same
@@ -279,7 +434,7 @@ export function* chooseGraftsGen(o = {}) {
   for (let step = 0; step < maxGrafts && !truncated; step++) {
     let best = null
     for (const a of pool) {
-      if (clock() - t0 > budgetMs) {
+      if (clock() - t0 > greedyMs) {
         truncated = true
         break
       }
@@ -311,10 +466,24 @@ export function* chooseGraftsGen(o = {}) {
   const spend = specs.reduce((x, g) => x + g.cost, 0)
   const slotHours = specs.reduce((x, g) => x + g.slotH, 0)
   const start = yield* withRunAt(chosen)
+  // WHICH LIVES THE SET IS GRAFTED IN (scheduleGen): the final window, or —
+  // for a prefix — the current life or the next. Its own slice of the budget.
+  const sched = start ? yield* scheduleGen({ chosen, specs, priceExit, without, join, fraction: start.fraction, finalH: start.h, deadline: () => clock() - t0 > budgetMs }) : null
+  const withLife = (i) => (lifeOf.has(chosen[i].name) ? { ...specs[i], life: lifeOf.get(chosen[i].name) } : specs[i])
+  // A schedule holds the current life open (the install waits for its
+  // grafts), so it must beat the final window by more than noise-level
+  // hours: SCHEDULE_MIN_GAIN (hours, or that share of the exit).
+  const minGain = Math.max(SCHEDULE_MIN_GAIN.hours, SCHEDULE_MIN_GAIN.rel * (num(start?.h) ? start.h : 0))
+  const scheduledH = sched && num(sched.h) && sched.h < start.h - minGain ? sched.h : null
+  if (scheduledH !== null) bestH = scheduledH
+  const lifeOf = new Map((scheduledH !== null ? sched.lifeGrafts : []).map((x) => [x.name, x.life]))
+  const order = scheduledH !== null ? sched.order : chosen.map((a, i) => i)
+  const startMoney = sched && scheduledH !== null ? sched.startMoney : start?.startMoney ?? null
   return {
-    startMoney: start?.startMoney ?? null,
+    startMoney,
     startFraction: start?.fraction ?? null,
-    grafts: chosen.map((a, i) => ({ name: a.name, cost: specs[i].cost, timeMs: specs[i].slotH * 3600000, mults: a.mults, spec: specs[i] })),
+    grafts: order.map((i) => ({ name: chosen[i].name, cost: specs[i].cost, timeMs: specs[i].slotH * 3600000, mults: chosen[i].mults, spec: withLife(i), ...(lifeOf.has(chosen[i].name) ? { life: lifeOf.get(chosen[i].name) } : {}) })),
+    schedule: sched ? { ...sched.summary, finalOnlyH: start.h, chosenH: bestH, taken: scheduledH !== null, minGainH: +minGain.toFixed(3) } : null,
     // Grafting nothing unpriceable: withoutH null (JSON has no Infinity), and
     // the gain is unbounded — published as such, not as a number.
     baseline: unpricedNone ? null : baseline,
@@ -330,7 +499,7 @@ export function* chooseGraftsGen(o = {}) {
     seededFrom,
     entropyAfter: (num(o.entropy0) ? o.entropy0 : 0) + (entropy ? chosen.length : 0),
     city: GRAFT_CITY,
-    why: `${chosen.length} graft(s) in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${unpricedNone ? 'unpriceable (the level is out of reach)' : `${baseline.toFixed(2)}h`} without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${truncated ? ' — search stopped at its CPU budget' : ''}`,
+    why: `${lifeOf.size ? `${lifeOf.size} of ${chosen.length} graft(s) in earlier lives (${[...new Set(lifeOf.values())].sort().map((l) => `life ${l}`).join(', ')}), the rest` : `${chosen.length} graft(s)`} in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${unpricedNone ? 'unpriceable (the level is out of reach)' : `${baseline.toFixed(2)}h`} without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${truncated ? ' — search stopped at its CPU budget' : ''}`,
   }
 }
 

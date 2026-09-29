@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
-import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, GRAFT_CITY } from 'graftplan.js'
+import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, graftSetOn, sameGraftSet, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGang, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
@@ -1737,6 +1737,26 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
  * Returns the decision record (also pc.decisions.grafts), never throws.
  */
 const GRAFT_SEARCH_MS = 250
+/**
+ * HOLD THE INSTALL FOR THIS LIFE'S SCHEDULED GRAFTS (spec.life 1): while the
+ * committed graft decision has grafts of this life not yet installed, the
+ * install waits — bounded, so a life whose money never arrives is not held
+ * for ever: past max(2h, 3 x the life's priced grafting leg) from the first
+ * hold of this life the hold is released and says so. A decision that no
+ * longer schedules them releases it on its own.
+ */
+let lifeHoldSince = null // {reset, at}
+function lifeGraftHoldOf(d, installed, lastAugReset, now = Date.now()) {
+  const pending = d?.key === 'grafts' && Array.isArray(d.grafts) ? d.grafts.filter((g) => g?.life === 1 && !installed.has(g.name)) : []
+  if (!pending.length) return { hold: false, pending: 0 }
+  if (!lifeHoldSince || lifeHoldSince.reset !== lastAugReset) lifeHoldSince = { reset: lastAugReset, at: now }
+  const legH = typeof d.lifeNow?.lifeH === 'number' && isFinite(d.lifeNow.lifeH) ? d.lifeNow.lifeH : 0
+  const capH = Math.max(2, 3 * legH)
+  const heldH = (now - lifeHoldSince.at) / 3.6e6
+  const names = pending.map((g) => g.name).join(', ')
+  if (heldH > capH) return { hold: false, pending: pending.length, why: `this life's scheduled grafts (${names}) not done after ${heldH.toFixed(2)}h of holding (cap ${capH.toFixed(2)}h) — hold released` }
+  return { hold: true, pending: pending.length, heldH, capH, why: `${pending.length} graft(s) scheduled in this life not done (${names}); the committed trajectory lasts this life ${legH.toFixed(2)}h for them (held ${heldH.toFixed(2)}h of at most ${capH.toFixed(2)}h)` }
+}
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
 let ownedAugsNow = new Set() // this pass's owned + queued augmentations (the purchase model's prerequisites)
 // THE NODE'S CATALOGUE for the purchase model's later lives: this pass's
@@ -1757,6 +1777,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     const t0 = Date.now()
     const withoutIn = { ...inputsFn() }
     delete withoutIn.finalGrafts
+    delete withoutIn.lifeGrafts
     delete withoutIn.graftStartMoney
     yield // the inputs builder is its own step (attributable in cpu.sections)
     // ONE TRAJECTORY BASIS: grafts are priced on the COMMITTED install
@@ -1779,6 +1800,10 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     let specs = null
     let startMoney = null
     let searchWhy = null
+    // WHICH LIVES THE SET IS GRAFTED IN (graftplan.scheduleGen): specs carrying
+    // `life` are grafted in that earlier life (1 = this one), the rest in the
+    // final window. Re-searched with the set; re-priced as committed otherwise.
+    let schedule = prev?.schedule ?? null
     let truncated = false
     // THE NODE'S GRAFT MEMORY (plan record graftMemory): the best set a search
     // of this node has found, kept when the committed decision is 'none', a
@@ -1834,6 +1859,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       } else {
         specs = r.grafts.map((g) => g.spec)
         startMoney = r.startMoney
+        schedule = r.schedule ?? null
         truncated = r.truncated === true
         // The memory advances only to a set that contains it (grown from it, or
         // from a committed set that already held it): a smaller set that wins
@@ -1850,9 +1876,30 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       startMoney = prev.startMoney ?? null
       searchWhy = 'the committed set, re-priced (no event)'
     }
-    // Started: a committed graft is owned or running — the threshold is spent.
-    const started = inProgress !== null || (prev?.grafts ?? []).some((g) => installed.has(g?.name))
-    const withIn = specs.length ? { ...withoutIn, finalGrafts: specs, graftStartMoney: started ? 0 : startMoney ?? 0 } : null
+    // Started: a committed FINAL-WINDOW graft is owned or running — the
+    // threshold is spent. A graft of an earlier life (spec.life) spends the
+    // life's own money, not the final window's start balance.
+    const isLife = (n) => specs.some((g) => g?.name === n && Number.isInteger(g.life))
+    const started = (inProgress !== null && !isLife(inProgress)) || (prev?.grafts ?? []).some((g) => installed.has(g?.name) && !Number.isInteger(g?.life))
+    // The running graft is paid, and only its remaining slot hours are left.
+    const specsNow = inProgressSpecsOf(specs, work, intel)
+    const withIn = specs.length ? { ...withoutIn, ...graftInputsOf(specsNow, started ? 0 : startMoney ?? 0) } : null
+    // THE SETS A REBASE CHOOSES AMONG (graftSetOn): this pass's, and the
+    // node's memory and last committed set where they differ from it. A search
+    // run on a stale basis can lose the memory set to a 'none' that basis
+    // prices low; the rebase onto the install decision's trajectory re-prices
+    // every set rather than only the survivor of that search. Live BN9
+    // 2026-09-29 17:42Z: the event re-search, on the last pass's committed
+    // batch, priced grafting nothing at 21.6h, the 24-graft memory could not
+    // beat it, the budget stopped the greedy at 1 graft, and the rebase onto
+    // w0.38 compared that 1 graft with nothing (110.9h vs 107.0h) and flipped
+    // to 'none' — where the 24 priced 74.5h on the same trajectory.
+    const liveOf = (gs) => (Array.isArray(gs) ? gs : []).filter((g) => g && typeof g.name === 'string' && !installed.has(g.name))
+    const altSets = [
+      { from: "the node's graft memory", specs: liveOf(memory?.grafts), startMoney: memory?.startMoney ?? null },
+      { from: 'the last committed set', specs: liveOf(pc.prevAny?.decisions?.grafts?.grafts), startMoney: pc.prevAny?.decisions?.grafts?.startMoney ?? null },
+    ].filter((a) => a.specs.length && !sameGraftSet(a.specs, specs))
+    const graftsInputsFor = (wo, set) => ({ ...wo, ...graftInputsOf(inProgressSpecsOf(set.specs, work, intel), started ? 0 : set.startMoney ?? 0) })
     const options = [{ key: 'none', noiseKey: noiseKeyOf(basis, withoutIn), sim: (d) => priceExit(applyDraw(withoutIn, d), d) }]
     if (withIn) options.push({ key: 'grafts', noiseKey: noiseKeyOf(basis, withIn), sim: (d) => priceExit(applyDraw(withIn, d), d) })
     const pointNone = priceExit(withoutIn)
@@ -1875,12 +1922,37 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       if (inputs) {
         wo = { ...inputs }
         delete wo.finalGrafts
+        delete wo.lifeGrafts
         delete wo.graftStartMoney
       }
-      const wi = specs.length ? { ...wo, finalGrafts: specs, graftStartMoney: started ? 0 : startMoney ?? 0 } : null
-      const opts2 = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr) }]
-      if (wi) opts2.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr) })
-      return { options: opts2, specs, startMoney: started ? 0 : startMoney, inputsKey: inputsKeyOf(wo) }
+      // The best set on THIS trajectory (graftSetOn), then the decision —
+      // `pick` is a generator (one point per set, yielding between them) the
+      // caller runs inside the rebase's sliced decision; until it runs, the
+      // options are this pass's set.
+      const sets = [{ from: 'this pass', specs, startMoney }, ...altSets]
+      const rp = { inputsKey: inputsKeyOf(wo), setsPriced: [] }
+      const useSet = (use) => {
+        const wi = use.specs.length ? graftsInputsFor(wo, use) : null
+        rp.options = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr) }]
+        if (wi) rp.options.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr) })
+        rp.specs = use.specs
+        rp.startMoney = started ? 0 : use.startMoney
+        rp.setFrom = use.from
+      }
+      useSet(sets[0])
+      rp.pick = function* () {
+        if (sets.length < 2) return
+        const priced = []
+        for (const a of sets) {
+          priced.push(graftSetOn((x) => t2(x), [{ ...a, inputs: graftsInputsFor(wo, a) }]).priced[0])
+          yield
+        }
+        rp.setsPriced = priced
+        let bi = 0
+        for (let i = 1; i < priced.length; i++) if (typeof priced[i].h === 'number' && !(typeof priced[bi].h === 'number' && priced[bi].h <= priced[i].h)) bi = i
+        useSet(sets[bi])
+      }
+      return rp
     }
     const d = pc.post
       ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => (k === 'none' ? pointNone : pointWith) })
@@ -1910,10 +1982,15 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       deltaH: typeof pointWith === 'number' && typeof pointNone === 'number' ? pointWith - pointNone : null,
       withInstalls: withPolicy?.best?.installsFirst ?? null,
       finalWindowNow: withPolicy?.best?.installsFirst === 0,
+      // THE SCHEDULE (graftplan.scheduleGen) and this life's grafting leg as
+      // the committed trajectory prices it (exitplan lifeGraftLegs): the
+      // grafts of life 1 are made now, and hold the install until done.
+      schedule: d.key === 'grafts' ? schedule : null,
+      lifeNow: d.key === 'grafts' ? (withPolicy?.best?.lifeGraftLegs ?? []).find((l) => l.life === 1) ?? null : null,
       searched: searchWhy,
       memory,
       truncated,
-      notSimulated: 'the grafted augmentation leaving earlier lives\' install catalogue (none are grafted there); travel to New Tokyo ($200k)',
+      notSimulated: 'the grafted augmentation leaving the later lives\' install catalogue (the measured cadence is held); travel to New Tokyo ($200k)',
       searchMs: Date.now() - t0,
     }
   })
@@ -1926,14 +2003,17 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
  * node and life; grafts already installed are dropped (they are in the
  * multiplier now). Null = none.
  */
-function carriedGraftsOf(pc, installed, work) {
+function carriedGraftsOf(pc, installed, work, intel = 0) {
   // A refused, thrown or unreached graft decision keeps the committed set
   // (graftplan.committedGraftsOf): only a decided 'none' carries nothing.
   const c = committedGraftsOf({ cur: pc?.decisions?.grafts ?? null, prev: pc?.prev?.decisions?.grafts ?? null, prevAny: pc?.prevAny?.decisions?.grafts ?? null, memory: pc?.decisions?.grafts?.memory ?? pc?.prevAny?.graftMemory ?? null, installed })
   if (!c || !c.grafts.length) return null
   const all = [pc?.decisions?.grafts, pc?.prev?.decisions?.grafts].flatMap((d) => (Array.isArray(d?.grafts) ? d.grafts : []))
-  const started = work?.type === 'GRAFTING' || all.some((g) => installed.has(g?.name))
-  return { finalGrafts: c.grafts, graftStartMoney: started ? 0 : c.startMoney ?? 0 }
+  // A final-window graft owned or running spends the start balance; an
+  // earlier life's graft (spec.life) does not (graftDecisionOf).
+  const lifeNames = new Set(c.grafts.filter((g) => Number.isInteger(g?.life)).map((g) => g.name))
+  const started = (work?.type === 'GRAFTING' && !lifeNames.has(work.augmentation)) || all.some((g) => installed.has(g?.name) && !Number.isInteger(g?.life))
+  return graftInputsOf(inProgressSpecsOf(c.grafts, work, intel), started ? 0 : c.startMoney ?? 0)
 }
 
 /**
@@ -4012,7 +4092,7 @@ async function act(ns, canJoin, info, note) {
     ownedAugsNow = new Set(allCount.keys())
     // The last committed grafts ride every exit this pass until this pass's
     // graft decision (graftDecisionOf) replaces them.
-    graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
+    graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
     // The Red Pill's requirement from the catalogue, for the exit's rep leg
     // before Daedalus (and so its offer) exists (exitInputsOf terminalRep).
     try {
@@ -5058,27 +5138,37 @@ async function act(ns, canJoin, info, note) {
   // running graft is never interrupted (the install below is held too;
   // GraftingWork.finish keeps the money of a cancelled graft).
   const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
-  if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work)
+  if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
   const graftStep = (() => {
     if (work?.type === 'GRAFTING') return { running: true, name: work.augmentation ?? '?' }
     const d = graftDecision
     if (!d || d.key !== 'grafts' || !Array.isArray(d.grafts) || !d.grafts.length) return null
     const installKey = planCtxOf(ns, info).prev?.decisions?.install?.key ?? null
-    if (!(d.finalWindowNow === true && installKey === 'never')) {
-      did.push(`grafts committed (${d.grafts.map((g) => g.name).join(', ')}; exit ${d.withH?.toFixed?.(2) ?? '?'}h vs ${d.withoutH?.toFixed?.(2) ?? '?'}h without) — waiting for the final window (with-run installs ${d.withInstalls ?? '?'} more; committed install ${installKey ?? 'none'})`)
+    const installed = new Set(installedCount.keys())
+    // THE SCHEDULE'S GRAFTS OF THIS LIFE (spec.life 1, graftplan.scheduleGen):
+    // made now, from this life's money — a graft rides through every later
+    // install — and the install waits for them (lifeGraftHold below).
+    const lifeNow = d.grafts.filter((g) => g.life === 1 && !installed.has(g.name))
+    const finalNow = d.finalWindowNow === true && installKey === 'never'
+    if (!finalNow && !lifeNow.length) {
+      did.push(`grafts committed (${d.grafts.map((g) => g.name).join(', ')}; exit ${d.withH?.toFixed?.(2) ?? '?'}h vs ${d.withoutH?.toFixed?.(2) ?? '?'}h without) — waiting for the final window (with-run installs ${d.withInstalls ?? '?'} more; committed install ${installKey ?? 'none'})${d.grafts.some((g) => Number.isInteger(g.life)) ? `; ${d.grafts.filter((g) => Number.isInteger(g.life) && !installed.has(g.name)).length} scheduled in a later life` : ''}`)
       return null
     }
-    const installed = new Set(installedCount.keys())
-    const next = d.grafts.find((g) => !installed.has(g.name) && (sing.augPrereq(g.name) ?? []).every((p) => installed.has(p)))
+    const pool = finalNow ? d.grafts : lifeNow
+    const next = pool.find((g) => !installed.has(g.name) && (sing.augPrereq(g.name) ?? []).every((p) => installed.has(p)))
     if (!next) return null
     const wealth = ns.getServerMoneyAvailable('home') + stockEquity
-    const need = d.started ? next.cost : Math.max(next.cost, d.startMoney ?? 0)
+    // An earlier life's graft is paid as soon as its price is in hand; the
+    // final window's first one waits for the committed start balance.
+    const need = next.life === 1 || d.started ? next.cost : Math.max(next.cost, d.startMoney ?? 0)
     if (!(wealth >= need)) {
-      did.push(`graft ${next.name} ($${Math.round(next.cost).toLocaleString()}) waits for $${Math.round(need).toLocaleString()} in hand (have $${Math.round(wealth).toLocaleString()}) — the committed start balance`)
+      did.push(`graft ${next.name} ($${Math.round(next.cost).toLocaleString()}) waits for $${Math.round(need).toLocaleString()} in hand (have $${Math.round(wealth).toLocaleString()}) — ${next.life === 1 ? "this life's scheduled graft (its price)" : 'the committed start balance'}`)
       return null
     }
     return { running: false, name: next.name, cost: next.cost, slotH: next.slotH }
   })()
+  const lifeGraftHold = lifeGraftHoldOf(graftDecision, new Set(installedCount.keys()), info?.lastAugReset ?? null)
+  if (lifeGraftHold.why && !lifeGraftHold.hold) todo.push(lifeGraftHold.why)
 
   // WHICH FACTION THE NEXT SAMPLE BELONGS TO.
   //
@@ -6088,10 +6178,15 @@ async function act(ns, canJoin, info, note) {
         const spec = basisOf(inst, Date.now())
         if (spec) {
           const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)
-          const d2 = await planDecide(pcx, 'graftsRebased', () => decideAmongGen({ options: rp.options, prev: { key: gd.key, decidedAt: gd.decidedAt, why: gd.why }, draws: pcx.draws, redecide: true, budgetMs: planBudgetLeft(pcx), clock: pcx.pacer.cpuNow }))
+          const d2 = await planDecide(pcx, 'graftsRebased', function* () {
+            // Every set this pass holds, re-priced on the install decision's
+            // trajectory first (graftReprice.pick), then the decision.
+            if (typeof rp.pick === 'function') yield* rp.pick()
+            return yield* decideAmongGen({ options: rp.options, prev: { key: gd.key, decidedAt: gd.decidedAt, why: gd.why }, draws: pcx.draws, redecide: true, budgetMs: planBudgetLeft(pcx), clock: pcx.pacer.cpuNow })
+          })
           if (d2?.key) {
             const flipped = d2.key !== gd.key
-            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, basisGainsKey: gainsKeyOf(spec.gains ?? null), samples: d2.samples ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
+            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, basisGainsKey: gainsKeyOf(spec.gains ?? null), samples: d2.samples ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, rebasedSet: rp.setFrom ?? null, rebasedSets: rp.setsPriced ?? null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
             // The install decision priced with the grafts carried before the
             // flip: one pass stale, re-decided next pass.
             if (flipped) pcx.forceRedecide = `the graft decision flipped (${gd.key} -> ${d2.key}) when re-priced on the install decision's ${inst.key}`
@@ -6532,6 +6627,11 @@ async function act(ns, canJoin, info, note) {
       // the work and the game keeps the graft's money (GraftingWork.finish,
       // cancelled). The plan priced the grafts as finishing first.
       did.push(`install HELD: grafting ${work.augmentation ?? '?'} is in progress — an install would cancel it and keep its price (${gate.why})`)
+    } else if (gate.install && !forcedInstall && lifeGraftHold?.hold) {
+      // THE SCHEDULE'S GRAFTS OF THIS LIFE ARE NOT DONE: the committed
+      // trajectory priced this life as lasting until they are (exitplan
+      // lifeGraftLeg), and an install now would move them to a later life.
+      did.push(`install HELD: ${lifeGraftHold.why} (${gate.why})`)
     } else if (gate.install || forcedInstall) {
       if (forcedInstall && !gate.install) {
         did.push(`INSTALL FORCED by --install-now. The gate would have held: ${gate.why}`)
