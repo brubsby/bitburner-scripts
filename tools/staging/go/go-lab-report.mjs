@@ -264,17 +264,19 @@ function liveCheck() {
   // live sample is 1-2 games and any comparison against it is noise reported as
   // a verdict. CLAUDE.md: never let "I could not tell" encode as anything else.
   const MIN_LIVE_GAMES = 20;
-  if (decided < MIN_LIVE_GAMES || !(live.games > 0)) {
+  // go.js renamed its per-process counter `games` -> `gamesThisProcess`.
+  const liveGames = live.gamesThisProcess ?? live.games;
+  if (decided < MIN_LIVE_GAMES || !(liveGames > 0)) {
     console.log(
       `CHECK  NOT CHECKABLE RIGHT NOW: live record is ${live.wins ?? 0}W/${live.losses ?? 0}L over ${decided} ` +
-        `decided games and ${live.games ?? 0} game(s) this go.js session — under ${MIN_LIVE_GAMES} decided games the ` +
+        `decided games and ${liveGames ?? 0} game(s) this go.js session — under ${MIN_LIVE_GAMES} decided games the ` +
         `live figure is wider than the gap being decided, so agreement would not be evidence and disagreement ` +
         `would not be a finding. This is "could not check", which is deliberately not "failed" and not "fine".`,
     );
     return;
   }
   const liveWin = decided ? live.wins / decided : NaN;
-  const liveTurns = live.games > 0 ? live.moves / live.games : NaN;
+  const liveTurns = liveGames > 0 ? live.moves / liveGames : NaN;
   const line = (name, model, obs, tol, fmt) => {
     if (!isFinite(obs)) return console.log(`CHECK  ${name}: no live value — uncheckable.`);
     const err = Math.abs(model - obs) / Math.abs(obs);
@@ -289,7 +291,7 @@ function liveCheck() {
   line("our stone-moves/game (base@1500)", arm.ourTurns - arm.ourPasses, liveTurns, 0.15, (x) => x.toFixed(1));
   console.log(
     `       live record: ${live.wins}W/${live.losses}L over ${decided} decided games, ` +
-      `${live.games} games this go.js session, board ${live.boardSize}x${live.boardSize}.`,
+      `${liveGames} games this go.js session, board ${live.boardSize}x${live.boardSize}.`,
   );
 }
 liveCheck();

@@ -752,6 +752,43 @@ export function exitWeights(record, lastAugReset, bestExitPolicy, spendRuns, o =
     const Tk = T({ ...g0, [k]: (num(g0[k]) && g0[k] > 0 ? g0[k] : 1) * Math.exp(d) })
     s[k] = num(Tk) ? (T0 - Tk) / d : null
   }
+  // HACKNET (hacknet_node_money): hours saved per ln of hacknet production
+  // UNTIL THE NEXT INSTALL — the only span the exit simulates it over
+  // (exitplan lifeIncome: destroyed at the install, a later life's rebuilt
+  // hacknet not modelled, so this is a floor). That is exactly the life of a
+  // Go Netburners bonus, which is what asked for this channel
+  // (goplan.chooseOpponent); augplan does not read it (RATE_CHANNELS).
+  //
+  // Two simulated effects, summed because they live on disjoint policies:
+  //  - money: +ln of the stream is li*W*3600 more dollars in the next batch.
+  //    The batch ladder is a STEP function (augs are lumpy): a small nudge
+  //    lands on a flat stretch and reads 0 while the average dollar is worth
+  //    plenty (live 2026-09-28: +$0.37t moved the exit 2.57h, +$0.19t moved
+  //    it 0). So money is priced at the PLATEAU SECANT: the exit at the next
+  //    ladder level whose gains differ, per dollar of the plateau's width —
+  //    the expected value of a dollar whose position on the step is unknown.
+  //    Above the ladder's top the batch is saturated: a known 0.
+  //  - hold-to-exit: a policy with no install runs on the scaled stream.
+  // No hacknet stream: a known 0, not an unknown.
+  const li = record.inputs?.lifeIncome
+  if (!(num(li) && li > 0)) s.hacknet = 0
+  else {
+    const ladder = (record.gainsByMoney ?? []).filter((r) => num(r?.money) && r?.gains).sort((x, y) => x.money - y.money)
+    const key = (g) => JSON.stringify(g)
+    const here = runs.without.installGains ? key(runs.without.installGains) : null
+    const hi = ladder.find((r) => r.money > record.moneyAtW && key(r.gains) !== here)
+    const lo = [...ladder].reverse().find((r) => r.money < record.moneyAtW && key(r.gains) !== here)
+    let money = 0
+    if (hi && num(record.W) && record.W > 0) {
+      const span = hi.money - (lo ? lo.money : 0)
+      const rHi = spendRuns(record, -(hi.money - record.moneyAtW), { allowGain: true })
+      const Thi = rHi ? bestExitPolicy({ ...rHi.with, eRep: record.eRep, eBudget: record.eBudget }, runs.max, runs.min)?.best?.hours : null
+      money = num(Thi) && span > 0 ? (Math.max(0, T0 - Thi) / span) * li * record.W * 3600 : null
+    }
+    const Thold = bestExitPolicy({ ...base, lifeIncome: li * Math.exp(d) }, runs.max, runs.min)?.best?.hours
+    const hold = num(Thold) ? (T0 - Thold) / d : null
+    s.hacknet = money !== null && hold !== null ? money + hold : null
+  }
   if (!(s.hacking > 0)) return null
   const w = (x) => (num(x) ? Math.max(0, x) / s.hacking : 0)
   const weights = {
@@ -762,6 +799,8 @@ export function exitWeights(record, lastAugReset, bestExitPolicy, spendRuns, o =
     hacking_chance: tChance * w(s.income),
     hacking_grow: tGrow * w(s.income),
     hacking_exp: w(s.exp),
+    // null (unpriced) stays absent rather than reading as worthless.
+    ...(num(s.hacknet) ? { hacknet_node_money: w(s.hacknet) } : {}),
   }
   return { weights, sensitivities: s, exitH: T0, W: record.W }
 }

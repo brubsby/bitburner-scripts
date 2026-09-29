@@ -177,15 +177,21 @@ export async function run() {
   {
     const gp = await import("../../goplan.js");
     const W = (over = {}) => ({ faction_rep: 0.5, hacking_speed: 0.5, hacking_money: 0.5, ...over });
+    // A fresh life: nothing banked against anyone. Marginal pricing needs the
+    // per-opponent node power explicitly; absence is a refusal, not a zero.
+    const NP0 = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 };
 
     // REFUSALS FIRST. Each must keep the incumbent and say why — a Go farm
-    // that churns its board on an unreadable objective is worse than one that
-    // never moves, because nodePower is per opponent and a switch discards it.
+    // that churns its board on an unreadable objective is a guess wearing a
+    // number's clothes.
     for (const [o, what] of [
-      [{ weights: null, windowH: 1.3, incumbent: "Daedalus" }, "no derived weights (a flat-weights pass)"],
-      [{ weights: W(), windowH: null, incumbent: "Daedalus" }, "no measured install window"],
-      [{ weights: W({ hacking_speed: null }), windowH: 1.3, incumbent: "Daedalus" }, "a partial basket"],
-      [{ weights: W({ faction_rep: 0, hacking_speed: 0, hacking_money: 0 }), windowH: 1.3, incumbent: "Daedalus" }, "every weight zero"],
+      [{ weights: null, windowH: 1.3, incumbent: "Daedalus", nodePower: NP0 }, "no derived weights (a flat-weights pass)"],
+      [{ weights: W(), windowH: null, incumbent: "Daedalus", nodePower: NP0 }, "no measured install window"],
+      [{ weights: W({ hacking_speed: null }), windowH: 1.3, incumbent: "Daedalus", nodePower: NP0 }, "a partial basket"],
+      [{ weights: W({ faction_rep: 0, hacking_speed: 0, hacking_money: 0 }), windowH: 1.3, incumbent: "Daedalus", nodePower: NP0 }, "every weight zero"],
+      [{ weights: W(), windowH: 1.3, incumbent: "Daedalus" }, "no per-opponent nodePower"],
+      [{ weights: W(), windowH: 1.3, incumbent: "Daedalus", nodePower: { Illuminati: NaN } }, "an unreadable nodePower"],
+      [{ weights: W(), windowH: 1.3, incumbent: "Daedalus", nodePower: NP0, boardSize: 9 }, "a board the rate table was not measured on"],
     ]) {
       c5.examined(1);
       const r = gp.chooseOpponent(o);
@@ -198,10 +204,10 @@ export async function run() {
     // With reputation weighted far above the budget channels, Daedalus wins;
     // reverse it and it must not.
     c5.examined(1);
-    const repHeavy = gp.chooseOpponent({ weights: W({ faction_rep: 5, hacking_speed: 0.1, hacking_money: 0.1 }), windowH: 1.3, incumbent: "Illuminati" });
+    const repHeavy = gp.chooseOpponent({ weights: W({ faction_rep: 5, hacking_speed: 0.1, hacking_money: 0.1 }), windowH: 1.3, incumbent: "Illuminati", nodePower: NP0 });
     if (repHeavy.opponent !== "Daedalus") c5.fail(`a reputation-dominated objective must choose Daedalus, got ${repHeavy.opponent} (${repHeavy.why})`);
     c5.examined(1);
-    const budgetHeavy = gp.chooseOpponent({ weights: W({ faction_rep: 0.01, hacking_speed: 5, hacking_money: 0.1 }), windowH: 1.3, incumbent: "Daedalus" });
+    const budgetHeavy = gp.chooseOpponent({ weights: W({ faction_rep: 0.01, hacking_speed: 5, hacking_money: 0.1 }), windowH: 1.3, incumbent: "Daedalus", nodePower: NP0 });
     if (budgetHeavy.opponent !== "Illuminati") c5.fail(`a speed-dominated objective must choose Illuminati, got ${budgetHeavy.opponent} (${budgetHeavy.why})`);
     if (budgetHeavy.refused) c5.fail("a decidable objective must not refuse");
 
@@ -209,7 +215,7 @@ export async function run() {
     // reputation weighing nothing, Daedalus — the opponent this repo shipped
     // as a CONSTANT — is the wrong board.
     c5.examined(1);
-    const live = gp.chooseOpponent({ weights: { faction_rep: 0, hacking_speed: 0.147, hacking_money: 0.147 }, windowH: 1.31, incumbent: "Daedalus" });
+    const live = gp.chooseOpponent({ weights: { faction_rep: 0, hacking_speed: 0.147, hacking_money: 0.147 }, windowH: 1.31, incumbent: "Daedalus", nodePower: NP0 });
     if (live.opponent === "Daedalus") c5.fail("with faction_rep weighing 0 the constant is not defensible", live.why);
 
     // Unpriceable channels are refused BY NAME, never scored zero: "not
@@ -242,16 +248,183 @@ export async function run() {
     }
     c5.note(`Daedalus mean multiplier over a window: 0.5h ${short.toFixed(4)}, 1.3h ${gp.meanEffect(gp.POWER_PER_HOUR.Daedalus, 1.1, 1.3).toFixed(4)}, 4h ${long.toFixed(4)}`);
 
-    // go.js must actually consult it, and must not switch mid-life for free.
+    // go.js must actually consult it, with the live per-opponent power.
     const src = read("go.js");
     c5.examined(1);
     if (!/chooseOpponent\(/.test(src)) c5.fail("go.js does not call chooseOpponent — the opponent is a constant again");
     if (/resetBoardState\(flags\.opponent/.test(src)) c5.fail("go.js still resets the board against the startup FLAG rather than the priced opponent");
-    if (!/banked \+\$\{bonusPct/.test(src) && !/bonusPct > 1/.test(src)) {
-      c5.fail("go.js does not guard against switching while the incumbent has banked power — nodePower is per opponent and a switch discards it");
-    }
+    if (!/nodePower:\s*nodePowerOf\(/.test(src)) c5.fail("go.js does not pass the live per-opponent nodePower to chooseOpponent");
   }
   checks.push(c5);
+
+  /* ------------------------------------------------------------------ GO9 */
+  const c9 = new Check("GO9", "a switch loses no banked power, so marginal pricing can flip off a well-banked incumbent — and the banked-bonus veto stays gone");
+  {
+    const gp = await import("../../goplan.js");
+    const GAME_GO = path.resolve(REPO, "../bitburner/src/Go");
+
+    // THE MECHANIC, FROM SOURCE. The veto rested on "switching discards the
+    // incumbent's power". Pin the three facts that make it false, so the day
+    // the game changes them this fails instead of the pricing going quietly
+    // wrong in the other direction.
+    c9.examined(1);
+    let goTs = null, effTs = null;
+    try {
+      goTs = fs.readFileSync(path.join(GAME_GO, "Go.ts"), "utf8");
+      effTs = fs.readFileSync(path.join(GAME_GO, "effects/effect.ts"), "utf8");
+    } catch (e) {
+      c9.fail(`game source unreadable under ${GAME_GO} — cannot confirm the per-opponent model`, String(e));
+    }
+    if (goTs && effTs) {
+      const zeroing = [...goTs.matchAll(/nodePower\s*=\s*0/g)].length;
+      const prestige = goTs.slice(goTs.indexOf("prestigeAugmentation()"), goTs.indexOf("prestigeSourceFile()"));
+      if (zeroing !== 1 || !/nodePower\s*=\s*0/.test(prestige)) c9.fail(`Go.ts must zero nodePower only in prestigeAugmentation (found ${zeroing} zeroing site(s))`);
+      if (!/getRecordEntries\(Go\.stats\)\.forEach/.test(effTs) || !/CalculateEffect\(stats\.nodePower, opponent\)/.test(effTs)) {
+        c9.fail("effect.ts calculateMults no longer applies EVERY opponent's nodePower at once — a switch may now discard power; re-derive the pricing");
+      }
+      const resetStats = fs.readFileSync(path.join(GAME_GO, "effects/netscriptGoImplementation.ts"), "utf8");
+      const rs = resetStats.slice(resetStats.indexOf("export function resetStats"));
+      if (/nodePower\s*=/.test(rs.slice(0, rs.indexOf("\n}\n")))) c9.fail("resetStats now touches nodePower");
+    }
+
+    // THE PLAYER'S MULTIPLIERS ACROSS A SWITCH, modelled as calculateMults
+    // does it (product over every opponent's stats). Daedalus at the live
+    // 2026-09-28 bonus, then 20 games' power against Illuminati: faction_rep
+    // must be exactly what it was, and hacking_speed must have risen.
+    c9.examined(1);
+    const nD = gp.nodePowerFromBonus(67.271, gp.OPPONENTS.Daedalus.power);
+    const mults = (stats) => {
+      const m = { faction_rep: 1, hacking_speed: 1 };
+      for (const [name, n] of Object.entries(stats)) m[gp.OPPONENTS[name].channel] *= gp.effectAt(n, gp.OPPONENTS[name].power);
+      return m;
+    };
+    const before = mults({ Daedalus: nD, Illuminati: 0 });
+    const after = mults({ Daedalus: nD, Illuminati: 20 * gp.POWER_PER_HOUR.Illuminati / 60 });
+    if (!(Math.abs(before.faction_rep - 1.67271) < 1e-6)) c9.fail(`nodePowerFromBonus must invert the published bonus exactly (got faction_rep ${before.faction_rep})`);
+    if (after.faction_rep !== before.faction_rep) c9.fail(`switching to Illuminati changed faction_rep ${before.faction_rep} -> ${after.faction_rep}`);
+    if (!(after.hacking_speed > before.hacking_speed)) c9.fail("playing Illuminati must raise hacking_speed");
+    c9.note(`Daedalus +67.271% = nodePower ${nD.toFixed(0)}; kept across the switch: faction_rep x${after.faction_rep.toFixed(5)}`);
+
+    // THE FLIP. Reputation still weighs something (so Daedalus is not
+    // trivially worthless), Daedalus has banked a lot, Illuminati nothing.
+    // The old rule refused to move because Daedalus's bonus was > 1%; the
+    // marginal rule must move, because Daedalus's concave curve is flat there
+    // and Illuminati's is at its steepest.
+    const W = { faction_rep: 0.5, hacking_speed: 0.5959, hacking_money: 0.5959 };
+    c9.examined(1);
+    const banked = gp.chooseOpponent({ weights: W, windowH: 1.72, incumbent: "Daedalus", nodePower: { Daedalus: nD, Illuminati: 0, TheBlackHand: 0 }, dwellH: 5 / 60 });
+    if (banked.refused || banked.opponent !== "Illuminati") c9.fail(`a +67% Daedalus against an unplayed Illuminati must flip to Illuminati, got ${banked.opponent}`, banked.why);
+    // ...and the SAME weights with nothing banked keep Daedalus: the flip is
+    // the banked power's concavity, not a weighting that always said Illuminati.
+    c9.examined(1);
+    const fresh = gp.chooseOpponent({ weights: { ...W, faction_rep: 2 }, windowH: 1.72, incumbent: "Daedalus", nodePower: { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 }, dwellH: 5 / 60 });
+    const heavyBanked = gp.chooseOpponent({ weights: { ...W, faction_rep: 2 }, windowH: 1.72, incumbent: "Daedalus", nodePower: { Daedalus: nD, Illuminati: 0, TheBlackHand: 0 }, dwellH: 5 / 60 });
+    if (fresh.opponent !== "Daedalus") c9.fail(`with faction_rep weighted 2 and nothing banked, Daedalus must lead, got ${fresh.opponent}`, fresh.why);
+    if (heavyBanked.opponent !== "Illuminati") c9.fail(`the same weights at Daedalus nodePower ${nD.toFixed(0)} must flip to Illuminati, got ${heavyBanked.opponent}`, heavyBanked.why);
+
+    // MARGINAL, NOT WINDOW-MEAN: the pick must depend on current power.
+    c9.examined(1);
+    const s1 = gp.effectSlope(0, 0.7), s2 = gp.effectSlope(1000, 0.7);
+    const h = 1e-3, num = (gp.effectAt(1000 + h, 0.7) - gp.effectAt(1000 - h, 0.7)) / (2 * h);
+    if (!(s1 > s2)) c9.fail("effectSlope must fall with nodePower (the effect is concave)");
+    if (!(Math.abs(num - s2) / s2 < 1e-5)) c9.fail(`effectSlope must be the derivative of effectAt (numeric ${num} vs ${s2})`);
+
+    // THE DWELL IS PRICED, NOT A VETO. Illuminati already well played, Black
+    // Hand fresh: instantaneous marginal favours Black Hand. A long committed
+    // dwell must be allowed to keep the incumbent when the block says so, and
+    // a zero dwell must not.
+    c9.examined(1);
+    const npI = { Daedalus: 0, Illuminati: 3000, TheBlackHand: 0 };
+    const Wb = { faction_rep: 0, hacking_speed: 0.5959, hacking_money: 0.5959 };
+    const instant = gp.chooseOpponent({ weights: Wb, windowH: 1.72, incumbent: "Illuminati", nodePower: npI, dwellH: 0 });
+    if (instant.opponent !== "TheBlackHand") c9.fail(`with no dwell the marginal argmax (TheBlackHand at n=0) must win, got ${instant.opponent}`, instant.why);
+    for (const dwellH of [5 / 60, 1]) {
+      const r = gp.chooseOpponent({ weights: Wb, windowH: 1.72, incumbent: "Illuminati", nodePower: npI, dwellH });
+      const t = Object.fromEntries((r.table ?? []).map((x) => [x.name, x.block]));
+      const expect = t.TheBlackHand > t.Illuminati ? "TheBlackHand" : "Illuminati";
+      if (r.opponent !== expect) c9.fail(`at a ${dwellH}h dwell the switch must follow the priced block (${JSON.stringify(t)}), got ${r.opponent}`, r.why);
+    }
+
+    // THE STREAK ACROSS A SWITCH, FROM SOURCE: paused, not reset. endGoGame
+    // and resetWinstreak touch only the finished game's opponent, and
+    // resetBoardState resets a streak only for a game still in progress.
+    c9.examined(1);
+    {
+      const sc = fs.readFileSync(path.join(GAME_GO, "boardAnalysis/scoring.ts"), "utf8");
+      const ni = fs.readFileSync(path.join(GAME_GO, "effects/netscriptGoImplementation.ts"), "utf8");
+      if (!/const statusToUpdate = getOpponentStats\(boardState\.ai\)/.test(sc)) c9.fail("endGoGame no longer updates only the finished game's opponent — the streak may not pause on a switch");
+      const rb = ni.slice(ni.indexOf("export function resetBoardState"));
+      if (!/if \(oldBoardState\.previousPlayer !== null[^)]*\)\s*\{\s*resetWinstreak/.test(rb.slice(0, 1200))) c9.fail("resetBoardState now resets a streak other than an in-progress game's — re-price the switch");
+      if (!/nodePower\s*\+?=/.test(sc) || !/getWinstreakMultiplier\(statusToUpdate\.winStreak, statusToUpdate\.oldWinStreak\)/.test(sc)) c9.fail("the per-game power no longer takes this opponent's own streak multiplier");
+    }
+
+    // THE STREAK IS PRICED. From the steady state the factor is ~1; a cold
+    // challenger (streak 0) earns below it, a hot incumbent above it — and
+    // that difference, not banked power, is what a switch costs.
+    c9.examined(1);
+    {
+      const cold = gp.streakFactor(gp.WIN_RATE.Daedalus, 0, 5), hot = gp.streakFactor(gp.WIN_RATE.Daedalus, 6, 5);
+      if (!(cold < 1 && hot > 1)) c9.fail(`a paused cold streak must price below steady state and a hot one above (cold ${cold}, hot ${hot})`);
+      const long = gp.streakFactor(gp.WIN_RATE.Daedalus, 0, 400);
+      if (!(Math.abs(long - 1) < 0.02)) c9.fail(`over a long dwell the streak factor must return to ~1 (got ${long})`);
+      // A near tie on marginals goes to the incumbent's hot streak; with the
+      // streaks swapped it goes to the challenger.
+      const w = { faction_rep: 0, hacking_speed: 0.5, hacking_money: 0.5 * (0.7 * 10331) / (0.9 * 3733) };
+      const tie = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 };
+      const a = gp.chooseOpponent({ weights: w, windowH: 2, incumbent: "TheBlackHand", nodePower: tie, dwellH: 5 / 60, dwellGames: 5, streaks: { TheBlackHand: 8, Illuminati: 0 } });
+      const b = gp.chooseOpponent({ weights: w, windowH: 2, incumbent: "Illuminati", nodePower: tie, dwellH: 5 / 60, dwellGames: 5, streaks: { TheBlackHand: 0, Illuminati: -8 } });
+      if (a.opponent !== "TheBlackHand") c9.fail(`equal marginals: an 8-streak incumbent must hold against a cold challenger, got ${a.opponent}`, a.why);
+      if (b.opponent !== "Illuminati") c9.fail(`equal marginals: a pending dry-streak bonus (x5) must hold Illuminati, got ${b.opponent}`, b.why);
+    }
+
+    // PLAY SPREADS ACROSS CHANNELS THAT MATTER. Two positively weighted
+    // channels, fresh life, go.js's own loop in miniature: price, play the
+    // committed dwell, bank the power, repeat. Each board's marginal falls as
+    // it banks, so the argmax must alternate — and neither may starve.
+    c9.examined(1);
+    {
+      const w = { faction_rep: 0, hacking_speed: 0.6, hacking_money: 0.6 };
+      const np = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 };
+      const st = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 };
+      const gameH = 1 / 60, K = 5;
+      let cur = "Daedalus", switches = 0;
+      const played = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 };
+      const seq = [];
+      for (let round = 0; round < 60; round++) {
+        const r = gp.chooseOpponent({ weights: w, windowH: 2, incumbent: cur, nodePower: np, dwellH: K * gameH, dwellGames: K, streaks: st });
+        if (r.refused) { c9.fail("a decidable objective refused", r.why); break; }
+        if (r.opponent !== cur) switches++;
+        cur = r.opponent;
+        seq.push(cur[0]);
+        // Bank K games at the measured steady-state rate (streak ignored in the toy).
+        np[cur] += gp.POWER_PER_HOUR[cur] * gameH * K;
+        played[cur] += K;
+      }
+      if (played.Daedalus) c9.fail(`faction_rep weighs 0, so Daedalus must never be played (played ${played.Daedalus})`);
+      if (!(played.Illuminati >= 30 && played.TheBlackHand >= 30)) c9.fail(`both weighted boards must be played as their marginals fall (Illuminati ${played.Illuminati}, TheBlackHand ${played.TheBlackHand})`, seq.join(""));
+      if (!(switches >= 4)) c9.fail(`the argmax must alternate as marginals fall, saw ${switches} switch(es)`, seq.join(""));
+      c9.note(`60 dwells, two channels weighted 0.6: ${seq.join("")} (I=Illuminati, T=TheBlackHand) — ${switches} switches`);
+    }
+
+    // HACKNET IS PRICED WHEN THE OBJECTIVE WEIGHS IT, SKIPPED BY NAME WHEN NOT.
+    c9.examined(1);
+    {
+      const base = { faction_rep: 0, hacking_speed: 0.1, hacking_money: 0.1 };
+      const np = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0, Netburners: 0 };
+      const withHn = gp.chooseOpponent({ weights: { ...base, hacknet_node_money: 5 }, windowH: 2, incumbent: "Daedalus", nodePower: np });
+      if (withHn.opponent !== "Netburners") c9.fail(`a hacknet-dominated objective must choose Netburners, got ${withHn.opponent}`, withHn.why);
+      const noHn = gp.chooseOpponent({ weights: base, windowH: 2, incumbent: "Daedalus", nodePower: np });
+      if (noHn.refused || !/Netburners \(hacknet_node_money: objective carries no weight/.test(noHn.why)) c9.fail("an objective without a hacknet weight must skip Netburners BY NAME, not refuse and not score it 0", noHn.why);
+    }
+
+    // go.js: the veto is gone, and factionRepBonusPct is Daedalus's whoever is played.
+    const src = read("go.js");
+    c9.examined(1);
+    if (/switching discards it/.test(src) || /bonusPct\s*>\s*1\b/.test(src)) c9.fail("go.js carries the banked-bonus veto again — a switch discards nothing (Go.ts:25-47, effect.ts:59-101)");
+    if (!/all\.Daedalus\?\.bonusPercent/.test(src)) c9.fail("go.js must publish factionRepBonusPct from Daedalus's stats, not the current opponent's");
+    if (!/gamesThisProcess/.test(src) || /^\s+games,$/m.test(src)) c9.fail("go.js must publish the per-process counter as gamesThisProcess, not an unlabelled `games` beside per-life wins/losses");
+  }
+  checks.push(c9);
 
   /* ------------------------------------------------------------------ GO6 */
   // THE MOVE WATCHDOG. 2026-09-26: /tel/go.txt froze for 30+ minutes and
@@ -386,7 +559,7 @@ export async function run() {
     if (!prints.some((p) => /MOVE STALL/.test(p))) c7.fail("the stall was not logged");
     if (calls.reset < 2) c7.fail(`the board must be reset to recover (then again for the next game); resetBoardState ran ${calls.reset} time(s)`);
     const last = tel[tel.length - 1];
-    if (last?.games !== 1) c7.fail(`after recovering, the next game must complete and publish; last write says games=${last?.games}`);
+    if (last?.gamesThisProcess !== 1) c7.fail(`after recovering, the next game must complete and publish; last write says gamesThisProcess=${last?.gamesThisProcess}`);
     c7.note(`${tel.length} status writes; resets ${calls.reset}; makeMove calls ${calls.makeMove}; final health '${last?.health}' moveStalls ${last?.moveStalls}`);
   }
   checks.push(c7);

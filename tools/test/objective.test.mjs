@@ -580,6 +580,22 @@ export async function run() {
       if (!(r.weights.faction_rep > 0)) cew.fail(`a ground rep leg must make faction_rep worth something: ${JSON.stringify(r.sensitivities)}`);
       if (Math.abs(r.weights.hacking_chance - 0.1 * r.weights.hacking_money) > 1e-12) cew.fail("chance carries the unsaturated share of the income weight");
     }
+    // HACKNET: no stream is a KNOWN 0; a stream is priced (goplan's Netburners
+    // needs it), and a bigger stream never prices lower.
+    if (r && r.weights.hacknet_node_money !== 0) cew.fail(`no lifeIncome must weigh hacknet_node_money exactly 0, got ${r.weights.hacknet_node_money}`);
+    cew.examined(1);
+    // A ladder that STEPS (more money buys more), unlike the flat one above,
+    // with the install point mid-plateau — the live 2026-09-28 shape where a
+    // 5% nudge reads 0 and only the plateau secant prices the dollar.
+    const steps = [0, 0.5, 1, 2].map((f) => ({ money: 1e10 * f, gains: { hacking: 1 + 0.3 * f, rep: 1.2, income: 1.1, exp: 1.05 } }));
+    const hrec = { ...rec, moneyAtW: 1.2e10, gainsByMoney: steps };
+    const rh = ob.exitWeights({ ...hrec, inputs: { ...inputs, lifeIncome: 5e6 } }, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now);
+    const rh2 = ob.exitWeights({ ...hrec, inputs: { ...inputs, lifeIncome: 5e7 } }, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now);
+    const h1 = rh?.weights?.hacknet_node_money, h2 = rh2?.weights?.hacknet_node_money;
+    if (!(typeof h1 === "number" && h1 >= 0 && typeof h2 === "number")) cew.fail(`a hacknet stream must price hacknet_node_money (got ${h1}, ${h2})`, JSON.stringify(rh?.sensitivities));
+    else if (!(h2 >= h1)) cew.fail(`a 10x hacknet stream must not weigh less (${h2} vs ${h1})`);
+    else if (!(h2 > 0)) cew.fail(`a $50m/s hacknet stream against a $10b ladder must be worth something at the exit (got ${h2})`, JSON.stringify(rh2?.sensitivities));
+    else cew.note(`hacknet_node_money weight: $5m/s ${h1.toExponential(3)}, $50m/s ${h2.toExponential(3)}`);
     if (ob.exitWeights({ ...rec, lastAugReset: 2 }, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now) !== null) cew.fail("another life's record refuses (deriveWeights is the named fallback)");
     if (ob.exitWeights({ ...rec, finalWindow: true }, 1, bestExitPolicy, spendRuns, { chanceObs: 0.9, growShare: 0.3 }, now) !== null) cew.fail("the final window has no next batch to weigh — refuse");
   }

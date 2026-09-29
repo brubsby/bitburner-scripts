@@ -1,4 +1,5 @@
-// Farms IPvGO node power against Daedalus, which multiplies faction reputation.
+// Farms IPvGO node power. Which opponent is PRICED each game (goplan.chooseOpponent);
+// Daedalus (faction reputation) is only the startup default.
 //
 //   run go.js                      13x13 vs Daedalus, forever
 //   run go.js --size 9             smaller, faster, easier to win
@@ -86,7 +87,7 @@
 
 import { chooseMove } from 'golib.js'
 import { canUseGoCheat, sfLevel } from 'sfgate.js'
-import { chooseOpponent } from 'goplan.js'
+import { chooseOpponent, nodePowerFromBonus, OPPONENTS } from 'goplan.js'
 // Pure data module (no ns surface): the BitNode table, for GoPower.
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
@@ -148,6 +149,11 @@ const SETTINGS = {
   // The solver-absence alarm. See solverHealth() below.
   solverWarnAfter: 10,
   solverMinShare: 0.5,
+  // A switch commits this many games before the opponent is re-priced. See
+  // pickOpponent: the commitment is what chooseOpponent's dwell block prices.
+  minDwellGames: 5,
+  // Game length used for that block until this process has timed 3 games.
+  defaultGameH: 1 / 60,
 }
 
 /**
@@ -399,24 +405,56 @@ export async function main(ns) {
   const sf14 = sfLevel(reset, 14)
 
   /**
-   * THE OPPONENT IS A CHANNEL CHOICE, re-priced each life rather than fixed.
+   * THE OPPONENT IS A CHANNEL CHOICE, re-priced at every game boundary.
    *
    * `SETTINGS.opponent` was a constant carried out of BitNode 2, where the run
    * was reputation-bound and the gang sold The Red Pill. Every opponent feeds a
    * different multiplier, so that constant is a standing bet on which channel
    * matters — and nothing re-examined it.
    *
-   * WHEN it switches matters as much as what to. nodePower is per opponent and
-   * every install zeroes all of them (Go/Go.ts:34-47), so a switch made mid-life
-   * throws away whatever the incumbent has banked, while a switch made just
-   * after an install costs exactly nothing. So this only ever moves while the
-   * board is cheap to leave, and otherwise keeps playing what it was playing.
+   * SWITCHING DISCARDS NOTHING. This block used to say the opposite — "a
+   * switch made mid-life throws away whatever the incumbent has banked" — and
+   * refused any switch once the incumbent's bonus passed 1%. On 2026-09-28
+   * that held BN9 on Daedalus at +67% faction_rep while faction_rep weighed 0
+   * and Illuminati priced higher. The game says otherwise: nodePower is per
+   * opponent and zeroed ONLY by an install (Go/Go.ts:25-47), and
+   * updateGoMults applies EVERY opponent's effect at once (effect.ts:59-101),
+   * so Daedalus's bonus keeps paying while we play someone else. winStreak is
+   * per opponent too, and only pauses.
+   *
+   * So the question is marginal: which board's NEXT game buys the most
+   * objective, at each opponent's CURRENT node power (read back from
+   * getStats' bonusPercent, which inverts exactly). chooseOpponent answers it.
+   * The one real switching cost is the win streak: both streaks PAUSE (stats
+   * are per opponent; scoring.ts touches only the finished game's opponent),
+   * so the challenger's next games earn at its own paused streak rather than
+   * the steady state. chooseOpponent prices that over the dwell (streakFactor).
+   * Churn is the other friction, and it is priced rather than vetoed:
+   * a switch commits `minDwellGames` games before re-pricing, and is made only
+   * when that committed block is worth more on the challenger than on the
+   * incumbent (chooseOpponent's dwell block).
    *
    * `ns.read` is 0GB and the gate file is on home; ns.scp pulls it because
    * boot.js may place this script off home (invariant C10).
    */
   const GATE_FILE = '/tel/installgate.txt'
-  const pickOpponent = (current, bonusPct) => {
+  const goPower = bitNodeMults(reset?.currentNode)?.GoPower ?? 1
+  /** { opponent: nodePower } for every priced opponent; 0 for one never played this life. */
+  const nodePowerOf = (stats) => {
+    const out = {}
+    for (const [name, meta] of Object.entries(OPPONENTS)) {
+      const pct = stats?.[name]?.bonusPercent
+      out[name] = pct === undefined ? 0 : nodePowerFromBonus(pct, meta.power, goPower, sf14)
+    }
+    return out
+  }
+  /** { opponent: current winStreak } — each resumes from its own paused streak. */
+  const streaksOf = (stats) => {
+    const out = {}
+    for (const name of Object.keys(OPPONENTS)) out[name] = stats?.[name]?.winStreak ?? 0
+    return out
+  }
+  const pickOpponent = (current, stats, dwellH) => {
     try {
       if (ns.getHostname() !== 'home') ns.scp(GATE_FILE, ns.getHostname(), 'home')
       const gate = JSON.parse(ns.read(GATE_FILE) || 'null')
@@ -425,24 +463,22 @@ export async function main(ns) {
       // chooseOpponent treats that as "cannot tell the channels apart" and
       // keeps the incumbent. That is the intended path, not a defect.
       //
-      // goPower was read off the gate file, which has never carried it — so
-      // it silently defaulted to 1 and would have UNDER-PRICED every opponent
-      // by a factor of 4 in BitNode 14, the one node where Go is the point.
-      // It comes from the BitNode table, which is the authority.
+      // goPower comes from the BitNode table, which is the authority — the
+      // gate file never carried it, and defaulting to 1 would under-price
+      // every opponent by 4x in BitNode 14.
       const pick = chooseOpponent({
         weights: gate?.objective?.weights ?? null,
         windowH: gate?.objective?.windowH ?? null,
         incumbent: current,
-        goPower: bitNodeMults(reset?.currentNode)?.GoPower ?? 1,
+        nodePower: nodePowerOf(stats),
+        dwellH,
+        dwellGames: SETTINGS.minDwellGames,
+        streaks: streaksOf(stats),
+        boardSize: N,
+        goPower,
         sf14,
       })
       if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why: pick.why, switched: false }
-      // Only switch while there is little to abandon. A bonus still near zero
-      // is a board we have just started; anything else has banked power that
-      // moving would discard for nothing.
-      if (typeof bonusPct === 'number' && bonusPct > 1) {
-        return { opponent: current, why: `${pick.opponent} scores better but ${current} has banked +${bonusPct.toFixed(2)}% — switching discards it; waiting for the next install`, switched: false }
-      }
       return { opponent: pick.opponent, why: pick.why, switched: true }
     } catch (e) {
       return { opponent: current, why: `opponent pricing failed: ${String(e).slice(0, 80)}`, switched: false }
@@ -450,10 +486,16 @@ export async function main(ns) {
   }
   let opponent = flags.opponent
   let opponentWhy = 'startup default'
-  let lastAugReset = reset.lastAugReset
   const canCheat = canUseGoCheat(reset) && ns.fileExists('go-cheat.js', 'home')
 
-  let games = 0
+  // PER-PROCESS counters: they restart at 0 whenever go.js restarts (every
+  // deploy). wins/losses/winStreak below are the game's own per-LIFE stats for
+  // the current opponent — a different clock, so the two never have to agree.
+  let gamesThisProcess = 0
+  const processStartedAt = Date.now()
+  // Games against the current opponent since the last switch. Starts at the
+  // dwell, because no switch has been committed to yet.
+  let gamesSinceSwitch = SETTINGS.minDwellGames
   let moves = 0
   let cheatsTried = 0
   // SEQ MUST NOT REPEAT ACROSS RESTARTS OF THIS SCRIPT.
@@ -515,7 +557,8 @@ export async function main(ns) {
     localMoves,
     mirrorPasses,
     passedBehind,
-    games,
+    gamesThisProcess,
+    processStartedAt: new Date(processStartedAt).toISOString(),
     moves,
     moveStalls,
     lastStallAt: lastStallAt ? new Date(lastStallAt).toISOString() : null,
@@ -567,22 +610,23 @@ export async function main(ns) {
 
   publishAt('ok', { detail: `starting vs ${opponent} on ${N}x${N}` })
 
-  while (flags.games < 0 || games < flags.games) {
+  while (flags.games < 0 || gamesThisProcess < flags.games) {
     try {
       // Re-priced at the game boundary — never mid-game, which would abandon a
-      // position. An install since the last game means every opponent's power
-      // is back to zero, so a switch there is free by construction.
-      const bonusNow = ns.go.analysis.getStats()[opponent]?.bonusPercent ?? 0
-      const reNow = ns.getResetInfo().lastAugReset
-      const installed = reNow !== lastAugReset
-      lastAugReset = reNow
-      const pick = pickOpponent(opponent, installed ? 0 : bonusNow)
-      if (pick.switched) {
-        publishAt('ok', { ...gameFields, detail: `opponent ${opponent} -> ${pick.opponent}: ${pick.why}` })
-        ns.print(`switching opponent ${opponent} -> ${pick.opponent}`)
+      // position — and only once the last switch's committed dwell is served.
+      // An install needs no special case: it zeroes every opponent's power,
+      // and the marginal pricing reads that straight out of getStats.
+      if (gamesSinceSwitch >= SETTINGS.minDwellGames) {
+        const gameH = gamesThisProcess >= 3 ? (Date.now() - processStartedAt) / 3600e3 / gamesThisProcess : SETTINGS.defaultGameH
+        const pick = pickOpponent(opponent, ns.go.analysis.getStats(), SETTINGS.minDwellGames * gameH)
+        if (pick.switched) {
+          publishAt('ok', { ...gameFields, detail: `opponent ${opponent} -> ${pick.opponent}: ${pick.why}` })
+          ns.print(`switching opponent ${opponent} -> ${pick.opponent}`)
+          gamesSinceSwitch = 0
+        }
+        opponent = pick.opponent
+        opponentWhy = pick.why
       }
-      opponent = pick.opponent
-      opponentWhy = pick.why
       ns.go.resetBoardState(opponent, N)
       await ns.sleep(100)
 
@@ -737,7 +781,8 @@ export async function main(ns) {
         continue
       }
 
-      games++
+      gamesThisProcess++
+      gamesSinceSwitch++
       let finalScore = null
       try {
         const gs = ns.go.getGameState()
@@ -751,8 +796,17 @@ export async function main(ns) {
       // returns undefined and prints a flat 0 on every game, which looks
       // exactly like "the bot banks nothing" — it cost an hour of chasing a
       // gameplay problem that did not exist.
-      const s = ns.go.analysis.getStats()[opponent] || {}
-      const bonusPercent = s.bonusPercent ?? 0
+      const all = ns.go.analysis.getStats()
+      const s = all[opponent] || {}
+      // factionRepBonusPct is DAEDALUS's bonus, whoever is being played:
+      // progress.js and installgate read it as the faction_rep multiplier, and
+      // Daedalus is the only opponent that feeds faction_rep (effect.ts:92-95).
+      // Taking it from the current opponent would publish Illuminati's
+      // hacking_speed bonus as reputation the moment the board switched.
+      const bonusPercent = all.Daedalus?.bonusPercent ?? 0
+      // Every opponent's live bonus: all of them apply at once.
+      const bonuses = {}
+      for (const [name, st] of Object.entries(all)) if (typeof st?.bonusPercent === 'number') bonuses[name] = Number(st.bonusPercent.toFixed(3))
 
       // The solver alarm rides the same write as everything else, so a reader
       // that already parses /tel/go.txt gets it for free and one that only
@@ -771,11 +825,13 @@ export async function main(ns) {
         highestWinStreak: s.highestWinStreak ?? 0,
         factionRepBonusPct: Number(bonusPercent.toFixed(3)),
         factionRepMult: Number((1 + bonusPercent / 100).toFixed(4)),
+        bonuses,
+        gamesSinceSwitch,
         finalScore,
         solverShare: solver.solverShare,
       }
       publishAt(h.health, { ...gameFields, ...(h.detail ? { detail: h.detail } : {}) })
-      ns.print(`game ${games}: ${s.wins ?? 0}W/${s.losses ?? 0}L faction_rep +${bonusPercent.toFixed(2)}%`)
+      ns.print(`game ${gamesThisProcess} (this process) vs ${opponent}: ${s.wins ?? 0}W/${s.losses ?? 0}L this life, faction_rep +${bonusPercent.toFixed(2)}%`)
     } catch (err) {
       // ALWAYS surface the failure. The status write was the last statement of
       // this try and a throw above it skipped the whole record — which is not a

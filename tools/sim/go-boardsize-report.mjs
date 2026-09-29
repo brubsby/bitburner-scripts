@@ -340,22 +340,23 @@ function liveCheck() {
   }
 
   // 2. Our turns per game. `moves` and `games` are both go.js session counters
-  //    (go.js:236,270), so they are consistent with each other even though
+  //    (`gamesThisProcess`, `moves`), so they are consistent with each other even though
   //    wins/losses above are not on the same clock.
-  if (!(live.games > 0) || !(live.moves > 0)) {
+  const liveGames = live.gamesThisProcess ?? live.games;
+  if (!(liveGames > 0) || !(live.moves > 0)) {
     uncheckable(
       "go-boardsize turns/game",
-      `live go.txt has games=${live.games} moves=${live.moves} — go.js has not completed a game this session, ` +
+      `live go.txt has gamesThisProcess=${liveGames} moves=${live.moves} — go.js has not completed a game this session, ` +
         `so there is no length to compare the wall-clock model against.`,
     );
-  } else if (live.games < 5) {
+  } else if (liveGames < 5) {
     uncheckable(
       "go-boardsize turns/game",
-      `only ${live.games} live game(s) this go.js session; game length varies enough that a mean over fewer ` +
+      `only ${liveGames} live game(s) this go.js session; game length varies enough that a mean over fewer ` +
         `than 5 is not a measurement.`,
     );
   } else {
-    checkWithin("go-boardsize turns/game", arm.ourTurns, live.moves / live.games, 0.1, (x) => x.toFixed(1));
+    checkWithin("go-boardsize turns/game", arm.ourTurns, live.moves / liveGames, 0.1, (x) => x.toFixed(1));
   }
 
   // Always said out loud, pass or fail: the arm that wins the comparison is not
