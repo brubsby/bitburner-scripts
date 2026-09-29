@@ -102,7 +102,13 @@ export async function run() {
       c.note(`${name}: chooseGrafts -> ${r.grafts ? `${r.grafts.length} grafts, withH ${r.withH?.toFixed(1)}h, withoutH ${r.withoutH}, unpricedNone ${r.unpricedNone}` : `REFUSED: ${r.why}`}`);
       if (!r.grafts) c.fail(`${name}: an unpriceable 'none' must not be a refusal: ${r.why}`);
       else {
-        if (r.grafts.length < 28) c.fail(`${name}: the seeded 28 must be the start: ${r.grafts.length}`);
+        // The seed is the START: every seeded name is in the result, or the
+        // prune dropped it because the exit was shorter without it (graftplan
+        // prune, r.pruned) — never lost to the search.
+        const got = new Set(r.grafts.map((g) => g.name));
+        const lost = MEM.filter((n) => !got.has(n) && !(r.pruned ?? []).includes(n));
+        if (r.seededFrom !== 0 || lost.length) c.fail(`${name}: the seeded 28 must be the start (seededFrom ${r.seededFrom}; lost without a prune: ${lost.join(", ") || "none"})`);
+        if ((r.pruned ?? []).length) c.note(`${name}: pruned ${r.pruned.join(", ")}`);
         if (r.withoutH !== null || r.unpricedNone !== true) c.fail(`${name}: grafting nothing must be published unpriced (withoutH null, unpricedNone): ${r.withoutH} ${r.unpricedNone}`);
         if (!(Number.isFinite(r.withH) && r.withH < 150)) c.fail(`${name}: withH must be the 28's finite exit: ${r.withH}`);
         if (JSON.stringify(r).includes("Infinity") || !/unpriceable/.test(r.why)) c.fail(`${name}: the record must carry no Infinity and say 'unpriceable': ${r.why}`);

@@ -168,7 +168,10 @@ export async function run() {
     const want = SEED29.filter((n) => n !== "QLink");
     const got = (r.grafts ?? []).map((g) => g.name);
     c.note(`seed of ${SEED29.length} with QLink owned -> ${got.length} kept`);
-    if (!want.every((n) => got.includes(n))) c.fail(`every graftable seed name must be kept: missing ${want.filter((n) => !got.includes(n)).join(", ")}`);
+    // Kept, or dropped by the prune for a shorter exit (graftplan prune) — never cut by the walk.
+    const cut = want.filter((n) => !got.includes(n) && !(r.pruned ?? []).includes(n));
+    if ((r.pruned ?? []).length) c.note(`pruned (a shorter exit without them): ${r.pruned.join(", ")}`);
+    if (cut.length) c.fail(`every graftable seed name must be kept: missing ${cut.join(", ")}`);
     checks.push(c);
   }
 

@@ -431,31 +431,91 @@ export function* chooseGraftsGen(o = {}) {
       seededFrom = si
     }
   }
-  for (let step = 0; step < maxGrafts && !truncated; step++) {
-    let best = null
-    for (const a of pool) {
-      if (clock() - t0 > greedyMs) {
-        truncated = true
-        break
+  // The greedy's additions, one bundle a step, while one shortens the exit.
+  const growSet = function* () {
+    let added = 0
+    for (let step = 0; step < maxGrafts && !truncated; step++) {
+      let best = null
+      for (const a of pool) {
+        if (clock() - t0 > greedyMs) {
+          truncated = true
+          break
+        }
+        if (chosen.includes(a)) continue
+        const willOwn = new Set([...owned, ...chosen.map((c) => c.name)])
+        // A CHAIN IS ONE STEP: greedy on single additions cannot see through a
+        // prerequisite that is individually negative to the strong augmentation
+        // behind it, so a candidate whose prerequisites are unmet is evaluated
+        // as the whole bundle it needs. chainFor returns null for a MISSING
+        // link — a refusal, not an empty chain.
+        const chain = prereqsMet(a, willOwn) ? [] : chainFor(a, willOwn, all)
+        if (chain === null) continue
+        const bundle = [...chain, a]
+        if (!bundle.every((x, i) => prereqsMet(x, new Set([...willOwn, ...bundle.slice(0, i).map((y) => y.name)])))) continue
+        const h = yield* withRun([...chosen, ...bundle])
+        if (h === null) continue
+        if (!best || h < best.h) best = { bundle, h }
       }
-      if (chosen.includes(a)) continue
-      const willOwn = new Set([...owned, ...chosen.map((c) => c.name)])
-      // A CHAIN IS ONE STEP: greedy on single additions cannot see through a
-      // prerequisite that is individually negative to the strong augmentation
-      // behind it, so a candidate whose prerequisites are unmet is evaluated
-      // as the whole bundle it needs. chainFor returns null for a MISSING
-      // link — a refusal, not an empty chain.
-      const chain = prereqsMet(a, willOwn) ? [] : chainFor(a, willOwn, all)
-      if (chain === null) continue
-      const bundle = [...chain, a]
-      if (!bundle.every((x, i) => prereqsMet(x, new Set([...willOwn, ...bundle.slice(0, i).map((y) => y.name)])))) continue
-      const h = yield* withRun([...chosen, ...bundle])
-      if (h === null) continue
-      if (!best || h < best.h) best = { bundle, h }
+      if (!best || !(best.h < bestH)) break
+      chosen.push(...best.bundle)
+      bestH = best.h
+      added += best.bundle.length
     }
-    if (!best || !(best.h < bestH)) break
-    chosen.push(...best.bundle)
-    bestH = best.h
+    return added
+  }
+  // THE PRUNE: the greedy only ever ADDS, and it starts from the node's
+  // remembered sets (the seeds) — so a set that grew around an expensive
+  // graft was never priced without it. Live BN9 2026-09-29 18:42Z: the
+  // remembered 24-graft set carries QLink ($75t: 3 x its $25t base), and on
+  // the trader's curve r(W) the final window earns $75t in ~225h at the
+  // market's saturated ~$3.3e11/h; the same set without QLink priced 102h
+  // against 262h with it (point, the committed install's trajectory), and no
+  // search could see it. Each round tries dropping one graft (with every
+  // member of the set that needs it), the most expensive first, and keeps
+  // the first drop that shortens the with-run's exit — then the greedy may
+  // add again around the smaller set. A set is never pruned to nothing
+  // (grafting nothing is the decision's other option).
+  const pruned = []
+  const prune = function* () {
+    let dropped = 0
+    for (let round = 0; round < 64 && !truncated && chosen.length > 1; round++) {
+      let took = false
+      const order = chosen.map((a) => ({ a, cost: graftSpecOf(a, intelligence, { entropy })?.cost ?? 0 })).sort((x, y) => y.cost - x.cost)
+      for (const { a } of order) {
+        if (clock() - t0 > greedyMs) {
+          truncated = true
+          break
+        }
+        // a, and every member whose prerequisite chain (within the set) reaches it.
+        const drop = new Set([a.name])
+        for (let grew = true; grew; ) {
+          grew = false
+          for (const x of chosen) if (!drop.has(x.name) && (Array.isArray(x.prereqs) ? x.prereqs : []).some((p) => drop.has(p))) (drop.add(x.name), (grew = true))
+        }
+        const rest = chosen.filter((x) => !drop.has(x.name))
+        if (!rest.length) continue
+        const h = yield* withRun(rest)
+        if (h !== null && h < bestH) {
+          chosen.length = 0
+          chosen.push(...rest)
+          bestH = h
+          pruned.push(...drop)
+          dropped += drop.size
+          took = true
+          break
+        }
+      }
+      if (!took) break
+    }
+    return dropped
+  }
+  // Prune FIRST: a seeded set is the mature one, and the greedy's pass over
+  // the pool (every candidate x the start fractions) is what the CPU budget
+  // stops — pruned after it, a remembered set was never pruned at all.
+  for (let pass = 0; pass < 4 && !truncated; pass++) {
+    yield* prune()
+    const added = truncated ? 0 : yield* growSet()
+    if (!added) break
   }
 
   if (!chosen.length) {
@@ -497,9 +557,11 @@ export function* chooseGraftsGen(o = {}) {
     spend,
     truncated,
     seededFrom,
+    // Grafts the prune dropped from the seeded/grown set (each shortened the exit without it).
+    pruned: [...new Set(pruned)],
     entropyAfter: (num(o.entropy0) ? o.entropy0 : 0) + (entropy ? chosen.length : 0),
     city: GRAFT_CITY,
-    why: `${lifeOf.size ? `${lifeOf.size} of ${chosen.length} graft(s) in earlier lives (${[...new Set(lifeOf.values())].sort().map((l) => `life ${l}`).join(', ')}), the rest` : `${chosen.length} graft(s)`} in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${unpricedNone ? 'unpriceable (the level is out of reach)' : `${baseline.toFixed(2)}h`} without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${truncated ? ' — search stopped at its CPU budget' : ''}`,
+    why: `${lifeOf.size ? `${lifeOf.size} of ${chosen.length} graft(s) in earlier lives (${[...new Set(lifeOf.values())].sort().map((l) => `life ${l}`).join(', ')}), the rest` : `${chosen.length} graft(s)`} in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${unpricedNone ? 'unpriceable (the level is out of reach)' : `${baseline.toFixed(2)}h`} without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${pruned.length ? `; pruned ${[...new Set(pruned)].join(', ')}` : ''}${truncated ? ' — search stopped at its CPU budget' : ''}`,
   }
 }
 
