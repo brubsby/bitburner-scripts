@@ -124,6 +124,37 @@ export function expectedReward(o = {}) {
 }
 
 /**
+ * The factions a contract's reputation can reach: gainCodingContractReward
+ * pays faction rep only to joined factions whose FactionInfo offers HACKING
+ * work (PlayerObjectGeneralMethods.ts:515, :525 — `offerHackingWork`), one at
+ * random or split evenly. The gang-only factions (Slum Snakes, Tetrads) and
+ * the special ones are not among them. [CP3] re-parses FactionInfo.tsx.
+ */
+export const HACKING_WORK_FACTIONS = new Set([
+  'Illuminati', 'Daedalus', 'The Covenant', 'ECorp', 'MegaCorp', 'Bachman & Associates', 'Blade Industries', 'NWO',
+  'Clarke Incorporated', 'OmniTek Incorporated', 'Four Sigma', 'KuaiGong International', 'Fulcrum Secret Technologies',
+  'BitRunners', 'The Black Hand', 'NiteSec', 'CyberSec', 'Aevum', 'Chongqing', 'Ishima', 'New Tokyo', 'Sector-12',
+  'Volhaven', 'Speakers for the Dead', 'The Dark Army', 'The Syndicate', 'Silhouette', 'Netburners', 'Tian Di Hui',
+])
+
+/** How many of `factions` (joined faction names) a contract's reputation is shared over. */
+export const contractFactionCount = (factions) => (Array.isArray(factions) ? factions.filter((f) => HACKING_WORK_FACTIONS.has(f)).length : null)
+
+/**
+ * GENERATED CONTRACTS FROM HASHES (Hacknet "Generate Coding Contract",
+ * HashUpgradesMetadata.tsx: costPerLevel 25; HashUpgrade.getCost: the k-th
+ * purchase of a life costs 25 x k, the level resetting at every install,
+ * HashManager.prestige). How many contracts `hashes` buys from upgrade level
+ * `level0`, as a CONTINUOUS count (the expectation a smooth trajectory
+ * integrates): the largest n with 25 x (n(n+1)/2 + level0 x n) <= hashes.
+ */
+export function contractsForHashes(hashes, level0 = 0, costPerLevel = 25) {
+  if (!num(hashes) || hashes <= 0 || !num(level0) || level0 < 0 || !num(costPerLevel) || costPerLevel <= 0) return 0
+  const b = 2 * level0 + 1
+  return (-b + Math.sqrt(b * b + (8 * hashes) / costPerLevel)) / 2
+}
+
+/**
  * The stream, per second: `{ perSec, moneyPerSec, factionRepPerSec, reward }`.
  * `pending` is how many contracts are outstanding (unsolved on the network) —
  * with ctauto.js running it is ~0 and the spawn chance sits at its maximum.

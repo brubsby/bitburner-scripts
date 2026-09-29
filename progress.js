@@ -129,7 +129,7 @@ import { joinWait, timeToMeet } from 'joinplan.js'
 import { snapshotView } from 'snapshot.js'
 // Pure: the expected contract stream, which is NOT script income and so is
 // invisible to getTotalScriptIncome (contractplan.js has the derivation).
-import { contractIncome } from 'contractplan.js'
+import { contractIncome, expectedReward, contractFactionCount, HACKING_WORK_FACTIONS } from 'contractplan.js'
 // Pure: the stock-market entry as an investment decision (stockplan.js).
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
@@ -153,7 +153,7 @@ const GYM_CLASS = { strength: 'str', defense: 'def', dexterity: 'dex', agility: 
 import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 // Pure: the install point (committed plan, then gate) every "until the install" price uses.
-import { installPointH } from 'hacknetplan.js'
+import { installPointH, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn, ONEOFF_EFFECTS } from 'objective.js'
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen } from 'goweights.js'
@@ -174,7 +174,7 @@ import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formula
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
-import { catalogueFromOffers, moneyScaleOf, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetFlow } from 'lifeplan.js'
+import { catalogueFromOffers, moneyScaleOf, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetStreams } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1424,17 +1424,49 @@ function stepRateAt(steps, h) {
   }
   return v
 }
-function freshHacknetNow(info, inputs) {
+/** The simulated rebuild's money flow and gross hash production (lifeplan.freshHacknetStreams), memoised together. */
+function freshHacknetStreamsNow(info, inputs) {
   if (!inputs?.hacknet) return null
-  if (freshHacknetMemo && freshHacknetMemo.reset === info?.lastAugReset && Date.now() - freshHacknetMemo.at < 600e3) return freshHacknetMemo.flow
-  let flow = null
+  if (freshHacknetMemo && freshHacknetMemo.reset === info?.lastAugReset && Date.now() - freshHacknetMemo.at < 600e3) return freshHacknetMemo.streams
+  let streams = null
   try {
-    flow = freshHacknetFlow(inputs, 48)
+    streams = freshHacknetStreams(inputs, 48)
   } catch {
-    flow = null
+    streams = null
   }
-  freshHacknetMemo = { reset: info?.lastAugReset, at: Date.now(), flow }
-  return flow
+  freshHacknetMemo = { reset: info?.lastAugReset, at: Date.now(), streams }
+  return streams
+}
+
+/**
+ * THE FINAL WINDOW'S HASHES AS THE EXIT FACTION'S REPUTATION (exitplan
+ * contractRep): with hacknet SERVERS and ctauto.js solving, every hash from
+ * the exit faction's join buys a generated contract, whose reputation is
+ * shared over the joined hacking-work factions (contractplan). The final
+ * life's faction count is this life's, plus the exit faction when it is not
+ * joined yet — a life re-joins what its requirements admit (stated). The
+ * live fleet's rate and the upgrade's level (hashspend.txt) price a final
+ * window that is now. { rec, why } — rec null with the reason.
+ */
+function contractRepOf(ns, info, player, inputs, streams) {
+  if (!inputs?.hacknet) return { rec: null, why: 'no hacknet servers this life: no hashes to spend' }
+  const ct = readJson(ns, '/tel/ctauto.txt')
+  if (!(Date.now() - Date.parse(ct?.at ?? '') < 15 * 60e3)) return { rec: null, why: 'ctauto.js is not reporting: a generated contract would sit unsolved' }
+  if (!HACKING_WORK_FACTIONS.has(EXIT_FACTION)) return { rec: null, why: `${EXIT_FACTION} offers no hacking work: contracts cannot pay it` }
+  const r = expectedReward({ totalSourceFileLevels: totalSfLevels(info), nodeContractMoney: bitNodeMults(info?.currentNode)?.CodingContractMoney, hasHackingFaction: true, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
+  const joined = (player.factions ?? []).includes(EXIT_FACTION)
+  const k = (contractFactionCount(player.factions) ?? 0) + (joined ? 0 : 1)
+  if (!(r?.factionRep > 0) || !(k >= 1)) return { rec: null, why: 'contract reputation unreadable' }
+  const hs = readJson(ns, '/tel/hashspend.txt')
+  const lvl = hs?.lastAugReset === info?.lastAugReset && Date.now() - Date.parse(hs?.at ?? '') < 15 * 60e3 && Number.isInteger(hs?.contractLevel) ? hs.contractLevel : null
+  const live = typeof inputs.lifeIncome === 'number' && inputs.lifeIncome > 0 ? inputs.lifeIncome / DOLLARS_PER_HASH : null
+  const rec = {
+    perContract: r.factionRep,
+    factions: k,
+    ...(Array.isArray(streams?.hashCum) && streams.hashCum.length >= 2 ? { hashCum: streams.hashCum } : {}),
+    ...(lvl !== null && live ? { hashPerSec: live, level0: lvl } : {}),
+  }
+  return { rec, why: `generated contracts from the ${EXIT_FACTION} join: ${r.factionRep.toFixed(0)} rep each over ${k} hacking-work faction(s)${rec.hashCum ? '' : ' (no rebuilt-fleet model)'}${rec.hashPerSec ? `, the live fleet ${live.toFixed(2)} hashes/s from level ${lvl}` : ''}` }
 }
 
 /**
@@ -3527,12 +3559,17 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   const sc = sleevesCarriedNow(ns, info)
   const carried = { ...(gc.steps ? { gang: gc.steps } : {}), ...(sc.steps ? { sleeves: sc.steps } : {}) }
   if (Object.keys(carried).length) out.carriedIncome = carried
-  const fh = freshHacknetNow(info, out)
+  const fs9 = freshHacknetStreamsNow(info, out)
+  const fh = fs9?.flow ?? null
   if (fh?.length) out.freshHacknet = fh
+  // The final window's hashes buy the exit faction's reputation (exitplan contractRep).
+  const cr = contractRepOf(ns, info, player, out, fs9)
+  if (cr.rec) out.contractRep = cr.rec
   // The committed 4S purchase (fourSDecisionOf): every decision's trajectory buys it where the plan does.
   const f4 = fourSCarriedOf(planCtx, info)
   if (f4) out.fourS = f4
   out.streams = { gang: gc.why, sleeves: sc.why, hacknetFinalWindow: fh?.length ? `the fleet a fresh life rebuilds (lifeplan.freshHacknetFlow): $${(stepRateAt(fh, 8) / 1e6).toFixed(2)}m/s to the balance at 8h, $${(stepRateAt(fh, 24) / 1e6).toFixed(2)}m/s at 24h (its purchases repaid from its own income first)` : 'no hacknet servers model this life (hacknet.txt mode not servers): the final window prices no hacknet (a floor)' }
+  out.streams.contractRep = cr.why
   // The life's length is a decision: where the purchase model prices it, the
   // exit's cycle is the length it chose (and what that length buys), not the
   // measured mean life — a policy-chosen short life is not evidence that

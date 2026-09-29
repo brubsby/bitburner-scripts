@@ -226,7 +226,19 @@ export function* freshLifeMoneyGen(inputs, L, scale = 1, rec = null, { steps = 2
  * hacknet model. `L` the life simulated (its purchases stop paying back near
  * its end); past it the last rate holds.
  */
-export function freshHacknetFlow(inputs, L = 48, { stepH = 0.125, decideH = 0.25 } = {}) {
+export function freshHacknetFlow(inputs, L = 48, o = {}) {
+  return freshHacknetStreams(inputs, L, o)?.flow ?? null
+}
+
+/**
+ * The same simulated rebuild, both ways it can be spent: `flow` (the money
+ * stream freshHacknetFlow returns, net of the fleet's own purchases) and
+ * `hashCum` [[atH, cumulative hashes since the install]] — the fleet's GROSS
+ * hash production, which is what a hash spent on an upgrade instead of sold
+ * comes out of (exitplan contractRep: the final window's generated contracts).
+ * Null with no hacknet model.
+ */
+export function freshHacknetStreams(inputs, L = 48, { stepH = 0.125, decideH = 0.25 } = {}) {
   if (!(inputs?.hacknet && inputs.hacknet.mults && num(inputs.hacknet.nodeMoney))) return null
   const rec = []
   // Decided every decideH (hacknet.js re-plans every few minutes; the
@@ -234,6 +246,8 @@ export function freshHacknetFlow(inputs, L = 48, { stepH = 0.125, decideH = 0.25
   const m = freshLifeMoney(inputs, L, 1, rec, { steps: Math.ceil(L / stepH), decisions: Math.ceil(L / decideH) })
   if (m === null) return null
   const out = []
+  const cum = [[0, 0]]
+  let hashes = 0
   let owed = 0
   for (const r of rec) {
     if (num(r.buy)) owed += r.buy
@@ -241,10 +255,14 @@ export function freshHacknetFlow(inputs, L = 48, { stepH = 0.125, decideH = 0.25
       const pay = Math.min(owed, r.earn)
       owed -= pay
       out.push({ atH: +r.h.toFixed(4), perSec: (r.earn - pay) / r.dt })
+      hashes += r.earn / DOLLARS_PER_HASH
+      cum.push([+(r.h + r.dt / 3600).toFixed(4), Math.round(hashes)])
     }
   }
-  // Consecutive equal rates are one step.
-  return out.filter((x, i) => i === 0 || x.perSec !== out[i - 1].perSec)
+  // Consecutive equal rates are one step; the cumulative curve keeps one point per hour.
+  const flow = out.filter((x, i) => i === 0 || x.perSec !== out[i - 1].perSec)
+  const hashCum = cum.filter((p, i) => i === 0 || i === cum.length - 1 || Math.floor(p[0]) !== Math.floor(cum[i - 1][0]))
+  return { flow, hashCum }
 }
 
 /**

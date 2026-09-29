@@ -38,7 +38,7 @@ import { hasHacknetServers, totalSfLevels } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy, spendRuns } from 'exitplan.js'
 import { decideHashSpend, batchIncomeRatio, minSecAfter, maxMoneyAfter, NOT_SIMULATED } from 'hashplan.js'
-import { expectedReward } from 'contractplan.js'
+import { expectedReward, contractFactionCount } from 'contractplan.js'
 import { incomeModel } from 'trajectory.js'
 import { covenantActive, COVENANT } from 'sleeveplan.js'
 
@@ -46,6 +46,8 @@ const STATUS = '/tel/hashspend.txt'
 const LOOP_MS = 30000
 /** How many of the batcher's targets are priced for the two server upgrades. */
 const TARGETS = 2
+/** The exit faction (The Red Pill's seller): a generated contract's reputation shortens the exit only there. */
+const EXIT_FACTION = 'Daedalus'
 /**
  * This file's full static price. No Singularity surface, so it does not move
  * with the Source-File 4 level; kept in the RAISE_CEILING(mult) shape that
@@ -193,18 +195,37 @@ function pass(ns, info) {
     options.push({ name: 'Improve Gym Training', target: null, cost: ns.hacknet.hashCost('Improve Gym Training', 1), effect: { covenantHScale: trainingMult / (trainingMult + 0.2) }, why: `combat ${cov.combatH.toFixed(1)}h x${(trainingMult / (trainingMult + 0.2)).toFixed(3)}` })
   }
 
-  // --- a coding contract: its expected money, only while ctauto.js solves
+  // --- a coding contract: its expected money, and in the final window its
+  // share of the exit faction's reputation — only while ctauto.js solves.
+  // The upgrade's level this life (HashUpgrade.getCost: the next costs 25 x
+  // (level + 1)) is published for progress.js's contract stream.
+  const contractCost = ns.hacknet.hashCost('Generate Coding Contract', 1)
+  const contractLevel = fin(contractCost) && contractCost > 0 ? Math.round(contractCost / 25) - 1 : null
   if (!freshWithin(ct, 15 * 60e3)) skipped.push({ name: 'Generate Coding Contract', why: 'ctauto.js is not reporting: a generated contract would sit unsolved' })
   else {
     const sfLevels = totalSfLevels(info)
-    const r = expectedReward({ totalSourceFileLevels: sfLevels, nodeContractMoney: bitNodeMults(info.currentNode)?.CodingContractMoney, hasHackingFaction: (player.factions?.length ?? 0) > 0, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
-    if (r && r.money > 0) options.push({ name: 'Generate Coding Contract', target: null, cost: ns.hacknet.hashCost('Generate Coding Contract', 1), effect: { money: r.money }, why: `expected $${r.money.toExponential(2)} (its ${r.factionRep.toFixed(0)} reputation is not simulated)` })
-    else skipped.push({ name: 'Generate Coding Contract', why: 'no expected money (CodingContractMoney 0, or unreadable)' })
+    const k = contractFactionCount(player.factions) ?? 0
+    const r = expectedReward({ totalSourceFileLevels: sfLevels, nodeContractMoney: bitNodeMults(info.currentNode)?.CodingContractMoney, hasHackingFaction: k > 0, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
+    // The exit faction's expected share: 1/k of the faction reputation, once
+    // it is joined (a contract solved before the join pays the others).
+    const toExit = finalWindow && k > 0 && (player.factions ?? []).includes(EXIT_FACTION) && r?.factionRep > 0 ? r.factionRep / k : 0
+    if (r && (r.money > 0 || toExit > 0)) {
+      options.push({
+        name: 'Generate Coding Contract',
+        target: null,
+        cost: contractCost,
+        effect: { money: r.money, ...(toExit > 0 ? { exitRep: toExit, contractLevels: 1 } : {}) },
+        // Priced as the POLICY the exit models (hashplan: every hash from the
+        // join on contracts, against every hash sold), not one purchase.
+        ...(toExit > 0 ? { policy: 'contracts' } : {}),
+        why: toExit > 0 ? `expected ${toExit.toFixed(0)} ${EXIT_FACTION} reputation (${r.factionRep.toFixed(0)} over ${k} hacking-work faction(s)) and $${r.money.toExponential(2)}` : `expected $${r.money.toExponential(2)}; its ${r.factionRep.toFixed(0)} reputation is ${finalWindow ? `not ${EXIT_FACTION}'s until it is joined` : 'priced only in the final window (before an install it reaches the batch at W, which the planner prices at today\'s reputation)'}`,
+      })
+    } else skipped.push({ name: 'Generate Coding Contract', why: 'no expected money or exit reputation (CodingContractMoney 0, or unreadable)' })
   }
 
   const decision = decideHashSpend({ hashes, capacity, record: record0, lastAugReset: info.lastAugReset, fns: { bestExitPolicy, spendRuns, incomeModel }, options, skipped, covenant, baseEffect })
   const did = act(ns, decision, hashes)
-  return { result: 'decided', lastAugReset: info.lastAugReset, bitNode: info.currentNode, hashes, capacity, studyMult, trainingMult, decision, did }
+  return { result: 'decided', lastAugReset: info.lastAugReset, bitNode: info.currentNode, hashes, capacity, studyMult, trainingMult, contractLevel, decision, did }
 }
 
 /** Carry the decision out, and read the hash count back — the signal the call itself did not produce. */

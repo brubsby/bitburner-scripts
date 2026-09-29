@@ -72,6 +72,7 @@ export const expForLevel = (level, mult) => Math.exp((level / mult + 200) / 32) 
 import { serveOrFarm } from 'expfarm.js'
 import { cadencePosterior } from 'bayes.js'
 import { capitalFV } from 'hacknetplan.js'
+import { contractsForHashes } from 'contractplan.js'
 import { drain } from 'coop.js'
 import { capitalOf, isShaped, capitalEarnAt, capitalRateAt, capitalGain, capitalStepFn, rateTab } from 'traderw.js'
 
@@ -727,6 +728,47 @@ export function hoursToRep(target, o = {}) {
  * replaces the rate from its hour on) when given, else `perSec` from `delayH`.
  * Null input -> always 0.
  */
+/**
+ * THE FINAL WINDOW'S GENERATED CONTRACTS as the exit faction's reputation by
+ * absolute hour t, or null when `c` is absent or unreadable.
+ *
+ *   c.perContract   expected faction reputation of ONE contract, over every
+ *                   faction it can reach (contractplan.expectedReward)
+ *   c.factions      how many joined hacking-work factions share it (the exit
+ *                   faction included): the exit faction's share is 1/factions
+ *                   — one at random or all split evenly (gainCodingContractReward)
+ *   c.hashCum       [[ageH, hashes]]: the rebuilt fleet's gross production
+ *                   since the window's install (lifeplan.freshHacknetStreams),
+ *                   used when an install opens the window
+ *   c.hashPerSec    the live fleet's rate, when the final window is now
+ *   c.level0        the upgrade's level now (the install resets it to 0)
+ *
+ * From `joinAt` (the rep leg cannot start before the join, and a contract
+ * solved before it pays other factions) every hash buys contracts at the
+ * rising price contractplan.contractsForHashes integrates. The fleet's money
+ * (freshHacknet, lifeIncome) is left as it was: every money leg of the
+ * window precedes the join, so a hash sold after it reaches no leg.
+ */
+function contractRepFn(c, { installsFirst, joinAt, finalStart }) {
+  if (!c || !pos(c.perContract) || !(Number.isInteger(c.factions) && c.factions >= 1)) return null
+  const perFaction = c.perContract / c.factions
+  if (installsFirst > 0) {
+    const cum = Array.isArray(c.hashCum) ? c.hashCum.filter((p) => Array.isArray(p) && num(p[0]) && num(p[1])) : []
+    if (cum.length < 2) return null
+    const at = (age) => {
+      if (age <= cum[0][0]) return cum[0][1]
+      for (let i = 1; i < cum.length; i++) if (age <= cum[i][0]) return cum[i - 1][1] + ((cum[i][1] - cum[i - 1][1]) * (age - cum[i - 1][0])) / (cum[i][0] - cum[i - 1][0] || 1)
+      const n = cum.length
+      return cum[n - 1][1] + ((cum[n - 1][1] - cum[n - 2][1]) / (cum[n - 1][0] - cum[n - 2][0] || 1)) * (age - cum[n - 1][0])
+    }
+    const h0 = at(joinAt - finalStart)
+    return (t) => perFaction * contractsForHashes(Math.max(0, at(t - finalStart) - h0), 0)
+  }
+  if (!pos(c.hashPerSec)) return null
+  const lvl = num(c.level0) && c.level0 >= 0 ? c.level0 : 0
+  return (t) => perFaction * contractsForHashes(Math.max(0, t - joinAt) * 3600 * c.hashPerSec, lvl)
+}
+
 function sleeveRateFn(term) {
   if (!term) return () => 0
   if (Array.isArray(term.steps) && term.steps.length) {
@@ -1025,6 +1067,12 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // Hacknet money (nodeecon.incomeOf lifePerSec): NOT part of incomePerSec,
     // and destroyed by the next install — see lifeInc below.
     lifeIncome = null,
+    // THE FINAL WINDOW'S HASHES AS REPUTATION (contractRep, hacknet SERVERS
+    // only — contractRepFn below): from the exit faction's join, every hash
+    // buys a generated coding contract whose reward shares faction rep over
+    // the joined hacking-work factions, the exit faction among them. Absent:
+    // the rep leg is ground (or donated) exactly as before.
+    contractRep = null,
     // A MULTIPLIER ON THE EXP RATE THAT THE NEXT INSTALL DESTROYS (an IPvGO
     // hacking_speed bonus, goweights.js): under "hold to the exit" it scales
     // every exp accrual before the terminal install and is gone for the climb
@@ -1638,6 +1686,11 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   if (terminalRep > 0) {
     const fleetOn = !!sleeveRep && (pos(sleeveRep.perSec) || (Array.isArray(sleeveRep.steps) && sleeveRep.steps.some((x) => pos(x?.perSec))))
     const sRep = sleeveRateFn(fleetOn ? sleeveRep : null)
+    // THE CONTRACTS' REPUTATION (contractRep): banked from the join (this
+    // hour — the rep leg cannot start before it) until the ground work ends,
+    // which is after the slot frees: rep by absolute hour t, or null.
+    const slotWait = Math.max(0, Math.max(busyH, graftDone - finalStart) - (h - finalStart))
+    const cRep = contractRepFn(contractRep, { installsFirst, joinAt: h, finalStart })
     // workWhileDonating (o, set by progress.js where donations open at favor
     // 0 — BitNode 8): the donation leg is priced with the slot's work (and
     // the best sleeve's, constant at its rate now) shrinking what is owed.
@@ -1663,11 +1716,15 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // term is not scaled (sleeves keep their skills across installs) and
     // joins at its delayH, measured FROM NOW like sleeveExp. Integrated in
     // two-minute steps; the last lands exactly.
-    if (r.how === 'ground' && (fleetOn || installsFirst > 0)) {
+    if (r.how === 'ground' && (fleetOn || installsFirst > 0 || cRep)) {
       const P = pos(repRate) ? repRate : 0
       const legStart = h
       const need = terminalRep - exitRep
       const varies = installsFirst > 0 && pos(hacking)
+      // The contracts as a rate constant inside each step (their banked rep
+      // at the step's two ends), on top of what was banked while the slot
+      // was busy: the ground work starts slotWait after the join.
+      const cAt = cRep ? (t) => cRep(legStart + slotWait + t) : () => 0
       const scale = varies ? (e) => levelAt(e, mult) / hacking : () => 1
       // One log per step: the level read for the rate is the level the
       // affine exp step starts from (expAdv's own path, not re-derived).
@@ -1684,14 +1741,16 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       // break to the next.
       const r0 = P * scale(exp) + sRep(legStart)
       const est = r0 > 0 ? need / r0 / 3600 : 1e4
-      const step = varies ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
-      let acc = 0
+      const step = varies || cRep ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
+      let acc = cAt(0)
       let t = 0
       let e = exp
       let iter = 0
       let L = varies ? contLevel(e, mult) : 0
       const lvlRate = (lv) => P * (varies ? Math.max(1, Math.floor(lv)) / hacking : 1)
       for (;;) {
+        // The contracts banked while the slot was busy already cover it.
+        if (acc >= need) break
         if (t > 1e4 || iter++ > 3000) {
           t = Infinity
           break
@@ -1700,7 +1759,8 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         const nb = fleetOn ? sleeveBreaks(sleeveRep, legStart + t)[0] : undefined
         const dt = Math.min(1e4 - t + 1e-9, typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step)
         // The sleeve's rate is constant inside the step (breaks end steps).
-        const sr = fleetOn ? sRep(legStart + t) : 0
+        const sec = dt * 3600
+        const sr = (fleetOn ? sRep(legStart + t) : 0) + (cRep ? (cAt(t + dt) - cAt(t)) / sec : 0)
         const r1 = lvlRate(L) + sr
         let e2 = e
         let L2 = L
@@ -1709,7 +1769,6 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
           L2 = contLevel(e2, mult)
         }
         const r2 = lvlRate(L2) + sr
-        const sec = dt * 3600
         const add = ((r1 + r2) / 2) * sec
         if (add > 0 && acc + add >= need) {
           // acc + r1 x + (r2 - r1) x^2 / (2 sec) = need, 0 < x <= sec.
@@ -1724,12 +1783,12 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         L = L2
         t += dt
       }
-      r = { hours: t, how: 'ground' }
+      r = { hours: t, how: 'ground', contracts: cRep && num(t) ? Math.min(need, cAt(t)) : 0 }
     }
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }
     h += r.hours
     if (r.how === 'ground') slotH += r.hours
-    legs.push({ leg: 'exit reputation', hours: r.hours, detail: D(() => `${Math.round(terminalRep)} rep, ${r.how}`) })
+    legs.push({ leg: 'exit reputation', hours: r.hours, detail: D(() => `${Math.round(terminalRep)} rep, ${r.how}${r.contracts > 0 ? ` (${Math.round(r.contracts)} of it from generated contracts, ${contractRep.factions} faction(s) sharing)` : ''}`) })
     exp = expAdv(exp, r.hours)
   }
 

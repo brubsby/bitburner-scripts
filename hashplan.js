@@ -55,10 +55,27 @@
 //                   Covenant campaign's combat hours (the only gym legs the
 //                   exit simulator carries).
 //   contract        one random contract (HacknetHelpers.tsx:556-560: same
-//                   draw as a natural spawn, ContractGenerator.ts:72-95).
-//                   Its expected MONEY (contractplan.expectedReward) as money
-//                   now, only while ctauto.js is solving; its reputation is
-//                   not simulated (a floor).
+//                   draw as a natural spawn, ContractGenerator.ts:72-95),
+//                   only while ctauto.js is solving. Its expected MONEY
+//                   (contractplan.expectedReward) as money now, and — in the
+//                   final window, once the exit faction is joined — its
+//                   expected share of that faction's REPUTATION (the reward
+//                   goes to one joined hacking-work faction at random or is
+//                   split over all of them), banked on the exit's rep leg.
+//                   The exit simulator carries the same contracts as the
+//                   final window's policy (exitplan contractRep: every hash
+//                   from the join), so this purchase also moves that stream
+//                   one level up. Before an install its reputation reaches the
+//                   batch at W, which the planner's ladders price at today's
+//                   reputation, not W's — not simulated (a floor, named).
+//
+// WHY MONEY IS NOT THE MEASURE (audit 2026-09-29, BitNode 9): money at the
+// install point was $8.8t against a batch the planner cannot grow past it
+// (the ladder flat from $6.6t), and in the final window the exit is bound by
+// the work slot (grafts + the Daedalus leg), not money — a fleet worth
+// $1e12/s there moved the exit by +0.26h. A hash sold is worth ~nothing; a
+// hash turned into the exit faction's reputation or the fleet's study exp is
+// worth what the rep leg and the level make of it.
 //
 // WHAT IS NOT SIMULATED, and is therefore never bought (named in `skipped`):
 // company favor (persists to the next BitNode, and company reputation is not
@@ -212,6 +229,13 @@ export function batchIncomeRatio(plan, before, after, player, o = {}) {
  *   effect.expPerSec    the fleet's TOTAL extra hacking exp/s under the option (final
  *                       window only); it REPLACES baseEffect.expPerSec
  *   effect.covenantHScale  combat hours x this (final window, Covenant only)
+ *   effect.exitRep      reputation with the exit faction banked now (final window)
+ *   effect.contractLevels  contract upgrade levels the purchase uses up (the
+ *                       record's modelled contract stream starts that much higher)
+ *   effect.noContracts  the selling policy: the record's contract stream removed
+ *
+ * In the final window the fleet's exp (a sleeve's transfer) is flat: where the
+ * record's exp rate is level-shaped it is added to expFlatPerSec as well.
  *
  * Before an install: every in-life effect only changes the money at W, so
  * the run is spendRuns(record, -(money + income x W)) — the planner's own
@@ -230,17 +254,32 @@ export function exitAfter(record, effect, fns, covenant = null, baseEffect = nul
     incomePerSec: (b.incomePerSec ?? 0) + (f.incomePerSec ?? 0),
     expPerSec: f.expPerSec !== undefined ? f.expPerSec : b.expPerSec ?? 0,
     covenantHScale: f.covenantHScale ?? 1,
+    exitRep: num(f.exitRep) && f.exitRep > 0 ? f.exitRep : 0,
+    contractLevels: num(f.contractLevels) && f.contractLevels > 0 ? f.contractLevels : 0,
   }
   const base = record?.inputs
   if (!base) return null
   const x = { eRep: record.eRep, eBudget: record.eBudget }
   if (record.finalWindow === true) {
+    // The fleet's study exp is a FLAT term (a sleeve's transfer does not rise
+    // with the player's level): where the record's exp rate is level-shaped,
+    // it rides expFlatPerSec too, or the exit would scale it with the level.
+    const shaped = base.expScalesWithLevel === true
+    // A contract bought now: its expected share of the exit faction's
+    // reputation, banked now; the modelled contract stream (contractRep) then
+    // starts that many levels higher, so the purchase is not counted twice.
+    // effect.noContracts: the SELLING policy — every hash sold from now on, so
+    // the record's contract stream is not in this trajectory at all.
+    const cr = f.noContracts === true ? { contractRep: undefined } : base.contractRep && e.contractLevels > 0 ? { contractRep: { ...base.contractRep, level0: (num(base.contractRep.level0) ? base.contractRep.level0 : 0) + e.contractLevels } } : {}
     const inp = {
       ...base,
       ...x,
       money: Math.max(0, (base.money ?? 0) + e.money),
       incomePerSec: (base.incomePerSec ?? 0) + e.incomePerSec,
       expPerSec: (base.expPerSec ?? 0) + e.expPerSec,
+      ...(shaped && e.expPerSec > 0 ? { expFlatPerSec: (base.expFlatPerSec ?? 0) + e.expPerSec } : {}),
+      ...(e.exitRep > 0 ? { exitRep: (base.exitRep ?? 0) + e.exitRep } : {}),
+      ...cr,
       ...(covenant ? { covenant: { ...covenant, combatH: covenant.combatH * e.covenantHScale } } : {}),
     }
     return bestExitPolicy(inp, 0, 0)?.best?.hours ?? null
@@ -315,12 +354,30 @@ export function decideHashSpend(ctx) {
       continue
     }
     const withX = exitAfter(record, o.effect, fns, covenant, baseEffect)
-    const withSell = exitAfter(record, { money: (o.cost / 4) * 1e6 }, fns, covenant, baseEffect)
+    // A POLICY, not a purchase (o.policy 'contracts'): the record's final
+    // window already spends every hash from the join on contracts, so one
+    // contract against one sale is a tie by construction (the stream buys
+    // it a few seconds later). The alternative is then the selling POLICY —
+    // this sale and every later hash sold (noContracts).
+    const withSell = exitAfter(record, { money: (o.cost / 4) * 1e6, ...(o.policy === 'contracts' ? { noContracts: true } : {}) }, fns, covenant, baseEffect)
     if (!num(withX) || !num(withSell)) {
       exits.push({ name: o.name, target: o.target ?? null, cost: o.cost, why: 'an exit could not be priced' })
       continue
     }
-    exits.push({ name: o.name, target: o.target ?? null, cost: o.cost, withH: withX, sellH: withSell, deltaH: withX - withSell, perHash: (withX - withSell) / o.cost, note: o.why ?? null })
+    // RANKED AT THE MARGIN. The policy's deltaH says whether contracts beat
+    // selling at all; which upgrade the NEXT hashes go to is the marginal
+    // question — this contract against selling just its hashes on the
+    // stream-bearing record (near a tie: the stream's price rises with every
+    // contract), so an upgrade worth more per hash at the margin (study
+    // levels) is not starved by the whole stream's value divided by one price.
+    let perHash = (withX - withSell) / o.cost
+    let marginalH = null
+    if (o.policy === 'contracts') {
+      const one = exitAfter(record, { money: (o.cost / 4) * 1e6 }, fns, covenant, baseEffect)
+      marginalH = num(one) ? withX - one : null
+      perHash = num(marginalH) ? Math.min(marginalH, 0) / o.cost : perHash
+    }
+    exits.push({ name: o.name, target: o.target ?? null, cost: o.cost, withH: withX, sellH: withSell, deltaH: withX - withSell, perHash, ...(marginalH !== null ? { policy: o.policy, marginalH } : {}), note: o.why ?? null })
   }
   const TIE_H = 1 / 3600
   const winners = exits.filter((x) => num(x.deltaH) && x.deltaH < -TIE_H).sort((a, b) => a.perHash - b.perHash)
