@@ -72,6 +72,8 @@
 // no live measurement of "hashes spent on X shortened the exit by Y" exists.
 
 
+import { capitalFV } from 'hacknetplan.js'
+
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
 
@@ -262,7 +264,13 @@ export function exitAfter(record, effect, fns, covenant = null, baseEffect = nul
     const z = m(x0)
     return num(a) && num(z) ? Math.max(0, a - z) : 0
   })()
-  const net = e.money + e.incomePerSec * record.W * 3600 + expMoney
+  // THE TRADER'S BOOK on both sides (hacknetplan.capitalFV, the one the spend
+  // verdicts and the hacknet batch use): money now compounds to W, income
+  // compounds from when it arrives. Without it, a sale's $12.5m and an
+  // upgrade's +$93/s were compared as if the book (82%/h in BitNode 9) did
+  // not exist — understating every sale against every income upgrade.
+  const fv = capitalFV(base, record.W)
+  const net = e.money * fv.lump + e.incomePerSec * fv.stream + expMoney
   const runs = spendRuns(record, -net, { allowGain: true })
   if (!runs) return null
   return bestExitPolicy({ ...runs.with, ...x }, runs.max, runs.min)?.best?.hours ?? null

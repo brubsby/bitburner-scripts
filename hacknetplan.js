@@ -358,13 +358,18 @@ export const hashCapacityOf = (cache) => (num(cache) ? 32 * Math.pow(2, cache) :
  * Cache is NOT a candidate: it produces no hashes (only capacity), and
  * hacknet.js buys it only when hashplan.js reports a capacity-bound choice.
  */
-export function bestServerUpgrade(servers, mults, nodeMoney, dollarsPerHash, o = {}) {
+/**
+ * Every single next purchase on a server fleet: [{kind, index, cost,
+ * hashGainPerSec, gainPerSec, paybackH}], or {why} when the inputs are
+ * unreadable. The one enumeration bestServerUpgrade and planHacknetBatch share.
+ */
+export function serverCandidates(servers, mults, nodeMoney, dollarsPerHash, o = {}) {
   const bad = multsProblem(mults)
-  if (bad) return { best: null, why: bad }
-  if (!num(nodeMoney) || nodeMoney < 0) return { best: null, why: 'HacknetNodeMoney unreadable' }
-  if (!num(dollarsPerHash) || dollarsPerHash <= 0) return { best: null, why: 'dollars per hash unreadable' }
-  if (!Array.isArray(servers)) return { best: null, why: 'server list unreadable' }
-  if (nodeMoney === 0) return { best: null, why: 'HacknetNodeMoney is 0 in this node: hacknet servers hash nothing' }
+  if (bad) return { why: bad }
+  if (!num(nodeMoney) || nodeMoney < 0) return { why: 'HacknetNodeMoney unreadable' }
+  if (!num(dollarsPerHash) || dollarsPerHash <= 0) return { why: 'dollars per hash unreadable' }
+  if (!Array.isArray(servers)) return { why: 'server list unreadable' }
+  if (nodeMoney === 0) return { why: 'HacknetNodeMoney is 0 in this node: hacknet servers hash nothing' }
   const m = mults.hacknet_node_money
   const rate = (s) => hashRate(s.level, num(s.ramUsed) ? s.ramUsed : 0, s.ram, s.cores, m, nodeMoney)
   const candidates = []
@@ -388,10 +393,140 @@ export function bestServerUpgrade(servers, mults, nodeMoney, dollarsPerHash, o =
     const r = rate({ level: 1, ram: 1, cores: 1, ramUsed: 0 })
     if (isFinite(sc) && sc > 0 && num(r)) candidates.push({ kind: 'node', index: servers.length, cost: sc, hashGainPerSec: r, gainPerSec: r * dollarsPerHash })
   }
-  if (!candidates.length) return { best: null, why: 'every server is maxed and no more can be bought' }
   for (const c of candidates) c.paybackH = c.gainPerSec > 0 ? c.cost / c.gainPerSec / 3600 : Infinity
+  return candidates
+}
+
+export function bestServerUpgrade(servers, mults, nodeMoney, dollarsPerHash, o = {}) {
+  const candidates = serverCandidates(servers, mults, nodeMoney, dollarsPerHash, o)
+  if (!Array.isArray(candidates)) return { best: null, why: candidates.why }
+  if (!candidates.length) return { best: null, why: 'every server is maxed and no more can be bought' }
   candidates.sort((a, b) => a.paybackH - b.paybackH)
   return { best: candidates[0], considered: candidates.length }
+}
+
+/** The fleet after one purchase (pure). */
+export function applyServerPurchase(servers, c) {
+  if (c.kind === 'node') return [...servers, { level: 1, ram: 1, cores: 1, ramUsed: 0, cache: 1 }]
+  return servers.map((s, i) => (i !== c.index ? s : { ...s, level: s.level + (c.kind === 'level' ? 1 : 0), ram: c.kind === 'ram' ? s.ram * 2 : s.ram, cores: s.cores + (c.kind === 'core' ? 1 : 0), cache: (s.cache ?? 1) + (c.kind === 'cache' ? 1 : 0) }))
+}
+
+/**
+ * What $1 now, and $1/s from now, are worth at W hours with the trader's book
+ * compounding at r = capitalReturnPerSec on min(balance, capitalCap)
+ * (exitplan.hoursToMoney's capital term) from `money`, after capitalWarmupH:
+ *   lump    the factor on a dollar held from now to W
+ *   stream  seconds-equivalent of $1/s reinvested as it arrives, now to W
+ * The book compounds only until it reaches the cap (a dollar above it earns
+ * nothing). r = 0: lump 1, stream W x 3600. exitplan.capitalFutureValue is
+ * this function (one implementation, so the batch and the verdict agree).
+ */
+export function capitalFV(capital, W) {
+  const T = Math.max(0, num(W) ? W : 0) * 3600
+  const r = num(capital?.capitalReturnPerSec) && capital.capitalReturnPerSec > 0 ? capital.capitalReturnPerSec : 0
+  if (!(r > 0) || !(T > 0)) return { lump: 1, stream: T }
+  const warm = Math.min(T, num(capital.capitalWarmupH) && capital.capitalWarmupH > 0 ? capital.capitalWarmupH * 3600 : 0)
+  const m = num(capital.money) && capital.money > 0 ? capital.money : 0
+  const cap = num(capital.capitalCap) && capital.capitalCap > 0 ? capital.capitalCap : Infinity
+  const toCap = m > 0 && isFinite(cap) ? (m >= cap ? 0 : Math.log(cap / m) / r) : Infinity
+  const end = Math.min(T, warm + toCap)
+  const span = Math.max(0, end - warm)
+  const lump = Math.exp(r * span)
+  const stream = warm * lump + (span > 0 ? Math.expm1(r * span) / r : 0) + Math.max(0, T - end)
+  return { lump, stream }
+}
+
+/**
+ * THE PURCHASE BATCH, by marginal return per dollar (a generator: one step
+ * per purchase chosen, so coop.makePacer can slice it off the page thread).
+ *
+ * Every candidate is valued in the currency the exit decides in: the money it
+ * adds at the install point W, `gainPerSec x stream - cost x lump`, with the
+ * trader's book compounding on both sides (capitalFV; with no trader, lump 1
+ * and stream W x 3600, i.e. `gain x W - cost`). A purchase is in the batch iff
+ * that is positive (money-dominant — plan.decideSpend's rule); the batch takes
+ * them in order of that value PER DOLLAR, greedily, re-enumerating after each
+ * (a level makes the next level the candidate). `order: 'payback'` takes them
+ * by payback instead — kept only so the replay can show where they differ.
+ *
+ * A new server hashes almost nothing at level 1: its value is the cheap
+ * upgrades it opens. It is therefore priced as a BUNDLE (the server plus the
+ * greedy run of its own upgrades that each add money at W), and taken when
+ * the bundle's value per dollar beats the best single step.
+ *
+ * Bounded: `maxItems` purchases, `budget` dollars. Returns {items, cost,
+ * gainPerSec, hashGainPerSec, netAtW, servers, stoppedBy}.
+ */
+export function* planHacknetBatchGen({ servers, mults, nodeMoney, dollarsPerHash = DOLLARS_PER_HASH, W, capital = null, budget = Infinity, maxItems = 400, order = 'value', maxNodes } = {}) {
+  const out = { items: [], cost: 0, gainPerSec: 0, hashGainPerSec: 0, netAtW: 0, servers, stoppedBy: null }
+  if (!num(W) || !(W > 0)) return { ...out, stoppedBy: 'no install horizon' }
+  const fv = capitalFV(capital, W)
+  const net = (c) => c.gainPerSec * fv.stream - c.cost * fv.lump
+  let fleet = servers
+  let left = num(budget) ? budget : Infinity
+  const bundleMemo = new Map()
+  while (out.items.length < maxItems) {
+    const cands = serverCandidates(fleet, mults, nodeMoney, dollarsPerHash, { maxNodes })
+    if (!Array.isArray(cands)) return { ...out, stoppedBy: cands.why }
+    let best = null
+    let bestKey = -Infinity
+    for (const c of cands) {
+      if (c.cost > left) continue
+      let v = net(c)
+      let cost = c.cost
+      if (c.kind === 'node' && bundleMemo.has(fleet.length) && bundleMemo.get(fleet.length).cost <= left) {
+        // Same fleet size, same price, same horizon: the same bundle.
+        v = bundleMemo.get(fleet.length).v
+        cost = bundleMemo.get(fleet.length).cost
+      } else if (c.kind === 'node') {
+        // The bundle: the new server, then its own upgrades while each adds
+        // money — enumerated on that server alone (its upgrades do not depend
+        // on the rest of the fleet), so the lookahead costs one server's
+        // candidates per step, not the fleet's.
+        let one = [{ level: 1, ram: 1, cores: 1, ramUsed: 0 }]
+        for (let k = 0; k < 60; k++) {
+          const own = serverCandidates(one, mults, nodeMoney, dollarsPerHash, { maxNodes: 1 })
+          if (!Array.isArray(own)) break
+          let b = null
+          for (const u of own) if (net(u) > 0 && (!b || net(u) / u.cost > net(b) / b.cost)) b = u
+          if (!b || cost + b.cost > left) break
+          v += net(b)
+          cost += b.cost
+          one = applyServerPurchase(one, b)
+        }
+        bundleMemo.set(fleet.length, { v, cost })
+      }
+      if (!(v > 0)) continue
+      const key = order === 'payback' ? -c.paybackH : v / cost
+      if (key > bestKey) {
+        bestKey = key
+        best = c
+      }
+    }
+    if (!best) return { ...out, servers: fleet, stoppedBy: out.items.length ? 'nothing else adds money at the install' : 'no purchase adds money at the install' }
+    const v1 = net(best)
+    out.items.push({ ...best, netAtW: v1 })
+    out.cost += best.cost
+    out.gainPerSec += best.gainPerSec
+    out.hashGainPerSec += best.hashGainPerSec
+    out.netAtW += v1
+    left -= best.cost
+    fleet = applyServerPurchase(fleet, best)
+    out.servers = fleet
+    yield out.items.length
+  }
+  return { ...out, stoppedBy: `maxItems ${maxItems}` }
+}
+
+/** planHacknetBatchGen run to completion synchronously; one step per purchase, so maxItems caps it. */
+export function planHacknetBatch(o) {
+  const g = planHacknetBatchGen(o)
+  const cap = (num(o?.maxItems) ? o.maxItems : 400) + 1
+  for (let steps = 0; steps <= cap; steps++) {
+    const r = g.next()
+    if (r.done) return r.value
+  }
+  throw new Error(`planHacknetBatch: the generator ran past maxItems (${cap} steps)`)
 }
 
 /**

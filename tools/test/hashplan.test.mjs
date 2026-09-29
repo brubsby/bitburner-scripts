@@ -361,7 +361,7 @@ export async function run() {
     const h = code("hacknet.js");
     c.examined(3);
     if (/hacknet servers \(hashes\) are not priced/.test(h)) c.fail("hacknet.js refuses phase 2 with hacknet servers again");
-    if (!/servers \? bestServerUpgrade\(/.test(h)) c.fail("hacknet.js phase 2 must price servers with bestServerUpgrade");
+    if (!/await pacer\.slices\(planHacknetBatchGen\(/.test(h)) c.fail("hacknet.js phase 2 must price servers with the batch planner (planHacknetBatchGen)");
     if (!/netburnersServerStep\(/.test(h)) c.fail("hacknet.js phase 1 must use the server model with servers");
     // The BN9 entry server needs only RAM (level 100, 10 cores): 1 -> 8GB.
     let fleet = [{ level: 100, ram: 1, cores: 10 }];
