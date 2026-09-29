@@ -169,7 +169,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, modelVersionFrom } from 'plan.js'
-import { incomePrior } from 'bayes.js'
+import { incomePrior, incomePosterior, lifeHackingObservation } from 'bayes.js'
 import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
@@ -2206,7 +2206,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
-    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 || capitalFitOf(ns, info) ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePriorOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })
+    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 || capitalFitOf(ns, info) ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, cadenceOptsOf(ns.getPlayer()))?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
@@ -2730,6 +2730,35 @@ function incomePriorOf(ns, info, player) {
   }
   return incomePriorMemo
 }
+/**
+ * THIS LIFE'S HACKING INCOME, A POSTERIOR (bayes.incomePosterior): the prior
+ * above updated by what this life's hacking stream has measured
+ * (bayes.lifeHackingObservation over tel.js's earnings ledger, the running
+ * scripts' hacking stream as its value), weighted by how long the stream has
+ * earned. Never a switch from prior to measured: a prepping batcher's $0/s
+ * is no observation at all, and the first minutes of batches landing weigh
+ * about as much as the prior. Once per pass; null with no prior (the
+ * measured income then stands as it is).
+ */
+let incomePostMemo
+function incomePostOf(ns, info, player) {
+  if (incomePostMemo !== undefined) return incomePostMemo
+  incomePostMemo = null
+  try {
+    const pr = incomePriorOf(ns, info, player)
+    if (pr) {
+      const since = info?.lastAugReset
+      const ageH = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 3.6e6) : 0
+      const earnings = JSON.parse(ns.read('/tel/earnings.txt') || 'null')
+      const obs = lifeHackingObservation(earnings?.lives?.[String(since)]?.samples, ageH, { nowPerSec: econNow?.levelPerSec ?? null })
+      const post = incomePosterior(pr, obs)
+      incomePostMemo = post ? { ...post, label: `income posterior (life ${pr.lifeN}): ${post.why}` } : null
+    }
+  } catch {
+    incomePostMemo = null
+  }
+  return incomePostMemo
+}
 // THE INSTALL CADENCE's inputs (bayes.cadencePosterior via
 // exitplan.installCadence): this life's raw hacking multiplier, so the last
 // finished life's gain counts, and the node covariate — the augmentation
@@ -2794,9 +2823,15 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // return): the previous-lives prior's median here, and a draw from it in
     // every Monte Carlo draw (plan.applyDraw), marked so every reader knows.
     ...(() => {
-      if (incomePerSec + contractMoneyPerSec > 0 || (capitalFitOf(ns, info)?.r ?? econNow?.capitalReturnPerSec ?? 0) > 0) return {}
-      const pr = incomePriorOf(ns, info, player)
-      return pr ? { incomePerSec: pr.perSec, incomeFromPrior: true, incomeSource: pr.label } : {}
+      // THE HACKING STREAM IS A POSTERIOR (incomePostOf), in every life and
+      // at every age: the flat part (the trader's flat income, contract
+      // money) stays as measured beside it, and the Monte Carlo draws the
+      // hacking part (plan.applyDraw adds incomeFlatPerSec back). The trader's
+      // return is its own stream and no longer switches the prior off.
+      const pr = incomePostOf(ns, info, player)
+      if (!pr) return {}
+      const flat = Math.max(0, incomePerSec - (econNow?.levelPerSec ?? 0)) + contractMoneyPerSec
+      return { incomePerSec: flat + pr.perSec, incomeFlatPerSec: flat, incomeFromPrior: true, incomeSource: pr.label }
     })(),
     // Hacknet money until the next install (exitplan lifeIncome).
     lifeIncome: hacknetLifeIncome(ns, info).perSec,
@@ -3162,6 +3197,7 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
 async function act(ns, canJoin, info, note) {
   planCtx = null // one plan context per pass (planCtxOf)
   incomePriorMemo = undefined // one income prior per pass (incomePriorOf)
+  incomePostMemo = undefined // and one posterior (incomePostOf)
   // The step-cost memory across passes (a fresh process each): the page's
   // localStorage, 0GB (coop.stepMemoryStore).
   passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns), store: stepMemoryStore(pageStorage()) })

@@ -16,6 +16,11 @@
 //   SI4  the trader's return is fitted where small hacknet/contract flows land
 //        every row (BN9), and a lumpy purchase is still refused
 //   SI5  the income prior measures the hacking stream (tel.js's third element)
+//   SI7  a pre-split life's hacking is reconstructed from bounds, or refused
+//   SI8  replay live BN9 05:36: the legacy-total prior rebuilt as hacking
+//   SI9  a life split part-way: exact after, capped before
+//   SI10 the fresh life's hacking income is a posterior (prior x measurement)
+//   SI11 replay live BN9 05:46 (0.08h after an install, batcher prepping)
 //   SI6  wiring: progress.js / buyserv.js / stock.js / tel.js
 
 import fs from "node:fs";
@@ -164,16 +169,20 @@ export async function run() {
 
   // -------------------------------------------------------------------
   {
-    const c = new Check("SI5", "THE INCOME PRIOR MEASURES THE HACKING STREAM: tel.js's third sample element (moneySources.hacking) when lives carry it; legacy all-source totals only when none do, and said so");
+    const c = new Check("SI5", "THE INCOME PRIOR MEASURES THE HACKING STREAM: tel.js's third sample element (moneySources.hacking) when lives carry it; a pre-split total is never taken as hacking — where the non-hacking bound cannot be excluded there is no prior at all");
     c.examined(3);
     const life = (k, total, hack) => [k, { node: 9, complete: true, samples: [[0.1, total * 0.1 * 3600, hack * 0.1 * 3600], [1, total * 3600, hack * 3600], [2, total * 7200, hack * 7200]] }];
     const split = { lives: Object.fromEntries([life("1000", 1e7, 1e4), life("2000", 1.2e7, 1.1e4)]) };
     const pr = B.incomePrior({ earnings: split, node: 9, ageH: 1 });
     c.note(pr ? pr.why : "null");
     if (!pr || !(pr.perSec > 5e3 && pr.perSec < 2e4) || pr.stream !== "hacking") c.fail(`the prior must be the hacking stream (~$1e4/s), not the all-source total (~$1e7/s): ${pr?.perSec}`);
+    // The same lives without the split: a $1e7/s total is within the bound on
+    // hacknet/crime/trader income, so hacking is not separable — no prior,
+    // rather than the $1e7/s total standing in for a $1e4/s stream.
     const legacy = { lives: Object.fromEntries(Object.entries(split.lives).map(([k, L]) => [k, { ...L, samples: L.samples.map((q) => q.slice(0, 2)) }])) };
     const lg = B.incomePrior({ earnings: legacy, node: 9, ageH: 1 });
-    if (!lg || !/LEGACY/.test(lg.why) || lg.stream === "hacking") c.fail(`legacy two-element lives: used only as a labelled fallback: ${lg?.why}`);
+    c.note(`legacy form: ${lg ? lg.why : "null (not separable, and said so by legacyHackingWindow)"}`);
+    if (lg) c.fail(`a legacy total must never stand in for the hacking stream: ${lg.why}`);
     checks.push(c);
   }
 
@@ -194,6 +203,136 @@ export async function run() {
     if (!/hackScriptIncome\(ns\.getTotalScriptIncome\(\), stockRecordFromText\(/.test(strip(code("buyserv.js")))) c.fail("buyserv.js's income per GB must be the hacking stream (hackScriptIncome)");
     if (!/scriptIncome: \(\(\) => \{\s*try \{\s*const perSec = ns\.getScriptIncome\(ns\.getScriptName\(\), ns\.getHostname\(\), \.\.\.ns\.args\)/.test(strip(code("stock.js")))) c.fail("stock.js must publish its own script income (scriptIncome)");
     if (!/L\.samples\.push\(\[Math\.round\(ageH \* 1e4\) \/ 1e4, Math\.round\(earned\), Math\.round\(hackEarned\)\]\)/.test(strip(code("tel.js")))) c.fail("tel.js must record the hacking stream as the earnings sample's third element");
+    checks.push(c);
+  }
+
+
+  // -------------------------------------------------------------------
+  {
+    const c = new Check("SI7", "A PRE-SPLIT LIFE IS RECONSTRUCTED FROM A BOUND: hacking = total less an upper bound on every other source (the trader's whole realised profit charged to the window, since act-liquidate lands it in one lump); the bracket holds the truth, and a window the bound swamps is refused with its reason");
+    c.examined(4);
+    const P = B.PRIORS.legacyNonHack;
+    // A synthetic life: hacking $1e11/s from 0.1h, other sources $5e6/s, and
+    // the trader's $2e11 profit realised in one lump at 1.9h.
+    const hack = (h) => Math.max(0, h - 0.1) * 3600 * 1e11;
+    const tot = (h) => hack(h) + h * 3600 * 5e6 + (h >= 1.9 ? 2e11 : 0);
+    const pts = [];
+    for (let h = 0; h <= 2.0001; h += 1 / 12) pts.push([+h.toFixed(4), tot(h)]);
+    const r = B.legacyHackingWindow(pts, 1.5, 2, { cash0: 1262, ...P });
+    c.note(r.why);
+    if (!r.ok || !(r.lo <= 1e11 * 1.0000001 && r.hi >= 1e11) || !(r.perSec > 0.9e11 && r.perSec < 1.1e11)) c.fail(`the bracket must hold the true $1e11/s and its midpoint sit near it: ${JSON.stringify(r)}`);
+    // A small earner: $5e5/s total is inside the bound on everything else.
+    const small = [[0, 0], [0.5, 5e5 * 1800], [1, 5e5 * 3600]];
+    const s1 = B.legacyHackingWindow(small, 0.5, 1, { cash0: 1262, ...P });
+    c.note(`small earner: ${s1.why}`);
+    if (s1.ok || !(s1.hi === 5e5)) c.fail("a total within the non-hacking bound is not separable; its total is kept as an upper bound only");
+    // A later split sample caps the hacking stream below the total.
+    const capped = B.legacyHackingWindow(small, 0.5, 1, { cash0: 1262, hackCap: 1000, ...P });
+    if (!(capped.hi < 1)) c.fail(`hackCap must bound the window's hacking: ${capped.hi}`);
+    checks.push(c);
+  }
+
+  // -------------------------------------------------------------------
+  {
+    const c = new Check("SI8", "REPLAY live BN9 05:36: the fresh-life income prior was BN1's legacy all-source totals ($5.47e8/s median). Rebuilt: every value is a reconstructed hacking rate inside its total, BN1's final life (no multiplier in the ledger) is not scaled at x1, inseparable lives only bound it from above, and the median falls");
+    c.examined(6);
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-earnings-0536.json"), "utf8"));
+    const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+    const shm = (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney);
+    const pr = B.incomePrior({ earnings: F.earnings, ledger: F.lifetimes, node: 9, ageH: F.ageH, hackMultNow: F.hackMultRaw, shm });
+    c.note(`before: ${F.planIncome.why}`);
+    c.note(`after:  ${pr?.why}`);
+    for (const x of pr?.excluded ?? []) c.note(`  excluded ${x.life}: ${x.why}`);
+    if (!pr) c.fail("the live ledger holds separable BN1 windows: a prior must exist");
+    else {
+      if (pr.stream !== "hacking" || /LEGACY totals/.test(pr.why)) c.fail(`the prior must be the hacking stream: ${pr.why}`);
+      if (!(pr.reconstructed >= 3)) c.fail(`BN1's high-earning lives are separable (hacking >= 50% guaranteed): ${pr.reconstructed}`);
+      if (!pr.excluded.some((x) => x.life === "1790600459770" && /multiplier/.test(x.why))) c.fail("BN1's last life has no lifetimes entry: it must be excluded, not scaled at ratio 1");
+      if (!(pr.bounded >= 1)) c.fail("an inseparable life still bounds the prior from above (censored)");
+      if (!(pr.perSec < F.planIncome.perSec / 2)) c.fail(`the stock-inclusive legacy prior was inflated: the rebuilt median must fall well below $${F.planIncome.perSec.toExponential(2)}/s: $${pr.perSec.toExponential(2)}/s`);
+    }
+    // The censored term only ever lowers the median (every bound here sits below it).
+    if (pr && !(pr.perSec <= pr.perSecUncensored * 1.0000001)) c.fail(`censoring must not raise the median: ${pr.perSec} vs ${pr.perSecUncensored}`);
+    checks.push(c);
+  }
+
+  // -------------------------------------------------------------------
+  {
+    const c = new Check("SI9", "A LIFE SPLIT PART-WAY (the one running when tel.js began recording the hacking stream) is exact from its first three-element sample on, and before it the totals are capped by the hacking that sample records");
+    c.examined(3);
+    // BN9-shaped: totals from the trader and hacknet ($1e7/s), hacking $10/s, split from 3h.
+    const S = [];
+    for (let h = 0.25; h <= 5.0001; h += 0.25) S.push(h < 3 ? [h, 1e7 * h * 3600] : [h, 1e7 * h * 3600, 10 * h * 3600]);
+    const earnings = { lives: { 1000: { node: 9, complete: true, samples: S } } };
+    const late = B.incomePrior({ earnings, node: 9, ageH: 3.5 });
+    c.note(`age 3.5h: ${late?.why}`);
+    if (!late || !(late.perSec > 8 && late.perSec < 12)) c.fail(`after the first split sample the hacking stream is exact ($10/s): ${late?.perSec}`);
+    const early = B.incomePrior({ earnings, node: 9, ageH: 1 });
+    c.note(`age 1h: ${early ? early.why : "null — the $1e7/s total is inseparable, and the 3h sample caps hacking at $30/s: never the total"}`);
+    if (early && early.perSec > 1e3) c.fail(`a total must not stand in for the hacking before the split: ${early.perSec}`);
+    checks.push(c);
+  }
+
+
+  // -------------------------------------------------------------------
+  {
+    const c = new Check("SI10", "THE FRESH LIFE'S HACKING INCOME IS A POSTERIOR, never a switch: a prepping batcher's $0/s is no observation (the prior stands alone), the first minutes of landings weigh about as much as the prior, hours of measurement dominate it — and the Monte Carlo keeps the measured flat income beside the drawn hacking stream");
+    c.examined(5);
+    const prior = { mean: Math.log(1e6), sd: 1.0, perSec: 1e6, why: "prior" };
+    const none = B.incomePosterior(prior, B.lifeHackingObservation([[0.0005, 0, 0], [0.0838, 5.8e6, 0]], 0.08, { nowPerSec: 0 }));
+    c.note(`prepping (hacking $0 so far): ${none?.why}`);
+    if (!none || none.perSec !== 1e6 || none.measuredWeight !== 0) c.fail("nothing earned yet: the prior alone, not a measured $0/s");
+    // The first sample with hacking > 0 at 0.1h; the life `hours` past it.
+    const samples = (rate, until) => { const q = [[0, 0, 0]]; for (let h = 0.1; h <= until + 1e-9; h += 1 / 60) q.push([h, 1e9 * h, (h - 0.1 + 1 / 60) * 3600 * rate]); return q; };
+    const w = (hours) => B.incomePosterior(prior, B.lifeHackingObservation(samples(1e4, 0.1 + hours), 0.1 + hours, { nowPerSec: 1e4 }));
+    const early = w(5 / 60);
+    const late = w(3);
+    c.note(`5 min of landings at $1e4/s: ${early.why}`);
+    c.note(`3h: median $${late.perSec.toExponential(2)}/s, weight ${(100 * late.measuredWeight).toFixed(0)}%`);
+    if (!(early.measuredWeight > 0.25 && early.measuredWeight < 0.75)) c.fail(`the first minutes must weigh about as much as the prior: ${early.measuredWeight}`);
+    if (!(late.measuredWeight > 0.95 && late.perSec < 1.3e4)) c.fail(`hours of measurement dominate: ${late.measuredWeight}, ${late.perSec}`);
+    if (!(early.perSec < prior.perSec && early.perSec > 1e4)) c.fail("the posterior lies between the prior and the measurement");
+    // plan.applyDraw: the flat part stays, the hacking stream is drawn.
+    const P = await import("../../plan.js");
+    const o = P.applyDraw({ incomePerSec: 5e5 + 1e6, incomeFlatPerSec: 5e5, incomeFromPrior: true }, { incomeLn: Math.log(2e6) });
+    if (!near(o.incomePerSec, 2.5e6, 1e-9)) c.fail(`a draw must keep the flat income beside the drawn hacking stream: ${o.incomePerSec}`);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const pr = incomePostOf\(ns, info, player\)\s*\n\s*if \(!pr\) return \{\}/.test(prog) || /econNow\?\.capitalReturnPerSec \?\? 0\) > 0\) return \{\}/.test(prog)) c.fail("exitInputsBaseOf must take the hacking stream from the posterior in every life (no measured/prior switch, no trader switch) (source guard)");
+    checks.push(c);
+  }
+
+  // -------------------------------------------------------------------
+  {
+    const c = new Check("SI11", "REPLAY live BN9 05:46, 0.08h after the 05:42 install (batcher prepping, $0 hacking): the plan read 272h 'income: measured' against the install decision's 104h. With the posterior the income is no longer the measured $0 — and the exit shows what the income does and does not explain");
+    c.examined(4);
+    const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-freshlife-0546.json"), "utf8"));
+    const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+    const shm = (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney);
+    const life = F.exitinputs.lastAugReset;
+    const ageH = (Date.parse(F.exitinputs.at) - life) / 3.6e6;
+    const pr = B.incomePrior({ earnings: F.earnings, ledger: F.lifetimes, node: 9, ageH, hackMultNow: F.hackMultRaw, shm });
+    const post = B.incomePosterior(pr, B.lifeHackingObservation(F.earnings.lives[String(life)]?.samples, ageH, { nowPerSec: F.levelPerSec }));
+    c.note(`as live: exit q50 ${F.planExit.q50}h (income ${F.planExit.income}); install decision: ${F.installLast.why}`);
+    c.note(`posterior at ${ageH.toFixed(2)}h: ${post?.why}`);
+    if (!post || post.measuredWeight !== 0) c.fail("prepping at $0/s: the posterior must be the prior alone");
+    const i = F.exitinputs.inputs;
+    const flat = i.incomePerSec; // live: every dollar of it was flat (contracts), hacking $0
+    const exitAt = (inp) => xp.bestExitPolicy(inp).best?.hours ?? null;
+    const asLive = exitAt(i);
+    const withPost = post ? exitAt({ ...i, incomePerSec: flat + post.perSec }) : null;
+    const hacking = (m) => exitAt({ ...i, incomePerSec: flat + m });
+    const installH = Number(/installing now is ([\d.]+)h/.exec(F.installLast.why)?.[1]);
+    c.note(`point exit: measured $0 hacking ${asLive?.toFixed(1)}h; posterior ${withPost?.toFixed(1)}h; the install decision ${installH}h`);
+    if (!(withPost > 0)) c.fail("the fresh life must price");
+    if (post && !(withPost <= asLive)) c.fail("a positive hacking posterior cannot price a slower exit than $0 hacking");
+    // What the gap IS: the install cadence. The fresh life has no faction
+    // offers yet (exitInputsOf skips the purchase model on empty offers), so
+    // the cycle falls back to the measured cadence posterior (x1.025 per
+    // 6.63h from one thin BN9 life); at x1.2 per cycle the same inputs price
+    // ~100h. Income from $0 to the posterior moves it by a few percent.
+    const cad = exitAt({ ...i, incomePerSec: flat + (post?.perSec ?? 0), multGainPerCycle: 1.2 });
+    c.note(`the same inputs at x1.2 a cycle: ${cad?.toFixed(1)}h — the 104h-vs-272h gap is the cadence source, not the income`);
+    if (withPost && installH && Math.abs(withPost - installH) / installH > 0.25) c.warn(`fresh-life exit ${withPost.toFixed(1)}h vs the install decision's ${installH}h: the fresh life's cadence falls back to the thin measured posterior while it has no offers (exitInputsOf) — a cadence issue, not income`);
     checks.push(c);
   }
 

@@ -149,8 +149,9 @@ export function applyDraw(inputs, d) {
   }
   if (fin(inputs.expPerSec)) o.expPerSec = inputs.expPerSec * d.expMult
   if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
-  // An income this life could not measure yet is a draw from earlier lives.
-  if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = Math.exp(d.incomeLn)
+  // The hacking stream is a draw from its posterior (earlier lives, updated
+  // by this life's measurement); the flat part measured beside it is kept.
+  if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = (fin(inputs.incomeFlatPerSec) && inputs.incomeFlatPerSec > 0 ? inputs.incomeFlatPerSec : 0) + Math.exp(d.incomeLn)
   if (inputs.repFromEstimate === true && fin(inputs.repPerSec) && fin(d.repResid)) o.repPerSec = inputs.repPerSec * d.repResid
   return o
 }

@@ -78,6 +78,19 @@ unpriced, marked in the inputs and in plan.txt `exit.income` / `exit.rep` /
   borrows other nodes whose scripts earn, scaled by ScriptHackMoney and widened
   (sd ln 1.0); none -> still unpriced, named. NOT implemented: a RAM-based
   batcher model for a save's very first life.
+  It is the HACKING stream only (tel.js's third sample element). A life
+  recorded before that column existed (2026-09-29) is reconstructed per
+  window as total less an upper bound on every other source
+  (`bayes.legacyHackingWindow`, PRIORS.legacyNonHack: the trader's whole
+  realised profit charged to the window, other sources $1e7/s), used only
+  where >= 50% of the window is provably hacking; an inseparable window is a
+  censored upper bound on the mean (Tobit), never a value; a life whose
+  multiplier is not in the lifetimes ledger is excluded (streams SI5, SI7-SI9).
+- the hacking income is then a POSTERIOR in every life (`bayes.incomePosterior`):
+  the prior updated by this life's own hacking stream (`lifeHackingObservation`,
+  sd ln 0.3 x sqrt(1h / hours earning)). A prepping batcher's $0/s is no
+  observation; five minutes of landings weigh about as much as a same-node
+  prior; hours dominate. No switch from prior to "measured" (streams SI10-SI11).
 - reputation: the game-formula estimate (factionplan `estimatedBaseRepPerSec`,
   [TJ6]) with a stated residual (sd ln 0.3, NOT CALIBRATED).
 Both are drawn per Monte Carlo draw, so the exit's interval widens with them

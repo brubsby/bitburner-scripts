@@ -289,6 +289,19 @@ export const PRIORS = {
   // another node's lives (scaled by ScriptHackMoney) — both stated.
   incomeLifeSdLn: 0.7,
   incomeCrossNodeSdLn: 1.0,
+  // A PRE-SPLIT LIFE'S NON-HACKING INCOME, bounded (legacyHackingWindow).
+  // Every figure is an UPPER bound, so a reconstructed hacking rate is never
+  // above the truth by more than its bracket:
+  //   stockReturnPerSec  the trader's return: 1.32e-4/s measured live (BN9
+  //                      2026-09-29 stock.txt, pre-4S, $196b book), x1.5
+  //   stockCap           the market's capacity: stock.txt capitalCap $1.054e13
+  //   otherPerSec        hacknet + crime + work + sleeves + gang + contracts:
+  //                      BN9's hacknet node (its specialty) earns $6.5e5/s
+  //                      live; x15 for everything else — stated, not fitted
+  //   minHackShare       a window is used only when at least this share of
+  //                      its total is provably hacking; else the life is
+  //                      excluded at this age
+  legacyNonHack: { stockReturnPerSec: 2e-4, stockCap: 1.1e13, otherPerSec: 1e7, minHackShare: 0.5 },
   // the game-formula reputation estimate's residual before any faction work
   // is measured this life (NOT CALIBRATED: a stated prior).
   repEstimateSdLn: 0.3,
@@ -737,7 +750,6 @@ export function logRatePosterior(obs, { binH = 0.5 } = {}) {
   const mm = nigMeanMarginal(post)
   return { post, mean: post.m, sd: mm.sd, n: xs.length, passes: S.length }
 }
-
 /**
  * INCOME WHILE THE CURRENT LIFE CANNOT MEASURE IT (a batcher prepping its
  * target after an install reads $0/s for up to an hour, and an exit with no
@@ -753,61 +765,102 @@ export function logRatePosterior(obs, { binH = 0.5 } = {}) {
  * node mean. No completed life in this node: other nodes' lives, scaled by
  * ScriptHackMoney and widened by PRIORS.incomeCrossNodeSdLn.
  *
- * earnings {lives: {<lastAugReset>: {node, complete, samples: [[ageH, earned]]}}}
- * ledger   [{at, lifeH, hackMult, bitNode}] (lifetimes)
- * Returns {mean, sd (of ln income/s), perSec (median), lives, source, why} or null.
+ * THE HACKING STREAM ONLY, every life. The prior stands in for exitplan's
+ * level-scaled incomePerSec, so it measures what that input means: tel.js's
+ * third sample element, moneySources.sinceInstall.hacking. The second element
+ * is every income source — the trader's sales and hacknet among them, which
+ * the exit prices through their own terms (capitalReturnPerSec, lifeIncome).
+ * A life recorded before the split (two-element samples, before 2026-09-29)
+ * is RECONSTRUCTED where its window allows (legacyHackingWindow: the total
+ * less a hard upper bound on everything else), and EXCLUDED where it does
+ * not, with the reason in `excluded` and the `why`. A legacy total never
+ * stands in for hacking income: with nothing splittable the result is null.
+ *
+ * earnings {lives: {<lastAugReset>: {node, complete, samples: [[ageH, total, hacking?]]}}}
+ * ledger   [{at, lifeH, hackMult, bitNode, capStart?}] (lifetimes)
+ * legacy   PRIORS.legacyNonHack by default (the bound's constants)
+ * Returns {mean, sd (of ln income/s), perSec (median), lives, stream,
+ * reconstructed, excluded, source, why} or null.
  */
-export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow = null, shm = null, windowH = 0.5 } = {}) {
+export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow = null, shm = null, windowH = 0.5, legacy = PRIORS.legacyNonHack } = {}) {
   const all = Object.entries(earnings?.lives ?? {}).filter(([, L]) => L && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2)
-  // THE HACKING STREAM ONLY. The prior stands in for exitplan's level-scaled
-  // incomePerSec, so it must measure what that input means: tel.js's third
-  // sample element, moneySources.sinceInstall.hacking. The second is every
-  // income source — the trader's sales and hacknet among them, which the exit
-  // prices through their own terms (capitalReturnPerSec, lifeIncome) — so a
-  // prior on it counted them twice and grew them with the hacking level.
-  // Lives recorded before the split (two-element samples) are used only when
-  // no split life exists anywhere, and the `why` says so.
-  const split = ([, L]) => L.samples.every((q) => Array.isArray(q) && fin(q[2]))
-  const anySplit = all.some(split)
-  const lives = anySplit ? all.filter(split) : all
-  const idx = anySplit ? 2 : 1
-  const multAt = (startMs) => {
+  const entryAt = (startMs) => {
     // The lifetimes entry whose life started at startMs (at - lifeH), within 15 min.
     let best = null
     for (const e of ledger ?? []) {
       if (!(fin(e?.lifeH) && fin(e?.hackMult) && fin(Date.parse(e?.at)))) continue
       const st = Date.parse(e.at) - e.lifeH * 3.6e6
       const d = Math.abs(st - startMs)
-      if (d < 15 * 60e3 && (!best || d < best.d)) best = { d, m: e.hackMult }
+      if (d < 15 * 60e3 && (!best || d < best.d)) best = { d, e }
     }
-    return best?.m ?? null
+    return best?.e ?? null
   }
-  const rateOf = (L) => {
+  // The window a life is read over, and the cumulative series of column idx.
+  const seriesOf = (L, idx) => {
     const pts = L.samples.filter((q) => Array.isArray(q) && fin(q[0]) && fin(q[idx])).map((q) => [q[0], q[idx]]).sort((a, b) => a[0] - b[0])
     if (pts.length < 2) return null
     let hi = 0
     for (const q of pts) hi = q[1] = Math.max(hi, q[1])
+    return pts
+  }
+  const windowOf = (pts) => {
     const end = pts[pts.length - 1][0]
     const first = pts.find((q) => q[1] > 0)?.[0]
     if (!fin(first)) return null
-    const at = (h) => {
-      if (h <= pts[0][0]) return pts[0][1]
-      for (let i = 1; i < pts.length; i++) if (h <= pts[i][0]) return pts[i - 1][1] + ((pts[i][1] - pts[i - 1][1]) * (h - pts[i - 1][0])) / (pts[i][0] - pts[i - 1][0] || 1)
-      return pts[pts.length - 1][1]
-    }
     const a0 = Math.min(Math.max(ageH, first), Math.max(first, end - windowH))
     const a1 = Math.min(end, a0 + windowH)
-    if (!(a1 > a0)) return null
-    const r = (at(a1) - at(a0)) / ((a1 - a0) * 3600)
-    return r > 0 ? r : null
+    return a1 > a0 ? { a0, a1 } : null
+  }
+  // A life is SPLIT from its first three-element sample on (tel.js recorded
+  // the hacking stream from 2026-09-29; the life then running is split only
+  // from there). Before it, the totals are reconstructed, and the first split
+  // sample caps them: hacking since the install can only have grown.
+  const splitFromOf = (L) => {
+    const q = L.samples.filter((x) => Array.isArray(x) && fin(x[0]) && fin(x[2])).sort((x, y) => x[0] - y[0])
+    return q.length ? q : null
+  }
+  const obsOf = (k, L) => {
+    const sp = splitFromOf(L)
+    const tot = seriesOf(L, 1)
+    const w = tot && windowOf(tot)
+    if (sp && sp.length >= 2 && (!w || w.a0 >= sp[0][0])) {
+      const pts = seriesOf({ samples: sp }, 2)
+      const w2 = pts && windowOf(pts)
+      if (!w2) return { skip: 'no hacking earned', split: true }
+      const r = (cumAt(pts, w2.a1) - cumAt(pts, w2.a0)) / ((w2.a1 - w2.a0) * 3600)
+      return r > 0 ? { rate: r, weight: 1, kind: 'split' } : { skip: 'no hacking earned in the window', split: true }
+    }
+    if (!w) return { skip: 'nothing earned' }
+    const e = entryAt(Number(k))
+    // Hacking in the window is at most the hacking recorded by the first split
+    // sample at or after its end.
+    const after = sp ? sp.find((q) => q[0] >= w.a1) ?? sp[sp.length - 1] : null
+    const hackCap = after && after[0] >= w.a1 ? Math.max(0, after[2]) : Infinity
+    const rec = legacyHackingWindow(tot, w.a0, w.a1, { cash0: fin(e?.capStart) && e.capStart > 0 ? e.capStart : 0, hackCap, ...legacy })
+    // Not separable: the bound is still an UPPER bound on the hacking rate,
+    // kept as a censored observation (below), never as a value.
+    if (!rec.ok) return { skip: rec.why, upper: rec.hi }
+    // The bracket [lo, hi] as a uniform on ln: its variance joins one life's
+    // scatter, and the observation is weighted by the precision that leaves.
+    const s0 = PRIORS.incomeLifeSdLn
+    const bv = rec.bracketLn ** 2 / 12
+    return { rate: rec.perSec, weight: (s0 * s0) / (s0 * s0 + bv), kind: 'reconstructed', share: rec.minShare }
   }
   const collect = (sameNode) => {
     const out = []
-    for (const [k, L] of lives) {
+    const bounded = []
+    const skipped = []
+    for (const [k, L] of all) {
       if ((L.node === node) !== sameNode) continue
-      const r = rateOf(L)
-      if (!r) continue
-      const m = multAt(Number(k))
+      // A life's rate is scaled to this life's multiplier; a life whose own
+      // multiplier is not in the ledger (a node's last life, ended by the
+      // daemon rather than an install, records no entry) cannot be, and
+      // taking it at ratio 1 read BN1's x8 final life as if at x1.4.
+      const m = entryAt(Number(k))?.hackMult
+      if (fin(hackMultNow) && !(fin(m) && m > 0)) {
+        skipped.push({ life: k, node: L.node, why: 'its hacking multiplier is not in the lifetimes ledger: cannot be scaled to this life' })
+        continue
+      }
       const multRatio = fin(hackMultNow) && fin(m) && m > 0 ? hackMultNow / m : 1
       let nodeRatio = 1
       if (!sameNode) {
@@ -816,27 +869,207 @@ export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow
         if (!(fin(a) && fin(b) && a > 0 && b > 0)) continue // a node whose scripts earn nothing says nothing
         nodeRatio = a / b
       }
-      out.push({ ln: Math.log(r * multRatio * nodeRatio), life: k, rate: r, multRatio })
+      const o = obsOf(k, L)
+      if (!o.rate) {
+        if (!o.split) skipped.push({ life: k, node: L.node, why: o.skip })
+        if (o.upper > 0) bounded.push({ lnUpper: Math.log(o.upper * multRatio * nodeRatio), life: k })
+        continue
+      }
+      out.push({ ln: Math.log(o.rate * multRatio * nodeRatio), life: k, rate: o.rate, multRatio, weight: o.weight, kind: o.kind })
     }
-    return out
+    return { out, bounded, skipped }
   }
-  let obs = collect(true)
-  let source = `${obs.length} earlier life/lives in BitNode ${node}`
+  let pick = collect(true)
+  const ownSkipped = pick.skipped
+  let source = `${pick.out.length} earlier life/lives in BitNode ${node}`
   let extra = 0
-  if (!obs.length) {
-    obs = collect(false)
-    source = `${obs.length} life/lives in other nodes, scaled by ScriptHackMoney (none in BitNode ${node} yet)`
+  if (!pick.out.length) {
+    const ownBounded = pick.bounded
+    pick = collect(false)
+    pick.skipped = [...ownSkipped, ...pick.skipped]
+    // This node's own censored lives still bound it (no cross-node widening).
+    pick.bounded = [...ownBounded, ...pick.bounded]
+    source = `${pick.out.length} life/lives in other nodes, scaled by ScriptHackMoney (none in BitNode ${node} yet)`
     extra = PRIORS.incomeCrossNodeSdLn
   }
+  const { out: obs, bounded, skipped } = pick
   if (!obs.length) return null
-  if (!anySplit) source += ' — LEGACY totals (every income source, not the hacking stream alone: no life recorded the split yet)'
+  const recon = obs.filter((o) => o.kind === 'reconstructed').length
+  if (recon) source += ` — ${recon} of them pre-split legacy li${recon === 1 ? 'fe' : 'ves'} RECONSTRUCTED as hacking (the total less an upper bound on every other source, >=${Math.round(100 * legacy.minHackShare)}% hacking guaranteed)`
+  if (skipped.length) source += `; ${skipped.length} li${skipped.length === 1 ? 'fe' : 'ves'} EXCLUDED as values (${[...new Set(skipped.map((x) => (/multiplier/.test(x.why) ? 'multiplier unknown' : 'hacking not separable at this age')))].join(', ')})`
   const sd0 = PRIORS.incomeLifeSdLn
-  const xs = obs.map((o) => o.ln)
-  const post = nigUpdate({ m: xs[0], k: 1, a: 2, b: sd0 * sd0 }, xs.slice(1))
+  // The best-determined observation seeds the prior; the rest update it, each
+  // at its own weight (1 for a split life).
+  obs.sort((a, b) => b.weight - a.weight)
+  const post = nigUpdate({ m: obs[0].ln, k: obs[0].weight, a: 2, b: sd0 * sd0 }, obs.slice(1).map((o) => o.ln), obs.slice(1).map((o) => o.weight))
   // The PREDICTIVE for this life: the node mean's uncertainty plus one life's
   // own scatter (and the cross-node spread when borrowed).
   const sLife2 = post.b / (post.a - 1)
   const sdMean = Math.sqrt(sLife2 / post.k)
   const sd = Math.sqrt(sdMean * sdMean + sLife2 + extra * extra)
-  return { mean: post.m, sd, sdLife: Math.sqrt(sLife2), perSec: Math.exp(post.m), lives: obs.length, stream: anySplit ? 'hacking' : 'all sources (legacy)', source, why: `income from prior: ${source} at age ${ageH.toFixed(2)}h, median $${Math.exp(post.m).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80%` }
+  // CENSORED LIVES: an inseparable legacy window still bounds hacking from
+  // above (hacking <= its total). Dropping those lives would keep exactly the
+  // high earners — the lives whose total dwarfs the bound — and bias the
+  // prior up, the direction this reconstruction exists to remove. So the node
+  // mean is the posterior MODE with each bound's likelihood P(x <= U) =
+  // Phi((ln U - mu) / s) (a Tobit term; s = one life's scatter), which moves
+  // it only where a bound sits below it. The spread is left as the uncensored
+  // fit's (conservative: a bound adds information).
+  let mean = post.m
+  if (bounded.length) {
+    const s = Math.sqrt(sLife2)
+    const f = (mu) => -((mu - post.m) ** 2) * post.k / (2 * s * s) + bounded.reduce((acc, c) => acc + logPhi((c.lnUpper - mu) / s), 0)
+    let lo = post.m - 12 * s
+    let hi = post.m
+    for (let i = 0; i < 100; i++) {
+      const a = lo + (hi - lo) * 0.382
+      const b = lo + (hi - lo) * 0.618
+      if (f(a) < f(b)) lo = a
+      else hi = b
+    }
+    mean = (lo + hi) / 2
+    source += `, ${bounded.length} of them kept as upper bounds (censored: hacking <= the total), moving the median x${Math.exp(mean - post.m).toFixed(2)}`
+  }
+  return {
+    mean,
+    sd,
+    sdLife: Math.sqrt(sLife2),
+    perSec: Math.exp(mean),
+    // The median before the censored lives' upper bounds (for the record).
+    perSecUncensored: Math.exp(post.m),
+    lives: obs.length,
+    bounded: bounded.length,
+    stream: 'hacking',
+    reconstructed: recon,
+    excluded: skipped,
+    source,
+    why: `income from prior: ${source} at age ${ageH.toFixed(2)}h, median $${Math.exp(mean).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80%`,
+  }
+}
+
+// ln of the standard normal CDF, accurate in the far lower tail.
+function logPhi(z) {
+  if (z < -8) return -0.5 * z * z - Math.log(-z) - 0.5 * Math.log(2 * Math.PI) + Math.log(1 - 1 / (z * z) + 3 / z ** 4)
+  // erfc by Abramowitz-Stegun 7.1.26 (abs error < 1.5e-7) on |x|.
+  const x = -z / Math.SQRT2
+  const t = 1 / (1 + 0.3275911 * Math.abs(x))
+  const y = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-x * x)
+  const phi = x >= 0 ? y / 2 : 1 - y / 2
+  return Math.log(Math.max(phi, 1e-300))
+}
+
+// Linear interpolation of a cumulative series [[ageH, $]] at h (clamped).
+function cumAt(pts, h) {
+  if (h <= pts[0][0]) return pts[0][1]
+  for (let i = 1; i < pts.length; i++) if (h <= pts[i][0]) return pts[i - 1][1] + ((pts[i][1] - pts[i - 1][1]) * (h - pts[i - 1][0])) / (pts[i][0] - pts[i - 1][0] || 1)
+  return pts[pts.length - 1][1]
+}
+
+/**
+ * THE HACKING SHARE OF A PRE-SPLIT LIFE'S WINDOW, reconstructed from a bound.
+ * A legacy sample's total is sum(max(0, moneySources.sinceInstall[k])) over
+ * every income source (tel.js INCOME_SOURCES); nothing recorded the split per
+ * life, and no other ledger carries it (stock-hist.txt and stock.txt are this
+ * life's only; history.jsonl keeps the cash balance, spending included). So
+ * hacking = total - (everything else), and everything else is BOUNDED:
+ *
+ *  - the trader: the game books a sale as +proceeds and a purchase as -cost
+ *    under `stock` (StockMarket/BuyingAndSelling.tsx:105/173/280/362), so
+ *    max(0, stock) at age t is at most the realised profit to t — which can
+ *    land in ONE window (act-liquidate.js sells everything before an
+ *    install), so its whole-life bound is charged to the window:
+ *    r x integral_0^a1 min(cap, wealth(t)) dt, with wealth(t) <= cash0 +
+ *    total(t) (spending only lowers it);
+ *  - every other source (hacknet, crime, work, sleeves, gang, contracts):
+ *    otherPerSec x the window.
+ *
+ * {ok, perSec (geometric midpoint of [lo, total]), lo, hi, minShare,
+ * bracketLn, why}. ok only when the guaranteed hacking share lo/total is at
+ * least minHackShare. Pure.
+ */
+export function legacyHackingWindow(pts, a0, a1, { cash0 = 0, hackCap = Infinity, stockReturnPerSec, stockCap, otherPerSec, minHackShare } = {}) {
+  const dt = (a1 - a0) * 3600
+  const total = cumAt(pts, a1) - cumAt(pts, a0)
+  if (!(dt > 0 && total > 0)) return { ok: false, hi: 0, why: 'nothing earned in the window' }
+  // Trapezoid over the samples to a1 of min(cap, cash0 + total(t)).
+  const knots = [...pts.map((q) => q[0]).filter((h) => h > 0 && h < a1), a1]
+  let integ = 0
+  let hPrev = 0
+  let wPrev = Math.min(stockCap, cash0 + cumAt(pts, 0))
+  for (const h of knots) {
+    const w = Math.min(stockCap, cash0 + cumAt(pts, h))
+    integ += ((w + wPrev) / 2) * (h - hPrev) * 3600
+    hPrev = h
+    wPrev = w
+  }
+  const stockMax = stockReturnPerSec * integ
+  const otherMax = otherPerSec * dt
+  const lo = total - stockMax - otherMax
+  // The hacking stream is also at most the total, and at most what a later
+  // split sample says was hacked since the install (hackCap).
+  const hi = Math.min(total, hackCap >= 0 ? hackCap : Infinity)
+  const minShare = lo / hi
+  const tag = `total $${(total / dt).toExponential(2)}/s over ${a0.toFixed(2)}-${a1.toFixed(2)}h, trader <= $${stockMax.toExponential(2)}, other <= $${otherMax.toExponential(2)}${hi < total ? `, hacking <= $${(hi / dt).toExponential(2)}/s (a later split sample)` : ''}`
+  if (!(hi > 0 && minShare >= minHackShare)) return { ok: false, minShare, hi: hi / dt, why: `${tag}: hacking only >= ${(100 * Math.max(0, minShare)).toFixed(0)}% of its bound guaranteed` }
+  const perSec = Math.sqrt(lo * hi) / dt
+  return { ok: true, perSec, lo: lo / dt, hi: hi / dt, minShare, bracketLn: Math.log(hi / lo), why: `${tag}: hacking ${(100 * minShare).toFixed(0)}-100% of its bound` }
+}
+
+/**
+ * THIS LIFE'S HACKING RATE AS AN OBSERVATION, from tel.js's earnings ledger
+ * (the running life's samples [ageH, total, hacking]): how long the hacking
+ * stream has been earning (`hours`, from the first sample with hacking > 0)
+ * and its rate over the last `windowH` of that. A batcher PREPPING its target
+ * earns $0/s by design (batch.txt says so) — that is not a measurement of a
+ * zero income, so until the stream has earned anything there is NO
+ * observation (null), and the prior stands alone. `nowPerSec` (the running
+ * scripts' hacking stream, nodeecon.incomeOf) is the value when positive; the
+ * ledger's rate is the fallback (a new target being prepped mid-life). Pure.
+ * {perSec, hours, source} or null.
+ */
+export function lifeHackingObservation(samples, ageH, { nowPerSec = null, windowH = 0.5 } = {}) {
+  const pts = (samples ?? []).filter((q) => Array.isArray(q) && fin(q[0]) && fin(q[2])).map((q) => [q[0], q[2]]).sort((a, b) => a[0] - b[0])
+  const first = pts.find((q) => q[1] > 0)
+  if (!first || !fin(ageH)) return null
+  const hours = Math.max(0, ageH - first[0])
+  if (!(hours > 0)) return null
+  if (fin(nowPerSec) && nowPerSec > 0) return { perSec: nowPerSec, hours, source: 'the running scripts\' hacking stream' }
+  const last = pts[pts.length - 1]
+  const a0 = Math.max(first[0], last[0] - windowH)
+  const r = last[0] > a0 ? (last[1] - cumAt(pts, a0)) / ((last[0] - a0) * 3600) : 0
+  return r > 0 ? { perSec: r, hours, source: `the earnings ledger's last ${(last[0] - a0).toFixed(2)}h` } : null
+}
+
+/**
+ * THE FRESH LIFE'S HACKING INCOME IS A POSTERIOR, never a switch. The prior
+ * (incomePrior: earlier lives at this age, the predictive for THIS life) is
+ * updated by this life's own measurement (lifeHackingObservation), whose
+ * weight grows with how long the stream has earned: ln(rate) measured with sd
+ * PRIORS.rateSdLn x sqrt(1h / hours) — five minutes of the first batches
+ * landing (the ramp) weigh about as much as the prior, two hours dominate
+ * it. Normal-normal on ln(rate). Switching from the prior to the first
+ * measured pass instead priced the whole trajectory on the $0/s a prepping
+ * batcher reads (live BN9 2026-09-29 05:46, 0.08h into the life: exit 272h
+ * against the install decision's 104h four minutes earlier).
+ * prior: an incomePrior result (null -> null); obs: an observation or null.
+ * Returns the prior's shape {mean, sd, perSec, ...} with `measuredWeight`.
+ */
+export function incomePosterior(prior, obs) {
+  if (!prior || !fin(prior.mean) || !(prior.sd > 0)) return null
+  if (!obs || !(obs.perSec > 0) || !(obs.hours > 0)) return { ...prior, measuredWeight: 0, why: `${prior.why}; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone` }
+  const sm = PRIORS.rateSdLn * Math.sqrt(1 / obs.hours)
+  const wp = 1 / (prior.sd * prior.sd)
+  const wm = 1 / (sm * sm)
+  const mean = (prior.mean * wp + Math.log(obs.perSec) * wm) / (wp + wm)
+  const sd = Math.sqrt(1 / (wp + wm))
+  const w = wm / (wp + wm)
+  return {
+    ...prior,
+    mean,
+    sd,
+    perSec: Math.exp(mean),
+    measuredWeight: w,
+    measured: obs,
+    why: `income posterior: prior $${prior.perSec.toExponential(2)}/s (x/÷ ${Math.exp(1.2816 * prior.sd).toFixed(1)}) updated by this life's $${obs.perSec.toExponential(2)}/s over ${obs.hours.toFixed(2)}h (${obs.source}; weight ${(100 * w).toFixed(0)}%) -> median $${Math.exp(mean).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80% [${prior.why}]`,
+  }
 }

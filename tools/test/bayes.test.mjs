@@ -732,7 +732,18 @@ export async function run() {
     const noIncome = { ...withRep, incomePerSec: 0, capitalReturnPerSec: 0 };
     if (exitOf(noIncome) !== null) c14.fail("fixture: with no income the exit must be unpriced");
     const ageH = (Date.parse(F.exitInputs.at) - F.exitInputs.lastAugReset) / 3.6e6;
-    const pr = B.incomePrior({ earnings: F.earnings, ledger: F.lifetimes, node: 1, ageH, hackMultNow: live.hackingMult / (bitNodeMults(1).HackingLevelMultiplier ?? 1), shm: (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney) });
+    // The fixture's lives predate tel.js's hacking column (two-element
+    // samples), and at $1e5-1e6/s their totals sit inside the bound on the
+    // trader, hacknet and crime: the hacking stream is not separable, so the
+    // legacy form yields NO prior (streams [SI5]/[SI7]) — never the total. The
+    // machinery is replayed on the same lives recorded split (hacking = the
+    // total, as a BN1 life with no other income would record it).
+    const shmOf = (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney);
+    const legacyPr = B.incomePrior({ earnings: F.earnings, ledger: F.lifetimes, node: 1, ageH, hackMultNow: live.hackingMult / (bitNodeMults(1).HackingLevelMultiplier ?? 1), shm: shmOf });
+    c14.note(`the fixture's legacy (pre-split) lives: ${legacyPr ? legacyPr.why : "no prior — hacking not separable from the totals at this age"}`);
+    if (legacyPr) c14.fail("these legacy totals are inside the non-hacking bound: they must not become a hacking prior", legacyPr.why);
+    const splitEarnings = { lives: Object.fromEntries(Object.entries(F.earnings.lives).map(([k, L]) => [k, { ...L, samples: L.samples.map((q) => [q[0], q[1], q[1]]) }])) };
+    const pr = B.incomePrior({ earnings: splitEarnings, ledger: F.lifetimes, node: 1, ageH, hackMultNow: live.hackingMult / (bitNodeMults(1).HackingLevelMultiplier ?? 1), shm: shmOf });
     if (!pr) c14.fail("the earnings ledger holds completed BN1 lives: the income prior must exist");
     else c14.note(pr.why);
     const fromPrior = pr ? { ...noIncome, incomePerSec: pr.perSec, incomeFromPrior: true, incomeSource: pr.why } : noIncome;
@@ -752,15 +763,15 @@ export async function run() {
     if (!(Number.isFinite(a.q50) && a.q50 > 0)) c14.fail("the fresh life must publish a finite exit");
     if (!(a.q90 - a.q10 > 1.2 * (measured.q90 - measured.q10))) c14.fail("an income drawn from earlier lives must widen the interval over a measured one");
     // Cross-node: a node's first life borrows other nodes' lives, wider still.
-    const first = B.incomePrior({ earnings: { lives: Object.fromEntries(Object.entries(F.earnings.lives).filter(([, L]) => L.node !== 1)) }, ledger: F.lifetimes, node: 1, ageH, hackMultNow: 1.3, shm: (n) => (bitNodeMults(n)?.ScriptHackMoneyGain === 0 ? 0 : bitNodeMults(n)?.ScriptHackMoney) });
+    const first = B.incomePrior({ earnings: { lives: Object.fromEntries(Object.entries(splitEarnings.lives).filter(([, L]) => L.node !== 1)) }, ledger: F.lifetimes, node: 1, ageH, hackMultNow: 1.3, shm: shmOf });
     c14.note(first ? `a node's first life: ${first.why}` : "a node's first life: no other node's scripts earned (BN8 pays nothing) — no prior, the exit stays unpriced and says so");
     if (first && !(first.sd > pr.sd)) c14.fail("borrowing another node's lives must be wider than this node's own");
     // Nothing leaks where income IS measured: the draw leaves a measured income alone.
     const d0 = draws[0];
     if (P.applyDraw({ ...withRep, incomePerSec: 5 }, d0).incomePerSec !== 5) c14.fail("a measured income must not be replaced by the prior's draw");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/if \(incomePerSec \+ contractMoneyPerSec > 0 \|\| \(capitalFitOf\(ns, info\)\?\.r \?\? econNow\?\.capitalReturnPerSec \?\? 0\) > 0\) return \{\}\s*\n\s*const pr = incomePriorOf\(ns, info, player\)\s*\n\s*return pr \? \{ incomePerSec: pr\.perSec, incomeFromPrior: true, incomeSource: pr\.label \} : \{\}/.test(prog)) c14.fail("exitInputsOf must take an unmeasurable income from the prior, marked (source guard)");
-    if (!/repFromEstimate: true, repSource:/.test(prog) || !/income: incomePriorOf\(ns, info, ns\.getPlayer\(\)\)[,} ]/.test(prog)) c14.fail("the reputation estimate and the income prior must reach the inputs and the posteriors (source guard)");
+    if (!/const pr = incomePostOf\(ns, info, player\)\s*\n\s*if \(!pr\) return \{\}\s*\n\s*const flat = [^\n]*\n\s*return \{ incomePerSec: flat \+ pr\.perSec, incomeFlatPerSec: flat, incomeFromPrior: true, incomeSource: pr\.label \}/.test(prog)) c14.fail("exitInputsOf must take the hacking stream from the income posterior, marked (source guard)");
+    if (!/repFromEstimate: true, repSource:/.test(prog) || !/income: incomePostOf\(ns, info, ns\.getPlayer\(\)\)[,} ]/.test(prog)) c14.fail("the reputation estimate and the income posterior must reach the inputs and the posteriors (source guard)");
   }
   checks.push(c14);
 
