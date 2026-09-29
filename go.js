@@ -619,13 +619,16 @@ export async function main(ns) {
       if (gamesSinceSwitch >= SETTINGS.minDwellGames) {
         const gameH = gamesThisProcess >= 3 ? (Date.now() - processStartedAt) / 3600e3 / gamesThisProcess : SETTINGS.defaultGameH
         const pick = pickOpponent(opponent, ns.go.analysis.getStats(), SETTINGS.minDwellGames * gameH)
-        if (pick.switched) {
-          publishAt('ok', { ...gameFields, detail: `opponent ${opponent} -> ${pick.opponent}: ${pick.why}` })
-          ns.print(`switching opponent ${opponent} -> ${pick.opponent}`)
-          gamesSinceSwitch = 0
-        }
+        const was = opponent
         opponent = pick.opponent
         opponentWhy = pick.why
+        // Published AFTER the assignment: the status thunk reads `opponent`,
+        // and announcing a switch beside the old name reads as no switch.
+        if (pick.switched) {
+          gamesSinceSwitch = 0
+          publishAt('ok', { ...gameFields, detail: `opponent ${was} -> ${opponent}` })
+          ns.print(`switching opponent ${was} -> ${opponent}`)
+        }
       }
       ns.go.resetBoardState(opponent, N)
       await ns.sleep(100)
