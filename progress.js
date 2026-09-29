@@ -168,7 +168,7 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, modelVersionFrom } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -1364,9 +1364,20 @@ let gangSchedMemo = null
 let stockNow = null
 let econNow = null
 function gangExitNow(ns, info, inputs, grindHours) {
+  return gangExitCtx(ns, info)(inputs, grindHours)
+}
+/**
+ * gangExit with the gang's schedule and eBudget read ONCE: the sleeve
+ * objective prices it per option per posterior draw, and each call read and
+ * parsed /tel/installgate.txt (79KB) and /tel/gang-last.txt — ~100 parses a
+ * pass, the plan-sleeveObjective section's cost and its GC pauses (live BN9
+ * 2026-09-29 14:11: one 179.8ms step).
+ */
+function gangExitCtx(ns, info) {
   const sched = gangScheduleNow(ns, info)
   const eB = readJson(ns, '/tel/installgate.txt')?.eBudget
-  return gangExit(bestExitPolicy, inputs, sched, grindHours, typeof eB === 'number' && isFinite(eB) ? eB : null)
+  const eBudget = typeof eB === 'number' && isFinite(eB) ? eB : null
+  return (inputs, grindHours) => gangExit(bestExitPolicy, inputs, sched, grindHours, eBudget)
 }
 
 /**
@@ -1654,6 +1665,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     const k = karmaChannelCtx(ns, info, player)
     const gang = k?.gangPending === true && !k.gangKarmaWaived && typeof k.grindHours === 'function'
     const grindByAssist = new Map()
+    const gangExitOf = gang ? gangExitCtx(ns, info) : null
     const finish = (inputs, assist) => {
       if (!gang) {
         // A degenerate exit is "unreachable", not a duration: every candidate
@@ -1665,7 +1677,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
       // assist, not once per option per draw (live: 182ms blocks).
       const gk = assist ? `${assist.karmaPerSec}` : 'alone'
       if (!grindByAssist.has(gk)) grindByAssist.set(gk, k.grindHours(null, assist))
-      const g = gangExitNow(ns, info, inputs, grindByAssist.get(gk))
+      const g = gangExitOf(inputs, grindByAssist.get(gk))
       return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
     }
     // Each candidate as a trajectory of the base inputs, so the plan can run
@@ -1864,6 +1876,9 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       // noise key for the chosen side — what consistencyOf compares.
       basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null, installAt: basis.installAt ?? null } : { kind: 'default policy (no committed install)' },
       basisNoiseKey: noiseKeyOf(basis, d.key === 'grafts' ? withIn : withoutIn),
+      // The batch the basis installs (the LAST pass's record): the install
+      // decision re-plans it this pass, and a different one is rebased onto.
+      basisGainsKey: gainsKeyOf(basis?.gains ?? null),
       inputsKey: inputsKeyOf(withoutIn),
       grafts: d.key === 'grafts' ? specs : [],
       startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
@@ -5959,16 +5974,20 @@ async function act(ns, canJoin, info, note) {
       const pcx = planCtx
       const inst = pcx?.decisions?.install
       const gd = pcx?.decisions?.grafts
-      // Rebased when the basis differs OR the inputs do (the graft decision's
-      // build is earlier in the pass than the install decision's).
-      if (pcx?.post && inst?.key && gd?.key && typeof pcx.graftReprice === 'function' && (gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey))) {
+      // Rebased when the basis differs, the inputs do (the graft decision's
+      // build is earlier in the pass than the install decision's), OR the
+      // batch does: the install decision re-plans its committed batch every
+      // pass (point.committedGains) and the graft decision priced the last
+      // pass's — one install minute, one noise key, two trajectories (live
+      // BN9 13:56: 71.7h vs 74.3h, both on 24 draws: PLAN INCONSISTENT).
+      if (pcx?.post && inst?.key && gd?.key && typeof pcx.graftReprice === 'function' && (gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey) || (inst.gainsKey !== undefined && gd.basisGainsKey !== inst.gainsKey))) {
         const spec = basisOf(inst, Date.now())
         if (spec) {
           const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)
           const d2 = await planDecide(pcx, 'graftsRebased', () => decideAmongGen({ options: rp.options, prev: { key: gd.key, decidedAt: gd.decidedAt, why: gd.why }, draws: pcx.draws, redecide: true, budgetMs: planBudgetLeft(pcx), clock: pcx.pacer.cpuNow }))
           if (d2?.key) {
             const flipped = d2.key !== gd.key
-            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
+            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, basisGainsKey: gainsKeyOf(spec.gains ?? null), samples: d2.samples ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
             // The install decision priced with the grafts carried before the
             // flip: one pass stale, re-decided next pass.
             if (flipped) pcx.forceRedecide = `the graft decision flipped (${gd.key} -> ${d2.key}) when re-priced on the install decision's ${inst.key}`

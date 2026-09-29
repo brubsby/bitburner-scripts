@@ -620,7 +620,7 @@ export async function run() {
     // Negative control: the pre-fix graft pricing (the default policy, no
     // install batch) claimed against the same basis must read INCONSISTENT.
     const legacy = P.decideAmong({ options: [{ key: gd.key, noiseKey: gdRec.basisNoiseKey, sim: (d) => { const r = X.bestExitPolicy(P.applyDraw(carried, d)); return r.degenerate ? null : r.best?.hours ?? null; } }], draws, budgetMs: 1e9 });
-    const bad = P.consistencyOf(inst2, { ...gdRec, meanH: legacy.meanH });
+    const bad = P.consistencyOf(inst2, { ...gdRec, meanH: legacy.meanH, samples: legacy.samples });
     c12.note(`the pre-fix basis (default policy): ${legacy.meanH}h against the install's ${inst2.meanH}h — ${bad.why}`);
     if (bad.ok !== false) c12.fail("fixture: the default-policy pricing must be caught as inconsistent (else the check proves nothing)");
     // MC mean vs point: the grafts option's point, mean and median; and with
@@ -941,7 +941,7 @@ export async function run() {
     if (!(Math.abs(oldRebase.meanH - inst.meanH) > 0.01)) c17.fail("fixture: different inputs should move the exit (else the check proves nothing)");
     if (P.inputsKeyOf(withG(A)) !== P.inputsKeyOf(A)) c17.fail("the inputs key must ignore the grafts a graft option adds");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/\(gd\.basisNoiseKey !== inst\.noiseKey \|\| \(inst\.inputsKey && gd\.inputsKey !== inst\.inputsKey\)\)/.test(prog) || !/pcx\.graftReprice\(spec, pcx\.installInputs \?\? null\)/.test(prog)) c17.fail("progress.js must rebase the graft decision onto the install decision's inputs when they differ (source guard)");
+    if (!/\(gd\.basisNoiseKey !== inst\.noiseKey \|\| \(inst\.inputsKey && gd\.inputsKey !== inst\.inputsKey\)( \|\||\))/.test(prog) || !/pcx\.graftReprice\(spec, pcx\.installInputs \?\? null\)/.test(prog)) c17.fail("progress.js must rebase the graft decision onto the install decision's inputs when they differ (source guard)");
     if (!/pc\.installInputs = inputs\s*\n\s*if \(d && typeof d === 'object'\) d\.inputsKey = inputsKeyOf\(inputs\)/.test(prog)) c17.fail("the install decision must record the inputs it priced (source guard)");
   }
   checks.push(c17);

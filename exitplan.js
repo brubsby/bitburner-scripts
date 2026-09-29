@@ -57,6 +57,7 @@ export const expForLevel = (level, mult) => Math.exp((level / mult + 200) / 32) 
 import { serveOrFarm } from 'expfarm.js'
 import { cadencePosterior } from 'bayes.js'
 import { capitalFV } from 'hacknetplan.js'
+import { drain } from 'coop.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -97,12 +98,211 @@ const contLevel = (exp, mult) => mult * (32 * Math.log(Math.max(0, exp) + 534.6)
 const EXP_CHUNK = 0.01 // level chunk: 1% of (level + 50)
 const EXP_ITER_CAP = 5000
 
+// ---------------------------------------------------------------------------
+// THE CLIMB IN CLOSED FORM. The chunked integration below (chunks of 1% of
+// (level + 50), up to 5000 per call) was the plan's hot spot: live BN9
+// 2026-09-29 13:44 one exit simulation took up to 318ms of synchronous work
+// and the Monte Carlo stopped at 3 of 24 draws (tools/sim/climbprof.mjs: the
+// two chunk loops were ~60% of an exit simulation's CPU). The rate every
+// caller builds is AFFINE in the level — expRateShape's F + k (max(1, L) + 50),
+// plus a sleeve's constant — and for that rate the time is an exponential
+// integral. With u = E + 534.6 = exp((L/M + 200)/32) and r = F + k (L + 50):
+//
+//   dt = dE / r = u dL / (32 M r),  x = r / a,  a = 32 M k
+//   t(L) = u(L) g(x(L)) / a  (+ const),   g(x) = e^-x Ei(x)
+//
+// (d/dL of u g / a is u/(32 M a) (g + 1/x - g) = u / (32 M r)). k = 0 is the
+// constant rate, dE / F. Below level 1 (a multiplier under ~1.0013 at zero
+// exp) the rate is clamped at max(1, L): constant there. A rateAt that is not
+// tagged affine (rateAt.affine = {F, k}) keeps the chunked integration, which
+// is also the reference the closed form is tested against ([FL8]).
+// ---------------------------------------------------------------------------
+
+const EULER_GAMMA = 0.5772156649015329
+/** g(x) = e^-x Ei(x), x > 0: the power series below 40, the asymptotic series above (error < 1e-16 either side). */
+export function eiScaled(x) {
+  if (!(x > 0)) return NaN
+  if (x >= 40) {
+    let term = 1
+    let sum = 1
+    for (let n = 1; n < 80; n++) {
+      const next = (term * n) / x
+      if (next >= term || next < 1e-17 * sum) break
+      term = next
+      sum += term
+    }
+    return sum / x
+  }
+  let term = 1
+  let sum = 0
+  for (let n = 1; n < 500; n++) {
+    term *= x / n
+    const add = term / n
+    sum += add
+    if (add < 1e-17 * sum) break
+  }
+  return (EULER_GAMMA + Math.log(x) + sum) * Math.exp(-x)
+}
+
+/** Tag a rate function as affine in the level: rate(L) = F + k (max(1, L) + 50). */
+export function affineRate(F, k) {
+  const f = (level) => F + k * (Math.max(1, level) + 50)
+  f.affine = { F, k }
+  return f
+}
+const affineOf = (rateAt) => {
+  const a = rateAt?.affine
+  return a && num(a.F) && num(a.k) && a.F >= 0 && a.k >= 0 && a.F + a.k > 0 ? a : null
+}
+
 /**
- * Hours from `exp0` to the exp of `level` when the rate is `rateAt(level)`:
- * chunks of 1% of (level + 50), each at its mid-level rate. Infinity when
- * the rate is zero on the way; null on bad input.
+ * The closed-form clock for an affine rate at a multiplier: T(E) seconds up to
+ * an additive constant, and its inverse. null where the numbers leave doubles
+ * (the caller falls back to the chunks, which overflow the same way).
+ */
+function affineClock(mult, { F, k }) {
+  const E1 = mult < 1.0013 ? expForLevel(1, mult) : 0 // below E1 the clamped level: constant rate
+  const r1 = F + 51 * k
+  if (k === 0) return { T: (E) => E / F, E1: 0, r1: F, inv: (T) => T * F }
+  const a = 32 * mult * k
+  // Above E1: T(E) = u g(x) / a, x = r(L) / a, u = E + 534.6.
+  const Tup = (E) => {
+    const u = E + 534.6
+    const x = (F + k * (contLevel(E, mult) + 50)) / a
+    return (u * eiScaled(x)) / a
+  }
+  // Continuous across E1: the clamped part runs at r1.
+  const TE1 = E1 > 0 ? Tup(E1) : 0
+  const T = (E) => (E < E1 ? (E - E1) / r1 + TE1 : Tup(E))
+  return { T, Tup, E1, r1, TE1, a }
+}
+
+/**
+ * Seconds from exp0 to exp `need` at an affine rate (closed form). Returns
+ * null when not representable (the caller then chunks).
+ */
+function affineSeconds(exp0, need, mult, aff) {
+  const c = affineClock(mult, aff)
+  const t = c.T(need) - c.T(exp0)
+  return num(t) && t >= 0 ? t : null
+}
+
+/**
+ * A SHORT STEP IN CLOSED FORM, or null. With c = 32 M k, u = E + 534.6 and
+ * r the rate at E: dr/dE = c/u, so E'' = c r / u, E''' = c r (c - r) / u^2,
+ * E'''' = c r (c^2 - 4 c r + 2 r^2) / u^3. In a = c t / u, b = r t / u the
+ * step is r t (1 + a/2 + a (a - b)/6 + ...), and the first term left out is
+ * r t a (a^2 - 4 a b + 2 b^2) / 24: the step is taken when that is below
+ * 1e-6 of it (the reputation leg's ~300 steps then carry < 3e-4 of the exp
+ * they add between them, against the 0.5% the climb is held to).
+ * The level's clamp at 1 is the caller's (not applied here).
+ */
+function taylorStep(E, r, sec, mult, k) {
+  const u = E + 534.6
+  const c = 32 * mult * k
+  const a = (c * sec) / u
+  const b = (r * sec) / u
+  if (!(Math.abs(a * (a * a - 4 * a * b + 2 * b * b)) < 24e-6) || !(a < 0.05) || !(b < 0.05)) return null
+  return E + r * sec * (1 + a / 2 + (a * (a - b)) / 6)
+}
+
+/**
+ * The exp after `sec` seconds from exp0 at an affine rate: the inverse of the
+ * clock. A short step (the reputation leg's minutes) is its Taylor series
+ * (taylorStep); a longer one is solved on the clock (monotone Newton).
+ */
+function affineExpAfter(exp0, sec, mult, aff) {
+  const { F, k } = aff
+  let E = Math.max(0, exp0)
+  if (k === 0) return E + F * sec
+  let left = sec
+  // Below level 1 (a multiplier under ~1.0013 at low exp): the clamped rate.
+  if (mult < 1.0013) {
+    const E1 = expForLevel(1, mult)
+    if (E < E1) {
+      const r1 = F + 51 * k
+      const need = (E1 - E) / r1
+      if (need >= left) return E + r1 * left
+      left -= need
+      E = E1
+    }
+  }
+  const L = contLevel(E, mult)
+  const r = F + k * (Math.max(1, L) + 50)
+  const short = taylorStep(E, r, left, mult, k)
+  if (short !== null) return short
+  const c = affineClock(mult, aff)
+  const rAt = (x) => F + k * (Math.max(1, contLevel(x, mult)) + 50)
+  const target = c.Tup(E) + left
+  if (!num(target)) return null
+  // T(E) is CONCAVE (dT/dE = 1/r(E), and r rises with the level): Newton
+  // from below the root stays below it and converges monotonically, with no
+  // bracket to build (each clock read is an exponential integral: the
+  // bracket's doublings were most of a reputation step's cost). E + r t is
+  // below the root (the rate only rises).
+  // Started from the series (when it is not wild), never below E + r t.
+  const u = E + 534.6
+  const a = (32 * mult * k * left) / u
+  const b = (r * left) / u
+  let x = E + r * left
+  if (a < 0.3 && b < 0.3) x = Math.max(x, E + r * left * (1 + a / 2 + (a * (a - b)) / 6))
+  for (let i = 0; i < 60; i++) {
+    const f = c.Tup(x) - target
+    if (!num(f)) return null
+    const step = -f * rAt(x)
+    x += step
+    if (Math.abs(step) <= 1e-13 * (x + 534.6) || Math.abs(f) <= 1e-12 * Math.abs(target)) return x
+  }
+  // Not converged (a step spanning many e-folds of the rate): bisect on the clock.
+  let lo = E + r * left
+  let hi = Math.max(lo, x)
+  for (let i = 0; i < 200 && !(c.Tup(hi) >= target); i++) hi = E + (hi - E) * 2
+  if (!(c.Tup(hi) >= target)) return null
+  for (let i = 0; i < 200 && hi - lo > 1e-13 * hi; i++) {
+    const m = (lo + hi) / 2
+    if (c.Tup(m) >= target) hi = m
+    else lo = m
+  }
+  x = (lo + hi) / 2
+  return x
+}
+
+/**
+ * expAfterHours(E, hours, mult, rateAt) for an affine rate whose continuous
+ * level at E the caller already holds (L = contLevel(E, mult)): the same
+ * second-order step without re-deriving the level, else expAfterHours itself.
+ * Bitwise the same result as expAfterHours.
+ */
+function affineStepFrom(E, L, hours, mult, aff, rateAt) {
+  if (!(hours > 0)) return E
+  const { F, k } = aff
+  const sec = hours * 3600
+  if (k === 0 || E < 0 || mult < 1.0013) return expAfterHours(E, hours, mult, rateAt)
+  const r = F + k * (Math.max(1, L) + 50)
+  const short = taylorStep(E, r, sec, mult, k)
+  return short !== null ? short : expAfterHours(E, hours, mult, rateAt)
+}
+
+/**
+ * Hours from `exp0` to the exp of `level` when the rate is `rateAt(level)`.
+ * An affine rate (expRateShape's, rateAt.affine) in closed form; any other
+ * rate in chunks of 1% of (level + 50), each at its mid-level rate. Infinity
+ * when the rate is zero on the way; null on bad input.
  */
 export function hoursToLevelShaped(level, mult, exp0, rateAt) {
+  if (!pos(mult) || !num(exp0) || exp0 < 0 || typeof rateAt !== 'function') return null
+  const need = expForLevel(level, mult)
+  if (need <= exp0) return 0
+  const aff = affineOf(rateAt)
+  if (aff) {
+    const s = affineSeconds(exp0, need, mult, aff)
+    if (s !== null) return s / 3600
+  }
+  return hoursToLevelChunked(level, mult, exp0, rateAt)
+}
+
+/** The chunked climb (the reference; the path for a rate that is not affine). */
+export function hoursToLevelChunked(level, mult, exp0, rateAt) {
   if (!pos(mult) || !num(exp0) || exp0 < 0 || typeof rateAt !== 'function') return null
   const need = expForLevel(level, mult)
   if (need <= exp0) return 0
@@ -120,8 +320,19 @@ export function hoursToLevelShaped(level, mult, exp0, rateAt) {
   return E >= need ? t / 3600 : Infinity
 }
 
-/** The exp after `hours` at `rateAt(level)`, from `exp0` (the chunks above, the last one partial). */
+/** The exp after `hours` at `rateAt(level)`, from `exp0`: closed form for an affine rate, else the chunks. */
 export function expAfterHours(exp0, hours, mult, rateAt) {
+  if (!(hours > 0) || !pos(mult) || typeof rateAt !== 'function') return exp0
+  const aff = affineOf(rateAt)
+  if (aff) {
+    const e = affineExpAfter(exp0, hours * 3600, mult, aff)
+    if (num(e)) return e
+  }
+  return expAfterHoursChunked(exp0, hours, mult, rateAt)
+}
+
+/** The chunked exp after `hours` (the reference; the last chunk partial). */
+export function expAfterHoursChunked(exp0, hours, mult, rateAt) {
   if (!(hours > 0) || !pos(mult) || typeof rateAt !== 'function') return exp0
   let E = Math.max(0, exp0)
   let left = hours * 3600
@@ -143,14 +354,15 @@ export function expAfterHours(exp0, hours, mult, rateAt) {
  * The exp-rate shape an exit run uses: constant (the old model, and the
  * default) or rising with the level. `rate` is the rate at the reference
  * level `ref` (today's), `flat` the part that does not move with the level
- * (the sleeves' exp transfer). Returns rateAt(level).
+ * (the sleeves' exp transfer). Returns rateAt(level), tagged affine
+ * (rateAt.affine = {F, k}) so the climb runs in closed form.
  */
 export function expRateShape(rate, { scales = false, ref = null, flat = 0 } = {}) {
   const R = pos(rate) ? rate : 0
-  if (!scales || !pos(ref)) return () => R
+  if (!scales || !pos(ref)) return affineRate(R, 0)
   const F = Math.min(R, pos(flat) ? flat : 0)
   const k = (R - F) / (ref + 50)
-  return (level) => F + k * (Math.max(1, level) + 50)
+  return affineRate(F, k)
 }
 
 /**
@@ -536,10 +748,26 @@ export function exitHours(o = {}) {
   // dln(planM)/dln(money)), each later life's augmentation growth:
   // g x ((income + extra)/income)^eBudget for a cycle starting at that hour.
   const steps = Array.isArray(extraIncome) ? extraIncome.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH) : []
+  // The step in force at t: the last (in sorted order) with atH <= t, by
+  // bisection — the money legs ask it every integration step and a simulated
+  // gang schedule has ~100 steps (it was a scan, the gang and sleeve
+  // decisions' largest cost after the climb).
+  const stepAt = (t) => {
+    let lo = 0
+    let hi = steps.length - 1
+    let at = -1
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1
+      if (steps[m].atH <= t) {
+        at = m
+        lo = m + 1
+      } else hi = m - 1
+    }
+    return at
+  }
   const extraAt = (t) => {
-    let v = 0
-    for (const x of steps) if (x.atH <= t) v = x.perSec
-    return v
+    const i = stepAt(t)
+    return i < 0 ? 0 : steps[i].perSec
   }
   // REPUTATION THAT RUNS FASTER ALL NODE (repBoost {K, e}): a sleeve working
   // factions beside the player multiplies the reputation every life earns by
@@ -550,7 +778,13 @@ export function exitHours(o = {}) {
   // repBoost.fromH: the lift starts with the first cycle beginning at or after
   // that hour (a sleeve that trains or recovers first adds its rep later).
   const repFrom = num(repBoost?.fromH) && repBoost.fromH > 0 ? repBoost.fromH : 0
-  const growthAt = (t) => (t >= repFrom ? repLift : 1) * (num(eBudget) && eBudget > 0 && pos(incomePerSec) ? Math.pow((incomePerSec + extraAt(t)) / incomePerSec, eBudget) : 1)
+  // Each step's growth factor once, not a power per cycle per policy.
+  const growOn = num(eBudget) && eBudget > 0 && pos(incomePerSec)
+  const stepGrowth = steps.map((x) => (growOn ? Math.pow((incomePerSec + x.perSec) / incomePerSec, eBudget) : 1))
+  const growthAt = (t) => {
+    const i = growOn ? stepAt(t) : -1
+    return (t >= repFrom ? repLift : 1) * (i < 0 ? 1 : stepGrowth[i])
+  }
 
   // Income is priced when ANY source is measured positive. A node whose only
   // income is the trader's compounding return (BitNode 8: scripted hacking
@@ -623,7 +857,12 @@ export function exitHours(o = {}) {
       (num(eBudget) && eBudget > 0 ? Math.pow(ratio('income'), eBudget) : 1)
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
-    for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift * cycleExtraAt(i)
+    // Nothing varies by cycle (no later income, no delayed rep lift, no
+    // per-install extra): one power, not a loop — the policy search prices
+    // k = 1..400 and the loop made it quadratic (live BN9 2026-09-29, 0.5h
+    // cycles, the optimum at ~325 installs).
+    if (!perCycleExtra && !steps.length && !(repFrom > 0)) mult *= Math.pow(multGainPerCycle * growthAt(0) * persistLift, Math.max(0, installsFirst - 1))
+    else for (let i = 1; i < installsFirst; i++) mult *= multGainPerCycle * growthAt(firstH + (i - 1) * cycleHours) * persistLift * cycleExtraAt(i)
     exp = 0
     // PlayerObjectGeneralMethods.ts:102 ($1262), or Prestige.ts:158's $250m in
     // BitNode 8 — which REPLACES the balance, positions included (the market
@@ -646,7 +885,16 @@ export function exitHours(o = {}) {
   // sleeves', a Covenant sleeve's) does not rise.
   const shaped = expScalesWithLevel === true && pos(hacking)
   let expFlat = shaped && pos(expFlatPerSec) ? expFlatPerSec : 0
-  const expAt = () => expRateShape(expRate, { scales: shaped, ref: hacking, flat: expFlat })
+  // One rate function per (rate, flat): the legs call this per step.
+  let expAtFn = null
+  let expAtKey = null
+  const expAt = () => {
+    if (expAtFn === null || expAtKey[0] !== expRate || expAtKey[1] !== expFlat) {
+      expAtFn = expRateShape(expRate, { scales: shaped, ref: hacking, flat: expFlat })
+      expAtKey = [expRate, expFlat]
+    }
+    return expAtFn
+  }
   const expAdv = (e, hours) => (shaped ? expAfterHours(e, hours, mult, expAt()) : e + (pos(expRate) ? expRate * hours * 3600 : 0))
   const climbTo = (level, e) => (shaped ? hoursToLevelShaped(level, mult, e, expAt()) : hoursToLevel(level, mult, e, expRate))
   const moneyLeg = (target, targetAt = null) => {
@@ -801,7 +1049,11 @@ export function exitHours(o = {}) {
       const P = pos(repRate) ? repRate : 0
       const legStart = h
       const need = terminalRep - exitRep
-      const scale = installsFirst > 0 && pos(hacking) ? (e) => levelAt(e, mult) / hacking : () => 1
+      const varies = installsFirst > 0 && pos(hacking)
+      const scale = varies ? (e) => levelAt(e, mult) / hacking : () => 1
+      // One log per step: the level read for the rate is the level the
+      // affine exp step starts from (expAdv's own path, not re-derived).
+      const aff = shaped ? expAt().affine ?? null : null
       // Adaptive step (1/300 of the leg at today's rate, never below 2 min)
       // and a hard iteration cap — see hoursToMoney: this froze the game.
       const r0 = P * scale(exp) + sRep(legStart)
@@ -811,22 +1063,26 @@ export function exitHours(o = {}) {
       let t = 0
       let e = exp
       let iter = 0
+      let L = varies ? contLevel(e, mult) : 0
       for (;;) {
         if (t > 1e4 || iter++ > 3000) {
           t = Infinity
           break
         }
         // Land exactly on the sleeve's next rate change inside this step.
-        const nb = sleeveBreaks(fleetOn ? sleeveRep : null, legStart + t)[0]
+        const nb = fleetOn ? sleeveBreaks(sleeveRep, legStart + t)[0] : undefined
         const dt = typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step
-        const rate = P * scale(e) + sRep(legStart + t)
+        const rate = P * (varies ? Math.max(1, Math.floor(L)) / hacking : 1) + (fleetOn ? sRep(legStart + t) : 0)
         const add = rate * dt * 3600
         if (rate > 0 && acc + add >= need) {
           t += (need - acc) / rate / 3600
           break
         }
         acc += add
-        e = expAdv(e, dt)
+        if (varies) {
+          e = aff ? affineStepFrom(e, L, dt, mult, aff, expAt()) : expAdv(e, dt)
+          L = contLevel(e, mult)
+        }
         t += dt
       }
       r = { hours: t, how: 'ground' }
@@ -869,7 +1125,7 @@ export function exitHours(o = {}) {
       const base = expAt()
       for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
         const s = sExp(t)
-        const rateAt = (l) => base(l) + s
+        const rateAt = base.affine ? affineRate(base.affine.F + (pos(s) ? s : 0), base.affine.k) : (l) => base(l) + s
         const span = b - t
         const tn = hoursToLevelShaped(exitLevel, mult, acc, rateAt)
         if (num(tn) && tn <= span) {
@@ -930,14 +1186,40 @@ export function exitHours(o = {}) {
  * `maxInstalls` bounds the search, and the bound is REPORTED — a silently
  * truncated search reads as "this is the optimum" when it may only be the edge
  * of where we looked (CLAUDE.md: no silent caps).
+ *
+ * THE SEARCH STRIDES PAST ITS HEAD. It was one install at a time until 15 in
+ * a row failed to beat the best — fine while the optimum was a few installs
+ * away, but under the purchase model's 0.5h cadence (live BN9 2026-09-29) the
+ * optimum sits at ~300 installs and every exit simulation priced ~340
+ * policies; with 10 options x 24 draws the plan's Monte Carlo ran out of
+ * budget at 3 draws. Now: the first POLICY_HEAD installs one by one, exactly
+ * as before (an optimum inside the head, or one the 15-worse rule ends near,
+ * is found by the same steps). Only while the exit is STILL IMPROVING at the
+ * head's end does it gallop (doubling strides), bisect the bracket the gallop
+ * closes, and then scan POLICY_WORSE installs either side of the best, again
+ * until that scan stops moving it. The exit over k is unimodal (a linear
+ * cycle cost plus a tail convex in ln M — every live and fixture inputs set
+ * checked, [XP-S]); the closing scan absorbs the level floor's plateaus.
+ * `tried` lists every policy priced, in install order.
  */
 // Memo: many callers in one pass simulate identical inputs. Keyed on the
 // inputs' JSON (functions excluded, as JSON drops them); bounded.
 const policyMemo = new Map()
 /** Exits longer than this are not durations but "unreachable": comparisons between them decide nothing. */
 export const DEGENERATE_H = 1e5
+export const POLICY_HEAD = 24
+export const POLICY_WORSE = 15
 
 export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
+  return drain(bestExitPolicyGen(o, maxInstalls, minInstalls))
+}
+
+/**
+ * bestExitPolicy as a GENERATOR that yields after each policy priced (one
+ * exitHours), so a caller running it in coop.js slices never blocks the page
+ * for a whole search. Same result as bestExitPolicy, which drains it.
+ */
+export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
   let key = null
   try {
     key = `${maxInstalls}|${minInstalls}|${JSON.stringify(o)}`
@@ -945,21 +1227,86 @@ export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
     key = null
   }
   if (key !== null && policyMemo.has(key)) return policyMemo.get(key)
-  const tried = []
+  const seen = new Map()
   let best = null
-  let worse = 0
-  for (let k = minInstalls; k <= maxInstalls; k++) {
+  function* at(k) {
+    const had = seen.get(k)
+    if (had) return had
     const r = exitHours({ ...o, installsFirst: k })
-    tried.push({ installsFirst: k, hours: r.hours, why: r.why ?? null })
-    if (num(r.hours) && (best === null || r.hours < best.hours)) {
-      best = { ...r, installsFirst: k }
-      worse = 0
-    } else if (best !== null && num(r.hours)) {
-      // Past the optimum the exit only grows (each install adds a cycle and a
-      // near-constant gain): stop after 15 installs in a row fail to beat it.
-      if (++worse >= 15) break
+    const row = { installsFirst: k, hours: r.hours, why: r.why ?? null }
+    seen.set(k, row)
+    // Strictly shorter, or as short at fewer installs (the one-by-one
+    // search's first minimum).
+    if (num(r.hours) && (best === null || r.hours < best.hours || (r.hours === best.hours && k < best.installsFirst))) best = { ...r, installsFirst: k }
+    yield
+    return row
+  }
+  // The head: one by one, the 15-worse rule.
+  let worse = 0
+  let k = minInstalls
+  let stopped = false
+  const headEnd = Math.min(maxInstalls, minInstalls + POLICY_HEAD - 1)
+  const linearFrom = function* (from, to) {
+    for (k = from; k <= to; k++) {
+      const before = best
+      const row = yield* at(k)
+      if (best !== before) worse = 0
+      else if (best !== null && num(row.hours)) {
+        if (++worse >= POLICY_WORSE) return true
+      }
+    }
+    return false
+  }
+  stopped = yield* linearFrom(minInstalls, headEnd)
+  if (!stopped && headEnd < maxInstalls) {
+    if (best === null || worse > 0) {
+      // Nothing priced yet, or past the best already: the one-by-one rule
+      // to its end, as it always ran.
+      yield* linearFrom(headEnd + 1, maxInstalls)
+    } else {
+      // Still improving at the head's end: gallop.
+      let prev = headEnd
+      let lo = headEnd - 1
+      let hi = null
+      // At most log2(maxInstalls / POLICY_HEAD) + 1 strides reach the cap; 64 bounds it.
+      for (let step = POLICY_HEAD, g = 0; g < 64; step *= 2, g++) {
+        const kk = Math.min(maxInstalls, prev + step)
+        yield* at(kk)
+        if (best.installsFirst === kk) {
+          lo = prev
+          prev = kk
+          if (kk === maxInstalls) break
+        } else {
+          hi = kk
+          break
+        }
+      }
+      // Bisect (lo, hi) around the best: the minimum of a unimodal exit lies
+      // strictly inside.
+      if (hi !== null) {
+        let a = lo
+        let b = hi
+        for (let it = 0; it < 64 && b - a > 3; it++) {
+          const kb = best.installsFirst
+          const m = kb - a > b - kb ? Math.floor((a + kb) / 2) : Math.ceil((kb + b) / 2)
+          if (m === kb || m <= a || m >= b) break
+          yield* at(m)
+          if (best.installsFirst === m) {
+            if (m < kb) b = kb
+            else a = kb
+          } else if (m < kb) a = m
+          else b = m
+        }
+      }
+      // The closing scan: POLICY_WORSE either side of the best, until it holds.
+      for (let round = 0; round < 20; round++) {
+        const kb = best.installsFirst
+        for (let j = Math.max(minInstalls, kb - POLICY_WORSE); j <= Math.min(maxInstalls, kb + POLICY_WORSE); j++) yield* at(j)
+        if (best.installsFirst === kb) break
+      }
     }
   }
+  const tried = [...seen.values()].sort((x, y) => x.installsFirst - y.installsFirst)
   const out = !best
     ? { best: null, tried, why: tried[0]?.why ?? 'no policy could be priced' }
     : {

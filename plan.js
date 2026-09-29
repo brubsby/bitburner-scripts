@@ -22,7 +22,7 @@
 import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderPosterior, driftPosterior, driftCalibration, logRatePosterior, jitterPosterior } from 'bayes.js'
 import { routeExitFixed, countExitFixed } from 'countexit.js'
 import { drain } from 'coop.js'
-import { bestExitPolicy } from 'exitplan.js'
+import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -209,7 +209,10 @@ export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = c
     for (const o of options) {
       let h = null
       try {
-        h = o.sim(d)
+        // o.simGen: the same simulation as a generator that yields inside
+        // (one policy priced per step, exitplan.bestExitPolicyGen), so one
+        // exit simulation never blocks the page for its whole search.
+        h = typeof o.simGen === 'function' ? yield* o.simGen(d) : o.sim(d)
       } catch {
         h = null
       }
@@ -433,7 +436,8 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   // committed install's spec).
   const add = (key, spec, pointH, extra = {}) => {
     const f = trajectoryOf(spec, ctx)
-    opts.push({ key, spec, pointH, noiseKey: noiseKeyOf(spec, inputs), sim: (d) => f(applyDraw(inputs, d), d), ...extra })
+    const fg = trajectoryGenOf(spec, ctx)
+    opts.push({ key, spec, pointH, noiseKey: noiseKeyOf(spec, inputs), sim: (d) => f(applyDraw(inputs, d), d), simGen: (d) => fg(applyDraw(inputs, d), d), ...extra })
   }
   const P0 = point ?? {}
   if (P0.now && fin(P0.now.hours)) add('now', { kind: 'wait', installAt: now, waitH: 0, n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null, gains: null }, P0.now.hours)
@@ -511,7 +515,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const pc = prev?.commitment ?? (prev && prev.key !== 'now' && fin(prev.meanH) ? { key: prev.key, meanH: prev.meanH, pointH: null, at: null, installAt: prev.installAt ?? null, noiseKey: prev.noiseKey ?? null, n: prev.n ?? null } : null)
     const carried = key === 'now' && elapsed && pc && fin(pc.meanH) && (!pc.at || now - Date.parse(pc.at) <= 60 * 60e3)
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
-    return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+    return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
   if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows })
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
@@ -547,6 +551,34 @@ export function trajectoryOf(spec, { count = null, repPoint = null } = {}) {
   return (x) => {
     const r = bestExitPolicy({ ...x, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
     return r.degenerate ? null : r.best?.hours ?? null
+  }
+}
+
+/**
+ * trajectoryOf as a GENERATOR per simulation: (inputs, d?) => a generator
+ * returning the same hours, yielding after each policy the no-count wait and
+ * never trajectories price (exitplan.bestExitPolicyGen). The count and route
+ * trajectories run in one step (countexit prices through the sync policy).
+ */
+export function trajectoryGenOf(spec, ctx = {}) {
+  const { count = null } = ctx
+  if (spec && !count && (spec.kind === 'never' || spec.kind === 'wait')) {
+    if (spec.kind === 'never') {
+      return function* (x) {
+        return (yield* bestExitPolicyGen(x, 0, 0)).best?.hours ?? null
+      }
+    }
+    const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0
+    const g = spec.gains ?? null
+    return function* (x) {
+      const r = yield* bestExitPolicyGen({ ...x, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
+      return r.degenerate ? null : r.best?.hours ?? null
+    }
+  }
+  const f = trajectoryOf(spec, ctx)
+  // eslint-disable-next-line require-yield
+  return function* (x, d = null) {
+    return f(x, d)
   }
 }
 
@@ -595,6 +627,16 @@ export function basisOf(rec, now = Date.now()) {
  * share draws and noise keys, so in fact exactly). Returns {ok, installH,
  * graftsH, diffH, tolH, sameBasis, why}.
  */
+/** The batch a trajectory installs (spec.gains), as a key: null = no batch named (the default). */
+export function gainsKeyOf(gains) {
+  if (!gains || typeof gains !== 'object') return null
+  const k = ['hacking', 'rep', 'income', 'exp'].map((n) => (fin(gains[n]) ? gains[n].toPrecision(9) : '-')).join(',')
+  return `b${(hashOf(k) >>> 0).toString(36)}`
+}
+/** A decision's per-draw exits of its chosen option (null = infeasible draw), for comparing two decisions on the SAME draws. */
+export function samplesOf(xs) {
+  return Array.isArray(xs) ? xs.map((x) => (fin(x) ? +x.toFixed(3) : null)) : null
+}
 /**
  * THE INPUTS a decision priced, as a key: the exit inputs without the grafts
  * a graft option adds (finalGrafts, graftStartMoney), hashed. Two decisions
@@ -693,13 +735,42 @@ function graftConsistencyOf(install, grafts, { si = 0.02 } = {}) {
     const d = fin(grafts.meanH) ? +(grafts.meanH - install.meanH).toFixed(3) : null
     return { ok: false, sameBasis, sameInputs: false, installH: install.meanH, graftsH: grafts.meanH, diffH: d, why: `INCONSISTENT INPUTS: the install decision (${install.meanH}h) and the graft decision (${grafts.meanH}h) priced one trajectory from different inputs (${install.inputsKey} vs ${grafts.inputsKey}) — the rebase onto the install decision's inputs did not run` }
   }
-  const gH = grafts.meanH
-  const N = Math.max(1, Math.min(install.n ?? 1, grafts.n ?? 1))
-  const tolH = Math.max(0.02 * install.meanH, (4 * Math.SQRT2 * si * install.meanH) / Math.sqrt(N))
-  if (!sameBasis) return { ok: null, sameBasis, installH: install.meanH, graftsH: gH, why: `the graft decision was priced on ${grafts.basisNoiseKey}, the install committed ${install.noiseKey}: not comparable this pass (re-priced on the next)` }
-  const diffH = +(gH - install.meanH).toFixed(3)
+  // ONE BATCH: the install decision re-plans its committed batch every pass
+  // (point.committedGains); the graft decision, earlier in the pass, priced
+  // the LAST pass's record — same install minute and inputs, so the same
+  // noise and inputs keys, but another trajectory (live BN9 2026-09-29 13:56:
+  // committed hacking x1.657 vs the graft basis's earlier batch, points 67.5h
+  // vs 69.9h, both on all 24 draws; reported 71.7h vs 74.3h). The rebase runs
+  // on a batch that differs; still differing here, it did not.
+  if (sameBasis && grafts.basisGainsKey !== undefined && install.gainsKey !== undefined && grafts.basisGainsKey !== install.gainsKey) {
+    const d = fin(grafts.meanH) ? +(grafts.meanH - install.meanH).toFixed(3) : null
+    return { ok: false, sameBasis, sameBatch: false, installH: install.meanH, graftsH: grafts.meanH, diffH: d, why: `INCONSISTENT BATCH: the install decision (${install.meanH}h) and the graft decision (${grafts.meanH}h) priced one install time with different batches (${install.gainsKey} vs ${grafts.basisGainsKey}) — the rebase onto the install decision's batch did not run` }
+  }
+  // ONE DRAW SET: a budget-stopped Monte Carlo averages a prefix of the
+  // draws, and two decisions stopped at different counts average different
+  // prefixes. Where both carry their per-draw exits, the means compared are
+  // over the draws BOTH priced (feasible in both).
+  let gH = grafts.meanH
+  let iH = install.meanH
+  let N = Math.max(1, Math.min(install.n ?? 1, grafts.n ?? 1))
+  let common = null
+  if (Array.isArray(install.samples) && Array.isArray(grafts.samples)) {
+    const m = Math.min(install.samples.length, grafts.samples.length)
+    const pairs = []
+    for (let i = 0; i < m; i++) if (fin(install.samples[i]) && fin(grafts.samples[i])) pairs.push([install.samples[i], grafts.samples[i]])
+    if (pairs.length) {
+      iH = +(pairs.reduce((a, p) => a + p[0], 0) / pairs.length).toFixed(3)
+      gH = +(pairs.reduce((a, p) => a + p[1], 0) / pairs.length).toFixed(3)
+      N = pairs.length
+      common = { n: pairs.length, of: [install.samples.length, grafts.samples.length] }
+    }
+  }
+  const tolH = Math.max(0.02 * iH, (4 * Math.SQRT2 * si * iH) / Math.sqrt(N))
+  if (!sameBasis) return { ok: null, sameBasis, installH: install.meanH, graftsH: grafts.meanH, why: `the graft decision was priced on ${grafts.basisNoiseKey}, the install committed ${install.noiseKey}: not comparable this pass (re-priced on the next)` }
+  const diffH = +(gH - iH).toFixed(3)
   const ok = Math.abs(diffH) <= tolH
-  return { ok, sameBasis, installH: install.meanH, graftsH: gH, diffH, tolH: +tolH.toFixed(3), why: ok ? `install and graft decisions price one trajectory: ${install.meanH}h vs ${gH}h` : `INCONSISTENT: the install decision's committed exit ${install.meanH}h and the graft decision's ${gH}h differ by ${diffH}h (tolerance ${tolH.toFixed(2)}h) on the same basis` }
+  const on = common ? ` on the ${common.n} draws both priced (of ${common.of[0]} and ${common.of[1]})` : ''
+  return { ok, sameBasis, installH: iH, graftsH: gH, diffH, tolH: +tolH.toFixed(3), ...(common ? { common } : {}), why: ok ? `install and graft decisions price one trajectory: ${iH}h vs ${gH}h${on}` : `INCONSISTENT: the install decision's committed exit ${iH}h and the graft decision's ${gH}h differ by ${diffH}h (tolerance ${tolH.toFixed(2)}h) on the same basis${on}` }
 }
 
 /**
@@ -721,10 +792,10 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   const { stats } = summarize(ev.samples)
   const rows = optionRows(use, stats, (o) => pointOf(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
+  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
-  return { key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
+  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
 }
 
 /** Standard normal CDF (Abramowitz-Stegun 7.1.26 via erf). */
