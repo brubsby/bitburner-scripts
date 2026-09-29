@@ -173,9 +173,35 @@ export function graftSpecOf(aug, intelligence, { entropy = true } = {}) {
  * then the final window's in set order), startMoney, summary}.
  */
 export const SCHEDULE_MS = 100
+/**
+ * ONE EXIT SIMULATION AS A GENERATOR. `priceExitGen(inputs)` (plan.
+ * trajectoryGenOf: yields after every install policy it prices) when given,
+ * else the synchronous `priceExit` as one step. A synchronous simulation of a
+ * 20-graft set waiting on a large start balance is one long step: priced
+ * that way the graft search held steps of ~10ms on the dev machine (2-4x that
+ * in the game's page) against the pacer's 40ms slice.
+ */
+function pricerOf(priceExit, priceExitGen) {
+  // A simulation the policy memo already holds returns without a yield
+  // (exitplan.bestExitPolicyGen): the yield after it keeps a run of memo hits
+  // from becoming one step (a whole re-priced search, 11ms in one step here).
+  if (typeof priceExitGen === 'function') {
+    return function* (x) {
+      const h = yield* priceExitGen(x)
+      yield
+      return h
+    }
+  }
+  return function* (x) {
+    const h = priceExit(x)
+    yield
+    return h
+  }
+}
 export const SCHEDULE_MIN_GAIN = { hours: 0.25, rel: 0.005 }
 const PREFIXES = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48]
-export function* scheduleGen({ chosen, specs, priceExit, without, join = 0, fraction = 0, finalH, deadline = () => false }) {
+export function* scheduleGen({ chosen, specs, priceExit, priceExitGen = null, without, join = 0, fraction = 0, finalH, deadline = () => false }) {
+  const price = pricerOf(priceExit, priceExitGen)
   const n = chosen.length
   const idx = chosen.map((_, i) => i)
   // Cheapest first, prerequisites (within the set) before what needs them.
@@ -212,8 +238,7 @@ export function* scheduleGen({ chosen, specs, priceExit, without, join = 0, frac
       const rest = idx.filter((i) => !early.has(i))
       const restCost = rest.reduce((a, i) => a + specs[i].cost, 0)
       const startMoney = rest.length ? fraction * (join + restCost) : 0
-      const h = priceExit({ ...without, lifeGrafts, finalGrafts: rest.map((i) => specs[i]), graftStartMoney: startMoney })
-      yield
+      const h = yield* price({ ...without, lifeGrafts, finalGrafts: rest.map((i) => specs[i]), graftStartMoney: startMoney })
       tried.push({ family: fam.name, c, h: num(h) ? +h.toFixed(3) : null })
       if (num(h) && h < best.h) best = { h, lifeGrafts: lifeGrafts.map((g) => ({ name: g.name, life: fam.life })), order: [...fam.order.slice(0, c), ...rest], startMoney, family: fam.name, c }
       if (num(h) && h < famBest) {
@@ -337,17 +362,18 @@ export function chooseGrafts(o = {}) {
  */
 export function* chooseGraftsGen(o = {}) {
   const { candidates, priceExit, base, intelligence, ownedNames } = o
+  const priceExitGen = typeof o.priceExitGen === 'function' ? o.priceExitGen : null
   const maxGrafts = num(o.maxGrafts) && o.maxGrafts > 0 ? o.maxGrafts : 12
   const entropy = o.entropy !== false
   const budgetMs = num(o.budgetMs) && o.budgetMs > 0 ? o.budgetMs : Infinity
   const clock = typeof o.now === 'function' ? o.now : () => Date.now()
-  if (typeof priceExit !== 'function') return { grafts: null, why: 'no exit pricing function supplied' }
+  if (typeof priceExit !== 'function' && !priceExitGen) return { grafts: null, why: 'no exit pricing function supplied' }
+  const price = pricerOf(priceExit, priceExitGen)
   if (!base || typeof base !== 'object') return { grafts: null, why: 'no exit policy inputs' }
   if (!Array.isArray(candidates)) return { grafts: null, why: 'no graft candidates supplied' }
   const without = { ...base }
   delete without.finalGrafts
-  const priced = priceExit(without)
-  yield
+  const priced = yield* price(without)
   // GRAFTING NOTHING MAY BE UNPRICEABLE — and that is a price, not a refusal.
   // Without the grafts' hacking multiplier the level the exit needs can be out
   // of reach: the simulator returns null (degenerate) or a number past any
@@ -384,8 +410,7 @@ export function* chooseGraftsGen(o = {}) {
     const total = join + specs.reduce((x, g) => x + g.cost, 0)
     let best = null
     for (const f of GRAFT_START_FRACTIONS) {
-      const hours = priceExit({ ...without, finalGrafts: specs, graftStartMoney: f * total })
-      yield
+      const hours = yield* price({ ...without, finalGrafts: specs, graftStartMoney: f * total })
       if (num(hours) && (!best || hours < best.h)) best = { h: hours, startMoney: f * total, fraction: f }
     }
     return best
@@ -528,7 +553,7 @@ export function* chooseGraftsGen(o = {}) {
   const start = yield* withRunAt(chosen)
   // WHICH LIVES THE SET IS GRAFTED IN (scheduleGen): the final window, or —
   // for a prefix — the current life or the next. Its own slice of the budget.
-  const sched = start ? yield* scheduleGen({ chosen, specs, priceExit, without, join, fraction: start.fraction, finalH: start.h, deadline: () => clock() - t0 > budgetMs }) : null
+  const sched = start ? yield* scheduleGen({ chosen, specs, priceExit, priceExitGen, without, join, fraction: start.fraction, finalH: start.h, deadline: () => clock() - t0 > budgetMs }) : null
   const withLife = (i) => (lifeOf.has(chosen[i].name) ? { ...specs[i], life: lifeOf.get(chosen[i].name) } : specs[i])
   // A schedule holds the current life open (the install waits for its
   // grafts), so it must beat the final window by more than noise-level

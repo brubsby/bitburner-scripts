@@ -49,6 +49,7 @@ import { levelAt, expRateShape } from 'exitplan.js'
 import { planHacknetBatch, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { formulaErrorPosterior } from 'bayes.js'
 import { capitalOf, capitalGain } from 'traderw.js'
+import { drain } from 'coop.js'
 
 /** Hacknet purchase decisions per simulated fresh life (freshLifeMoney). */
 export const HACKNET_DECISIONS = 12
@@ -144,7 +145,11 @@ export function batchCost(prices) {
  * warm-up — exitplan.hoursToMoney's terms) integrated forward, times `scale`
  * (moneyScaleOf). Null when income is unreadable.
  */
-export function freshLifeMoney(inputs, L, scale = 1, rec = null, { steps = 200, decisions = HACKNET_DECISIONS } = {}) {
+export function freshLifeMoney(inputs, L, scale = 1, rec = null, opts = {}) {
+  return drain(freshLifeMoneyGen(inputs, L, scale, rec, opts))
+}
+/** freshLifeMoney as a generator: yields after each hacknet batch decision (the planner's search is the costly part). */
+export function* freshLifeMoneyGen(inputs, L, scale = 1, rec = null, { steps = 200, decisions = HACKNET_DECISIONS } = {}) {
   const cash0 = num(inputs?.installCash) && inputs.installCash >= 0 ? inputs.installCash : 1262
   if (!pos(L)) return cash0
   const flat = num(inputs.flatIncomePerSec) && inputs.flatIncomePerSec > 0 ? inputs.flatIncomePerSec : 0
@@ -196,6 +201,7 @@ export function freshLifeMoney(inputs, L, scale = 1, rec = null, { steps = 200, 
         fleet = b.servers
         hashPerSec = fleet.reduce((a, x) => a + (hashRate(x.level, 0, x.ram, x.cores, hn.mults.hacknet_node_money, hn.nodeMoney) ?? 0), 0)
       }
+      yield
     }
     const lvl = levelAt(exp, inputs.hackingMult)
     // The book's return at its own size (traderw.capitalGain: the curve r(W), or the flat r x min(W, cap)).
@@ -361,8 +367,25 @@ export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repP
  * multGainPerCycle exp(mean)). Returns {cycleHours, multGainPerCycle, exitH,
  * table, why} or null (no life length prices).
  */
-export function cadenceByPurchases({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, grid = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24], horizonH = 48, maxLives = 100 }) {
-  if (!catalogue || !pos(repPerHour0) || typeof bestExitPolicy !== 'function') return null
+export function cadenceByPurchases(o = {}) {
+  return drain(cadenceByPurchasesGen(o))
+}
+/**
+ * cadenceByPurchases as a GENERATOR (the same search, the same result):
+ * yields after each life length's money and purchase sequence, and inside
+ * each exit simulation when `bestExitPolicyGen` is given (exitplan's: one
+ * yield per policy) — so progress.js builds the exit inputs in coop.js
+ * slices. Priced in one step it was the first exit inputs of every pass:
+ * live BN9 2026-09-29 21:12Z, 201.8ms in 'plan-grafts' step 1 (the ten
+ * lengths' exits on inputs carrying 21 grafts; ~50ms warm, ~220ms cold on
+ * the dev machine), PLAN BLOCKED THE PAGE.
+ */
+export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24], horizonH = 48, maxLives = 100 }) {
+  if (!catalogue || !pos(repPerHour0) || (typeof bestExitPolicy !== 'function' && typeof bestExitPolicyGen !== 'function')) return null
+  // eslint-disable-next-line require-yield
+  const policyGen = typeof bestExitPolicyGen === 'function' ? bestExitPolicyGen : function* (x) {
+    return bestExitPolicy(x)
+  }
   // Memoised per length: lifeSequence and the table row both ask, and with a
   // hacknet rebuild each answer is a small simulation.
   const moneyMemo = new Map()
@@ -374,7 +397,10 @@ export function cadenceByPurchases({ inputs, catalogue, favor, owned, repPerHour
   let best = null
   for (const L of grid) {
     const n = Math.max(1, Math.min(maxLives, Math.round(horizonH / L)))
+    if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(inputs, L, moneyScale)) ?? 0)
+    yield
     const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0 })
+    yield
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
     const g = Math.exp(mean)
     // ON THE EXIT'S OWN INPUTS: only the later lives' length and gain vary.
@@ -383,7 +409,7 @@ export function cadenceByPurchases({ inputs, catalogue, favor, owned, repPerHour
     // the first install the L-length life's gain too, which favours long
     // lives — live BN9 2026-09-29 it chose 16h (table 99.0h) where the full
     // exit on the same inputs is 98.6h at 6h against 107.6h at 16h.
-    const r = g > 1 ? bestExitPolicy({ ...inputs, cycleHours: L, multGainPerCycle: g }) : null
+    const r = g > 1 ? yield* policyGen({ ...inputs, cycleHours: L, multGainPerCycle: g }) : null
     const H = r && !r.degenerate ? r.best?.hours ?? null : null
     table.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +g.toFixed(4), perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0, H: num(H) ? +H.toFixed(2) : null })
     if (num(H) && (!best || H < best.H)) best = { L, g, H, mean }

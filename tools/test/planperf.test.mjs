@@ -20,6 +20,16 @@
 //        decision on the 13:56 basis, replayed in coop.js slices at the live
 //        budgets: all 24 draws inside the work budget with margin, no step
 //        over the slice, no block over the limit
+//        + THE GRAFT SEARCH AND THE PASS'S FIRST INPUTS (live BN9 2026-09-29
+//        21:12Z: PLAN BLOCKED THE PAGE, 201.8ms in 'plan-grafts' step 1 — the
+//        purchase model's ten exits inside the pass's first exit inputs — and
+//        the search priced each set in one synchronous simulation, ~24ms a
+//        step on the 18:42Z QLink set here). Both replayed in the same pacer
+//        ahead of the decisions: the search at progress.js's GRAFT_SEARCH_MS
+//        on the remembered 24-graft set (QLink, $75t), the purchase model on
+//        the same inputs — every step under 10ms, each the same answer as its
+//        synchronous form, and the install decision after them still prices
+//        all 24 draws (the search is not charged to the draws' budget)
 //   PP4  PLAN INCONSISTENT (13:56, 71.683h vs 74.324h, both n = 24): the
 //        install decision re-plans its committed batch while the graft
 //        decision priced the last pass's — same noise and inputs keys, another
@@ -36,6 +46,8 @@ const P = await import("../../plan.js");
 const CO = await import("../../coop.js");
 const GP = await import("../../gangplan.js");
 const GW = await import("../../gangworth.js");
+const GR = await import("../../graftplan.js");
+const LP = await import("../../lifeplan.js");
 const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
 const { RW_PRIOR } = await import("../../traderw.js");
 
@@ -65,6 +77,23 @@ const CURVE_BELIEF = (() => {
   return { inputs: { capitalReturnPerSec: b.r, capitalScaleW: b.Wstar, capitalShape: b.shape }, draws: P.makeDraws({ ...POST, trader: b.post }, P.PLAN.N, P.seedOf(1790660521043, 9)), belief: b };
 })();
 const NOW = Date.parse(F.at1341);
+// THE LARGE GRAFT SET (fixture-bn9-qlink-1842): the node's remembered 24
+// grafts with QLink ($75t) in life 1, on that pass's committed install basis.
+const Q = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-qlink-1842.json"), "utf8"));
+const QI = Q.exitinputs.inputs;
+const Q_NONE = (() => {
+  const b = { ...QI };
+  delete b.finalGrafts;
+  delete b.lifeGrafts;
+  delete b.graftStartMoney;
+  return b;
+})();
+const Q_SEED = [...(QI.lifeGrafts ?? []), ...(QI.finalGrafts ?? [])].map((g) => g.name);
+const Q_BASIS = P.basisOf(Q.plan.decisions.install, Date.parse(Q.exitinputs.at));
+// The purchase model's catalogue (fixture-bn9-catalogue-0541: the node's offers).
+const CAT = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-catalogue-0541.json"), "utf8"));
+const CATALOGUE = LP.catalogueFromOffers(CAT.offers, CAT.owned);
+const GRAFT_SEARCH_MS = +(/const GRAFT_SEARCH_MS = (\d+)/.exec(fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8"))?.[1] ?? NaN);
 
 /** The 13:41 install decision's point, as progress.js builds it (the waits from 2h on carry the planned batch). */
 function pointOf(inputs, gains) {
@@ -271,6 +300,26 @@ export async function run() {
     const budget = P.PLAN.budgetMs;
     const decisions = {};
     const left = () => Math.max(20, budget - Object.values(decisions).reduce((a, d) => a + (d?.ms ?? 0), 0));
+    // THE PASS'S FIRST EXIT INPUTS: the purchase model's exits in slices
+    // (progress.js exitInputsGen -> purchaseCadenceGen), then the GRAFT SEARCH
+    // on the remembered 24-graft set, each set priced as a generator
+    // (progress.js passes trajGen as priceExitGen). Neither is charged to the
+    // draws' budget (progress.js planBudgetLeft counts the decisions' `ms`).
+    const qIn = CURVE ? { ...QI, ...CURVE.inputs } : QI;
+    const qNone = CURVE ? { ...Q_NONE, ...CURVE.inputs } : Q_NONE;
+    const cadenceArgs = { inputs: qIn, catalogue: CATALOGUE, favor: CATALOGUE.favor, owned: CAT.owned, repPerHour0: qIn.repPerSec * 3600, bestExitPolicy: X.bestExitPolicy };
+    const cadence = await pacer.slices(LP.cadenceByPurchasesGen({ ...cadenceArgs, bestExitPolicyGen: X.bestExitPolicyGen }), "plan-inputs");
+    const qTraj = P.trajectoryOf(Q_BASIS);
+    const qGen = P.trajectoryGenOf(Q_BASIS);
+    // A counting clock: the budget stops the search at the same check whatever the pricing's steps (the pacer's
+    // work clock at GRAFT_SEARCH_MS is the live budget; this makes the identity with the synchronous search exact).
+    const counter = () => {
+      let k = 0;
+      return () => k++;
+    };
+    const searchArgs = { candidates: Q.candidates, priceExit: (x) => qTraj(x), base: qNone, intelligence: 0, ownedNames: Q.owned, seeds: [Q_SEED, Q.plan.graftMemory?.names ?? []] };
+    const search = await pacer.slices(GR.chooseGraftsGen({ ...searchArgs, priceExitGen: (x) => qGen(x), budgetMs: 400, now: counter() }), "plan-graftSearch");
+    const searchLive = await pacer.slices(GR.chooseGraftsGen({ ...searchArgs, priceExitGen: (x) => qGen(x), budgetMs: GRAFT_SEARCH_MS, now: pacer.cpuNow }), "plan-graftSearchLive");
     decisions.grafts = await pacer.slices(P.decideAmongGen({ options: graftOpts(basisOf(F.install1341.gains)), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-grafts");
     decisions.install = await pacer.slices(P.decideInstallGen({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow, now: NOW }), "plan-install");
     decisions.graftsRebased = await pacer.slices(P.decideAmongGen({ options: graftOpts(basisOf(F.install1356.gains)), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-graftsRebased");
@@ -289,7 +338,34 @@ export async function run() {
     decisions.gang = await pacer.slices(P.decideAmongGen({ options: ["none", "fleet", "player"].map((k) => ({ key: k, sim: (dr) => armH(k, P.applyDraw(b0, dr)) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-gang");
     decisions.sleeveObjective = await pacer.slices(P.decideAmongGen({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-sleeveObjective");
     const spent = Object.values(decisions).reduce((a, d) => a + (d?.ms ?? 0), 0);
-    c.examined(Object.keys(decisions).length);
+    c.examined(Object.keys(decisions).length + 3);
+    {
+      const sI = pacer.stats.sections["plan-inputs"];
+      const sS = pacer.stats.sections["plan-graftSearch"];
+      const sL = pacer.stats.sections["plan-graftSearchLive"];
+      const t0 = performance.now();
+      const cadenceSync = LP.cadenceByPurchases(cadenceArgs);
+      const tCad = performance.now() - t0;
+      let longest = 0;
+      const timed = (x) => {
+        const a = performance.now();
+        const h = qTraj(x);
+        longest = Math.max(longest, performance.now() - a);
+        return h;
+      };
+      const syncSearch = GR.chooseGrafts({ ...searchArgs, priceExit: timed, budgetMs: 400, now: counter() });
+      const names = (r) => (r?.grafts ?? []).map((g) => `${g.name}${g.life ? `@${g.life}` : ""}`).join("|");
+      c.note(`the pass's first inputs: the purchase model (${cadence?.cycleHours}h lives) in ${sI.steps} steps, longest ${sI.maxStepMs.toFixed(1)}ms (${sI.cpuMs.toFixed(0)}ms; one synchronous step ${tCad.toFixed(1)}ms warm)`);
+      c.note(`the graft search on the remembered ${Q_SEED.length} (QLink $75t): ${search.grafts?.length} grafts, ${search.withH?.toFixed(2)}h, pruned ${search.pruned?.join(", ") || "none"}; ${sS.steps} steps, longest ${sS.maxStepMs.toFixed(1)}ms (a synchronous exit simulation here: up to ${longest.toFixed(1)}ms a step); at GRAFT_SEARCH_MS ${GRAFT_SEARCH_MS}ms of work: ${sL.cpuMs.toFixed(0)}ms in ${sL.steps} steps, longest ${sL.maxStepMs.toFixed(1)}ms, truncated ${searchLive.truncated}`);
+      if (!(cadence && cadenceSync && cadence.cycleHours === cadenceSync.cycleHours && cadence.exitH === cadenceSync.exitH)) c.fail("the purchase model in slices must be the synchronous one", `${cadence?.cycleHours}/${cadence?.exitH} vs ${cadenceSync?.cycleHours}/${cadenceSync?.exitH}`);
+      if (!(names(search) === names(syncSearch) && search.withH === syncSearch.withH && search.startMoney === syncSearch.startMoney)) c.fail("the graft search priced as generators must be the synchronous search", `${names(search)} ${search.withH} vs ${names(syncSearch)} ${syncSearch.withH}`);
+      if (!(search.grafts?.length >= 20)) c.fail(`fixture: the search must price a large set (${search.grafts?.length})`);
+      if (!(Number.isFinite(GRAFT_SEARCH_MS) && GRAFT_SEARCH_MS > 0)) c.fail("progress.js GRAFT_SEARCH_MS not found");
+      for (const [lbl, sec] of [["the purchase model", sI], ["the graft search", sS], ["the graft search at its live budget", sL]]) {
+        if (!(sec.maxStepMs < 10)) c.fail(`${lbl}: a ${sec.maxStepMs.toFixed(1)}ms step (every step must stay under 10ms: the game's page runs it 2-4x slower against the ${P.PLAN.sliceMs}ms slice)`);
+      }
+      if (!(sL.cpuMs <= GRAFT_SEARCH_MS + 60)) c.fail(`the graft search must stop near its ${GRAFT_SEARCH_MS}ms budget (${sL.cpuMs.toFixed(0)}ms)`);
+    }
     for (const [name, d] of Object.entries(decisions)) {
       const sec = pacer.stats.sections[`plan-${name}`];
       c.note(`${name.padEnd(15)} ${String(d.key).padEnd(7)} mean ${d.meanH}h on ${d.n}/${DRAWS.length} draws, ${d.ms}ms work, ${sec.steps} steps, longest ${sec.maxStepMs.toFixed(1)}ms`);
@@ -311,6 +387,10 @@ export async function run() {
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const sleeveSrc = prog.slice(prog.indexOf("async function sleeveObjectiveByExit"), prog.indexOf("async function sleeveObjectiveByExit") + 6000);
     if (!/const gangExitOf = gang \? gangExitCtx\(ns, info\) : null/.test(sleeveSrc) || /gangExitNow\(ns, info, inputs/.test(sleeveSrc)) c.fail("the sleeve objective must read the gang schedule and eBudget once per pass (gangExitCtx), not per draw");
+    // The wiring the replay above stands for (source guards).
+    if (!/chooseGraftsGen\(\{ candidates: cands, priceExit, priceExitGen: \(x\) => trajGen\(x\),/.test(prog)) c.fail("progress.js must price the graft search as generators (chooseGraftsGen priceExitGen: trajGen)");
+    if (!/await paced\(exitInputsGen\(/.test(prog) || !/yield\* purchaseCadenceGen\(/.test(prog) || !/yield\* cadenceByPurchasesGen\(/.test(prog)) c.fail("progress.js must build the pass's first exit inputs in slices (exitInputsGen -> purchaseCadenceGen -> cadenceByPurchasesGen)");
+    if (!/const withoutIn = \{ \.\.\.\(yield\* inputsGen\(\)\) \}/.test(prog)) c.fail("the graft decision must build its inputs as a generator");
     checks.push(c);
   }
 

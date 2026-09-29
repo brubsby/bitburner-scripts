@@ -160,7 +160,7 @@ import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg } from 'bodyplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
-import { bestExitPolicy, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
+import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
@@ -174,7 +174,7 @@ import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formula
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
-import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases, nodeFactionsOf, freshLifeMoney, freshHacknetFlow } from 'lifeplan.js'
+import { catalogueFromOffers, moneyScaleOf, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetFlow } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1859,7 +1859,7 @@ let cadenceOffersNow = null
 let cadenceKeptWhy = null
 const NODE_FACTIONS_FILE = '/tel/node-factions.txt'
 let redPillRepReq = null // the catalogue's Red Pill requirement this pass (exitInputsOf)
-async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, countCtx = null) {
+async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work, countCtx = null) {
   const pc = planCtxOf(ns, info)
   if (!canUseGrafting(info)) {
     pc.decisions.grafts = { key: 'none', why: 'grafting is not accessible here (BitNode 10 or Source-File 10: sfgate.canUseGrafting)', held: false }
@@ -1867,7 +1867,9 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
   }
   return planDecide(pc, 'grafts', function* () {
     const t0 = Date.now()
-    const withoutIn = { ...inputsFn() }
+    // The pass's FIRST exit inputs (the purchase model's exits are built
+    // here, then memoised): a generator, in slices (exitInputsGen).
+    const withoutIn = { ...(yield* inputsGen()) }
     delete withoutIn.finalGrafts
     delete withoutIn.lifeGrafts
     delete withoutIn.graftStartMoney
@@ -1882,6 +1884,11 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
     const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const priceExit = (x, d = null) => traj(x, d)
+    // Priced as generators (trajectoryGenOf yields per policy): a 23-graft set
+    // waiting on $75t is one long simulation, and priced in one step it held
+    // the page 189ms (live 20:02Z, PLAN BLOCKED THE PAGE). The graft SEARCH
+    // prices through it too (chooseGraftsGen priceExitGen).
+    const trajGen = trajectoryGenOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const installed = new Set(sing.ownedAugs(false))
     const inProgress = work?.type === 'GRAFTING' ? work.augmentation ?? null : null
     const prev = pc.prev?.decisions?.grafts ?? null
@@ -1935,7 +1942,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       const live = (names) => (names ?? []).filter((n) => typeof n === 'string' && !installed.has(n))
       const seed = live((pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name))
       const memSeed = live(memPrev?.names)
-      const r = yield* chooseGraftsGen({ candidates: cands, priceExit, base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, now: pc.pacer.cpuNow, seeds: [seed, memSeed] })
+      const r = yield* chooseGraftsGen({ candidates: cands, priceExit, priceExitGen: (x) => trajGen(x), base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, now: pc.pacer.cpuNow, seeds: [seed, memSeed] })
       if (!r.grafts) {
         // A REFUSAL KEEPS THE COMMITTED SET (graftplan.committedGraftsOf):
         // the committed decision, else the node's memory, re-priced below
@@ -1999,10 +2006,6 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     // The running graft is paid, and only its remaining slot hours are left.
     const inputsOfSet = (wo, set) => (set.specs.length ? { ...wo, ...graftInputsOf(inProgressSpecsOf(set.specs, work, intel), started ? 0 : set.startMoney ?? 0) } : null)
     let withIn = inputsOfSet(withoutIn, { specs, startMoney })
-    // Priced as generators (trajectoryGenOf yields per policy): a 23-graft set
-    // waiting on $75t is one long simulation, and priced in one step it held
-    // the page 189ms (live 20:02Z, PLAN BLOCKED THE PAGE).
-    const trajGen = trajectoryGenOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const optionOf = (key, x) => ({ key, noiseKey: noiseKeyOf(basis, x), sim: (d) => priceExit(applyDraw(x, d), d), simGen: (d) => trajGen(applyDraw(x, d), d) })
     const options = [optionOf('none', withoutIn)]
     if (withIn) options.push(optionOf('grafts', withIn))
@@ -2072,6 +2075,19 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       withIn = a.inputs
       pointWith = pointCh[a.key]
       d = { ...d, key: 'grafts', why: `set switched to ${a.from} (${a.specs.length} grafts, was ${setSwitch.was}): ${d.why}` }
+    }
+    // A SWITCHED GRAFT SET IS AN EVENT (as a carried stream that moved is,
+    // plan.streamEventsOf): every later decision this pass prices the node
+    // with the new set, so the install decision re-decides on it rather than
+    // holding a trajectory decided on the old one — and the exit's move is
+    // the switch, not drift. Live BN9 2026-09-29 20:57Z: the budget-stopped
+    // search's 21-graft set won the commitment rule against the committed 4
+    // (switch recorded), the held install re-priced on it 90.6h -> 47.2h and
+    // EXIT UNSTABLE read the committed switch as "no event"; 21:17Z again
+    // (21 -> 19, 34.1h -> 26.5h).
+    if (pc.prev && (setSwitch || (d.switched === true && (d.key === 'grafts' || d.key === 'none')))) {
+      pc.events = [...(pc.events ?? []), setSwitch ? `the committed graft set switched to ${setSwitch.from} (${setSwitch.n} grafts, was ${setSwitch.was})` : `the graft decision switched to '${d.key}'`]
+      pc.redecide = true
     }
     pc.graftChosen = d.key === 'grafts' ? { from: setSwitch ? setSwitch.from : committedSet ? 'the committed set' : "this pass's search", specs, startMoney } : null
     // The with-run's policy (installs before the final window) on the same
@@ -3398,7 +3414,12 @@ function cadenceOptsOf(player) {
 // length taken. Once per pass and life (3ms offline); null without offers or
 // a reputation rate, and the measured cadence stands, named.
 let purchaseCadenceMemo = null
-function purchaseCadenceOf(ns, info, base, offers, owned) {
+// IN SLICES (purchaseCadenceGen, lifeplan.cadenceByPurchasesGen): the first
+// exit inputs of a pass price ten life lengths' exits, and in one step that
+// held the page 201.8ms (live BN9 2026-09-29 21:12Z, 'plan-grafts' step 1:
+// the graft decision builds the pass's first inputs). The graft decision
+// builds them through exitInputsGen; every later build this pass hits the memo.
+function* purchaseCadenceGen(ns, info, base, offers, owned) {
   const key = `${info?.lastAugReset}|${planCtx?.decidedAt ?? ''}|${Math.floor(Date.now() / 300e3)}`
   if (purchaseCadenceMemo?.key === key) return purchaseCadenceMemo.value
   let value = null
@@ -3407,7 +3428,7 @@ function purchaseCadenceOf(ns, info, base, offers, owned) {
     const rph = typeof base.repPerSec === 'number' && base.repPerSec > 0 ? base.repPerSec * 3600 : null
     if (catal.items.length && rph) {
       const ms = moneyScaleOf(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
-      const r = cadenceByPurchases({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy })
+      const r = yield* cadenceByPurchasesGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy, bestExitPolicyGen })
       value = r ? { ...r, moneyScale: ms.scale, moneyCalibration: ms.why } : null
     }
   } catch (e) {
@@ -3464,6 +3485,10 @@ function cadenceModelPriorOf(ns, info) {
   return null
 }
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
+  return drain(exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet))
+}
+/** exitInputsOf as a generator: the purchase model's exits in slices (purchaseCadenceGen). */
+function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   const out = exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
   // EVERY MONEY STREAM ONCE, with its own growth driver (the final window's
   // money leg is the binding one on the trader's curve): the committed gang
@@ -3487,7 +3512,7 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
   // (plan.applyDraw, cadenceRateMedian).
   // The NODE's catalogue (cadenceOffersNow): a fresh life has joined nothing.
   const cOffers = cadenceOffersNow?.length ? cadenceOffersNow : offers
-  const pc = Array.isArray(cOffers) && cOffers.length ? purchaseCadenceOf(ns, info, out, cOffers, ownedAugsNow) : null
+  const pc = Array.isArray(cOffers) && cOffers.length ? yield* purchaseCadenceGen(ns, info, out, cOffers, ownedAugsNow) : null
   if (pc && !pc.error && typeof pc.cycleHours === 'number' && pc.multGainPerCycle > 1) {
     // THE MODEL IS THE CADENCE POSTERIOR'S PRIOR (bayes.cadencePosterior
     // modelPrior): its ln(M) per hour at the length it chose, with its stated
@@ -5388,6 +5413,19 @@ async function act(ns, canJoin, info, note) {
     }
   }
 
+  // THE PASS'S FIRST EXIT INPUTS, IN SLICES. The first build of a pass prices
+  // the purchase model's ten life lengths (purchaseCadenceGen, memoised for
+  // the pass); built synchronously by whichever caller came first it held the
+  // page 201.8ms (live BN9 2026-09-29 21:12Z, 'plan-grafts' step 1). Built
+  // here under the pass pacer, every later exitInputsOf this pass is cheap —
+  // including the ones that cannot yield. A throw is left to those callers
+  // (each guards its own build and says so).
+  try {
+    await paced(exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), 'plan-inputs')
+  } catch {
+    // reported by the callers' own builds
+  }
+
 
   // THE WORK SLOT, PRICED. An hour of the best money crime is worth
   // moneyLn(dollars/h) in the same ln(M) the schedule prices an hour of
@@ -5488,7 +5526,7 @@ async function act(ns, canJoin, info, note) {
   // the committed start balance — and holds the work slot until it is done: a
   // running graft is never interrupted (the install below is held too;
   // GraftingWork.finish keeps the money of a cancelled graft).
-  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
+  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
   // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
   const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
   const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)

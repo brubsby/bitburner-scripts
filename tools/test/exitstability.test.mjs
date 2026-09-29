@@ -47,6 +47,15 @@
 //                           the rebase prices the carried set only; the farm
 //                           share and eBudget are smoothed; publishPlan
 //                           records exitStability
+//   ES9 A SWITCHED GRAFT SET (fixture-bn9-graftswitch-2057: 20:52 -> 20:57Z,
+//                           21:12 -> 21:17Z live): the budget-stopped search's
+//                           set replaced the committed one only by winning the
+//                           commitment rule (setSwitch recorded, the held key
+//                           kept otherwise), and the exit moved with it
+//                           (90.6h -> 47.2h, 34.1h -> 26.5h). EXIT UNSTABLE
+//                           read that decided switch as "no event"; the switch
+//                           is now an event of its pass (the install decision
+//                           re-decides on the new set, the check skips it)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -288,6 +297,28 @@ export async function run() {
     if (P.streamEventsOf(a, Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v * 1.1]))).length) c.fail("a 10% move is not an event (25%)");
     const prog = code("progress.js");
     if (!/pc\.streams = streamSummaryOf\(inputs\?\.carriedIncome\)/.test(prog) || !/const eRepObs = /.test(prog) || !/yield\* policyGenOf\(basis, withIn\)/.test(prog)) c.fail("wiring: the stream event in planInstallOf, eRep smoothed, the with-run's policy as a generator");
+    checks.push(c);
+  }
+  {
+    const c = new Check("ES9", "A SWITCHED GRAFT SET IS AN EVENT: live 20:57Z and 21:17Z the committed set changed only through the commitment rule (setSwitch), and the exit's move was that switch — not drift for EXIT UNSTABLE");
+    const W = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-graftswitch-2057.json"), "utf8"));
+    for (const [a, b] of [["p2052", "p2057"], ["p2112", "p2117"]]) {
+      const prev = W[a];
+      const rec = W[b];
+      const g = rec.decisions.grafts;
+      c.examined(1);
+      const live = P.exitStabilityOf(prev, rec);
+      c.note(`${b.slice(1)}: committed ${prev.decisions.grafts.grafts.length} -> ${g.grafts.length} grafts (setSwitch ${JSON.stringify(g.setSwitch)}), exit ${prev.exit.meanH}h -> ${rec.exit.meanH}h; as published: ${live.why.slice(0, 120)}`);
+      if (!(live.ok === false)) c.fail(`fixture: the published pair must fail EXIT UNSTABLE (${live.why})`);
+      // 6024ebf held under the budget-cut search: the set changed only as a challenger's win.
+      if (!(g.setSwitch && g.setSwitch.n === g.grafts.length && g.setSwitch.was === prev.decisions.grafts.grafts.length && g.key === "grafts")) c.fail("the set change must be a recorded switch of the committed set (a challenger that won the commitment rule)", JSON.stringify(g.setSwitch));
+      // With the switch as the pass's event (progress.js graftDecisionOf), the pair is no longer drift.
+      const withEvent = P.exitStabilityOf(prev, { ...rec, events: [`the committed graft set switched to ${g.setSwitch?.from} (${g.setSwitch?.n} grafts, was ${g.setSwitch?.was})`] });
+      if (!(withEvent.ok === null && /re-decided this pass/.test(withEvent.why))) c.fail("a pass whose graft set switched must be skipped as an event pass", withEvent.why);
+    }
+    const prog = code("progress.js");
+    c.examined(1);
+    if (!/if \(pc\.prev && \(setSwitch \|\| \(d\.switched === true/.test(prog) || !/pc\.events = \[\.\.\.\(pc\.events \?\? \[\]\), setSwitch \? `the committed graft set switched/.test(prog)) c.fail("progress.js must record a switched graft set as an event of its pass (and re-decide)");
     checks.push(c);
   }
   return checks;
