@@ -169,7 +169,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -1908,19 +1908,34 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     // The running graft is paid, and only its remaining slot hours are left.
     const inputsOfSet = (wo, set) => (set.specs.length ? { ...wo, ...graftInputsOf(inProgressSpecsOf(set.specs, work, intel), started ? 0 : set.startMoney ?? 0) } : null)
     let withIn = inputsOfSet(withoutIn, { specs, startMoney })
-    const options = [{ key: 'none', noiseKey: noiseKeyOf(basis, withoutIn), sim: (d) => priceExit(applyDraw(withoutIn, d), d) }]
-    if (withIn) options.push({ key: 'grafts', noiseKey: noiseKeyOf(basis, withIn), sim: (d) => priceExit(applyDraw(withIn, d), d) })
-    const challengers = setsIn.map((a) => ({ ...a, inputs: inputsOfSet(withoutIn, a) })).filter((a) => a.inputs)
-    for (const a of challengers) options.push({ key: a.key, noiseKey: noiseKeyOf(basis, a.inputs), sim: (d) => priceExit(applyDraw(a.inputs, d), d) })
-    const pointNone = priceExit(withoutIn)
+    // Priced as generators (trajectoryGenOf yields per policy): a 23-graft set
+    // waiting on $75t is one long simulation, and priced in one step it held
+    // the page 189ms (live 20:02Z, PLAN BLOCKED THE PAGE).
+    const trajGen = trajectoryGenOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
+    const optionOf = (key, x) => ({ key, noiseKey: noiseKeyOf(basis, x), sim: (d) => priceExit(applyDraw(x, d), d), simGen: (d) => trajGen(applyDraw(x, d), d) })
+    const options = [optionOf('none', withoutIn)]
+    if (withIn) options.push(optionOf('grafts', withIn))
+    const pointNone = yield* trajGen(withoutIn)
     yield
-    let pointWith = withIn ? priceExit(withIn) : null
+    let pointWith = withIn ? yield* trajGen(withIn) : null
     yield
     const pointCh = {}
-    for (const a of challengers) {
-      pointCh[a.key] = priceExit(a.inputs)
+    const allChallengers = setsIn.map((a) => ({ ...a, inputs: inputsOfSet(withoutIn, a) })).filter((a) => a.inputs)
+    for (const a of allChallengers) {
+      pointCh[a.key] = yield* trajGen(a.inputs)
       yield
     }
+    // A CHALLENGER ENTERS THE DRAWS ONLY IF ITS POINT COULD WIN: within three
+    // structural errors of the committed set's point (or the committed set is
+    // unpriced). The node's 23-graft memory at 287h against 21h would take the
+    // pass's Monte Carlo budget and win nothing: live 20:02Z it did, the
+    // install decision was left 3 draws (PLAN UNDER-SAMPLED). Screened sets
+    // are published with their points (challengers[].screened).
+    const sS = typeof pc.post?.drift?.s === 'number' && pc.post.drift.s > 0 ? pc.post.drift.s : 0.1
+    const refH = typeof pointWith === 'number' && isFinite(pointWith) ? pointWith : typeof pointNone === 'number' && isFinite(pointNone) ? pointNone : null
+    const inReach = (h) => typeof h === 'number' && isFinite(h) && (refH === null || h < refH * (1 + 3 * sS))
+    const challengers = allChallengers.filter((a) => inReach(pointCh[a.key]))
+    for (const a of challengers) options.push(optionOf(a.key, a.inputs))
     // Re-pricing on another basis (the install decision may switch later this
     // pass): the committed choice's options again, same draws, on the install
     // decision's INPUTS when given: the graft decision builds its inputs early
@@ -1943,8 +1958,9 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       }
       const rp = { inputsKey: inputsKeyOf(wo) }
       const wi = pc.graftChosen?.specs?.length ? inputsOfSet(wo, pc.graftChosen) : null
-      rp.options = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr) }]
-      if (wi) rp.options.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr) })
+      const g2 = trajectoryGenOf(spec, { count: countCtx, repPoint: pc.repPoint ?? null })
+      rp.options = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr), simGen: (dr) => g2(applyDraw(wo, dr), dr) }]
+      if (wi) rp.options.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr), simGen: (dr) => g2(applyDraw(wi, dr), dr) })
       rp.specs = pc.graftChosen?.specs ?? []
       rp.startMoney = started ? 0 : pc.graftChosen?.startMoney ?? null
       rp.setFrom = pc.graftChosen?.from ?? null
@@ -1984,7 +2000,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       grafts: d.key === 'grafts' ? specs : [],
       startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
       ...(setSwitch ? { setSwitch } : {}),
-      challengers: challengers.map((a) => ({ key: a.key, from: a.from, n: a.specs.length, pointH: typeof pointCh[a.key] === 'number' ? +pointCh[a.key].toFixed(3) : null })),
+      challengers: allChallengers.map((a) => ({ key: a.key, from: a.from, n: a.specs.length, pointH: typeof pointCh[a.key] === 'number' ? +pointCh[a.key].toFixed(3) : null, ...(challengers.includes(a) ? {} : { screened: `point beyond ${(3 * sS * 100).toFixed(0)}% of the committed set's` }) })),
       // No decision (nothing feasible, budget): the set priced is KEPT for
       // every other decision's inputs (committedGraftsOf), never dropped.
       ...(!d.key && specs.length ? { kept: { grafts: specs, startMoney: started ? 0 : startMoney, from: 'the set this undecided pass priced' } } : {}),

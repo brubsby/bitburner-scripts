@@ -232,6 +232,8 @@ export async function run() {
       [/key: 'grafts:memory'/, "the node's memory is a challenger"],
       [/redecide: pc\.redecide \|\| !prev \|\| challengers\.length > 0/, "a challenger is decided by the commitment rule"],
       [/const wi = pc\.graftChosen\?\.specs\?\.length \? inputsOfSet\(wo, pc\.graftChosen\)/, "the rebase prices the set the install carried"],
+      [/const challengers = allChallengers\.filter\(\(a\) => inReach\(pointCh\[a\.key\]\)\)/, "a challenger enters the draws only if its point could win (live 20:02Z the 287h memory set left the install 3 draws)"],
+      [/simGen: \(d\) => trajGen\(applyDraw\(x, d\), d\)/, "graft options price as generators (a 189ms step blocked the page live)"],
       [/const shareObs = /, "the exp farm's share is averaged over the life"],
       [/const eBudgetObs = /, "eBudget is averaged over the life"],
       [/rec\.exitStability = exitStabilityOf\(pc\.prevAny/, "publishPlan records exitStability"],
