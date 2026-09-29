@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: the manipCurve interpolation (prices port openers' manipulation channel).
-import { rateAt, manipLostExp } from 'expfarm.js'
+import { rateAt, manipLostExp, farmOrMoney } from 'expfarm.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -2623,6 +2623,51 @@ function installPointOf(ns, info, gate) {
   if (inPass) return installPointH({ gate, planInstall: inPass, planOpts: { lastAugReset: info?.lastAugReset } })
   const rec = readJson(ns, PLAN_FILE)
   return installPointH({ gate, planInstall: rec?.decisions?.install ?? null, planOpts: { lastAugReset: info?.lastAugReset, planLastAugReset: rec?.lastAugReset, at: rec?.at ?? '' } })
+}
+
+/**
+ * MONEY BATCHES OR THE EXP FARM — two simulated exits, in every node.
+ *
+ * batch.js ran the exp farm only where hacking pays nothing (BitNode 8's
+ * ScriptHackMoneyGain 0). In BitNode 9 hacking pays a thousandth of BN1
+ * (ServerMaxMoney 0.01 x ScriptHackMoney 0.1: the batcher earned $6.7k/s of a
+ * $6.7m/s income) while the exit's binding legs are the climb to 6000 and
+ * every rep leg, all paced by hacking exp at HackExpGain 0.05. So the fleet's
+ * product is a choice, priced here on the exit inputs:
+ *
+ *   money  as measured
+ *   farm   script exp x the farm's exp multiple (batch.txt expFarmPreview:
+ *          exp per GB-ms of the farm unit over HWGW's, on the RAM the farm
+ *          would hold over the RAM the batches hold), income less what the
+ *          batcher earns (batch.txt earnedPerSec)
+ *   mixed  a fraction f of the fleet farming (reported, not acted on: the
+ *          batcher farms all-or-nothing)
+ *
+ * The farm's exp multiple is NOT CALIBRATED (the farm has never run in this
+ * node); the HWGW side is the measured script exp rate (tel.js). What the
+ * exp is NOT simulated to buy: the higher level's reputation in earlier lives
+ * (lifeplan holds the rep rate flat) — a floor on the farm's side.
+ * Publishes /tel/expfarm.txt {farm, withH, withoutH, mixed, why}; batch.js
+ * farms on a fresh farm: true.
+ */
+function farmVerdictOf(ns, info, inputs) {
+  const out = (farm, why, extra = {}) => ({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, farm, why, ...extra })
+  try {
+    const b = readJson(ns, '/tel/batch.txt')
+    const t = readJson(ns, '/tel/status.txt')
+    if (!b || !(Date.now() - Date.parse(b.at) < 5 * 60e3)) return out(false, 'no fresh batch.txt')
+    if (b.expFarm) return out(true, 'the farm is running (batch.txt expFarm): its own record is the measurement now', { running: true })
+    const pv = b.expFarmPreview
+    if (!pv?.perGB || !(pv.usedGB > 0) || !(pv.totalGB > 0)) return out(false, `no farm preview to price (${pv?.why ?? 'batch.js published none'})`)
+    const scriptExp = t && Date.now() - Date.parse(t.at) < 5 * 60e3 && t.expPerSec > 0 ? t.expPerSec : null
+    if (scriptExp === null || !(inputs?.expPerSec > 0)) return out(false, 'no measured script exp rate')
+    const r = farmOrMoney(bestExitPolicy, inputs, { scriptExpPerSec: scriptExp, perGB: pv.perGB, usedGB: pv.usedGB, totalGB: pv.totalGB, batchMoneyPerSec: b.totals?.earnedPerSec > 0 ? b.totals.earnedPerSec : 0 })
+    if (r.farm === null) return out(false, r.why)
+    const { farm, withH, withoutH, k, batchMoney, mixed } = r
+    return out(farm, `exit ${withH.toFixed(2)}h farming exp (script exp x${k.toFixed(2)} on ${pv.target}, -$${Math.round(batchMoney)}/s) vs ${withoutH.toFixed(2)}h batching money`, { withH, withoutH, expMultiple: k, target: pv.target, batchMoneyPerSec: batchMoney, scriptExpPerSec: scriptExp, mixed, calibration: 'farm side NOT CALIBRATED (no farm run in this node); batched side = tel.js script exp', notSimulated: "the higher level's reputation in lives before the final one (a floor on the farm)" })
+  } catch (e) {
+    return out(false, `farm verdict threw: ${String(e).slice(0, 100)}`)
+  }
 }
 
 function hacknetLifeIncome(ns, info) {
@@ -5771,6 +5816,12 @@ async function act(ns, canJoin, info, note) {
       // flat fallback needs it added.
       const mW = Wg === null ? liveCapital : liveCapital + (incomeTraj ? incomeTraj.moneyBy(Wg) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * Wg * 3600)
       publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), { W: Wg, finalWindow: gate.holdForever === true, moneyAtW: mW, replanAt, pending, offers })
+      // The fleet's product, priced on the same trajectory (farmVerdictOf).
+      try {
+        ns.write('/tel/expfarm.txt', JSON.stringify(farmVerdictOf(ns, info, exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))), 'w')
+      } catch {
+        /* batch.js reads a stale or missing verdict as money mode */
+      }
     }
     writeSleevePlan(
       ns,

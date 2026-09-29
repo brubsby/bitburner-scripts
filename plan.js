@@ -112,7 +112,7 @@ export function makeDraws(post, N, seed) {
     const repResid = Math.exp(PRIORS.repEstimateSdLn * normalOf(st('repEstimate')))
     const incomeLn = post.income && fin(post.income.mean) && fin(post.income.sd) ? post.income.mean + post.income.sd * normalOf(st('income')) : null
     const r = post.trader ? Math.max(1e-9, post.trader.perSec.mean + post.trader.perSec.sd * zT) : null
-    out.push({ i, seed, r, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, cycleH, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    out.push({ i, seed, r, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -132,7 +132,17 @@ export function applyDraw(inputs, d) {
     // The life's length is the purchase model's DECISION (lifeplan), not a
     // random input: kept. What a life buys is scaled by this draw's measured
     // rate against its median — the posterior's spread, on the model's level.
-    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cadenceRateMedian) && inputs.cadenceRateMedian > 0 && fin(inputs.multGainPerCycle) && inputs.multGainPerCycle > 1) o.multGainPerCycle = Math.exp((Math.log(inputs.multGainPerCycle) * d.lnPerHour) / inputs.cadenceRateMedian)
+    //
+    // ONLY BY THIS NODE'S OWN EVIDENCE (d.cadOwnW, the posterior's own-node
+    // weight): the purchase model's gain comes from THIS node's catalogue,
+    // money and reputation, so the cross-node spread of other nodes' cadences
+    // (x4.75 either way at 80% with no life here) is not its uncertainty.
+    // Applied in full it made the Monte Carlo mean ~1.2-2x the point exit
+    // (live BN9 2026-09-29: this draw alone, mean 130h, q90 211h, point
+    // 108h). With w = 0 the model's gain stands; the draws' spread then comes
+    // from the rates the model is fed (exp, rep, the trader), as it should.
+    const w = fin(d.cadOwnW) ? Math.min(1, Math.max(0, d.cadOwnW)) : 1
+    if (w > 0 && fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cadenceRateMedian) && inputs.cadenceRateMedian > 0 && fin(inputs.multGainPerCycle) && inputs.multGainPerCycle > 1) o.multGainPerCycle = Math.exp(Math.log(inputs.multGainPerCycle) * Math.pow(d.lnPerHour / inputs.cadenceRateMedian, w))
   } else {
     if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
     if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)

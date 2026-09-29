@@ -101,6 +101,22 @@ let stockCurve = null
 // Every company server with a stock, servable or not, for the trader to read
 // (batch.txt stockServers): published whatever it currently requests.
 let stockServers = null
+// THE FARM, PRICED (not a BitNode flag): in money mode the batcher still
+// ranks exp targets and publishes what farming would earn against what the
+// money batches earn in exp (expFarmPreview); progress.js prices the two on
+// the exit simulation and publishes /tel/expfarm.txt, which switches the
+// farm on here. BitNode 8 (hacking pays nothing) farms regardless.
+let farmPreview = null
+const FARM_VERDICT = '/tel/expfarm.txt'
+/** A fresh, this-life verdict from progress.js that farming shortens the exit. */
+function farmVerdictOn(ns) {
+  try {
+    const v = JSON.parse(ns.read(FARM_VERDICT) || 'null')
+    return !!v && v.farm === true && v.lastAugReset === ns.getResetInfo().lastAugReset && Date.now() - Date.parse(v.at) < 15 * 60e3
+  } catch {
+    return false
+  }
+}
 function refreshStockManip(ns) {
   try {
     const rec = stockRecordOf(JSON.parse(ns.read(STOCK_FILE) || 'null'), ns.getResetInfo().lastAugReset)
@@ -1620,7 +1636,38 @@ export async function main(ns) {
         // are pointless. The batcher serves only the trader's manip hosts, and
         // only on a priced verdict; the farm gets the rest of the fleet.
         const nodeMults = bitNodeMults(ns.getResetInfo().currentNode)
-        farm.on = !flags.nofarm && expMode(nodeMults)
+        farm.on = !flags.nofarm && (expMode(nodeMults) || farmVerdictOn(ns))
+        // Money mode: what the farm WOULD earn, for progress.js to price.
+        if (!farm.on) {
+          farmPreview = (() => {
+            try {
+              const readT = (h) => readTarget(ns, h, yOf())
+              const ex = rankExpTargets(ns, readT, level)
+              const best = ex[0] ?? null
+              if (!best) return { at: new Date(now).toISOString(), why: 'no rooted, hackable exp target' }
+              const cur = targets.map((h) => {
+                const t = readT(h)
+                t.baseDifficulty = ns.getServer(h).baseDifficulty
+                return batchedScore(t)
+              }).filter((x) => x > 0)
+              const batchScore = cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null
+              return {
+                at: new Date(now).toISOString(),
+                target: best.t.host,
+                farmScorePerGBms: best.s,
+                batchScorePerGBms: batchScore,
+                // Exp per GB-ms of the farm's hack+weaken unit over HWGW's
+                // (every op padded to weaken time) — expfarm.js. NOT CALIBRATED:
+                // the farm's side has no live measurement in this node.
+                perGB: batchScore > 0 ? best.s / batchScore : null,
+                usedGB: Math.round(usedRam),
+                totalGB: Math.round(totalRam),
+              }
+            } catch (e) {
+              return { at: new Date(now).toISOString(), why: `preview threw: ${String(e).slice(0, 120)}` }
+            }
+          })()
+        } else farmPreview = null
         farm.weakenRate = nodeMults?.ServerWeakenRate > 0 ? nodeMults.ServerWeakenRate : 1
         if (farm.on) {
           const readT = (h) => readTarget(ns, h, yOf())
@@ -2242,6 +2289,7 @@ export async function main(ns) {
           // The exp farm (expfarm.js), when this node pays nothing for hacks.
           // `model.hackThreadsPerSec` x exp/thread is the prediction to hold
           // against tel.js's measured script exp rate — NOT CALIBRATED yet.
+          expFarmPreview: farmPreview,
           expFarm: farm.on
             ? {
                 target: farm.target?.host ?? null,

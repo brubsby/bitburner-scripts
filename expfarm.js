@@ -231,6 +231,36 @@ export function rateAt(curve, nu) {
 }
 
 /**
+ * MONEY BATCHES OR THE FARM — two exits on one input set (progress.js
+ * farmVerdictOf publishes it; batch.js farms on it in every node).
+ *
+ *   money  inputs as measured
+ *   farm   expPerSec: the non-script exp + script exp x k, where
+ *          k = perGB x totalGB / usedGB (the farm unit's exp per GB-ms over
+ *          HWGW's, on the RAM the farm fills over the RAM the batches hold);
+ *          incomePerSec less what the batcher earns
+ *   mixed  f of the fleet farming, f in {0.25, 0.5, 0.75} (reported)
+ *
+ * { farm, withH, withoutH, k, batchMoney, mixed } or { farm: null, why }.
+ */
+export function farmOrMoney(bestExitPolicy, inputs, { scriptExpPerSec, perGB, usedGB, totalGB, batchMoneyPerSec = 0 } = {}) {
+  if (typeof bestExitPolicy !== 'function' || !inputs) return { farm: null, why: 'no exit inputs' }
+  if (!pos(scriptExpPerSec) || !pos(inputs.expPerSec)) return { farm: null, why: 'no measured script exp rate' }
+  if (!pos(perGB) || !pos(usedGB) || !pos(totalGB)) return { farm: null, why: 'farm preview unreadable' }
+  const k = (perGB * totalGB) / usedGB
+  const batchMoney = pos(batchMoneyPerSec) ? batchMoneyPerSec : 0
+  const script = Math.min(scriptExpPerSec, inputs.expPerSec)
+  const other = inputs.expPerSec - script
+  const at = (f) => ({ ...inputs, expPerSec: other + script * (1 - f + f * k), incomePerSec: Math.max(0, (inputs.incomePerSec ?? 0) - f * batchMoney) })
+  const H = (x) => bestExitPolicy(x)?.best?.hours ?? null
+  const withoutH = H(inputs)
+  const mixed = [0.25, 0.5, 0.75, 1].map((f) => ({ f, hours: H(at(f)) }))
+  const withH = mixed[mixed.length - 1].hours
+  if (!num(withH) || !num(withoutH)) return { farm: null, why: 'an exit could not be priced' }
+  return { farm: withH < withoutH - 1 / 60, withH, withoutH, k, batchMoney, mixed }
+}
+
+/**
  * Whether the fleet should farm exp instead of money: where scripted hacking
  * pays nothing (ScriptHackMoneyGain 0, NetscriptHelpers.tsx:648), every
  * drained dollar is waste and exp is the only product. Null table -> false

@@ -7,7 +7,7 @@
 //   EF3  waves stay underflow-safe and chunks never drain the balance to zero
 //   EF4  manipVerdict is exit-with vs exit-without on the same inputs, and
 //        refuses (serves nothing) without the trader's manipCurve
-//   EF5  batch.js is gated on the node (expMode) and the farm runs only there;
+//   EF5  batch.js farms in exp mode, or elsewhere on the priced verdict;
 //        spill is off in exp mode; h.js is launched unpadded by the farm
 //   EF6  seed.js ranks by exp and drops the money floor only in exp mode
 
@@ -101,11 +101,13 @@ export async function run() {
   }
   checks.push(c4);
 
-  const c5 = new Check("EF5", "batch.js farms exp only in exp mode; spill off there; hacks launched unpadded");
+  const c5 = new Check("EF5", "batch.js farms exp in exp mode OR on the priced farm verdict (bn9exit [EX1]); spill off there; hacks launched unpadded");
   {
     c5.examined(4);
     const s = code("batch.js");
-    if (!/farm\.on = !flags\.nofarm && expMode\(nodeMults\)/.test(s)) c5.fail("batch.js no longer gates the farm on expMode(the node's table)");
+    // expMode (hacking pays nothing) always farms; elsewhere the farm is a
+    // priced decision (progress.js farmVerdictOf -> /tel/expfarm.txt).
+    if (!/farm\.on = !flags\.nofarm && \(expMode\(nodeMults\) \|\| farmVerdictOn\(ns\)\)/.test(s)) c5.fail("batch.js no longer gates the farm on expMode(the node's table) or the priced verdict");
     if (!/if \(!farm\.on && anyBatching && targets\.length\)/.test(s)) c5.fail("the weaken spill still runs in exp mode (it would starve the farm)");
     if (!/spreadChunks\(ns, free, ram, 'hack', tgt\.host, wv\.hack, wv\.chunk, nextId\)/.test(s)) c5.fail("the farm's hacks are not launched through spreadChunks");
     if (!/exec\(SETTINGS\.workers\[op\], host, \{ threads: take, temporary: true \}, target, 0, nextId\(\)/.test(s)) c5.fail("spreadChunks pads its ops — a padded hack earns the weaken rate");

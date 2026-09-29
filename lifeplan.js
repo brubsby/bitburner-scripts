@@ -294,7 +294,13 @@ export function cadenceByPurchases({ inputs, catalogue, favor, owned, repPerHour
     const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0 })
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
     const g = Math.exp(mean)
-    const r = g > 1 ? bestExitPolicy({ ...inputs, cycleHours: L, multGainPerCycle: g, installGains: null, nextInstallGain: null }) : null
+    // ON THE EXIT'S OWN INPUTS: only the later lives' length and gain vary.
+    // The next install's batch (installGains / nextInstallGain) is THIS
+    // life's, whatever length later lives run; nulling it (as this did) gave
+    // the first install the L-length life's gain too, which favours long
+    // lives — live BN9 2026-09-29 it chose 16h (table 99.0h) where the full
+    // exit on the same inputs is 98.6h at 6h against 107.6h at 16h.
+    const r = g > 1 ? bestExitPolicy({ ...inputs, cycleHours: L, multGainPerCycle: g }) : null
     const H = r && !r.degenerate ? r.best?.hours ?? null : null
     table.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +g.toFixed(4), perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0, H: num(H) ? +H.toFixed(2) : null })
     if (num(H) && (!best || H < best.H)) best = { L, g, H, mean }
