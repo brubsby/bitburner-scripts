@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
-import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, graftSetOn, sameGraftSet, GRAFT_CITY } from 'graftplan.js'
+import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGang, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
@@ -169,7 +169,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -1877,46 +1877,61 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       startMoney = prev.startMoney ?? null
       searchWhy = 'the committed set, re-priced (no event)'
     }
+    const liveOf = (gs) => (Array.isArray(gs) ? gs : []).filter((g) => g && typeof g.name === 'string' && !installed.has(g.name))
+    // THE COMMITTED SET HOLDS; ANOTHER SET IS A CHALLENGER. A search the
+    // budget stopped continues every pass (`continuing`), and its result used
+    // to REPLACE the committed set under the unchanged key 'grafts' — so a
+    // "held" graft decision carried a different set every pass, the install
+    // decision priced whichever set this pass's search returned, and the
+    // rebase then committed another (live BN9 2026-09-29 19:22-19:32Z: 9, 7,
+    // 1 grafts on consecutive passes, the committed 6 beside the 9 priced —
+    // GRAFTS DROPPED; the exit 71h -> 46h -> 13h). Now the committed set is
+    // option 'grafts' and a different set — this pass's search, the node's
+    // memory — is option 'grafts:<from>', which replaces it only by the
+    // commitment rule on the paired draws (P >= theta and a positive expected
+    // gain), like any other switch.
+    const committedSet = prev?.key === 'grafts' && liveOf(prev.grafts).length ? { from: 'the committed set', specs: liveOf(prev.grafts), startMoney: prev.startMoney ?? null, schedule: prev.schedule ?? null } : null
+    const setsIn = []
+    if (committedSet && !sameGraftSet(committedSet.specs, specs)) {
+      setsIn.push({ key: 'grafts:search', from: "this pass's search", specs, startMoney, schedule })
+      specs = committedSet.specs
+      startMoney = committedSet.startMoney
+      schedule = committedSet.schedule
+    }
+    const memSpecs = liveOf(memory?.grafts)
+    if (memSpecs.length && !sameGraftSet(memSpecs, specs) && !setsIn.some((a) => sameGraftSet(a.specs, memSpecs))) setsIn.push({ key: 'grafts:memory', from: "the node's graft memory", specs: memSpecs, startMoney: memory?.startMoney ?? null, schedule: null })
     // Started: a committed FINAL-WINDOW graft is owned or running — the
     // threshold is spent. A graft of an earlier life (spec.life) spends the
     // life's own money, not the final window's start balance.
     const isLife = (n) => specs.some((g) => g?.name === n && Number.isInteger(g.life))
     const started = (inProgress !== null && !isLife(inProgress)) || (prev?.grafts ?? []).some((g) => installed.has(g?.name) && !Number.isInteger(g?.life))
     // The running graft is paid, and only its remaining slot hours are left.
-    const specsNow = inProgressSpecsOf(specs, work, intel)
-    const withIn = specs.length ? { ...withoutIn, ...graftInputsOf(specsNow, started ? 0 : startMoney ?? 0) } : null
-    // THE SETS A REBASE CHOOSES AMONG (graftSetOn): this pass's, and the
-    // node's memory and last committed set where they differ from it. A search
-    // run on a stale basis can lose the memory set to a 'none' that basis
-    // prices low; the rebase onto the install decision's trajectory re-prices
-    // every set rather than only the survivor of that search. Live BN9
-    // 2026-09-29 17:42Z: the event re-search, on the last pass's committed
-    // batch, priced grafting nothing at 21.6h, the 24-graft memory could not
-    // beat it, the budget stopped the greedy at 1 graft, and the rebase onto
-    // w0.38 compared that 1 graft with nothing (110.9h vs 107.0h) and flipped
-    // to 'none' — where the 24 priced 74.5h on the same trajectory.
-    const liveOf = (gs) => (Array.isArray(gs) ? gs : []).filter((g) => g && typeof g.name === 'string' && !installed.has(g.name))
-    const altSets = [
-      { from: "the node's graft memory", specs: liveOf(memory?.grafts), startMoney: memory?.startMoney ?? null },
-      { from: 'the last committed set', specs: liveOf(pc.prevAny?.decisions?.grafts?.grafts), startMoney: pc.prevAny?.decisions?.grafts?.startMoney ?? null },
-    ].filter((a) => a.specs.length && !sameGraftSet(a.specs, specs))
-    const graftsInputsFor = (wo, set) => ({ ...wo, ...graftInputsOf(inProgressSpecsOf(set.specs, work, intel), started ? 0 : set.startMoney ?? 0) })
+    const inputsOfSet = (wo, set) => (set.specs.length ? { ...wo, ...graftInputsOf(inProgressSpecsOf(set.specs, work, intel), started ? 0 : set.startMoney ?? 0) } : null)
+    let withIn = inputsOfSet(withoutIn, { specs, startMoney })
     const options = [{ key: 'none', noiseKey: noiseKeyOf(basis, withoutIn), sim: (d) => priceExit(applyDraw(withoutIn, d), d) }]
     if (withIn) options.push({ key: 'grafts', noiseKey: noiseKeyOf(basis, withIn), sim: (d) => priceExit(applyDraw(withIn, d), d) })
+    const challengers = setsIn.map((a) => ({ ...a, inputs: inputsOfSet(withoutIn, a) })).filter((a) => a.inputs)
+    for (const a of challengers) options.push({ key: a.key, noiseKey: noiseKeyOf(basis, a.inputs), sim: (d) => priceExit(applyDraw(a.inputs, d), d) })
     const pointNone = priceExit(withoutIn)
     yield
-    // The with-run's policy (installs before the final window) on the same
-    // basis: the graft step waits for 0 installs left.
-    const withPolicy = withIn ? (countCtx ? bestExitPolicy(withIn) : policyOf(basis, withIn)) : null
-    const pointWith = withIn ? priceExit(withIn) : null
+    let pointWith = withIn ? priceExit(withIn) : null
     yield
+    const pointCh = {}
+    for (const a of challengers) {
+      pointCh[a.key] = priceExit(a.inputs)
+      yield
+    }
     // Re-pricing on another basis (the install decision may switch later this
-    // pass): the committed choice's options again, same draws.
-    // ...and on the install decision's INPUTS when given: the graft decision
-    // builds its inputs early in the pass, the install decision later, and
-    // right after an install the two builds differ (income measured vs from
-    // the prior, the ramp between the reads) — live BN1 2026-09-28 06:04, 4
-    // minutes into a life: the same trajectory read 19.23h and 18.56h.
+    // pass): the committed choice's options again, same draws, on the install
+    // decision's INPUTS when given: the graft decision builds its inputs early
+    // in the pass, the install decision later, and right after an install the
+    // two builds differ (live BN1 2026-09-28 06:04: 19.23h vs 18.56h). ONE SET:
+    // the set this decision committed — the one the install decision's inputs
+    // carried (carriedGraftsOf) — never another set picked by point on the
+    // rebase: that committed a set the install had not priced (live 19:22Z:
+    // install on 9 grafts, graft decision on 6, basis keys g9 vs g6, and the
+    // consistency check said 'not comparable'). Another set better on the new
+    // basis is the next pass's challenger.
     pc.graftReprice = (spec, inputs = null) => {
       const t2 = trajectoryOf(spec, { count: countCtx, repPoint: pc.repPoint ?? null })
       let wo = withoutIn
@@ -1926,38 +1941,36 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
         delete wo.lifeGrafts
         delete wo.graftStartMoney
       }
-      // The best set on THIS trajectory (graftSetOn), then the decision —
-      // `pick` is a generator (one point per set, yielding between them) the
-      // caller runs inside the rebase's sliced decision; until it runs, the
-      // options are this pass's set.
-      const sets = [{ from: 'this pass', specs, startMoney }, ...altSets]
-      const rp = { inputsKey: inputsKeyOf(wo), setsPriced: [] }
-      const useSet = (use) => {
-        const wi = use.specs.length ? graftsInputsFor(wo, use) : null
-        rp.options = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr) }]
-        if (wi) rp.options.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr) })
-        rp.specs = use.specs
-        rp.startMoney = started ? 0 : use.startMoney
-        rp.setFrom = use.from
-      }
-      useSet(sets[0])
-      rp.pick = function* () {
-        if (sets.length < 2) return
-        const priced = []
-        for (const a of sets) {
-          priced.push(graftSetOn((x) => t2(x), [{ ...a, inputs: graftsInputsFor(wo, a) }]).priced[0])
-          yield
-        }
-        rp.setsPriced = priced
-        let bi = 0
-        for (let i = 1; i < priced.length; i++) if (typeof priced[i].h === 'number' && !(typeof priced[bi].h === 'number' && priced[bi].h <= priced[i].h)) bi = i
-        useSet(sets[bi])
-      }
+      const rp = { inputsKey: inputsKeyOf(wo) }
+      const wi = pc.graftChosen?.specs?.length ? inputsOfSet(wo, pc.graftChosen) : null
+      rp.options = [{ key: 'none', noiseKey: noiseKeyOf(spec, wo), sim: (dr) => t2(applyDraw(wo, dr), dr) }]
+      if (wi) rp.options.push({ key: 'grafts', noiseKey: noiseKeyOf(spec, wi), sim: (dr) => t2(applyDraw(wi, dr), dr) })
+      rp.specs = pc.graftChosen?.specs ?? []
+      rp.startMoney = started ? 0 : pc.graftChosen?.startMoney ?? null
+      rp.setFrom = pc.graftChosen?.from ?? null
       return rp
     }
-    const d = pc.post
-      ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => (k === 'none' ? pointNone : pointWith) })
+    const pointOfKey = (k) => (k === 'none' ? pointNone : k === 'grafts' ? pointWith : pointCh[k] ?? null)
+    let d = pc.post
+      ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev || challengers.length > 0, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: pointOfKey })
       : { key: typeof pointWith === 'number' && isFinite(pointWith) && !(typeof pointNone === 'number' && isFinite(pointNone) && pointNone <= pointWith) ? 'grafts' : 'none', why: 'no posterior: the point comparison (grafting nothing unpriced counts as never)' }
+    // A challenger that won IS the committed set from here on.
+    let setSwitch = null
+    if (typeof d.key === 'string' && d.key.startsWith('grafts:')) {
+      const a = challengers.find((x) => x.key === d.key)
+      setSwitch = { from: a.from, n: a.specs.length, was: specs.length }
+      specs = a.specs
+      startMoney = a.startMoney
+      schedule = a.schedule ?? null
+      withIn = a.inputs
+      pointWith = pointCh[a.key]
+      d = { ...d, key: 'grafts', why: `set switched to ${a.from} (${a.specs.length} grafts, was ${setSwitch.was}): ${d.why}` }
+    }
+    pc.graftChosen = d.key === 'grafts' ? { from: setSwitch ? setSwitch.from : committedSet ? 'the committed set' : "this pass's search", specs, startMoney } : null
+    // The with-run's policy (installs before the final window) on the same
+    // basis: the graft step waits for 0 installs left.
+    const withPolicy = withIn ? (countCtx ? bestExitPolicy(withIn) : policyOf(basis, withIn)) : null
+    yield
     return {
       ...d,
       // The trajectory this was priced on (the committed install's), and its
@@ -1970,6 +1983,8 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       inputsKey: inputsKeyOf(withoutIn),
       grafts: d.key === 'grafts' ? specs : [],
       startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
+      ...(setSwitch ? { setSwitch } : {}),
+      challengers: challengers.map((a) => ({ key: a.key, from: a.from, n: a.specs.length, pointH: typeof pointCh[a.key] === 'number' ? +pointCh[a.key].toFixed(3) : null })),
       // No decision (nothing feasible, budget): the set priced is KEPT for
       // every other decision's inputs (committedGraftsOf), never dropped.
       ...(!d.key && specs.length ? { kept: { grafts: specs, startMoney: started ? 0 : startMoney, from: 'the set this undecided pass priced' } } : {}),
@@ -2614,6 +2629,13 @@ function publishPlan(ns, info, extra = {}) {
       // correction moves the forecast without the run moving.
       ver: MODEL_VERSION,
     }
+    // EXIT UNSTABLE (plan.exitStabilityOf): this pass's exit against the last
+    // pass's, when nothing was re-decided. planCheck fails on it.
+    try {
+      rec.exitStability = exitStabilityOf(pc.prevAny ?? null, rec)
+    } catch (e) {
+      rec.exitStability = { ok: null, why: `exit stability check threw: ${String(e).slice(0, 120)}` }
+    }
     ns.write(PLAN_FILE, JSON.stringify(rec), 'w')
   } catch (e) {
     ns.write(PLAN_FILE, JSON.stringify({ at: new Date().toISOString(), node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null, health: 'error', error: `publishPlan threw: ${String(e).slice(0, 200)}` }), 'w')
@@ -2973,19 +2995,42 @@ function freshPriorOf(ns, info, player) {
     const pipes = bFresh ? b.ram?.reservedForPipelines ?? 0 : 0
     // The farm's MEASURED share when the batcher publishes one; the farm's
     // intent (the whole fleet) when it is on and unmeasured; else none.
-    const farmShare = bn.ScriptHackMoneyGain === 0 ? 1 : farmOn ? (held + pipes > 0 ? Math.round((20 * held) / (held + pipes)) / 20 : 1) : 0
+    // THE FARM'S SHARE, SMOOTHED OVER THE LIFE with hysteresis. It was one
+    // batch.txt sample rounded to 0.05: the farm holds whatever RAM the
+    // pipelines leave (live BN9 2026-09-29 19:34-19:38Z held 526-944GB beside
+    // ~6930GB of pipelines, 30s apart), i.e. 0.07-0.12, which rounds to 0.05
+    // or 0.10 by the sample — and the fresh-life exp formula (the final
+    // window's whole exp climb) doubled or halved with it: formula exp at the
+    // life's age 57.7/s at 19:27Z, 183/s at 19:32Z, the exit 45.7h -> 12.9h
+    // on a pass that re-decided nothing. Now the mean of this life's last 12
+    // measured shares (one per pass), and the prior's share moves only when
+    // that mean leaves +-25% of the one it was simulated at.
+    const cachedPrior = readJson(ns, FRESH_PRIOR_FILE)
+    const sameLife = cachedPrior?.lastAugReset === info?.lastAugReset
+    const measuredShare = farmOn && held + pipes > 0 ? held / (held + pipes) : null
+    const shareObs = [...(sameLife && Array.isArray(cachedPrior?.shareObs) ? cachedPrior.shareObs.filter((x) => typeof x === 'number' && isFinite(x)) : []), ...(measuredShare !== null ? [+measuredShare.toFixed(4)] : [])].slice(-12)
+    const meanShare = shareObs.length ? shareObs.reduce((a, b) => a + b, 0) / shareObs.length : null
+    const prevShare = sameLife && cachedPrior?.inputs?.farmMeasured && typeof cachedPrior?.inputs?.farmShare === 'number' ? cachedPrior.inputs.farmShare : null
+    const smoothShare = meanShare === null ? null : prevShare !== null && Math.abs(meanShare - prevShare) <= 0.25 * Math.max(prevShare, 0.05) ? prevShare : Math.round(20 * meanShare) / 20
+    const farmShare = bn.ScriptHackMoneyGain === 0 ? 1 : farmOn ? (measuredShare !== null ? smoothShare : 1) : 0
     const m = player.mults
     const mults = { hacking: m.hacking, hacking_exp: m.hacking_exp, hacking_speed: m.hacking_speed, hacking_money: m.hacking_money, hacking_grow: m.hacking_grow, hacking_chance: m.hacking_chance }
     const int = player.skills?.intelligence ?? 0
     const key = JSON.stringify([node, Object.values(mults).map((x) => +Number(x).toFixed(4)), int, Math.round(homeGB), farmShare, 'v1'])
-    const cached = readJson(ns, FRESH_PRIOR_FILE)
+    const cached = cachedPrior
     if (cached?.key === key && Array.isArray(cached.pts)) {
       freshPriorMemo = { pts: expandPts(cached.pts, cached.levelMult), levelMult: cached.levelMult, key, why: cached.why, inputs: cached.inputs, cached: true }
+      // The share observations advance on a cache hit too (same prior, same key).
+      try {
+        ns.write(FRESH_PRIOR_FILE, JSON.stringify({ ...cached, lastAugReset: info?.lastAugReset, shareObs }), 'w')
+      } catch {
+        /* the next pass re-reads the older buffer */
+      }
       return freshPriorMemo
     }
     const r = simulateFreshLife({ bn, mults, intelligence: int, homeGB, farmShare, horizonH: 24 })
     const inputs = { node, homeRam, homeGB, farmShare, farmMeasured: held + pipes > 0, int, mults }
-    ns.write(FRESH_PRIOR_FILE, JSON.stringify({ at: new Date().toISOString(), key, lastAugReset: info?.lastAugReset, levelMult: r.levelMult, inputs, why: r.why, pts: compactPts(r.pts) }), 'w')
+    ns.write(FRESH_PRIOR_FILE, JSON.stringify({ at: new Date().toISOString(), key, lastAugReset: info?.lastAugReset, levelMult: r.levelMult, inputs: { ...inputs, measuredShare, meanShare }, shareObs, why: r.why, pts: compactPts(r.pts) }), 'w')
     freshPriorMemo = { pts: r.pts, levelMult: r.levelMult, key, why: r.why, inputs, cached: false }
   } catch (e) {
     freshPriorMemo = { error: String(e).slice(0, 160) }
@@ -4338,7 +4383,22 @@ async function act(ns, canJoin, info, note) {
             ...(typeof of.donationCost === 'number' ? { donationCost: of.donationCost / K } : {}),
           })),
         })
-        const eBudget = Math.max(0, (richer.logM - probePlan.logM) / Math.log(K))
+        // THE BUDGET ELASTICITY, OVER THE LIFE'S LAST HOUR. One finite
+        // difference of a discrete purchase planner at x1.5 money is a step
+        // function of the money: live BN9 2026-09-29 19:17-19:37Z it read 0,
+        // 0.120, 0.147, 0.027, 0 on consecutive passes as the balance crossed
+        // one augmentation's price, and every exit priced through it (later
+        // lives' growth, exitplan persistLift) moved ~18h of ~100h with it —
+        // on passes that re-decided nothing (EXIT UNSTABLE). The exit reads the
+        // mean of this life's last 12 measurements (one per pass): the
+        // elasticity over the balances the life has passed through.
+        const eBudgetRaw = Math.max(0, (richer.logM - probePlan.logM) / Math.log(K))
+        const eBudgetObs = (() => {
+          const g = readJson(ns, GATE)
+          const prevObs = g?.lastAugReset === info?.lastAugReset && Array.isArray(g?.eBudgetObs) ? g.eBudgetObs.filter((x) => typeof x === 'number' && isFinite(x)) : []
+          return [...prevObs, +eBudgetRaw.toFixed(4)].slice(-12)
+        })()
+        const eBudget = eBudgetObs.reduce((a, b) => a + b, 0) / eBudgetObs.length
         const eRep = Math.max(0, (faster.logM - probePlan.logM) / Math.log(K))
 
         // Remaining windows to the exit condition, on the measured growth.
@@ -4486,7 +4546,7 @@ async function act(ns, canJoin, info, note) {
           // WINDOW instead of assuming this window's rate repeats — see
           // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
           const winH = measureWindow(ns, info)?.windowH
-          weightsMeta = { source: derived?.source ?? 'derived', exitSensitivity: byExit ? { hoursPerLn: byExit.sensitivities, exitH: byExit.exitH, W: byExit.W } : null, eBudget: +eBudget.toFixed(4), eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          weightsMeta = { source: derived?.source ?? 'derived', exitSensitivity: byExit ? { hoursPerLn: byExit.sensitivities, exitH: byExit.exitH, W: byExit.W } : null, eBudget: +eBudget.toFixed(4), eBudgetRaw: +eBudgetRaw.toFixed(4), eBudgetObs, eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
           replanAt = (m, offersAt = null) =>
             planPurchases({
               ...planArgs,
@@ -4575,7 +4635,7 @@ async function act(ns, canJoin, info, note) {
         // dollars home's extra income brings in before the join.
         join,
       })
-      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
+      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, eBudgetObs: weightsMeta?.eBudgetObs ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
     } catch {
       return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', homeLnJoin: null, homeLnPlan: null, eBudget: null, remainingWindows: null, probeMoney: null }
     }
@@ -6221,14 +6281,13 @@ async function act(ns, canJoin, info, note) {
         if (spec) {
           const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)
           const d2 = await planDecide(pcx, 'graftsRebased', function* () {
-            // Every set this pass holds, re-priced on the install decision's
-            // trajectory first (graftReprice.pick), then the decision.
-            if (typeof rp.pick === 'function') yield* rp.pick()
+            // The committed set (the one the install decision's inputs
+            // carried) and grafting nothing, on the install decision's trajectory.
             return yield* decideAmongGen({ options: rp.options, prev: { key: gd.key, decidedAt: gd.decidedAt, why: gd.why }, draws: pcx.draws, redecide: true, budgetMs: planBudgetLeft(pcx), clock: pcx.pacer.cpuNow })
           })
           if (d2?.key) {
             const flipped = d2.key !== gd.key
-            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, basisGainsKey: gainsKeyOf(spec.gains ?? null), samples: d2.samples ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, rebasedSet: rp.setFrom ?? null, rebasedSets: rp.setsPriced ?? null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
+            pcx.decisions.grafts = { ...gd, key: d2.key, meanH: d2.meanH, q10: d2.q10, q50: d2.q50, q90: d2.q90, pBest: d2.pBest, options: d2.options, pricedAt: d2.pricedAt ?? null, n: d2.n, why: `rebased on the install decision's ${inst.key}${rp.inputsKey !== gd.inputsKey ? ' and its inputs' : ''}: ${d2.why}`, basis: { kind: spec.kind, waitH: spec.waitH ?? null, installAt: spec.installAt ?? null }, basisNoiseKey: rp.options.find((o) => o.key === d2.key)?.noiseKey ?? null, basisGainsKey: gainsKeyOf(spec.gains ?? null), samples: d2.samples ?? null, inputsKey: rp.inputsKey, rebasedFrom: gd.basis ?? null, rebasedInputs: rp.inputsKey !== gd.inputsKey, grafts: d2.key === 'grafts' ? rp.specs : [], startMoney: d2.key === 'grafts' ? rp.startMoney : null, rebasedSet: rp.setFrom ?? null, ...(flipped ? { flippedOnRebase: `${gd.key} -> ${d2.key}` } : {}) }
             // The install decision priced with the grafts carried before the
             // flip: one pass stale, re-decided next pass.
             if (flipped) pcx.forceRedecide = `the graft decision flipped (${gd.key} -> ${d2.key}) when re-priced on the install decision's ${inst.key}`

@@ -135,7 +135,7 @@ export function traderBeliefOf(rows, { regime = 'pre-long', warmupH: warmIn = nu
 
 // A held decision's reason: the decision's own, once — not re-prefixed every
 // pass it is held ("held (no event): held (no event): ... stays on").
-const heldWhy = (prev) => String(prev?.why ?? '').replace(/^(held \(no event\): )+/, '')
+const heldWhy = (prev) => String(prev?.why ?? '').replace(/^(held \(no event(?: since [^)]*)?\)(?::|; at that decision:) )+/, '')
 
 /**
  * N parameter draws, seeded: draw i is the same vector in every option and in
@@ -260,6 +260,11 @@ export function evaluate(options, draws, opts = {}) {
  * pacer's WORK clock in progress.js, so a pause never truncates the draws.
  */
 export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = clock } = {}) {
+  // Keys index the samples: a repeated key merges two trajectories into one
+  // array and breaks every per-draw pairing after it (decideInstallGen add).
+  // Loud, never merged.
+  const dup = options.map((o) => o.key).find((k, i, a) => a.indexOf(k) !== i)
+  if (dup !== undefined) throw new Error(`evaluateGen: option key '${dup}' appears twice — two trajectories would share one samples array`)
   const t0 = now()
   const samples = Object.fromEntries(options.map((o) => [o.key, []]))
   const raw = Object.fromEntries(options.map((o) => [o.key, []]))
@@ -478,8 +483,25 @@ export function withObs(buf, v, at, max = 48, tags = {}) {
 const r3 = (x) => (fin(x) ? +x.toFixed(3) : null)
 export const routeKey = (r) => `${r?.name ?? ''}|${r?.faction ?? ''}|${r?.via ?? ''}`
 
-function optionRows(options, stats, pointOf) {
-  return options.map((o) => ({ key: o.key, pointH: r3(pointOf(o)), ...stats[o.key] })).sort((a, b) => (a.meanH ?? Infinity) - (b.meanH ?? Infinity))
+// Every row carries the trajectory it priced (noiseKey) and the pass that
+// priced it (pricedAt): a decision's options are published only as priced
+// with its committed exit, on its basis (optionsBasisOf: OPTIONS OFF BASIS).
+function optionRows(options, stats, pointOf, pricedAt = null) {
+  return options.map((o) => ({ key: o.key, pointH: r3(pointOf(o)), ...stats[o.key], noiseKey: o.noiseKey ?? null, pricedAt })).sort((a, b) => (a.meanH ?? Infinity) - (b.meanH ?? Infinity))
+}
+/**
+ * A HELD DECISION, published on THIS pass's pricing only. It used to carry
+ * the options (and the switching rule's numbers) of the pass that decided,
+ * beside a committed exit re-priced every pass on moved inputs: live BN9
+ * 2026-09-29 19:22Z the held install read 70.98h while its options (from
+ * 18:52Z, every one ~3x its point) said 241-373h and its reason "the best
+ * alternative w13.41 is expected 63.73h sooner" — a 63h gain against a 71h
+ * exit, on another basis. Now: the options are this pass's rows (the
+ * committed option alone when held), and the decision's own reason is kept
+ * dated, as what it said then.
+ */
+function heldFields(prev, rows, pricedAt) {
+  return { held: true, why: `held (no event since ${prev?.decidedAt ?? '?'}); at that decision: ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev?.decidedAt ?? null, options: rows, pricedAt }
 }
 const pick = (r) => (r ? { name: r.name, faction: r.faction ?? null, via: r.via ?? null, price: fin(r.price) ? Math.round(r.price) : null, detourH: r3(r.detourH), joinH: r3(r.joinH), grindH: r3(r.grindH) } : {})
 
@@ -514,14 +536,15 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   const options = keys.map((k) => ({ key: k, sim: sim(byKey.get(k)) }))
   const ev = yield* evaluateGen(options, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
-  const rows = optionRows(options, stats, (o) => pointH.get(o.key))
+  const pricedAt = new Date(now).toISOString()
+  const rows = optionRows(options, stats, (o) => pointH.get(o.key), pricedAt)
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   if (!redecide && committedKey) {
-    return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...heldSanity(prev), ...cpu }
+    return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
   }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: fin(prev?.meanH) ? prev.meanH : null })
-  if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
-  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
+  if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
+  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
 
 /**
@@ -543,7 +566,24 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   // same trajectory wherever it is used — here, and as the basis of every
   // other decision this plan makes (the graft decision prices on the
   // committed install's spec).
-  const add = (key, spec, pointH, extra = {}) => {
+  // ONE KEY, ONE TRAJECTORY. Two waits of the same length (two faction holds
+  // both at 4.99h, the lifeplan target on a round wait) were two options
+  // under one key: evaluateGen pushed both into one samples array (48 of 24
+  // draws), summarize read every single-key option as feasible in 24/48 = 0.5
+  // (or 24/72 = 0.333 beside a triple) and decide() paired draw d of one
+  // option with draw d/2 of another. Live BN9 2026-09-29 19:27Z: the held
+  // incumbent, 71.0h and feasible in every draw, read "no longer feasible
+  // (0.333 of draws)" — SWITCH ARTEFACT committed -> w3.32. The same spec
+  // twice is priced once; the same length with another batch gets its own key.
+  const add = (key0, spec, pointH, extra = {}) => {
+    let key = key0
+    const same = opts.find((o) => o.key === key0)
+    if (same) {
+      if (JSON.stringify(same.spec) === JSON.stringify(spec)) return
+      let k = 2
+      while (opts.some((o) => o.key === `${key0}#${k}`)) k++
+      key = `${key0}#${k}`
+    }
     const f = trajectoryOf(spec, ctx)
     const fg = trajectoryGenOf(spec, ctx)
     opts.push({ key, spec, pointH, noiseKey: noiseKeyOf(spec, inputs), sim: (d) => f(applyDraw(inputs, d), d), simGen: (d) => fg(applyDraw(inputs, d), d), ...extra })
@@ -605,7 +645,8 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const use = !redecide && committedKey ? opts.filter((o) => o.key === committedKey) : opts
   const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
-  const rows = optionRows(use, stats, (o) => o.pointH)
+  const pricedAt = new Date(now).toISOString()
+  const rows = optionRows(use, stats, (o) => o.pointH, pricedAt)
   const record = (key, extra) => {
     const o = opts.find((x) => x.key === key)
     const sp = o.spec
@@ -626,12 +667,12 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
     return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
-  if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...heldSanity(prev) })
+  if (!redecide && committedKey) return record(committedKey, { ...heldFields(prev, rows, pricedAt), ...heldSanity(prev) })
   // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
   const prevH = committedKey ? (fin(prev?.commitment?.meanH) ? prev.commitment.meanH : fin(prev?.meanH) ? prev.meanH : null) : null
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
-  if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows })
+  if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt })
 }
 
 /**
@@ -969,12 +1010,13 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   if (!use?.length) return { key: null, why: 'no option', decidedAt: prev?.decidedAt ?? null }
   const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
   const { stats } = summarize(ev.samples)
-  const rows = optionRows(use, stats, (o) => pointOf(o.key))
+  const pricedAt = new Date(now).toISOString()
+  const rows = optionRows(use, stats, (o) => pointOf(o.key), pricedAt)
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...heldSanity(prev), ...cpu }
+  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
-  if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
-  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
+  if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
+  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
 
 /** Standard normal CDF (Abramowitz-Stegun 7.1.26 via erf). */
@@ -1024,6 +1066,107 @@ export function decideSpend({ deltaH, withoutH, si, theta = PLAN.theta, dominant
  * Returns {fails: [{what, detail}], notes: [string]}.
  */
 export const PLAN_CAL = { minN: 8, lo: 0.55, hi: 0.97, staleMin: 45 }
+
+/**
+ * EXIT UNSTABLE. Between two consecutive passes of one life with NO EVENT
+ * (nothing re-decided: the plan holds its commitments), the committed exit
+ * may move only by the hours that passed (a followed plan's exit falls 1h per
+ * hour) plus the Monte Carlo's own noise: the draws are the same vectors
+ * every pass (seeded per life, makeDraws), so a held trajectory re-priced on
+ * unchanged beliefs moves by far less than its standard error. Tolerance:
+ * EXIT_STABLE.k standard errors of the difference of the two means (each
+ * sd/sqrt(n) over its per-draw exits), at least minTolH. Beyond it something
+ * moved that the plan does not treat as an event — a graft set replaced under
+ * a held key, an input read at a different point — and it fails loudly. Live
+ * BN9 2026-09-29: 19.5h, 176h, 71.0h, 45.7h, 12.9h on consecutive passes.
+ * prev/rec: plan records. Returns {ok (true|false|null), ...numbers, why}.
+ */
+export const EXIT_STABLE = { k: 4, minTolH: 0.5, maxGapMin: 20 }
+export function exitStabilityOf(prev, rec) {
+  const cur = exitStabilityNow(prev, rec)
+  // A failure stays on the record for an hour (the healthcheck runs every 15
+  // minutes; a pass-to-pass check read only on its own pass would be missed).
+  const pf = prev?.exitStability
+  const last = pf?.ok === false ? { at: prev.at, why: pf.why } : pf?.lastFail ?? null
+  const keep = last && cur.ok !== false && fin(Date.parse(last.at)) && Date.parse(rec?.at) - Date.parse(last.at) <= 60 * 60e3 && prev?.lastAugReset === rec?.lastAugReset
+  return keep ? { ...cur, lastFail: last } : cur
+}
+function exitStabilityNow(prev, rec) {
+  const ex = rec?.exit
+  const px = prev?.exit
+  if (!ex || !fin(ex.meanH) || !px || !fin(px.meanH)) return { ok: null, why: 'no exit on this pass or the last' }
+  if (prev.lastAugReset !== rec.lastAugReset || prev.node !== rec.node) return { ok: null, why: 'the last pass was another life' }
+  const events = Array.isArray(rec.events) ? rec.events : []
+  if (events.length) return { ok: null, why: `re-decided this pass (${events.join('; ').slice(0, 160)}): the exit may move` }
+  const dtH = (Date.parse(rec.at) - Date.parse(px.at ?? prev.at)) / 3.6e6
+  if (!(dtH >= 0) || dtH * 60 > EXIT_STABLE.maxGapMin) return { ok: null, why: `the last exit is ${fin(dtH) ? (dtH * 60).toFixed(0) : '?'} min old: not consecutive passes` }
+  const seOf = (x, d) => {
+    const s = Array.isArray(d?.samples) ? d.samples.filter(fin) : []
+    if (s.length >= 2) {
+      const m = s.reduce((a, b) => a + b, 0) / s.length
+      const v = s.reduce((a, b) => a + (b - m) * (b - m), 0) / (s.length - 1)
+      return Math.sqrt(v / s.length)
+    }
+    // No per-draw exits: the 80% interval's width as ~2.56 sd, over N draws.
+    return fin(x.q10) && fin(x.q90) ? (x.q90 - x.q10) / 2.563 / Math.sqrt(Math.max(1, d?.n ?? 24)) : null
+  }
+  const se1 = seOf(px, prev.decisions?.install)
+  const se2 = seOf(ex, rec.decisions?.install)
+  const se = fin(se1) && fin(se2) ? Math.sqrt(se1 * se1 + se2 * se2) : fin(se1) ? se1 * Math.SQRT2 : fin(se2) ? se2 * Math.SQRT2 : null
+  const tolH = Math.max(EXIT_STABLE.minTolH, fin(se) ? EXIT_STABLE.k * se : 0.1 * px.meanH)
+  const expectedH = px.meanH - dtH
+  const diffH = ex.meanH - expectedH
+  const ok = Math.abs(diffH) <= tolH
+  const out = { ok, prevH: px.meanH, curH: ex.meanH, expectedH: +expectedH.toFixed(3), diffH: +diffH.toFixed(3), tolH: +tolH.toFixed(3), dtH: +dtH.toFixed(3), prevAt: prev.at, prevSource: px.source ?? null, curSource: ex.source ?? null }
+  return { ...out, why: ok ? `exit ${px.meanH}h -> ${ex.meanH}h over ${(dtH * 60).toFixed(0)} min with no event: within ${tolH.toFixed(2)}h of the ${expectedH.toFixed(2)}h a held plan expects` : `EXIT UNSTABLE: ${px.meanH}h (${px.source ?? '?'}, ${prev.at}) -> ${ex.meanH}h (${ex.source ?? '?'}) over ${(dtH * 60).toFixed(0)} min with no event — ${diffH > 0 ? '+' : ''}${diffH.toFixed(2)}h against the ${expectedH.toFixed(2)}h a held plan expects (tolerance ${tolH.toFixed(2)}h = ${EXIT_STABLE.k} standard errors of the draws)` }
+}
+
+/**
+ * OPTIONS OFF BASIS. Every option a decision publishes must be priced on the
+ * basis of the committed exit it is compared with:
+ *   - within a decision, every option row was priced on the pass the
+ *     decision's own exit was (row.pricedAt === decision.pricedAt) — a held
+ *     decision carrying its deciding pass's options beside a re-priced exit
+ *     is off basis (live 19:22Z: a 71h exit beside 241-373h options);
+ *   - the graft decision's options are priced on the install decision's
+ *     committed trajectory: the same install time (noise key without its
+ *     graft count), the same inputs, and its committed side IS the install's
+ *     trajectory (the same noise key, graft count included) — live 19:22Z the
+ *     install priced 9 grafts (g9) while the graft decision's options were
+ *     on 6 (g6), and the one-plan check only said 'not comparable'.
+ * Returns {ok (true|false|null), fails: [..], checked, why}.
+ */
+export function optionsBasisOf(plan) {
+  const d = plan?.decisions ?? {}
+  const fails = []
+  let checked = 0
+  for (const name of ['install', 'grafts', 'countRoute', 'sleeveObjective']) {
+    const x = d[name]
+    if (!x?.key || !Array.isArray(x.options) || !x.options.length) continue
+    checked++
+    // The committed option's own row must read the decision's exit (any
+    // record format): the held install's 'committed' row, else its key's.
+    const own = x.options.find((o) => o.key === x.key) ?? (name === 'install' && x.held ? x.options.find((o) => o.key === 'committed') : null)
+    if (own && fin(own.meanH) && fin(x.meanH) && Math.abs(own.meanH - x.meanH) > 1e-3 * Math.max(1, x.meanH)) fails.push(`${name}: its committed option's row reads ${own.meanH}h where its exit is ${x.meanH}h — the rows are another pass's pricing`)
+    if (!x.pricedAt) continue // a record from before options carried their pass
+    const off = x.options.filter((o) => o.pricedAt !== x.pricedAt)
+    if (off.length) fails.push(`${name}: ${off.length} of ${x.options.length} option(s) priced on another pass (${[...new Set(off.map((o) => o.pricedAt ?? 'unstamped'))].slice(0, 2).join(', ')}) than its exit (${x.pricedAt})`)
+  }
+  const inst = d.install
+  const g = d.grafts
+  if (inst?.key && inst.noiseKey && g?.key && Array.isArray(g.options) && g.options.length && !g.flippedOnRebase) {
+    checked++
+    const at = (k) => String(k ?? '').replace(/\|g\d+$/, '')
+    const offAt = g.options.filter((o) => o.noiseKey && at(o.noiseKey) !== at(inst.noiseKey))
+    if (offAt.length) fails.push(`grafts: option(s) ${offAt.map((o) => `${o.key} on ${o.noiseKey}`).join(', ')} priced on another install time than the committed exit (${inst.noiseKey})`)
+    const mine = { noiseKey: g.options.find((o) => o.key === g.key)?.noiseKey ?? g.basisNoiseKey ?? null }
+    if (mine.noiseKey && mine.noiseKey !== inst.noiseKey) fails.push(`grafts: the committed '${g.key}' is priced on ${mine.noiseKey} while the install decision's exit is on ${inst.noiseKey} — two graft sets`)
+    if (inst.inputsKey && g.inputsKey && inst.inputsKey !== g.inputsKey) fails.push(`grafts: priced from inputs ${g.inputsKey}, the install decision from ${inst.inputsKey}`)
+    if (inst.pricedAt && g.pricedAt && Date.parse(g.pricedAt) < Date.parse(inst.pricedAt) - 10 * 60e3) fails.push(`grafts: priced at ${g.pricedAt}, the install decision at ${inst.pricedAt}`)
+  }
+  if (!checked) return { ok: null, fails, checked, why: 'no decision with stamped options this pass' }
+  return { ok: !fails.length, fails, checked, why: fails.length ? `OPTIONS OFF BASIS: ${fails.join('; ')}` : `every option of ${checked} check(s) priced on its committed exit's basis` }
+}
 
 /**
  * GRAFTS DROPPED: the committed graft set must be in the install decision's
@@ -1122,6 +1265,14 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const ej = plan.exitJump ?? null
   if (ej?.ok === false) fail(String(ej.why).startsWith('EXIT JUMP AT INSTALL') ? ej.why : `EXIT JUMP AT INSTALL: ${ej.why}`, "the install's simulation of the next life and the next life's own pricing disagree about one state — an input is estimated one way before the install and another after it (compare the two exits' inputs group by group: tools/sim/exitjump/attribute.mjs)")
   else if (ej?.why && ej.install) notes.push(`plan exit across the install: ${ej.why}`)
+  // EXIT UNSTABLE (exitStabilityOf, against the last pass: recorded by the
+  // pass as plan.exitStability) and OPTIONS OFF BASIS (on this record).
+  const es = plan.exitStability ?? null
+  if (es?.ok === false || es?.lastFail) fail(es.ok === false ? es.why : `${es.lastFail.why} [at ${es.lastFail.at}, within the hour]`, 'the committed exit moved beyond its own Monte Carlo noise on a pass that re-decided nothing — an input or a committed choice changed without being an event (a graft set replaced under a held key, a noisy point input); diff the two passes\' exitinputs field by field')
+  else if (es?.why) notes.push(`plan exit stability: ${es.why}`)
+  const ob = optionsBasisOf(plan)
+  if (ob.ok === false) fail(ob.why, "a decision published options priced on another basis than the committed exit they are compared with (a held decision's old options, a graft set the install did not price) — every number in a decision must be one pass's pricing of one trajectory")
+  else if (ob.why) notes.push(`plan options basis: ${ob.why}`)
   // SWITCH ARTEFACT (switchSanityOf): taken, never blocked — reported here.
   for (const [name, dd] of Object.entries(plan.decisions ?? {})) {
     const ss = dd?.switchSanity

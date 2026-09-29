@@ -166,7 +166,7 @@ export async function run() {
   }
 
   {
-    const c = new Check("GL4", "THE 17:42 FLIP: on w0.38 the 24-graft memory beats the searched 1 graft and nothing; the rebase's set choice (graftSetOn) takes it");
+    const c = new Check("GL4", "THE 17:42 FLIP: on w0.38 the 24-graft memory beats the searched 1 graft and nothing; the graft decision's memory challenger (graftSetOn here, the commitment rule live) takes it");
     const p = F.p1742;
     const traj = P.trajectoryOf(basisOf(p));
     const wo = noGrafts(p.exitinputs);
@@ -181,7 +181,9 @@ export async function run() {
     c.note(`w${p.install.waitH}: none ${fin(none) ? none.toFixed(2) : none}h; ${pick.priced.map((x) => `${x.from} (${x.n}) ${x.h}h`).join("; ")}; live record: ${p.grafts.key} (${p.grafts.flippedOnRebase ?? ""})`);
     if (pick.set?.from !== "the node's graft memory") c.fail("the memory set must win on the install decision's trajectory", JSON.stringify(pick.priced));
     const memH = pick.priced.find((x) => x.from === "the node's graft memory")?.h;
-    if (!(fin(memH) && fin(none) && memH < none - 50)) c.fail(`the memory set (${memH}h) should beat grafting nothing (${none}h) by far`);
+    // Grafting nothing is unpriceable on this trajectory once later lives no
+    // longer compound the batch lift at 0.5h (exitplan liftShare): dominated.
+    if (!(fin(memH) && (!fin(none) || memH < none - 50))) c.fail(`the memory set (${memH}h) should beat grafting nothing (${none}h) by far`);
     if (!GP.sameGraftSet(mem.grafts, [...mem.grafts].reverse()) || GP.sameGraftSet(mem.grafts, p.exitinputs.finalGrafts)) c.fail("sameGraftSet is wrong");
     out.push(c);
   }
@@ -202,7 +204,7 @@ export async function run() {
   }
 
   {
-    const c = new Check("GL6", "WIRING: progress.js grafts this life's scheduled grafts, holds the install for them (bounded), carries lifeGrafts, and re-prices every held set on rebase; plan.js keys count them");
+    const c = new Check("GL6", "WIRING: progress.js grafts this life's scheduled grafts, holds the install for them (bounded), carries lifeGrafts, challenges the committed set with the memory and the search, rebases the carried set only; plan.js keys count them");
     const prog = repo("progress.js");
     const plan = repo("plan.js");
     const need = [
@@ -210,7 +212,9 @@ export async function run() {
       [prog, /gate\.install && !forcedInstall && lifeGraftHold\?\.hold/, "the install is held for this life's scheduled grafts"],
       [prog, /function lifeGraftHoldOf[\s\S]{0,900}heldH > capH/, "the hold is bounded"],
       [prog, /return graftInputsOf\(inProgressSpecsOf\(c\.grafts, work, intel\)/, "the carry splits lifeGrafts from finalGrafts"],
-      [prog, /yield\* rp\.pick\(\)/, "the rebase re-prices every held set first"],
+      [prog, /key: 'grafts:memory'/, "the node's memory is a challenger to the committed set in every graft decision"],
+      [prog, /key: 'grafts:search'/, "this pass's search is a challenger, never a silent replacement"],
+      [prog, /const wi = pc\.graftChosen\?\.specs\?\.length \? inputsOfSet\(wo, pc\.graftChosen\)/, "the rebase prices the set the install decision carried, and only it"],
       [prog, /delete withoutIn\.lifeGrafts/, "the without-run has no life grafts"],
       [plan, /inputs\.lifeGrafts\.length/, "noiseKeyOf counts life grafts"],
       [plan, /names\(installInputs\.lifeGrafts\)/, "graftCarryCheckOf counts life grafts"],

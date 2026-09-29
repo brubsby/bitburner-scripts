@@ -507,14 +507,24 @@ export async function run() {
 
   const c19 = new Check("XP19", "a batch lifts later lives only by its gains beyond the plan the cadence already represents");
   {
-    c19.examined(3);
+    c19.examined(5);
     const b = { money: 1e9, incomePerSec: 1e8, hacking: 800, hackingExp: 1e9, hackingMult: 1.5, expPerSec: 1e5, repPerSec: 30, exitRep: 0, exitFavor: 0, terminalRep: 0, exitLevel: 3000, joinMoney: 0, cycleHours: 4, multGainPerCycle: 1.1, eRep: 0.5, eBudget: 0.3, installsFirst: 10, firstInstallH: 0 };
     const g = { hacking: 1.2, rep: 1.5, income: 1.3, exp: 1 };
     const plain = exitHours({ ...b, installGains: g }).mult;
     const same = exitHours({ ...b, installGains: g, persistBaseline: g }).mult;
     if (Math.abs(same - plain) > 1e-9 * plain) c19.fail("the plan the cadence represents must lift nothing (no double count)");
     const bigger = exitHours({ ...b, installGains: { ...g, rep: 3 }, persistBaseline: g }).mult;
-    if (Math.abs(bigger / same - Math.pow(Math.pow(2, 0.5), 9)) > 1e-9) c19.fail(`twice the plan's rep lifts each of 9 later lives by 2^eRep: ${bigger / same}`);
+    // ...as a share of each later life's own batch: ln(1.1)/ln(1.2) of the
+    // lift measured on the x1.2 baseline batch (a x1.0027 life cannot gain
+    // x1.26: live BN9 2026-09-29 19:32Z, 0.5h lives compounded it to 14h).
+    const share = Math.log(1.1) / Math.log(1.2);
+    if (Math.abs(bigger / same - Math.pow(Math.pow(2, 0.5 * share), 9)) > 1e-9) c19.fail(`twice the plan's rep lifts each of 9 later lives by 2^(eRep x ln g / ln g_base): ${bigger / same}`);
+    const big = { ...b, multGainPerCycle: 1.5 };
+    const capped = exitHours({ ...big, installGains: { ...g, rep: 3 }, persistBaseline: g }).mult / exitHours({ ...big, installGains: g, persistBaseline: g }).mult;
+    if (Math.abs(capped - Math.pow(Math.pow(2, 0.5), 9)) > 1e-9) c19.fail(`a later life at least the baseline's size takes the whole measured lift, never more: ${capped}`);
+    const tiny = { ...b, multGainPerCycle: 1.0027, cycleHours: 0.5 };
+    const tinyLift = exitHours({ ...tiny, installGains: { ...g, rep: 3 }, persistBaseline: g }).mult / exitHours({ ...tiny, installGains: g, persistBaseline: g }).mult;
+    if (!(tinyLift < Math.pow(1.02, 9))) c19.fail(`a x1.0027 life cannot take the x${Math.pow(2, 0.5).toFixed(3)} lift measured on a x1.2 batch: ${tinyLift}`);
     const none = exitHours({ ...b, installGains: { ...g, rep: 3 } }).mult;
     if (Math.abs(none / exitHours({ ...b, installGains: g }).mult - 1) > 1e-12) c19.fail("no baseline, no lift");
   }

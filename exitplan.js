@@ -997,9 +997,24 @@ export function exitHours(o = {}) {
     // gain double-counted the baseline: live 2026-09-24 it priced the exit at
     // 15.5h against 66h the pass before. No baseline, no lift.
     const ratio = (k) => (pos(installGains?.[k]) && pos(persistBaseline?.[k]) ? installGains[k] / persistBaseline[k] : 1)
-    const persistLift =
+    const persistLiftRef =
       (num(eRep) && eRep > 0 ? Math.pow(ratio('rep'), eRep) : 1) *
       (num(eBudget) && eBudget > 0 ? Math.pow(ratio('income'), eBudget) : 1)
+    // ...AS A SHARE OF A LATER LIFE'S OWN BATCH. eRep / eBudget are measured
+    // on THIS life's batch (persistBaseline, x1.13 hacking live): K^e is what
+    // a batch of that size gains. A later life buying far less cannot gain
+    // more than in proportion — a 0.5h life's x1.0016 batch lifted by the
+    // x1.26 measured on a x1.13 one compounded x1.26 every half hour: live
+    // BN9 2026-09-29 19:32Z the same trajectory read 14.1h on 0.5h lives
+    // (16 installs, mult 1.13 -> 73.4 on x1.0027 lives) against 70.8h on 12h
+    // lives, and the purchase model's life length flipped 12h -> 0.5h
+    // (lifeplan.cadenceByPurchases prices every length through this) — the
+    // exit 45.7h -> 12.9h on a pass that re-decided nothing. The lift's ln is
+    // scaled by ln(g) / ln(the baseline batch's hacking), capped at 1 (never
+    // more than measured).
+    const lnRef = pos(persistBaseline?.hacking) && persistBaseline.hacking > 1 ? Math.log(persistBaseline.hacking) : null
+    const liftShare = lnRef && pos(multGainPerCycle) ? Math.max(0, Math.min(1, Math.log(Math.max(1, multGainPerCycle)) / lnRef)) : 1
+    const persistLift = Math.exp(Math.log(persistLiftRef) * liftShare)
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
     // A GRAFT PERSISTS THROUGH EVERY LATER INSTALL (it is pushed onto

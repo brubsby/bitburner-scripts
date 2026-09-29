@@ -173,8 +173,15 @@ export async function run() {
     // Live the re-planned committed batch left the incumbent feasible in 83% of
     // draws at ~26,648h (a >10x gain); on the inputs' batch replayed here it is
     // infeasible outright. Either way the switch is the artefact, and flagged.
-    if (!(bug.switched && bug.key === "w4")) c.fail(`the replay must reproduce the switch committed -> w4 without the grafts: ${bug.key} ${bug.why}`);
-    if (bug.switchSanity?.ok !== false || !/^SWITCH ARTEFACT/.test(bug.why)) c.fail(`that switch must be flagged as a pricing artefact: ${JSON.stringify(bug.switchSanity)}`);
+    // Live, w4 reached the exit without the grafts only because these inputs'
+    // 0.5h lives compounded the batch lift every half hour (exitplan
+    // liftShare, 2026-09-29 19:32Z): priced now, no option is feasible without
+    // the grafts and nothing is switched to. Either way a switch made without
+    // the grafts must be flagged, never taken silently.
+    if (bug.switched && (bug.switchSanity?.ok !== false || !/^SWITCH ARTEFACT/.test(bug.why))) c.fail(`a switch without the grafts must be flagged as a pricing artefact: ${bug.key} ${JSON.stringify(bug.switchSanity)}`);
+    if (!bug.switched && bug.key !== null) c.fail(`without the grafts the replay must not hold a priced incumbent: ${bug.key} ${bug.why}`);
+    const art = P.switchSanityOf({ from: "committed", to: "w4", gainH: 26581.67, exitH: 66.236, fromH: 26647.957, prevH: F14.committedPrev.meanH });
+    if (art?.ok !== false) c.fail("the live 14:51 switch must read as a SWITCH ARTEFACT");
     if (fixed.switchSanity) c.fail(`with the grafts carried there must be no artefact: ${fixed.switchSanity.why}`);
     const cm = opt(fixed, "committed")?.meanH;
     if (!(Number.isFinite(cm) && cm < 80)) c.fail(`with the grafts carried the incumbent must price near the 28's ~53h: ${cm}`);

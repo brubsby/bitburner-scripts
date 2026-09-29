@@ -183,7 +183,9 @@ export async function run() {
     const prev = { key: "a", why: "held (no event): held (no event): stays on a", decidedAt: new Date().toISOString() };
     const d = pl.decideAmong({ options: [{ key: "a", sim: () => 1 }, { key: "b", sim: () => 2 }], prev, draws: [{ i: 0 }, { i: 1 }], redecide: false });
     c.note(`held reason: ${d.why}`);
-    if (!/^held \(no event\): stays on a/.test(d.why ?? "")) c.fail(`a held reason must carry one prefix: ${d.why}`);
+    // One prefix, dated (plan.heldFields): the decision's own reason is what it said then.
+    const d2 = pl.decideAmong({ options: [{ key: "a", sim: () => 1 }, { key: "b", sim: () => 2 }], prev: { ...prev, why: d.why }, draws: [{ i: 0 }, { i: 1 }], redecide: false });
+    if (!/^held \(no event since [^)]*\); at that decision: stays on a$/.test(d.why ?? "") || d2.why !== d.why) c.fail(`a held reason must carry one prefix: ${d.why} / ${d2.why}`);
     checks.push(c);
   }
   return checks;
