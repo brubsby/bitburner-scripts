@@ -7,7 +7,10 @@
 // x14.65, fixture-bn9-freshlife-0546) and by 10:26 committed 12 (x2.45).
 //
 // How it was lost: the trader's realised fit (nodeecon.realisedCapital) first
-// reads non-null ~08:50Z, at 0.6%/h on its first 11 points. At that rate the
+// read non-null ~08:50Z, at 0.6%/h on its first 11 points — a clock bug:
+// flowed intervals (hacknet cash every row) left the index but stayed on the
+// clock, so the slope was growth over ALL elapsed time (fixed: 19.7%/h then,
+// 62.9%/h at 11:15 against 61-87%/h on the flow-free intervals). At that rate the
 // 29 set's $75t cannot be paid for and loses to grafting nothing, so the
 // seeded search dropped it (graftplan kept a seed "only while it still beats
 // grafting nothing") and the ONLY copy — the committed decision — went with
@@ -16,8 +19,8 @@
 // grafts by 10:26. Re-priced on the 10:26 inputs the lost 29 read 124h
 // against the 12's 196h (point, bestExitPolicy).
 //
-//   GM1 THE TRIGGER    the 08:50 fit makes the 29 set lose to grafting nothing;
-//                      the 10:27 fit makes it win by >100h
+//   GM1 THE TRIGGER    the diluted 08:50 fit (0.6%/h) made the 29 set lose to
+//                      grafting nothing; the fixed fit keeps it
 //   GM2 THE MEMORY     a budgeted search seeded with the committed 12 only (the
 //                      old memory) stays >50h behind the one also seeded with
 //                      the node's remembered 29
@@ -74,23 +77,70 @@ export async function run() {
   const checks = [];
 
   {
-    const c = new Check("GM1", "THE TRIGGER: the trader's first realised fit (08:50Z, 0.6%/h) makes the node's 29-graft set lose to grafting nothing; the 10:27 fit makes it win");
+    const c = new Check("GM1", "THE TRIGGER: the trader fit's diluted clock read 0.6%/h at 08:50Z and discarded the 29-graft set; the fit on its measured time reads the flow-free rate and keeps it");
+    // The pre-fix fit: flowed intervals skipped from the index but left on
+    // the clock (reproduced here so the trigger stays demonstrable).
+    const diluted = (rows) => {
+      const pts = [];
+      let s0 = null;
+      let y = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const b = rows[i];
+        if (i === 0 || b.t < rows[i - 1].t) {
+          s0 = b;
+          y = 0;
+          pts.length = 0;
+          pts.push({ T: b.t * ne.STOCK_TICK_S, y });
+          continue;
+        }
+        const a = rows[i - 1];
+        if (!ne.flowNegligible(a, b)) continue;
+        y += Math.log(1 + (b.lifePnl - a.lifePnl) / a.wealth);
+        pts.push({ T: b.t * ne.STOCK_TICK_S, y });
+      }
+      void s0;
+      const n = pts.length;
+      const mT = pts.reduce((x, p) => x + p.T, 0) / n;
+      const mY = pts.reduce((x, p) => x + p.y, 0) / n;
+      return pts.reduce((x, p) => x + (p.T - mT) * (p.y - mY), 0) / pts.reduce((x, p) => x + (p.T - mT) ** 2, 0);
+    };
+    const life = (hhmm) => F.stockHist.filter((r) => r.at >= "2026-09-29T05:43" && r.at <= `2026-09-29T${hhmm}`);
+    // The rate on the flow-free intervals themselves (what bayes.traderPosterior averages).
+    const flowFree = (rows) => {
+      let g = 0;
+      let T = 0;
+      for (let i = 1; i < rows.length; i++) if (ne.flowNegligible(rows[i - 1], rows[i])) {
+        g += Math.log(1 + (rows[i].lifePnl - rows[i - 1].lifePnl) / rows[i - 1].wealth);
+        T += (rows[i].t - rows[i - 1].t) * ne.STOCK_TICK_S;
+      }
+      return g / T;
+    };
+    const pct = (r) => `${(r * 360000).toFixed(1)}%/h`;
+    const old0850 = diluted(life("08:50"));
     const f0850 = fitAt("08:50");
     const f1027 = fitAt("10:27");
-    c.examined(4);
-    if (!f0850 || !f1027) c.fail(`the fits could not be reproduced: 08:50 ${JSON.stringify(f0850)}, 10:27 ${JSON.stringify(f1027)}`);
-    else {
-      const pct = (f) => `${(f.r * 360000).toFixed(1)}%/h (warm-up ${f.warmupH.toFixed(2)}h, ${f.points} points)`;
-      c.note(`realised fit 08:50 ${pct(f0850)}; 10:27 ${pct(f1027)} (published ${(I.capitalReturnPerSec * 360000).toFixed(1)}%/h)`);
-      if (fitAt("08:40") !== null) c.fail("before 08:50 the fit must still be null (the live return stood in)");
-      if (!(f0850.r * 3600 < 0.01)) c.fail(`the 08:50 fit must read < 1%/h: ${pct(f0850)}`);
-      const at0850 = { ...base, capitalReturnPerSec: f0850.r, capitalWarmupH: f0850.warmupH };
-      const s0850 = search(at0850, [SEED29], 0);
-      const s1027 = search(base, [SEED29], 0);
-      c.note(`29 set on the 08:50 fit: none ${s0850.withoutH.toFixed(1)}h, seed kept: ${s0850.seededFrom === 0}; on 10:27: none ${s1027.withoutH.toFixed(1)}h, with ${s1027.withH.toFixed(1)}h`);
-      if (s0850.seededFrom === 0) c.fail("on the 08:50 fit the 29 set must lose to grafting nothing (that is what discarded it)");
-      if (!(s1027.seededFrom === 0 && s1027.withoutH - s1027.withH > 100)) c.fail(`on the 10:27 inputs the 29 set must beat grafting nothing by >100h: ${s1027.withoutH} -> ${s1027.withH}`);
+    const ff = flowFree(life("10:27"));
+    c.examined(5);
+    c.note(`08:50: diluted clock ${pct(old0850)}, fixed ${f0850 ? pct(f0850.r) : null}; 10:27: fixed ${f1027 ? pct(f1027.r) : null} (warm-up ${f1027?.warmupH.toFixed(2)}h) vs flow-free intervals ${pct(ff)}; published then ${pct(I.capitalReturnPerSec)}`);
+    if (!(old0850 * 3600 < 0.01)) c.fail(`the pre-fix fit must reproduce the 08:50 0.6%/h: ${pct(old0850)}`);
+    if (!f0850 || !(f0850.r * 3600 > 0.1)) c.fail(`the fixed fit at 08:50 must read the measured intervals' rate, not 0.6%/h: ${JSON.stringify(f0850)}`);
+    if (!f1027 || Math.abs(f1027.r / ff - 1) > 0.25) c.fail(`the fixed fit at 10:27 must be within 25% of the flow-free intervals' rate ${pct(ff)}: ${f1027 && pct(f1027.r)}`);
+    const sOld = search({ ...base, capitalReturnPerSec: old0850, capitalWarmupH: 0 }, [SEED29], 0);
+    const sNew = search({ ...base, capitalReturnPerSec: f0850.r, capitalWarmupH: f0850.warmupH }, [SEED29], 0);
+    c.note(`29 set on the diluted 08:50 fit: none ${sOld.withoutH.toFixed(1)}h, kept ${sOld.seededFrom === 0}; on the fixed 08:50 fit: none ${sNew.withoutH.toFixed(1)}h, with ${sNew.withH.toFixed(1)}h`);
+    if (sOld.seededFrom === 0) c.fail("on the diluted fit the 29 set must lose to grafting nothing (that is what discarded it)");
+    if (sNew.seededFrom !== 0) c.fail("on the fixed fit the 29 set must be kept");
+    // A synthetic book at exactly 1e-4/s with a flow on every other interval: the rate is not halved.
+    const synth = [];
+    let w = 1e9, pnl = 0, fl = 0;
+    for (let t = 9; t <= 1209; t += 10) {
+      if (((t - 9) / 10) % 2 === 1) { w += 0.1 * w; fl += 0.1 * (w / 1.1); }
+      const gg = w * Math.expm1(1e-4 * 60); w += gg; pnl += gg;
+      synth.push({ t, wealth: w, lifePnl: pnl, externalFlows: fl });
     }
+    const rs = ne.realisedCapital(synth);
+    c.note(`synthetic 1e-4/s with a 10% flow every other interval: ${rs?.r.toExponential(3)}/s`);
+    if (!(rs && Math.abs(rs.r / 1e-4 - 1) < 0.05)) c.fail(`flows on half the intervals must not halve the rate: ${rs?.r}`);
     checks.push(c);
   }
 

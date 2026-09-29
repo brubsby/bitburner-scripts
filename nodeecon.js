@@ -602,9 +602,10 @@ export function withCashRaise(orders, cash, equity, margin = 0.02) {
  * THE TRADER'S REALISED RETURN, from its own history (/tel/stock-hist.txt,
  * one row per 10 ticks: {t, wealth, lifePnl, externalFlows}). Each run of
  * stock.js is a segment (t restarts); within it the growth index is
- * sum ln(1 + dPnl / wealth) over intervals with NO external flow — so a
- * purchase, a raise or the pre-install liquidation (which the trader books as
- * a flow) neither counts as a loss nor inflates the base. Pooled over every
+ * sum ln(1 + dPnl / wealth) over intervals with NO external flow (within
+ * FLOW_TOL_FRAC), on a clock that runs only over those intervals — so a
+ * purchase, a raise or the pre-install liquidation neither counts as a loss,
+ * inflates the base, nor dilutes the rate with time it was not measured on. Pooled over every
  * segment seen from its start (t0 small), least squares of
  * index = r (T - w), T the trader's own clock (t x 6s per market update,
  * StockMarket/data/Constants.ts:4 msPerStockUpdate — a page freeze stops it).
@@ -660,14 +661,28 @@ export function realisedCapital(rows, { maxStartTicks = 150, minPoints = 8 } = {
     const S = s[0].wealth - s[0].lifePnl
     let y = fin(s[0].externalFlows) && s[0].externalFlows === 0 && S > 0 && s[0].wealth > 0 ? Math.log(s[0].wealth / S) : 0
     pts.push({ T: s[0].t * STOCK_TICK_S, y })
+    // THE INDEX AND ITS CLOCK MOVE TOGETHER. A flowed interval is skipped
+    // from the index, and it used to stay on the clock: the fit then read
+    // (growth over flow-free intervals) / (ALL elapsed time). In BitNode 9,
+    // where hacknet cash lands every row and is large against a young book,
+    // most intervals were skipped and the slope collapsed (live 2026-09-29
+    // 08:50Z: 0.6%/h against 61-87%/h on the flow-free intervals of the same
+    // hours; that read discarded the node's 29-graft set). A skipped interval
+    // now leaves the clock too — the rate over the time it was measured on,
+    // as bayes.traderPosterior has always taken it. (Not measured on a
+    // flow-adjusted base instead: a sale the trader books as a flow moves
+    // lifePnl with the flow, so a flowed interval's dPnl is not a return.)
+    let skipS = 0
     for (let i = 1; i < s.length; i++) {
       const a = s[i - 1]
       const b = s[i]
-      if (!flowNegligible(a, b)) continue
-      const g = 1 + (b.lifePnl - a.lifePnl) / a.wealth
-      if (!(g > 0)) continue
+      const g = flowNegligible(a, b) ? 1 + (b.lifePnl - a.lifePnl) / a.wealth : null
+      if (!(g > 0)) {
+        skipS += Math.max(0, (b.t - a.t) * STOCK_TICK_S)
+        continue
+      }
       y += Math.log(g)
-      pts.push({ T: b.t * STOCK_TICK_S, y })
+      pts.push({ T: b.t * STOCK_TICK_S - skipS, y })
     }
     hours += (s[s.length - 1].t * STOCK_TICK_S) / 3600
   }
