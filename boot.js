@@ -761,7 +761,14 @@ export async function main(ns) {
       // cost the target nothing until they RUN. A hand-maintained per-entry
       // dependency list would be cheaper and would go stale, which this repo
       // has already paid for once — a transcribed list is a fork.
-      if (host !== 'home') ns.scp(ship ?? (ship = ns.ls('home', '.js')), host, 'home')
+      // ONLY THE SCRIPT'S IMPORT CLOSURE. Copying every .js to every host
+      // (what this line did) was not free: 143 files x ~70 hosts put ~10k
+      // script copies into the game — a 28MB save (27.6MB of it servers) and a
+      // 1.1GB page heap with no script running, serialised on every autosave;
+      // the page then froze in GC so hard DevTools could not pause it
+      // (2026-09-29 00:09). The closure is computed from the sources on home
+      // (ns.read, 0GB) so it cannot go stale the way a transcribed list would.
+      if (host !== 'home') ns.scp(importClosureOf(ns, entry.script), host, 'home')
       const pid = ns.exec(entry.script, host, threads, ...(entry.args || []))
       if (pid) started.push(`${entry.script} on ${host}${threads > 1 ? ` x${threads}` : ''}`)
       else failed.push(`${entry.script}: exec refused on ${host}`)
@@ -825,4 +832,22 @@ export async function main(ns) {
       ns.spawn(worker.script, { threads, spawnDelay: 0 }, ...(worker.args || []))
     }
   }
+}
+
+/** A script and everything it imports (transitively), read from home. */
+function importClosureOf(ns, root) {
+  const out = new Set([root])
+  const queue = [root]
+  while (queue.length) {
+    const f = queue.shift()
+    const src = String(ns.read(f) || '')
+    for (const m of src.matchAll(/from\s+['"]([^'"]+\.js)['"]/g)) {
+      const dep = m[1].replace(/^\//, '')
+      if (!out.has(dep)) {
+        out.add(dep)
+        queue.push(dep)
+      }
+    }
+  }
+  return [...out]
 }
