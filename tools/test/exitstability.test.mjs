@@ -183,6 +183,8 @@ export async function run() {
     c.note(`19:22 -> 19:27: ${ev.why}`);
     if (live.ok !== false || !/^EXIT UNSTABLE/.test(live.why)) c.fail(`the live pair must fail: ${JSON.stringify(live)}`);
     if (ev.ok !== null) c.fail("an event pass may move the exit");
+    const deploy = P.exitStabilityOf({ ...Bp.plan, ver: "a.1" }, { ...C.plan, ver: "b.1" });
+    if (deploy.ok !== null) c.fail(`a deploy (another model version) re-prices the exit, it is not drift: ${deploy.why}`);
     // A held decision re-priced on the same draws five minutes later.
     const inputs = C.exitinputs.inputs;
     const draws = P.makeDraws(postOf(C), P.PLAN.N, P.seedOf(C.plan.lastAugReset, 9));

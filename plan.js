@@ -1096,6 +1096,8 @@ function exitStabilityNow(prev, rec) {
   const px = prev?.exit
   if (!ex || !fin(ex.meanH) || !px || !fin(px.meanH)) return { ok: null, why: 'no exit on this pass or the last' }
   if (prev.lastAugReset !== rec.lastAugReset || prev.node !== rec.node) return { ok: null, why: 'the last pass was another life' }
+  // A deploy re-prices the exit on another model: a correction, not drift.
+  if (prev.ver !== undefined && rec.ver !== undefined && prev.ver !== rec.ver) return { ok: null, why: `the exit model changed (${prev.ver} -> ${rec.ver}): not comparable` }
   const events = Array.isArray(rec.events) ? rec.events : []
   if (events.length) return { ok: null, why: `re-decided this pass (${events.join('; ').slice(0, 160)}): the exit may move` }
   const dtH = (Date.parse(rec.at) - Date.parse(px.at ?? prev.at)) / 3.6e6
