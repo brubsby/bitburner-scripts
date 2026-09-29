@@ -100,8 +100,11 @@ export function prereqsMet(aug, ownedNames) {
 }
 
 /**
- * chooseGrafts (below) REFUSES — returns `{ grafts: null, why }` — rather than guessing whenever the
- * exit cannot be priced or the inputs are unreadable. A graft is money spent
+ * chooseGrafts (below) REFUSES — returns `{ grafts: null, why }` — rather than guessing whenever
+ * nothing can be priced (neither grafting nothing nor any graft set) or the
+ * inputs are unreadable. An unpriceable 'none' alone is NOT a refusal: it is
+ * the dominated option (+Infinity). And a refusal is never a decision to drop
+ * the committed set — the caller keeps it (progress.js graftDecisionOf). A graft is money spent
  * and entropy that survives every install until the BitNode ends
  * (Prestige.ts:128 re-applies it; only prestigeSourceFile clears it), so a
  * guess here is not recoverable by noticing later.
@@ -190,9 +193,23 @@ export function* chooseGraftsGen(o = {}) {
   if (!Array.isArray(candidates)) return { grafts: null, why: 'no graft candidates supplied' }
   const without = { ...base }
   delete without.finalGrafts
-  const baseline = priceExit(without)
+  const priced = priceExit(without)
   yield
-  if (!num(baseline)) return { grafts: null, why: 'the exit could not be priced without grafting — nothing to compare against' }
+  // GRAFTING NOTHING MAY BE UNPRICEABLE — and that is a price, not a refusal.
+  // Without the grafts' hacking multiplier the level the exit needs can be out
+  // of reach: the simulator returns null (degenerate) or a number past any
+  // horizon. That makes 'none' the WORST option, dominated by any with-run
+  // that is priced, so it is searched against as +Infinity.
+  //
+  // It was a refusal until 2026-09-29, and a refusal dropped the committed
+  // grafts from every other decision's inputs: live BN9 13:41Z and 14:51Z the
+  // committed install's batch (hacking x1.41) could not reach 6000 without
+  // the node's 28 grafts (x~14); the search refused ("the exit could not be
+  // priced without grafting"), the install decision re-priced its incumbent
+  // without them (26,648h mean) and switched to w4 for "26,581.67h sooner".
+  // A refusal is now only "nothing could be priced, with OR without".
+  const unpricedNone = !num(priced)
+  const baseline = unpricedNone ? Infinity : priced
 
   const owned = new Set(Array.isArray(ownedNames) ? ownedNames : [])
   // Only what the game would let us graft (not special, not owned), and
@@ -200,8 +217,9 @@ export function* chooseGraftsGen(o = {}) {
   // the price of the G2 behind it.
   const all = candidates.filter((a) => a && typeof a.name === 'string' && a.isSpecial !== true && !owned.has(a.name) && num(a.baseCost) && a.baseCost > 0 && a.mults && typeof a.mults === 'object' && graftSpecOf(a, intelligence) !== null)
   const pool = all.filter(moves)
+  const REFUSE_UNPRICED = 'the exit could not be priced without grafting, and no graft set was priced either — nothing to compare'
   const none = (why) => ({ grafts: [], baseline, withoutH: baseline, withH: baseline, exitHours: baseline, deltaH: 0, netHours: 0, slotHours: 0, spend: 0, truncated: false, why })
-  if (!pool.length) return none('no graftable augmentation moves the exit — grafting nothing')
+  if (!pool.length) return unpricedNone ? { grafts: null, why: REFUSE_UNPRICED, unpricedNone } : none('no graftable augmentation moves the exit — grafting nothing')
 
   // The with-run's own policy parameter, searched like an install time: the
   // balance at which the grafting starts, as a fraction of what the window
@@ -285,7 +303,10 @@ export function* chooseGraftsGen(o = {}) {
     bestH = best.h
   }
 
-  if (!chosen.length) return { ...none(`grafting nothing: no graft shortens the simulated exit (${baseline.toFixed(2)}h without)${truncated ? ' — search stopped at its CPU budget' : ''}`), truncated, seededFrom }
+  if (!chosen.length) {
+    if (unpricedNone) return { grafts: null, why: `${REFUSE_UNPRICED}${truncated ? ' (search stopped at its CPU budget)' : ''}`, unpricedNone, truncated, seededFrom }
+    return { ...none(`grafting nothing: no graft shortens the simulated exit (${baseline.toFixed(2)}h without)${truncated ? ' — search stopped at its CPU budget' : ''}`), truncated, seededFrom }
+  }
   const specs = chosen.map((a) => graftSpecOf(a, intelligence, { entropy }))
   const spend = specs.reduce((x, g) => x + g.cost, 0)
   const slotHours = specs.reduce((x, g) => x + g.slotH, 0)
@@ -294,20 +315,70 @@ export function* chooseGraftsGen(o = {}) {
     startMoney: start?.startMoney ?? null,
     startFraction: start?.fraction ?? null,
     grafts: chosen.map((a, i) => ({ name: a.name, cost: specs[i].cost, timeMs: specs[i].slotH * 3600000, mults: a.mults, spec: specs[i] })),
-    baseline,
-    withoutH: baseline,
+    // Grafting nothing unpriceable: withoutH null (JSON has no Infinity), and
+    // the gain is unbounded — published as such, not as a number.
+    baseline: unpricedNone ? null : baseline,
+    withoutH: unpricedNone ? null : baseline,
+    unpricedNone,
     withH: bestH,
     exitHours: bestH,
-    deltaH: bestH - baseline,
-    netHours: baseline - bestH,
+    deltaH: unpricedNone ? null : bestH - baseline,
+    netHours: unpricedNone ? null : baseline - bestH,
     slotHours,
     spend,
     truncated,
     seededFrom,
     entropyAfter: (num(o.entropy0) ? o.entropy0 : 0) + (entropy ? chosen.length : 0),
     city: GRAFT_CITY,
-    why: `${chosen.length} graft(s) in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${baseline.toFixed(2)}h without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${truncated ? ' — search stopped at its CPU budget' : ''}`,
+    why: `${chosen.length} graft(s) in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${unpricedNone ? 'unpriceable (the level is out of reach)' : `${baseline.toFixed(2)}h`} without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${truncated ? ' — search stopped at its CPU budget' : ''}`,
   }
+}
+
+/**
+ * THE COMMITTED GRAFT SET, WHATEVER THIS PASS'S GRAFT DECISION DID — the set
+ * every other decision prices the node with (progress.js carriedGraftsOf) and
+ * the set a refused search keeps (graftDecisionOf).
+ *
+ * A graft decision DECIDES ('grafts' -> its set, 'none' -> nothing) or it
+ * does not (a refusal, a throw, a budget stop with nothing feasible: key
+ * null). A non-decision is never "graft nothing": the set is, in order, what
+ * the non-decision kept (`kept`), the last decided record of this life
+ * (`prev`), of the node (`prevAny`), then the node's graft memory — its
+ * stored specs, else its names walked through `candidates` like a seed
+ * (ungraftable names skipped, prerequisites in order). Installed names are
+ * dropped (they are in the multiplier). Returns {grafts, startMoney, from}
+ * ({grafts: []} when 'none' was decided), or null when nothing is committed
+ * anywhere.
+ *
+ * Live BN9 2026-09-29 13:41Z and 14:51Z: a refused search published key null
+ * and the carry read that as "no grafts", so the install decision priced the
+ * node without its 28 committed grafts (hacking x~14) and switched onto a
+ * pricing artefact ("26581.67h sooner").
+ */
+export function committedGraftsOf(o = {}) {
+  const own = o.installed instanceof Set ? o.installed : new Set(Array.isArray(o.installed) ? o.installed : [])
+  const live = (gs) => (Array.isArray(gs) ? gs : []).filter((g) => g && typeof g.name === 'string' && !own.has(g.name))
+  const decided = (d) => d && (d.key === 'grafts' || d.key === 'none')
+  const of = (d, from) => (d.key === 'none' ? { grafts: [], startMoney: null, from } : { grafts: live(d.grafts), startMoney: num(d.startMoney) ? d.startMoney : null, from })
+  if (decided(o.cur)) return of(o.cur, "this pass's graft decision")
+  const k = o.cur?.kept
+  if (k && Array.isArray(k.grafts) && k.grafts.length) return { grafts: live(k.grafts), startMoney: num(k.startMoney) ? k.startMoney : null, from: k.from ?? 'the set the graft decision kept' }
+  if (decided(o.prev)) return of(o.prev, 'the last committed graft decision')
+  if (decided(o.prevAny)) return of(o.prevAny, "the node's last committed graft decision")
+  const m = o.memory
+  if (Array.isArray(m?.grafts) && m.grafts.length) return { grafts: live(m.grafts), startMoney: num(m.startMoney) ? m.startMoney : null, from: "the node's graft memory" }
+  if (Array.isArray(m?.names) && m.names.length && Array.isArray(o.candidates)) {
+    const walked = []
+    for (const n of m.names) {
+      if (own.has(n) || walked.some((a) => a.name === n)) continue
+      const a = o.candidates.find((x) => x?.name === n)
+      if (!a || !prereqsMet(a, new Set([...own, ...walked.map((w) => w.name)]))) continue
+      walked.push(a)
+    }
+    const specs = walked.map((a) => graftSpecOf(a, o.intelligence, { entropy: o.entropy !== false })).filter(Boolean)
+    if (specs.length) return { grafts: specs, startMoney: num(m.startMoney) ? m.startMoney : null, from: `the node's graft memory (${specs.length} of ${m.names.length} names)` }
+  }
+  return null
 }
 
 /**

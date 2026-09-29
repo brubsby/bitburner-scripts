@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
-import { chooseGraftsGen, graftCandidatesOf, GRAFT_CITY } from 'graftplan.js'
+import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGang, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
@@ -168,7 +168,7 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -1819,17 +1819,32 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       const seed = live((pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name))
       const memSeed = live(memPrev?.names)
       const r = yield* chooseGraftsGen({ candidates: cands, priceExit, base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, now: pc.pacer.cpuNow, seeds: [seed, memSeed] })
-      if (!r.grafts) return { key: null, why: `graft search refused: ${r.why}`, ms: Date.now() - t0, memory }
-      specs = r.grafts.map((g) => g.spec)
-      startMoney = r.startMoney
-      truncated = r.truncated === true
-      // The memory advances only to a set that contains it (grown from it, or
-      // from a committed set that already held it): a smaller set that wins
-      // on today's inputs is the committed set, and the memory stays beside it.
-      const found = r.grafts.map((g) => g.name)
-      if (found.length && (!memSeed.length || memSeed.every((n) => found.includes(n)))) memory = { names: found, withH: r.withH ?? null, at: new Date().toISOString() }
-      const from = r.seededFrom === 0 ? 'the committed set' : r.seededFrom === 1 ? `the node's graft memory (${memSeed.length})` : 'nothing'
-      searchWhy = `${r.why} (${cands.length} candidates; resumed from ${from}${continuing ? ', continuing a budget-stopped search' : ''})`
+      if (!r.grafts) {
+        // A REFUSAL KEEPS THE COMMITTED SET (graftplan.committedGraftsOf):
+        // the committed decision, else the node's memory, re-priced below
+        // against grafting nothing. It is never "no grafts" — live BN9
+        // 2026-09-29 13:41Z/14:51Z a refusal published key null, the carry
+        // dropped the 28 committed grafts from the install decision's inputs
+        // and the plan switched on a 26,581h artefact.
+        const kept = committedGraftsOf({ prev: pc.prevAny?.decisions?.grafts ?? null, memory: memPrev, candidates: cands, intelligence: intel, entropy, installed })
+        if (!kept?.grafts?.length) return { key: null, why: `graft search refused: ${r.why}`, ms: Date.now() - t0, memory, ...(kept ? { kept } : {}) }
+        specs = kept.grafts
+        startMoney = kept.startMoney
+        searchWhy = `graft search refused (${r.why}); kept ${kept.from} (${kept.grafts.length}), re-priced against grafting nothing`
+      } else {
+        specs = r.grafts.map((g) => g.spec)
+        startMoney = r.startMoney
+        truncated = r.truncated === true
+        // The memory advances only to a set that contains it (grown from it, or
+        // from a committed set that already held it): a smaller set that wins
+        // on today's inputs is the committed set, and the memory stays beside it.
+        // It carries the specs and start balance, so a later pass that cannot
+        // search still has a set to price (committedGraftsOf).
+        const found = r.grafts.map((g) => g.name)
+        if (found.length && (!memSeed.length || memSeed.every((n) => found.includes(n)))) memory = { names: found, withH: r.withH ?? null, at: new Date().toISOString(), startMoney: r.startMoney ?? null, grafts: specs }
+        const from = r.seededFrom === 0 ? 'the committed set' : r.seededFrom === 1 ? `the node's graft memory (${memSeed.length})` : 'nothing'
+        searchWhy = `${r.why} (${cands.length} candidates; resumed from ${from}${continuing ? ', continuing a budget-stopped search' : ''})`
+      }
     } else {
       specs = (prev.grafts ?? []).filter((g) => g && !installed.has(g.name))
       startMoney = prev.startMoney ?? null
@@ -1869,7 +1884,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     }
     const d = pc.post
       ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !prev, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => (k === 'none' ? pointNone : pointWith) })
-      : { key: typeof pointWith === 'number' && typeof pointNone === 'number' && pointWith < pointNone ? 'grafts' : 'none', why: 'no posterior: the point comparison' }
+      : { key: typeof pointWith === 'number' && isFinite(pointWith) && !(typeof pointNone === 'number' && isFinite(pointNone) && pointNone <= pointWith) ? 'grafts' : 'none', why: 'no posterior: the point comparison (grafting nothing unpriced counts as never)' }
     return {
       ...d,
       // The trajectory this was priced on (the committed install's), and its
@@ -1882,6 +1897,12 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       inputsKey: inputsKeyOf(withoutIn),
       grafts: d.key === 'grafts' ? specs : [],
       startMoney: d.key === 'grafts' ? (started ? 0 : startMoney) : null,
+      // No decision (nothing feasible, budget): the set priced is KEPT for
+      // every other decision's inputs (committedGraftsOf), never dropped.
+      ...(!d.key && specs.length ? { kept: { grafts: specs, startMoney: started ? 0 : startMoney, from: 'the set this undecided pass priced' } } : {}),
+      // Grafting nothing could not be priced (the level out of reach without
+      // the grafts): the dominated option, not a refusal.
+      noneUnpriced: !(typeof pointNone === 'number' && isFinite(pointNone)),
       started,
       inProgress,
       withoutH: pointNone,
@@ -1906,12 +1927,13 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
  * multiplier now). Null = none.
  */
 function carriedGraftsOf(pc, installed, work) {
-  const d = pc?.decisions?.grafts ?? pc?.prev?.decisions?.grafts ?? null
-  if (!d || d.key !== 'grafts' || !Array.isArray(d.grafts)) return null
-  const left = d.grafts.filter((g) => g && typeof g.name === 'string' && !installed.has(g.name))
-  if (!left.length) return null
-  const started = work?.type === 'GRAFTING' || d.grafts.some((g) => installed.has(g?.name))
-  return { finalGrafts: left, graftStartMoney: started ? 0 : d.startMoney ?? 0 }
+  // A refused, thrown or unreached graft decision keeps the committed set
+  // (graftplan.committedGraftsOf): only a decided 'none' carries nothing.
+  const c = committedGraftsOf({ cur: pc?.decisions?.grafts ?? null, prev: pc?.prev?.decisions?.grafts ?? null, prevAny: pc?.prevAny?.decisions?.grafts ?? null, memory: pc?.decisions?.grafts?.memory ?? pc?.prevAny?.graftMemory ?? null, installed })
+  if (!c || !c.grafts.length) return null
+  const all = [pc?.decisions?.grafts, pc?.prev?.decisions?.grafts].flatMap((d) => (Array.isArray(d?.grafts) ? d.grafts : []))
+  const started = work?.type === 'GRAFTING' || all.some((g) => installed.has(g?.name))
+  return { finalGrafts: c.grafts, graftStartMoney: started ? 0 : c.startMoney ?? 0 }
 }
 
 /**
@@ -2427,6 +2449,9 @@ function publishPlan(ns, info, extra = {}) {
       // the graft decision's committed option, priced on the same basis,
       // must agree (plan.consistencyOf); `ok: false` is health 'inconsistent'.
       consistency: pc.consistency ?? null,
+      // GRAFTS DROPPED check (plan.graftCarryCheckOf): the install decision's
+      // inputs against the committed graft set / graft memory.
+      graftCarry: pc.graftCarryCheck ?? null,
       // A decision that changed under a re-basing this pass: re-decide next
       // pass (redecideEvents reads it).
       forceRedecide: pc.forceRedecide ?? null,
@@ -5999,6 +6024,16 @@ async function act(ns, canJoin, info, note) {
       // reason) and the exit the plan committed for this install agree with
       // the plan's 'now' (plan.installExitsOf: TWO EXITS AT INSTALL).
       if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02, atInstall: { actorH: typeof exitCompare?.nowH === 'number' && isFinite(exitCompare.nowH) ? exitCompare.nowH : null, now: Date.now() } })
+      // GRAFTS DROPPED (plan.graftCarryCheckOf): the install decision's
+      // inputs carry the committed graft set (or, with no graft decision, the
+      // node's memory). Published as plan.graftCarry; planCheck fails on it.
+      if (pcx) {
+        try {
+          pcx.graftCarryCheck = graftCarryCheckOf({ install: pcx.decisions.install ?? null, installInputs: pcx.installInputs ?? null, grafts: pcx.decisions.grafts ?? null, memory: pcx.decisions.grafts?.memory ?? pcx.prevAny?.graftMemory ?? null, installed: new Set(installedCount.keys()) })
+        } catch (e) {
+          pcx.graftCarryCheck = { ok: null, why: `graft carry check threw: ${String(e).slice(0, 120)}` }
+        }
+      }
     }
     // The route's exit on THIS pass's inputs, from the gate's own comparison.
     if (countRouteNow?.chosen && exitCompare?.countAware) {

@@ -270,19 +270,17 @@ export function summarize(samples) {
  * its own simulated path. Returns {choice, switched, stays, why, gainH, pWin,
  * regretH, stats}.
  */
-export function decide({ samples, committed = null, switchCost = {}, theta = PLAN.theta } = {}) {
+export function decide({ samples, committed = null, switchCost = {}, theta = PLAN.theta, committedPrevH = null } = {}) {
   const { stats, filled, N } = summarize(samples)
   const feasible = Object.keys(stats).filter((k) => filled[k])
   if (!feasible.length || !N) return { choice: null, switched: false, stays: false, why: 'no option is feasible in half the draws', stats }
   const argmin = feasible.reduce((a, k) => (stats[k].meanH < stats[a].meanH ? k : a), feasible[0])
   if (committed === null || !filled[committed]) {
-    return {
-      choice: argmin,
-      switched: committed !== null,
-      stays: false,
-      why: committed === null ? `no committed option: the least expected exit (${stats[argmin].meanH}h, P(best) ${stats[argmin].pBest})` : `the committed option ${committed} is no longer feasible (${stats[committed]?.pFeasible ?? 0} of draws): the least expected exit, ${argmin}`,
-      stats,
-    }
+    const why = committed === null ? `no committed option: the least expected exit (${stats[argmin].meanH}h, P(best) ${stats[argmin].pBest})` : `the committed option ${committed} is no longer feasible (${stats[committed]?.pFeasible ?? 0} of draws): the least expected exit, ${argmin}`
+    // An incumbent priced finite last pass and unpriceable now is the same
+    // artefact as a 10x gain (an input it needs went missing): flagged.
+    const sanity = committed !== null && fin(committedPrevH) ? switchSanityOf({ from: committed, to: argmin, gainH: Infinity, exitH: stats[argmin].meanH, fromH: null, prevH: committedPrevH }) : null
+    return { choice: argmin, switched: committed !== null, stays: false, why: sanity ? `${sanity.why} — ${why}` : why, ...(sanity ? { switchSanity: sanity } : {}), stats }
   }
   const c = filled[committed]
   let best = null
@@ -297,7 +295,9 @@ export function decide({ samples, committed = null, switchCost = {}, theta = PLA
     if (!best || gain > best.gain) best = { key: k, gain, pWin, cost }
   }
   if (best && best.gain > 0 && best.pWin >= theta) {
-    return { choice: best.key, switched: true, stays: false, gainH: +best.gain.toFixed(3), pWin: +best.pWin.toFixed(3), regretH: +regret.toFixed(3), why: `switch ${committed} -> ${best.key}: expected ${best.gain.toFixed(2)}h sooner net of a ${best.cost.toFixed(2)}h switch cost, better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws (>= ${(100 * theta).toFixed(0)}%)`, stats }
+    const why = `switch ${committed} -> ${best.key}: expected ${best.gain.toFixed(2)}h sooner net of a ${best.cost.toFixed(2)}h switch cost, better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws (>= ${(100 * theta).toFixed(0)}%)`
+    const sanity = switchSanityOf({ from: committed, to: best.key, gainH: best.gain, exitH: stats[best.key]?.meanH, fromH: stats[committed]?.meanH, prevH: committedPrevH })
+    return { choice: best.key, switched: true, stays: false, gainH: +best.gain.toFixed(3), pWin: +best.pWin.toFixed(3), regretH: +regret.toFixed(3), why: sanity ? `${sanity.why} — ${why}` : why, ...(sanity ? { switchSanity: sanity } : {}), stats }
   }
   return {
     choice: committed,
@@ -310,6 +310,44 @@ export function decide({ samples, committed = null, switchCost = {}, theta = PLA
     stats,
   }
 }
+
+/**
+ * SWITCH SANITY. A switch whose expected gain is more than SWITCH_SANITY.ratio
+ * times the exit it switches TO says the incumbent was priced on something
+ * other than the plan — an input dropped, a leg unpriceable — not that the
+ * plan found 26,000 hours. Live BN9 2026-09-29 14:51Z: "switch committed ->
+ * w4: expected 26581.67h sooner" onto a 66h exit, because the incumbent was
+ * re-priced without the node's 28 committed grafts (GRAFTS DROPPED).
+ *
+ * It NEVER BLOCKS the switch: a real collapse of the incumbent (an input that
+ * genuinely changed) must still be acted on, and a guard that holds a bad
+ * incumbent is worse than the artefact. It is reported: `switchSanity` on the
+ * decision record, carried on the held passes after it (the same decision),
+ * and a FAIL in planCheck (SWITCH ARTEFACT). Returns null when sane.
+ */
+export const SWITCH_SANITY = { ratio: 10 }
+export function switchSanityOf({ from = null, to = null, gainH, exitH, fromH = null, prevH = null, ratio = SWITCH_SANITY.ratio } = {}) {
+  if (!fin(exitH) || !(exitH > 0)) return null
+  // gainH Infinity: the incumbent is unpriceable now (no feasible half of the
+  // draws) — an artefact when it was priced finite last pass (prevH).
+  const unpriced = gainH === Infinity
+  if (unpriced ? !fin(prevH) : !fin(gainH) || !(gainH > ratio * exitH)) return null
+  return {
+    ok: false,
+    from,
+    to,
+    gainH: unpriced ? null : +gainH.toFixed(3),
+    exitH: +exitH.toFixed(3),
+    fromH: fin(fromH) ? +fromH.toFixed(3) : null,
+    prevH: fin(prevH) ? +prevH.toFixed(3) : null,
+    ratio,
+    why: unpriced
+      ? `SWITCH ARTEFACT: ${from} -> ${to}: the incumbent, ${prevH.toFixed(1)}h when last priced, is unpriceable now — probably priced without an input the plan holds (taken, not blocked)`
+      : `SWITCH ARTEFACT: ${from} -> ${to} gains ${gainH.toFixed(1)}h against a ${exitH.toFixed(1)}h exit (> ${ratio}x) — the incumbent${fin(fromH) ? ` (${fromH.toFixed(1)}h)` : ''}${fin(prevH) ? `, ${prevH.toFixed(1)}h when last priced,` : ''} was probably priced without an input the plan holds (taken, not blocked)`,
+  }
+}
+/** The switch-sanity flag of a held decision: the one its decision made. */
+const heldSanity = (prev) => (prev?.switchSanity?.ok === false ? { switchSanity: prev.switchSanity } : {})
 
 /**
  * RE-DECIDE ON EVENTS, not every pass. prev = the last plan record (or null),
@@ -408,11 +446,11 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   const rows = optionRows(options, stats, (o) => pointH.get(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   if (!redecide && committedKey) {
-    return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
+    return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...heldSanity(prev), ...cpu }
   }
-  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
+  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
-  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
+  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
 }
 
 /**
@@ -517,10 +555,12 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
     return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
-  if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows })
-  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
+  if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...heldSanity(prev) })
+  // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
+  const prevH = committedKey ? (fin(prev?.commitment?.meanH) ? prev.commitment.meanH : fin(prev?.meanH) ? prev.meanH : null) : null
+  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
   if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows })
+  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows })
 }
 
 /**
@@ -792,10 +832,10 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   const { stats } = summarize(ev.samples)
   const rows = optionRows(use, stats, (o) => pointOf(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
-  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
+  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...heldSanity(prev), ...cpu }
+  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
-  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
+  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
 }
 
 /** Standard normal CDF (Abramowitz-Stegun 7.1.26 via erf). */
@@ -845,6 +885,60 @@ export function decideSpend({ deltaH, withoutH, si, theta = PLAN.theta, dominant
  * Returns {fails: [{what, detail}], notes: [string]}.
  */
 export const PLAN_CAL = { minN: 8, lo: 0.55, hi: 0.97, staleMin: 45 }
+
+/**
+ * GRAFTS DROPPED: the committed graft set must be in the install decision's
+ * inputs. The plan is one trajectory — an install decision priced without the
+ * grafts the node has committed to prices a different node (live BN9
+ * 2026-09-29 13:41Z and 14:51Z: a refused graft search dropped the 28
+ * committed grafts, the incumbent install re-priced at ~26,000h, and the plan
+ * switched on the artefact).
+ *
+ * Expected: the graft decision's committed set when it DECIDED ('grafts' ->
+ * its set, 'none' -> nothing); when it did not (a refusal, a throw, a pass
+ * that did not reach it), the set it kept (`kept`), else the node's graft
+ * memory — a non-decision never means "graft nothing". Installed names are
+ * dropped from both sides (they are in the multiplier). A graft decision that
+ * flipped when rebased this pass is a note: the install decision priced the
+ * pre-flip set and re-decides next pass (forceRedecide).
+ * Returns {ok (true|false|null), expected, carried, why}.
+ */
+export function graftCarryCheckOf({ install = null, installInputs = null, grafts = null, memory = null, installed = [] } = {}) {
+  if (!install?.key || !installInputs) return { ok: null, why: 'no install decision priced this pass' }
+  const own = new Set(installed instanceof Set ? installed : Array.isArray(installed) ? installed : [])
+  const names = (xs) => (Array.isArray(xs) ? xs : []).map((g) => (typeof g === 'string' ? g : g?.name)).filter((n) => typeof n === 'string' && !own.has(n))
+  const carried = names(installInputs.finalGrafts)
+  let expected = null
+  let source = null
+  if (grafts?.key === 'grafts') {
+    expected = names(grafts.grafts)
+    source = 'the committed graft decision'
+  } else if (grafts?.key === 'none') {
+    expected = []
+    source = "the graft decision ('none')"
+  } else if (Array.isArray(grafts?.kept?.grafts) && grafts.kept.grafts.length) {
+    expected = names(grafts.kept.grafts)
+    source = `the set the graft decision kept (${grafts.why ? String(grafts.why).slice(0, 80) : 'no decision'})`
+  } else if (Array.isArray(memory?.names) && memory.names.length) {
+    expected = names(memory.names)
+    source = `the node's graft memory (graft decision: ${grafts ? String(grafts.why ?? 'no key').slice(0, 80) : 'not reached'})`
+  } else return { ok: null, carried, why: 'no committed graft set and no graft memory' }
+  const a = new Set(carried)
+  const b = new Set(expected)
+  const missing = expected.filter((n) => !a.has(n))
+  const extra = carried.filter((n) => !b.has(n))
+  if (!missing.length && !extra.length) return { ok: true, expected: expected.length, carried: carried.length, source, why: `the install decision's inputs carry ${carried.length} graft(s), as ${source}` }
+  if (grafts?.flippedOnRebase) return { ok: null, expected: expected.length, carried: carried.length, source, why: `graft decision flipped on rebase (${grafts.flippedOnRebase}): the install decision priced the pre-flip set (${carried.length}); re-decided next pass` }
+  return {
+    ok: false,
+    expected: expected.length,
+    carried: carried.length,
+    missing: missing.slice(0, 40),
+    extra: extra.slice(0, 40),
+    source,
+    why: `GRAFTS DROPPED: the install decision (${install.key}) priced ${carried.length} graft(s) where ${source} holds ${expected.length}${missing.length ? ` — missing ${missing.length} (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', ...' : ''})` : ''}${extra.length ? ` — ${extra.length} not committed (${extra.slice(0, 3).join(', ')})` : ''}`,
+  }
+}
 export function planCheck(plan, { gate = null, progress = null, now = Date.now() } = {}) {
   const fails = []
   const notes = []
@@ -881,6 +975,15 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   else if (ie?.why) notes.push(`plan install exits: ${ie.why}`)
   if (graftOk === false) fail(`PLAN INCONSISTENT: ${graftWhy}`, 'two decisions of the one plan price its committed trajectory differently — they are not reading the same basis (plan.basisOf / trajectoryOf)')
   else if (graftWhy) notes.push(`plan consistency: ${graftWhy}`)
+  // GRAFTS DROPPED (graftCarryCheckOf, recorded by the pass as plan.graftCarry).
+  const gc = plan.graftCarry ?? null
+  if (gc?.ok === false) fail(String(gc.why).startsWith('GRAFTS DROPPED') ? gc.why : `GRAFTS DROPPED: ${gc.why}`, 'the install decision priced a node without the grafts it has committed to — every exit and switch this pass is off another trajectory (progress.js carriedGraftsOf / graftDecisionOf: a refused or unreached graft decision must keep the committed set)')
+  else if (gc?.why) notes.push(`plan graft carry: ${gc.why}`)
+  // SWITCH ARTEFACT (switchSanityOf): taken, never blocked — reported here.
+  for (const [name, dd] of Object.entries(plan.decisions ?? {})) {
+    const ss = dd?.switchSanity
+    if (ss?.ok === false) fail(`${String(ss.why).startsWith('SWITCH ARTEFACT') ? ss.why : `SWITCH ARTEFACT: ${ss.why}`} [${name}${dd.held ? ', held since' : ''} ${dd.decidedAt ?? ''}]`, 'a switch gained more than 10x the exit it chose: the incumbent was priced on something the plan does not hold (a dropped input, an unpriceable leg) — the switch was taken; find what the incumbent lost')
+  }
   const c = plan.calibration
   if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
   else if (c) notes.push(`plan calibration: ${c.why ?? 'none'}`)
