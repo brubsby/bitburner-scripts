@@ -48,6 +48,7 @@ import "./test/gameresolve.mjs";
 const { wealthNegativeCheck, stackTierFromBoot } = await import("../nodeecon.js");
 const { ramUpgradeCost } = await import("../homecost.js");
 const { bitNodeMults } = await import("../bitNodeMultipliers.js");
+const { gangActivity, wantedBindsCheck, whyContradictions } = await import("../gangplan.js");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEL = path.join(ROOT, ".telemetry");
@@ -236,6 +237,7 @@ const now = {
   gangRespect: tel["gang.txt"]?.respect ?? null,
   gangMembers: tel["gang.txt"]?.members ?? null,
   gangTerritory: tel["gang.txt"]?.territory ?? null,
+  gangPenalty: tel["gang.txt"]?.wantedPenalty ?? null,
   goBonusPct: tel["go.txt"]?.factionRepBonusPct ?? null,
   sleeveSyncMin: tel["sleeve.txt"]?.syncMin ?? null,
   sleeveKarmaYield: tel["sleeve.txt"]?.karmaYield ?? null,
@@ -254,6 +256,22 @@ const now = {
 };
 
 if (state.__error) fail("daemon /state unreadable", state.__error);
+
+// THE GANG'S WANTED PENALTY, every run (not a movement check): it multiplies
+// every respect and money gain, and wanted does not decay unless a member is
+// on justice. Live 2026-09-29 it sat at 0.006 (respect 2, wanted 336) for an
+// hour while every check here passed. A penalty rising since the last sample
+// is a recovery and is noted; anything else under the floor FAILS.
+if (tel["gang.txt"]?.phase === "running") {
+  const w = wantedBindsCheck(tel["gang.txt"], prev?.gangPenalty ?? null);
+  if (w?.fail) fail(w.what, w.detail);
+  else if (w?.note) note(w.note);
+  // A published reason must describe the task actually held: three members on
+  // Territory Warfare published "train: ..." because the warfare override
+  // replaced the task and kept the policy's reason.
+  const bad = whyContradictions(tel["gang.txt"]);
+  if (bad.length) fail(`GANG ASSIGNMENT CONTRADICTS ITS WHY: ${bad.length} member(s)`, bad.join("; "));
+}
 
 // Telemetry advances on its own cadence — the daemon mirrors the save every
 // 30s, gang.js and go.js publish per tick — so two samples taken close
@@ -379,7 +397,14 @@ if (!prev) {
     // this fails once it outlasts any plausible one.
     const TRAIN_BUDGET_H = 6;
     const assignments = Object.values(tel["gang.txt"]?.assignments ?? {});
-    const training = assignments.length > 0 && assignments.every((t) => /^Train /.test(String(t)));
+    // NOBODY EARNING is the legitimate flat-respect state — training, or on
+    // justice clearing wanted, or holding Territory Warfare. This read
+    // "every member on a Train task", so 8 training + 3 on warfare (live
+    // 2026-09-29) fell through to "nobody is training", which named the
+    // wrong cause twice over: 8 were training, and the real fault was that
+    // nobody was on a respect task at all.
+    const act = gangActivity(tel["gang.txt"]?.assignments);
+    const training = act.members > 0 && act.earning === 0 && act.training + act.justice > 0;
     const grew = now.gangRespect !== null && prev.gangRespect !== null && now.gangRespect > prev.gangRespect;
     if (grew) {
       now.trainingSince = null;
@@ -389,7 +414,7 @@ if (!prev) {
       if (h > TRAIN_BUDGET_H) {
         fail(`the gang has been training ${h.toFixed(1)}h with no respect earned`, `budget ${TRAIN_BUDGET_H}h — the policy trains before earning, but not indefinitely; check factionplan.txt gang.unlocks and gang.txt policy.k`);
       } else {
-        note(`gang training ${h.toFixed(1)}h/${TRAIN_BUDGET_H}h (respect stays flat by design: ${assignments.length} member(s) on training tasks)`);
+        note(`gang not earning ${h.toFixed(1)}h/${TRAIN_BUDGET_H}h (respect stays flat by design: ${act.training} training, ${act.justice} on justice, ${act.warfare} on warfare, of ${assignments.length})`);
       }
     } else if (now.gangRespect !== null && prev.gangRespect !== null) {
       // RESPECT IS NOT MONOTONIC. Ascension subtracts the member's earned
@@ -406,7 +431,7 @@ if (!prev) {
         const noop = since.filter((a) => /gain x1\.000/.test(String(a.why ?? "")));
         if (noop.length) fail(`${noop.length} ascension(s) at gain x1.000`, `an ascension that multiplies stats by 1 cannot pay: it resets earned respect and destroys the member's equipment. Members: ${[...new Set(noop.map((a) => a.name))].join(", ")}`);
       } else {
-        fail("gang respect is not growing, nobody is training, and no ascension explains it", `${Math.round(prev.gangRespect)} -> ${Math.round(now.gangRespect)}, assignments ${JSON.stringify(tel["gang.txt"]?.assignments ?? null)}`);
+        fail(`gang respect is not growing with ${act.earning} member(s) on earning tasks (${act.training} training, ${act.justice} justice, ${act.warfare} warfare), and no ascension explains it`, `${Math.round(prev.gangRespect)} -> ${Math.round(now.gangRespect)}, wanted penalty ${tel["gang.txt"]?.wantedPenalty ?? "?"}, assignments ${JSON.stringify(tel["gang.txt"]?.assignments ?? null)}`);
       }
     }
     note(`gang ${now.gangFaction}: respect ${Math.round(now.gangRespect ?? 0).toLocaleString()}, territory ${((now.gangTerritory ?? 0) * 100).toFixed(1)}%`);

@@ -143,10 +143,37 @@ export async function run() {
     if (Object.values(hg.assignments).some((t) => !TASK[t].isHacking)) c3.fail("a hacking gang never gets a combat-only task");
 
     c3.examined(1);
-    const hot = assign({ ...g, respect: 100, wantedLevel: 100 }, [strong("a"), strong("b"), strong("c")], { softcap: 1, minPenalty: 0.9 });
-    const justice = Object.values(hot.assignments).filter((t) => t === "Vigilante Justice").length;
-    if (!(justice >= 1)) c3.fail("with the penalty at 0.5 someone must lower wanted");
-    if (!(hot.rates.wanted <= 0)) c3.fail("enough members must be converted for wanted to fall");
+    // WANTED CONTROL IS PRICED, not a sign rule. Each case is judged by
+    // trajectory: the priced policy (assign re-planned every minute) against
+    // every fixed number of justice members, 4h of gross respect. The old
+    // rule ("convert until wanted falls") put all three on justice at
+    // respect 100 / wanted 100 and lost ~45% to earning straight through.
+    const forced = (n) => (gg, ms, o) => {
+      const p = assign(gg, ms, { ...o, minPenalty: 0 });
+      ms.slice(0, n).forEach((m) => (p.assignments[m.name] = "Vigilante Justice"));
+      return p;
+    };
+    const cases = [
+      { R: 100, W: 100, s: 400, N: 3, expectJustice: 0 },
+      { R: 1e3, W: 5e4, s: 200, N: 6, expectJustice: 1 },
+      { R: 5e5, W: 2e5, s: 160, N: 8, expectJustice: 1 },
+    ];
+    let justice = null;
+    for (const cs of cases) {
+      const gg = { ...g, respect: cs.R, wantedLevel: cs.W };
+      const ms = Array.from({ length: cs.N }, (_, i) => member({ name: `j${i}`, hack: 50, str: cs.s, def: cs.s, dex: cs.s, agi: cs.s, cha: 200 }));
+      const hot = assign(gg, ms, { softcap: 1, minPenalty: 0.9 });
+      const nj = Object.values(hot.assignments).filter((t) => t === "Vigilante Justice").length;
+      if (justice === null) justice = nj;
+      if (cs.expectJustice === 0 && nj !== 0) c3.fail(`respect ${cs.R} / wanted ${cs.W}: earning through lifts the penalty fastest, but ${nj} went to justice`);
+      if (cs.expectJustice > 0 && !(nj >= cs.expectJustice)) c3.fail(`respect ${cs.R} / wanted ${cs.W}: justice pays here and nobody took it`);
+      const gross = (fn) => gp.simulateGang(gg, ms, { softcap: 1, horizonH: 4, stepSec: 60, assignFn: fn }).samples.at(-1).gross;
+      const priced = gross(undefined);
+      const fixed = [0, 1, 2, cs.N].map((n) => ({ n, v: gross(forced(n)) }));
+      const best = fixed.reduce((a, b) => (b.v > a.v ? b : a));
+      if (!(priced >= best.v * 0.99)) c3.fail(`respect ${cs.R} / wanted ${cs.W}: the priced policy (${priced.toExponential(3)}) loses to ${best.n} fixed on justice (${best.v.toExponential(3)})`);
+      c3.note(`respect ${cs.R} / wanted ${cs.W}: ${nj} of ${cs.N} on justice now; 4h gross priced ${priced.toExponential(2)} vs fixed ${fixed.map((f) => `${f.n}:${f.v.toExponential(2)}`).join(" ")}`);
+    }
     const cool = assign(g, [strong("a"), strong("b"), strong("c")], { softcap: 1, minPenalty: 0.9 });
     if (Object.values(cool.assignments).includes("Vigilante Justice")) c3.fail("with the penalty near 1 nobody wastes time on justice");
 

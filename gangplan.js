@@ -228,6 +228,94 @@ export function discount(respect, power) {
 /** The productive tasks a gang of this kind can use (tasks.ts isHacking / isCombat flags). */
 export const tasksFor = (isHackingGang) => TASKS.filter((t) => (isHackingGang ? t.isHacking : t.isCombat) && t.name !== 'Unassigned' && t.name !== 'Territory Warfare')
 
+// ---------------------------------------------------------------------------
+// THE WANTED PENALTY, PRICED.
+//
+// Every gain is multiplied by pen = respect / (respect + wanted)
+// (formulas.ts calculateWantedPenalty), raised to the softcap exponent. So
+// a gain at penalty p is exactly (gain at p = 1) x p^soft, and the penalty
+// moves by two different laws (Gang.ts:processGains):
+//
+//   respect  += sum of gains, each proportional to p^soft
+//   wanted    = (wanted + sum wantedGain x 10) x (1 - 0.001 x justice)
+//               per 2s process, floored at 1
+//
+// With NO member on a task that moves wanted (everyone training, or on
+// Territory Warfare) the sum is 0 and justice is 0, so wanted is frozen:
+// it does not decay on its own. That is how the live gang sat at wanted 336
+// on respect 2 (penalty 0.006) for as long as it trained.
+// ---------------------------------------------------------------------------
+
+/** How far ahead justicePlan projects, and its step. */
+export const JUSTICE_TAU_MIN = 120
+const JUSTICE_STEP_SEC = 60
+/** The penalty below which wanted is managed at all (assign, trainRatio, shouldAscend). */
+export const MIN_PENALTY = 0.9
+
+/**
+ * Project `entries` [{m, task}] for `tauSec` from `g`, with the given number
+ * of extra justice members folded in (`extra`: {n, wanted}). Returns the
+ * value (respect, or money in money mode) earned over the projection plus
+ * the final rate held for as long again — the second term is what makes a
+ * wanted level left standing cost something after the window.
+ */
+export function projectWanted(g, entries, softcap, mode = 'respect', extra = null, tauSec = JUSTICE_TAU_MIN * 60) {
+  const s = soft(g, softcap)
+  const g1 = { ...g, wantedLevel: 0 }
+  let r1 = 0
+  let v1 = 0
+  let w = num(extra?.wanted) ? extra.wanted : 0
+  let n = num(extra?.n) ? extra.n : 0
+  for (const e of entries) {
+    const r = respectGain(g1, e.m, e.task, softcap)
+    r1 += r
+    v1 += mode === 'money' ? moneyGain(g1, e.m, e.task, softcap) : r
+    w += wantedGain(g, e.m, e.task)
+    if (e.task.baseWanted < 0) n++
+  }
+  const cyc = JUSTICE_STEP_SEC / CYCLE_SEC
+  const decay = Math.pow(Math.max(0, 1 - 0.001 * n), cyc / CYCLES_PER_PROCESS)
+  let R = Math.max(g.respect, 1e-9)
+  let W = g.wantedLevel
+  let total = 0
+  const steps = Math.round(tauSec / JUSTICE_STEP_SEC)
+  for (let i = 0; i < steps; i++) {
+    const f = Math.pow(R / (R + W), s)
+    R += r1 * f * cyc
+    total += v1 * f * cyc
+    if (W !== 1 || w >= 0) {
+      const old = W
+      W = (W + w * cyc) * decay
+      if (W < 1 || (w <= 0 && W > old)) W = 1
+    }
+  }
+  const endPen = R / (R + W)
+  return { value: total + v1 * Math.pow(endPen, s) * cyc * steps, endPenalty: endPen, respect: R, wanted: W }
+}
+
+/**
+ * How many of `entries` (cheapest first) to move onto `justice`: the n in
+ * 0..N whose projection is worth most (ties to the smaller n). `extra`:
+ * justice members already committed elsewhere (trainees), folded into
+ * every candidate.
+ */
+export function justicePlan(g, entries, justice, softcap, mode = 'respect', extra = null) {
+  let best = null
+  for (let n = 0; n <= entries.length; n++) {
+    const es = entries.map((e, i) => (i < n ? { m: e.m, task: justice } : e))
+    const p = projectWanted(g, es, softcap, mode, extra)
+    if (!best || p.value > best.value * (1 + 1e-9)) best = { n, ...p }
+  }
+  return best
+}
+
+/**
+ * Can lowering wanted lift the penalty? Only when wanted stands above its
+ * floor of 1 by enough to matter: at respect 2 the best penalty there is,
+ * wanted 1, is 0.67, and justice cannot improve on that — only respect can.
+ */
+export const wantedReducible = (g) => g.wantedLevel > 1 && wantedPenalty({ respect: g.respect, wantedLevel: 1 }) - wantedPenalty(g) > 0.01
+
 /**
  * One task per member. `g`: {respect, wantedLevel, territory, isHacking};
  * `members`: getMemberInformation objects; `o`: {softcap, mode: 'respect'|'money', minPenalty=0.9}.
@@ -237,7 +325,7 @@ export const tasksFor = (isHackingGang) => TASKS.filter((t) => (isHackingGang ? 
 export function assign(g, members, o = {}) {
   if (!g || !num(g.respect) || !num(g.wantedLevel) || !num(g.territory) || typeof g.isHacking !== 'boolean') return null
   if (!Array.isArray(members) || !num(o.softcap)) return null
-  const minPenalty = num(o.minPenalty) ? o.minPenalty : 0.9
+  const minPenalty = num(o.minPenalty) ? o.minPenalty : MIN_PENALTY
   // Below the member cap respect is what recruits need — unless the caller
   // is splitting the gang by trajectory (o.split, from trainRatio's m),
   // in which case the search has already priced recruits against money.
@@ -263,20 +351,29 @@ export function assign(g, members, o = {}) {
     }
     picks.push({ m, best })
   }
-  // Wanted control: while the projected penalty is below the floor, move the
-  // member whose switch costs the least value to the justice task.
-  let wantedRate = picks.reduce((a, p) => a + p.best.wanted, 0)
-  // Per-cycle wanted gain is tiny against the level, so the honest check is
-  // the SIGN at the current penalty: if the penalty is already under the
-  // floor and wanted is still rising, convert members until it falls.
+  // WANTED CONTROL, PRICED. While the penalty is under the floor and the
+  // earners would raise wanted, choose HOW MANY of them (cheapest first) move
+  // to the justice task by projecting the penalty forward (justicePlan) —
+  // not by the sign rule this used to be ("convert until wanted falls").
+  //
+  // The sign rule was wrong in both directions. At respect 2 and wanted 336
+  // (live 2026-09-29, penalty 0.006) earning straight through lifts the
+  // penalty fastest, because respect grows in proportion to itself while
+  // wanted grows linearly; the sign rule would have parked every earner on
+  // justice for a quarter of an hour instead. And at respect 1e6 with the
+  // penalty sat at an equilibrium below the floor, the projection finds the
+  // justice that pays where the sign rule did too.
+  const wantedRate = picks.reduce((a, p) => a + p.best.wanted, 0)
   const pen = wantedPenalty(g)
   picks.sort((a, b) => a.best.value - b.best.value)
   let converted = 0
-  while (pen < minPenalty && wantedRate > 0 && converted < picks.length) {
-    const p = picks[converted++]
-    wantedRate += wantedGain(g, p.m, justice) - p.best.wanted
-    assignments[p.m.name] = justice.name
-    why[p.m.name] = `wanted penalty ${pen.toFixed(3)} below ${minPenalty}: lowering wanted`
+  if (pen < minPenalty && wantedRate > 0 && picks.length) {
+    const jp = justicePlan(g, picks.map((p) => ({ m: p.m, task: p.best.task })), justice, o.softcap, mode, o.extraJustice)
+    converted = jp.n
+    for (const p of picks.slice(0, converted)) {
+      assignments[p.m.name] = justice.name
+      why[p.m.name] = `wanted: penalty ${pen.toFixed(3)} below ${minPenalty}; ${converted} of ${picks.length} earners on justice is the best ${mode} over ${JUSTICE_TAU_MIN} min projected`
+    }
   }
   for (const p of picks.slice(converted)) {
     assignments[p.m.name] = p.best.task.name
@@ -307,6 +404,17 @@ export function shouldAscend(m, result, g, o = {}) {
   const left = g.respect - (num(result.respect) ? result.respect : 0)
   const need = respectForMembers(o.members ?? MAX_MEMBERS)
   if (left < need) return { ascend: false, why: `would drop respect to ${left.toFixed(0)}, below the ${need.toFixed(0)} that keeps ${o.members} members`, gain }
+  // THE PENALTY AFTER. Ascension takes respect and leaves wanted where it
+  // is, so it can crash the penalty on its own: live 2026-09-29 19:10 three
+  // ascensions took respect 871,679 -> 2 against wanted 336 (0.9996 ->
+  // 0.006). Refused when the penalty after would fall under the floor and
+  // was not already there — a gang already under it is the wanted
+  // control's to fix, not a reason to stop ascending forever.
+  if (num(g.wantedLevel)) {
+    const after = wantedPenalty({ respect: Math.max(1, left), wantedLevel: g.wantedLevel })
+    const floor = num(o.minPenalty) ? o.minPenalty : MIN_PENALTY
+    if (after < floor && after < wantedPenalty(g)) return { ascend: false, why: `would drop the wanted penalty to ${after.toFixed(3)} (respect ${Math.max(1, left).toFixed(0)} vs wanted ${g.wantedLevel.toFixed(0)}), below ${floor}`, gain }
+  }
   return { ascend: true, why: `gain x${gain.toFixed(3)}, respect ${left.toFixed(0)} keeps every member`, gain }
 }
 
@@ -409,6 +517,30 @@ export function territoryUpdate(t, warfareMembers) {
   }
   t.territory = Math.max(0, Math.min(1, t.territory))
   return deathPerMember
+}
+
+/**
+ * THE WARFARE SQUAD, one rule for gang.js and the simulation: the strongest
+ * round(fraction x n) members hold Territory Warfare in place of what the
+ * policy gave them — except a member the wanted control has put on justice,
+ * who stays there (clearing wanted outranks power, and wanted cannot fall
+ * while nobody is on justice). Rewrites `plan.why` for every member it
+ * takes: gang.js used to overwrite the task and leave the policy's reason
+ * behind, so three members on Territory Warfare published "train: stat
+ * weight N below ..." (live 2026-09-29) and read as a bug in the policy.
+ * Returns the squad.
+ */
+export function warfareSquad(plan, ms, fraction, at = {}) {
+  if (!plan || !num(fraction) || fraction <= 0) return []
+  const n = Math.round(Math.min(1, fraction) * ms.length)
+  const justiceName = (name) => /^(Vigilante Justice|Ethical Hacking)$/.test(plan.assignments[name] ?? '')
+  const squad = [...ms].sort((a, b) => memberPower(b) - memberPower(a)).slice(0, n).filter((m) => !justiceName(m.name))
+  for (const m of squad) {
+    const was = plan.assignments[m.name]
+    plan.assignments[m.name] = 'Territory Warfare'
+    if (plan.why) plan.why[m.name] = `warfare: strongest ${n} of ${ms.length} (w=${fraction.toFixed(3)}) build power${num(at.power) ? ` ${at.power.toFixed(1)}` : ''}${num(at.territory) ? ` at territory ${(at.territory * 100).toFixed(1)}%` : ''} (policy had ${was})`
+  }
+  return squad
 }
 
 /** A fresh recruit (GangMember constructor): every exp 0, every mult 1, no ascension. */
@@ -631,9 +763,7 @@ export function simulateGang(g, members, o = {}) {
     // Territory Warfare instead of what the policy gave them.
     let warfareMembers = []
     if (warfare) {
-      const n = Math.round(warfare.fraction * ms.length)
-      warfareMembers = [...ms].sort((a, b) => memberPower(b) - memberPower(a)).slice(0, n)
-      for (const m of warfareMembers) plan.assignments[m.name] = 'Territory Warfare'
+      warfareMembers = warfareSquad(plan, ms, warfare.fraction, { power: terr.power, territory: terr.territory })
       const maxRival = Math.max(...Object.values(terr.rivals).map((r) => r.power))
       terr.engaged = terr.power >= warfare.engageRatio * maxRival
     } else if (terr) terr.engaged = false
@@ -928,24 +1058,43 @@ export function trainRatio(k, isHacking, m = 0) {
   const split = num(m) ? Math.min(1, Math.max(0, m)) : 0
   return (g, ms, o) => {
     const train = g.isHacking ? TASK['Train Hacking'] : TASK['Train Combat']
+    const justice = g.isHacking ? TASK['Ethical Hacking'] : TASK['Vigilante Justice']
     const trainees = k > 0 ? ms.filter((mem) => statWeight(top, mem) < k * 4 * top.difficulty) : []
     const rest = ms.filter((mem) => !trainees.includes(mem))
+    // WANTED BEFORE TRAINING. Trainees earn nothing, so a penalty they come
+    // back to is the penalty every gain they are training for will pay.
+    // While it binds and lowering wanted can lift it, they hold the justice
+    // task (0.1% of wanted per member per process, plus its own negative
+    // gain); once wanted is down they train. A trainee's exp on justice is
+    // 1/63 of Train Combat's (difficulty 1 vs 100, ^0.9), a few minutes of
+    // training — against a penalty that, left standing, taxes every hour
+    // after. The search prices the whole trajectory with this rule in it.
+    const penNow = wantedPenalty(g)
+    const traineeJustice = trainees.length > 0 && penNow < MIN_PENALTY && wantedReducible(g)
+    const extraJustice = traineeJustice ? { n: trainees.length, wanted: trainees.reduce((a, mem) => a + wantedGain(g, mem, justice), 0) } : null
+    const oo = extraJustice ? { ...o, extraJustice } : o
     let plan
     if (split > 0 && rest.length) {
       const n = Math.round(split * rest.length)
       const byMoney = [...rest].sort((a, b) => bestMoneyGain(g, b, g.isHacking, o.softcap) - bestMoneyGain(g, a, g.isHacking, o.softcap))
       const earners = byMoney.slice(0, n)
       const others = byMoney.slice(n)
-      const pm = earners.length ? assign(g, earners, { ...o, mode: 'money', split: true }) : { assignments: {}, why: {} }
-      const pr = others.length ? assign(g, others, { ...o, mode: 'respect', split: true }) : { assignments: {}, why: {} }
+      const pm = earners.length ? assign(g, earners, { ...oo, mode: 'money', split: true }) : { assignments: {}, why: {} }
+      const pr = others.length ? assign(g, others, { ...oo, mode: 'respect', split: true }) : { assignments: {}, why: {} }
       if (!pm || !pr) return null
       plan = { assignments: { ...pm.assignments, ...pr.assignments }, why: { ...pm.why, ...pr.why }, mode: n === rest.length ? 'money' : n === 0 ? 'respect' : 'split' }
-    } else plan = rest.length ? assign(g, rest, o) : { assignments: {}, why: {}, mode: o.mode === 'money' ? 'money' : 'respect' }
+    } else plan = rest.length ? assign(g, rest, oo) : { assignments: {}, why: {}, mode: o.mode === 'money' ? 'money' : 'respect' }
     if (!plan) return null
     for (const m of trainees) {
+      if (traineeJustice) {
+        plan.assignments[m.name] = justice.name
+        plan.why[m.name] = `wanted: penalty ${penNow.toFixed(3)} below ${MIN_PENALTY} (wanted ${g.wantedLevel.toFixed(0)}, respect ${g.respect.toFixed(0)}): justice before training (stat weight ${statWeight(top, m).toFixed(0)} below ${k.toFixed(2)} x ${4 * top.difficulty} on ${top.name})`
+        continue
+      }
       plan.assignments[m.name] = train.name
       plan.why[m.name] = `train: stat weight ${statWeight(top, m).toFixed(0)} below ${k.toFixed(2)} x ${4 * top.difficulty} on ${top.name}`
     }
+    plan.wantedBinds = penNow < MIN_PENALTY
     const rates = { respect: 0, money: 0, wanted: 0 }
     for (const m of ms) {
       const t = TASK[plan.assignments[m.name]]
@@ -1250,4 +1399,57 @@ export function runSearch(g, members, o = {}) {
     const r = it.next()
     if (r.done) return r.value
   }
+}
+
+// ---------------------------------------------------------------------------
+// HEALTH, as pure functions over /tel/gang.txt so tools/healthcheck.mjs and
+// the tests read the gang the same way.
+// ---------------------------------------------------------------------------
+
+/**
+ * What the members are doing, by task class. `earning` counts tasks that
+ * pay respect or money; `training` the Train tasks; `justice` the tasks
+ * that lower wanted; `warfare` Territory Warfare.
+ */
+export function gangActivity(assignments) {
+  const out = { training: 0, earning: 0, justice: 0, warfare: 0, other: 0, members: 0 }
+  for (const t of Object.values(assignments ?? {})) {
+    out.members++
+    const task = TASK[t]
+    if (!task) out.other++
+    else if (/^Train /.test(t)) out.training++
+    else if (t === 'Territory Warfare') out.warfare++
+    else if (task.baseWanted < 0 && !(task.baseRespect > 0)) out.justice++
+    else if (task.baseRespect > 0 || task.baseMoney > 0) out.earning++
+    else out.other++
+  }
+  return out
+}
+
+/**
+ * WANTED PENALTY BINDS: `tel` is /tel/gang.txt, `prevPenalty` the penalty
+ * at the previous healthcheck sample (null for none). Fails while the
+ * penalty is under the floor and not recovering; a penalty rising since the
+ * last sample is a recovery in progress and is noted, not failed.
+ */
+export function wantedBindsCheck(tel, prevPenalty = null) {
+  if (!tel || tel.phase !== 'running') return null
+  const pen = num(tel.wantedPenalty) ? tel.wantedPenalty : num(tel.respect) && num(tel.wantedLevel) ? wantedPenalty({ respect: tel.respect, wantedLevel: tel.wantedLevel }) : null
+  if (pen === null) return { fail: true, what: 'gang wanted penalty unreadable', detail: 'gang.txt carries neither wantedPenalty nor respect/wantedLevel' }
+  if (pen >= MIN_PENALTY) return { fail: false, note: `gang wanted penalty ${pen.toFixed(3)}` }
+  const act = gangActivity(tel.assignments)
+  const detail = `penalty ${pen.toFixed(4)} = respect ${Number(tel.respect).toFixed(1)} / (respect + wanted ${Number(tel.wantedLevel).toFixed(1)}) multiplies every respect and money gain; ${act.justice} on justice, ${act.earning} earning, ${act.training} training, ${act.warfare} on warfare; mode ${tel.mode}`
+  if (num(prevPenalty) && pen > prevPenalty + 0.005) return { fail: false, note: `gang wanted penalty recovering ${prevPenalty.toFixed(3)} -> ${pen.toFixed(3)} (${act.justice} on justice, ${act.earning} earning)` }
+  return { fail: true, what: `WANTED PENALTY BINDS: gang penalty ${pen.toFixed(3)} below ${MIN_PENALTY}${num(prevPenalty) ? ` and not recovering (was ${prevPenalty.toFixed(3)})` : ''}`, detail }
+}
+
+/** Members whose published `why` names a task class other than the one they hold. */
+export function whyContradictions(tel) {
+  const out = []
+  for (const [name, task] of Object.entries(tel?.assignments ?? {})) {
+    const why = String(tel?.why?.[name] ?? '')
+    const bad = (/^train\b/.test(why) && !/^Train /.test(task)) || (/^warfare\b/.test(why) && task !== 'Territory Warfare') || (/^wanted\b/.test(why) && !/^(Vigilante Justice|Ethical Hacking)$/.test(task))
+    if (bad) out.push(`${name}: on ${task}, why "${why.slice(0, 60)}"`)
+  }
+  return out
 }

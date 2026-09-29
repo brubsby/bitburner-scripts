@@ -27,7 +27,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, memberPower, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
 import { spendable, reserveFor, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -89,6 +89,8 @@ const GANG_LAST = '/tel/gang-last.txt'
 const SCHEDULE = '/tel/factionplan.txt'
 /** Ceiling on the coarse tail past the install window, in hours. */
 const TAIL_MAX_H = 32
+/** How long a refused equipment spend keeps equipment out of the search. */
+const EQUIP_REPROBE_MS = 30 * 60 * 1000
 // THE LAST READABLE WINDOW LENGTH THIS LIFE. progress.js measures windowH
 // from the lifetime ledger and publishes null on a pass that cannot read it,
 // which is the right refusal for a figure it would otherwise guess — but a
@@ -138,6 +140,36 @@ export async function main(ns) {
   let search = null
   let searchBudget = 0
   let compete = null
+  // THE EQUIPMENT REFUSAL (see the decision below), remembered across a
+  // restart through our own last publish: same life, still fresh.
+  let equipRefused = null
+  try {
+    fetchFromHome(ns, STATUS)
+    const last = JSON.parse(ns.read(STATUS) || 'null')
+    const er = last?.policy?.equipRefused
+    if (last?.lastAugReset === info.lastAugReset && er && Date.now() - er.at < EQUIP_REPROBE_MS) equipRefused = er
+  } catch {
+    /* no previous publish: probe the equipment in the first search */
+  }
+  // What the spend allows for a decision's equipment (`cmp`, the compete
+  // record): the exit comparison when it priced, the ln-per-dollar
+  // competition as the named fallback. One function for the decision and
+  // the purchase, so the two cannot disagree.
+  const spendVerdict = (cmp, claims) => {
+    fetchFromHome(ns, GATE_FILE)
+    const rivalsLn = marginalLnPerDollar(ns.read(GATE_FILE), info.lastAugReset)
+    const lnCompete = cmp && typeof cmp.lnPerDollar === 'number' && cmp.lnPerDollar > 0 ? { lnPerDollar: cmp.lnPerDollar, rivals: rivalsLn } : null
+    const exitCmp = cmp?.exitCmp
+    const exitPriced = !!exitCmp && typeof exitCmp.deltaH === 'number' && isFinite(exitCmp.deltaH)
+    fetchFromHome(ns, STOCK_FILE)
+    const stockRec = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
+    const cashNow = ns.getServerMoneyAvailable('home')
+    const approved = exitPriced && exitCmp.deltaH < 0
+    const permitted = exitPriced
+      ? approved ? spendable('gang', wealthOf(cashNow, stockRec) ?? 0, claims, { exitApproved: true }) : 0
+      : spendable('gang', cashNow, claims, lnCompete ? { lnCompete } : {})
+    return { rivalsLn, exitPriced, approved, permitted, stockRec, cashNow }
+  }
   const readClaims = () => ({
     join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
     augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
@@ -295,8 +327,12 @@ export async function main(ns) {
         // where stock.js trades, cash is ~$0 and the search would see no money.
         fetchFromHome(ns, STOCK_FILE)
         const contested = spendable('gang', wealthOf(ns.getServerMoneyAvailable('home'), stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)) ?? 0, claimsNow, { lnCompete: { lnPerDollar: Infinity, rivals: { join: 0, augmentations: 0, home: 0 } } })
-        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, objective, rivals, equipment: contested > 0 ? { budget: contested } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e, m: policy.m } })
-        searchBudget = contested
+        // Equipment the spend refused within EQUIP_REPROBE_MS is left out of
+        // the search entirely (see the refusal at the decision below).
+        if (equipRefused && Date.now() - equipRefused.at >= EQUIP_REPROBE_MS) equipRefused = null
+        const budgetForSearch = equipRefused ? 0 : contested
+        search = policySearch(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, objective, rivals, equipment: budgetForSearch > 0 ? { budget: budgetForSearch } : null, incumbent: { k: policy.k, x: policy.x, y: policy.y, w: policy.w, e: policy.e, m: policy.m } })
+        searchBudget = budgetForSearch
         searchStartedAt = Date.now()
       }
       if (search) {
@@ -309,10 +345,11 @@ export async function main(ns) {
           const d = r.value
           search = null
           if (d) {
-            policy = {
+            const candidate = {
               k: d.k,
               x: d.x,
-              y: d.y ?? policy.y,
+              // Searched without equipment: nothing is bought outside the priced path.
+              y: searchBudget > 0 ? (d.y ?? policy.y) : 0,
               w: d.w ?? 0,
               e: d.e ?? policy.e,
               m: d.m ?? 0,
@@ -324,13 +361,14 @@ export async function main(ns) {
               searchMs: Date.now() - searchStartedAt,
               evals: d.evals.length,
               rollouts: d.ascendNow,
+              equipment: searchBudget > 0 ? 'searched with the contested budget' : `searched WITHOUT equipment: ${equipRefused?.why ?? 'no budget'}`,
               why: objective?.why ?? null,
             }
             // The spend's own ln per dollar: the chosen trajectory's value
             // minus the same policy without equipment, over the cost.
             compete = null
             if (searchBudget > 0 && d.y > 0 && d.forecast && d.forecast.equipSpent > 0) {
-              const bare = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, assignFn: policy.assignFn, ascend: { minGain: d.x }, rivals, warfare: rivals ? { fraction: d.w, engageRatio: d.e } : null })
+              const bare = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, assignFn: candidate.assignFn, ascend: { minGain: d.x }, rivals, warfare: rivals ? { fraction: d.w, engageRatio: d.e } : null })
               const without = bare ? scoreTrajectory(bare, objective) : null
               const lnGain = without ? d.score.value - without.value : null
               fetchFromHome(ns, EXIT_INPUTS)
@@ -342,9 +380,33 @@ export async function main(ns) {
               }
               compete = { cost: d.forecast.equipSpent, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget, exitCmp }
             }
-            const sim = d.forecast
-            forecast = sim
-              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'} m=${d.m ?? '-'} y=${d.y ?? '-'} w=${d.w ?? '-'} e=${d.e ?? '-'}`, moneyPerSec: sim.moneyPerSec, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent, money: sim.money }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, money: s.money, members: s.members })) }
+            // A POLICY PRICED ON EQUIPMENT THE SPEND WILL NOT BUY IS NOT A
+            // POLICY. The search values equipment through the trajectory
+            // (respect unlocks included); the spend is then decided by the
+            // exit comparison, which sees only gang MONEY — so in respect
+            // mode it priced deltaH 0 and refused every dollar, while the
+            // gang ran the k=4.22 "train until Terrorism clears at 4x" plan
+            // that only paid WITH $23b of gear it never got. Live 2026-09-29
+            // 18:45-19:45: every member training or on warfare, respect gain
+            // 0 for an hour. Simulated on that fixture the same policy
+            // without the gear earns nothing in 6h; k=1 earns 2.7e6 in 1h.
+            // So: a refused spend rejects the decision, the incumbent stays,
+            // and the next search (started now) runs WITHOUT equipment.
+            // The equipment is re-probed every EQUIP_REPROBE_MS.
+            const verdict = compete ? spendVerdict(compete, readClaims()) : null
+            if (compete && !(verdict.permitted >= 0.5 * compete.cost)) {
+              equipRefused = { at: Date.now(), why: `the chosen policy needed $${Math.round(compete.cost).toLocaleString()} of equipment and the spend allows $${Math.round(verdict.permitted).toLocaleString()} (${compete.exitCmp?.why ?? 'ln-per-dollar competition'})`, rejected: { k: d.k, x: d.x, y: d.y, w: d.w, e: d.e, m: d.m, score: d.score?.value ?? null } }
+              compete = null
+              policy.at = 0
+            } else {
+              if (compete) equipRefused = null
+              policy = candidate
+            }
+            // Only an ADOPTED policy's trajectory is published — progress.js
+            // prices the gang faction's unlocks off this forecast.
+            const sim = policy === candidate ? d.forecast : undefined
+            if (sim !== undefined) forecast = sim
+              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'} m=${d.m ?? '-'} y=${d.y ?? '-'} w=${d.w ?? '-'} e=${d.e ?? '-'}`, moneyPerSec: sim.moneyPerSec, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent, money: sim.money }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, money: s.money, members: s.members, wantedLevel: s.wantedLevel })) }
               : { at: new Date().toISOString(), why: 'the chosen policy could not be simulated' }
           }
         }
@@ -361,8 +423,9 @@ export async function main(ns) {
       // rival's. Without rivals readable, none of this happens.
       let warfare = false
       if (rivals && policy.w > 0) {
-        const n = Math.round(policy.w * members.length)
-        for (const m of [...members].sort((a, b) => memberPower(b) - memberPower(a)).slice(0, n)) plan.assignments[m.name] = 'Territory Warfare'
+        // One rule with the simulation (gangplan.warfareSquad): the squad's
+        // `why` says warfare, and a member on justice for wanted stays there.
+        warfareSquad(plan, members, policy.w, { power: g.power, territory: g.territory })
         const maxRival = Math.max(...Object.values(rivals).map((r) => r.power))
         warfare = g.power >= policy.e * maxRival
       }
@@ -405,7 +468,16 @@ export async function main(ns) {
         // own search would have rejected.
         const floor = typeof policy.x === 'number' && isFinite(policy.x) && policy.x > 1 ? policy.x : 1.25
         const v = shouldAscend(m, r, gang, { members: members.length, minGain: floor })
-        if (v.ascend && ns.gang.ascendMember(m.name)) ascended.push({ at: new Date().toISOString(), name: m.name, why: v.why })
+        if (v.ascend && ns.gang.ascendMember(m.name)) {
+          ascended.push({ at: new Date().toISOString(), name: m.name, why: v.why })
+          // THE GUARD MUST SEE EVERY ASCENSION BEFORE IT, not the respect
+          // this tick began with. Each ascension costs the gang that
+          // member's earned respect (Gang.ts:393); checking each against the
+          // same snapshot let three pass at 19:10 on 2026-09-29, each
+          // "respect 579,718 keeps every member", which together took gang
+          // respect 871,679 -> 2 against wanted 336 (penalty 0.006).
+          gang.respect = Math.max(1, gang.respect - (typeof r?.respect === 'number' ? r.respect : 0))
+        }
       }
       ascended = ascended.slice(-12)
 
@@ -415,26 +487,15 @@ export async function main(ns) {
       const claims = readClaims()
       // Compete: the rivals' ln per dollar from the gate file; the gang's own
       // from the last decision. Unreadable either side keeps the claims.
-      fetchFromHome(ns, GATE_FILE)
-      const rivalsLn = marginalLnPerDollar(ns.read(GATE_FILE), info.lastAugReset)
-      const lnCompete = compete && typeof compete.lnPerDollar === 'number' && compete.lnPerDollar > 0 ? { lnPerDollar: compete.lnPerDollar, rivals: rivalsLn } : null
       // THE EXIT DECIDES when it could be priced (compete.exitCmp): the gang
       // with the equipment against without, as two simulated exits — an
       // approved spend passes the augmentation and home claims (budget.js
       // exitApproved), a refused one spends nothing. The ln-per-dollar
       // competition is the named fallback for an unpriced exit.
-      const exitCmp = compete?.exitCmp
-      const exitPriced = !!exitCmp && typeof exitCmp.deltaH === 'number' && isFinite(exitCmp.deltaH)
       // An APPROVED exit is priced on WEALTH and its cash is raised from the
       // trader's book (a raise request act.js serves); the unpriced ln-per-
       // dollar fallback spends cash in hand only — it never sells the book.
-      fetchFromHome(ns, STOCK_FILE)
-      const stockRec = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
-      const cashNow = ns.getServerMoneyAvailable('home')
-      const approved = exitPriced && exitCmp.deltaH < 0
-      const permitted = exitPriced
-        ? approved ? spendable('gang', wealthOf(cashNow, stockRec) ?? 0, claims, { exitApproved: true }) : 0
-        : spendable('gang', cashNow, claims, lnCompete ? { lnCompete } : {})
+      const { rivalsLn, exitPriced, approved, permitted, stockRec, cashNow } = spendVerdict(compete, claims)
       if (compete) compete.decidedBy = exitPriced ? 'exit-sim' : 'ln-per-dollar fallback'
       // Spend what the trajectory chose, inside what the competition allows.
       let budget = Math.min(permitted, compete ? compete.cost : permitted * policy.y)
@@ -476,7 +537,15 @@ export async function main(ns) {
             respectForNextRecruit: g.respectForNextRecruit,
             nextRecruitAt: respectForMembers(members.length + 1),
             wantedLevel: g.wantedLevel,
-            wantedPenalty: g.respect / (g.respect + g.wantedLevel),
+            wantedPenalty: wantedPenalty(g),
+            // THE WANTED PENALTY, said out loud: every gain is multiplied by
+            // it, and wanted does not fall unless someone is on justice.
+            // `binds` is what the healthcheck's WANTED PENALTY BINDS reads.
+            wanted: (() => {
+              const pen = wantedPenalty(g)
+              const justice = Object.entries(plan.assignments).filter(([, t]) => t === 'Vigilante Justice' || t === 'Ethical Hacking').map(([n]) => n)
+              return { penalty: pen, floor: MIN_PENALTY, binds: pen < MIN_PENALTY, justice, gainPerCycle: g.wantedGainRate ?? null, why: pen < MIN_PENALTY ? `penalty ${pen.toFixed(3)} below ${MIN_PENALTY} (respect ${g.respect.toFixed(1)}, wanted ${g.wantedLevel.toFixed(1)}): ${justice.length} on justice` : null }
+            })(),
             territory: g.territory,
             power: g.power,
             warfare,
@@ -484,7 +553,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, windowHSource: objective.windowHSource ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
+            policy: { equipRefused, equipment: policy.equipment ?? null, k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, windowHSource: objective.windowHSource ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,
