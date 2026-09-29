@@ -23,6 +23,7 @@ import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderPoster
 import { routeExitFixed, countExitFixed } from 'countexit.js'
 import { drain } from 'coop.js'
 import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
+import { realisedCapital } from 'nodeecon.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -61,9 +62,12 @@ const clock = () => {
  * Each is null when its data is absent — and then the draw keeps the point
  * input (named in `missing`), never a silent zero.
  */
-export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null, expPost = null } = {}) {
+export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null, expPost = null, traderBelief = null } = {}) {
   const jitter = jitterPosterior(optionPoints ?? [])
-  const trader = stockRows ? traderPosterior(stockRows, { warmupH }) : null
+  // THE TRADER'S RETURN: the belief the exit inputs' point was taken from
+  // (traderBeliefOf), so the point and the draws are one distribution; the
+  // rows path is kept for callers that have no belief.
+  const trader = traderBelief ? traderBelief.post ?? null : stockRows ? traderPosterior(stockRows, { warmupH }) : null
   const drift = driftPosterior(exitSamples ?? [])
   const calibration = driftCalibration(exitSamples ?? [])
   const exp = logRatePosterior(obs?.exp)
@@ -74,6 +78,40 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
   if (!exp && !expPost) missing.push('exp rate (no observation): point kept')
   if (!rep) missing.push('rep rate (no observation): point kept')
   return { trader, drift, calibration, cadence, exp, expPost, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
+}
+
+/**
+ * THE TRADER'S RETURN, ONE BELIEF for the point and the draws. The exit's
+ * money legs compound the book at `capitalReturnPerSec`; the Monte Carlo
+ * redraws it from the trader posterior (applyDraw d.r). They were two
+ * estimators: the point was the realised fit (nodeecon.realisedCapital: the
+ * runs seen from their start — young books only), else this life's live
+ * return (stock.js returnPerSec, one young book), while the draws were
+ * bayes.traderPosterior over every run — and the draws existed only once the
+ * fit had 8 points. Live BN9 2026-09-29: installed at 16:17Z on 'now' 50.26h
+ * (point = the live 1.2/h, draws none: the fit was null), and the first pass
+ * after the young book's fit reached 8 points (16:32Z) priced the same
+ * trajectory at 94.1h (point 1.75/h, draws 0.38/h) — EXIT JUMP AT INSTALL.
+ * Now: the posterior (pooled over every run by random effects) is the point
+ * (its mean) and the draws; the fit supplies only the warm-up; the fit's rate
+ * stands in only where no run has a posterior. Returns {r, sd, warmupH, post,
+ * fit, source, why} or null (no trader history).
+ */
+export function traderBeliefOf(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return null
+  let fit = null
+  try {
+    fit = realisedCapital(rows)
+  } catch {
+    fit = null
+  }
+  const warmupH = fin(fit?.warmupH) ? fit.warmupH : 0
+  const post = traderPosterior(rows, { warmupH })
+  if (post && fin(post.perSec?.mean) && post.perSec.mean > 0) {
+    return { r: post.perSec.mean, sd: post.perSec.sd, warmupH, post, fit, source: 'posterior', why: `trader posterior (the draws' own distribution, its mean the point): ${(post.perHour.mean * 100).toFixed(1)}%/h +- ${(post.perHour.sd * 100).toFixed(1)} — ${post.why}${fit ? `; warm-up ${warmupH.toFixed(3)}h from the realised fit (${(fit.r * 360000).toFixed(1)}%/h on the young runs alone, not the point)` : ''}` }
+  }
+  if (fit && fin(fit.r) && fit.r > 0) return { r: fit.r, sd: null, warmupH, post: null, fit, source: 'fit', why: `no trader posterior (too few flow-free intervals): the realised fit — ${fit.why}` }
+  return null
 }
 
 // A held decision's reason: the decision's own, once — not re-prefixed every
@@ -753,6 +791,71 @@ export function installExitsOf(install, { actorH = null, now = Date.now(), si = 
   }
 }
 
+/**
+ * EXIT JUMP AT INSTALL. The install actor prices "install this batch now" as
+ * a trajectory through the next life; once that life begins, the plan prices
+ * the SAME trajectory from inside it. The two must agree: the exit the next
+ * life publishes is the install's exit less the hours since, within the
+ * forecast's tolerance. Live BN9 2026-09-29: installed at 16:17Z on 50.26h
+ * (plan 'now' mean 50.06h, 80% 45.8-54.4h); at 16:32Z the new life priced
+ * the committed trajectory at 94.1h (80% 79.3-112.1h) — the point from one
+ * trader-return estimator and the draws from another (traderBeliefOf). This
+ * morning's install at 104h read 272h at life age 0.08h.
+ *
+ * Every exit the new life publishes in its first EXIT_JUMP.windowH hours is
+ * compared, point with the actor's point and mean with the plan's 'now' mean
+ * (install-last `exits`), each less the elapsed hours; the record keeps the
+ * first and the worst and fails if any breaks tolerance (rel of the exit, or
+ * minTolH, or the Monte Carlo's noise where larger). `prev` is the record the
+ * life has carried so far. Returns {ok, install, first, worst, n, why} or
+ * {ok: null, why} when there is nothing to compare.
+ */
+export const EXIT_JUMP = { rel: 0.15, minTolH: 1, windowH: 1, matchMin: 10 }
+export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), prev = null, si = 0.02 } = {}) {
+  const carry = (why) => (prev && prev.install ? prev : { ok: null, why })
+  if (!rec?.at || !fin(lastAugReset)) return carry('no install record, or no life stamp')
+  const installAt = Date.parse(rec.at)
+  // The install that began THIS life: act.js records it moments before the
+  // install runs; the new life's lastAugReset is the install itself.
+  if (!fin(installAt) || rec.lastAugReset === lastAugReset || Math.abs(installAt - lastAugReset) > EXIT_JUMP.matchMin * 60e3) return { ok: null, why: 'the last install record is not the install that began this life' }
+  if (prev?.install && prev.install.at !== rec.at) prev = null
+  const ex = rec.exits ?? null
+  const preMean = fin(ex?.planH) ? ex.planH : null
+  const prePoint = fin(ex?.actorH) ? ex.actorH : fin(ex?.planPointH) ? ex.planPointH : null
+  if (preMean === null && prePoint === null) return { ok: null, why: `the install (${rec.at}) recorded no exit${rec.terminal ? ' (terminal install)' : ''}` }
+  const install = { at: rec.at, actorH: prePoint, planH: preMean, q10: ex?.commitment?.q10 ?? null, q90: ex?.commitment?.q90 ?? null }
+  const elapsedH = Math.max(0, (now - installAt) / 3.6e6)
+  if (elapsedH > EXIT_JUMP.windowH) return prev?.install ? prev : { ok: null, install, why: `no exit priced in the first ${EXIT_JUMP.windowH}h after the install` }
+  if (!exit || (!fin(exit.meanH) && !fin(exit.pointH))) return prev?.install ? prev : { ok: null, install, why: 'no exit priced yet this life' }
+  const N = Math.max(1, exit.n ?? 24)
+  const tolOf = (h) => Math.max(EXIT_JUMP.rel * h, EXIT_JUMP.minTolH, (4 * Math.SQRT2 * si * h) / Math.sqrt(N))
+  const checks = []
+  if (fin(prePoint) && fin(exit.pointH)) checks.push({ what: 'point', a: exit.pointH, b: +(prePoint - elapsedH).toFixed(3), aName: `the new life's point ${(+exit.pointH).toFixed(2)}h`, bName: `the install actor's ${prePoint.toFixed(2)}h less ${elapsedH.toFixed(2)}h` })
+  if (fin(preMean) && fin(exit.meanH)) checks.push({ what: 'mean', a: exit.meanH, b: +(preMean - elapsedH).toFixed(3), aName: `the new life's mean ${(+exit.meanH).toFixed(2)}h`, bName: `the plan's 'now' mean ${preMean.toFixed(2)}h less ${elapsedH.toFixed(2)}h` })
+  if (!checks.length) return prev?.install ? prev : { ok: null, install, why: 'no exit of the same kind to compare (point with point, mean with mean)' }
+  for (const k of checks) {
+    k.diffH = +(k.a - k.b).toFixed(3)
+    k.tolH = +tolOf(Math.max(k.a, k.b)).toFixed(3)
+    k.ok = Math.abs(k.diffH) <= k.tolH
+  }
+  const sample = { at: new Date(now).toISOString(), elapsedH: +elapsedH.toFixed(3), meanH: fin(exit.meanH) ? exit.meanH : null, pointH: fin(exit.pointH) ? exit.pointH : null, source: exit.source ?? null, ok: checks.every((k) => k.ok), checks }
+  const badness = (x) => Math.max(0, ...(x?.checks ?? []).map((k) => Math.abs(k.diffH) / Math.max(1e-9, k.tolH)))
+  const first = prev?.first ?? sample
+  const worst = prev?.worst && badness(prev.worst) >= badness(sample) ? prev.worst : sample
+  const ok = (prev?.ok !== false) && sample.ok
+  const w = worst.checks.filter((k) => !k.ok)
+  return {
+    ok,
+    install,
+    first,
+    worst,
+    n: (prev?.n ?? 0) + 1,
+    why: ok
+      ? `one trajectory across the install (${rec.at}): ${checks.map((k) => `${k.aName} ~ ${k.bName}`).join('; ')}`
+      : `EXIT JUMP AT INSTALL (${rec.at}): ${w.map((k) => `${k.aName} vs ${k.bName}: ${k.diffH > 0 ? '+' : ''}${k.diffH}h (tolerance ${k.tolH}h)`).join('; ')} at ${worst.elapsedH}h into the life — the install priced the next life on one model and the life prices itself on another`,
+  }
+}
+
 export function consistencyOf(install, grafts, { si = 0.02, atInstall = null } = {}) {
   const g = graftConsistencyOf(install, grafts, { si })
   if (!atInstall) return g
@@ -979,6 +1082,10 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const gc = plan.graftCarry ?? null
   if (gc?.ok === false) fail(String(gc.why).startsWith('GRAFTS DROPPED') ? gc.why : `GRAFTS DROPPED: ${gc.why}`, 'the install decision priced a node without the grafts it has committed to — every exit and switch this pass is off another trajectory (progress.js carriedGraftsOf / graftDecisionOf: a refused or unreached graft decision must keep the committed set)')
   else if (gc?.why) notes.push(`plan graft carry: ${gc.why}`)
+  // EXIT JUMP AT INSTALL (exitJumpOf, carried through the life by the pass).
+  const ej = plan.exitJump ?? null
+  if (ej?.ok === false) fail(String(ej.why).startsWith('EXIT JUMP AT INSTALL') ? ej.why : `EXIT JUMP AT INSTALL: ${ej.why}`, "the install's simulation of the next life and the next life's own pricing disagree about one state — an input is estimated one way before the install and another after it (compare the two exits' inputs group by group: tools/sim/exitjump/attribute.mjs)")
+  else if (ej?.why && ej.install) notes.push(`plan exit across the install: ${ej.why}`)
   // SWITCH ARTEFACT (switchSanityOf): taken, never blocked — reported here.
   for (const [name, dd] of Object.entries(plan.decisions ?? {})) {
     const ss = dd?.switchSanity
@@ -1011,12 +1118,19 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
  * failed one stays a failure for `holdH` hours after the install (the
  * healthcheck's F section reads it every run). Returns {fails, notes}.
  */
-export function installRecordCheck(rec, { now = Date.now(), holdH = 12 } = {}) {
+export function installRecordCheck(rec, { now = Date.now(), holdH = 12, jump = null, plan = null } = {}) {
   const fails = []
   const notes = []
   if (!rec || !rec.at) return { fails, notes }
   const ageH = (now - Date.parse(rec.at)) / 3.6e6
   if (!(ageH >= 0 && ageH <= holdH)) return { fails, notes }
+  // EXIT JUMP AT INSTALL, after the fact (/tel/exitjump.txt, the record the
+  // next life's passes kept): it outlives plan.txt's copy, which the life
+  // after replaces. Reported here only when plan.txt no longer carries it.
+  if (jump?.install?.at === rec.at && plan?.exitJump?.install?.at !== rec.at) {
+    if (jump.ok === false) fails.push({ what: String(jump.why).startsWith('EXIT JUMP AT INSTALL') ? jump.why : `EXIT JUMP AT INSTALL: ${jump.why}`, detail: 'the install priced the next life on one model and the life priced itself on another — plan.exitJumpOf, /tel/exitjump.txt' })
+    else if (jump.why) notes.push(`last install's exit across the install: ${jump.why}`)
+  }
   const ex = rec.exits ?? null
   if (!ex) {
     notes.push(`last install (${ageH.toFixed(1)}h ago) recorded no exit comparison${rec.terminal ? ' (terminal install)' : ''}`)

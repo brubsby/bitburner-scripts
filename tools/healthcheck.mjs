@@ -670,7 +670,8 @@ if (!sleevesExpected) {
     // TWO EXITS AT INSTALL, after the fact: plan.txt belongs to the next life
     // once an install runs, so the verdict the install order carried
     // (act.js /tel/install-last.txt `exits`) is where it survives.
-    const ri = installRecordCheck(readTel("install-last.txt"), { now: Date.now() });
+    // EXIT JUMP AT INSTALL outlives plan.txt's copy in /tel/exitjump.txt.
+    const ri = installRecordCheck(readTel("install-last.txt"), { now: Date.now(), jump: readTel("exitjump.txt"), plan: readTel("plan.txt") });
     for (const f of ri.fails) fail(f.what, f.detail);
     for (const n of ri.notes) note(n);
   }

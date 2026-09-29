@@ -155,7 +155,8 @@ export async function run() {
     if (/favorNeededToDonate\(1\)/.test(s)) f.fail("progress.js offers donations at a hardcoded 150 (favorNeededToDonate(1))");
     if (/f > 0 \? 150 \* f : null/.test(s)) f.fail("exitInputsOf turns FavorToDonateToFaction 0 into 'never'");
     if (!/incomeOf\(\{ scriptIncome:/.test(s)) f.fail("progress.js no longer measures income through nodeecon.incomeOf");
-    if (!/installCash: postInstallMoney\(/.test(s)) f.fail("exitInputsOf no longer passes the node's post-install money");
+    // The node's post-install money plus the owned augmentations' startingMoney (installCashOf, EJ2).
+    if (!/installCash: installCashOf\(/.test(s) || !/const base = postInstallMoney\(node\)/.test(s)) f.fail("exitInputsOf no longer passes the node's post-install money");
     if (/freshStart: 1262/.test(s)) f.fail("count timing still assumes a $1262 opening");
   }
   checks.push(f);
@@ -423,8 +424,13 @@ export async function run() {
     if (fitted.best && noWarm.best && !(noWarm.best.hours <= fitted.best.hours + 1e-6)) n.fail("the warm-up must cost hours, never save them");
     // progress.js builds the exit inputs from the fit, and records the capital per life.
     const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/capitalReturnPerSec: capitalFitOf\(ns, info\)\?\.r \?\?/.test(src)) n.fail("exitInputsOf must take the capital return from the realised fit first");
-    if (!/capitalWarmupH: capitalFitOf\(ns, info\)\?\.warmupH/.test(src)) n.fail("exitInputsOf must pass the per-install warm-up");
+    // The realised return is now ONE belief for the point and the draws
+    // (plan.traderBeliefOf via traderBeliefNow, EJ2): the trader posterior
+    // over every run's realised intervals, the warm-up from the realised fit,
+    // the fit (else the trader's steady rate) where no run has a posterior.
+    if (!/capitalReturnPerSec: traderBeliefNow\(ns, info\)\?\.r \?\?/.test(src)) n.fail("exitInputsOf must take the capital return from the realised trader belief first");
+    if (!/capitalWarmupH: traderBeliefNow\(ns, info\)\?\.warmupH/.test(src)) n.fail("exitInputsOf must pass the per-install warm-up");
+    if (!/traderBeliefMemo = traderBeliefOf\(stockHistRowsOf\(ns\)\)[\s\S]{0,200}capitalFitOf\(ns, info\)/.test(src)) n.fail("traderBeliefNow must fall back to the realised fit / the trader's steady rate");
     if (!/capStart:[^\n]*capEnd:/.test(src)) n.fail("the lifetimes ledger must record the capital at each life's start and install");
   }
   checks.push(n);

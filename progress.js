@@ -154,7 +154,7 @@ import { STORY_SERVERS } from 'storyservers.js'
 import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 // Pure: the install point (committed plan, then gate) every "until the install" price uses.
 import { installPointH } from 'hacknetplan.js'
-import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn } from 'objective.js'
+import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn, ONEOFF_EFFECTS } from 'objective.js'
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
@@ -168,7 +168,7 @@ import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2162,6 +2162,47 @@ function countModelOf(mults, offers, allCount, player) {
  * trader's own modelled steady rate (stock.txt calibration.predictedPerSec).
  * Null outside a capital node or with nothing to fit.
  */
+// THE TRADER'S HISTORY, read once per pass: the exit inputs' point and the
+// plan's draws must read the same rows (traderBeliefNow).
+let stockRowsMemo = null
+function stockHistRowsOf(ns) {
+  if (stockRowsMemo) return stockRowsMemo
+  stockRowsMemo = (ns.read(STOCK_HIST_FILE) || '')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l)
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+  return stockRowsMemo
+}
+/**
+ * THE TRADER'S RETURN, ONE BELIEF (plan.traderBeliefOf) for the exit inputs'
+ * point (capitalReturnPerSec) and the plan's draws (posteriorsOf): the
+ * posterior pooled over every trader run. Where no run has one, the realised
+ * fit, else (money-is-capital nodes) the trader's modelled steady rate; null
+ * with no trader history — the caller then keeps this life's live return,
+ * named. Once per pass.
+ */
+let traderBeliefMemo
+function traderBeliefNow(ns, info) {
+  if (traderBeliefMemo !== undefined) return traderBeliefMemo
+  traderBeliefMemo = null
+  try {
+    traderBeliefMemo = traderBeliefOf(stockHistRowsOf(ns))
+    if (!traderBeliefMemo) {
+      const fit = capitalFitOf(ns, info)
+      if (fit && typeof fit.r === 'number' && fit.r > 0) traderBeliefMemo = { r: fit.r, sd: null, warmupH: typeof fit.warmupH === 'number' ? fit.warmupH : 0, post: null, fit, source: 'steady', why: fit.why }
+    }
+  } catch {
+    traderBeliefMemo = null
+  }
+  return traderBeliefMemo
+}
 let capitalFitMemo = null
 function capitalFitOf(ns, info) {
   // EVERY NODE WITH A TRADER, not only where money is capital: stock.js runs
@@ -2180,17 +2221,7 @@ function capitalFitOf(ns, info) {
     // its cash, so a ledger fit reads purchases as losses (live 2026-09-26
     // 02:08: 1.78e-4/s realised read as 3.4e-5/s; the exit jumped 113h ->
     // 159h). The ledger columns stay recorded; they are not a return.
-    const rows = (ns.read(STOCK_HIST_FILE) || '')
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => {
-        try {
-          return JSON.parse(l)
-        } catch {
-          return null
-        }
-      })
-      .filter(Boolean)
+    const rows = stockHistRowsOf(ns)
     const steady = readJson(ns, STOCK_FILE)?.calibration?.predictedPerSec
     fit = realisedCapital(rows) ?? (capitalNode && typeof steady === 'number' && steady > 0 ? { r: steady, warmupH: null, n: 0, why: "no trader run seen from its start in the history: the trader's modelled steady rate, warm-up unmeasured" } : null)
   } catch {
@@ -2258,18 +2289,12 @@ function planCtxOf(ns, info) {
     }
     if (prev && prev.node !== info?.currentNode) prev = null
     const sameLife = prev?.lastAugReset === info?.lastAugReset
-    const rows = (ns.read(STOCK_HIST_FILE) || '')
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => {
-        try {
-          return JSON.parse(l)
-        } catch {
-          return null
-        }
-      })
-      .filter(Boolean)
-    const fit = capitalFitOf(ns, info)
+    // THE TRADER'S RETURN: the belief the exit inputs' point is (traderBeliefNow)
+    // — in every node with a trader history, not only once the realised fit
+    // has 8 points: that gate turned the draws on 15 minutes into a life and
+    // moved the exit 50h -> 94h with nothing in the game changing (EXIT JUMP
+    // AT INSTALL, live BN9 2026-09-29 16:32Z).
+    const tb = traderBeliefNow(ns, info)
     const cal = exitCalibrationOf(ns, info)
     let ledger = null
     try {
@@ -2285,7 +2310,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
-    const post = posteriorsOf({ stockRows: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 || capitalFitOf(ns, info) ? rows : null, warmupH: fit?.warmupH ?? 0, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
+    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
@@ -2410,6 +2435,17 @@ function publishPlan(ns, info, extra = {}) {
     const blocked = st ? st.maxBlockMs > PLAN.maxBlockMs : false
     const truncated = [route, inst, pc.decisions.grafts, pc.decisions.sleeveObjective].some((d) => d?.overBudget === true)
     const redecided = pc.redecide && Object.values(pc.decisions).some((d) => d && d.held === false)
+    // EXIT JUMP AT INSTALL (plan.exitJumpOf): this life's exits in its first
+    // hour against the install's own (act.js /tel/install-last.txt), carried
+    // through the life; /tel/exitjump.txt keeps it past the next install.
+    let exitJump = pc.prev?.exitJump ?? null
+    try {
+      const pointH = ex === inst ? inst?.pointH : ex?.pointH ?? null
+      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump })
+      if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, ...exitJump }), 'w')
+    } catch (e) {
+      exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }
+    }
     const rec = {
       at,
       node: info?.currentNode ?? null,
@@ -2452,6 +2488,8 @@ function publishPlan(ns, info, extra = {}) {
       // GRAFTS DROPPED check (plan.graftCarryCheckOf): the install decision's
       // inputs against the committed graft set / graft memory.
       graftCarry: pc.graftCarryCheck ?? null,
+      // EXIT JUMP AT INSTALL (plan.exitJumpOf; planCheck fails on ok false).
+      exitJump,
       // A decision that changed under a re-basing this pass: re-decide next
       // pass (redecideEvents reads it).
       forceRedecide: pc.forceRedecide ?? null,
@@ -3063,6 +3101,17 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
   }
   return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
 }
+/** The balance an install leaves: the node's (nodeecon.postInstallMoney) plus the owned augmentations' startingMoney where it survives. */
+function installCashOf(node, owned) {
+  const base = postInstallMoney(node)
+  if (!startingMoneySurvives(node) || !owned) return base
+  let grant = 0
+  for (const n of owned) {
+    const g = ONEOFF_EFFECTS[n]?.startingMoney
+    if (typeof g === 'number' && g > 0) grant += g
+  }
+  return base + grant
+}
 function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   // A posterior, hierarchical over nodes (exitplan.installCadence): this
   // node's lives dominate, other nodes only shrink toward the cross-node
@@ -3215,12 +3264,20 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // columns — not the young life's own return, which was negative for its
     // first half hour and made the exit read "money never grows" (live
     // 2026-09-25 21:46: exit 1309h, an install every ~35 min).
-    capitalReturnPerSec: capitalFitOf(ns, info)?.r ?? econNow?.capitalReturnPerSec ?? 0,
-    capitalWarmupH: capitalFitOf(ns, info)?.warmupH ?? 0,
-    capitalFit: capitalFitOf(ns, info)?.why ?? null,
+    // ONE BELIEF (traderBeliefNow): the posterior's mean, the distribution the
+    // plan's draws take the return from — was the realised fit on the young
+    // runs (1.75/h live BN9 16:42Z) or this life's live return (1.2/h at the
+    // 16:17Z install) against draws at 0.38/h.
+    capitalReturnPerSec: traderBeliefNow(ns, info)?.r ?? econNow?.capitalReturnPerSec ?? 0,
+    capitalWarmupH: traderBeliefNow(ns, info)?.warmupH ?? 0,
+    capitalFit: traderBeliefNow(ns, info)?.why ?? (econNow?.capitalReturnPerSec ? "no trader history to pool: this life's live return (stock.js returnPerSec)" : null),
     capitalCap: econNow?.capitalCap ?? null,
     // What an install leaves: $1262, or BitNode 8's $250m (Prestige.ts:158).
-    installCash: postInstallMoney(info?.currentNode),
+    // ...plus every owned (or queued) augmentation's startingMoney
+    // (Prestige.ts:85-88 — CashRoot's $1m), where the node keeps it: live BN9
+    // every life opened at ~$1.0m while the exit compounded the book from
+    // $1262 (ln 800 = 6.7 e-folds of the trader's return).
+    installCash: installCashOf(info?.currentNode, ownedAugsNow),
     // Where donations open at favor 0 (FavorToDonateToFaction 0, BitNode 8)
     // reputation is bought from the first join, and the work slot's faction
     // work shrinks what is owed while the money is saved — exitplan prices the
@@ -3493,6 +3550,8 @@ async function act(ns, canJoin, info, note) {
   freshErrMemo = undefined // one formula-error posterior per pass (freshErrOf)
   expPostMemo = undefined // one exp posterior per pass (expPostOf)
   incomePostMemo = undefined // and one posterior (incomePostOf)
+  stockRowsMemo = null // one read of the trader's history per pass (stockHistRowsOf)
+  traderBeliefMemo = undefined // one trader-return belief per pass (traderBeliefNow)
   // The step-cost memory across passes (a fresh process each): the page's
   // localStorage, 0GB (coop.stepMemoryStore).
   passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns), store: stepMemoryStore(pageStorage()) })
@@ -5467,6 +5526,17 @@ async function act(ns, canJoin, info, note) {
       {
         const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
         publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + cashNow * W0 * 3600, replanAt, pending, offers })
+        // THE FLEET'S PRODUCT on this path too (farmVerdictOf). It was priced
+        // only with something planned, so every life opened in money mode
+        // until its first batch: live BN9 2026-09-29 the 16:17Z install
+        // priced the next life at the farm's exp (the batcher had farmed
+        // since 16:04Z, ~600 exp/s) and that life batched money at ~70 exp/s
+        // — the verdict file was the last life's, which batch.js refuses.
+        try {
+          ns.write('/tel/expfarm.txt', JSON.stringify(farmVerdictOf(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))), 'w')
+        } catch {
+          /* batch.js reads a stale or missing verdict as money mode */
+        }
       }
       writeSleevePlan(ns, info, await gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
@@ -5531,7 +5601,16 @@ async function act(ns, canJoin, info, note) {
                   if (inp?.repFromEstimate) pc.repFromEstimate = inp.repSource
                   const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
                   const traj = trajectoryOf(basis, {})
-                  const d = await planDecide(pc, 'exit', () => decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow }))
+                  // The point on the inputs themselves, beside the draws: the
+                  // exit jump check compares it with the install actor's point.
+                  let pointH = null
+                  try {
+                    pointH = traj(inp)
+                  } catch {
+                    pointH = null
+                  }
+                  const d = await planDecide(pc, 'exit', () => decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: () => pointH }))
+                  if (d && typeof pointH === 'number' && isFinite(pointH)) d.pointH = +pointH.toFixed(3)
                   if (d?.key && typeof d.q50 === 'number') decided = { exitH: d.q50, source: `plan: median over the posterior (${basis ? `committed install ${basis.kind}` : 'default policy'}, nothing queued), 80% interval ${d.q10}-${d.q90}h${inp?.incomeFromPrior ? ` — ${inp.incomeSource}` : ''}${inp?.repFromEstimate ? ` — ${inp.repSource}` : ''}` }
                 }
               } catch {
