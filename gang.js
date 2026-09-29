@@ -13,8 +13,12 @@
 //   3. Assign every member the task gangplan.assign chooses — respect until
 //      twelve members, then whatever the install gate says is binding.
 //   4. Ascend members that pass gangplan.shouldAscend.
-//   5. Buy the best equipment per dollar with what budget.js leaves after
-//      the join, augmentation and home claims ('gang' is last in PRIORITY).
+//   5. Buy the equipment the chosen policy needs when the exit comparison
+//      approves it (gangworth.gangEquipExit against not buying, decided by
+//      plan.decideSpend), on the player's wealth through a raise
+//      (budget.js exitApproved / joinAfterInstall); the ln-per-dollar
+//      competition on cash in hand is the named fallback when the exit
+//      cannot be priced.
 //   6. Publish /tel/gang.txt: rates, assignments with reasons, refusals.
 //
 // Territory warfare is engaged only when our power beats every other gang's
@@ -27,7 +31,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, gangRepAt, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
 import { spendable, reserveFor, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -35,6 +39,7 @@ import { sfLevel } from 'sfgate.js'
 import { gangEquipExit } from 'gangworth.js'
 import { bestExitPolicy, spendRuns } from 'exitplan.js'
 import { enter, leave } from 'trace.js'
+import { decideSpend, PLAN_FILE } from 'plan.js'
 import { stockRecordFromText, wealthOf, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 
 const STATUS = '/tel/gang.txt'
@@ -86,6 +91,22 @@ const GATE_FILE = '/tel/installgate.txt'
 // exits (gangworth.gangEquipExit), falling back, named, when stale.
 const EXIT_INPUTS = '/tel/exitinputs.txt'
 const GANG_LAST = '/tel/gang-last.txt'
+/**
+ * THE PLAN'S OPTION-SPECIFIC ERROR (plan.txt posteriors.optionErr.si), the
+ * one belief every other spend verdict is decided on (progress.js
+ * spendVerdictsOf -> plan.decideSpend). Same life and fresh, else null — and
+ * decideSpend then uses its stated prior.
+ */
+function planSi(ns, lastAugReset) {
+  try {
+    fetchFromHome(ns, PLAN_FILE)
+    const p = JSON.parse(ns.read(PLAN_FILE) || 'null')
+    const si = p?.posteriors?.optionErr?.si
+    return p?.lastAugReset === lastAugReset && Date.now() - Date.parse(p.at) < 45 * 60e3 && typeof si === 'number' && isFinite(si) && si > 0 ? si : null
+  } catch {
+    return null
+  }
+}
 const SCHEDULE = '/tel/factionplan.txt'
 /** Ceiling on the coarse tail past the install window, in hours. */
 const TAIL_MAX_H = 32
@@ -155,6 +176,23 @@ export async function main(ns) {
   // record): the exit comparison when it priced, the ln-per-dollar
   // competition as the named fallback. One function for the decision and
   // the purchase, so the two cannot disagree.
+  //
+  // THE EXIT DECIDES, ON THE PLAYER'S WEALTH. Equipment competes with every
+  // other spender on the committed trajectory (gangworth.gangEquipExit: the
+  // price out of the trader's book to the install point, the augmentation
+  // batch re-bought on what is left, the gang faction's reputation at the
+  // install) and is decided by the plan's rule for a purchase
+  // (plan.decideSpend: the saving beats the simulator's option-specific
+  // error with P >= theta, on the plan's own si). An approved spend draws on
+  // cash plus the book (a raise request the trader honours, /tel/raise/gang.txt):
+  // the augmentation and home claims are waived because the comparison IS
+  // their weighing (budget.js exitApproved), and the JOIN claim only where
+  // the committed trajectory installs before the join can happen
+  // (budget.js joinAfterInstall — that install destroys the held join
+  // money). Priced against gang money alone the spend could never pass in
+  // respect mode (live 2026-09-29 18:45Z, $23b at k=4.22), and the join
+  // claim ($100b in hand for Daedalus at hacking 298 of 2500) held a -1.1h
+  // verdict at $0 (20:56Z).
   const spendVerdict = (cmp, claims) => {
     fetchFromHome(ns, GATE_FILE)
     const rivalsLn = marginalLnPerDollar(ns.read(GATE_FILE), info.lastAugReset)
@@ -164,11 +202,12 @@ export async function main(ns) {
     fetchFromHome(ns, STOCK_FILE)
     const stockRec = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
     const cashNow = ns.getServerMoneyAvailable('home')
-    const approved = exitPriced && exitCmp.deltaH < 0
+    const approved = exitPriced && exitCmp.plan?.buy === true
+    const opts = { exitApproved: true, ...(exitCmp?.joinAfterInstall ? { joinAfterInstall: exitCmp.joinAfterInstall } : {}) }
     const permitted = exitPriced
-      ? approved ? spendable('gang', wealthOf(cashNow, stockRec) ?? 0, claims, { exitApproved: true }) : 0
+      ? approved ? spendable('gang', wealthOf(cashNow, stockRec) ?? 0, claims, opts) : 0
       : spendable('gang', cashNow, claims, lnCompete ? { lnCompete } : {})
-    return { rivalsLn, exitPriced, approved, permitted, stockRec, cashNow }
+    return { rivalsLn, exitPriced, approved, permitted, stockRec, cashNow, opts }
   }
   const readClaims = () => ({
     join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
@@ -374,11 +413,24 @@ export async function main(ns) {
               fetchFromHome(ns, EXIT_INPUTS)
               let exitCmp = null
               try {
-                exitCmp = gangEquipExit(JSON.parse(ns.read(EXIT_INPUTS) || 'null'), info.lastAugReset, bestExitPolicy, d.forecast, bare, d.forecast.equipSpent, Date.now(), spendRuns)
+                const rec = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
+                // The gang faction's reputation conversion (factionplan's gang
+                // section, read with the objective): the respect channel.
+                const rep = objective && typeof objective.repNow === 'number' ? { repNow: objective.repNow, facRepMult: objective.facRepMult, favor: objective.favor } : null
+                // NOT BUYING means running the incumbent policy (the committed
+                // trajectory) or this one bare, whichever exits sooner.
+                const incumbent = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, assignFn: policy.assignFn ?? trainRatio(policy.k, gang.isHacking, policy.m ?? 0), ascend: { minGain: policy.x }, rivals, warfare: rivals ? { fraction: policy.w ?? 0, engageRatio: policy.e } : null })
+                exitCmp = gangEquipExit(rec, info.lastAugReset, bestExitPolicy, d.forecast, bare, d.forecast.equipSpent, Date.now(), spendRuns, { rep, gangRepAt, alternatives: incumbent ? [{ sim: incumbent, label: 'the incumbent policy' }] : [] })
+                if (typeof exitCmp.deltaH === 'number' && isFinite(exitCmp.deltaH)) {
+                  exitCmp.plan = decideSpend({ deltaH: exitCmp.deltaH, withoutH: exitCmp.withoutH, si: planSi(ns, info.lastAugReset) })
+                  // Where the committed trajectory installs before the join
+                  // (budget.js joinAfterInstall checks every field, fail closed).
+                  exitCmp.joinAfterInstall = { finalWindow: rec?.finalWindow, W: rec?.W, hacking: player.skills?.hacking, joinLevel: rec?.inputs?.joinLevel }
+                }
               } catch (e) {
                 exitCmp = { deltaH: null, why: `gang equipment exit threw: ${String(e).slice(0, 80)}` }
               }
-              compete = { cost: d.forecast.equipSpent, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget, exitCmp }
+              compete = { cost: d.forecast.equipSpent, spent: 0, lnGain, lnPerDollar: lnGain !== null && d.forecast.equipSpent > 0 ? lnGain / d.forecast.equipSpent : null, contested: searchBudget, exitCmp }
             }
             // A POLICY PRICED ON EQUIPMENT THE SPEND WILL NOT BUY IS NOT A
             // POLICY. The search values equipment through the trajectory
@@ -395,7 +447,7 @@ export async function main(ns) {
             // The equipment is re-probed every EQUIP_REPROBE_MS.
             const verdict = compete ? spendVerdict(compete, readClaims()) : null
             if (compete && !(verdict.permitted >= 0.5 * compete.cost)) {
-              equipRefused = { at: Date.now(), why: `the chosen policy needed $${Math.round(compete.cost).toLocaleString()} of equipment and the spend allows $${Math.round(verdict.permitted).toLocaleString()} (${compete.exitCmp?.why ?? 'ln-per-dollar competition'})`, rejected: { k: d.k, x: d.x, y: d.y, w: d.w, e: d.e, m: d.m, score: d.score?.value ?? null } }
+              equipRefused = { at: Date.now(), why: `the chosen policy needed $${Math.round(compete.cost).toLocaleString()} of equipment and the spend allows $${Math.round(verdict.permitted).toLocaleString()} (${compete.exitCmp?.why ?? 'ln-per-dollar competition'}${compete.exitCmp?.plan ? ` — plan: ${compete.exitCmp.plan.why}` : ''})`, rejected: { k: d.k, x: d.x, y: d.y, w: d.w, e: d.e, m: d.m, score: d.score?.value ?? null } }
               compete = null
               policy.at = 0
             } else {
@@ -495,14 +547,15 @@ export async function main(ns) {
       // An APPROVED exit is priced on WEALTH and its cash is raised from the
       // trader's book (a raise request act.js serves); the unpriced ln-per-
       // dollar fallback spends cash in hand only — it never sells the book.
-      const { rivalsLn, exitPriced, approved, permitted, stockRec, cashNow } = spendVerdict(compete, claims)
+      const { rivalsLn, exitPriced, approved, permitted, stockRec, cashNow, opts } = spendVerdict(compete, claims)
       if (compete) compete.decidedBy = exitPriced ? 'exit-sim' : 'ln-per-dollar fallback'
-      // Spend what the trajectory chose, inside what the competition allows.
-      let budget = Math.min(permitted, compete ? compete.cost : permitted * policy.y)
+      // Spend what the trajectory chose, inside what the competition allows —
+      // the decision's cost ONCE, not once per tick (compete.spent).
+      let budget = Math.min(permitted, compete ? Math.max(0, compete.cost - (compete.spent ?? 0)) : permitted * policy.y)
       let raiseReq = null
       if (approved && budget > 0) {
-        const cashBudget = spendable('gang', cashNow, claims, { exitApproved: true })
-        if (cashBudget < budget) raiseReq = raiseRequestFor({ cash: cashNow, equity: stockRec.ok ? stockRec.equity : 0, target: reserveFor('gang', claims, { exitApproved: true }) + budget, by: 'gang', why: `gang equipment the exit simulation approved ($${Math.round(budget)})`, lastAugReset: info.lastAugReset })
+        const cashBudget = spendable('gang', cashNow, claims, opts)
+        if (cashBudget < budget) raiseReq = raiseRequestFor({ cash: cashNow, equity: stockRec.ok ? stockRec.equity : 0, target: reserveFor('gang', claims, opts) + budget, by: 'gang', why: `gang equipment the exit simulation approved ($${Math.round(budget)})`, lastAugReset: info.lastAugReset })
         budget = Math.min(budget, cashBudget)
       }
       ns.write(raiseFileOf('gang'), JSON.stringify(raiseReq ?? { at: new Date().toISOString(), by: 'gang', target: 0, why: 'no raise needed' }), 'w')
@@ -521,6 +574,7 @@ export async function main(ns) {
         if (!best) break
         if (!ns.gang.purchaseEquipment(best.member, best.name)) break
         budget -= best.cost
+        if (compete) compete.spent = (compete.spent ?? 0) + best.cost
         purchases.push(best)
         const idx = members.findIndex((m) => m.name === best.member)
         if (idx >= 0) members[idx] = ns.gang.getMemberInformation(best.member)

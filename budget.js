@@ -101,10 +101,29 @@ export function reserveFor(spender, claims = {}, o = {}) {
     // simulated exit against the exit without it (exitplan.spendExit, the
     // augmentations re-planned on the money the purchase leaves) has already
     // been weighed against the augmentation and home claims — the comparison
-    // IS that weighing. So those two are waived. The join claim never is: it
-    // is the exit's own gate, and a simulated exit does not model the invite.
+    // IS that weighing. So those two are waived. The join claim is not: it
+    // is the exit's own gate — except where an install comes first (below).
     if (o.exitApproved === true && (key === 'augmentations' || key === 'home')) continue
     let v = claims[key]
+
+    // THE JOIN CLAIM AND AN INSTALL THAT COMES FIRST. The join claim holds
+    // money IN HAND for an invite; an install destroys every dollar held
+    // (money resets to the post-install balance). So where the committed
+    // trajectory installs before the join can happen — not the final window,
+    // an install point W ahead, and the join's hacking level not reached —
+    // the money held now cannot be the money the invite sees, and a spend
+    // the exit comparison approved (whose with-run re-buys the batch on what
+    // is left and walks the join's own money leg in the final life) passes
+    // it. Only with exitApproved, and every field read and finite, or the
+    // full hold stands — an UNREADABLE join claim included. Live BN9
+    // 2026-09-29 20:56Z: the $100b Daedalus claim (hacking 298 of 2500, 4
+    // installs ahead) held a gang equipment spend the exit had approved
+    // (-1.1h) to $0. [GE1]
+    if (key === 'join' && o.exitApproved === true && o.joinAfterInstall) {
+      const j = o.joinAfterInstall
+      const fin = (x) => typeof x === 'number' && isFinite(x)
+      if (fin(v) && v >= 0 && j.finalWindow === false && fin(j.W) && j.W > 0 && fin(j.hacking) && fin(j.joinLevel) && j.joinLevel > 0 && j.hacking < j.joinLevel) continue
+    }
 
     // THE JOIN CLAIM AND A SPEND THAT PAYS ITSELF BACK. The join claim holds
     // money a faction invite needs IN HAND; it exists so a spender cannot

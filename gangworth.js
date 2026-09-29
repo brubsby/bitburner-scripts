@@ -27,6 +27,8 @@
 // because the failure it replaces was an unexamined assumption, and a made-up
 // number is just a faster way back to one.
 
+import { capitalFV } from 'hacknetplan.js'
+
 const num = (v) => typeof v === 'number' && isFinite(v)
 
 /** Two simulated exits closer than this are the same exit (progress.js objective sort uses 1/60). */
@@ -405,14 +407,77 @@ export function rememberedGangIncome(record, node) {
 }
 
 /**
- * GANG EQUIPMENT, trajectory against trajectory: the node's exit with the gang
- * run as gangplan simulated it WITH the planned equipment (its price out of
- * the money now) against the same gang WITHOUT it — each gang trajectory's
- * money as an income schedule from now, on progress.js's published exit
- * inputs (/tel/exitinputs.txt). Replaces lnGain / equipSpent against the
- * rivals' ln per dollar. Null deltaH (refuse) on a stale or foreign record.
+ * THE GANG FACTION'S REPUTATION LEVELS the planner re-plans its batch at
+ * (progress.js publishExitInputs gainsByGangRep): the distinct unlock levels
+ * above the reputation now, at most `n`, spread evenly over ALL of them and
+ * always including the last — the nearest n alone stopped short of where a
+ * few hours of a 2M-respect gang reach (live 21:38Z: 131k now, ~2-3M at W),
+ * so every trajectory landed past the ladder's end and equipment priced 0.
  */
-export function gangEquipExit(record, lastAugReset, bestExitPolicy, withSim, bareSim, spent, now = Date.now(), spendRunsFn = null) {
+export function gangRepLevels(repReqs, repNow, n = 10) {
+  const all = [...new Set((repReqs ?? []).filter((r) => num(r) && r > (num(repNow) ? repNow : 0)))].sort((a, b) => a - b)
+  if (all.length <= n) return all
+  const out = new Set()
+  for (let i = 1; i <= n; i++) out.add(all[Math.round((i * all.length) / n) - 1])
+  return [...out].sort((a, b) => a - b)
+}
+
+/**
+ * GANG EQUIPMENT, trajectory against trajectory, on the committed plan's own
+ * inputs (/tel/exitinputs.txt, progress.js publishExitInputs): the node's exit
+ * with the gang run as gangplan simulated it WITH the planned equipment
+ * against the best way of running it WITHOUT buying — the same policy bare
+ * (`bareSim`) and every alternative the caller names (`o.alternatives`
+ * [{sim, label}]: the incumbent policy, the committed trajectory). Comparing
+ * only against the same policy bare credits the gear with what a different
+ * no-gear policy earns anyway: live 21:38Z the refused money-split policy
+ * reached 1.1M gang reputation bare, while the respect policy then running
+ * reached 1.96M with no gear at all.
+ *
+ * What each run carries, and where:
+ *   PRICE       out of the player's WEALTH now — cash plus the trader's book —
+ *               so it stops compounding until the install point W: charged
+ *               `spent x lump` at W (hacknetplan.capitalFV, the trader's
+ *               r(W) on the book's own path; lump 1 where nothing trades).
+ *               Every re-buy the simulation makes after an ascension is
+ *               charged at t0 as well, which overstates the lost compounding
+ *               (a conservative with-run).
+ *   MONEY       each gang's money before W, reinvested as it arrives (the
+ *               same FV per hour), moves the batch the install at W buys
+ *               along the planner's own money ladder (exitplan.spendRuns: the
+ *               crowding-out of the augmentation batch, priced by the
+ *               planner). After W each run's gang income REPLACES the
+ *               committed gang stream (carriedIncome.gang), counted once and
+ *               never as an eBudget lift (exitplan: a carried stream is
+ *               priced in the money legs) — the old comparison fed both
+ *               gangs in as extraIncome, whose lift on the scripts' $64k/s
+ *               priced a $27b money-split policy at -6h on money alone.
+ *   RESPECT     the gang faction's reputation at W (o.rep + o.gangRepAt),
+ *               through the planner's reputation ladder (gainsByGangRep: the
+ *               batch at W re-planned with the gang faction's reputation at
+ *               each unlock level), as that row's gains over row 0's (the
+ *               money ladder is planned at the reputation now). This is what
+ *               equipment buys in respect mode, where the gang earns $0 and a
+ *               money-only comparison priced deltaH 0 and refused every
+ *               dollar (live 2026-09-29 18:45Z, $23b at k=4.22). No ladder ->
+ *               the channel is unpriced and SAID so (`unpriced`).
+ *   FINAL WINDOW no install is coming: the price leaves the money short in the
+ *               exit's own legs (the graft start money, the join money in
+ *               hand), and the gangs' incomes feed those legs.
+ *
+ * ITS OWN HORIZON. Equipment is lost on ascension (GangMember.ts ascend():
+ * upgrades.length = 0; gang augmentations survive) and NOT on install
+ * (Prestige.ts:131-143 only scales ascension points by 0.95): the simulation
+ * carries every ascension it makes, and past the with-run's last simulated
+ * hour its income falls back to `bareSim`'s. Its value in later lives (money
+ * after the simulated horizon, reputation toward later batches) is NOT
+ * simulated: a floor, stated in `floor`.
+ *
+ * Returns {deltaH, withH, withoutH, without (the label that won), moneyAtW,
+ * repAtW, unpriced, floor, why}; deltaH null (refuse) on a stale or foreign
+ * record, or any unreadable input.
+ */
+export function gangEquipExit(record, lastAugReset, bestExitPolicy, withSim, bareSim, spent, now = Date.now(), spendRunsFn = null, o = {}) {
   if (typeof spendRunsFn !== 'function') return { deltaH: null, why: 'no spendRuns supplied' }
   if (!record || typeof bestExitPolicy !== 'function' || record.lastAugReset !== lastAugReset || !(now - Date.parse(record.at) < 15 * 60e3) || !record.inputs) {
     return { deltaH: null, why: 'no fresh exit inputs from progress.js' }
@@ -420,17 +485,103 @@ export function gangEquipExit(record, lastAugReset, bestExitPolicy, withSim, bar
   const sw = gangIncomeSchedule(withSim)
   const sb = gangIncomeSchedule(bareSim)
   if (!sw || !sb || !num(spent) || spent < 0) return { deltaH: null, why: 'a gang trajectory or the spend is unreadable' }
+  const inputs = record.inputs
+  const ageH = Math.max(0, (now - Date.parse(record.at)) / 3600e3)
   const e = num(record.eBudget) ? record.eBudget : null
-  // The price comes out of the next batch (or the final window), priced by
-  // the planner's own ladder — exitplan.spendRuns.
-  const runs = spendRunsFn(record, spent)
-  if (!runs) return { deltaH: null, why: 'the exit inputs carry no install point or batch ladder' }
-  const withE = bestExitPolicy({ ...runs.with, extraIncome: sw, eBudget: e }, runs.max, runs.min)
-  const bare = bestExitPolicy({ ...runs.without, extraIncome: sb, eBudget: e }, runs.max, runs.min)
-  const a = withE?.best?.hours
-  const b = bare?.best?.hours
-  if (!num(a) || !num(b)) return { deltaH: null, why: 'an exit could not be priced' }
-  return { deltaH: a - b, withH: a, withoutH: b, why: `exit ${a.toFixed(2)}h with the equipment vs ${b.toFixed(2)}h without` }
+  const unpriced = []
+  const floor = ["the equipment's effect past the simulated horizon (and on later lives' reputation) is not simulated"]
+  // Past the with-run's last simulated hour its income is bareSim's: the
+  // equipment's difference is priced over the horizon the simulation saw.
+  const endH = sw.length
+  const withSteps = [...sw, { atH: endH, perSec: sb[sb.length - 1].perSec }]
+  const carried = (steps) => ({ ...(inputs.carriedIncome ?? {}), gang: steps })
+  const alts = [{ sim: bareSim, steps: sb, label: 'the same policy without the equipment' }]
+  for (const a of Array.isArray(o?.alternatives) ? o.alternatives : []) {
+    const st = gangIncomeSchedule(a?.sim)
+    if (st) alts.push({ sim: a.sim, steps: st, label: a.label ?? 'an alternative' })
+  }
+  const W = record.finalWindow === true ? null : num(record.W) ? Math.max(0, record.W - ageH) : null
+  if (record.finalWindow !== true && (W === null || !num(record.moneyAtW))) return { deltaH: null, why: 'the exit inputs carry no install point or money at it' }
+  // The money each gang adds before W, compounded to W (0 in the final window).
+  const gangFV = (steps) => {
+    if (W === null) return 0
+    let v = 0
+    for (let h = 0; h < W; h++) {
+      const span = Math.min(1, W - h)
+      const r = steps[Math.min(h, steps.length - 1)].perSec
+      if (r > 0) v += r * span * 3600 * capitalFV(inputs, Math.max(0, W - h - span / 2)).lump
+    }
+    return v
+  }
+  // The reputation ladder, when published and readable.
+  const ladder = record.gainsByGangRep
+  const r = o?.rep
+  let rows = null
+  if (W !== null) {
+    if (!ladder || !Array.isArray(ladder.rows) || !ladder.rows.length) unpriced.push("the gang faction's reputation (no gainsByGangRep ladder published)")
+    else if (!r || typeof o.gangRepAt !== 'function' || !num(r.repNow) || !num(r.facRepMult)) unpriced.push("the gang faction's reputation (repNow / facRepMult unreadable)")
+    else rows = ladder.rows.filter((x) => num(x?.rep) && x?.gains).sort((a, b) => a.rep - b.rep)
+    if (rows && !rows.length) {
+      rows = null
+      unpriced.push("the gang faction's reputation (an empty ladder)")
+    }
+  }
+  const rowAt = (rep) => (rows ? rows.filter((x) => x.rep <= rep + 1e-6).at(-1) ?? rows[0] : null)
+  const ref = alts[0]
+  const refFV = gangFV(ref.steps)
+  const lump = W === null ? 1 : capitalFV(inputs, W).lump
+  // One run's exit inputs: its price, its gang money and its reputation.
+  const runOf = (sim, steps, cost) => {
+    if (W === null) {
+      const runs = spendRunsFn(record, cost)
+      if (!runs) return null
+      return { x: { ...runs.with, carriedIncome: carried(steps), eBudget: e }, max: runs.max, min: runs.min, m: null, rep: null }
+    }
+    const net = cost * lump - (gangFV(steps) - refFV)
+    const runs = spendRunsFn(record, net, { allowGain: true })
+    if (!runs) return null
+    let g = runs.with.installGains ?? null
+    let rep = null
+    if (rows) {
+      rep = o.gangRepAt(sim, W, r.repNow, { facRepMult: r.facRepMult, favor: r.favor })
+      const row = num(rep) ? rowAt(rep) : null
+      if (row && row !== rows[0]) {
+        const g0 = g ?? {}
+        const keys = new Set([...Object.keys(g0), ...Object.keys(row.gains), ...Object.keys(rows[0].gains)])
+        g = Object.fromEntries([...keys].map((k) => {
+          const a = num(row.gains[k]) && row.gains[k] > 0 ? row.gains[k] : 1
+          const b = num(rows[0].gains[k]) && rows[0].gains[k] > 0 ? rows[0].gains[k] : 1
+          return [k, (num(g0[k]) && g0[k] > 0 ? g0[k] : 1) * (a / b)]
+        }))
+      }
+      if (num(rep) && rep > rows[rows.length - 1].rep && !floor.some((f) => /ladder's last level/.test(f))) floor.push("reputation past the ladder's last level is priced at that level")
+    }
+    return { x: { ...runs.with, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}), carriedIncome: carried(steps), eBudget: e }, max: runs.max, min: runs.min, m: record.moneyAtW - net, rep }
+  }
+  const exitOf = (arm) => (arm ? bestExitPolicy(arm.x, arm.max, arm.min)?.best?.hours : null)
+  const wRun = runOf(withSim, withSteps, spent)
+  const a = exitOf(wRun)
+  let best = null
+  for (const alt of alts) {
+    const arm = runOf(alt.sim, alt.steps, 0)
+    const h = exitOf(arm)
+    if (num(h) && (!best || h < best.h)) best = { h, arm, label: alt.label }
+  }
+  if (!num(a) || !best) return { deltaH: null, why: 'an exit could not be priced' }
+  const b = best.h
+  const moneyAtW = W === null ? null : { with: wRun.m, without: best.arm.m, lump }
+  const repAtW = rows ? { with: wRun.rep, without: best.arm.rep } : null
+  return {
+    deltaH: a - b,
+    withH: a,
+    withoutH: b,
+    without: best.label,
+    moneyAtW,
+    repAtW,
+    unpriced: unpriced.length ? unpriced : null,
+    floor,
+    why: `exit ${a.toFixed(2)}h with the equipment vs ${b.toFixed(2)}h without (${best.label})${moneyAtW ? `; money at W $${(moneyAtW.with / 1e9).toFixed(1)}b vs $${(moneyAtW.without / 1e9).toFixed(1)}b, the price x${lump.toFixed(2)} compounded` : ''}${repAtW && num(repAtW.with) && num(repAtW.without) ? `; gang rep at W ${Math.round(repAtW.with).toLocaleString()} vs ${Math.round(repAtW.without).toLocaleString()}` : ''}${unpriced.length ? `; UNPRICED: ${unpriced.join(', ')}` : ''}`,
+  }
 }
 
 /**

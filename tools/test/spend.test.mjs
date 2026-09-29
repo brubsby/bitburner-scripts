@@ -63,8 +63,11 @@ export async function run() {
     c4.examined(2);
     // The approved spend is priced on WEALTH (cash + the trader's book) and
     // raised from it; the unpriced fallback spends cash only ([W] wealth.test).
-    if (!/const approved = exitPriced && exitCmp\.deltaH < 0/.test(gs) || !/const permitted = exitPriced\s*\? approved \? spendable\('gang', wealthOf\(cashNow, stockRec\) \?\? 0, claims, \{ exitApproved: true \}\) : 0\s*: spendable\('gang', cashNow, claims, lnCompete \? \{ lnCompete \} : \{\}\)/.test(gs)) c4.fail("gang.js must follow the exit comparison before the ln competition");
-    if (!/gangEquipExit\(JSON\.parse\(ns\.read\(EXIT_INPUTS\)/.test(gs) || !/fetchFromHome\(ns, EXIT_INPUTS\)/.test(gs)) c4.fail("gang.js must price equipment from progress.js's exit inputs, pulled from home");
+    // Approval is the plan's rule for a purchase (plan.decideSpend on the
+    // exit pair, gangequip.test GE5); the join claim is waived only through
+    // joinAfterInstall (budget.js, GE1).
+    if (!/const approved = exitPriced && exitCmp\.plan\?\.buy === true/.test(gs) || !/const opts = \{ exitApproved: true, \.\.\.\(exitCmp\?\.joinAfterInstall \? \{ joinAfterInstall: exitCmp\.joinAfterInstall \} : \{\}\) \}/.test(gs) || !/const permitted = exitPriced\s*\? approved \? spendable\('gang', wealthOf\(cashNow, stockRec\) \?\? 0, claims, opts\) : 0\s*: spendable\('gang', cashNow, claims, lnCompete \? \{ lnCompete \} : \{\}\)/.test(gs)) c4.fail("gang.js must follow the exit comparison before the ln competition");
+    if (!/const rec = JSON\.parse\(ns\.read\(EXIT_INPUTS\) \|\| 'null'\)[\s\S]{0,1200}?gangEquipExit\(rec, /.test(gs) || !/fetchFromHome\(ns, EXIT_INPUTS\)/.test(gs)) c4.fail("gang.js must price equipment from progress.js's exit inputs, pulled from home");
   }
   checks.push(c4);
 

@@ -142,7 +142,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain, stepMemoryStore, pageStorage } from 'coop.js'
 import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
-import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule } from 'gangworth.js'
+import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
@@ -1675,6 +1675,8 @@ function nextInstallGainOf(plan, pending, offers) {
   return batchHackingGain(names.map((n) => byName.get(n)?.mults ?? {}))
 }
 
+/** Gang-faction reputation levels in the published batch ladder (gainsByGangRep); each is one re-plan. */
+const GANG_REP_LEVELS = 10
 /**
  * The exit simulation's inputs with the sleeve fleet REMOVED (the player
  * alone), published for scripts that price their own choices as exits —
@@ -1698,6 +1700,28 @@ function publishExitInputs(ns, info, inputs, at = null) {
         return { money: m, gains: installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(at.pending ?? [])], at.offers) }
       })
     })()
+    // THE SAME BATCH AGAINST THE GANG FACTION'S REPUTATION: at moneyAtW, the
+    // batch re-planned with the gang faction's reputation lifted to its
+    // unlock levels (gangworth.gangRepLevels: at most GANG_REP_LEVELS, spread
+    // over all of them, the last included). gang.js prices its equipment
+    // through it (gangworth.gangEquipExit): in respect mode what equipment
+    // buys is reputation, which the money ladder cannot see. Row 0 is the
+    // reputation now. Null when not in a gang.
+    const gangTable = (() => {
+      if (!at || typeof at.replanAt !== 'function' || !(at.moneyAtW >= 0) || !Array.isArray(at.offers)) return null
+      const live = readJson(ns, '/tel/gang.txt')
+      const fac = live?.lastAugReset === info?.lastAugReset ? live?.faction : null
+      const mine = fac ? at.offers.filter((o) => o?.faction === fac) : []
+      if (!mine.length) return null
+      const repNow = Math.max(0, ...mine.map((o) => (typeof o.factionRep === 'number' && isFinite(o.factionRep) ? o.factionRep : 0)))
+      const levels = gangRepLevels(mine.map((o) => o.repReq), repNow, GANG_REP_LEVELS)
+      const row = (rep) => {
+        const lifted = at.offers.map((o) => (o?.faction === fac && rep > (o.factionRep ?? 0) ? { ...o, factionRep: rep } : o))
+        const p2 = at.replanAt(at.moneyAtW, lifted)
+        return { rep, gains: installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(at.pending ?? [])], at.offers) }
+      }
+      return { faction: fac, repNow, money: at.moneyAtW, rows: [repNow, ...levels].map(row) }
+    })()
     ns.write(
       '/tel/exitinputs.txt',
       JSON.stringify({
@@ -1713,6 +1737,7 @@ function publishExitInputs(ns, info, inputs, at = null) {
         // Why inputs.lifeIncome is 0 when it is (null when it was read).
         lifeIncomeWhy: hacknetLifeIncome(ns, info).why,
         gainsByMoney: table,
+        gainsByGangRep: gangTable,
       }),
       'w',
     )
