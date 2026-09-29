@@ -187,5 +187,27 @@ export async function run() {
   }
   checks.push(c5);
 
+  const c6 = new Check("GV6", "a recruit arriving inside a coarse tail step trains until the next re-plan (it used to throw and kill every search once respect crossed the next recruit threshold mid-step, live 2026-09-29 20:21-20:40)");
+  {
+    // The fixture's members earning, wanted at its floor, respect some way
+    // under the 12th recruit (5^9 = 1,953,125): a short fine window, then a
+    // tail whose 900s steps recruit on their 300s sub-steps. Several starting
+    // points so the crossing lands mid-step in some of them.
+    let recruited = 0;
+    for (let r0 = 1.0e6; r0 <= 1.9e6; r0 += 1e5) {
+      c6.examined(1);
+      const g = { ...FX.gang, respect: r0, wantedLevel: 1 };
+      try {
+        const f = GP.simulateGang(g, FX.members, { ...base, horizonH: 0.05, tailH: 3, assignFn: GP.trainRatio(1, false, 0), ascend: { minGain: P.x } });
+        if (f.samples.at(-1).members === 12) recruited++;
+      } catch (e) {
+        c6.fail(`respect ${r0}: simulateGang threw on a mid-tail recruit: ${String(e).slice(0, 120)}`);
+      }
+    }
+    if (!recruited) c6.fail("no start recruited the 12th member inside 3h; the check exercises nothing");
+    c6.note(`${recruited} starting points recruited the 12th member inside the tail without throwing`);
+  }
+  checks.push(c6);
+
   return checks;
 }

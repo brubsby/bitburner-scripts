@@ -544,13 +544,13 @@ export async function main(ns) {
             wanted: (() => {
               const pen = wantedPenalty(g)
               const justice = Object.entries(plan.assignments).filter(([, t]) => t === 'Vigilante Justice' || t === 'Ethical Hacking').map(([n]) => n)
-              return { penalty: pen, floor: MIN_PENALTY, binds: pen < MIN_PENALTY, justice, gainPerCycle: g.wantedGainRate ?? null, why: pen < MIN_PENALTY ? `penalty ${pen.toFixed(3)} below ${MIN_PENALTY} (respect ${g.respect.toFixed(1)}, wanted ${g.wantedLevel.toFixed(1)}): ${justice.length} on justice` : null }
+              return { penalty: pen, floor: MIN_PENALTY, binds: pen < MIN_PENALTY, justice, gainPerCycle: g.wantedLevelGainRate ?? null, why: pen < MIN_PENALTY ? `penalty ${pen.toFixed(3)} below ${MIN_PENALTY} (respect ${g.respect.toFixed(1)}, wanted ${g.wantedLevel.toFixed(1)}): ${justice.length} on justice` : null }
             })(),
             territory: g.territory,
             power: g.power,
             warfare,
             mode: plan.mode,
-            rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedGainRate, plannedPerSec: plan.rates },
+            rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedLevelGainRate ?? null, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
             policy: { equipRefused, equipment: policy.equipment ?? null, k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, windowHSource: objective.windowHSource ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },

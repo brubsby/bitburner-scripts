@@ -809,7 +809,15 @@ export function simulateGang(g, members, o = {}) {
       // coarse; only the decisions that cost nothing to re-take move here.
       if (isTail && sub + 1 < subs) {
         hNow = (elapsedSec + (sub + 1) * cyclesSub * CYCLE_SEC) / 3600
-        while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) ms.push(freshMember(`sim${recruitIndex++}`))
+        while (ms.length < MAX_MEMBERS && state.respect >= respectForMembers(ms.length + 1)) {
+          ms.push(freshMember(`sim${recruitIndex++}`))
+          // A recruit arriving mid-step has no task from this step's plan:
+          // it trains until the next re-plan (a fresh member clears nothing).
+          // Without this the gains loop read tasks[k] undefined and threw —
+          // live 2026-09-29 20:2x, once respect passed 5^8 inside a tail
+          // step, which killed every search (gang.js kept its incumbent).
+          tasks.push(state.isHacking ? TASK['Train Hacking'] : TASK['Train Combat'])
+        }
         tryAscend()
       }
     }
