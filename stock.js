@@ -259,6 +259,7 @@ function remainingLifeH(ns, lastAugReset) {
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog('ALL')
+  const startedAt = Date.now()
   const flags = ns.flags([
     ['horizon', -1], // hours: override the remaining-life horizon for the 4S verdict
     ['no4s', false], // never buy the 4S TIX API
@@ -539,6 +540,22 @@ export async function main(ns) {
         startWealth,
         lifePnl,
         externalFlows: wealth - startWealth - lifePnl,
+        // THIS SCRIPT'S SHARE OF getTotalScriptIncome. The game books every
+        // sale's realised profit as the selling script's income
+        // (StockMarket/BuyingAndSelling.tsx:175/364), so the planner's
+        // "script income" was mostly this trader — and was counted again as
+        // hacking income beside the trader's own return. nodeecon.incomeOf
+        // takes this back out (hackScriptIncome). `made` = $ realised by this
+        // run (its rate x its uptime), for the since-install fallback.
+        // Its own try: a failure here must never cost the record it sits in.
+        scriptIncome: (() => {
+          try {
+            const perSec = ns.getScriptIncome(ns.getScriptName(), ns.getHostname(), ...ns.args)
+            return Number.isFinite(perSec) ? { perSec, made: perSec * ((Date.now() - startedAt) / 1000) } : { perSec: null, why: `getScriptIncome returned ${perSec}` }
+          } catch (e) {
+            return { perSec: null, why: `getScriptIncome threw: ${String(e).slice(0, 80)}` }
+          }
+        })(),
         manip: manipOf(positions, prices, servable, (s) => forecastOf(st, s)),
         servable: { level: servable.level, syms: [...servable.syms], nudgesPerSec: servable.nu, boostPoints: boostPts, why: servable.why },
         // Return per second at each nudge rate the batcher could deliver, at

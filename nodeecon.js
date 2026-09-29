@@ -137,7 +137,7 @@ const fin = (x) => typeof x === 'number' && isFinite(x)
  * a node with no other income, see incomeOf).
  */
 export function stockRecordOf(rec, lastAugReset, now = Date.now()) {
-  const none = (why) => ({ ok: false, equity: 0, returnPerSec: null, capitalCap: null, incomePerSec: null, manip: null, manipCurve: null, why })
+  const none = (why) => ({ ok: false, equity: 0, returnPerSec: null, capitalCap: null, incomePerSec: null, scriptPerSec: null, scriptMade: null, manip: null, manipCurve: null, why })
   if (!rec || typeof rec !== 'object') return none('no stock trader record')
   const age = now - Date.parse(rec.at ?? '')
   if (!(age >= 0 && age < STOCK_FRESH_MS)) return none(`stock record stale or undated (${fin(age) ? Math.round(age / 60e3) + ' min' : 'no at'})`)
@@ -150,6 +150,12 @@ export function stockRecordOf(rec, lastAugReset, now = Date.now()) {
     returnPerSec: fin(rec.returnPerSec) ? rec.returnPerSec : null,
     capitalCap: fin(rec.capitalCap) && rec.capitalCap > 0 ? rec.capitalCap : null,
     incomePerSec: fin(rec.incomePerSec) && rec.incomePerSec >= 0 ? rec.incomePerSec : null,
+    // THE TRADER'S SHARE OF getTotalScriptIncome (stock.js scriptIncome): the
+    // game books every sale's realised profit as the selling script's income
+    // (StockMarket/BuyingAndSelling.tsx:175/364 -> onlineMoneyMade and
+    // scriptProdSinceLastAug). Signed — a losing run lowers the total.
+    scriptPerSec: fin(rec.scriptIncome?.perSec) ? rec.scriptIncome.perSec : null,
+    scriptMade: fin(rec.scriptIncome?.made) ? rec.scriptIncome.made : null,
     manip,
     manipCurve: Array.isArray(rec.manipCurve) ? rec.manipCurve.filter((x) => fin(x?.nudgesPerSec) && x.nudgesPerSec >= 0 && fin(x?.returnPerSec)) : null,
     why: null,
@@ -184,6 +190,23 @@ export function stockFlagFor(manip, host, op) {
  * it — spendExit, gangGainHours — are adding hacking-shaped income).
  * `priced` is false when nothing positive was measured; `why` then says
  * whether that is a real zero or an absent instrument.
+ *
+ * EACH STREAM ONCE. getTotalScriptIncome is NOT the hacking stream: the game
+ * adds every stock sale's realised profit to the selling script's income
+ * (StockMarket/BuyingAndSelling.tsx:175 and :364 -> onlineMoneyMade,
+ * scriptProdSinceLastAug). Until 2026-09-29 that whole figure was
+ * levelPerSec, so the trader was counted TWICE — as its compounding
+ * r x money AND as "hacking" income — and the second copy was scaled with the
+ * hacking level and every hacking_money augmentation, neither of which drives
+ * it. Live BN9 03:21: script income $13.36m/s, of which the batcher (exp
+ * farm) earned $0/s and stock.js ~$13.1m/s. So the trader's share
+ * (stock.js's own getScriptIncome, published as scriptIncome; its lifePnl
+ * rate as the stand-in for a record that predates it) is taken OUT of the
+ * script income here, and the trader is priced only through its own terms
+ * (capitalReturnPerSec, or flatPerSec when no return is measured).
+ * `lifeSec` (optional): seconds since the install, for the since-install
+ * fallback ([1]) — the trader's realised $ over the life is removed from it.
+ * `streams` names every stream and its growth driver, for the record.
  */
 /**
  * HACKNET PRODUCTION AS MONEY, from hacknet.js's report (/tel/hacknet.txt
@@ -204,16 +227,16 @@ export function hacknetRecordOf(rec, lastAugReset, now = Date.now()) {
   return fin(v) && v >= 0 ? { ok: true, perSec: v, why: null } : { ok: false, perSec: 0, why: 'hacknet report carries no moneyPerSec' }
 }
 
-export function incomeOf({ scriptIncome, mults, stock, hacknet } = {}) {
-  const now = fin(scriptIncome?.[0]) && scriptIncome[0] > 0 ? scriptIncome[0] : 0
-  const avg = fin(scriptIncome?.[1]) && scriptIncome[1] > 0 ? scriptIncome[1] : 0
-  const levelPerSec = now || avg
+export function incomeOf({ scriptIncome, mults, stock, hacknet, lifeSec = null } = {}) {
   const s = stock?.ok ? stock : null
+  const split = hackScriptIncome(scriptIncome, s, lifeSec)
+  const now = split.nowPerSec
+  const levelPerSec = split.perSec
   const r = s && fin(s.returnPerSec) && s.returnPerSec > 0 ? s.returnPerSec : 0
   const flatPerSec = s && !(r > 0) && fin(s.incomePerSec) && s.incomePerSec > 0 ? s.incomePerSec : 0
   const hackPays = mults?.ScriptHackMoneyGain
   const sources = []
-  if (levelPerSec > 0) sources.push(now ? 'running-scripts' : 'since-last-aug')
+  if (levelPerSec > 0) sources.push(now > 0 ? 'running-scripts' : 'since-last-aug')
   if (r > 0) sources.push('stock-return')
   else if (flatPerSec > 0) sources.push('stock-realised')
   // Hacknet (hacknetRecordOf): priced, reported, and kept OUT of incomePerSec.
@@ -240,9 +263,50 @@ export function incomeOf({ scriptIncome, mults, stock, hacknet } = {}) {
     // RAM's income response is the SCRIPT part only. In BN8 it is a measured
     // zero; everywhere else it is what batch.txt's RAM earns.
     scriptPerSec: levelPerSec,
+    // The trader's share taken out of the script income, and how it was known.
+    stockScriptPerSec: split.stockPerSec,
+    stockScriptSource: split.stockSource,
     hackPays: fin(hackPays) ? hackPays > 0 : null,
+    // EVERY STREAM ONCE, with what makes it grow (exitplan's terms).
+    streams: {
+      hack: { perSec: levelPerSec, grows: 'hacking level (+50) and hacking_money multipliers', term: 'incomePerSec - flatIncomePerSec' },
+      stock: r > 0
+        ? { perSec: r * (s?.equity ?? 0), returnPerSec: r, equity: s?.equity ?? 0, realisedPerSec: split.stockPerSec, grows: 'compounds on the balance (r x min(money, cap)); no hacking scaling', term: 'capitalReturnPerSec' }
+        : { perSec: flatPerSec, grows: 'flat (no measured return)', term: 'flatIncomePerSec' },
+      hacknet: { perSec: lifePerSec, grows: 'this life only (destroyed at install)', term: 'lifeIncome' },
+    },
     why,
   }
+}
+
+/**
+ * THE HACKING STREAM OF getTotalScriptIncome: the script income less the
+ * trader's realised profit, which the game books into the same counters
+ * (StockMarket/BuyingAndSelling.tsx:175/364). Pure.
+ *   scriptIncome  [running $/s, since-install $/s] (ns.getTotalScriptIncome)
+ *   stock         a stockRecordOf record (ok), or null for no trader
+ *   lifeSec       seconds since the install (the [1] fallback), optional
+ * { perSec, nowPerSec, stockPerSec, stockSource }. [0] is used when the
+ * hacking part of it is positive; else [1] less the trader's realised
+ * dollars over the life (its published `made`, else its rate).
+ */
+export function hackScriptIncome(scriptIncome, stock, lifeSec = null) {
+  const raw0 = fin(scriptIncome?.[0]) ? scriptIncome[0] : 0
+  const raw1 = fin(scriptIncome?.[1]) ? scriptIncome[1] : 0
+  const s = stock?.ok ? stock : null
+  let stockPerSec = 0
+  let stockSource = s ? null : 'no trader record'
+  if (s && fin(s.scriptPerSec)) {
+    stockPerSec = s.scriptPerSec
+    stockSource = "stock.js's own script income (getScriptIncome)"
+  } else if (s && fin(s.incomePerSec)) {
+    stockPerSec = s.incomePerSec
+    stockSource = "stock.js lifePnl rate (record carries no scriptIncome)"
+  } else if (s) stockSource = 'trader record without an income figure: nothing removed'
+  const nowPerSec = Math.max(0, raw0 - stockPerSec)
+  if (nowPerSec > 0) return { perSec: nowPerSec, nowPerSec, stockPerSec, stockSource }
+  const stockAvg = !s ? 0 : fin(s.scriptMade) && fin(lifeSec) && lifeSec > 0 ? s.scriptMade / lifeSec : stockPerSec
+  return { perSec: Math.max(0, raw1 - stockAvg), nowPerSec: 0, stockPerSec, stockSource }
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +618,25 @@ export function withCashRaise(orders, cash, equity, margin = 0.02) {
  */
 export const STOCK_HIST_FILE = '/tel/stock-hist.txt'
 export const STOCK_TICK_S = 6
+/**
+ * AN INTERVAL WITH A NEGLIGIBLE FLOW STILL MEASURES THE RETURN. lifePnl is
+ * flow-free by construction (stock.js telescopes the market move on its own
+ * book), so a flow only matters through the capital base, a.wealth. The rule
+ * was "no flow at all", right for BitNode 8's lumpy purchases, but in
+ * BitNode 9 hacknet and contract money land in cash every row (+$33m a
+ * minute on a $95b book), so EVERY interval was refused and neither this fit
+ * nor bayes.traderPosterior ever existed there (live 2026-09-29: both null
+ * over 357 rows; the exit ran on the last hour's noisy point instead). A
+ * flow within FLOW_TOL_FRAC of the base moves the return by at most that
+ * fraction of itself; a purchase or raise larger than that is still refused.
+ * bayes.js carries the same constant (it imports nothing): [SI4] pins them.
+ */
+export const FLOW_TOL_FRAC = 0.02
+export function flowNegligible(a, b) {
+  if (!(fin(a?.wealth) && a.wealth > 0)) return false
+  if (a.externalFlows === b.externalFlows) return true
+  return fin(a.externalFlows) && fin(b.externalFlows) && Math.abs(b.externalFlows - a.externalFlows) <= FLOW_TOL_FRAC * a.wealth
+}
 export function realisedCapital(rows, { maxStartTicks = 150, minPoints = 8 } = {}) {
   if (!Array.isArray(rows) || rows.length < 2) return null
   const segs = []
@@ -580,7 +663,7 @@ export function realisedCapital(rows, { maxStartTicks = 150, minPoints = 8 } = {
     for (let i = 1; i < s.length; i++) {
       const a = s[i - 1]
       const b = s[i]
-      if (!(a.wealth > 0) || b.externalFlows !== a.externalFlows) continue
+      if (!flowNegligible(a, b)) continue
       const g = 1 + (b.lifePnl - a.lifePnl) / a.wealth
       if (!(g > 0)) continue
       y += Math.log(g)

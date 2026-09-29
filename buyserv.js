@@ -46,7 +46,7 @@ import { nextHomeUpgrade } from 'homecost.js'
 // The node's multiplier table (pure lookup; its main() is not imported code).
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetTarget } from 'fleetshape.js'
-import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
+import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE, hackScriptIncome } from 'nodeecon.js'
 
 // Where progress.js publishes the augmentation plan and its total cost.
 const GATE_FILE = '/tel/installgate.txt'
@@ -264,8 +264,12 @@ function reserveNow(ns) {
   // failing to read leaves payback undefined and budget.js fails closed.
   const payback = (() => {
     try {
-      const inc0 = ns.getTotalScriptIncome()
-      const incomePerSec = (isFinite(inc0?.[0]) && inc0[0] > 0 ? inc0[0] : 0) || (isFinite(inc0?.[1]) && inc0[1] > 0 ? inc0[1] : 0)
+      // The HACKING stream only (nodeecon.hackScriptIncome): the trader's
+      // realised sales are booked as script income too, and a server's RAM
+      // earns none of them.
+      fetchFromHome(ns, STOCK_FILE)
+      const life = ns.getResetInfo().lastAugReset
+      const incomePerSec = hackScriptIncome(ns.getTotalScriptIncome(), stockRecordFromText(ns.read(STOCK_FILE), life), (Date.now() - life) / 1000).perSec
       const sched = JSON.parse(ns.read(SCHEDULE_FILE) || 'null')
       const windowH = sched?.windowH > 0 ? sched.windowH : 1.72 // 2026-09-15 measured median, self-replacing
       const fleetDollarPerGB = ns.cloud.getServerCost(4096) / 4096

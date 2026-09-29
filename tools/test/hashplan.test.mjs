@@ -318,7 +318,7 @@ export async function run() {
     if (!/lifeIncome: hacknetLifeIncome\(ns, info\)\.perSec/.test(p)) c.fail("progress.js exitInputsOf no longer carries hacknet money");
     // Planned path: incomeTraj carries it (lifePerSec) and the flat fallback
     // adds it; unplanned path: the flat rate plus it. [HL3] pins the model.
-    if (!/incomeTraj \? incomeTraj\.moneyBy\(Wg\) : \(incomePerSec \+ hacknetLifeIncome\(ns, info\)\.perSec\) \* Wg \* 3600/.test(p) || !/\(incNow \+ hacknetLifeIncome\(ns, info\)\.perSec\) \* W0 \* 3600/.test(p)) c.fail("both published moneyAtW figures must include the hacknet money until the install");
+    if (!/incomeTraj \? incomeTraj\.moneyBy\(Wg\) : \(incomePerSec \+ hacknetLifeIncome\(ns, info\)\.perSec\) \* Wg \* 3600/.test(p) || !/cashNow \* W0 \* 3600/.test(p) || !/function cashPerSecOf\(e, wealth\) \{[\s\S]{0,300}\(e\?\.lifePerSec \?\? 0\)/.test(p)) c.fail("both published moneyAtW figures must include the hacknet money until the install (the unplanned path through cashPerSecOf, every stream once)");
     if (!/moneyPerSec/.test(code("hacknet.js"))) c.fail("hacknet.js no longer publishes moneyPerSec");
     // ONE instrument, no double count: nodeecon owns it, reports it as
     // lifePerSec, and keeps it OUT of incomePerSec (which persists across

@@ -134,7 +134,13 @@ function recordEarnings(ns, self) {
   // marked complete, and countplan uses completed lives alone.
   for (const [k, L] of Object.entries(led.lives)) if (k !== key && L && !L.complete) L.complete = true
   const L = (led.lives[key] ??= { node: info?.currentNode ?? null, complete: false, samples: [] })
-  L.samples.push([Math.round(ageH * 1e4) / 1e4, Math.round(earned)])
+  // [ageH, every income source, the HACKING stream alone]. The third is what
+  // bayes.incomePrior uses: the prior stands in for the exit's level-scaled
+  // income, and the trader's sales and hacknet are priced as their own
+  // streams (exitplan capitalReturnPerSec, lifeIncome) — in the total they
+  // were counted twice.
+  const hackEarned = typeof src.hacking === 'number' && isFinite(src.hacking) ? Math.max(0, src.hacking) : 0
+  L.samples.push([Math.round(ageH * 1e4) / 1e4, Math.round(earned), Math.round(hackEarned)])
   const keys = Object.keys(led.lives).sort((a, b) => Number(a) - Number(b))
   while (keys.length > EARN_LIVES) delete led.lives[keys.shift()]
   ns.write(EARN, JSON.stringify(led), 'w')

@@ -300,6 +300,8 @@ export const PRIORS = {
 }
 
 export const STOCK_TICK_S = 6 // StockMarket/data/Constants.ts:4 msPerStockUpdate
+// nodeecon.FLOW_TOL_FRAC, duplicated because this module imports nothing ([SI4] pins them equal).
+export const FLOW_TOL_FRAC = 0.02
 
 /**
  * THE TRADER'S RETURN, per hour of market ticks. /tel/stock-hist.txt rows
@@ -332,7 +334,10 @@ export function traderPosterior(rows, { warmupH = 0, minPoints = 4 } = {}) {
     for (let i = 1; i < s.length; i++) {
       const a = s[i - 1]
       const b = s[i]
-      if (!(a.wealth > 0) || b.externalFlows !== a.externalFlows) continue
+      // A negligible flow (hacknet/contract cash, within FLOW_TOL_FRAC of the
+      // base) keeps the interval: nodeecon.flowNegligible has the why.
+      if (!(a.wealth > 0)) continue
+      if (b.externalFlows !== a.externalFlows && !(fin(a.externalFlows) && fin(b.externalFlows) && Math.abs(b.externalFlows - a.externalFlows) <= FLOW_TOL_FRAC * a.wealth)) continue
       if (a.t * STOCK_TICK_S < warmS) continue
       const dtH = ((b.t - a.t) * STOCK_TICK_S) / 3600
       const g = 1 + (b.lifePnl - a.lifePnl) / a.wealth
@@ -753,7 +758,19 @@ export function logRatePosterior(obs, { binH = 0.5 } = {}) {
  * Returns {mean, sd (of ln income/s), perSec (median), lives, source, why} or null.
  */
 export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow = null, shm = null, windowH = 0.5 } = {}) {
-  const lives = Object.entries(earnings?.lives ?? {}).filter(([, L]) => L && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2)
+  const all = Object.entries(earnings?.lives ?? {}).filter(([, L]) => L && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2)
+  // THE HACKING STREAM ONLY. The prior stands in for exitplan's level-scaled
+  // incomePerSec, so it must measure what that input means: tel.js's third
+  // sample element, moneySources.sinceInstall.hacking. The second is every
+  // income source — the trader's sales and hacknet among them, which the exit
+  // prices through their own terms (capitalReturnPerSec, lifeIncome) — so a
+  // prior on it counted them twice and grew them with the hacking level.
+  // Lives recorded before the split (two-element samples) are used only when
+  // no split life exists anywhere, and the `why` says so.
+  const split = ([, L]) => L.samples.every((q) => Array.isArray(q) && fin(q[2]))
+  const anySplit = all.some(split)
+  const lives = anySplit ? all.filter(split) : all
+  const idx = anySplit ? 2 : 1
   const multAt = (startMs) => {
     // The lifetimes entry whose life started at startMs (at - lifeH), within 15 min.
     let best = null
@@ -766,7 +783,7 @@ export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow
     return best?.m ?? null
   }
   const rateOf = (L) => {
-    const pts = L.samples.filter((q) => Array.isArray(q) && fin(q[0]) && fin(q[1])).map((q) => [q[0], q[1]]).sort((a, b) => a[0] - b[0])
+    const pts = L.samples.filter((q) => Array.isArray(q) && fin(q[0]) && fin(q[idx])).map((q) => [q[0], q[idx]]).sort((a, b) => a[0] - b[0])
     if (pts.length < 2) return null
     let hi = 0
     for (const q of pts) hi = q[1] = Math.max(hi, q[1])
@@ -812,6 +829,7 @@ export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow
     extra = PRIORS.incomeCrossNodeSdLn
   }
   if (!obs.length) return null
+  if (!anySplit) source += ' — LEGACY totals (every income source, not the hacking stream alone: no life recorded the split yet)'
   const sd0 = PRIORS.incomeLifeSdLn
   const xs = obs.map((o) => o.ln)
   const post = nigUpdate({ m: xs[0], k: 1, a: 2, b: sd0 * sd0 }, xs.slice(1))
@@ -820,5 +838,5 @@ export function incomePrior({ earnings, ledger = [], node, ageH = 0, hackMultNow
   const sLife2 = post.b / (post.a - 1)
   const sdMean = Math.sqrt(sLife2 / post.k)
   const sd = Math.sqrt(sdMean * sdMean + sLife2 + extra * extra)
-  return { mean: post.m, sd, sdLife: Math.sqrt(sLife2), perSec: Math.exp(post.m), lives: obs.length, source, why: `income from prior: ${source} at age ${ageH.toFixed(2)}h, median $${Math.exp(post.m).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80%` }
+  return { mean: post.m, sd, sdLife: Math.sqrt(sLife2), perSec: Math.exp(post.m), lives: obs.length, stream: anySplit ? 'hacking' : 'all sources (legacy)', source, why: `income from prior: ${source} at age ${ageH.toFixed(2)}h, median $${Math.exp(post.m).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80%` }
 }

@@ -2677,6 +2677,30 @@ function hacknetLifeIncome(ns, info) {
 }
 
 /**
+ * THIS PASS'S INCOME, EACH STREAM ONCE (nodeecon.incomeOf): the script income
+ * with the trader's realised sales taken out (the game books them as script
+ * income — StockMarket/BuyingAndSelling.tsx:175), the trader as its own
+ * compounding return, hacknet as this life's income. Every exit input and
+ * every income-per-GB read goes through here; a raw getTotalScriptIncome
+ * counted the trader twice and grew it with the hacking level (live BN9
+ * 2026-09-29: $13.4m/s "hacking" income, of which the batcher earned $0).
+ */
+function econIncomeNow(ns, info) {
+  const since = info?.lastAugReset
+  const lifeSec = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 1000) : null
+  return incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info), lifeSec })
+}
+/**
+ * CASH ARRIVING PER SECOND, all streams once, for linear money-at-W
+ * projections: level + flat income, hacknet, and the trader's return on
+ * today's balance (a lower bound: it compounds). `e` from econIncomeNow.
+ */
+function cashPerSecOf(e, wealth) {
+  const cap = e?.capitalReturnPerSec > 0 ? e.capitalReturnPerSec * Math.min(Math.max(0, wealth ?? 0), e.capitalCap ?? Infinity) : 0
+  return (e?.incomePerSec ?? 0) + (e?.lifePerSec ?? 0) + cap
+}
+
+/**
  * INCOME WHILE THIS LIFE CANNOT MEASURE IT (bayes.incomePrior): what earlier
  * lives earned at this point of a life, from tel.js's earnings ledger and the
  * lifetimes ledger, scaled by the multiplier — so a batcher prepping after an
@@ -2856,7 +2880,9 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // of incomePerSec that does not scale with the hacking level, and the
     // stock trader's compounding return. Zero/absent outside a node whose
     // income is the trader's, so every other node prices as before.
-    flatIncomePerSec: econNow?.flatPerSec ?? 0,
+    // Contract money is in incomePerSec (above) and is flat too: its reward is
+    // difficulty x CodingContractMoney, not the hacking level.
+    flatIncomePerSec: (econNow?.flatPerSec ?? 0) + (contractMoneyPerSec > 0 ? contractMoneyPerSec : 0),
     // THE TRADER ACROSS LIVES (nodeecon.realisedCapital): a steady rate and the
     // warm-up every install costs, fitted from the lifetimes ledger's capital
     // columns — not the young life's own return, which was negative for its
@@ -3209,7 +3235,7 @@ async function act(ns, canJoin, info, note) {
   // Read the income split here too, so every pass publishes it — the unplanned
   // path returns before the gate section re-reads it (progress.txt income was
   // null for 5.8h in BitNode 8 while the trader earned $4m/s).
-  econNow = incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info) })
+  econNow = econIncomeNow(ns, info)
   // THE STOCK MARKET ENTRY, priced and — for now — refused with its reason:
   // the expected return needs a 4S forecast this run has not bought, so
   // `edgePerHour` is null and stockplan says so rather than guessing. What
@@ -3977,7 +4003,9 @@ async function act(ns, canJoin, info, note) {
     try {
       const hu = readJson(ns, '/tel/homeup.txt')
       const bt = readJson(ns, '/tel/batch.txt')
-      const inc = ns.getTotalScriptIncome()
+      // RAM earns the HACKING stream only (econIncomeNow): the trader's sales
+      // are in the raw script income and no GB of home earns them.
+      const hackInc = econIncomeNow(ns, info).levelPerSec
       const w = measureWindow(ns, info)
       // The watchdog prices the next upgrade every cycle (jobs['homeup.js']
       // .next); homeup.txt's copy is only as fresh as homeup's last run and
@@ -3988,7 +4016,7 @@ async function act(ns, canJoin, info, note) {
       const homeRam = hu?.homeRam > 0 ? hu.homeRam : readJson(ns, '/tel/boot.txt')?.homeRam
       const deltaGB = next?.kind === 'RAM' && homeRam > 0 ? homeRam : null
       const h = homeLn({
-        incomePerSec: (isFinite(inc?.[0]) && inc[0] > 0 ? inc[0] : 0) || null,
+        incomePerSec: hackInc > 0 ? hackInc : null,
         deltaGB,
         ramTotal: bt?.ram?.total,
         windowH: w?.windowH,
@@ -4081,7 +4109,7 @@ async function act(ns, canJoin, info, note) {
         // all. repLadder takes a FLAT rate, so the trader's compounding
         // return enters as its rate on today's capital — a floor, since the
         // capital grows while the ladder runs.
-        const e = incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info) })
+        const e = econIncomeNow(ns, info)
         const cap = e.capitalReturnPerSec > 0 ? e.capitalReturnPerSec * Math.min(ns.getServerMoneyAvailable('home') + e.equity, e.capitalCap ?? Infinity) : 0
         // Hacknet money (lifePerSec) is this life's too, and the ladder is.
         return e.incomePerSec + e.lifePerSec + cap || null
@@ -4527,8 +4555,9 @@ async function act(ns, canJoin, info, note) {
     const perHour = c.rates.money * 3600
     try {
       if (typeof replanAt !== 'function') return { crime: c.crime, perHour, wins: false, why: 'no plan to re-price — faction work keeps the slot' }
-      const inc0 = ns.getTotalScriptIncome()
-      const incomeNow = (isFinite(inc0?.[0]) && inc0[0] > 0 ? inc0[0] : 0) || (isFinite(inc0?.[1]) && inc0[1] > 0 ? inc0[1] : 0)
+      // Level + flat income, each stream once (econIncomeNow).
+      const e0 = econIncomeNow(ns, info)
+      const incomeNow = e0.incomePerSec
       const g = readJson(ns, GATE)
       const W = g && g.lastAugReset === info?.lastAugReset && g.planned !== false
         ? (g.install ? 0 : g.holdForever ? null : g.bestWait?.waitMs > 0 ? g.bestWait.waitMs / 3600000 : 0)
@@ -4539,7 +4568,7 @@ async function act(ns, canJoin, info, note) {
       const fav = faction && canJoin ? 1 + Math.max(0, sing.factionFavor(faction)) / 100 : 1
       const repGain = faction && baseRep > 0 ? baseRep * fav * W * 3600 : 0
       const inputs = exitInputsOf(ns, info, player, schedule, incomeNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
-      const m = ns.getServerMoneyAvailable('home') + stockEquity + incomeNow * W * 3600
+      const m = ns.getServerMoneyAvailable('home') + stockEquity + cashPerSecOf(e0, ns.getServerMoneyAvailable('home') + stockEquity) * W * 3600
       const gainsOf = (p2) => installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
       const exitAt = (p2) => {
         const gi = gainsOf(p2)
@@ -5048,8 +5077,12 @@ async function act(ns, canJoin, info, note) {
     // on the planned path, so a fresh life — nothing affordable yet — never
     // started the calibration loop, and the first scoreable prediction was
     // deferred to whenever augmentations happened to become buyable.
-    const inc0 = ns.getTotalScriptIncome()
-    const incNow = (isFinite(inc0?.[0]) && inc0[0] > 0 ? inc0[0] : 0) || (isFinite(inc0?.[1]) && inc0[1] > 0 ? inc0[1] : 0)
+    // Level + flat income, each stream once (econIncomeNow): the exit inputs'
+    // incomePerSec. The raw script income carried the trader's sales too.
+    const econPass = econIncomeNow(ns, info)
+    const incNow = econPass.incomePerSec
+    // Cash arriving per second, every stream once, for the linear money-at-W.
+    const cashNow = cashPerSecOf(econPass, ns.getServerMoneyAvailable('home') + stockEquity)
     let prevIncome0 = null
     try {
       const saved = JSON.parse(ns.read(GATE) || 'null')
@@ -5068,7 +5101,7 @@ async function act(ns, canJoin, info, note) {
       const byExit = await sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
       {
         const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
-        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + (incNow + hacknetLifeIncome(ns, info).perSec) * W0 * 3600, replanAt, pending, offers })
+        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + cashNow * W0 * 3600, replanAt, pending, offers })
       }
       writeSleevePlan(ns, info, await gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
@@ -5145,8 +5178,8 @@ async function act(ns, canJoin, info, note) {
             const source = decided?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null)
             return { objective: unifyObjectiveExit(weightsMeta, decided), exitH, exitSource: source, exitCalibration: withExitSample(cal0, info, exitH, source), countRoute: countRouteNow }
           })()),
-          incomeSample: makeIncomeSample(incNow, player, schedule, info),
-          incomeCalibration: scoreIncome(prevIncome0, incNow),
+          incomeSample: makeIncomeSample(econPass.levelPerSec, player, schedule, info),
+          incomeCalibration: scoreIncome(prevIncome0, econPass.levelPerSec),
           // The Covenant comparison rides this path too: a life with nothing
           // left to buy is very often the final window, which is the only
           // one the campaign can fit in.
@@ -5163,7 +5196,7 @@ async function act(ns, canJoin, info, note) {
             // remainder — the median window minus this life's age — stated.
             const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
             return {
-              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => (incNow + hacknetLifeIncome(ns, info).perSec) * h * 3600, replanAt, pending, offers),
+              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => cashNow * h * 3600, replanAt, pending, offers),
               covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf, offers, [...allCount.keys()]),
               sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home') + stockEquity),
             }
@@ -5254,8 +5287,7 @@ async function act(ns, canJoin, info, note) {
     // income (level-scaled), a flat realised rate, and the trader's
     // compounding return on the balance. Without a trader record in such a
     // node it reports UNMEASURED with the reason, never $0/s as a finding.
-    const income = ns.getTotalScriptIncome()
-    econNow = incomeOf({ scriptIncome: income, mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info) })
+    econNow = econIncomeNow(ns, info)
     const incomePerSec = econNow.incomePerSec
     const incomeSource = econNow.source
     // Priced when ANY source is measured: the capital return alone suffices.
