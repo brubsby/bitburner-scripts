@@ -169,7 +169,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2071,7 +2071,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     pc.graftChosen = d.key === 'grafts' ? { from: setSwitch ? setSwitch.from : committedSet ? 'the committed set' : "this pass's search", specs, startMoney } : null
     // The with-run's policy (installs before the final window) on the same
     // basis: the graft step waits for 0 installs left.
-    const withPolicy = withIn ? (countCtx ? bestExitPolicy(withIn) : policyOf(basis, withIn)) : null
+    const withPolicy = withIn ? (countCtx ? bestExitPolicy(withIn) : yield* policyGenOf(basis, withIn)) : null
     yield
     return {
       ...d,
@@ -2672,6 +2672,15 @@ async function planInstallOf(ns, info, inputs, count, point) {
   const pc = planCtxOf(ns, info)
   if (!pc.post) return null
   pc.obsInputs = inputs
+  // A CARRIED STREAM THAT MOVED IS AN EVENT (plan.streamEventsOf): the
+  // install decision re-decides on it rather than re-pricing its held
+  // trajectory on a stream it was not decided with.
+  pc.streams = streamSummaryOf(inputs?.carriedIncome)
+  const sev = pc.prev ? streamEventsOf(pc.prev.streams ?? null, pc.streams) : []
+  if (sev.length) {
+    pc.events = [...(pc.events ?? []), ...sev]
+    pc.redecide = true
+  }
   if (inputs?.incomeFromPrior) pc.incomeFromPrior = inputs.incomeSource
   if (inputs?.repFromEstimate) pc.repFromEstimate = inputs.repSource
   const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, sameLife: !!pc.prev }))
@@ -2831,6 +2840,8 @@ function publishPlan(ns, info, extra = {}) {
       graftCarry: pc.graftCarryCheck ?? null,
       // PER-LIFE GAIN UNBOUGHT (plan.perLifeGainCheckOf; planCheck fails on it).
       perLifeGain: pc.perLifeGain ?? null,
+      // The carried streams' summaries (plan.streamSummaryOf): the next pass's stream events compare them.
+      streams: pc.streams ?? pc.prev?.streams ?? null,
       // EXIT JUMP AT INSTALL (plan.exitJumpOf; planCheck fails on ok false).
       exitJump,
       // A decision that changed under a re-basing this pass: re-decide next
@@ -4625,7 +4636,14 @@ async function act(ns, canJoin, info, note) {
           return [...prevObs, +eBudgetRaw.toFixed(4)].slice(-12)
         })()
         const eBudget = eBudgetObs.reduce((a, b) => a + b, 0) / eBudgetObs.length
-        const eRep = Math.max(0, (faster.logM - probePlan.logM) / Math.log(K))
+        // eRep the same way (live 20:22 -> 20:27Z: 0.197 -> 0.334 on one pass).
+        const eRepRaw = Math.max(0, (faster.logM - probePlan.logM) / Math.log(K))
+        const eRepObs = (() => {
+          const g = readJson(ns, GATE)
+          const prevObs = g?.lastAugReset === info?.lastAugReset && Array.isArray(g?.eRepObs) ? g.eRepObs.filter((x) => typeof x === 'number' && isFinite(x)) : []
+          return [...prevObs, +eRepRaw.toFixed(4)].slice(-12)
+        })()
+        const eRep = eRepObs.reduce((a, b) => a + b, 0) / eRepObs.length
 
         // Remaining windows to the exit condition, on the measured growth.
         const wdd = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
@@ -4772,7 +4790,7 @@ async function act(ns, canJoin, info, note) {
           // WINDOW instead of assuming this window's rate repeats — see
           // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
           const winH = measureWindow(ns, info)?.windowH
-          weightsMeta = { source: derived?.source ?? 'derived', exitSensitivity: byExit ? { hoursPerLn: byExit.sensitivities, exitH: byExit.exitH, W: byExit.W } : null, eBudget: +eBudget.toFixed(4), eBudgetRaw: +eBudgetRaw.toFixed(4), eBudgetObs, eRep: +eRep.toFixed(4), remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
+          weightsMeta = { source: derived?.source ?? 'derived', exitSensitivity: byExit ? { hoursPerLn: byExit.sensitivities, exitH: byExit.exitH, W: byExit.W } : null, eBudget: +eBudget.toFixed(4), eBudgetRaw: +eBudgetRaw.toFixed(4), eBudgetObs, eRep: +eRep.toFixed(4), eRepRaw: +eRepRaw.toFixed(4), eRepObs, remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
           replanAt = (m, offersAt = null) =>
             planPurchases({
               ...planArgs,
@@ -4861,7 +4879,7 @@ async function act(ns, canJoin, info, note) {
         // dollars home's extra income brings in before the join.
         join,
       })
-      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, eBudgetObs: weightsMeta?.eBudgetObs ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
+      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, eBudgetObs: weightsMeta?.eBudgetObs ?? null, eRepObs: weightsMeta?.eRepObs ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
     } catch {
       return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', homeLnJoin: null, homeLnPlan: null, eBudget: null, remainingWindows: null, probeMoney: null }
     }

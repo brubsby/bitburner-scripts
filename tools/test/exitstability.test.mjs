@@ -275,5 +275,20 @@ export async function run() {
     if (!chk.fails.some((f) => /^PER-LIFE GAIN UNBOUGHT/.test(f.what))) c.fail("planCheck must fail PER-LIFE GAIN UNBOUGHT");
     checks.push(c);
   }
+  {
+    const c = new Check("ES8", "A CARRIED STREAM THAT MOVED IS AN EVENT: the gang re-simulated between 20:22 and 20:27Z (the held exit 33.1h -> 43.7h) re-decides; an unchanged stream does not; eRep and the farm share are smoothed");
+    const G = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-perlife-2022.json"), "utf8"));
+    const a = P.streamSummaryOf(G.exitinputs.inputs.carriedIncome);
+    const b = P.streamSummaryOf(G.carried2027.carriedIncome);
+    const ev = P.streamEventsOf(a, b);
+    c.examined(4);
+    c.note(`20:22Z ${JSON.stringify(a)}; 20:27Z ${JSON.stringify(b)}: ${ev.join("; ") || "no event"}`);
+    if (!ev.some((e) => /'gang' moved/.test(e))) c.fail("the gang's re-simulated stream must be an event");
+    if (P.streamEventsOf(a, { ...a }).length) c.fail("an unchanged stream is no event");
+    if (P.streamEventsOf(a, Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v * 1.1]))).length) c.fail("a 10% move is not an event (25%)");
+    const prog = code("progress.js");
+    if (!/pc\.streams = streamSummaryOf\(inputs\?\.carriedIncome\)/.test(prog) || !/const eRepObs = /.test(prog) || !/yield\* policyGenOf\(basis, withIn\)/.test(prog)) c.fail("wiring: the stream event in planInstallOf, eRep smoothed, the with-run's policy as a generator");
+    checks.push(c);
+  }
   return checks;
 }

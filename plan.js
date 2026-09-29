@@ -455,6 +455,49 @@ export function redecideEvents(prev, cur, o = {}) {
   return ev
 }
 
+/**
+ * THE CARRIED STREAMS AS AN EVENT. exitInputsOf carries the plan's committed
+ * money streams (carriedIncome {name: [{atH, perSec}]}: the gang's simulated
+ * income, the sleeves on crime) into every exit; a stream re-simulated on a
+ * new state (the gang's respect 5.15e4 -> 2.63e5 across gang.js's restart,
+ * live 2026-09-29 20:22 -> 20:27Z) moved the held exit 33.1h -> 43.7h with
+ * nothing re-deciding (EXIT UNSTABLE). A stream's mean $/s over the next
+ * 4h and 24h is its summary; one that moved by more than `rel` (or
+ * appeared, or vanished) is an event: the plan re-decides on it, as on a
+ * moved posterior.
+ */
+export const STREAM_EVENT = { rel: 0.25, horizons: [4, 24] }
+export function streamSummaryOf(carried, horizons = STREAM_EVENT.horizons) {
+  if (!carried || typeof carried !== 'object') return {}
+  const out = {}
+  for (const [name, list] of Object.entries(carried)) {
+    if (!Array.isArray(list) || !list.length) continue
+    const xs = list.filter((x) => fin(x?.atH) && fin(x?.perSec)).sort((a, b) => a.atH - b.atH)
+    for (const H of horizons) {
+      let area = 0
+      for (let i = 0; i < xs.length; i++) {
+        const a = Math.max(0, xs[i].atH)
+        const b = Math.min(H, i + 1 < xs.length ? xs[i + 1].atH : H)
+        if (b > a) area += Math.max(0, xs[i].perSec) * (b - a)
+      }
+      out[`${name}@${H}h`] = +(area / H).toPrecision(4)
+    }
+  }
+  return out
+}
+export function streamEventsOf(prev, cur, rel = STREAM_EVENT.rel) {
+  if (!prev || typeof prev !== 'object' || !cur || typeof cur !== 'object') return []
+  const ev = []
+  for (const name of new Set([...Object.keys(prev), ...Object.keys(cur)])) {
+    const a = prev[name] ?? 0
+    const b = cur[name] ?? 0
+    if (a === b) continue
+    const m = Math.max(a, b)
+    if (m > 0 && Math.abs(b - a) / m > rel) ev.push(`carried stream '${name.replace(/@.*/, '')}' moved $${a.toExponential(2)}/s -> $${b.toExponential(2)}/s (mean over the next ${name.replace(/.*@/, '')})`)
+  }
+  return ev
+}
+
 /** The posterior summary a plan record carries (and redecideEvents compares). */
 export function posteriorSummary(post) {
   return {
