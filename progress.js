@@ -169,7 +169,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf } from 'plan.js'
+import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2829,6 +2829,8 @@ function publishPlan(ns, info, extra = {}) {
       // GRAFTS DROPPED check (plan.graftCarryCheckOf): the install decision's
       // inputs against the committed graft set / graft memory.
       graftCarry: pc.graftCarryCheck ?? null,
+      // PER-LIFE GAIN UNBOUGHT (plan.perLifeGainCheckOf; planCheck fails on it).
+      perLifeGain: pc.perLifeGain ?? null,
       // EXIT JUMP AT INSTALL (plan.exitJumpOf; planCheck fails on ok false).
       exitJump,
       // A decision that changed under a re-basing this pass: re-decide next
@@ -6532,6 +6534,14 @@ async function act(ns, canJoin, info, note) {
       // node's memory). Published as plan.graftCarry; planCheck fails on it.
       if (pcx) {
         try {
+          // PER-LIFE GAIN UNBOUGHT (plan.perLifeGainCheckOf): the committed
+          // trajectory's per-life gain against what the purchase model buys.
+          try {
+            const sp = basisOf(pcx.decisions.install ?? null, Date.now())
+            if (sp && pcx.installInputs) pcx.perLifeGain = perLifeGainCheckOf((await paced(policyGenOf(sp, pcx.installInputs), 'plan-perlife'))?.best ?? null)
+          } catch (e) {
+            pcx.perLifeGain = { ok: null, why: `per-life gain check threw: ${String(e).slice(0, 120)}` }
+          }
           pcx.graftCarryCheck = graftCarryCheckOf({ install: pcx.decisions.install ?? null, installInputs: pcx.installInputs ?? null, grafts: pcx.decisions.grafts ?? null, memory: pcx.decisions.grafts?.memory ?? pcx.prevAny?.graftMemory ?? null, installed: new Set(installedCount.keys()) })
         } catch (e) {
           pcx.graftCarryCheck = { ok: null, why: `graft carry check threw: ${String(e).slice(0, 120)}` }

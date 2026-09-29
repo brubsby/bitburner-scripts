@@ -245,5 +245,35 @@ export async function run() {
     if (/rp\.pick|graftSetOn\(/.test(prog)) c.fail("the rebase must not choose among sets by point");
     checks.push(c);
   }
+  {
+    const c = new Check("ES7", "PER-LIFE GAIN: the later lives buy what the purchase model buys — 20:22Z's 42 lives of x1.153 at 0.5h are gone, the exit's best life length is a long one, and PER-LIFE GAIN UNBOUGHT fails on the live figure");
+    const G = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-perlife-2022.json"), "utf8"));
+    const I = G.exitinputs.inputs;
+    const spec = P.basisOf(G.install, Date.parse(G.at));
+    const base = { ...I, firstInstallH: spec.waitH, installGains: spec.gains, nextInstallGain: spec.gains.hacking };
+    c.examined(5);
+    // The purchase model's own answer for a 0.5h life: its table row.
+    const row = I.cadence.table.find((r) => r.L === 0.5);
+    const buyer = E.purchaseGainOf(I.cadence, 0.5, I.cadenceFrom);
+    c.note(`the purchase model: a 0.5h life earns $${row.money.toExponential(2)} (calibrated) and buys x${row.gain} (${row.first} augmentations, ${row.firstNfg} NeuroFlux levels in its first life, the catalogue depleting over ${row.lives} lives); purchaseGainOf reads $${buyer.mL.toExponential(2)} -> x${buyer.gL.toFixed(4)}`);
+    if (!(Math.abs(buyer.gL / row.gain - 1) < 1e-6 && Math.abs(buyer.mL / row.money - 1) < 1e-6)) c.fail("purchaseGainOf must read the table's own row at its length");
+    const byL = I.cadence.table.map((r) => ({ L: r.L, g: r.gain, b: E.bestExitPolicy({ ...base, cycleHours: r.L, multGainPerCycle: r.gain }, 400, 1).best }));
+    c.note(byL.map((x) => `${x.L}h ${Number.isFinite(x.b?.hours) && x.b.hours < 1e4 ? x.b.hours.toFixed(1) : "unreached"} (x${x.b?.perLife ? Math.exp(x.b.perLife.pricedLn).toFixed(4) : "-"}/life)`).join("; "));
+    const live = E.bestExitPolicy(base, 400, 1).best;
+    c.note(`the live inputs (0.5h x${I.multGainPerCycle.toFixed(4)}): ${live.hours.toExponential(3)}h, ${live.installsFirst} installs, x${Math.exp(live.perLife.pricedLn).toFixed(4)} a life (live 20:22Z: 33.2h, x1.153)`);
+    if (!(live.perLife.pricedLn < Math.log(1.01))) c.fail(`a 0.5h life must not be priced at more than x1.01: x${Math.exp(live.perLife.pricedLn)}`);
+    const best = byL.filter((x) => Number.isFinite(x.b?.hours)).sort((a, b) => a.b.hours - b.b.hours)[0];
+    if (!(best && best.L >= 6)) c.fail(`the exit's best life length must be a long one: ${best?.L}h`);
+    for (const x of byL) {
+      const k = P.perLifeGainCheckOf(x.b);
+      if (k.ok === false) c.fail(`${x.L}h: ${k.why}`);
+    }
+    const bad = P.perLifeGainCheckOf({ perLife: { lives: 42, cycleHours: 0.5, pricedLn: Math.log(1.153), boughtLn: Math.log(1.0626), moneyL: row.money, kAll: 128 } });
+    c.note(`the live 20:22Z figure: ${bad.why}`);
+    if (bad.ok !== false || !/^PER-LIFE GAIN UNBOUGHT/.test(bad.why)) c.fail("PER-LIFE GAIN UNBOUGHT must fail on the live figure");
+    const chk = P.planCheck({ at: new Date().toISOString(), perLifeGain: bad }, { now: Date.now() });
+    if (!chk.fails.some((f) => /^PER-LIFE GAIN UNBOUGHT/.test(f.what))) c.fail("planCheck must fail PER-LIFE GAIN UNBOUGHT");
+    checks.push(c);
+  }
   return checks;
 }

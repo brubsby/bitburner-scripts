@@ -752,6 +752,42 @@ export function policyOf(spec, x) {
   return bestExitPolicy(x)
 }
 
+/** policyOf as a generator (exitplan.bestExitPolicyGen: yields per policy). */
+export function* policyGenOf(spec, x) {
+  if (spec?.kind === 'never') return yield* bestExitPolicyGen(x, 0, 0)
+  if (spec?.kind === 'wait') {
+    const g = spec.gains ?? null
+    return yield* bestExitPolicyGen({ ...x, firstInstallH: Math.max(0, spec.waitH ?? 0), ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
+  }
+  return yield* bestExitPolicyGen(x)
+}
+
+/**
+ * PER-LIFE GAIN UNBOUGHT. The committed trajectory's later lives compound a
+ * per-life gain (exitplan exitHours perLife.pricedLn: the mean ln gain of
+ * the lives after the first install, graft purchases excluded); the purchase
+ * model (lifeplan.cadenceByPurchases: each life length's modelled money and
+ * what lifeSequence buys with it from the depleting catalogue at 1.9x
+ * escalation) says what a life of that length CAN buy — with every income
+ * the node carries multiplied into its money (perLife.boughtLn, a generous
+ * bound). Priced beyond it, the exit rests on lives that buy more than the
+ * planner could: live BN9 2026-09-29 20:22Z, 42 lives of x1.153 each at
+ * 0.5h where a 0.5h life's $62m buys x1.0016. Tolerance: 5% of the bound, at
+ * least 0.005. Returns {ok (true|false|null), ...}.
+ */
+export const PER_LIFE_TOL = { rel: 0.05, abs: 0.005 }
+export function perLifeGainCheckOf(best) {
+  const pl = best?.perLife
+  if (!pl || !fin(pl.pricedLn)) return { ok: null, why: 'no later lives on the committed trajectory' }
+  if (!fin(pl.boughtLn)) return { ok: null, pricedLn: +pl.pricedLn.toFixed(5), why: "no purchase-model table on the inputs (the cadence is not the purchase model's): the per-life gain is the measured cadence's" }
+  const tol = Math.max(PER_LIFE_TOL.abs, PER_LIFE_TOL.rel * pl.boughtLn)
+  const ok = pl.pricedLn <= pl.boughtLn + tol
+  const out = { ok, lives: pl.lives, cycleHours: pl.cycleHours, pricedLn: +pl.pricedLn.toFixed(5), boughtLn: +pl.boughtLn.toFixed(5), moneyL: pl.moneyL, kAll: fin(pl.kAll) ? +pl.kAll.toFixed(2) : null }
+  const x = (v) => `x${Math.exp(v).toFixed(4)}`
+  const m = `$${(pl.moneyL ?? 0).toExponential(2)}`
+  return { ...out, why: ok ? `${pl.lives} later lives of ${pl.cycleHours}h at ${x(pl.pricedLn)} each, within the ${x(pl.boughtLn)} a life's ${m} (x${out.kAll} with every stream) buys` : `PER-LIFE GAIN UNBOUGHT: ${pl.lives} later lives of ${pl.cycleHours}h priced at ${x(pl.pricedLn)} each, beyond the ${x(pl.boughtLn)} the purchase model buys with a life's ${m} (x${out.kAll} with every stream carried)` }
+}
+
 /**
  * The structural-noise key of a trajectory: the install point (to the
  * minute) or 'never' or the route, and whether the inputs carry committed
@@ -1285,6 +1321,9 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const ob = optionsBasisOf(plan)
   if (ob.ok === false) fail(ob.why, "a decision published options priced on another basis than the committed exit they are compared with (a held decision's old options, a graft set the install did not price) — every number in a decision must be one pass's pricing of one trajectory")
   else if (ob.why) notes.push(`plan options basis: ${ob.why}`)
+  const plg = plan.perLifeGain ?? null
+  if (plg?.ok === false) fail(plg.why, "the committed trajectory's later lives compound a gain the purchase model cannot buy with a life's money — a lift applied per cycle whatever the life buys (exitplan lifeLift, lifeplan table)")
+  else if (plg?.why) notes.push(`plan per-life gain: ${plg.why}`)
   // SWITCH ARTEFACT (switchSanityOf): taken, never blocked — reported here.
   for (const [name, dd] of Object.entries(plan.decisions ?? {})) {
     const ss = dd?.switchSanity

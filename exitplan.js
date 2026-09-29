@@ -829,6 +829,54 @@ function stepsOf(extra, carried) {
   return v
 }
 
+/**
+ * THE PURCHASE MODEL'S MONEY -> GAIN, for the later lives' money lifts
+ * (exitHours lifeLift). `cadence.table` (lifeplan.cadenceByPurchases, carried
+ * on the exit inputs): per life length L, the money a life of that length
+ * earns (calibrated) and the mean gain its lifeSequence buys over the node's
+ * lives from the depleting catalogue at 1.9x escalation. Read as ln(ln G)
+ * against ln(money), piecewise linear, non-decreasing; below the table ln G
+ * falls in proportion to the money, above it it stays at the richest row (a
+ * floor on what more money buys: never extrapolated upward). mL: the money of
+ * a life of `L` hours (interpolated in ln L); gL its gain. Returns
+ * {mL, gL, lnGainAt(m), lnGainRatio(K)} or null (no table, not the purchase
+ * model's cadence, or nothing bought at any length).
+ */
+export function purchaseGainOf(cadence, L, from = null) {
+  if (from !== 'purchase model' && cadence?.source !== 'purchase model') return null
+  const rows = (Array.isArray(cadence?.table) ? cadence.table : []).filter((r) => pos(r?.L) && pos(r?.money) && pos(r?.gain))
+  const pts = rows
+    .filter((r) => r.gain > 1)
+    .map((r) => [Math.log(r.money), Math.log(Math.log(r.gain))])
+    .sort((a, b) => a[0] - b[0])
+  if (!pts.length || !pos(L)) return null
+  for (let i = 1; i < pts.length; i++) if (pts[i][1] < pts[i - 1][1]) pts[i][1] = pts[i - 1][1]
+  const lnlnAt = (lm) => {
+    if (lm <= pts[0][0]) return pts[0][1] + (lm - pts[0][0])
+    const last = pts[pts.length - 1]
+    if (lm >= last[0]) return last[1]
+    let j = 1
+    while (pts[j][0] < lm) j++
+    const [x0, y0] = pts[j - 1]
+    const [x1, y1] = pts[j]
+    return y0 + ((y1 - y0) * (lm - x0)) / (x1 - x0)
+  }
+  const lnGainAt = (m) => (pos(m) ? Math.exp(lnlnAt(Math.log(m))) : 0)
+  const byL = rows.map((r) => [Math.log(r.L), Math.log(r.money)]).sort((a, b) => a[0] - b[0])
+  const ll = Math.log(L)
+  let lmL
+  if (ll <= byL[0][0]) lmL = byL[0][1] + (ll - byL[0][0])
+  else if (ll >= byL[byL.length - 1][0]) lmL = byL[byL.length - 1][1]
+  else {
+    let j = 1
+    while (byL[j][0] < ll) j++
+    lmL = byL[j - 1][1] + ((byL[j][1] - byL[j - 1][1]) * (ll - byL[j - 1][0])) / (byL[j][0] - byL[j - 1][0])
+  }
+  const mL = Math.exp(lmL)
+  const base = lnGainAt(mL)
+  return { mL, gL: Math.exp(base), lnGainAt, lnGainRatio: (K) => lnGainAt(mL * K) - base }
+}
+
 export function exitHours(o = {}, installsAt = null, quiet = false) {
   // installsAt: the policy's install count, when the caller passes it beside
   // the inputs rather than in them (the policy search: a copy of the inputs
@@ -1009,10 +1057,20 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // Each step's growth factor once, not a power per cycle per policy.
   const growOn = num(eBudget) && eBudget > 0 && pos(incomePerSec)
   const stepGrowth = growOn ? growthTableOf(liftSteps, incomePerSec, eBudget) : null
-  const growthAt = (t) => {
-    const i = growOn ? stepIn(liftSteps, t) : -1
-    return (t >= repFrom ? repLift : 1) * (i < 0 ? 1 : stepGrowth[i])
+  void stepGrowth
+  const repLiftAt = (t) => (t >= repFrom ? repLift : 1)
+  // The later income step in force at t, as the factor K on the scripts' stream.
+  const incomeKAt = (t) => {
+    if (!pos(incomePerSec) || !liftSteps.length) return 1
+    const i = stepIn(liftSteps, t)
+    return i < 0 ? 1 : (incomePerSec + Math.max(0, liftSteps[i].perSec)) / incomePerSec
   }
+  // The largest per-cycle extra (the check's allowance).
+  const perCycleExtraMax = (() => {
+    if (!perCycleExtra) return 1
+    if (Array.isArray(perCycleExtra.byInstall)) return Math.max(1, ...perCycleExtra.byInstall.filter(pos))
+    return cycleExtraAt(1e9)
+  })()
 
   // Income is priced when ANY source is measured positive. A node whose only
   // income is the trader's compounding return (BitNode 8: scripted hacking
@@ -1110,6 +1168,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // the reputation/donation rates act from the final window on (below).
   let lifeGE = 1
   let lifeLegsOut = []
+  let perLifeOut = null
   if (installsFirst > 0) {
     const firstH0 = num(firstInstallH) && firstInstallH >= 0 ? firstInstallH : cycleHours
     // A LIFE THAT GRAFTS IS LONGER (lifeGraftLeg): its own length, after the
@@ -1171,7 +1230,26 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // more than measured).
     const lnRef = pos(persistBaseline?.hacking) && persistBaseline.hacking > 1 ? Math.log(persistBaseline.hacking) : null
     const liftShare = lnRef && pos(multGainPerCycle) ? Math.max(0, Math.min(1, Math.log(Math.max(1, multGainPerCycle)) / lnRef)) : 1
-    const persistLift = Math.exp(Math.log(persistLiftRef) * liftShare)
+    void persistLiftRef
+    // THE LATER LIVES' LIFTS, ONE FUNCTION (lifeLift): the reputation lifts
+    // (this batch's rep beyond the baseline, a graft's rep, a sleeve's
+    // repBoost) as K^eRep scaled by liftShare; the MONEY lifts (this batch's
+    // income beyond the baseline, a graft's hacking_money, a later income
+    // step) through the PURCHASE MODEL where the cadence is its
+    // (lifeplan.cadenceByPurchases: each life length's money and the gain its
+    // lifeSequence buys from the depleting catalogue at 1.9x escalation) — a
+    // life of money m lifted by K buys G(mK) / G(m), not K^e. Live BN9
+    // 2026-09-29 20:22Z the 3 grafts of life 1 lifted every later 0.5h life
+    // by their money^eBudget x rep^eRep, unscaled: 42 lives of x1.153 each
+    // (mult 1.10 -> 20.3, exit 33.2h) where the purchase model buys x1.0016
+    // with a 0.5h life's $62m. Without the purchase model's table, K^e scaled
+    // by liftShare.
+    const buyer = purchaseGainOf(o.cadence, cycleHours, o.cadenceFrom)
+    const ratioRep = ratio('rep')
+    const ratioInc = ratio('income')
+    const lnRepPart = (gRep) => (num(eRep) && eRep > 0 ? eRep * Math.log(ratioRep * gRep) : 0)
+    const lnIncPart = (K) => (!(K > 0) || K === 1 || !(num(eBudget) && eBudget > 0) ? 0 : buyer ? buyer.lnGainRatio(K) : eBudget * Math.log(K) * liftShare)
+    const lifeLift = (t, gRep, gMoney) => Math.exp(liftShare * (lnRepPart(gRep) + Math.log(repLiftAt(t))) + lnIncPart(ratioInc * gMoney * incomeKAt(t)))
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
     // A GRAFT PERSISTS THROUGH EVERY LATER INSTALL (it is pushed onto
@@ -1183,16 +1261,22 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // measured K^e responses persistLift uses — from the install after the
     // grafting life (the life that grafts earns its batch's reputation with
     // the slot partly held by the grafting).
-    let graftLift = 1
+    let graftRepK = 1
+    let graftMoneyK = 1
     const applyLifeGrafts = (leg) => {
       mult *= leg.g.hacking
       lifeGE *= leg.g.exp
       incomeAtLevel1 *= leg.g.money
       if (pos(repRate)) repRate *= leg.g.rep
       if (pos(donation)) donation /= leg.g.rep
-      graftLift *= (num(eRep) && eRep > 0 ? Math.pow(leg.g.rep, eRep) : 1) * (num(eBudget) && eBudget > 0 ? Math.pow(leg.g.money, eBudget) : 1)
+      if (pos(leg.g.rep)) graftRepK *= leg.g.rep
+      if (pos(leg.g.money)) graftMoneyK *= leg.g.money
     }
     if (g1) applyLifeGrafts(g1)
+    // The check's baseline: after the first install and life 1's grafts; the
+    // later lives' own grafts are purchases of their own (graftHackLater).
+    const multAfterFirst = mult
+    let graftHackLater = 1
     // 4S bought in life 1: every later life's legs, and the final window's, trade on the 4S curve.
     if (fourInLife1) curve = fourCurve
     const lifeLegs = g1 ? [{ life: 1, ...g1 }] : []
@@ -1201,7 +1285,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // k = 1..400 and the loop made it quadratic (live BN9 2026-09-29, 0.5h
     // cycles, the optimum at ~325 installs). Lives that graft are walked one
     // by one up to the last of them, and the power covers the rest.
-    const cycleAt = (i, t) => multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * graftLift
+    const cycleAt = (i, t) => multGainPerCycle * lifeLift(t, graftRepK, graftMoneyK) * cycleExtraAt(i)
     // ...and past the last hour at which anything varies (the last income
     // step, where it moves the growth; the rep lift's start; a per-cycle
     // extra's first install) every later cycle is the same: one power again.
@@ -1233,7 +1317,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         const nb = nextBreak(t)
         const n = Math.min(installsFirst - i, Math.max(1, Math.ceil((nb - t) / cycleHours - 1e-12)))
         if (n > 1) {
-          mult *= Math.pow(multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * graftLift, n)
+          mult *= Math.pow(cycleAt(i, t), n)
           t += n * cycleHours
           i += n - 1
           continue
@@ -1242,7 +1326,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       const life = i + 1
       // Install `life` ends this life: its batch is lifted by the grafts of
       // the lives before it, not by this life's own.
-      const liftBefore = graftLift
+      const liftBefore = lifeLift(t, graftRepK, graftMoneyK)
       let len = cycleHours
       if (lifeSched.byLife.has(life)) {
         const leg = lifeGraftLeg(lifeSched.byLife.get(life), { baseH: cycleHours, money0: num(installCash) && installCash >= 0 ? installCash : 1262, mult, exp0: 0, first: false, atH: t })
@@ -1250,13 +1334,23 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         len = leg.lifeH
         h += len - cycleHours
         applyLifeGrafts(leg)
+        if (pos(leg.g.hacking)) graftHackLater *= leg.g.hacking
         lifeLegs.push({ life, ...leg })
       }
-      mult *= multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * liftBefore
+      mult *= multGainPerCycle * liftBefore * cycleExtraAt(i)
       t += len
     }
     if (i < installsFirst) mult *= Math.pow(cycleAt(i, t), installsFirst - i)
     lifeLegsOut = lifeLegs
+    // THE PRICED PER-LIFE GAIN against what the purchase model buys (plan
+    // perLifeGainCheckOf: PER-LIFE GAIN UNBOUGHT): the later lives' mean ln
+    // gain, and the most a life of this length can buy — its modelled money
+    // times every income the node carries (the carried streams included),
+    // through the same table.
+    if (installsFirst > 1) {
+      const kAll = pos(incomePerSec) && steps.length ? Math.max(1, ...steps.map((x) => (incomePerSec + Math.max(0, x.perSec)) / incomePerSec)) : 1
+      perLifeOut = { lives: installsFirst - 1, cycleHours, pricedLn: Math.log(mult / multAfterFirst / graftHackLater) / (installsFirst - 1), boughtLn: buyer ? buyer.lnGainAt(buyer.mL * kAll * ratioInc * graftMoneyK) + Math.log(multGainPerCycle / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) : null, moneyL: buyer ? buyer.mL : null, kAll }
+    }
     if (lifeLegs.length) {
       legs.push({ leg: 'grafts in earlier lives', hours: lifeLegs.reduce((a, l) => a + l.extraH, 0), detail: D(() => lifeLegs.map((l) => `life ${l.life}: ${l.n} graft(s)${l.fourS ? ' + the 4S TIX API' : ''} $${(l.cost / 1e9).toFixed(2)}b, ${l.slotH.toFixed(2)}h slot, money ${l.moneyH.toFixed(2)}h, life ${l.lifeH.toFixed(2)}h (+${l.extraH.toFixed(2)}h), hacking x${l.g.hacking.toFixed(3)}`).join('; ')) })
     }
@@ -1652,7 +1746,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
 
   // The earlier lives' grafting legs, for the executor: life 1's length is
   // how long the current life is held open for its grafts.
-  return { hours: h, legs, mult, ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
+  return { hours: h, legs, mult, ...(perLifeOut ? { perLife: perLifeOut } : {}), ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
 }
 
 /**
