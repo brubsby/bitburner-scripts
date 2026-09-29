@@ -46,6 +46,10 @@
  */
 import { favorToRep, repToFavor } from 'favor.js'
 import { levelAt } from 'exitplan.js'
+import { planHacknetBatch, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
+
+/** Hacknet purchase decisions per simulated fresh life (freshLifeMoney). */
+export const HACKNET_DECISIONS = 12
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -131,11 +135,32 @@ export function freshLifeMoney(inputs, L, scale = 1) {
   let exp = 0
   const steps = 200
   const dt = (L * 3600) / steps
+  // THE HACKNET REBUILD (inputs.hacknet {mults, nodeMoney}, hacknet SERVERS
+  // only): an install deletes the fleet (PlayerObjectGeneralMethods.ts:130)
+  // and, outside node entry, nothing grants one back (Prestige.ts:329 runs in
+  // prestigeSourceFile only), so every later life starts at zero servers and
+  // re-buys from this life's own money. Every HACKNET_DECISIONS-th step the
+  // batch planner buys what adds money by the end of THIS life (its W is the
+  // time left, the trader's return on the same balance), paid from the
+  // balance; the fleet's hashes are sold. Absent (every node without hacknet
+  // servers): exactly the old integration.
+  const hn = inputs.hacknet && inputs.hacknet.mults && num(inputs.hacknet.nodeMoney) ? inputs.hacknet : null
+  let fleet = []
+  let hashPerSec = 0
+  const every = Math.max(1, Math.floor(steps / HACKNET_DECISIONS))
   for (let i = 0; i < steps; i++) {
     const h = (i * dt) / 3600
+    if (hn && i % every === 0 && L - h > 0 && money > 0) {
+      const b = planHacknetBatch({ servers: fleet, mults: hn.mults, nodeMoney: hn.nodeMoney, W: L - h, capital: r > 0 ? { capitalReturnPerSec: r, capitalCap: cap, capitalWarmupH: Math.max(0, warmH - h), money } : null, budget: money, maxItems: 60 })
+      if (b.items.length) {
+        money -= b.cost
+        fleet = b.servers
+        hashPerSec = fleet.reduce((a, x) => a + (hashRate(x.level, 0, x.ram, x.cores, hn.mults.hacknet_node_money, hn.nodeMoney) ?? 0), 0)
+      }
+    }
     const lvl = levelAt(exp, inputs.hackingMult)
     const cg = r > 0 && h >= warmH ? (money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt) : 0
-    money += ((lvlIncome * (lvl + 50)) / 51 + flat) * dt + Math.max(0, cg)
+    money += ((lvlIncome * (lvl + 50)) / 51 + flat + hashPerSec * DOLLARS_PER_HASH) * dt + Math.max(0, cg)
     exp += xps * dt
   }
   return cash0 + (money - cash0) * (pos(scale) ? scale : 1)
@@ -255,7 +280,13 @@ export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repP
  */
 export function cadenceByPurchases({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, grid = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24], horizonH = 48, maxLives = 100 }) {
   if (!catalogue || !pos(repPerHour0) || typeof bestExitPolicy !== 'function') return null
-  const moneyAt = (L) => freshLifeMoney(inputs, L, moneyScale) ?? 0
+  // Memoised per length: lifeSequence and the table row both ask, and with a
+  // hacknet rebuild each answer is a small simulation.
+  const moneyMemo = new Map()
+  const moneyAt = (L) => {
+    if (!moneyMemo.has(L)) moneyMemo.set(L, freshLifeMoney(inputs, L, moneyScale) ?? 0)
+    return moneyMemo.get(L)
+  }
   const table = []
   let best = null
   for (const L of grid) {

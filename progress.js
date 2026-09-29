@@ -1941,7 +1941,12 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     } else out.home = { buy: false, why: 'next home upgrade, home RAM or income per GB unreadable' }
     // Hacknet: its own best upgrade (game formula, hacknetplan).
     const hn = readJson(ns, '/tel/hacknet.txt')
-    if (hn?.best?.cost > 0 && Date.now() - Date.parse(hn.at) < 15 * 60e3) out.hacknet = verdict(hn.best.cost, hn.best.gainPerSec, false, { kind: hn.best.kind, index: hn.best.index })
+    // Servers (BitNode 9 / SF9): the WHOLE batch hacknet.js planned — every
+    // purchase that adds money at the install, by value per dollar — priced
+    // as one spend (its cost, its income), approved or not as a unit
+    // (hacknet.js buys the approved prefix on one raise). Nodes: the best one.
+    if (hn?.batch?.cost > 0 && hn.lastAugReset === info?.lastAugReset && Date.now() - Date.parse(hn.at) < 15 * 60e3) out.hacknet = verdict(hn.batch.cost, hn.batch.gainPerSec, false, { kind: 'batch', n: hn.batch.n, batch: true })
+    else if (hn?.best?.cost > 0 && Date.now() - Date.parse(hn.at) < 15 * 60e3) out.hacknet = verdict(hn.best.cost, hn.best.gainPerSec, false, { kind: hn.best.kind, index: hn.best.index })
     else out.hacknet = { buy: false, why: 'no fresh hacknet offer' }
     // Cloud fleet: how much of the money to put into RAM at buyserv's $/GB.
     const bs = readJson(ns, '/tel/buyserv.txt')
@@ -2720,6 +2725,12 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     })(),
     // Hacknet money until the next install (exitplan lifeIncome).
     lifeIncome: hacknetLifeIncome(ns, info).perSec,
+    // The fleet every LATER life rebuilds from zero (lifeplan.freshLifeMoney):
+    // hacknet.js's purchase model, when it runs hacknet servers this life.
+    hacknet: (() => {
+      const h = readJson(ns, HACKNET_FILE)
+      return h?.mode === 'servers' && h.lastAugReset === info?.lastAugReset && h.model?.mults && typeof h.model.nodeMoney === 'number' ? h.model : null
+    })(),
     hacking: player.skills?.hacking,
     hackingExp: player.exp?.hacking ?? 0,
     hackingMult: effectiveHackingMult(player, info),

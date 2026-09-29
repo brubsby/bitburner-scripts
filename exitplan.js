@@ -56,6 +56,7 @@ export const expForLevel = (level, mult) => Math.exp((level / mult + 200) / 32) 
 // Pure: the serve-or-farm decision the batcher makes (prices openers' manipulation).
 import { serveOrFarm } from 'expfarm.js'
 import { cadencePosterior } from 'bayes.js'
+import { capitalFV } from 'hacknetplan.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -1029,21 +1030,9 @@ export function batchHackingGain(multsList) {
  * nothing), so both stop growing there. r = 0: lump 1, stream W x 3600.
  */
 export function capitalFutureValue(inputs, W) {
-  const T = Math.max(0, num(W) ? W : 0) * 3600
-  const r = num(inputs?.capitalReturnPerSec) && inputs.capitalReturnPerSec > 0 ? inputs.capitalReturnPerSec : 0
-  if (!(r > 0) || !(T > 0)) return { lump: 1, stream: T }
-  const warm = Math.min(T, num(inputs.capitalWarmupH) && inputs.capitalWarmupH > 0 ? inputs.capitalWarmupH * 3600 : 0)
-  const m = num(inputs.money) && inputs.money > 0 ? inputs.money : 0
-  const cap = num(inputs.capitalCap) && inputs.capitalCap > 0 ? inputs.capitalCap : Infinity
-  // Seconds of compounding the book has before it caps (or W ends it).
-  const toCap = m > 0 && isFinite(cap) ? (m >= cap ? 0 : Math.log(cap / m) / r) : Infinity
-  const end = Math.min(T, warm + toCap)
-  const span = Math.max(0, end - warm)
-  const lump = Math.exp(r * span)
-  // A dollar arriving at t compounds over [max(t, warm), end]: before warm the
-  // full span, inside it the remainder, after `end` not at all.
-  const stream = warm * lump + (span > 0 ? Math.expm1(r * span) / r : 0) + Math.max(0, T - end)
-  return { lump, stream }
+  // One implementation (hacknetplan.capitalFV, which the hacknet batch values
+  // purchases with): the spend verdict and the batch must agree on a dollar.
+  return capitalFV(inputs, W)
 }
 
 export function spendExit(o = {}) {

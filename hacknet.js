@@ -53,12 +53,14 @@
 // script income and progress.js's exit inputs would otherwise never see it.
 
 import { reporter } from 'status.js'
-import { bestUpgrade, verdict, remainingLife, committedInstallH, bestServerUpgrade, netburnersServerStep, ramPolicy, hashRate, cacheCost, hashCapacityOf, DOLLARS_PER_HASH } from 'hacknetplan.js'
+import { bestUpgrade, verdict, remainingLife, committedInstallH, planHacknetBatchGen, netburnersServerStep, ramPolicy, hashRate, cacheCost, hashCapacityOf, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { spendable, reserveFor, augClaim, joinClaim } from 'budget.js'
 import { stockRecordFromText, raiseRequestFor, raiseFileOf, STOCK_FILE } from 'nodeecon.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { hasHacknetServers } from 'sfgate.js'
+// Pure: runs the batch planner in slices so a big batch never holds the page.
+import { makePacer } from 'coop.js'
 
 const NEED = { levels: 100, ram: 8, cores: 4 }
 const STATUS = '/tel/hacknet.txt'
@@ -66,6 +68,11 @@ const GATE_FILE = '/tel/installgate.txt'
 const SCHEDULE = '/tel/factionplan.txt'
 /** progress.js's committed plan: its install decision is when this life ends. */
 const PLAN_FILE = '/tel/plan.txt'
+/** progress.js's exit inputs: the trader's return, cap and the balance, for the batch's money-at-install values. */
+const EXIT_INPUTS = '/tel/exitinputs.txt'
+/** Per-pass bounds: purchases planned, and the page-thread slice (ms) between yields. */
+const BATCH_MAX_ITEMS = 400
+const BATCH_SLICE_MS = 20
 const BATCH_FILE = '/tel/batch.txt'
 /** hashspend.js's report: a capacity-bound choice asks this file for cache. */
 const HASHSPEND_FILE = '/tel/hashspend.txt'
@@ -207,6 +214,10 @@ function serverReport(ns, t, mults, nodeMoney) {
   }
   return {
     mode: 'servers',
+    // The purchase model progress.js carries into the exit (exitInputsOf
+    // `hacknet`): each later life rebuilds its fleet from zero
+    // (lifeplan.freshLifeMoney), priced with these.
+    model: { mults: { hacknet_node_money: mults.hacknet_node_money, hacknet_node_purchase_cost: mults.hacknet_node_purchase_cost, hacknet_node_level_cost: mults.hacknet_node_level_cost, hacknet_node_ram_cost: mults.hacknet_node_ram_cost, hacknet_node_core_cost: mults.hacknet_node_core_cost }, nodeMoney },
     hashesPerSec: t.productionPerSec,
     // Capacity from cache (HacknetServer.updateHashCapacity: 32 x 2^cache), NOT
     // stats.hashCapacity: that property name is billed as ns.hacknet.hashCapacity
@@ -244,6 +255,122 @@ function cacheOffer(ns, info, t, capacity, free) {
   if (!best) return { buy: false, why: 'every cache is maxed' }
   const ok = best.cost <= free
   return { ...best, buy: ok, for: cb.name, why: ok ? `${cb.name} needs ${cb.cost} hashes against capacity ${capacity}` : `cache $${best.cost.toExponential(2)} exceeds the $${Math.round(free)} the claims leave` }
+}
+
+
+/** What budget.js leaves room for: the join, augmentation and home claims (fail closed when unreadable). */
+function claimsOf(ns, info) {
+  return {
+    join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
+    augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
+    home: (() => {
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
+      if (!up) return 0
+      const ram = ns.getServerMaxRam('home')
+      return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
+    })(),
+  }
+}
+
+/**
+ * ONE SERVER-MODE PASS: plan the batch (sliced), take the exit verdict on it,
+ * fund it with one sized raise, buy it in order. Returns {bought, lastBuy,
+ * again} — `again` when the batch was cut short by cash and a raise is out.
+ *
+ * The verdict: progress.js prices the published batch (cost, income) as one
+ * spend (installgate spendExit.hacknet, `batch: true`) and approves it when it
+ * is money-dominant; this buys the batch's prefix up to the approved cost.
+ * Without a fresh verdict the batch's own test stands — every item adds money
+ * at the install by construction — named `batch-dominance`, and it spends
+ * through the home and (join-money-not-in-hand) join claims only, never the
+ * augmentation claim and never the book.
+ */
+async function serverBatchPass(ns, { info, t, mults, nodeMoney, money, base, state }) {
+  const life = remainingLifeH(ns, info.lastAugReset)
+  fetchFromHome(ns, EXIT_INPUTS)
+  const capital = (() => {
+    try {
+      const r = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
+      if (!r?.inputs || r.lastAugReset !== info.lastAugReset || !(Date.now() - Date.parse(r.at) < 15 * 60e3)) return null
+      const x = r.inputs
+      return { capitalReturnPerSec: x.capitalReturnPerSec, capitalCap: x.capitalCap, capitalWarmupH: x.capitalWarmupH, money: x.money }
+    } catch {
+      return null
+    }
+  })()
+  const pacer = makePacer({ sliceMs: BATCH_SLICE_MS, yieldFn: () => ns.sleep(0) })
+  const batch = life.hours === null ? { items: [], cost: 0, gainPerSec: 0, stoppedBy: life.why } : await pacer.slices(planHacknetBatchGen({ servers: t.list, mults, nodeMoney, W: life.hours, capital, maxItems: BATCH_MAX_ITEMS }), 'hacknet-batch')
+  fetchFromHome(ns, GATE_FILE)
+  const exitV = (() => {
+    try {
+      const g = JSON.parse(ns.read(GATE_FILE) || 'null')
+      const x = g?.spendExit
+      const h = x?.hacknet
+      if (!x || x.lastAugReset !== info.lastAugReset || !(Date.now() - Date.parse(x.at) < 15 * 60e3) || !h || !(h.cost > 0) || h.batch !== true) return null
+      return { buy: h.buy === true, approvedCost: h.cost, why: `exit-sim: ${h.why}`, decidedBy: 'exit-sim' }
+    } catch {
+      return null
+    }
+  })()
+  const v = exitV ?? (batch.items.length ? { buy: true, approvedCost: batch.cost, why: `every item adds money at the install (${life.hours.toFixed(2)}h, ${capital ? 'trader compounding' : 'no trader record'}); no fresh exit verdict on the batch`, decidedBy: 'batch-dominance' } : { buy: false, why: batch.stoppedBy ?? 'empty batch', decidedBy: 'batch-dominance' })
+  // The prefix the verdict covers (the batch moves a little between passes).
+  const prefix = []
+  let prefixCost = 0
+  if (v.buy) {
+    for (const it of batch.items) {
+      if (prefixCost + it.cost > v.approvedCost * 1.02) break
+      prefix.push(it)
+      prefixCost += it.cost
+    }
+  }
+  const claims = claimsOf(ns, info)
+  const payback = prefix.length && life.hours !== null ? { payback: { moneyReturn: { cost: prefixCost, gainPerSec: prefix.reduce((a, x) => a + x.gainPerSec, 0), horizonSec: life.hours * 3600 } } } : {}
+  const opts = exitV?.buy ? { exitApproved: true, ...payback } : payback
+  const free = spendable('hacknet', money, claims, opts)
+  // ONE RAISE for the whole approved prefix (nodeecon: wealth decides, cash
+  // pays); only an exit-approved batch may sell the book.
+  {
+    fetchFromHome(ns, STOCK_FILE)
+    const stock = stockRecordFromText(ns.read(STOCK_FILE), info.lastAugReset)
+    const req = exitV?.buy && prefixCost > free ? raiseRequestFor({ cash: money, equity: stock.ok ? stock.equity : 0, target: reserveFor('hacknet', claims, opts) + prefixCost, by: 'hacknet', why: `hacknet batch the exit simulation approved: ${prefix.length} purchases, $${Math.round(prefixCost)}`, lastAugReset: info.lastAugReset }) : null
+    ns.write(raiseFileOf('hacknet'), JSON.stringify(req ?? { at: new Date().toISOString(), by: 'hacknet', target: 0, why: 'no raise needed' }), 'w')
+    if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('hacknet'), 'home', ns.getHostname())
+  }
+  // Buy in the batch's order while the cash lasts; a purchase the game
+  // refuses (read back from its return) ends the pass.
+  let spent = 0
+  let n = 0
+  for (const it of prefix) {
+    if (spent + it.cost > free) break
+    if (!buy(ns, it)) break
+    spent += it.cost
+    n++
+    state.bought++
+    state.lastBuy = { at: new Date().toISOString(), ...it, batch: true }
+    if (n % 50 === 0) await ns.sleep(0)
+  }
+  const cache = cacheOffer(ns, info, t, base.hashCap, spendable('hacknet', money - spent, claims, {}))
+  if (cache?.buy && buy(ns, cache)) {
+    state.bought++
+    state.lastBuy = { at: new Date().toISOString(), ...cache }
+  }
+  const st = pacer.stats
+  publish(ns, {
+    ...base,
+    bought: state.bought,
+    lastBuy: state.lastBuy,
+    phase: 'claimant',
+    best: batch.items[0] ?? null,
+    batch: { n: batch.items.length, cost: batch.cost, gainPerSec: batch.gainPerSec, hashGainPerSec: batch.hashGainPerSec, netAtW: batch.netAtW, stoppedBy: batch.stoppedBy, W: life.hours, capital: capital ? 'trader' : null, first: batch.items.slice(0, 8).map(({ kind, index, cost, gainPerSec, netAtW }) => ({ kind, index, cost, gainPerSec, netAtW })) },
+    pass: { planned: batch.items.length, approved: prefix.length, boughtNow: n, spentNow: spent, cpuMs: Math.round(st.cpuMs), maxBlockMs: +st.maxBlockMs.toFixed(1), yields: st.yields },
+    remainingLifeH: life.hours,
+    verdict: v,
+    spendable: free,
+    affordable: prefixCost <= free,
+    cache,
+    claims: { join: claims.join, augmentations: claims.augmentations, home: typeof claims.home === 'object' ? claims.home.amount : claims.home },
+  })
+  return { again: n < prefix.length && exitV?.buy === true }
 }
 
 export async function main(ns) {
@@ -319,10 +446,23 @@ export async function main(ns) {
         continue
       }
 
-      // PHASE 2: the claimant. Nodes are priced in dollars directly; servers
-      // in dollars at the hash sell floor (hacknetplan.bestServerUpgrade), so
-      // everything below — exit verdict, payback, budget — is shared.
-      const plan = servers ? bestServerUpgrade(t.list, mults, nodeMoney, DOLLARS_PER_HASH) : bestUpgrade(t.list, mults, nodeMoney)
+      // PHASE 2 WITH SERVERS: THE BATCH. Every purchase that adds money at
+      // the install point, taken by value per dollar
+      // (hacknetplan.planHacknetBatchGen, the trader's compounding on both
+      // sides), bought in ONE pass on ONE sized raise — not one purchase per
+      // 30s cycle each waiting on its own verdict and raise (live 2026-09-28:
+      // 2 upgrades in 10 minutes against a batch of hundreds).
+      if (servers) {
+        const state = { bought, lastBuy }
+        const r = await serverBatchPass(ns, { info, t, mults, nodeMoney, money, base, state })
+        bought = state.bought
+        lastBuy = state.lastBuy
+        await ns.sleep(r.again ? 5000 : 30000)
+        continue
+      }
+      // PHASE 2 WITH NODES: the claimant, one purchase at a time, priced in
+      // dollars directly.
+      const plan = bestUpgrade(t.list, mults, nodeMoney)
       const life = remainingLifeH(ns, info.lastAugReset)
       // THE EXIT VERDICT (installgate spendExit.hacknet): the node's exit with
       // this upgrade against without, from progress.js. Used when it is this
@@ -378,7 +518,7 @@ export async function main(ns) {
         ns.write(raiseFileOf('hacknet'), JSON.stringify(req ?? { at: new Date().toISOString(), by: 'hacknet', target: 0, why: 'no raise needed' }), 'w')
         if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('hacknet'), 'home', ns.getHostname())
       }
-      const cache = servers ? cacheOffer(ns, info, t, serverFields.hashCap, spendable('hacknet', money, claims, {})) : null
+      const cache = null
       publish(ns, {
             ...base,
             phase: 'claimant',
@@ -395,12 +535,6 @@ export async function main(ns) {
       if (v.buy && affordable && buy(ns, plan.best)) {
         bought++
         lastBuy = { at: new Date().toISOString(), ...plan.best }
-        await ns.sleep(200)
-        continue
-      }
-      if (cache?.buy && buy(ns, cache)) {
-        bought++
-        lastBuy = { at: new Date().toISOString(), ...cache }
         await ns.sleep(200)
         continue
       }
