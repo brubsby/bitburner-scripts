@@ -336,7 +336,7 @@ export async function run() {
     }
     // Every consumer of the capital term takes the curve.
     for (const [f, re] of [
-      ["exitplan.js", /capitalScaleW, capitalShape, targetAt/],
+      ["exitplan.js", /capitalScaleW: curve\.W, capitalShape: curve\.sh, targetAt/],
       ["hacknet.js", /capitalScaleW: x\.capitalScaleW/],
       ["lifeplan.js", /capitalScaleW: inputs\.capitalScaleW/],
       ["trajectory.js", /isShaped\(o\)\) return capitalAfter/],

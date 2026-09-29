@@ -47,6 +47,21 @@
 // Pure: no ns surface, so importing it costs nothing and it runs under plain
 // node for testing.
 
+/**
+ * How much a flat income over a step is worth at its end when the book it
+ * joins compounds: (e^{x} - 1)/x with x = ln(1 + gain/W), the step's own
+ * log growth read from the capital's gain. 1 with no growth, or when the
+ * step reaches the cap (a dollar past it earns nothing).
+ */
+function incFactor(W, gain, cap) {
+  if (!(W > 0) || !(gain > 0) || !(W + gain < cap)) return 1
+  const f = gain / W
+  // f / ln(1 + f): its series below 0.3 (relative error < 3e-5; the money legs' steps
+  // grow the book <= ~28%), the log beyond.
+  if (f < 0.3) return 1 + f * (0.5 + f * (-1 / 12 + f * (1 / 24 - f * (19 / 720))))
+  return f / Math.log1p(f)
+}
+
 /** level from exp and multiplier — PersonObjects/formulas/skill.ts:13 */
 export const levelAt = (exp, mult) => Math.max(1, Math.floor(mult * (32 * Math.log(Math.max(0, exp) + 534.6) - 200)))
 
@@ -409,6 +424,9 @@ export function hoursToMoney(target, o = {}) {
   // re-initialised and the estimator relearns (nodeecon.fitCapital).
   const warmH = num(o.capitalWarmupH) && o.capitalWarmupH > 0 ? o.capitalWarmupH : 0
   const lvlIncome = num(incomeAtLevel1) && incomeAtLevel1 > 0 ? incomeAtLevel1 : 0
+  // o.coarse: a quarter of the steps (a screening estimate, ~10% — a caller
+  // that only needs to know the leg is well inside another uses it first).
+  const coarse = o.coarse === true
   let stepH = o.stepH ?? 1 / 120
   if (!num(target) || target <= money0) return 0
   if (!(lvlIncome > 0 || flat > 0 || r > 0) || !pos(mult) || !num(exp0)) return null
@@ -425,7 +443,7 @@ export function hoursToMoney(target, o = {}) {
     const lvl0 = levelAt(exp, mult)
     const r0 = (lvlIncome * (lvl0 + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(0) : 0) + capitalEarnAt(Math.max(0, money), capC)
     const est = r0 > 0 ? (target - money) / r0 / 3600 : maxHours
-    stepH = Math.max(stepH, Math.min(maxHours, est) / 200)
+    stepH = Math.max(stepH, Math.min(maxHours, est) / (coarse ? 50 : 100))
     // A compounding balance must not be stepped past ~2% growth: the linear
     // estimate above over-states an exponential leg by orders of magnitude,
     // and a step of 2/r is not an integration of e^rt. (4000 steps of 2%
@@ -467,19 +485,30 @@ export function hoursToMoney(target, o = {}) {
         len += d / Math.max(rn, 1e-15)
       }
     }
-    if (rMax > 0) legH = Math.min(stepH, Math.max(0.02 / (rMax * 3600), len / 3600 / 50))
+    if (rMax > 0) legH = Math.min(stepH, Math.max(0.02 / (rMax * 3600), len / 3600 / (coarse ? 10 : 30)))
   }
   let rNow = 0 // the book's rate at the step's start (stepAt sets it; capitalGain reuses it)
   const stepAt = (m) => {
     rNow = !(m > 0) ? 0 : capC.tab ? rateTab(capC, m) : capitalRateAt(m, capC)
     const rn = m < gateW ? capitalRateAt(gateW, capC) : rNow
-    return rn > 0 ? Math.min(legH, 0.25 / (rn * 3600)) : legH
+    return rn > 0 ? Math.min(legH, (coarse ? 1 : 0.25) / (rn * 3600)) : legH
   }
   let iter = 0
+  const exAt = typeof extraAt === 'function' ? extraAt : null
+  const xrAt = typeof o.expRateAt === 'function' ? o.expRateAt : null
+  const xr0 = pos(expPerSec) ? expPerSec : 0
+  const tgtAt = typeof o.targetAt === 'function' ? o.targetAt : null
+  const trap = shapedCap && lvlIncome > 0
+  // The level at the next step's start, when this step computed it (the trapezoid's end).
+  let lvlNext = null
+  // A landing bisected inside a curved step reads the step's own rate (traderw.capitalStepFn).
+  // The flat rate's own closed form otherwise (no capital in the warm-up).
+  const stepFnOf = (m, dt, capOn) => (!capOn ? () => 0 : shapedCap ? capitalStepFn(m, dt, capC, rNow) : m < cap ? (x) => Math.min(m * Math.expm1(r * x), cap - m + r * cap * x) : (x) => r * cap * x)
   while (h < maxHours && iter++ < 4000) {
-    const lvl = levelAt(exp, mult)
+    const lvl = lvlNext ?? levelAt(exp, mult)
+    lvlNext = null
     // income(level) = incomeAtLevel1 * (level + 50) / 51
-    const rate = (lvlIncome * (lvl + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(h) : 0)
+    const rate = (lvlIncome * (lvl + 50)) / 51 + flat + (exAt !== null ? exAt(h) : 0)
     // THE WARM-UP ENDS ON ITS HOUR, not on the next step boundary: a 2.5h
     // step starting inside a 0.16h warm-up earned no capital for all of it
     // (live BN8 2026-09-26: the $250m -> $100b hoard read 10.25h against
@@ -491,19 +520,50 @@ export function hoursToMoney(target, o = {}) {
     // tools/test/traderrw.test.mjs RW3, the flat rate's own 1.7%.)
     let stepNow = stepH
     if (shapedCap) {
-      stepNow = stepAt(money)
       const inc = rate - spend
+      stepNow = stepAt(money)
       if (inc > 0 && money < gateW) stepNow = Math.min(stepNow, Math.max(1e-4, (gateW - money) / inc / 3600))
     }
-    const sH = r > 0 && h < warmH && warmH - h < stepNow ? warmH - h : stepNow
-    const dt = sH * 3600
+    let sH = r > 0 && h < warmH && warmH - h < stepNow ? warmH - h : stepNow
+    let dt = sH * 3600
+    // THE LEVEL'S INCOME AS A TRAPEZOID on a curve: the level climbs inside
+    // the step (x40 in a fresh window's first hour at a grafted multiplier),
+    // and the income read at the step's opening level alone under-paid every
+    // step of the climb (+1% on a $1e8 -> $179b leg). The exp step is the
+    // same Euler step the loop takes below.
+    const xr = xrAt !== null ? Math.max(0, xrAt(lvl)) : xr0
+    let dExp = xr * dt
+    let rateS = rate
+    if (trap && dExp > 0) {
+      let lvl2 = levelAt(exp + dExp, mult)
+      // ...and a step in which the level's income would move by more than
+      // LVL_STEP of itself is shortened to that (the fresh window's climb:
+      // one step of a leg sized by the book's growth read level 10 at its
+      // start and 3000 at its end).
+      const lim = (coarse ? 4 : 1) * LVL_STEP * (lvl + 50)
+      if (lvl2 - lvl > lim) {
+        sH *= lim / (lvl2 - lvl)
+        dt = sH * 3600
+        dExp = xr * dt
+        lvl2 = levelAt(exp + dExp, mult)
+      }
+      rateS = rate + (lvlIncome * (lvl2 - lvl)) / 51 / 2
+      lvlNext = lvl2
+    }
     // The capital term over the step: exponential below the cap, linear at
     // it (traderw.capitalGain; on a curve, at the step's midpoint rate).
-    const capGain = !(r > 0 && h >= warmH) ? 0 : shapedCap ? capitalGain(money, dt, capC, rNow) : money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt
-    // A landing bisected inside a curved step reads the step's own rate (traderw.capitalStepFn).
-    // The flat rate's own closed form otherwise (no capital in the warm-up).
-    const stepFn = () => (!(r > 0 && h >= warmH) ? () => 0 : shapedCap ? capitalStepFn(money, dt, capC, rNow) : money < cap ? (x) => Math.min(money * Math.expm1(r * x), cap - money + r * cap * x) : (x) => r * cap * x)
-    const add = rate * dt + Math.max(0, capGain) - spend * dt
+    const capOn = r > 0 && h >= warmH
+    const capGain = !capOn ? 0 : shapedCap ? capitalGain(money, dt, capC, rNow) : money < cap ? Math.min(money * Math.expm1(r * dt), cap - money + r * cap * dt) : r * cap * dt
+    // THE INCOME COMPOUNDS INSIDE THE STEP on the curve: dW/dt = r W + I at
+    // the step's own rate r (the capital term's midpoint rate, read back from
+    // its gain: r dt = ln(1 + gain/W)) is W e^{r dt} + I (e^{r dt} - 1)/r —
+    // the income arriving in the step earns from its arrival. Added flat it
+    // missed that: $1m -> $179b with $60k/s of income read 5.07h against a
+    // fine integral's 4.74h (+7%), the error growing with the step. Only
+    // below the cap (above it a dollar more earns nothing) and on a curve
+    // (the flat rate keeps its old closed form).
+    const incF = shapedCap ? incFactor(money, capGain, capC.cap) : 1
+    const add = (rateS - spend) * dt * incF + Math.max(0, capGain)
     if (!(add > 0) && money + add <= 0) return Infinity // the spend empties the balance first
     // The last step lands exactly: without this the answer is quantised to
     // stepH, and a with/without comparison of a small spend reads as zero
@@ -512,20 +572,20 @@ export function hoursToMoney(target, o = {}) {
     // o.targetAt(h) (optional): a target that FALLS while the money is saved —
     // a donation shrinking as faction work earns the same reputation
     // (hoursToRep, workWhileDonating). Landed by solving the step linearly.
-    if (typeof o.targetAt === 'function') {
-      const T0 = o.targetAt(h)
-      const T1 = o.targetAt(h + sH)
+    if (tgtAt !== null) {
+      const T0 = tgtAt(h)
+      const T1 = tgtAt(h + sH)
       if (money >= T0) return h
       if (add > 0 && money + add >= T1) {
         if (!(capGain > 0)) return h + Math.min(1, Math.max(0, (T0 - money) / (add + T0 - T1))) * sH
         // Compounding: land on the curve against the falling target (below).
-        const stepGain = stepFn()
+        const stepGain = stepFnOf(money, dt, capOn)
         let lo = 0
         let hi = dt
-        for (let k = 0; k < 40; k++) {
+        for (let k = 0; k < LAND_HALVINGS; k++) {
           const mid = (lo + hi) / 2
           const c = stepGain(mid)
-          if (money + rate * mid + Math.max(0, c) - spend * mid >= o.targetAt(h + mid / 3600)) hi = mid
+          if (money + (rateS - spend) * mid * (shapedCap ? incFactor(money, c, capC.cap) : 1) + Math.max(0, c) >= tgtAt(h + mid / 3600)) hi = mid
           else lo = mid
         }
         return h + hi / 3600
@@ -542,14 +602,14 @@ export function hoursToMoney(target, o = {}) {
       // depth since the step bound above (1/100 of the leg): with it the
       // chord's error is ~1e-3h, so [GP10] pins the bound, not this.
       if (!(capGain > 0)) return h + ((target - money) / add) * sH
-      const stepGain = stepFn()
+      const stepGain = stepFnOf(money, dt, capOn)
       const addOver = (s) => {
         const c = stepGain(s)
-        return rate * s + Math.max(0, c) - spend * s
+        return (rateS - spend) * s * (shapedCap ? incFactor(money, c, capC.cap) : 1) + Math.max(0, c)
       }
       let lo = 0
       let hi = dt
-      for (let k = 0; k < 40; k++) {
+      for (let k = 0; k < LAND_HALVINGS; k++) {
         const mid = (lo + hi) / 2
         if (money + addOver(mid) >= target) hi = mid
         else lo = mid
@@ -559,11 +619,15 @@ export function hoursToMoney(target, o = {}) {
     money += add
     // o.expRateAt(level): the exp rate rising with the level (expRateShape),
     // at the step's opening level; absent, the constant rate.
-    exp += typeof o.expRateAt === 'function' ? Math.max(0, o.expRateAt(lvl)) * dt : pos(expPerSec) ? expPerSec * dt : 0
+    exp += dExp
     h += sH
   }
   return Infinity
 }
+/** The largest relative move of the level's income inside one money-leg step (hoursToMoney). */
+export const LVL_STEP = 0.25
+/** Halvings of a money leg's landing step: the step / 2^26 (< 1e-4 s on a 2h step). */
+export const LAND_HALVINGS = 26
 
 /**
  * Hours to bank `target` reputation, or to buy it outright past the donation
@@ -714,9 +778,65 @@ export function lifeGraftsOf(list, installsFirst) {
   return { byLife, spill, lastLife, bad: null }
 }
 
-export function exitHours(o = {}) {
+/**
+ * Step functions of node hours ([{atH, perSec}], each step replacing the
+ * rate from its hour on) summed into one. Null/empty lists are skipped; a
+ * single list comes back sorted and filtered as extraIncome always was.
+ */
+export function mergeSteps(lists) {
+  const parts = (Array.isArray(lists) ? lists : []).map((l) => (Array.isArray(l) ? l.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH) : [])).filter((l) => l.length)
+  if (parts.length <= 1) return parts[0] ?? []
+  const hs = [...new Set(parts.flatMap((l) => l.map((x) => x.atH)))].sort((a, b) => a - b)
+  const at = (l, t) => {
+    let v = 0
+    for (const x of l) {
+      if (x.atH > t) break
+      v = x.perSec
+    }
+    return v
+  }
+  return hs.map((t) => ({ atH: t, perSec: parts.reduce((a, l) => a + at(l, t), 0) }))
+}
+
+/**
+ * mergeSteps of (extraIncome, carriedIncome) once per pair of input objects:
+ * every policy of every draw shares them (applyDraw copies the inputs, not
+ * the arrays), and the filter/sort per exit simulation was ~4% of a plan pass.
+ * The lists must not be mutated once passed in.
+ */
+const stepsMemo = new WeakMap()
+/** Each lift step's growth factor, once per (steps, income, eBudget): a gang's ~100 steps took a pow each, per exit simulation. */
+const growthMemo = new WeakMap()
+function growthTableOf(list, income, e) {
+  let byKey = growthMemo.get(list)
+  if (!byKey) growthMemo.set(list, (byKey = new Map()))
+  const key = `${income}|${e}`
+  let v = byKey.get(key)
+  if (!v) {
+    if (byKey.size > 64) byKey.clear()
+    byKey.set(key, (v = list.map((x) => Math.pow((income + x.perSec) / income, e))))
+  }
+  return v
+}
+const NO_STEPS = {}
+function stepsOf(extra, carried) {
+  const a = Array.isArray(extra) ? extra : NO_STEPS
+  const b = carried && typeof carried === 'object' ? carried : NO_STEPS
+  let byB = stepsMemo.get(a)
+  if (!byB) stepsMemo.set(a, (byB = new WeakMap()))
+  let v = byB.get(b)
+  if (!v) byB.set(b, (v = mergeSteps([a === NO_STEPS ? null : a, ...(b === NO_STEPS ? [] : Object.values(b))])))
+  return v
+}
+
+export function exitHours(o = {}, installsAt = null, quiet = false) {
+  // installsAt: the policy's install count, when the caller passes it beside
+  // the inputs rather than in them (the policy search: a copy of the inputs
+  // per policy priced was ~8% of the plan's CPU). quiet: the legs' text is
+  // not built (the search prices every policy and reads only the best's).
+  const D = quiet ? () => '' : (f) => f()
+  const installsFirst = num(installsAt) ? installsAt : num(o.installsFirst) ? o.installsFirst : 0
   const {
-    installsFirst = 0,
     // measured state
     money = 0,
     incomePerSec,
@@ -840,24 +960,39 @@ export function exitHours(o = {}) {
   // money legs at the hour they run, and, with eBudget (the planner's measured
   // dln(planM)/dln(money)), each later life's augmentation growth:
   // g x ((income + extra)/income)^eBudget for a cycle starting at that hour.
-  const steps = Array.isArray(extraIncome) ? extraIncome.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH) : []
+  // THE COMMITTED STREAMS (o.carriedIncome {name: [{atH, perSec}]}), every
+  // one a step function of node hours like extraIncome and summed with it: the
+  // plan's committed choices that earn money beside the scripts — the gang
+  // (its income as it grows, a gang persisting through installs), the sleeves
+  // on crime (committed objective 'money') — so every decision prices the
+  // node with them, not only the decision that chose them. A decision that
+  // prices one of them itself (the sleeve objective, the gang) removes its
+  // own stream from carriedIncome first: each stream counted once.
+  const steps = stepsOf(extraIncome, o.carriedIncome)
+  // The augmentation lift (eBudget, below) reads extraIncome alone: a
+  // carried stream is priced in the money legs, never as a lift on the
+  // measured cadence — its denominator (incomePerSec) is the scripts' stream
+  // only, and a gang's $m/s over a $20k/s hacking stream lifted every cycle
+  // x1.6 (eBudget 0.1): a multiplier of 1.7e7 after 47 installs.
+  const liftSteps = stepsOf(extraIncome, null)
   // The step in force at t: the last (in sorted order) with atH <= t, by
   // bisection — the money legs ask it every integration step and a simulated
   // gang schedule has ~100 steps (it was a scan, the gang and sleeve
   // decisions' largest cost after the climb).
-  const stepAt = (t) => {
+  const stepIn = (list, t) => {
     let lo = 0
-    let hi = steps.length - 1
+    let hi = list.length - 1
     let at = -1
     while (lo <= hi) {
       const m = (lo + hi) >> 1
-      if (steps[m].atH <= t) {
+      if (list[m].atH <= t) {
         at = m
         lo = m + 1
       } else hi = m - 1
     }
     return at
   }
+  const stepAt = (t) => stepIn(steps, t)
   const extraAt = (t) => {
     const i = stepAt(t)
     return i < 0 ? 0 : steps[i].perSec
@@ -873,9 +1008,9 @@ export function exitHours(o = {}) {
   const repFrom = num(repBoost?.fromH) && repBoost.fromH > 0 ? repBoost.fromH : 0
   // Each step's growth factor once, not a power per cycle per policy.
   const growOn = num(eBudget) && eBudget > 0 && pos(incomePerSec)
-  const stepGrowth = steps.map((x) => (growOn ? Math.pow((incomePerSec + x.perSec) / incomePerSec, eBudget) : 1))
+  const stepGrowth = growOn ? growthTableOf(liftSteps, incomePerSec, eBudget) : null
   const growthAt = (t) => {
-    const i = growOn ? stepAt(t) : -1
+    const i = growOn ? stepIn(liftSteps, t) : -1
     return (t >= repFrom ? repLift : 1) * (i < 0 ? 1 : stepGrowth[i])
   }
 
@@ -884,6 +1019,25 @@ export function exitHours(o = {}) {
   // pays ScriptHackMoneyGain = 0) has incomePerSec 0 and is still priceable.
   const flatInc = num(flatIncomePerSec) && flatIncomePerSec > 0 ? flatIncomePerSec : 0
   const capR = num(capitalReturnPerSec) && capitalReturnPerSec > 0 ? capitalReturnPerSec : 0
+  // THE TRADER'S CURVE IN FORCE (every money leg reads it): the inputs' own
+  // until the 4S TIX API is bought (o.fourS), the 4S curve from then on.
+  let curve = { r: capR, W: capitalScaleW, sh: capitalShape }
+  // THE 4S MARKET DATA TIX API (o.fourS {cost, when: 'life1' | 'final', r0PerSec, Wstar, shape}):
+  // bought once, it PERSISTS through every install of the node (prestigeAugmentation
+  // leaves Player.has4SDataTixApi alone; only prestigeSourceFile clears it,
+  // PlayerObjectGeneralMethods.ts:166) and the trader reads the real forecasts
+  // (ns.stock.getForecast needs it alone, NetscriptFunctions/StockMarket.ts:229)
+  // — its curve r(W) is the 4S one from the purchase on. 'life1': paid in the
+  // current life like a graft of that life (the life first earns the price
+  // from its balance, then runs its own length: lifeGraftLeg), the curve
+  // switched from the next life on; 'final': paid first thing in the final
+  // window from the post-install balance. With no install before the final
+  // window both are the final window's first leg. Not simulated: the 4S
+  // curve inside the rest of the current life and in the intermediate lives'
+  // batches (their money is the measured cadence) — both only favour buying.
+  const four = o.fourS && pos(o.fourS.cost) && pos(o.fourS.r0PerSec) ? o.fourS : null
+  const fourCurve = four ? { r: four.r0PerSec, W: pos(four.Wstar) ? four.Wstar : curve.W, sh: four.shape ?? curve.sh } : null
+  const FOUR_NAME = '4S Market Data TIX API'
   // A hold-to-exit run whose only income is hacknet (BitNode 9's opening) is priceable too.
   const incomeOk = num(incomePerSec) && incomePerSec >= 0 && (incomePerSec > 0 || capR > 0 || lifeInc > 0)
   if (!incomeOk || !pos(hacking) || !pos(hackingMult) || !pos(exitLevel)) {
@@ -936,10 +1090,10 @@ export function exitHours(o = {}) {
       g.money *= pos(x.money) ? x.money : 1
     }
     const shapedHere = expScalesWithLevel === true && pos(hacking)
-    const moneyH = cost <= money0 ? 0 : hoursToMoney(cost, { money0, incomeAtLevel1, mult: m, exp0, expPerSec, expRateAt: shapedHere ? expRateShape(expPerSec, { scales: true, ref: hacking, flat: pos(expFlatPerSec) ? expFlatPerSec : 0 }) : null, extraAt: steps.length ? (rel) => extraAt(atH + rel) : null, flatPerSec: flatInc + (first && pos(lifeIncome) ? lifeIncome : 0), capitalReturnPerSec: capR, capitalCap, capitalScaleW: o.capitalScaleW, capitalShape: o.capitalShape, spendPerSec, capitalWarmupH: !first && num(capitalWarmupH) ? capitalWarmupH : 0 })
+    const moneyH = cost <= money0 ? 0 : hoursToMoney(cost, { money0, incomeAtLevel1, mult: m, exp0, expPerSec, expRateAt: shapedHere ? expRateShape(expPerSec, { scales: true, ref: hacking, flat: pos(expFlatPerSec) ? expFlatPerSec : 0 }) : null, extraAt: steps.length ? (rel) => extraAt(atH + rel) : null, flatPerSec: flatInc + (first && pos(lifeIncome) ? lifeIncome : 0), capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, spendPerSec, capitalWarmupH: !first && num(capitalWarmupH) ? capitalWarmupH : 0 })
     if (!num(moneyH)) return { lifeH: null, why: `could not price the money for ${specs.length} graft(s) in an earlier life ($${Math.round(cost)})` }
     const lifeH = moneyH + Math.max(slot, baseH)
-    return { lifeH, extraH: lifeH - baseH, moneyH, slotH: slot, cost, n: specs.length, g }
+    return { lifeH, extraH: lifeH - baseH, moneyH, slotH: slot, cost, n: specs.filter((x) => x.name !== FOUR_NAME).length, g, ...(specs.some((x) => x.name === FOUR_NAME) ? { fourS: true } : {}) }
   }
 
   // GRAFTS IN THE LIVES BEFORE THE FINAL WINDOW (o.lifeGrafts [{life, ...graftSpecOf}]).
@@ -948,6 +1102,9 @@ export function exitHours(o = {}) {
   // window instead, ahead of o.finalGrafts (lifeGraftsOf).
   const lifeSched = lifeGraftsOf(o.lifeGrafts, installsFirst)
   if (lifeSched.bad) return { hours: null, why: lifeSched.bad }
+  // 4S in the current life: its price joins life 1's (a graft of that life with no slot and no multipliers).
+  const fourInLife1 = !!four && installsFirst > 0 && four.when === 'life1'
+  if (fourInLife1) lifeSched.byLife.set(1, [...(lifeSched.byLife.get(1) ?? []), { name: FOUR_NAME, cost: four.cost, slotH: 0, hacking: 1, exp: 1, rep: 1, money: 1, life: 1 }])
   const finalGrafts = [...lifeSched.spill, ...(Array.isArray(o.finalGrafts) ? o.finalGrafts : [])]
   // What the earlier lives' grafts did to the player's multipliers: exp and
   // the reputation/donation rates act from the final window on (below).
@@ -1036,6 +1193,8 @@ export function exitHours(o = {}) {
       graftLift *= (num(eRep) && eRep > 0 ? Math.pow(leg.g.rep, eRep) : 1) * (num(eBudget) && eBudget > 0 ? Math.pow(leg.g.money, eBudget) : 1)
     }
     if (g1) applyLifeGrafts(g1)
+    // 4S bought in life 1: every later life's legs, and the final window's, trade on the 4S curve.
+    if (fourInLife1) curve = fourCurve
     const lifeLegs = g1 ? [{ life: 1, ...g1 }] : []
     // Nothing varies by cycle (no later income, no delayed rep lift, no
     // per-install extra): one power, not a loop — the policy search prices
@@ -1043,11 +1202,43 @@ export function exitHours(o = {}) {
     // cycles, the optimum at ~325 installs). Lives that graft are walked one
     // by one up to the last of them, and the power covers the rest.
     const cycleAt = (i, t) => multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * graftLift
-    const flat = !perCycleExtra && !steps.length && !(repFrom > 0)
+    // ...and past the last hour at which anything varies (the last income
+    // step, where it moves the growth; the rep lift's start; a per-cycle
+    // extra's first install) every later cycle is the same: one power again.
+    // Exact — the loop multiplied the same factor.
+    const lastStepH = growOn && liftSteps.length ? liftSteps[liftSteps.length - 1].atH : 0
+    const cycleFrom = perCycleExtra && !Array.isArray(perCycleExtra.byInstall) ? (num(perCycleExtra.fromInstall) && perCycleExtra.fromInstall >= 1 ? perCycleExtra.fromInstall : 2) : 0
+    const stableAt = (i, t) => !Array.isArray(perCycleExtra?.byInstall) && i + 1 >= cycleFrom && t >= repFrom && t >= lastStepH
     const lastGraftLife = lifeSched.lastLife
     let t = firstH
     let i = 1
-    for (; i < installsFirst && (!flat || i < lastGraftLife); i++) {
+    // The next hour at which a cycle's factor can change (a lift step, the rep
+    // lift's start), after t — the lives between walk as one power.
+    const nextBreak = (t) => {
+      let nb = Infinity
+      if (t < repFrom) nb = repFrom
+      if (growOn && liftSteps.length) {
+        const j = stepIn(liftSteps, t) + 1
+        if (j < liftSteps.length && liftSteps[j].atH < nb) nb = liftSteps[j].atH
+      }
+      return nb
+    }
+    for (; i < installsFirst && (i < lastGraftLife || !stableAt(i, t)); i++) {
+      // A RUN OF PLAIN LIVES (no graft, no per-install extra, the per-cycle
+      // extra already on) until the factor next changes: one power, exactly
+      // the product the one-by-one walk took (a gang's income schedule has
+      // ~100 steps, each hours long: a 0.5h cadence walked ~200 lives per
+      // exit simulation).
+      if (i >= lastGraftLife && !Array.isArray(perCycleExtra?.byInstall) && i + 1 >= cycleFrom) {
+        const nb = nextBreak(t)
+        const n = Math.min(installsFirst - i, Math.max(1, Math.ceil((nb - t) / cycleHours - 1e-12)))
+        if (n > 1) {
+          mult *= Math.pow(multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * graftLift, n)
+          t += n * cycleHours
+          i += n - 1
+          continue
+        }
+      }
       const life = i + 1
       // Install `life` ends this life: its batch is lifted by the grafts of
       // the lives before it, not by this life's own.
@@ -1064,17 +1255,17 @@ export function exitHours(o = {}) {
       mult *= multGainPerCycle * growthAt(t) * persistLift * cycleExtraAt(i) * liftBefore
       t += len
     }
-    if (i < installsFirst) mult *= Math.pow(cycleAt(i, 0), installsFirst - i)
+    if (i < installsFirst) mult *= Math.pow(cycleAt(i, t), installsFirst - i)
     lifeLegsOut = lifeLegs
     if (lifeLegs.length) {
-      legs.push({ leg: 'grafts in earlier lives', hours: lifeLegs.reduce((a, l) => a + l.extraH, 0), detail: lifeLegs.map((l) => `life ${l.life}: ${l.n} graft(s) $${(l.cost / 1e9).toFixed(2)}b, ${l.slotH.toFixed(2)}h slot, money ${l.moneyH.toFixed(2)}h, life ${l.lifeH.toFixed(2)}h (+${l.extraH.toFixed(2)}h), hacking x${l.g.hacking.toFixed(3)}`).join('; ') })
+      legs.push({ leg: 'grafts in earlier lives', hours: lifeLegs.reduce((a, l) => a + l.extraH, 0), detail: D(() => lifeLegs.map((l) => `life ${l.life}: ${l.n} graft(s)${l.fourS ? ' + the 4S TIX API' : ''} $${(l.cost / 1e9).toFixed(2)}b, ${l.slotH.toFixed(2)}h slot, money ${l.moneyH.toFixed(2)}h, life ${l.lifeH.toFixed(2)}h (+${l.extraH.toFixed(2)}h), hacking x${l.g.hacking.toFixed(3)}`).join('; ')) })
     }
     exp = 0
     // PlayerObjectGeneralMethods.ts:102 ($1262), or Prestige.ts:158's $250m in
     // BitNode 8 — which REPLACES the balance, positions included (the market
     // re-initialises, Prestige.ts:166-170).
     cash = num(installCash) && installCash >= 0 ? installCash : 1262
-    legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}` })
+    legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: D(() => `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}`) })
   }
 
   // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
@@ -1105,11 +1296,32 @@ export function exitHours(o = {}) {
   }
   const expAdv = (e, hours) => (shaped ? expAfterHours(e, hours, mult, expAt()) : e + (pos(expRate) ? expRate * hours * 3600 : 0))
   const climbTo = (level, e) => (shaped ? hoursToLevelShaped(level, mult, e, expAt()) : hoursToLevel(level, mult, e, expRate))
+  // THE FINAL WINDOW'S OWN HACKNET (o.freshHacknet [{atH: hours since the
+  // window's install, perSec}], lifeplan.freshHacknetFlow): the fleet an
+  // install deletes is rebuilt in every fresh life, the final one included,
+  // and in BitNode 9 it out-earns the scripts ~40x. Only where an install
+  // opens the window: under hold-to-exit the live fleet is lifeInc.
+  const fleet = installsFirst > 0 && Array.isArray(o.freshHacknet) ? o.freshHacknet.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH) : []
+  const fleetAt = (age) => {
+    let lo = 0
+    let hi = fleet.length - 1
+    let at = -1
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1
+      if (fleet[m].atH <= age) {
+        at = m
+        lo = m + 1
+      } else hi = m - 1
+    }
+    return at < 0 ? 0 : fleet[at].perSec
+  }
   const moneyLeg = (target, targetAt = null) => {
     const t0 = h
+    const age0 = h - finalStart
+    const ex = steps.length && fleet.length ? (rel) => extraAt(t0 + rel) + fleetAt(age0 + rel) : steps.length ? (rel) => extraAt(t0 + rel) : fleet.length ? (rel) => fleetAt(age0 + rel) : null
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: steps.length ? (rel) => extraAt(t0 + rel) : null, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: capR, capitalCap, capitalScaleW, capitalShape, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: ex, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -1121,6 +1333,21 @@ export function exitHours(o = {}) {
   // rate — not simulated, and gangworth says so.
   const busyH = installsFirst === 0 && num(o.slotBusyH) && o.slotBusyH > 0 ? o.slotBusyH : 0
   slotH += busyH
+
+  // 4S bought in the final window (or now, when the final window is now): its
+  // price first, from the window's balance, then every later leg on the 4S curve.
+  if (four && !fourInLife1) {
+    if (four.cost > cash) {
+      const hm = moneyLeg(four.cost)
+      if (!num(hm)) return { hours: null, why: 'could not price the money for the 4S TIX API' }
+      h += hm
+      exp = expAdv(exp, hm)
+      cash = four.cost
+      legs.push({ leg: '4S money', hours: hm, detail: D(() => `$${Math.round(four.cost)} for the ${FOUR_NAME}`) })
+    }
+    cash -= four.cost
+    curve = fourCurve
+  }
 
   // GRAFTS IN THE FINAL WINDOW (o.finalGrafts [{name, cost, slotH, hacking,
   // exp, rep}], graftplan.graftSpecOf): each is paid when the balance reaches
@@ -1161,7 +1388,7 @@ export function exitHours(o = {}) {
       h += hm
       exp = expAdv(exp, hm)
       cash = startAt
-      legs.push({ leg: 'graft start money', hours: hm, detail: `$${Math.round(startAt)} before the first graft` })
+      legs.push({ leg: 'graft start money', hours: hm, detail: D(() => `$${Math.round(startAt)} before the first graft`) })
     }
     let gM = 1
     for (const g of finalGrafts) {
@@ -1172,7 +1399,7 @@ export function exitHours(o = {}) {
         h += hm
         exp = expAdv(exp, hm)
         cash = g.cost
-        legs.push({ leg: 'graft money', hours: hm, detail: `$${Math.round(g.cost)} for ${g.name}` })
+        legs.push({ leg: 'graft money', hours: hm, detail: D(() => `$${Math.round(g.cost)} for ${g.name}`) })
       }
       cash -= g.cost
       graftDone = Math.max(h, graftDone) + g.slotH
@@ -1189,7 +1416,7 @@ export function exitHours(o = {}) {
     preExpBoost *= gE
     if (pos(repRate)) repRate *= graftRep
     if (pos(donation)) donation /= graftRep
-    legs.push({ leg: 'grafts', hours: 0, detail: `${finalGrafts.length} graft(s)${lifeSched.spill.length ? ` (${lifeSched.spill.length} scheduled in lives this policy does not have)` : ''}, slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}` })
+    legs.push({ leg: 'grafts', hours: 0, detail: D(() => `${finalGrafts.length} graft(s)${lifeSched.spill.length ? ` (${lifeSched.spill.length} scheduled in lives this policy does not have)` : ''}, slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}`) })
   }
 
   if (covenant) {
@@ -1201,7 +1428,7 @@ export function exitHours(o = {}) {
       h += hm
       exp = expAdv(exp, hm)
       cash = target
-      legs.push({ leg: 'covenant money', hours: hm, detail: `$${Math.round(target)} in hand` })
+      legs.push({ leg: 'covenant money', hours: hm, detail: D(() => `$${Math.round(target)} in hand`) })
     }
     cash -= covenant.cost
     slotH += covenant.member ? 0 : covenant.combatH
@@ -1216,7 +1443,7 @@ export function exitHours(o = {}) {
     if (!num(hm)) return { hours: null, why: 'could not price the join-money leg' }
     h += hm
     cash = joinMoney
-    legs.push({ leg: 'hoard join money', hours: hm, detail: `$${Math.round(joinMoney)} in hand` })
+    legs.push({ leg: 'hoard join money', hours: hm, detail: D(() => `$${Math.round(joinMoney)} in hand`) })
     // The hoard leg also banks exp, which the climb below inherits.
     exp = expAdv(exp, hm)
   }
@@ -1230,7 +1457,7 @@ export function exitHours(o = {}) {
     if (!num(hj)) return { hours: null, why: `could not price the climb to the join level ${joinLevel}` }
     h += hj
     exp = expAdv(exp, hj)
-    legs.push({ leg: 'climb to join level', hours: hj, detail: `hacking ${joinLevel} with $${Math.round(joinMoney)} in hand` })
+    legs.push({ leg: 'climb to join level', hours: hj, detail: D(() => `hacking ${joinLevel} with $${Math.round(joinMoney)} in hand`) })
   }
 
   if (terminalRep > 0) {
@@ -1270,16 +1497,25 @@ export function exitHours(o = {}) {
       // One log per step: the level read for the rate is the level the
       // affine exp step starts from (expAdv's own path, not re-derived).
       const aff = shaped ? expAt().affine ?? null : null
-      // Adaptive step (1/300 of the leg at today's rate, never below 2 min)
-      // and a hard iteration cap — see hoursToMoney: this froze the game.
+      // Adaptive step (1/REP_STEPS of the leg at today's rate, never below 2
+      // min) and a hard iteration cap — see hoursToMoney: this froze the game.
+      // THE TRAPEZOID: the rate at both ends of each step (the level the
+      // affine exp step reaches is computed anyway, for the next step), the
+      // landing solved on the step's linear rate. The left sum it replaced
+      // needed 300 steps a leg for a bias of ~0.5% of the leg (the rate only
+      // rises); the trapezoid at REP_STEPS is within 0.05% of a 3000-step
+      // integral ([FM8]) — the rep leg was ~40% of the plan pass's CPU.
+      // A rate that does not vary with the level steps from one sleeve
+      // break to the next.
       const r0 = P * scale(exp) + sRep(legStart)
       const est = r0 > 0 ? need / r0 / 3600 : 1e4
-      const step = Math.max(1 / 30, Math.min(1e4, est) / 300)
+      const step = varies ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
       let acc = 0
       let t = 0
       let e = exp
       let iter = 0
       let L = varies ? contLevel(e, mult) : 0
+      const lvlRate = (lv) => P * (varies ? Math.max(1, Math.floor(lv)) / hacking : 1)
       for (;;) {
         if (t > 1e4 || iter++ > 3000) {
           t = Infinity
@@ -1287,18 +1523,30 @@ export function exitHours(o = {}) {
         }
         // Land exactly on the sleeve's next rate change inside this step.
         const nb = fleetOn ? sleeveBreaks(sleeveRep, legStart + t)[0] : undefined
-        const dt = typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step
-        const rate = P * (varies ? Math.max(1, Math.floor(L)) / hacking : 1) + (fleetOn ? sRep(legStart + t) : 0)
-        const add = rate * dt * 3600
-        if (rate > 0 && acc + add >= need) {
-          t += (need - acc) / rate / 3600
+        const dt = Math.min(1e4 - t + 1e-9, typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step)
+        // The sleeve's rate is constant inside the step (breaks end steps).
+        const sr = fleetOn ? sRep(legStart + t) : 0
+        const r1 = lvlRate(L) + sr
+        let e2 = e
+        let L2 = L
+        if (varies) {
+          e2 = aff ? affineStepFrom(e, L, dt, mult, aff, expAt()) : expAdv(e, dt)
+          L2 = contLevel(e2, mult)
+        }
+        const r2 = lvlRate(L2) + sr
+        const sec = dt * 3600
+        const add = ((r1 + r2) / 2) * sec
+        if (add > 0 && acc + add >= need) {
+          // acc + r1 x + (r2 - r1) x^2 / (2 sec) = need, 0 < x <= sec.
+          const a = (r2 - r1) / (2 * sec)
+          const rem = need - acc
+          const x = Math.abs(a) * sec < 1e-9 * Math.max(r1, 1e-300) ? rem / r1 : (-r1 + Math.sqrt(Math.max(0, r1 * r1 + 4 * a * rem))) / (2 * a)
+          t += Math.min(sec, Math.max(0, x)) / 3600
           break
         }
         acc += add
-        if (varies) {
-          e = aff ? affineStepFrom(e, L, dt, mult, aff, expAt()) : expAdv(e, dt)
-          L = contLevel(e, mult)
-        }
+        e = e2
+        L = L2
         t += dt
       }
       r = { hours: t, how: 'ground' }
@@ -1306,7 +1554,7 @@ export function exitHours(o = {}) {
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }
     h += r.hours
     if (r.how === 'ground') slotH += r.hours
-    legs.push({ leg: 'exit reputation', hours: r.hours, detail: `${Math.round(terminalRep)} rep, ${r.how}` })
+    legs.push({ leg: 'exit reputation', hours: r.hours, detail: D(() => `${Math.round(terminalRep)} rep, ${r.how}`) })
     exp = expAdv(exp, r.hours)
   }
 
@@ -1319,7 +1567,7 @@ export function exitHours(o = {}) {
   // The terminal install ends a pre-install exp bonus: the climb runs without it.
   if (preExpBoost !== 0) expRate = Math.max(0, expRate - preExpBoost)
   if (graftDone > h) {
-    legs.push({ leg: 'grafts finish', hours: graftDone - h, detail: 'the climb waits for the last graft (an install cancels one in progress)' })
+    legs.push({ leg: 'grafts finish', hours: graftDone - h, detail: D(() => 'the climb waits for the last graft (an install cancels one in progress)') })
     h = graftDone
   }
   let climb
@@ -1374,22 +1622,31 @@ export function exitHours(o = {}) {
   // first — its measured lag behind a constant rate is charged once.
   const lagH = climb > 0 && num(freshExpLagH) && freshExpLagH > 0 ? freshExpLagH : 0
   h += climb + lagH
-  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})` })
+  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: D(() => `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})`) })
   // Rooting w0r1d_d43m0n: the openers bought again from the reset balance,
   // concurrent with the climb — only the excess binds.
   if (pos(finalRootCost)) {
     const money0 = num(installCash) && installCash >= 0 ? installCash : 1262
-    const rootH = finalRootCost <= money0 ? 0 : hoursToMoney(finalRootCost, { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: capR, capitalCap, capitalScaleW, capitalShape, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 })
+    const rootIn = { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 }
+    // SCREENED FIRST: the leg binds only past the climb, and it almost never
+    // does (minutes against hours) — a coarse estimate with 50% to spare
+    // settles it at a quarter of the steps; it was half of every exit
+    // simulation's money-leg work (the plan pass's largest single cost).
+    let rootH = 0
+    if (finalRootCost > money0) {
+      const quick = hoursToMoney(finalRootCost, { ...rootIn, coarse: true })
+      rootH = num(quick) && quick * 1.5 <= climb + lagH ? quick : hoursToMoney(finalRootCost, rootIn)
+    }
     if (!num(rootH)) return { hours: null, why: 'could not price re-buying the port openers after the terminal install' }
     const extra = Math.max(0, rootH - (climb + lagH))
-    legs.push({ leg: 'root w0r1d_d43m0n', hours: extra, detail: `$${Math.round(finalRootCost)} of openers from $${Math.round(money0)} after the install: ${rootH.toFixed(2)}h, concurrent with the climb` })
+    legs.push({ leg: 'root w0r1d_d43m0n', hours: extra, detail: D(() => `$${Math.round(finalRootCost)} of openers from $${Math.round(money0)} after the install: ${rootH.toFixed(2)}h, concurrent with the climb`) })
     h += extra
   }
 
   // The work slot can bind the window: the passive legs overlap it, a ground
   // reputation leg and the Covenant gym legs do not overlap each other.
   if (slotH > h - finalStart) {
-    legs.push({ leg: 'work slot binds', hours: slotH - (h - finalStart), detail: `${slotH.toFixed(1)}h of work slot in a ${(h - finalStart).toFixed(1)}h window` })
+    legs.push({ leg: 'work slot binds', hours: slotH - (h - finalStart), detail: D(() => `${slotH.toFixed(1)}h of work slot in a ${(h - finalStart).toFixed(1)}h window`) })
     h = finalStart + slotH
   }
 
@@ -1424,9 +1681,16 @@ export function exitHours(o = {}) {
 // inputs' JSON (functions excluded, as JSON drops them); bounded.
 const policyMemo = new Map()
 /** Exits longer than this are not durations but "unreachable": comparisons between them decide nothing. */
+/** Steps of the exit's ground-reputation leg (trapezoid; [FM8]). */
+export const REP_STEPS = 40
 export const DEGENERATE_H = 1e5
 export const POLICY_HEAD = 24
 export const POLICY_WORSE = 15
+// The closing scan's half-width around a galloped optimum. It was
+// POLICY_WORSE (15): 31 policies a search, half the policies priced at a 0.5h
+// cadence; at 6 every fixture's search [PP2] is still identical to the
+// one-by-one walk (336 of 336) and the plan pass's exits move < 0.5%.
+export const POLICY_CLOSE = 6
 
 export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
   return drain(bestExitPolicyGen(o, maxInstalls, minInstalls))
@@ -1437,26 +1701,62 @@ export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
  * exitHours), so a caller running it in coop.js slices never blocks the page
  * for a whole search. Same result as bestExitPolicy, which drains it.
  */
+/**
+ * The memo's key for exit inputs: every field the simulation reads, as JSON,
+ * with each object-valued field's JSON cached by identity (the draws copy
+ * the inputs, not their arrays: the grafts, the carried streams, the fleet's
+ * table, the curve's shape) — the whole-object stringify was ~5% of a pass.
+ * The inputs' descriptive fields (text, the cadence's record, the purchase
+ * model's inputs) are skipped. Objects must not be mutated once passed in.
+ */
+const MEMO_SKIP = new Set(['cadence', 'incomeSource', 'expSource', 'repSource', 'capitalFit', 'streams', 'hacknet', 'freshHackCum'])
+const jsonMemo = new WeakMap()
+function memoKeyOf(o) {
+  let out = ''
+  for (const k in o) {
+    if (MEMO_SKIP.has(k)) continue
+    const v = o[k]
+    if (v === undefined || typeof v === 'function') continue
+    let j
+    if (v !== null && typeof v === 'object') {
+      j = jsonMemo.get(v)
+      if (j === undefined) jsonMemo.set(v, (j = JSON.stringify(v)))
+    } else j = JSON.stringify(v)
+    out += `${k}:${j},`
+  }
+  return out
+}
+
 export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
   let key = null
   try {
-    key = `${maxInstalls}|${minInstalls}|${JSON.stringify(o)}`
+    // Keyed on what the simulation reads: the inputs' descriptive fields
+    // (text, the cadence's own record, the purchase model's inputs) are
+    // skipped — they were most of the key's bytes, stringified per search.
+    key = `${maxInstalls}|${minInstalls}|${memoKeyOf(o)}`
   } catch {
     key = null
   }
   if (key !== null && policyMemo.has(key)) return policyMemo.get(key)
   const seen = new Map()
   let best = null
-  function* at(k) {
+  // One policy priced (a plain function: a generator object per policy was
+  // ~4% of the plan's CPU); `fresh` says whether it was new — the callers
+  // yield after each new one, as before.
+  let fresh = false
+  const at = (k) => {
     const had = seen.get(k)
-    if (had) return had
-    const r = exitHours({ ...o, installsFirst: k })
+    if (had) {
+      fresh = false
+      return had
+    }
+    const r = exitHours(o, k, true)
     const row = { installsFirst: k, hours: r.hours, why: r.why ?? null }
     seen.set(k, row)
     // Strictly shorter, or as short at fewer installs (the one-by-one
     // search's first minimum).
     if (num(r.hours) && (best === null || r.hours < best.hours || (r.hours === best.hours && k < best.installsFirst))) best = { ...r, installsFirst: k }
-    yield
+    fresh = true
     return row
   }
   // The head: one by one, the 15-worse rule.
@@ -1467,7 +1767,8 @@ export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
   const linearFrom = function* (from, to) {
     for (k = from; k <= to; k++) {
       const before = best
-      const row = yield* at(k)
+      const row = at(k)
+      if (fresh) yield
       if (best !== before) worse = 0
       else if (best !== null && num(row.hours)) {
         if (++worse >= POLICY_WORSE) return true
@@ -1489,7 +1790,8 @@ export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
       // At most log2(maxInstalls / POLICY_HEAD) + 1 strides reach the cap; 64 bounds it.
       for (let step = POLICY_HEAD, g = 0; g < 64; step *= 2, g++) {
         const kk = Math.min(maxInstalls, prev + step)
-        yield* at(kk)
+        at(kk)
+        if (fresh) yield
         if (best.installsFirst === kk) {
           lo = prev
           prev = kk
@@ -1508,7 +1810,8 @@ export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
           const kb = best.installsFirst
           const m = kb - a > b - kb ? Math.floor((a + kb) / 2) : Math.ceil((kb + b) / 2)
           if (m === kb || m <= a || m >= b) break
-          yield* at(m)
+          at(m)
+          if (fresh) yield
           if (best.installsFirst === m) {
             if (m < kb) b = kb
             else a = kb
@@ -1516,15 +1819,20 @@ export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
           else b = m
         }
       }
-      // The closing scan: POLICY_WORSE either side of the best, until it holds.
+      // The closing scan: POLICY_CLOSE either side of the best, until it holds.
       for (let round = 0; round < 20; round++) {
         const kb = best.installsFirst
-        for (let j = Math.max(minInstalls, kb - POLICY_WORSE); j <= Math.min(maxInstalls, kb + POLICY_WORSE); j++) yield* at(j)
+        for (let j = Math.max(minInstalls, kb - POLICY_CLOSE); j <= Math.min(maxInstalls, kb + POLICY_CLOSE); j++) {
+          at(j)
+          if (fresh) yield
+        }
         if (best.installsFirst === kb) break
       }
     }
   }
   const tried = [...seen.values()].sort((x, y) => x.installsFirst - y.installsFirst)
+  // The best policy's legs with their text (the search priced it quiet).
+  if (best) best = { ...exitHours(o, best.installsFirst), installsFirst: best.installsFirst }
   const out = !best
     ? { best: null, tried, why: tried[0]?.why ?? 'no policy could be priced' }
     : {

@@ -174,7 +174,7 @@ import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formula
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
-import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases, nodeFactionsOf, freshLifeMoney } from 'lifeplan.js'
+import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases, nodeFactionsOf, freshLifeMoney, freshHacknetFlow } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1247,6 +1247,8 @@ function readFleet(ns, info) {
       // from it (sleeveplan.sleevesFromCovenant); absent, it refuses.
       sleeves: Number.isInteger(f.sleeves) ? f.sleeves : null,
       byObjective: f.byObjective && typeof f.byObjective === 'object' ? f.byObjective : null,
+      // What the fleet is doing (sleeve.js follows the plan's committed objective).
+      objective: typeof f.objective === 'string' ? f.objective : null,
       persons: Array.isArray(f.persons) ? f.persons : null,
       gymToPlayerAtTm1: f.gymToPlayerAtTm1 && typeof f.gymToPlayerAtTm1 === 'object' ? f.gymToPlayerAtTm1 : null,
       expToPlayerHackingIfStudying: fin(f.expToPlayerHackingIfStudying) ? f.expToPlayerHackingIfStudying : null,
@@ -1305,7 +1307,13 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
     let exitCmp = null
     let decision = null
     if (open && arms && (arms.fleet !== null || arms.player !== null)) {
-      const base = inputsFn()
+      // The gang's own stream is the arms' to add (never carried: not in a gang here).
+      const base = (() => {
+        const b = inputsFn()
+        if (!b?.carriedIncome?.gang) return b
+        const { gang, ...rest } = b.carriedIncome
+        return { ...b, carriedIncome: rest }
+      })()
       const sched = gangScheduleNow(ns, info)
       const eB = readJson(ns, GATE)?.eBudget
       const eBudget = typeof eB === 'number' && isFinite(eB) ? eB : null
@@ -1314,7 +1322,7 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
       if (pc?.post && exitCmp?.best) {
         const { inputs: b0 } = withRepEstimate(base)
         const armH = (k, b) => {
-          const r = gangArms(bestExitPolicy, b, sched, k === 'none' ? {} : { [k]: arms[k] }, eBudget)
+          const r = gangArms(bestExitPolicy, b, sched, k === 'none' ? {} : { [k]: arms[k] }, eBudget, 400, { lower: false })
           return k === 'none' ? r.withoutH : r.arms?.[k]?.withH ?? null
         }
         const keys = ['none', ...Object.keys(exitCmp.arms ?? {}).filter((k) => typeof exitCmp.arms[k]?.withH === 'number')]
@@ -1350,8 +1358,78 @@ function gangScheduleNow(ns, info) {
   const rivals = Object.fromEntries(['Tetrads', 'The Syndicate', 'The Dark Army', 'Speakers for the Dead', 'NiteSec', 'The Black Hand'].map((n) => [n, { power: 1, territory: 1 / 7 }]))
   const sim = typeof softcap === 'number' ? simulateGang(G, [], { softcap, horizonH: 100, stepSec: 300, mode: 'money', assignFn: trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } }) : null
   const sched = gangIncomeSchedule(sim)
-  gangSchedMemo = { node, at: Date.now(), sched }
+  gangSchedMemo = { node, at: Date.now(), sched, respectPath: Array.isArray(sim?.samples) ? sim.samples.filter((x) => typeof x?.h === 'number' && typeof x?.respect === 'number').map((x) => [x.h, x.respect]) : null }
   return sched
+}
+
+/**
+ * THE COMMITTED GANG'S INCOME, carried in every decision's exit inputs
+ * (exitplan carriedIncome.gang): a gang persists through installs
+ * (prestigeAugmentation keeps Player.gang; only prestigeSourceFile clears it,
+ * PlayerObjectGeneralMethods.ts:157) and its money is not script income
+ * (Gang.processGains -> Player.gainMoney 'gang'), so nothing else prices it —
+ * the exit priced a node with a gang as if it had none (live BN9 2026-09-29,
+ * Slum Snakes formed that day). The schedule is gangScheduleNow's (a gang
+ * measured in this node, else the fresh gang simulated under this node's
+ * softcap), entered at the gang's own state: the simulated hour whose respect
+ * first reaches the live gang's (/tel/gang.txt), the schedule from there on.
+ * Null (and why) when not in a gang this life. {steps, why}.
+ */
+function gangCarriedNow(ns, info) {
+  const live = readJson(ns, '/tel/gang.txt')
+  if (!live?.faction || live.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(live.at ?? '') < 15 * 60e3)) return { steps: null, why: 'not in a gang this life (no fresh /tel/gang.txt)' }
+  const sched = gangScheduleNow(ns, info)
+  if (!Array.isArray(sched) || !sched.length) return { steps: null, why: 'in a gang, but its income schedule could not be simulated (no GangSoftcap)' }
+  if (sched.length === 1) return { steps: sched, why: `in ${live.faction}: the income a gang measured in this node` }
+  const path = gangSchedMemo?.respectPath ?? null
+  const r = typeof live.respect === 'number' ? live.respect : 0
+  const hit = path ? path.find(([, x]) => x >= r) : null
+  const age = hit ? hit[0] : path?.length ? path[path.length - 1][0] : 0
+  const steps = sched.filter((x) => x.atH + 1 > age).map((x) => ({ atH: Math.max(0, x.atH - age), perSec: x.perSec }))
+  return { steps: steps.length ? steps : [sched[sched.length - 1]], why: `in ${live.faction} (respect ${r.toExponential(2)}, ${live.members?.length ?? live.members ?? '?'} members): the fresh gang's simulated income from its hour ${age.toFixed(1)} (the hour its respect reaches the live gang's) on` }
+}
+
+/**
+ * THE SLEEVES' CRIME MONEY, carried in every decision's exit inputs
+ * (exitplan carriedIncome.sleeves) while the fleet runs the 'money' objective
+ * the plan committed (sleeve.txt objective, sleeve.js following
+ * decisions.sleeveObjective): sleeves persist through installs, their money
+ * is not script income. The sleeve objective decision prices its own
+ * candidates and removes this first (counted once). {steps, why}.
+ */
+function sleevesCarriedNow(ns, info) {
+  const f = readFleet(ns, info)
+  if (f?.objective !== 'money') return { steps: null, why: `the fleet's objective is ${f?.objective ?? 'unknown'}${f?.why && !f.assist ? ` (${f.why})` : ''}, not money` }
+  const m = f.byObjective?.money
+  return typeof m === 'number' && isFinite(m) && m > 0 ? { steps: [{ atH: 0, perSec: m }], why: `the fleet on crime for money: $${(m / 1e3).toFixed(1)}k/s` } : { steps: null, why: 'the fleet runs money but its rate is unpublished' }
+}
+
+/**
+ * THE FINAL WINDOW'S HACKNET (exitplan freshHacknet): lifeplan.freshHacknetFlow
+ * on this pass's inputs, once per 10 minutes a life (46ms: 192 purchase
+ * decisions over the 48h fresh life).
+ */
+let freshHacknetMemo = null
+/** A step function's rate at hour h ([{atH, perSec}], sorted). */
+function stepRateAt(steps, h) {
+  let v = 0
+  for (const x of steps) {
+    if (x.atH > h) break
+    v = x.perSec
+  }
+  return v
+}
+function freshHacknetNow(info, inputs) {
+  if (!inputs?.hacknet) return null
+  if (freshHacknetMemo && freshHacknetMemo.reset === info?.lastAugReset && Date.now() - freshHacknetMemo.at < 600e3) return freshHacknetMemo.flow
+  let flow = null
+  try {
+    flow = freshHacknetFlow(inputs, 48)
+  } catch {
+    flow = null
+  }
+  freshHacknetMemo = { reset: info?.lastAugReset, at: Date.now(), flow }
+  return flow
 }
 
 /**
@@ -1658,7 +1736,15 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     const fleet = readFleet(ns, info)
     const by = fleet?.byObjective
     if (!by) return out(null, `no per-objective fleet rates from sleeve.js (${fleet?.why ?? 'no fleet'})`)
-    const base = inputsFn({ expToPlayerHacking: 0, factionRepPerSec: 0 })
+    // The fleet's own money stream is each candidate's to add (the 'money'
+    // option below): carried in from the committed objective it would count
+    // twice there and credit the exp and rep options with money they forgo.
+    const base = (() => {
+      const b = inputsFn({ expToPlayerHacking: 0, factionRepPerSec: 0 })
+      if (!b?.carriedIncome?.sleeves) return b
+      const { sleeves, ...rest } = b.carriedIncome
+      return { ...b, carriedIncome: rest }
+    })()
     const gate = readJson(ns, GATE)
     const eRep = typeof gate?.objective?.eRep === 'number' ? gate.objective.eRep : null
     const eB = typeof gate?.eBudget === 'number' ? gate.eBudget : null
@@ -2027,6 +2113,112 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     }
   })
 }
+/**
+ * THE 4S MARKET DATA TIX API, DECIDED BY THE EXIT — trajectory against
+ * trajectory on the committed install decision's basis (the graft decision's
+ * pricing), one belief for the point and the draws:
+ *   none  the trader on its pre-4S curve r(W) for the rest of the node
+ *   now   the API's price earned in THIS life (a leg of it, as a graft of the
+ *         life is: exitplan lifeGraftLeg), the trader on the 4S curve from
+ *         the next life on — every later life's legs and the final window's.
+ * 4S persists through installs (prestigeAugmentation does not touch
+ * Player.has4SDataTixApi; prestigeSourceFile clears it,
+ * PlayerObjectGeneralMethods.ts:166), so a purchase serves the node, not the
+ * life — which stockplan.buy4SVerdict (this life's horizon, the old rate
+ * table) could not see. Price: MarketDataTixApi4SCost x the node's
+ * FourSigmaMarketDataApiCost (StockMarketCosts.ts; BitNode 9: $25b x 4 =
+ * $100b). The API alone serves the trader: ns.stock.getForecast needs
+ * has4SDataTixApi only (NetscriptFunctions/StockMarket.ts:229) — the $1b x
+ * FourSigmaMarketDataCost data subscription is the UI's and is not bought.
+ * The 4S curve: traderw RW_PRIOR['4S-long'] (r0 1.135/h, W* $1e12) at the
+ * point, moved in each draw by the draw's ratio to the pre-4S posterior's
+ * point (plan.applyDraw): the live market's evidence on the sim's error
+ * scales both regimes alike. Committed to 'none' until P(now better) >= theta.
+ * stock.js buys when the committed key is 'now' (stockplan.fourSPlanOf).
+ * Not simulated (both favour buying): the 4S curve inside the rest of this
+ * life and in the intermediate lives' batches (the measured cadence).
+ */
+const FOUR_S_API_BASE = 25e9 // StockMarket/data/Constants.ts MarketDataTixApi4SCost
+function fourSSpecOf(info, when = 'life1') {
+  const m = bitNodeMults(info?.currentNode)?.FourSigmaMarketDataApiCost
+  const pr = RW_PRIOR['4S-long']
+  if (!(typeof m === 'number' && m > 0) || !pr) return null
+  return { cost: FOUR_S_API_BASE * m, when, r0PerSec: pr.r0PerHour / 3600, Wstar: pr.Wstar, shape: pr.shape }
+}
+/** Whether the 4S TIX API is owned, from the trader's own record (stock.txt mode). {owned: true|false|null, why}. */
+function fourSStateOf(ns, info) {
+  const st = readJson(ns, STOCK_FILE)
+  if (!st || st.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(st.at ?? '') < 15 * 60e3)) return { owned: null, why: 'no fresh trader record (stock.txt): the TIX API or the trader is absent' }
+  if (typeof st.mode !== 'string') return { owned: null, why: 'the trader record carries no mode' }
+  return /pre-4S/.test(st.mode) ? { owned: false, why: 'the trader reads estimated forecasts (pre-4S)' } : { owned: true, why: 'the trader reads the 4S forecasts' }
+}
+/** The committed 4S purchase as exit inputs (every decision's trajectory carries it): 'now' committed and not owned. */
+let fourSOwnedNow = null
+function fourSCarriedOf(pc, info) {
+  const d = pc?.decisions?.fourS ?? pc?.prev?.decisions?.fourS ?? null
+  return d?.key === 'now' && fourSOwnedNow === false ? fourSSpecOf(info, 'life1') : null
+}
+let fourSHoldSince = null
+function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
+  if (d?.key !== 'now' || owned !== false) return { hold: false }
+  if (!fourSHoldSince || fourSHoldSince.reset !== lastAugReset) fourSHoldSince = { reset: lastAugReset, at: now }
+  const legH = typeof d.lifeNow?.lifeH === 'number' && isFinite(d.lifeNow.lifeH) ? d.lifeNow.lifeH : 0
+  const capH = Math.max(2, 3 * legH)
+  const heldH = (now - fourSHoldSince.at) / 3.6e6
+  if (heldH > capH) return { hold: false, why: `the committed 4S TIX API not bought after ${heldH.toFixed(2)}h of holding (cap ${capH.toFixed(2)}h) — hold released` }
+  return { hold: true, why: `the committed 4S TIX API ($${(d.cost / 1e9).toFixed(0)}b) not bought yet; the committed trajectory lasts this life ${legH.toFixed(2)}h for it (held ${heldH.toFixed(2)}h of at most ${capH.toFixed(2)}h)` }
+}
+async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
+  const pc = planCtxOf(ns, info)
+  const st = fourSStateOf(ns, info)
+  fourSOwnedNow = st.owned
+  if (st.owned !== false) {
+    pc.decisions.fourS = { key: st.owned ? 'owned' : null, why: st.why, held: false }
+    return pc.decisions.fourS
+  }
+  return planDecide(pc, 'fourS', function* () {
+    const t0 = Date.now()
+    const base = { ...inputsFn() }
+    delete base.fourS
+    yield
+    const spec = fourSSpecOf(info, 'life1')
+    if (!spec) return { key: null, why: 'the 4S TIX API price is unreadable (FourSigmaMarketDataApiCost)' }
+    const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
+    const withIn = { ...base, fourS: spec }
+    // One trajectory structure (the purchase adds no leg the structural noise
+    // is keyed on): both options share the basis's noise, so the pair differs
+    // by the purchase alone.
+    const nk = noiseKeyOf(basis, base)
+    const options = [
+      { key: 'none', noiseKey: nk, sim: (d) => traj(applyDraw(base, d), d) },
+      { key: 'now', noiseKey: nk, sim: (d) => traj(applyDraw(withIn, d), d) },
+    ]
+    const pointNone = traj(base)
+    yield
+    const pointNow = traj(withIn)
+    const lifeNow = (policyOf(basis, withIn)?.best?.lifeGraftLegs ?? []).find((l) => l.life === 1) ?? null
+    yield
+    const was = pc.prev?.decisions?.fourS
+    const prev = was?.key === 'none' || was?.key === 'now' ? was : { key: 'none', why: 'not bought (a purchase is committed only when the exit says buy)', decidedAt: null }
+    const d = pc.post
+      ? yield* decideAmongGen({ options, prev, draws: pc.draws, redecide: pc.redecide || !(was?.key === 'none' || was?.key === 'now'), budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => (k === 'none' ? pointNone : pointNow) })
+      : { key: typeof pointNow === 'number' && typeof pointNone === 'number' && pointNow < pointNone ? 'now' : 'none', why: 'no posterior: the point comparison' }
+    return {
+      ...d,
+      cost: spec.cost,
+      curve: { r0PerHour: +(spec.r0PerSec * 3600).toFixed(3), Wstar: spec.Wstar, source: RW_PRIOR['4S-long'].source },
+      basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
+      withoutH: pointNone,
+      withH: pointNow,
+      deltaH: typeof pointNow === 'number' && typeof pointNone === 'number' ? +(pointNow - pointNone).toFixed(3) : null,
+      lifeNow,
+      notSimulated: "the 4S curve inside the rest of this life and in the intermediate lives' batches (their money is the measured cadence) — both favour buying",
+      ms: Date.now() - t0,
+    }
+  })
+}
+
 /**
  * The committed grafts as exit inputs for EVERY decision this pass (the plan
  * is one trajectory: an install decision that did not know the node will be
@@ -2615,6 +2807,8 @@ function publishPlan(ns, info, extra = {}) {
         // Carried when this pass did not reach the graft step (an early
         // return): the commitment must not vanish between passes.
         grafts: pc.decisions.grafts ?? pc.prev?.decisions?.grafts ?? null,
+        // The 4S TIX API (fourSDecisionOf): stock.js buys on 'now'. Carried when this pass did not reach it.
+        fourS: pc.decisions.fourS ?? pc.prev?.decisions?.fourS ?? null,
       },
       // The node's best-found graft set (graftDecisionOf): survives a 'none'
       // or refused decision, an unreached graft step and an install.
@@ -3253,6 +3447,20 @@ function cadenceModelPriorOf(ns, info) {
 }
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   const out = exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+  // EVERY MONEY STREAM ONCE, with its own growth driver (the final window's
+  // money leg is the binding one on the trader's curve): the committed gang
+  // and the sleeves on money as carried step functions of node hours, and the
+  // final window's rebuilt hacknet by the window's age. Named in `streams`.
+  const gc = gangCarriedNow(ns, info)
+  const sc = sleevesCarriedNow(ns, info)
+  const carried = { ...(gc.steps ? { gang: gc.steps } : {}), ...(sc.steps ? { sleeves: sc.steps } : {}) }
+  if (Object.keys(carried).length) out.carriedIncome = carried
+  const fh = freshHacknetNow(info, out)
+  if (fh?.length) out.freshHacknet = fh
+  // The committed 4S purchase (fourSDecisionOf): every decision's trajectory buys it where the plan does.
+  const f4 = fourSCarriedOf(planCtx, info)
+  if (f4) out.fourS = f4
+  out.streams = { gang: gc.why, sleeves: sc.why, hacknetFinalWindow: fh?.length ? `the fleet a fresh life rebuilds (lifeplan.freshHacknetFlow): $${(stepRateAt(fh, 8) / 1e6).toFixed(2)}m/s to the balance at 8h, $${(stepRateAt(fh, 24) / 1e6).toFixed(2)}m/s at 24h (its purchases repaid from its own income first)` : 'no hacknet servers model this life (hacknet.txt mode not servers): the final window prices no hacknet (a floor)' }
   // The life's length is a decision: where the purchase model prices it, the
   // exit's cycle is the length it chose (and what that length buys), not the
   // measured mean life — a policy-chosen short life is not evidence that
@@ -5256,6 +5464,10 @@ async function act(ns, canJoin, info, note) {
   // running graft is never interrupted (the install below is held too;
   // GraftingWork.finish keeps the money of a cancelled graft).
   const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
+  // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
+  const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
+  const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)
+  if (fourSHold.why && !fourSHold.hold) todo.push(fourSHold.why)
   if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
   const graftStep = (() => {
     if (work?.type === 'GRAFTING') return { running: true, name: work.augmentation ?? '?' }
@@ -6744,6 +6956,10 @@ async function act(ns, canJoin, info, note) {
       // the work and the game keeps the graft's money (GraftingWork.finish,
       // cancelled). The plan priced the grafts as finishing first.
       did.push(`install HELD: grafting ${work.augmentation ?? '?'} is in progress — an install would cancel it and keep its price (${gate.why})`)
+    } else if (gate.install && !forcedInstall && fourSHold?.hold) {
+      // THE COMMITTED 4S PURCHASE IS THIS LIFE'S: the trajectory priced the
+      // life as lasting until its price is earned and paid (exitplan fourS 'life1').
+      did.push(`install HELD: ${fourSHold.why} (${gate.why})`)
     } else if (gate.install && !forcedInstall && lifeGraftHold?.hold) {
       // THE SCHEDULE'S GRAFTS OF THIS LIFE ARE NOT DONE: the committed
       // trajectory priced this life as lasting until they are (exitplan

@@ -199,6 +199,14 @@ export function applyDraw(inputs, d) {
   if (fin(d.r)) o.capitalReturnPerSec = d.r
   // The knee only where the inputs carry the curve (a flat-rate input stays flat).
   if (fin(d.Wstar) && d.Wstar > 0 && fin(inputs.capitalScaleW)) o.capitalScaleW = d.Wstar
+  // THE 4S CURVE UNDER THE SAME DRAW (inputs.fourS, exitplan): its prior
+  // point moved by this draw's ratio to the pre-4S point — one belief about
+  // how far the live market sits from the sim, applied to both regimes.
+  if (inputs.fourS && fin(inputs.fourS.r0PerSec)) {
+    const kr = fin(d.r) && fin(inputs.capitalReturnPerSec) && inputs.capitalReturnPerSec > 0 ? d.r / inputs.capitalReturnPerSec : 1
+    const kw = fin(d.Wstar) && d.Wstar > 0 && fin(inputs.capitalScaleW) && inputs.capitalScaleW > 0 ? d.Wstar / inputs.capitalScaleW : 1
+    o.fourS = { ...inputs.fourS, r0PerSec: inputs.fourS.r0PerSec * kr, ...(fin(inputs.fourS.Wstar) ? { Wstar: inputs.fourS.Wstar * kw } : {}) }
+  }
   if (inputs.cadenceFrom === 'purchase model') {
     // The life's length is the purchase model's DECISION (lifeplan), not a
     // random input: kept. What a life of that length buys is this draw's
@@ -799,10 +807,12 @@ export function samplesOf(xs) {
  */
 export function inputsKeyOf(inputs) {
   if (!inputs || typeof inputs !== 'object') return null
-  const { finalGrafts, graftStartMoney, lifeGrafts, ...rest } = inputs
+  // streams: the carried streams' descriptions (text), not inputs.
+  const { finalGrafts, graftStartMoney, lifeGrafts, streams, ...rest } = inputs
   void finalGrafts
   void graftStartMoney
   void lifeGrafts
+  void streams
   let s = null
   try {
     s = JSON.stringify(rest)

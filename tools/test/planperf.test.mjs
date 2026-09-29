@@ -37,6 +37,7 @@ const CO = await import("../../coop.js");
 const GP = await import("../../gangplan.js");
 const GW = await import("../../gangworth.js");
 const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
+const { RW_PRIOR } = await import("../../traderw.js");
 
 const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-plancpu-1341.json"), "utf8"));
 
@@ -233,7 +234,7 @@ export async function run() {
   for (const [ID, CURVE] of [["PP3", null], ["PP3c", CURVE_BELIEF]]) {
     const INPUTS = CURVE ? { ...INPUTS0, ...CURVE.inputs } : INPUTS0;
     const DRAWS = CURVE ? CURVE.draws : DRAWS0;
-    const c = new Check(ID, (CURVE ? "ON THE CURVE r(W) (traderw.js: the trader's return at its own book, level and knee drawn): " : "") + "CPU GUARD, a full re-deciding plan pass replayed on the live BN9 inputs in coop.js slices at the live budgets: install (10 options), grafts, the graft rebase, gang (3 arms) and sleeve objective (4) — every decision all 24 draws inside the one work budget with margin, no step near the slice");
+    const c = new Check(ID, (CURVE ? "ON THE CURVE r(W) (traderw.js: the trader's return at its own book, level and knee drawn): " : "") + "CPU GUARD, a full re-deciding plan pass replayed on the live BN9 inputs in coop.js slices at the live budgets: install (10 options), grafts, the graft rebase, the 4S TIX API (2), gang (3 arms) and sleeve objective (4) — every decision all 24 draws inside the one work budget with margin, no step near the slice");
     const gains = F.install1341.gains;
     const point = pointOf(INPUTS, gains);
     const prev = { key: F.install1341.key, installAt: F.install1341.installAt, gains, spec: { kind: "wait", installAt: F.install1341.installAt, waitH: 4, gains }, decidedAt: F.at1341, why: "fixture" };
@@ -254,7 +255,7 @@ export async function run() {
     const grinds = { fleet: 2.0, player: 1.2 };
     const eBudget = F.exitinputs1416.eBudget ?? 0.1;
     const armH = (k, b) => {
-      const r = GW.gangArms(X.bestExitPolicy, b, sched, k === "none" ? {} : { [k]: grinds[k] }, eBudget);
+      const r = GW.gangArms(X.bestExitPolicy, b, sched, k === "none" ? {} : { [k]: grinds[k] }, eBudget, 400, { lower: false });
       return k === "none" ? r.withoutH : r.arms?.[k]?.withH ?? null;
     };
     // The sleeve objective's candidates (progress.js sleeveObjectiveByExit, gang pending): each a gang exit after its grind.
@@ -273,6 +274,15 @@ export async function run() {
     decisions.grafts = await pacer.slices(P.decideAmongGen({ options: graftOpts(basisOf(F.install1341.gains)), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-grafts");
     decisions.install = await pacer.slices(P.decideInstallGen({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow, now: NOW }), "plan-install");
     decisions.graftsRebased = await pacer.slices(P.decideAmongGen({ options: graftOpts(basisOf(F.install1356.gains)), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-graftsRebased");
+    // The 4S TIX API (progress.js fourSDecisionOf): none vs bought this life, on the committed basis with the grafts carried.
+    {
+      const basis = basisOf(F.install1356.gains);
+      const traj = P.trajectoryOf(basis);
+      const pr = RW_PRIOR["4S-long"];
+      const withF = { ...withG, fourS: { cost: 25e9 * bitNodeMults(9).FourSigmaMarketDataApiCost, when: "life1", r0PerSec: pr.r0PerHour / 3600, Wstar: pr.Wstar, shape: pr.shape } };
+      const nk = P.noiseKeyOf(basis, withG);
+      decisions.fourS = await pacer.slices(P.decideAmongGen({ options: [{ key: "none", noiseKey: nk, sim: (d) => traj(P.applyDraw(withG, d), d) }, { key: "now", noiseKey: nk, sim: (d) => traj(P.applyDraw(withF, d), d) }], prev: { key: "none" }, draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-fourS");
+    }
     // The gang and sleeve decisions on the 14:16 pass's inputs (the 13:41 ones price the default policy degenerate: no gang arm would run).
     const I2 = CURVE ? { ...F.exitinputs1416, ...CURVE.inputs } : F.exitinputs1416;
     const { inputs: b0 } = GW.withRepEstimate(I2);
@@ -289,6 +299,10 @@ export async function run() {
     c.note(`live 13:41 (before): install ${F.install1341.key} ${F.install1341.meanH}h on ${F.install1341.n} draws, ${F.install1341.cpu.sections["plan-install"].cpuMs}ms, longest step ${F.install1341.cpu.sections["plan-install"].maxStepMs}ms`);
     c.note(`pass: ${spent.toFixed(0)}ms of the ${budget}ms work budget (margin: at most two thirds), longest block ${pacer.stats.maxBlockMs.toFixed(1)}ms (slice ${P.PLAN.sliceMs}ms, limit ${P.PLAN.maxBlockMs}ms)`);
     if (!(spent <= 0.67 * budget)) c.fail(`the pass's decisions must use at most two thirds of the ${budget}ms budget on the dev machine (used ${spent.toFixed(0)}ms)`);
+    // THE MARGIN UNDER THE GUARD (2026-09-29: PP3c ran 740-800ms against the
+    // 804ms limit): the target is two thirds of the limit, a WARN past it —
+    // not a FAIL, the dev machine's load moves a pass by +-10%.
+    else if (!(spent <= (2 / 3) * 0.67 * budget)) c.warn(`the pass used ${spent.toFixed(0)}ms: past the margin target ${((2 / 3) * 0.67 * budget).toFixed(0)}ms (two thirds of the ${(0.67 * budget).toFixed(0)}ms limit)`);
     if (!(pacer.stats.maxBlockMs <= P.PLAN.maxBlockMs)) c.fail(`a ${pacer.stats.maxBlockMs.toFixed(1)}ms block exceeds ${P.PLAN.maxBlockMs}ms`);
     // Slicing changes nothing (the generator path is the sync path).
     const sync = P.decideInstall({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: 1e9, now: NOW });

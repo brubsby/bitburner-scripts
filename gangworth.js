@@ -157,7 +157,7 @@ export function withRepEstimate(base) {
  * reputation and augmentations. `grinds` {fleet, player}: hours or null.
  * Returns {best: 'none'|'fleet'|'player', savedH, withoutH, arms, why}.
  */
-export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget = null, maxInstalls = 400) {
+export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget = null, maxInstalls = 400, { lower: wantLower = true } = {}) {
   if (typeof bestExitPolicy !== 'function' || !base0) return { best: null, savedH: null, why: 'no exit policy or inputs' }
   if (!Array.isArray(schedule) || !schedule.length) return { best: null, savedH: null, why: 'no gang income trajectory (measured or simulated)' }
   const { inputs: base, repSource } = withRepEstimate(base0)
@@ -174,7 +174,8 @@ export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget =
   }
   const gP = grinds.player
   if (num(gP) && gP >= 0) {
-    const lower = exitWithExtra({ extraIncome: shifted(gP), slotBusyH: gP })
+    // The slot-free bound is for the record; a caller pricing only withH (the plan's per-draw arms) skips it.
+    const lower = wantLower ? exitWithExtra({ extraIncome: shifted(gP), slotBusyH: gP }) : null
     const fromStart = exitWithExtra({ extraIncome: shifted(0) })
     arms.player = { grindH: gP, withH: num(fromStart) ? gP + fromStart : null, lowerH: num(lower) ? lower : null }
   }

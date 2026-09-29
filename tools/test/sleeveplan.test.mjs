@@ -847,7 +847,7 @@ export async function run() {
     const src = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../progress.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
     const fn = src.slice(src.indexOf("function sleeveObjectiveByExit"), src.indexOf("function spendVerdictsOf"));
     c20.examined(6);
-    if (!/const base = inputsFn\(\{ expToPlayerHacking: 0, factionRepPerSec: 0 \}\)/.test(fn)) c20.fail("the base must be the shared builder with the fleet removed");
+    if (!/const b = inputsFn\(\{ expToPlayerHacking: 0, factionRepPerSec: 0 \}\)/.test(fn) || !/const \{ sleeves, \.\.\.rest \} = b\.carriedIncome/.test(fn)) c20.fail("the base must be the shared builder with the fleet removed");
     if (!/if \(repFaction && by\.rep > 0\) fns\.push\(\['rep', \(b\) => finish\(\{ \.\.\.b, sleeveRep: \{ perSec: by\.rep, delayH: 0 \}, \.\.\.\(playerRep > 0 \? \{ repBoost: \{ K: \(playerRep \+ by\.rep\) \/ playerRep, e: eRep \} \} : \{\}\) \}/.test(fn)) c20.fail("rep: the sleeve's rep on the exit leg always; repBoost only with a measured player rate (it vanished whenever the rate was estimated)");
     if (!/\['money', \(b\) => finish\(\{ \.\.\.b, extraIncome: \[\{ atH: 0, perSec: by\.money \}\], eBudget: eB \}/.test(fn)) c20.fail("money: crime income from now through eBudget");
     if (!/\['karma', \(b\) => finish\(b, \{ karmaPerSec: by\.karma/.test(fn)) c20.fail("karma: the fleet's karma shortening the gang's grind");

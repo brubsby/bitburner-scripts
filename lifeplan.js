@@ -144,7 +144,7 @@ export function batchCost(prices) {
  * warm-up — exitplan.hoursToMoney's terms) integrated forward, times `scale`
  * (moneyScaleOf). Null when income is unreadable.
  */
-export function freshLifeMoney(inputs, L, scale = 1) {
+export function freshLifeMoney(inputs, L, scale = 1, rec = null, { steps = 200, decisions = HACKNET_DECISIONS } = {}) {
   const cash0 = num(inputs?.installCash) && inputs.installCash >= 0 ? inputs.installCash : 1262
   if (!pos(L)) return cash0
   const flat = num(inputs.flatIncomePerSec) && inputs.flatIncomePerSec > 0 ? inputs.flatIncomePerSec : 0
@@ -160,7 +160,6 @@ export function freshLifeMoney(inputs, L, scale = 1) {
   const xpsAt = expRateShape(xps, { scales: inputs.expScalesWithLevel === true, ref: inputs.hacking, flat: inputs.expFlatPerSec ?? 0 })
   let money = cash0
   let exp = 0
-  const steps = 200
   const dt = (L * 3600) / steps
   // THE HACKING STREAM FROM THE GAME'S FORMULAS (inputs.freshHackCum
   // [[ageH, $ since the install]], freshlife.js x its error posterior —
@@ -186,12 +185,13 @@ export function freshLifeMoney(inputs, L, scale = 1) {
   const hn = inputs.hacknet && inputs.hacknet.mults && num(inputs.hacknet.nodeMoney) ? inputs.hacknet : null
   let fleet = []
   let hashPerSec = 0
-  const every = Math.max(1, Math.floor(steps / HACKNET_DECISIONS))
+  const every = Math.max(1, Math.floor(steps / decisions))
   for (let i = 0; i < steps; i++) {
     const h = (i * dt) / 3600
     if (hn && i % every === 0 && L - h > 0 && money > 0) {
       const b = planHacknetBatch({ servers: fleet, mults: hn.mults, nodeMoney: hn.nodeMoney, W: L - h, capital: r > 0 ? { capitalReturnPerSec: r, capitalCap: cap, capitalScaleW: inputs.capitalScaleW ?? null, capitalShape: inputs.capitalShape ?? null, capitalWarmupH: Math.max(0, warmH - h), money } : null, budget: money, maxItems: 60 })
       if (b.items.length) {
+        if (rec) rec.push({ h, buy: b.cost })
         money -= b.cost
         fleet = b.servers
         hashPerSec = fleet.reduce((a, x) => a + (hashRate(x.level, 0, x.ram, x.cores, hn.mults.hacknet_node_money, hn.nodeMoney) ?? 0), 0)
@@ -202,9 +202,43 @@ export function freshLifeMoney(inputs, L, scale = 1) {
     const cg = r > 0 && h >= warmH ? capitalGain(money, dt, capC) : 0
     const hackStep = fh ? Math.max(0, fhAt(h + dt / 3600) - fhAt(h)) : ((lvlIncome * (lvl + 50)) / 51) * dt
     money += hackStep + (flat + hashPerSec * DOLLARS_PER_HASH) * dt + Math.max(0, cg)
+    if (rec && hashPerSec > 0) rec.push({ h, dt, earn: hashPerSec * DOLLARS_PER_HASH * dt })
     exp += xpsAt(lvl) * dt
   }
   return cash0 + (money - cash0) * (pos(scale) ? scale : 1)
+}
+
+/**
+ * THE HACKNET OF A FRESH LIFE AS AN INCOME STREAM, [{atH: hours since the
+ * install, perSec}] — the fleet freshLifeMoney rebuilds (inputs.hacknet, the
+ * servers hacknet.js runs), for the exit's final window (exitplan
+ * freshHacknet). Its purchases are charged to its own income: what the fleet
+ * earns repays what was spent on it before any of it reaches the balance
+ * (a zero-interest loan from the balance, repaid within hours), so the stream
+ * is never negative and every server bought is paid for — the one thing not
+ * charged is the trader's compounding on the dollars lent. Null with no
+ * hacknet model. `L` the life simulated (its purchases stop paying back near
+ * its end); past it the last rate holds.
+ */
+export function freshHacknetFlow(inputs, L = 48, { stepH = 0.125, decideH = 0.25 } = {}) {
+  if (!(inputs?.hacknet && inputs.hacknet.mults && num(inputs.hacknet.nodeMoney))) return null
+  const rec = []
+  // Decided every decideH (hacknet.js re-plans every few minutes; the
+  // purchase model's 12 decisions a life are 4h apart over 48h).
+  const m = freshLifeMoney(inputs, L, 1, rec, { steps: Math.ceil(L / stepH), decisions: Math.ceil(L / decideH) })
+  if (m === null) return null
+  const out = []
+  let owed = 0
+  for (const r of rec) {
+    if (num(r.buy)) owed += r.buy
+    else if (num(r.earn) && r.dt > 0) {
+      const pay = Math.min(owed, r.earn)
+      owed -= pay
+      out.push({ atH: +r.h.toFixed(4), perSec: (r.earn - pay) / r.dt })
+    }
+  }
+  // Consecutive equal rates are one step.
+  return out.filter((x, i) => i === 0 || x.perSec !== out[i - 1].perSec)
 }
 
 /**

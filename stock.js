@@ -30,7 +30,7 @@
 
 import { enter as traceEnter, leave as traceLeave } from 'trace.js'
 import { newState, observe, decide, forecastOf, forecastSd, volOf, ticksToBoundary, SYMBOL_META, phaseRecord, phasePriorFrom } from 'stockstrat.js'
-import { buy4SVerdict, manipCurveAt, growthRate } from 'stockplan.js'
+import { buy4SVerdict, manipCurveAt, growthRate, fourSPlanOf } from 'stockplan.js'
 import { canShortStock } from 'sfgate.js'
 import { reserveFor, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
@@ -305,6 +305,8 @@ export async function main(ns) {
   let phaseLockTick = null
   let last = { orders: [], refused: [] }
   let v4s = null
+  let planFourS = null // the plan's committed 4S decision (stockplan.fourSPlanOf), re-read once a minute
+  let planFourSAt = 0
   // Return accounting (nodeecon.js returnPerSec/incomePerSec): each tick's
   // P&L is the change in post-trade equity plus the cash our own orders moved,
   // so deposits and withdrawals by other spenders never read as return.
@@ -479,10 +481,25 @@ export async function main(ns) {
       const wCap = ret.reduce((a, b) => a + b.capitalSec, 0)
 
       // ---- the 4S TIX API: a trajectory decision ----------------------------
+      // THE PLAN DECIDES IT (progress.js fourSDecisionOf, /tel/plan.txt
+      // decisions.fourS: the node's exit with vs without, across installs, on
+      // the curve r(W)); read once a minute. No fresh decision of this life:
+      // buy4SVerdict on this life's horizon, named as the fallback.
       if (!has4S && !flags.no4s && !hold) {
         const cost = consts.MarketDataTixApi4SCost * nodeMults.FourSigmaMarketDataApiCost
-        const life = flags.horizon >= 0 ? { hours: flags.horizon, why: '--horizon', source: 'flag' } : remainingLifeH(ns, info.lastAugReset)
-        v4s = buy4SVerdict({ wealth: wealth - (claimKnown ? R : 0), cost, horizonH: life.hours, canShort, why: life.why })
+        if (Date.now() - planFourSAt > 60e3) {
+          planFourSAt = Date.now()
+          if (ns.getHostname() !== 'home') ns.scp('/tel/plan.txt', ns.getHostname(), 'home')
+          planFourS = fourSPlanOf(ns.read('/tel/plan.txt'), info.lastAugReset)
+        }
+        if (planFourS) {
+          // The committed purchase is bought as soon as the book covers it
+          // (the trajectory priced it paid when the life's money reaches it).
+          v4s = { buy: planFourS.key === 'now' && wealth >= cost, decidedBy: 'plan (decisions.fourS)', planKey: planFourS.key, cost, why: `plan ${planFourS.at}: ${planFourS.key}${planFourS.key === 'now' && wealth < cost ? ` — waiting for the book ($${Math.round(wealth).toLocaleString()}) to cover $${Math.round(cost).toLocaleString()}` : ''}: ${planFourS.why}` }
+        } else {
+          const life = flags.horizon >= 0 ? { hours: flags.horizon, why: '--horizon', source: 'flag' } : remainingLifeH(ns, info.lastAugReset)
+          v4s = { ...buy4SVerdict({ wealth: wealth - (claimKnown ? R : 0), cost, horizonH: life.hours, canShort, why: life.why }), fallback: 'no fresh plan decision of this life (decisions.fourS): this life\'s horizon only' }
+        }
         if (v4s.buy && ns.getServerMoneyAvailable('home') >= cost) {
           v4s.bought = ns.stock.purchase4SMarketDataTixApi()
         } else if (v4s.buy) {

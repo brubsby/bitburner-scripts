@@ -231,6 +231,27 @@ export function buy4SVerdict({ wealth, cost, horizonH, canShort = false, why = n
   }
 }
 
+/**
+ * THE PLAN'S 4S DECISION (progress.js fourSDecisionOf, /tel/plan.txt
+ * decisions.fourS) as stock.js follows it: the purchase priced on the exit's
+ * trajectory — across installs, on the curve r(W) — which buy4SVerdict (this
+ * life's horizon) cannot see. `text` the plan file's contents. Returns
+ * {key: 'now' | 'none', why, at} from a record of THIS life no older than
+ * `maxAgeMin`, else null (stock.js then falls back to buy4SVerdict, named).
+ */
+export function fourSPlanOf(text, lastAugReset, now = Date.now(), maxAgeMin = 45) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  const d = rec?.decisions?.fourS
+  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  if (d?.key !== 'now' && d?.key !== 'none') return null
+  return { key: d.key, why: String(d.why ?? '').slice(0, 240), at: rec.at, meanH: d.meanH ?? null, deltaH: d.deltaH ?? null }
+}
+
 // ---------------------------------------------------------------------------
 // THE MANIPULATION CURVE (nodeecon.js `manipCurve`, read by batch.js through
 // expfarm.manipVerdict): the trader's return per second as a function of the
