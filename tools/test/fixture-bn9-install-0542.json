@@ -1,0 +1,947 @@
+{
+ "note": "live BN9 2026-09-29, life 1790620681588: exit inputs at 02:56 (/tel/exitinputs.txt, the last full copy of this life), the plan install decision at 05:36 (/tel/plan.txt: committed w0.083 -> install at 05:41:25, 72.48h, gains of a futures batch planned WITHOUT the count tickets), the install record at 05:42 (/tel/install-last.txt: 104.0h installing now) and the per-aug multipliers of the 18 augmentations actually bought (snap-augstats). TWO EXITS AT INSTALL.",
+ "exitinputs0256": {
+  "at": "2026-09-29T02:56:26.496Z",
+  "lastAugReset": 1790620681588,
+  "bitNode": 9,
+  "inputs": {
+   "money": 61987420366.70991,
+   "incomePerSec": 10219590.977509895,
+   "lifeIncome": 462297.2078346578,
+   "hacknet": {
+    "mults": {
+     "hacknet_node_money": 1.28,
+     "hacknet_node_purchase_cost": 0.78125,
+     "hacknet_node_level_cost": 0.78125,
+     "hacknet_node_ram_cost": 0.78125,
+     "hacknet_node_core_cost": 0.78125
+    },
+    "nodeMoney": 1
+   },
+   "hacking": 167,
+   "hackingExp": 987964.5659386134,
+   "hackingMult": 0.6912,
+   "expPerSec": 110.49331832130517,
+   "repPerSec": 2.142560054081368,
+   "exitRep": 0,
+   "exitFavor": 0,
+   "cycleHours": 6,
+   "multGainPerCycle": 1.0835585886127697,
+   "nextInstallGain": 1,
+   "installGains": {
+    "hacking": 1,
+    "rep": 1.265,
+    "income": 1,
+    "exp": 1.1
+   },
+   "persistBaseline": {
+    "hacking": 1,
+    "rep": 1.265,
+    "income": 1,
+    "exp": 1.1
+   },
+   "eRep": 0,
+   "eBudget": 0.1473,
+   "exitLevel": 6000,
+   "joinMoney": 100000000000,
+   "joinLevel": 2500,
+   "finalRootCost": 287200000,
+   "freshExpLagH": 5.823170426151631,
+   "terminalRep": 2500000,
+   "donationCost": null,
+   "favorToDonate": 150,
+   "flatIncomePerSec": 0,
+   "capitalReturnPerSec": 0.00027779803402309706,
+   "capitalWarmupH": 0,
+   "capitalFit": null,
+   "capitalCap": 9502934497089.076,
+   "installCash": 1262,
+   "workWhileDonating": false,
+   "cadence": {
+    "source": "purchase model",
+    "node": 9,
+    "lives": 0,
+    "stalls": 0,
+    "weight": 0,
+    "rateMedian": 0.06586152242137135,
+    "why": "life length chosen by the exit over what each length buys: 6h lives (x1.084 a life, 0.0134 ln(M)/h) exit 98.4h \u2014 reputation reset at every install (base 2.19/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x1.00 calibrated); not modelled: donations, rising faction_rep, sleeves, new joins, the count's value",
+    "measured": "cadence posterior for BitNode 9: ln(M) 0.0659/h (x4.75 either way at 80%), 3.30h a life -> x1.243 a cycle; 0 own gaining lives carry 0% of the rate, BitNode 8, 1 shrink it toward the cross-node mean; 6 re-recorded ledger entries merged",
+    "table": [
+     {
+      "L": 0.5,
+      "lives": 96,
+      "money": 17168141106,
+      "gain": 1.0035,
+      "perHour": 0.007,
+      "first": 1,
+      "firstNfg": 14,
+      "H": 128.31
+     },
+     {
+      "L": 1,
+      "lives": 48,
+      "money": 48951472294,
+      "gain": 1.0071,
+      "perHour": 0.007,
+      "first": 1,
+      "firstNfg": 15,
+      "H": 128.61
+     },
+     {
+      "L": 2,
+      "lives": 24,
+      "money": 191550988169,
+      "gain": 1.0216,
+      "perHour": 0.0107,
+      "first": 2,
+      "firstNfg": 16,
+      "H": 104.54
+     },
+     {
+      "L": 3,
+      "lives": 16,
+      "money": 580837102432,
+      "gain": 1.0345,
+      "perHour": 0.0113,
+      "first": 3,
+      "firstNfg": 17,
+      "H": 102.8
+     },
+     {
+      "L": 4,
+      "lives": 12,
+      "money": 1635137590497,
+      "gain": 1.0523,
+      "perHour": 0.0128,
+      "first": 3,
+      "firstNfg": 19,
+      "H": 98.49
+     },
+     {
+      "L": 6,
+      "lives": 8,
+      "money": 11887303239518,
+      "gain": 1.0836,
+      "perHour": 0.0134,
+      "first": 4,
+      "firstNfg": 21,
+      "H": 98.44
+     },
+     {
+      "L": 8,
+      "lives": 6,
+      "money": 30880240221922,
+      "gain": 1.1166,
+      "perHour": 0.0138,
+      "first": 4,
+      "firstNfg": 22,
+      "H": 99.16
+     },
+     {
+      "L": 12,
+      "lives": 4,
+      "money": 68870686920442,
+      "gain": 1.1858,
+      "perHour": 0.0142,
+      "first": 4,
+      "firstNfg": 24,
+      "H": 103.02
+     },
+     {
+      "L": 16,
+      "lives": 3,
+      "money": 106861922991475,
+      "gain": 1.2635,
+      "perHour": 0.0146,
+      "first": 4,
+      "firstNfg": 24,
+      "H": 109.65
+     },
+     {
+      "L": 24,
+      "lives": 2,
+      "money": 182850521195368,
+      "gain": 1.4203,
+      "perHour": 0.0146,
+      "first": 4,
+      "firstNfg": 25,
+      "H": 117.65
+     }
+    ],
+    "moneyCalibration": "UNCALIBRATED: no completed life in the earnings ledger \u2014 the exit model's fresh-life income taken as it is"
+   },
+   "finalGrafts": [
+    {
+     "name": "OmniTek InfoLoad",
+     "cost": 8625000000,
+     "slotH": 0.8305153026531141,
+     "hacking": 1.176,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module",
+     "cost": 750000000,
+     "slotH": 0.28306337654186614,
+     "hacking": 1.0584,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen I",
+     "cost": 210000000,
+     "slotH": 0.7146378689546223,
+     "hacking": 1.029,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen II",
+     "cost": 375000000,
+     "slotH": 0.9963526678693064,
+     "hacking": 1.0486,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen III",
+     "cost": 1650000000,
+     "slotH": 1.0214181997672203,
+     "hacking": 1.0682,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen IV",
+     "cost": 3300000000,
+     "slotH": 1.0631406680615823,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Cranial Signal Processors - Gen V",
+     "cost": 6750000000,
+     "slotH": 1.2064722603117857,
+     "hacking": 1.274,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "QLink",
+     "cost": 75000000000000,
+     "slotH": 1.7870306700720142,
+     "hacking": 1.7149999999999999,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "nextSENS Gene Modification",
+     "cost": 5775000000,
+     "slotH": 1.5509766681453374,
+     "hacking": 1.176,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core Implant",
+     "cost": 7500000000,
+     "slotH": 1.346215804095117,
+     "hacking": 1.0486,
+     "exp": 1.0486,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core V2 Upgrade",
+     "cost": 13500000000,
+     "slotH": 1.3865850413475147,
+     "hacking": 1.0584,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "Embedded Netburner Module Core V3 Upgrade",
+     "cost": 22500000000,
+     "slotH": 1.417891836440836,
+     "hacking": 1.078,
+     "exp": 1.225,
+     "rep": 0.98
+    },
+    {
+     "name": "Unstable Circadian Modulator",
+     "cost": 15000000000,
+     "slotH": 0.9984777438944127,
+     "hacking": 1.127,
+     "exp": 1.96,
+     "rep": 0.98
+    },
+    {
+     "name": "SPTN-97 Gene Modification",
+     "cost": 14625000000,
+     "slotH": 1.633808141980706,
+     "hacking": 1.127,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Xanipher",
+     "cost": 12750000000,
+     "slotH": 2.0001610279659885,
+     "hacking": 1.176,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuronal Densification",
+     "cost": 4125000000,
+     "slotH": 1.0255058935302153,
+     "hacking": 1.127,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "BitRunners Neurolink",
+     "cost": 13125000000,
+     "slotH": 1.236856394588478,
+     "hacking": 1.127,
+     "exp": 1.176,
+     "rep": 0.98
+    },
+    {
+     "name": "PC Direct-Neural Interface",
+     "cost": 11250000000,
+     "slotH": 0.8111418926499228,
+     "hacking": 1.0584,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "PC Direct-Neural Interface Optimization Submodule",
+     "cost": 13500000000,
+     "slotH": 0.9315883808678161,
+     "hacking": 1.078,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Artificial Bio-neural Network Implant",
+     "cost": 9000000000,
+     "slotH": 1.0295687379374858,
+     "hacking": 1.0976000000000001,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "CRTX42-AA Gene Modification",
+     "cost": 675000000,
+     "slotH": 0.7676339627139372,
+     "hacking": 1.0584,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "Neural Accelerator",
+     "cost": 5250000000,
+     "slotH": 1.0592774443175685,
+     "hacking": 1.078,
+     "exp": 1.127,
+     "rep": 0.98
+    },
+    {
+     "name": "PC Direct-Neural Interface NeuroNet Injector",
+     "cost": 22500000000,
+     "slotH": 1.1827418676144315,
+     "hacking": 1.078,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Enhanced Myelin Sheathing",
+     "cost": 4125000000,
+     "slotH": 1.0110882283300493,
+     "hacking": 1.0584,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "The Black Hand",
+     "cost": 1650000000,
+     "slotH": 1.373397717874428,
+     "hacking": 1.078,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "BitWire",
+     "cost": 30000000,
+     "slotH": 0.2642357696288807,
+     "hacking": 1.029,
+     "exp": 0.98,
+     "rep": 0.98
+    },
+    {
+     "name": "Power Recirculation Core",
+     "cost": 540000000,
+     "slotH": 1.9407142345773176,
+     "hacking": 1.029,
+     "exp": 1.078,
+     "rep": 0.98
+    },
+    {
+     "name": "Neuregen Gene Modification",
+     "cost": 1125000000,
+     "slotH": 0.4565040111336936,
+     "hacking": 0.98,
+     "exp": 1.3719999999999999,
+     "rep": 0.98
+    },
+    {
+     "name": "The Shadow's Simulacrum",
+     "cost": 1200000000,
+     "slotH": 0.7882905779372092,
+     "hacking": 0.98,
+     "exp": 0.98,
+     "rep": 1.127
+    }
+   ],
+   "graftStartMoney": 7530140500000,
+   "cadenceFrom": "purchase model",
+   "cadenceRateMedian": 0.06586152242137135
+  },
+  "eRep": 0,
+  "eBudget": 0.1473,
+  "W": 2.7496925,
+  "finalWindow": false,
+  "moneyAtW": 1079291560990.4017,
+  "lifeIncomeWhy": null,
+  "gainsByMoney": [
+   {
+    "money": 0,
+    "gains": null
+   },
+   {
+    "money": 269822890247.60043,
+    "gains": {
+     "hacking": 1.1347379435700002,
+     "rep": 1.2776533143,
+     "income": 1.1197850907696807,
+     "exp": 1.1110028820000002
+    }
+   },
+   {
+    "money": 539645780495.20087,
+    "gains": {
+     "hacking": 1.1914748407485003,
+     "rep": 1.2776533143,
+     "income": 1.1197850907696807,
+     "exp": 1.1110028820000002
+    }
+   },
+   {
+    "money": 809468670742.8013,
+    "gains": {
+     "hacking": 1.2033927108200682,
+     "rep": 1.2904331948946834,
+     "income": 1.1592003859722682,
+     "exp": 1.122115821647551
+    }
+   },
+   {
+    "money": 971362404891.3616,
+    "gains": {
+     "hacking": 1.2033927108200682,
+     "rep": 1.2904331948946834,
+     "income": 1.1592003859722682,
+     "exp": 1.122115821647551
+    }
+   },
+   {
+    "money": 1079291560990.4017,
+    "gains": {
+     "hacking": 1.2154297908171712,
+     "rep": 1.303340907778601,
+     "income": 1.2000030594394107,
+     "exp": 1.1333399198074794
+    }
+   },
+   {
+    "money": 1349114451238.0022,
+    "gains": {
+     "hacking": 1.2154297908171712,
+     "rep": 1.303340907778601,
+     "income": 1.2000030594394107,
+     "exp": 1.1333399198074794
+    }
+   },
+   {
+    "money": 1618937341485.6025,
+    "gains": {
+     "hacking": 1.2154297908171712,
+     "rep": 1.303340907778601,
+     "income": 1.2000030594394107,
+     "exp": 1.1333399198074794
+    }
+   },
+   {
+    "money": 2158583121980.8035,
+    "gains": {
+     "hacking": 1.2275872731513948,
+     "rep": 1.3163777316095653,
+     "income": 1.2422419454736064,
+     "exp": 1.144676288356144
+    }
+   }
+  ]
+ },
+ "planInstall0536": {
+  "key": "w0.083",
+  "install": false,
+  "installAt": 1790660485290,
+  "waitH": 0.083,
+  "routeKey": null,
+  "extra": null,
+  "fixed": {
+   "n": null,
+   "lifeH": null
+  },
+  "gains": {
+   "hacking": 1.3971559418351507,
+   "rep": 1.1843566591096286,
+   "income": 1.9512516084972802,
+   "exp": 1.1843566591096286
+  },
+  "spec": {
+   "kind": "wait",
+   "installAt": 1790660485290,
+   "waitH": 0.08259055555555556,
+   "n": null,
+   "lifeH": null,
+   "gains": {
+    "hacking": 1.3971559418351507,
+    "rep": 1.1843566591096286,
+    "income": 1.9512516084972802,
+    "exp": 1.1843566591096286
+   }
+  },
+  "noiseKey": "at:29844341|g29",
+  "pFeasible": 1,
+  "meanH": 72.482,
+  "q10": 63.962,
+  "q50": 72.028,
+  "q90": 80.746,
+  "pBest": 1,
+  "held": true,
+  "why": "held (no event): held (no event): held (no event): stays on committed: the best alternative w0.25 is expected -1.51h later net of a 0.05h switch cost and better in 17% of 24 paired draws (needs a positive gain and 80%)",
+  "decidedAt": "2026-09-29T05:21:28.129Z",
+  "options": [
+   {
+    "key": "committed",
+    "pointH": null,
+    "pFeasible": 1,
+    "meanH": 70.177,
+    "q10": 61.821,
+    "q50": 69.717,
+    "q90": 78.115,
+    "pBest": 0.667
+   },
+   {
+    "key": "w0.25",
+    "pointH": 71.474,
+    "pFeasible": 1,
+    "meanH": 71.638,
+    "q10": 63.421,
+    "q50": 71.839,
+    "q90": 77.38,
+    "pBest": 0.167
+   },
+   {
+    "key": "w0.5",
+    "pointH": 71.724,
+    "pFeasible": 1,
+    "meanH": 72.085,
+    "q10": 64.497,
+    "q50": 72.418,
+    "q90": 78.728,
+    "pBest": 0.083
+   },
+   {
+    "key": "w1",
+    "pointH": 72.224,
+    "pFeasible": 1,
+    "meanH": 72.118,
+    "q10": 64.759,
+    "q50": 72.409,
+    "q90": 81.337,
+    "pBest": 0.083
+   },
+   {
+    "key": "w1.7397662206746483",
+    "pointH": 72.431,
+    "pFeasible": 1,
+    "meanH": 72.879,
+    "q10": 64.498,
+    "q50": 72.936,
+    "q90": 79.615,
+    "pBest": 0
+   },
+   {
+    "key": "w2",
+    "pointH": 72.691,
+    "pFeasible": 1,
+    "meanH": 73.425,
+    "q10": 65.435,
+    "q50": 72.032,
+    "q90": 82.633,
+    "pBest": 0
+   },
+   {
+    "key": "w4",
+    "pointH": 74.072,
+    "pFeasible": 1,
+    "meanH": 73.929,
+    "q10": 66.387,
+    "q50": 73.176,
+    "q90": 82.753,
+    "pBest": 0
+   },
+   {
+    "key": "now",
+    "pointH": 101.632,
+    "pFeasible": 1,
+    "meanH": 101.428,
+    "q10": 88.609,
+    "q50": 99.452,
+    "q90": 113.44,
+    "pBest": 0
+   },
+   {
+    "key": "never",
+    "pointH": 7641.562,
+    "pFeasible": 1,
+    "meanH": 7530.343,
+    "q10": 6399.568,
+    "q50": 7230.559,
+    "q90": 8286.106,
+    "pBest": 0
+   }
+  ],
+  "n": 24,
+  "ms": 8.4,
+  "overBudget": false,
+  "inputsKey": "i1hdoj74"
+ },
+ "planExit0536": {
+  "meanH": 72.482,
+  "q10": 63.962,
+  "q50": 72.028,
+  "q90": 80.746,
+  "source": "install decision (w0.083)",
+  "income": "measured",
+  "rep": "reputation from the formula estimate (no faction work measured this life): 2.926/s base"
+ },
+ "planConsistency0536": {
+  "ok": true,
+  "sameBasis": true,
+  "installH": 72.482,
+  "graftsH": 72.482,
+  "diffH": 0,
+  "tolH": 1.674,
+  "why": "install and graft decisions price one trajectory: 72.482h vs 72.482h"
+ },
+ "plan0531": {
+  "meanH": 70.558,
+  "q10": 62.255,
+  "q50": 70.115,
+  "q90": 78.59,
+  "key": "w0.166",
+  "source": "transcript of /tel/plan.txt 05:31:28Z"
+ },
+ "installLast0542": {
+  "at": "2026-09-29T05:42:00.464Z",
+  "lastAugReset": 1790620681588,
+  "batchAt": "2026-09-29T05:41:28.522Z",
+  "why": "install: 18 aug(s) \u2014 the simulated exit installing now is 104.0h, the best wait unpriced, never installing 6767.9h",
+  "terminal": false,
+  "planInstall": "now",
+  "batch": [
+   "Hacknet Node Core Direct-Neural Interface",
+   "Speech Processor Implant",
+   "Hacknet Node Kernel Direct-Neural Interface",
+   "INFRARET Enhancement",
+   "Social Negotiation Assistant (S.N.A)",
+   "Combat Rib I",
+   "Nuoptimal Nootropic Injector Implant",
+   "ADR-V1 Pheromone Gene",
+   "Augmented Targeting I",
+   "Speech Enhancement",
+   "Hacknet Node CPU Architecture Neural-Upload",
+   "Hacknet Node Cache Architecture Neural-Upload",
+   "Hacknet Node NIC Architecture Neural-Upload",
+   "Neurotrainer I",
+   "Wired Reflexes",
+   "NutriGen Implant",
+   "NeuroFlux Governor",
+   "NeuroFlux Governor"
+  ],
+  "bought": 18,
+  "results": [
+   {
+    "kind": "liquidate",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   }
+  ]
+ },
+ "boughtMults": {
+  "ADR-V1 Pheromone Gene": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1.1
+  },
+  "Combat Rib I": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Social Negotiation Assistant (S.N.A)": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1.15
+  },
+  "Speech Processor Implant": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Hacknet Node Kernel Direct-Neural Interface": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "NutriGen Implant": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "NeuroFlux Governor": {
+   "hacking_chance": 1.01000262,
+   "hacking_speed": 1.01000262,
+   "hacking_money": 1.01000262,
+   "hacking_grow": 1.01000262,
+   "hacking": 1.01000262,
+   "hacking_exp": 1.01000262,
+   "faction_rep": 1.01000262
+  },
+  "INFRARET Enhancement": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Hacknet Node Cache Architecture Neural-Upload": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Neurotrainer I": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1.1,
+   "faction_rep": 1
+  },
+  "Hacknet Node CPU Architecture Neural-Upload": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Hacknet Node NIC Architecture Neural-Upload": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Wired Reflexes": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Nuoptimal Nootropic Injector Implant": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Hacknet Node Core Direct-Neural Interface": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Augmented Targeting I": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  },
+  "Speech Enhancement": {
+   "hacking_chance": 1,
+   "hacking_speed": 1,
+   "hacking_money": 1,
+   "hacking_grow": 1,
+   "hacking": 1,
+   "hacking_exp": 1,
+   "faction_rep": 1
+  }
+ },
+ "stock0536": {
+  "wealth": 196204957040.6464,
+  "cash": 40549941.976664245,
+  "equity": 196164407098.66974,
+  "returnPerSec": 0.00013245032730599553,
+  "lastAugReset": 1790620681588
+ }
+}

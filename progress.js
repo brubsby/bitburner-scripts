@@ -170,7 +170,7 @@ import { enter, leave } from 'trace.js'
 // the commitment rule. Pure: free to import.
 import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, modelVersionFrom } from 'plan.js'
 import { incomePrior, incomePosterior, lifeHackingObservation } from 'bayes.js'
-import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases } from 'lifeplan.js'
+import { catalogueFromOffers, moneyScaleOf, cadenceByPurchases, nodeFactionsOf } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1724,6 +1724,13 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
 const GRAFT_SEARCH_MS = 250
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
 let ownedAugsNow = new Set() // this pass's owned + queued augmentations (the purchase model's prerequisites)
+// THE NODE'S CATALOGUE for the purchase model's later lives: this pass's
+// offers plus those of every faction an earlier life of this node joined
+// (lifeplan.nodeFactionsOf, persisted in NODE_FACTIONS_FILE). Null when no
+// faction is missing from this life's joined set (the offers are the catalogue).
+let cadenceOffersNow = null
+let cadenceKeptWhy = null
+const NODE_FACTIONS_FILE = '/tel/node-factions.txt'
 let redPillRepReq = null // the catalogue's Red Pill requirement this pass (exitInputsOf)
 async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, countCtx = null) {
   const pc = planCtxOf(ns, info)
@@ -2798,9 +2805,11 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
   // lives must be short (live BN1 2026-09-28: one-ticket lives of ~25 min
   // had become the cadence). The measured rate still scales the draws
   // (plan.applyDraw, cadenceRateMedian).
-  const pc = Array.isArray(offers) && offers.length ? purchaseCadenceOf(ns, info, out, offers, ownedAugsNow) : null
+  // The NODE's catalogue (cadenceOffersNow): a fresh life has joined nothing.
+  const cOffers = cadenceOffersNow?.length ? cadenceOffersNow : offers
+  const pc = Array.isArray(cOffers) && cOffers.length ? purchaseCadenceOf(ns, info, out, cOffers, ownedAugsNow) : null
   if (pc && !pc.error && typeof pc.cycleHours === 'number' && pc.multGainPerCycle > 1) {
-    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle, cadenceFrom: 'purchase model', cadenceRateMedian: out.cadence?.rateMedian ?? null, cadence: { ...(out.cadence ?? {}), source: 'purchase model', why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration } }
+    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle, cadenceFrom: 'purchase model', cadenceRateMedian: out.cadence?.rateMedian ?? null, cadence: { ...(out.cadence ?? {}), source: 'purchase model', why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration, catalogue: cadenceKeptWhy ?? 'this life\'s offers' } }
   }
   return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
 }
@@ -3649,6 +3658,8 @@ async function act(ns, canJoin, info, note) {
   let countRouteNow = null
   let candidates = []
   let joinState = null
+  cadenceOffersNow = null
+  cadenceKeptWhy = null
   if (canBuyAug) {
     const count = (list) => list.reduce((m, a) => m.set(a, (m.get(a) ?? 0) + 1), new Map())
     installedCount = count(sing.ownedAugs(false))
@@ -3712,6 +3723,34 @@ async function act(ns, canJoin, info, note) {
           nfgLevel: 0,
         })
       }
+    }
+
+    // THE NODE'S CATALOGUE, for the purchase model's LATER lives (not for
+    // anything bought now): an install resets membership, so a fresh life's
+    // offers are empty while the lives after it re-join the same factions.
+    // Priced from the snapshots at today's prices and favour, reputation 0.
+    try {
+      const nf = nodeFactionsOf(readJson(ns, NODE_FACTIONS_FILE), info?.currentNode ?? null, player.factions)
+      if (nf.added) ns.write(NODE_FACTIONS_FILE, JSON.stringify({ at: new Date().toISOString(), node: info?.currentNode ?? null, factions: nf.factions }), 'w')
+      const extra = []
+      const skipped = []
+      for (const f of nf.factions) {
+        if (player.factions.includes(f)) continue
+        try {
+          const favor = sing.factionFavor(f)
+          for (const aug of sing.factionAugs(f)) {
+            if (allCount.has(aug) && aug !== NFG) continue
+            extra.push({ name: aug, faction: f, baseCost: sing.augPrice(aug) / (isSoa(aug) ? 1 : unqueue), repReq: sing.augRepReq(aug), factionRep: 0, mults: sing.augStats(aug), prereqs: sing.augPrereq(aug), favor, nfgLevel: 0, kept: true })
+          }
+        } catch {
+          skipped.push(f)
+        }
+      }
+      cadenceOffersNow = extra.length ? [...offers, ...extra] : null
+      cadenceKeptWhy = extra.length || skipped.length ? `${nf.why}: ${extra.length} offer(s) from factions not joined this life${skipped.length ? `; unreadable in the snapshots: ${skipped.join(', ')}` : ''}` : null
+    } catch (e) {
+      cadenceOffersNow = null
+      cadenceKeptWhy = `the node's catalogue could not be built (${String(e).slice(0, 80)}): this life's offers only`
     }
 
     // THE ENDGAME OBJECTIVE rides every plan: Daedalus admits at a distinct-
@@ -5334,6 +5373,11 @@ async function act(ns, canJoin, info, note) {
     const incomePriced = incomePerSec > 0 || econNow.capitalReturnPerSec > 0 || econNow.lifePerSec > 0
     const liveCapital = ns.getServerMoneyAvailable('home') + stockEquity
     let futures = []
+    // THE BATCH AN INSTALL AFTER waitH BUYS (null: unpriced) — one function
+    // for every install time: the wait options below, the committed install
+    // (plan.decideInstallGen point.committedGains) and, at wait 0, exactly the batch
+    // the purchase step buys now (`plan`).
+    let futureBatchAt = null
     let incomeCalibration = null
     let futuresCalibration = null
     let futurePredictions = []
@@ -5403,32 +5447,43 @@ async function act(ns, canJoin, info, note) {
         ...gangUnlockWaits,
         ...lifeWaits,
       ]
+      // THE BATCH A WAIT BUYS IS PLANNED BY THE PURCHASE STEP'S OWN PLANNER
+      // (replanAt: the same ticketsWanted, oneoff context and channel weights
+      // as `plan`), on the offers and money that wait reaches. It called
+      // planPurchases with its own argument list, WITHOUT the count tickets:
+      // live BN9 2026-09-29 every wait priced a hacking batch (x1.397 hacking,
+      // x1.951 income, 70.6h) while installing now priced the ticket batch
+      // the purchase step actually buys (x1.02 / x1.06, 101.6h) — a 30h
+      // phantom for a 15-minute wait, and the install at 05:42 ran on 104h
+      // against a committed 70.6h (TWO EXITS AT INSTALL).
+      futureBatchAt = (waitH, cand = {}) => {
+        const { hold = null } = cand
+        if (typeof replanAt !== 'function' || !(typeof waitH === 'number' && isFinite(waitH) && waitH >= 0)) return null
+        const repGain = ftraj ? ftraj.repBetween(0, waitH, favMult) : 0
+        const moneyGain = itraj ? itraj.moneyBy(waitH) : incomePerSec * waitH * 3600
+        const gangRep = gangRepIn(waitH)
+        const advanced = offers.map((o) => {
+          let rep = o.factionRep
+          if (repGain > 0 && o.faction === workingF) rep += repGain
+          if (hold && o.faction === hold.faction) rep = Math.max(rep, hold.repTarget)
+          if (gangRep !== null && gangCtx && o.faction === gangCtx.faction) rep = Math.max(rep, gangRep)
+          return rep !== o.factionRep ? { ...o, factionRep: rep } : o
+        })
+        const f = replanAt(liveCapital + moneyGain, advanced)
+        return f ? { f, repGain, moneyGain, gangRep } : null
+      }
       for (const cand of candidates) {
         const { waitH, hold, gangUnlock, lifeTarget } = cand
         const waitMs = waitH * 3600000
         try {
-          const repGain = ftraj ? ftraj.repBetween(0, waitH, favMult) : 0
-          const moneyGain = itraj ? itraj.moneyBy(waitH) : incomePerSec * waitH * 3600
-          const gangRep = gangRepIn(waitH)
-          const f = planPurchases({
-            // Advance the worked faction along its trajectory; a hold
-            // additionally lifts ITS faction to the target the continuous
-            // grind reaches — that is the hold's entire point.
-            offers: offers.map((o) => {
-              let rep = o.factionRep
-              if (repGain > 0 && o.faction === workingF) rep += repGain
-              if (hold && o.faction === hold.faction) rep = Math.max(rep, hold.repTarget)
-              if (gangRep !== null && gangCtx && o.faction === gangCtx.faction) rep = Math.max(rep, gangRep)
-              return rep !== o.factionRep ? { ...o, factionRep: rep } : o
-            }),
-            money: liveCapital + moneyGain,
-            r: BASE_PRICE_MULT,
-            nodeMoneyMult: 1,
-            owned: [...installedCount.keys()],
-            soaOwned: [...allCount.keys()].filter(isSoa).length,
-            channelWeights,
-            channels: channelsUsed,
-          })
+          // Advance the worked faction along its trajectory; a hold
+          // additionally lifts ITS faction to the target the continuous
+          // grind reaches — that is the hold's entire point.
+          const fb = futureBatchAt(waitH, cand)
+          const f = fb?.f ?? null
+          const repGain = fb?.repGain ?? 0
+          const gangRep = fb?.gangRep ?? null
+          const moneyGain = fb?.moneyGain ?? 0
           if (f && f.M > 1)
             futures.push({
               waitMs,
@@ -5615,6 +5670,19 @@ async function act(ns, canJoin, info, note) {
         }
         const now = bestExitPolicy({ ...inputs, firstInstallH: 0 }, 400, 1)
         const never = bestExitPolicy(inputs, 0, 0)
+        // THE COMMITTED INSTALL'S BATCH, re-planned on this pass's state by the
+        // same function as every wait (futureBatchAt -> replanAt), at its
+        // remaining wait — not the batch frozen when it was committed.
+        const committedGains = (() => {
+          try {
+            const spec = basisOf(planCtxOf(ns, info)?.prev?.decisions?.install ?? null, Date.now())
+            if (!(spec?.kind === 'wait' && spec.waitH > 0.05) || typeof futureBatchAt !== 'function') return null
+            const fb = futureBatchAt(spec.waitH)
+            return fb?.f ? installGainsOf([...(fb.f.buy ?? []).map((b) => b?.name), ...pending], offers) : null
+          } catch {
+            return null
+          }
+        })()
         const waits = futures.map((f) => {
           const g = installGainsOf([...(f.buy ?? []), ...pending], offers)
           const r = bestExitPolicy({ ...inputs, firstInstallH: f.waitMs / 3600000, installGains: g, nextInstallGain: g?.hacking ?? null }, 400, 1)
@@ -5628,7 +5696,7 @@ async function act(ns, canJoin, info, note) {
           atSearchEdge: now.atSearchEdge === true,
           why: now.best ? null : now.why,
           joinModelled: inputs.joinMoney > 0 && typeof inputs.installCash === 'number' && typeof inputs.joinLevel === 'number',
-          bayes: now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null })), never: { hours: never.best?.hours ?? null } }) : null,
+          bayes: now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null })), never: { hours: never.best?.hours ?? null }, committedGains }) : null,
         }
       } catch (e) {
         return { nowH: null, why: `exit comparison threw: ${String(e).slice(0, 80)}` }
@@ -5660,7 +5728,11 @@ async function act(ns, canJoin, info, note) {
           }
         }
       }
-      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02 })
+      // ... and, when the plan installs now, that the install actor's exit
+      // (the gate's simulated nowH, which act.js records as the install's
+      // reason) and the exit the plan committed for this install agree with
+      // the plan's 'now' (plan.installExitsOf: TWO EXITS AT INSTALL).
+      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02, atInstall: { actorH: typeof exitCompare?.nowH === 'number' && isFinite(exitCompare.nowH) ? exitCompare.nowH : null, now: Date.now() } })
     }
     // The route's exit on THIS pass's inputs, from the gate's own comparison.
     if (countRouteNow?.chosen && exitCompare?.countAware) {
@@ -6277,6 +6349,14 @@ async function act(ns, canJoin, info, note) {
         orders[orders.length - 1].terminal = gate.terminal === true
         orders[orders.length - 1].planInstall = gate.planDecision?.key ?? null
         orders[orders.length - 1].batch = [...pending, ...bought]
+        // THE EXITS THIS INSTALL RAN ON (act.js copies them into
+        // /tel/install-last.txt, the record that outlives the life): the
+        // actor's, the plan's 'now', the plan's commitment, and the verdict.
+        orders[orders.length - 1].exits = (() => {
+          const ie = planCtx?.consistency?.install ?? null
+          const pi = planCtx?.decisions?.install ?? null
+          return { ok: ie?.ok ?? null, why: ie?.why ?? (pi ? `the plan's install decision is ${pi.key}: not compared` : 'no plan decision this pass'), actorH: typeof exitCompare?.nowH === 'number' ? +exitCompare.nowH.toFixed(3) : null, planKey: pi?.key ?? null, planH: pi?.meanH ?? null, planPointH: pi?.pointH ?? null, commitment: pi?.commitment ?? null, checks: ie?.checks ?? null }
+        })()
         ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
         publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
         flushOrders()

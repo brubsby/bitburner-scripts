@@ -663,10 +663,16 @@ if (!sleevesExpected) {
   // gate, not broken, inside its CPU budget, and its predictive intervals
   // calibrated (planCheck in plan.js, shared with the suite).
   {
-    const { planCheck } = await import("../plan.js");
+    const { planCheck, installRecordCheck } = await import("../plan.js");
     const r = planCheck(readTel("plan.txt"), { gate, progress: prog, now: Date.now() });
     for (const f of r.fails) fail(f.what, f.detail);
     for (const n of r.notes) note(n);
+    // TWO EXITS AT INSTALL, after the fact: plan.txt belongs to the next life
+    // once an install runs, so the verdict the install order carried
+    // (act.js /tel/install-last.txt `exits`) is where it survives.
+    const ri = installRecordCheck(readTel("install-last.txt"), { now: Date.now() });
+    for (const f of ri.fails) fail(f.what, f.detail);
+    for (const n of ri.notes) note(n);
   }
   const windowH = gate?.objective?.windowH;
   now.exitH = num(exitH) ? exitH : null;

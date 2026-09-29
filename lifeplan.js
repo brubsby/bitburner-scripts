@@ -79,6 +79,27 @@ export function catalogueOf({ catalog, price, repReq, stats, prereq, owned, join
 }
 
 /**
+ * THE FACTIONS LATER LIVES BUY FROM: every faction this node's lives have
+ * joined (`kept`, the persisted record, same node only) together with the
+ * ones joined now. An install resets membership, so right after one the
+ * joined set is empty and a catalogue of the JOINED factions is empty too —
+ * the purchase model then did not price at all and the cadence fell back to
+ * one thin measured life (live BN9 2026-09-29 05:46: x1.025 per 6.63h, the
+ * fresh life's exit 272h against the 104h the install was priced on). Later
+ * lives re-join the same factions, so their catalogue is the node's.
+ * Returns {node, factions, added, why}; `added` is true when the union grew
+ * (the caller persists it then).
+ */
+export function nodeFactionsOf(kept, node, joined) {
+  const same = kept && kept.node === node && Array.isArray(kept.factions)
+  const before = same ? kept.factions.filter((f) => typeof f === 'string') : []
+  const set = new Set(before)
+  for (const f of joined ?? []) if (typeof f === 'string') set.add(f)
+  const factions = [...set]
+  return { node, factions, added: factions.length > before.length || !same, why: same ? `${factions.length} faction(s) joined in this node (${factions.length - (joined ?? []).length} not joined this life)` : `no record for BitNode ${node}: this life's ${factions.length} faction(s)` }
+}
+
+/**
  * The same catalogue from progress.js's offers ({name, faction, baseCost,
  * repReq, mults, prereqs, favor}), one row per augmentation with every
  * faction that sells it; favour per faction from the offers.

@@ -337,7 +337,9 @@ export async function run() {
     c10.examined(calls.length);
     // One feed since every exit simulation shares exitInputsOf (CLAUDE.md: one builder).
     if (calls.length < 1) c10.fail(`expected the exit input builder's feed, found ${calls.length}`);
-    const builder = src.slice(src.indexOf("function exitInputsOf"), src.indexOf("function exitInputsOf") + 2500);
+    // The builder is exitInputsOf over exitInputsBaseOf (the purchase-model
+    // cadence wraps the base): the feed lives in the base.
+    const builder = src.slice(src.indexOf("function exitInputsBaseOf"), src.indexOf("function exitInputsBaseOf") + 2500);
     if (!/expPerSecWithFleet\(exitExpPerSec\(ns, schedule\),/.test(builder)) c10.fail("exitInputsOf must feed the exit from exitExpPerSec");
     for (const m of calls) {
       if (!/^\s*exitExpPerSec\(ns, schedule\),/.test(m[1])) c10.fail(`exit exp rate fed from '${m[1].trim()}' — schedule.expPerSec alone is 0 while the batcher is not training and prices the climb at ~1e45h`);

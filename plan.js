@@ -452,14 +452,37 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   // relative to its own detour, so it is committed by key while the route
   // is the same.
   let committedKey = null
+  // The committed install ran out its wait this pass: 'now' IS the committed
+  // trajectory (same act, same batch function), not a switch to another one.
+  let elapsed = false
   if (sameLife && prev && typeof prev.key === 'string' && prev.key.startsWith('r') && opts.some((o) => o.key === prev.key && o.routeKey === prev.routeKey)) committedKey = prev.key
   else if (sameLife && prev && (fin(prev.installAt) || prev.key === 'never')) {
     if (prev.key === 'never') committedKey = opts.some((o) => o.key === 'never') ? 'never' : null
     else {
       const spec = basisOf(prev, now)
-      if (spec && spec.waitH <= 0.05) committedKey = opts.some((o) => o.key === 'now') ? 'now' : null
-      else if (spec) {
-        add('committed', spec, null)
+      if (spec && spec.waitH <= 0.05) {
+        committedKey = opts.some((o) => o.key === 'now') ? 'now' : null
+        elapsed = committedKey === 'now'
+      } else if (spec) {
+        // THE COMMITTED INSTALL BUYS WHAT THE PLANNER BUYS AT ITS INSTALL
+        // POINT — re-planned this pass (point.gainsAt, the same batch function
+        // as every wait option and, at wait 0, as 'now'), not the batch frozen
+        // when it was first chosen. Frozen, the commitment priced a batch the
+        // purchase step never buys: live BN9 2026-09-29 the committed w0.166
+        // carried hacking x1.397 / income x1.951 (70.6h) while the 18 augs
+        // actually bought at 05:41 were x1.02 / x1.06 (104h installing).
+        // point.committedGains: the caller's batch at this remaining wait,
+        // computed outside the sliced search (a purchase plan is one long
+        // synchronous step); point.gainsAt(waitH) where no precomputed one.
+        const g = count !== null ? null : P0.committedGains ?? (typeof P0.gainsAt === 'function' ? P0.gainsAt(spec.waitH) : null)
+        const specNow = g ? { ...spec, gains: g } : spec
+        let pointH = null
+        try {
+          pointH = trajectoryOf(specNow, ctx)(inputs)
+        } catch {
+          pointH = null
+        }
+        add('committed', specNow, fin(pointH) ? pointH : null)
         committedKey = 'committed'
       }
     }
@@ -475,7 +498,19 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const installAt = sp.kind === 'wait' ? sp.installAt : null
     const waitH = sp.kind === 'wait' ? sp.waitH : sp.kind === 'route' ? o.pointH : null
     const { route, ...specOut } = sp
-    return { key: key === 'committed' ? `w${r3(sp.waitH)}` : key, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, spec: specOut, noiseKey: o.noiseKey, ...stats[key], ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+    const outKey = key === 'committed' ? `w${r3(sp.waitH)}` : key
+    // THE COMMITMENT: the exit this plan priced for the install it committed
+    // to (mean over the draws and the point), and when. Refreshed every pass
+    // the plan holds an install point; carried unchanged through the pass on
+    // which the committed wait runs out ('now' by elapse), so the exit the
+    // install actor acts on can be compared with the exit the plan committed
+    // to for the same act (installExitsOf: TWO EXITS AT INSTALL). A 'now'
+    // chosen by a switch starts a new commitment.
+    // A record from before commitments were published: its own exit, undated.
+    const pc = prev?.commitment ?? (prev && prev.key !== 'now' && fin(prev.meanH) ? { key: prev.key, meanH: prev.meanH, pointH: null, at: null, installAt: prev.installAt ?? null, noiseKey: prev.noiseKey ?? null, n: prev.n ?? null } : null)
+    const carried = key === 'now' && elapsed && pc && fin(pc.meanH) && (!pc.at || now - Date.parse(pc.at) <= 60 * 60e3)
+    const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
+    return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
   if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${prev?.why ?? ''}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows })
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
@@ -578,7 +613,74 @@ export function inputsKeyOf(inputs) {
   }
   return `i${(hashOf(s) >>> 0).toString(36)}`
 }
-export function consistencyOf(install, grafts, { si = 0.02 } = {}) {
+/**
+ * TWO EXITS AT INSTALL. When the plan's install decision is 'now', three
+ * numbers price ONE act — installing this batch now:
+ *   - the plan's 'now' (its mean over the draws, and its point),
+ *   - the commitment the plan made for this install (install.commitment: the
+ *     committed wait's exit on the last pass it was held, carried through the
+ *     pass on which the wait ran out), less the hours since it was priced,
+ *   - the install actor's own simulated exit (installgate's nowH, `actorH`:
+ *     the number act.js records in /tel/install-last.txt as its reason).
+ * They must agree. Live BN9 2026-09-29: the plan committed 70.6h (80%
+ * 62.3-78.6h) to installing at 05:41, and the install at 05:42 recorded
+ * "the simulated exit installing now is 104.0h" — the committed wait priced a
+ * batch (futures planned without the count tickets) the purchase step never
+ * buys. Tolerance: 5% of the exit, or the Monte Carlo's option-specific noise
+ * (as consistencyOf) where larger; a pass's own drift is well inside it (the
+ * commitment is at most one pass old). Returns {ok, checks, tolH, why}.
+ */
+export const INSTALL_EXIT_TOL = { rel: 0.05, maxCarryMin: 60 }
+export function installExitsOf(install, { actorH = null, now = Date.now(), si = 0.02 } = {}) {
+  if (!install?.key || !fin(install.meanH)) return { ok: null, why: 'no install decision this pass' }
+  if (install.key !== 'now') return { ok: null, why: `the plan installs at ${install.key}, not now: no install exit to compare` }
+  const N = Math.max(1, install.n ?? 1)
+  const tolOf = (h) => Math.max(INSTALL_EXIT_TOL.rel * h, (4 * Math.SQRT2 * si * h) / Math.sqrt(N))
+  const checks = []
+  const c = install.commitment ?? null
+  const agedH = c?.at && fin(Date.parse(c.at)) ? Math.max(0, (now - Date.parse(c.at)) / 3.6e6) : 0
+  const own = c && c.key !== 'now' ? c : null
+  if (own && fin(own.meanH)) {
+    const expH = own.meanH - agedH
+    checks.push({ what: 'plan now vs the plan\'s commitment', a: install.meanH, b: +expH.toFixed(3), aName: `the plan's 'now' ${install.meanH}h`, bName: `its commitment ${own.key} ${own.meanH}h priced ${(agedH * 60).toFixed(0)} min ago` })
+  }
+  if (fin(actorH)) {
+    // Point against point where the commitment carries one (no Monte Carlo
+    // noise on either side), else against the plan's own 'now' point.
+    if (own && fin(own.pointH)) checks.push({ what: 'install actor vs the plan\'s commitment', a: actorH, b: +(own.pointH - agedH).toFixed(3), aName: `the install actor's ${(+actorH).toFixed(2)}h`, bName: `the commitment ${own.key}'s point ${own.pointH}h priced ${(agedH * 60).toFixed(0)} min ago` })
+    const nowPoint = fin(install.pointH) ? install.pointH : install.meanH
+    checks.push({ what: 'install actor vs the plan\'s now', a: actorH, b: nowPoint, aName: `the install actor's ${(+actorH).toFixed(2)}h`, bName: `the plan's 'now' ${nowPoint}h` })
+  }
+  if (!checks.length) return { ok: null, why: 'installing now: no commitment and no install-actor exit to compare' }
+  for (const k of checks) {
+    k.diffH = +(k.a - k.b).toFixed(3)
+    k.tolH = +tolOf(Math.max(k.a, k.b)).toFixed(3)
+    k.ok = Math.abs(k.diffH) <= k.tolH
+  }
+  const bad = checks.filter((k) => !k.ok)
+  const worst = [...checks].sort((a, b) => Math.abs(b.diffH) - Math.abs(a.diffH))[0]
+  return {
+    ok: bad.length === 0,
+    checks,
+    diffH: worst.diffH,
+    tolH: worst.tolH,
+    why: bad.length
+      ? `TWO EXITS AT INSTALL: ${bad.map((k) => `${k.aName} vs ${k.bName} differ by ${k.diffH}h (tolerance ${k.tolH}h)`).join('; ')}`
+      : `one exit at install: ${checks.map((k) => `${k.aName} ~ ${k.bName}`).join('; ')}`,
+  }
+}
+
+export function consistencyOf(install, grafts, { si = 0.02, atInstall = null } = {}) {
+  const g = graftConsistencyOf(install, grafts, { si })
+  if (!atInstall) return g
+  // The install check runs whatever the graft decision did this pass; the
+  // graft result stays readable on its own (graftOk / graftWhy).
+  const ie = installExitsOf(install, { ...atInstall, si })
+  const ok = g.ok === false || ie.ok === false ? false : g.ok === true || ie.ok === true ? true : null
+  const why = ie.ok === false ? (g.ok === false ? `${ie.why}; ${g.why}` : ie.why) : ie.ok === null ? g.why : `${g.why}; ${ie.why}`
+  return { ...g, ok, why, graftOk: g.ok ?? null, graftWhy: g.why ?? null, install: ie }
+}
+function graftConsistencyOf(install, grafts, { si = 0.02 } = {}) {
   if (!install?.key || !fin(install.meanH)) return { ok: null, why: 'no install decision this pass' }
   if (!grafts?.key || !grafts.basisNoiseKey) return { ok: null, why: 'no graft decision priced on a basis this pass' }
   const sameBasis = grafts.basisNoiseKey === install.noiseKey
@@ -697,8 +799,16 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   else if (cpu && !('maxBlockMs' in cpu) && cpu.overBudget) fail(`PLAN OVER CPU BUDGET: ${cpu.ms}ms against ${cpu.budgetMs}ms`, 'the Monte Carlo runs on the game\'s main thread (the page has frozen before) — lower PLAN.N or PLAN.topK')
   if (cpu && cpu.truncated) notes.push(`plan Monte Carlo truncated at its ${cpu.budgetMs}ms work budget (${cpu.draws} of ${cpu.N} draws)`)
   if (cpu && fin(cpu.draws) && cpu.draws < 8 && fin(cpu.N)) fail(`PLAN UNDER-SAMPLED: ${cpu.draws} of ${cpu.N} draws`, 'the work budget stopped the Monte Carlo before its probabilities mean anything — the decision rests on too few paired draws')
-  if (plan.consistency?.ok === false) fail(`PLAN INCONSISTENT: ${plan.consistency.why}`, 'two decisions of the one plan price its committed trajectory differently — they are not reading the same basis (plan.basisOf / trajectoryOf)')
-  else if (plan.consistency?.why) notes.push(`plan consistency: ${plan.consistency.why}`)
+  // TWO EXITS AT INSTALL (plan.installExitsOf) and the graft decision's
+  // basis (graftConsistencyOf) are separate failures with separate causes.
+  const cons = plan.consistency ?? null
+  const ie = cons?.install ?? null
+  const graftOk = cons && 'graftOk' in cons ? cons.graftOk : cons?.ok
+  const graftWhy = cons && 'graftWhy' in cons ? cons.graftWhy : cons?.why
+  if (ie?.ok === false) fail(String(ie.why).startsWith('TWO EXITS AT INSTALL') ? ie.why : `TWO EXITS AT INSTALL: ${ie.why}`, 'the install actor, the plan\'s \'now\' and the exit the plan committed for this install price one act differently — one of them is pricing another batch or trajectory (plan.installExitsOf; every install time\'s batch comes from replanAt, the purchase step\'s planner)')
+  else if (ie?.why) notes.push(`plan install exits: ${ie.why}`)
+  if (graftOk === false) fail(`PLAN INCONSISTENT: ${graftWhy}`, 'two decisions of the one plan price its committed trajectory differently — they are not reading the same basis (plan.basisOf / trajectoryOf)')
+  else if (graftWhy) notes.push(`plan consistency: ${graftWhy}`)
   const c = plan.calibration
   if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
   else if (c) notes.push(`plan calibration: ${c.why ?? 'none'}`)
@@ -715,6 +825,30 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   if (d.countRoute?.key) notes.push(`plan route: ${d.countRoute.name} at ${d.countRoute.faction} via ${d.countRoute.via}${d.countRoute.held ? ' (held)' : ''} — ${String(d.countRoute.why ?? '').slice(0, 160)}`)
   if (d.install?.key) notes.push(`plan install: ${d.install.key}${d.install.held ? ' (held)' : ''} — ${String(d.install.why ?? '').slice(0, 160)}`)
   if (cpu) notes.push(fin(cpu.maxBlockMs) ? `plan cpu: ${cpu.cpuMs}ms work over ${cpu.wallMs}ms wall, longest block ${cpu.maxBlockMs}ms (${cpu.yields} yields), ${cpu.draws} draws` : `plan cpu: ${cpu.ms}ms of ${cpu.budgetMs}ms, ${cpu.draws} draws`)
+  return { fails, notes }
+}
+
+/**
+ * THE LAST INSTALL'S EXITS (/tel/install-last.txt, written by act.js from the
+ * install order before the install runs). After an install plan.txt belongs
+ * to the next life, so this record is where the comparison survives: the
+ * order carries installExitsOf's verdict on the pass that ordered it. A
+ * failed one stays a failure for `holdH` hours after the install (the
+ * healthcheck's F section reads it every run). Returns {fails, notes}.
+ */
+export function installRecordCheck(rec, { now = Date.now(), holdH = 12 } = {}) {
+  const fails = []
+  const notes = []
+  if (!rec || !rec.at) return { fails, notes }
+  const ageH = (now - Date.parse(rec.at)) / 3.6e6
+  if (!(ageH >= 0 && ageH <= holdH)) return { fails, notes }
+  const ex = rec.exits ?? null
+  if (!ex) {
+    notes.push(`last install (${ageH.toFixed(1)}h ago) recorded no exit comparison${rec.terminal ? ' (terminal install)' : ''}`)
+    return { fails, notes }
+  }
+  if (ex.ok === false) fails.push({ what: `TWO EXITS AT INSTALL (${rec.at}): ${String(ex.why ?? '').replace(/^TWO EXITS AT INSTALL: /, '')}`, detail: `the install ran on one exit while the plan had committed another for the same act — act.js /tel/install-last.txt; plan.installExitsOf` })
+  else notes.push(`last install (${ageH.toFixed(1)}h ago): ${ex.why ?? 'exits not compared'}`)
   return { fails, notes }
 }
 

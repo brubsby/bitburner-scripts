@@ -20,7 +20,8 @@
 //   SI8  replay live BN9 05:36: the legacy-total prior rebuilt as hacking
 //   SI9  a life split part-way: exact after, capped before
 //   SI10 the fresh life's hacking income is a posterior (prior x measurement)
-//   SI11 replay live BN9 05:46 (0.08h after an install, batcher prepping)
+//   SI11 replay live BN9 05:46 (0.08h after an install, batcher prepping):
+//        the fresh life prices its cadence on the node's catalogue
 //   SI6  wiring: progress.js / buyserv.js / stock.js / tel.js
 
 import fs from "node:fs";
@@ -303,7 +304,7 @@ export async function run() {
 
   // -------------------------------------------------------------------
   {
-    const c = new Check("SI11", "REPLAY live BN9 05:46, 0.08h after the 05:42 install (batcher prepping, $0 hacking): the plan read 272h 'income: measured' against the install decision's 104h. With the posterior the income is no longer the measured $0 — and the exit shows what the income does and does not explain");
+    const c = new Check("SI11", "REPLAY live BN9 05:46, 0.08h after the 05:42 install (batcher prepping, $0 hacking): the plan read 272h 'income: measured' against the install decision's 104h. With the posterior the income is no longer the measured $0; the gap was the cadence (one thin measured life while nothing is joined) — priced on the node's catalogue, the fresh life's exit is within 25% of the install's");
     c.examined(4);
     const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-freshlife-0546.json"), "utf8"));
     const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
@@ -332,7 +333,31 @@ export async function run() {
     // ~100h. Income from $0 to the posterior moves it by a few percent.
     const cad = exitAt({ ...i, incomePerSec: flat + (post?.perSec ?? 0), multGainPerCycle: 1.2 });
     c.note(`the same inputs at x1.2 a cycle: ${cad?.toFixed(1)}h — the 104h-vs-272h gap is the cadence source, not the income`);
-    if (withPost && installH && Math.abs(withPost - installH) / installH > 0.25) c.warn(`fresh-life exit ${withPost.toFixed(1)}h vs the install decision's ${installH}h: the fresh life's cadence falls back to the thin measured posterior while it has no offers (exitInputsOf) — a cadence issue, not income`);
+    // THE FIX (lifeplan.nodeFactionsOf, progress.js cadenceOffersNow): later
+    // lives re-join the factions this node's lives joined, so the purchase
+    // model prices the fresh life's cadence on the NODE's catalogue — here
+    // the 8 factions joined at 05:41 (fixture-bn9-catalogue-0541.json,
+    // rebuilt from the snapshots) — not on one thin measured life.
+    c.examined(3);
+    const L = await import("../../lifeplan.js");
+    const Cat = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-catalogue-0541.json"), "utf8"));
+    const nf = L.nodeFactionsOf({ node: 9, factions: Cat.factions }, 9, []);
+    if (nf.factions.length !== Cat.factions.length || nf.added) c.fail("a fresh life (nothing joined) keeps the node's factions, and does not rewrite them");
+    if (!L.nodeFactionsOf({ node: 8, factions: ["X"] }, 9, ["Y"]).factions.every((f) => f === "Y")) c.fail("another node's factions are not this node's catalogue");
+    const catal = L.catalogueFromOffers(Cat.offers, new Set(Cat.owned));
+    const inp = { ...i, incomePerSec: flat + (post?.perSec ?? 0) };
+    const ms = L.moneyScaleOf(F.earnings, 9, inp);
+    const pm = L.cadenceByPurchases({ inputs: inp, catalogue: catal, favor: catal.favor, owned: Cat.owned, repPerHour0: i.repPerSec * 3600, moneyScale: ms.scale, bestExitPolicy: xp.bestExitPolicy });
+    const fixedH = pm ? exitAt({ ...inp, cycleHours: pm.cycleHours, multGainPerCycle: pm.multGainPerCycle }) : null;
+    c.note(`the node's catalogue (${catal.items.length} items, ${nf.why}): ${pm?.why ?? "unpriced"} -> fresh-life exit ${fixedH?.toFixed(1)}h (thin measured cadence x${i.multGainPerCycle.toFixed(3)} per ${i.cycleHours.toFixed(2)}h: ${withPost?.toFixed(1)}h)`);
+    if (!(pm && pm.multGainPerCycle > 1.1)) c.fail("the purchase model must price the fresh life's cadence on the node's catalogue");
+    // Tolerance 25%: what remains is the fresh life's own state (reputation
+    // from the level-1 formula estimate, 0.87/s against 2.9/s before the
+    // install; money scaled x0.08 to the node's one completed life), which
+    // the install decision's inputs did not have — not a second model.
+    if (!(fixedH && installH && Math.abs(fixedH - installH) / installH <= 0.25)) c.fail(`fresh-life exit ${fixedH?.toFixed(1)}h vs the install decision's ${installH}h: more than 25% apart on the node's catalogue`);
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/const cOffers = cadenceOffersNow\?\.length \? cadenceOffersNow : offers/.test(prog) || !/nodeFactionsOf\(readJson\(ns, NODE_FACTIONS_FILE\)/.test(prog)) c.fail("exitInputsOf must price the purchase model on the node's catalogue (source guard)");
     checks.push(c);
   }
 

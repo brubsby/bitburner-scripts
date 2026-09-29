@@ -1,0 +1,1030 @@
+{
+"note": "live BN9 2026-09-29: the catalogue the pre-install life bought from \u2014 the offers of the 8 factions it had joined at 05:41 (history.jsonl factions), rebuilt from the post-install snapshots at 06:07 (snap-catalog/augprice/augstats/prereq/rep; prices are the node's, NeuroFlux at its level then), and the augmentations owned after the 05:42 install (snap-owned). Reconstructed: the planner did not persist its catalogue before this fix.",
+"factions": [
+"Chongqing",
+"Ishima",
+"New Tokyo",
+"Tetrads",
+"Slum Snakes",
+"Netburners",
+"Tian Di Hui",
+"CyberSec"
+],
+"offers": [
+{
+"name": "NeuroFlux Governor",
+"faction": "Chongqing",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 29.23158251516555,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "Speech Processor Implant",
+"faction": "Chongqing",
+"baseCost": 50000000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 29.23158251516555,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "DataJack",
+"faction": "Chongqing",
+"baseCost": 450000000,
+"repReq": 112500,
+"factionRep": 0,
+"favor": 29.23158251516555,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1.25,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Neuralstimulator",
+"faction": "Chongqing",
+"baseCost": 3000000000,
+"repReq": 50000,
+"factionRep": 0,
+"favor": 29.23158251516555,
+"mults": {
+"hacking_chance": 1.1,
+"hacking_speed": 1.02,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1.12,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Nuoptimal Nootropic Injector Implant",
+"faction": "Chongqing",
+"baseCost": 20000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 29.23158251516555,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Neuregen Gene Modification",
+"faction": "Chongqing",
+"baseCost": 375000000,
+"repReq": 37500,
+"factionRep": 0,
+"favor": 29.23158251516555,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1.4,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "Ishima",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "Augmented Targeting I",
+"faction": "Ishima",
+"baseCost": 15000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Combat Rib I",
+"faction": "Ishima",
+"baseCost": 23750000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Wired Reflexes",
+"faction": "Ishima",
+"baseCost": 2500000,
+"repReq": 1250,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Speech Processor Implant",
+"faction": "Ishima",
+"baseCost": 50000000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Neuralstimulator",
+"faction": "Ishima",
+"baseCost": 3000000000,
+"repReq": 50000,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1.1,
+"hacking_speed": 1.02,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1.12,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "INFRARET Enhancement",
+"faction": "Ishima",
+"baseCost": 30000000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 18.594240470113846,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "New Tokyo",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 26.152945327013256,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "Speech Processor Implant",
+"faction": "New Tokyo",
+"baseCost": 50000000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 26.152945327013256,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "DataJack",
+"faction": "New Tokyo",
+"baseCost": 450000000,
+"repReq": 112500,
+"factionRep": 0,
+"favor": 26.152945327013256,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1.25,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Neuralstimulator",
+"faction": "New Tokyo",
+"baseCost": 3000000000,
+"repReq": 50000,
+"factionRep": 0,
+"favor": 26.152945327013256,
+"mults": {
+"hacking_chance": 1.1,
+"hacking_speed": 1.02,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1.12,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Nuoptimal Nootropic Injector Implant",
+"faction": "New Tokyo",
+"baseCost": 20000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 26.152945327013256,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NutriGen Implant",
+"faction": "New Tokyo",
+"baseCost": 2500000,
+"repReq": 6250,
+"factionRep": 0,
+"favor": 26.152945327013256,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "Tetrads",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "LuminCloaking-V1 Skin Implant",
+"faction": "Tetrads",
+"baseCost": 5000000,
+"repReq": 1500,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "LuminCloaking-V2 Skin Implant",
+"faction": "Tetrads",
+"baseCost": 30000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": [
+"LuminCloaking-V1 Skin Implant"
+]
+},
+{
+"name": "HemoRecirculator",
+"faction": "Tetrads",
+"baseCost": 45000000,
+"repReq": 10000,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Power Recirculation Core",
+"faction": "Tetrads",
+"baseCost": 180000000,
+"repReq": 25000,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1.05,
+"hacking_exp": 1.1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Bionic Arms",
+"faction": "Tetrads",
+"baseCost": 275000000,
+"repReq": 62500,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Glibness Enhancement",
+"faction": "Tetrads",
+"baseCost": 2500000000,
+"repReq": 40500,
+"factionRep": 0,
+"favor": 2.3152909205405185,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "Slum Snakes",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "Augmented Targeting I",
+"faction": "Slum Snakes",
+"baseCost": 15000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Combat Rib I",
+"faction": "Slum Snakes",
+"baseCost": 23750000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Wired Reflexes",
+"faction": "Slum Snakes",
+"baseCost": 2500000,
+"repReq": 1250,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "LuminCloaking-V1 Skin Implant",
+"faction": "Slum Snakes",
+"baseCost": 5000000,
+"repReq": 1500,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "LuminCloaking-V2 Skin Implant",
+"faction": "Slum Snakes",
+"baseCost": 30000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": [
+"LuminCloaking-V1 Skin Implant"
+]
+},
+{
+"name": "SmartSonar Implant",
+"faction": "Slum Snakes",
+"baseCost": 75000000,
+"repReq": 22500,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Neural Wit Amplifier",
+"faction": "Slum Snakes",
+"baseCost": 10000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 2.7193062451576737,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "Netburners",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 87.10276871360682,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "Hacknet Node CPU Architecture Neural-Upload",
+"faction": "Netburners",
+"baseCost": 11000000,
+"repReq": 3750,
+"factionRep": 0,
+"favor": 87.10276871360682,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Hacknet Node Cache Architecture Neural-Upload",
+"faction": "Netburners",
+"baseCost": 5500000,
+"repReq": 2500,
+"factionRep": 0,
+"favor": 87.10276871360682,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Hacknet Node NIC Architecture Neural-Upload",
+"faction": "Netburners",
+"baseCost": 4500000,
+"repReq": 1875,
+"factionRep": 0,
+"favor": 87.10276871360682,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Hacknet Node Kernel Direct-Neural Interface",
+"faction": "Netburners",
+"baseCost": 40000000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 87.10276871360682,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Hacknet Node Core Direct-Neural Interface",
+"faction": "Netburners",
+"baseCost": 60000000,
+"repReq": 12500,
+"factionRep": 0,
+"favor": 87.10276871360682,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "Tian Di Hui",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "Nanofiber Weave",
+"faction": "Tian Di Hui",
+"baseCost": 125000000,
+"repReq": 37500,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Wired Reflexes",
+"faction": "Tian Di Hui",
+"baseCost": 2500000,
+"repReq": 1250,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Speech Processor Implant",
+"faction": "Tian Di Hui",
+"baseCost": 50000000,
+"repReq": 7500,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Neuroreceptor Management Implant",
+"faction": "Tian Di Hui",
+"baseCost": 550000000,
+"repReq": 75000,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Nuoptimal Nootropic Injector Implant",
+"faction": "Tian Di Hui",
+"baseCost": 20000000,
+"repReq": 5000,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Speech Enhancement",
+"faction": "Tian Di Hui",
+"baseCost": 12500000,
+"repReq": 2500,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "ADR-V1 Pheromone Gene",
+"faction": "Tian Di Hui",
+"baseCost": 17500000,
+"repReq": 3750,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1.1
+},
+"prereqs": []
+},
+{
+"name": "Social Negotiation Assistant (S.N.A)",
+"faction": "Tian Di Hui",
+"baseCost": 30000000,
+"repReq": 6250,
+"factionRep": 0,
+"favor": 24.67372120332223,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1.15
+},
+"prereqs": []
+},
+{
+"name": "NeuroFlux Governor",
+"faction": "CyberSec",
+"baseCost": 974699.9999999999,
+"repReq": 649.8,
+"factionRep": 0,
+"favor": 33.689674839464594,
+"mults": {
+"hacking_chance": 1.01000262,
+"hacking_speed": 1.01000262,
+"hacking_money": 1.01000262,
+"hacking_grow": 1.01000262,
+"hacking": 1.01000262,
+"hacking_exp": 1.01000262,
+"faction_rep": 1.01000262
+},
+"prereqs": []
+},
+{
+"name": "BitWire",
+"faction": "CyberSec",
+"baseCost": 10000000,
+"repReq": 3750,
+"factionRep": 0,
+"favor": 33.689674839464594,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1.05,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Synaptic Enhancement Implant",
+"faction": "CyberSec",
+"baseCost": 7500000,
+"repReq": 2000,
+"factionRep": 0,
+"favor": 33.689674839464594,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1.03,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Cranial Signal Processors - Gen I",
+"faction": "CyberSec",
+"baseCost": 70000000,
+"repReq": 10000,
+"factionRep": 0,
+"favor": 33.689674839464594,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1.01,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1.05,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": []
+},
+{
+"name": "Cranial Signal Processors - Gen II",
+"faction": "CyberSec",
+"baseCost": 125000000,
+"repReq": 18750,
+"factionRep": 0,
+"favor": 33.689674839464594,
+"mults": {
+"hacking_chance": 1.05,
+"hacking_speed": 1.02,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1.07,
+"hacking_exp": 1,
+"faction_rep": 1
+},
+"prereqs": [
+"Cranial Signal Processors - Gen I"
+]
+},
+{
+"name": "Neurotrainer I",
+"faction": "CyberSec",
+"baseCost": 4000000,
+"repReq": 1000,
+"factionRep": 0,
+"favor": 33.689674839464594,
+"mults": {
+"hacking_chance": 1,
+"hacking_speed": 1,
+"hacking_money": 1,
+"hacking_grow": 1,
+"hacking": 1,
+"hacking_exp": 1.1,
+"faction_rep": 1
+},
+"prereqs": []
+}
+],
+"owned": [
+"Hacknet Node Core Direct-Neural Interface",
+"Speech Processor Implant",
+"Hacknet Node Kernel Direct-Neural Interface",
+"INFRARET Enhancement",
+"Social Negotiation Assistant (S.N.A)",
+"Combat Rib I",
+"Nuoptimal Nootropic Injector Implant",
+"ADR-V1 Pheromone Gene",
+"Augmented Targeting I",
+"Speech Enhancement",
+"Hacknet Node CPU Architecture Neural-Upload",
+"Hacknet Node Cache Architecture Neural-Upload",
+"Hacknet Node NIC Architecture Neural-Upload",
+"Neurotrainer I",
+"Wired Reflexes",
+"NutriGen Implant",
+"NeuroFlux Governor"
+]
+}
