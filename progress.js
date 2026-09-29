@@ -1765,7 +1765,20 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
     let startMoney = null
     let searchWhy = null
     let truncated = false
-    if (pc.redecide || !prev || prev.key === null || prev.key === undefined) {
+    // THE NODE'S GRAFT MEMORY (plan record graftMemory): the best set a search
+    // of this node has found, kept when the committed decision is 'none', a
+    // refusal, or not reached this pass. The committed set was the only
+    // memory, and one transient input that made it lose to grafting nothing
+    // discarded it (live BN9 2026-09-29 ~08:50Z, the trader's first realised
+    // fit at 0.6%/h: 29 grafts -> a restart that had rebuilt 12 by 10:26,
+    // exit 184h where the 29 re-priced on the same inputs read 124h).
+    const memPrev = pc.prevAny?.graftMemory && Array.isArray(pc.prevAny.graftMemory.names) ? pc.prevAny.graftMemory : null
+    let memory = memPrev
+    // A SEARCH THE BUDGET STOPPED CONTINUES ON THE NEXT PASS, not at the next
+    // event (up to 30 minutes later): at GRAFT_SEARCH_MS a search adds one or
+    // two bundles, so waiting for events rebuilt a set at ~1 bundle per 30 min.
+    const continuing = prev?.truncated === true
+    if (pc.redecide || !prev || prev.key === null || prev.key === undefined || continuing) {
       const names = sing.catalogNames()
       const safe = (f) => {
         try {
@@ -1787,13 +1800,21 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       yield // the candidate read is its own step
       // Resumed from the committed set (same node, any life: grafts are the
       // node's), so a search the budget stopped grows across re-decisions.
-      const seed = (pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name).filter((n) => typeof n === 'string' && !installed.has(n))
-      const r = yield* chooseGraftsGen({ candidates: cands, priceExit, base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, now: pc.pacer.cpuNow, seed })
-      if (!r.grafts) return { key: null, why: `graft search refused: ${r.why}`, ms: Date.now() - t0 }
+      const live = (names) => (names ?? []).filter((n) => typeof n === 'string' && !installed.has(n))
+      const seed = live((pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name))
+      const memSeed = live(memPrev?.names)
+      const r = yield* chooseGraftsGen({ candidates: cands, priceExit, base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, now: pc.pacer.cpuNow, seeds: [seed, memSeed] })
+      if (!r.grafts) return { key: null, why: `graft search refused: ${r.why}`, ms: Date.now() - t0, memory }
       specs = r.grafts.map((g) => g.spec)
       startMoney = r.startMoney
       truncated = r.truncated === true
-      searchWhy = `${r.why} (${cands.length} candidates)`
+      // The memory advances only to a set that contains it (grown from it, or
+      // from a committed set that already held it): a smaller set that wins
+      // on today's inputs is the committed set, and the memory stays beside it.
+      const found = r.grafts.map((g) => g.name)
+      if (found.length && (!memSeed.length || memSeed.every((n) => found.includes(n)))) memory = { names: found, withH: r.withH ?? null, at: new Date().toISOString() }
+      const from = r.seededFrom === 0 ? 'the committed set' : r.seededFrom === 1 ? `the node's graft memory (${memSeed.length})` : 'nothing'
+      searchWhy = `${r.why} (${cands.length} candidates; resumed from ${from}${continuing ? ', continuing a budget-stopped search' : ''})`
     } else {
       specs = (prev.grafts ?? []).filter((g) => g && !installed.has(g.name))
       startMoney = prev.startMoney ?? null
@@ -1851,6 +1872,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsFn, pending, work, 
       withInstalls: withPolicy?.best?.installsFirst ?? null,
       finalWindowNow: withPolicy?.best?.installsFirst === 0,
       searched: searchWhy,
+      memory,
       truncated,
       notSimulated: 'the grafted augmentation leaving earlier lives\' install catalogue (none are grafted there); travel to New Tokyo ($200k)',
       searchMs: Date.now() - t0,
@@ -2173,6 +2195,16 @@ function modelVersionOf(ns) {
 // slices, and its stats (work, wall, longest block) are the plan's CPU record.
 let passPacer = null
 let passT0 = 0
+// The graft memory survives a pass whose plan context threw (graftDecisionOf
+// reads prevAny.graftMemory; the plan record carries it on).
+function graftMemoryCarryOf(ns, info) {
+  try {
+    const p = JSON.parse(ns.read(PLAN_FILE) || 'null')
+    return p && p.node === info?.currentNode ? { graftMemory: p.graftMemory ?? null } : null
+  } catch {
+    return null
+  }
+}
 function planCtxOf(ns, info) {
   if (planCtx) return planCtx
   const t0 = Date.now()
@@ -2220,7 +2252,7 @@ function planCtxOf(ns, info) {
     const draws = makeDraws(post, PLAN.N, seed)
     planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, decisions: {}, setupMs: 0, pacer: passPacer, error: null }
   } catch (e) {
-    planCtx = { t0, prev: null, post: null, events: [], redecide: false, draws: [], decisions: {}, setupMs: 0, pacer: passPacer, error: `plan context threw: ${String(e).slice(0, 160)}` }
+    planCtx = { t0, prev: null, prevAny: graftMemoryCarryOf(ns, info), post: null, events: [], redecide: false, draws: [], decisions: {}, setupMs: 0, pacer: passPacer, error: `plan context threw: ${String(e).slice(0, 160)}` }
   }
   planCtx.setupMs += Date.now() - t0
   leave('plan')
@@ -2361,6 +2393,9 @@ function publishPlan(ns, info, extra = {}) {
         // return): the commitment must not vanish between passes.
         grafts: pc.decisions.grafts ?? pc.prev?.decisions?.grafts ?? null,
       },
+      // The node's best-found graft set (graftDecisionOf): survives a 'none'
+      // or refused decision, an unreached graft step and an install.
+      graftMemory: pc.decisions.grafts?.memory ?? pc.prevAny?.graftMemory ?? null,
       posteriors: pc.post ? posteriorSummary(pc.post) : null,
       calibration: pc.post?.calibration ?? null,
       // Per section (the label each slices() run names): its work, longest

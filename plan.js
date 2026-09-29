@@ -76,6 +76,10 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
   return { trader, drift, calibration, cadence, exp, rep, gymSdLn: PRIORS.gymSdLn, jitter, income, missing }
 }
 
+// A held decision's reason: the decision's own, once — not re-prefixed every
+// pass it is held ("held (no event): held (no event): ... stays on").
+const heldWhy = (prev) => String(prev?.why ?? '').replace(/^(held \(no event\): )+/, '')
+
 /**
  * N parameter draws, seeded: draw i is the same vector in every option and in
  * every pass that uses the same seed (the caller seeds per life), which is
@@ -404,7 +408,7 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   const rows = optionRows(options, stats, (o) => pointH.get(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   if (!redecide && committedKey) {
-    return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${prev?.why ?? ''}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
+    return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
   }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
@@ -512,7 +516,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
     return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
-  if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${prev?.why ?? ''}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows })
+  if (!redecide && committedKey) return record(committedKey, { held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows })
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
   if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows })
@@ -720,7 +724,7 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   const { stats } = summarize(ev.samples)
   const rows = optionRows(use, stats, (o) => pointOf(o.key))
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
-  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${prev?.why ?? ''}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
+  if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], held: true, why: `held (no event): ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev.decidedAt, options: prev.options ?? rows, ...cpu }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }
   return { key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, ...cpu }

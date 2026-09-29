@@ -226,21 +226,36 @@ export function* chooseGraftsGen(o = {}) {
   let bestH = baseline
   let truncated = false
   const t0 = clock()
-  // RESUME FROM A COMMITTED SET (o.seed, names in graft order): a search the
-  // CPU budget stopped continues from where the plan stands next time,
-  // instead of restarting and stopping at the same place. Kept only while it
-  // still beats grafting nothing on today's inputs.
-  if (Array.isArray(o.seed) && o.seed.length) {
+  // RESUME FROM A KNOWN SET (o.seeds, each a list of names in graft order;
+  // o.seed is one): a search the CPU budget stopped continues from where the
+  // plan stands next time, instead of restarting and stopping at the same
+  // place. Several seeds (the committed set, and the best set any search of
+  // this node found — progress.js graftMemory) are priced and the best that
+  // beats grafting nothing on today's inputs is the start. A seed name that is
+  // not graftable now (owned, queued, unpriced) is SKIPPED, not the end of
+  // the seed: its dependants fall out on their own prerequisite check.
+  //
+  // Why several: one committed set was the only memory, and a transient input
+  // that made it lose to grafting nothing threw it away for good (live BN9
+  // 2026-09-29 ~08:50Z: the trader's first realised fit read 0.6%/h, the
+  // committed 29-graft set could not be paid for, the budgeted search
+  // restarted from nothing and had rebuilt 12 grafts by 10:26 — exit 184h
+  // point where the 29 re-priced on the same inputs read 124h).
+  const seeds = [...(Array.isArray(o.seeds) ? o.seeds : []), ...(Array.isArray(o.seed) ? [o.seed] : [])].filter((s) => Array.isArray(s) && s.length)
+  let seededFrom = null
+  for (let si = 0; si < seeds.length; si++) {
     const seeded = []
-    for (const n of o.seed) {
+    for (const n of seeds[si]) {
       const a = all.find((x) => x.name === n)
-      if (!a || !prereqsMet(a, new Set([...owned, ...seeded.map((s) => s.name)]))) break
+      if (!a || seeded.includes(a) || !prereqsMet(a, new Set([...owned, ...seeded.map((s) => s.name)]))) continue
       seeded.push(a)
     }
     const h = seeded.length ? yield* withRun(seeded) : null
-    if (h !== null && h < baseline) {
+    if (h !== null && h < bestH) {
+      chosen.length = 0
       chosen.push(...seeded)
       bestH = h
+      seededFrom = si
     }
   }
   for (let step = 0; step < maxGrafts && !truncated; step++) {
@@ -270,7 +285,7 @@ export function* chooseGraftsGen(o = {}) {
     bestH = best.h
   }
 
-  if (!chosen.length) return { ...none(`grafting nothing: no graft shortens the simulated exit (${baseline.toFixed(2)}h without)${truncated ? ' — search stopped at its CPU budget' : ''}`), truncated }
+  if (!chosen.length) return { ...none(`grafting nothing: no graft shortens the simulated exit (${baseline.toFixed(2)}h without)${truncated ? ' — search stopped at its CPU budget' : ''}`), truncated, seededFrom }
   const specs = chosen.map((a) => graftSpecOf(a, intelligence, { entropy }))
   const spend = specs.reduce((x, g) => x + g.cost, 0)
   const slotHours = specs.reduce((x, g) => x + g.slotH, 0)
@@ -288,6 +303,7 @@ export function* chooseGraftsGen(o = {}) {
     slotHours,
     spend,
     truncated,
+    seededFrom,
     entropyAfter: (num(o.entropy0) ? o.entropy0 : 0) + (entropy ? chosen.length : 0),
     city: GRAFT_CITY,
     why: `${chosen.length} graft(s) in the final window for $${(spend / 1e9).toFixed(2)}b and ${slotHours.toFixed(1)}h of work slot: exit ${baseline.toFixed(2)}h without -> ${bestH.toFixed(2)}h with (entropy ${ENTROPY_EFFECT}^${chosen.length} on every multiplier inside the run)${truncated ? ' — search stopped at its CPU budget' : ''}`,
