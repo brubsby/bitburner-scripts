@@ -109,7 +109,7 @@ const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
 import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, GRAFT_CITY } from 'graftplan.js'
-import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGang, trainRatio } from 'gangplan.js'
+import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGangGen, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
 import { ALL_FACTIONS } from 'factions.js'
@@ -174,7 +174,7 @@ import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formula
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
-import { catalogueFromOffers, moneyScaleOf, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetStreams } from 'lifeplan.js'
+import { catalogueFromOffers, moneyScaleOfGen, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1349,16 +1349,44 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
 
 /** The gang's income trajectory for this node: measured, else a simulated fresh gang (memoised 10 min). */
 function gangScheduleNow(ns, info) {
+  return drain(gangScheduleGen(ns, info))
+}
+/**
+ * gangScheduleNow in slices (gangplan.simulateGangGen), for the pass's first
+ * exit inputs: the fresh gang's 1,200 steps held the page 208-256ms in one
+ * piece (live BN9 2026-09-29 23:32Z, 'plan-inputs' step 1 of ~430, every
+ * pass — progress.js is a fresh process each pass, so the in-process memo
+ * never survived to the next one). The simulation depends only on the node's
+ * softcap, so it is also CACHED in GANG_SCHED_FILE by its inputs for an hour
+ * (the hour bounds how long a changed gangplan.js model can go unseen).
+ */
+const GANG_SCHED_FILE = '/tel/gangsched.txt'
+const GANG_SCHED_MAX_AGE_MS = 3600e3
+function* gangScheduleGen(ns, info) {
   const node = info?.currentNode
   const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
   if (remembered.perSec) return [{ atH: 0, perSec: remembered.perSec }]
   if (gangSchedMemo && gangSchedMemo.node === node && Date.now() - gangSchedMemo.at < 600e3) return gangSchedMemo.sched
   const softcap = bitNodeMults(node)?.GangSoftcap
+  const opts = { softcap, horizonH: 100, stepSec: 300, mode: 'money', ascend: { minGain: 1.09 }, warfare: { fraction: 0, engageRatio: 1 } }
+  const key = JSON.stringify([node, opts, 'trainRatio(4.2, false, 1)', 'v1'])
+  const cached = readJson(ns, GANG_SCHED_FILE)
+  if (cached?.key === key && Array.isArray(cached.sched) && Date.now() - Date.parse(cached.at ?? '') < GANG_SCHED_MAX_AGE_MS) {
+    gangSchedMemo = { node, at: Date.now(), sched: cached.sched, respectPath: Array.isArray(cached.respectPath) ? cached.respectPath : null }
+    return gangSchedMemo.sched
+  }
   const G = { faction: 'Slum Snakes', isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false }
   const rivals = Object.fromEntries(['Tetrads', 'The Syndicate', 'The Dark Army', 'Speakers for the Dead', 'NiteSec', 'The Black Hand'].map((n) => [n, { power: 1, territory: 1 / 7 }]))
-  const sim = typeof softcap === 'number' ? simulateGang(G, [], { softcap, horizonH: 100, stepSec: 300, mode: 'money', assignFn: trainRatio(4.2, false, 1), ascend: { minGain: 1.09 }, rivals, warfare: { fraction: 0, engageRatio: 1 } }) : null
+  const sim = typeof softcap === 'number' ? yield* simulateGangGen(G, [], { ...opts, assignFn: trainRatio(4.2, false, 1), rivals }) : null
   const sched = gangIncomeSchedule(sim)
   gangSchedMemo = { node, at: Date.now(), sched, respectPath: Array.isArray(sim?.samples) ? sim.samples.filter((x) => typeof x?.h === 'number' && typeof x?.respect === 'number').map((x) => [x.h, x.respect]) : null }
+  if (Array.isArray(sched)) {
+    try {
+      ns.write(GANG_SCHED_FILE, JSON.stringify({ at: new Date().toISOString(), key, node, sched, respectPath: gangSchedMemo.respectPath }), 'w')
+    } catch {
+      /* the next pass simulates again */
+    }
+  }
   return sched
 }
 
@@ -1375,10 +1403,10 @@ function gangScheduleNow(ns, info) {
  * first reaches the live gang's (/tel/gang.txt), the schedule from there on.
  * Null (and why) when not in a gang this life. {steps, why}.
  */
-function gangCarriedNow(ns, info) {
+function* gangCarriedGen(ns, info) {
   const live = readJson(ns, '/tel/gang.txt')
   if (!live?.faction || live.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(live.at ?? '') < 15 * 60e3)) return { steps: null, why: 'not in a gang this life (no fresh /tel/gang.txt)' }
-  const sched = gangScheduleNow(ns, info)
+  const sched = yield* gangScheduleGen(ns, info)
   if (!Array.isArray(sched) || !sched.length) return { steps: null, why: 'in a gang, but its income schedule could not be simulated (no GangSoftcap)' }
   // THE GANG'S OWN TRAJECTORY FIRST (gangworth.gangCarriedSchedule): the
   // adopted policy's forecast carries its mode, split, members, ascensions
@@ -1424,13 +1452,13 @@ function stepRateAt(steps, h) {
   }
   return v
 }
-/** The simulated rebuild's money flow and gross hash production (lifeplan.freshHacknetStreams), memoised together. */
-function freshHacknetStreamsNow(info, inputs) {
+/** The simulated rebuild's money flow and gross hash production (lifeplan.freshHacknetStreamsGen), memoised together; in slices. */
+function* freshHacknetStreamsPassGen(info, inputs) {
   if (!inputs?.hacknet) return null
   if (freshHacknetMemo && freshHacknetMemo.reset === info?.lastAugReset && Date.now() - freshHacknetMemo.at < 600e3) return freshHacknetMemo.streams
   let streams = null
   try {
-    streams = freshHacknetStreams(inputs, 48)
+    streams = yield* freshHacknetStreamsGen(inputs, 48)
   } catch {
     streams = null
   }
@@ -3488,7 +3516,7 @@ function* purchaseCadenceGen(ns, info, base, offers, owned) {
     const catal = catalogueFromOffers(offers, owned)
     const rph = typeof base.repPerSec === 'number' && base.repPerSec > 0 ? base.repPerSec * 3600 : null
     if (catal.items.length && rph) {
-      const ms = moneyScaleOf(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
+      const ms = yield* moneyScaleOfGen(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
       const r = yield* cadenceByPurchasesGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy, bestExitPolicyGen })
       value = r ? { ...r, moneyScale: ms.scale, moneyCalibration: ms.why } : null
     }
@@ -3550,17 +3578,32 @@ function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPer
 }
 /** exitInputsOf as a generator: the purchase model's exits in slices (purchaseCadenceGen). */
 function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
+  // THE BASE INPUTS' ONCE-PER-PASS PIECES, one step each: the first build of
+  // a pass computes them all (the trader's belief, the formula's fresh life
+  // and its error, the income and exp posteriors); exitInputsBaseOf then
+  // reads their memos.
+  traderBeliefNow(ns, info)
+  yield
+  freshPriorOf(ns, info, player)
+  yield
+  freshErrOf(ns, info)
+  yield
+  incomePostOf(ns, info, player)
+  expPostOf(ns, info, player)
+  yield
   const out = exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+  yield
   // EVERY MONEY STREAM ONCE, with its own growth driver (the final window's
   // money leg is the binding one on the trader's curve): the committed gang
   // and the sleeves on money as carried step functions of node hours, and the
   // final window's rebuilt hacknet by the window's age. Named in `streams`.
-  const gc = gangCarriedNow(ns, info)
+  const gc = yield* gangCarriedGen(ns, info)
   const sc = sleevesCarriedNow(ns, info)
   const carried = { ...(gc.steps ? { gang: gc.steps } : {}), ...(sc.steps ? { sleeves: sc.steps } : {}) }
   if (Object.keys(carried).length) out.carriedIncome = carried
-  const fs9 = freshHacknetStreamsNow(info, out)
+  const fs9 = yield* freshHacknetStreamsPassGen(info, out)
   const fh = fs9?.flow ?? null
+  yield
   if (fh?.length) out.freshHacknet = fh
   // The final window's hashes buy the exit faction's reputation (exitplan contractRep).
   const cr = contractRepOf(ns, info, player, out, fs9)

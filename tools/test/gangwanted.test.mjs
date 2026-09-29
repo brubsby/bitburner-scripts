@@ -262,7 +262,7 @@ export async function run() {
     if (GW.gangCarriedSchedule(MONEY, fresh, rpath, nowM + 31 * 60e3) !== null) c7.fail("a forecast over 30 min old must not be carried");
     if (GW.gangCarriedSchedule({ ...MONEY, forecast: null }, fresh, rpath, nowM) !== null) c7.fail("no forecast must return null");
     const PJ = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/const own = gangCarriedSchedule\(live, /.test(PJ)) c7.fail("progress.js gangCarriedNow must carry gangworth.gangCarriedSchedule first");
+    if (!/const own = gangCarriedSchedule\(live, /.test(PJ)) c7.fail("progress.js gangCarriedGen must carry gangworth.gangCarriedSchedule first");
   }
   checks.push(c7);
 

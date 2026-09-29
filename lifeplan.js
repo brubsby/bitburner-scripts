@@ -229,6 +229,10 @@ export function* freshLifeMoneyGen(inputs, L, scale = 1, rec = null, { steps = 2
 export function freshHacknetFlow(inputs, L = 48, o = {}) {
   return freshHacknetStreams(inputs, L, o)?.flow ?? null
 }
+/** freshHacknetFlow as a generator (one yield per purchase decision): 46-57ms in one piece blocked the page in 'plan-inputs' step 1. */
+export function* freshHacknetFlowGen(inputs, L = 48, o = {}) {
+  return (yield* freshHacknetStreamsGen(inputs, L, o))?.flow ?? null
+}
 
 /**
  * The same simulated rebuild, both ways it can be spent: `flow` (the money
@@ -238,12 +242,16 @@ export function freshHacknetFlow(inputs, L = 48, o = {}) {
  * comes out of (exitplan contractRep: the final window's generated contracts).
  * Null with no hacknet model.
  */
-export function freshHacknetStreams(inputs, L = 48, { stepH = 0.125, decideH = 0.25 } = {}) {
+export function freshHacknetStreams(inputs, L = 48, o = {}) {
+  return drain(freshHacknetStreamsGen(inputs, L, o))
+}
+/** freshHacknetStreams as a generator (freshLifeMoneyGen: a yield per purchase decision). */
+export function* freshHacknetStreamsGen(inputs, L = 48, { stepH = 0.125, decideH = 0.25 } = {}) {
   if (!(inputs?.hacknet && inputs.hacknet.mults && num(inputs.hacknet.nodeMoney))) return null
   const rec = []
   // Decided every decideH (hacknet.js re-plans every few minutes; the
   // purchase model's 12 decisions a life are 4h apart over 48h).
-  const m = freshLifeMoney(inputs, L, 1, rec, { steps: Math.ceil(L / stepH), decisions: Math.ceil(L / decideH) })
+  const m = yield* freshLifeMoneyGen(inputs, L, 1, rec, { steps: Math.ceil(L / stepH), decisions: Math.ceil(L / decideH) })
   if (m === null) return null
   const out = []
   const cum = [[0, 0]]
@@ -275,7 +283,11 @@ export function freshHacknetStreams(inputs, L = 48, { stepH = 0.125, decideH = 0
  * `recent` window is kept (lives from an older catalogue say less). {scale,
  * sd, lives, weight, ratios, why}.
  */
-export function moneyScaleOf(earnings, node, inputs, { recent = 4 } = {}) {
+export function moneyScaleOf(earnings, node, inputs, opts = {}) {
+  return drain(moneyScaleOfGen(earnings, node, inputs, opts))
+}
+/** moneyScaleOf as a generator: each life's modelled money in slices (with a hacknet model, ~20ms in one piece). */
+export function* moneyScaleOfGen(earnings, node, inputs, { recent = 4 } = {}) {
   const lives = Object.entries(earnings?.lives ?? {})
     .filter(([, L]) => L?.node === node && L.complete === true && Array.isArray(L.samples) && L.samples.length >= 2)
     .sort((a, b) => Number(a[0]) - Number(b[0]))
@@ -284,7 +296,8 @@ export function moneyScaleOf(earnings, node, inputs, { recent = 4 } = {}) {
   const res = []
   for (const [k, L] of lives) {
     const [h, earned] = L.samples[L.samples.length - 1]
-    const m = freshLifeMoney(inputs, h, 1)
+    const m = yield* freshLifeMoneyGen(inputs, h, 1)
+    yield
     const cash0 = num(inputs?.installCash) ? inputs.installCash : 1262
     if (pos(h) && pos(earned) && pos(m - cash0)) {
       ratios.push(earned / (m - cash0))

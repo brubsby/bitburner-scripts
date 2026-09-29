@@ -60,6 +60,7 @@
 const num = (x) => typeof x === 'number' && isFinite(x)
 
 import { moneyLn, exitLnOfInstallLifts } from 'objective.js'
+import { drain } from 'coop.js'
 
 export const CYCLE_SEC = 0.2 // CONSTANTS.MilliPerCycle
 export const MAX_MEMBERS = 12
@@ -588,6 +589,14 @@ export function freshMember(name) {
  * inputs are unreadable. Samples are one per step, so callers interpolate.
  */
 export function simulateGang(g, members, o = {}) {
+  return drain(simulateGangGen(g, members, o))
+}
+/**
+ * simulateGang as a generator: yields once per step (coop.js slices). The
+ * fresh gang progress.js carries (100h at 300s, 1,200 steps) held the page
+ * 208-256ms in one piece (live BN9 2026-09-29 23:32Z, 'plan-inputs' step 1).
+ */
+export function* simulateGangGen(g, members, o = {}) {
   if (!g || !num(g.respect) || !num(g.wantedLevel) || !num(g.territory) || typeof g.isHacking !== 'boolean') return null
   if (!Array.isArray(members) || !num(o.softcap)) return null
   const horizonH = num(o.horizonH) && o.horizonH > 0 ? o.horizonH : 24
@@ -731,6 +740,7 @@ export function simulateGang(g, members, o = {}) {
   }
   let elapsedSec = 0
   for (let i = 1; i <= schedule.length; i++) {
+    if (i > 1) yield
     const stepSecNow = schedule[i - 1]
     const cyclesPerStep = Math.max(1, Math.round(stepSecNow / CYCLE_SEC))
     const processesPerStep = Math.max(1, Math.round(cyclesPerStep / CYCLES_PER_PROCESS))

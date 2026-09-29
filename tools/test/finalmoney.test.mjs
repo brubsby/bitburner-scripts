@@ -176,7 +176,7 @@ export async function run() {
     if (!(e.mult > a.mult)) c.fail("extraIncome keeps its lift (the decisions that price their own stream)");
     const pg = code("progress.js");
     if (!/const \{ sleeves, \.\.\.rest \} = b\.carriedIncome/.test(pg) || !/const \{ gang, \.\.\.rest \} = b\.carriedIncome/.test(pg)) c.fail("the sleeve and gang decisions must strip their own carried stream");
-    if (!/out\.carriedIncome = carried/.test(pg) || !/function gangCarriedNow/.test(pg) || !/function sleevesCarriedNow/.test(pg)) c.fail("exitInputsOf must carry the gang and the sleeves");
+    if (!/out\.carriedIncome = carried/.test(pg) || !/function\* gangCarriedGen/.test(pg) || !/function sleevesCarriedNow/.test(pg)) c.fail("exitInputsOf must carry the gang and the sleeves");
     checks.push(c);
   }
 

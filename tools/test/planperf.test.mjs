@@ -58,6 +58,8 @@ const { bitNodeMults } = await import("../../bitNodeMultipliers.js");
 const { RW_PRIOR } = await import("../../traderw.js");
 
 const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-plancpu-1341.json"), "utf8"));
+// The 23:32Z pass's first exit inputs (PP3: the first step in slices).
+const PI = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-planinputs-2332.json"), "utf8"));
 
 /** The 13:41 pass's posteriors, rebuilt from its published summary (plan.posteriorSummary). */
 function postOf(ps) {
@@ -315,6 +317,19 @@ export async function run() {
     const qNone = CURVE ? { ...Q_NONE, ...CURVE.inputs } : Q_NONE;
     const cadenceArgs = { inputs: qIn, catalogue: CATALOGUE, favor: CATALOGUE.favor, owned: CAT.owned, repPerHour0: qIn.repPerSec * 3600, bestExitPolicy: X.bestExitPolicy };
     const cadence = await pacer.slices(LP.cadenceByPurchasesGen({ ...cadenceArgs, bestExitPolicyGen: X.bestExitPolicyGen }), "plan-inputs");
+    // THE REST OF THE FIRST STEP (live BN9 2026-09-29 23:32Z, 208-256ms in
+    // 'plan-inputs' step 1 of ~430, every pass: progress.js is a fresh process
+    // each pass, so the 10-minute memos never survived to the next one). The
+    // carried gang's fresh-gang schedule (gangScheduleGen: 1,200 steps,
+    // 254ms in one piece), the final window's hacknet (freshHacknetFlow,
+    // 57ms) and the purchase model's money scale (moneyScaleOf, 20ms), on the
+    // 23:32Z inputs, in the same pacer.
+    const gangOpts = { softcap: bitNodeMults(9).GangSoftcap, horizonH: 100, stepSec: 300, mode: "money", ascend: { minGain: 1.09 }, warfare: { fraction: 0, engageRatio: 1 } };
+    const gangG = { faction: "Slum Snakes", isHacking: false, respect: 1, wantedLevel: 1, territory: 1 / 7, power: 1, territoryClashChance: 0, territoryWarfareEngaged: false };
+    const gangRivals = () => Object.fromEntries(["Tetrads", "The Syndicate", "The Dark Army", "Speakers for the Dead", "NiteSec", "The Black Hand"].map((n) => [n, { power: 1, territory: 1 / 7 }]));
+    const freshGang = await pacer.slices(GP.simulateGangGen(gangG, [], { ...gangOpts, assignFn: GP.trainRatio(4.2, false, 1), rivals: gangRivals() }), "plan-inputs-gang");
+    const firstHn = await pacer.slices(LP.freshHacknetStreamsGen(PI.exitinputs, 48), "plan-inputs-hacknet");
+    const firstMs = await pacer.slices(LP.moneyScaleOfGen(PI.earnings, 9, PI.exitinputs), "plan-inputs-moneyScale");
     const qTraj = P.trajectoryOf(Q_BASIS);
     const qGen = P.trajectoryGenOf(Q_BASIS);
     // A counting clock: the budget stops the search at the same check whatever the pricing's steps (the pacer's
@@ -370,6 +385,26 @@ export async function run() {
       for (const [lbl, sec] of [["the purchase model", sI], ["the graft search", sS], ["the graft search at its live budget", sL]]) {
         if (!(sec.maxStepMs < 10)) c.fail(`${lbl}: a ${sec.maxStepMs.toFixed(1)}ms step (every step must stay under 10ms: the game's page runs it 2-4x slower against the ${P.PLAN.sliceMs}ms slice)`);
       }
+      // The first step's pieces: every step under 10ms, each the synchronous answer.
+      const t1 = performance.now();
+      const gangSync = GP.simulateGang(gangG, [], { ...gangOpts, assignFn: GP.trainRatio(4.2, false, 1), rivals: gangRivals() });
+      const tGang = performance.now() - t1;
+      const hnSync = LP.freshHacknetStreams(PI.exitinputs, 48);
+      const msSync = LP.moneyScaleOf(PI.earnings, 9, PI.exitinputs);
+      const sec = (k) => pacer.stats.sections[k];
+      c.note(`the first step's pieces (23:32Z): the fresh gang in ${sec("plan-inputs-gang").steps} steps, longest ${sec("plan-inputs-gang").maxStepMs.toFixed(1)}ms (one synchronous piece ${tGang.toFixed(0)}ms); the final window's hacknet in ${sec("plan-inputs-hacknet").steps}, longest ${sec("plan-inputs-hacknet").maxStepMs.toFixed(1)}ms; the money scale x${firstMs?.scale?.toFixed(3)} in ${sec("plan-inputs-moneyScale").steps}, longest ${sec("plan-inputs-moneyScale").maxStepMs.toFixed(1)}ms`);
+      if (JSON.stringify(freshGang?.samples) !== JSON.stringify(gangSync?.samples) || !(freshGang?.samples?.length > 1000)) c.fail("the fresh gang in slices must be the synchronous simulation");
+      if (JSON.stringify(firstHn) !== JSON.stringify(hnSync) || !(firstHn?.flow?.length > 0 && firstHn?.hashCum?.length > 1)) c.fail("the final window's hacknet in slices must be the synchronous flow");
+      if (!(firstMs && msSync && firstMs.scale === msSync.scale && firstMs.lives === msSync.lives && msSync.lives > 0)) c.fail("the money scale in slices must be the synchronous one", `${firstMs?.scale}/${firstMs?.lives} vs ${msSync?.scale}/${msSync?.lives}`);
+      for (const [lbl, k] of [["the fresh gang", "plan-inputs-gang"], ["the final window's hacknet", "plan-inputs-hacknet"], ["the money scale", "plan-inputs-moneyScale"]]) {
+        if (!(sec(k).maxStepMs < 10)) c.fail(`${lbl}: a ${sec(k).maxStepMs.toFixed(1)}ms step in the pass's first inputs (every step must stay under 10ms)`);
+      }
+      // progress.js builds them as generators inside exitInputsGen, with a yield after the base inputs.
+      const pj = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+      if (!/const gc = yield\* gangCarriedGen\(ns, info\)/.test(pj) || !/const sched = yield\* gangScheduleGen\(ns, info\)/.test(pj) || !/yield\* simulateGangGen\(/.test(pj)) c.fail("progress.js must carry the gang through gangCarriedGen -> gangScheduleGen -> simulateGangGen");
+      if (!/const fs9 = yield\* freshHacknetStreamsPassGen\(info, out\)/.test(pj) || !/yield\* freshHacknetStreamsGen\(inputs, 48\)/.test(pj)) c.fail("progress.js must build the final window's hacknet with freshHacknetStreamsGen");
+      if (!/const ms = yield\* moneyScaleOfGen\(/.test(pj)) c.fail("progress.js purchaseCadenceGen must slice the money scale (moneyScaleOfGen)");
+      if (!/exitInputsBaseOf\(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet\)\n  yield\n/.test(pj)) c.fail("exitInputsGen must yield after the base inputs");
       if (!(sL.cpuMs <= GRAFT_SEARCH_MS + 60)) c.fail(`the graft search must stop near its ${GRAFT_SEARCH_MS}ms budget (${sL.cpuMs.toFixed(0)}ms)`);
     }
     for (const [name, d] of Object.entries(decisions)) {
