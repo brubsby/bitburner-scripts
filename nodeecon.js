@@ -571,15 +571,39 @@ export function bootstrapHomeStep({ homeRam, boot, gate, lastAugReset, now = Dat
   return { required: true, step: 'wait', cost: ramCost, tier, why: `${base} — $${Math.round(ramCost)} not yet covered by cash + book` }
 }
 
-export function withCashRaise(orders, cash, equity, margin = 0.02) {
+/**
+ * THE BATCH'S CASH, raised from the book in front of its first costed order:
+ * a liquidate('raise', target) whose target is the absolute cash balance the
+ * batch needs (its costs plus `margin` for the sale's spread).
+ *
+ * CASH IN HAND AT PLAN TIME IS NOT CASH AT ACT TIME. A pre-4S trader cycles
+ * the WHOLE book between cash and positions within minutes (live BN9
+ * 2026-09-29: $100.0b cash at 23:34:41, $0.8m at 23:32:54). The planner read
+ * a cash phase at 23:28:59, ordered a $540m graft with no raise because cash
+ * covered it, and 10s later the trader had re-invested: the graft was
+ * refused "money short: $706837 of $540000000" with $98b in the book. So
+ * while a trader holds or may hold a book (`trader`, default: equity > 0) a
+ * costed batch ALWAYS carries the raise: when cash already covers it the
+ * actor sells nothing, but the ordered raise is what makes stock.js hold that
+ * cash (dueRaiseOf) from this write until act.js runs, and act-liquidate's
+ * hold keeps it from re-opening until the batch has spent it.
+ * Without a book (and no trader) there is nothing to sell or to race.
+ */
+export function withCashRaise(orders, cash, equity, { margin = 0.02, trader = equity > 0 } = {}) {
   if (!Array.isArray(orders)) return orders
   const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)
   const first = orders.findIndex((o) => costOf(o) > 0)
-  if (first < 0 || !(equity > 0) || orders.some((o) => o.kind === 'liquidate')) return orders
+  if (first < 0 || orders.some((o) => o.kind === 'liquidate')) return orders
   const total = orders.reduce((a, o) => a + costOf(o), 0)
-  if (fin(cash) && cash >= total) return orders
-  const target = Math.ceil(total * (1 + margin))
-  return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['raise', target], why: `raise $${target} cash from the stock book for this batch ($${Math.round(total)} of orders, $${Math.round(cash ?? 0)} in hand)` }, ...orders.slice(first)]
+  const covered = fin(cash) && cash >= total
+  if (covered ? !trader : !(equity > 0)) return orders
+  // Covered: never ask above the cash in hand for the margin alone — with no
+  // book behind it act-liquidate would refuse an unreachable target.
+  const target = covered ? Math.min(Math.ceil(total * (1 + margin)), Math.max(Math.ceil(total), Math.floor(cash))) : Math.ceil(total * (1 + margin))
+  const why = covered
+    ? `hold $${target} cash for this batch ($${Math.round(total)} of orders; $${Math.round(cash)} in hand now, but the trader re-invests cash between this pass and act.js — the raise sells only what it moved)`
+    : `raise $${target} cash from the stock book for this batch ($${Math.round(total)} of orders, $${Math.round(cash ?? 0)} in hand)`
+  return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['raise', target], why }, ...orders.slice(first)]
 }
 
 /**
@@ -918,6 +942,40 @@ export function softlockStep({ cash, stock, work = null, queued = null, hackPays
   if (!fin(queued)) return { level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, but the queued-augmentation count is unreadable: not choosing install vs reset blind` }
   actions.push(queued > 0 ? { kind: 'install', why: `softlock over ${kept.length} samples: ${base}; ${queued} augmentation(s) queued — install` } : { kind: 'softreset', why: `softlock over ${kept.length} samples: ${base}; nothing queued — soft reset` })
   return { level: 3, actions, samples: kept, why: base }
+}
+
+/**
+ * WHY THE COMMITTED GRAFT IS NOT RUNNING, for the healthcheck's ORDER NOT
+ * HELD detail: the graft's order, its raise, and what act.js did with them.
+ * orders: /tel/orders.txt; act: /tel/act.txt; progress: /tel/progress.txt.
+ * Returns one sentence (never null: "no graft order found" is itself a cause).
+ */
+export function graftHoldCauseOf({ orders, act, progress } = {}) {
+  const $ = (x) => `$${fin(x) ? Math.round(x).toLocaleString('en-US') : '?'}`
+  const list = Array.isArray(orders?.orders) ? orders.orders : []
+  const graft = list.find((o) => o?.kind === 'graft')
+  const raise = list.find((o) => o?.kind === 'liquidate' && o.args?.[0] === 'raise')
+  const ran = act?.orders?.at ?? null
+  // Ordered and not yet executed: act.js has not reached this batch.
+  if (graft && orders?.at && !(ran && ran >= orders.at)) {
+    return raise ? `graft ${graft.args?.[0]} waiting on a raise of ${$(raise.args[1])} (batch ${orders.at}, not yet run by act.js)` : `graft ${graft.args?.[0]} ordered ${orders.at} (${$(graft.cost)}), not yet run by act.js — and the batch carries NO raise`
+  }
+  const results = Array.isArray(act?.orders?.results) ? act.orders.results : []
+  const g = results.find((r) => r?.kind === 'graft')
+  const l = results.find((r) => r?.kind === 'liquidate')
+  if (g) {
+    const at = `batch ${act.orders.at}`
+    if (l && l.ok !== true) return `raise refused because ${String(l.result?.error ?? l.why ?? 'the liquidate actor did not confirm the cash').slice(0, 200)} (${at}; graft ${g.args?.[0] ?? '?'} ${g.skipped ? 'skipped' : 'not started'})`
+    if (g.skipped) return `graft ${g.args?.[0] ?? '?'} skipped: ${String(g.skipped).slice(0, 200)} (${at})`
+    if (g.ok !== true) {
+      const why = g.result?.refused ?? g.result?.error ?? g.why ?? 'not ok'
+      const funding = l ? `after a raise to ${$(l.result?.target)} (cash then ${$(l.result?.cash)})` : 'the batch carried NO raise from the book'
+      return `graft ${g.args?.[0] ?? '?'} refused by the game: ${String(why).slice(0, 160)} — ${funding} (${at})`
+    }
+  }
+  const waits = (Array.isArray(progress?.did) ? progress.did : []).find((d) => /^graft .* waits for /.test(String(d)))
+  if (waits) return String(waits).slice(0, 240)
+  return g?.ok === true ? `graft ${g.args?.[0] ?? '?'} started (${act.orders.at}) but the game is not grafting now` : 'no graft order found in /tel/orders.txt or act.js results'
 }
 
 /**

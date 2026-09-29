@@ -331,7 +331,10 @@ export async function run() {
     else if (!(raise.args[1] >= 20.2e6 && raise.args[1] < 21e6)) l.fail(`the raise is not sized to the batch: ${raise.args[1]}`);
     else l.note(raise.why);
     if (out.some((o) => o.kind === "liquidate" && o.args[0] === "all")) l.fail("a purchase batch sells the whole book");
-    if (econ.withCashRaise(orders, 50e6, st.equity).some((o) => o.kind === "liquidate")) l.fail("raised cash that is already in hand");
+    // Cash in hand still gets a raise while a book exists (B8ah: the trader
+    // re-invests it before act.js runs) — but one that sells nothing.
+    const held = econ.withCashRaise(orders, 50e6, st.equity).find((o) => o.kind === "liquidate");
+    if (held && !(held.args[1] <= 50e6)) l.fail(`a raise above the cash already in hand: ${held.args[1]}`);
     if (econ.withCashRaise(orders, 0, 0).some((o) => o.kind === "liquidate")) l.fail("raised from an empty book");
     const src = code("progress.js");
     if (!/const liveMoney = ns\.getServerMoneyAvailable\('home'\) \+ stockEquity/.test(src)) l.fail("the aug plan budgets on cash alone");
@@ -1124,6 +1127,57 @@ export async function run() {
     if (!/if \(forMin > 30\) fail\(`BOOTSTRAP STALLED:/.test(hc) || !/now\.homeRam < tier && covered/.test(hc)) ag.fail("healthcheck F must fail BOOTSTRAP STALLED after 30 minutes below the stack tier with wealth covering it");
   }
   checks.push(ag);
+
+  // -----------------------------------------------------------------------
+  const ah = new Check("B8ah", "a costed batch raises from the book even when cash covers it at plan time (the pre-4S trader re-invests between the pass and act.js); a refused raise skips the graft with its reason; ORDER NOT HELD names the graft's funding cause — replay of BN9 2026-09-29 23:28:59");
+  {
+    ah.examined(9);
+    // Live: the planner read a cash phase (equity $724.7m on the record, cash
+    // ~$97b), ordered travel + the $540m graft with no raise; 10s later the
+    // trader had re-invested and act-graft was refused "money short: $706837".
+    const orders = [
+      { id: 1, kind: "travel", args: ["New Tokyo"], cost: 200000 },
+      { id: 2, kind: "graft", args: ["Power Recirculation Core", true], cost: 540e6 },
+    ];
+    const planTime = econ.withCashRaise(orders, 97e9, 724731297.39, { trader: true });
+    const r = planTime[0];
+    if (r?.kind !== "liquidate" || r.args[0] !== "raise") ah.fail("a cash-phase read ordered the graft with no raise: the trader is free to re-invest the cash", JSON.stringify(planTime[0]));
+    else if (!(r.args[1] >= 540.2e6 && r.args[1] <= 540.2e6 * 1.02 + 1)) ah.fail(`the raise is not the batch's cost: ${r.args[1]}`);
+    else ah.note(r.why);
+    // The trader holds exactly an ordered raise as cash until act.js runs it.
+    const due = (await import("../../stock.js")).dueRaiseOf({ at: "2026-09-29T23:28:59.842Z", lastAugReset: 1, orders: planTime }, { orders: { at: "2026-09-29T23:23:59.000Z" } }, 1, Date.parse("2026-09-29T23:29:05Z"));
+    if (due !== r?.args?.[1]) ah.fail(`stock.js does not hold the ordered raise as cash: dueRaise ${due}`);
+    // Invested phase: the sized raise, as before.
+    const inv = econ.withCashRaise(orders, 706837, 98.4e9, { trader: true });
+    if (!(inv[0]?.kind === "liquidate" && inv[0].args[1] > 540e6)) ah.fail("an invested book did not raise the graft's cost");
+    // Covered with an all-cash book: never ask above cash (no book to sell).
+    const allCash = econ.withCashRaise(orders, 540.5e6, 0, { trader: true });
+    if (!(allCash[0]?.kind === "liquidate" && allCash[0].args[1] <= 540.5e6)) ah.fail("an all-cash trader's hold raise asks above the cash in hand", JSON.stringify(allCash[0]));
+    // No trader, no book: nothing to sell or to race.
+    if (econ.withCashRaise(orders, 1e9, 0, { trader: false }).some((o) => o.kind === "liquidate")) ah.fail("a raise without a trader");
+    if (econ.withCashRaise(orders, 0, 0).some((o) => o.kind === "liquidate")) ah.fail("a raise from an empty book");
+    // progress.js passes the trader's presence, act.js chains the graft on its raise.
+    if (!/withCashRaise\(orders, ns\.getServerMoneyAvailable\('home'\), stockEquity, \{ trader: stockNow\.ok === true \}\)/.test(code("progress.js"))) ah.fail("progress.js must tell withCashRaise a trader is live");
+    if (!/const CHAIN = new Set\(\[[^\]]*'graft'[^\]]*\]\)/.test(code("act.js"))) ah.fail("act.js must skip a graft whose raise failed (CHAIN)");
+    // The healthcheck's cause, for every state of the graft's money.
+    const act0 = { orders: { at: "2026-09-29T23:28:59.842Z", results: [
+      { id: 1, kind: "travel", args: ["New Tokyo"], ok: true },
+      { id: 2, kind: "graft", args: ["Power Recirculation Core", true], ok: false, result: { ok: false, refused: "money short: $706837 of $540000000" } },
+    ] } };
+    const live = econ.graftHoldCauseOf({ orders: { at: "2026-09-29T23:28:59.842Z", orders }, act: act0 });
+    if (!/refused by the game: money short/.test(live) || !/NO raise/.test(live)) ah.fail(`the live cause is not named: ${live}`);
+    else ah.note(`live 23:32: ${live}`);
+    const pending = econ.graftHoldCauseOf({ orders: { at: "2026-09-29T23:33:59.700Z", orders: planTime }, act: act0 });
+    if (!/^graft Power Recirculation Core waiting on a raise of \$/.test(pending)) ah.fail(`a pending raise is not named: ${pending}`);
+    const refused = econ.graftHoldCauseOf({ orders: { at: "2026-09-29T23:28:59.842Z", orders: planTime }, act: { orders: { at: "2026-09-29T23:28:59.842Z", results: [
+      { id: 0, kind: "liquidate", ok: false, result: { error: "refused: the book reaches ~$1 of $2 after the sale haircut — nothing sold" } },
+      { id: 2, kind: "graft", args: ["Power Recirculation Core", true], skipped: "an earlier purchase in the chain failed" },
+    ] } } });
+    if (!/^raise refused because refused: the book reaches/.test(refused)) ah.fail(`a refused raise is not named: ${refused}`);
+    const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
+    if (!/owner === "graft" \? graftHoldCauseOf\(/.test(hc)) ah.fail("healthcheck ORDER NOT HELD must name the graft's cause");
+  }
+  checks.push(ah);
 
   return checks;
 }

@@ -119,7 +119,9 @@ async function runSnapshot(ns, actor) {
 /** Orders whose failure ends the purchase chain they belong to. */
 // liquidate: the sale of the stock positions that fund the purchases after it
 // (progress.js prefixes it) — if it fails, those purchases cannot be paid.
-const CHAIN = new Set(['liquidate', 'donate', 'buyaug'])
+// graft: paid from the same raise; a refused raise skips it with the raise's
+// reason instead of letting the game refuse it "money short".
+const CHAIN = new Set(['liquidate', 'donate', 'buyaug', 'graft'])
 // Copies of nodeecon.js's INSTALL_HOLD_FILE / STOCK_HOLD_FILE (act.js runs
 // anywhere and imports nothing it does not scp; [B8o] keeps them equal).
 const INSTALL_HOLD_FILE = '/install-hold.txt'
@@ -459,7 +461,7 @@ export async function main(ns) {
         let bought = 0
         for (const o of batch.orders) {
           if (CHAIN.has(o.kind) && chainFailed) {
-            results.push({ id: o.id, kind: o.kind, skipped: 'an earlier purchase in the chain failed' })
+            results.push({ id: o.id, kind: o.kind, args: o.args, skipped: `an earlier purchase in the chain failed (${chainFailed})` })
             continue
           }
           if (o.kind === 'install') {
@@ -558,7 +560,7 @@ export async function main(ns) {
           if (o.kind === 'join' && results.some((x) => (x.kind === 'liquidate' || x.kind === 'travel') && x.ok === true)) await ns.sleep(INVITE_WAIT_MS)
           const r = await runActor(ns, o.kind, o.args)
           results.push({ id: o.id, kind: o.kind, args: o.args, why: o.why, ...r })
-          if (CHAIN.has(o.kind) && r.ok !== true) chainFailed = true
+          if (CHAIN.has(o.kind) && r.ok !== true) chainFailed = `${o.kind}${o.kind === 'liquidate' ? ' ' + (o.args ?? []).join(' ') : ''}: ${String(r.result?.error ?? r.result?.refused ?? r.why ?? 'not ok').slice(0, 160)}`
           if (o.kind === 'buyaug' && r.ok === true) bought++
           if (r.ok === true) {
             if (o.kind === 'work') work = { kind: 'work', faction: o.args[0], type: r.result?.type ?? o.args[1], since: r.result.at }

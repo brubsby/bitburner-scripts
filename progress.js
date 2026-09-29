@@ -4213,7 +4213,9 @@ async function act(ns, canJoin, info, note) {
   // SIZED, not 'all': the old prefix sold the whole book for any purchase,
   // and the book is the only compounding income in BitNode 8. act.js still
   // sells everything before an install (the market re-initialises).
-  const withLiquidation = () => withCashRaise(orders, ns.getServerMoneyAvailable('home'), stockEquity)
+  // A live trader record means cash can move into the book before act.js
+  // runs, whatever its equity reads this instant (withCashRaise).
+  const withLiquidation = () => withCashRaise(orders, ns.getServerMoneyAvailable('home'), stockEquity, { trader: stockNow.ok === true })
   const flushOrders = () => ns.write(ORDERS, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, orders: withLiquidation() }, null, 2), 'w')
   // THE COVENANT CAMPAIGN'S PATH B, when the simulated exits chose it
   // (covenantExitOf path 'install-batch'): order the combat batch, every

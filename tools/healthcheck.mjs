@@ -45,7 +45,7 @@ import "./test/gameresolve.mjs";
 // three static imports here broke the healthcheck outright (2026-09-27:
 // "Cannot find package 'sfgate.js'"), and the scheduled watcher read that as
 // a new problem it could not describe. [TL1] enforces this.
-const { wealthNegativeCheck, stackTierFromBoot } = await import("../nodeecon.js");
+const { wealthNegativeCheck, stackTierFromBoot, graftHoldCauseOf } = await import("../nodeecon.js");
 const { ramUpgradeCost } = await import("../homecost.js");
 const { bitNodeMults } = await import("../bitNodeMultipliers.js");
 const { gangActivity, wantedBindsCheck, whyContradictions } = await import("../gangplan.js");
@@ -498,7 +498,11 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   const actual = state.currentWork?.type ?? null;
   const want = { body: ["ClassWork", "CrimeWork"], faction: ["FactionWork"], crime: ["CrimeWork"], graft: ["GraftingWork"] }[owner];
   if (want && ageMin !== null && ageMin < 15) {
-    if (!want.includes(actual)) fail(`ORDER NOT HELD: progress.js claims the work slot for '${owner}' work, but the game is running ${actual ?? "nothing"}`, "something else took the slot (act.js? a stale order?) — the plan is not happening");
+    if (!want.includes(actual)) {
+      // A graft's usual cause is its money (the book, its raise): name it.
+      const cause = owner === "graft" ? graftHoldCauseOf({ orders: readTel("orders.txt"), act: tel["act.txt"], progress: pr }) : null;
+      fail(`ORDER NOT HELD: progress.js claims the work slot for '${owner}' work, but the game is running ${actual ?? "nothing"}`, cause ?? "something else took the slot (act.js? a stale order?) — the plan is not happening");
+    }
     else note(`work slot: '${owner}' claimed and the game is running ${actual}`);
   }
 }
