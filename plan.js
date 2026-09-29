@@ -825,10 +825,10 @@ export function perLifeGainCheckOf(best) {
   if (!fin(pl.boughtLn)) return { ok: null, pricedLn: +pl.pricedLn.toFixed(5), why: "no purchase-model table on the inputs (the cadence is not the purchase model's): the per-life gain is the measured cadence's" }
   const tol = Math.max(PER_LIFE_TOL.abs, PER_LIFE_TOL.rel * pl.boughtLn)
   const ok = pl.pricedLn <= pl.boughtLn + tol
-  const out = { ok, lives: pl.lives, cycleHours: pl.cycleHours, pricedLn: +pl.pricedLn.toFixed(5), boughtLn: +pl.boughtLn.toFixed(5), moneyL: pl.moneyL, kAll: fin(pl.kAll) ? +pl.kAll.toFixed(2) : null }
+  const out = { ok, lives: pl.lives, cycleHours: pl.cycleHours, pricedLn: +pl.pricedLn.toFixed(5), boughtLn: +pl.boughtLn.toFixed(5), moneyL: pl.moneyL, kAll: fin(pl.kAll) ? +pl.kAll.toFixed(2) : null, kPeak: fin(pl.kPeak) ? +pl.kPeak.toFixed(2) : null }
   const x = (v) => `x${Math.exp(v).toFixed(4)}`
   const m = `$${(pl.moneyL ?? 0).toExponential(2)}`
-  return { ...out, why: ok ? `${pl.lives} later lives of ${pl.cycleHours}h at ${x(pl.pricedLn)} each, within the ${x(pl.boughtLn)} a life's ${m} (x${out.kAll} with every stream) buys` : `PER-LIFE GAIN UNBOUGHT: ${pl.lives} later lives of ${pl.cycleHours}h priced at ${x(pl.pricedLn)} each, beyond the ${x(pl.boughtLn)} the purchase model buys with a life's ${m} (x${out.kAll} with every stream carried)` }
+  return { ...out, why: ok ? `${pl.lives} later lives of ${pl.cycleHours}h at ${x(pl.pricedLn)} each, within the ${x(pl.boughtLn)} a life's ${m} (x${out.kAll} mean over those lives with the streams they walk, x${out.kPeak ?? '?'} at most) buys` : `PER-LIFE GAIN UNBOUGHT: ${pl.lives} later lives of ${pl.cycleHours}h priced at ${x(pl.pricedLn)} each, beyond the ${x(pl.boughtLn)} the purchase model buys with a life's ${m} (x${out.kAll} mean over those lives with the streams they walk, x${out.kPeak ?? '?'} at most)` }
 }
 
 /**

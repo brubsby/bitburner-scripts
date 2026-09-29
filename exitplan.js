@@ -819,6 +819,71 @@ function growthTableOf(list, income, e) {
   return v
 }
 const NO_STEPS = {}
+/**
+ * THE MONEY MULTIPLE EACH LATER LIFE WALKS (exitHours perLife). `steps`
+ * [{atH, perSec}] sorted, each in force from its atH to the next (before the
+ * first, 0; the last holds); life j (0-based) spans [startH + j x lenH, +lenH).
+ * k_j = 1 + integral of max(0, perSec) over the life / (base x lenH). Lives
+ * whose span sits inside one step share a k, so the result is run-length
+ * encoded: {runs: [{k, n}], mean, first, last, peak}. base <= 0 or no steps:
+ * every k is 1.
+ */
+export function lifeStreamMultiples(steps, base, startH, lenH, lives) {
+  const one = { runs: [{ k: 1, n: lives }], mean: 1, first: 1, last: 1, peak: 1 }
+  if (!pos(base) || !Array.isArray(steps) || !steps.length || !pos(lenH) || !(lives > 0)) return one
+  const rate = (i) => (i < 0 ? 0 : Math.max(0, steps[i].perSec))
+  // Integral of the rate from 0 to T (hours x $/s): prefix sums at each
+  // step's start, then the step in force by bisection — exitHours runs this
+  // per simulation, up to 400 lives over ~100 steps.
+  const n = steps.length
+  const x0 = steps.map((s) => Math.max(0, s.atH))
+  const cum = new Array(n)
+  cum[0] = 0
+  for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + rate(i - 1) * Math.max(0, x0[i] - x0[i - 1])
+  const integ = (T) => {
+    if (T <= x0[0]) return 0
+    let lo = 0
+    let hi = n - 1
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1
+      if (x0[m] <= T) lo = m
+      else hi = m - 1
+    }
+    return cum[lo] + rate(lo) * (T - x0[lo])
+  }
+  const runs = []
+  let sum = 0
+  let peak = 1
+  let first = null
+  let last = 1
+  const lastAt = steps[steps.length - 1].atH
+  let j = 0
+  while (j < lives) {
+    const a = startH + j * lenH
+    // Every life starting at or after the last step walks the last rate: one run.
+    if (a >= lastAt) {
+      const k = 1 + rate(steps.length - 1) / base
+      const n = lives - j
+      runs.push({ k, n })
+      sum += k * n
+      peak = Math.max(peak, k)
+      if (first === null) first = k
+      last = k
+      break
+    }
+    const k = 1 + (integ(a + lenH) - integ(a)) / (base * lenH)
+    const prev = runs[runs.length - 1]
+    if (prev && Math.abs(prev.k - k) < 1e-12) prev.n++
+    else runs.push({ k, n: 1 })
+    sum += k
+    peak = Math.max(peak, k)
+    if (first === null) first = k
+    last = k
+    j++
+  }
+  return { runs, mean: sum / lives, first: first ?? 1, last, peak }
+}
+
 function stepsOf(extra, carried) {
   const a = Array.isArray(extra) ? extra : NO_STEPS
   const b = carried && typeof carried === 'object' ? carried : NO_STEPS
@@ -1348,8 +1413,24 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // times every income the node carries (the carried streams included),
     // through the same table.
     if (installsFirst > 1) {
-      const kAll = pos(incomePerSec) && steps.length ? Math.max(1, ...steps.map((x) => (incomePerSec + Math.max(0, x.perSec)) / incomePerSec)) : 1
-      perLifeOut = { lives: installsFirst - 1, cycleHours, pricedLn: Math.log(mult / multAfterFirst / graftHackLater) / (installsFirst - 1), boughtLn: buyer ? buyer.lnGainAt(buyer.mL * kAll * ratioInc * graftMoneyK) + Math.log(multGainPerCycle / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) : null, moneyL: buyer ? buyer.mL : null, kAll }
+      // PER LIFE, AT ITS OWN HOURS. Each later life k (2..installsFirst)
+      // spans [firstH + (k-2) x cycleHours, + cycleHours) from now; its money
+      // multiple is 1 + (the carried streams integrated over exactly those
+      // hours) / (incomePerSec x cycleHours) — the money that life walks, not
+      // the schedule's PEAK. The peak was a gang schedule's last simulated
+      // hour ($7.76m/s at hour ~100 over ~$62k/s: x125) applied to every
+      // life, so no over-priced life could ever show (live BN9 2026-09-29).
+      // The bound is the mean of the per-life bounds, against the mean
+      // priced gain. Lives stretched by grafts are placed at the cadence
+      // (their extra hours only move later lives onto richer steps, so this
+      // errs low on the stream, and a graft life's money is its own leg).
+      const lives = installsFirst - 1
+      const ks = lifeStreamMultiples(steps, incomePerSec, firstH, cycleHours, lives)
+      const kAll = ks.mean
+      const lnBought = (k) => buyer.lnGainAt(buyer.mL * k * ratioInc * graftMoneyK)
+      const boughtFixed = buyer ? Math.log(multGainPerCycle / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) : null
+      const boughtMoney = buyer ? ks.runs.reduce((a, r) => a + r.n * lnBought(r.k), 0) / lives : null
+      perLifeOut = { lives, cycleHours, pricedLn: Math.log(mult / multAfterFirst / graftHackLater) / lives, boughtLn: buyer ? boughtMoney + boughtFixed : null, moneyL: buyer ? buyer.mL : null, kAll, kFirst: ks.first, kLast: ks.last, kPeak: ks.peak }
     }
     if (lifeLegs.length) {
       legs.push({ leg: 'grafts in earlier lives', hours: lifeLegs.reduce((a, l) => a + l.extraH, 0), detail: D(() => lifeLegs.map((l) => `life ${l.life}: ${l.n} graft(s)${l.fourS ? ' + the 4S TIX API' : ''} $${(l.cost / 1e9).toFixed(2)}b, ${l.slotH.toFixed(2)}h slot, money ${l.moneyH.toFixed(2)}h, life ${l.lifeH.toFixed(2)}h (+${l.extraH.toFixed(2)}h), hacking x${l.g.hacking.toFixed(3)}`).join('; ')) })
