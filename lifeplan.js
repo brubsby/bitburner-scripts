@@ -437,28 +437,19 @@ export function cadenceByPurchases(o = {}) {
  * lengths' exits on inputs carrying 21 grafts; ~50ms warm, ~220ms cold on
  * the dev machine), PLAN BLOCKED THE PAGE.
  */
-export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24], horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
+export const LIFE_GRID = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24]
+export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
   if (!catalogue || !pos(repPerHour0) || (typeof bestExitPolicy !== 'function' && typeof bestExitPolicyGen !== 'function')) return null
   // eslint-disable-next-line require-yield
   const policyGen = typeof bestExitPolicyGen === 'function' ? bestExitPolicyGen : function* (x) {
     return bestExitPolicy(x)
   }
-  // Memoised per length: lifeSequence and the table row both ask, and with a
-  // hacknet rebuild each answer is a small simulation.
-  const moneyMemo = new Map()
-  const moneyAt = (L) => {
-    if (!moneyMemo.has(L)) moneyMemo.set(L, freshLifeMoney(inputs, L, moneyScale) ?? 0)
-    return moneyMemo.get(L)
-  }
+  const rows = yield* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale, grid, horizonH, maxLives, nfgLevel0 })
+  if (!rows) return null
   const table = []
   let best = null
-  for (const L of grid) {
-    const n = Math.max(1, Math.min(maxLives, Math.round(horizonH / L)))
-    if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(inputs, L, moneyScale)) ?? 0)
-    yield
-    const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 })
-    yield
-    const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
+  for (const row of rows) {
+    const { L, lnMean: mean } = row
     const g = Math.exp(mean)
     // ON THE EXIT'S OWN INPUTS: only the later lives' length and gain vary.
     // The next install's batch (installGains / nextInstallGain) is THIS
@@ -468,7 +459,9 @@ export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPer
     // exit on the same inputs is 98.6h at 6h against 107.6h at 16h.
     const r = g > 1 ? yield* policyGen({ ...inputs, cycleHours: L, multGainPerCycle: g }) : null
     const H = r && !r.degenerate ? r.best?.hours ?? null : null
-    table.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +g.toFixed(4), perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0, H: num(H) ? +H.toFixed(2) : null })
+    const { lnMean, ...shown } = row
+    void lnMean
+    table.push({ ...shown, H: num(H) ? +H.toFixed(2) : null })
     if (num(H) && (!best || H < best.H)) best = { L, g, H, mean }
   }
   if (!best) return null
@@ -478,5 +471,117 @@ export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPer
     exitH: best.H,
     table,
     why: `life length chosen by the exit over what each length buys: ${best.L}h lives (x${best.g.toFixed(3)} a life, ${(best.mean / best.L).toFixed(4)} ln(M)/h) exit ${best.H.toFixed(1)}h — reputation reset at every install (base ${(repPerHour0 / 3600).toFixed(2)}/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x${moneyScale.toFixed(2)} calibrated); not modelled: donations, rising faction_rep, sleeves, new joins, the count's value`,
+  }
+}
+
+/**
+ * WHAT A LIFE OF EACH LENGTH BUYS, without choosing one: per L in `grid`, the
+ * lives of length L in the horizon, their money and the mean ln(M) their
+ * purchase sequence buys (lifeSequence). No exit is priced here — the length
+ * is the PLAN's decision (plan.decideLifeLengthGen: each length priced as the
+ * committed trajectory, grafts and streams carried, on the shared draws). The
+ * chooser this came out of (cadenceByPurchases) priced each length on the
+ * default policy with its own first install at L and took the argmin every
+ * pass: live BN9 2026-09-30 it flipped 0.5h / 3h / 6h / 8h between passes
+ * that re-decided nothing (07:04Z, 08:35Z, 09:20Z EXIT UNSTABLE).
+ * Returns [{L, lives, money, gain, lnMean, perHour, first, firstNfg}] or null.
+ */
+export function lifeTable(o = {}) {
+  return drain(lifeTableGen(o))
+}
+export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
+  if (!catalogue || !pos(repPerHour0)) return null
+  // Memoised per length: lifeSequence and the table row both ask, and with a
+  // hacknet rebuild each answer is a small simulation.
+  const moneyMemo = new Map()
+  const moneyAt = (L) => {
+    if (!moneyMemo.has(L)) moneyMemo.set(L, freshLifeMoney(inputs, L, moneyScale) ?? 0)
+    return moneyMemo.get(L)
+  }
+  const rows = []
+  for (const L of grid) {
+    const n = Math.max(1, Math.min(maxLives, Math.round(horizonH / L)))
+    if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(inputs, L, moneyScale)) ?? 0)
+    yield
+    const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 })
+    yield
+    const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
+    rows.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +Math.exp(mean).toFixed(4), lnMean: mean, perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0 })
+  }
+  return rows
+}
+
+/**
+ * THE CADENCE AT LIFE LENGTH L, ONE BELIEF for the point and the draws: the
+ * cadence posterior (bayes.cadencePosterior) whose prior is the purchase
+ * model's ln(M)/h AT L and whose evidence is this node's own gaining lives.
+ * The update is Gaussian in ln(rate) with a precision that does not depend on
+ * L (the model's structural error, the lives' scatter), so the posterior at
+ * any L follows exactly from the one computed at `post.modelPrior` (L0):
+ *   mean_L = mean_L0 + (1 - w) (ln m_L - ln m_L0),   sd_L = sd_L0
+ * (w: the own lives' share of the rate's precision). `row`: the table row at L
+ * (lnMean, the model's mean ln gain a life; `gain` where the row is rounded).
+ * Returns {L, model (ln(M)/h), mean, sd, r (the median ln(M)/h), gain (the
+ * point's per-life gain exp(r L)), weight} or null (nothing bought at L).
+ */
+export function lifeCadenceAt(row, post) {
+  const L = row?.L
+  const ln = num(row?.lnMean) ? row.lnMean : pos(row?.gain) ? Math.log(row.gain) : null
+  if (!pos(L) || !pos(ln)) return null
+  const model = ln / L
+  const rate = post?.rate
+  const m0 = post?.modelPrior?.lnPerHour
+  let mean = Math.log(model)
+  let sd = null
+  let w = 0
+  if (rate && num(rate.mean) && num(rate.sd) && pos(m0)) {
+    w = num(rate.weight) ? rate.weight : 0
+    mean = rate.mean + (1 - w) * (Math.log(model) - Math.log(m0))
+    sd = rate.sd
+  }
+  const r = Math.exp(mean)
+  return { L, model, mean, sd, r, gain: Math.exp(r * L), weight: w }
+}
+
+/**
+ * THE EXIT INPUTS WITH LATER LIVES OF LENGTH L: the base inputs (grafts,
+ * carried streams, the trader's belief, the purchase model's table — the
+ * next install's batch owned) with the cycle at L and what the posterior says
+ * a life of L buys (lifeCadenceAt). `cadence.post` {mean, sd} is the belief
+ * plan.applyDraw draws the per-life gain from (the same z in every option: a
+ * paired comparison), its median the point. Every decision prices the
+ * COMMITTED L through this one function (progress.js exitInputsGen); the life
+ * length decision prices each L through it. `rec`: the purchase model's record
+ * {table, moneyScale, moneyCalibration, afterBatch}; `post`: the cadence
+ * posterior (installCadence(...).posterior) at its model prior; `lifeLength`:
+ * what committed L (descriptive). Returns inputs or null (L not priced).
+ */
+export function lifeInputsOf(base, rec, L, post, { lifeLength = null, catalogue = null } = {}) {
+  const row = (rec?.table ?? []).find((r) => r.L === L)
+  const c = row ? lifeCadenceAt(row, post) : null
+  if (!c) return null
+  const measured = base?.cadence ?? null
+  return {
+    ...base,
+    cycleHours: L,
+    multGainPerCycle: c.gain,
+    cadenceFrom: 'purchase model',
+    cadenceRateMedian: c.r,
+    cadence: {
+      ...(measured ?? {}),
+      source: 'purchase model',
+      model: { lnPerHour: c.model, cycleHours: L, multGainPerCycle: Math.exp(c.model * L) },
+      rateMedian: c.r,
+      // THE BELIEF THE DRAWS TAKE (plan.applyDraw): ln(ln(M)/h) ~ N(mean, sd).
+      post: num(c.sd) ? { mean: c.mean, sd: c.sd, weight: c.weight } : null,
+      posterior: post?.why ?? null,
+      why: lifeLength ?? `later lives of ${L}h`,
+      measured: measured?.why ?? null,
+      // lnMean unrounded: a replay of these inputs prices each L exactly.
+      table: rec?.table ?? [],
+      moneyCalibration: rec?.moneyCalibration ?? null,
+      catalogue,
+      afterBatch: rec?.afterBatch ?? null,
+    },
   }
 }

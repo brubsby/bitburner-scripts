@@ -54,6 +54,13 @@ export const PLAN = {
   installTopK: 3,
   installReach: 3,
   installFloorMs: 1000,
+  // THE LIFE LENGTH (decideLifeLengthGen): the incumbent and the best
+  // lifeTopK other lengths by point within lifeReach structural errors enter
+  // the draws; a switch pays lifeSwitchCostH (stated: re-planning the later
+  // lives costs nothing in the game — it is the rule's own margin).
+  lifeTopK: 2,
+  lifeReach: 3,
+  lifeSwitchCostH: 0.05,
   traderMoveSd: 1, // posterior mean moved by this many sds = an event
   driftMoveFactor: 1.5, // structural error scale moved by this factor = an event
 }
@@ -173,7 +180,11 @@ export function makeDraws(post, N, seed) {
     // this draw's node-level ln(M)/h and life length — the exit spans many
     // lives, so it is the node's mean that is uncertain, not one life's.
     const cad = post.cadence
-    const ln = cad && fin(cad.rate?.mean) && fin(cad.rate?.sd) ? Math.exp(cad.rate.mean + cad.rate.sd * normalOf(st('cadenceRate'))) : null
+    // The cadence rate's z, kept: inputs that carry their own cadence belief
+    // (inputs.cadence.post, lifeplan.lifeInputsOf — one per life length)
+    // draw from it with this same z, so every length is paired.
+    const zCad = normalOf(st('cadenceRate'))
+    const ln = cad && fin(cad.rate?.mean) && fin(cad.rate?.sd) ? Math.exp(cad.rate.mean + cad.rate.sd * zCad) : null
     const cycleH = cad && fin(cad.life?.mean) && fin(cad.life?.sd) ? Math.exp(cad.life.mean + cad.life.sd * normalOf(st('cadenceLife'))) : null
     // The script exp rate: the formula prior's posterior (bayes.ratePosterior,
     // updated by this life's measurement) when there is one — its spread
@@ -192,7 +203,7 @@ export function makeDraws(post, N, seed) {
     const tw = post.trader?.lnWstar
     const rho = fin(post.trader?.rho) ? post.trader.rho : 0
     const Wstar = tw && fin(tw.mean) && fin(tw.sd) ? Math.exp(tw.mean + tw.sd * (rho * zT + Math.sqrt(1 - rho * rho) * normalOf(st('traderW')))) : null
-    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zc, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zc, zCad, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -226,7 +237,13 @@ export function applyDraw(inputs, d) {
     // whose evidence is this node's own gaining lives — the measured cadence
     // moves the model by its precision, it no longer scales the model's gain
     // by a power of its own weight.
-    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours)
+    // ONE BELIEF PER LIFE LENGTH: inputs built for a length L carry the
+    // posterior AT L (inputs.cadence.post, whose median is the point's
+    // multGainPerCycle); the draw takes it with its own z, so the point and
+    // the draws are one distribution and every length is paired.
+    const cp = inputs.cadence?.post
+    if (cp && fin(cp.mean) && fin(cp.sd) && fin(d.zCad) && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(Math.exp(cp.mean + cp.sd * d.zCad) * inputs.cycleHours)
+    else if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours)
   } else {
     if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
     if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
@@ -887,11 +904,151 @@ export function perLifeGainCheckOf(best) {
 export function noiseKeyOf(spec, inputs) {
   // Every committed graft, wherever the schedule puts it (final window or an earlier life).
   const nG = (Array.isArray(inputs?.finalGrafts) ? inputs.finalGrafts.length : 0) + (Array.isArray(inputs?.lifeGrafts) ? inputs.lifeGrafts.length : 0)
-  const g = `g${nG}`
+  // THE LATER LIVES' LENGTH is on the basis (decideLifeLengthGen): two
+  // lengths are two trajectories, and LIFE LENGTH OFF BASIS reads it here.
+  const L = lifeLOf(inputs)
+  const g = `${L === null ? '' : `L${L}|`}g${nG}`
   if (!spec) return `default|${g}`
   if (spec.kind === 'never') return `never|${g}`
   if (spec.kind === 'route') return `route:${spec.routeKey ?? routeKey(spec.route)}|${spec.extra ?? 0}|${g}`
   return `at:${Math.round((spec.installAt ?? 0) / 60e3)}|${g}`
+}
+
+/**
+ * The later lives' length L the inputs price (the purchase model's cadence:
+ * lifeplan.lifeInputsOf), or null where the cadence is the measured one (no L
+ * is decided there). `lifeOfNoiseKey`: the same L read back from a noise key.
+ */
+export function lifeLOf(inputs) {
+  return inputs?.cadenceFrom === 'purchase model' && fin(inputs.cycleHours) && inputs.cycleHours > 0 ? +inputs.cycleHours.toFixed(3) : null
+}
+export function lifeOfNoiseKey(k) {
+  // String.match, not RegExp.exec: a bare `exec` is billed as ns.exec (1.3GB).
+  const m = String(k ?? '').match(/\|L([\d.]+)\|g\d+$/)
+  return m ? +m[1] : null
+}
+export const lifeKeyOf = (L) => `L${+(+L).toFixed(3)}`
+
+/**
+ * THE LATER LIVES' LENGTH, committed. The purchase model's chooser
+ * (lifeplan.cadenceByPurchases) picked L every pass by the argmin of its own
+ * exits — on the default policy (this life's install AT L), without the
+ * committed install's batch, with no draws and no incumbent — and every other
+ * decision priced on whatever it picked. Live BN9 2026-09-30 it drove the exit
+ * with nothing re-deciding: 07:04Z 0.5h -> 3h (15.5h -> 26.2h, EXIT
+ * UNSTABLE), 07:14Z 0.5h (point 109h against 32.5h at 6h), 08:24Z 0.5h right
+ * after the install (the full simulation 54h), 08:30Z 8h, 08:35Z 6h (42.7h ->
+ * 27.5h), 09:20Z 6h -> 4h (14.1h -> 24.9h).
+ *
+ * Now L is a plan decision like the install: each option is the COMMITTED
+ * TRAJECTORY (`basis`: the committed install's spec — this life's install time
+ * is the install decision's, L governs the lives after it; null: the default
+ * policy, named) priced on inputs whose later lives run L (`options` [{L,
+ * inputs, cad}] — lifeplan.lifeInputsOf: grafts, carried streams, the trader's
+ * r(W) belief and the next install's batch as every decision has them, the
+ * per-life gain drawn from the posterior AT L). Same draws, same exit
+ * machinery (trajectoryOf) and the same noise keys (L on the key) as the
+ * install decision. On a re-decision the incumbent and the best `topK` lengths
+ * by point within `reach` structural errors enter the draws
+ * (installScreenOf); a switch needs a positive expected gain net of
+ * `switchCostH` and P(better) >= theta. Held (no event), only the incumbent is
+ * priced. Returns the decision record {key 'L<h>', lifeH, ...stats, samples,
+ * noiseKey, options, screened, table, basis, why, ...}.
+ */
+export function decideLifeLength(o = {}) {
+  return drain(decideLifeLengthGen(o))
+}
+export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx = {}, prev = null, draws = [], redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock, topK = PLAN.lifeTopK, reach = PLAN.lifeReach, reachSd = null, switchCostH = PLAN.lifeSwitchCostH } = {}) {
+  const f = trajectoryOf(basis, ctx)
+  const fg = trajectoryGenOf(basis, ctx)
+  const opts = (optsIn ?? [])
+    .filter((o) => o && fin(o.L) && o.L > 0 && o.inputs)
+    .map((o) => ({ key: lifeKeyOf(o.L), L: +(+o.L).toFixed(3), inputs: o.inputs, cad: o.cad ?? null, noiseKey: noiseKeyOf(basis, o.inputs), sim: (d) => f(applyDraw(o.inputs, d), d), simGen: (d) => fg(applyDraw(o.inputs, d), d), pointH: null }))
+  const basisOut = basis ? { kind: basis.kind, waitH: r3(basis.waitH ?? null), installAt: basis.installAt ?? null, gainsKey: gainsKeyOf(basis.gains ?? null) } : { kind: 'default policy (no committed install)' }
+  if (!opts.length) return { key: null, lifeH: null, why: 'no life length priced: no purchase-model row buys anything', basis: basisOut, decidedAt: prev?.decidedAt ?? null }
+  const committedKey = prev?.key && opts.some((o) => o.key === prev.key) ? prev.key : null
+  const hold = !redecide && committedKey !== null
+  // The points: every length on a re-decision (the screen reads them), the
+  // incumbent alone when held.
+  for (const o of opts) {
+    if (hold && o.key !== committedKey) continue
+    let h = null
+    try {
+      h = yield* fg(o.inputs)
+    } catch {
+      h = null
+    }
+    o.pointH = fin(h) ? h : null
+    yield
+  }
+  const screen = hold ? null : installScreenOf(opts, committedKey, { topK, reach, sd: reachSd })
+  const use = screen ? screen.use : opts.filter((o) => o.key === committedKey)
+  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
+  const { stats } = summarize(ev.samples)
+  const pricedAt = new Date(now).toISOString()
+  const rows = optionRows(use, stats, (o) => o.pointH, pricedAt).map((r) => ({ ...r, L: opts.find((o) => o.key === r.key)?.L ?? null }))
+  const table = opts.map((o) => ({ L: o.L, pointH: r3(o.pointH), perLife: o.cad && fin(o.cad.gain) ? +o.cad.gain.toFixed(6) : null, model: o.cad && fin(o.cad.model) ? +o.cad.model.toPrecision(4) : null, drawn: use.includes(o) }))
+  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+  const record = (key, extra) => {
+    const o = opts.find((x) => x.key === key)
+    return { key, lifeH: o.L, ...stats[key], pointH: r3(o.pointH), samples: samplesOf(ev.samples[key]), noiseKey: o.noiseKey, perLife: o.cad && fin(o.cad.gain) ? +o.cad.gain.toFixed(6) : null, basis: basisOut, table, ...extra, ...cpu }
+  }
+  if (hold) return record(committedKey, { ...heldFields(prev, rows, pricedAt), ...heldSanity(prev) })
+  const prevH = committedKey && fin(prev?.meanH) ? prev.meanH : null
+  const switchCost = Object.fromEntries(use.filter((o) => o.key !== committedKey).map((o) => [o.key, switchCostH]))
+  const d = decide({ samples: ev.samples, committed: committedKey, switchCost, theta, committedPrevH: prevH })
+  const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
+  if (d.choice === null) return { key: null, lifeH: null, why: d.why, basis: basisOut, table, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened, ...cpu }
+  // The incumbent gone (its length no longer buys anything): the choice is a switch.
+  const gone = prev?.key && committedKey === null
+  const switched = d.switched === true || (gone && d.choice !== prev.key)
+  const why = gone ? `the committed ${prev.key} is no longer priced (nothing bought at that length): ${d.why}` : d.why
+  return record(d.choice, { held: false, switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why, ...(switched && prev?.key ? { from: prev.key } : {}), ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+}
+
+/**
+ * LIFE LENGTH OFF BASIS. Every decision prices the committed later-lives
+ * length (decisions.lifeLength.lifeH): its committed option and every option
+ * row carry it on their noise key (noiseKeyOf `|L<h>|`), and a decision priced
+ * without noise keys (gang, sleeve objective) stamps `pricedL`. A decision
+ * priced this pass on another L is off basis — the plan's exit is then two
+ * trajectories. The life length decision's own rows are its alternatives and
+ * are not checked; its committed option must be on its own L. Decisions carried
+ * from an earlier pass (not re-priced this one) are skipped, and counted.
+ * Returns {ok (true|false|null), fails, checked, why}.
+ */
+export function lifeLengthBasisOf(plan) {
+  const d = plan?.decisions ?? {}
+  const ll = d.lifeLength
+  if (!ll?.key || !fin(ll.lifeH)) return { ok: null, fails: [], checked: 0, why: 'no committed life length (the measured cadence, or no purchase model)' }
+  const Lc = +(+ll.lifeH).toFixed(3)
+  const fails = []
+  let checked = 0
+  let carried = 0
+  const own = lifeOfNoiseKey(ll.noiseKey)
+  if (own !== null && own !== Lc) fails.push(`lifeLength: its committed ${ll.key} is priced on L${own}`)
+  const passAt = Date.parse(ll.pricedAt ?? plan?.at ?? '')
+  for (const [name, x] of Object.entries(d)) {
+    if (name === 'lifeLength' || !x || typeof x !== 'object') continue
+    // Priced before the committed length was (another pass): carried, not this pass's pricing.
+    const at = Date.parse(x.pricedAt ?? '')
+    if (fin(at) && fin(passAt) && at < passAt - 10 * 60e3) {
+      carried++
+      continue
+    }
+    const seen = []
+    for (const k of [x.noiseKey, x.basisNoiseKey, ...(Array.isArray(x.options) ? x.options.map((o) => o?.noiseKey) : [])]) {
+      const L = lifeOfNoiseKey(k)
+      if (L !== null) seen.push(L)
+    }
+    if (fin(x.pricedL)) seen.push(+(+x.pricedL).toFixed(3))
+    if (!seen.length) continue
+    checked++
+    const off = [...new Set(seen.filter((L) => L !== Lc))]
+    if (off.length) fails.push(`${name}: priced on L${off.join(', L')} (committed ${ll.key})`)
+  }
+  if (!checked && !fails.length) return { ok: null, fails, checked, carried, why: `no decision this pass carries its later lives' length${carried ? ` (${carried} carried from an earlier pass)` : ''}` }
+  return { ok: !fails.length, fails, checked, carried, why: fails.length ? `LIFE LENGTH OFF BASIS: ${fails.join('; ')}` : `every decision of ${checked} priced on the committed ${ll.key}${carried ? ` (${carried} carried from an earlier pass, not checked)` : ''}` }
 }
 
 /**
@@ -1219,6 +1376,12 @@ export const PLAN_CAL = { minN: 8, lo: 0.55, hi: 0.97, staleMin: 45 }
  * prev/rec: plan records. Returns {ok (true|false|null), ...numbers, why}.
  */
 export const EXIT_STABLE = { k: 4, minTolH: 0.5, maxGapMin: 20 }
+/** The later lives' length a plan record's exit is on: the committed life length, else its install decision's noise key. */
+export function planLifeOf(rec) {
+  const ll = rec?.decisions?.lifeLength
+  if (ll?.key && fin(ll.lifeH)) return +(+ll.lifeH).toFixed(3)
+  return lifeOfNoiseKey(rec?.decisions?.install?.noiseKey)
+}
 export function exitStabilityOf(prev, rec) {
   const cur = exitStabilityNow(prev, rec)
   // A failure stays on the record for an hour (the healthcheck runs every 15
@@ -1239,6 +1402,13 @@ function exitStabilityNow(prev, rec) {
   if (events.length) return { ok: null, why: `re-decided this pass (${events.join('; ').slice(0, 160)}): the exit may move` }
   const dtH = (Date.parse(rec.at) - Date.parse(px.at ?? prev.at)) / 3.6e6
   if (!(dtH >= 0) || dtH * 60 > EXIT_STABLE.maxGapMin) return { ok: null, why: `the last exit is ${fin(dtH) ? (dtH * 60).toFixed(0) : '?'} min old: not consecutive passes` }
+  // THE LATER LIVES' LENGTH IS ON THE BASIS: a held plan's exit cannot move
+  // to another L without the switch being an event (decideLifeLengthGen). Live
+  // BN9 2026-09-30 07:04Z the purchase model's chooser moved 0.5h -> 3h and
+  // the exit 15.5h -> 26.2h on a pass that re-decided nothing.
+  const lp = planLifeOf(prev)
+  const lc = planLifeOf(rec)
+  if (lp !== null && lc !== null && lp !== lc) return { ok: false, prevH: px.meanH, curH: ex.meanH, dtH: +dtH.toFixed(3), lifeL: { prev: lp, cur: lc }, prevAt: prev.at, why: `EXIT UNSTABLE: the later lives' length moved L${lp} -> L${lc} with no event (${px.meanH}h -> ${ex.meanH}h over ${(dtH * 60).toFixed(0)} min) — a length switch must be the life length decision's, and an event` }
   const seOf = (x, d) => {
     const s = Array.isArray(d?.samples) ? d.samples.filter(fin) : []
     if (s.length >= 2) {
@@ -1279,7 +1449,7 @@ export function optionsBasisOf(plan) {
   const d = plan?.decisions ?? {}
   const fails = []
   let checked = 0
-  for (const name of ['install', 'grafts', 'countRoute', 'sleeveObjective']) {
+  for (const name of ['install', 'grafts', 'countRoute', 'sleeveObjective', 'lifeLength']) {
     const x = d[name]
     if (!x?.key || !Array.isArray(x.options) || !x.options.length) continue
     checked++
@@ -1416,6 +1586,12 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const ob = optionsBasisOf(plan)
   if (ob.ok === false) fail(ob.why, "a decision published options priced on another basis than the committed exit they are compared with (a held decision's old options, a graft set the install did not price) — every number in a decision must be one pass's pricing of one trajectory")
   else if (ob.why) notes.push(`plan options basis: ${ob.why}`)
+  // LIFE LENGTH OFF BASIS (lifeLengthBasisOf): every decision on the committed L.
+  const lb = lifeLengthBasisOf(plan)
+  if (lb.ok === false) fail(lb.why, "a decision priced later lives of another length than the plan committed (decisions.lifeLength) — its inputs were built before the life length decision, or from another builder than progress.js exitInputsGen (lifeplan.lifeInputsOf on the committed L)")
+  else if (lb.why) notes.push(`plan life length basis: ${lb.why}`)
+  const ll0 = plan.decisions?.lifeLength
+  if (ll0?.key) notes.push(`plan life length: ${ll0.key}${ll0.held ? ' (held)' : ''} — ${String(ll0.why ?? '').slice(0, 160)}`)
   const plg = plan.perLifeGain ?? null
   if (plg?.ok === false) fail(plg.why, "the committed trajectory's later lives compound a gain the purchase model cannot buy with a life's money — a lift applied per cycle whatever the life buys (exitplan lifeLift, lifeplan table)")
   else if (plg?.why) notes.push(`plan per-life gain: ${plg.why}`)

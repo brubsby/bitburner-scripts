@@ -1009,7 +1009,15 @@ export async function run() {
     const o = P.applyDraw(inp, { lnPerHour: 0.06, cycleH: 1.2 });
     if (!(o.cycleHours === 8 && Math.abs(Math.log(o.multGainPerCycle) - 0.06 * 8) < 1e-12)) c18.fail("a draw must keep the purchase model's life length and buy the drawn rate over it", JSON.stringify({ c: o.cycleHours, g: o.multGainPerCycle }));
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/return \{ \.\.\.out, cycleHours: pc\.cycleHours, multGainPerCycle: Math\.exp\(r \* pc\.cycleHours\), cadenceFrom: 'purchase model'/.test(prog)) c18.fail("exitInputsOf must take the purchase model's life length, the gain the model-prior posterior's rate over it (source guard)");
+    // The length is now the PLAN's committed one (lifelength.test.mjs LL*), the gain the model-prior posterior's
+    // rate at it through lifeplan.lifeInputsOf.
+    if (!/const x = lifeInputsOf\(out, pc, Lc, post, \{ lifeLength: lifeWhy, catalogue \}\)/.test(prog) || !/const Lc = c && buys\(c\.L\) \? c\.L : provisionalLifeL\(/.test(prog)) c18.fail("exitInputsOf must take the committed life length, the gain the model-prior posterior's rate over it (source guard)");
+    {
+      const row = { L: 8, lnMean: 0.2 };
+      const post = { rate: { mean: Math.log(0.03), sd: 0.4, weight: 0.3 }, modelPrior: { lnPerHour: 0.2 / 8 } };
+      const x = LP.lifeInputsOf(I, { table: [row] }, 8, post);
+      if (!(x && x.cycleHours === 8 && Math.abs(Math.log(x.multGainPerCycle) - 0.03 * 8) < 1e-12 && x.cadenceFrom === "purchase model")) c18.fail("lifeInputsOf at the prior's own length must price the posterior's median rate over it", JSON.stringify({ c: x?.cycleHours, g: x?.multGainPerCycle }));
+    }
   }
   checks.push(c18);
 

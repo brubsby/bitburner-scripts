@@ -169,12 +169,12 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
-import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
+import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, lifeTableGen, lifeInputsOf, lifeCadenceAt, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -1328,6 +1328,8 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
         const keys = ['none', ...Object.keys(exitCmp.arms ?? {}).filter((k) => typeof exitCmp.arms[k]?.withH === 'number')]
         const pointH = { none: exitCmp.withoutH, ...Object.fromEntries(keys.filter((k) => k !== 'none').map((k) => [k, exitCmp.arms[k].withH])) }
         decision = await planDecide(pc, 'gang', () => decideAmongGen({ options: keys.map((k) => ({ key: k, sim: (dr) => armH(k, applyDraw(b0, dr)) })), prev: pc.prev?.decisions?.gang ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
+        // The later lives' length its trajectories priced (LIFE LENGTH OFF BASIS: no noise keys here).
+        if (decision && typeof decision === 'object') decision.pricedL = lifeLOf(b0)
         // THE PLAN'S COMMITMENT GOVERNS: its key replaces the point argmin.
         if (decision?.key && decision.key !== exitCmp.best) {
           const h = pointH[decision.key]
@@ -1915,6 +1917,8 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     if (pc?.post && priced.length > 1) {
       const pointH = Object.fromEntries(priced)
       const d = await planDecide(pc, 'sleeveObjective', () => decideAmongGen({ options: fns.filter(([o]) => o in pointH).map(([o, f]) => ({ key: o, sim: (dr) => f(applyDraw(base, dr)) })), prev: pc.prev?.decisions?.sleeveObjective ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
+      // The later lives' length its trajectories priced (LIFE LENGTH OFF BASIS: no noise keys here).
+      if (d && typeof d === 'object') d.pricedL = lifeLOf(base)
       if (d?.key) return out(d.key, `plan: ${d.why} — point exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}`, { exits: pointH, plan: { meanH: d.meanH, q10: d.q10, q90: d.q90, held: d.held === true } })
     }
     return out(priced[0][0], `simulated exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}${eRep === null ? ' (eRep unmeasured: rep priced on the exit leg only — a floor)' : ''}`, { exits: Object.fromEntries(priced) })
@@ -2850,19 +2854,82 @@ function planCtxOf(ns, info) {
  * held, why}. Null when the plan cannot decide (installgate then keeps its
  * own comparison, named as the fallback there).
  */
-async function planInstallOf(ns, info, inputs, count, point) {
-  const pc = planCtxOf(ns, info)
-  if (!pc.post) return null
-  pc.obsInputs = inputs
-  // A CARRIED STREAM THAT MOVED IS AN EVENT (plan.streamEventsOf): the
-  // install decision re-decides on it rather than re-pricing its held
-  // trajectory on a stream it was not decided with.
+/**
+ * A CARRIED STREAM THAT MOVED IS AN EVENT (plan.streamEventsOf): the
+ * decisions re-decide on it rather than re-pricing a held trajectory on a
+ * stream it was not decided with. Once per pass, by the first decision that
+ * builds inputs (the life length decision, else the install decision).
+ */
+function streamEventsNow(pc, inputs) {
+  if (!pc || pc.streamsChecked) return
+  pc.streamsChecked = true
   pc.streams = streamSummaryOf(inputs?.carriedIncome)
   const sev = pc.prev ? streamEventsOf(pc.prev.streams ?? null, pc.streams) : []
   if (sev.length) {
     pc.events = [...(pc.events ?? []), ...sev]
     pc.redecide = true
   }
+}
+/**
+ * THE LATER LIVES' LENGTH, A PLAN DECISION (plan.decideLifeLengthGen). The
+ * purchase model's chooser picked it every pass by the argmin of exits priced
+ * on the default policy — this life's install AT the length, no committed
+ * batch, no draws, no incumbent — and every decision priced on its pick: live
+ * BN9 2026-09-30 it moved 0.5h / 3h / 6h / 8h between passes that re-decided
+ * nothing, and 0.5h right after the 08:19Z install (the full trajectory 54h).
+ * Now each length is the COMMITTED trajectory (the committed install's spec
+ * and batch: this life's install time is the install decision's, the length
+ * governs the lives after it) on this pass's inputs with the committed grafts
+ * and streams carried (lifeplan.lifeInputsOf on the pass's first build:
+ * lifeBaseNow), on the plan's draws; the incumbent is the node's committed
+ * length (installs do not reset it) and moves only by the commitment rule.
+ * It runs FIRST, right after the pass's first inputs, so every decision after
+ * it prices the committed length (exitInputsGen: committedLifeL). A switch is
+ * an event (every later decision re-decides on it); an event raised after it
+ * this pass (a graft set switch) re-decides it on the next pass
+ * (lifeLengthPending, publishPlan). Never throws; null without the purchase
+ * model (the measured cadence stands).
+ */
+async function lifeLengthDecisionOf(ns, info, countCtx = null) {
+  const lb = lifeBaseNow
+  if (!lb || lb.pass !== passT0 || lb.lastAugReset !== info?.lastAugReset) return null
+  const pc = planCtxOf(ns, info)
+  streamEventsNow(pc, lb.base)
+  const prev = pc.prevAny?.decisions?.lifeLength?.key ? pc.prevAny.decisions.lifeLength : null
+  const pending = typeof pc.prevAny?.lifeLengthPending === 'string' ? pc.prevAny.lifeLengthPending : null
+  const redecide = pc.redecide || !prev || pending !== null
+  const options = []
+  for (const row of lb.rec?.table ?? []) {
+    if (!(typeof row.lnMean === 'number' && row.lnMean > 0)) continue
+    const inputs = lifeInputsOf(lb.base, lb.rec, row.L, lb.post, { lifeLength: `later lives of ${row.L}h: an option of the plan's life length decision`, catalogue: lb.catalogue })
+    if (inputs) options.push({ L: row.L, inputs, cad: lifeCadenceAt(row, lb.post) })
+  }
+  if (!pc.post) {
+    // No posterior (the plan context threw): no draws to decide on — the committed length stands, named.
+    pc.decisions.lifeLength = prev ? { ...prev, held: true, why: `no posterior this pass (${pc.error ?? 'plan context'}): the committed ${prev.key} stands`, options: [], pricedAt: null } : { key: null, lifeH: null, why: `no posterior this pass (${pc.error ?? 'plan context'}) and no committed life length: the provisional length stands` }
+    return pc.decisions.lifeLength
+  }
+  const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+  const d = await planDecide(pc, 'lifeLength', () => decideLifeLengthGen({ options, basis, ctx: { count: countCtx, repPoint: pc.repPoint ?? null }, prev, draws: pc.draws, redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, reachSd: pc.post?.drift?.s ?? null }))
+  if (d && typeof d === 'object') {
+    if (pending) d.pendingFrom = pending
+    // A SWITCHED LENGTH IS AN EVENT: every decision after this one prices the
+    // node on the new length, so they re-decide on it — and the exit's move
+    // is the switch, not drift (plan.exitStabilityOf).
+    if (d.key && prev && d.switched === true) {
+      pc.events = [...(pc.events ?? []), `the committed life length switched ${prev.key} -> ${d.key} (${String(d.why ?? '').slice(0, 120)})`]
+      pc.redecide = true
+    }
+  }
+  // Events raised after this point re-decide the length on the next pass.
+  pc.lifeEventsAt = (pc.events ?? []).length
+  return d
+}
+async function planInstallOf(ns, info, inputs, count, point) {
+  const pc = planCtxOf(ns, info)
+  if (!pc.post) return null
+  pc.obsInputs = inputs
+  streamEventsNow(pc, inputs)
   if (inputs?.incomeFromPrior) pc.incomeFromPrior = inputs.incomeSource
   if (inputs?.repFromEstimate) pc.repFromEstimate = inputs.repSource
   // THE DECISION THAT ACTS GETS ITS DRAWS: a floor on its budget
@@ -2967,7 +3034,11 @@ function publishPlan(ns, info, extra = {}) {
     // `truncated`), and wall time against work time shows a throttled tab.
     const st = pc.pacer?.stats ?? null
     const blocked = st ? st.maxBlockMs > PLAN.maxBlockMs : false
-    const truncated = [route, inst, pc.decisions.grafts, pc.decisions.sleeveObjective].some((d) => d?.overBudget === true)
+    const truncated = [route, inst, pc.decisions.grafts, pc.decisions.sleeveObjective, pc.decisions.lifeLength].some((d) => d?.overBudget === true)
+    // EVENTS AFTER THE LIFE LENGTH DECISION (a graft set switch, a flipped
+    // rebase): the length was priced before them — it re-decides next pass.
+    const lateEvents = pc.decisions.lifeLength?.key && Number.isInteger(pc.lifeEventsAt) ? (pc.events ?? []).slice(pc.lifeEventsAt) : []
+    const lifeLengthPending = lateEvents.length ? `events after the life length decision on ${at}: ${lateEvents.join('; ')}`.slice(0, 300) : null
     const redecided = pc.redecide && Object.values(pc.decisions).some((d) => d && d.held === false)
     // EXIT JUMP AT INSTALL (plan.exitJumpOf): this life's exits in its first
     // hour against the install's own (act.js /tel/install-last.txt), carried
@@ -3004,7 +3075,13 @@ function publishPlan(ns, info, extra = {}) {
         grafts: pc.decisions.grafts ?? pc.prev?.decisions?.grafts ?? null,
         // The 4S TIX API (fourSDecisionOf): stock.js buys on 'now'. Carried when this pass did not reach it.
         fourS: pc.decisions.fourS ?? pc.prev?.decisions?.fourS ?? null,
+        // THE LATER LIVES' LENGTH (lifeLengthDecisionOf): every decision
+        // above prices it. The node's commitment — carried across installs
+        // and through a pass that did not reach it.
+        lifeLength: pc.decisions.lifeLength ?? pc.prevAny?.decisions?.lifeLength ?? null,
       },
+      // The life length re-decides on the next pass (events raised after it this pass).
+      lifeLengthPending,
       // The node's best-found graft set (graftDecisionOf): survives a 'none'
       // or refused decision, an unreached graft step and an install.
       graftMemory: pc.decisions.grafts?.memory ?? pc.prevAny?.graftMemory ?? null,
@@ -3048,6 +3125,12 @@ function publishPlan(ns, info, extra = {}) {
       rec.exitStability = exitStabilityOf(pc.prevAny ?? null, rec)
     } catch (e) {
       rec.exitStability = { ok: null, why: `exit stability check threw: ${String(e).slice(0, 120)}` }
+    }
+    // LIFE LENGTH OFF BASIS (plan.lifeLengthBasisOf): every decision on the committed length. planCheck fails on it.
+    try {
+      rec.lifeLengthBasis = lifeLengthBasisOf(rec)
+    } catch (e) {
+      rec.lifeLengthBasis = { ok: null, why: `life length basis check threw: ${String(e).slice(0, 120)}` }
     }
     ns.write(PLAN_FILE, JSON.stringify(rec), 'w')
   } catch (e) {
@@ -3577,22 +3660,21 @@ function incomePostOf(ns, info, player) {
 function cadenceOptsOf(player) {
   return { hackMultNow: player?.mults?.hacking ?? null, covOf: (n) => (bitNodeMults(n) ? Math.log(bitNodeMults(n).AugmentationMoneyCost * bitNodeMults(n).AugmentationRepCost) : 0) }
 }
-// THE LIFE'S LENGTH, CHOSEN (lifeplan.cadenceByPurchases): what a life of
-// each length buys — reputation reset at every install, favour banked, the
-// 1.9x money escalation — priced as the exit's cycle, the soonest exit's
-// length taken. Once per pass and life (3ms offline); null without offers or
-// a reputation rate, and the measured cadence stands, named.
+// WHAT A LIFE OF EACH LENGTH BUYS (lifeplan.lifeTableGen): reputation reset at
+// every install, favour banked, the 1.9x money escalation — per length, no
+// exit priced. THE LENGTH ITSELF IS THE PLAN'S DECISION (lifeLengthDecisionOf,
+// plan.decideLifeLengthGen), priced on the committed trajectory; this table
+// is what each option's later lives buy. It used to be cadenceByPurchases,
+// which also CHOSE the length every pass by its own graft-free default-policy
+// exits (live BN9 2026-09-30: 0.5h / 3h / 6h / 8h between passes that
+// re-decided nothing). Once per pass and life; null without offers or a
+// reputation rate, and the measured cadence stands, named.
 let purchaseCadenceMemo = null
-// IN SLICES (purchaseCadenceGen, lifeplan.cadenceByPurchasesGen): the first
-// exit inputs of a pass price ten life lengths' exits, and in one step that
-// held the page 201.8ms (live BN9 2026-09-29 21:12Z, 'plan-grafts' step 1:
-// the graft decision builds the pass's first inputs). The graft decision
-// builds them through exitInputsGen; every later build this pass hits the memo.
 // `batch`: the next install's purchases (plan.buy + the queue) — owned in every
 // life the model prices (lifeplan.ownedAfterBatch), never bought twice.
 function* purchaseCadenceGen(ns, info, base, offers, owned0, batch = []) {
   const { owned, nfgLevel0 } = ownedAfterBatch(owned0, batch)
-  const key = `${info?.lastAugReset}|${planCtx?.decidedAt ?? ''}|${Math.floor(Date.now() / 300e3)}|${owned.size}+${nfgLevel0}`
+  const key = `${info?.lastAugReset}|${Math.floor(Date.now() / 300e3)}|${owned.size}+${nfgLevel0}|${base.repPerSec}`
   if (purchaseCadenceMemo?.key === key) return purchaseCadenceMemo.value
   let value = null
   try {
@@ -3600,14 +3682,55 @@ function* purchaseCadenceGen(ns, info, base, offers, owned0, batch = []) {
     const rph = typeof base.repPerSec === 'number' && base.repPerSec > 0 ? base.repPerSec * 3600 : null
     if (catal.items.length && rph) {
       const ms = yield* moneyScaleOfGen(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
-      const r = yield* cadenceByPurchasesGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy, bestExitPolicyGen, nfgLevel0 })
-      value = r ? { ...r, moneyScale: ms.scale, moneyCalibration: ms.why, afterBatch: { augs: owned.size - new Set(owned0 ?? []).size, nfgLevels: nfgLevel0 } } : null
+      const table = yield* lifeTableGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, nfgLevel0 })
+      value = table?.length ? { table, moneyScale: ms.scale, moneyCalibration: ms.why, afterBatch: { augs: owned.size - new Set(owned0 ?? []).size, nfgLevels: nfgLevel0 }, why: `what a life of each length buys (lifeplan.lifeTable): reputation reset at every install (base ${(rph / 3600).toFixed(2)}/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x${ms.scale.toFixed(2)} calibrated); not modelled: donations, rising faction_rep, sleeves, new joins, the count's value` } : null
     }
   } catch (e) {
     value = { error: String(e).slice(0, 120) }
   }
   purchaseCadenceMemo = { key, value }
   return value
+}
+/**
+ * THE COMMITTED LATER-LIVES LENGTH every exit input of this pass is built on:
+ * this pass's life length decision, else the node's last committed one (the
+ * plan record: installs do not reset it — it is the node's), else null (no
+ * decision yet: the provisional length, named). Only a length the table
+ * prices is used.
+ */
+function committedLifeL(ns, info) {
+  const pc = planCtx
+  const cur = pc?.decisions?.lifeLength
+  if (cur && typeof cur.lifeH === 'number' && isFinite(cur.lifeH)) return { L: cur.lifeH, from: `the plan's life length decision this pass (${cur.key}${cur.held ? ', held' : ''})` }
+  const prev = pc ? pc.prevAny?.decisions?.lifeLength ?? null : lifePrevOf(ns, info)
+  if (prev && typeof prev.lifeH === 'number' && isFinite(prev.lifeH)) return { L: prev.lifeH, from: `the plan's committed life length (${prev.key}, decided ${prev.decidedAt ?? '?'})` }
+  return null
+}
+// The last plan record's life length (same node), for builds before this pass's plan context exists.
+let lifePrevMemo = null
+function lifePrevOf(ns, info) {
+  if (lifePrevMemo?.pass === passT0) return lifePrevMemo.value
+  let value = null
+  try {
+    const p = JSON.parse(ns.read(PLAN_FILE) || 'null')
+    value = p && p.node === info?.currentNode ? p.decisions?.lifeLength ?? null : null
+  } catch {
+    value = null
+  }
+  lifePrevMemo = { pass: passT0, value }
+  return value
+}
+/**
+ * WITH NOTHING COMMITTED (the node's first decision, or a plan record from
+ * before the decision existed): the length nearest the measured mean life
+ * (the cadence posterior's own), among the lengths that buy something —
+ * provisional, named, and used only until the life length decision runs.
+ */
+function provisionalLifeL(table, measured) {
+  const rows = (table ?? []).filter((r) => typeof r.lnMean === 'number' && r.lnMean > 0)
+  if (!rows.length) return null
+  const target = typeof measured?.cycleHours === 'number' && measured.cycleHours > 0 ? measured.cycleHours : 6
+  return rows.reduce((a, r) => (Math.abs(Math.log(r.L / target)) < Math.abs(Math.log(a.L / target)) ? r : a), rows[0]).L
 }
 /**
  * THE COUNT BATCH'S FRESH-LIFE EARNINGS CURVE (countplan.freshCurve): the
@@ -3697,11 +3820,11 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   out.streams = { gang: gc.why, sleeves: sc.why, hacknetFinalWindow: fh?.length ? `the fleet a fresh life rebuilds (lifeplan.freshHacknetFlow): $${(stepRateAt(fh, 8) / 1e6).toFixed(2)}m/s to the balance at 8h, $${(stepRateAt(fh, 24) / 1e6).toFixed(2)}m/s at 24h (its purchases repaid from its own income first)` : 'no hacknet servers model this life (hacknet.txt mode not servers): the final window prices no hacknet (a floor)' }
   out.streams.contractRep = cr.why
   // The life's length is a decision: where the purchase model prices it, the
-  // exit's cycle is the length it chose (and what that length buys), not the
-  // measured mean life — a policy-chosen short life is not evidence that
-  // lives must be short (live BN1 2026-09-28: one-ticket lives of ~25 min
-  // had become the cadence). The measured rate still scales the draws
-  // (plan.applyDraw, cadenceRateMedian).
+  // exit's cycle is the COMMITTED length (the plan's life length decision:
+  // lifeLengthDecisionOf) and what that length buys, not the measured mean
+  // life — a policy-chosen short life is not evidence that lives must be
+  // short (live BN1 2026-09-28: one-ticket lives of ~25 min had become the
+  // cadence).
   // The NODE's catalogue (cadenceOffersNow): a fresh life has joined nothing.
   const cOffers = cadenceOffersNow?.length ? cadenceOffersNow : offers
   // THE LIVES IT PRICES FOLLOW THE NEXT INSTALL: that install's batch is
@@ -3709,22 +3832,37 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   // first install's gains, not again as every later life's purchases.
   const nextBatch = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])].filter((n) => typeof n === 'string')
   const pc = Array.isArray(cOffers) && cOffers.length ? yield* purchaseCadenceGen(ns, info, out, cOffers, ownedAugsNow, nextBatch) : null
-  if (pc && !pc.error && typeof pc.cycleHours === 'number' && pc.multGainPerCycle > 1) {
+  const buys = (L) => (pc?.table ?? []).some((r) => r.L === L && typeof r.lnMean === 'number' && r.lnMean > 0)
+  if (pc && !pc.error && pc.table?.some((r) => r.lnMean > 0)) {
+    const c = committedLifeL(ns, info)
+    const Lc = c && buys(c.L) ? c.L : provisionalLifeL(pc.table, { cycleHours: out.cycleHours })
+    const row = pc.table.find((r) => r.L === Lc)
     // THE MODEL IS THE CADENCE POSTERIOR'S PRIOR (bayes.cadencePosterior
-    // modelPrior): its ln(M) per hour at the length it chose, with its stated
-    // structural error, updated by this node's own gaining lives by their
-    // precision — the measured cadence moves the model, it does not stand in
-    // for it (and no longer scales the draws by a power of its own weight).
-    // The point is the posterior's median at the model's length; the draws
-    // take the posterior's rate at that length (plan.applyDraw).
-    const modelPrior = { lnPerHour: Math.log(pc.multGainPerCycle) / pc.cycleHours, cycleHours: pc.cycleHours, why: pc.why }
+    // modelPrior): its ln(M) per hour at the committed length, with its
+    // stated structural error, updated by this node's own gaining lives by
+    // their precision. The posterior at every other length follows from this
+    // one exactly (lifeplan.lifeCadenceAt) — the life length decision's
+    // options and the committed inputs are one belief. The point is its
+    // median; the draws take it with their own z (plan.applyDraw).
+    const modelPrior = { lnPerHour: row.lnMean / Lc, cycleHours: Lc, why: pc.why }
     cadenceModelNow = { lastAugReset: info?.lastAugReset, modelPrior }
     const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player), modelPrior })
-    const r = cm?.stats?.lnPerHour > 0 ? cm.stats.lnPerHour : modelPrior.lnPerHour
-    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: Math.exp(r * pc.cycleHours), cadenceFrom: 'purchase model', cadenceRateMedian: r, cadence: { ...(out.cadence ?? {}), source: 'purchase model', model: { lnPerHour: modelPrior.lnPerHour, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle }, rateMedian: r, posterior: cm?.why ?? null, why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration, catalogue: cadenceKeptWhy ?? 'this life\'s offers', afterBatch: pc.afterBatch ?? null } }
+    const post = cm?.posterior ?? null
+    const catalogue = cadenceKeptWhy ?? "this life's offers"
+    // The base the life length decision prices every length from: these
+    // inputs before a length is applied (grafts, streams, trader belief).
+    lifeBaseNow = { pass: passT0, lastAugReset: info?.lastAugReset, base: out, rec: pc, post, catalogue }
+    const lifeWhy = c && buys(c.L)
+      ? `later lives of ${Lc}h: ${c.from}`
+      : `later lives of ${Lc}h: PROVISIONAL — ${c ? `the committed ${c.L}h buys nothing now` : 'no committed life length yet'} (the length nearest the measured mean life among those that buy something) until the plan's life length decision prices them`
+    const x = lifeInputsOf(out, pc, Lc, post, { lifeLength: lifeWhy, catalogue })
+    if (x) return c && buys(c.L) ? x : { ...x, cadence: { ...x.cadence, provisional: true } }
   }
   return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
 }
+// The last purchase-model build's base inputs, table and cadence posterior
+// (exitInputsGen), for the life length decision's options.
+let lifeBaseNow = null
 /** The balance an install leaves: the node's (nodeecon.postInstallMoney) plus the owned augmentations' startingMoney where it survives. */
 function installCashOf(node, owned) {
   const base = postInstallMoney(node)
@@ -5671,6 +5809,15 @@ async function act(ns, canJoin, info, note) {
   } catch {
     // reported by the callers' own builds
   }
+  // THE LATER LIVES' LENGTH (lifeLengthDecisionOf), decided FIRST on the
+  // pass's first inputs: every exit input built after it — the graft, 4S,
+  // install, gang, sleeve and exit decisions' — prices the committed length.
+  try {
+    await lifeLengthDecisionOf(ns, info, canBuyAug ? countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player) : null)
+  } catch (e) {
+    const pcl = planCtx
+    if (pcl) pcl.decisions.lifeLength = { key: null, lifeH: null, error: true, why: `life length decision threw: ${String(e).slice(0, 160)}` }
+  }
 
 
   // THE WORK SLOT, PRICED. An hour of the best money crime is worth
@@ -6533,11 +6680,12 @@ async function act(ns, canJoin, info, note) {
       // gang faction's reputation along that trajectory below, since it
       // accrues during any wait whatever the work slot is doing.
       const gangUnlockWaits = (schedule?.gang?.unlocks ?? []).filter((u) => typeof u.atH === 'number' && u.atH > 0 && u.atH <= 12).map((u) => ({ waitH: u.atH, gangUnlock: u.name }))
-      // THE LIFE THE PURCHASE MODEL CHOSE (lifeplan.cadenceByPurchases, via
-      // exitInputsOf this pass): installing when this life reaches that
-      // length is a wait like any other, priced with what it buys — so the
-      // plan can choose it for THIS life too, not only for later ones.
-      const lifeTargetH = purchaseCadenceMemo?.value?.cycleHours
+      // THE COMMITTED LIFE LENGTH (lifeLengthDecisionOf, the plan's decision
+      // this pass): installing when this life reaches that length is a wait
+      // like any other, priced with what it buys — so the install decision
+      // can choose it for THIS life too. This life's install time stays the
+      // install decision's; the length governs the lives after it.
+      const lifeTargetH = committedLifeL(ns, info)?.L
       const lifeAgeH = typeof info?.lastAugReset === 'number' ? (Date.now() - info.lastAugReset) / 3600000 : null
       const lifeWaits = typeof lifeTargetH === 'number' && typeof lifeAgeH === 'number' && lifeTargetH - lifeAgeH > 4 ? [{ waitH: +(lifeTargetH - lifeAgeH).toFixed(2), lifeTarget: lifeTargetH }] : []
       const candidates = [
