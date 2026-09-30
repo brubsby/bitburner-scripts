@@ -80,6 +80,7 @@ import { CRIMES, GYMS, crimeChance, crimeRates, gymRate, hoursToStat, intelligen
 import { skillFromExp } from 'installgate.js'
 // Pure: the floor against our own unchecked fee spending.
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
+import { HACKING_WORK_FACTIONS } from 'contractplan.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 /**
@@ -1005,7 +1006,13 @@ export function sleeveFactionRepPerSec(sleeve, o = {}) {
     nodeRepMult *
     intB
   // Per CYCLE above; 5 cycles per second.
-  const best = hacking >= field ? { type: 'hacking', base: hacking } : { type: 'field', base: field }
+  // ONLY WORK THE FACTION OFFERS. Tetrads and Slum Snakes offer no hacking
+  // work (FactionInfo.tsx offerHackingWork), and setToFactionWork returns
+  // false for it: live 2026-09-30 05:02Z "sleeve 0 faction Tetrads/hacking:
+  // returned false". An unknown faction (o.repFaction absent) keeps the old
+  // choice. [SP30]
+  const hackOffered = typeof o.repFaction !== 'string' || HACKING_WORK_FACTIONS.has(o.repFaction)
+  const best = hackOffered && hacking >= field ? { type: 'hacking', base: hacking } : { type: 'field', base: field }
   const favorMult = num(o.favor) && o.favor > 0 ? 1 + o.favor / 100 : 1
   return {
     workType: best.type,

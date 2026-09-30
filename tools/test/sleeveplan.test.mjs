@@ -611,12 +611,12 @@ export async function run() {
   checks.push(c12);
 
   // ---------------------------------------------------------------------
-  const c13 = new Check("SP13", "the plan says WHERE its horizon came from — priced, capped, carried or none");
+  const c29 = new Check("SP29", "the plan says WHERE its horizon came from — priced, capped, carried or none");
   {
-    c13.examined(5);
+    c29.examined(5);
     const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const fn = src.match(/function writeSleevePlan\([\s\S]*?\n\}/)?.[0] ?? "";
-    if (!fn) c13.fail("could not locate writeSleevePlan in progress.js", "a rotted check, not a clean repo");
+    if (!fn) c29.fail("could not locate writeSleevePlan in progress.js", "a rotted check, not a clean repo");
     const bare = fn.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
 
     // The three cases are not interchangeable: a sleeve deciding to spend 100h
@@ -625,11 +625,11 @@ export async function run() {
     // across other files to explain, which is the cost this pins down.
     for (const f of ["horizonRawHours", "horizonSource", "horizonWhy"]) {
       if (!new RegExp(`\\b${f}\\s*:`).test(bare)) {
-        c13.fail(`the sleeve plan must publish \`${f}\``, "a horizon whose origin cannot be read is a number nobody can check");
+        c29.fail(`the sleeve plan must publish \`${f}\``, "a horizon whose origin cannot be read is a number nobody can check");
       }
     }
     for (const word of ["capped", "priced", "carried", "unpriceable"]) {
-      if (!new RegExp(`'${word}'`).test(bare)) c13.fail(`horizonSource must be able to say '${word}'`);
+      if (!new RegExp(`'${word}'`).test(bare)) c29.fail(`horizonSource must be able to say '${word}'`);
     }
     // THE CAP MUST LIVE HERE, not at the call site — that split is what dropped
     // horizonRawHours when this function was extracted.
@@ -637,11 +637,11 @@ export async function run() {
     // `/MAX_PLANNING_HORIZON_H/` passed while the cap itself had been moved
     // back out. Pin the assignment that actually applies it.
     if (!/const horizonHours\s*=[^\n]*MAX_PLANNING_HORIZON_H/.test(bare)) {
-      c13.fail("writeSleevePlan must own the cap", "applying it at the call site is what silently lost the raw figure in a refactor");
+      c29.fail("writeSleevePlan must own the cap", "applying it at the call site is what silently lost the raw figure in a refactor");
     }
-    c13.note("horizon carries raw, capped, source and why — the three cases are distinguishable from the file alone");
+    c29.note("horizon carries raw, capped, source and why — the three cases are distinguishable from the file alone");
   }
-  checks.push(c13);
+  checks.push(c29);
 
   // ---------------------------------------------------------------------
   const c14 = new Check("SP14", "the fleet record carries the skills that explain its rates");
@@ -1029,6 +1029,27 @@ export async function run() {
     if (!/const ready = \[\.\.\.left\]\.filter\(\(n\) => \(sing\.augPrereq\(n\) \?\? \[\]\)\.every\(\(q\) => have\.has\(q\) \|\| seq\.includes\(q\)\)\)/.test(pr)) c28.fail("the batch must be ordered prerequisites-first");
   }
   checks.push(c28);
+
+  // [SP30] A sleeve works only the work its faction offers: Tetrads and Slum
+  // Snakes offer no hacking work, and setToFactionWork returns false for it
+  // (live 2026-09-30 05:02Z, "sleeve 0 faction Tetrads/hacking").
+  const cOffer = new Check("SP30", "sleeve faction work picks only a work type the faction offers");
+  {
+    const hackish = sleeve({ sync: 100 });
+    const free = sp.sleeveFactionRepPerSec(hackish, { nodeWorkRepMult: 1 });
+    if (free?.workType !== "hacking") cOffer.fail(`a hacking-skewed sleeve with no faction named should pick hacking, got ${free?.workType}`);
+    for (const f of ["Tetrads", "Slum Snakes"]) {
+      const r = sp.sleeveFactionRepPerSec(hackish, { nodeWorkRepMult: 1, repFaction: f });
+      if (r?.workType !== "field") cOffer.fail(`${f} offers no hacking work: must pick field, got ${r?.workType}`);
+    }
+    const ns = sp.sleeveFactionRepPerSec(hackish, { nodeWorkRepMult: 1, repFaction: "NiteSec" });
+    if (ns?.workType !== "hacking") cOffer.fail(`NiteSec offers hacking work, got ${ns?.workType}`);
+    const info = game("src/Faction/FactionInfo.tsx");
+    const block = (name) => info.slice(info.indexOf(`[FactionName.${name}]`), info.indexOf("}),", info.indexOf(`[FactionName.${name}]`)));
+    for (const f of ["Tetrads", "SlumSnakes"]) if (/offerHackingWork:\s*true/.test(block(f))) cOffer.fail(`${f} now offers hacking work in FactionInfo.tsx`);
+    cOffer.examined(4);
+  }
+  checks.push(cOffer);
 
   return checks;
 }
