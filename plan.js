@@ -480,6 +480,11 @@ export function redecideEvents(prev, cur, o = {}) {
   if (!prev.decidedAt || (cur.now - Date.parse(prev.decidedAt)) / 60e3 >= P.maxAgeMin) ev.push(`${P.maxAgeMin} min since the last decision`)
   if (cur.committedAvailable === false) ev.push('the committed option is gone (bought, finished or unpriced)')
   if (prev.forceRedecide) ev.push(prev.forceRedecide)
+  // A NEW EXIT MODEL re-decides: a held decision was chosen on the old
+  // model's arithmetic (live 2026-09-30 18:30Z: 8e594a2 corrected the rep
+  // rate, and the L8 / 5-graft decisions made on the broken one would
+  // otherwise hold up to maxAgeMin). [PL-VER]
+  if (prev.ver != null && cur.ver != null && prev.ver !== cur.ver) ev.push(`the exit model changed (${prev.ver} -> ${cur.ver})`)
   if (prev.invitesKey !== undefined && cur.invitesKey !== undefined && prev.invitesKey !== cur.invitesKey) ev.push('the invitation/joined set changed')
   const pt = prev.posteriors?.trader
   if (pt && cur.trader && Math.abs(cur.trader.perSec.mean - pt.mean) > P.traderMoveSd * Math.max(pt.sd, 1e-12)) ev.push(`trader posterior moved ${((cur.trader.perSec.mean - pt.mean) / pt.sd).toFixed(1)} sd`)

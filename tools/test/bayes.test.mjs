@@ -225,6 +225,12 @@ export async function run() {
     if (!life.some((e) => /new life/.test(e))) c5.fail("an install is an event");
     const old = P.redecideEvents(prev, { lastAugReset: 1, now: 31 * 60e3, trader: { perSec: { mean: 2e-4 } }, drift: { s: 0.15 }, committedAvailable: true });
     if (!old.some((e) => /min since/.test(e))) c5.fail("the max age is an event");
+    // [PL-VER] A new exit model is an event; the same model is not.
+    const cur0 = { lastAugReset: 1, now, trader: { perSec: { mean: 2.05e-4 } }, drift: { s: 0.16 }, committedAvailable: true };
+    const newModel = P.redecideEvents({ ...prev, ver: "a.1" }, { ...cur0, ver: "b.1" });
+    if (!newModel.some((e) => /exit model changed/.test(e))) c5.fail("a new exit model must be an event");
+    const sameModel = P.redecideEvents({ ...prev, ver: "a.1" }, { ...cur0, ver: "a.1" });
+    if (sameModel.length) c5.fail("the same model is no event", sameModel.join("; "));
   }
   checks.push(c5);
 

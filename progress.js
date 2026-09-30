@@ -2907,7 +2907,7 @@ function planCtxOf(ns, info) {
     const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const traderRegime = typeof stockNow?.mode === 'string' ? rwRegimeOf(stockNow.mode) : null
-    const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime })
+    const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime, ver: MODEL_VERSION })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
     const draws = makeDraws(post, PLAN.N, seed)
     planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, runDropped, decisions: {}, setupMs: 0, pacer: passPacer, error: null, traderRegime }
