@@ -1484,8 +1484,13 @@ export function gangBridgeOf(live, carry, { now = Date.now(), lifeStart = null, 
   return { steps, why: `the install's carried gang stream (built ${carry.at}, ${dH.toFixed(2)}h ago; $${(steps[0].perSec / 1e6).toFixed(1)}m/s now): gang.js's forecast has no money ${ageH.toFixed(2)}h into the life, inside the ${graceH}h post-install grace` }
 }
 
-export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), prev = null, si = 0.02 } = {}) {
+export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), prev = null, si = 0.02, ver = null } = {}) {
   const carry = (why) => (prev && prev.install ? prev : { ok: null, why })
+  // A DEPLOY INSIDE THE WINDOW re-prices the exit on another model: a
+  // correction, not a jump. Keep the verdict the install's own model reached
+  // and stop comparing (live 2026-09-30 14:45Z: 40f64df priced the new life
+  // 3.8h sooner mid-window and this fired on the improvement). [EJ5]
+  if (prev?.install && prev.ver != null && ver != null && prev.ver !== ver) return { ...prev, why: `${String(prev.why ?? '').replace(/ \(the exit model changed.*$/, '')} (the exit model changed ${prev.ver} -> ${ver} inside the window: later passes not compared)` }
   if (!rec?.at || !fin(lastAugReset)) return carry('no install record, or no life stamp')
   const installAt = Date.parse(rec.at)
   // The install that began THIS life: act.js records it moments before the
@@ -1522,6 +1527,7 @@ export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), p
     install,
     first,
     worst,
+    ver: prev?.ver ?? ver,
     n: (prev?.n ?? 0) + 1,
     why: ok
       ? `one trajectory across the install (${rec.at}): ${checks.map((k) => `${k.aName} ~ ${k.bName}`).join('; ')}`

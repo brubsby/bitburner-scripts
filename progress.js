@@ -3197,7 +3197,7 @@ function publishPlan(ns, info, extra = {}) {
     let exitJump = pc.prev?.exitJump ?? null
     try {
       const pointH = ex === inst ? inst?.pointH : ex?.pointH ?? null
-      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump })
+      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION })
       if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, ...exitJump }), 'w')
     } catch (e) {
       exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }

@@ -249,6 +249,26 @@ export async function run() {
   }
 
   {
+    // [EJ5] A deploy inside the window re-prices the exit on another model:
+    // the verdict the install's own model reached stands, later passes are
+    // not compared (live 2026-09-30 14:45Z, 40f64df priced 3.8h sooner).
+    const c = new Check("EJ5", "EXIT JUMP AT INSTALL does not compare across an exit-model change inside its window");
+    const rec = F.installLast;
+    const el = (t) => (t - INSTALL_AT) / 3.6e6;
+    const t1 = INSTALL_AT + 0.2 * 3.6e6, t2 = INSTALL_AT + 0.6 * 3.6e6;
+    const good = P.exitJumpOf(rec, { meanH: 50.06 - el(t1), pointH: 50.26 - el(t1), n: 24 }, { lastAugReset: F.lastAugReset, now: t1, ver: "a.1" });
+    if (good.ok !== true) c.fail(`a consistent first pass must pass: ${good.why}`);
+    if (good.ver !== "a.1") c.fail("the verdict must carry the model version it was reached on");
+    const moved = P.exitJumpOf(rec, { meanH: 20, pointH: 20, n: 24 }, { lastAugReset: F.lastAugReset, now: t2, prev: good, ver: "b.1" });
+    if (moved.ok !== true) c.fail(`a pass on another model must not be compared: ${moved.why}`);
+    if (!/exit model changed/.test(moved.why)) c.fail(`it must say why: ${moved.why}`);
+    const same = P.exitJumpOf(rec, { meanH: 20, pointH: 20, n: 24 }, { lastAugReset: F.lastAugReset, now: t2, prev: good, ver: "a.1" });
+    if (same.ok !== false) c.fail("the same model's jump must still fail");
+    c.examined(3);
+    checks.push(c);
+  }
+
+  {
     const c = new Check("EJ4", "WIRING: the exit inputs' trader point and the plan's draws come from one belief; the plan record carries exitJump; the farm verdict is priced with nothing planned");
     const src = code("progress.js");
     const want = [
