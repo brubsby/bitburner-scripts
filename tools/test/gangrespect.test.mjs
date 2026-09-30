@@ -17,8 +17,9 @@
 //   GR3  the fix: the candidate's stream priced where the exit prices the
 //        committed gang (carriedIncome.gang: later lives' and the final
 //        window's money legs), replacing it — money beats respect
-//   GR4  more money is never a later exit: the stream is priced as the best of
-//        itself and its capped rungs; ties at the exit's resolution go to money
+//   GR4  more money is never a later exit: the exit itself is monotone in the
+//        stream (exitplan's work-slot queue, [XM]) and the value with it, with
+//        no capped ladder; ties at the exit's resolution go to money
 //   GR5  the search on the live members picks money, forecasting a stream on
 //        the scale the install carried ($171m/s at 15:20Z)
 //   GR6  a missing search falls back to the last ADOPTED policy (restored
@@ -109,23 +110,25 @@ export async function run() {
     const h0 = X.bestExitPolicy({ ...base, carriedIncome: others }).best.hours;
     const h1 = X.bestExitPolicy({ ...base, carriedIncome: { ...others, gang: steps } }).best.hours;
     if (!(h0 - h1 > 2)) c3.fail(`the exit with the money gang must be hours sooner than with none: ${h1} vs ${h0}`);
-    c3.note(`value money ${sm.value.toFixed(3)} ln vs respect ${sr.value.toFixed(3)} ln; exit ${h1.toFixed(2)}h with the stream vs ${h0.toFixed(2)}h without (${(h0 - h1).toFixed(2)}h)${sm.moneyCapped ? `, priced at the $${(sm.moneyCapped / 1e6).toFixed(1)}m/s rung` : ""}`);
+    c3.note(`value money ${sm.value.toFixed(3)} ln vs respect ${sr.value.toFixed(3)} ln; exit ${h1.toFixed(2)}h with the stream vs ${h0.toFixed(2)}h without (${(h0 - h1).toFixed(2)}h)`);
   }
   checks.push(c3);
 
-  const c4 = new Check("GR4", "more money is never a later exit: capped rungs make the value monotone, and exit-resolution ties go to money");
+  const c4 = new Check("GR4", "more money is never a later exit: the raw exit and the priced value are monotone in the stream (no capped ladder), and exit-resolution ties go to money");
   {
     const rates = [1e7, 5e7, 2e8, 4e8];
     const vals = rates.map((r) => GP.scoreTrajectory(flat(r), o));
     c4.examined(rates.length);
     for (let i = 1; i < rates.length; i++) if (vals[i].value < vals[i - 1].value - 1e-9) c4.fail(`$${rates[i] / 1e6}m/s priced below $${rates[i - 1] / 1e6}m/s: ${vals[i].value} < ${vals[i - 1].value}`);
-    // Without the ladder the exit itself is not monotone on these inputs.
+    // The exit itself (it was not: $10m/s 9.627h, $400m/s 9.698h at 0209b85,
+    // the ground leg priced from the join's level while the slot grafted).
     const base = { ...REC.inputs, eRep: REC.eRep, eBudget: REC.eBudget };
     const hAt = (r) => X.bestExitPolicy({ ...base, carriedIncome: { ...base.carriedIncome, gang: [{ atH: 0, perSec: r }] } }).best.hours;
-    const h10 = hAt(1e7);
-    const h400 = hAt(4e8);
-    c4.note(`raw exit $10m/s ${h10.toFixed(3)}h, $400m/s ${h400.toFixed(3)}h; priced ${vals.map((v, i) => `$${rates[i] / 1e6}m/s ${v.value.toFixed(4)}${v.moneyCapped ? `@${(v.moneyCapped / 1e6).toFixed(1)}m` : ""}`).join(", ")}`);
-    c4.examined(2);
+    const hs = rates.map(hAt);
+    for (let i = 1; i < rates.length; i++) if (!(hs[i] <= hs[i - 1] + 1e-6)) c4.fail(`the raw exit rises with the stream: $${rates[i - 1] / 1e6}m/s ${hs[i - 1]}h -> $${rates[i] / 1e6}m/s ${hs[i]}h`);
+    if ("moneyCapped" in vals[0]) c4.fail("the capped ladder is gone: no moneyCapped on a score");
+    c4.note(`raw exit ${rates.map((r, i) => `$${r / 1e6}m/s ${hs[i].toFixed(3)}h`).join(", ")}; priced ${vals.map((v, i) => `$${rates[i] / 1e6}m/s ${v.value.toFixed(4)}`).join(", ")}`);
+    c4.examined(rates.length);
     if (!(vals[3].tieLn > 0)) c4.fail("an exit-priced score carries its tie tolerance");
     if (!GP.betterScore(vals[3], vals[0])) c4.fail("$400m/s must win over $10m/s (equal exits: the money)");
     if (GP.betterScore({ ...vals[0], value: vals[3].value }, vals[3])) c4.fail("at equal value the smaller stream must lose");

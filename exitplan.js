@@ -1653,7 +1653,41 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // before. Absent, every node prices exactly as before.
   let graftDone = finalStart + busyH
   let graftRep = 1
+  // THE ORDER ON THE WORK SLOT (o.slotOrder 'grafts' | 'rep'; absent: the
+  // better of the two, simulated): the final window's grafts and a ground
+  // reputation leg share one slot, so one waits for the other. Grafts first
+  // DOMINATES whenever the set leaves the reputation rate no lower at any
+  // hour — hacking x rep >= 1 and exp >= 1 over the set: the grind then
+  // starts later, at a level that is only higher, on a rate that is only
+  // higher, while the contracts, sleeves and favor stream bank through the
+  // wait — so the other order is simulated only when that screen fails
+  // (a set whose entropy outweighs it). Interleavings are not searched.
+  // 'rep': the grafts are paid where they are (before the join) but made
+  // after the reputation leg, and none of their multipliers reach it.
+  let slotOrder = o.slotOrder === 'rep' ? 'rep' : 'grafts'
+  // REPLAYS ONLY (o.slotQueue === false): the accounting before the queue —
+  // the grind priced from the join's level beside the grafts, the overlap
+  // settled by the window's slot total. Records published before it reproduce
+  // on it (their CHECK lines); no live caller sets it ([XM4]).
+  const preQueue = o.slotQueue === false
+  let applyGrafts = null
+  let graftsAfter = 0
   if (finalGrafts.length) {
+    if (o.slotOrder !== 'grafts' && o.slotOrder !== 'rep' && terminalRep > 0 && !preQueue) {
+      let sH = 1
+      let sE = 1
+      let sR = 1
+      for (const g of finalGrafts) {
+        sH *= pos(g?.hacking) ? g.hacking : 1
+        sE *= pos(g?.exp) ? g.exp : 1
+        sR *= pos(g?.rep) ? g.rep : 1
+      }
+      if (!(sH * sR >= 1 && sE >= 1)) {
+        const a = exitHours({ ...o, slotOrder: 'grafts' }, installsFirst, quiet)
+        const b = exitHours({ ...o, slotOrder: 'rep' }, installsFirst, quiet)
+        return num(b.hours) && (!num(a.hours) || b.hours < a.hours) ? b : a
+      }
+    }
     let gH = 1
     let gE = 1
     // WHEN THE GRAFTING STARTS (o.graftStartMoney, the with-run's policy
@@ -1686,23 +1720,31 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         legs.push({ leg: 'graft money', hours: hm, detail: D(() => `$${Math.round(g.cost)} for ${g.name}`) })
       }
       cash -= g.cost
-      graftDone = Math.max(h, graftDone) + g.slotH
+      if (slotOrder === 'grafts') graftDone = Math.max(h, graftDone) + g.slotH
       slotH += g.slotH
       gH *= g.hacking
       gE *= g.exp
       graftRep *= g.rep
       gM *= pos(g.money) ? g.money : 1
     }
-    mult *= gH
-    // hacking_money and its entropy: the level-scaled income from the window on.
-    incomeAtLevel1 *= gM
-    // The player's exp multiplier: not the flat part (the sleeves', applySleeveGains).
-    const flatNow = shaped ? expFlat : sExpW
-    if (pos(expRate)) expRate = (expRate - flatNow) * gE + flatNow
-    preExpBoost *= gE
-    if (pos(repRate)) repRate *= graftRep
-    if (pos(donation)) donation /= graftRep
-    legs.push({ leg: 'grafts', hours: 0, detail: D(() => `${finalGrafts.length} graft(s)${lifeSched.spill.length ? ` (${lifeSched.spill.length} scheduled in lives this policy does not have)` : ''}, slot until +${(graftDone - finalStart).toFixed(2)}h, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}`) })
+    const gSlot = finalGrafts.reduce((a, g) => a + g.slotH, 0)
+    applyGrafts = () => {
+      mult *= gH
+      // hacking_money and its entropy: the level-scaled income from the window on.
+      incomeAtLevel1 *= gM
+      // The player's exp multiplier: not the flat part (the sleeves', applySleeveGains).
+      const flatNow = shaped ? expFlat : sExpW
+      if (pos(expRate)) expRate = (expRate - flatNow) * gE + flatNow
+      preExpBoost *= gE
+      if (pos(repRate)) repRate *= graftRep
+      if (pos(donation)) donation /= graftRep
+    }
+    if (slotOrder === 'grafts') {
+      applyGrafts()
+      applyGrafts = null
+    }
+    legs.push({ leg: 'grafts', hours: 0, detail: D(() => `${finalGrafts.length} graft(s)${lifeSched.spill.length ? ` (${lifeSched.spill.length} scheduled in lives this policy does not have)` : ''}, ${slotOrder === 'grafts' ? `slot until +${(graftDone - finalStart).toFixed(2)}h` : `${gSlot.toFixed(2)}h of slot after the reputation leg`}, hacking x${gH.toFixed(3)}, exp x${gE.toFixed(3)}, rep x${graftRep.toFixed(3)}`) })
+    graftsAfter = slotOrder === 'rep' ? gSlot : 0
   }
 
   if (covenant) {
@@ -1798,15 +1840,26 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // term is not scaled (sleeves keep their skills across installs) and
     // joins at its delayH, measured FROM NOW like sleeveExp. Integrated in
     // two-minute steps; the last lands exactly.
+    // THE WORK SLOT IS ONE QUEUE. The ground work holds the slot, so it starts
+    // only once whatever holds it first is done (slotWait after the join: a
+    // karma grind, the final window's grafts), at the LEVEL of that hour. It
+    // was priced from the join's level with the slot's overlap settled only
+    // by the window's total ("work slot binds"): a sooner join (more money)
+    // then started the grind at a lower level while the slot was still
+    // grafting, and the exit got LATER with income (live BN9 15:56Z: a
+    // $10m/s gang stream 9.627h, $400m/s 9.698h, $1t/s 9.747h). The
+    // contracts, the sleeves and the favor stream bank from the join,
+    // through the wait; the player's own work from the wait's end. Returns
+    // hours from the join; `slot` is the part of them on the work slot.
     const groundLeg = () => {
       const P = P0
       const legStart = h
       const need = terminalRep - exitRep
       const varies = installsFirst > 0 && pos(hacking)
       // The contracts as a rate constant inside each step (their banked rep
-      // at the step's two ends), on top of what was banked while the slot
-      // was busy: the ground work starts slotWait after the join.
-      const cAt = cRep ? (t) => cRep(legStart + slotWait + t) : () => 0
+      // at the step's two ends), from the join.
+      const qW = preQueue ? 0 : slotWait
+      const cAt = cRep ? (t) => cRep(legStart + (preQueue ? slotWait : 0) + t) : () => 0
       const scale = varies ? (e) => levelAt(e, mult) / hacking : () => 1
       // One log per step: the level read for the rate is the level the
       // affine exp step starts from (expAdv's own path, not re-derived).
@@ -1820,39 +1873,65 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       // rises); the trapezoid at REP_STEPS is within 0.05% of a 3000-step
       // integral ([FM8]) — the rep leg was ~40% of the plan pass's CPU.
       // A rate that does not vary with the level steps from one sleeve
-      // break to the next.
-      const r0 = (P * scale(exp) + sRep(legStart)) * fm0
+      // break to the next; the wait's end is a break too.
+      const eW = varies && qW > 0 ? expAdv(exp, qW) : exp
+      const r0 = (P * scale(eW) + sRep(legStart + qW)) * fmAt(qW)
       const est = r0 > 0 ? need / r0 / 3600 : 1e4
       const step = varies || cRep || fStream ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
       let acc = cAt(0)
       let t = 0
       let e = exp
       let iter = 0
+      // THE WAIT IN ONE STEP when no sleeve works the faction: only the
+      // contracts bank then (the favor stream scales work, and there is
+      // none), and their cumulative is exact — stepping through it at the
+      // grind's step doubled the leg's cost (the plan pass +20%, [PP3]).
+      if (qW > 0 && !fleetOn) {
+        const cW = cAt(qW)
+        if (cW >= need) {
+          // The contracts alone cover it inside the wait: land by bisection.
+          let lo = 0
+          let hi = qW
+          for (let i = 0; i < 40; i++) {
+            const mid = (lo + hi) / 2
+            if (cAt(mid) >= need) hi = mid
+            else lo = mid
+          }
+          return { hours: hi, slot: 0, how: 'ground', contracts: need }
+        }
+        acc = cW
+        e = eW
+        t = qW
+      }
       let L = varies ? contLevel(e, mult) : 0
-      const lvlRate = (lv) => P * (varies ? Math.max(1, Math.floor(lv)) / hacking : 1)
+      // The player's own work: none while the slot is held.
+      const lvlRate = (lv, at) => (at < qW ? 0 : P * (varies ? Math.max(1, Math.floor(lv)) / hacking : 1))
       for (;;) {
-        // The contracts banked while the slot was busy already cover it.
+        // The contracts (and sleeves) banked while the slot was busy may cover it.
         if (acc >= need) break
         if (t > 1e4 || iter++ > 3000) {
           t = Infinity
           break
         }
-        // Land exactly on the sleeve's next rate change inside this step.
+        // Land exactly on the sleeve's next rate change, and on the slot's
+        // freeing, inside this step.
         const nb = fleetOn ? sleeveBreaks(sleeveRep, legStart + t)[0] : undefined
-        const dt = Math.min(1e4 - t + 1e-9, typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step)
+        let dt = Math.min(1e4 - t + 1e-9, typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step)
+        if (t < qW) dt = Math.max(1e-9, Math.min(dt, qW - t))
         // The sleeve's rate is constant inside the step (breaks end steps);
         // the favor multiplier is read at both ends, as the level is.
         const sec = dt * 3600
         const sl = fleetOn ? sRep(legStart + t) : 0
         const cr = cRep ? (cAt(t + dt) - cAt(t)) / sec : 0
-        const r1 = (lvlRate(L) + sl) * fmAt(t) + cr
+        const r1 = (lvlRate(L, t) + sl) * fmAt(t) + cr
         let e2 = e
         let L2 = L
         if (varies) {
           e2 = aff ? affineStepFrom(e, L, dt, mult, aff, expAt()) : expAdv(e, dt)
           L2 = contLevel(e2, mult)
         }
-        const r2 = (lvlRate(L2) + sl) * fmAt(t + dt) + cr
+        // A step ending on the wait's end is still inside it.
+        const r2 = (lvlRate(L2, t) + sl) * fmAt(t + dt) + cr
         const add = ((r1 + r2) / 2) * sec
         if (add > 0 && acc + add >= need) {
           // acc + r1 x + (r2 - r1) x^2 / (2 sec) = need, 0 < x <= sec.
@@ -1867,7 +1946,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         L = L2
         t += dt
       }
-      return { hours: t, how: 'ground', contracts: cRep && num(t) ? Math.min(need, cAt(t)) : 0 }
+      return { hours: t, slot: Math.max(0, t - qW), how: 'ground', contracts: cRep && num(t) ? Math.min(need, cAt(t)) : 0 }
     }
     const trajectory = fleetOn || installsFirst > 0 || cRep || fStream
     if (r.how === 'ground' && trajectory) r = groundLeg()
@@ -1889,10 +1968,20 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       }
     }
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }
+    // A constant-rate grind (no trajectory) waits for the slot the same way.
+    if (r.how === 'ground' && !num(r.slot)) r = { ...r, hours: (preQueue ? 0 : slotWait) + r.hours, slot: r.hours }
     h += r.hours
-    if (r.how === 'ground') slotH += r.hours
-    legs.push({ leg: 'exit reputation', hours: r.hours, detail: D(() => `${Math.round(terminalRep)} rep, ${r.how}${r.contracts > 0 ? ` (${Math.round(r.contracts)} of it from generated contracts, ${contractRep.factions} faction(s) sharing)` : ''}`) })
+    if (r.how === 'ground') slotH += r.slot
+    const waitH = r.how === 'ground' ? r.hours - r.slot : 0
+    if (waitH > 0) legs.push({ leg: 'reputation waits for the slot', hours: waitH, detail: D(() => `the work slot is held ${slotWait.toFixed(2)}h past the join (${busyH > 0 ? 'the karma grind' : ''}${busyH > 0 && graftDone > finalStart + busyH ? ', ' : ''}${graftDone > finalStart + busyH ? 'the grafts' : ''}); contracts, sleeves and favor bank meanwhile`) })
+    legs.push({ leg: 'exit reputation', hours: r.hours - waitH, detail: D(() => `${Math.round(terminalRep)} rep, ${r.how}${r.contracts > 0 ? ` (${Math.round(r.contracts)} of it from generated contracts, ${contractRep.factions} faction(s) sharing)` : ''}`) })
     exp = expAdv(exp, r.hours)
+  }
+  // 'rep' first: the grafts take the slot now, and their multipliers reach
+  // the climb only.
+  if (applyGrafts) {
+    graftDone = Math.max(h, graftDone) + graftsAfter
+    applyGrafts()
   }
 
   // The final install: skills reset, and the climb runs on the multiplier we

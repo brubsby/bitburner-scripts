@@ -57,6 +57,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
+import { preQueue } from "./prequeue.mjs";
 import { REPO_ROOT } from "./gameresolve.mjs";
 
 const P = await import("../../plan.js");
@@ -64,7 +65,8 @@ const LP = await import("../../lifeplan.js");
 const B = await import("../../bayes.js");
 const R = await import("../sim/exitjump/lifelength.mjs");
 
-const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-lifelength-0714.json"), "utf8"));
+// Published before the work-slot queue: replayed on the accounting that priced it (prequeue.mjs).
+const F = preQueue(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-lifelength-0714.json"), "utf8")));
 const PASSES = F.passes;
 const code = (f) => fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
 const byStamp = (rows, s) => rows.find((r) => r.stamp === s);

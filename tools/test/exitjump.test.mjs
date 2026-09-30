@@ -47,6 +47,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
+import { preQueue } from "./prequeue.mjs";
 import { REPO_ROOT } from "./gameresolve.mjs";
 
 const P = await import("../../plan.js");
@@ -55,7 +56,8 @@ const B = await import("../../bayes.js");
 const N = await import("../../nodeecon.js");
 const O = await import("../../objective.js");
 
-const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-exitjump-1645.json"), "utf8"));
+// Published before the work-slot queue: replayed on the accounting that priced it (prequeue.mjs).
+const F = preQueue(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-exitjump-1645.json"), "utf8")));
 const code = (f) => fs.readFileSync(path.join(REPO_ROOT, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
 
 const POST = F.exitinputs;

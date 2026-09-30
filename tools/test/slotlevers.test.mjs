@@ -32,7 +32,7 @@
 //                       escapes the player's multipliers exactly
 //   SL3 THE SCHEDULE    on the 00:00Z inputs the costliest-first family with
 //                       the integer refinement beats the committed schedule by
-//                       hours; sameGraftSchedule tells lives apart
+//                       > 2h (4.87h before the work-slot queue, 2.93h after); sameGraftSchedule tells lives apart
 //   SL4 THE LEVERS      the commitment rule on the fixture's draws: 1 stays,
 //                       2 switches to k=1, 3 stays, 4 switches, the Go stream
 //                       prices shorter; the CHECK reproduces the plan's mean
@@ -188,7 +188,9 @@ export async function run() {
     const hC = traj(I);
     const hS = traj(pick);
     if (s.summary.family !== "costliest first, current life") c.fail(`the dearest grafts belong in this life: picked ${s.summary.family}`);
-    if (!(hS < hC - 3)) c.fail(`the search must beat the committed schedule by > 3h: ${hS} vs ${hC}`);
+    // 4.87h when this landed; 2.93h since the ground leg queues behind the
+    // grafts on the work slot ([XM]: a graft now delays the grind).
+    if (!(hS < hC - 2)) c.fail(`the search must beat the committed schedule by > 2h: ${hS} vs ${hC}`);
     const tried = s.summary.tried.filter((t) => t.family === s.summary.family).map((t) => t.c);
     if (!tried.some((k) => ![1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 15].includes(k))) c.fail(`the refinement must price sizes between the grid points: ${tried.join(",")}`);
     if (s.summary.truncated) c.fail("an unbudgeted search must not truncate");
@@ -216,7 +218,9 @@ export async function run() {
   {
     const c = new Check("SL4", "THE LEVERS on the plan's draws: the CHECK reproduces the committed mean; the commitment rule keeps no favor life, takes k=1, keeps the sleeves, takes the searched schedule; the Go stream prices shorter");
     const draws = drawsOf();
-    const base = decide(draws, [{ key: "base", inputs: I }]);
+    // The CHECK replays the plan on the accounting that priced it (before the
+    // work-slot queue, prequeue.mjs); the levers are decided on today's model.
+    const base = decide(draws, [{ key: "base", inputs: { ...I, slotQueue: false } }]);
     const m0 = meanOf(base, "base");
     const pm = F.plan.decisions.install.meanH;
     if (!(Math.abs(m0 / pm - 1) < 0.01)) c.fail(`CHECK: the replay's mean ${m0}h must be within 1% of the plan's ${pm}h`);

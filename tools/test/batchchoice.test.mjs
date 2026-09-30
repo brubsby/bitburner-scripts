@@ -50,6 +50,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
+import { preQueue } from "./prequeue.mjs";
 import { REPO_ROOT } from "./gameresolve.mjs";
 
 const P = await import("../../plan.js");
@@ -57,7 +58,8 @@ const E = await import("../../exitplan.js");
 const O = await import("../../objective.js");
 const A = await import("../../augplan.js");
 
-const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-twoexits-1325-1405.json"), "utf8"));
+// Published before the work-slot queue: replayed on the accounting that priced it (prequeue.mjs).
+const F = preQueue(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-twoexits-1325-1405.json"), "utf8")));
 const code = (f) => fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
 const fin = (x) => typeof x === "number" && isFinite(x);
 const draws = P.makeDraws(P.posteriorsOf({ exitSamples: [] }), 24, 0xbc1);

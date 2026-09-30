@@ -24,7 +24,8 @@
 //        rate is level-shaped
 //   HV4  THE AUDIT on the live 22:57Z inputs, both trajectories each: the
 //        final window's fleet money moves the exit < 0.01h; a $1e12/s fleet
-//        does not shorten it; the contracts shorten it by > 0.1h
+//        never lengthens it (it did, +0.26h, before the work slot was a
+//        queue: [XM]); the contracts shorten it by > 0.1h
 //   HV5  THE WIRING: progress.js publishes contractRep (ctauto fresh, factions
 //        counted by the game's rule); hashspend.js prices the exit faction's
 //        share only in the final window once it is joined, counts hacking-work
@@ -197,7 +198,7 @@ export async function run() {
 
   // ---------------------------------------------------------------------
   {
-    const c = new Check("HV4", "THE AUDIT on the live 22:57Z inputs: final-window fleet money moves the exit < 0.01h, a $1e12/s fleet does not shorten it, the contracts shorten it by > 0.1h");
+    const c = new Check("HV4", "THE AUDIT on the live 22:57Z inputs: final-window fleet money moves the exit < 0.01h, a $1e12/s fleet never lengthens it (it did: the work slot, [XM]), the contracts shorten it by > 0.1h");
     const basis = P.basisOf(FX.plan.decisions.install, Date.parse(EI.at));
     const g = basis?.gains ?? null;
     const run = (inp) => X.bestExitPolicy({ ...inp, eRep: EI.eRep, eBudget: EI.eBudget, firstInstallH: Math.max(0, basis?.waitH ?? 0), ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) }, 400, 1).best.hours;
@@ -208,7 +209,11 @@ export async function run() {
     const withC = run({ ...I, contractRep: { perContract: r.factionRep, factions: k, hashCum: streams.hashCum } });
     c.examined(4);
     if (!(Math.abs(T0 - noFleet) < 0.01)) c.fail(`the final window's fleet money must not move this exit: ${T0} with vs ${noFleet} without`);
-    if (!(rich >= T0 - 1e-6)) c.fail(`money does not bind the final window: a $1e12/s fleet cannot shorten it (${rich} vs ${T0})`);
+    // This read "cannot shorten it" (rich >= T0) and so passed on the exit
+    // RISING with money (+0.26h): the grind priced from the join's level
+    // beside the grafts. With the slot a queue, more money pays the grafts
+    // sooner and the grind starts sooner: never later ([XM1]).
+    if (!(rich <= T0 + 1e-6)) c.fail(`more money never makes the exit later: a $1e12/s fleet ${rich} vs ${T0}`);
     if (!(T0 - withC > 0.1)) c.fail(`the contracts must shorten the exit by > 0.1h: ${withC} vs ${T0}`);
     c.note(`exit ${T0.toFixed(3)}h; without the final window's fleet ${noFleet.toFixed(3)}h; with a $1e12/s one ${rich.toFixed(3)}h; with contracts (k=${k}) ${withC.toFixed(3)}h (${(withC - T0).toFixed(3)}h)`);
     checks.push(c);

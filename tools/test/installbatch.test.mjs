@@ -48,6 +48,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
+import { preQueue } from "./prequeue.mjs";
 import { REPO_ROOT } from "./gameresolve.mjs";
 
 const P = await import("../../plan.js");
@@ -55,7 +56,8 @@ const N = await import("../../nodeecon.js");
 const L = await import("../../lifeplan.js");
 const A = await import("../sim/exitjump/attribute-batch.mjs");
 
-const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-batch-0819.json"), "utf8"));
+// Published before the work-slot queue: replayed on the accounting that priced it (prequeue.mjs).
+const F = preQueue(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-batch-0819.json"), "utf8")));
 const code = (f) => fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
 const IL = F.installLast;
 const PRICED = F.pre.gate.plan.buy.map((b) => b.name);

@@ -40,13 +40,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Check } from "./harness.mjs";
+import { preQueue } from "./prequeue.mjs";
 import { REPO_ROOT } from "./gameresolve.mjs";
 
 const P = await import("../../plan.js");
 const E = await import("../../exitplan.js");
 const G = await import("../../graftplan.js");
 
-const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-held-0644.json"), "utf8"));
+// Published before the work-slot queue: replayed on the accounting that priced it (prequeue.mjs).
+const F = preQueue(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-held-0644.json"), "utf8")));
 const A = F.a;
 const B = F.b;
 const CRTX = "CRTX42-AA Gene Modification";

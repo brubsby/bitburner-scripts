@@ -79,10 +79,6 @@ export const CYCLES_PER_TERRITORY_UPDATE = 100 // GangConstants.CyclesPerTerrito
 // 900/300 buys a node-long trajectory for 2.6x a window-long one and stays
 // inside the budget; 900/60 is barely better and does not.
 export const TAIL_STEP_SEC = 900
-// The money ladder a gang stream is also priced capped at (perWindowMoneyLn):
-// $1m/s, then every half decade up to the stream's peak.
-export const MONEY_CAP_FLOOR = 1e6
-export const MONEY_CAP_STEP = Math.sqrt(10)
 export const TAIL_SUB_SEC = 300
 export const MAX_TAIL_STEPS = 128
 /** Gang/data/power.ts: the NPC gangs' additive power multipliers. */
@@ -1203,29 +1199,17 @@ function perWindowMoneyLn(f, m) {
     // with nothing left to unlock (live BN9 2026-09-30 15:56Z) — while the
     // plan's exit, carrying that $0 stream, jumped +5h.
     //
-    // MORE MONEY IS NEVER A LATER EXIT: whatever a smaller stream funds, a
-    // larger one funds too (the plan's own dominance rule, plan.decideSpend).
-    // The exit's sequential legs are not monotone in it — on the 15:56Z
-    // inputs a flat $10m/s exits 9.627h and $400m/s 9.698h (the grafts start
-    // sooner and the work slot binds) — and a 4-minute artifact must not
-    // choose $13m/s over $190m/s. So the stream is priced as the best of
-    // itself and itself capped at each rung of a fixed ladder below its peak
-    // (the smaller stream the player could always emulate); the ladder is
-    // absolute, so two streams past a rung price that rung identically and
-    // tie (betterScore then prefers the money).
+    // MORE MONEY IS NEVER A LATER EXIT, and the exit now says so itself
+    // (exitplan: the ground reputation leg queues behind the grafts on the
+    // work slot, [XM1] sweeps every fixture). It did not when this pricing
+    // landed — $10m/s 9.627h vs $400m/s 9.698h on the 15:56Z inputs — and the
+    // stream was priced as the best of itself and its caps on a $1m x
+    // sqrt(10)^n ladder; that ladder is gone (an exit per rung, bought
+    // nothing once the exit is monotone). Ties within the exit's resolution
+    // still go to the money (betterScore).
     const steps = gangIncomeSchedule(f)
-    const exitLn = (st) => exitLnOfInstallLifts(lifts, m.exit, Date.now(), st ? { name: 'gang', steps: st } : null)
-    let ln = exitLn(steps)
-    let capped = null
-    const peak = steps ? Math.max(...steps.map((s) => s.perSec)) : 0
-    for (let cap = MONEY_CAP_FLOOR; num(ln) && cap < peak; cap *= MONEY_CAP_STEP) {
-      const v = exitLn(steps.map((s) => ({ atH: s.atH, perSec: Math.min(s.perSec, cap) })))
-      if (num(v) && v > ln) {
-        ln = v
-        capped = cap
-      }
-    }
-    if (num(ln)) return { ln, reason: null, windowsPriced: lifts.length, mode: 'exit', capped }
+    const ln = exitLnOfInstallLifts(lifts, m.exit, Date.now(), steps ? { name: 'gang', steps } : null)
+    if (num(ln)) return { ln, reason: null, windowsPriced: lifts.length, mode: 'exit' }
   }
   let ln = 0
   let at = 0
@@ -1278,7 +1262,6 @@ export function scoreTrajectory(f, obj = {}) {
   let moneyValue = 0
   let moneyWhy = null
   let moneyMode = null
-  let moneyCapped = null
   let tieLn = null
   if (obj.money && typeof obj.money === 'object') {
     // Per window when a window length is readable, flat-rate otherwise —
@@ -1288,7 +1271,6 @@ export function scoreTrajectory(f, obj = {}) {
     moneyMode = per ? (per.mode === 'exit' ? 'exit' : 'per-window') : 'flat-rate'
     if (v.ln === null) moneyWhy = v.reason
     else moneyValue = v.ln
-    if (per?.capped) moneyCapped = per.capped
     // Exit-priced money: two values closer than the exit's resolution are one
     // exit, and betterScore breaks that tie on money (see there).
     const hpl = obj.money.exit?.hoursPerLn
@@ -1302,7 +1284,7 @@ export function scoreTrajectory(f, obj = {}) {
     if (h !== null && isFinite(h) && (hoursToFirst === null || h < hoursToFirst)) hoursToFirst = h
   }
   const last = f.samples[f.samples.length - 1]
-  return { value, unlockValue: value - moneyValue, moneyValue, moneyMode, moneyCapped, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst, tieLn }
+  return { value, unlockValue: value - moneyValue, moneyValue, moneyMode, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst, tieLn }
 }
 
 /**
