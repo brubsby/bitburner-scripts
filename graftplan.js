@@ -326,6 +326,59 @@ export function graftInputsOf(specs, startMoney) {
 }
 
 /**
+ * ONE AUGMENTATION, ONE SOURCE. An augmentation owned cannot be grafted
+ * (GraftingHelpers.getGraftingAvailableAugs drops Player.hasAugmentation),
+ * and a grafted one leaves the faction catalogue. The exit simulation took
+ * the install batch (installGains, a product of multipliers) and the graft
+ * set (per-graft multipliers) as independent, so an augmentation in both was
+ * counted twice: live BN9 2026-09-30 the batch bought CRTX42-AA while it was
+ * being grafted, and PC Direct-Neural Interface, Artificial Bio-neural
+ * Network Implant, Cranial Signal Processors - Gen V and Enhanced Myelin
+ * Sheathing while the final window grafted them too (hacking x1.70 counted
+ * twice). CRTX42-AA's graft finishing took it out of the batch and the held
+ * exit moved 16.0h -> 21.5h with no event (EXIT UNSTABLE); the four left
+ * priced ~21h where the set without them reads ~47h.
+ *
+ * The rule, by what happens first on the trajectory: a graft of THIS life
+ * (life 1, or the one running) completes before the install, so it is owned
+ * when the batch is bought — the batch's offers exclude it (graftsOfLifeNow).
+ * A graft after the first install (the final window, a later life) comes
+ * after the batch — a batch augmentation is dropped from the set
+ * (graftsOffBatch) and never a candidate.
+ */
+export function graftsOfLifeNow(carry, work = null) {
+  const out = new Set()
+  for (const g of Array.isArray(carry?.lifeGrafts) ? carry.lifeGrafts : []) if (g && typeof g.name === 'string' && g.life === 1) out.add(g.name)
+  if (work?.type === 'GRAFTING' && typeof work.augmentation === 'string') out.add(work.augmentation)
+  return out
+}
+/** specs without the grafts after the first install whose augmentation the batch buys: {kept, dropped (names)}. */
+export function graftsOffBatch(specs, batchNames) {
+  const b = batchNames instanceof Set ? batchNames : new Set(Array.isArray(batchNames) ? batchNames : [])
+  const kept = []
+  const dropped = []
+  for (const g of Array.isArray(specs) ? specs : []) {
+    if (g && typeof g.name === 'string' && b.has(g.name) && g.life !== 1) dropped.push(g.name)
+    else kept.push(g)
+  }
+  return { kept, dropped }
+}
+/**
+ * AUG COUNTED TWICE: the install decision's inputs graft an augmentation the
+ * batch also buys. batchNames: the batch the plan buys (and the queued ones);
+ * inputs: the exit inputs the install decision priced. {ok, both, why}.
+ */
+export function graftBatchCheckOf({ batchNames = null, inputs = null } = {}) {
+  if (!inputs) return { ok: null, why: 'no install decision priced this pass' }
+  if (!batchNames) return { ok: null, why: 'no install batch read this pass' }
+  const b = batchNames instanceof Set ? batchNames : new Set(batchNames)
+  const grafts = [...(Array.isArray(inputs.lifeGrafts) ? inputs.lifeGrafts : []), ...(Array.isArray(inputs.finalGrafts) ? inputs.finalGrafts : [])]
+  const both = grafts.map((g) => g?.name).filter((n) => typeof n === 'string' && b.has(n))
+  if (!both.length) return { ok: true, why: `no augmentation both bought (${b.size} in the batch) and grafted (${grafts.length})` }
+  return { ok: false, both, why: `AUG COUNTED TWICE: ${both.length} augmentation(s) in the install batch AND the graft set the install decision priced (${both.slice(0, 4).join(', ')}${both.length > 4 ? ', ...' : ''}) — their multipliers enter the exit twice` }
+}
+
+/**
  * THE RUNNING GRAFT AS THE SIMULATOR TAKES IT: already paid (its price left
  * the balance when the work started, GraftingWork.tsx:33) and only its
  * remaining slot time left. A cycle is 200ms of real time (CONSTANTS.

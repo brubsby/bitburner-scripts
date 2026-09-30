@@ -461,6 +461,12 @@ export function redecideEvents(prev, cur, o = {}) {
     if (!fin(pt.Wstar)) ev.push("the trader's r(W) curve appeared (the return at the book's own size)")
     else if (Math.abs(lw.mean - Math.log(pt.Wstar)) > P.traderMoveSd * Math.max(fin(pt.lnWstarSd) ? pt.lnWstarSd : lw.sd, 1e-6)) ev.push(`trader curve's knee W* moved $${pt.Wstar.toExponential(2)} -> $${Math.exp(lw.mean).toExponential(2)}`)
   }
+  // THE TRADER'S REGIME (traderw.rwRegimeOf: pre-4S / 4S) is a belief about
+  // which curve the book compounds on, not a sample on it: a switch is an
+  // event whether or not the posterior's mean has moved past traderMoveSd yet
+  // (live BN9 2026-09-30 ~01:00Z the 4S purchase fired only through the
+  // posterior's 4.5 sd move, which a slower-moving fit would not have).
+  if (prev.traderRegime !== undefined && prev.traderRegime !== null && cur.traderRegime !== undefined && cur.traderRegime !== null && prev.traderRegime !== cur.traderRegime) ev.push(`the trader's regime changed ${prev.traderRegime} -> ${cur.traderRegime}`)
   const sPrev = prev.posteriors?.s
   if (fin(sPrev) && cur.drift && (cur.drift.s / sPrev > P.driftMoveFactor || sPrev / cur.drift.s > P.driftMoveFactor)) ev.push(`structural error moved ${(100 * sPrev).toFixed(0)}% -> ${(100 * cur.drift.s).toFixed(0)}%`)
   return ev
@@ -1394,6 +1400,10 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const gc = plan.graftCarry ?? null
   if (gc?.ok === false) fail(String(gc.why).startsWith('GRAFTS DROPPED') ? gc.why : `GRAFTS DROPPED: ${gc.why}`, 'the install decision priced a node without the grafts it has committed to — every exit and switch this pass is off another trajectory (progress.js carriedGraftsOf / graftDecisionOf: a refused or unreached graft decision must keep the committed set)')
   else if (gc?.why) notes.push(`plan graft carry: ${gc.why}`)
+  // AUG COUNTED TWICE (graftplan.graftBatchCheckOf, recorded as plan.graftBatch).
+  const gb = plan.graftBatch ?? null
+  if (gb?.ok === false) fail(String(gb.why).startsWith('AUG COUNTED TWICE') ? gb.why : `AUG COUNTED TWICE: ${gb.why}`, 'an augmentation is both bought by the install batch and grafted on the committed trajectory — owned once, priced twice (graftplan.graftsOfLifeNow keeps this life\'s grafts out of the offers; graftsOffBatch keeps the batch out of the later grafts)')
+  else if (gb?.why) notes.push(`plan graft/batch: ${gb.why}`)
   // EXIT JUMP AT INSTALL (exitJumpOf, carried through the life by the pass).
   const ej = plan.exitJump ?? null
   if (ej?.ok === false) fail(String(ej.why).startsWith('EXIT JUMP AT INSTALL') ? ej.why : `EXIT JUMP AT INSTALL: ${ej.why}`, "the install's simulation of the next life and the next life's own pricing disagree about one state — an input is estimated one way before the install and another after it (compare the two exits' inputs group by group: tools/sim/exitjump/attribute.mjs)")

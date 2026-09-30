@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
-import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, sameGraftSchedule, GRAFT_CITY } from 'graftplan.js'
+import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, sameGraftSchedule, graftsOfLifeNow, graftsOffBatch, graftBatchCheckOf, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGangGen, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
@@ -1966,6 +1966,12 @@ function lifeGraftHoldOf(d, installed, lastAugReset, now = Date.now()) {
   return { hold: true, pending: pending.length, heldH, capH, why: `${pending.length} graft(s) scheduled in this life not done (${names}); the committed trajectory lasts this life ${legH.toFixed(2)}h for them (held ${heldH.toFixed(2)}h of at most ${capH.toFixed(2)}h)` }
 }
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
+// This life's grafts (running, or committed to life 1): kept out of the batch's offers (graftplan.graftsOfLifeNow).
+let graftedThisLife = new Set()
+// The augmentations the install batch buys this pass (plan.buy, and at the
+// money the gate expects at the install): kept out of the graft set after the
+// first install (graftplan.graftsOffBatch). Null before the batch is planned.
+let batchNamesNow = null
 let ownedAugsNow = new Set() // this pass's owned + queued augmentations (the purchase model's prerequisites)
 // THE NODE'S CATALOGUE for the purchase model's later lives: this pass's
 // offers plus those of every faction an earlier life of this node joined
@@ -2008,6 +2014,19 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
     const installed = new Set(sing.ownedAugs(false))
     const inProgress = work?.type === 'GRAFTING' ? work.augmentation ?? null : null
     const prev = pc.prev?.decisions?.grafts ?? null
+    // ONE AUGMENTATION, ONE SOURCE (graftplan.graftsOffBatch): a graft after
+    // the first install whose augmentation the batch buys is impossible (it is
+    // owned by then) and was counted twice. It leaves every set here, and a
+    // committed set losing one is an EVENT — the set changes, so the plan
+    // re-decides on it rather than re-pricing a held trajectory on a set it
+    // was not decided with.
+    const batchNow = batchNamesNow ?? new Set()
+    const offBatch = (gs) => graftsOffBatch(gs, batchNow).kept
+    const offDropped = graftsOffBatch(prev?.key === 'grafts' ? prev.grafts : [], batchNow).dropped.filter((n) => !installed.has(n))
+    if (pc.prev && offDropped.length) {
+      pc.events = [...(pc.events ?? []), `${offDropped.length} committed graft(s) bought by the install batch instead (${offDropped.slice(0, 3).join(', ')}${offDropped.length > 3 ? ', ...' : ''}): the set shrinks`]
+      pc.redecide = true
+    }
     const entropy = !installed.has('violet Congruity Implant')
     const intel = player.skills?.intelligence ?? 0
     // Re-search on an event (or with nothing committed this life); otherwise
@@ -2047,7 +2066,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
         stats: Object.fromEntries(names.map((n) => [n, safe(() => sing.augStats(n))])),
         prereqs: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrereq(n))])),
         price: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrice(n))])),
-        owned: new Set([...installed, ...pending]),
+        owned: new Set([...installed, ...pending, ...batchNow]),
         augMoneyCost: bitNodeMults(info?.currentNode)?.AugmentationMoneyCost,
         queuedNonSoA: pending.filter((n) => !isSoa(n)).length,
         sf11: sfLevel(info, 11),
@@ -2055,7 +2074,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
       yield // the candidate read is its own step
       // Resumed from the committed set (same node, any life: grafts are the
       // node's), so a search the budget stopped grows across re-decisions.
-      const live = (names) => (names ?? []).filter((n) => typeof n === 'string' && !installed.has(n))
+      const live = (names) => (names ?? []).filter((n) => typeof n === 'string' && !installed.has(n) && !batchNow.has(n))
       const seed = live((pc.prevAny?.decisions?.grafts?.grafts ?? []).map((g) => g?.name))
       const memSeed = live(memPrev?.names)
       const r = yield* chooseGraftsGen({ candidates: cands, priceExit, priceExitGen: (x) => trajGen(x), base: withoutIn, intelligence: intel, ownedNames: [...installed], entropy, budgetMs: GRAFT_SEARCH_MS, now: pc.pacer.cpuNow, seeds: [seed, memSeed] })
@@ -2066,7 +2085,8 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
         // 2026-09-29 13:41Z/14:51Z a refusal published key null, the carry
         // dropped the 28 committed grafts from the install decision's inputs
         // and the plan switched on a 26,581h artefact.
-        const kept = committedGraftsOf({ prev: pc.prevAny?.decisions?.grafts ?? null, memory: memPrev, candidates: cands, intelligence: intel, entropy, installed })
+        const kept0 = committedGraftsOf({ prev: pc.prevAny?.decisions?.grafts ?? null, memory: memPrev, candidates: cands, intelligence: intel, entropy, installed })
+        const kept = kept0 ? { ...kept0, grafts: offBatch(kept0.grafts) } : null
         if (!kept?.grafts?.length) return { key: null, why: `graft search refused: ${r.why}`, ms: Date.now() - t0, memory, ...(kept ? { kept } : {}) }
         specs = kept.grafts
         startMoney = kept.startMoney
@@ -2087,11 +2107,11 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
         searchWhy = `${r.why} (${cands.length} candidates; resumed from ${from}${continuing ? ', continuing a budget-stopped search' : ''})`
       }
     } else {
-      specs = (prev.grafts ?? []).filter((g) => g && !installed.has(g.name))
+      specs = offBatch((prev.grafts ?? []).filter((g) => g && !installed.has(g.name)))
       startMoney = prev.startMoney ?? null
       searchWhy = 'the committed set, re-priced (no event)'
     }
-    const liveOf = (gs) => (Array.isArray(gs) ? gs : []).filter((g) => g && typeof g.name === 'string' && !installed.has(g.name))
+    const liveOf = (gs) => offBatch((Array.isArray(gs) ? gs : []).filter((g) => g && typeof g.name === 'string' && !installed.has(g.name)))
     // THE COMMITTED SET HOLDS; ANOTHER SET IS A CHALLENGER. A search the
     // budget stopped continues every pass (`continuing`), and its result used
     // to REPLACE the committed set under the unchanged key 'grafts' — so a
@@ -2250,6 +2270,8 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
       schedule: d.key === 'grafts' ? schedule : null,
       lifeNow: d.key === 'grafts' ? (withPolicy?.best?.lifeGraftLegs ?? []).find((l) => l.life === 1) ?? null : null,
       searched: searchWhy,
+      // Committed grafts the install batch buys instead (graftsOffBatch): dropped, and an event.
+      ...(offDropped.length ? { offBatch: offDropped } : {}),
       memory,
       truncated,
       notSimulated: 'the grafted augmentation leaving the later lives\' install catalogue (the measured cadence is held); travel to New Tokyo ($200k)',
@@ -2371,11 +2393,26 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
  * node and life; grafts already installed are dropped (they are in the
  * multiplier now). Null = none.
  */
+function batchNamesOf(ns, info, plan, pending, replanAt) {
+  const names = new Set([...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])].filter((n) => typeof n === 'string'))
+  try {
+    const ei = readJson(ns, '/tel/exitinputs.txt')
+    const mW = ei?.lastAugReset === info?.lastAugReset ? ei?.moneyAtW : null
+    if (typeof replanAt === 'function' && typeof mW === 'number' && isFinite(mW) && mW > 0) for (const b of replanAt(mW)?.buy ?? []) if (typeof b?.name === 'string') names.add(b.name)
+  } catch {
+    /* the richer batch unreadable: the batch at today's money only */
+  }
+  return names
+}
 function carriedGraftsOf(pc, installed, work, intel = 0) {
   // A refused, thrown or unreached graft decision keeps the committed set
   // (graftplan.committedGraftsOf): only a decided 'none' carries nothing.
   const c = committedGraftsOf({ cur: pc?.decisions?.grafts ?? null, prev: pc?.prev?.decisions?.grafts ?? null, prevAny: pc?.prevAny?.decisions?.grafts ?? null, memory: pc?.decisions?.grafts?.memory ?? pc?.prevAny?.graftMemory ?? null, installed })
   if (!c || !c.grafts.length) return null
+  // A graft after the first install that the batch buys is not on the
+  // trajectory (graftsOffBatch) — whichever record the set came from.
+  if (batchNamesNow) c.grafts = graftsOffBatch(c.grafts, batchNamesNow).kept
+  if (!c.grafts.length) return null
   const all = [pc?.decisions?.grafts, pc?.prev?.decisions?.grafts].flatMap((d) => (Array.isArray(d?.grafts) ? d.grafts : []))
   // A final-window graft owned or running spends the start balance; an
   // earlier life's graft (spec.life) does not (graftDecisionOf).
@@ -2795,10 +2832,11 @@ function planCtxOf(ns, info) {
     const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
     const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
     const committedAvailable = null // set by the route decision
-    const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined })
+    const traderRegime = typeof stockNow?.mode === 'string' ? rwRegimeOf(stockNow.mode) : null
+    const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
     const draws = makeDraws(post, PLAN.N, seed)
-    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, decisions: {}, setupMs: 0, pacer: passPacer, error: null }
+    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, decisions: {}, setupMs: 0, pacer: passPacer, error: null, traderRegime }
   } catch (e) {
     planCtx = { t0, prev: null, prevAny: graftMemoryCarryOf(ns, info), post: null, events: [], redecide: false, draws: [], decisions: {}, setupMs: 0, pacer: passPacer, error: `plan context threw: ${String(e).slice(0, 160)}` }
   }
@@ -2971,6 +3009,8 @@ function publishPlan(ns, info, extra = {}) {
       // or refused decision, an unreached graft step and an install.
       graftMemory: pc.decisions.grafts?.memory ?? pc.prevAny?.graftMemory ?? null,
       posteriors: pc.post ? posteriorSummary(pc.post) : null,
+      // The trader's regime (pre-long / 4S-long): a change is an event (redecideEvents).
+      traderRegime: pc.traderRegime ?? pc.prevAny?.traderRegime ?? null,
       calibration: pc.post?.calibration ?? null,
       // Per section (the label each slices() run names): its work, longest
       // block, and longest single step with its index — a step longer than
@@ -2986,6 +3026,8 @@ function publishPlan(ns, info, extra = {}) {
       // GRAFTS DROPPED check (plan.graftCarryCheckOf): the install decision's
       // inputs against the committed graft set / graft memory.
       graftCarry: pc.graftCarryCheck ?? null,
+      // AUG COUNTED TWICE (graftplan.graftBatchCheckOf; planCheck fails on it).
+      graftBatch: pc.graftBatch ?? null,
       // PER-LIFE GAIN UNBOUGHT (plan.perLifeGainCheckOf; planCheck fails on it).
       perLifeGain: pc.perLifeGain ?? null,
       // The carried streams' summaries (plan.streamSummaryOf): the next pass's stream events compare them.
@@ -4165,6 +4207,8 @@ async function act(ns, canJoin, info, note) {
   passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns), store: stepMemoryStore(pageStorage()) })
   passT0 = Date.now()
   graftCarry = null // set once the snapshots are read (carriedGraftsOf)
+  graftedThisLife = new Set()
+  batchNamesNow = null
   redPillRepReq = null
   {
     const g = readJson(ns, GATE)?.objective?.growShare
@@ -4628,6 +4672,12 @@ async function act(ns, canJoin, info, note) {
     // The last committed grafts ride every exit this pass until this pass's
     // graft decision (graftDecisionOf) replaces them.
     graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
+    // ONE AUGMENTATION, ONE SOURCE (graftplan.graftsOfLifeNow): the running
+    // graft and the committed grafts of this life are owned before the
+    // install, so the batch never buys them (live BN9 2026-09-30: CRTX42-AA
+    // bought and grafted, counted twice until its graft finished — EXIT
+    // UNSTABLE 16.0h -> 21.5h with no event).
+    graftedThisLife = graftsOfLifeNow(graftCarry, work)
     // The Red Pill's requirement from the catalogue, for the exit's rep leg
     // before Daedalus (and so its offer) exists (exitInputsOf terminalRep).
     try {
@@ -4663,6 +4713,7 @@ async function act(ns, canJoin, info, note) {
       for (const aug of sing.factionAugs(f)) {
         // NeuroFlux is the only repeatable augmentation (AugmentationHelpers.ts:117-120).
         if (allCount.has(aug) && aug !== NFG) continue
+        if (graftedThisLife.has(aug)) continue
         const repReq = sing.augRepReq(aug)
         offers.push({
           name: aug,
@@ -5707,6 +5758,11 @@ async function act(ns, canJoin, info, note) {
   // the committed start balance — and holds the work slot until it is done: a
   // running graft is never interrupted (the install below is held too;
   // GraftingWork.finish keeps the money of a cancelled graft).
+  // THE BATCH'S AUGMENTATIONS (graftplan.graftsOffBatch): what the purchase
+  // step buys now, and at the money the last pass expected at the install
+  // (exitinputs moneyAtW, same life) — a batch bought with more money buys a
+  // superset, and a graft after the install cannot take any of it.
+  if (canBuyAug) batchNamesNow = batchNamesOf(ns, info, plan, pending, replanAt)
   const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
   // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
   const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
@@ -6784,7 +6840,10 @@ async function act(ns, canJoin, info, note) {
           } catch (e) {
             pcx.perLifeGain = { ok: null, why: `per-life gain check threw: ${String(e).slice(0, 120)}` }
           }
-          pcx.graftCarryCheck = graftCarryCheckOf({ install: pcx.decisions.install ?? null, installInputs: pcx.installInputs ?? null, grafts: pcx.decisions.grafts ?? null, memory: pcx.decisions.grafts?.memory ?? pcx.prevAny?.graftMemory ?? null, installed: new Set(installedCount.keys()) })
+          // The batch's augmentations leave both sides after the first install
+          // (graftsOffBatch); AUG COUNTED TWICE checks the inputs against it.
+          pcx.graftCarryCheck = graftCarryCheckOf({ install: pcx.decisions.install ?? null, installInputs: pcx.installInputs ?? null, grafts: pcx.decisions.grafts ?? null, memory: pcx.decisions.grafts?.memory ?? pcx.prevAny?.graftMemory ?? null, installed: new Set([...installedCount.keys(), ...(batchNamesNow ?? [])]) })
+          pcx.graftBatch = graftBatchCheckOf({ batchNames: batchNamesNow, inputs: pcx.installInputs ?? null })
         } catch (e) {
           pcx.graftCarryCheck = { ok: null, why: `graft carry check threw: ${String(e).slice(0, 120)}` }
         }
