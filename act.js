@@ -504,10 +504,18 @@ export async function main(ns) {
               results.push({ id: o.id, kind: o.kind, skipped: `a purchase in this batch failed; ${bought} bought of the plan — not installing on a partial plan` })
               continue
             }
+            // INSTALLED A DIFFERENT BATCH (plan.differentBatchCheckOf): the
+            // install runs only on the batch the order names — the planner
+            // checked (and, trimmed, re-priced) exactly that one. A count that
+            // differs is another batch, whatever the chain reported.
+            if (Array.isArray(o.batch) && bought !== o.batch.length - (o.requireQueued ?? 0)) {
+              results.push({ id: o.id, kind: o.kind, skipped: `refused: ${bought} bought against the ${o.batch.length - (o.requireQueued ?? 0)} the install order names — not installing a batch nobody priced` })
+              continue
+            }
             // THE INSTALL IS RECORDED BEFORE IT RUNS (nothing runs after a
             // prestige): the batch, the reason, and what act-install will check.
             try {
-              ns.write('/tel/install-last.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: info.lastAugReset, batchAt: batch.at, why: o.why ?? null, terminal: o.terminal === true, planInstall, batch: o.batch ?? null, exits: o.exits ?? null, bought, results: results.map((x) => ({ kind: x.kind, ok: x.ok ?? null, skipped: x.skipped ?? null })) }), 'w')
+              ns.write('/tel/install-last.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: info.lastAugReset, batchAt: batch.at, why: o.why ?? null, terminal: o.terminal === true, planInstall, batch: o.batch ?? null, pricedBatch: o.pricedBatch ?? null, batchCheck: o.batchCheck ?? null, exits: o.exits ?? null, bought, results: results.map((x) => ({ kind: x.kind, ok: x.ok ?? null, skipped: x.skipped ?? null })) }), 'w')
               if (ns.getHostname() !== 'home') ns.scp('/tel/install-last.txt', 'home', ns.getHostname())
             } catch {
               /* the record must not block the install; act-install writes its own */

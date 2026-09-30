@@ -141,7 +141,7 @@ import { rateAt, manipLostExp, farmOrMoney } from 'expfarm.js'
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain, stepMemoryStore, pageStorage } from 'coop.js'
-import { exitRootRequired, batchFits, raisable, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
+import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -169,12 +169,12 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
-import { catalogueFromOffers, moneyScaleOfGen, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
+import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, cadenceByPurchasesGen, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -3588,8 +3588,11 @@ let purchaseCadenceMemo = null
 // held the page 201.8ms (live BN9 2026-09-29 21:12Z, 'plan-grafts' step 1:
 // the graft decision builds the pass's first inputs). The graft decision
 // builds them through exitInputsGen; every later build this pass hits the memo.
-function* purchaseCadenceGen(ns, info, base, offers, owned) {
-  const key = `${info?.lastAugReset}|${planCtx?.decidedAt ?? ''}|${Math.floor(Date.now() / 300e3)}`
+// `batch`: the next install's purchases (plan.buy + the queue) — owned in every
+// life the model prices (lifeplan.ownedAfterBatch), never bought twice.
+function* purchaseCadenceGen(ns, info, base, offers, owned0, batch = []) {
+  const { owned, nfgLevel0 } = ownedAfterBatch(owned0, batch)
+  const key = `${info?.lastAugReset}|${planCtx?.decidedAt ?? ''}|${Math.floor(Date.now() / 300e3)}|${owned.size}+${nfgLevel0}`
   if (purchaseCadenceMemo?.key === key) return purchaseCadenceMemo.value
   let value = null
   try {
@@ -3597,8 +3600,8 @@ function* purchaseCadenceGen(ns, info, base, offers, owned) {
     const rph = typeof base.repPerSec === 'number' && base.repPerSec > 0 ? base.repPerSec * 3600 : null
     if (catal.items.length && rph) {
       const ms = yield* moneyScaleOfGen(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
-      const r = yield* cadenceByPurchasesGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy, bestExitPolicyGen })
-      value = r ? { ...r, moneyScale: ms.scale, moneyCalibration: ms.why } : null
+      const r = yield* cadenceByPurchasesGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, bestExitPolicy, bestExitPolicyGen, nfgLevel0 })
+      value = r ? { ...r, moneyScale: ms.scale, moneyCalibration: ms.why, afterBatch: { augs: owned.size - new Set(owned0 ?? []).size, nfgLevels: nfgLevel0 } } : null
     }
   } catch (e) {
     value = { error: String(e).slice(0, 120) }
@@ -3701,7 +3704,11 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   // (plan.applyDraw, cadenceRateMedian).
   // The NODE's catalogue (cadenceOffersNow): a fresh life has joined nothing.
   const cOffers = cadenceOffersNow?.length ? cadenceOffersNow : offers
-  const pc = Array.isArray(cOffers) && cOffers.length ? yield* purchaseCadenceGen(ns, info, out, cOffers, ownedAugsNow) : null
+  // THE LIVES IT PRICES FOLLOW THE NEXT INSTALL: that install's batch is
+  // theirs already (lifeplan.ownedAfterBatch) — it is priced once, as the
+  // first install's gains, not again as every later life's purchases.
+  const nextBatch = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])].filter((n) => typeof n === 'string')
+  const pc = Array.isArray(cOffers) && cOffers.length ? yield* purchaseCadenceGen(ns, info, out, cOffers, ownedAugsNow, nextBatch) : null
   if (pc && !pc.error && typeof pc.cycleHours === 'number' && pc.multGainPerCycle > 1) {
     // THE MODEL IS THE CADENCE POSTERIOR'S PRIOR (bayes.cadencePosterior
     // modelPrior): its ln(M) per hour at the length it chose, with its stated
@@ -3714,7 +3721,7 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
     cadenceModelNow = { lastAugReset: info?.lastAugReset, modelPrior }
     const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player), modelPrior })
     const r = cm?.stats?.lnPerHour > 0 ? cm.stats.lnPerHour : modelPrior.lnPerHour
-    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: Math.exp(r * pc.cycleHours), cadenceFrom: 'purchase model', cadenceRateMedian: r, cadence: { ...(out.cadence ?? {}), source: 'purchase model', model: { lnPerHour: modelPrior.lnPerHour, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle }, rateMedian: r, posterior: cm?.why ?? null, why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration, catalogue: cadenceKeptWhy ?? 'this life\'s offers' } }
+    return { ...out, cycleHours: pc.cycleHours, multGainPerCycle: Math.exp(r * pc.cycleHours), cadenceFrom: 'purchase model', cadenceRateMedian: r, cadence: { ...(out.cadence ?? {}), source: 'purchase model', model: { lnPerHour: modelPrior.lnPerHour, cycleHours: pc.cycleHours, multGainPerCycle: pc.multGainPerCycle }, rateMedian: r, posterior: cm?.why ?? null, why: pc.why, measured: out.cadence?.why ?? null, table: pc.table, moneyCalibration: pc.moneyCalibration, catalogue: cadenceKeptWhy ?? 'this life\'s offers', afterBatch: pc.afterBatch ?? null } }
   }
   return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
 }
@@ -4821,9 +4828,16 @@ async function act(ns, canJoin, info, note) {
       ...karmaChannelCtx(ns, info, player),
     }
 
+    // THE PLAN IS BOUGHT AT WHAT A RAISE REACHES (nodeecon.batchReach): the
+    // purchase step orders on batchFits — the book after the sale haircut,
+    // less the raise margin — so a plan at face value is trimmed there, and
+    // the install then runs on a batch nobody priced (live BN9 2026-09-30
+    // 08:19Z: 12 planned on $577.9b, 8 fitted). Money beyond the book (a
+    // later balance) is cash; the book is capped at today's equity.
+    const reachOf = (m) => batchReach(Math.max(0, m - stockEquity), Math.min(stockEquity, Math.max(0, m)))
     const planArgs = {
       offers,
-      money: liveMoney,
+      money: reachOf(liveMoney),
       r,
       nodeMoneyMult: 1, // already in the live price
       owned: [...installedCount.keys()],
@@ -4832,7 +4846,7 @@ async function act(ns, canJoin, info, note) {
       oneoff: oneoffBase,
     }
     plan = planPurchases(planArgs)
-    replanAt = (m, offersAt = null) => planPurchases({ ...planArgs, money: m, ...(offersAt ? { offers: offersAt } : {}) })
+    replanAt = (m, offersAt = null) => planPurchases({ ...planArgs, money: reachOf(m), ...(offersAt ? { offers: offersAt } : {}) })
 
     // ------------------------------------------------------------------
     // THE DERIVED OBJECTIVE (objective.js has the model). Two stages,
@@ -5056,7 +5070,7 @@ async function act(ns, canJoin, info, note) {
           replanAt = (m, offersAt = null) =>
             planPurchases({
               ...planArgs,
-              money: m,
+              money: reachOf(m),
               ...(offersAt ? { offers: offersAt } : {}),
               channelWeights,
               channels: channelsUsed,
@@ -6694,6 +6708,9 @@ async function act(ns, canJoin, info, note) {
     // candidate wait (with that wait's batch), and if nothing is installed
     // again — all on one input builder, so only the choice differs.
     const exitCal0 = exitCalibrationOf(ns, info)
+    // The inputs the gate's 'now' was priced on (the ordinary comparison):
+    // the purchase step re-prices a trimmed batch on exactly these.
+    let gateExitInputs = null
     const exitCompare = await (async () => {
       try {
         const inputs0 = exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
@@ -6755,6 +6772,7 @@ async function act(ns, canJoin, info, note) {
           }
         }
         const now = bestExitPolicy({ ...inputs, firstInstallH: 0 }, 400, 1)
+        gateExitInputs = inputs
         const never = bestExitPolicy(inputs, 0, 0)
         // THE COMMITTED INSTALL'S BATCH, re-planned on this pass's state by the
         // same function as every wait (futureBatchAt -> replanAt), at its
@@ -7377,12 +7395,48 @@ async function act(ns, canJoin, info, note) {
       // when The Red Pill is in the ordered batch (its donation included) or
       // already queued; otherwise nothing in this batch is ordered at all —
       // money spent on lesser augmentations is money the Red Pill needs.
-      const installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.planDecision?.key ?? null, capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
+      let installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.planDecision?.key ?? null, capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
+      // THE BATCH ORDERED IS THE BATCH PRICED, or it is re-priced before it
+      // installs (plan.installBatchVerdictOf). The gate priced 'now' on the
+      // whole plan; a trimmed batch is another act. Live BN9 2026-09-30
+      // 08:19Z: priced 12 at 19.66h, installed 8 (the raise's reach) — the 8
+      // alone price +2.6h. Re-priced on the gate's own inputs; installed only
+      // within tolerance of the priced exit or still ahead of every
+      // alternative (each wait's batch, holding for the rest), else nothing
+      // in this batch is ordered and the next pass re-plans on the real state.
+      const pricedBatch = [...pending, ...(plan?.buy ?? []).map((b) => b?.name)]
+      const batchCheck = (() => {
+        // A terminal install is decided on The Red Pill being in the ordered
+        // batch (installOfOrderedBatch above), not on the rest of it.
+        if (installRefused || forcedInstall || gate.terminal === true) return null
+        try {
+          const orderedBatch = [...pending, ...bought]
+          const same = batchDiffOf(pricedBatch, orderedBatch).same
+          const inputs = same ? null : gateExitInputs
+          const g = inputs ? installGainsOf(orderedBatch, offers) : null
+          const repricedH = inputs && g && !exitCompare?.countAware ? bestExitPolicy({ ...inputs, firstInstallH: 0, installGains: g, nextInstallGain: g.hacking ?? null }, 400, 1).best?.hours ?? null : null
+          const alternatives = same || !inputs ? [] : (exitCompare?.waits ?? []).filter((w) => typeof w?.H === 'number').map((w) => ({ key: `wait ${(w.waitMs / 3600000).toFixed(2)}h`, H: w.H }))
+          if (!same && inputs && !exitCompare?.countAware) {
+            // Holding for the rest: the whole priced batch once the income covers the shortfall.
+            const need = (plan?.totalCost ?? 0) * (1 + RAISE_MARGIN) - raisable(ns.getServerMoneyAvailable('home'), stockEquity)
+            const inc = typeof incomePerSec === 'number' && incomePerSec > 0 ? incomePerSec : 0
+            if (need > 0 && inc > 0) {
+              const w = need / inc / 3600
+              const hH = bestExitPolicy({ ...inputs, firstInstallH: w }, 400, 1).best?.hours ?? null
+              if (typeof hH === 'number') alternatives.push({ key: `the priced batch after ${w.toFixed(2)}h of income`, H: hH })
+            }
+          }
+          return installBatchVerdictOf({ priced: pricedBatch, bought: orderedBatch, pricedH: exitCompare?.nowH ?? null, repricedH, alternatives })
+        } catch (e) {
+          return { ok: true, same: false, install: false, action: 'hold', why: `HOLD: the batch check threw (${String(e).slice(0, 80)}) — not installing on an unchecked batch` }
+        }
+      })()
+      if (batchCheck && batchCheck.install === false && !installRefused) installRefused = batchCheck.why
       if (installRefused) {
         orders.length = firstPlanOrder
         did.push(`install NOT ordered: ${installRefused}`)
         bought.length = 0
-      }
+      } else if (batchCheck && !batchCheck.same) did.push(`INSTALLING A TRIMMED BATCH: ${batchCheck.why}`)
       const installing = installRefused ? 0 : pending.length + bought.length
       ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, income: econNow }, null, 2), 'w')
       did.push(`ordered ${bought.length} of ${plan ? plan.buy.length : 0} planned purchase(s); install ordered for ${installing} augmentation(s) if act.js completes the chain — ${gate.why}`)
@@ -7482,12 +7536,21 @@ async function act(ns, canJoin, info, note) {
         orders[orders.length - 1].terminal = gate.terminal === true
         orders[orders.length - 1].planInstall = gate.planDecision?.key ?? null
         orders[orders.length - 1].batch = [...pending, ...bought]
+        // THE BATCH THE DECISION PRICED and the check of the one ordered
+        // against it (act.js copies both into /tel/install-last.txt;
+        // plan.differentBatchCheckOf fails INSTALLED A DIFFERENT BATCH on it).
+        orders[orders.length - 1].pricedBatch = pricedBatch
+        orders[orders.length - 1].batchCheck = batchCheck
         // THE EXITS THIS INSTALL RAN ON (act.js copies them into
         // /tel/install-last.txt, the record that outlives the life): the
         // actor's, the plan's 'now', the plan's commitment, and the verdict.
         orders[orders.length - 1].exits = (() => {
           const ie = planCtx?.consistency?.install ?? null
           const pi = planCtx?.decisions?.install ?? null
+          // A TRIMMED BATCH INSTALLS ON ITS RE-PRICED EXIT: the next life is
+          // compared with that (plan.exitJumpOf), not with the plan's mean
+          // for a batch that was not bought.
+          if (batchCheck && batchCheck.same === false && typeof batchCheck.repricedH === 'number') return { ok: ie?.ok ?? null, why: `${ie?.why ?? 'not compared'}; the batch re-priced: ${batchCheck.why}`, actorH: batchCheck.repricedH, pricedActorH: typeof exitCompare?.nowH === 'number' ? +exitCompare.nowH.toFixed(3) : null, planKey: pi?.key ?? null, planH: null, planPointH: null, commitment: pi?.commitment ?? null, checks: ie?.checks ?? null }
           return { ok: ie?.ok ?? null, why: ie?.why ?? (pi ? `the plan's install decision is ${pi.key}: not compared` : 'no plan decision this pass'), actorH: typeof exitCompare?.nowH === 'number' ? +exitCompare.nowH.toFixed(3) : null, planKey: pi?.key ?? null, planH: pi?.meanH ?? null, planPointH: pi?.pointH ?? null, commitment: pi?.commitment ?? null, checks: ie?.checks ?? null }
         })()
         ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')

@@ -446,6 +446,18 @@ export function raisable(cash, equity) {
 export function batchFits(cash, equity, total) {
   return fin(total) && raisable(cash, equity) >= total * (1 + RAISE_MARGIN)
 }
+/**
+ * THE MOST A BATCH CAN SPEND: the largest total batchFits accepts. The
+ * purchase planner budgets on this, not on cash + equity at face value — the
+ * purchase step executes on batchFits, so a plan built on the face value is a
+ * plan the step trims. Live BN9 2026-09-30 08:19Z: planned 12 augmentations
+ * ($557.3b before NeuroFlux) on $577.9b of cash + book; a raise reached
+ * ~$559b after the sale haircut, $557.3b x 1.02 did not fit, and the install
+ * ran on 8 while the gate had priced 12.
+ */
+export function batchReach(cash, equity) {
+  return raisable(cash, equity) / (1 + RAISE_MARGIN)
+}
 
 /**
  * The previous order batch's OUTCOME, from act.js's record (/tel/act.txt

@@ -1444,6 +1444,74 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
 }
 
 /**
+ * THE BATCH ORDERED AGAINST THE BATCH PRICED. The install gate prices
+ * "install now" on the plan's whole batch; the purchase step can order less
+ * (the raise's reach, a stale price, a refusal) and the install used to run
+ * on whatever was ordered. Live BN9 2026-09-30 08:19Z: priced 12 at 19.66h,
+ * ordered and installed 8 — the 8 alone price +2.6h, and the next life's exit
+ * jumped +33.9h (tools/sim/exitjump/attribute-batch.mjs).
+ *
+ * `priced`, `bought`: the batches as names (NeuroFlux once per level, the
+ * queue included in both). `pricedH`: the gate's exit installing `priced`
+ * now; `repricedH`: the same exit on `bought`; `alternatives` [{key, H, why}]:
+ * the exits of not installing `bought` now (each wait's own batch, holding
+ * for the rest). Installs `bought` only when it is the batch priced, or its
+ * re-priced exit is within tolerance of the priced one, or it still beats
+ * every alternative; otherwise holds. Returns {ok, same, install, action,
+ * pricedN, boughtN, missing, extra, pricedH, repricedH, altKey, altH, tolH, why}.
+ */
+export const BATCH_TOL = { rel: 0.03, minH: 0.5 }
+export function batchDiffOf(priced, bought) {
+  const count = (xs) => (xs ?? []).reduce((m, n) => m.set(n, (m.get(n) ?? 0) + 1), new Map())
+  const a = count(priced)
+  const b = count(bought)
+  const missing = []
+  const extra = []
+  for (const [n, k] of a) for (let i = 0; i < k - (b.get(n) ?? 0); i++) missing.push(n)
+  for (const [n, k] of b) for (let i = 0; i < k - (a.get(n) ?? 0); i++) extra.push(n)
+  return { missing, extra, same: !missing.length && !extra.length }
+}
+export function installBatchVerdictOf({ priced = [], bought = [], pricedH = null, repricedH = null, alternatives = [], tol = BATCH_TOL } = {}) {
+  const d = batchDiffOf(priced, bought)
+  const base = { pricedN: priced.length, boughtN: bought.length, missing: d.missing, extra: d.extra, pricedH: fin(pricedH) ? +pricedH.toFixed(3) : null }
+  const short = (xs) => [...new Map(xs.map((n) => [n, xs.filter((x) => x === n).length])).entries()].map(([n, k]) => (k > 1 ? `${n} x${k}` : n)).join(', ')
+  if (d.same) return { ok: true, same: true, install: true, action: 'install', ...base, repricedH: base.pricedH, altKey: null, altH: null, tolH: null, why: `the batch ordered is the batch priced (${bought.length})` }
+  const diff = `priced ${priced.length}, ordered ${bought.length}${d.missing.length ? `; not ordered: ${short(d.missing)}` : ''}${d.extra.length ? `; not priced: ${short(d.extra)}` : ''}`
+  if (!bought.length) return { ok: true, same: false, install: false, action: 'hold', ...base, repricedH: null, altKey: null, altH: null, tolH: null, why: `nothing ordered (${diff}) — nothing to install` }
+  if (!fin(pricedH) || !fin(repricedH)) return { ok: true, same: false, install: false, action: 'hold', ...base, repricedH: fin(repricedH) ? +repricedH.toFixed(3) : null, altKey: null, altH: null, tolH: null, why: `HOLD: the batch ordered is not the batch priced (${diff}) and ${fin(pricedH) ? 'the ordered batch' : 'the priced batch'} could not be priced — not installing on an unpriced batch` }
+  const tolH = Math.max(tol.minH, tol.rel * pricedH)
+  const alt = (alternatives ?? []).filter((a) => a && fin(a.H)).sort((x, y) => x.H - y.H)[0] ?? null
+  const r = (x) => +x.toFixed(3)
+  if (repricedH - pricedH <= tolH) return { ok: true, same: false, install: true, action: 'install', ...base, repricedH: r(repricedH), altKey: alt?.key ?? null, altH: alt ? r(alt.H) : null, tolH: r(tolH), why: `install the ordered batch: ${diff}; re-priced ${repricedH.toFixed(2)}h against the ${pricedH.toFixed(2)}h priced (within ${tolH.toFixed(2)}h)` }
+  if (alt && repricedH <= alt.H) return { ok: true, same: false, install: true, action: 'install', ...base, repricedH: r(repricedH), altKey: alt.key, altH: r(alt.H), tolH: r(tolH), why: `install the ordered batch: ${diff}; re-priced ${repricedH.toFixed(2)}h (priced ${pricedH.toFixed(2)}h) still beats ${alt.key} ${alt.H.toFixed(2)}h` }
+  return { ok: true, same: false, install: false, action: 'hold', ...base, repricedH: r(repricedH), altKey: alt?.key ?? null, altH: alt ? r(alt.H) : null, tolH: r(tolH), why: `HOLD: the batch ordered is not the batch priced (${diff}); re-priced ${repricedH.toFixed(2)}h against the ${pricedH.toFixed(2)}h priced (+${(repricedH - pricedH).toFixed(2)}h, tolerance ${tolH.toFixed(2)}h)${alt ? ` and ${alt.key} prices ${alt.H.toFixed(2)}h` : ', no alternative priced'} — buy the rest or re-plan next pass` }
+}
+
+/**
+ * INSTALLED A DIFFERENT BATCH (/tel/install-last.txt): the batch the install
+ * ran on against the batch its decision priced. An install on a batch that
+ * differs passes only with the re-pricing that justified it recorded
+ * (`batchCheck` install true, on the bought set). A record from before
+ * `pricedBatch` existed is read by the gate's own count ("install: N aug(s)").
+ * Returns {ok, why} (ok null: nothing to compare).
+ */
+export function differentBatchCheckOf(rec) {
+  if (!rec?.at || !Array.isArray(rec.batch)) return { ok: null, why: 'no install batch recorded' }
+  const installed = rec.batch
+  const priced = Array.isArray(rec.pricedBatch) ? rec.pricedBatch : null
+  // String.match, not RegExp.exec: a bare `exec` is billed as ns.exec (1.3GB).
+  const m = priced ? null : String(rec.why ?? '').match(/install: (\d+) aug\(s\)/)
+  const pricedN = priced ? priced.length : m ? +m[1] : null
+  if (pricedN === null) return { ok: null, why: `the install (${rec.at}) recorded no priced batch` }
+  const d = priced ? batchDiffOf(priced, installed) : { same: pricedN === installed.length, missing: [], extra: [] }
+  if (d.same) return { ok: true, why: `the install (${rec.at}) ran on the batch it priced (${installed.length})` }
+  const bc = rec.batchCheck ?? null
+  if (bc?.install === true && bc.same === false && fin(bc.repricedH)) return { ok: true, why: `the install (${rec.at}) ran on ${installed.length} of the ${pricedN} priced, re-priced on the bought set: ${bc.why}` }
+  const names = d.missing.length ? `; not bought: ${d.missing.join(', ')}` : ''
+  return { ok: false, why: `INSTALLED A DIFFERENT BATCH (${rec.at}): the decision priced ${pricedN} augmentation(s) and the install ran on ${installed.length}${names} — never re-priced on the batch bought (${bc ? bc.why : 'no batch check recorded'})` }
+}
+
+/**
  * THE LAST INSTALL'S EXITS (/tel/install-last.txt, written by act.js from the
  * install order before the install runs). After an install plan.txt belongs
  * to the next life, so this record is where the comparison survives: the
@@ -1464,6 +1532,9 @@ export function installRecordCheck(rec, { now = Date.now(), holdH = 12, jump = n
     if (jump.ok === false) fails.push({ what: String(jump.why).startsWith('EXIT JUMP AT INSTALL') ? jump.why : `EXIT JUMP AT INSTALL: ${jump.why}`, detail: 'the install priced the next life on one model and the life priced itself on another — plan.exitJumpOf, /tel/exitjump.txt' })
     else if (jump.why) notes.push(`last install's exit across the install: ${jump.why}`)
   }
+  const db = differentBatchCheckOf(rec)
+  if (db.ok === false) fails.push({ what: db.why, detail: 'the install ran on a batch its decision never priced — the purchase step ordered less than the plan (raise reach, a stale price, a refusal) and nothing re-priced it (plan.installBatchVerdictOf; progress.js holds or re-prices, act.js refuses a count that differs from the order)' })
+  else if (db.ok === true) notes.push(`last install's batch: ${db.why}`)
   const ex = rec.exits ?? null
   if (!ex) {
     notes.push(`last install (${ageH.toFixed(1)}h ago) recorded no exit comparison${rec.terminal ? ' (terminal install)' : ''}`)

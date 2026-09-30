@@ -1032,7 +1032,7 @@ export async function run() {
     if (IG.installOfOrderedBatch({ terminal: false, ordered: ["x"], pending: [], planKey: "now", capitalNode: true }).refused) ad.fail("an ordinary install the plan chose is not refused");
     if (IG.installOfOrderedBatch({ terminal: false, ordered: ["x"], pending: [], planKey: "never", capitalNode: false }).refused) ad.fail("other nodes: unchanged");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/const installRefused = installOfOrderedBatch\(\{ terminal: gate\.terminal === true, ordered: bought, pending/.test(prog) || !/if \(installRefused\) \{\s*\n\s*orders\.length = firstPlanOrder/.test(prog)) ad.fail("progress.js must decide the install on the ordered batch and withdraw a batch that cannot carry the Red Pill");
+    if (!/(?:const|let) installRefused = installOfOrderedBatch\(\{ terminal: gate\.terminal === true, ordered: bought, pending/.test(prog) || !/if \(installRefused\) \{\s*\n\s*orders\.length = firstPlanOrder/.test(prog)) ad.fail("progress.js must decide the install on the ordered batch and withdraw a batch that cannot carry the Red Pill");
     if (!/orders\[orders\.length - 1\]\.terminal = gate\.terminal === true/.test(prog)) ad.fail("the install order must say whether it is terminal");
     if (!/installWhy: String\(gate\.why/.test(prog)) ad.fail("the lifetimes ledger records why each install ran");
     const act = fs.readFileSync(path.join(REPO_ROOT, "act.js"), "utf8");

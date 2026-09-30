@@ -107,6 +107,27 @@ export function nodeFactionsOf(kept, node, joined) {
  * repReq, mults, prereqs, favor}), one row per augmentation with every
  * faction that sells it; favour per faction from the offers.
  */
+/**
+ * THE PURCHASE MODEL'S LIVES START AFTER THE NEXT INSTALL, so what that
+ * install's batch buys is owned in every one of them: its augmentations leave
+ * the catalogue and its NeuroFlux levels raise the price the lives start from.
+ * Without this the batch was priced twice — once as the first install's gains
+ * (exitplan installGains) and again as what every later life buys. Live BN9
+ * 2026-09-30: the 6h life bought x1.149 with the 12-augmentation batch still in
+ * the catalogue and x1.066 at the same money once 8 of them were owned; the
+ * install priced at 19.66h, ~24.7h on the cadence without them.
+ * `batch`: names, NeuroFlux once per level. Returns {owned: Set, nfgLevel0}.
+ */
+export function ownedAfterBatch(owned, batch) {
+  const out = new Set(owned ?? [])
+  let nfgLevel0 = 0
+  for (const b of batch ?? []) {
+    if (b === NFG) nfgLevel0++
+    else if (typeof b === 'string') out.add(b)
+  }
+  return { owned: out, nfgLevel0 }
+}
+
 export function catalogueFromOffers(offers, owned) {
   const have = owned instanceof Set ? owned : new Set(owned ?? [])
   const byName = new Map()
@@ -376,9 +397,14 @@ export function lifeBatch({ items, nfg, state, L, money, repPerHour0 }) {
   return { chosen: chosen.map((c) => c.name), gain, lnGain: Math.log(gain), nfgLevels: levels, hours, rep, cost: batchCost(prices), money }
 }
 
-/** Lives of length L in a row: the catalogue depleting, favour accruing. */
-export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repPerHour0 }) {
-  const state = { owned: new Set(owned ?? []), favor: { ...(favor ?? {}) }, nfgLevel: 0 }
+/**
+ * Lives of length L in a row: the catalogue depleting, favour accruing.
+ * `nfgLevel0`: NeuroFlux levels bought before the first of these lives and
+ * not in the catalogue's price (the next install's batch: the lives start
+ * after it).
+ */
+export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repPerHour0, nfgLevel0 = 0 }) {
+  const state = { owned: new Set(owned ?? []), favor: { ...(favor ?? {}) }, nfgLevel: Number.isInteger(nfgLevel0) && nfgLevel0 > 0 ? nfgLevel0 : 0 }
   const out = []
   const money = moneyAt(L)
   for (let i = 0; i < lives; i++) {
@@ -411,7 +437,7 @@ export function cadenceByPurchases(o = {}) {
  * lengths' exits on inputs carrying 21 grafts; ~50ms warm, ~220ms cold on
  * the dev machine), PLAN BLOCKED THE PAGE.
  */
-export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24], horizonH = 48, maxLives = 100 }) {
+export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24], horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
   if (!catalogue || !pos(repPerHour0) || (typeof bestExitPolicy !== 'function' && typeof bestExitPolicyGen !== 'function')) return null
   // eslint-disable-next-line require-yield
   const policyGen = typeof bestExitPolicyGen === 'function' ? bestExitPolicyGen : function* (x) {
@@ -430,7 +456,7 @@ export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPer
     const n = Math.max(1, Math.min(maxLives, Math.round(horizonH / L)))
     if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(inputs, L, moneyScale)) ?? 0)
     yield
-    const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0 })
+    const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 })
     yield
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
     const g = Math.exp(mean)
