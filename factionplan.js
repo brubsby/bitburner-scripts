@@ -509,6 +509,26 @@ export function bestCompatibleSet(candidates, o = {}) {
  * faction keeping the SHORTEST hold, since a longer one for the same faction
  * subsumes it only if the gate already accepted the shorter.
  */
+/**
+ * THE OFFERS AN INSTALL AFTER A WAIT SEES: each faction's reputation advanced
+ * by what the wait earns it. `repGain` is the worked faction's grind over the
+ * wait; a `hold` {faction, repTarget} lifts its faction to the target — and
+ * MOVES THE WORK SLOT there, so the worked faction does not also grind (one
+ * slot: live BN9 2026-09-30 the BitRunners hold was priced with New Tokyo's
+ * 1.5h of grind on top). The gang faction's reputation (`gangRep`) accrues
+ * whatever the slot does.
+ */
+export function advancedOffersOf(offers, { workingF = null, repGain = 0, hold = null, gangFaction = null, gangRep = null } = {}) {
+  const slotWorks = !hold || hold.faction === workingF
+  return (offers ?? []).map((o) => {
+    let rep = o.factionRep
+    if (repGain > 0 && slotWorks && o.faction === workingF) rep += repGain
+    if (hold && o.faction === hold.faction) rep = Math.max(rep, hold.repTarget)
+    if (gangRep !== null && gangFaction && o.faction === gangFaction) rep = Math.max(rep, gangRep)
+    return rep !== o.factionRep ? { ...o, factionRep: rep } : o
+  })
+}
+
 export function holdCandidates(segments, o = {}) {
   const maxH = o.maxH ?? 12
   const byFaction = new Map()

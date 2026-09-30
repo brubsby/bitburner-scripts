@@ -684,7 +684,17 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
       add(`r${extra}`, { kind: 'route', route: w.route, routeKey: routeKey(w.route), extra, lifeH: w.lifeH ?? null }, w.hours, { routeKey: routeKey(w.route), extra })
       continue
     }
-    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null }, w.hours)
+    // A HOLD WAIT CARRIES ITS HOLD (factionplan.holdCandidates: the slot
+    // grinds `hold.faction` to `hold.repTarget` for the wait): its batch buys
+    // what that grind unlocks, so the commitment is the grind too — the
+    // record keeps it (basisOf), the work slot enacts it (installHoldOf), and
+    // the committed batch is re-planned on the grind actually running. It was
+    // dropped: live BN9 2026-09-30 09:14Z, 10:10Z and 11:50Z the plan switched
+    // to a BitRunners hold (Neural Accelerator, hacking x1.277) the slot never
+    // worked, the next pass re-priced the commitment as a plain wait (x1.138,
+    // +3.3h), and 30 min later the same hold won again: INSTALL DEFERRED
+    // REPEATEDLY.
+    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null, ...(w.hold ? { hold: w.hold } : {}) }, w.hours)
   }
   if (!count && P0.never && fin(P0.never.hours)) add('never', { kind: 'never' }, P0.never.hours)
   // The committed install time, on its remaining wait. A route option is
@@ -1062,7 +1072,125 @@ export function basisOf(rec, now = Date.now()) {
   const sp = rec.spec ?? null
   if (sp?.kind === 'route') return null // a route basis needs this pass's route object: priced by the install decision only
   if (!fin(rec.installAt)) return null
-  return { kind: 'wait', installAt: rec.installAt, waitH: Math.max(0, (rec.installAt - now) / 3.6e6), n: rec.fixed?.n ?? sp?.n ?? null, lifeH: rec.fixed?.lifeH ?? sp?.lifeH ?? null, gains: rec.gains ?? sp?.gains ?? null }
+  const hold = sp?.hold ?? null
+  return { kind: 'wait', installAt: rec.installAt, waitH: Math.max(0, (rec.installAt - now) / 3.6e6), n: rec.fixed?.n ?? sp?.n ?? null, lifeH: rec.fixed?.lifeH ?? sp?.lifeH ?? null, gains: rec.gains ?? sp?.gains ?? null, ...(hold ? { hold } : {}) }
+}
+
+/**
+ * THE COMMITTED HOLD, ENACTED. A committed install whose wait is a hold
+ * (spec.hold {faction, repTarget}) is a promise that the work slot grinds
+ * that faction until the target (or the install): its batch was priced on
+ * the augmentation the grind unlocks. Returns {faction, repTarget, why} when
+ * the slot should be there this pass, else null with nothing to enact:
+ * another life, the install time passed, the faction not joined, the target
+ * reached. `rec` the plan's install decision; `repOf(faction)` the
+ * faction's reputation now (null unreadable: nothing enacted, named).
+ */
+export function installHoldOf(rec, { lastAugReset = null, planLife = null, now = Date.now(), joined = [], repOf = null } = {}) {
+  const h = rec?.spec?.hold ?? null
+  if (!h || typeof h.faction !== 'string' || !fin(h.repTarget)) return null
+  if (planLife !== null && lastAugReset !== null && planLife !== lastAugReset) return null
+  if (!fin(rec.installAt) || rec.installAt <= now) return null
+  if (!(joined ?? []).includes(h.faction)) return { faction: null, repTarget: h.repTarget, why: `the committed hold's faction ${h.faction} is not joined: the hold cannot be worked (its batch will be re-priced without it)` }
+  const rep = typeof repOf === 'function' ? repOf(h.faction) : null
+  if (!fin(rep)) return { faction: null, repTarget: h.repTarget, why: `${h.faction}'s reputation is unreadable: the hold is not enacted this pass` }
+  if (rep >= h.repTarget) return null
+  return { faction: h.faction, repTarget: h.repTarget, rep, why: `the committed install ${rec.key} holds for ${h.faction} to ${Math.round(h.repTarget).toLocaleString()} rep (${Math.round(rep).toLocaleString()} now; install at ${new Date(rec.installAt).toISOString().slice(11, 16)}Z)` }
+}
+
+/**
+ * THE COMMITTED BATCH, re-planned on events, not on every pass's replan
+ * jitter. The purchase planner's batch at the committed install's remaining
+ * wait flips between near-equal batches pass to pass (live BN9 2026-09-30
+ * held w1.4: hacking x1.150/x1.138/x1.127, income x3.15/x5.11/x4.93 on
+ * consecutive passes; 07:04Z x2.94 -> x2.70), each flip moving the held exit
+ * 0.4-0.7h with nothing decided. The batch is kept (`held`) while the
+ * re-planned one prices within `tolH` (5% of the exit, at least 0.5h: the
+ * flips; a lost augmentation is 3h) of it; beyond, the re-planned one is
+ * taken and the move is an EVENT (the install decision re-decides on it). A
+ * drift in small steps accumulates against the KEPT batch, so it too becomes
+ * an event once it matters. In
+ * the last `freshH` hours of the wait the re-planned batch is always taken
+ * (the install buys it: TWO EXITS AT INSTALL compares against it).
+ * prevGains/newGains: the batches; prevH/newH: the committed trajectory's
+ * point on each (this pass's inputs). Returns {gains, held, event, why}.
+ */
+export const BATCH_HOLD = { rel: 0.05, minTolH: 0.5, freshH: 0.5 }
+export function committedBatchOf({ prevGains = null, newGains = null, prevH = null, newH = null, waitH = null, o = BATCH_HOLD } = {}) {
+  const key = (g) => gainsKeyOf(g ?? null)
+  if (!newGains) return { gains: prevGains, held: !!prevGains, event: null, why: prevGains ? 'no re-planned batch this pass: the committed batch kept' : 'no batch' }
+  if (!prevGains || key(prevGains) === key(newGains)) return { gains: newGains, held: false, event: null, why: prevGains ? 'the re-planned batch is the committed one' : 'no committed batch: the re-planned one' }
+  if (!fin(prevH) || !fin(newH)) return { gains: newGains, held: false, event: `the committed install's batch changed (${fin(prevH) ? '' : 'the committed batch is unpriced'}${!fin(prevH) && !fin(newH) ? ', ' : ''}${fin(newH) ? '' : 'the re-planned batch is unpriced'})`, why: 'one of the batches is unpriced: the re-planned one, as an event' }
+  const tolH = Math.max(o.minTolH, o.rel * Math.max(prevH, newH))
+  const d = newH - prevH
+  const g = (x) => `h${(x.hacking ?? 1).toFixed(3)} $${(x.income ?? 1).toFixed(3)}`
+  if (Math.abs(d) > tolH) return { gains: newGains, held: false, event: `the committed install's batch moved ${g(prevGains)} -> ${g(newGains)} (${d > 0 ? '+' : ''}${d.toFixed(2)}h, beyond ${tolH.toFixed(2)}h)`, why: `re-planned batch ${d > 0 ? '+' : ''}${d.toFixed(2)}h: taken, an event` }
+  if (fin(waitH) && waitH <= o.freshH) return { gains: newGains, held: false, event: null, why: `the last ${o.freshH}h of the wait: the re-planned batch (${d > 0 ? '+' : ''}${d.toFixed(2)}h, within ${tolH.toFixed(2)}h) is what the install buys` }
+  return { gains: prevGains, held: true, event: null, why: `the re-planned batch prices ${d > 0 ? '+' : ''}${d.toFixed(2)}h, within ${tolH.toFixed(2)}h: the committed batch kept` }
+}
+
+/**
+ * INSTALL DEFERRED REPEATEDLY. Each switch of the install decision to a LATER
+ * install time is a deferral, and it promises an exit date (the switch's
+ * pass + its mean exit). A plan that keeps deferring its own install while
+ * the exit date slides past each promise is not choosing better waits — it
+ * is renegotiating: every wait is priced as if it were the last one, and the
+ * next pass defers again (live BN9 2026-09-30: 09:14Z promised 23:18Z,
+ * 10:10Z 23:07Z, 11:50Z 00:40Z; at 12:35Z the exit read 04:07Z, 3.5-5h past
+ * each, and the committed install had moved 09:35Z -> 13:24Z).
+ * installDeferralsOf(prev, rec) carries the life's ledger and appends this
+ * pass's deferral; installDeferralCheckOf(rec) fails when `n` or more
+ * deferrals of this life have each been overshot by more than their own
+ * claimed gain (at least `minH`) — the waiting delivered less than nothing.
+ */
+export const DEFER = { n: 3, minH: 0.5, max: 12 }
+export function installDeferralsOf(prev, rec) {
+  const same = prev && prev.lastAugReset === rec?.lastAugReset && prev.node === rec?.node
+  const ledger = same && Array.isArray(prev.installDeferrals) ? prev.installDeferrals : []
+  const a = prev?.decisions?.install
+  const b = rec?.decisions?.install
+  if (!same || !b?.switched || !fin(a?.installAt) || !fin(b?.installAt) || !(b.installAt > a.installAt + 60e3) || !fin(rec?.exit?.meanH)) return ledger
+  const at = Date.parse(rec.at)
+  const d = { at: rec.at, from: a.key ?? null, fromInstallAt: new Date(a.installAt).toISOString(), to: b.key, toInstallAt: new Date(b.installAt).toISOString(), meanH: rec.exit.meanH, promisedExitAt: new Date(at + rec.exit.meanH * 3.6e6).toISOString(), gainH: fin(b.gainH) ? b.gainH : null, hold: b.spec?.hold?.faction ?? null }
+  return [...ledger, d].slice(-DEFER.max)
+}
+export function installDeferralCheckOf(rec, o = DEFER) {
+  const L = Array.isArray(rec?.installDeferrals) ? rec.installDeferrals : []
+  if (!L.length) return { ok: null, n: 0, why: 'no install deferral this life' }
+  if (!fin(rec?.exit?.meanH)) return { ok: null, n: L.length, why: `${L.length} deferral(s) this life; no exit this pass to compare` }
+  const exitAt = Date.parse(rec.at) + rec.exit.meanH * 3.6e6
+  const rows = L.map((d) => {
+    const short = (exitAt - Date.parse(d.promisedExitAt)) / 3.6e6
+    const tol = Math.max(o.minH, fin(d.gainH) ? d.gainH : 0)
+    return { at: d.at, from: d.fromInstallAt, to: d.toInstallAt, promised: d.promisedExitAt, shortH: +short.toFixed(2), tolH: +tol.toFixed(2), missed: short > tol, hold: d.hold ?? null }
+  })
+  const missed = rows.filter((r) => r.missed)
+  const hh = (s) => String(s).slice(11, 16)
+  const list = rows.map((r) => `${hh(r.at)}Z ${hh(r.from)}->${hh(r.to)}Z promised ${hh(r.promised)}Z (${r.shortH > 0 ? '+' : ''}${r.shortH}h${r.missed ? `, beyond its ${r.tolH}h gain` : ''}${r.hold ? `, a ${r.hold} hold` : ''})`).join('; ')
+  const ok = missed.length < o.n
+  return { ok, n: rows.length, missed: missed.length, exitAt: new Date(exitAt).toISOString(), rows, why: ok ? `${rows.length} install deferral(s) this life, ${missed.length} overshot: ${list}` : `INSTALL DEFERRED REPEATEDLY: ${missed.length} of ${rows.length} deferrals this life promised an exit the plan now puts later by more than each switch's own gain (exit now ${hh(new Date(exitAt).toISOString())}Z): ${list}` }
+}
+
+/**
+ * A RATE READ OFF ONE PASS, SMOOTHED. The faction reputation rate is the
+ * worked faction's reputation delta over one 5-minute pass
+ * (progress.js planFactionWork); a pass on which the slot was elsewhere for
+ * part of the interval reads a fraction of it. Live BN9 2026-09-30 09:19Z-
+ * 09:34Z it read 4.0, 4.4, 17.8, 4.2, 17.7 rep/s against ~17 either side,
+ * and each flip moved the held exit 7-8h (EXIT UNSTABLE, no event). The
+ * rate is the MEDIAN of this life's samples over the last `windowH` hours
+ * (robust to a minority of short intervals, lagging a steady climb by about
+ * half the window). `obs` [{at, v}]. Returns {v, n, raw, why} (v null: no
+ * sample in the window).
+ */
+export const RATE_SMOOTH = { windowH: 1, max: 24 }
+export function robustRateOf(obs, now = Date.now(), { windowH = RATE_SMOOTH.windowH } = {}) {
+  const S = (obs ?? []).filter((o) => fin(o?.v) && o.v > 0 && fin(Date.parse(o?.at)) && now - Date.parse(o.at) <= windowH * 3.6e6 && Date.parse(o.at) <= now + 60e3)
+  if (!S.length) return { v: null, n: 0, raw: null, why: `no sample in the last ${windowH}h` }
+  const xs = S.map((o) => o.v).sort((a, b) => a - b)
+  const m = xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2
+  const raw = S[S.length - 1].v
+  return { v: m, n: S.length, raw, why: `median of ${S.length} sample(s) over the last ${windowH}h: ${m.toFixed(2)} (this pass ${raw.toFixed(2)})` }
 }
 
 /**
@@ -1592,6 +1720,10 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   else if (lb.why) notes.push(`plan life length basis: ${lb.why}`)
   const ll0 = plan.decisions?.lifeLength
   if (ll0?.key) notes.push(`plan life length: ${ll0.key}${ll0.held ? ' (held)' : ''} — ${String(ll0.why ?? '').slice(0, 160)}`)
+  // INSTALL DEFERRED REPEATEDLY (installDeferralCheckOf, recorded by the pass).
+  const idf = plan.installDeferral ?? null
+  if (idf?.ok === false) fail(idf.why, "the install decision keeps switching to a later install while the exit slides past every switch's promise — a wait priced on something the committed policy does not do (a hold nobody works, a batch the next pass re-plans away): compare each switch's option with the next pass's committed batch (tools/sim/exitjump/attribute-pair.mjs)")
+  else if (idf?.why && idf.n) notes.push(`plan install deferrals: ${idf.why}`)
   const plg = plan.perLifeGain ?? null
   if (plg?.ok === false) fail(plg.why, "the committed trajectory's later lives compound a gain the purchase model cannot buy with a life's money — a lift applied per cycle whatever the life buys (exitplan lifeLift, lifeplan table)")
   else if (plg?.why) notes.push(`plan per-life gain: ${plg.why}`)

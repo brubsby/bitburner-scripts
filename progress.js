@@ -124,7 +124,7 @@ import {
   scoreFutures,
   discountFutures,
   carryPredictions, installOfOrderedBatch } from 'installgate.js'
-import { planSchedule, bestCompatibleSet, holdCandidates, logValue } from 'factionplan.js'
+import { planSchedule, bestCompatibleSet, holdCandidates, advancedOffersOf, logValue } from 'factionplan.js'
 import { joinWait, timeToMeet } from 'joinplan.js'
 import { snapshotView } from 'snapshot.js'
 // Pure: the expected contract stream, which is NOT script income and so is
@@ -169,7 +169,7 @@ import { enter, leave } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -578,6 +578,20 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     const favor = prior.favors?.[wasWorking] ?? 0
     if (dt > 5 && dr > 0) base = dr / dt / (1 + favor / 100)
   }
+  // SMOOTHED OVER THE LAST HOUR (plan.robustRateOf): one pass's delta reads a
+  // fraction of the rate when the slot was elsewhere for part of the interval
+  // (live BN9 2026-09-30 09:19Z-09:34Z: 4.0 / 4.4 / 17.8 / 4.2 / 17.7 rep/s,
+  // each flip 7-8h on the held exit). The samples ride the schedule record
+  // (same life); the published base rate is their median, the pass's own
+  // delta kept beside it (`baseRepRaw`).
+  const baseRepRaw = base
+  const baseRepObs = (() => {
+    const kept = prior.lastAugReset === info?.lastAugReset && Array.isArray(prior.baseRepObs) ? prior.baseRepObs : []
+    const at = new Date(now).toISOString()
+    return (typeof base === 'number' && isFinite(base) && base > 0 ? [...kept, { at, v: base }] : kept).filter((o) => now - Date.parse(o.at) <= 2 * RATE_SMOOTH.windowH * 3.6e6).slice(-RATE_SMOOTH.max)
+  })()
+  const baseRepSmooth = robustRateOf(baseRepObs, now)
+  if (baseRepSmooth.v !== null) base = baseRepSmooth.v
 
   // Hacking-exp rate, measured the same way and stored the same place. It is
   // what turns "BitRunners needs hacking 505" into an ETA. A stale-life prior
@@ -971,6 +985,9 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     at: new Date(now).toISOString(),
     lastAugReset: info?.lastAugReset,
     measuredBaseRepPerSec: base,
+    baseRepRaw,
+    baseRepObs,
+    baseRepWhy: baseRepSmooth.why,
     estimated: base === null,
     estimatedBaseRepPerSec: base === null ? (joinCtx?.state?.baseRepEstimate ?? null) : null,
     hackingExp: expNow ?? null,
@@ -3111,6 +3128,9 @@ function publishPlan(ns, info, extra = {}) {
       streams: pc.streams ?? pc.prev?.streams ?? null,
       // EXIT JUMP AT INSTALL (plan.exitJumpOf; planCheck fails on ok false).
       exitJump,
+      // The committed install's batch this pass (plan.committedBatchOf):
+      // kept, or re-planned (a move beyond the jitter is an event).
+      committedBatch: pc.committedBatch ?? null,
       // A decision that changed under a re-basing this pass: re-decide next
       // pass (redecideEvents reads it).
       forceRedecide: pc.forceRedecide ?? null,
@@ -3125,6 +3145,15 @@ function publishPlan(ns, info, extra = {}) {
       rec.exitStability = exitStabilityOf(pc.prevAny ?? null, rec)
     } catch (e) {
       rec.exitStability = { ok: null, why: `exit stability check threw: ${String(e).slice(0, 120)}` }
+    }
+    // INSTALL DEFERRED REPEATEDLY (plan.installDeferralCheckOf): the life's
+    // ledger of switches to a later install, each against the exit it
+    // promised. planCheck fails on it.
+    try {
+      rec.installDeferrals = installDeferralsOf(pc.prevAny ?? null, rec)
+      rec.installDeferral = installDeferralCheckOf(rec)
+    } catch (e) {
+      rec.installDeferral = { ok: null, why: `install deferral check threw: ${String(e).slice(0, 120)}` }
     }
     // LIFE LENGTH OFF BASIS (plan.lifeLengthBasisOf): every decision on the committed length. planCheck fails on it.
     try {
@@ -4072,7 +4101,19 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
 function goFavorStreamInputOf(ns, info) {
   const g = readJson(ns, '/tel/go.txt')
   if (!g || !(Date.now() - Date.parse(g.at ?? '') < 15 * 60e3)) return { favorStreamWhy: 'go.js is not reporting' }
-  if (g.opponent !== EXIT_FACTION) return { favorStreamWhy: `go.js plays ${g.opponent ?? '?'}, not ${EXIT_FACTION}` }
+  if (g.opponent !== EXIT_FACTION) {
+    // A SWITCH IS A FEW GAMES, NOT THE STREAM'S END: go.js commits a handful
+    // of games to another opponent, then re-prices (go.js SETTINGS: a switch commits games). The
+    // stream measured against the exit faction within the last half hour of
+    // this life is carried through it: live BN9 2026-09-30 08:39Z and 10:35Z
+    // one pass each read "go.js plays Netburners", the stream vanished and
+    // the held exit moved +1.9h with nothing decided.
+    const prev = readJson(ns, '/tel/exitinputs.txt')
+    const fs0 = prev?.lastAugReset === info?.lastAugReset ? prev?.inputs?.favorStream ?? null : null
+    const at0 = Date.parse(prev?.inputs?.favorStreamAt ?? '')
+    if (fs0 && fs0.repPerH > 0 && Date.now() - at0 < 30 * 60e3) return { favorStream: fs0, favorStreamAt: prev.inputs.favorStreamAt, favorStreamWhy: `carried from ${prev.inputs.favorStreamAt}: go.js plays ${g.opponent ?? '?'} for now, not ${EXIT_FACTION}` }
+    return { favorStreamWhy: `go.js plays ${g.opponent ?? '?'}, not ${EXIT_FACTION}` }
+  }
   const start = Date.parse(g.processStartedAt ?? '')
   if (!(start >= (info?.lastAugReset ?? Infinity))) return { favorStreamWhy: "go.js's process predates this life" }
   const hrs = (Date.parse(g.at) - start) / 3.6e6
@@ -4083,7 +4124,7 @@ function goFavorStreamInputOf(ns, info) {
   if (!(typeof wins === 'number' && typeof losses === 'number' && wins + losses > 0)) return { favorStreamWhy: 'no Go win record this life' }
   const s = goFavorStreamOf({ gamesPerHour: g.gamesThisProcess / hrs, pWin: wins / (wins + losses), sf14: g.sf14 ?? 0, banked: g.favorRep?.[EXIT_FACTION] ?? null })
   if (!(s.repPerH > 0)) return { favorStreamWhy: s.why }
-  return { favorStream: { repPerH: s.repPerH, capRep: s.capRep }, favorStreamWhy: s.why }
+  return { favorStream: { repPerH: s.repPerH, capRep: s.capRep }, favorStreamAt: g.at, favorStreamWhy: s.why }
 }
 
 /**
@@ -5739,9 +5780,31 @@ async function act(ns, canJoin, info, note) {
     scheduleTarget = routeLead.faction
     did.push(`route leg: ${routeLead.kind} for ${routeLead.name} at ${routeLead.faction}${routeLead.companyLeg ? ` — ${routeLead.company} reputation ${Math.round(routeLead.companyLeg.have ?? 0).toLocaleString()} of ${routeLead.companyLeg.need?.toLocaleString?.() ?? '?'} (~${(routeLead.companyLeg.hoursLeft ?? 0).toFixed(2)}h at the measured rate)` : ''}`)
   }
+  // THE COMMITTED INSTALL HOLD DRIVES THE WORK SLOT (plan.installHoldOf), as
+  // the committed route does above. A hold wait's batch is priced on the
+  // augmentation its grind unlocks; nothing worked it. Live BN9 2026-09-30
+  // the plan committed three times to a BitRunners hold (200,000 rep in
+  // ~1.6-2.3h, for Neural Accelerator) while the slot stayed on New Tokyo:
+  // BitRunners gained ~2,000 rep an hour, the next pass re-priced each
+  // commitment without the augmentation (+3.3h), and the install moved
+  // 09:35Z -> 13:24Z (INSTALL DEFERRED REPEATEDLY). Not over a route leg or
+  // the gang bootstrap (their own owners of the slot).
+  const holdLead = (() => {
+    if (routeLead || !canJoin) return null
+    try {
+      const pr = readJson(ns, PLAN_FILE)
+      return installHoldOf(pr?.decisions?.install ?? null, { lastAugReset: info?.lastAugReset ?? null, planLife: pr?.lastAugReset ?? null, now: Date.now(), joined: player.factions, repOf: (f) => (player.factions.includes(f) ? sing.factionRep(f) : null) })
+    } catch (e) {
+      return { faction: null, why: `the committed install hold could not be read (${String(e).slice(0, 80)})` }
+    }
+  })()
+  if (holdLead?.faction && !gangBootstrapPending) {
+    scheduleTarget = holdLead.faction
+    did.push(`install hold: ${holdLead.why}`)
+  } else if (holdLead?.why) todo.push(`install hold not worked: ${holdLead.why}`)
   const wantCompany = routeLead
     ? routeLead.company
-    : schedule?.current?.workH > 0 ? (MEGACORPS.find((m) => m.faction === schedule.current.faction)?.company ?? null) : null
+    : holdLead?.faction ? null : schedule?.current?.workH > 0 ? (MEGACORPS.find((m) => m.faction === schedule.current.faction)?.company ?? null) : null
   const deskFaction = routeLead ? routeLead.faction : schedule?.current?.faction
   const deskH = routeLead ? routeLead.companyLeg?.hoursLeft ?? 0 : schedule?.current?.workH ?? 0
   // Starting employment is deferred until the ranking is MEASURED, not
@@ -6709,13 +6772,8 @@ async function act(ns, canJoin, info, note) {
         const repGain = ftraj ? ftraj.repBetween(0, waitH, favMult) : 0
         const moneyGain = itraj ? itraj.moneyBy(waitH) : incomePerSec * waitH * 3600
         const gangRep = gangRepIn(waitH)
-        const advanced = offers.map((o) => {
-          let rep = o.factionRep
-          if (repGain > 0 && o.faction === workingF) rep += repGain
-          if (hold && o.faction === hold.faction) rep = Math.max(rep, hold.repTarget)
-          if (gangRep !== null && gangCtx && o.faction === gangCtx.faction) rep = Math.max(rep, gangRep)
-          return rep !== o.factionRep ? { ...o, factionRep: rep } : o
-        })
+        // One slot: a hold elsewhere moves it, the worked faction stops (factionplan.advancedOffersOf).
+        const advanced = advancedOffersOf(offers, { workingF, repGain, hold, gangFaction: gangCtx?.faction ?? null, gangRep })
         const f = replanAt(liveCapital + moneyGain, advanced)
         return f ? { f, repGain, moneyGain, gangRep } : null
       }
@@ -6925,12 +6983,34 @@ async function act(ns, canJoin, info, note) {
         // THE COMMITTED INSTALL'S BATCH, re-planned on this pass's state by the
         // same function as every wait (futureBatchAt -> replanAt), at its
         // remaining wait — not the batch frozen when it was committed.
+        // A COMMITTED HOLD is re-planned as the grind it is: the work step
+        // points the slot at its faction (installHoldOf), so the worked
+        // faction IS the hold's and the plain batch advances it along the
+        // measured trajectory — not to the target the hold promised. A hold
+        // the slot is NOT working (not joined, another owner) gets no lift:
+        // what the policy actually does, and the loss is an event below.
+        // THE BATCH ON EVENTS (plan.committedBatchOf): the re-planned batch
+        // replaces the committed one only when it prices beyond the batch
+        // planner's own jitter (then an EVENT: the install decision
+        // re-decides), or in the wait's last half hour.
         const committedGains = (() => {
           try {
-            const spec = basisOf(planCtxOf(ns, info)?.prev?.decisions?.install ?? null, Date.now())
+            const pcx = planCtxOf(ns, info)
+            const spec = basisOf(pcx?.prev?.decisions?.install ?? null, Date.now())
             if (!(spec?.kind === 'wait' && spec.waitH > 0.05) || typeof futureBatchAt !== 'function') return null
+            const worked = schedule?.workingFaction ?? null
             const fb = futureBatchAt(spec.waitH)
-            return fb?.f ? installGainsOf([...(fb.f.buy ?? []).map((b) => b?.name), ...pending], offers) : null
+            const g = fb?.f ? installGainsOf([...(fb.f.buy ?? []).map((b) => b?.name), ...pending], offers) : null
+            const pointOn = (gg) => (gg ? trajectoryOf({ ...spec, gains: gg })(inputs) : null)
+            const cb = committedBatchOf({ prevGains: spec.gains ?? null, newGains: g, prevH: spec.gains && g && gainsKeyOf(spec.gains) !== gainsKeyOf(g) ? pointOn(spec.gains) : null, newH: spec.gains && g && gainsKeyOf(spec.gains) !== gainsKeyOf(g) ? pointOn(g) : null, waitH: spec.waitH })
+            if (pcx) {
+              pcx.committedBatch = { held: cb.held, why: cb.why, ...(spec.hold ? { hold: spec.hold.faction, holdWorked: spec.hold.faction === worked } : {}) }
+              if (cb.event) {
+                pcx.events = [...(pcx.events ?? []), cb.event]
+                pcx.redecide = true
+              }
+            }
+            return cb.gains
           } catch {
             return null
           }
@@ -6938,17 +7018,17 @@ async function act(ns, canJoin, info, note) {
         const waits = futures.map((f) => {
           const g = installGainsOf([...(f.buy ?? []), ...pending], offers)
           const r = bestExitPolicy({ ...inputs, firstInstallH: f.waitMs / 3600000, installGains: g, nextInstallGain: g?.hacking ?? null }, 400, 1)
-          return { waitMs: f.waitMs, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, gains: g }
+          return { waitMs: f.waitMs, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, gains: g, hold: f.holdFor ? { faction: f.holdFor, repTarget: f.holdRepTarget } : null }
         })
         return {
           nowH: now.best?.hours ?? null,
           nowInstalls: now.best?.installsFirst ?? null,
           neverH: never.best?.hours ?? null,
-          waits: waits.map(({ gains, ...w }) => w),
+          waits: waits.map(({ gains, hold, ...w }) => (hold ? { ...w, holdFor: hold.faction } : w)),
           atSearchEdge: now.atSearchEdge === true,
           why: now.best ? null : now.why,
           joinModelled: inputs.joinMoney > 0 && typeof inputs.installCash === 'number' && typeof inputs.joinLevel === 'number',
-          bayes: now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null })), never: { hours: never.best?.hours ?? null }, committedGains }) : null,
+          bayes: now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null, hold: w.hold ?? null })), never: { hours: never.best?.hours ?? null }, committedGains }) : null,
         }
       } catch (e) {
         return { nowH: null, why: `exit comparison threw: ${String(e).slice(0, 80)}` }

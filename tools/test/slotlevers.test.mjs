@@ -249,7 +249,7 @@ export async function run() {
       [/cityInvites\.includes\(f\)\) continue\s*if \(!joinAllowed\(ns, info, f, todo\)\) continue/, "chosen city factions pass it"],
       [/!wantCompany && joinAllowed\(ns, info, scheduleTarget, todo\)\)/, "the schedule's target passes it"],
       [/\.\.\.goFavorStreamInputOf\(ns, info\),/, "exitInputsBaseOf carries the Go favor stream"],
-      [/g\.opponent !== EXIT_FACTION[\s\S]{0,1200}goFavorStreamOf\(\{ gamesPerHour: g\.gamesThisProcess \/ hrs, pWin: wins \/ \(wins \+ losses\), sf14: g\.sf14 \?\? 0, banked: g\.favorRep\?\.\[EXIT_FACTION\] \?\? null \}\)/, "the stream only while go.js plays the exit faction, from its measured games and wins"],
+      [/g\.opponent !== EXIT_FACTION[\s\S]{0,2400}goFavorStreamOf\(\{ gamesPerHour: g\.gamesThisProcess \/ hrs, pWin: wins \/ \(wins \+ losses\), sf14: g\.sf14 \?\? 0, banked: g\.favorRep\?\.\[EXIT_FACTION\] \?\? null \}\)/, "the stream only while go.js plays the exit faction (or carried at most 30 min through a switch, deferral DF7), from its measured games and wins"],
       [/expFlatPerSec: \(b\.expFlatPerSec \?\? 0\) \+ by\.exp/, "the sleeve objective's study exp is flat"],
     ];
     for (const [re, what] of need) if (!re.test(p)) c.fail(`progress.js: ${what}`);
