@@ -309,7 +309,8 @@ export const PRIORS = {
   //                      excluded at this age
   legacyNonHack: { stockReturnPerSec: 2e-4, stockCap: 1.1e13, otherPerSec: 1e7, minHackShare: 0.5 },
   // the game-formula reputation estimate's residual before any faction work
-  // is measured this life (NOT CALIBRATED: a stated prior).
+  // is measured this life, and the prior sd of ln k in repRatePosterior when
+  // no life carried one (NOT CALIBRATED: a stated prior).
   repEstimateSdLn: 0.3,
   // gym formula residual (NOT CALIBRATED: no live residual feed).
   gymSdLn: 0.1,
@@ -1605,6 +1606,68 @@ export function carriedRatePrior(c, { level = null, mult = null, what = 'exp', l
     perSec,
     source: 'carried',
     why: `${what} carried by the install (${c.at ?? '?'}): ${c.perSec.toExponential(2)}/s at level ${Math.round(c.level)} x ${gain.toFixed(3)} (this life's multiplier over the install's) x (${Math.round(level)} + 50)/(${Math.round(c.level)} + 50) -> ${perSec.toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(2)} at 80% (the install's own sd with one life's scatter)`,
+  }
+}
+
+/**
+ * THE PLAYER'S FACTION-WORK REPUTATION RATE, A POSTERIOR ON THE FORMULA'S
+ * COEFFICIENT. The ground reputation leg is ground by the player ON FACTION
+ * WORK, so its rate is the game's formula (trajectory.estimateBaseRepPerSec:
+ * reputation.ts getHackingWorkRepGain at this life's skills and multipliers,
+ * share bonus 1, favour divided out) times k, and the belief is over ln k:
+ * the share bonus the grind actually runs with, focus, and whatever else the
+ * formula misses. k carries across an install as it stands (a ratio: the next
+ * life's formula already has its multipliers and level); the rate never does.
+ *
+ * Live BN9 2026-09-30 17:51Z: the slot was GRAFTING (5 grafts, 6.67h) and the
+ * one-pass reputation delta at the last-worked faction — contracts, the Go
+ * favour stream, anything but the player's own work: ~6/s at EVERY joined
+ * faction — was published as the measured rate, 5.96/s against the formula's
+ * ~60/s. The exit's ground leg went 2.7h -> 14.4h and the new life priced
+ * itself at 21.2h against the install's 7.6h (EXIT JUMP AT INSTALL, +13.6h).
+ *
+ *   formula   this life's formula base rate (no share, no favour), rep/s
+ *   carried   {mean, sd, at} a posterior on ln k another life ended with
+ *             (the install's `carry.rep`, else the schedule record's), or null
+ *   samples   this life's VALID samples [{at, lnK, h}] (plan.repSampleOf:
+ *             faction hacking work at both ends of the interval)
+ * Prior: carried, widened by one life's scatter (PRIORS.carryLifeSdLn), else
+ * the formula itself (ln k = 0, PRIORS.repEstimateSdLn). Observation: the
+ * MEDIAN ln k of the samples (robust to a short or interrupted interval),
+ * with sd PRIORS.rateSdLn x sqrt(1h / their hours) — ratePosterior's weight.
+ * Returns {mean, sd, k, perSec, formula, measuredWeight, n, hours, source,
+ * why} or null (no formula).
+ */
+export function repRatePosterior({ formula = null, carried = null, samples = [], lifeSdLn = PRIORS.carryLifeSdLn } = {}) {
+  if (!(fin(formula) && formula > 0)) return null
+  const hasCarry = carried && fin(carried.mean) && fin(carried.sd) && carried.sd > 0
+  const prior = hasCarry
+    ? { mean: carried.mean, sd: Math.sqrt(carried.sd * carried.sd + lifeSdLn * lifeSdLn), source: 'carried', why: `k carried from ${carried.at ?? 'the last life'}: ${Math.exp(carried.mean).toFixed(3)} x/÷ ${Math.exp(1.2816 * carried.sd).toFixed(2)}, one life's scatter added` }
+    : { mean: 0, sd: PRIORS.repEstimateSdLn, source: 'formula', why: `the game's formula (k = 1, x/÷ ${Math.exp(1.2816 * PRIORS.repEstimateSdLn).toFixed(2)} at 80%, stated)` }
+  const S = (Array.isArray(samples) ? samples : []).filter((s) => fin(s?.lnK) && fin(s?.h) && s.h > 0)
+  const hours = S.reduce((a, s) => a + s.h, 0)
+  if (!S.length || !(hours > 0)) {
+    return { mean: prior.mean, sd: prior.sd, k: Math.exp(prior.mean), perSec: formula * Math.exp(prior.mean), formula, measuredWeight: 0, n: 0, hours: 0, source: prior.source, why: `faction-work reputation: formula ${formula.toFixed(2)}/s x k ${Math.exp(prior.mean).toFixed(3)} = ${(formula * Math.exp(prior.mean)).toFixed(2)}/s [${prior.why}]; no faction work measured this life` }
+  }
+  const xs = S.map((s) => s.lnK).sort((a, b) => a - b)
+  const med = xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2
+  const sm = PRIORS.rateSdLn * Math.sqrt(1 / hours)
+  const wp = 1 / (prior.sd * prior.sd)
+  const wm = 1 / (sm * sm)
+  const mean = (prior.mean * wp + med * wm) / (wp + wm)
+  const sd = Math.sqrt(1 / (wp + wm))
+  const w = wm / (wp + wm)
+  return {
+    mean,
+    sd,
+    k: Math.exp(mean),
+    perSec: formula * Math.exp(mean),
+    formula,
+    measuredWeight: w,
+    n: S.length,
+    hours,
+    source: prior.source === 'carried' ? 'carried+measured' : 'measured',
+    why: `faction-work reputation: formula ${formula.toFixed(2)}/s x k ${Math.exp(mean).toFixed(3)} = ${(formula * Math.exp(mean)).toFixed(2)}/s; k posterior: prior ${Math.exp(prior.mean).toFixed(3)} [${prior.why}] updated by ${S.length} faction-work sample(s) over ${hours.toFixed(2)}h, median k ${Math.exp(med).toFixed(3)} (weight ${(100 * w).toFixed(0)}%) -> x/÷ ${Math.exp(1.2816 * sd).toFixed(2)} at 80%`,
   }
 }
 

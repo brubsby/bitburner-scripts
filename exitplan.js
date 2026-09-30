@@ -1876,7 +1876,17 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       // break to the next; the wait's end is a break too.
       const eW = varies && qW > 0 ? expAdv(exp, qW) : exp
       const r0 = (P * scale(eW) + sRep(legStart + qW)) * fmAt(qW)
-      const est = r0 > 0 ? need / r0 / 3600 : 1e4
+      // THE STEP FROM A RATE THE LEG REACHES, not its first minute's. Right
+      // after an install with no leg before the grind (the exit faction
+      // already joined: no join money to hoard, no join level to climb), the
+      // leg starts at exp 0, level ~1: r0 is ~1/level-now of the grind, the
+      // step est/REP_STEPS ran to the 250h cap, and the trapezoid over a
+      // level climbing from 1 priced the grind 4-8x long (live BN9
+      // 2026-09-30 18:06Z: Daedalus joined, the committed exit 22.1h ->
+      // 39.9h, no event; the 1-install rep leg 10.5h against 2.5h converged
+      // at 60 rep/s). today's level's rate (scale 1) bounds the step.
+      const rRef = (P + sRep(legStart + qW)) * fmAt(qW)
+      const est = Math.max(r0, rRef) > 0 ? need / Math.max(r0, rRef) / 3600 : 1e4
       const step = varies || cRep || fStream ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
       let acc = cAt(0)
       let t = 0

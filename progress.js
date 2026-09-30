@@ -169,8 +169,8 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
-import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, PRIORS as BAYES_PRIORS } from 'bayes.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
@@ -567,31 +567,57 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     if (e) e.augs.push({ name: o.name, repReq: o.repReq, mults: o.mults })
   }
 
-  // Measured rate: reputation gained at the faction we were actually working,
-  // divided by elapsed time, with the favour multiplier divided back out so it
-  // is a BASE rate the module can re-apply per faction.
-  let base = null
-  const wasWorking = prior.workingFaction
-  if (prior.at && prior.reps && wasWorking && reps[wasWorking] != null && prior.reps[wasWorking] != null) {
-    const dt = (now - Date.parse(prior.at)) / 1000
-    const dr = reps[wasWorking] - prior.reps[wasWorking]
-    const favor = prior.favors?.[wasWorking] ?? 0
-    if (dt > 5 && dr > 0) base = dr / dt / (1 + favor / 100)
-  }
-  // SMOOTHED OVER THE LAST HOUR (plan.robustRateOf): one pass's delta reads a
-  // fraction of the rate when the slot was elsewhere for part of the interval
-  // (live BN9 2026-09-30 09:19Z-09:34Z: 4.0 / 4.4 / 17.8 / 4.2 / 17.7 rep/s,
-  // each flip 7-8h on the held exit). The samples ride the schedule record
-  // (same life); the published base rate is their median, the pass's own
-  // delta kept beside it (`baseRepRaw`).
-  const baseRepRaw = base
-  const baseRepObs = (() => {
-    const kept = prior.lastAugReset === info?.lastAugReset && Array.isArray(prior.baseRepObs) ? prior.baseRepObs : []
-    const at = new Date(now).toISOString()
-    return (typeof base === 'number' && isFinite(base) && base > 0 ? [...kept, { at, v: base }] : kept).filter((o) => now - Date.parse(o.at) <= 2 * RATE_SMOOTH.windowH * 3.6e6).slice(-RATE_SMOOTH.max)
+  // THE PLAYER'S FACTION-WORK RATE (bayes.repRatePosterior): the game's
+  // formula at this life's skills and multipliers (share bonus 1, favour
+  // divided out) times k, the belief over ln k carried from the last life and
+  // updated ONLY by samples taken while the slot was on faction hacking work
+  // at both ends of the interval (plan.repSampleOf), the reputation every
+  // faction gained meanwhile taken off. It used to be the last-worked
+  // faction's one-pass delta, whatever the slot was doing — live BN9
+  // 2026-09-30 17:51Z the slot was grafting (5 grafts, 6.67h) and 5.96/s of
+  // contracts and Go favour (~6/s at every joined faction) became the rate
+  // the exit's final grind was priced at: exit reputation 2.7h -> 14.4h, the
+  // new life at 21.2h against the install's 7.6h (EXIT JUMP AT INSTALL).
+  // The reps, work and focus are one snapshot (snap-rep.js), stamped with
+  // its own time.
+  const repAt = typeof sing.at?.rep === 'string' ? sing.at.rep : new Date(now).toISOString()
+  const workNow = (() => {
+    try {
+      const w = sing.currentWork()
+      if (!w || typeof w !== 'object') return null
+      return { type: w.type ?? null, faction: w.factionName ?? null, workType: w.factionWorkType ?? null, focused: (() => { try { return sing.focused() } catch { return null } })() }
+    } catch {
+      return null
+    }
   })()
-  const baseRepSmooth = robustRateOf(baseRepObs, now)
-  if (baseRepSmooth.v !== null) base = baseRepSmooth.v
+  const favorsNow = Object.fromEntries([...byFaction].map(([k, v]) => [k, v.favor]))
+  const formulaNow = joinCtx?.state?.baseRepFormula ?? null
+  const sameLife = prior.lastAugReset === info?.lastAugReset
+  const repSample = repSampleOf(
+    prior.repAt || prior.at ? { at: prior.repAt ?? prior.at, lastAugReset: prior.lastAugReset, work: prior.work ?? null, reps: prior.reps, favors: prior.favors, formula: prior.repFormula ?? null } : null,
+    { at: repAt, lastAugReset: info?.lastAugReset, work: workNow, reps, favors: favorsNow, formula: formulaNow },
+  )
+  const repSamples = (() => {
+    const kept = sameLife && Array.isArray(prior.repSamples) ? prior.repSamples.filter((x) => x && typeof x.lnK === 'number' && x.at !== repAt) : []
+    return (repSample.ok ? [...kept, repSample.sample] : kept).slice(-48)
+  })()
+  // THE CARRY: the install's (plan.installCarryOf `rep`, progress.js writes
+  // it with the install order), else the posterior the last life's final
+  // record ended with, else the one this life started from.
+  const repCarry = (() => {
+    const inst = installCarryOf(readJson(ns, '/tel/install-last.txt'), info?.lastAugReset)?.rep ?? null
+    if (inst && typeof inst.mean === 'number' && typeof inst.sd === 'number') return { mean: inst.mean, sd: inst.sd, at: inst.at ?? null, from: 'the install' }
+    if (sameLife) return prior.repCarry ?? null
+    const pp = prior.repPost
+    return pp && pp.carryable && typeof pp.mean === 'number' && typeof pp.sd === 'number' ? { mean: pp.mean, sd: pp.sd, at: prior.at ?? null, from: 'the last life' } : null
+  })()
+  const repPost = repRatePosterior({ formula: formulaNow, carried: repCarry, samples: repSamples })
+  let base = repPost ? repPost.perSec : null
+  // The pass's own valid sample and the last hour's median of them (plan.
+  // robustRateOf over faction-work samples only), beside the posterior.
+  const baseRepRaw = repSample.ok ? repSample.sample.v : null
+  const baseRepObs = repSamples.map((x) => ({ at: x.at, v: x.v }))
+  const baseRepSmooth = robustRateOf(baseRepObs, Date.parse(repAt) || now)
 
   // Hacking-exp rate, measured the same way and stored the same place. It is
   // what turns "BitRunners needs hacking 505" into an ETA. A stale-life prior
@@ -984,12 +1010,21 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
   const out = {
     at: new Date(now).toISOString(),
     lastAugReset: info?.lastAugReset,
-    measuredBaseRepPerSec: base,
+    // The faction-work rate (repPost): `estimated` while no faction work
+    // has measured it in this life or a carried one — the formula alone.
+    measuredBaseRepPerSec: base !== null && repPost?.source !== 'formula' ? base : null,
     baseRepRaw,
     baseRepObs,
-    baseRepWhy: baseRepSmooth.why,
-    estimated: base === null,
-    estimatedBaseRepPerSec: base === null ? (joinCtx?.state?.baseRepEstimate ?? null) : null,
+    baseRepWhy: `${repPost?.why ?? 'no formula rate (player skills or multipliers unread)'}; this pass: ${repSample.why}; faction-work samples, last hour: ${baseRepSmooth.why}`,
+    estimated: base === null || repPost?.source === 'formula',
+    estimatedBaseRepPerSec: base !== null && repPost?.source === 'formula' ? base : base === null ? (joinCtx?.state?.baseRepEstimate ?? null) : null,
+    repPost: repPost ? { mean: repPost.mean, sd: repPost.sd, k: repPost.k, perSec: repPost.perSec, formula: repPost.formula, n: repPost.n, hours: repPost.hours, measuredWeight: repPost.measuredWeight, source: repPost.source, carryable: repPost.source !== 'formula', why: repPost.why } : null,
+    repSample: { ok: repSample.ok, why: repSample.why },
+    repSamples,
+    repCarry,
+    repAt,
+    repFormula: formulaNow,
+    work: workNow,
     hackingExp: expNow ?? null,
     expPerSec: expRate,
     trajectory: traj ? (traj.grows ? 'growing' : 'flat') : 'unavailable',
@@ -3158,6 +3193,26 @@ function pageYieldOf(ns) {
     })
 }
 /**
+ * THE PLAN'S REP OBSERVATIONS (plan.posteriorsOf `rep`): this pass's
+ * faction-work sample only (planFactionWork repSample: the slot on faction
+ * hacking work at both ends of the interval), tagged `work: 'faction'` —
+ * never the published rate, which on a grafting pass was whatever the
+ * factions gained meanwhile (live BN9 2026-09-30 17:51Z: 5.96/s). The run
+ * rule (bayes.runTail) still applies to what is kept.
+ */
+function repObsOf(ns, info, buf, at) {
+  const b = Array.isArray(buf) ? buf : []
+  try {
+    const sch = readJson(ns, SCHEDULE)
+    if (!sch || sch.lastAugReset !== info?.lastAugReset || sch.repSample?.ok !== true) return b
+    const smp = Array.isArray(sch.repSamples) ? sch.repSamples[sch.repSamples.length - 1] : null
+    if (!smp || !(smp.v > 0) || b.some((o) => o?.sampleAt === smp.at)) return b
+    return withObs(b, smp.v, at, 48, { ver: MODEL_VERSION, boot: PAGE_BOOT, work: 'faction', sampleAt: smp.at, faction: smp.faction ?? null })
+  } catch {
+    return b
+  }
+}
+/**
  * /tel/plan.txt — ONE record, every pass that reached a decision. Carries each
  * committed choice with its distribution, the posteriors, the calibration,
  * the CPU spent and whether it broke the budget, and the observation buffers
@@ -3170,7 +3225,7 @@ function publishPlan(ns, info, extra = {}) {
     const at = new Date().toISOString()
     const inp = extra.inputs ?? pc.obsInputs ?? null
     const obs = pc.post
-      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PAGE_BOOT }), rep: withObs(pc.obs?.rep, inp?.repFromEstimate ? null : inp?.repPerSec, at, 48, { ver: MODEL_VERSION, boot: PAGE_BOOT }) }
+      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PAGE_BOOT }), rep: repObsOf(ns, info, pc.obs?.rep, at) }
       : pc.obs ?? {}
     const route = pc.decisions.countRoute ?? null
     const inst = pc.decisions.install ?? null
@@ -4138,6 +4193,16 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // leg: no measured reputation rate").
     ...(schedule?.estimated && typeof schedule?.estimatedBaseRepPerSec === 'number' && schedule.estimatedBaseRepPerSec > 0
       ? { repPerSec: repPerSecWithFleet(schedule.estimatedBaseRepPerSec, planFleet?.factionRepPerSec), repFromEstimate: true, repSource: `reputation from the formula estimate (no faction work measured this life): ${schedule.estimatedBaseRepPerSec.toFixed(3)}/s base` }
+      : {}),
+    // THE PLAYER'S FACTION-WORK RATE, A POSTERIOR (planFactionWork repPost,
+    // bayes.repRatePosterior): this life's formula x k, k carried across the
+    // install and updated only on faction hacking work — so a grafting (or
+    // crime, gym, company) life never prices the final grind at what the
+    // factions happen to gain meanwhile. The draws move it by k's own sd
+    // (plan.applyDraw repSdLn). The rate is at THIS life's multipliers; the
+    // exit scales it by each install's rep gain and each graft's (exitplan).
+    ...(schedule?.repPost && typeof schedule.repPost.perSec === 'number' && schedule.repPost.perSec > 0 && typeof schedule.repPost.sd === 'number'
+      ? { repPerSec: repPerSecWithFleet(schedule.repPost.perSec, planFleet?.factionRepPerSec), repSdLn: schedule.repPost.sd, repSource: schedule.repPost.why, ...(schedule.estimated ? { repFromEstimate: true } : {}) }
       : {}),
     exitRep: rp?.factionRep ?? 0,
     exitFavor: rp?.favor ?? 0,
@@ -5593,6 +5658,17 @@ async function act(ns, canJoin, info, note) {
         factionRepMult: player.mults?.faction_rep,
         nodeWorkRepMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
         sharePower: ns.getSharePower(),
+      }),
+      // THE FACTION-WORK RATE'S STRUCTURE (bayes.repRatePosterior): the same
+      // formula at share bonus 1 — the share bonus rises and falls with the
+      // fleet's spare RAM, so the posterior's k carries what the grind
+      // actually runs with instead of whatever was shared this minute.
+      baseRepFormula: estimateBaseRepPerSec({
+        hacking: player.skills?.hacking,
+        intelligence: player.skills?.intelligence ?? 0,
+        factionRepMult: player.mults?.faction_rep,
+        nodeWorkRepMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
+        sharePower: 1,
       }),
       // Cash plus the trader's book (BitNode 8: the book IS the money; a
       // cash-only figure left bestGym without the fare and priced every
@@ -8021,6 +8097,10 @@ async function act(ns, canJoin, info, note) {
               at,
               exp: ep && ep.perSec > 0 ? { perSec: ep.perSec, sdLn: ep.sd ?? null, level: player?.skills?.hacking ?? null, mult: player?.mults?.hacking_exp ?? null, at } : null,
               gang: Array.isArray(gang) && gang.length ? { steps: gang, at } : null,
+              // The faction-work rate's k (bayes.repRatePosterior): a ratio
+              // to the formula, so the next life's formula supplies its own
+              // multipliers and level. Only a k something measured.
+              rep: schedule?.repPost?.carryable && typeof schedule.repPost.mean === 'number' && typeof schedule.repPost.sd === 'number' ? { mean: schedule.repPost.mean, sd: schedule.repPost.sd, at } : null,
             }
           } catch {
             return null

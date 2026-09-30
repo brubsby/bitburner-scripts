@@ -90,7 +90,9 @@ export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null
   const drift = driftPosterior(exitSamples ?? [])
   const calibration = driftCalibration(exitSamples ?? [])
   const exp = logRatePosterior(obs?.exp)
-  const rep = logRatePosterior(obs?.rep)
+  // Faction-work samples only (progress.js tags them `work: 'faction'`): an
+  // untagged entry is a pass's published rate, whatever the slot was doing.
+  const rep = logRatePosterior((obs?.rep ?? []).filter((o) => o?.work === 'faction'))
   const missing = []
   if (!trader) missing.push('trader return (no stock history past warm-up): point input kept')
   if (!cadence) missing.push('install cadence (no life in any node with a measured gain): point cadence kept')
@@ -195,7 +197,8 @@ export function makeDraws(post, N, seed) {
     // Income drawn from the previous-lives prior (bayes.incomePrior) — used
     // only where this life's income is not measurable yet (inputs.incomeFromPrior).
     // The reputation estimate's residual (inputs.repFromEstimate only).
-    const repResid = Math.exp(PRIORS.repEstimateSdLn * normalOf(st('repEstimate')))
+    const zRep = normalOf(st('repEstimate'))
+    const repResid = Math.exp(PRIORS.repEstimateSdLn * zRep)
     const incomeLn = post.income && fin(post.income.mean) && fin(post.income.sd) ? post.income.mean + post.income.sd * normalOf(st('income')) : null
     const r = post.trader ? Math.max(1e-9, post.trader.perSec.mean + post.trader.perSec.sd * zT) : null
     // The curve's knee, correlated with the level as the posterior has it
@@ -203,7 +206,7 @@ export function makeDraws(post, N, seed) {
     const tw = post.trader?.lnWstar
     const rho = fin(post.trader?.rho) ? post.trader.rho : 0
     const Wstar = tw && fin(tw.mean) && fin(tw.sd) ? Math.exp(tw.mean + tw.sd * (rho * zT + Math.sqrt(1 - rho * rho) * normalOf(st('traderW')))) : null
-    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zc, zCad, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zRep, zc, zCad, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -249,11 +252,18 @@ export function applyDraw(inputs, d) {
     if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
   }
   if (fin(inputs.expPerSec)) o.expPerSec = inputs.expPerSec * d.expMult
-  if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
+  // THE FACTION-WORK RATE'S OWN POSTERIOR (inputs.repSdLn, progress.js
+  // repRatePosterior: the formula x k, k's sd): the point times this draw's
+  // residual. It replaces the pass-observation draw below, whose buffer held
+  // whatever the worked faction gained — grafting included (live BN9
+  // 2026-09-30 17:51Z: 5.96/s against the formula's ~60/s).
+  const repPost = fin(inputs.repSdLn) && inputs.repSdLn > 0 && fin(inputs.repPerSec) && fin(d.zRep)
+  if (repPost) o.repPerSec = inputs.repPerSec * Math.exp(inputs.repSdLn * d.zRep)
+  else if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
   // The hacking stream is a draw from its posterior (earlier lives, updated
   // by this life's measurement); the flat part measured beside it is kept.
   if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = (fin(inputs.incomeFlatPerSec) && inputs.incomeFlatPerSec > 0 ? inputs.incomeFlatPerSec : 0) + Math.exp(d.incomeLn)
-  if (inputs.repFromEstimate === true && fin(inputs.repPerSec) && fin(d.repResid)) o.repPerSec = inputs.repPerSec * d.repResid
+  if (!repPost && inputs.repFromEstimate === true && fin(inputs.repPerSec) && fin(d.repResid)) o.repPerSec = inputs.repPerSec * d.repResid
   return o
 }
 
@@ -261,7 +271,10 @@ export function applyDraw(inputs, d) {
  * A route's detour under one draw: join legs x the gym residual, and the
  * grind rescaled from the rate it was priced at (`repPoint`) to the drawn one.
  */
-export function detourOf(route, d, repPoint = null) {
+export function detourOf(route, d, repPoint = null, repSdLn = null) {
+  // With the faction-work posterior's sd (inputs.repSdLn) the grind moves by
+  // this draw's residual on it, exactly as applyDraw moves the rate.
+  if (fin(route?.joinH) && fin(route?.grindH) && route.grindH > 0 && fin(repSdLn) && repSdLn > 0 && fin(d.zRep)) return route.joinH * d.gymMult + route.grindH / Math.exp(repSdLn * d.zRep)
   if (fin(route?.joinH) && fin(route?.grindH)) return route.joinH * d.gymMult + (route.grindH > 0 && fin(repPoint) && repPoint > 0 && fin(d.repRate) ? (route.grindH * repPoint) / d.repRate : route.grindH)
   return route?.detourH ?? null
 }
@@ -606,7 +619,7 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   const lifeOf = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.lifeH ?? null]))
   const pointH = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.hours]))
   const committedKey = prev?.key && byKey.has(prev.key) ? prev.key : null
-  const sim = (route) => (d) => routeExitFixed(bestExitPolicy, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, detourH: detourOf(route, d, repPoint) })
+  const sim = (route) => (d) => routeExitFixed(bestExitPolicy, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
   let keys = []
   if (!redecide && committedKey) keys = [committedKey]
   else {
@@ -819,7 +832,7 @@ export function trajectoryOf(spec, { count = null, repPoint = null } = {}) {
   if (spec.kind === 'never') return (x) => bestExitPolicy(x, 0, 0).best?.hours ?? null
   if (spec.kind === 'route') {
     return (x, d = null) => {
-      const det = d ? detourOf(spec.route, d, repPoint) : spec.route?.detourH
+      const det = d ? detourOf(spec.route, d, repPoint, x?.repSdLn ?? null) : spec.route?.detourH
       return count ? routeExitFixed(bestExitPolicy, x, count, spec.route, { firstInstallH: det + (spec.extra ?? 0), lifeH: spec.lifeH ?? null, detourH: det }) : null
     }
   }
@@ -1292,7 +1305,10 @@ export function installDeferralCheckOf(rec, o = DEFER) {
  * rate is the MEDIAN of this life's samples over the last `windowH` hours
  * (robust to a minority of short intervals, lagging a steady climb by about
  * half the window). `obs` [{at, v}]. Returns {v, n, raw, why} (v null: no
- * sample in the window).
+ * sample in the window). progress.js feeds it faction-work samples ONLY
+ * (repSampleOf): a median over whatever the factions gained while the slot
+ * grafted is still that (live 17:51Z: 5.96/s held for an hour) — and the
+ * rate the exit prices is the posterior (bayes.repRatePosterior), this beside it.
  */
 export const RATE_SMOOTH = { windowH: 1, max: 24 }
 export function robustRateOf(obs, now = Date.now(), { windowH = RATE_SMOOTH.windowH } = {}) {
@@ -1302,6 +1318,54 @@ export function robustRateOf(obs, now = Date.now(), { windowH = RATE_SMOOTH.wind
   const m = xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2
   const raw = S[S.length - 1].v
   return { v: m, n: S.length, raw, why: `median of ${S.length} sample(s) over the last ${windowH}h: ${m.toFixed(2)} (this pass ${raw.toFixed(2)})` }
+}
+
+/**
+ * ONE FACTION-WORK SAMPLE, OR WHY NOT. The reputation a faction gains between
+ * two passes is the player's faction work only when the work slot was ON
+ * that faction's hacking work — at both ends of the interval, focused — and
+ * even then it carries everything else that reaches every faction
+ * (contracts, the Go favour stream): that incidental rate, the median over
+ * the OTHER joined factions' deltas, is taken off. Live BN9 2026-09-30
+ * 17:51Z the slot was grafting and the last-worked faction's delta (5.96/s,
+ * ~6-7/s at every joined faction) was published as the player's rate —
+ * 9% of the formula's. `prev`, `cur`: {at, lastAugReset, work: {type,
+ * faction, workType, focused}, reps: {faction: rep}, favors, formula (the
+ * formula base rate at that pass)}. Returns {ok, why, sample?: {at, faction,
+ * v, lnK, h, incidental}}: v the base rate (favour divided out), lnK
+ * ln(v / the formula averaged over the interval), h the interval's hours.
+ */
+export const REP_SAMPLE = { minDtS: 60, maxGapH: 1 }
+export function repSampleOf(prev, cur, { minDtS = REP_SAMPLE.minDtS, maxGapH = REP_SAMPLE.maxGapH } = {}) {
+  const no = (why) => ({ ok: false, why })
+  if (!prev?.at || !cur?.at) return no('no previous pass')
+  if (prev.lastAugReset !== cur.lastAugReset) return no('the previous pass is another life')
+  const onFaction = (w) => w?.type === 'FACTION' && typeof w.faction === 'string' && (w.workType == null || String(w.workType).toLowerCase() === 'hacking') && w.focused !== false
+  const wp = prev.work ?? null
+  const wc = cur.work ?? null
+  if (!onFaction(wc)) return no(`the slot is not on faction hacking work now (${wc?.type ?? 'none'}${wc?.faction ? ` ${wc.faction}` : ''}${wc?.focused === false ? ', unfocused' : ''})`)
+  if (!onFaction(wp)) return no(`the slot was not on faction hacking work at the previous pass (${wp?.type ?? 'none'}${wp?.faction ? ` ${wp.faction}` : ''}${wp?.focused === false ? ', unfocused' : ''})`)
+  if (wp.faction !== wc.faction) return no(`the slot moved ${wp.faction} -> ${wc.faction} inside the interval`)
+  const f = wc.faction
+  const dt = (Date.parse(cur.at) - Date.parse(prev.at)) / 1000
+  if (!(dt >= minDtS)) return no(`interval ${fin(dt) ? dt.toFixed(0) : '?'}s < ${minDtS}s`)
+  if (dt > maxGapH * 3600) return no(`interval ${(dt / 3600).toFixed(2)}h > ${maxGapH}h (a gap, not a pass)`)
+  const r0 = prev.reps?.[f]
+  const r1 = cur.reps?.[f]
+  if (!fin(r0) || !fin(r1)) return no(`${f}'s reputation unread at one end`)
+  // In BASE terms (each faction's delta over its own favour multiplier):
+  // live, what the unworked factions gained was one base rate at ~all of
+  // them (17:56Z-18:11Z: 6.74/s at 7 of 10), so it is favour-scaled.
+  const fm = (g) => 1 + (fin(prev.favors?.[g]) ? prev.favors[g] : 0) / 100
+  const others = Object.keys(cur.reps ?? {}).filter((g) => g !== f && fin(cur.reps[g]) && fin(prev.reps?.[g])).map((g) => Math.max(0, cur.reps[g] - prev.reps[g]) / dt / fm(g)).sort((a, b) => a - b)
+  const incidental = others.length ? (others.length % 2 ? others[(others.length - 1) / 2] : (others[others.length / 2 - 1] + others[others.length / 2]) / 2) : 0
+  const gained = (r1 - r0) / dt / fm(f)
+  const v = gained - incidental
+  if (!(v > 0)) return no(`${f} gained ${gained.toFixed(2)}/s base, no more than the ${incidental.toFixed(2)}/s base every faction gained`)
+  const fms = [prev.formula, cur.formula].filter((x) => fin(x) && x > 0)
+  if (!fms.length) return no('no formula rate to compare with')
+  const formula = fms.reduce((a, b) => a + b, 0) / fms.length
+  return { ok: true, why: `${f}: ${v.toFixed(2)}/s base over ${(dt / 60).toFixed(1)} min on faction hacking work (${incidental.toFixed(2)}/s base incidental taken off), formula ${formula.toFixed(2)}/s -> k ${(v / formula).toFixed(3)}`, sample: { at: cur.at, faction: f, v, lnK: Math.log(v / formula), h: dt / 3600, incidental } }
 }
 
 /**

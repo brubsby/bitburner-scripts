@@ -41,7 +41,9 @@
 //                         09:39Z series within 15% of the steady rate; the
 //                         09:24 -> 09:29 jump on the smoothed rate is < 1h
 //   DF7 WIRING            progress.js smooths the base rep rate on the
-//                         schedule record, carries the Go favor stream through
+//                         schedule record (now the
+//                         faction-work posterior's median over valid
+//                         samples only, reprate.test.mjs), carries the Go favor stream through
 //                         an opponent switch, and publishes the deferral check
 
 import fs from "node:fs";
@@ -247,7 +249,10 @@ export async function run() {
     const c = new Check("DF7", "WIRING: progress.js smooths the base rep rate on the schedule record, carries the Go favor stream through an opponent switch, publishes the deferral check and the committed batch");
     const src = code("progress.js");
     c.examined(4);
-    if (!/const baseRepSmooth = robustRateOf\(baseRepObs, now\)\s*\n\s*if \(baseRepSmooth\.v !== null\) base = baseRepSmooth\.v/.test(src) || !/baseRepObs,\s*\n\s*baseRepWhy/.test(src)) c.fail("planFactionWork must publish the smoothed base rep rate and carry its samples on the schedule record");
+    // The smoothing is now the faction-work posterior over this life's VALID
+    // samples (plan.repSampleOf, bayes.repRatePosterior: the median ln k),
+    // robustRateOf over those same samples beside it (reprate.test.mjs RR).
+    if (!/const repPost = repRatePosterior\(\{ formula: formulaNow, carried: repCarry, samples: repSamples \}\)/.test(src) || !/const baseRepSmooth = robustRateOf\(baseRepObs, /.test(src) || !/baseRepObs,\s*\n\s*baseRepWhy/.test(src)) c.fail("planFactionWork must publish the smoothed base rep rate and carry its samples on the schedule record");
     if (!/favorStreamWhy: `carried from \$\{prev\.inputs\.favorStreamAt\}/.test(src)) c.fail("goFavorStreamInputOf must carry the last stream through an opponent switch");
     if (!/rec\.installDeferrals = installDeferralsOf\(pc\.prevAny \?\? null, rec\)/.test(src) || !/rec\.installDeferral = installDeferralCheckOf\(rec\)/.test(src)) c.fail("publishPlan must record the deferral ledger and its check");
     if (!/committedBatch: pc\.committedBatch \?\? null/.test(src)) c.fail("publishPlan must record the committed batch verdict");
