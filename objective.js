@@ -813,14 +813,40 @@ export function exitWeights(record, lastAugReset, bestExitPolicy, spendRuns, o =
  * moneyLn's N x eB x ln((B+$)/B) wherever money arrives window by window.
  * `exit`: { record, hoursPerLn, bestExitPolicy, lastAugReset }. Null (refuse)
  * on a stale, foreign or missing record.
+ *
+ * `stream` ({name, steps: [{atH, perSec}]}, optional): a money stream that
+ * PERSISTS through installs (the gang's own income, simulated) priced where
+ * the exit prices a committed stream — carriedIncome[name], the money legs of
+ * every later life and the final window (the join money, the grafts, the
+ * last root) — REPLACING the committed one, against the exit with no such
+ * stream at all (counted once). Without it the lifts alone are priced, and a
+ * life whose batch cannot use money (eBudget 0) priced a $190m/s gang at 0:
+ * live BN9 2026-09-30 15:56Z the gang farmed respect at 1.1e9 with every
+ * unlock taken, while the exit it dropped jumped +5h.
  */
-export function exitLnOfInstallLifts(lifts, exit, now = Date.now()) {
+const exitBaseMemo = new WeakMap()
+export function exitLnOfInstallLifts(lifts, exit, now = Date.now(), stream = null) {
   const num = (x) => typeof x === 'number' && isFinite(x)
   const rec = exit?.record
   if (!Array.isArray(lifts) || !rec?.inputs || typeof exit.bestExitPolicy !== 'function' || !(exit.hoursPerLn > 0)) return null
   if (rec.lastAugReset !== exit.lastAugReset || !(now - Date.parse(rec.at) < 15 * 60e3)) return null
-  const base = { ...rec.inputs, eRep: rec.eRep, eBudget: rec.eBudget }
-  const a0 = exit.bestExitPolicy(base).best?.hours
-  const a1 = exit.bestExitPolicy({ ...base, perCycleExtra: { byInstall: lifts } }).best?.hours
+  const name = stream && typeof stream.name === 'string' && Array.isArray(stream.steps) ? stream.name : null
+  let base = { ...rec.inputs, eRep: rec.eRep, eBudget: rec.eBudget }
+  if (name) {
+    const { [name]: _committed, ...others } = rec.inputs.carriedIncome ?? {}
+    base = { ...base, carriedIncome: others }
+  }
+  // The reference exit is the same for every candidate a search scores on
+  // this record: once per (record, bestExitPolicy, stream name).
+  let memo = exitBaseMemo.get(rec)
+  if (!memo) exitBaseMemo.set(rec, (memo = new Map()))
+  const key = name ?? ''
+  let a0 = memo.get(key)?.fn === exit.bestExitPolicy ? memo.get(key).h : undefined
+  if (a0 === undefined) {
+    a0 = exit.bestExitPolicy(base).best?.hours
+    memo.set(key, { fn: exit.bestExitPolicy, h: a0 })
+  }
+  const withStream = name ? { ...base, carriedIncome: { ...base.carriedIncome, [name]: stream.steps } } : base
+  const a1 = exit.bestExitPolicy({ ...withStream, perCycleExtra: { byInstall: lifts } }).best?.hours
   return num(a0) && num(a1) ? Math.max(0, a0 - a1) / exit.hoursPerLn : null
 }

@@ -134,7 +134,7 @@ export async function run() {
     // uses, rejects the decision, and the next search leaves equipment out.
     c3.examined(1);
     if (!/const spendVerdict = \(cmp, claims\)/.test(GANG_JS)) c3.fail("gang.js must decide the spend in one spendVerdict for both the decision and the purchase");
-    if (!/verdict\.permitted >= 0\.5 \* compete\.cost[\s\S]{0,700}?policy\.at = 0[\s\S]{0,200}?policy = candidate/.test(GANG_JS)) c3.fail("a refused spend must reject the decision (policy.at = 0 re-searches) and only an allowed one adopts the candidate");
+    if (!/verdict\.permitted >= 0\.5 \* compete\.cost[\s\S]{0,700}?nextSearchAt = 0[\s\S]{0,200}?policy = candidate/.test(GANG_JS)) c3.fail("a refused spend must reject the decision (nextSearchAt = 0 re-searches; policy.at stays the adoption time, GR7) and only an allowed one adopts the candidate");
     if (!/const budgetForSearch = equipRefused \? 0 : contested/.test(GANG_JS)) c3.fail("the search after a refusal must run without equipment");
     if (!/const sim = policy === candidate \? d\.forecast : undefined/.test(GANG_JS)) c3.fail("a rejected decision's forecast must not be published (progress.js prices unlocks off it)");
     c3.note(`live k=${P.k.toFixed(2)} w=${P.w.toFixed(3)}: with $${(P.compete.cost / 1e9).toFixed(1)}b gear ${at(withEq, 1).gross.toExponential(2)} by 1h; without ${bare.samples.at(-1).gross} in ${base.horizonH}h`);

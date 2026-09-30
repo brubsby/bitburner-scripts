@@ -60,6 +60,7 @@
 const num = (x) => typeof x === 'number' && isFinite(x)
 
 import { moneyLn, exitLnOfInstallLifts } from 'objective.js'
+import { gangIncomeSchedule, EXIT_RESOLUTION_H } from 'gangworth.js'
 import { drain } from 'coop.js'
 
 export const CYCLE_SEC = 0.2 // CONSTANTS.MilliPerCycle
@@ -78,6 +79,10 @@ export const CYCLES_PER_TERRITORY_UPDATE = 100 // GangConstants.CyclesPerTerrito
 // 900/300 buys a node-long trajectory for 2.6x a window-long one and stays
 // inside the budget; 900/60 is barely better and does not.
 export const TAIL_STEP_SEC = 900
+// The money ladder a gang stream is also priced capped at (perWindowMoneyLn):
+// $1m/s, then every half decade up to the stream's peak.
+export const MONEY_CAP_FLOOR = 1e6
+export const MONEY_CAP_STEP = Math.sqrt(10)
 export const TAIL_SUB_SEC = 300
 export const MAX_TAIL_STEPS = 128
 /** Gang/data/power.ts: the NPC gangs' additive power multipliers. */
@@ -1188,8 +1193,39 @@ function perWindowMoneyLn(f, m) {
       at0 = end
     }
     while (lifts.length < Math.ceil(N) && last !== null) lifts.push(Math.pow((m.budget + last) / m.budget, m.eBudget))
-    const ln = exitLnOfInstallLifts(lifts, m.exit)
-    if (num(ln)) return { ln, reason: null, windowsPriced: lifts.length, mode: 'exit' }
+    // THE GANG'S OWN STREAM, where the exit prices the committed gang
+    // (carriedIncome.gang: every later life's money legs and the final
+    // window's join money, grafts and root), this trajectory's income in
+    // place of the committed one. The lifts alone price only what the next
+    // batches buy with it, and a life whose batch cannot use money (eBudget
+    // 0, the ladder saturated) priced every dollar at 0: the search then
+    // tied, reputation broke the tie and the gang farmed respect at 1.1e9
+    // with nothing left to unlock (live BN9 2026-09-30 15:56Z) — while the
+    // plan's exit, carrying that $0 stream, jumped +5h.
+    //
+    // MORE MONEY IS NEVER A LATER EXIT: whatever a smaller stream funds, a
+    // larger one funds too (the plan's own dominance rule, plan.decideSpend).
+    // The exit's sequential legs are not monotone in it — on the 15:56Z
+    // inputs a flat $10m/s exits 9.627h and $400m/s 9.698h (the grafts start
+    // sooner and the work slot binds) — and a 4-minute artifact must not
+    // choose $13m/s over $190m/s. So the stream is priced as the best of
+    // itself and itself capped at each rung of a fixed ladder below its peak
+    // (the smaller stream the player could always emulate); the ladder is
+    // absolute, so two streams past a rung price that rung identically and
+    // tie (betterScore then prefers the money).
+    const steps = gangIncomeSchedule(f)
+    const exitLn = (st) => exitLnOfInstallLifts(lifts, m.exit, Date.now(), st ? { name: 'gang', steps: st } : null)
+    let ln = exitLn(steps)
+    let capped = null
+    const peak = steps ? Math.max(...steps.map((s) => s.perSec)) : 0
+    for (let cap = MONEY_CAP_FLOOR; num(ln) && cap < peak; cap *= MONEY_CAP_STEP) {
+      const v = exitLn(steps.map((s) => ({ atH: s.atH, perSec: Math.min(s.perSec, cap) })))
+      if (num(v) && v > ln) {
+        ln = v
+        capped = cap
+      }
+    }
+    if (num(ln)) return { ln, reason: null, windowsPriced: lifts.length, mode: 'exit', capped }
   }
   let ln = 0
   let at = 0
@@ -1242,6 +1278,8 @@ export function scoreTrajectory(f, obj = {}) {
   let moneyValue = 0
   let moneyWhy = null
   let moneyMode = null
+  let moneyCapped = null
+  let tieLn = null
   if (obj.money && typeof obj.money === 'object') {
     // Per window when a window length is readable, flat-rate otherwise —
     // the mode is published so a silent fallback cannot hide.
@@ -1250,6 +1288,11 @@ export function scoreTrajectory(f, obj = {}) {
     moneyMode = per ? (per.mode === 'exit' ? 'exit' : 'per-window') : 'flat-rate'
     if (v.ln === null) moneyWhy = v.reason
     else moneyValue = v.ln
+    if (per?.capped) moneyCapped = per.capped
+    // Exit-priced money: two values closer than the exit's resolution are one
+    // exit, and betterScore breaks that tie on money (see there).
+    const hpl = obj.money.exit?.hoursPerLn
+    if (num(hpl) && hpl > 0) tieLn = EXIT_RESOLUTION_H / hpl
   } else moneyWhy = 'no money objective'
   value += moneyValue
   for (const u of obj.unlocks ?? []) {
@@ -1259,13 +1302,32 @@ export function scoreTrajectory(f, obj = {}) {
     if (h !== null && isFinite(h) && (hoursToFirst === null || h < hoursToFirst)) hoursToFirst = h
   }
   const last = f.samples[f.samples.length - 1]
-  return { value, unlockValue: value - moneyValue, moneyValue, moneyMode, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst }
+  return { value, unlockValue: value - moneyValue, moneyValue, moneyMode, moneyCapped, moneyAtHorizon: moneyAt, moneyWhy, repAtHorizon: repH, grossAtHorizon: last.gross, hoursToFirst, tieLn }
 }
 
-/** Is score a better than b? Value first, then reputation (gross when reputation is unreadable). */
+/**
+ * Is score a better than b? Value first, then reputation (gross when
+ * reputation is unreadable).
+ *
+ * EXIT-PRICED MONEY TIES GO TO THE MONEY. Where both scores price money
+ * through the exit (`tieLn`, the exit's resolution in ln), values within it
+ * are the same exit, and the one with more money at the horizon wins: every
+ * use of money the exit comparison holds fixed (the graft set, the join, the
+ * next life's balance) can only be served better by more of it, while
+ * reputation past the last unlock buys nothing — at favor >= 150 it is
+ * bought with money anyway. Reputation broke this tie before, and with every
+ * Slum Snakes unlock taken it chose respect at 1.1e9 over $190m/s (live BN9
+ * 2026-09-30 15:56Z).
+ */
 export const betterScore = (a, b) => {
   if (!b) return true
-  if (a.value !== b.value) return a.value > b.value
+  const tie = num(a.tieLn) && num(b.tieLn) ? Math.max(a.tieLn, b.tieLn) : 0
+  if (Math.abs(a.value - b.value) > tie || (tie === 0 && a.value !== b.value)) return a.value > b.value
+  if (tie > 0) {
+    const ma = num(a.moneyAtHorizon) ? a.moneyAtHorizon : 0
+    const mb = num(b.moneyAtHorizon) ? b.moneyAtHorizon : 0
+    if (Math.abs(ma - mb) > 1e-6 * Math.max(ma, mb, 1)) return ma > mb
+  }
   const ra = a.repAtHorizon ?? a.grossAtHorizon
   const rb = b.repAtHorizon ?? b.grossAtHorizon
   return ra > rb
@@ -1406,6 +1468,30 @@ export function* policySearch(g, members, o = {}) {
     }
   }
   return { k, x, m: hasMoney ? P.m : null, y: hasBudget ? P.y : null, w: hasRivals ? P.w : null, e: hasRivals ? P.e : null, score: chosen?.score ?? best, forecast: chosen?.f ?? null, evals, ascendNow, sims }
+}
+
+/**
+ * THE LAST ADOPTED POLICY, out of gang.js's own last publish (`last`, the
+ * /tel/gang.txt record), for a gang.js that starts with no search complete —
+ * after an install above all, which kills every script while the gang itself
+ * persists (Prestige.ts:130-144 keeps Player.gang and only scales ascension
+ * points by 0.95). The incumbent used to be a fixed respect default (k=1:
+ * train, m=0: no money), so every install threw a money policy away and the
+ * gang farmed respect until a search landed — live BN9 2026-09-30 15:20Z the
+ * install carried $171m/s and the new life's gang forecast $0.
+ *
+ * Same BitNode only (a new node has a new gang). The life may differ: the
+ * gang does not. Returns {k, x, y, w, e, m, at, why} or null with no
+ * readable adopted policy.
+ */
+export function restoredPolicyOf(last, node) {
+  const p = last?.policy
+  if (!p || typeof p !== 'object' || !num(node) || last?.bitNode !== node) return null
+  const at = Date.parse(p.adoptedAt ?? p.at ?? '')
+  if (!num(at) || !num(p.k) || !(num(p.x) || p.ascendNever === true)) return null
+  const x = p.ascendNever === true ? Infinity : p.x
+  const opt = (v, d) => (num(v) ? v : d)
+  return { k: p.k, x, y: opt(p.y, 0), w: opt(p.w, 0), e: opt(p.e, 1.2), m: opt(p.m, 0), at, why: `restored: the policy adopted ${new Date(at).toISOString()} (k=${p.k.toFixed(3)} x=${isFinite(x) ? x.toFixed(3) : 'never'} m=${opt(p.m, 0).toFixed(2)} w=${opt(p.w, 0).toFixed(2)}), in force until this process's first search lands` }
 }
 
 /** Run a policySearch to completion synchronously (tests, tools). */

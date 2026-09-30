@@ -31,7 +31,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, gangRepAt, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
+import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, restoredPolicyOf, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, gangRepAt, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
 import { spendable, reserveFor, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -121,6 +121,17 @@ const EQUIP_REPROBE_MS = 30 * 60 * 1000
 // named (see `windowHSource` in the telemetry). Cleared when the life changes.
 let lastWindowH = null
 let lastWindowLife = null
+/**
+ * The published forecast (/tel/gang.txt `forecast`, what progress.js carries
+ * as the gang's income) of a simulated policy `q` {k, x, m, y, w, e}.
+ * `source`: 'search' (a completed search's adopted policy), 'restored' (the
+ * last adopted policy, re-simulated on the live gang) or 'default'.
+ */
+function forecastOf(sim, q, source) {
+  const at = new Date().toISOString()
+  if (!sim) return { at, source, why: 'the chosen policy could not be simulated' }
+  return { at, source, horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${q.k.toFixed(3)} x=${isFinite(q.x) ? q.x.toFixed(3) : 'never'} m=${q.m ?? '-'} y=${q.y ?? '-'} w=${q.w ?? '-'} e=${q.e ?? '-'}`, moneyPerSec: sim.moneyPerSec, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent, money: sim.money }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, money: s.money, members: s.members, wantedLevel: s.wantedLevel })) }
+}
 const NAMES = ['ash', 'bex', 'cid', 'dov', 'eli', 'fay', 'gus', 'hal', 'ivy', 'jax', 'kit', 'lou', 'max', 'nia', 'oz', 'pip']
 
 export async function main(ns) {
@@ -157,7 +168,12 @@ export async function main(ns) {
   const SEARCH_BUDGET_MS = 300
   const SEARCH_EVERY_MS = 60000
   const STEP_SEC = 180
-  let policy = { k: 1, x: 1.25, y: 1, w: 0, e: 1.2, m: 0, assignFn: null, ascendNow: {}, at: null, score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25, spend the gang budget, no warfare (no search complete yet)' }
+  let policy = { k: 1, x: 1.25, y: 1, w: 0, e: 1.2, m: 0, assignFn: null, ascendNow: {}, at: null, source: 'default', score: null, sims: 0, why: 'incumbent: train until the hardest task clears, ascend at 1.25, spend the gang budget, no warfare (no search complete yet, no adopted policy to restore)' }
+  // When the next search may start. A refused decision sets it to now; it is
+  // NOT policy.at, which is when the policy in force was adopted — zeroing
+  // that on a refusal published `policy.at: null` ("no search complete") over
+  // an adopted policy, and left the rollout's ascensions stale.
+  let nextSearchAt = 0
   let search = null
   let searchBudget = 0
   let compete = null
@@ -169,6 +185,10 @@ export async function main(ns) {
     const last = JSON.parse(ns.read(STATUS) || 'null')
     const er = last?.policy?.equipRefused
     if (last?.lastAugReset === info.lastAugReset && er && Date.now() - er.at < EQUIP_REPROBE_MS) equipRefused = er
+    // THE LAST ADOPTED POLICY is the incumbent until a search lands — across
+    // an install too, since the gang persists (gangplan.restoredPolicyOf).
+    const rp = restoredPolicyOf(last, info.currentNode)
+    if (rp) policy = { ...policy, ...rp, assignFn: null, ascendNow: {}, source: 'restored', score: null, sims: 0 }
   } catch {
     /* no previous publish: probe the equipment in the first search */
   }
@@ -226,7 +246,7 @@ export async function main(ns) {
     try {
       const player = ns.getPlayer()
       const allowed = gangAllowed({ bitNode: info.currentNode, sf2: sfLevel(info, 2), karma: player.karma, disabled: info.bitNodeOptions?.disableGang === true })
-      const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, allowed }
+      const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, bitNode: info.currentNode, allowed }
       if (!allowed.ok) {
         publish(ns, { ...base, phase: 'refused', why: allowed.why })
         await nap(60000)
@@ -285,7 +305,7 @@ export async function main(ns) {
       // The objective, from the planner's gang section (same life, fresh):
       // unlock values and the remaining install window. Absent -> value 0
       // and reputation at an 8h horizon decides — stated in `why`.
-      if (!search && (!policy.at || Date.now() - policy.at >= SEARCH_EVERY_MS)) {
+      if (!search && Date.now() >= nextSearchAt) {
         objective = null
         try {
           fetchFromHome(ns, SCHEDULE)
@@ -383,6 +403,7 @@ export async function main(ns) {
         if (r.done) {
           const d = r.value
           search = null
+          nextSearchAt = Date.now() + SEARCH_EVERY_MS
           if (d) {
             const candidate = {
               k: d.k,
@@ -401,6 +422,7 @@ export async function main(ns) {
               evals: d.evals.length,
               rollouts: d.ascendNow,
               equipment: searchBudget > 0 ? 'searched with the contested budget' : `searched WITHOUT equipment: ${equipRefused?.why ?? 'no budget'}`,
+              source: 'search',
               why: objective?.why ?? null,
             }
             // The spend's own ln per dollar: the chosen trajectory's value
@@ -449,19 +471,28 @@ export async function main(ns) {
             if (compete && !(verdict.permitted >= 0.5 * compete.cost)) {
               equipRefused = { at: Date.now(), why: `the chosen policy needed $${Math.round(compete.cost).toLocaleString()} of equipment and the spend allows $${Math.round(verdict.permitted).toLocaleString()} (${compete.exitCmp?.why ?? 'ln-per-dollar competition'}${compete.exitCmp?.plan ? ` — plan: ${compete.exitCmp.plan.why}` : ''})`, rejected: { k: d.k, x: d.x, y: d.y, w: d.w, e: d.e, m: d.m, score: d.score?.value ?? null } }
               compete = null
-              policy.at = 0
+              nextSearchAt = 0
             } else {
               if (compete) equipRefused = null
               policy = candidate
+              nextSearchAt = policy.at + SEARCH_EVERY_MS
             }
             // Only an ADOPTED policy's trajectory is published — progress.js
             // prices the gang faction's unlocks off this forecast.
             const sim = policy === candidate ? d.forecast : undefined
-            if (sim !== undefined) forecast = sim
-              ? { at: new Date().toISOString(), horizonH: sim.horizonH, respectPerSec: sim.respectPerSec, policy: `k=${d.k.toFixed(3)} x=${isFinite(d.x) ? d.x.toFixed(3) : 'never'} m=${d.m ?? '-'} y=${d.y ?? '-'} w=${d.w ?? '-'} e=${d.e ?? '-'}`, moneyPerSec: sim.moneyPerSec, end: { territory: sim.territory, power: sim.power, engaged: sim.engaged, deaths: sim.deaths, equipSpent: sim.equipSpent, money: sim.money }, samples: sim.samples.map((s) => ({ h: +s.h.toFixed(4), gross: s.gross, respect: s.respect, money: s.money, members: s.members, wantedLevel: s.wantedLevel })) }
-              : { at: new Date().toISOString(), why: 'the chosen policy could not be simulated' }
+            if (sim !== undefined) forecast = forecastOf(sim, d, 'search')
           }
         }
+      }
+      // THE FORECAST IS THE POLICY IN FORCE, from the first tick. With no
+      // search landed yet (a restart, every install) there was none, and
+      // progress.js carried the gang at $0 — or, inside its grace, the
+      // install's stream. The policy in force (restored, else the default) is
+      // simulated on the live gang once, under the objective's horizons.
+      if (!forecast && objective) {
+        const q = policy
+        const sim = simulateGang(gang, members, { softcap, mode, horizonH: objective.horizonH, tailH: objective.tailH, stepSec: STEP_SEC, assignFn: q.assignFn ?? trainRatio(q.k, gang.isHacking, q.m ?? 0), ascend: { minGain: q.x }, rivals, warfare: rivals ? { fraction: q.w ?? 0, engageRatio: q.e } : null })
+        forecast = forecastOf(sim, q, q.source === 'restored' ? 'restored' : 'default')
       }
       if (!policy.assignFn) policy.assignFn = trainRatio(policy.k, gang.isHacking, policy.m) ?? assign
       const plan = policy.assignFn(gang, members, { softcap, mode })
@@ -607,7 +638,7 @@ export async function main(ns) {
             rates: { gameRespectPerCycle: g.respectGainRate, gameMoneyPerCycle: g.moneyGainRate, gameWantedPerCycle: g.wantedLevelGainRate ?? null, plannedPerSec: plan.rates },
             assignments: plan.assignments,
             why: plan.why,
-            policy: { equipRefused, equipment: policy.equipment ?? null, k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, windowHSource: objective.windowHSource ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
+            policy: { equipRefused, equipment: policy.equipment ?? null, k: policy.k, x: isFinite(policy.x) ? policy.x : null, ascendNever: !isFinite(policy.x), m: policy.m, y: policy.y, w: policy.w, e: policy.e, rivals, compete, at: policy.at ? new Date(policy.at).toISOString() : null, source: policy.source ?? null, nextSearchAt: search ? null : new Date(nextSearchAt).toISOString(), score: policy.score, sims: policy.sims, searchMs: policy.searchMs ?? null, evals: policy.evals ?? null, rollouts: policy.rollouts ?? null, searching: !!search, objective: objective ? { horizonH: objective.horizonH, tailH: objective.tailH ?? null, windowHSource: objective.windowHSource ?? null, unlocks: objective.unlocks.length, money: objective.money, moneyWhy: objective.moneyWhy, why: objective.why } : null, why: policy.why },
             forecast,
             recruited,
             ascended,
