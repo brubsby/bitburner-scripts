@@ -2012,20 +2012,38 @@ const GRAFT_SEARCH_MS = 250
  * committed graft decision has grafts of this life not yet installed, the
  * install waits — bounded, so a life whose money never arrives is not held
  * for ever: past max(2h, 3 x the life's priced grafting leg) from the first
- * hold of this life the hold is released and says so. A decision that no
+ * install it HELD the hold is released and says so. A decision that no
  * longer schedules them releases it on its own.
+ *
+ * THE CLOCK STARTS AT THE FIRST INSTALL HELD (lifeGraftHoldStart, called
+ * where the hold actually holds one), and the cap is the grafting leg priced
+ * then. It started at the first pass with a pending graft and read the leg
+ * each pass: live BN9 2026-09-30 the life's grafts were pending from ~18:3xZ
+ * under a committed wait that was itself counting down (w3.75 -> w0.999), so
+ * the clock ran ~3h while no install was due and the cap shrank with the
+ * leg (3 x 0.92h) — at 21:31Z, the first pass the install was due ('now',
+ * priced with OmniTek InfoLoad grafted first, 0.83h), the hold released at
+ * once and the install went ahead: the graft ordered in the same batch was
+ * cancelled by the install and the next life had to schedule it again.
  */
-let lifeHoldSince = null // {reset, at}
+let lifeHoldSince = null // {reset, at, capH}
 function lifeGraftHoldOf(d, installed, lastAugReset, now = Date.now()) {
   const pending = d?.key === 'grafts' && Array.isArray(d.grafts) ? d.grafts.filter((g) => g?.life === 1 && !installed.has(g.name)) : []
-  if (!pending.length) return { hold: false, pending: 0 }
-  if (!lifeHoldSince || lifeHoldSince.reset !== lastAugReset) lifeHoldSince = { reset: lastAugReset, at: now }
+  if (!pending.length) {
+    lifeHoldSince = null
+    return { hold: false, pending: 0 }
+  }
+  if (lifeHoldSince && lifeHoldSince.reset !== lastAugReset) lifeHoldSince = null
   const legH = typeof d.lifeNow?.lifeH === 'number' && isFinite(d.lifeNow.lifeH) ? d.lifeNow.lifeH : 0
-  const capH = Math.max(2, 3 * legH)
-  const heldH = (now - lifeHoldSince.at) / 3.6e6
+  const capH = lifeHoldSince ? lifeHoldSince.capH : Math.max(2, 3 * legH)
+  const heldH = lifeHoldSince ? (now - lifeHoldSince.at) / 3.6e6 : 0
   const names = pending.map((g) => g.name).join(', ')
-  if (heldH > capH) return { hold: false, pending: pending.length, why: `this life's scheduled grafts (${names}) not done after ${heldH.toFixed(2)}h of holding (cap ${capH.toFixed(2)}h) — hold released` }
-  return { hold: true, pending: pending.length, heldH, capH, why: `${pending.length} graft(s) scheduled in this life not done (${names}); the committed trajectory lasts this life ${legH.toFixed(2)}h for them (held ${heldH.toFixed(2)}h of at most ${capH.toFixed(2)}h)` }
+  if (heldH > capH) return { hold: false, pending: pending.length, why: `this life's scheduled grafts (${names}) not done after ${heldH.toFixed(2)}h of holding the install (cap ${capH.toFixed(2)}h) — hold released` }
+  return { hold: true, pending: pending.length, heldH, capH, reset: lastAugReset, why: `${pending.length} graft(s) scheduled in this life not done (${names}); the committed trajectory lasts this life ${legH.toFixed(2)}h for them (${lifeHoldSince ? `install held ${heldH.toFixed(2)}h of at most ${capH.toFixed(2)}h` : `no install held yet; at most ${capH.toFixed(2)}h once one is`})` }
+}
+/** Start the hold's clock: the first pass whose install it actually holds (lifeGraftHoldOf). */
+function lifeGraftHoldStart(h, now = Date.now()) {
+  if (h?.hold && !lifeHoldSince) lifeHoldSince = { reset: h.reset ?? null, at: now, capH: h.capH }
 }
 let graftCarry = null // this pass's committed grafts as exit inputs (carriedGraftsOf)
 // This life's grafts (running, or committed to life 1): kept out of the batch's offers (graftplan.graftsOfLifeNow).
@@ -2043,6 +2061,10 @@ let cadenceOffersNow = null
 let cadenceKeptWhy = null
 const NODE_FACTIONS_FILE = '/tel/node-factions.txt'
 let redPillRepReq = null // the catalogue's Red Pill requirement this pass (exitInputsOf)
+// THE EXIT FACTION as the snapshots read it this pass, member or not: its
+// favor (a faction keeps its favor through every install) and the
+// invitation's static requirements (exitInputsOf exitFavor, rejoinMoney).
+let exitFactionNow = null
 async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work, countCtx = null) {
   const pc = planCtxOf(ns, info)
   if (!canUseGrafting(info)) {
@@ -4205,7 +4227,22 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
       ? { repPerSec: repPerSecWithFleet(schedule.repPost.perSec, planFleet?.factionRepPerSec), repSdLn: schedule.repPost.sd, repSource: schedule.repPost.why, ...(schedule.estimated ? { repFromEstimate: true } : {}) }
       : {}),
     exitRep: rp?.factionRep ?? 0,
-    exitFavor: rp?.favor ?? 0,
+    // THE EXIT FACTION'S FAVOR, MEMBER OR NOT: favor survives every install
+    // (Faction.prestigeAugmentation adds the rep to it and keeps it), so a
+    // life that has not re-joined yet grinds at x(1 + favor/100) all the same.
+    // It read the offer's favor only — 0 until the join: live BN9 2026-09-30
+    // the life after the 21:31:41Z install priced the Red Pill's 2.5m rep at
+    // favor 0 where Daedalus held 131.6 (x2.32): +2.05h of the +2.8h EXIT
+    // JUMP (tools/sim/exitjump/attribute-2131.mjs).
+    exitFavor: rp?.favor ?? exitFactionNow?.favor ?? 0,
+    // THE RE-JOIN (exitplan rejoinMoney / rejoinLevel): a member has nothing
+    // to join now (joinMoney below is 0), but an install ends the membership
+    // and the final window after it must meet the invitation again.
+    rejoinMoney: moneyNeeds(exitFactionNow?.reqs).reduce((a, b) => Math.max(a, b), 0),
+    rejoinLevel: exitFactionHackReq([{ name: EXIT_FACTION, requirements: exitFactionNow?.reqs ?? null }]) ?? 0,
+    // THE IPvGO REPUTATION BONUS THE NEXT INSTALL ZEROES (exitplan
+    // preInstallRepMult): in today's faction_rep, so in the rate above.
+    preInstallRepMult: 1 + goBonus(ns) / 100,
     // THE EXIT FACTION'S FAVOR FROM IPvGO WINS once joined (exitplan
     // favorStream, favor.goFavorStreamOf): while go.js plays the exit
     // faction's AI, measured on its games and wins.
@@ -4611,6 +4648,7 @@ async function act(ns, canJoin, info, note) {
   graftedThisLife = new Set()
   batchNamesNow = null
   redPillRepReq = null
+  exitFactionNow = null
   {
     const g = readJson(ns, GATE)?.objective?.growShare
     growShareNow = typeof g === 'number' && isFinite(g) ? g : null
@@ -5090,6 +5128,12 @@ async function act(ns, canJoin, info, note) {
       redPillRepReq = allCount.has(TERMINAL_AUG) ? 0 : sing.augRepReq(TERMINAL_AUG)
     } catch {
       redPillRepReq = null
+    }
+    try {
+      const fav = sing.factionFavor(EXIT_FACTION)
+      exitFactionNow = { favor: typeof fav === 'number' && isFinite(fav) && fav >= 0 ? fav : null, reqs: sing.inviteReqs(EXIT_FACTION) ?? null }
+    } catch {
+      exitFactionNow = null
     }
     const held = []
     for (const [name, n] of allCount) {
@@ -7827,6 +7871,7 @@ async function act(ns, canJoin, info, note) {
       // THE SCHEDULE'S GRAFTS OF THIS LIFE ARE NOT DONE: the committed
       // trajectory priced this life as lasting until they are (exitplan
       // lifeGraftLeg), and an install now would move them to a later life.
+      lifeGraftHoldStart(lifeGraftHold)
       did.push(`install HELD: ${lifeGraftHold.why} (${gate.why})`)
     } else if (gate.install || forcedInstall) {
       if (forcedInstall && !gate.install) {

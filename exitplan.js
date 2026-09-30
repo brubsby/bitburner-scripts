@@ -1001,8 +1001,10 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     hackingMult,
     expPerSec,
     repPerSec,
-    exitRep = 0,
-    exitFavor = 0,
+    // The exit faction TODAY: its reputation in hand (a member's) and its
+    // favor (a faction's favor persists through installs, member or not).
+    exitRep: exitRepNow = 0,
+    exitFavor: exitFavorNow = 0,
     // measured per-cycle behaviour, from the lifetimes ledger
     cycleHours,
     multGainPerCycle,
@@ -1011,11 +1013,18 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     nextInstallGain = null,
     // the gates
     exitLevel,
-    joinMoney = 0,
+    joinMoney: joinMoneyNow = 0,
     // The exit faction's hacking requirement for the INVITATION (Daedalus:
     // haveSkill hacking 2500, FactionInfo.tsx), which must hold at the same
     // time as the money in hand: the reputation leg cannot start before it.
-    joinLevel = 0,
+    joinLevel: joinLevelNow = 0,
+    // THE INVITATION AGAIN AFTER AN INSTALL (rejoinMoney / rejoinLevel): a
+    // member publishes joinMoney 0 (nothing to join today), but every install
+    // ends the membership (Faction.prestigeAugmentation: isMember = false,
+    // alreadyInvited = false), so a final window after one hoards the money
+    // and climbs to the level again. Absent: as before.
+    rejoinMoney = 0,
+    rejoinLevel = 0,
     // AFTER THE TERMINAL INSTALL (The Red Pill must be INSTALLED before
     // w0r1d_d43m0n exists, ServerHelpers.ts:342): money is reset to the
     // node's post-install balance and every program with it, and the daemon
@@ -1081,6 +1090,16 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // Under any policy with an install it ends before any leg simulated here,
     // so it does nothing. Default 1: every other caller prices as before.
     preInstallExpMult = 1,
+    // THE SAME FOR REPUTATION (preInstallRepMult): the IPvGO Daedalus bonus
+    // multiplies faction_rep (Go/effects/effect.ts calculateMults) and the
+    // install zeroes its node power (Go.prestigeAugmentation), so the rate
+    // measured today — the formula at today's faction_rep — carries a factor
+    // the life after any install starts without. Divided out of the rate (and
+    // into a donation's price) from the first install on; its regrowth in
+    // the new life is not simulated, on either side of an install (the new
+    // life prices at its own current bonus): a floor. Live BN9 2026-09-30
+    // 21:31Z: +51% in the rate the install priced the final window on.
+    preInstallRepMult = 1,
     // THE EXP RATE RISES WITH THE LEVEL (expRateShape): expPerSec is the rate
     // at today's level `hacking`, and every leg integrates it as (level + 50)
     // (freshlife.js, the game's hack/grow/weaken times). expFlatPerSec is the
@@ -1089,6 +1108,20 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     expScalesWithLevel = false,
     expFlatPerSec = 0,
   } = o
+  // WHAT AN INSTALL DOES TO THE EXIT FACTION (Faction.ts prestigeAugmentation,
+  // run on every faction by Prestige.ts): favor += repToFavor of the rep in
+  // hand (addRepToFavor), then the rep is 0 and the membership gone. So under
+  // any policy with an install the final window starts from 0 rep, at the
+  // converted favor, and joins again — it was priced from today's rep, at
+  // today's favor, joined (live BN9 2026-09-30 21:31:41Z: 201k Daedalus rep
+  // counted after the install, favor 85.5 where the install banks 131.4, the
+  // $100b re-join unpriced; tools/sim/exitjump/attribute-2131.mjs).
+  const lostAtInstall = installsFirst > 0
+  const exitRep = lostAtInstall ? 0 : exitRepNow
+  const exitFavor0 = num(exitFavorNow) && exitFavorNow > 0 ? exitFavorNow : 0
+  const exitFavor = lostAtInstall && num(exitRepNow) && exitRepNow > 0 ? addRepToFavor(exitFavor0, exitRepNow) : exitFavor0
+  const joinMoney = lostAtInstall ? Math.max(num(joinMoneyNow) ? joinMoneyNow : 0, num(rejoinMoney) ? rejoinMoney : 0) : joinMoneyNow
+  const joinLevel = lostAtInstall ? Math.max(num(joinLevelNow) ? joinLevelNow : 0, num(rejoinLevel) ? rejoinLevel : 0) : joinLevelNow
   // INCOME THAT THE NEXT INSTALL DESTROYS (lifeIncome, $/s): hacknet
   // production — hashes sold, or a node's money — from servers/nodes that
   // prestigeAugmentation deletes (PlayerObjectGeneralMethods.ts:130). It is
@@ -1317,6 +1350,10 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       if (pos(repRate)) repRate *= installGains.rep
       if (pos(donation)) donation /= installGains.rep
     }
+    if (pos(preInstallRepMult) && preInstallRepMult > 1) {
+      if (pos(repRate)) repRate /= preInstallRepMult
+      if (pos(donation)) donation *= preInstallRepMult
+    }
     if (pos(installGains?.income) && installGains.income >= 1) incomeAtLevel1 *= installGains.income
     // AUGMENTATIONS PERSIST: the batch's reputation and income gains act in
     // EVERY later life, so each later install buys more — by the measured
@@ -1475,7 +1512,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // two installs: no favor life, exactly as before.
     const fl = o.favorLife
     if (fl && pos(fl.rep) && installsFirst >= 2 && pos(terminalRep)) {
-      const nested = exitHours({ ...o, favorLife: null, favorStream: null, lifeGrafts: (Array.isArray(o.lifeGrafts) ? o.lifeGrafts : []).filter((g) => Number.isInteger(g?.life) && g.life < installsFirst), finalGrafts: [], graftStartMoney: 0, fourS: four && four.when === 'life1' ? four : null, covenant: null, terminalRep: fl.rep, exitRep: 0, exitLevel: 1, finalRootCost: 0, freshExpLagH: 0, slotBusyH: 0, donationCost: null }, installsFirst - 1, true)
+      const nested = exitHours({ ...o, favorLife: null, favorStream: null, lifeGrafts: (Array.isArray(o.lifeGrafts) ? o.lifeGrafts : []).filter((g) => Number.isInteger(g?.life) && g.life < installsFirst), finalGrafts: [], graftStartMoney: 0, fourS: four && four.when === 'life1' ? four : null, covenant: null, terminalRep: fl.rep, exitRep: 0, exitFavor, exitLevel: 1, finalRootCost: 0, freshExpLagH: 0, slotBusyH: 0, donationCost: null }, installsFirst - 1, true)
       if (!num(nested.hours) || !num(nested.finalStartH)) return { hours: null, why: `could not price the favor life (${fl.rep} rep): ${nested.why ?? 'unpriced'}` }
       const L = nested.hours - nested.finalStartH
       const last = lifeLegs.find((l) => l.life === installsFirst)

@@ -149,7 +149,7 @@ export async function run() {
       ["pcx.graftBatch = graftBatchCheckOf(", "the pass records AUG COUNTED TWICE"],
       ["graftBatch: pc.graftBatch ?? null", "the plan record carries it"],
       ["batchNamesNow = batchNamesOf(ns, info, plan, pending, replanAt)", "the batch's names before the graft decision"],
-      ["traderRegime })", "the trader regime reaches redecideEvents"],
+      ["invitesKey: undefined, traderRegime,", "the trader regime reaches redecideEvents"],
     ];
     for (const [s, what] of need) if (!pg.includes(s)) c.fail(`progress.js: ${what}`, s);
     c.examined(need.length);
