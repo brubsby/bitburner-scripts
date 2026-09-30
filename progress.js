@@ -7295,7 +7295,14 @@ async function act(ns, canJoin, info, note) {
       // (the gate's simulated nowH, which act.js records as the install's
       // reason) and the exit the plan committed for this install agree with
       // the plan's 'now' (plan.installExitsOf: TWO EXITS AT INSTALL).
-      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02, atInstall: { actorH: typeof exitCompare?.nowH === 'number' && isFinite(exitCompare.nowH) ? exitCompare.nowH : null, now: Date.now() } })
+      // THE COMMITMENT CARRIES THE MODEL IT WAS PRICED ON: made this pass,
+      // this model; carried from an earlier pass, that pass's record's model.
+      // installExitsOf does not compare across a change (live 2026-09-30
+      // 17:11Z: 3105d60 re-priced the exit +1.2h between the commitment and
+      // the install, and TWO EXITS AT INSTALL fired on the correction). [TX6]
+      const cmt = pcx?.decisions?.install?.commitment
+      if (cmt && cmt.ver == null) cmt.ver = cmt.at && Date.parse(cmt.at) < pcx.t0 ? pcx.prevAny?.ver ?? null : MODEL_VERSION
+      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02, atInstall: { actorH: typeof exitCompare?.nowH === 'number' && isFinite(exitCompare.nowH) ? exitCompare.nowH : null, now: Date.now(), ver: MODEL_VERSION } })
       // GRAFTS DROPPED (plan.graftCarryCheckOf): the install decision's
       // inputs carry the committed graft set (or, with no graft decision, the
       // node's memory). Published as plan.graftCarry; planCheck fails on it.

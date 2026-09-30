@@ -196,5 +196,26 @@ export async function run() {
   }
   checks.push(c5);
 
+  // [TX6] A commitment priced on another exit model is not compared: a
+  // deploy between the commitment and the install re-prices the exit (live
+  // 2026-09-30 17:11Z, 3105d60 +1.2h). The same model still fails.
+  const c6 = new Check("TX6", "TWO EXITS AT INSTALL does not compare a commitment priced on another exit model");
+  {
+    const now = Date.parse("2026-09-30T17:11:00Z");
+    const mk = (ver) => ({ key: "now", meanH: 10.159, pointH: 10.19, n: 24, commitment: { key: "w0.083", meanH: 9.138, pointH: 9.4, at: "2026-09-30T16:46:00Z", ver } });
+    const same = P.installExitsOf(mk("a.1"), { actorH: 10.19, now, si: 0.02, ver: "a.1" });
+    if (same.ok !== false) c6.fail(`the live gap on one model must fail: ${same.why}`);
+    const cross = P.installExitsOf(mk("a.1"), { actorH: 10.19, now, si: 0.02, ver: "b.1" });
+    if (cross.ok === false) c6.fail(`a commitment on another model must not fail it: ${cross.why}`);
+    if (cross.checks?.some((k) => /commitment/.test(k.what))) c6.fail("no commitment check may run across models");
+    const legacy = P.installExitsOf(mk(undefined), { actorH: 10.19, now, si: 0.02, ver: "b.1" });
+    if (legacy.ok !== false) c6.fail("an untagged commitment is still compared (the old behaviour)");
+    const src = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (!/cmt\.ver = cmt\.at && Date\.parse\(cmt\.at\) < pcx\.t0 \? pcx\.prevAny\?\.ver \?\? null : MODEL_VERSION/.test(src)) c6.fail("progress.js must stamp the commitment's model version");
+    if (!/atInstall: \{[^}]*ver: MODEL_VERSION \}/.test(src)) c6.fail("progress.js must pass the model version to the install check");
+    c6.examined(5);
+  }
+  checks.push(c6);
+
   return checks;
 }

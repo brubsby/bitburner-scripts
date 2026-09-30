@@ -1362,7 +1362,7 @@ export function inputsKeyOf(inputs) {
  * commitment is at most one pass old). Returns {ok, checks, tolH, why}.
  */
 export const INSTALL_EXIT_TOL = { rel: 0.05, maxCarryMin: 60 }
-export function installExitsOf(install, { actorH = null, now = Date.now(), si = 0.02 } = {}) {
+export function installExitsOf(install, { actorH = null, now = Date.now(), si = 0.02, ver = null } = {}) {
   if (!install?.key || !fin(install.meanH)) return { ok: null, why: 'no install decision this pass' }
   if (install.key !== 'now') return { ok: null, why: `the plan installs at ${install.key}, not now: no install exit to compare` }
   const N = Math.max(1, install.n ?? 1)
@@ -1370,7 +1370,10 @@ export function installExitsOf(install, { actorH = null, now = Date.now(), si = 
   const checks = []
   const c = install.commitment ?? null
   const agedH = c?.at && fin(Date.parse(c.at)) ? Math.max(0, (now - Date.parse(c.at)) / 3.6e6) : 0
-  const own = c && c.key !== 'now' ? c : null
+  // A commitment priced on another exit model is not this model's promise:
+  // a deploy between the two re-prices, it is not two exits. [TX6]
+  const crossModel = !!(c && c.ver != null && ver != null && c.ver !== ver)
+  const own = c && c.key !== 'now' && !crossModel ? c : null
   if (own && fin(own.meanH)) {
     const expH = own.meanH - agedH
     checks.push({ what: 'plan now vs the plan\'s commitment', a: install.meanH, b: +expH.toFixed(3), aName: `the plan's 'now' ${install.meanH}h`, bName: `its commitment ${own.key} ${own.meanH}h priced ${(agedH * 60).toFixed(0)} min ago` })
@@ -1382,7 +1385,7 @@ export function installExitsOf(install, { actorH = null, now = Date.now(), si = 
     const nowPoint = fin(install.pointH) ? install.pointH : install.meanH
     checks.push({ what: 'install actor vs the plan\'s now', a: actorH, b: nowPoint, aName: `the install actor's ${(+actorH).toFixed(2)}h`, bName: `the plan's 'now' ${nowPoint}h` })
   }
-  if (!checks.length) return { ok: null, why: 'installing now: no commitment and no install-actor exit to compare' }
+  if (!checks.length) return { ok: null, why: crossModel ? `installing now: the commitment was priced on another exit model (${c.ver} -> ${ver}), not compared` : 'installing now: no commitment and no install-actor exit to compare' }
   for (const k of checks) {
     k.diffH = +(k.a - k.b).toFixed(3)
     k.tolH = +tolOf(Math.max(k.a, k.b)).toFixed(3)
