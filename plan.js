@@ -1109,9 +1109,19 @@ export function installHoldOf(rec, { lastAugReset = null, planLife = null, now =
  * flips; a lost augmentation is 3h) of it; beyond, the re-planned one is
  * taken and the move is an EVENT (the install decision re-decides on it). A
  * drift in small steps accumulates against the KEPT batch, so it too becomes
- * an event once it matters. In
- * the last `freshH` hours of the wait the re-planned batch is always taken
- * (the install buys it: TWO EXITS AT INSTALL compares against it).
+ * an event once it matters.
+ * In the last `freshH` hours of the wait the BETTER of the two on this pass's
+ * inputs is taken — the batch the install buys is chosen the same way
+ * (chooseBatchGen, the committed batch against the fresh one at the raise's
+ * reach). It was "the re-planned batch, always": live BN9 2026-09-30 13:20Z
+ * took a re-planned batch +0.16h worse, 13:25Z bought another one (ENM DMA
+ * Upgrade and DataJack for ADR-V2 and The Shadow's Simulacrum) the exit
+ * priced 0.94h worse than the committed one, and the install fired TWO EXITS
+ * AT INSTALL; 14:05Z the same without ADR-V2 and The Shadow's Simulacrum
+ * (1.49h). The purchase planner's batches flip between near-equal ones on its
+ * linearised weights (objective.exitWeights: the exit's slope at the last
+ * published batch and inputs; 0 for rep on the 14:00Z record), so "fresh"
+ * was not "better".
  * prevGains/newGains: the batches; prevH/newH: the committed trajectory's
  * point on each (this pass's inputs). Returns {gains, held, event, why}.
  */
@@ -1125,8 +1135,109 @@ export function committedBatchOf({ prevGains = null, newGains = null, prevH = nu
   const d = newH - prevH
   const g = (x) => `h${(x.hacking ?? 1).toFixed(3)} $${(x.income ?? 1).toFixed(3)}`
   if (Math.abs(d) > tolH) return { gains: newGains, held: false, event: `the committed install's batch moved ${g(prevGains)} -> ${g(newGains)} (${d > 0 ? '+' : ''}${d.toFixed(2)}h, beyond ${tolH.toFixed(2)}h)`, why: `re-planned batch ${d > 0 ? '+' : ''}${d.toFixed(2)}h: taken, an event` }
-  if (fin(waitH) && waitH <= o.freshH) return { gains: newGains, held: false, event: null, why: `the last ${o.freshH}h of the wait: the re-planned batch (${d > 0 ? '+' : ''}${d.toFixed(2)}h, within ${tolH.toFixed(2)}h) is what the install buys` }
+  if (fin(waitH) && waitH <= o.freshH) {
+    if (d < 0) return { gains: newGains, held: false, event: null, why: `the last ${o.freshH}h of the wait: the re-planned batch prices ${d.toFixed(2)}h (within ${tolH.toFixed(2)}h) — the better one, taken (the install buys the better: chooseBatchGen)` }
+    return { gains: prevGains, held: true, event: null, why: `the last ${o.freshH}h of the wait: the re-planned batch prices +${d.toFixed(2)}h (within ${tolH.toFixed(2)}h) — the committed batch is the better one and kept (the install buys the better: chooseBatchGen)` }
+  }
   return { gains: prevGains, held: true, event: null, why: `the re-planned batch prices ${d > 0 ? '+' : ''}${d.toFixed(2)}h, within ${tolH.toFixed(2)}h: the committed batch kept` }
+}
+
+/**
+ * THE BATCH IS CHOSEN BY THE EXIT, not by the planner's proxy. The purchase
+ * planner (augplan.planPurchases) maximises a weighted sum of ln multipliers
+ * whose weights are the exit's SLOPES at the last published batch and inputs
+ * (objective.exitWeights: hours per ln, a +5% finite difference) — local, and
+ * one pass old. The exit is not linear in the batch and moves with the
+ * inputs: live BN9 2026-09-30 the 14:00Z record priced rep x1.03 and x1.42
+ * alike (13.079h / 13.077h: rep slope 0, the rep augmentations 'no-value' to
+ * the 14:05Z planner), while on the 14:05Z inputs (the rep rate 19.3 ->
+ * 13.3/s) the same two augmentations were worth 1.49h (15.19h -> 13.71h,
+ * nothing past x1.42); at 13:25Z the slope read 0.98h per ln against a
+ * secant of 2.9h per ln. The batch flips pass to pass between batches that
+ * are near-equal by the proxy and 0.9-1.5h apart by the exit — and at 13:25Z
+ * and 14:05Z the install bought the worse one against a commitment priced on
+ * the better: TWO EXITS AT INSTALL.
+ *
+ * So every candidate batch is priced by the exit itself, on ONE set of
+ * inputs and ONE draw set, and the best is bought: `candidates` [{key, names,
+ * gains, buyable, why}] (the fresh plan, the plan on the last pass's weights,
+ * the committed batch where it is still buyable at the raise's reach — each
+ * the caller's), a wait `waitH` (the committed install's remaining wait, 0 at
+ * the install) at `installAt` (the committed install time: the candidates
+ * share its structural noise key). Candidates with the same gains are one
+ * trajectory (the first key kept). With `draws` the choice is the lowest mean
+ * over the draws all candidates priced (paired; ties to `prefer`, the
+ * incumbent), else the lowest point. Each candidate is priced with itself as
+ * the inputs' persistBaseline (`ownBaseline`): how the plan prices it once it
+ * is the plan. Returns {key, names, gains, gainsKey,
+ * rows [{key, n, gainsKey, pointH, meanH, ...}], gainH (the fresh plan's mean
+ * or point less the chosen's), unbuyable, why, n, ms, overBudget}.
+ */
+export const BATCH_CHOICE = { nearH: 0.5, floorMs: 300, tieH: 1e-6 }
+export function chooseBatch(o = {}) {
+  return drain(chooseBatchGen(o))
+}
+export function* chooseBatchGen({ candidates = [], inputs = null, waitH = 0, installAt = null, draws = [], prefer = 'committed', freshKey = 'fresh', ownBaseline = true, budgetMs = PLAN.budgetMs, now = Date.now(), clock: budgetClock = clock, tieH = BATCH_CHOICE.tieH } = {}) {
+  const unbuyable = candidates.filter((c) => c && c.buyable === false).map((c) => ({ key: c.key, why: c.why ?? null }))
+  const seen = new Map()
+  const use = []
+  for (const c of candidates) {
+    if (!c || c.buyable === false || !c.gains) continue
+    const gk = gainsKeyOf(c.gains)
+    if (seen.has(gk)) {
+      seen.get(gk).alias.push(c.key)
+      continue
+    }
+    const o = { ...c, gainsKey: gk, alias: [] }
+    seen.set(gk, o)
+    use.push(o)
+  }
+  const fresh = use.find((c) => c.key === freshKey || c.alias.includes(freshKey)) ?? null
+  if (!use.length) return { key: null, names: null, gains: null, rows: [], unbuyable, why: 'no candidate batch to price' }
+  if (!inputs) return { key: fresh?.key ?? use[0].key, names: (fresh ?? use[0]).names ?? null, gains: (fresh ?? use[0]).gains, gainsKey: (fresh ?? use[0]).gainsKey, rows: [], unbuyable, why: 'no exit inputs: the fresh plan, unpriced against the rest' }
+  const w = fin(waitH) ? Math.max(0, waitH) : 0
+  const at = fin(installAt) ? installAt : now + w * 3.6e6
+  const specOf = (g) => ({ kind: 'wait', installAt: at, waitH: w, n: null, lifeH: null, gains: g })
+  const opts = use.map((c) => {
+    const spec = specOf(c.gains)
+    const f = trajectoryOf(spec)
+    const fg = trajectoryGenOf(spec)
+    // AS THE PLAN PRICES IT ONCE SHIPPED: the batch is also the baseline
+    // the measured cadence represents (exit inputs persistBaseline = the
+    // plan's batch), so the choice's price of the chosen batch is the price
+    // the install decision's 'now' and the install actor put on it.
+    const x = ownBaseline && inputs && 'persistBaseline' in inputs ? { ...inputs, persistBaseline: c.gains } : inputs
+    let pointH = null
+    try {
+      pointH = f(x)
+    } catch {
+      pointH = null
+    }
+    return { ...c, spec, pointH: fin(pointH) ? pointH : null, noiseKey: noiseKeyOf(spec, x), sim: (d) => f(applyDraw(x, d), d), simGen: (d) => fg(applyDraw(x, d), d) }
+  })
+  let stats = {}
+  let ev = { n: 0, ms: 0, overBudget: false, samples: {} }
+  if (opts.length > 1 && Array.isArray(draws) && draws.length) {
+    ev = yield* evaluateGen(opts, draws, { budgetMs, now: budgetClock })
+    stats = summarize(ev.samples).stats
+  }
+  const meanOf = (k) => (fin(stats[k]?.meanH) && stats[k].pFeasible >= 0.5 ? stats[k].meanH : null)
+  const byDraws = opts.every((o) => meanOf(o.key) !== null)
+  const valueOf = (o) => (byDraws ? meanOf(o.key) : o.pointH)
+  const ranked = opts.filter((o) => fin(valueOf(o))).sort((a, b) => valueOf(a) - valueOf(b))
+  let best = ranked[0] ?? fresh ?? opts[0]
+  const inc = ranked.find((o) => o.key === prefer || o.alias.includes(prefer))
+  if (inc && best !== inc && Math.abs(valueOf(inc) - valueOf(best)) <= tieH) best = inc
+  const freshOpt = fresh ? opts.find((o) => o.gainsKey === fresh.gainsKey) ?? null : null
+  const r3v = (x) => (fin(x) ? +x.toFixed(3) : null)
+  const rows = opts.map((o) => ({ key: o.key, ...(o.alias.length ? { alias: o.alias } : {}), n: Array.isArray(o.names) ? o.names.length : null, names: o.names ?? null, gainsKey: o.gainsKey, gains: o.gains, pointH: r3v(o.pointH), meanH: meanOf(o.key), q10: stats[o.key]?.q10 ?? null, q90: stats[o.key]?.q90 ?? null, ...(o.why ? { why: o.why } : {}) }))
+  const gainH = freshOpt && fin(valueOf(freshOpt)) && fin(valueOf(best)) ? r3v(valueOf(freshOpt) - valueOf(best)) : null
+  const how = byDraws ? `mean over ${ev.n} shared draws` : 'point'
+  const list = rows.map((r) => `${r.key} ${r.n ?? '?'} aug(s) ${byDraws ? `${r.meanH}h mean` : `${r.pointH}h`}`).join(', ')
+  const why = freshOpt && best.gainsKey === freshOpt.gainsKey
+    ? `the fresh plan is the best batch by the exit (${how}): ${list}`
+    : `BATCH BY THE EXIT: '${best.key}' over the fresh plan by ${gainH}h (${how}, one set of inputs, wait ${w.toFixed(2)}h): ${list}`
+  return { key: best.key, names: best.names ?? null, gains: best.gains, gainsKey: best.gainsKey, by: byDraws ? 'draws' : 'point', rows, gainH, unbuyable, waitH: r3v(w), why, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
 }
 
 /**

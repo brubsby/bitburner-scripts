@@ -169,7 +169,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, installCarryOf, gangBridgeOf } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -3015,6 +3015,122 @@ async function planDecide(pc, name, genFn) {
 }
 /** A long search in slices when a pass pacer exists (always await it). */
 const paced = (gen, label) => (passPacer ? passPacer.slices(gen, label) : drain(gen))
+
+/**
+ * THE BATCH BY THE EXIT (plan.chooseBatchGen). The purchase planner ranks
+ * batches on linearised weights (objective.exitWeights: the exit's slopes at
+ * the LAST published batch and inputs), and near-equal-by-proxy batches flip
+ * pass to pass — the 14:00Z record's rep slope read 0 where the 14:05Z inputs
+ * priced the rep augmentations at 1.49h (live BN9 2026-09-30 13:20-13:25Z
+ * and 14:00-14:05Z: the
+ * install bought the batch the exit priced 0.94h and 1.49h worse than the one
+ * committed five minutes earlier — TWO EXITS AT INSTALL). The candidates:
+ *   fresh      the planner on this pass's weights (the plan as it was)
+ *   incumbent  the planner on the weights the last SHIPPED batch was planned
+ *              on (the gate's objective.batchWeights), so a batch the exit
+ *              preferred survives a pass whose slope forgot it
+ *   committed  within BATCH_CHOICE.nearH of the committed install: the
+ *              committed batch itself (the plan record's committedBatch
+ *              names, else the last shipped plan's where its gains are the
+ *              commitment's), planned alone at the raise's reach — a
+ *              candidate only if every augmentation of it is bought there
+ * each priced by the exit as the plan would price it once shipped (the
+ * pass's first exit inputs, the candidate's own batch as installGains and
+ * persistBaseline, the committed install's remaining wait), near the install
+ * also on the plan's draws. Returns {...choice, plan (the chosen plan object), weights (what the
+ * next pass's incumbent is planned on)} or null (nothing to choose).
+ */
+async function batchChoiceStep(ns, info, { plan, inputs: inputs0 = null, planOnWeights, planRestricted, channelWeights, channelsUsed, offers, pending = [] }) {
+  if (!plan) return null
+  const now = Date.now()
+  const pc = planCtxOf(ns, info)
+  // The pass's first exit inputs; where their build failed, the last
+  // published record (one pass old, this life), named.
+  let inputs = inputs0
+  let inputsFrom = 'this pass'
+  if (!inputs) {
+    const rec = readJson(ns, '/tel/exitinputs.txt')
+    inputs = rec?.lastAugReset === info?.lastAugReset && rec?.inputs && now - Date.parse(rec.at) < 15 * 60e3 ? rec.inputs : null
+    inputsFrom = inputs ? `the last published (${rec.at})` : 'none'
+  }
+  const pendingNow = [...(pending ?? [])]
+  const namesOf = (p) => (p?.buy ?? []).map((b) => b?.name).filter((x) => typeof x === 'string')
+  const gainsOf = (names) => installGainsOf([...names, ...pendingNow], offers)
+  const sameGains = (a, b) => !!a && !!b && ['hacking', 'rep', 'income', 'exp'].every((k) => Math.abs(Math.log((a[k] ?? 1) / (b[k] ?? 1))) < 1e-3)
+  const gate = readJson(ns, GATE)
+  const sameLifeGate = gate?.lastAugReset === info?.lastAugReset
+  const cands = [{ key: 'fresh', names: namesOf(plan), gains: gainsOf(namesOf(plan)), plan, weights: channelWeights }]
+  const incW = sameLifeGate && gate?.objective?.batchWeights && typeof gate.objective.batchWeights === 'object' ? gate.objective.batchWeights : null
+  if (incW && channelWeights && typeof planOnWeights === 'function' && JSON.stringify(incW) !== JSON.stringify(channelWeights)) {
+    const p = planOnWeights(incW)
+    if (p?.buy?.length) cands.push({ key: 'incumbent', names: namesOf(p), gains: gainsOf(namesOf(p)), plan: p, weights: incW, why: 'the planner on the weights the last shipped batch was planned on' })
+  }
+  const prevInst = pc?.prev?.decisions?.install ?? null
+  const basis = basisOf(prevInst, now)
+  const near = basis?.kind === 'wait' && basis.waitH <= BATCH_CHOICE.nearH && !!prevInst?.gains
+  let committedWhy = null
+  if (near) {
+    const cb = pc.prev?.committedBatch ?? null
+    let names = Array.isArray(cb?.names) && cb.gainsKey === prevInst.gainsKey ? cb.names : null
+    let from = 'the plan record'
+    if (!names && sameLifeGate && Array.isArray(gate?.plan?.buy)) {
+      const gn = gate.plan.buy.map((b) => b?.name).filter((x) => typeof x === 'string')
+      if (gn.length && sameGains(gainsOf(gn), prevInst.gains)) {
+        names = gn
+        from = "the last pass's shipped plan"
+      }
+    }
+    if (!names) committedWhy = `the committed ${prevInst.key}'s batch is not named (no plan-record names, and the last shipped plan is another batch): not a candidate`
+    else {
+      // The committed batch alone, at the raise's reach: its offers only,
+      // NeuroFlux to its count, every multiplier it moves valued (so none is
+      // 'no-value'), no tickets.
+      const want = names.filter((n) => n === NFG).length
+      const set = new Set(names)
+      const restricted = (offers ?? []).filter((o) => set.has(o?.name)).map((o) => (o.name === NFG ? { ...o, nfgMaxLevels: Math.min(o.nfgMaxLevels ?? Infinity, want) } : o))
+      const chans = [...new Set(restricted.flatMap((o) => Object.keys(o.mults ?? {})))]
+      const cp = restricted.length && typeof planRestricted === 'function' ? planRestricted(restricted, chans) : null
+      const diff = batchDiffOf(names, namesOf(cp))
+      const buyable = !!cp && diff.missing.length === 0
+      cands.push({ key: 'committed', names, gains: gainsOf(names), plan: cp, buyable, weights: incW ?? channelWeights, why: buyable ? `the committed ${prevInst.key}'s batch (${from}), every augmentation bought at the raise's reach` : `the committed ${prevInst.key}'s batch (${from}) is not buyable at the raise's reach: ${diff.missing.length} missing (${[...new Set(diff.missing)].join(', ').slice(0, 160)})` })
+    }
+  }
+  const distinct = new Set(cands.filter((c) => c.buyable !== false && c.gains).map((c) => gainsKeyOf(c.gains)))
+  if (distinct.size < 2) {
+    const d = { key: 'fresh', by: null, gainH: 0, rows: [], unbuyable: cands.filter((c) => c.buyable === false).map((c) => ({ key: c.key, why: c.why })), near, why: `one candidate batch${cands.length > 1 ? ` (${cands.map((c) => c.key).join(', ')} are one batch or not buyable)` : ''}${committedWhy ? `; ${committedWhy}` : ''}` }
+    pc.decisions.batch = d
+    return { ...d, plan, weights: channelWeights }
+  }
+  const choice = await paced(
+    chooseBatchGen({
+      candidates: cands.map(({ plan: _p, weights: _w, ...c }) => c),
+      inputs,
+      waitH: near ? basis.waitH : 0,
+      installAt: near ? prevInst.installAt : null,
+      draws: near ? pc.draws ?? [] : [],
+      prefer: near ? 'committed' : 'incumbent',
+      // Its own budget, not charged to the decisions' (as the graft search):
+      // near the install only, ~2 x 24 exits.
+      budgetMs: near ? BATCH_CHOICE.floorMs : 0,
+      clock: pc?.pacer?.cpuNow,
+      now,
+    }),
+    'plan-batch',
+  )
+  const chosen = cands.find((c) => c.key === choice?.key) ?? cands[0]
+  let out = chosen.plan
+  if (chosen !== cands[0] && out) {
+    // THE REPORTED MULTIPLIER on this pass's objective (the gate multiplies
+    // it with the queue's): the chosen batch valued as the fresh one is.
+    const byName = new Map((offers ?? []).map((o) => [o?.name, o]))
+    const lnM = namesOf(out).reduce((s, n) => s + augValue({ name: n, mults: byName.get(n)?.mults ?? {} }, { channels: channelsUsed, weights: channelWeights }).real, 0)
+    out = { ...out, M: Math.exp(lnM), logM: lnM, chosenBy: { key: chosen.key, why: String(choice.why ?? '').slice(0, 200) } }
+  }
+  const { ms: cpuMs, ...rest } = choice ?? {}
+  const d = { ...rest, cpuMs, near, inputsFrom, ...(committedWhy ? { committedWhy } : {}), ...(near ? { committed: prevInst.key } : {}) }
+  pc.decisions.batch = d
+  return { ...d, plan: out, weights: chosen.key === 'committed' ? incW ?? channelWeights : chosen.weights }
+}
 /**
  * GIVE THE PAGE BACK: a MessageChannel round trip — a macrotask the page's
  * input and rendering run between, which Chrome's timer throttling of a
@@ -3097,6 +3213,9 @@ function publishPlan(ns, info, extra = {}) {
       exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       decisions: {
         install: inst,
+        // THE BATCH BY THE EXIT (batchChoiceStep / plan.chooseBatchGen): the
+        // candidates priced this pass and the one the plan buys.
+        batch: pc.decisions.batch ?? null,
         countRoute: route,
         factionTarget: extra.factionTarget ?? null,
         bodyLeg: extra.bodyLeg ?? null,
@@ -4859,6 +4978,11 @@ async function act(ns, canJoin, info, note) {
   // weights — what an alternative trajectory that spends money elsewhere
   // first (a sleeve purchase) would be left to buy.
   let replanAt = null
+  // The shipped plan's planner on another weight vector (set with the
+  // derived weights), and this pass's batch choice (batchChoiceStep).
+  let planOnWeights = null
+  let planRestricted = null
+  let batchChoiceNow = null
   // See the oneoff grant valuation: set where the exit weights are priced.
   let oneoffExit = null
   // Hoisted: the forward projection in section 5 re-plans against the SAME
@@ -5295,6 +5419,15 @@ async function act(ns, canJoin, info, note) {
             // coefficient.
             oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed, exit: oneoffExit },
           })
+          // The same plan on another weight vector (the batch choice's
+          // incumbent: the weights the last shipped batch was planned on).
+          planOnWeights = (wts) =>
+            planPurchases({
+              ...planArgs,
+              channelWeights: wts,
+              channels: channelsUsed,
+              oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: wts, channels: channelsUsed, exit: oneoffExit },
+            })
         }
         // Published on whichever objective this pass ships (derived or flat).
         weightsMeta = { ...weightsMeta, goWeights: goPub }
@@ -5306,6 +5439,10 @@ async function act(ns, canJoin, info, note) {
     } else {
       weightsMeta = { source: 'flat', why: 'no plan could be built this pass' }
     }
+    // The committed batch alone at the raise's reach (batchChoiceStep): the
+    // shipped plan's arguments on a restricted offer list, every multiplier
+    // valued, no tickets.
+    planRestricted = (offersR, chans) => planPurchases({ ...planArgs, offers: offersR, channelWeights: null, channels: chans, ticketsWanted: 0, oneoff: undefined })
     // A planner that silently fell back to a heuristic must say so, every pass.
     if (!plan.exact) did.push(`plan is APPROXIMATE: ${plan.approximation}`)
     for (const rgroup of plan.restricted) did.push(`plan restricted: ${rgroup.why} (${rgroup.group.join(' -> ')})`)
@@ -5898,10 +6035,42 @@ async function act(ns, canJoin, info, note) {
   // here under the pass pacer, every later exitInputsOf this pass is cheap —
   // including the ones that cannot yield. A throw is left to those callers
   // (each guards its own build and says so).
+  let firstInputs = null
   try {
-    await paced(exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), 'plan-inputs')
+    firstInputs = await paced(exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), 'plan-inputs')
   } catch {
     // reported by the callers' own builds
+  }
+  // THE BATCH BY THE EXIT (batchChoiceStep / plan.chooseBatchGen), on the
+  // pass's first inputs, BEFORE anything prices the plan's batch: the
+  // planner's batch on this pass's weights, on the incumbent's weights, and —
+  // near the committed install — the committed batch itself where a raise
+  // still reaches it, each priced as the plan would price it (one set of
+  // inputs, near the install one draw set); the best is the plan. Every exit
+  // input built after this carries it (installGains, persistBaseline), so the
+  // install decision's 'now' and the install actor price the batch chosen
+  // here. Published in the gate's objective, the plan record, and the
+  // install order (-> install-last.txt).
+  if (plan && canBuyAug) {
+    try {
+      const bc = await batchChoiceStep(ns, info, { plan, inputs: firstInputs, planOnWeights, planRestricted, channelWeights, channelsUsed, offers, pending })
+      batchChoiceNow = bc ? { ...bc, plan: undefined } : null
+      if (bc?.plan && bc.plan !== plan) {
+        plan = bc.plan
+        // The pass's inputs again, in slices, on the chosen batch: the
+        // purchase model's later lives are memoised on the batch's size and
+        // NeuroFlux count (ownedAfterBatch), so a batch of another size would
+        // otherwise be re-priced synchronously by the next caller.
+        try {
+          await paced(exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), 'plan-inputs')
+        } catch {
+          // reported by the callers' own builds
+        }
+      }
+      if (weightsMeta && bc) weightsMeta = { ...weightsMeta, batchWeights: bc.weights ?? null, batchChoice: { key: bc.key, by: bc.by ?? null, gainH: bc.gainH ?? null, why: String(bc.why ?? '').slice(0, 400) } }
+    } catch (e) {
+      batchChoiceNow = { key: null, why: `batch choice threw: ${String(e).slice(0, 160)}` }
+    }
   }
   // THE LATER LIVES' LENGTH (lifeLengthDecisionOf), decided FIRST on the
   // pass's first inputs: every exit input built after it — the graft, 4S,
@@ -7024,6 +7193,11 @@ async function act(ns, canJoin, info, note) {
         // replaces the committed one only when it prices beyond the batch
         // planner's own jitter (then an EVENT: the install decision
         // re-decides), or in the wait's last half hour.
+        // THE COMMITTED BATCH BY NAME (batchChoiceStep buys it near the
+        // install): every batch this pass priced, by its gains key — the
+        // committed one's re-plan, each wait's, and a kept batch's names
+        // carried from the record that named it.
+        const namesByGains = new Map()
         const committedGains = (() => {
           try {
             const pcx = planCtxOf(ns, info)
@@ -7031,7 +7205,11 @@ async function act(ns, canJoin, info, note) {
             if (!(spec?.kind === 'wait' && spec.waitH > 0.05) || typeof futureBatchAt !== 'function') return null
             const worked = schedule?.workingFaction ?? null
             const fb = futureBatchAt(spec.waitH)
-            const g = fb?.f ? installGainsOf([...(fb.f.buy ?? []).map((b) => b?.name), ...pending], offers) : null
+            const fbNames = fb?.f ? (fb.f.buy ?? []).map((b) => b?.name) : null
+            const g = fb?.f ? installGainsOf([...fbNames, ...pending], offers) : null
+            if (g) namesByGains.set(gainsKeyOf(g), fbNames)
+            const pcb = pcx?.prev?.committedBatch ?? null
+            if (spec.gains && Array.isArray(pcb?.names) && pcb.gainsKey === gainsKeyOf(spec.gains)) namesByGains.set(pcb.gainsKey, pcb.names)
             const pointOn = (gg) => (gg ? trajectoryOf({ ...spec, gains: gg })(inputs) : null)
             const cb = committedBatchOf({ prevGains: spec.gains ?? null, newGains: g, prevH: spec.gains && g && gainsKeyOf(spec.gains) !== gainsKeyOf(g) ? pointOn(spec.gains) : null, newH: spec.gains && g && gainsKeyOf(spec.gains) !== gainsKeyOf(g) ? pointOn(g) : null, waitH: spec.waitH })
             if (pcx) {
@@ -7048,9 +7226,23 @@ async function act(ns, canJoin, info, note) {
         })()
         const waits = futures.map((f) => {
           const g = installGainsOf([...(f.buy ?? []), ...pending], offers)
+          if (g && !namesByGains.has(gainsKeyOf(g))) namesByGains.set(gainsKeyOf(g), [...(f.buy ?? [])])
           const r = bestExitPolicy({ ...inputs, firstInstallH: f.waitMs / 3600000, installGains: g, nextInstallGain: g?.hacking ?? null }, 400, 1)
           return { waitMs: f.waitMs, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, gains: g, hold: f.holdFor ? { faction: f.holdFor, repTarget: f.holdRepTarget } : null }
         })
+        const bayes = now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null, hold: w.hold ?? null })), never: { hours: never.best?.hours ?? null }, committedGains }) : null
+        // The committed batch's names ride the plan record (plan.txt
+        // committedBatch.names): the next passes' batch choice buys THEM near
+        // the install, not whatever the planner's weights produce then.
+        try {
+          const pcx = planCtxOf(ns, info)
+          const inst = pcx?.decisions?.install ?? null
+          const pcb = pcx?.prev?.committedBatch ?? null
+          const carried = pcb?.gainsKey === inst?.gainsKey && Array.isArray(pcb?.names) ? pcb.names : null
+          if (pcx && inst?.gainsKey && inst.key !== 'now') pcx.committedBatch = { ...(pcx.committedBatch ?? {}), gainsKey: inst.gainsKey, names: namesByGains.get(inst.gainsKey) ?? carried }
+        } catch {
+          /* the names serve the next pass's batch choice, which falls back to the last shipped plan's */
+        }
         return {
           nowH: now.best?.hours ?? null,
           nowInstalls: now.best?.installsFirst ?? null,
@@ -7059,7 +7251,7 @@ async function act(ns, canJoin, info, note) {
           atSearchEdge: now.atSearchEdge === true,
           why: now.best ? null : now.why,
           joinModelled: inputs.joinMoney > 0 && typeof inputs.installCash === 'number' && typeof inputs.joinLevel === 'number',
-          bayes: now.best ? await planInstallOf(ns, info, inputs, null, { now: { hours: now.best.hours }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, installGains: w.gains ?? null, hold: w.hold ?? null })), never: { hours: never.best?.hours ?? null }, committedGains }) : null,
+          bayes,
         }
       } catch (e) {
         return { nowH: null, why: `exit comparison threw: ${String(e).slice(0, 80)}` }
@@ -7800,6 +7992,13 @@ async function act(ns, canJoin, info, note) {
         // plan.differentBatchCheckOf fails INSTALLED A DIFFERENT BATCH on it).
         orders[orders.length - 1].pricedBatch = pricedBatch
         orders[orders.length - 1].batchCheck = batchCheck
+        // WHICH BATCH, BY THE EXIT (batchChoiceStep): the committed batch
+        // against the fresh plan (and the incumbent's), priced on one set of
+        // inputs and draws — act.js copies it into /tel/install-last.txt, so
+        // a TWO EXITS AT INSTALL there names the comparison it ran on.
+        orders[orders.length - 1].batchChoice = batchChoiceNow
+          ? { key: batchChoiceNow.key ?? null, by: batchChoiceNow.by ?? null, near: batchChoiceNow.near ?? null, committed: batchChoiceNow.committed ?? null, gainH: batchChoiceNow.gainH ?? null, rows: (batchChoiceNow.rows ?? []).map((r) => ({ key: r.key, n: r.n, pointH: r.pointH, meanH: r.meanH, gainsKey: r.gainsKey, ...(r.alias ? { alias: r.alias } : {}) })), unbuyable: batchChoiceNow.unbuyable ?? [], n: batchChoiceNow.n ?? null, why: String(batchChoiceNow.why ?? '').slice(0, 500) }
+          : null
         // WHAT THE INSTALL CARRIES INTO THE NEXT LIFE (plan.installCarryOf;
         // act.js copies it into /tel/install-last.txt): the beliefs the gate's
         // simulation priced the next life on, for what that life cannot

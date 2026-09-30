@@ -403,7 +403,7 @@ export async function run() {
       [/await planDecide\(pc, 'countRoute', \(\) => decideRouteGen\(\{ inputs: rec\.inputs, count: cc, routes, point: ranked, repPoint: repPerSec, prev: pc\.prev\?\.decisions\?\.countRoute/, "the count route is decided by the plan against its committed choice"],
       [/const cm = bayRoute\s*\n?\s*\?/, "the schedule's route (countRoute.best) is the plan's choice, the interim rule only its fallback"],
       [/bayes: await planInstallOf\(ns, info, inputs, countCtx,/, "the count-aware exit comparison carries the plan's install decision"],
-      [/bayes: now\.best \? await planInstallOf\(ns, info, inputs, null,/, "the ordinary exit comparison carries the plan's install decision"],
+      [/const bayes = now\.best \? await planInstallOf\(ns, info, inputs, null,[^\n]*\n[\s\S]*?bayes,\n/, "the ordinary exit comparison carries the plan's install decision"],
       [/const b = exitCompare\?\.bayes\s*\n\s*if \(b && typeof b\.q50 === 'number'\) return \{ exitH: b\.q50/, "the published exit is the plan's median"],
       [/enter\(`plan-\$\{name\}`\)[\s\S]{0,200}d = await pc\.pacer\.slices\(genFn\(\), `plan-\$\{name\}`\)[\s\S]{0,200}leave\(`plan-\$\{name\}`\)/, "each Monte Carlo is bracketed by trace.js and run in the pacer's slices"],
       [/const ranked = await paced\(bestCountRouteGen\(/, "the count-route scan runs in slices"],

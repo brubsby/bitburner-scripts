@@ -204,7 +204,10 @@ export async function run() {
     const g1 = { hacking: 1.1, rep: 1, income: 1, exp: 1 };
     const g2 = { hacking: 1.2, rep: 1, income: 1, exp: 1 };
     const fresh = P.committedBatchOf({ prevGains: g1, newGains: g2, prevH: 15, newH: 15.2, waitH: 0.3 });
-    if (fresh.held || fresh.event) c.fail("in the wait's last half hour the re-planned batch (what the install buys) is taken", fresh.why);
+    // The last half hour takes the BETTER of the two (plan.chooseBatchGen buys the same one): here the committed batch.
+    if (!fresh.held || fresh.event || fresh.gains !== g1) c.fail("in the wait's last half hour the better batch is kept (the re-planned one prices +0.2h)", fresh.why);
+    const freshBetter = P.committedBatchOf({ prevGains: g1, newGains: g2, prevH: 15.2, newH: 15, waitH: 0.3 });
+    if (freshBetter.held || freshBetter.event || freshBetter.gains !== g2) c.fail("in the wait's last half hour a better re-planned batch is taken", freshBetter.why);
     const same = P.committedBatchOf({ prevGains: g1, newGains: { ...g1 }, prevH: null, newH: null, waitH: 2 });
     if (same.held || same.event) c.fail("the same batch is simply the re-planned one", same.why);
     const src = code("progress.js");
