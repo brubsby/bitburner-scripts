@@ -1310,13 +1310,76 @@ export function installExitsOf(install, { actorH = null, now = Date.now(), si = 
  * {ok: null, why} when there is nothing to compare.
  */
 export const EXIT_JUMP = { rel: 0.15, minTolH: 1, windowH: 1, matchMin: 10 }
+/**
+ * The install record (act.js /tel/install-last.txt) is the install that began
+ * the life stamped `lastAugReset`: act.js records it moments before the
+ * install runs, and the new life's lastAugReset is the install itself.
+ */
+export function installBeganLife(rec, lastAugReset) {
+  const installAt = Date.parse(rec?.at ?? '')
+  return fin(installAt) && fin(lastAugReset) && rec.lastAugReset !== lastAugReset && Math.abs(installAt - lastAugReset) <= EXIT_JUMP.matchMin * 60e3
+}
+
+/**
+ * WHAT THE INSTALL CARRIED INTO THE LIFE IT BEGAN (install-last `carry`,
+ * built by progress.js at the install order): the beliefs the install's own
+ * simulation priced the next life on, for the states the next life cannot
+ * measure in its first minutes. Live BN9 2026-09-30 13:25Z (17 of 17 bought,
+ * EXIT JUMP AT INSTALL +10.3h at life age 0.085h): the exp posterior read the
+ * running scripts' 34 exp/s five minutes into a life (the fleet re-rooting)
+ * at 25% weight, 1.4e3/s at level 468 where the install simulated 7.0e3/s
+ * (the old life's measured rate x the batch's exp gain, level-scaled) — +6.8h
+ * to +7.7h alone; and gang.js's forecast read $0/s over its whole horizon for
+ * ~20 minutes after the install (its post-install respect mode), where the
+ * install carried the pre-install forecast ($126m/s rising) — +1.1h to
+ * +10.6h. Returns the record's carry when it began this life, else null.
+ *   exp   {perSec, sdLn, level, mult, at}  the script exp posterior at the
+ *         install pass, the level and hacking_exp multiplier it was read at
+ *   gang  {steps [{atH, perSec}], at}       the gang's carried stream, node
+ *         hours from `at`
+ */
+export function installCarryOf(rec, lastAugReset) {
+  if (!rec?.carry || typeof rec.carry !== 'object' || !installBeganLife(rec, lastAugReset)) return null
+  return rec.carry
+}
+
+/**
+ * THE GANG'S POST-INSTALL GAP, BRIDGED. gang.js forecasts its adopted policy
+ * and the first ~20 minutes after an install it adopts a respect policy with
+ * no money in its whole horizon (live BN9 2026-09-30 08:19Z and 13:25Z: $0/s
+ * to 8h, $13m/s back by 08:44Z) — a transient of the gang's own controller,
+ * not the gang's income: members, respect and territory persist through the
+ * install (Prestige.ts keeps Player.gang). Within INSTALL_CARRY.gangGraceH of
+ * the life's start, a live stream with no money is replaced by the install's
+ * carried stream, shifted by the node hours since it was built. Past the
+ * grace, or with any money in the live forecast, the live one stands.
+ * `live` [{atH, perSec}] or null; `carry` installCarryOf(...).gang.
+ * Returns {steps, why} or null (nothing to bridge).
+ */
+export const INSTALL_CARRY = { gangGraceH: 0.5 }
+export function gangBridgeOf(live, carry, { now = Date.now(), lifeStart = null, graceH = INSTALL_CARRY.gangGraceH } = {}) {
+  if (!carry || !Array.isArray(carry.steps) || !carry.steps.some((s) => fin(s?.perSec) && s.perSec > 0)) return null
+  if (!fin(lifeStart)) return null
+  const ageH = (now - lifeStart) / 3.6e6
+  if (!(ageH >= 0 && ageH < graceH)) return null
+  if (Array.isArray(live) && live.some((s) => fin(s?.perSec) && s.perSec > 0)) return null
+  const at = Date.parse(carry.at ?? '')
+  if (!fin(at) || at > now + 60e3) return null
+  const dH = Math.max(0, (now - at) / 3.6e6)
+  const s = carry.steps.filter((x) => fin(x?.atH) && fin(x?.perSec)).map((x) => ({ atH: x.atH - dH, perSec: x.perSec }))
+  const inForce = s.filter((x) => x.atH <= 0).pop()
+  const steps = [...(inForce ? [{ atH: 0, perSec: inForce.perSec }] : []), ...s.filter((x) => x.atH > 0)]
+  if (!steps.length) return null
+  return { steps, why: `the install's carried gang stream (built ${carry.at}, ${dH.toFixed(2)}h ago; $${(steps[0].perSec / 1e6).toFixed(1)}m/s now): gang.js's forecast has no money ${ageH.toFixed(2)}h into the life, inside the ${graceH}h post-install grace` }
+}
+
 export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), prev = null, si = 0.02 } = {}) {
   const carry = (why) => (prev && prev.install ? prev : { ok: null, why })
   if (!rec?.at || !fin(lastAugReset)) return carry('no install record, or no life stamp')
   const installAt = Date.parse(rec.at)
   // The install that began THIS life: act.js records it moments before the
   // install runs; the new life's lastAugReset is the install itself.
-  if (!fin(installAt) || rec.lastAugReset === lastAugReset || Math.abs(installAt - lastAugReset) > EXIT_JUMP.matchMin * 60e3) return { ok: null, why: 'the last install record is not the install that began this life' }
+  if (!installBeganLife(rec, lastAugReset)) return { ok: null, why: 'the last install record is not the install that began this life' }
   if (prev?.install && prev.install.at !== rec.at) prev = null
   const ex = rec.exits ?? null
   const preMean = fin(ex?.planH) ? ex.planH : null

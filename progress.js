@@ -169,8 +169,8 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH } from 'plan.js'
-import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, PRIORS as BAYES_PRIORS } from 'bayes.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, installCarryOf, gangBridgeOf } from 'plan.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
@@ -1431,6 +1431,12 @@ function* gangCarriedGen(ns, info) {
   // adopted policy's forecast carries its mode, split, members, ascensions
   // and wanted penalty; the respect-matched fresh gang below is the fallback.
   const own = gangCarriedSchedule(live, sched.length > 1 ? sched : null, sched.length > 1 ? gangSchedMemo?.respectPath ?? null : null)
+  // THE POST-INSTALL GAP (plan.gangBridgeOf): gang.js's forecast has no money
+  // for ~20 minutes after an install; within the grace the install's carried
+  // stream stands in (live BN9 2026-09-30 13:30Z: $0/s to 8h against the
+  // $126m/s the install priced).
+  const bridge = gangBridgeOf(own?.steps ?? null, installCarryOf(readJson(ns, '/tel/install-last.txt'), info?.lastAugReset)?.gang ?? null, { now: Date.now(), lifeStart: info?.lastAugReset ?? null })
+  if (bridge) return { steps: bridge.steps, why: `in ${live.faction}: ${bridge.why}` }
   if (own) return { steps: own.steps, why: `in ${live.faction}: ${own.why}` }
   if (sched.length === 1) return { steps: sched, why: `in ${live.faction}: the income a gang measured in this node (no fresh forecast in gang.txt)` }
   const path = gangSchedMemo?.respectPath ?? null
@@ -3643,11 +3649,18 @@ function incomePriorOf(ns, info, player) {
 }
 
 /**
- * THIS LIFE'S SCRIPT EXP RATE, A POSTERIOR: the formula's exp/s at this age
- * (freshPriorOf x freshErrOf.exp) updated by tel.js's measured script exp
- * rate (getTotalScriptExpGain), weighted by the hours this life has run
- * (bayes.ratePosterior: sd 0.3 x sqrt(1h / hours)). Early in a life the
- * formula carries it; hours in, the measurement. Null without either.
+ * THIS LIFE'S SCRIPT EXP RATE, A POSTERIOR: the prior updated by tel.js's
+ * measured script exp rate (getTotalScriptExpGain), weighted by the hours
+ * this life has run past its fresh-life ramp (bayes.afterRamp,
+ * bayes.ratePosterior: sd 0.3 x sqrt(1h / hours)). THE PRIOR is the rate
+ * the install that began this life carried (plan.installCarryOf `exp`,
+ * bayes.carriedRatePrior: the last life's posterior x the batch's exp gain,
+ * level-scaled — the number the install's simulation priced this life on),
+ * else the formula's exp/s at this age (freshPriorOf x freshErrOf.exp: the
+ * node's first life, a record lost). Live BN9 2026-09-30 13:30Z the formula
+ * prior with 34 exp/s measured at age 0.08h (the ramp, at 25% weight) read
+ * 1.4e3/s where the install simulated 7.0e3/s: EXIT JUMP AT INSTALL, +7h of
+ * the +10.3h (tools/sim/exitjump/attribute-1325.mjs). Null without either.
  */
 let expPostMemo
 function expPostOf(ns, info, player) {
@@ -3658,12 +3671,14 @@ function expPostOf(ns, info, player) {
     const ageH = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 3.6e6) : 0
     const fp = freshPriorOf(ns, info, player)
     const err = freshErrOf(ns, info)
-    const pr = fp?.pts && err?.exp ? formulaRatePrior(fp.pts, ageH, err.exp, { key: 'exp', what: 'exp' }) : null
+    const carried = carriedRatePrior(installCarryOf(readJson(ns, '/tel/install-last.txt'), info?.lastAugReset)?.exp ?? null, { level: player?.skills?.hacking ?? null, mult: player?.mults?.hacking_exp ?? null, what: 'exp' })
+    const pr = carried ?? (fp?.pts && err?.exp ? formulaRatePrior(fp.pts, ageH, err.exp, { key: 'exp', what: 'exp' }) : null)
     if (!pr) return null
     const t = readJson(ns, '/tel/status.txt')
     const age = Date.now() - Date.parse(t?.at ?? '')
-    const obs = age >= 0 && age < 5 * 60e3 && t?.expPerSec > 0 && ageH > 0 ? { perSec: t.expPerSec, hours: ageH, source: 'the running scripts\' exp (tel.js getTotalScriptExpGain)' } : null
-    expPostMemo = ratePosterior(pr, obs, { what: 'exp', none: 'no fresh script exp rate' })
+    const obs0 = age >= 0 && age < 5 * 60e3 && t?.expPerSec > 0 && ageH > 0 ? { perSec: t.expPerSec, hours: ageH, source: 'the running scripts\' exp (tel.js getTotalScriptExpGain)' } : null
+    const obs = afterRamp(obs0, BAYES_PRIORS.freshRampH)
+    expPostMemo = ratePosterior(pr, obs, { what: 'exp', none: obs0 ? `the first ${BAYES_PRIORS.freshRampH}h of a life is its ramp, not its rate` : 'no fresh script exp rate' })
   } catch {
     expPostMemo = null
   }
@@ -7785,6 +7800,26 @@ async function act(ns, canJoin, info, note) {
         // plan.differentBatchCheckOf fails INSTALLED A DIFFERENT BATCH on it).
         orders[orders.length - 1].pricedBatch = pricedBatch
         orders[orders.length - 1].batchCheck = batchCheck
+        // WHAT THE INSTALL CARRIES INTO THE NEXT LIFE (plan.installCarryOf;
+        // act.js copies it into /tel/install-last.txt): the beliefs the gate's
+        // simulation priced the next life on, for what that life cannot
+        // measure in its first minutes — the script exp posterior (with the
+        // level and hacking_exp multiplier it was read at) and the gang's
+        // carried stream (gang.js forecasts $0/s for ~20 min after an install).
+        orders[orders.length - 1].carry = (() => {
+          try {
+            const at = new Date().toISOString()
+            const ep = expPostOf(ns, info, player)
+            const gang = gateExitInputs?.carriedIncome?.gang ?? null
+            return {
+              at,
+              exp: ep && ep.perSec > 0 ? { perSec: ep.perSec, sdLn: ep.sd ?? null, level: player?.skills?.hacking ?? null, mult: player?.mults?.hacking_exp ?? null, at } : null,
+              gang: Array.isArray(gang) && gang.length ? { steps: gang, at } : null,
+            }
+          } catch {
+            return null
+          }
+        })()
         // THE EXITS THIS INSTALL RAN ON (act.js copies them into
         // /tel/install-last.txt, the record that outlives the life): the
         // actor's, the plan's 'now', the plan's commitment, and the verdict.

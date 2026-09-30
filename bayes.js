@@ -337,6 +337,17 @@ export const PRIORS = {
     // have lives (x1.9 either way at 80%): stated.
     tau: 0.5,
   },
+  // THE INSTALL'S CARRIED RATE AS THE NEXT LIFE'S PRIOR (carriedRatePrior):
+  // one life's scatter of the fleet's exp coefficient around the last life's
+  // measured one, on top of that posterior's own sd (x/÷ 1.47 at 80%):
+  // stated, not fitted.
+  carryLifeSdLn: 0.3,
+  // THE FRESH-LIFE RAMP (afterRamp): the first quarter hour of a life is the
+  // fleet re-rooting and prepping — the running scripts' exp rate there is
+  // not the life's rate (live BN9 2026-09-30 13:30Z: 34 exp/s at age 0.08h,
+  // 1.3e4/s at 0.17h, ~2e4/s from 0.5h on). Observations count their hours
+  // from its end: stated (the level reached 1490 by 0.17h twice today).
+  freshRampH: 0.25,
 }
 
 export const STOCK_TICK_S = 6 // StockMarket/data/Constants.ts:4 msPerStockUpdate
@@ -1568,6 +1579,44 @@ export function ratePosterior(prior, obs, { what = 'rate', none = 'nothing measu
     measured: obs,
     why: `${what} posterior: prior ${$}${prior.perSec.toExponential(2)}/s (x/÷ ${Math.exp(1.2816 * prior.sd).toFixed(1)}) updated by this life's ${$}${obs.perSec.toExponential(2)}/s over ${obs.hours.toFixed(2)}h (${obs.source}; weight ${(100 * w).toFixed(0)}%) -> median ${$}${Math.exp(mean).toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(1)} at 80% [${prior.why}]`,
   }
+}
+
+/**
+ * THE INSTALL'S OWN BELIEF AS THE NEXT LIFE'S PRIOR (plan.installCarryOf
+ * `exp`): the rate the install's simulation carried into this life — the
+ * last life's posterior `perSec` at its level `c.level`, times this life's
+ * multiplier over the one it was read at (`mult / c.mult`: the batch's gain,
+ * exactly what the install bought), at this life's `level` on the exit's
+ * (level + 50) shape (exitplan.expRateShape). sd: that posterior's own and
+ * one life's scatter (PRIORS.carryLifeSdLn). The same number the install
+ * priced the next life on, so the next life's first exit prices the same
+ * trajectory; its own measurement takes over as it accrues (ratePosterior).
+ * Null when the carry is incomplete. {mean, sd, perSec, source: 'carried', why}.
+ */
+export function carriedRatePrior(c, { level = null, mult = null, what = 'exp', lifeSdLn = PRIORS.carryLifeSdLn } = {}) {
+  if (!c || !(c.perSec > 0) || !(c.level > 0) || !(level > 0)) return null
+  const gain = mult > 0 && c.mult > 0 ? mult / c.mult : 1
+  const perSec = c.perSec * gain * ((level + 50) / (c.level + 50))
+  const sd0 = fin(c.sdLn) && c.sdLn > 0 ? c.sdLn : PRIORS.rateSdLn
+  const sd = Math.sqrt(sd0 * sd0 + lifeSdLn * lifeSdLn)
+  return {
+    mean: Math.log(perSec),
+    sd,
+    perSec,
+    source: 'carried',
+    why: `${what} carried by the install (${c.at ?? '?'}): ${c.perSec.toExponential(2)}/s at level ${Math.round(c.level)} x ${gain.toFixed(3)} (this life's multiplier over the install's) x (${Math.round(level)} + 50)/(${Math.round(c.level)} + 50) -> ${perSec.toExponential(2)}/s, x/÷ ${Math.exp(1.2816 * sd).toFixed(2)} at 80% (the install's own sd with one life's scatter)`,
+  }
+}
+
+/**
+ * A FRESH LIFE'S OBSERVATION COUNTS FROM THE END OF ITS RAMP: `obs.hours`
+ * (the life's age) less `rampH`; none inside the ramp — the fleet
+ * re-rooting is not the life's rate (PRIORS.freshRampH). null in, null out.
+ */
+export function afterRamp(obs, rampH = PRIORS.freshRampH) {
+  if (!obs || !fin(obs.hours)) return obs ?? null
+  const hours = obs.hours - (fin(rampH) && rampH > 0 ? rampH : 0)
+  return hours > 0 ? { ...obs, hours, source: `${obs.source ?? 'measured'}, hours after the ${rampH}h fresh-life ramp` } : null
 }
 
 /**
