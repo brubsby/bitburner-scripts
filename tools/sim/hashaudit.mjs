@@ -108,7 +108,14 @@ for (const n of [0, 10, 30, 50]) {
 console.log("\nQ3  REPUTATION");
 console.log(`  one generated contract: ${rw.factionRep.toFixed(0)} faction rep expected (difficulty ${rw.meanDifficulty.toFixed(2)}), shared over the joined hacking-work factions`);
 for (const kk of [k, 4, 2, 1]) console.log(`  final window's hashes -> contracts, ${kk} faction(s) sharing: exit ${H(run({ ...I, contractRep: { ...contractRep, factions: kk } }).hours)}`);
-console.log(`  Daedalus favor ${I.exitFavor} (donations need ${I.favorToDonate}): the leg is ground; a banked 150 (x2.5 rate, donations open) would be ${H(run({ ...I, repPerSec: I.repPerSec * 2.5 }).hours)} before the life it costs — not simulated`);
+{
+  // The favor banked in an earlier life (exitplan favorLife: a second install
+  // whose life joins Daedalus and grinds to 150), forced to that route; the
+  // plan-layer pricing of it and the other slot levers: tools/sim/slotlevers.mjs.
+  const R = 25000 * Math.expm1(0.019802627296179712 * 150);
+  const fl = X.bestExitPolicy({ ...I, favorLife: { rep: R }, eRep: ei.eRep, eBudget: ei.eBudget, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 2).best;
+  console.log(`  Daedalus favor ${I.exitFavor} (donations need ${I.favorToDonate}): the leg is ground; a banked 150 free would be ${H(run({ ...I, exitFavor: 150 }).hours)}; the life that banks it (a second install, forced): ${H(fl?.hours)} vs ${H(base.hours)}`);
+}
 
 // Q4 — the batcher's upgrades.
 console.log("\nQ4  INCREASE MAXIMUM MONEY / REDUCE MINIMUM SECURITY");

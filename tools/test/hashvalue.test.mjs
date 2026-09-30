@@ -221,7 +221,8 @@ export async function run() {
     const h = code("hashspend.js");
     c.examined(7);
     if (!/const cr = contractRepOf\(ns, info, player, out, fs9\)\s*\n\s*if \(cr\.rec\) out\.contractRep = cr\.rec/.test(p)) c.fail("progress.js exitInputsGen no longer attaches contractRep");
-    if (!/function contractRepOf[\s\S]{0,400}\/tel\/ctauto\.txt[\s\S]{0,1400}contractFactionCount\(player\.factions\)/.test(p)) c.fail("contractRepOf must require ctauto.js reporting and count factions by contractFactionCount");
+    // The count is the final window's (contractplan.finalWindowContractFactions, [SL5]): the joined ones when it is now, the exit faction alone after an install.
+    if (!/function contractRepOf[\s\S]{0,400}\/tel\/ctauto\.txt[\s\S]{0,1400}finalWindowContractFactions\(player\.factions/.test(p)) c.fail("contractRepOf must require ctauto.js reporting and count the final window's factions by finalWindowContractFactions");
     if (!/const toExit = finalWindow && k > 0 && \(player\.factions \?\? \[\]\)\.includes\(EXIT_FACTION\)/.test(h)) c.fail("hashspend.js must price the exit faction's share only in the final window, once it is joined");
     if (!/exitRep: toExit, contractLevels: 1/.test(h)) c.fail("hashspend.js's contract option must carry its exit reputation and the level it uses");
     if (!/\.\.\.\(toExit > 0 \? \{ policy: 'contracts' \} : \{\}\)/.test(h)) c.fail("hashspend.js must price the exit-bound contract as the POLICY (one contract against one sale ties by construction and would always sell)");

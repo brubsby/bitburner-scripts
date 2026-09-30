@@ -343,3 +343,33 @@ export function repToCross(favor, o = {}) {
   if (favor >= need) return 0
   return favorToRep(need) - favorToRep(favor)
 }
+
+/**
+ * FAVOR FROM IPvGO WINS, as a stream of rep-equivalent (exitplan
+ * favorStream). A win against a faction's AI that leaves the streak EVEN
+ * adds getMaxRep()/200 rep-equivalent to that faction's favor through the
+ * favor curve — only while the player is a MEMBER and while the node's total
+ * from that opponent (Go stats `rep`, kept through installs) is below
+ * getMaxRep() (Go/boardAnalysis/scoring.ts:66-78). getMaxRep() is 100k, or
+ * 200k/300k/400k at Source-File 14 levels 1/2/3 (Go/effects/effect.ts:30-43).
+ *
+ * Per game the chance of an even-streak win at win rate p is the stationary
+ * P(streak even and > 0) = p^2 / (1 + p): a loss resets the streak, a win
+ * moves it 0 -> 1 -> 2 -> ... (q_odd = p/(1+p), q_even = p q_odd).
+ *
+ * `gamesPerHour` and `pWin` are measured (go.js: this process's games, this
+ * life's wins); `banked` is the node's rep-equivalent already given to that
+ * opponent. Returns {repPerH, capRep, why} or {repPerH: null, why}.
+ */
+export function goFavorStreamOf({ gamesPerHour, pWin, sf14 = 0, banked } = {}) {
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  if (!fin(gamesPerHour) || gamesPerHour <= 0) return { repPerH: null, why: 'no measured Go game rate' }
+  if (!fin(pWin) || pWin < 0 || pWin > 1) return { repPerH: null, why: 'no measured Go win rate' }
+  if (!fin(banked) || banked < 0) return { repPerH: null, why: "the opponent's banked Go favor is unread (go.js favorRep)" }
+  const lvl = fin(sf14) ? sf14 : 0
+  const maxRep = lvl >= 3 ? 400e3 : lvl === 2 ? 300e3 : lvl === 1 ? 200e3 : 100e3
+  const capRep = Math.max(0, maxRep - banked)
+  const perGame = (pWin * pWin) / (1 + pWin)
+  const repPerH = gamesPerHour * perGame * (maxRep / 200)
+  return { repPerH, capRep, why: `${gamesPerHour.toFixed(0)} games/h at ${(pWin * 100).toFixed(1)}% won: ${perGame.toFixed(3)} favor steps a game of ${maxRep / 200} rep-equivalent each, ${Math.round(capRep)} of the node's ${maxRep} left` }
+}

@@ -108,7 +108,7 @@ const SCHEDULE = '/tel/factionplan.txt'
 const WD_BASE_HACKING = 3000
 
 import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
-import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, GRAFT_CITY } from 'graftplan.js'
+import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, sameGraftSchedule, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGangGen, trainRatio } from 'gangplan.js'
 
 // The whole faction space as data — see factions.js and [BC9].
@@ -129,7 +129,7 @@ import { joinWait, timeToMeet } from 'joinplan.js'
 import { snapshotView } from 'snapshot.js'
 // Pure: the expected contract stream, which is NOT script income and so is
 // invisible to getTotalScriptIncome (contractplan.js has the derivation).
-import { contractIncome, expectedReward, contractFactionCount, HACKING_WORK_FACTIONS } from 'contractplan.js'
+import { contractIncome, expectedReward, contractFactionCount, HACKING_WORK_FACTIONS, finalWindowJoinOf, finalWindowContractFactions } from 'contractplan.js'
 // Pure: the stock-market entry as an investment decision (stockplan.js).
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
@@ -162,7 +162,7 @@ import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg } from 'bodyplan
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
-import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross } from 'favor.js'
+import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross, goFavorStreamOf } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
 import { enter, leave } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
@@ -1467,6 +1467,30 @@ function* freshHacknetStreamsPassGen(info, inputs) {
 }
 
 /**
+ * THE FINAL WINDOW IS NOW: the committed install decision (last pass's plan,
+ * this life) is 'never' — no install before The Red Pill's. Read from the
+ * plan file, not the pass's context, so the join step (which runs before this
+ * pass's decisions) and the exit inputs builder read the same answer.
+ */
+function finalWindowNowOf(ns, info) {
+  const p = readJson(ns, PLAN_FILE)
+  return !!p && p.lastAugReset === info?.lastAugReset && p.decisions?.install?.key === 'never'
+}
+/** The last published exit inputs (this life) price the final window's contracts as the exit faction's reputation. */
+function contractsOnOf(ns, info) {
+  const rec = readJson(ns, '/tel/exitinputs.txt')
+  return !!rec && rec.lastAugReset === info?.lastAugReset && !!rec.inputs?.contractRep
+}
+/**
+ * A join the final window's contract policy declines (contractplan.
+ * finalWindowJoinOf), named in `todo`; true when the join may go ahead.
+ */
+function joinAllowed(ns, info, faction, todo) {
+  const v = finalWindowJoinOf(faction, { finalWindow: finalWindowNowOf(ns, info), contractsOn: contractsOnOf(ns, info), exitFaction: EXIT_FACTION })
+  if (!v.join) todo.push(v.why)
+  return v.join
+}
+/**
  * THE FINAL WINDOW'S HASHES AS THE EXIT FACTION'S REPUTATION (exitplan
  * contractRep): with hacknet SERVERS and ctauto.js solving, every hash from
  * the exit faction's join buys a generated contract, whose reputation is
@@ -1482,8 +1506,12 @@ function contractRepOf(ns, info, player, inputs, streams) {
   if (!(Date.now() - Date.parse(ct?.at ?? '') < 15 * 60e3)) return { rec: null, why: 'ctauto.js is not reporting: a generated contract would sit unsolved' }
   if (!HACKING_WORK_FACTIONS.has(EXIT_FACTION)) return { rec: null, why: `${EXIT_FACTION} offers no hacking work: contracts cannot pay it` }
   const r = expectedReward({ totalSourceFileLevels: totalSfLevels(info), nodeContractMoney: bitNodeMults(info?.currentNode)?.CodingContractMoney, hasHackingFaction: true, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
-  const joined = (player.factions ?? []).includes(EXIT_FACTION)
-  const k = (contractFactionCount(player.factions) ?? 0) + (joined ? 0 : 1)
+  // THE SHARE COUNT OF THE FINAL WINDOW'S CONTRACTS: when the final window is
+  // now, the hacking-work factions joined (and the exit faction until it is);
+  // a final window after an install starts with none and joins the exit
+  // faction alone (contractplan.finalWindowJoinOf, the join step): 1.
+  const fwNow = finalWindowNowOf(ns, info)
+  const k = finalWindowContractFactions(player.factions ?? [], { finalWindowNow: fwNow, exitFaction: EXIT_FACTION })
   if (!(r?.factionRep > 0) || !(k >= 1)) return { rec: null, why: 'contract reputation unreadable' }
   const hs = readJson(ns, '/tel/hashspend.txt')
   const lvl = hs?.lastAugReset === info?.lastAugReset && Date.now() - Date.parse(hs?.at ?? '') < 15 * 60e3 && Number.isInteger(hs?.contractLevel) ? hs.contractLevel : null
@@ -1494,7 +1522,7 @@ function contractRepOf(ns, info, player, inputs, streams) {
     ...(Array.isArray(streams?.hashCum) && streams.hashCum.length >= 2 ? { hashCum: streams.hashCum } : {}),
     ...(lvl !== null && live ? { hashPerSec: live, level0: lvl } : {}),
   }
-  return { rec, why: `generated contracts from the ${EXIT_FACTION} join: ${r.factionRep.toFixed(0)} rep each over ${k} hacking-work faction(s)${rec.hashCum ? '' : ' (no rebuilt-fleet model)'}${rec.hashPerSec ? `, the live fleet ${live.toFixed(2)} hashes/s from level ${lvl}` : ''}` }
+  return { rec, why: `generated contracts from the ${EXIT_FACTION} join: ${r.factionRep.toFixed(0)} rep each over ${k} hacking-work faction(s) (${fwNow ? 'the final window is now: those joined' : `a later final window joins ${EXIT_FACTION} alone`})${rec.hashCum ? '' : ' (no rebuilt-fleet model)'}${rec.hashPerSec ? `, the live fleet ${live.toFixed(2)} hashes/s from level ${lvl}` : ''}` }
 }
 
 /**
@@ -1869,7 +1897,10 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     // sleeve, charged unchecked): the exp candidate carries it as a money
     // outflow on the same trajectory (exitplan spendPerSec).
     const studyFee = CLASSES.Algorithms.cost * Math.max(...UNIVERSITIES.map((u) => u.costMult)) * (Number.isInteger(fleet.sleeves) ? fleet.sleeves : 1)
-    if (!expDisabled && by.exp > 0) fns.push(['exp', (b) => finish({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, spendPerSec: studyFee }, null)])
+    // The fleet's study exp reaches the player at a rate that does not rise
+    // with the player's level: FLAT beside a level-shaped script rate
+    // (exitplan expFlatPerSec), as exitInputsOf carries the fleet's transfer.
+    if (!expDisabled && by.exp > 0) fns.push(['exp', (b) => finish({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, ...(b.expScalesWithLevel ? { expFlatPerSec: (b.expFlatPerSec ?? 0) + by.exp } : {}), spendPerSec: studyFee }, null)])
     if (by.money > 0) fns.push(['money', (b) => finish({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
     const cands = fns.map(([o, f]) => [o, f(base)])
     // Ties within a minute are ties, not decisions: the earlier-listed
@@ -2075,7 +2106,14 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
     // gain), like any other switch.
     const committedSet = prev?.key === 'grafts' && liveOf(prev.grafts).length ? { from: 'the committed set', specs: liveOf(prev.grafts), startMoney: prev.startMoney ?? null, schedule: prev.schedule ?? null } : null
     const setsIn = []
-    if (committedSet && !sameGraftSet(committedSet.specs, specs)) {
+    // THE SCHEDULE IS PART OF THE SET: the same names grafted in other lives
+    // (graftplan.sameGraftSchedule) are a different trajectory, and a search
+    // that re-scheduled the committed names replaced the committed schedule
+    // under the unchanged key — no commitment rule, on the search's POINT
+    // (live BN9 2026-09-29 22:57Z 6 grafts in life 1, 23:38Z 8, the plan
+    // flipping between grafting this life and the final window). Now it is
+    // the 'grafts:search' challenger like any other set.
+    if (committedSet && !sameGraftSchedule(committedSet.specs, specs)) {
       setsIn.push({ key: 'grafts:search', from: "this pass's search", specs, startMoney, schedule })
       specs = committedSet.specs
       startMoney = committedSet.startMoney
@@ -3737,6 +3775,10 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
       : {}),
     exitRep: rp?.factionRep ?? 0,
     exitFavor: rp?.favor ?? 0,
+    // THE EXIT FACTION'S FAVOR FROM IPvGO WINS once joined (exitplan
+    // favorStream, favor.goFavorStreamOf): while go.js plays the exit
+    // faction's AI, measured on its games and wins.
+    ...goFavorStreamInputOf(ns, info),
     cycleHours: cyc?.cycleHours,
     multGainPerCycle: cyc?.multGainPerCycle,
     nextInstallGain: nextInstallGainOf(plan, pending, offers),
@@ -3832,6 +3874,29 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // final window in every decision's trajectory. Absent when none.
     ...(graftCarry ?? {}),
   }
+}
+
+/**
+ * THE EXIT FACTION'S FAVOR FROM IPvGO, for the exit inputs: {favorStream}
+ * when /tel/go.txt is fresh, of this life, plays the exit faction's AI and
+ * publishes that opponent's banked favor (go.js favorRep); else {} (the rep
+ * leg priced without it, as before) and the reason in `favorStreamWhy`.
+ */
+function goFavorStreamInputOf(ns, info) {
+  const g = readJson(ns, '/tel/go.txt')
+  if (!g || !(Date.now() - Date.parse(g.at ?? '') < 15 * 60e3)) return { favorStreamWhy: 'go.js is not reporting' }
+  if (g.opponent !== EXIT_FACTION) return { favorStreamWhy: `go.js plays ${g.opponent ?? '?'}, not ${EXIT_FACTION}` }
+  const start = Date.parse(g.processStartedAt ?? '')
+  if (!(start >= (info?.lastAugReset ?? Infinity))) return { favorStreamWhy: "go.js's process predates this life" }
+  const hrs = (Date.parse(g.at) - start) / 3.6e6
+  // Ten games at least, so one slow first game is not the rate.
+  if (!(hrs > 0 && g.gamesThisProcess >= 10)) return { favorStreamWhy: `too few Go games this process (${g.gamesThisProcess ?? 0})` }
+  const wins = g.wins ?? null
+  const losses = g.losses ?? null
+  if (!(typeof wins === 'number' && typeof losses === 'number' && wins + losses > 0)) return { favorStreamWhy: 'no Go win record this life' }
+  const s = goFavorStreamOf({ gamesPerHour: g.gamesThisProcess / hrs, pWin: wins / (wins + losses), sf14: g.sf14 ?? 0, banked: g.favorRep?.[EXIT_FACTION] ?? null })
+  if (!(s.repPerH > 0)) return { favorStreamWhy: s.why }
+  return { favorStream: { repPerH: s.repPerH, capRep: s.capRep }, favorStreamWhy: s.why }
 }
 
 /**
@@ -4298,7 +4363,10 @@ async function act(ns, canJoin, info, note) {
   const invites = canJoin ? sing.invitations() : (player.factionInvitations ?? [])
   // Non-exclusive invitations are free: joining costs nothing and can only add
   // augmentations, so they are accepted without analysis.
-  const wanted = invites.filter((f) => !CITY_FACTIONS.includes(f))
+  // THE FINAL WINDOW'S JOINS (contractplan.finalWindowJoinOf): where its
+  // hashes buy the exit faction's reputation, another hacking-work faction
+  // would split every contract — declined, named in todo.
+  const wanted = invites.filter((f) => !CITY_FACTIONS.includes(f) && joinAllowed(ns, info, f, todo))
   for (const f of wanted) {
     if (canJoin && !flags.dry) {
       if (order('join', [f], 'non-exclusive invitation')) did.push(`ordered join ${f}`)
@@ -4396,6 +4464,7 @@ async function act(ns, canJoin, info, note) {
         todo.push(`city factions could not be priced exactly (${pick.error}) — none joined`)
       } else {
         for (const f of cityInvites) {
+          if (!joinAllowed(ns, info, f, todo)) continue
           if (!pick.chosen.includes(f)) {
             todo.push(`${f} invite declined: the best compatible city set is [${pick.chosen.join(', ') || 'none'}] worth ${pick.value.toFixed(4)} ln(M)`)
             continue
@@ -4404,6 +4473,7 @@ async function act(ns, canJoin, info, note) {
         }
         for (const f of pick.chosen) {
           if (player.factions.includes(f) || cityInvites.includes(f)) continue
+          if (!joinAllowed(ns, info, f, todo)) continue
           let reqs = []
           try {
             reqs = sing.inviteReqs(f)
@@ -5710,7 +5780,7 @@ async function act(ns, canJoin, info, note) {
   // chain below, and ALSO taken beside a graft (a graft holds the slot for
   // hours; a join needs no slot, and the final window's Daedalus join is
   // priced in parallel with the grafts).
-  const joinTargetDue = !!(scheduleTarget && canJoin && !flags.dry && !player.factions.includes(scheduleTarget) && !wantCompany)
+  const joinTargetDue = !!(scheduleTarget && canJoin && !flags.dry && !player.factions.includes(scheduleTarget) && !wantCompany && joinAllowed(ns, info, scheduleTarget, todo))
   const joinTargetStep = () => {
     try {
       const reqs = sing.inviteReqs(scheduleTarget)

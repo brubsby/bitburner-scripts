@@ -161,14 +161,18 @@ export function graftSpecOf(aug, intelligence, { entropy = true } = {}) {
  *
  * The families searched, each a prefix moved out of the final window
  * (exitplan `lifeGrafts`, life 1 = the current life):
+ *   costliest    -> life 1   descending price, prerequisites first — the
+ *                            grafts whose money legs the final window pays
+ *                            dearest
  *   cheapest     -> life 1   ascending price, prerequisites first — what the
  *                            current balance already covers
  *   set order    -> life 1   the greedy's own order (strongest first)
  *   set order    -> life 2   the next life
  * each at prefix sizes 1,2,3,4,6,8,12,16,24,... until two sizes in a row do
- * not improve on it; the rest stays in the final window at the set's start
- * fraction. The trajectory with the schedule against the same set in the
- * final window alone is withH - withoutH like every other choice here. Returns
+ * not improve on it, then every size outward from the family's best while it
+ * improves; the rest stays in the final window at the set's start fraction.
+ * The trajectory with the schedule against the same set in the final window
+ * alone is withH - withoutH like every other choice here. Returns
  * {h, lifeGrafts [{name, life}], order (indices into chosen: life grafts first,
  * then the final window's in set order), startMoney, summary}.
  */
@@ -200,51 +204,97 @@ function pricerOf(priceExit, priceExitGen) {
 }
 export const SCHEDULE_MIN_GAIN = { hours: 0.25, rel: 0.005 }
 const PREFIXES = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48]
+/**
+ * An order of `idx` with every prerequisite (within the set) before what
+ * needs it, the ready item picked by `better(a, b)` < 0. Empty when the
+ * prerequisites cannot be ordered (a cycle, or one missing from the set that
+ * no owned augmentation satisfies — the caller's set came from a search that
+ * already checked them, so this does not happen in practice).
+ */
+function readyOrder(chosen, idx, better) {
+  const out = []
+  const left = new Set(idx)
+  while (left.size) {
+    const ready = [...left].filter((i) => (Array.isArray(chosen[i].prereqs) ? chosen[i].prereqs : []).every((p) => !chosen.some((c, j) => c.name === p && left.has(j))))
+    if (!ready.length) return []
+    ready.sort(better)
+    out.push(ready[0])
+    left.delete(ready[0])
+  }
+  return out
+}
 export function* scheduleGen({ chosen, specs, priceExit, priceExitGen = null, without, join = 0, fraction = 0, finalH, deadline = () => false }) {
   const price = pricerOf(priceExit, priceExitGen)
   const n = chosen.length
   const idx = chosen.map((_, i) => i)
   // Cheapest first, prerequisites (within the set) before what needs them.
-  const cheap = []
-  {
-    const left = new Set(idx)
-    while (left.size) {
-      const ready = [...left].filter((i) => (Array.isArray(chosen[i].prereqs) ? chosen[i].prereqs : []).every((p) => !chosen.some((c, j) => c.name === p && left.has(j))))
-      if (!ready.length) break
-      ready.sort((a, b) => specs[a].cost - specs[b].cost || a - b)
-      cheap.push(ready[0])
-      left.delete(ready[0])
-    }
-    if (cheap.length < n) cheap.length = 0
-  }
+  const cheap = readyOrder(chosen, idx, (a, b) => specs[a].cost - specs[b].cost || a - b)
+  // COSTLIEST FIRST: the final window pays each graft it keeps with a money
+  // leg on the post-install book (the leg the slot waits behind), while the
+  // current life pays from a balance that already covers it — so the grafts
+  // worth moving out of the window are the dearest, up to the life's own
+  // length of slot (past it the life lengthens). Live BN9 2026-09-30 00:00Z:
+  // the cheapest 8 in life 1 read 28.19h; the dearest 9 read 23.32h.
+  const dear = readyOrder(chosen, idx, (a, b) => specs[b].cost - specs[a].cost || a - b)
   const families = [
-    ...(cheap.length ? [{ name: 'cheapest first, current life', order: cheap, life: 1 }] : []),
+    ...(dear.length === n ? [{ name: 'costliest first, current life', order: dear, life: 1 }] : []),
+    ...(cheap.length === n ? [{ name: 'cheapest first, current life', order: cheap, life: 1 }] : []),
     { name: 'set order, current life', order: idx, life: 1 },
     { name: 'set order, next life', order: idx, life: 2 },
   ]
   let best = { h: finalH, lifeGrafts: [], order: idx, startMoney: null, family: 'final window only', c: 0 }
   const tried = []
   let truncated = false
+  const priceAt = function* (fam, c) {
+    const early = new Set(fam.order.slice(0, c))
+    const lifeGrafts = fam.order.slice(0, c).map((i) => ({ ...specs[i], life: fam.life }))
+    const rest = idx.filter((i) => !early.has(i))
+    const restCost = rest.reduce((a, i) => a + specs[i].cost, 0)
+    const startMoney = rest.length ? fraction * (join + restCost) : 0
+    const h = yield* price({ ...without, lifeGrafts, finalGrafts: rest.map((i) => specs[i]), graftStartMoney: startMoney })
+    tried.push({ family: fam.name, c, h: num(h) ? +h.toFixed(3) : null })
+    if (num(h) && h < best.h) best = { h, lifeGrafts: lifeGrafts.map((g) => ({ name: g.name, life: fam.life })), order: [...fam.order.slice(0, c), ...rest], startMoney, family: fam.name, c }
+    return h
+  }
   for (const fam of families) {
     let famBest = Infinity
+    let famC = null
     let worse = 0
+    const seen = new Map()
     for (const c of [...PREFIXES.filter((k) => k < n), n]) {
       if (deadline()) {
         truncated = true
         break
       }
-      const early = new Set(fam.order.slice(0, c))
-      const lifeGrafts = fam.order.slice(0, c).map((i) => ({ ...specs[i], life: fam.life }))
-      const rest = idx.filter((i) => !early.has(i))
-      const restCost = rest.reduce((a, i) => a + specs[i].cost, 0)
-      const startMoney = rest.length ? fraction * (join + restCost) : 0
-      const h = yield* price({ ...without, lifeGrafts, finalGrafts: rest.map((i) => specs[i]), graftStartMoney: startMoney })
-      tried.push({ family: fam.name, c, h: num(h) ? +h.toFixed(3) : null })
-      if (num(h) && h < best.h) best = { h, lifeGrafts: lifeGrafts.map((g) => ({ name: g.name, life: fam.life })), order: [...fam.order.slice(0, c), ...rest], startMoney, family: fam.name, c }
+      const h = yield* priceAt(fam, c)
+      seen.set(c, h)
       if (num(h) && h < famBest) {
         famBest = h
+        famC = c
         worse = 0
       } else if (++worse >= 2) break
+    }
+    if (truncated) break
+    // EVERY SIZE BETWEEN THE GRID POINTS AROUND THE FAMILY'S BEST: the exit
+    // over the prefix size is unimodal-ish but its optimum sits where the
+    // moved grafts' slot fills the life, which the doubling grid steps over
+    // (live 00:00Z: 8 -> 12 skipped the best, 9). Walk outward from the
+    // best one size at a time while it improves, both ways.
+    if (famC !== null) {
+      for (const dir of [1, -1]) {
+        let c = famC + dir
+        while (c >= 1 && c <= n && !truncated) {
+          if (deadline()) {
+            truncated = true
+            break
+          }
+          const h = seen.has(c) ? seen.get(c) : yield* priceAt(fam, c)
+          seen.set(c, h)
+          if (!(num(h) && h < famBest)) break
+          famBest = h
+          c += dir
+        }
+      }
     }
     if (truncated) break
   }
@@ -300,6 +350,19 @@ export function sameGraftSet(a, b) {
   const A = n(a)
   const B = n(b)
   return A.size === B.size && [...A].every((x) => B.has(x))
+}
+
+/**
+ * Same graft names AND the same life for each (spec.life: an earlier life,
+ * absent: the final window) — the same trajectory. Order within a life is
+ * not compared (the executor grafts what its prerequisites allow).
+ */
+export function sameGraftSchedule(a, b) {
+  if (!sameGraftSet(a, b)) return false
+  const lifeOf = (xs) => new Map((Array.isArray(xs) ? xs : []).filter((g) => typeof g?.name === 'string').map((g) => [g.name, Number.isInteger(g.life) ? g.life : 0]))
+  const A = lifeOf(a)
+  const B = lifeOf(b)
+  return [...A].every(([n, l]) => B.get(n) === l)
 }
 
 /**

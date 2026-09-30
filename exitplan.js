@@ -73,6 +73,7 @@ import { serveOrFarm } from 'expfarm.js'
 import { cadencePosterior } from 'bayes.js'
 import { capitalFV } from 'hacknetplan.js'
 import { contractsForHashes } from 'contractplan.js'
+import { favorToRep, repToFavor, addRepToFavor } from 'favor.js'
 import { drain } from 'coop.js'
 import { capitalOf, isShaped, capitalEarnAt, capitalRateAt, capitalGain, capitalStepFn, rateTab } from 'traderw.js'
 
@@ -1280,6 +1281,9 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // What the earlier lives' grafts did to the player's multipliers: exp and
   // the reputation/donation rates act from the final window on (below).
   let lifeGE = 1
+  // The exit faction's favor at the final window: today's, or what a favor life banked (o.favorLife).
+  let favorBanked = num(exitFavor) && exitFavor > 0 ? exitFavor : 0
+  let favorLifeOut = null
   let lifeLegsOut = []
   let perLifeOut = null
   if (installsFirst > 0) {
@@ -1455,6 +1459,33 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     }
     if (i < installsFirst) mult *= Math.pow(cycleAt(i, t), installsFirst - i)
     lifeLegsOut = lifeLegs
+    // THE EXIT FACTION'S FAVOR BANKED IN AN EARLIER LIFE (o.favorLife {rep}):
+    // the LAST life before the final window (life installsFirst, a fresh life
+    // after an install — the current one cannot reach the join here) joins
+    // the exit faction and grinds `rep` before its install, which converts it
+    // to favor (Faction.ts:79 prestigeAugmentation: setFavor(addRepToFavor(
+    // favor, playerReputation))). The final window's reputation then runs at
+    // x(1 + favor/100) (reputation.ts:8-13) and, past favorToDonate
+    // (donation.ts:17), may be donated. The life's own legs are that window's
+    // join (money in hand from the install balance, the join level) and the
+    // rep leg, simulated as a final window of the policy one install shorter
+    // (no grafts, no climb): it lasts max(its cycle, those legs). Its batch is
+    // held at the cadence's (the Daedalus augmentations the banked rep could
+    // buy are not simulated — a floor). Absent, or a policy with fewer than
+    // two installs: no favor life, exactly as before.
+    const fl = o.favorLife
+    if (fl && pos(fl.rep) && installsFirst >= 2 && pos(terminalRep)) {
+      const nested = exitHours({ ...o, favorLife: null, favorStream: null, lifeGrafts: (Array.isArray(o.lifeGrafts) ? o.lifeGrafts : []).filter((g) => Number.isInteger(g?.life) && g.life < installsFirst), finalGrafts: [], graftStartMoney: 0, fourS: four && four.when === 'life1' ? four : null, covenant: null, terminalRep: fl.rep, exitRep: 0, exitLevel: 1, finalRootCost: 0, freshExpLagH: 0, slotBusyH: 0, donationCost: null }, installsFirst - 1, true)
+      if (!num(nested.hours) || !num(nested.finalStartH)) return { hours: null, why: `could not price the favor life (${fl.rep} rep): ${nested.why ?? 'unpriced'}` }
+      const L = nested.hours - nested.finalStartH
+      const last = lifeLegs.find((l) => l.life === installsFirst)
+      const lenLast = last ? last.lifeH : cycleHours
+      const ext = Math.max(0, L + (last ? last.slotH : 0) - lenLast)
+      h += ext
+      const f1 = addRepToFavor(num(exitFavor) && exitFavor > 0 ? exitFavor : 0, fl.rep)
+      favorLifeOut = { life: installsFirst, rep: fl.rep, legsH: L, lifeH: lenLast + ext, extraH: ext, favor: f1 }
+      favorBanked = f1
+    }
     // THE PRICED PER-LIFE GAIN against what the purchase model buys (plan
     // perLifeGainCheckOf: PER-LIFE GAIN UNBOUGHT): the later lives' mean ln
     // gain, and the most a life of this length can buy — its modelled money
@@ -1489,15 +1520,28 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // re-initialises, Prestige.ts:166-170).
     cash = num(installCash) && installCash >= 0 ? installCash : 1262
     legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: D(() => `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}`) })
+    if (favorLifeOut) legs.push({ leg: 'favor life', hours: favorLifeOut.extraH, detail: D(() => `life ${favorLifeOut.life} joins the exit faction and banks ${Math.round(favorLifeOut.rep)} rep in ${favorLifeOut.legsH.toFixed(2)}h (life ${favorLifeOut.lifeH.toFixed(2)}h, +${favorLifeOut.extraH.toFixed(2)}h): favor ${favorLifeOut.favor.toFixed(1)} in the final window`) })
   }
 
   // The exp rate can rise mid-window (a Covenant sleeve's transfer), so the
   // legs read this rather than the input.
   let expRate = expPerSec
+  // THE PLAYER'S EXP MULTIPLIERS DO NOT REACH THE SLEEVES' TRANSFER: the flat
+  // part of a shaped rate (expFlatPerSec, the fleet's exp to the player) is
+  // applied without the player's hacking_exp ("The receiving sleeves and the
+  // player do not apply their xp multipliers from augs", applySleeveGains,
+  // Sleeve/Work/Work.ts:16-24) — so a graft's or a batch's exp multiplies the
+  // rest only. It multiplied the whole rate: live BN9 2026-09-30 the fleet's
+  // 66 exp/s studying read x4.2 (x2.26 life grafts, x1.86 the batch) and
+  // priced the fleet's study at -0.81h where it is ~0.
+  const flatIn = expScalesWithLevel === true && pos(hacking) && pos(expFlatPerSec) && pos(expRate) ? Math.min(expFlatPerSec, expRate) : 0
+  const byPlayerMult = (m) => {
+    if (pos(expRate)) expRate = (expRate - flatIn) * m + flatIn
+  }
   // Earlier lives' grafts' hacking_exp (lifeGrafts), from the final window on.
-  if (lifeGE !== 1 && pos(expRate)) expRate *= lifeGE
+  if (lifeGE !== 1) byPlayerMult(lifeGE)
   // The batch's hacking_exp scales the player's own exp from the install on.
-  if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1 && pos(expRate)) expRate *= installGains.exp
+  if (installsFirst > 0 && pos(installGains?.exp) && installGains.exp >= 1) byPlayerMult(installGains.exp)
   // preInstallExpMult: added as an AMOUNT, so it is removed exactly before the
   // climb whatever is added to the rate in between (a Covenant sleeve).
   let preExpBoost = installsFirst === 0 && pos(preInstallExpMult) && preInstallExpMult !== 1 && pos(expRate) ? expRate * (preInstallExpMult - 1) : 0
@@ -1548,6 +1592,23 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
+  // THE SLEEVES' EXP TRANSFER ACROSS THE WINDOW (sleeveExp): it reaches the
+  // player from the window's start, not only on the climb — every money leg,
+  // the join level and the level-scaled rep leg bank it, and at a fresh
+  // life's level 1 the scripts' own rate is a sliver of it (live BN9
+  // 2026-09-30: 66 exp/s studying against ~18 exp/s from the scripts at
+  // level 1). Priced on the climb alone (sleeve.js's study price) it could
+  // not move the exit at all; across the window it is small but real
+  // (-0.015h for the fleet there, tools/sim/slotlevers.mjs lever 3). FLAT beside
+  // the level-shaped rate (the player's exp mults do not apply to it:
+  // applySleeveGains), at the rate in force when the window opens (a delay
+  // or ramp ending inside the window is priced from the climb on only — a
+  // floor). Taken back out before the climb, which adds it piecewise itself.
+  const sExpW = sleeveExp && (pos(sleeveExp.perSec) || (Array.isArray(sleeveExp.steps) && sleeveExp.steps.some((x) => pos(x?.perSec)))) ? sleeveRateFn(sleeveExp)(finalStart) : 0
+  if (sExpW > 0) {
+    expRate = (pos(expRate) ? expRate : 0) + sExpW
+    if (shaped) expFlat += sExpW
+  }
   let slotH = 0
   // THE WORK SLOT HELD FROM NOW (o.slotBusyH): something else occupies it for
   // this many hours first — the gang's karma grind (gangworth.gangExit). Only
@@ -1635,7 +1696,9 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     mult *= gH
     // hacking_money and its entropy: the level-scaled income from the window on.
     incomeAtLevel1 *= gM
-    if (pos(expRate)) expRate *= gE
+    // The player's exp multiplier: not the flat part (the sleeves', applySleeveGains).
+    const flatNow = shaped ? expFlat : sExpW
+    if (pos(expRate)) expRate = (expRate - flatNow) * gE + flatNow
     preExpBoost *= gE
     if (pos(repRate)) repRate *= graftRep
     if (pos(donation)) donation /= graftRep
@@ -1697,18 +1760,37 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // Reputation per hour is held at today's level-rate: a floor after an
     // install, when the level climbs back.
     const wwd = o.workWhileDonating === true
+    // THE EXIT FACTION'S FAVOR. repPerSec (and a sleeve's term) is a BASE
+    // rate — measured / (1 + favor/100) of the faction worked (progress.js
+    // measuredBaseRepPerSec) — and faction work pays x(1 + favor/100) of the
+    // faction worked (reputation.ts:8-13; SleeveFactionWork.getReputationRate
+    // passes the faction's favor too), so the exit faction's own favor scales
+    // both: today's (exitFavor), or what a favor life banked (favorBanked).
+    // THE FAVOR IT GAINS DURING THE LEG (o.favorStream {repPerH, capRep}):
+    // IPvGO wins against a faction's AI add favor to it while the player is a
+    // member (Go/boardAnalysis/scoring.ts:66-78: every second win of a streak,
+    // addRepToFavor(favor, getMaxRep()/200)), until the node's total reaches
+    // getMaxRep() (Go/effects/effect.ts:30-43: 100k without Source-File 14),
+    // `capRep` of it left: rep-equivalent per hour from the join. Contracts
+    // are paid without favor (gainCodingContractReward).
+    const fav0 = favorBanked
+    const fStream = o.favorStream && pos(o.favorStream.repPerH) ? o.favorStream : null
+    const fCap = fStream ? (num(fStream.capRep) && fStream.capRep >= 0 ? fStream.capRep : Infinity) : 0
+    const fmAt = fStream ? (tj) => 1 + repToFavor(favorToRep(fav0) + Math.min(fCap, fStream.repPerH * Math.max(0, tj))) / 100 : () => 1 + fav0 / 100
+    const fm0 = fmAt(0)
+    const P0 = pos(repRate) ? repRate : 0
     let r = hoursToRep(terminalRep, {
       rep0: exitRep,
-      repPerSec: wwd ? repRate : fleetOn ? (pos(repRate) ? repRate : 0) + sRep(h) : repRate,
+      repPerSec: wwd ? P0 * fm0 : fleetOn ? (P0 + sRep(h)) * fm0 : pos(repRate) ? repRate * fm0 : repRate,
       donationCost: donation,
-      favor: exitFavor,
+      favor: fav0,
       favorToDonate,
       moneyLeg,
       workWhileDonating: wwd,
-      sleeveRepPerSec: wwd && fleetOn ? sRep(h) : 0,
+      sleeveRepPerSec: wwd && fleetOn ? sRep(h) * fm0 : 0,
       slotFreeAt: Math.max(0, Math.max(busyH, graftDone - finalStart) - (h - finalStart)),
     })
-    if (wwd && r.how === 'ground' && fleetOn) r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: (pos(repRate) ? repRate : 0) + sRep(h) })
+    if (wwd && r.how === 'ground' && fleetOn) r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: (P0 + sRep(h)) * fm0 })
     // GROUND REPUTATION AS A TRAJECTORY. Faction-work rep is linear in the
     // player's hacking level (reputation.ts:16), and after an install the
     // level restarts from 1 and climbs as exp accrues — so the rep leg runs
@@ -1716,8 +1798,8 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // term is not scaled (sleeves keep their skills across installs) and
     // joins at its delayH, measured FROM NOW like sleeveExp. Integrated in
     // two-minute steps; the last lands exactly.
-    if (r.how === 'ground' && (fleetOn || installsFirst > 0 || cRep)) {
-      const P = pos(repRate) ? repRate : 0
+    const groundLeg = () => {
+      const P = P0
       const legStart = h
       const need = terminalRep - exitRep
       const varies = installsFirst > 0 && pos(hacking)
@@ -1739,9 +1821,9 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       // integral ([FM8]) — the rep leg was ~40% of the plan pass's CPU.
       // A rate that does not vary with the level steps from one sleeve
       // break to the next.
-      const r0 = P * scale(exp) + sRep(legStart)
+      const r0 = (P * scale(exp) + sRep(legStart)) * fm0
       const est = r0 > 0 ? need / r0 / 3600 : 1e4
-      const step = varies || cRep ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
+      const step = varies || cRep || fStream ? Math.max(1 / 30, Math.min(1e4, est) / (num(o.repSteps) && o.repSteps > 0 ? o.repSteps : REP_STEPS)) : 1e4
       let acc = cAt(0)
       let t = 0
       let e = exp
@@ -1758,17 +1840,19 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         // Land exactly on the sleeve's next rate change inside this step.
         const nb = fleetOn ? sleeveBreaks(sleeveRep, legStart + t)[0] : undefined
         const dt = Math.min(1e4 - t + 1e-9, typeof nb === 'number' && nb - (legStart + t) < step ? Math.max(1e-9, nb - (legStart + t)) : step)
-        // The sleeve's rate is constant inside the step (breaks end steps).
+        // The sleeve's rate is constant inside the step (breaks end steps);
+        // the favor multiplier is read at both ends, as the level is.
         const sec = dt * 3600
-        const sr = (fleetOn ? sRep(legStart + t) : 0) + (cRep ? (cAt(t + dt) - cAt(t)) / sec : 0)
-        const r1 = lvlRate(L) + sr
+        const sl = fleetOn ? sRep(legStart + t) : 0
+        const cr = cRep ? (cAt(t + dt) - cAt(t)) / sec : 0
+        const r1 = (lvlRate(L) + sl) * fmAt(t) + cr
         let e2 = e
         let L2 = L
         if (varies) {
           e2 = aff ? affineStepFrom(e, L, dt, mult, aff, expAt()) : expAdv(e, dt)
           L2 = contLevel(e2, mult)
         }
-        const r2 = lvlRate(L2) + sr
+        const r2 = (lvlRate(L2) + sl) * fmAt(t + dt) + cr
         const add = ((r1 + r2) / 2) * sec
         if (add > 0 && acc + add >= need) {
           // acc + r1 x + (r2 - r1) x^2 / (2 sec) = need, 0 < x <= sec.
@@ -1783,7 +1867,26 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         L = L2
         t += dt
       }
-      r = { hours: t, how: 'ground', contracts: cRep && num(t) ? Math.min(need, cAt(t)) : 0 }
+      return { hours: t, how: 'ground', contracts: cRep && num(t) ? Math.min(need, cAt(t)) : 0 }
+    }
+    const trajectory = fleetOn || installsFirst > 0 || cRep || fStream
+    if (r.how === 'ground' && trajectory) r = groundLeg()
+    // DONATING IS AN OPTION, NOT AN OBLIGATION (o.repRoute 'donate' |
+    // 'ground'; absent: both): past the threshold the player may still
+    // grind, and with a banked favor (x2.5 at 150) and a level that climbs
+    // after the install the grind can beat saving the money. The two are
+    // different TRAJECTORIES, not two leg lengths — a ground leg holds the
+    // work slot (a graft, a gym campaign binds against it) and a donation
+    // does not — so each is simulated to the exit and the sooner returned.
+    // Only where a favor is banked or streamed, so a favor-0 threshold
+    // (BitNode 8) prices as before.
+    else if (typeof r.how === 'string' && r.how.startsWith('donated') && (fav0 > 0 || fStream) && o.repRoute !== 'donate') {
+      if (o.repRoute === 'ground') r = trajectory ? groundLeg() : hoursToRep(terminalRep, { rep0: exitRep, repPerSec: pos(repRate) ? repRate * fm0 : repRate })
+      else {
+        const a = exitHours({ ...o, repRoute: 'donate' }, installsFirst, quiet)
+        const b = exitHours({ ...o, repRoute: 'ground' }, installsFirst, quiet)
+        return num(b.hours) && (!num(a.hours) || b.hours < a.hours) ? b : a
+      }
     }
     if (!num(r.hours)) return { hours: null, why: `could not price the reputation leg: ${r.how}` }
     h += r.hours
@@ -1800,6 +1903,10 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // The last graft finishes before the install that starts the climb.
   // The terminal install ends a pre-install exp bonus: the climb runs without it.
   if (preExpBoost !== 0) expRate = Math.max(0, expRate - preExpBoost)
+  if (sExpW > 0) {
+    expRate = Math.max(0, expRate - sExpW)
+    if (shaped) expFlat = Math.max(0, expFlat - sExpW)
+  }
   if (graftDone > h) {
     legs.push({ leg: 'grafts finish', hours: graftDone - h, detail: D(() => 'the climb waits for the last graft (an install cancels one in progress)') })
     h = graftDone
@@ -1886,7 +1993,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
 
   // The earlier lives' grafting legs, for the executor: life 1's length is
   // how long the current life is held open for its grafts.
-  return { hours: h, legs, mult, ...(perLifeOut ? { perLife: perLifeOut } : {}), ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
+  return { hours: h, legs, mult, finalStartH: finalStart, ...(favorLifeOut ? { favorLife: favorLifeOut } : {}), ...(perLifeOut ? { perLife: perLifeOut } : {}), ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
 }
 
 /**

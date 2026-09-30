@@ -351,8 +351,10 @@ export async function run() {
   {
     c11.examined(6);
     // Donation-bound exit rep (a passive money leg), so the gym can overlap.
+    // repRoute 'donate': at favor 200 the grind (x3) is the other trajectory
+    // exitHours now prices beside it (XP-route); this check is the donation's.
     const base = {
-      money: 1e12, incomePerSec: 1e9, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 1e7, repPerSec: 50,
+      money: 1e12, incomePerSec: 1e9, hacking: 3000, hackingExp: 1e12, hackingMult: 5, expPerSec: 1e7, repPerSec: 50, repRoute: "donate",
       exitRep: 0, exitFavor: 200, favorToDonate: 150, donationCost: 5e13, terminalRep: 2.5e6,
       exitLevel: 3000, joinMoney: 100e9, cycleHours: 3, multGainPerCycle: 1.2,
     };

@@ -141,6 +141,44 @@ export const HACKING_WORK_FACTIONS = new Set([
 export const contractFactionCount = (factions) => (Array.isArray(factions) ? factions.filter((f) => HACKING_WORK_FACTIONS.has(f)).length : null)
 
 /**
+ * THE FINAL WINDOW'S JOINS, WHERE ITS HASHES BUY THE EXIT FACTION'S
+ * REPUTATION. In the life that ends with The Red Pill every hash after the
+ * exit faction's join buys a generated contract, and a contract's
+ * reputation is split over EVERY joined hacking-work faction (one at random
+ * or evenly, gainCodingContractReward) — so each other hacking-work faction
+ * joined in that life takes its share of the contracts off the rep leg, the
+ * leg the work slot waits behind. What such a join buys in the final window:
+ * augmentations for the terminal install's batch (not simulated by the exit;
+ * the best, Neuralstimulator's hacking_exp x1.12 as an upper bound from the
+ * window's start, loses to Daedalus alone: tools/sim/slotlevers.mjs lever 2b),
+ * Go favor only for a faction played (the exit faction), nothing else the
+ * exit prices. So in the final window, while the contracts pay the exit
+ * faction (`contractsOn`), a hacking-work faction other than the exit
+ * faction is not joined. Anywhere else a join is decided as before.
+ * Factions reset at every install (prestigeAugmentation), so the policy
+ * holds k at the exit faction alone for a final window that starts fresh.
+ * Returns {join: true} or {join: false, why}.
+ */
+export function finalWindowJoinOf(faction, { finalWindow = false, contractsOn = false, exitFaction = 'Daedalus' } = {}) {
+  if (finalWindow !== true || contractsOn !== true) return { join: true }
+  if (faction === exitFaction || !HACKING_WORK_FACTIONS.has(faction)) return { join: true }
+  return { join: false, why: `${faction}: not joined in the final window — it would take a share of every generated contract's reputation from the ${exitFaction} leg (hacking-work factions split it), and nothing it sells reaches the exit` }
+}
+
+/**
+ * The contract share count k the final window will have: when the final
+ * window is now, the hacking-work factions joined (and the exit faction when
+ * it is not yet); a final window after an install starts with no faction
+ * joined and, under finalWindowJoinOf, joins the exit faction alone: 1.
+ */
+export function finalWindowContractFactions(joined, { finalWindowNow = false, exitFaction = 'Daedalus' } = {}) {
+  if (finalWindowNow !== true) return 1
+  const k = contractFactionCount(joined)
+  if (k === null) return null
+  return k + (joined.includes(exitFaction) ? 0 : 1)
+}
+
+/**
  * GENERATED CONTRACTS FROM HASHES (Hacknet "Generate Coding Contract",
  * HashUpgradesMetadata.tsx: costPerLevel 25; HashUpgrade.getCost: the k-th
  * purchase of a life costs 25 x k, the level resetting at every install,

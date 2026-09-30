@@ -822,6 +822,13 @@ export async function main(ns) {
       // Every opponent's live bonus: all of them apply at once.
       const bonuses = {}
       for (const [name, st] of Object.entries(all)) if (typeof st?.bonusPercent === 'number') bonuses[name] = Number(st.bonusPercent.toFixed(3))
+      // THE FAVOR EACH OPPONENT'S WINS HAVE GIVEN ITS FACTION this node, as
+      // rep-equivalent (getStats `rep`, netscriptGoImplementation.ts:378-396;
+      // kept through installs, capped at getMaxRep()): what is left of it is
+      // the favor a member still gains from winning (favor.goFavorStreamOf,
+      // the exit's favorStream).
+      const favorRep = {}
+      for (const [name, st] of Object.entries(all)) if (typeof st?.rep === 'number') favorRep[name] = Math.round(st.rep)
 
       // The solver alarm rides the same write as everything else, so a reader
       // that already parses /tel/go.txt gets it for free and one that only
@@ -841,6 +848,7 @@ export async function main(ns) {
         factionRepBonusPct: Number(bonusPercent.toFixed(3)),
         factionRepMult: Number((1 + bonusPercent / 100).toFixed(4)),
         bonuses,
+        favorRep,
         gamesSinceSwitch,
         finalScore,
         solverShare: solver.solverShare,
