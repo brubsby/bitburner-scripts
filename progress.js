@@ -164,13 +164,13 @@ import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, inst
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross, goFavorStreamOf } from 'favor.js'
 import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
-import { enter, leave } from 'trace.js'
+import { enter, leave, pageBoot } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH } from 'plan.js'
-import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, PRIORS as BAYES_PRIORS } from 'bayes.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
@@ -268,7 +268,7 @@ const RAISE_CEILING = (mult) => 8.45 + 0 * mult
 
 export async function main(ns) {
   ns.ramOverride(2.6)
-  PLANNER_BOOT = Date.now()
+  PAGE_BOOT = pageBoot()
   // Bracketed: this runs before the pass's own 'progress' section, and the
   // 2026-09-27 freeze left no open section — so anything here must be visible.
   enter('plan-version')
@@ -2782,10 +2782,14 @@ function capitalFitOf(ns, info) {
  */
 let planCtx = null
 // THE MODEL VERSION every published forecast is tagged with (modelVersionOf),
-// and this planner process's start: a pair of forecasts from different
-// versions or processes is a re-pricing, not forecast error (bayes.driftPairs).
+// and the game PAGE it ran in (trace.pageBoot: performance.timeOrigin): a pair
+// of forecasts from different versions or pages, or across a telemetry gap,
+// is a re-pricing, not forecast error (bayes.runBreak). NOT this process's
+// start: progress.js is a fresh process every pass, so a per-process tag
+// excluded every pair there was (the drift posterior at its prior, one-sample
+// rate buffers, no option jitter — live BN9 2026-09-30).
 let MODEL_VERSION = null
-let PLANNER_BOOT = null
+let PAGE_BOOT = null
 /**
  * The hash of every module in progress.js's import graph, as the files stood
  * when this process started (the code it is running): read by following the
@@ -2844,20 +2848,28 @@ function planCtxOf(ns, info) {
       ledger = null
     }
     // Rate observations and route rankings from another model version or
-    // process are a different model's numbers: dropped (and counted).
-    const sameModel = (o) => o?.ver === MODEL_VERSION && o?.boot === PLANNER_BOOT
+    // page, or before a telemetry gap, are a different run's numbers: dropped
+    // (and counted, plan.txt runDropped) — the same rule as the exit pairs
+    // (bayes.runTail / runBreak).
+    const cur = { ver: MODEL_VERSION, boot: PAGE_BOOT, at: new Date().toISOString() }
+    const runDropped = {}
+    const tail = (k, v) => {
+      const r = runTail(v, cur)
+      runDropped[k] = r.dropped
+      return r.kept
+    }
     const obsAll = sameLife ? prev.obs ?? {} : {}
-    const obs = Object.fromEntries(Object.entries(obsAll).map(([k, v]) => [k, Array.isArray(v) ? v.filter(sameModel) : []]))
+    const obs = Object.fromEntries(Object.entries(obsAll).map(([k, v]) => [k, Array.isArray(v) ? tail(k, v) : []]))
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
-    const points = sameLife && Array.isArray(prev.points) ? prev.points.filter(sameModel) : []
+    const points = sameLife && Array.isArray(prev.points) ? tail('points', prev.points) : []
     const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
     const committedAvailable = null // set by the route decision
     const traderRegime = typeof stockNow?.mode === 'string' ? rwRegimeOf(stockNow.mode) : null
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime })
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
     const draws = makeDraws(post, PLAN.N, seed)
-    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, decisions: {}, setupMs: 0, pacer: passPacer, error: null, traderRegime }
+    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, runDropped, decisions: {}, setupMs: 0, pacer: passPacer, error: null, traderRegime }
   } catch (e) {
     planCtx = { t0, prev: null, prevAny: graftMemoryCarryOf(ns, info), post: null, events: [], redecide: false, draws: [], decisions: {}, setupMs: 0, pacer: passPacer, error: `plan context threw: ${String(e).slice(0, 160)}` }
   }
@@ -3036,7 +3048,7 @@ function publishPlan(ns, info, extra = {}) {
     const at = new Date().toISOString()
     const inp = extra.inputs ?? pc.obsInputs ?? null
     const obs = pc.post
-      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }), rep: withObs(pc.obs?.rep, inp?.repFromEstimate ? null : inp?.repPerSec, at, 48, { ver: MODEL_VERSION, boot: PLANNER_BOOT }) }
+      ? { exp: withObs(pc.obs?.exp, inp?.expPerSec, at, 48, { ver: MODEL_VERSION, boot: PAGE_BOOT }), rep: withObs(pc.obs?.rep, inp?.repFromEstimate ? null : inp?.repPerSec, at, 48, { ver: MODEL_VERSION, boot: PAGE_BOOT }) }
       : pc.obs ?? {}
     const route = pc.decisions.countRoute ?? null
     const inst = pc.decisions.install ?? null
@@ -3138,6 +3150,10 @@ function publishPlan(ns, info, extra = {}) {
       // EXIT NOT APPROACHING compares exits within one version only: a model
       // correction moves the forecast without the run moving.
       ver: MODEL_VERSION,
+      // The page the run's pairs are keyed on (trace.pageBoot), and what the
+      // run rule (bayes.runTail) dropped from the buffers this pass.
+      page: PAGE_BOOT,
+      runDropped: pc.runDropped ?? null,
     }
     // EXIT UNSTABLE (plan.exitStabilityOf): this pass's exit against the last
     // pass's, when nothing was re-decided. planCheck fails on it.
@@ -3199,7 +3215,7 @@ function exitCalibrationOf(ns, info) {
 function withExitSample(cal, info, exitH, source) {
   const last = cal.samples[cal.samples.length - 1]
   const due = typeof exitH === 'number' && isFinite(exitH) && (!last || Date.now() - Date.parse(last.at) >= EXIT_CAL_GAP_MS || last.life !== info?.lastAugReset)
-  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PLANNER_BOOT }].slice(-EXIT_CAL_MAX) : cal.samples
+  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT }].slice(-EXIT_CAL_MAX) : cal.samples
   const d = exitDrift(samples)
   return { node: cal.node, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
 }
@@ -5636,7 +5652,7 @@ async function act(ns, canJoin, info, note) {
       // named fallback when the plan cannot decide.
       const pc = planCtxOf(ns, info)
       pc.repPoint = repPerSec
-      pc.point = { at: new Date().toISOString(), life: info?.lastAugReset ?? null, ver: MODEL_VERSION, boot: PLANNER_BOOT, h: Object.fromEntries((ranked.tried ?? []).filter((t) => typeof t.hours === 'number').slice(0, 8).map((t) => [routeKey(t), t.hours])) }
+      pc.point = { at: new Date().toISOString(), life: info?.lastAugReset ?? null, ver: MODEL_VERSION, boot: PAGE_BOOT, h: Object.fromEntries((ranked.tried ?? []).filter((t) => typeof t.hours === 'number').slice(0, 8).map((t) => [routeKey(t), t.hours])) }
       if (!pc.obsInputs) pc.obsInputs = rec.inputs
       const bay = pc.post ? await planDecide(pc, 'countRoute', () => decideRouteGen({ inputs: rec.inputs, count: cc, routes, point: ranked, repPoint: repPerSec, prev: pc.prev?.decisions?.countRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow })) : null
       const bayRoute = bay?.key ? routes.find((r) => routeKey(r) === bay.key) ?? null : null

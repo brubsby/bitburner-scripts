@@ -38,6 +38,13 @@ const pageId = () => {
     return 0
   }
 }
+/**
+ * THIS PAGE's identity (performance.timeOrigin, ms): the same for every
+ * script and every process for as long as the page lives, new on a reload.
+ * progress.js tags its forecasts with it (bayes.runBreak): a per-pass job's
+ * own start changes every pass, the page does not. 0 when unreadable.
+ */
+export const pageBoot = pageId
 const keyOf = (id) => `${PREFIX}${id}`
 const read = (id = pageId()) => {
   try {

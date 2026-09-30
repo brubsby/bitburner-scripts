@@ -55,18 +55,36 @@ a draw of s² then ε ~ N(0, s²) (Student-t marginal).
 Every exit sample (and every rate observation and route ranking) is tagged
 `ver` — a hash of every module in progress.js's import graph as it stood
 when the planner started (`plan.modelVersionFrom`; nothing to bump, so
-nothing to forget) — and `boot`, the planner process's start. A pair counts
-toward s and toward the calibration score only when both ends share life,
-version and process; the rest are excluded and COUNTED (`driftExcluded`,
-`calibration.excluded`; untagged legacy samples are excluded too — whether
-they straddle a deploy cannot be told). The likelihood is Student-t (nu 4,
+nothing to forget) — and `boot`, the game PAGE the planner ran in
+(`trace.pageBoot`, performance.timeOrigin). A pair counts toward s and toward
+the calibration score only when both ends share life, version and page and
+no telemetry gap longer than `PAIR_MAX_GAP_H` (1h; passes run every ~5 min,
+samples every ~15) lies between them (`bayes.runBreak`); the rest are
+excluded and COUNTED (`driftExcluded`, `calibration.excluded`: `version`,
+`boot` = across a page reload, `stale` = across a gap; untagged legacy
+samples are excluded too — whether they straddle a deploy cannot be told).
+The rate buffers and the option points keep their trailing run by the same
+rule (`bayes.runTail`; plan.txt `runDropped`).
+
+`boot` was the planner PROCESS start until 2026-09-30. progress.js is a
+watchdog job, a fresh process every pass, so no two samples ever shared one:
+every pair was excluded "across a restart", s sat at its 10% prior, the rate
+buffers never held more than the pass's own sample and the option jitter had
+no pair — the whole calibration layer silently off. What the exclusion is
+for is a change in the conditions a pair assumes, and a pass boundary is not
+one (the state a pass carries lives in files): a page reload, or a stretch
+the page did not run (a freeze, a suspend, a stalled planner) where game time
+and wall time part. Replayed on that day (BN9, 12:55Z, the last 48 samples):
+42 pairs, s = 7.2% (4 outlier pairs down-weighted), 71% inside the 80%
+interval (PIT var 0.081 vs 0.083); the rep posterior from 18 same-version
+passes, 26.0 rep/s, sd of ln 0.095 (tools/test BY20). The likelihood is Student-t (nu 4,
 stated): one mis-priced pass is down-weighted, not squared. Live replay
 (2026-09-27, 48 samples): the Gaussian fit read s = 59.8% — almost all of it
 ONE pass (05:32 read 108.5h between 16.1h and 12.7h); robust, s = 6.2%, and
 6.1% with the 3 pairs across the 4 committed deploys excluded; calibration
 89% -> 79% inside the 80% interval (PIT var 0.038 -> 0.061 vs 0.083).
-Cost: after a deploy or restart s rests on its prior (10%) until same-version
-pairs accumulate (one per ~15 min).
+Cost: after a deploy or a page reload s rests on its prior (10%) until
+same-version pairs accumulate (one per ~15 min).
 
 ### A fresh life is not blind
 

@@ -644,7 +644,7 @@ export async function run() {
   checks.push(c12);
 
   // -----------------------------------------------------------------------
-  const c13 = new Check("BY13", "FORECAST ERROR IS ONE MODEL'S ERROR: pairs across a model version, a restart or an install are excluded (and counted); the version is the planner's whole import graph; one mis-priced pass is down-weighted (Student-t) — replayed on the live 2026-09-27 sample history");
+  const c13 = new Check("BY13", "FORECAST ERROR IS ONE MODEL'S ERROR: pairs across a model version, a page reload or an install are excluded (and counted); the version is the planner's whole import graph; one mis-priced pass is down-weighted (Student-t) — replayed on the live 2026-09-27 sample history");
   {
     c13.examined(8);
     const t0 = Date.parse("2026-09-27T00:00:00Z");
@@ -664,7 +664,7 @@ export async function run() {
     c13.note(`7 deploys re-pricing x1.3/x0.77: version-blind s ${(100 * blind.s).toFixed(1)}% (${blind.pairs} pairs) vs version-aware ${(100 * tagged.s).toFixed(1)}% (${tagged.pairs} pairs, excluded ${JSON.stringify(tagged.excluded)})`);
     if (!(tagged.excluded.version === 7 && tagged.s < 0.06 && blind.s > 1.5 * tagged.s)) c13.fail("the pairs across the deploys must be excluded, leaving the model's own ~3% (and the version-blind fit must read more)");
     const reboot = B.driftPosterior(S.map((x, i) => ({ ...x, ver: "A", boot: i < 22 ? 1 : 2 })));
-    if (reboot.excluded.boot !== 1) c13.fail("a pair across a planner restart must be excluded");
+    if (reboot.excluded.boot !== 1) c13.fail("a pair across a page reload must be excluded");
     const legacy = B.driftPosterior(S.map(({ ver, boot, ...x }) => x));
     if (!(legacy.pairs === 0 && legacy.excluded.untagged === 39)) c13.fail("untagged pairs cannot be told apart from a deploy: excluded (and counted), never trusted");
     // The model version: every module in the planner's import graph.
@@ -684,8 +684,8 @@ export async function run() {
     if (vMod === v0 || vDeep === v0) c13.fail("an edit to any module in the graph, however deep, must change the version");
     if (vOut !== v0) c13.fail("a module outside the graph must not change the version");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/exitH: \+exitH\.toFixed\(2\), life: info\?\.lastAugReset \?\? null, source, ver: MODEL_VERSION, boot: PLANNER_BOOT \}/.test(prog)) c13.fail("every exit sample must carry the model version and the planner boot (source guard)");
-    if (!/MODEL_VERSION = modelVersionOf\(ns\)/.test(prog) || !/PLANNER_BOOT = Date\.now\(\)/.test(prog)) c13.fail("the version and boot must be taken at planner start (source guard)");
+    if (!/exitH: \+exitH\.toFixed\(2\), life: info\?\.lastAugReset \?\? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT \}/.test(prog)) c13.fail("every exit sample must carry the model version and the page (source guard)");
+    if (!/MODEL_VERSION = modelVersionOf\(ns\)/.test(prog) || !/PAGE_BOOT = pageBoot\(\)/.test(prog)) c13.fail("the version and the page must be taken at planner start (source guard)");
     // REPLAY on the live history (untagged; the commits of planner modules
     // are the known deploys — a lower bound).
     const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn8-exitcal-0927.json"), "utf8"));
@@ -1080,6 +1080,76 @@ export async function run() {
     if (!/makePacer\(\{ sliceMs: PLAN\.sliceMs, yieldFn: pageYieldOf\(ns\), store: stepMemoryStore\(pageStorage\(\)\) \}\)/.test(prog)) c19.fail("progress.js's pass pacer must persist its step memory (source guard)");
   }
   checks.push(c19);
+
+  // -----------------------------------------------------------------------
+  const c20 = new Check("BY20", "ONE RUN IS ONE PAGE, NOT ONE PROCESS: progress.js is a fresh process every pass, and pairs keyed on the process start never existed (live BN9 2026-09-30: s at its 10% prior all day, 41 pairs 'across a restart', calibration n 0, rep posterior null) — keyed on the page, a page reload, a model version or a telemetry gap > 1h breaks a run, a pass does not; replayed on the live 12:55Z history");
+  {
+    c20.examined(9);
+    const t0 = Date.parse("2026-09-30T00:00:00Z");
+    const at = (h) => new Date(t0 + h * 3.6e6).toISOString();
+    // One page, one version, a sample every 15 min from a new process each
+    // pass: every consecutive pair counts.
+    const rand = B.rngOf(11);
+    const S = [];
+    for (let i = 0; i < 20; i++) S.push({ at: at(i * 0.25), exitH: (30 - i * 0.25) * Math.exp(0.05 * B.normalOf(rand)), life: 1, ver: "v", boot: 777 });
+    const d = B.driftPosterior(S);
+    if (!(d.pairs === 19 && d.excluded.boot === 0)) c20.fail("passes of one page must pair", JSON.stringify(d.excluded));
+    // A telemetry gap longer than PAIR_MAX_GAP_H (a freeze, a suspend, a
+    // stalled planner) breaks the run; one missed pass does not.
+    const gapped = S.map((x, i) => (i >= 10 ? { ...x, at: at(i * 0.25 + 1.5) } : x));
+    const g = B.driftPosterior(gapped);
+    if (!(g.excluded.stale === 1 && g.pairs === 18)) c20.fail("a pair across a gap > 1h must be excluded as stale (and counted)", JSON.stringify(g.excluded));
+    const missed = S.filter((_, i) => i !== 5);
+    if (B.driftPairs(missed).excluded.stale !== 0) c20.fail("one missed pass (30 min) is not a gap");
+    if (!/across a page reload/.test(d.why) || !/telemetry gap/.test(d.why)) c20.fail("the reason names the page and the gap", d.why);
+    // runTail: the trailing run of a buffer.
+    const buf = [
+      { at: at(0), v: 1, ver: "old", boot: 1 },
+      { at: at(0.1), v: 2, ver: "v", boot: 1 },
+      { at: at(0.2), v: 3, ver: "v", boot: 2 },
+      { at: at(1.9), v: 4, ver: "v", boot: 2 },
+      { at: at(2.0), v: 5, ver: "v", boot: 2 },
+    ];
+    const r = B.runTail(buf, { ver: "v", boot: 2, at: at(2.1) });
+    c20.note(`runTail: kept ${r.kept.map((x) => x.v).join(",")}, dropped ${JSON.stringify(r.dropped)}`);
+    if (r.kept.map((x) => x.v).join(",") !== "4,5" || r.dropped.stale !== 3) c20.fail("runTail keeps the run after the last gap", JSON.stringify(r));
+    const r2 = B.runTail(buf.slice(1, 3), { ver: "v", boot: 2, at: at(0.3) });
+    if (r2.kept.map((x) => x.v).join(",") !== "3" || r2.dropped.boot !== 1) c20.fail("runTail drops another page's entries", JSON.stringify(r2));
+    const r3 = B.runTail(buf.slice(3), { ver: "v", boot: 2, at: at(3.5) });
+    if (r3.kept.length !== 0) c20.fail("a buffer whose last entry is older than the gap is not carried");
+    const r4 = B.runTail(buf.slice(3), { ver: "w", boot: 2, at: at(2.1) });
+    if (r4.kept.length !== 0 || r4.dropped.version !== 2) c20.fail("another version's entries are dropped", JSON.stringify(r4));
+    // The option jitter pairs on the same rule.
+    const pts = [0, 0.08, 0.16, 0.24].map((h, i) => ({ at: at(h), life: 1, ver: "v", boot: 9, h: { a: 10 + i * 0.01, b: 12 - i * 0.02 } }));
+    if (B.jitterPosterior(pts).n !== 3) c20.fail("option points of one page pair across passes");
+    if (B.jitterPosterior(pts.map((p, i) => ({ ...p, boot: i }))).n !== 0) c20.fail("option points across page reloads do not pair");
+    // The page id: one value for the page's life, whatever the process.
+    const T = await import("../../trace.js");
+    if (!(T.pageBoot() === T.pageBoot() && T.pageBoot() === Math.round(performance.timeOrigin))) c20.fail("trace.pageBoot is performance.timeOrigin", `${T.pageBoot()} vs ${performance.timeOrigin}`);
+    // Wiring: every consumer on the page tag, none on the process start.
+    const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
+    if (/PLANNER_BOOT|boot: Date\.now\(\)/.test(prog)) c20.fail("progress.js must not tag forecasts with the process start (source guard)");
+    if ((prog.match(/ver: MODEL_VERSION, boot: PAGE_BOOT/g) ?? []).length !== 5) c20.fail("the exit samples, both rate buffers, the option points and the run they are read against carry the page (source guard)");
+    if (!/const r = runTail\(v, cur\)/.test(prog) || !/tail\('points', prev\.points\)/.test(prog)) c20.fail("planCtxOf must keep the buffers' trailing run (runTail), not a per-process filter (source guard)");
+    if (!/runDropped: pc\.runDropped/.test(prog)) c20.fail("plan.txt must publish what the run rule dropped (source guard)");
+    // REPLAY: live BN9 2026-09-30 12:55Z.
+    const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-exitcal-0930.json"), "utf8"));
+    const reload = Date.parse(L.pageLoadedAfter);
+    const pageOf = (x) => (x.boot === undefined ? x : { ...x, boot: Date.parse(x.at) > reload ? "B" : "A" });
+    const asLive = B.driftPosterior(L.samples);
+    const byPage = B.driftPosterior(L.samples.map(pageOf));
+    const cal = B.driftCalibration(L.samples.map(pageOf));
+    const repRun = B.runTail(L.rep.map(pageOf), { ver: L.ver, boot: "B", at: L.at });
+    const repPost = B.logRatePosterior(repRun.kept);
+    c20.note(`as live (per process): ${asLive.why}`);
+    c20.note(`per page: ${byPage.why}`);
+    c20.note(`calibration: ${cal.why}; rep: ${repRun.kept.length} observations of version ${L.ver} -> median ${Math.exp(repPost?.mean ?? NaN).toFixed(2)} rep/s, sd of ln ${repPost?.sd?.toFixed(3)} (live: no posterior)`);
+    if (!(asLive.pairs === 0 && asLive.s === Math.sqrt(B.PRIORS.drift.b / (B.PRIORS.drift.a - 1)))) c20.fail("fixture: the per-process tags leave the drift at its prior", asLive.why);
+    if (!(byPage.pairs >= 40 && byPage.excluded.boot === 0 && byPage.s < 0.1)) c20.fail("keyed on the page the day's pairs count and the posterior leaves its prior", byPage.why);
+    if (!(cal.n >= 40 && cal.cover80 > 0.6 && cal.cover80 < 0.95)) c20.fail("the calibration is measured on them", cal.why);
+    if (!(repRun.kept.length >= 15 && repPost && repPost.sd < 0.2)) c20.fail("the rep observations of the current version accumulate", JSON.stringify(repRun.dropped));
+  }
+  checks.push(c20);
 
   return checks;
 }

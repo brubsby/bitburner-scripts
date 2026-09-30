@@ -646,23 +646,82 @@ export function traderRwPosterior(rows, { warmupH = 0, prior = null, shape = nul
 }
 
 /**
- * Same-life pairs of exit samples: relative residual against the predicted
- * -1h/h. A pair counts only when BOTH ends were produced by the same model
- * and the same process:
- *   life  the same life (an install legitimately re-plans);
- *   ver   the same model version (a hash of the exit-relevant sources,
+ * ONE RUN OF ONE MODEL: may two consecutive tagged records (exit samples,
+ * rate observations, option points) be compared as the same model's
+ * forecasts? Each record carries
+ *   ver   the model version (a hash of the planner's whole import graph,
  *         progress.js modelVersionOf) — a deploy's re-pricing is a model
  *         change, not forecast error;
- *   boot  the same planner process (a page reload or restart).
+ *   boot  the game PAGE the planner ran in (performance.timeOrigin,
+ *         trace.js pageBoot) — NOT the planner process.
+ * progress.js is a watchdog JOB: a fresh process every pass. `boot` was its
+ * process start (Date.now() at main), so no two passes ever shared one, and
+ * every pair, observation buffer and option point was excluded "across a
+ * restart" — the drift posterior sat at its prior, the rate buffers held one
+ * sample, the option jitter had 0 pairs (live BN9 2026-09-30, all day). What
+ * the exclusion protects against is a change in the conditions a pair
+ * assumes, and a pass boundary is not one (pass-to-pass state lives in files,
+ * which survive the process): a page RELOAD (every in-page timer, the
+ * offline catch-up, the scripts' own restart) or a stretch where the page did
+ * not run — a freeze, a suspended machine, a stalled planner — where game time
+ * and wall time part and "the exit falls 1h per wall hour" is not the model's
+ * claim. So a pair breaks on: a different page, a different version, or a
+ * telemetry gap longer than maxGapH (PAIR_MAX_GAP_H: four exit-sample
+ * cadences; passes run every ~15 min).
+ * Returns null (same run) or the reason: 'untagged' | 'version' | 'boot' | 'stale'.
+ */
+export const PAIR_MAX_GAP_H = 1
+export function runBreak(a, b, { maxGapH = PAIR_MAX_GAP_H } = {}) {
+  if (a?.ver === undefined || b?.ver === undefined || a?.boot === undefined || b?.boot === undefined) return 'untagged'
+  if (a.ver !== b.ver) return 'version'
+  if (a.boot !== b.boot) return 'boot'
+  const dh = (Date.parse(b.at) - Date.parse(a.at)) / 3.6e6
+  if (fin(dh) && dh > maxGapH) return 'stale'
+  return null
+}
+/**
+ * The trailing run of a tagged buffer (oldest first) that belongs to the run
+ * `cur` {ver, boot, at} is in: entries of another version or page are
+ * dropped, and a telemetry gap longer than maxGapH (between entries, or from
+ * the last entry to `cur.at`) cuts everything before it. Returns
+ * {kept, dropped: {untagged, version, boot, stale}}.
+ */
+export function runTail(buf, cur, { maxGapH = PAIR_MAX_GAP_H } = {}) {
+  const B = Array.isArray(buf) ? buf : []
+  const dropped = { untagged: 0, version: 0, boot: 0, stale: 0 }
+  const kept = []
+  let next = cur
+  for (let i = B.length - 1; i >= 0; i--) {
+    const why = runBreak(B[i], next, { maxGapH })
+    if (why === 'stale') {
+      dropped.stale += i + 1
+      break
+    }
+    if (why) {
+      dropped[why]++
+      continue
+    }
+    kept.unshift(B[i])
+    next = B[i]
+  }
+  return { kept, dropped }
+}
+
+/**
+ * Same-life pairs of exit samples: relative residual against the predicted
+ * -1h/h. A pair counts only when BOTH ends were produced by the same model in
+ * the same run (runBreak): the same life (an install legitimately re-plans),
+ * version, and page, with no telemetry gap longer than maxGapH between them.
  * Untagged samples (written before the tags existed) are excluded: whether
  * they straddle a deploy cannot be told, and "cannot tell" is not "fine".
- * Returns the kept pairs; `excluded` {life, version, boot, untagged, gap}
- * rides on the array.
+ * Returns the kept pairs; `excluded` {life, version, boot, stale, untagged,
+ * gap} rides on the array (`gap`: closer than minGapH; `stale`: further than
+ * maxGapH).
  */
-export function driftPairs(samples, { minGapH = 0.2 } = {}) {
+export function driftPairs(samples, { minGapH = 0.2, maxGapH = PAIR_MAX_GAP_H } = {}) {
   const S = (samples ?? []).filter((x) => fin(x?.exitH) && x.exitH > 0 && fin(Date.parse(x?.at)))
   const out = []
-  const excluded = { life: 0, version: 0, boot: 0, untagged: 0, gap: 0 }
+  const excluded = { life: 0, version: 0, boot: 0, stale: 0, untagged: 0, gap: 0 }
   for (let i = 1; i < S.length; i++) {
     const a = S[i - 1]
     const b = S[i]
@@ -675,16 +734,9 @@ export function driftPairs(samples, { minGapH = 0.2 } = {}) {
       excluded.gap++
       continue
     }
-    if (a.ver === undefined || b.ver === undefined || a.boot === undefined || b.boot === undefined) {
-      excluded.untagged++
-      continue
-    }
-    if (a.ver !== b.ver) {
-      excluded.version++
-      continue
-    }
-    if (a.boot !== b.boot) {
-      excluded.boot++
+    const why = runBreak(a, b, { maxGapH })
+    if (why) {
+      excluded[why]++
       continue
     }
     out.push({ at: b.at, dh, a: a.exitH, b: b.exitH, r: (b.exitH - (a.exitH - dh)) / a.exitH })
@@ -730,9 +782,9 @@ export function driftPosterior(samples, prior = PRIORS.drift, nu = PRIORS.driftN
   const r = robustIG(prior, pairs.map((x) => x.r / Math.SQRT2), nu)
   const s = Math.sqrt(r.b / (r.a - 1))
   const ex = pairs.excluded
-  const nEx = ex.version + ex.boot + ex.untagged
+  const nEx = ex.version + ex.boot + (ex.stale ?? 0) + ex.untagged
   const outliers = r.weights.filter((w) => w < 0.3).length
-  return { a: r.a, b: r.b, s, nu, pairs: pairs.length, excluded: ex, outliers, why: `${pairs.length} same-life, same-model pair(s): relative forecast error s = ${(100 * s).toFixed(1)}% (t, nu ${nu}; ${outliers} outlier pair(s) down-weighted; excluded ${nEx}: ${ex.version} across a model version, ${ex.boot} across a restart, ${ex.untagged} untagged; IG prior a=${prior.a}, E[s^2] = (${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(0)}%)^2)` }
+  return { a: r.a, b: r.b, s, nu, pairs: pairs.length, excluded: ex, outliers, why: `${pairs.length} same-life, same-model pair(s): relative forecast error s = ${(100 * s).toFixed(1)}% (t, nu ${nu}; ${outliers} outlier pair(s) down-weighted; excluded ${nEx}: ${ex.version} across a model version, ${ex.boot} across a page reload, ${ex.stale ?? 0} across a telemetry gap > ${PAIR_MAX_GAP_H}h, ${ex.untagged} untagged; IG prior a=${prior.a}, E[s^2] = (${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(0)}%)^2)` }
 }
 
 /**
@@ -778,9 +830,9 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
   const xs = []
   for (let i = 1; i < P.length; i++) {
     if (P[i].life !== P[i - 1].life) continue
-    // Same model version and process only (as driftPairs): a deploy's
-    // re-pricing is not jitter.
-    if (P[i].ver === undefined || P[i].ver !== P[i - 1].ver || P[i].boot !== P[i - 1].boot) continue
+    // Same model version, page and run only (runBreak, as driftPairs): a
+    // deploy's re-pricing is not jitter.
+    if (runBreak(P[i - 1], P[i])) continue
     const A = P[i - 1].h
     const B = P[i].h
     const common = Object.keys(A).filter((k) => fin(A[k]) && A[k] > 0 && fin(B[k]) && B[k] > 0)
