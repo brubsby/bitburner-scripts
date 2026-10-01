@@ -18,3 +18,4 @@ tools/sim/stocks/stocks.bundle.mjs
 tools/sim/nodechoice/game.bundle.mjs
 tools/sim/nodechoice/.entry.generated.ts
 tools/sim/nodechoice/.cache.json
+tools/sim/nodechoice/.cache-next.json
