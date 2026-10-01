@@ -81,6 +81,8 @@ import { skillFromExp } from 'installgate.js'
 // Pure: the floor against our own unchecked fee spending.
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
 import { HACKING_WORK_FACTIONS } from 'contractplan.js'
+// Pure: the Bladeburner exit model, for the fleet on the Bladeburner route (bladeFleetGen).
+import { chooseSleeveConfigGen, sleeveTasksOf } from 'bbplan.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 /**
@@ -1294,4 +1296,51 @@ export function afterCombatInstall(player, batch) {
   const mults = { ...player.mults }
   for (const [k, g] of Object.entries(batch.gains)) if (num(mults[k])) mults[k] = mults[k] * g
   return { ...player, mults, exp: { ...player.exp, strength: 0, defense: 0, dexterity: 0, agility: 0 } }
+}
+
+// ---------------------------------------------------------------------------
+// THE FLEET ON BLADEBURNER (the committed Bladeburner route, BN6/7 or SF6/7).
+//
+// What a sleeve can do for the division (Sleeve.ts:489-539,
+// NetscriptFunctions/Sleeve.ts:271-303), and what each is worth to the exit:
+//
+//   Infiltrate Synthoids  every completion (60s) adds n^-0.5/2 to EVERY
+//                         contract and operation count, n = sleeves on it
+//                         (Bladeburner.ts:1252-1264): the fleet supplies
+//                         sqrt(n)/2 per minute. Counts are what bind the
+//                         high-level operations.
+//   Field Analysis        0.1 x BladeburnerRank rank per 30s, always succeeds,
+//                         no stamina, sharpens the estimate of the player's
+//                         current city (Bladeburner.ts:1122-1150): skill
+//                         points early, when rank is scarce.
+//   Support main sleeve   +1 team member (SleeveSupportWork.ts): operations
+//                         and black ops gain (team+1)^0.05 competence;
+//                         casualties only shock the sleeve +0.5.
+//   Take on contracts     NOT OFFERED: the chance is the SLEEVE's (its own
+//                         stats; every sleeve enters a node at shock 100, exp
+//                         0), one sleeve per contract, and it spends the
+//                         player's contract counts. Not modelled by
+//                         bbplan.bladeExit — named here rather than guessed.
+//
+// Which mix: every configuration of the fleet simulated to the 21st black op
+// from the same state (bbplan.chooseSleeveConfigGen — the exit model the plan
+// prices the route with), the fastest kept. On the game's own classes the
+// model's pick (1 infiltrate / 4 field analysis on a fresh BN6 entry) beat
+// all-infiltrate 30.3h vs 31.8h (tools/sim/bb6.mjs, 3 seeds).
+//
+// s0 is bbplan.bladeStartOf's (one builder). Returns
+// { tasks (per sleeve index, sleeve.js order), config, hours, byConfig, why }.
+export function* bladeFleetGen(s0, n) {
+  if (!(n > 0)) return { tasks: [], config: null, hours: null, byConfig: [], why: 'no sleeves' }
+  const pick = yield* chooseSleeveConfigGen(s0, n)
+  if (!pick.config) return { tasks: null, config: null, hours: null, byConfig: pick.byConfig, why: `no configuration reaches the 21st black op within ${s0.maxH ?? 400}h in the model — the fleet keeps its ordinary plan` }
+  const ranked = pick.byConfig.filter((x) => x.hours !== null).sort((a, b) => a.hours - b.hours)
+  const worst = ranked[ranked.length - 1]
+  return {
+    tasks: sleeveTasksOf(pick.config, n),
+    config: pick.config,
+    hours: +pick.hours.toFixed(2),
+    byConfig: ranked.slice(0, 6).map((x) => ({ ...x.config, hours: +x.hours.toFixed(2) })),
+    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model) vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
+  }
 }

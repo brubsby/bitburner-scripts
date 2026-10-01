@@ -13,7 +13,7 @@
 // merely returned.
 //
 // ---------------------------------------------------------------------------
-// RAMOVERRIDE 3.25GB (raises to 45.75; 3.25 = base 1.6 + getResetInfo 1.0 + getHostname 0.05 + scp 0.6, because the capability-absent path mirrors its record home and a call past the allocation KILLS the script, NetscriptHelpers.tsx:498-523 — at 2.6 it died off home before saying why) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery / setToFactionWork, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
+// RAMOVERRIDE 3.25GB (raises to 49.75; 3.25 = base 1.6 + getResetInfo 1.0 + getHostname 0.05 + scp 0.6, because the capability-absent path mirrors its record home and a call past the allocation KILLS the script, NetscriptHelpers.tsx:498-523 — at 2.6 it died off home before saying why) — excludes: the ns.sleeve.* surface (getNumSleeves / getSleeve / getTask / travel / setToGymWorkout / setToUniversityCourse / setToCommitCrime / setToSynchronize / setToShockRecovery / setToFactionWork / setToBladeburnerAction, 4GB each, NOT scaled by Source-File 4), plus common.js's spawn/kill/ps/hacknet reads.
 //
 // Why this is sound: Netscript bills a script for every ns identifier in its
 // import graph whether or not the call is reachable (RamCalculations.ts:407
@@ -102,9 +102,11 @@ import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf } from 'sleeveplan.js'
+import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen } from 'sleeveplan.js'
+import { bladeStartOf, SLEEVE_ACTION } from 'bbplan.js'
+import { makePacer } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
-import { CRIMES, GYMS, gymRate } from 'bodyplan.js'
+import { CRIMES, GYMS, gymRate, bestGym } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { enter, leave } from 'trace.js'
@@ -132,7 +134,7 @@ const CRIME_NAMES = new Set(Object.keys(CRIMES))
  *  evaluates it per regime; a constant that ignores `mult` is the honest answer
  *  here, not a shortcut. Measured with the game's own calculator
  *  (tools/staging/fix4/measure.mjs). */
-const RAISE_CEILING = (mult) => 45.75 + 0 * mult
+const RAISE_CEILING = (mult) => 49.75 + 0 * mult
 
 export async function main(ns) {
   ns.ramOverride(3.25)
@@ -291,6 +293,75 @@ const getSleeves = (ns) => {
 	});
 };
 
+// THE FLEET ON THE BLADEBURNER ROUTE (sleeveplan.bladeFleetGen): only when
+// progress.js's plan committed it (/tel/plan.txt decisions.bladeRoute.key
+// 'blade', this node) and the player is in the division (/tel/bladeburner.txt
+// joined) — setToBladeburnerAction returns false otherwise
+// (NetscriptFunctions/Sleeve.ts:271-276). Re-priced every 30 minutes, or at
+// once when the fleet, the route or the membership changes; the ~13 exit
+// simulations run in 40ms slices (coop.js pacer, a MessageChannel yield as
+// progress.js's pageYieldOf — a hidden tab throttles ns.sleep(0) to a minute).
+const BLADE_TEL = '/tel/bladeburner.txt'
+const PLAN_TEL = '/tel/plan.txt'
+const BLADE_REPRICE_MS = 30 * 60e3
+let bladeMemo = null
+function pageYield(ns) {
+  let MC = null
+  try {
+    MC = eval('MessageChannel')
+  } catch {
+    MC = null
+  }
+  if (typeof MC !== 'function') return () => ns.sleep(0)
+  return () =>
+    new Promise((resolve) => {
+      const ch = new MC()
+      ch.port1.onmessage = () => {
+        ch.port1.close()
+        resolve()
+      }
+      ch.port2.postMessage(0)
+    })
+}
+async function bladeFleetNow(ns, n, node) {
+  const info = ns.getResetInfo()
+  if (ns.getHostname() !== 'home') {
+    try { ns.scp(BLADE_TEL, ns.getHostname(), 'home') } catch { /* the copy here decides by its stamp */ }
+    try { ns.scp(PLAN_TEL, ns.getHostname(), 'home') } catch { /* the copy here decides by its stamp */ }
+  }
+  let plan = null
+  let tel = null
+  try { plan = JSON.parse(ns.read(PLAN_TEL) || 'null') } catch { plan = null }
+  try { tel = JSON.parse(ns.read(BLADE_TEL) || 'null') } catch { tel = null }
+  const route = plan && plan.node === info.currentNode ? plan.decisions?.bladeRoute?.key ?? null : null
+  const joined = !!tel && tel.bitNode === info.currentNode && tel.joined === true
+  if (route !== 'blade' || !joined) return { on: false, why: route !== 'blade' ? `the plan's Bladeburner route is ${route ?? 'not decided in this node'}` : 'not in the Bladeburner division yet', route, joined }
+  const key = `${n}|${route}|${joined}`
+  if (bladeMemo && bladeMemo.key === key && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
+  const p = ns.getPlayer()
+  const mults = { ...p.mults }
+  for (const [k, nk] of Object.entries(LEVEL_MULTS)) if (typeof node?.[nk] === 'number' && node[nk] > 0 && typeof mults[k] === 'number') mults[k] = mults[k] * node[nk]
+  const person = { skills: { ...p.skills }, exp: { ...p.exp }, mults }
+  const gym = bestGym(person)
+  let cyc = null
+  try {
+    const ei = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
+    if (ei?.bitNode === info.currentNode && typeof ei?.inputs?.cycleHours === 'number') cyc = ei.inputs.cycleHours
+  } catch { cyc = null }
+  const lifeAgeH = Math.max(0, (Date.now() - info.lastAugReset) / 3600e3)
+  const s0 = bladeStartOf({
+    tel, person,
+    gymExpPerSec: gym ? gymRate(gym, 'strength', person, 1) : null,
+    bnRank: node?.BladeburnerRank ?? 1, skillCostMult: node?.BladeburnerSkillCost ?? 1,
+    install: cyc > 0 ? { everyH: cyc, firstH: Math.max(0.25, cyc - lifeAgeH), combatGain: 1 } : null,
+  })
+  const pacer = makePacer({ sliceMs: 40, yieldFn: pageYield(ns) })
+  const fleet = await pacer.slices(bladeFleetGen(s0, n), 'bladeFleet')
+  const result = { on: !!fleet.tasks, ...fleet, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), installEveryH: cyc }
+  bladeMemo = { key, at: Date.now(), result }
+  return result
+}
+
 // Module scope stays side-effect free: the shipped file read localStorage at
 // IMPORT time, which runs before main() has decided the script may act at all.
 let print_tasks = false;
@@ -435,6 +506,18 @@ async function act(ns, note) {
 			if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('sleeve'), 'home', ns.getHostname())
 		}
 
+		// THE BLADEBURNER ROUTE: the fleet's Bladeburner tasks replace the
+		// ordinary plan's (bladeFleetNow says when). A failure to price is
+		// published and leaves the ordinary plan standing.
+		let blade = null
+		try {
+			blade = await bladeFleetNow(ns, sleeves.length, node)
+		} catch (err) {
+			blade = { on: false, error: true, why: `bladeFleetNow threw: ${describe(err)}` }
+			refusals.push(blade.why)
+		}
+		if (blade?.on && Array.isArray(blade.tasks) && auto) auto.tasks = blade.tasks
+
 		sleeves.forEach((sleeve, index) => {
 			let sleeveTask = sleeveTasks[index] ?
 				sleeveTasks[index].toLowerCase() : undefined;
@@ -447,6 +530,20 @@ async function act(ns, note) {
 			// the faction, or it is the gang's faction — so doTask's catch is
 			// what keeps a refusal a published refusal instead of a dead script.
 			if (typeof sleeveTask === 'object') {
+				// BLADEBURNER (sleeveplan.bladeFleetGen). Re-issuing restarts the
+				// work (Sleeve.startWork finishes the current one), so only on a change.
+				if (sleeveTask.kind === 'bladeburner' && sleeveTask.action) {
+					const t = sleeve.task
+					const already =
+						(sleeveTask.action === SLEEVE_ACTION.infiltrate && t?.type === 'INFILTRATE') ||
+						(sleeveTask.action === SLEEVE_ACTION.support && t?.type === 'SUPPORT') ||
+						(t?.type === 'BLADEBURNER' && t?.actionName === sleeveTask.action)
+					if (!already) {
+						doTask(`sleeve ${sleeve.index} bladeburner ${sleeveTask.action}`,
+							() => ns.sleeve.setToBladeburnerAction(sleeve.index, sleeveTask.action, sleeveTask.contract));
+					}
+					return;
+				}
 				if (sleeveTask.kind === 'faction' && sleeveTask.faction) {
 					const already = sleeve.task?.type === 'FACTION' && sleeve.task?.factionName === sleeveTask.faction
 					if (!already) {
@@ -717,6 +814,8 @@ async function act(ns, note) {
 				skills: { str: x.skills?.strength ?? null, def: x.skills?.defense ?? null, dex: x.skills?.dexterity ?? null, agi: x.skills?.agility ?? null, hack: x.skills?.hacking ?? null },
 			})),
 			tasks: sleeveTasks,
+			// The Bladeburner fleet (config, model hours, the ranked configs) or why not.
+			blade,
 			unknownTasks: [...warned],
 			refusals,
 			detail: refusals.length

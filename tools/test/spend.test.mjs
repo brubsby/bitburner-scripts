@@ -126,7 +126,8 @@ export async function run() {
     const destroyAt = eg.indexOf("destroyW0r1dD43m0n(");
     if (gateAt < 0 || !(gateAt < readyAt && gateAt < destroyAt)) c9.fail("the mandate check must come before the ready report and the destroy call");
     const blk = eg.slice(gateAt, readyAt);
-    if (!/if \(from === null \|\| covenantMandated\(reset\.currentNode, from\)\) \{[\s\S]*?return\s*\}/.test(blk)) c9.fail("an unknown count or an unmet mandate must RETURN (refuse), not continue");
+    // `return true` since the leaving path became leave() (shared with the Bladeburner exit): still a refusal.
+    if (!/if \(from === null \|\| covenantMandated\(reset\.currentNode, from\)\) \{[\s\S]*?return(?:\s+true)?\s*\}/.test(blk)) c9.fail("an unknown count or an unmet mandate must RETURN (refuse), not continue");
     if (/singularity|destroyW0r1dD43m0n|connect|installBackdoor/.test(blk)) c9.fail("the precondition must never act — only refuse");
     if (!/\['waive-covenant', false\]/.test(eg)) c9.fail("the override must be an explicit flag, off by default");
   }

@@ -35,6 +35,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoPushVerdict } from "./pushwatch.mjs";
+import { bladeburnerHealth } from "./bbhealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -505,6 +506,17 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
     }
     else note(`work slot: '${owner}' claimed and the game is running ${actual}`);
   }
+}
+// THE BLADEBURNER ROUTE (tools/bbhealth.mjs): the daemon reporting, the slot
+// held by an action, rank rising, stamina recovering, attempts succeeding at
+// the rate the policy priced, the formula agreeing with the game, and the
+// exit taken once the 21st black op is done. Silent outside BN6/7 and SF6/7
+// nodes with no record. The rank comparison uses this run's previous snapshot.
+{
+  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), state, prev: prev?.bladeburner ?? null });
+  for (const f of r.fails) fail(f.what, f.detail);
+  for (const n of r.notes) note(n);
+  now.bladeburner = r.snap;
 }
 // THE STOCK TRADER (stock.js). In BitNode 8 it is the whole income, so a dead
 // or erroring trader is a stalled node, and a live one earning far below what

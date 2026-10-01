@@ -25,6 +25,8 @@ import { drain } from 'coop.js'
 import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
 import { realisedCapital } from 'nodeecon.js'
 import { RW_PRIOR, rwShape } from 'traderw.js'
+// Pure: the Bladeburner exit model (decideBladeRouteGen).
+import { bladeExitGen } from 'bbplan.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -2131,3 +2133,54 @@ export function modelVersionFrom(readFn, root = 'progress.js') {
 
 /** A per-life seed: the same draws for every pass of one life (CRN across passes). */
 export const seedOf = (lastAugReset, node) => hashOf(`${node ?? ''}:${lastAugReset ?? 0}`)
+
+/**
+ * THE BLADEBURNER ROUTE (decisions.bladeRoute): exit by the 21 black ops
+ * against the exit the plan already prices, on the same draws, by the plan's
+ * commitment rule (decide: switch only when P(win) >= theta).
+ *
+ *   'hack'   `traj` (the committed trajectory) on each draw of `base` — the
+ *            work slot on faction work and grafts, the World Daemon exit.
+ *   'blade'  bbplan.bladeExitGen from bladeStartAt(cycleHours): the work slot
+ *            on Bladeburner, an install (combat exp to 0, the retrain) at the
+ *            draw's cadence. One simulation per cadence step of e^0.25 around
+ *            the point's (memo) — nothing else of the route is drawn yet, and its
+ *            structural noise is the hacking simulator's (discrepancyOf on its
+ *            own key 'bladeburner').
+ *
+ * Not simulated, named: the hacking exit still progressing on the blade route
+ * (only the slot moved) — the blade arm is the black-op exit alone, so the
+ * comparison leans to 'hack'. The blade model is NOT CALIBRATED live; against
+ * the game's own classes it is within -2..+15% (tools/sim/bb6.mjs).
+ *
+ * Returns the decideAmong record plus { hackH, bladeH } (the points).
+ */
+export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now() } = {}) {
+  // The cadence in steps of e^0.25 (28%) around the point's: the drawn
+  // cadences collapse to a handful of simulations (~50-100ms each), however
+  // wide the cadence posterior is.
+  const memo = new Map()
+  const c0 = fin(base?.cycleHours) && base.cycleHours > 0 ? base.cycleHours : null
+  function* bladeH(cyc) {
+    const k = c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
+    if (!memo.has(k)) memo.set(k, (yield* bladeExitGen(bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0))).hours)
+    return memo.get(k)
+  }
+  let pointHack = null
+  try {
+    pointHack = traj(base)
+  } catch {
+    pointHack = null
+  }
+  yield
+  const pointBlade = yield* bladeH(base?.cycleHours)
+  const options = [
+    { key: 'hack', noiseKey: noiseKeyOf(basis, base), sim: (d) => traj(applyDraw(base, d), d) },
+    { key: 'blade', noiseKey: 'bladeburner', sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours)), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours) },
+  ]
+  const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null
+  const d = post
+    ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade) })
+    : { key: fin(pointBlade) && (!fin(pointHack) || pointBlade < pointHack) ? 'blade' : fin(pointHack) ? 'hack' : null, why: 'no posterior: the point comparison' }
+  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeSims: memo.size }
+}

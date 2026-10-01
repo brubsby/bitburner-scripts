@@ -374,7 +374,8 @@ const STRUCTURAL = [
   [
     "ns.ramOverride floors are 2.6GB, and the raise ceilings are SF4-dependent",
     "healer.js, createProgram.js, training.js, crime.js, faction.js, bladeburner.js, sleeve.js, endgame.js and progress.js each declare " +
-      "(hashspend.js declares ns.ramOverride(3.25): it also mirrors its capability-absent record home, getHostname + scp, and raises to 7.25GB only with hacknet servers) " +
+      "(hashspend.js declares ns.ramOverride(3.25): it also mirrors its capability-absent record home, getHostname + scp, and raises to 7.25GB only with hacknet servers; " +
+      "bladeburner.js and sleeve.js declare 3.25 for the same reason and raise to a ceiling with NO SF4 term — 92.75GB and 49.75GB — because ns.bladeburner/ns.sleeve are not SF4-scaled) " +
       "`ns.ramOverride(2.6)` as the first statement of main (2.6 = RamCostConstants.Base 1.6 + ns.getResetInfo 1.0) and then " +
       "raise to `nonSing + singBase * singularityRamMultiplier(resetInfo)` before the first gated call. The FLOOR is " +
       "BitNode-independent; the CEILING is not — singBase is multiplied by 1 inside BN4, 16 at SF4.1, 4 at SF4.2, 1 at SF4.3. " +

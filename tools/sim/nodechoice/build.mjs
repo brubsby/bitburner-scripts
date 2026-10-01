@@ -26,7 +26,13 @@ export { Bladeburner } from "${GAME}/src/Bladeburner/Bladeburner";
 export { BladeburnerConstants } from "${GAME}/src/Bladeburner/data/Constants";
 export { Skills as BladeburnerSkills } from "${GAME}/src/Bladeburner/data/Skills";
 export * from "${GAME}/src/Bladeburner/Enums";
-export { calculateActionRankGain } from "${GAME}/src/Bladeburner/Formulas";
+export { calculateActionRankGain, calculateActionRankLoss, calculateActionReputationGain } from "${GAME}/src/Bladeburner/Formulas";
+export { createContracts } from "${GAME}/src/Bladeburner/data/Contracts";
+export { createOperations } from "${GAME}/src/Bladeburner/data/Operations";
+export { createBlackOperations } from "${GAME}/src/Bladeburner/data/BlackOperations";
+export { GeneralActions as BladeburnerGeneralActions } from "${GAME}/src/Bladeburner/data/GeneralActions";
+// The game's own ns.bladeburner implementation, for driving bladeburner.js offline (tools/test/bbdaemon.test.mjs).
+export { NetscriptBladeburner } from "${GAME}/src/NetscriptFunctions/Bladeburner";
 export { PlayerObject } from "${GAME}/src/PersonObjects/Player/PlayerObject";
 export { Sleeve } from "${GAME}/src/PersonObjects/Sleeve/Sleeve";
 export { SleeveInfiltrateWork } from "${GAME}/src/PersonObjects/Sleeve/Work/SleeveInfiltrateWork";

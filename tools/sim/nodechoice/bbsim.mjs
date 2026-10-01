@@ -57,7 +57,10 @@
 //     the gym (their exp reaches the player at sync x their shock bonus,
 //     Work.ts applySleeveGains), never on contracts.
 
+import '../../test/gameresolve.mjs'
 import g, { setBitNode } from './game.mjs'
+// bbplan.js imports by the game's bare spelling ('coop.js'): load it after gameresolve's hook is registered.
+const bp = await import('bbplan.js')
 
 const T = g.BladeburnerActionType
 const SK = g.BladeburnerSkillName
@@ -280,13 +283,25 @@ export function runBladeburner(o) {
     // The fleet as it arrives: Sleeve.prestige() — shock 100, exp 0, sync = memory (100).
     const nInf = pol.sleeves?.infiltrate ?? 0
     const nGym = pol.sleeves?.gym ?? 0
-    for (let i = 0; i < nInf + nGym; i++) {
+    const nSup = pol.sleeves?.support ?? 0
+    const nFa = pol.sleeves?.fa ?? 0
+    for (let i = 0; i < nInf + nGym + nSup + nFa; i++) {
       const s = new g.Sleeve()
       s.memory = 100
       s.prestige()
       P.sleeves.push(s)
     }
-    P.sleeves.forEach((s, i) => s.startWork(i < nInf ? new g.SleeveInfiltrateWork() : new g.SleeveClassWork({ classType: g.GymType[COMBAT[i % 4]], location: GYM })))
+    P.sleeves.forEach((s, i) =>
+      s.startWork(
+        i < nInf
+          ? new g.SleeveInfiltrateWork()
+          : i < nInf + nSup
+            ? new g.SleeveSupportWork()
+            : i < nInf + nSup + nFa
+              ? new g.SleeveBladeburnerWork({ actionId: { type: T.General, name: g.BladeburnerGeneralActionName.FieldAnalysis } })
+              : new g.SleeveClassWork({ classType: g.GymType[COMBAT[i % 4]], location: GYM }),
+      ),
+    )
 
     const gen = (name) => ({ type: T.General, name })
     const hrc = gen(g.BladeburnerGeneralActionName.HyperbolicRegen)
@@ -302,7 +317,50 @@ export function runBladeburner(o) {
     const trace = []
     const gymTarget = () => Math.max(100, pol.gymTo ?? 100)
 
+    // THE SHARED POLICY (pol.shared): bbplan.chooseAction / planSkills /
+    // bestCity — the exact code bladeburner.js runs in the game — deciding on a
+    // view built from the game's own objects, while every OUTCOME (success
+    // rolls, rank, counts, chaos, events, sleeves) is still the game's.
+    const sharedPol = { ...bp.POLICY, ...(pol.sharedPolicy ?? {}) }
+    const viewOf = () => {
+      // ENV in a reference city (population 1e9, no chaos); every real city
+      // scales it by bbplan.cityFactor — the same split the daemon uses.
+      const env = (a) => ({ int: P.skills.intelligence, stamina: bb.stamina, maxStamina: bb.maxStamina, pop: C.PopulationThreshold, chaos: 0, teamCount: a.teamCount ?? 0, augMult: P.mults.bladeburner_success_chance })
+      const next = bb.blackOperationArray[bb.numBlackOpsComplete]
+      return {
+        person: P, sm: bb.skillMultipliers, levels: { ...bb.skills }, bnRank: g.currentNodeMults.BladeburnerRank,
+        rank: bb.rank, stamina: bb.stamina, maxStamina: bb.maxStamina, staminaGain: bb.calculateStaminaGainPerSecond(),
+        maxStaminaBase: true, staminaBonus: bb.staminaBonus, resting,
+        ref: { pop: C.PopulationThreshold, chaos: 0 },
+        cities: Object.entries(bb.cities).map(([name, x]) => ({ name, pop: pol.useEst ? x.popEst : x.pop, chaos: x.chaos, comms: x.comms })),
+        city: bb.city,
+        actions: [...Object.values(bb.contracts), ...Object.values(bb.operations)].map((a) => {
+          const d = bp.dataOf(a.name)
+          return { d, count: a.count, maxLevel: a.maxLevel, K: bp.envOf(d, env(a)), width: 0 }
+        }),
+        blackOp: next ? { d: bp.dataOf(next.name), K: bp.envOf(bp.dataOf(next.name), env(next)), width: 0 } : null,
+      }
+    }
+    const sharedDecide = () => {
+      // Operations and black ops take the whole team (the daemon's setTeamSize).
+      for (const a of [...Object.values(bb.operations), ...bb.blackOperationArray]) a.teamCount = bb.teamSize
+      if (t - lastSkillT >= 600) {
+        for (const b of bp.planSkills(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost)) bb.upgradeSkill(b.name, b.count)
+        lastSkillT = t
+      }
+      if (bb.stamina <= sharedPol.restLow * bb.maxStamina) resting = true
+      if (resting && bb.stamina >= sharedPol.restHigh * bb.maxStamina) resting = false
+      const pick = bp.chooseAction(viewOf(), sharedPol)
+      if (pick.city) bb.city = pick.city
+      const id = { type: pick.type, name: pick.name }
+      if (pick.level) bb.getActionObject(id).level = pick.level
+      const cur = bb.action
+      if (!cur || cur.type !== id.type || cur.name !== id.name) bb.startAction(id)
+      else if (bb.actionTimeCurrent === 0) bb.actionTimeToComplete = bb.getActionObject(id).getActionTime(bb, P)
+    }
+
     const decide = () => {
+      if (pol.shared) return sharedDecide()
       if (t - lastSkillT >= 600) {
         spendSkills(bb, P, pol)
         lastSkillT = t
@@ -349,7 +407,10 @@ export function runBladeburner(o) {
         }
       }
       faction.prestigeAugmentation() // rep -> favor (Faction.ts:77)
-      for (const s of COMBAT) P.exp[s] = 0 // prestigeAugmentation resets exp (PlayerObjectGeneralMethods.ts)
+      // prestigeAugmentation resets EVERY exp (PlayerObjectGeneralMethods.ts:95-101) — charisma
+      // too, which the contracts and Investigation/Undercover weigh 0.1-0.25. Hacking
+      // stays the fixed input (the hacking scripts rebuild it within the life).
+      for (const s of [...COMBAT, "charisma"]) P.exp[s] = 0
       applyMults()
       P.hp.current = P.hp.max
       bb.prestigeAugmentation() // resetAction + joinFaction (Bladeburner.ts:260)

@@ -338,11 +338,33 @@ const STACK = [
     // must use the RAISED figure or the raise is denied on arrival.
     // 41.75 -> 45.75: ns.sleeve.setToFactionWork, so the fleet can work the
     // faction whose reputation gates the exit. Still well inside tier 64.
-    raisesTo: 45.75,
+    // 45.75 -> 49.75: ns.sleeve.setToBladeburnerAction, the fleet on the
+    // Bladeburner route (sleeveplan.bladeFleetGen).
+    raisesTo: 49.75,
     why:
       'sleeves are parallel actors: each one commits crime, trains or works a faction alongside the player, and the ' +
       'karma grind that gates a gang is the single longest work-slot leg of a gang node. Refuses by name in ' +
       '/tel/sleeve.txt without Source-File 10, so it costs 2.60GB and says why in nodes that cannot use it.',
+  },
+  {
+    // MOVED OUT OF tools/test/stage.test.mjs's HAND_RUN LIST for BitNode 6
+    // (2026-09-30, the watchdog's endgame --next 6), the step that list
+    // exists to force — the same move sleeve.js made for BitNode 10.
+    //
+    // 3.25GB declared; raised to its full 92.75GB only where sfgate says the
+    // division exists (BN6/7, or SF6/7). Every ns.bladeburner call is 4GB and
+    // NOT scaled by Source-File 4 (RamCostGenerator.ts SF4Cost touches only
+    // ns.singularity), so 92.75GB is the price at every SF4 level: tier 128,
+    // off home, on a host that has the RAISED figure free.
+    script: 'bladeburner.js',
+    where: 'anywhere',
+    tier: 128,
+    rank: 33,
+    raisesTo: 92.75,
+    why:
+      'the Bladeburner route to the exit: rank, skills and the 21 black operations by bbplan.js, acting only while ' +
+      'progress.js holds the work slot for it (slot.owner "bladeburner"). Exits in telemetry where the division does ' +
+      'not exist; never destroys w0r1d_d43m0n (endgame.js does, under its --next and hold).',
   },
   {
     // THE STOCK TRADER (stock.js + stockstrat.js). Waits in telemetry and

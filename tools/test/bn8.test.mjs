@@ -1063,7 +1063,8 @@ export async function run() {
     const ab = fs.readFileSync(path.join(REPO_ROOT, "autobuy.js"), "utf8");
     if (!/\{ exitRoot: exitRootRequired\(resetInfo\.ownedAugs\) \}/.test(ab)) ae.fail("autobuy.js honours the exit requirement too");
     const wd = fs.readFileSync(path.join(REPO_ROOT, "watchdog.js"), "utf8");
-    if (!/script: 'endgame\.js',[\s\S]{0,400}minIntervalMs: \(ns\) => \(ns\.getResetInfo\(\)\?\.ownedAugs\?\.has\?\.\('The Red Pill'\) \? 120000 : 3600000\)/.test(wd) || !/typeof entry\.minIntervalMs === 'function' \? entry\.minIntervalMs\(ns\)/.test(wd)) ae.fail("endgame.js must run every 2 minutes once The Red Pill is installed");
+    // The cadence is now a function body (the Bladeburner exit's Daedalus-next case joined it, 2026-09-30); the Red Pill arm is still first.
+    if (!/script: 'endgame\.js',[\s\S]{0,900}minIntervalMs: \(ns\) => \{[\s\S]{0,200}ownedAugs\?\.has\?\.\('The Red Pill'\)\) return 120000[\s\S]{0,700}return near \? 120000 : 3600000/.test(wd) || !/typeof entry\.minIntervalMs === 'function' \? entry\.minIntervalMs\(ns\)/.test(wd)) ae.fail("endgame.js must run every 2 minutes once The Red Pill is installed");
     const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
     if (!/EXIT BLOCKED: The Red Pill is installed/.test(hc) || !/if \(forMin > 10\) fail\(/.test(hc)) ae.fail("healthcheck F must fail EXIT BLOCKED after 10 minutes not ready");
   }

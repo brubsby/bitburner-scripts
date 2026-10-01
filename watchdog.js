@@ -517,8 +517,22 @@ const WATCHED = [
     args: ['--next', 6],
     // Hourly while it can only report the gap; every 2 minutes once The Red
     // Pill is installed — the exit is then minutes away and waiting an hour
-    // for the next run cost BN8 up to 60 min (2026-09-27).
-    minIntervalMs: (ns) => (ns.getResetInfo()?.ownedAugs?.has?.('The Red Pill') ? 120000 : 3600000),
+    // for the next run cost BN8 up to 60 min (2026-09-27). The Bladeburner
+    // route's equivalent: Operation Daedalus next or done (bladeburner.txt,
+    // this node). Only the CADENCE reads that file; endgame.js decides from
+    // the game's own getNextBlackOp().
+    minIntervalMs: (ns) => {
+      const info = ns.getResetInfo()
+      if (info?.ownedAugs?.has?.('The Red Pill')) return 120000
+      let bb = null
+      try {
+        bb = JSON.parse(ns.read('/tel/bladeburner.txt') || 'null')
+      } catch {
+        bb = null
+      }
+      const near = !!bb && bb.bitNode === info?.currentNode && (bb.exitReady === true || (bb.blackOps?.done ?? 0) >= 20)
+      return near ? 120000 : 3600000
+    },
     trigger: () => true,
   },
   // Converts money into NeuroFlux levels via donations. NFG is +1% to every

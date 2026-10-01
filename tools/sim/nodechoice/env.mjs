@@ -46,5 +46,11 @@ if (!G.document.adoptedStyleSheets) G.document.adoptedStyleSheets = [];
 // Rebuild when missing or older than the game source it bundles.
 const OUT = path.join(HERE, "game.bundle.mjs");
 const SRC = path.resolve(HERE, "../../../../bitburner/src/Bladeburner/Bladeburner.ts");
-const stale = !fs.existsSync(OUT) || (fs.existsSync(SRC) && fs.statSync(SRC).mtimeMs > fs.statSync(OUT).mtimeMs);
+// Also when build.mjs itself is newer: an ENTRY added there (a newly exported
+// formula) must not be read from a bundle built before it existed.
+const BUILD = path.join(HERE, "build.mjs");
+const stale =
+  !fs.existsSync(OUT) ||
+  (fs.existsSync(SRC) && fs.statSync(SRC).mtimeMs > fs.statSync(OUT).mtimeMs) ||
+  fs.statSync(BUILD).mtimeMs > fs.statSync(OUT).mtimeMs;
 if (stale) execFileSync(process.execPath, [path.join(HERE, "build.mjs")], { stdio: "inherit" });

@@ -650,7 +650,8 @@ function runB711() {
     // read from live telemetry and an UNREADABLE save leaves the exemption
     // standing — unknown must not manufacture a failure, but it must not
     // manufacture a pass either, so that case is NOTED out loud.
-    "bladeburner.js", "go-cheat.js", "stock.js",
+    // bladeburner.js left this list for BitNode 6 (boot.js manifest, tier 128).
+    "go-cheat.js", "stock.js",
     // Needs SF4 and is superseded on the autonomous path: progress.js buys
     // programs through torbuy.js/autobuy.js. Kept for hand use.
     "createProgram.js", "healer.js",

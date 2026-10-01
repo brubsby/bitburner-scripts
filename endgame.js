@@ -57,6 +57,19 @@
 // wrong in every other one.
 //
 // ---------------------------------------------------------------------------
+// THE SECOND WAY OUT: THE BLADEBURNER EXIT
+//
+// destroyW0r1dD43m0n accepts EITHER requirement (Singularity.ts:1148-1163):
+// the hacking one above, or Player.bladeburner.numBlackOpsComplete >= 21 —
+// Operation Daedalus done. The Bladeburner one needs no hacking level, no root
+// and no Red Pill (GetServer resolves the daemon whether or not it is linked).
+// So this checks it FIRST, from the game (inBladeburner + getNextBlackOp() ===
+// null, a statement the black ops themselves make — not /tel/bladeburner.txt,
+// which the daemon that runs them writes), and when it holds goes straight to
+// the same leaving path: /endgame-hold.txt, the Covenant mandate, --next,
+// --dry. bladeburner.js never destroys anything; this file is the only actor.
+//
+// ---------------------------------------------------------------------------
 // RAMOVERRIDE 3.2GB — excludes: ns.singularity.destroyW0r1dD43m0n (32GB at base
 // price, 512GB at the 16x SF4.1 rate), which is the only Singularity call in
 // this file.
@@ -91,7 +104,7 @@
 // early is free and must not wait for a human, while leaving the node should be
 // a decision someone made on purpose.
 
-import { canUseSingularity, singularityRamMultiplier, sfLevel } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, sfLevel, canJoinBladeburner } from 'sfgate.js'
 import { COVENANT_MANDATE, covenantMandated, sleevesFromCovenant } from 'sleeveplan.js'
 import { reporter } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
@@ -102,7 +115,9 @@ import { raiseRam } from 'ramgrow.js'
  * 35.20GB in BN4 (mult 1) and 515.20GB at SF4.1 outside BN4 (mult 16), i.e.
  * 3.20 + 32.0*mult. Asserted every run by tools/test/ramoverride.test.mjs [R5].
  */
-const RAISE_CEILING = (mult) => 3.2 + 32.0 * mult
+const RAISE_CEILING = (mult) => 5.2 + 32.0 * mult
+/** The floor plus ns.bladeburner.getNextBlackOp (2GB, NOT SF4-scaled; inBladeburner is 0GB): what reading the black ops needs. */
+const BLADE_PROBE = 5.2
 
 const STATUS = '/tel/endgame.txt'
 const WD = 'w0r1d_d43m0n'
@@ -137,6 +152,35 @@ export async function main(ns) {
 
   const level = ns.getHackingLevel()
 
+  // THE BLADEBURNER EXIT, checked first (header). Only where the division
+  // can exist; the raise covers the one 2GB read and nothing else.
+  const resetB = ns.getResetInfo()
+  let blade = null
+  if (canJoinBladeburner(resetB)) {
+    if (await raiseRam(ns, BLADE_PROBE, STATUS, 'endgame.js reading the black ops (getNextBlackOp)')) {
+      const joined = ns.bladeburner.inBladeburner()
+      const next = joined ? ns.bladeburner.getNextBlackOp() : undefined
+      blade = { joined, done: joined && next === null, next: next?.name ?? null, nextRank: next?.rank ?? null }
+    } else {
+      blade = { joined: null, done: false, why: `could not raise to ${BLADE_PROBE}GB to read the black ops` }
+    }
+  }
+  if (blade?.done) {
+    const report = {
+      at: new Date().toISOString(),
+      bitNode: resetB?.currentNode,
+      server: WD,
+      route: 'bladeburner',
+      hackingLevel: level,
+      blackOps: 'all 21 complete (Operation Daedalus done)',
+      ready: true,
+      canAct: canUseSingularity(resetB),
+      next: flags.next || null,
+    }
+    published = await leave(ns, flags, report, resetB, note, level, null)
+    return
+  }
+
   // Resolving the hostname is itself the first gate — see the header. It throws
   // until The Red Pill has been installed and a prestige has linked the daemon
   // into the network.
@@ -160,6 +204,7 @@ export async function main(ns) {
       server: WD,
       hackingLevel: level,
       redPillInstalled: hasTRP,
+      bladeburner: blade,
       result: 'waiting',
       stage: hasTRP ? 'red-pill-installed-but-daemon-still-unlinked' : 'need-the-red-pill',
       detail: hasTRP
@@ -222,6 +267,8 @@ export async function main(ns) {
     ready,
     canAct,
     next: flags.next || null,
+    route: 'hacking',
+    bladeburner: blade,
   }
 
   if (!ready) {
@@ -235,13 +282,24 @@ export async function main(ns) {
   }
 
   // --- 3. leave ------------------------------------------------------------
+  published = await leave(ns, flags, report, reset, note, level, need)
+}
+
+/**
+ * The leaving path, shared by both routes: the hold file, the Covenant
+ * mandate, --next/--dry, the raise, then destroyW0r1dD43m0n. Returns true once
+ * it has published. `need` is the hacking level (null on the Bladeburner route).
+ */
+async function leave(ns, flags, report, reset, note, level, need) {
+  const canAct = canUseSingularity(reset)
   if (!canAct) {
     report.result = 'blocked'
-    report.detail = 'requirements met but Singularity is unavailable — connect to w0r1d_d43m0n and backdoor it manually'
+    report.detail = need === null
+      ? 'all 21 black ops are done but Singularity is unavailable — Bladeburner > Black Operations > "Destroy w0r1d_d43m0n" by hand (BlackOpPage.tsx:39-50)'
+      : 'requirements met but Singularity is unavailable — connect to w0r1d_d43m0n and backdoor it manually'
     note('ok', report)
-    published = true
     ns.tprint(`endgame: READY — ${report.detail}`)
-    return
+    return true
   }
 
   // THE COVENANT MANDATE (sleeveplan.COVENANT_MANDATE, the user's decision
@@ -260,9 +318,8 @@ export async function main(ns) {
     report.result = 'held'
     report.detail = `ready, but /endgame-hold.txt holds the exit: ${hold.slice(0, 200)}`
     note('ok', report)
-    published = true
     ns.tprint(`endgame: ${report.detail}`)
-    return
+    return true
   }
 
   if (reset?.currentNode === COVENANT_MANDATE.node && !flags['waive-covenant']) {
@@ -281,9 +338,8 @@ export async function main(ns) {
           ? `ready, but the Covenant sleeve count is unreadable (sleeve.txt ${fleet ? 'stale or foreign' : 'missing'}) — not leaving BitNode ${reset.currentNode} on an unknown (mandate ${COVENANT_MANDATE.decided}; --waive-covenant to override)`
           : `ready, but only ${from} of the ${COVENANT_MANDATE.target} mandated Covenant sleeves are bought — BitNode ${reset.currentNode} is the only place to buy them (mandate ${COVENANT_MANDATE.decided}; --waive-covenant to override)`
       note('ok', report)
-      published = true
       ns.tprint(`endgame: ${report.detail}`)
-      return
+      return true
     }
   }
 
@@ -291,11 +347,10 @@ export async function main(ns) {
     // Deliberate stop. Everything is in place and the last step waits for an
     // explicit choice of destination, because it cannot be undone.
     report.result = 'ready'
-    report.detail = `ready to leave BitNode ${reset?.currentNode}: rooted and at level ${level}/${need}. Re-run with --next <bitNode> to destroy the world daemon.`
+    report.detail = `ready to leave BitNode ${reset?.currentNode}: ${need === null ? 'all 21 black ops done (the Bladeburner exit)' : `rooted and at level ${level}/${need}`}. Re-run with --next <bitNode> to destroy the world daemon.`
     note('ok', report)
-    published = true
     ns.tprint(`endgame: ${report.detail}`)
-    return
+    return true
   }
 
   // Raise to the full price before the only Singularity call in the file. A
@@ -307,15 +362,14 @@ export async function main(ns) {
     report.result = 'blocked'
     report.detail = `requirements met but could not raise to ${want.toFixed(2)}GB to call destroyW0r1dD43m0n`
     note('ok', report)
-    published = true
-    return
+    return true
   }
 
   report.result = 'destroying'
   note('ok', report)
-  published = true
-  ns.tprint(`endgame: destroying ${WD}, entering BitNode ${flags.next}`)
+  ns.tprint(`endgame: destroying ${WD} by the ${need === null ? 'Bladeburner' : 'hacking'} route, entering BitNode ${flags.next}`)
   // boot.js is handed in as the callback so the next node comes up with the
   // stack running, the same contract progress.js uses for installs.
   ns.singularity.destroyW0r1dD43m0n(flags.next, 'boot.js')
+  return true
 }

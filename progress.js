@@ -107,7 +107,7 @@ const SCHEDULE = '/tel/factionplan.txt'
  */
 const WD_BASE_HACKING = 3000
 
-import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting, canJoinBladeburner } from 'sfgate.js'
 import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, sameGraftSchedule, graftsOfLifeNow, graftsOffBatch, graftBatchCheckOf, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGangGen, trainRatio } from 'gangplan.js'
 
@@ -158,7 +158,9 @@ import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERM
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym } from 'bodyplan.js'
+// Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
+import { bladeStartOf, POLICY as BB_POLICY, JOIN_COMBAT } from 'bbplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -169,7 +171,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2418,6 +2420,78 @@ function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
   if (heldH > capH) return { hold: false, why: `the committed 4S TIX API not bought after ${heldH.toFixed(2)}h of holding (cap ${capH.toFixed(2)}h) — hold released` }
   return { hold: true, why: `the committed 4S TIX API ($${(d.cost / 1e9).toFixed(0)}b) not bought yet; the committed trajectory lasts this life ${legH.toFixed(2)}h for it (held ${heldH.toFixed(2)}h of at most ${capH.toFixed(2)}h)` }
 }
+/**
+ * THE BLADEBURNER ROUTE (decisions.bladeRoute): the exit by the 21 black ops
+ * against the exit the plan already prices, on the same draws, committed by
+ * the plan's rule (CLAUDE.md "Decisions compare simulated trajectories").
+ *
+ *   'hack'   the committed trajectory (plan.trajectoryOf on the committed
+ *            install basis) — the work slot on faction work, grafts, the
+ *            World Daemon at 3000 x WorldDaemonDifficulty.
+ *   'blade'  bbplan.bladeExit from this pass's state (/tel/bladeburner.txt,
+ *            the player, the sleeves' Bladeburner fleet) with the work slot
+ *            on Bladeburner and installs at the draw's cadence. Each install
+ *            resets combat exp (the retrain is in the model); combatGain 1:
+ *            the augmentation batches are bought for the hacking exit, so no
+ *            combat growth is credited — PESSIMISTIC for this arm.
+ *
+ * Not simulated, named: the hacking exit still progressing on the blade
+ * route (money and scripts run on; only the slot moved) — the blade arm is
+ * the black-op exit alone, pessimistic. The blade model is NOT CALIBRATED
+ * against a live Bladeburner; against the game's own classes it is within
+ * -2..+15% (tools/sim/bb6.mjs), and the draws' structural noise is the
+ * hacking simulator's (discrepancyOf, its own key).
+ *
+ * The comparison itself is plan.decideBladeRouteGen (tested on a BN6 entry
+ * replay, tools/test/bladeroute.test.mjs [BR1-BR3]); this builds its inputs.
+ * CPU: one bladeExit per cadence step (e^0.25) the draws reach, as a
+ * generator yielding every 10 steps, so the plan's pacer slices it like
+ * every other trajectory. Only where the division exists.
+ */
+const BLADE_TEL = '/tel/bladeburner.txt'
+async function bladeRouteOf(ns, info, player, inputsFn) {
+  const mults = bitNodeMults(info?.currentNode)
+  if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
+  const pc = planCtxOf(ns, info)
+  try {
+    const tel0 = readJson(ns, BLADE_TEL)
+    // This node's division only: a BitNode entry deletes it (prestigeSourceFile).
+    const tel = tel0 && tel0.bitNode === info.currentNode ? tel0 : null
+    const fleet = readJson(ns, '/tel/sleeve.txt')
+    const ours = fleet && fleet.bitNode === info.currentNode
+    const nSleeves = ours && Number.isInteger(fleet.sleeves) ? fleet.sleeves : 0
+    // The fleet sleeve.js committed for Bladeburner (sleeve.txt blade.config), else all on Infiltrate.
+    const sleeves = ours && fleet.blade?.config ? fleet.blade.config : { infiltrate: nSleeves, support: 0, fa: 0 }
+    const person = levelledPerson(player, info)
+    const gym = bestGym(person)
+    const gymExpPerSec = gym ? gymRate(gym, 'strength', person, ns.hacknet.getTrainingMult()) : null
+    return await planDecide(pc, 'bladeRoute', function* () {
+      const base = inputsFn()
+      yield
+      const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+      const lifeAgeH = Math.max(0, (Date.now() - (info?.lastAugReset ?? Date.now())) / 3600e3)
+      const bladeStartAt = (cyc) =>
+        bladeStartOf({
+          tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost,
+          install: cyc > 0 ? { everyH: cyc, firstH: Math.max(0.25, cyc - lifeAgeH), combatGain: 1 } : null,
+        })
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), basis, bladeStartAt, prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
+      return {
+        ...d,
+        joined: tel?.joined === true,
+        rank: tel?.rank ?? null,
+        blackOps: tel?.blackOps?.done ?? null,
+        sleeves,
+        combatGain: 1,
+        model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
+      }
+    })
+  } catch (e) {
+    pc.decisions.bladeRoute = { key: null, error: true, why: `bladeRouteOf threw: ${String(e?.stack ?? e).slice(0, 240)}` }
+    return pc.decisions.bladeRoute
+  }
+}
+
 async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
   const pc = planCtxOf(ns, info)
   const st = fourSStateOf(ns, info)
@@ -3254,7 +3328,11 @@ function publishPlan(ns, info, extra = {}) {
     // THE PLAN'S EXIT: the committed install option's distribution (it
     // includes the committed route where one exists), else the route's.
     const pex = pc.decisions.exit ?? null
-    const ex = inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
+    // On the committed Bladeburner route the exit IS the black ops: the
+    // healthcheck's EXIT NOT APPROACHING watches that number, not the World
+    // Daemon's.
+    const br = pc.decisions.bladeRoute ?? null
+    const ex = br?.key === 'blade' && typeof br.q50 === 'number' ? br : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
     // THE PAGE-FREEZE METRIC is the longest stretch of work between yields
     // (maxBlockMs), not the total: the searches run in slices, so a pass may
     // spend seconds of work while never holding the page for more than a
@@ -3287,7 +3365,7 @@ function publishPlan(ns, info, extra = {}) {
       error: pc.error ?? (Object.values(pc.decisions).find((d) => d?.error)?.why ?? null),
       decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
       events: pc.events,
-      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
+      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       decisions: {
         install: inst,
         // THE BATCH BY THE EXIT (batchChoiceStep / plan.chooseBatchGen): the
@@ -3297,6 +3375,8 @@ function publishPlan(ns, info, extra = {}) {
         factionTarget: extra.factionTarget ?? null,
         bodyLeg: extra.bodyLeg ?? null,
         sleeveObjective: pc.decisions.sleeveObjective ?? null,
+        // THE BLADEBURNER ROUTE (bladeRouteOf): 'hack' / 'blade', both exits; carried when not re-priced.
+        bladeRoute: pc.decisions.bladeRoute ?? pc.prev?.decisions?.bladeRoute ?? null,
         // The gang: none / the fleet grinds / the fleet and the slot grind
         // (gangWorthNow). Carried when this pass did not reach it.
         gang: pc.decisions.gang ?? pc.prev?.decisions?.gang ?? null,
@@ -6267,6 +6347,23 @@ async function act(ns, canJoin, info, note) {
   // slot, as priced — the campaign's future charged the gym hours against
   // reputation. The legs' "does not fit one install window" refusal is
   // exactly what the hold removes, so it is not consulted here.
+  // THE BLADEBURNER ROUTE (bladeRouteOf): where the division exists, the plan
+  // prices the exit by the 21 black ops (bbplan.bladeExit) against the exit
+  // it already prices (the committed trajectory), and commits the faster.
+  // Committed 'blade': the gym to combat >= BB_POLICY.gymTo (the join bar,
+  // and the retrain after every install) takes the slot as a body leg, and
+  // then bladeburner.js does — slot.owner 'bladeburner', below.
+  const bladeRoute = canJoin ? await bladeRouteOf(ns, info, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))) : null
+  const bladeOn = bladeRoute?.key === 'blade'
+  const bladeGymStep = (() => {
+    if (!bladeOn) return null
+    const target = Math.max(JOIN_COMBAT, BB_POLICY.gymTo)
+    const short = Object.fromEntries(['strength', 'defense', 'dexterity', 'agility'].filter((k) => (player.skills?.[k] ?? 0) < target).map((k) => [k, target]))
+    if (!Object.keys(short).length) return null
+    const legs = gymLegs(short, levelledPerson(player, info), ns.hacknet.getTrainingMult())
+    const leg = legs?.legs?.[0]
+    return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: 'Bladeburners', stat: leg.stat, to: leg.to, hours: leg.hours } : null
+  })()
   const covenantStep = (() => {
     if (!canJoin || player.factions.includes(COVENANT.faction)) return null
     const cv = covenantActive(readJson(ns, '/tel/installgate.txt'), info?.lastAugReset)
@@ -6277,7 +6374,7 @@ async function act(ns, canJoin, info, note) {
     const leg = legs?.legs?.[0]
     return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: COVENANT.faction, stat: leg.stat, to: COVENANT.skill, hours: leg.hours } : null
   })()
-  const bodyStep = covenantStep ?? (() => {
+  const bodyStep = covenantStep ?? bladeGymStep ?? (() => {
     if (!scheduleTarget || wantCompany || !(schedule?.current?.workH > 0 || routeLead)) return null
     if (player.factions.includes(scheduleTarget)) return null
     const f = schedule?.joinForecasts?.find((x) => x.name === scheduleTarget)
@@ -6396,7 +6493,21 @@ async function act(ns, canJoin, info, note) {
       todo.push(`${scheduleTarget}: invitation requirements unreadable (${String(e).slice(0, 60)})`)
     }
   }
-  if (graftStep && canWork && !flags.dry) {
+  // THE BLADEBURNER SLOT: committed route, in the division, combat retrained
+  // (no body leg left). A RUNNING graft keeps the slot (never interrupted);
+  // no NEW graft starts — the committed grafts were priced on the hacking
+  // exit this route replaces. Every other claimant (desk, crime, faction
+  // work, the gang bootstrap) yields: the route was priced with the slot on
+  // Bladeburner, and faction work would cancel the action
+  // (Bladeburner.ts:1353-1366).
+  const bladeJoined = bladeRoute?.joined === true
+  if (bladeOn && graftStep && !graftStep.running) todo.push(`graft ${graftStep.name} not started: the committed route is Bladeburner (${String(bladeRoute.why ?? '').slice(0, 120)})`)
+  if (bladeOn && bladeJoined && !bodyStep && !graftStep?.running && canWork && !flags.dry) {
+    workedFaction = null
+    slotOwner = 'bladeburner'
+    if (joinTargetDue) joinTargetStep()
+    did.push(`work slot: Bladeburner (committed route: ${bladeRoute.bladeH?.toFixed?.(1) ?? '?'}h by the black ops vs ${bladeRoute.hackH?.toFixed?.(1) ?? '?'}h by the World Daemon) — bladeburner.js acts`)
+  } else if (graftStep && (graftStep.running || !bladeOn) && canWork && !flags.dry) {
     workedFaction = null
     slotOwner = 'graft'
     if (joinTargetDue) joinTargetStep()
