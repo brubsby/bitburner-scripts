@@ -498,6 +498,13 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   const ageMin = pr?.at ? (Date.now() - Date.parse(pr.at)) / 60000 : null;
   const actual = state.currentWork?.type ?? null;
   const want = { body: ["ClassWork", "CrimeWork"], faction: ["FactionWork"], crime: ["CrimeWork"], graft: ["GraftingWork"] }[owner];
+  // The Bladeburner owner's work lives on Player.bladeburner, not currentWork:
+  // hold it to bladeburner.js's own record of the running action. [HC-BB]
+  if (owner === "bladeburner" && ageMin !== null && ageMin < 15) {
+    const bb = tel["bladeburner.txt"] ?? readTel("bladeburner.txt");
+    const fresh = bb?.at && (Date.now() - Date.parse(bb.at)) / 60000 < 5;
+    if (fresh && !bb?.running?.name) fail("ORDER NOT HELD: progress.js gives the work slot to Bladeburner, but no Bladeburner action is running", `bladeburner.js: ${String(bb?.result ?? "?")} — ${String(bb?.detail ?? "").slice(0, 160)}`);
+  }
   if (want && ageMin !== null && ageMin < 15) {
     if (!want.includes(actual)) {
       // A graft's usual cause is its money (the book, its raise): name it.
@@ -723,7 +730,13 @@ if (!sleevesExpected) {
   now.queued = (state.queuedAugmentations ?? []).length;
   now.didCount = Array.isArray(prog?.did) ? prog.did.length : null;
   now.todo0 = Array.isArray(prog?.todo) ? String(prog.todo[0] ?? "") : null;
-  now.working = !!(state.currentWork && (state.currentWork.type ?? state.currentWork.data?.type));
+  // A BLADEBURNER ACTION is the player's work too, but the game keeps it on
+  // Player.bladeburner, not Player.currentWork: count it from the daemon's
+  // fresh record (bladeburner.js `running`). Live BN6 2026-10-01 11:06Z:
+  // PLAYER IDLE while Tracking contracts ran. [HC-BB]
+  const bbRec = tel["bladeburner.txt"] ?? readTel("bladeburner.txt");
+  const bbRunning = !!(bbRec?.running?.name && ageMin(bbRec?.at) !== null && ageMin(bbRec.at) < 5);
+  now.working = !!(state.currentWork && (state.currentWork.type ?? state.currentWork.data?.type)) || bbRunning;
   const sameNode = prev && prev.bitNode === now.bitNode;
   // Entries carry their node, so a node change can never leak an old node's
   // exit into the comparison (BN1's 0.1h vs BN9's 327.8h, 2026-09-28).
