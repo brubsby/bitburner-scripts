@@ -304,6 +304,8 @@ const getSleeves = (ns) => {
 const BLADE_TEL = '/tel/bladeburner.txt'
 const PLAN_TEL = '/tel/plan.txt'
 const BLADE_REPRICE_MS = 30 * 60e3
+/** The fleet's exits are simulated this far at most (12 configurations, each bladeExitGen in 40ms slices). */
+const BLADE_FLEET_MAXH = 200
 let bladeMemo = null
 function pageYield(ns) {
   let MC = null
@@ -354,6 +356,8 @@ async function bladeFleetNow(ns, n, node) {
     gymExpPerSec: gym ? gymRate(gym, 'strength', person, 1) : null,
     bnRank: node?.BladeburnerRank ?? 1, skillCostMult: node?.BladeburnerSkillCost ?? 1,
     install: cyc > 0 ? { everyH: cyc, firstH: Math.max(0.25, cyc - lifeAgeH), combatGain: 1 } : null,
+    // Bounded: a fleet that does not reach the 21st black op in BLADE_FLEET_MAXH is not chosen.
+    maxH: BLADE_FLEET_MAXH,
   })
   const pacer = makePacer({ sliceMs: 40, yieldFn: pageYield(ns) })
   const fleet = await pacer.slices(bladeFleetGen(s0, n), 'bladeFleet')

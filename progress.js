@@ -140,9 +140,9 @@ import { rateAt, manipLostExp, farmOrMoney } from 'expfarm.js'
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
-import { makePacer, drain, stepMemoryStore, pageStorage } from 'coop.js'
+import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
 import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
-import { gangVerdict, gangExit, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
+import { gangVerdict, gangExit, gangExitGen, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
@@ -171,7 +171,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -1912,6 +1912,22 @@ function publishExitInputs(ns, info, inputs, at = null) {
  */
 async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, expDisabled) {
   const out = (objective, why, extra = {}) => ({ objective, why, ...extra })
+  // ON THE COMMITTED BLADEBURNER ROUTE THIS DECISION IS MOOT: every option
+  // prices the World Daemon exit (bestExitPolicy, the gang's exit) — the
+  // route decision's hack arm — while the fleet's Bladeburner work is
+  // sleeve.js's (bladeFleetGen, the black-op exit). Live 2026-10-01 22:35Z it
+  // held the page 238ms in one step, and at 22:59:50Z 'plan-sleeveObjective'
+  // opened and never closed before the page froze (killed 23:11Z). Not run:
+  // published not applicable (plan.BLADE_MOOT), as grafts and the life length.
+  {
+    const pcB = planCtxOf(ns, info)
+    const br = pcB?.decisions?.bladeRoute ?? pcB?.prev?.decisions?.bladeRoute ?? null
+    if (br?.key === 'blade') {
+      const why = `not applicable: ${BLADE_MOOT.sleeveObjective}`
+      if (pcB) pcB.decisions.sleeveObjective = { key: null, applicable: false, notApplicable: BLADE_MOOT.sleeveObjective, why, held: false }
+      return out(null, why)
+    }
+  }
   try {
     const fleet = readFleet(ns, info)
     const by = fleet?.byObjective
@@ -1932,29 +1948,38 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     const k = karmaChannelCtx(ns, info, player)
     const gang = k?.gangPending === true && !k.gangKarmaWaived && typeof k.grindHours === 'function'
     const grindByAssist = new Map()
-    const gangExitOf = gang ? gangExitCtx(ns, info) : null
-    const finish = (inputs, assist) => {
+    // AS A GENERATOR (bestExitPolicyGen / gangExitGen): every draw's exit
+    // yields inside its policy search, so the plan's pacer slices it — live
+    // 22:35Z one synchronous draw held the page 238ms (PLAN BLOCKED THE PAGE,
+    // 'plan-sleeveObjective' step 11 of 25).
+    const gangSched = gang ? gangScheduleNow(ns, info) : null
+    const gangEB = (() => {
+      const e = readJson(ns, '/tel/installgate.txt')?.eBudget
+      return typeof e === 'number' && isFinite(e) ? e : null
+    })()
+    function* finishGen(inputs, assist) {
       if (!gang) {
         // A degenerate exit is "unreachable", not a duration: every candidate
         // ties inside it (BitNode 8, 1.5e26h each), so it decides nothing.
-        const r = bestExitPolicy(inputs)
+        const r = yield* bestExitPolicyGen(inputs)
         return r.degenerate ? null : r.best?.hours ?? null
       }
       // The grind does not depend on a posterior draw: priced once per
       // assist, not once per option per draw (live: 182ms blocks).
       const gk = assist ? `${assist.karmaPerSec}` : 'alone'
       if (!grindByAssist.has(gk)) grindByAssist.set(gk, k.grindHours(null, assist))
-      const g = gangExitOf(inputs, grindByAssist.get(gk))
+      const g = yield* gangExitGen(bestExitPolicyGen, inputs, gangSched, grindByAssist.get(gk), gangEB)
       return typeof g.savedH === 'number' ? (g.savedH > 0 ? g.withH : g.withoutH) : null
     }
+    const finish = (inputs, assist) => drain(finishGen(inputs, assist))
     // Each candidate as a trajectory of the base inputs, so the plan can run
     // it on every posterior draw (applyDraw) as well as on the point.
     const fns = []
-    if (gang && by.karma > 0) fns.push(['karma', (b) => finish(b, { karmaPerSec: by.karma, killsPerSec: 0 })])
+    if (gang && by.karma > 0) fns.push(['karma', (b, fin = finish) => fin(b, { karmaPerSec: by.karma, killsPerSec: 0 })])
     // The sleeve's rep prices on the exit leg by itself; the life-to-life lift
     // (repBoost) needs the player's measured rate as its denominator, and is
     // simply omitted (a floor) while that rate is only estimated.
-    if (repFaction && by.rep > 0) fns.push(['rep', (b) => finish({ ...b, sleeveRep: { perSec: by.rep, delayH: 0 }, ...(playerRep > 0 ? { repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } } : {}) }, null)])
+    if (repFaction && by.rep > 0) fns.push(['rep', (b, fin = finish) => fin({ ...b, sleeveRep: { perSec: by.rep, delayH: 0 }, ...(playerRep > 0 ? { repBoost: { K: (playerRep + by.rep) / playerRep, e: eRep } } : {}) }, null)])
     // STUDY PAYS A FEE (ClassWork.tsx:42, 320 x ZB's costMult 5 per second per
     // sleeve, charged unchecked): the exp candidate carries it as a money
     // outflow on the same trajectory (exitplan spendPerSec).
@@ -1962,9 +1987,20 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     // The fleet's study exp reaches the player at a rate that does not rise
     // with the player's level: FLAT beside a level-shaped script rate
     // (exitplan expFlatPerSec), as exitInputsOf carries the fleet's transfer.
-    if (!expDisabled && by.exp > 0) fns.push(['exp', (b) => finish({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, ...(b.expScalesWithLevel ? { expFlatPerSec: (b.expFlatPerSec ?? 0) + by.exp } : {}), spendPerSec: studyFee }, null)])
-    if (by.money > 0) fns.push(['money', (b) => finish({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
-    const cands = fns.map(([o, f]) => [o, f(base)])
+    if (!expDisabled && by.exp > 0) fns.push(['exp', (b, fin = finish) => fin({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, ...(b.expScalesWithLevel ? { expFlatPerSec: (b.expFlatPerSec ?? 0) + by.exp } : {}), spendPerSec: studyFee }, null)])
+    if (by.money > 0) fns.push(['money', (b, fin = finish) => fin({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
+    // The points too, in slices (each a whole policy search, two with the gang).
+    // Capped: SLEEVE_OBJECTIVE_CAP steps and wall ms over all the points (coop
+    // LoopCapError), so no input can make it run away; an option past the cap
+    // is unpriced, said so below.
+    const cands = []
+    const cap = cappedGen(SLEEVE_OBJECTIVE_CAP)
+    try {
+      for (const [o, f] of fns) cands.push([o, await paced(cap(f(base, finishGen)), 'plan-sleeveObjective-point')])
+    } catch (e) {
+      if (!(e instanceof LoopCapError)) throw e
+      return out(null, `the objective points ran past their cap (${String(e.message).slice(0, 120)}): not priced this pass`)
+    }
     // Ties within a minute are ties, not decisions: the earlier-listed
     // objective keeps them (sort is stable), so floating-point noise cannot
     // flip the fleet from pass to pass.
@@ -1976,7 +2012,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     const pc = planCtxOf(ns, info)
     if (pc?.post && priced.length > 1) {
       const pointH = Object.fromEntries(priced)
-      const d = await planDecide(pc, 'sleeveObjective', () => decideAmongGen({ options: fns.filter(([o]) => o in pointH).map(([o, f]) => ({ key: o, sim: (dr) => f(applyDraw(base, dr)) })), prev: pc.prev?.decisions?.sleeveObjective ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
+      const d = await planDecide(pc, 'sleeveObjective', () => decideAmongGen({ options: fns.filter(([o]) => o in pointH).map(([o, f]) => ({ key: o, sim: (dr) => f(applyDraw(base, dr)), simGen: (dr) => f(applyDraw(base, dr), finishGen) })), prev: pc.prev?.decisions?.sleeveObjective ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
       // The later lives' length its trajectories priced (LIFE LENGTH OFF BASIS: no noise keys here).
       if (d && typeof d === 'object') d.pricedL = lifeLOf(base)
       if (d?.key) return out(d.key, `plan: ${d.why} — point exits: ${priced.map(([o, h]) => `${o} ${h.toFixed(2)}h`).join(', ')}`, { exits: pointH, plan: { meanH: d.meanH, q10: d.q10, q90: d.q90, held: d.held === true } })
@@ -3269,6 +3305,25 @@ async function planDecide(pc, name, genFn) {
 }
 /** A long search in slices when a pass pacer exists (always await it). */
 const paced = (gen, label) => (passPacer ? passPacer.slices(gen, label) : drain(gen))
+/**
+ * A SHARED HARD CAP over several generators: steps and wall milliseconds
+ * across every generator wrapped by the one cap, LoopCapError past either.
+ */
+const SLEEVE_OBJECTIVE_CAP = { steps: 20000, ms: 3000 }
+function cappedGen({ steps = 20000, ms = 3000 } = {}) {
+  let n = 0
+  const t0 = Date.now()
+  return function* (gen) {
+    let r = gen.next()
+    while (!r.done) {
+      if (++n > steps) throw new LoopCapError(`${n} steps (cap ${steps})`)
+      if (Date.now() - t0 > ms) throw new LoopCapError(`${Date.now() - t0}ms (cap ${ms}ms)`)
+      yield
+      r = gen.next()
+    }
+    return r.value
+  }
+}
 
 /**
  * THE BATCH BY THE EXIT (plan.chooseBatchGen). The purchase planner ranks
@@ -3492,7 +3547,9 @@ function publishPlan(ns, info, extra = {}) {
       decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
       events: pc.events,
       exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
-      decisions: {
+      // markBladeMoot: on the committed Bladeburner route the hack arm's decisions
+      // (grafts, lifeLength, fourS, batch, sleeveObjective) say they are not on the committed exit.
+      decisions: markBladeMoot({
         install: inst,
         // THE BATCH BY THE EXIT (batchChoiceStep / plan.chooseBatchGen): the
         // candidates priced this pass and the one the plan buys.
@@ -3516,7 +3573,7 @@ function publishPlan(ns, info, extra = {}) {
         // above prices it. The node's commitment — carried across installs
         // and through a pass that did not reach it.
         lifeLength: pc.decisions.lifeLength ?? pc.prevAny?.decisions?.lifeLength ?? null,
-      },
+      }),
       // The life length re-decides on the next pass (events raised after it this pass).
       lifeLengthPending,
       // The node's best-found graft set (graftDecisionOf): survives a 'none'

@@ -297,12 +297,17 @@ export async function run() {
     };
     // The sleeve objective's candidates (progress.js sleeveObjectiveByExit, gang pending): each a gang exit after its grind.
     const by = { karma: 0.5, rep: 3, exp: 50, money: 1e4 };
+    // As progress.js prices them since 22:35Z (PLAN BLOCKED THE PAGE, 238ms in one 'plan-sleeveObjective'
+    // step): each option's exit a generator (gangExitGen over bestExitPolicyGen), the sync form for the point.
     const finish = (inputs) => GW.gangExit(X.bestExitPolicy, inputs, sched, grinds.fleet, eBudget)?.withH ?? null;
+    function* finishGen(inputs) {
+      return (yield* GW.gangExitGen(X.bestExitPolicyGen, inputs, sched, grinds.fleet, eBudget))?.withH ?? null;
+    }
     const sleeveFns = [
-      ["karma", (b) => finish(b)],
-      ["rep", (b) => finish({ ...b, sleeveRep: { perSec: by.rep, delayH: 0 }, repBoost: { K: (b.repPerSec + by.rep) / b.repPerSec, e: 0.3 } })],
-      ["exp", (b) => finish({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, spendPerSec: 1600 })],
-      ["money", (b) => finish({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget })],
+      ["karma", (b, fin = finish) => fin(b)],
+      ["rep", (b, fin = finish) => fin({ ...b, sleeveRep: { perSec: by.rep, delayH: 0 }, repBoost: { K: (b.repPerSec + by.rep) / b.repPerSec, e: 0.3 } })],
+      ["exp", (b, fin = finish) => fin({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, spendPerSec: 1600 })],
+      ["money", (b, fin = finish) => fin({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget })],
     ];
     const pacer = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)), memory: new Map() });
     const budget = P.PLAN.budgetMs;
@@ -370,7 +375,7 @@ export async function run() {
     const I2 = CURVE ? { ...F.exitinputs1416, ...CURVE.inputs } : F.exitinputs1416;
     const { inputs: b0 } = GW.withRepEstimate(I2);
     decisions.gang = await pacer.slices(P.decideAmongGen({ options: ["none", "fleet", "player"].map((k) => ({ key: k, sim: (dr) => armH(k, P.applyDraw(b0, dr)) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-gang");
-    decisions.sleeveObjective = await pacer.slices(P.decideAmongGen({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-sleeveObjective");
+    decisions.sleeveObjective = await pacer.slices(P.decideAmongGen({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)), simGen: (dr) => f(P.applyDraw(I2, dr), finishGen) })), draws: DRAWS, redecide: true, budgetMs: left(), clock: pacer.cpuNow }), "plan-sleeveObjective");
     const spent = Object.values(decisions).reduce((a, d) => a + (d?.ms ?? 0), 0);
     c.examined(Object.keys(decisions).length + 3);
     {
@@ -439,8 +444,10 @@ export async function run() {
     if (!(sync.key === decisions.install.key && sync.meanH === decisions.install.meanH)) c.fail("the sliced install decision must equal the synchronous one", `${sync.key} ${sync.meanH} vs ${decisions.install.key} ${decisions.install.meanH}`);
     // The sleeve objective prices its gang exit without re-reading telemetry per draw (source guard).
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    const sleeveSrc = prog.slice(prog.indexOf("async function sleeveObjectiveByExit"), prog.indexOf("async function sleeveObjectiveByExit") + 6000);
-    if (!/const gangExitOf = gang \? gangExitCtx\(ns, info\) : null/.test(sleeveSrc) || /gangExitNow\(ns, info, inputs/.test(sleeveSrc)) c.fail("the sleeve objective must read the gang schedule and eBudget once per pass (gangExitCtx), not per draw");
+    const sleeveSrc = prog.slice(prog.indexOf("async function sleeveObjectiveByExit"), prog.indexOf("async function sleeveObjectiveByExit") + 12000);
+    if (!/const gangSched = gang \? gangScheduleNow\(ns, info\) : null/.test(sleeveSrc) || /gangExitNow\(ns, info, inputs/.test(sleeveSrc)) c.fail("the sleeve objective must read the gang schedule and eBudget once per pass, not per draw");
+    // ...and prices every draw as a generator (live 22:35Z: 238ms in one 'plan-sleeveObjective' step).
+    if (!/yield\* gangExitGen\(bestExitPolicyGen, /.test(sleeveSrc) || !/yield\* bestExitPolicyGen\(inputs\)/.test(sleeveSrc) || !/simGen: \(dr\) => f\(applyDraw\(base, dr\), finishGen\)/.test(sleeveSrc)) c.fail("the sleeve objective's draws must run as generators (finishGen: bestExitPolicyGen / gangExitGen, simGen)");
     // The wiring the replay above stands for (source guards).
     if (!/chooseGraftsGen\(\{ candidates: cands, priceExit, priceExitGen: \(x\) => trajGen\(x\),/.test(prog)) c.fail("progress.js must price the graft search as generators (chooseGraftsGen priceExitGen: trajGen)");
     if (!/await paced\(exitInputsGen\(/.test(prog) || !/yield\* purchaseCadenceGen\(/.test(prog) || !/yield\* lifeTableGen\(/.test(prog)) c.fail("progress.js must build the pass's first exit inputs in slices (exitInputsGen -> purchaseCadenceGen -> lifeTableGen)");

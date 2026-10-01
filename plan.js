@@ -1860,9 +1860,63 @@ function exitStabilityNow(prev, rec) {
  *     on 6 (g6), and the one-plan check only said 'not comparable'.
  * Returns {ok (true|false|null), fails: [..], checked, why}.
  */
+/**
+ * THE DECISIONS THE BLADEBURNER ROUTE MAKES MOOT. With decisions.bladeRoute
+ * 'blade' and the install decision on that route (route 'blade'), the
+ * committed exit is the black ops' (bbplan.bladeExit, noise key
+ * 'bladeburner'). Four decisions still price the World Daemon exit — they
+ * are the route decision's HACK ARM, the alternative it is compared with —
+ * and none of them is on the committed trajectory:
+ *   grafts      no graft starts on the route (progress.js graftStep: the work
+ *               slot is the division's — d66a620); the committed set is the
+ *               hack arm's plan.
+ *   lifeLength  the later lives' length is the hacking cadence; on the route
+ *               every install is the black-op install decision's.
+ *   fourS       a money purchase: the black-op exit prices no money.
+ *   batch       chosen on the hacking exit's channel weights; the black-op
+ *               install decision prices whatever batch is bought on its own
+ *               exit (bladeContentOf) — a batch chosen BY that exit is not
+ *               simulated (named, not folded in).
+ * Live 2026-10-01 13:37Z: OPTIONS OFF BASIS failed on the graft options
+ * (default|L12|g7) beside the committed exit (bladeburner). They were never
+ * on its basis and never could be; the record says so instead
+ * (applicable: false, notApplicable: why) and the basis check skips them
+ * by that field, naming each. Returns {on, why, moot: {name: why}}.
+ */
+export const BLADE_MOOT = {
+  grafts: 'no graft starts on the committed Bladeburner route (the work slot is the division\'s): this prices the World Daemon exit — the route decision\'s hack arm — and is not acted on',
+  lifeLength: 'the later lives\' length is the hacking route\'s cadence; on the committed Bladeburner route every install is the black-op install decision\'s: this prices the hack arm only',
+  fourS: 'a money purchase priced on the World Daemon exit; the committed black-op exit prices no money: the hack arm\'s decision, not on the committed exit\'s basis',
+  sleeveObjective: 'the fleet\'s objective (karma, reputation, exp, money) priced on the World Daemon exit; on the committed Bladeburner route the fleet is sleeve.js\'s Bladeburner mix, priced on the black-op exit — not run (live 22:59Z it opened and never closed before the page froze)',
+  batch: 'chosen on the World Daemon exit\'s channel weights; on the committed Bladeburner route the install decision prices the bought batch\'s content on the black-op exit — a batch chosen by the black-op exit is not simulated',
+}
+export function bladeMootOf(decisions) {
+  const br = decisions?.bladeRoute
+  const inst = decisions?.install
+  const on = br?.key === 'blade' && inst?.route === 'blade'
+  return on ? { on, why: 'the committed route is Bladeburner and the install decision prices the black-op exit', moot: { ...BLADE_MOOT } } : { on: false, why: br?.key === 'blade' ? 'the route is Bladeburner but the install decision is not priced on it yet' : 'not on the Bladeburner route', moot: {} }
+}
+/** Mark the moot decisions on a record's decisions (progress.js publish): applicable false, with the reason. */
+export function markBladeMoot(decisions) {
+  const m = bladeMootOf(decisions)
+  const out = { ...decisions }
+  for (const name of Object.keys(BLADE_MOOT)) {
+    const x = out[name]
+    if (!x || typeof x !== 'object') continue
+    if (m.on) out[name] = { ...x, applicable: false, notApplicable: m.moot[name] }
+    else if ('applicable' in x || 'notApplicable' in x) {
+      // Off the route (or a record carried from it): the mark goes with it.
+      const { applicable: _a, notApplicable: _n, ...rest } = x
+      out[name] = rest
+    }
+  }
+  return out
+}
+
 export function optionsBasisOf(plan) {
   const d = plan?.decisions ?? {}
   const fails = []
+  const skipped = []
   let checked = 0
   for (const name of ['install', 'grafts', 'countRoute', 'sleeveObjective', 'lifeLength']) {
     const x = d[name]
@@ -1878,7 +1932,11 @@ export function optionsBasisOf(plan) {
   }
   const inst = d.install
   const g = d.grafts
-  if (inst?.key && inst.noiseKey && g?.key && Array.isArray(g.options) && g.options.length && !g.flippedOnRebase) {
+  // A decision the committed route makes moot (markBladeMoot) prices the
+  // other route's exit by design: its own rows are still checked above; the
+  // cross-check against the committed exit is skipped, by name.
+  if (g?.key && g.applicable === false) skipped.push(`grafts: not applicable (${String(g.notApplicable ?? 'no reason given').slice(0, 120)})`)
+  if (inst?.key && inst.noiseKey && g?.key && g.applicable !== false && Array.isArray(g.options) && g.options.length && !g.flippedOnRebase) {
     checked++
     const at = (k) => String(k ?? '').replace(/\|g\d+$/, '')
     const offAt = g.options.filter((o) => o.noiseKey && at(o.noiseKey) !== at(inst.noiseKey))
@@ -1888,8 +1946,9 @@ export function optionsBasisOf(plan) {
     if (inst.inputsKey && g.inputsKey && inst.inputsKey !== g.inputsKey) fails.push(`grafts: priced from inputs ${g.inputsKey}, the install decision from ${inst.inputsKey}`)
     if (inst.pricedAt && g.pricedAt && Date.parse(g.pricedAt) < Date.parse(inst.pricedAt) - 10 * 60e3) fails.push(`grafts: priced at ${g.pricedAt}, the install decision at ${inst.pricedAt}`)
   }
-  if (!checked) return { ok: null, fails, checked, why: 'no decision with stamped options this pass' }
-  return { ok: !fails.length, fails, checked, why: fails.length ? `OPTIONS OFF BASIS: ${fails.join('; ')}` : `every option of ${checked} check(s) priced on its committed exit's basis` }
+  const sk = skipped.length ? `; skipped: ${skipped.join('; ')}` : ''
+  if (!checked) return { ok: null, fails, checked, skipped, why: `no decision with stamped options this pass${sk}` }
+  return { ok: !fails.length, fails, checked, skipped, why: fails.length ? `OPTIONS OFF BASIS: ${fails.join('; ')}${sk}` : `every option of ${checked} check(s) priced on its committed exit's basis${sk}` }
 }
 
 /**

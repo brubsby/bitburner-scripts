@@ -1,0 +1,4114 @@
+{
+ "source": "live BN6 2026-10-01: /tel/bladeburner.txt 13:22:57Z, the save 13:24:09Z (Player.bladeburner: true city populations, action counters, stamina; the player), /tel/sleeve.txt 13:22:46Z, /tel/plan.txt 12:17:16Z and 12:22:17Z (EXIT UNSTABLE 23.64h -> 25.56h) and 13:37:16Z (OPTIONS OFF BASIS), and the plan series of the Bladeburner route since BN6 entry (/tmp/fx/hist); the realised rank 13:22-22:15Z every 5 min (/tel/bladeburner.txt captures, one life)",
+ "bladeburner": {
+  "at": "2026-10-01T13:22:55.330Z",
+  "health": "ok",
+  "errors": [],
+  "bitNode": 6,
+  "lastAugReset": 1790854331029,
+  "host": "netlink",
+  "result": "acting",
+  "joined": true,
+  "factionJoined": true,
+  "rank": 161.98,
+  "rankPerHour": 45.07,
+  "skillPoints": 4,
+  "levels": {
+   "Blade's Intuition": 1,
+   "Cloak": 3,
+   "Short-Circuit": 2,
+   "Digital Observer": 2,
+   "Tracer": 2,
+   "Overclock": 2,
+   "Reaper": 2,
+   "Evasive System": 2,
+   "Datamancer": 0,
+   "Cyber's Edge": 0,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 46.44,
+  "maxStamina": 67.11,
+  "resting": true,
+  "city": "Chongqing",
+  "team": 0,
+  "slot": {
+   "owner": "bladeburner",
+   "ours": true,
+   "at": "2026-10-01T13:22:17.492Z",
+   "why": "progress.js holds the slot for bladeburner"
+  },
+  "action": {
+   "type": "General",
+   "name": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "p": null,
+   "ev": null,
+   "why": "stamina 46.4/67.1: resting to 95%"
+  },
+  "running": {
+   "type": "General",
+   "name": "Hyperbolic Regeneration Chamber"
+  },
+  "blackOps": {
+   "done": 0,
+   "next": "Operation Typhoon",
+   "reqdRank": 2500,
+   "chance": [
+    0.0363,
+    0.037
+   ],
+   "formulaChance": 0.0363
+  },
+  "exitReady": false,
+  "exitNote": null,
+  "env": {
+   "contracts": 1.1422985670967232,
+   "operations": 1.1422985670967232
+  },
+  "counts": {
+   "Tracking": 2.9,
+   "Bounty Hunter": 220,
+   "Retirement": 150.3,
+   "Investigation": 186.4,
+   "Undercover Operation": 204.1,
+   "Sting Operation": 159.2,
+   "Raid": 100.5,
+   "Stealth Retirement Operation": 113,
+   "Assassination": 102.5
+  },
+  "maxLevels": {
+   "Tracking": 18,
+   "Bounty Hunter": 1,
+   "Retirement": 11,
+   "Investigation": 1,
+   "Undercover Operation": 1,
+   "Sting Operation": 1,
+   "Raid": 1,
+   "Stealth Retirement Operation": 1,
+   "Assassination": 1
+  },
+  "cities": [
+   {
+    "name": "Aevum",
+    "popEst": 1042550990,
+    "chaos": 0,
+    "comms": 145
+   },
+   {
+    "name": "Chongqing",
+    "popEst": 1178427898,
+    "chaos": 1.65,
+    "comms": 104
+   },
+   {
+    "name": "Sector-12",
+    "popEst": 1152684268,
+    "chaos": 0,
+    "comms": 26
+   },
+   {
+    "name": "New Tokyo",
+    "popEst": 1162550410,
+    "chaos": 1.42,
+    "comms": 53
+   },
+   {
+    "name": "Ishima",
+    "popEst": 646359814,
+    "chaos": 0,
+    "comms": 10
+   },
+   {
+    "name": "Volhaven",
+    "popEst": 1033321823,
+    "chaos": 0.63,
+    "comms": 147
+   }
+  ],
+  "outcomes": {
+   "n": 20,
+   "observed": 1,
+   "expected": 0.6635820630037025,
+   "last": [
+    {
+     "name": "Retirement",
+     "level": 10,
+     "p": 0.5382733348546617,
+     "ok": true
+    },
+    {
+     "name": "Retirement",
+     "level": 10,
+     "p": 0.541288768661299,
+     "ok": true
+    },
+    {
+     "name": "Tracking",
+     "level": 18,
+     "p": 0.9036697316461214,
+     "ok": true
+    },
+    {
+     "name": "Retirement",
+     "level": 10,
+     "p": 0.5443011942307192,
+     "ok": true
+    },
+    {
+     "name": "Retirement",
+     "level": 10,
+     "p": 0.5466230821013599,
+     "ok": true
+    }
+   ]
+  },
+  "calibration": {
+   "timeFormulaS": null,
+   "timeGameS": null,
+   "maxStaminaFormula": 67.106,
+   "maxStaminaGame": 67.106
+  },
+  "purchases": [
+   {
+    "at": "2026-10-01T12:21:09.965Z",
+    "name": "Short-Circuit",
+    "count": 1,
+    "cost": 4,
+    "got": 1,
+    "why": "rank/s +2.67%"
+   },
+   {
+    "at": "2026-10-01T12:26:52.793Z",
+    "name": "Tracer",
+    "count": 1,
+    "cost": 4,
+    "got": 1,
+    "why": "rank/s +2.00%"
+   },
+   {
+    "at": "2026-10-01T12:47:35.275Z",
+    "name": "Reaper",
+    "count": 1,
+    "cost": 4,
+    "got": 1,
+    "why": "rank/s +1.63%"
+   },
+   {
+    "at": "2026-10-01T13:11:01.958Z",
+    "name": "Overclock",
+    "count": 1,
+    "cost": 4,
+    "got": 1,
+    "why": "rank/s +0.65%"
+   }
+  ],
+  "samples": [
+   {
+    "at": "2026-10-01T12:18:57.053Z",
+    "rank": 107.67,
+    "stamina": 58.61
+   },
+   {
+    "at": "2026-10-01T12:20:07.559Z",
+    "rank": 110.35,
+    "stamina": 54.06
+   },
+   {
+    "at": "2026-10-01T12:21:09.965Z",
+    "rank": 113.04,
+    "stamina": 50.73
+   },
+   {
+    "at": "2026-10-01T12:22:24.375Z",
+    "rank": 116.36,
+    "stamina": 47.07
+   },
+   {
+    "at": "2026-10-01T12:23:24.679Z",
+    "rank": 117.27,
+    "stamina": 44.09
+   },
+   {
+    "at": "2026-10-01T12:24:39.083Z",
+    "rank": 118.74,
+    "stamina": 40.4
+   },
+   {
+    "at": "2026-10-01T12:25:52.488Z",
+    "rank": 121.36,
+    "stamina": 36.64
+   },
+   {
+    "at": "2026-10-01T12:26:52.794Z",
+    "rank": 123.99,
+    "stamina": 33.67
+   },
+   {
+    "at": "2026-10-01T12:27:52.898Z",
+    "rank": 124.95,
+    "stamina": 33.75
+   },
+   {
+    "at": "2026-10-01T12:28:52.902Z",
+    "rank": 124.95,
+    "stamina": 35.71
+   },
+   {
+    "at": "2026-10-01T12:29:52.905Z",
+    "rank": 124.95,
+    "stamina": 37.67
+   },
+   {
+    "at": "2026-10-01T12:30:52.910Z",
+    "rank": 124.95,
+    "stamina": 39.62
+   },
+   {
+    "at": "2026-10-01T12:31:52.917Z",
+    "rank": 124.95,
+    "stamina": 41.58
+   },
+   {
+    "at": "2026-10-01T12:32:52.961Z",
+    "rank": 124.95,
+    "stamina": 43.76
+   },
+   {
+    "at": "2026-10-01T12:33:52.974Z",
+    "rank": 124.95,
+    "stamina": 45.75
+   },
+   {
+    "at": "2026-10-01T12:34:52.989Z",
+    "rank": 124.95,
+    "stamina": 47.69
+   },
+   {
+    "at": "2026-10-01T12:35:52.997Z",
+    "rank": 124.95,
+    "stamina": 49.65
+   },
+   {
+    "at": "2026-10-01T12:36:53.128Z",
+    "rank": 124.95,
+    "stamina": 51.64
+   },
+   {
+    "at": "2026-10-01T12:37:53.150Z",
+    "rank": 124.95,
+    "stamina": 53.58
+   },
+   {
+    "at": "2026-10-01T12:38:53.161Z",
+    "rank": 124.95,
+    "stamina": 55.85
+   },
+   {
+    "at": "2026-10-01T12:39:53.175Z",
+    "rank": 124.95,
+    "stamina": 57.79
+   },
+   {
+    "at": "2026-10-01T12:40:57.422Z",
+    "rank": 125.62,
+    "stamina": 58.6
+   },
+   {
+    "at": "2026-10-01T12:41:57.464Z",
+    "rank": 125.82,
+    "stamina": 59.95
+   },
+   {
+    "at": "2026-10-01T12:42:57.713Z",
+    "rank": 126.02,
+    "stamina": 61.32
+   },
+   {
+    "at": "2026-10-01T12:44:10.041Z",
+    "rank": 127.92,
+    "stamina": 58.81
+   },
+   {
+    "at": "2026-10-01T12:45:20.569Z",
+    "rank": 130.84,
+    "stamina": 54.28
+   },
+   {
+    "at": "2026-10-01T12:46:33.972Z",
+    "rank": 132.38,
+    "stamina": 50.62
+   },
+   {
+    "at": "2026-10-01T12:47:35.275Z",
+    "rank": 135.31,
+    "stamina": 47.66
+   },
+   {
+    "at": "2026-10-01T12:48:51.678Z",
+    "rank": 137.84,
+    "stamina": 44.72
+   },
+   {
+    "at": "2026-10-01T12:49:53.980Z",
+    "rank": 139.92,
+    "stamina": 41.95
+   },
+   {
+    "at": "2026-10-01T12:51:11.391Z",
+    "rank": 142.6,
+    "stamina": 38.02
+   },
+   {
+    "at": "2026-10-01T12:52:14.693Z",
+    "rank": 143.58,
+    "stamina": 35.27
+   },
+   {
+    "at": "2026-10-01T12:53:14.698Z",
+    "rank": 143.58,
+    "stamina": 37.28
+   },
+   {
+    "at": "2026-10-01T12:54:14.720Z",
+    "rank": 143.58,
+    "stamina": 39.3
+   },
+   {
+    "at": "2026-10-01T12:55:14.732Z",
+    "rank": 143.58,
+    "stamina": 41.32
+   },
+   {
+    "at": "2026-10-01T12:56:14.735Z",
+    "rank": 143.58,
+    "stamina": 43.54
+   },
+   {
+    "at": "2026-10-01T12:57:14.741Z",
+    "rank": 143.58,
+    "stamina": 45.56
+   },
+   {
+    "at": "2026-10-01T12:58:14.754Z",
+    "rank": 143.58,
+    "stamina": 47.58
+   },
+   {
+    "at": "2026-10-01T12:59:14.760Z",
+    "rank": 143.58,
+    "stamina": 49.61
+   },
+   {
+    "at": "2026-10-01T13:00:14.773Z",
+    "rank": 143.58,
+    "stamina": 51.63
+   },
+   {
+    "at": "2026-10-01T13:01:14.777Z",
+    "rank": 143.58,
+    "stamina": 53.65
+   },
+   {
+    "at": "2026-10-01T13:02:14.790Z",
+    "rank": 143.58,
+    "stamina": 55.67
+   },
+   {
+    "at": "2026-10-01T13:03:14.796Z",
+    "rank": 143.58,
+    "stamina": 57.97
+   },
+   {
+    "at": "2026-10-01T13:04:14.809Z",
+    "rank": 143.58,
+    "stamina": 59.33
+   },
+   {
+    "at": "2026-10-01T13:05:14.813Z",
+    "rank": 143.58,
+    "stamina": 61.35
+   },
+   {
+    "at": "2026-10-01T13:06:14.880Z",
+    "rank": 143.68,
+    "stamina": 63.4
+   },
+   {
+    "at": "2026-10-01T13:07:14.893Z",
+    "rank": 143.88,
+    "stamina": 64.78
+   },
+   {
+    "at": "2026-10-01T13:08:14.900Z",
+    "rank": 144.08,
+    "stamina": 65.22
+   },
+   {
+    "at": "2026-10-01T13:09:16.212Z",
+    "rank": 145.26,
+    "stamina": 62.33
+   },
+   {
+    "at": "2026-10-01T13:10:26.756Z",
+    "rank": 148.25,
+    "stamina": 57.82
+   },
+   {
+    "at": "2026-10-01T13:11:37.160Z",
+    "rank": 149.43,
+    "stamina": 53.95
+   },
+   {
+    "at": "2026-10-01T13:12:40.471Z",
+    "rank": 151.51,
+    "stamina": 51.24
+   },
+   {
+    "at": "2026-10-01T13:13:57.877Z",
+    "rank": 154.31,
+    "stamina": 47.33
+   },
+   {
+    "at": "2026-10-01T13:15:00.181Z",
+    "rank": 155.38,
+    "stamina": 44.6
+   },
+   {
+    "at": "2026-10-01T13:16:17.677Z",
+    "rank": 158.07,
+    "stamina": 40.68
+   },
+   {
+    "at": "2026-10-01T13:17:35.089Z",
+    "rank": 161.98,
+    "stamina": 36.99
+   },
+   {
+    "at": "2026-10-01T13:18:35.194Z",
+    "rank": 161.98,
+    "stamina": 37.07
+   },
+   {
+    "at": "2026-10-01T13:19:35.199Z",
+    "rank": 161.98,
+    "stamina": 39.13
+   },
+   {
+    "at": "2026-10-01T13:20:35.212Z",
+    "rank": 161.98,
+    "stamina": 41.19
+   },
+   {
+    "at": "2026-10-01T13:21:35.217Z",
+    "rank": 161.98,
+    "stamina": 43.25
+   },
+   {
+    "at": "2026-10-01T13:22:35.319Z",
+    "rank": 161.98,
+    "stamina": 45.31
+   }
+  ],
+  "detail": "stamina 46.4/67.1: resting to 95%"
+ },
+ "player": {
+  "skills": {
+   "hacking": 154,
+   "strength": 157,
+   "defense": 155,
+   "dexterity": 173,
+   "agility": 171,
+   "charisma": 112,
+   "intelligence": 132
+  },
+  "exp": {
+   "hacking": 1722826.0534811954,
+   "strength": 13198.860478761235,
+   "defense": 12600.516603780166,
+   "dexterity": 15764.525630011118,
+   "agility": 15059.193115132734,
+   "charisma": 2445.591989328861,
+   "intelligence": 32260.33211427963
+  },
+  "mults": {
+   "hacking_chance": 1.6210399984439157,
+   "hacking_speed": 1.669671198397233,
+   "hacking_money": 1.6210399984439157,
+   "hacking_grow": 1.8155647982571856,
+   "hacking": 1.7020919983661114,
+   "hacking_exp": 1.7831439982883066,
+   "strength": 1.500962961522144,
+   "strength_exp": 1.9812711092092294,
+   "defense": 1.500962961522144,
+   "defense_exp": 1.9812711092092294,
+   "dexterity": 1.5760111095982503,
+   "dexterity_exp": 1.9812711092092294,
+   "agility": 1.5760111095982503,
+   "agility_exp": 1.9812711092092294,
+   "charisma": 2.0128813891788866,
+   "charisma_exp": 1.733612220558076,
+   "hacknet_node_money": 1.6810785169048015,
+   "hacknet_node_purchase_cost": 0.5862902833442215,
+   "hacknet_node_ram_cost": 0.5862902833442215,
+   "hacknet_node_core_cost": 0.5862902833442215,
+   "hacknet_node_level_cost": 0.5862902833442215,
+   "company_rep": 3.053029651019136,
+   "faction_rep": 2.3129012507720725,
+   "work_money": 1.500962961522144,
+   "crime_success": 1.8611940722874585,
+   "crime_money": 1.8611940722874585,
+   "dnet_money": 1.172627313689175,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "bladeburner_analysis": 1,
+   "bladeburner_success_chance": 1
+  },
+  "hp": {
+   "current": 13,
+   "max": 25
+  }
+ },
+ "save": {
+  "at": "2026-10-01T13:24:09.939Z",
+  "rank": 161.97589270666424,
+  "stamina": 48.80077550189404,
+  "maxStamina": 67.1061872176597,
+  "staminaBonus": 0,
+  "city": "Chongqing",
+  "numHosp": 10,
+  "cities": {
+   "Aevum": {
+    "pop": 1237532678,
+    "popEst": 1042550990,
+    "comms": 145,
+    "chaos": 0
+   },
+   "Chongqing": {
+    "pop": 1157976236,
+    "popEst": 1178427898,
+    "comms": 104,
+    "chaos": 1.646300000000163
+   },
+   "Sector-12": {
+    "pop": 1268731540,
+    "popEst": 1152684268,
+    "comms": 26,
+    "chaos": 0
+   },
+   "New Tokyo": {
+    "pop": 800690111,
+    "popEst": 1162550409.7639487,
+    "comms": 53,
+    "chaos": 1.4165899999996132
+   },
+   "Ishima": {
+    "pop": 678318484,
+    "popEst": 646359814,
+    "comms": 10,
+    "chaos": 0
+   },
+   "Volhaven": {
+    "pop": 1423729324,
+    "popEst": 1033321823,
+    "comms": 147,
+    "chaos": 0.6199000000000574
+   }
+  },
+  "actions": {
+   "Tracking": {
+    "count": 3.541666666666953,
+    "level": 18,
+    "maxLevel": 18,
+    "successes": 198,
+    "failures": 35
+   },
+   "Bounty Hunter": {
+    "count": 220.70374999999572,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   },
+   "Retirement": {
+    "count": 150.93729166665838,
+    "level": 11,
+    "maxLevel": 11,
+    "successes": 81,
+    "failures": 54
+   },
+   "Investigation": {
+    "count": 186.77895833332286,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   },
+   "Undercover Operation": {
+    "count": 204.51791666667606,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   },
+   "Sting Operation": {
+    "count": 159.55333333331288,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   },
+   "Raid": {
+    "count": 100.805624999976,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   },
+   "Stealth Retirement Operation": {
+    "count": 113.1516666666245,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   },
+   "Assassination": {
+    "count": 102.71583333329389,
+    "level": 1,
+    "maxLevel": 1,
+    "successes": 0,
+    "failures": 0
+   }
+  },
+  "console": {
+   "from": "[2026-10-01 08:40:12]",
+   "to": "[2026-10-01 09:23:55]",
+   "Tracking": {
+    "ok": 24,
+    "fail": 1
+   },
+   "Retirement": {
+    "ok": 21,
+    "fail": 15
+   },
+   "hrc": 20,
+   "fieldAnalysis": 12
+  }
+ },
+ "sleeve": {
+  "at": "2026-10-01T13:22:46.723Z",
+  "bitNode": 6,
+  "sleeves": 5,
+  "assigned": [
+   {
+    "i": 0,
+    "task": "CRIME"
+   },
+   {
+    "i": 1,
+    "task": "CRIME"
+   },
+   {
+    "i": 2,
+    "task": "CRIME"
+   },
+   {
+    "i": 3,
+    "task": "CRIME"
+   },
+   {
+    "i": 4,
+    "task": "CRIME"
+   }
+  ],
+  "blade": {
+   "on": false,
+   "config": null,
+   "hours": null,
+   "why": "no configuration reaches the 21st black op within 400h in the model \u2014 the fleet keeps its ordinary plan",
+   "route": "blade",
+   "joined": true,
+   "installEveryH": 12
+  }
+ },
+ "plan1217": {
+  "at": "2026-10-01T12:17:16.692Z",
+  "lastAugReset": 1790854331029,
+  "exit": {
+   "meanH": 23.641,
+   "q10": 21.937,
+   "q50": 23.777,
+   "q90": 24.782,
+   "source": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "income": "measured",
+   "rep": "measured (or not needed)"
+  },
+  "exitStability": {
+   "ok": true,
+   "prevH": 24.769,
+   "curH": 23.641,
+   "expectedH": 24.686,
+   "diffH": -1.045,
+   "tolH": 1.313,
+   "dtH": 0.083,
+   "prevAt": "2026-10-01T12:12:16.884Z",
+   "prevSource": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "curSource": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "why": "exit 24.769h -> 23.641h over 5 min with no event: within 1.31h of the 24.69h a held plan expects"
+  },
+  "events": [],
+  "bladeRoute": {
+   "key": "blade",
+   "pFeasible": 1,
+   "meanH": 23.641,
+   "q10": 21.937,
+   "q50": 23.777,
+   "q90": 24.782,
+   "pBest": 1,
+   "held": true,
+   "why": "held (no event since 2026-10-01T12:07:14.934Z); at that decision: stays on blade: the best alternative hack is expected -185.42h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)",
+   "decidedAt": "2026-10-01T12:07:14.934Z",
+   "options": [
+    {
+     "key": "blade",
+     "pointH": 23.648,
+     "pFeasible": 1,
+     "meanH": 23.641,
+     "q10": 21.937,
+     "q50": 23.777,
+     "q90": 24.782,
+     "pBest": 1,
+     "noiseKey": "bladeburner",
+     "pricedAt": "2026-10-01T12:17:14.934Z"
+    }
+   ],
+   "pricedAt": "2026-10-01T12:17:14.934Z",
+   "n": 24,
+   "ms": 0.3,
+   "overBudget": false,
+   "hackH": 143.022,
+   "bladeH": 23.648,
+   "bladeSims": 1,
+   "joined": true,
+   "rank": 107.27,
+   "blackOps": 0,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   },
+   "installBasis": {
+    "kind": "none",
+    "why": "no install priced on this route yet: none"
+   },
+   "simulacrum": {
+    "cost": 150000000000,
+    "repReq": 1250,
+    "withoutH": 23.65,
+    "moneyH": 5851.69,
+    "repH": 32.55,
+    "reachH": 5851.69,
+    "boundH": 21.73,
+    "boundGainH": 1.92,
+    "buy": false,
+    "withH": null,
+    "gainH": null,
+    "why": "unreachable before the exit: money in 5851.7h ($150.0b against $0.026b at $25.6m/h), reputation in 32.5h (62 of 1250 at 36.5/h) \u2014 the exit is 23.6h away; installed now at no cost it would be worth 1.92h",
+    "rankPerH": 8.57
+   },
+   "model": "bbplan.bladeExit \u2014 NOT CALIBRATED live; vs the game's classes -2..+15% (tools/sim/bb6.mjs)"
+  }
+ },
+ "plan1222": {
+  "at": "2026-10-01T12:22:17.626Z",
+  "lastAugReset": 1790854331029,
+  "exit": {
+   "meanH": 25.557,
+   "q10": 23.715,
+   "q50": 25.704,
+   "q90": 26.79,
+   "source": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "income": "measured",
+   "rep": "measured (or not needed)"
+  },
+  "exitStability": {
+   "ok": false,
+   "prevH": 23.641,
+   "curH": 25.557,
+   "expectedH": 23.557,
+   "diffH": 2,
+   "tolH": 1.335,
+   "dtH": 0.084,
+   "prevAt": "2026-10-01T12:17:16.692Z",
+   "prevSource": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "curSource": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "why": "EXIT UNSTABLE: 23.641h (the Bladeburner route (21 black ops, bbplan.bladeExit), 2026-10-01T12:17:16.692Z) -> 25.557h (the Bladeburner route (21 black ops, bbplan.bladeExit)) over 5 min with no event \u2014 +2.00h against the 23.56h a held plan expects (tolerance 1.33h = 4 standard errors of the draws)"
+  },
+  "events": [],
+  "bladeRoute": {
+   "key": "blade",
+   "pFeasible": 1,
+   "meanH": 25.557,
+   "q10": 23.715,
+   "q50": 25.704,
+   "q90": 26.79,
+   "pBest": 1,
+   "held": true,
+   "why": "held (no event since 2026-10-01T12:07:14.934Z); at that decision: stays on blade: the best alternative hack is expected -185.42h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)",
+   "decidedAt": "2026-10-01T12:07:14.934Z",
+   "options": [
+    {
+     "key": "blade",
+     "pointH": 25.564,
+     "pFeasible": 1,
+     "meanH": 25.557,
+     "q10": 23.715,
+     "q50": 25.704,
+     "q90": 26.79,
+     "pBest": 1,
+     "noiseKey": "bladeburner",
+     "pricedAt": "2026-10-01T12:22:16.162Z"
+    }
+   ],
+   "pricedAt": "2026-10-01T12:22:16.162Z",
+   "n": 24,
+   "ms": 0.4,
+   "overBudget": false,
+   "hackH": 143.974,
+   "bladeH": 25.564,
+   "bladeSims": 1,
+   "joined": true,
+   "rank": 115.45,
+   "blackOps": 0,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   },
+   "installBasis": {
+    "kind": "none",
+    "why": "no install priced on this route yet: none"
+   },
+   "simulacrum": {
+    "cost": 150000000000,
+    "repReq": 1250,
+    "withoutH": 25.56,
+    "moneyH": 5314.06,
+    "repH": 8.18,
+    "reachH": 5314.06,
+    "boundH": 21.67,
+    "boundGainH": 3.9,
+    "buy": false,
+    "withH": null,
+    "gainH": null,
+    "why": "unreachable before the exit: money in 5314.1h ($150.0b against $0.025b at $28.2m/h), reputation in 8.2h (87 of 1250 at 142.2/h) \u2014 the exit is 25.6h away; installed now at no cost it would be worth 3.9h",
+    "rankPerH": 33.17
+   },
+   "model": "bbplan.bladeExit \u2014 NOT CALIBRATED live; vs the game's classes -2..+15% (tools/sim/bb6.mjs)"
+  }
+ },
+ "plan1337": {
+  "at": "2026-10-01T13:37:16.604Z",
+  "node": 6,
+  "lastAugReset": 1790854331029,
+  "decisions": {
+   "install": {
+    "key": "never",
+    "route": "blade",
+    "install": false,
+    "installAt": null,
+    "waitH": null,
+    "routeKey": null,
+    "extra": null,
+    "fixed": {
+     "n": null,
+     "lifeH": null
+    },
+    "gains": null,
+    "gainsKey": null,
+    "samples": [
+     24.398,
+     26.131,
+     29.733,
+     27.711,
+     27.271,
+     27.633,
+     27.203,
+     27.248,
+     27.745,
+     25.37,
+     26.19,
+     26.822,
+     28.157,
+     26.366,
+     25.212,
+     26.723,
+     26.746,
+     24.512,
+     27.045,
+     25.507,
+     26.136,
+     24.401,
+     26.627,
+     27.373
+    ],
+    "spec": {
+     "kind": "never"
+    },
+    "noiseKey": "bladeburner",
+    "pFeasible": 1,
+    "meanH": 26.594,
+    "q10": 24.722,
+    "q50": 26.735,
+    "q90": 27.735,
+    "pBest": 1,
+    "pointH": 26.602,
+    "commitment": {
+     "key": "never",
+     "meanH": 26.594,
+     "pointH": 26.602,
+     "q10": 24.722,
+     "q90": 27.735,
+     "at": "2026-10-01T13:37:16.133Z",
+     "installAt": null,
+     "noiseKey": "bladeburner",
+     "n": 24,
+     "ver": "10w7119.41"
+    },
+    "held": true,
+    "why": "held (no event since 2026-10-01T13:22:16.498Z); at that decision: no committed option: the least expected exit (26.67h, P(best) 0.917)",
+    "decidedAt": "2026-10-01T13:22:16.498Z",
+    "options": [
+     {
+      "key": "never",
+      "pointH": 26.602,
+      "pFeasible": 1,
+      "meanH": 26.594,
+      "q10": 24.722,
+      "q50": 26.735,
+      "q90": 27.735,
+      "pBest": 1,
+      "noiseKey": "bladeburner",
+      "pricedAt": "2026-10-01T13:37:16.133Z"
+     }
+    ],
+    "pricedAt": "2026-10-01T13:37:16.133Z",
+    "n": 24,
+    "ms": 0.2,
+    "overBudget": false,
+    "inputsKey": "i4velzb"
+   },
+   "grafts": {
+    "key": "grafts",
+    "pFeasible": 1,
+    "meanH": 272.932,
+    "q10": 85.521,
+    "q50": 187.3,
+    "q90": 566.638,
+    "pBest": 0.292,
+    "samples": [
+     213.626,
+     552.83,
+     954.288,
+     290.835,
+     154.056,
+     335.223,
+     222.579,
+     67.207,
+     146.74,
+     248.589,
+     192.137,
+     128.368,
+     94.597,
+     65.848,
+     81.632,
+     102.896,
+     112.476,
+     451.815,
+     572.556,
+     250.07,
+     163.368,
+     182.463,
+     816.726,
+     149.436
+    ],
+    "held": false,
+    "switched": false,
+    "stays": true,
+    "gainH": 49.631,
+    "pWin": 0.708,
+    "why": "stays on grafts: the best alternative grafts:search is expected 49.63h sooner net of a 0.05h switch cost and better in 71% of 24 paired draws (needs a positive gain and 80%)",
+    "decidedAt": "2026-10-01T13:37:15.631Z",
+    "options": [
+     {
+      "key": "grafts:search",
+      "pointH": 157.715,
+      "pFeasible": 1,
+      "meanH": 223.25,
+      "q10": 90.031,
+      "q50": 176.653,
+      "q90": 418.485,
+      "pBest": 0.708,
+      "noiseKey": "default|L12|g7",
+      "pricedAt": "2026-10-01T13:37:15.631Z"
+     },
+     {
+      "key": "none",
+      "pointH": 172.678,
+      "pFeasible": 1,
+      "meanH": 250.681,
+      "q10": 93.286,
+      "q50": 195.458,
+      "q90": 469.52,
+      "pBest": 0,
+      "noiseKey": "default|L12|g0",
+      "pricedAt": "2026-10-01T13:37:15.631Z"
+     },
+     {
+      "key": "grafts",
+      "pointH": 163.556,
+      "pFeasible": 1,
+      "meanH": 272.932,
+      "q10": 85.521,
+      "q50": 187.3,
+      "q90": 566.638,
+      "pBest": 0.292,
+      "noiseKey": "default|L12|g7",
+      "pricedAt": "2026-10-01T13:37:15.631Z"
+     }
+    ],
+    "pricedAt": "2026-10-01T13:37:15.631Z",
+    "n": 24,
+    "ms": 164.7,
+    "overBudget": false,
+    "basis": {
+     "kind": "default policy (no committed install)"
+    },
+    "basisNoiseKey": "default|L12|g7",
+    "basisGainsKey": null,
+    "inputsKey": "i1xf78h3",
+    "grafts": [
+     {
+      "name": "SPTN-97 Gene Modification",
+      "cost": 14625000000,
+      "slotH": 1.6284760133192313,
+      "hacking": 1.127,
+      "exp": 0.98,
+      "rep": 0.98,
+      "money": 0.98,
+      "life": 1
+     },
+     {
+      "name": "PC Direct-Neural Interface",
+      "cost": 11250000000,
+      "slotH": 0.8084946338787197,
+      "hacking": 1.0584,
+      "exp": 0.98,
+      "rep": 0.98,
+      "money": 0.98,
+      "life": 1
+     },
+     {
+      "name": "PC Direct-Neural Interface Optimization Submodule",
+      "cost": 13500000000,
+      "slotH": 0.9285480305484083,
+      "hacking": 1.078,
+      "exp": 0.98,
+      "rep": 0.98,
+      "money": 0.98,
+      "life": 1
+     },
+     {
+      "name": "Embedded Netburner Module",
+      "cost": 750000000,
+      "slotH": 0.2821395652911505,
+      "hacking": 1.0584,
+      "exp": 0.98,
+      "rep": 0.98,
+      "money": 0.98,
+      "life": 1
+     },
+     {
+      "name": "Embedded Netburner Module Core Implant",
+      "cost": 7500000000,
+      "slotH": 1.3418222674924392,
+      "hacking": 1.0486,
+      "exp": 1.0486,
+      "rep": 0.98,
+      "money": 1.078,
+      "life": 1
+     },
+     {
+      "name": "Embedded Netburner Module Core V2 Upgrade",
+      "cost": 13500000000,
+      "slotH": 1.3820597549013485,
+      "hacking": 1.0584,
+      "exp": 1.127,
+      "rep": 0.98,
+      "money": 1.274,
+      "life": 1
+     },
+     {
+      "name": "Embedded Netburner Module Core V3 Upgrade",
+      "cost": 22500000000,
+      "slotH": 1.4132643765171806,
+      "hacking": 1.078,
+      "exp": 1.225,
+      "rep": 0.98,
+      "money": 1.3719999999999999,
+      "life": 1
+     }
+    ],
+    "startMoney": 0,
+    "challengers": [
+     {
+      "key": "grafts:search",
+      "from": "this pass's search",
+      "n": 7,
+      "pointH": 157.715
+     }
+    ],
+    "noneUnpriced": false,
+    "started": false,
+    "inProgress": null,
+    "withoutH": 172.67824104214057,
+    "withH": 163.55567928206295,
+    "deltaH": -9.122561760077616,
+    "withInstalls": 12,
+    "finalWindowNow": false,
+    "schedule": {
+     "family": "costliest first, current life",
+     "early": 7,
+     "lives": [
+      1
+     ],
+     "h": 143.742,
+     "finalOnlyH": 147.84996219848168,
+     "tried": [
+      {
+       "family": "costliest first, current life",
+       "c": 1,
+       "h": 146.975
+      },
+      {
+       "family": "costliest first, current life",
+       "c": 2,
+       "h": 146.674
+      },
+      {
+       "family": "costliest first, current life",
+       "c": 3,
+       "h": 146.226
+      },
+      {
+       "family": "costliest first, current life",
+       "c": 4,
+       "h": 146.184
+      },
+      {
+       "family": "costliest first, current life",
+       "c": 6,
+       "h": 144.267
+      },
+      {
+       "family": "costliest first, current life",
+       "c": 7,
+       "h": 143.742
+      },
+      {
+       "family": "cheapest first, current life",
+       "c": 1,
+       "h": 147.794
+      },
+      {
+       "family": "cheapest first, current life",
+       "c": 2,
+       "h": 146.949
+      },
+      {
+       "family": "cheapest first, current life",
+       "c": 3,
+       "h": 146.717
+      },
+      {
+       "family": "cheapest first, current life",
+       "c": 4,
+       "h": 146.323
+      },
+      {
+       "family": "cheapest first, current life",
+       "c": 6,
+       "h": 144.267
+      },
+      {
+       "family": "cheapest first, current life",
+       "c": 7,
+       "h": 143.742
+      },
+      {
+       "family": "set order, current life",
+       "c": 1,
+       "h": 146.975
+      },
+      {
+       "family": "set order, current life",
+       "c": 2,
+       "h": 146.674
+      },
+      {
+       "family": "set order, current life",
+       "c": 3,
+       "h": 146.226
+      },
+      {
+       "family": "set order, current life",
+       "c": 4,
+       "h": 146.184
+      },
+      {
+       "family": "set order, current life",
+       "c": 6,
+       "h": 144.267
+      },
+      {
+       "family": "set order, current life",
+       "c": 7,
+       "h": 143.742
+      },
+      {
+       "family": "set order, next life",
+       "c": 1,
+       "h": 150.552
+      },
+      {
+       "family": "set order, next life",
+       "c": 2,
+       "h": 150.393
+      },
+      {
+       "family": "set order, next life",
+       "c": 3,
+       "h": 149.972
+      },
+      {
+       "family": "set order, next life",
+       "c": 4,
+       "h": 149.9
+      },
+      {
+       "family": "set order, next life",
+       "c": 6,
+       "h": 147.907
+      },
+      {
+       "family": "set order, next life",
+       "c": 7,
+       "h": 147.304
+      }
+     ],
+     "truncated": false,
+     "chosenH": 143.74243398034622,
+     "taken": true,
+     "minGainH": 0.739
+    },
+    "lifeNow": {
+     "life": 1,
+     "n": 7,
+     "cost": 108625000000,
+     "moneyH": 6.793667314573417,
+     "slotH": 7.784804641948479,
+     "lifeH": 18.79366731457342,
+     "extraH": 6.793667314573419
+    },
+    "searched": "7 graft(s) in the final window for $83.63b and 7.8h of work slot: exit 172.68h without -> 157.72h with (entropy 0.98^7 on every multiplier inside the run) \u2014 search stopped at its CPU budget (89 candidates; resumed from the committed set, continuing a budget-stopped search)",
+    "memory": {
+     "names": [
+      "SPTN-97 Gene Modification",
+      "PC Direct-Neural Interface",
+      "PC Direct-Neural Interface Optimization Submodule",
+      "Embedded Netburner Module",
+      "Embedded Netburner Module Core Implant",
+      "Embedded Netburner Module Core V2 Upgrade",
+      "Embedded Netburner Module Core V3 Upgrade"
+     ],
+     "withH": 157.71516893768296,
+     "at": "2026-10-01T13:37:15.628Z",
+     "startMoney": 110175000000,
+     "grafts": [
+      {
+       "name": "SPTN-97 Gene Modification",
+       "cost": 14625000000,
+       "slotH": 1.6284760133192313,
+       "hacking": 1.127,
+       "exp": 0.98,
+       "rep": 0.98,
+       "money": 0.98
+      },
+      {
+       "name": "PC Direct-Neural Interface",
+       "cost": 11250000000,
+       "slotH": 0.8084946338787197,
+       "hacking": 1.0584,
+       "exp": 0.98,
+       "rep": 0.98,
+       "money": 0.98
+      },
+      {
+       "name": "PC Direct-Neural Interface Optimization Submodule",
+       "cost": 13500000000,
+       "slotH": 0.9285480305484083,
+       "hacking": 1.078,
+       "exp": 0.98,
+       "rep": 0.98,
+       "money": 0.98
+      },
+      {
+       "name": "Embedded Netburner Module",
+       "cost": 750000000,
+       "slotH": 0.2821395652911505,
+       "hacking": 1.0584,
+       "exp": 0.98,
+       "rep": 0.98,
+       "money": 0.98
+      },
+      {
+       "name": "Embedded Netburner Module Core Implant",
+       "cost": 7500000000,
+       "slotH": 1.3418222674924392,
+       "hacking": 1.0486,
+       "exp": 1.0486,
+       "rep": 0.98,
+       "money": 1.078
+      },
+      {
+       "name": "Embedded Netburner Module Core V2 Upgrade",
+       "cost": 13500000000,
+       "slotH": 1.3820597549013485,
+       "hacking": 1.0584,
+       "exp": 1.127,
+       "rep": 0.98,
+       "money": 1.274
+      },
+      {
+       "name": "Embedded Netburner Module Core V3 Upgrade",
+       "cost": 22500000000,
+       "slotH": 1.4132643765171806,
+       "hacking": 1.078,
+       "exp": 1.225,
+       "rep": 0.98,
+       "money": 1.3719999999999999
+      }
+     ]
+    },
+    "truncated": true,
+    "notSimulated": "the grafted augmentation leaving the later lives' install catalogue (the measured cadence is held); travel to New Tokyo ($200k)",
+    "searchMs": 427
+   },
+   "countRoute": null,
+   "sleeveObjective": {
+    "key": "rep",
+    "pFeasible": 1,
+    "meanH": 247.949,
+    "q10": 86.154,
+    "q50": 179.657,
+    "q90": 493.179,
+    "pBest": 1,
+    "samples": [
+     197.282,
+     495.991,
+     794.808,
+     297.557,
+     148.289,
+     310.544,
+     210.851,
+     68.167,
+     140.361,
+     236.63,
+     188.383,
+     123.434,
+     95.287,
+     65.43,
+     82.24,
+     101.409,
+     115.971,
+     394.378,
+     486.619,
+     239.016,
+     166.454,
+     170.93,
+     674.124,
+     146.615
+    ],
+    "held": true,
+    "why": "held (no event since 2026-10-01T13:22:16.945Z); at that decision: switch karma -> rep: expected 8.76h sooner net of a 0.05h switch cost, better in 92% of 24 paired draws (>= 80%)",
+    "decidedAt": "2026-10-01T13:22:16.945Z",
+    "options": [
+     {
+      "key": "rep",
+      "pointH": 160.435,
+      "pFeasible": 1,
+      "meanH": 247.949,
+      "q10": 86.154,
+      "q50": 179.657,
+      "q90": 493.179,
+      "pBest": 1,
+      "noiseKey": null,
+      "pricedAt": "2026-10-01T13:37:16.465Z"
+     }
+    ],
+    "pricedAt": "2026-10-01T13:37:16.465Z",
+    "n": 24,
+    "ms": 84.8,
+    "overBudget": false,
+    "pricedL": 12
+   },
+   "lifeLength": {
+    "key": "L12",
+    "lifeH": 12,
+    "pFeasible": 1,
+    "meanH": 272.932,
+    "q10": 85.521,
+    "q50": 187.3,
+    "q90": 566.638,
+    "pBest": 1,
+    "pointH": 163.556,
+    "samples": [
+     213.626,
+     552.83,
+     954.288,
+     290.835,
+     154.056,
+     335.223,
+     222.579,
+     67.207,
+     146.74,
+     248.589,
+     192.137,
+     128.368,
+     94.597,
+     65.848,
+     81.632,
+     102.896,
+     112.476,
+     451.815,
+     572.556,
+     250.07,
+     163.368,
+     182.463,
+     816.726,
+     149.436
+    ],
+    "noiseKey": "default|L12|g7",
+    "perLife": 1.312179,
+    "basis": {
+     "kind": "default policy (no committed install)"
+    },
+    "table": [
+     {
+      "L": 0.5,
+      "pointH": null,
+      "perLife": 1.010214,
+      "model": 0.001659,
+      "drawn": false
+     },
+     {
+      "L": 1,
+      "pointH": null,
+      "perLife": 1.021569,
+      "model": 0.003712,
+      "drawn": false
+     },
+     {
+      "L": 2,
+      "pointH": null,
+      "perLife": 1.044989,
+      "model": 0.006158,
+      "drawn": false
+     },
+     {
+      "L": 3,
+      "pointH": null,
+      "perLife": 1.069252,
+      "model": 0.007797,
+      "drawn": false
+     },
+     {
+      "L": 4,
+      "pointH": null,
+      "perLife": 1.093841,
+      "model": 0.008419,
+      "drawn": false
+     },
+     {
+      "L": 6,
+      "pointH": null,
+      "perLife": 1.144679,
+      "model": 0.009041,
+      "drawn": false
+     },
+     {
+      "L": 8,
+      "pointH": null,
+      "perLife": 1.198003,
+      "model": 0.009456,
+      "drawn": false
+     },
+     {
+      "L": 12,
+      "pointH": 163.556,
+      "perLife": 1.312179,
+      "model": 0.00987,
+      "drawn": true
+     },
+     {
+      "L": 16,
+      "pointH": null,
+      "perLife": 1.437859,
+      "model": 0.01029,
+      "drawn": false
+     },
+     {
+      "L": 24,
+      "pointH": null,
+      "perLife": 1.721813,
+      "model": 0.00987,
+      "drawn": false
+     }
+    ],
+    "held": true,
+    "why": "held (no event since 2026-10-01T13:22:15.351Z); at that decision: stays on L12: the best alternative L8 is expected -12.65h later net of a 0.05h switch cost and better in 50% of 24 paired draws (needs a positive gain and 80%)",
+    "decidedAt": "2026-10-01T13:22:15.351Z",
+    "options": [
+     {
+      "key": "L12",
+      "pointH": 163.556,
+      "pFeasible": 1,
+      "meanH": 272.932,
+      "q10": 85.521,
+      "q50": 187.3,
+      "q90": 566.638,
+      "pBest": 1,
+      "noiseKey": "default|L12|g7",
+      "pricedAt": "2026-10-01T13:37:15.261Z",
+      "L": 12
+     }
+    ],
+    "pricedAt": "2026-10-01T13:37:15.261Z",
+    "n": 24,
+    "ms": 51.5,
+    "overBudget": false
+   },
+   "fourS": {
+    "key": "now",
+    "pFeasible": 1,
+    "meanH": 272.932,
+    "q10": 85.521,
+    "q50": 187.3,
+    "q90": 566.638,
+    "pBest": 1,
+    "samples": [
+     213.626,
+     552.83,
+     954.288,
+     290.835,
+     154.056,
+     335.223,
+     222.579,
+     67.207,
+     146.74,
+     248.589,
+     192.137,
+     128.368,
+     94.597,
+     65.848,
+     81.632,
+     102.896,
+     112.476,
+     451.815,
+     572.556,
+     250.07,
+     163.368,
+     182.463,
+     816.726,
+     149.436
+    ],
+    "held": true,
+    "why": "held (no event since 2026-10-01T13:22:16.007Z); at that decision: stays on now: the best alternative none is expected -1.12h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)",
+    "decidedAt": "2026-10-01T13:22:16.007Z",
+    "options": [
+     {
+      "key": "now",
+      "pointH": 163.556,
+      "pFeasible": 1,
+      "meanH": 272.932,
+      "q10": 85.521,
+      "q50": 187.3,
+      "q90": 566.638,
+      "pBest": 1,
+      "noiseKey": "default|L12|g7",
+      "pricedAt": "2026-10-01T13:37:15.843Z"
+     }
+    ],
+    "pricedAt": "2026-10-01T13:37:15.843Z",
+    "n": 24,
+    "ms": 89,
+    "overBudget": false,
+    "cost": 25000000000,
+    "curve": {
+     "r0PerHour": 1.135,
+     "Wstar": 1000000000000,
+     "source": "tools/sim/stocks/rw.mjs 12 seeds x 5h (skip 1h) + low-book 12 x 2h, fitted by rwfit.mjs"
+    },
+    "basis": {
+     "kind": "default policy (no committed install)"
+    },
+    "withoutH": 164.58798551544373,
+    "withH": 163.55567928206295,
+    "deltaH": -1.032,
+    "lifeNow": {
+     "life": 1,
+     "n": 7,
+     "cost": 108625000000,
+     "moneyH": 6.793667314573417,
+     "slotH": 7.784804641948479,
+     "lifeH": 18.79366731457342,
+     "extraH": 6.793667314573419
+    },
+    "notSimulated": "the 4S curve inside the rest of this life and in the intermediate lives' batches (their money is the measured cadence) \u2014 both favour buying"
+   },
+   "batch": {
+    "key": "fresh",
+    "by": null,
+    "gainH": 0,
+    "rows": [],
+    "unbuyable": [],
+    "near": false,
+    "why": "one candidate batch (fresh, incumbent are one batch or not buyable)"
+   },
+   "bladeRoute": {
+    "key": "blade",
+    "meanH": 26.594,
+    "q50": 26.735,
+    "pricedAt": "2026-10-01T13:37:15.320Z",
+    "installBasis": {
+     "kind": "never",
+     "waitH": null,
+     "installAt": null,
+     "from": "never"
+    },
+    "sleeves": {
+     "infiltrate": 5,
+     "support": 0,
+     "fa": 0
+    }
+   }
+  }
+ },
+ "series": [
+  {
+   "at": "2026-10-01T04:53:43.743Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.662,
+   "exitMeanH": 54.339,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T04:58:43.558Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 53.561,
+   "exitMeanH": 53.244,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:03:43.618Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 53.402,
+   "exitMeanH": 53.087,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:08:43.647Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.395,
+   "exitMeanH": 54.074,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:13:43.711Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.262,
+   "exitMeanH": 54.803,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:18:43.699Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.07,
+   "exitMeanH": 54.612,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:23:43.857Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.318,
+   "exitMeanH": 53.867,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:28:44.113Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.078,
+   "exitMeanH": 53.746,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:33:43.932Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.045,
+   "exitMeanH": 54.708,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:38:44.002Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.963,
+   "exitMeanH": 54.626,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:43:43.994Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.872,
+   "exitMeanH": 54.606,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:48:44.149Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.766,
+   "exitMeanH": 54.501,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:53:44.575Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 54.72,
+   "exitMeanH": 54.455,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T05:58:44.561Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 53.569,
+   "exitMeanH": 53.354,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:03:44.812Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.689,
+   "exitMeanH": 55.465,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:08:44.488Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.545,
+   "exitMeanH": 55.321,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:13:44.622Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 56.305,
+   "exitMeanH": 56.101,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:18:44.798Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.747,
+   "exitMeanH": 55.545,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:23:44.853Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.612,
+   "exitMeanH": 55.411,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:28:44.797Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.559,
+   "exitMeanH": 55.38,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:33:44.845Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 56.274,
+   "exitMeanH": 56.092,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:38:45.106Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.524,
+   "exitMeanH": 55.344,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:43:45.096Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 56.239,
+   "exitMeanH": 56.073,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:48:45.006Z",
+   "lastAugReset": 1790822928426,
+   "joined": false,
+   "rank": null,
+   "bladeH": 55.724,
+   "exitMeanH": 55.559,
+   "sleeves": {
+    "infiltrate": 0,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:54:05.345Z",
+   "lastAugReset": 1790837341610,
+   "joined": false,
+   "rank": null,
+   "bladeH": 35.231,
+   "exitMeanH": 35.084,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T06:59:06.696Z",
+   "lastAugReset": 1790837341610,
+   "joined": false,
+   "rank": null,
+   "bladeH": 35.137,
+   "exitMeanH": 34.991,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:04:04.164Z",
+   "lastAugReset": 1790837341610,
+   "joined": false,
+   "rank": null,
+   "bladeH": 35.107,
+   "exitMeanH": 34.96,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:14:04.219Z",
+   "lastAugReset": 1790837341610,
+   "joined": false,
+   "rank": null,
+   "bladeH": 35.111,
+   "exitMeanH": 34.978,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:19:04.049Z",
+   "lastAugReset": 1790837341610,
+   "joined": false,
+   "rank": null,
+   "bladeH": 34.844,
+   "exitMeanH": 34.712,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:24:04.035Z",
+   "lastAugReset": 1790837341610,
+   "joined": false,
+   "rank": null,
+   "bladeH": 34.412,
+   "exitMeanH": 34.282,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:29:04.213Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 0,
+   "bladeH": 33.936,
+   "exitMeanH": 33.82,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:34:04.442Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 4.45,
+   "bladeH": 34.63,
+   "exitMeanH": 34.511,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:39:04.767Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 5.72,
+   "bladeH": null,
+   "exitMeanH": 234.252,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:44:05.194Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 5.72,
+   "bladeH": 34.601,
+   "exitMeanH": 34.468,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:49:04.645Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 9.11,
+   "bladeH": 34.049,
+   "exitMeanH": 33.918,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:54:04.753Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 11.55,
+   "bladeH": 34.879,
+   "exitMeanH": 34.745,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T07:59:04.988Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 11.55,
+   "bladeH": 33.916,
+   "exitMeanH": 33.796,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:04:04.806Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 14.17,
+   "bladeH": 33.863,
+   "exitMeanH": 33.743,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:09:05.009Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 18.13,
+   "bladeH": 33.928,
+   "exitMeanH": 33.807,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:14:05.228Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 18.13,
+   "bladeH": 33.989,
+   "exitMeanH": 33.877,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:19:07.154Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 19.68,
+   "bladeH": 33.854,
+   "exitMeanH": 33.743,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:24:05.140Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 33.899,
+   "exitMeanH": 33.787,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:29:06.527Z",
+   "lastAugReset": 1790837341610,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 33.854,
+   "exitMeanH": 33.748,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:34:20.433Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 34.927,
+   "exitMeanH": 34.378,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:39:19.824Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 34.79,
+   "exitMeanH": 34.243,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:44:19.637Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 34.686,
+   "exitMeanH": 34.141,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:49:19.709Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 33.908,
+   "exitMeanH": 33.375,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:54:19.865Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 24.72,
+   "bladeH": 33.795,
+   "exitMeanH": 33.274,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T08:59:19.884Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 30.76,
+   "bladeH": 33.767,
+   "exitMeanH": 33.246,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:04:20.129Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 31.96,
+   "bladeH": 33.668,
+   "exitMeanH": 33.149,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:09:20.417Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 31.96,
+   "bladeH": 32.925,
+   "exitMeanH": 32.441,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:14:19.830Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 34.2,
+   "bladeH": 32.545,
+   "exitMeanH": 32.067,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:19:21.533Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 39.58,
+   "bladeH": 32.482,
+   "exitMeanH": 32.005,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:24:20.167Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 39.58,
+   "bladeH": 32.7,
+   "exitMeanH": 32.245,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:29:21.641Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 39.58,
+   "bladeH": 32.023,
+   "exitMeanH": 31.578,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:34:20.297Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 45.58,
+   "bladeH": 31.918,
+   "exitMeanH": 31.474,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:39:20.197Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 46.37,
+   "bladeH": null,
+   "exitMeanH": 153.692,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:44:20.972Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 46.37,
+   "bladeH": 31.868,
+   "exitMeanH": 31.44,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:49:21.920Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 48.73,
+   "bladeH": 31.792,
+   "exitMeanH": 31.365,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:54:20.453Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 52.76,
+   "bladeH": 30.767,
+   "exitMeanH": 30.368,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T09:59:20.517Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 28.713,
+   "exitMeanH": 28.341,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:04:20.527Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 28.87,
+   "exitMeanH": 28.496,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:16:46.930Z",
+   "lastAugReset": 1790843357214,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 28.732,
+   "exitMeanH": 28.371,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:22:05.379Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 30.882,
+   "exitMeanH": 31.105,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:27:03.214Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 30.971,
+   "exitMeanH": 31.195,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:32:02.930Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 30.852,
+   "exitMeanH": 31.075,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:37:03.744Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 29.833,
+   "exitMeanH": 30.048,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:42:04.189Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 29.867,
+   "exitMeanH": 30.081,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:47:03.256Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 59.17,
+   "bladeH": 29.402,
+   "exitMeanH": 29.614,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:52:03.164Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 66.73,
+   "bladeH": 29.762,
+   "exitMeanH": 29.976,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T10:57:03.722Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 69.07,
+   "bladeH": 29.767,
+   "exitMeanH": 29.976,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:02:03.111Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 69.07,
+   "bladeH": 28.953,
+   "exitMeanH": 29.156,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:07:03.519Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 73.28,
+   "bladeH": 28.884,
+   "exitMeanH": 29.087,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:12:04.928Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 80.7,
+   "bladeH": 28.834,
+   "exitMeanH": 29.034,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:17:05.270Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 80.7,
+   "bladeH": 29.098,
+   "exitMeanH": 29.299,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:22:05.681Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 80.7,
+   "bladeH": 28.853,
+   "exitMeanH": 29.053,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:27:05.626Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 85.26,
+   "bladeH": 28.577,
+   "exitMeanH": 28.772,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:32:05.798Z",
+   "lastAugReset": 1790849820744,
+   "joined": true,
+   "rank": 92.21,
+   "bladeH": 28.711,
+   "exitMeanH": 28.907,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:37:15.402Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 92.21,
+   "bladeH": 29.716,
+   "exitMeanH": 29.71,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:42:15.316Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 92.21,
+   "bladeH": 28.675,
+   "exitMeanH": 28.669,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:47:15.008Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 92.21,
+   "bladeH": 28.608,
+   "exitMeanH": 28.602,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:52:15.711Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 92.21,
+   "bladeH": 27.816,
+   "exitMeanH": 27.81,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T11:57:15.692Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 92.21,
+   "bladeH": 27.746,
+   "exitMeanH": 27.739,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:02:17.202Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 101.93,
+   "bladeH": 26.913,
+   "exitMeanH": 26.905,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:07:16.873Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 107.27,
+   "bladeH": 24.751,
+   "exitMeanH": 24.744,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:12:16.884Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 107.27,
+   "bladeH": 24.776,
+   "exitMeanH": 24.769,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:17:16.692Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 107.27,
+   "bladeH": 23.648,
+   "exitMeanH": 23.641,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:22:17.626Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 115.45,
+   "bladeH": 25.564,
+   "exitMeanH": 25.557,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:27:15.613Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 124.95,
+   "bladeH": 25.618,
+   "exitMeanH": 25.61,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:32:15.766Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 124.95,
+   "bladeH": 25.818,
+   "exitMeanH": 25.811,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:37:17.204Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 124.95,
+   "bladeH": 25.705,
+   "exitMeanH": 25.698,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:42:17.404Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 125.82,
+   "bladeH": 26.752,
+   "exitMeanH": 26.744,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:47:16.261Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 134.16,
+   "bladeH": 26.507,
+   "exitMeanH": 26.499,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:52:17.109Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 143.58,
+   "bladeH": 26.735,
+   "exitMeanH": 26.728,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T12:57:15.710Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 143.58,
+   "bladeH": 25.686,
+   "exitMeanH": 25.678,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:02:16.197Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 143.58,
+   "bladeH": 26.466,
+   "exitMeanH": 26.458,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:07:16.001Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 143.88,
+   "bladeH": 26.673,
+   "exitMeanH": 26.665,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:12:18.113Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 149.43,
+   "bladeH": 26.719,
+   "exitMeanH": 26.711,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:17:16.387Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 160.81,
+   "bladeH": 26.659,
+   "exitMeanH": 26.651,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:22:17.490Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 161.98,
+   "bladeH": 26.677,
+   "exitMeanH": 26.67,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:27:17.061Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 161.98,
+   "bladeH": 26.64,
+   "exitMeanH": 26.632,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:32:18.205Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 162.55,
+   "bladeH": 26.676,
+   "exitMeanH": 26.669,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:37:16.604Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 175.74,
+   "bladeH": 26.602,
+   "exitMeanH": 26.594,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:42:16.471Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 182.43,
+   "bladeH": 26.83,
+   "exitMeanH": 26.822,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  },
+  {
+   "at": "2026-10-01T13:47:18.257Z",
+   "lastAugReset": 1790854331029,
+   "joined": true,
+   "rank": 182.43,
+   "bladeH": 25.645,
+   "exitMeanH": 25.638,
+   "sleeves": {
+    "infiltrate": 5,
+    "support": 0,
+    "fa": 0
+   }
+  }
+ ],
+ "realised": [
+  {
+   "at": "2026-10-01T13:22:55.330Z",
+   "rank": 161.98,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 46.44,
+   "maxStamina": 67.11,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:27:55.484Z",
+   "rank": 161.98,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 56.99,
+   "maxStamina": 67.42,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:32:45.176Z",
+   "rank": 164.35,
+   "action": "Tracking",
+   "level": 18,
+   "city": "Chongqing",
+   "stamina": 59.58,
+   "maxStamina": 67.73,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:37:50.800Z",
+   "rank": 177.02,
+   "action": "Retirement",
+   "level": 12,
+   "city": "Chongqing",
+   "stamina": 44.45,
+   "maxStamina": 68.36,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:42:48.704Z",
+   "rank": 182.43,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 41.38,
+   "maxStamina": 68.98,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:47:48.923Z",
+   "rank": 182.43,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 51.82,
+   "maxStamina": 68.98,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:52:48.987Z",
+   "rank": 182.43,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 62.53,
+   "maxStamina": 69.29,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T13:57:51.243Z",
+   "rank": 187.69,
+   "action": "Retirement",
+   "level": 12,
+   "city": "Chongqing",
+   "stamina": 55.47,
+   "maxStamina": 69.92,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:02:44.819Z",
+   "rank": 197,
+   "action": "Tracking",
+   "level": 18,
+   "city": "Chongqing",
+   "stamina": 43.72,
+   "maxStamina": 70.54,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:07:49.556Z",
+   "rank": 201.16,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 44.41,
+   "maxStamina": 70.85,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:12:49.717Z",
+   "rank": 201.16,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 55.01,
+   "maxStamina": 70.85,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:17:49.787Z",
+   "rank": 201.16,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 65.87,
+   "maxStamina": 71.16,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:22:52.816Z",
+   "rank": 207.49,
+   "action": "Field Analysis",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 61.1,
+   "maxStamina": 71.47,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:27:55.380Z",
+   "rank": 219.97,
+   "action": "Retirement",
+   "level": 12,
+   "city": "Chongqing",
+   "stamina": 49.69,
+   "maxStamina": 72.08,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:32:56.769Z",
+   "rank": 226.33,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 39.62,
+   "maxStamina": 72.7,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:37:56.978Z",
+   "rank": 226.33,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 50.39,
+   "maxStamina": 72.7,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:42:57.311Z",
+   "rank": 226.33,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 61.39,
+   "maxStamina": 73.01,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:47:52.913Z",
+   "rank": 229.63,
+   "action": "Tracking",
+   "level": 20,
+   "city": "Chongqing",
+   "stamina": 65.08,
+   "maxStamina": 73.31,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:52:47.574Z",
+   "rank": 238.94,
+   "action": "Tracking",
+   "level": 20,
+   "city": "Chongqing",
+   "stamina": 50.85,
+   "maxStamina": 73.62,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T14:57:55.751Z",
+   "rank": 250.19,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 44.49,
+   "maxStamina": 76.43,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:02:55.817Z",
+   "rank": 250.19,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 55.55,
+   "maxStamina": 76.43,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:07:55.935Z",
+   "rank": 250.19,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 66.85,
+   "maxStamina": 76.74,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:12:57.898Z",
+   "rank": 255.52,
+   "action": "Tracking",
+   "level": 21,
+   "city": "Chongqing",
+   "stamina": 64.78,
+   "maxStamina": 77.06,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:17:59.466Z",
+   "rank": 265.64,
+   "action": "Retirement",
+   "level": 15,
+   "city": "Chongqing",
+   "stamina": 51.82,
+   "maxStamina": 77.68,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:22:51.557Z",
+   "rank": 274.22,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 44.9,
+   "maxStamina": 78,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:27:51.720Z",
+   "rank": 274.22,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 56.1,
+   "maxStamina": 78,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:32:51.777Z",
+   "rank": 274.22,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 67.53,
+   "maxStamina": 78.31,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:37:47.054Z",
+   "rank": 279.01,
+   "action": "Tracking",
+   "level": 21,
+   "city": "Chongqing",
+   "stamina": 68.15,
+   "maxStamina": 78.62,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:42:42.579Z",
+   "rank": 294.75,
+   "action": "Retirement",
+   "level": 14,
+   "city": "Chongqing",
+   "stamina": 57.5,
+   "maxStamina": 80.15,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:47:48.038Z",
+   "rank": 310.85,
+   "action": "Retirement",
+   "level": 14,
+   "city": "Chongqing",
+   "stamina": 44.46,
+   "maxStamina": 80.78,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:52:54.986Z",
+   "rank": 312.23,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 53.68,
+   "maxStamina": 80.78,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T15:57:52.287Z",
+   "rank": 312.23,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 64.32,
+   "maxStamina": 80.78,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:03:05.322Z",
+   "rank": 312.23,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 76.23,
+   "maxStamina": 81.1,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:08:16.494Z",
+   "rank": 319.63,
+   "action": "Field Analysis",
+   "level": null,
+   "city": "Chongqing",
+   "stamina": 72.36,
+   "maxStamina": 82.05,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:18:55.852Z",
+   "rank": 337.56,
+   "action": "Retirement",
+   "level": 17,
+   "city": "Sector-12",
+   "stamina": 61.92,
+   "maxStamina": 83.62,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:23:59.647Z",
+   "rank": 349.98,
+   "action": "Retirement",
+   "level": 17,
+   "city": "Sector-12",
+   "stamina": 52.35,
+   "maxStamina": 84.56,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:29:02.837Z",
+   "rank": 359.19,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 53.86,
+   "maxStamina": 85.5,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:34:01.268Z",
+   "rank": 359.19,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 67.44,
+   "maxStamina": 86.13,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:39:08.399Z",
+   "rank": 359.19,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 79.05,
+   "maxStamina": 86.75,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:49:52.883Z",
+   "rank": 381.76,
+   "action": "Retirement",
+   "level": 16,
+   "city": "Sector-12",
+   "stamina": 66.35,
+   "maxStamina": 88.3,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:54:56.047Z",
+   "rank": 400.71,
+   "action": "Retirement",
+   "level": 16,
+   "city": "Sector-12",
+   "stamina": 54.05,
+   "maxStamina": 88.3,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T16:59:55.391Z",
+   "rank": 408.72,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 54.29,
+   "maxStamina": 88.61,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:04:59.751Z",
+   "rank": 408.72,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 66.3,
+   "maxStamina": 88.61,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:10:04.049Z",
+   "rank": 408.72,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 78.4,
+   "maxStamina": 88.61,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:15:13.835Z",
+   "rank": 416.75,
+   "action": "Retirement",
+   "level": 17,
+   "city": "Sector-12",
+   "stamina": 79.31,
+   "maxStamina": 88.61,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:20:20.625Z",
+   "rank": 436.42,
+   "action": "Retirement",
+   "level": 17,
+   "city": "Sector-12",
+   "stamina": 69.08,
+   "maxStamina": 91.45,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:25:24.912Z",
+   "rank": 454.46,
+   "action": "Retirement",
+   "level": 19,
+   "city": "Sector-12",
+   "stamina": 57.68,
+   "maxStamina": 91.45,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:30:21.706Z",
+   "rank": 466.11,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 55.98,
+   "maxStamina": 93.15,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:35:19.609Z",
+   "rank": 466.11,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 67.62,
+   "maxStamina": 93.48,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:40:19.980Z",
+   "rank": 466.11,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 80.56,
+   "maxStamina": 94.12,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:45:04.906Z",
+   "rank": 471.63,
+   "action": "Retirement",
+   "level": 19,
+   "city": "Sector-12",
+   "stamina": 87.21,
+   "maxStamina": 94.44,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:50:16.351Z",
+   "rank": 487.79,
+   "action": "Retirement",
+   "level": 19,
+   "city": "Sector-12",
+   "stamina": 76.56,
+   "maxStamina": 95.08,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T17:55:01.916Z",
+   "rank": 506.05,
+   "action": "Retirement",
+   "level": 19,
+   "city": "Sector-12",
+   "stamina": 66.8,
+   "maxStamina": 95.72,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:00:16.415Z",
+   "rank": 522.52,
+   "action": "Retirement",
+   "level": 20,
+   "city": "Sector-12",
+   "stamina": 56.08,
+   "maxStamina": 96.36,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:05:24.351Z",
+   "rank": 530.71,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 60.91,
+   "maxStamina": 97,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:10:26.386Z",
+   "rank": 530.71,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 73.86,
+   "maxStamina": 97.32,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:15:24.314Z",
+   "rank": 530.71,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 87.07,
+   "maxStamina": 97.96,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:20:14.741Z",
+   "rank": 538.36,
+   "action": "Retirement",
+   "level": 20,
+   "city": "Sector-12",
+   "stamina": 88.84,
+   "maxStamina": 98.28,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:25:33.388Z",
+   "rank": 558.53,
+   "action": "Retirement",
+   "level": 20,
+   "city": "Sector-12",
+   "stamina": 80.71,
+   "maxStamina": 98.92,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:30:21.819Z",
+   "rank": 585.17,
+   "action": "Retirement",
+   "level": 23,
+   "city": "Sector-12",
+   "stamina": 69.26,
+   "maxStamina": 98.92,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:35:21.391Z",
+   "rank": 604.85,
+   "action": "Retirement",
+   "level": 23,
+   "city": "Sector-12",
+   "stamina": 60.32,
+   "maxStamina": 99.23,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:46:05.325Z",
+   "rank": 619.93,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 72.2,
+   "maxStamina": 99.55,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:51:00.380Z",
+   "rank": 619.93,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 85.27,
+   "maxStamina": 99.55,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T18:55:59.099Z",
+   "rank": 620.13,
+   "action": "Field Analysis",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 97.17,
+   "maxStamina": 99.55,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:00:58.167Z",
+   "rank": 636.74,
+   "action": "Retirement",
+   "level": 22,
+   "city": "Sector-12",
+   "stamina": 88.82,
+   "maxStamina": 99.55,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:06:06.763Z",
+   "rank": 657.51,
+   "action": "Retirement",
+   "level": 22,
+   "city": "Sector-12",
+   "stamina": 81.65,
+   "maxStamina": 99.87,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:11:04.849Z",
+   "rank": 660.93,
+   "action": "Field Analysis",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 80.75,
+   "maxStamina": 99.87,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:15:35.044Z",
+   "rank": 675.84,
+   "action": "Retirement",
+   "level": 22,
+   "city": "Sector-12",
+   "stamina": 68.87,
+   "maxStamina": 99.87,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:26:51.893Z",
+   "rank": 693.94,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 65,
+   "maxStamina": 102.94,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:31:55.897Z",
+   "rank": 693.94,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 78.13,
+   "maxStamina": 102.94,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:37:16.556Z",
+   "rank": 693.94,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 91.41,
+   "maxStamina": 102.94,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:42:35.127Z",
+   "rank": 705.42,
+   "action": "Retirement",
+   "level": 22,
+   "city": "Sector-12",
+   "stamina": 94.78,
+   "maxStamina": 102.94,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:53:06.106Z",
+   "rank": 742.11,
+   "action": "Tracking",
+   "level": 25,
+   "city": "Sector-12",
+   "stamina": 69.17,
+   "maxStamina": 104.79,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T19:58:04.218Z",
+   "rank": 756.62,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 60.9,
+   "maxStamina": 104.79,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:03:04.379Z",
+   "rank": 756.62,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 71.22,
+   "maxStamina": 104.79,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:08:12.890Z",
+   "rank": 756.62,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 86.1,
+   "maxStamina": 104.79,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:13:06.063Z",
+   "rank": 756.62,
+   "action": "Retirement",
+   "level": 25,
+   "city": "Sector-12",
+   "stamina": 99.61,
+   "maxStamina": 104.79,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:18:19.576Z",
+   "rank": 775.31,
+   "action": "Retirement",
+   "level": 25,
+   "city": "Sector-12",
+   "stamina": 91.5,
+   "maxStamina": 105.12,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:23:40.031Z",
+   "rank": 787.58,
+   "action": "Undercover Operation",
+   "level": 1,
+   "city": "Sector-12",
+   "stamina": 80.99,
+   "maxStamina": 105.12,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:41:37.959Z",
+   "rank": 831.87,
+   "action": "Retirement",
+   "level": 25,
+   "city": "Chongqing",
+   "stamina": 76.78,
+   "maxStamina": 105.45,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T20:46:37.095Z",
+   "rank": 833.51,
+   "action": "Retirement",
+   "level": 25,
+   "city": "Chongqing",
+   "stamina": 77.27,
+   "maxStamina": 105.45,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:14:09.896Z",
+   "rank": 898,
+   "action": "Retirement",
+   "level": 26,
+   "city": "Chongqing",
+   "stamina": 68.75,
+   "maxStamina": 105.78,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:24:48.674Z",
+   "rank": 916.82,
+   "action": "Retirement",
+   "level": 26,
+   "city": "Sector-12",
+   "stamina": 65.36,
+   "maxStamina": 106.11,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:29:51.747Z",
+   "rank": 919.58,
+   "action": "Retirement",
+   "level": 26,
+   "city": "Sector-12",
+   "stamina": 67.82,
+   "maxStamina": 106.11,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:35:02.353Z",
+   "rank": 933.06,
+   "action": "Retirement",
+   "level": 26,
+   "city": "Sector-12",
+   "stamina": 64.36,
+   "maxStamina": 106.11,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:39:59.375Z",
+   "rank": 955.16,
+   "action": "Retirement",
+   "level": 26,
+   "city": "Sector-12",
+   "stamina": 66.16,
+   "maxStamina": 106.11,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:45:09.446Z",
+   "rank": 984.05,
+   "action": "Field Analysis",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 67.59,
+   "maxStamina": 106.44,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:49:40.877Z",
+   "rank": 998.79,
+   "action": "Undercover Operation",
+   "level": 4,
+   "city": "Sector-12",
+   "stamina": 65.1,
+   "maxStamina": 106.44,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T21:54:47.135Z",
+   "rank": 1009.31,
+   "action": "Retirement",
+   "level": 26,
+   "city": "Sector-12",
+   "stamina": 62.89,
+   "maxStamina": 106.44,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T22:00:08.574Z",
+   "rank": 1028.36,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 59.91,
+   "maxStamina": 106.77,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T22:04:59.835Z",
+   "rank": 1028.36,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 70.32,
+   "maxStamina": 106.77,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T22:10:05.357Z",
+   "rank": 1028.36,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 88.99,
+   "maxStamina": 106.77,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  },
+  {
+   "at": "2026-10-01T22:15:00.890Z",
+   "rank": 1028.36,
+   "action": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "Sector-12",
+   "stamina": 100.08,
+   "maxStamina": 106.77,
+   "lastAugReset": 1790854331029,
+   "slotOurs": true
+  }
+ ],
+ "realisedEarlier": [
+  {
+   "at": "2026-10-01T10:31:00Z",
+   "rank": 59
+  },
+  {
+   "at": "2026-10-01T11:06:00Z",
+   "rank": 73
+  },
+  {
+   "at": "2026-10-01T12:10:00Z",
+   "rank": 107
+  }
+ ]
+}

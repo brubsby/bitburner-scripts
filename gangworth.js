@@ -128,6 +128,33 @@ export function gangExit(bestExitPolicy, base, schedule, grindHours, eBudget = n
   if (!num(a) || !num(b)) return { savedH: null, why: `exit unpriceable (${without?.why ?? 'ok'} / ${withG?.why ?? 'ok'})` }
   return { savedH: a - b, withoutH: a, withH: b, why: `exit ${a.toFixed(1)}h without a gang vs ${b.toFixed(1)}h with one after a ${grindHours.toFixed(1)}h karma grind` }
 }
+/**
+ * gangExit as a generator over exitplan.bestExitPolicyGen: the same two
+ * trajectories, yielding inside each policy search so the plan's pacer
+ * slices it (live 22:35Z: PLAN BLOCKED THE PAGE, 238ms in one
+ * 'plan-sleeveObjective' step — the karma objective's two exits in one step).
+ */
+export function* gangExitGen(bestExitPolicyGen, base, schedule, grindHours, eBudget = null, maxInstalls = 400) {
+  if (typeof bestExitPolicyGen !== 'function' || !base) return { savedH: null, why: 'no exit policy or inputs' }
+  if (!Array.isArray(schedule) || !schedule.length) return { savedH: null, why: 'no gang income trajectory (measured or simulated)' }
+  if (!num(grindHours) || grindHours < 0) return { savedH: null, why: 'karma grind unpriced' }
+  const without = yield* bestExitPolicyGen({ ...base }, maxInstalls)
+  // THE GRIND HOLDS THE WORK SLOT (exitplan slotBusyH) where the model can
+  // price what the slot would otherwise earn: with base.workWhileDonating
+  // (donations open at favor 0 — BitNode 8) the exit's reputation leg is
+  // work-plus-donation, so every hour of crime is an hour of reputation the
+  // money must buy instead. BitNode 8 is where this decides the answer: with
+  // GangSoftcap 0 a gang earns ~$60/s (gangplan at x^0 = 1 per member per
+  // cycle, Gang/formulas/formulas.ts:71), and without the slot's cost that
+  // tiny income read as "WORTH IT". Elsewhere it stays unsimulated, as the
+  // header says, so no other node's verdict moves.
+  const slot = base.workWhileDonating === true ? { slotBusyH: grindHours } : {}
+  const withG = yield* bestExitPolicyGen({ ...base, ...slot, extraIncome: schedule.map((x) => ({ atH: x.atH + grindHours, perSec: x.perSec })), eBudget }, maxInstalls)
+  const a = without?.best?.hours
+  const b = withG?.best?.hours
+  if (!num(a) || !num(b)) return { savedH: null, why: `exit unpriceable (${without?.why ?? 'ok'} / ${withG?.why ?? 'ok'})` }
+  return { savedH: a - b, withoutH: a, withH: b, why: `exit ${a.toFixed(1)}h without a gang vs ${b.toFixed(1)}h with one after a ${grindHours.toFixed(1)}h karma grind` }
+}
 
 /**
  * WHERE THE REPUTATION RATE CAME FROM, for the verdict. exitInputsOf fills an
