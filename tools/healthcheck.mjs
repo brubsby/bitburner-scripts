@@ -705,7 +705,9 @@ if (!sleevesExpected) {
   // calibrated (planCheck in plan.js, shared with the suite).
   {
     const { planCheck, installRecordCheck } = await import("../plan.js");
-    const r = planCheck(readTel("plan.txt"), { gate, progress: prog, now: Date.now() });
+    const bootTier = now.homeRam !== null ? stackTierFromBoot(readTel("boot.txt"), now.homeRam) : null;
+    const bootstrap = bootTier !== null && now.homeRam < bootTier ? `home ${now.homeRam}GB is below the ${bootTier}GB stack tier` : null;
+    const r = planCheck(readTel("plan.txt"), { gate, progress: prog, now: Date.now(), bootstrap });
     for (const f of r.fails) fail(f.what, f.detail);
     for (const n of r.notes) note(n);
     // TWO EXITS AT INSTALL, after the fact: plan.txt belongs to the next life

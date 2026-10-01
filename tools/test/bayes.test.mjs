@@ -436,6 +436,10 @@ export async function run() {
     if (ok.fails.length) c9.fail("a sound plan must pass", JSON.stringify(ok.fails));
     if (!chk(null, "PLAN MISSING")) c9.fail("no plan while progress.js runs must fail");
     if (!chk({ ...good, at: new Date(now - 90 * 60e3).toISOString() }, "PLAN STALE")) c9.fail("a 90-min-old plan must fail");
+    // [BY9] Below the stack's tier the planner is not placed: a note, not a fail.
+    const boot = P.planCheck({ ...good, at: new Date(now - 90 * 60e3).toISOString() }, { now, bootstrap: "home 32GB is below the 64GB stack tier" });
+    if (boot.fails.some((f) => /PLAN STALE/.test(f.what))) c9.fail("during the bootstrap a stale plan is a note");
+    if (!boot.notes.some((n) => /not placed yet/.test(n))) c9.fail("the bootstrap note must say why");
     if (!chk({ ...good, health: "error", error: "route decision threw" }, "PLAN BROKEN")) c9.fail("a plan that recorded an error must fail");
     // The page-freeze metric is the longest block, not the total: 900ms of
     // work in 41ms slices passes; one 120ms block fails.
@@ -450,7 +454,7 @@ export async function run() {
     if (!chk({ ...good, calibration: { n: 20, cover80: 1.0, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("100% coverage of an 80% interval (underconfident) must fail");
     if (chk({ ...good, calibration: { n: 5, cover80: 0.2, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("five pairs are too few to call miscalibration");
     const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
-    if (!/planCheck\(readTel\("plan\.txt"\), \{ gate, progress: prog, now: Date\.now\(\) \}\)/.test(hc)) c9.fail("healthcheck section F must run planCheck on /tel/plan.txt");
+    if (!/planCheck\(readTel\("plan\.txt"\), \{ gate, progress: prog, now: Date\.now\(\), bootstrap \}\)/.test(hc)) c9.fail("healthcheck section F must run planCheck on /tel/plan.txt (with the bootstrap state)");
   }
   checks.push(c9);
 

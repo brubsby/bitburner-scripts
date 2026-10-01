@@ -1912,7 +1912,7 @@ export function graftCarryCheckOf({ install = null, installInputs = null, grafts
     why: `GRAFTS DROPPED: the install decision (${install.key}) priced ${carried.length} graft(s) where ${source} holds ${expected.length}${missing.length ? ` — missing ${missing.length} (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', ...' : ''})` : ''}${extra.length ? ` — ${extra.length} not committed (${extra.slice(0, 3).join(', ')})` : ''}`,
   }
 }
-export function planCheck(plan, { gate = null, progress = null, now = Date.now() } = {}) {
+export function planCheck(plan, { gate = null, progress = null, now = Date.now(), bootstrap = null } = {}) {
   const fails = []
   const notes = []
   const fail = (what, detail) => fails.push({ what, detail })
@@ -1922,7 +1922,14 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
     return { fails, notes }
   }
   const age = (now - Date.parse(plan.at)) / 60e3
-  if (!(age < PLAN_CAL.staleMin)) fail(`PLAN STALE: /tel/plan.txt is ${fin(age) ? age.toFixed(0) : '?'} min old`, 'progress.js has not reached a decision pass since — find where the pass returns early')
+  // BELOW THE STACK'S TIER progress.js is not placed at all (boot.js admits it
+  // at 64GB): a stale plan is the bootstrap, not a planner returning early.
+  // Live BN6 2026-10-01: 32GB home, PLAN STALE for the whole crime-money
+  // opening. The bootstrap has its own check (BOOTSTRAP STALLED). [BY9]
+  if (!(age < PLAN_CAL.staleMin)) {
+    if (bootstrap) notes.push(`plan ${fin(age) ? age.toFixed(0) : '?'} min old: ${bootstrap} — progress.js is not placed yet`)
+    else fail(`PLAN STALE: /tel/plan.txt is ${fin(age) ? age.toFixed(0) : '?'} min old`, 'progress.js has not reached a decision pass since — find where the pass returns early')
+  }
   if (gate && gate.lastAugReset !== undefined && plan.lastAugReset !== gate.lastAugReset && Date.parse(plan.at) < Date.parse(gate.at)) fail('PLAN FROM ANOTHER LIFE: plan.txt lastAugReset differs from the gate\'s', 'a reader would follow a previous life\'s commitment')
   if (plan.health === 'error') fail(`PLAN BROKEN: ${plan.error ?? 'health error'}`, 'a decision threw or the context could not be built; the named fallbacks decide meanwhile')
   // THE PAGE-FREEZE CHECK is the longest synchronous block, not the total:
