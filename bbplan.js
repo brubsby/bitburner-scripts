@@ -627,8 +627,28 @@ export function planSkills(v, sp, pol = POLICY, skillCostMult = 1, chunks = 20) 
 //   bnRank, skillCostMult             node multipliers BladeburnerRank / BladeburnerSkillCost
 //   sleeves {infiltrate, support, fa}
 //   gymExpPerSec                      exp per second a stat gains at the gym (to the join bar and after installs)
-//   install {everyH, firstH, combatGain}  combat-multiplier gain per install; exp resets to 0
+//   install {firstH, everyH?, combatGain?, gains?, simulacrum?}
+//                                     an augmentation install (Prestige.ts prestigeAugmentation): every
+//                                     exp to 0 and the stats with it (PlayerObjectGeneralMethods.ts:80-100);
+//                                     the division, rank, skills, skill points, black ops done and the
+//                                     stamina bonus PERSIST (Player.bladeburner is kept; Bladeburner.ts:260-264
+//                                     only resets the action and re-joins the faction at rank >= 25), so
+//                                     no re-join. `gains` multiplies person.mults (the batch's combat level
+//                                     and exp multipliers, bladeburner_* — success chance through env.augMult,
+//                                     stamina through maxStaminaOf/staminaGainOf); combatGain (legacy) the
+//                                     four combat level multipliers. everyH absent: that one install only.
+//                                     Max stamina follows agility (calculateMaxStamina scales the current
+//                                     stamina with it), which the retrain restores.
+//   simulacrum                        The Blade's Simulacrum installed (Bladeburner.ts:179, :1355): the
+//                                     player's work runs beside the action, so the gym trains combat
+//                                     IN PARALLEL (the lowest stat, gymExpPerSec) instead of blocking
+//                                     the retrain. install.simulacrum: installed by that install.
 //   maxH, dt
+//
+// The retrain is the POLICY (progress.js bladeGymStep): whenever a combat stat
+// is below max(JOIN_COMBAT, pol.gymTo) on the committed route, the slot trains
+// at the gym before Bladeburner acts — at the start (a life that begins below
+// it, e.g. right after an install) as after each install.
 export const CITY_NAMES = ['Aevum', 'Chongqing', 'Sector-12', 'New Tokyo', 'Ishima', 'Volhaven']
 const EVENT_MEAN_S = 420 // getRandomIntInclusive(240, 600)
 
@@ -698,13 +718,33 @@ export function* bladeExitGen(s0, pol = POLICY) {
     return need <= 0 ? 0 : gymRate > 0 ? need / gymRate : Infinity
   }
   relevel()
+  // THE SIMULACRUM: the gym beside the action (the lowest combat stat, one class at a time).
+  let simOn = s0.simulacrum === true
+  const startExpMult = person.mults.strength_exp ?? 1
+  const gymParallel = (secs) => {
+    if (!(gymRate > 0)) return
+    let low = 'strength'
+    for (const c of ['defense', 'dexterity', 'agility']) if ((person.skills[c] ?? 0) < (person.skills[low] ?? 0)) low = c
+    person.exp[low] = (person.exp[low] ?? 0) + gymRate * ((person.mults[`${low}_exp`] ?? 1) / startExpMult) * secs
+    relevel()
+  }
   if (!s0.joined) {
     const h = gymTo(JOIN_COMBAT)
     if (!isFinite(h)) return { hours: null, why: 'not in the division and no gym rate to reach combat 100' }
     t += h
     joinH = h / 3600
+  } else if (!simOn) {
+    // In the division but below the retrain bar (a life that began with an
+    // install): the policy trains first (progress.js bladeGymStep).
+    const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo))
+    if (isFinite(h) && h > 0) {
+      t += h
+      joinH = h / 3600
+    }
   }
-  let nextInstall = s0.install?.everyH ? (s0.install.firstH ?? s0.install.everyH) * 3600 : Infinity
+  const inst = s0.install ?? null
+  const firstInstallS = inst ? (Number.isFinite(inst.firstH) ? inst.firstH : inst.everyH) : null
+  let nextInstall = Number.isFinite(firstInstallS) && firstInstallS >= 0 ? firstInstallS * 3600 : Infinity
   let lastSkill = -Infinity
   let smKey = null
   let smNow = null
@@ -763,13 +803,17 @@ export function* bladeExitGen(s0, pol = POLICY) {
       yield
     }
     if (t >= nextInstall) {
-      // An install: combat (and every) exp to 0, the multiplier the node's economy bought.
-      const g = s0.install.combatGain ?? 1
+      // An install: combat (and every) exp to 0, the multipliers the batch bought.
+      const g = inst.combatGain ?? 1
       for (const c of ['strength', 'defense', 'dexterity', 'agility']) person.mults[c] = lvMult(c) * g
+      for (const [k, x] of Object.entries(inst.gains ?? {})) if (Number.isFinite(x) && x > 0) person.mults[k] = (person.mults[k] ?? 1) * x
+      env.augMult = person.mults.bladeburner_success_chance ?? 1
+      if (inst.simulacrum === true) simOn = true
       for (const c of ['strength', 'defense', 'dexterity', 'agility', 'charisma']) person.exp[c] = 0
       relevel()
       installs++
-      nextInstall += s0.install.everyH * 3600
+      nextInstall = inst.everyH > 0 ? nextInstall + inst.everyH * 3600 : Infinity
+      if (simOn) continue // the retrain runs beside the actions (gymParallel)
       const h = gymTo(pol.gymTo)
       cityTick(h)
       t += h
@@ -804,6 +848,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       st.bo++
       continue
     }
+    if (simOn) gymParallel(dt)
     let left = dt
     for (let k = 0; k < 3 && left > 1e-9; k++) {
       const c = k === 0 ? pick : chooseAction(viewOf(), pol)
@@ -855,6 +900,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     rank: st.rank,
     blackOps: st.bo,
     installs,
+    simulacrum: simOn,
     levels: st.levels,
     stats: { ...person.skills },
     cities,
@@ -917,9 +963,10 @@ export function sleeveTasksOf(config, n) {
  *
  *   person   {skills, exp, mults} with LEVEL mults including the node's (progress.js levelledPerson)
  *   sleeves  {infiltrate, support, fa}
- *   install  {everyH, firstH, combatGain} | null — the plan's cadence; combatGain 1 = no combat augs (pessimistic)
+ *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
+ *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, maxH = 400, dt = 300 }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300 }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
   return {
@@ -939,7 +986,102 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     sleeves,
     gymExpPerSec,
     install,
+    simulacrum: simulacrum === true,
     maxH,
     dt,
   }
+}
+
+// --- installs and The Blade's Simulacrum, on this route's exit ------------------
+
+export const SIMULACRUM = "The Blade's Simulacrum"
+/** The multipliers an augmentation moves on the black-op exit (bladeExitGen install.gains). */
+export const BLADE_GAIN_KEYS = ['strength', 'defense', 'dexterity', 'agility', 'charisma', 'strength_exp', 'defense_exp', 'dexterity_exp', 'agility_exp', 'charisma_exp', 'bladeburner_success_chance', 'bladeburner_max_stamina', 'bladeburner_stamina_gain']
+
+/**
+ * A batch's content on the Bladeburner route: the product of each
+ * augmentation's BLADE_GAIN_KEYS multipliers (statsOf(name): the game's
+ * getAugmentationStats, snapshot) and whether it carries The Blade's
+ * Simulacrum. Names without stats contribute nothing (named in `unpriced`).
+ * Returns {gains (keys != 1 only), simulacrum, n, unpriced}.
+ */
+export function bladeContentOf(names, statsOf) {
+  const gains = {}
+  const unpriced = []
+  for (const n of names ?? []) {
+    let m = null
+    try {
+      m = statsOf(n)
+    } catch {
+      m = null
+    }
+    if (!m || typeof m !== 'object') {
+      if (n !== SIMULACRUM) unpriced.push(n)
+      continue
+    }
+    for (const k of BLADE_GAIN_KEYS) if (Number.isFinite(m[k]) && m[k] > 0 && m[k] !== 1) gains[k] = (gains[k] ?? 1) * m[k]
+  }
+  for (const k of Object.keys(gains)) gains[k] = +gains[k].toFixed(6)
+  return { gains, simulacrum: (names ?? []).includes(SIMULACRUM), n: (names ?? []).length, unpriced }
+}
+
+/**
+ * The install a plan spec makes on this route (plan.js install specs):
+ * {kind:'wait', waitH, blade:{gains, simulacrum}} -> one install at waitH with
+ * that content; 'never' or null -> none. The installs after it are the next
+ * decisions' (each priced the same way), not a cadence.
+ */
+export function bladeInstallOfSpec(spec) {
+  if (!spec || spec.kind !== 'wait') return null
+  const w = Number.isFinite(spec.waitH) ? Math.max(0, spec.waitH) : 0
+  return { firstH: w, gains: spec.blade?.gains ?? null, simulacrum: spec.blade?.simulacrum === true }
+}
+
+/**
+ * THE BLADE'S SIMULACRUM, priced as a spend on the black-op exit
+ * (Augmentations.ts:284: $150b x the node's AugmentationMoneyCost x 1.9^queued,
+ * 1.25k x AugmentationRepCost Bladeburners reputation; it takes effect only
+ * at an install). With it the player's work runs beside the Bladeburner
+ * action (Bladeburner.ts:179, :1355): the gym trains combat in parallel
+ * (bladeExitGen simulacrum) and the slot stops being one queue.
+ *
+ *   s0          bladeStartOf(...) of the committed trajectory, no install
+ *   withoutH    the committed exit (hours from now)
+ *   cost        money price now; repReq  the reputation it needs
+ *   wealth      cash + equity now; moneyPerH  the node's income per hour
+ *   rep         Bladeburners reputation now; repPerRank  2 x faction_rep x (1 + favor/100) (Formulas.ts:46-49)
+ *   rankPerH    the rank rate (measured, else the model's)
+ *   owned / queued  already installed / bought and waiting
+ *
+ * Reach is when BOTH money and reputation are there (linear in the measured
+ * rates — reputation from rank, Bladeburner.ts:1276-1281; it resets at an
+ * install, which this trajectory has none of before the purchase). The
+ * exit WITH it: an install at the reach carrying it (exp reset, retrain in
+ * parallel). The bound: the exit were it installed NOW at no cost (its whole
+ * value on this trajectory). Returns {buy, why, reachH, moneyH, repH, withH,
+ * withoutH, boundH, boundGainH, gainH, cost, repReq}.
+ */
+export function simulacrumVerdict(o) {
+  return drain(simulacrumVerdictGen(o))
+}
+export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, moneyPerH = 0, rep = 0, repPerRank = 0, rankPerH = 0, owned = false, queued = false } = {}) {
+  const r2 = (x) => (Number.isFinite(x) ? +x.toFixed(2) : null)
+  const base = { cost: Number.isFinite(cost) ? Math.round(cost) : null, repReq: Number.isFinite(repReq) ? Math.round(repReq) : null, withoutH: r2(withoutH) }
+  if (owned) return { ...base, buy: false, why: `${SIMULACRUM} is installed: the exit already runs the gym beside the actions` }
+  if (queued) return { ...base, buy: false, why: `${SIMULACRUM} is bought and waits for an install: the install decision prices it (its batch carries it)` }
+  if (!s0 || !Number.isFinite(withoutH)) return { ...base, buy: false, why: 'no committed Bladeburner exit to price it against' }
+  const moneyH = !Number.isFinite(cost) ? Infinity : wealth >= cost ? 0 : moneyPerH > 0 ? (cost - wealth) / moneyPerH : Infinity
+  const repH = !Number.isFinite(repReq) ? Infinity : rep >= repReq ? 0 : repPerRank > 0 && rankPerH > 0 ? (repReq - rep) / (repPerRank * rankPerH) : Infinity
+  const reachH = Math.max(moneyH, repH)
+  const bound = yield* bladeExitGen({ ...s0, install: { firstH: 0, gains: null, simulacrum: true } })
+  const boundH = bound.hours
+  const out = { ...base, moneyH: r2(moneyH), repH: r2(repH), reachH: r2(reachH), boundH: r2(boundH), boundGainH: Number.isFinite(boundH) ? r2(withoutH - boundH) : null }
+  const money = !Number.isFinite(cost) ? 'money: the price is unread (snap-augprice)' : Number.isFinite(moneyH) ? `money in ${moneyH.toFixed(1)}h ($${(cost / 1e9).toFixed(1)}b against $${(wealth / 1e9).toFixed(3)}b at $${(moneyPerH / 1e6).toFixed(1)}m/h)` : `money never ($${(cost / 1e9).toFixed(1)}b, no income)`
+  const repTxt = !Number.isFinite(repReq) ? 'reputation: the requirement is unread' : `reputation in ${Number.isFinite(repH) ? repH.toFixed(1) + 'h' : 'never'} (${Math.round(rep)} of ${Math.round(repReq)} at ${(repPerRank * rankPerH).toFixed(1)}/h)`
+  if (!(reachH < withoutH)) return { ...out, buy: false, withH: null, gainH: null, why: `unreachable before the exit: ${money}, ${repTxt} — the exit is ${withoutH.toFixed(1)}h away; installed now at no cost it would be worth ${out.boundGainH ?? '?'}h` }
+  const w = yield* bladeExitGen({ ...s0, install: { firstH: reachH, gains: null, simulacrum: true } })
+  const withH = Number.isFinite(w.hours) ? w.hours : null
+  const gainH = withH === null ? null : withoutH - withH
+  const buy = gainH !== null && gainH > 0
+  return { ...out, buy, withH: r2(withH), gainH: r2(gainH), why: buy ? `buy (${money}, ${repTxt}) and install at ${reachH.toFixed(1)}h: the exit ${withH.toFixed(1)}h against ${withoutH.toFixed(1)}h (${gainH.toFixed(1)}h sooner)` : `not worth it: bought at ${reachH.toFixed(1)}h and installed, the exit is ${withH === null ? 'unpriced' : withH.toFixed(1) + 'h'} against ${withoutH.toFixed(1)}h (the install's reset costs more than the parallel gym returns)` }
 }

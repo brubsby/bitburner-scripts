@@ -271,3 +271,53 @@ export function decide(s = {}) {
   if (due) return { kind: 'join', args: [due], why: `no faction joined; trying ${due} (an uninvited join just returns false)` }
   return { kind: 'idle', why: 'no faction joined; every hack-line join was tried in the last 10 min' }
 }
+
+/**
+ * THE OWNER'S WORK, RE-ISSUED. progress.js claims the slot for a kind of
+ * work and orders it once per batch; act.js starts it. Anything that ends it
+ * afterwards — the negative-cash escape stopping a paid class (softlockStep,
+ * on a raise the trader re-invested a moment later), a Bladeburner
+ * startAction (Bladeburner.ts:179 finishes the player's work first) — left
+ * the claimed slot EMPTY until the next batch: live BN6 2026-10-01 the gym
+ * (defense to 100 for Bladeburners) ran from 10:27:25Z, was gone by
+ * 10:27:56Z, and nothing worked until the 10:32Z batch re-ordered it.
+ *
+ * Re-issue the last work order of the CURRENT batch when, and only when:
+ *   - progress.txt is fresh, this life, and its owner is the kind that order
+ *     serves (body -> gym/crime, faction -> work, crime -> crime, company ->
+ *     company; never a graft — it is paid up front, and never 'bladeburner',
+ *     whose daemon restarts its own action);
+ *   - the game shows NO work: the rep snapshot (getCurrentWork) is fresh and
+ *     taken after the order ran;
+ *   - a paid class is fundable for FEE_FLOOR_S (else the escape stops it
+ *     again — the raise is the escape's job, not this);
+ *   - at most REISSUE.max per batch, REISSUE.gapMs apart.
+ * s: { now, lastAugReset, progress, lastWork {kind, args, at, batchAt},
+ *      batchAt (the batch act.js last executed), work (snapshot), workAt,
+ *      cash, gymCostMult (gym name -> costMult), reissued {n, at} }
+ * Returns {kind, args, why} to run, or {skip: why} / null (nothing to say).
+ */
+export const REISSUE = { max: 3, gapMs: 90e3, snapMaxAgeMs: 120e3, settleMs: 5e3 }
+const OWNER_KINDS = { body: ['gym', 'crime'], faction: ['work'], crime: ['crime'], company: ['company'] }
+export function reissueWorkOf(s) {
+  const lw = s.lastWork
+  if (!lw || !lw.kind) return null
+  const at = Date.parse(s.progress?.at ?? '')
+  const owner = s.progress?.slot?.owner ?? null
+  if (!(num(at) && s.now - at < PROGRESS_FRESH_MS) || s.progress?.health === 'error') return null
+  if (!OWNER_KINDS[owner]?.includes(lw.kind)) return null
+  if (lw.batchAt !== s.batchAt) return null
+  const ranAt = Date.parse(lw.at ?? '')
+  const snapAt = Date.parse(s.workAt ?? '')
+  if (!num(snapAt) || s.now - snapAt > REISSUE.snapMaxAgeMs || !num(ranAt) || snapAt < ranAt + REISSUE.settleMs) return null
+  if (s.work) return null
+  const r = s.reissued ?? { n: 0, at: 0 }
+  if (r.n >= REISSUE.max) return { skip: `the ${owner} slot's ${lw.kind} order (batch ${lw.batchAt}) has stopped ${r.n} times after re-issue — leaving it to the next batch` }
+  if (s.now - (r.at ?? 0) < REISSUE.gapMs) return { skip: `re-issued ${Math.round((s.now - r.at) / 1000)}s ago` }
+  if (lw.kind === 'gym') {
+    const cm = s.gymCostMult?.(lw.args?.[0])
+    const fee = CLASS_BASE_FEE.gym * (num(cm) ? cm : 20)
+    if (!feeFundable(s.cash, fee)) return { skip: `the ${lw.args?.[0] ?? 'gym'} fee ($${fee}/s) is not covered for ${FEE_FLOOR_S}s by cash $${Math.round(s.cash ?? 0)} — the negative-cash escape would stop it again` }
+  }
+  return { kind: lw.kind, args: lw.args, why: `progress.js holds the slot for ${owner} (${Math.round((s.now - at) / 60000)} min ago) and its ${lw.kind} order (batch ${lw.batchAt}, ran ${lw.at}) is no longer running — the game shows no work (snapshot ${s.workAt}): re-issued` }
+}

@@ -160,7 +160,7 @@ import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, POLICY as BB_POLICY, JOIN_COMBAT } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT } from 'bbplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -171,7 +171,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE } from 'plan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2089,7 +2089,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
     // install decision's w4 read 23.0h while grafts, priced on the default
     // policy with no install batch, read 84.9h). No committed install: the
     // default policy, named in `basis`.
-    const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
     const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const priceExit = (x, d = null) => traj(x, d)
     // Priced as generators (trajectoryGenOf yields per policy): a 23-graft set
@@ -2447,9 +2447,28 @@ function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
  * CPU: one bladeExit per cadence step (e^0.25) the draws reach, as a
  * generator yielding every 10 steps, so the plan's pacer slices it like
  * every other trajectory. Only where the division exists.
+ *
+ * THE BLADE ARM IS THE COMMITTED BLADEBURNER TRAJECTORY. Once the install
+ * decision prices on this route (bladeInstallCompareOf: its record carries
+ * route 'blade'), the arm is that decision's committed install plan — one
+ * install at its time with its batch, or none — on its noise key
+ * (plan.bladeNoiseKeyOf), so the route's exit, the install decision's and
+ * the gate's are one trajectory with one set of draws. Before that (no
+ * blade-priced record), no install: on this route an install only resets
+ * the combat the black ops are priced on, and the install decision installs
+ * only where its batch pays on this exit. The hacking arm then prices the
+ * default policy (a blade-priced 'never' is not the hacking route's plan).
+ *
+ * THE BLADE'S SIMULACRUM (bbplan.simulacrumVerdictGen): priced on this exit
+ * as a spend every pass the route is 'blade' — published as
+ * decisions.bladeRoute.simulacrum; act() orders it only when the verdict
+ * buys and both money and reputation are there now.
+ *
+ * Publishes pc.bladeCtx.startFor(spec): the start every Bladeburner
+ * trajectory of this pass is priced from (one builder).
  */
 const BLADE_TEL = '/tel/bladeburner.txt'
-async function bladeRouteOf(ns, info, player, inputsFn) {
+async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0 } = {}) {
   const mults = bitNodeMults(info?.currentNode)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
   const pc = planCtxOf(ns, info)
@@ -2465,30 +2484,129 @@ async function bladeRouteOf(ns, info, player, inputsFn) {
     const person = levelledPerson(player, info)
     const gym = bestGym(person)
     const gymExpPerSec = gym ? gymRate(gym, 'strength', person, ns.hacknet.getTrainingMult()) : null
+    const simOwned = !!owned?.has?.(SIMULACRUM)
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned })
+    pc.bladeCtx = { startFor, simOwned }
     return await planDecide(pc, 'bladeRoute', function* () {
       const base = inputsFn()
       yield
-      const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
-      const lifeAgeH = Math.max(0, (Date.now() - (info?.lastAugReset ?? Date.now())) / 3600e3)
-      const bladeStartAt = (cyc) =>
-        bladeStartOf({
-          tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost,
-          install: cyc > 0 ? { everyH: cyc, firstH: Math.max(0.25, cyc - lifeAgeH), combatGain: 1 } : null,
-        })
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), basis, bladeStartAt, prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
+      const prevInst = pc.prev?.decisions?.install ?? null
+      const bladeCommitted = prevInst?.route === 'blade'
+      const bladeBasis = bladeCommitted ? basisOf(prevInst, Date.now()) : null
+      const basis = bladeCommitted ? null : basisOf(prevInst, Date.now())
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
+      let simulacrum = null
+      if (d?.key === 'blade' && typeof d.bladeH === 'number') {
+        try {
+          const fav = sing ? sing.factionFavor('Bladeburners') : null
+          const repNow = sing && player.factions?.includes?.('Bladeburners') ? sing.factionRep('Bladeburners') : 0
+          const fin1 = (x) => typeof x === 'number' && isFinite(x)
+          const cost = sing ? sing.augPrice(SIMULACRUM) : null
+          const repReq = sing ? sing.augRepReq(SIMULACRUM) : null
+          const rankPerH = fin1(tel?.rankPerHour) && tel.rankPerHour > 0 ? tel.rankPerHour : null
+          simulacrum = yield* simulacrumVerdictGen({
+            s0: startFor(bladeBasis),
+            withoutH: d.bladeH,
+            cost: fin1(cost) ? cost : null,
+            repReq: fin1(repReq) ? repReq : null,
+            wealth,
+            moneyPerH: (moneyPerSec ?? 0) * 3600,
+            rep: fin1(repNow) ? repNow : 0,
+            repPerRank: 2 * (player.mults?.faction_rep ?? 1) * (1 + (fin1(fav) ? fav : 0) / 100),
+            rankPerH: rankPerH ?? 0,
+            owned: simOwned,
+            queued: (queued ?? []).includes(SIMULACRUM),
+          })
+          if (simulacrum) simulacrum.rankPerH = rankPerH === null ? 'unmeasured (no rank rate in /tel/bladeburner.txt)' : +rankPerH.toFixed(2)
+        } catch (e) {
+          simulacrum = { buy: false, why: `the Simulacrum verdict threw: ${String(e).slice(0, 160)}` }
+        }
+      }
       return {
         ...d,
         joined: tel?.joined === true,
         rank: tel?.rank ?? null,
         blackOps: tel?.blackOps?.done ?? null,
         sleeves,
-        combatGain: 1,
+        installBasis: bladeBasis ? { kind: bladeBasis.kind, waitH: bladeBasis.waitH ?? null, installAt: bladeBasis.installAt ?? null, from: prevInst?.key ?? null } : { kind: 'none', why: bladeCommitted ? `the committed install is ${prevInst?.key}` : 'no install priced on this route yet: none' },
+        simulacrum,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }
     })
   } catch (e) {
     pc.decisions.bladeRoute = { key: null, error: true, why: `bladeRouteOf threw: ${String(e?.stack ?? e).slice(0, 240)}` }
     return pc.decisions.bladeRoute
+  }
+}
+
+/**
+ * THE INSTALL DECISION ON THE BLADEBURNER ROUTE (decisions.bladeRoute
+ * 'blade'). Every option is the black-op exit (bbplan.bladeExit from
+ * pc.bladeCtx.startFor — the route decision's own start), the install's
+ * effect on THAT trajectory, which the game source fixes:
+ *   - rank, skill levels, skill points, black ops done and the stamina bonus
+ *     persist (Prestige.ts:152-155 keeps Player.bladeburner; its
+ *     prestigeAugmentation only resets the action and re-joins the faction
+ *     at rank >= 25, Bladeburner.ts:260-264) — no re-join, no combat-100 bar;
+ *   - every exp and stat resets (PlayerObjectGeneralMethods.ts:85-100), so
+ *     the policy retrains combat at the gym (progress.js bladeGymStep) and
+ *     max stamina falls with agility until it does (calculateMaxStamina);
+ *   - the batch's combat level and exp multipliers and bladeburner_* move
+ *     the success chance (via the stats and env.augMult), the stamina and
+ *     the retrain (bbplan.bladeContentOf);
+ *   - The Blade's Simulacrum in the batch runs the gym beside the actions.
+ * Not modelled, named: money (gym fees after the reset leave cash at
+ * $1262 — the body leg's fee floor delays the retrain; optimistic for an
+ * install), and later installs (each is the next decision's).
+ *
+ * Options: install now (the batch the purchase step buys now with the
+ * queue), after each future wait with that wait's batch (a hold is not
+ * enactable — the slot is Bladeburner's), never. One simulation per option
+ * (deterministic; the draws move only the structural noise). Returns the
+ * exitCompare shape the gate reads, `route: 'blade'`.
+ */
+async function bladeInstallCompareOf(ns, info, { inputs, pending = [], futures = [], plan = null, statsOf }) {
+  const pc = planCtxOf(ns, info)
+  const bc = pc?.bladeCtx
+  if (!bc) return null
+  const content = (names) => {
+    const c = bladeContentOf(names, statsOf)
+    return { gains: c.gains, simulacrum: c.simulacrum, n: c.n, ...(c.unpriced.length ? { unpriced: c.unpriced } : {}) }
+  }
+  const memo = new Map()
+  const keyOf = (spec) => (spec?.kind === 'wait' ? `w${(+(spec.waitH ?? 0)).toFixed(4)}|${JSON.stringify(spec.blade?.gains ?? null)}|${spec.blade?.simulacrum === true}` : 'never')
+  function* hoursOf(spec) {
+    const k = keyOf(spec)
+    if (!memo.has(k)) {
+      const r = yield* bladeExitGen(bc.startFor(spec))
+      memo.set(k, typeof r?.hours === 'number' && isFinite(r.hours) ? r.hours : null)
+    }
+    return memo.get(k)
+  }
+  const trajOf = (spec) => ({ f: () => drain(hoursOf(spec)), fg: function* () { return yield* hoursOf(spec) }, noiseKey: bladeNoiseKeyOf(spec) })
+  const nowNames = [...(plan?.buy ?? []).map((b) => b?.name).filter(Boolean), ...pending]
+  const nowB = content(nowNames)
+  const nowH = await paced(hoursOf({ kind: 'wait', waitH: 0, blade: nowB }), 'plan-blade-install')
+  const neverH = await paced(hoursOf({ kind: 'never' }), 'plan-blade-install')
+  const waits = []
+  for (const f of futures ?? []) {
+    if (f?.holdFor || !(f?.waitMs > 0)) continue
+    const blade = content([...(f.buy ?? []), ...pending])
+    const H = await paced(hoursOf({ kind: 'wait', waitH: f.waitMs / 3600000, blade }), 'plan-blade-install')
+    waits.push({ waitMs: f.waitMs, H, blade })
+  }
+  const bayes = typeof nowH === 'number' ? await planInstallOf(ns, info, inputs, null, { now: { hours: nowH, blade: nowB }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, blade: w.blade })), never: { hours: neverH } }, { route: 'blade', trajOf }) : null
+  return {
+    route: 'blade',
+    nowH,
+    nowInstalls: null,
+    neverH,
+    waits: waits.map(({ blade, ...w }) => w),
+    nowBatch: nowB,
+    atSearchEdge: false,
+    why: typeof nowH === 'number' ? null : 'the Bladeburner exit installing now is unpriced',
+    joinModelled: false,
+    bayes,
   }
 }
 
@@ -2507,7 +2625,7 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
     yield
     const spec = fourSSpecOf(info, 'life1')
     if (!spec) return { key: null, why: 'the 4S TIX API price is unreadable (FourSigmaMarketDataApiCost)' }
-    const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
     const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const withIn = { ...base, fourS: spec }
     // One trajectory structure (the purchase adds no leg the structural noise
@@ -2518,10 +2636,15 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
       { key: 'none', noiseKey: nk, sim: (d) => traj(applyDraw(base, d), d) },
       { key: 'now', noiseKey: nk, sim: (d) => traj(applyDraw(withIn, d), d) },
     ]
-    const pointNone = traj(base)
+    // The points as generators (one policy per step): synchronously each was
+    // a whole policy search — PLAN BLOCKED THE PAGE, 61ms in 'plan-fourS'
+    // (live BN6 2026-10-01 11:21Z).
+    const tg = trajectoryGenOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
+    const pointNone = yield* tg(base)
     yield
-    const pointNow = traj(withIn)
-    const lifeNow = (policyOf(basis, withIn)?.best?.lifeGraftLegs ?? []).find((l) => l.life === 1) ?? null
+    const pointNow = yield* tg(withIn)
+    yield
+    const lifeNow = (countCtx ? policyOf(basis, withIn) : yield* policyGenOf(basis, withIn))?.best?.lifeGraftLegs?.find((l) => l.life === 1) ?? null
     yield
     const was = pc.prev?.decisions?.fourS
     const prev = was?.key === 'none' || was?.key === 'now' ? was : { key: 'none', why: 'not bought (a purchase is committed only when the exit says buy)', decidedAt: null }
@@ -3075,7 +3198,7 @@ async function lifeLengthDecisionOf(ns, info, countCtx = null) {
     pc.decisions.lifeLength = prev ? { ...prev, held: true, why: `no posterior this pass (${pc.error ?? 'plan context'}): the committed ${prev.key} stands`, options: [], pricedAt: null } : { key: null, lifeH: null, why: `no posterior this pass (${pc.error ?? 'plan context'}) and no committed life length: the provisional length stands` }
     return pc.decisions.lifeLength
   }
-  const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+  const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
   const d = await planDecide(pc, 'lifeLength', () => decideLifeLengthGen({ options, basis, ctx: { count: countCtx, repPoint: pc.repPoint ?? null }, prev, draws: pc.draws, redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, reachSd: pc.post?.drift?.s ?? null }))
   if (d && typeof d === 'object') {
     if (pending) d.pendingFrom = pending
@@ -3091,7 +3214,7 @@ async function lifeLengthDecisionOf(ns, info, countCtx = null) {
   pc.lifeEventsAt = (pc.events ?? []).length
   return d
 }
-async function planInstallOf(ns, info, inputs, count, point) {
+async function planInstallOf(ns, info, inputs, count, point, { route = null, trajOf = null } = {}) {
   const pc = planCtxOf(ns, info)
   if (!pc.post) return null
   pc.obsInputs = inputs
@@ -3102,13 +3225,13 @@ async function planInstallOf(ns, info, inputs, count, point) {
   // (PLAN.installFloorMs) whatever the decisions before it spent, and its
   // options screened by point against the structural error (plan.
   // installScreenOf). Live 21:12Z it was left 784ms for 26 options: 5 draws.
-  const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: Math.max(planBudgetLeft(pc), PLAN.installFloorMs), clock: pc.pacer.cpuNow, sameLife: !!pc.prev, reachSd: pc.post?.drift?.s ?? null }))
+  const d = await planDecide(pc, 'install', () => decideInstallGen({ inputs, count, point, repPoint: pc.repPoint ?? null, prev: pc.prev?.decisions?.install ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: Math.max(planBudgetLeft(pc), PLAN.installFloorMs), clock: pc.pacer.cpuNow, sameLife: !!pc.prev, reachSd: pc.post?.drift?.s ?? null, route, trajOf }))
   // The inputs this decision priced: the graft decision is rebased onto them
   // (one trajectory from one state), and consistencyOf compares the keys.
   pc.installInputs = inputs
   if (d && typeof d === 'object') d.inputsKey = inputsKeyOf(inputs)
   if (!d?.key || typeof d.meanH !== 'number') return null
-  return { install: d.install === true, key: d.key, waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why }
+  return { install: d.install === true, key: d.key, ...(route ? { route } : {}), waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why }
 }
 /**
  * The decisions DERIVED from the committed route, recorded in the plan so a
@@ -3197,7 +3320,7 @@ async function batchChoiceStep(ns, info, { plan, inputs: inputs0 = null, planOnW
     if (p?.buy?.length) cands.push({ key: 'incumbent', names: namesOf(p), gains: gainsOf(namesOf(p)), plan: p, weights: incW, why: 'the planner on the weights the last shipped batch was planned on' })
   }
   const prevInst = pc?.prev?.decisions?.install ?? null
-  const basis = basisOf(prevInst, now)
+  const basis = hackBasisOf(prevInst, now)
   const near = basis?.kind === 'wait' && basis.waitH <= BATCH_CHOICE.nearH && !!prevInst?.gains
   let committedWhy = null
   if (near) {
@@ -3332,7 +3455,10 @@ function publishPlan(ns, info, extra = {}) {
     // healthcheck's EXIT NOT APPROACHING watches that number, not the World
     // Daemon's.
     const br = pc.decisions.bladeRoute ?? null
-    const ex = br?.key === 'blade' && typeof br.q50 === 'number' ? br : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
+    // On it, the install decision priced on the black ops (route 'blade') is
+    // the committed trajectory — the same one the route's blade arm prices.
+    const instBlade = inst?.key && inst.route === 'blade' && typeof inst.q50 === 'number'
+    const ex = br?.key === 'blade' && instBlade ? inst : br?.key === 'blade' && typeof br.q50 === 'number' ? br : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
     // THE PAGE-FREEZE METRIC is the longest stretch of work between yields
     // (maxBlockMs), not the total: the searches run in slices, so a pass may
     // spend seconds of work while never holding the page for more than a
@@ -3351,7 +3477,7 @@ function publishPlan(ns, info, extra = {}) {
     // through the life; /tel/exitjump.txt keeps it past the next install.
     let exitJump = pc.prev?.exitJump ?? null
     try {
-      const pointH = ex === inst ? inst?.pointH : ex?.pointH ?? null
+      const pointH = ex === inst ? inst?.pointH : ex === br ? br?.bladeH ?? null : ex?.pointH ?? null
       exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION })
       if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, ...exitJump }), 'w')
     } catch (e) {
@@ -3365,7 +3491,7 @@ function publishPlan(ns, info, extra = {}) {
       error: pc.error ?? (Object.values(pc.decisions).find((d) => d?.error)?.why ?? null),
       decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
       events: pc.events,
-      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
+      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       decisions: {
         install: inst,
         // THE BATCH BY THE EXIT (batchChoiceStep / plan.chooseBatchGen): the
@@ -6353,8 +6479,24 @@ async function act(ns, canJoin, info, note) {
   // Committed 'blade': the gym to combat >= BB_POLICY.gymTo (the join bar,
   // and the retrain after every install) takes the slot as a body leg, and
   // then bladeburner.js does — slot.owner 'bladeburner', below.
-  const bladeRoute = canJoin ? await bladeRouteOf(ns, info, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))) : null
+  const bladeRoute = canJoin
+    ? await bladeRouteOf(ns, info, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), {
+        owned: installedCount,
+        queued: pending,
+        sing,
+        wealth: wealthOf(player.money, stockNow) ?? 0,
+        moneyPerSec: econNow?.lifePerSec ?? econNow?.incomePerSec ?? 0,
+      })
+    : null
   const bladeOn = bladeRoute?.key === 'blade'
+  // THE BLADE'S SIMULACRUM (bladeRouteOf's verdict, priced on the black-op
+  // exit): bought only when the verdict buys AND money and reputation are
+  // there now; the install decision then prices its install (the queued
+  // batch carries it).
+  const simV = bladeOn ? bladeRoute.simulacrum ?? null : null
+  const simBuy = simV?.buy === true && simV.reachH === 0 && canBuyAug && !flags.dry
+  if (simV?.why && !simBuy) did.push(`${SIMULACRUM}: ${simV.why}`.slice(0, 400))
+  if (simBuy && order('buyaug', ['Bladeburners', SIMULACRUM], `the Bladeburner exit with it: ${simV.why}`.slice(0, 300), simV.cost ?? 0)) did.push(`ordered ${SIMULACRUM}: ${simV.why}`)
   const bladeGymStep = (() => {
     if (!bladeOn) return null
     const target = Math.max(JOIN_COMBAT, BB_POLICY.gymTo)
@@ -6957,7 +7099,9 @@ async function act(ns, canJoin, info, note) {
               // is queued, so there is no install decision): the committed
               // route's median over the posterior draws.
               const pr = planCtx?.decisions?.countRoute
-              if (pr?.key && typeof pr.q50 === 'number') decided = { exitH: pr.q50, source: `plan: median over the posterior via the committed route (${pr.name}), 80% interval ${pr.q10}-${pr.q90}h` }
+              const brU = planCtx?.decisions?.bladeRoute
+              if (brU?.key === 'blade' && typeof brU.q50 === 'number') decided = { exitH: brU.q50, source: `plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval ${brU.q10}-${brU.q90}h` }
+              else if (pr?.key && typeof pr.q50 === 'number') decided = { exitH: pr.q50, source: `plan: median over the posterior via the committed route (${pr.name}), 80% interval ${pr.q10}-${pr.q90}h` }
               else if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = await countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
               if (countRouteNow?.chosen && decided?.source?.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +decided.exitH.toFixed(2)
             } catch {
@@ -6974,7 +7118,7 @@ async function act(ns, canJoin, info, note) {
                   const inp = gangInputs0()
                   if (inp?.incomeFromPrior) pc.incomeFromPrior = inp.incomeSource
                   if (inp?.repFromEstimate) pc.repFromEstimate = inp.repSource
-                  const basis = basisOf(pc.prev?.decisions?.install ?? null, Date.now())
+                  const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
                   const traj = trajectoryOf(basis, {})
                   // The point on the inputs themselves, beside the draws: the
                   // exit jump check compares it with the install actor's point.
@@ -7355,6 +7499,17 @@ async function act(ns, canJoin, info, note) {
         // compares — it happens whichever way the gate chooses.
         const cm = covenantExitOf(ns, info, player, schedule, { best: { hours: 1, installsFirst: 0 } }, () => inputs0, planFleet)
         const inputs = cm?.mandated && typeof cm.combatH === 'number' ? { ...inputs0, covenant: { cost: cm.cost, joinMoney: COVENANT.joinMoney, combatH: cm.combatH, member: cm.member, sleeveExpPerSec: 0 } } : inputs0
+        // THE COMMITTED BLADEBURNER ROUTE PRICES THE INSTALL ON ITS OWN EXIT
+        // (bladeInstallCompareOf): the options, the gate's exitH and the
+        // install actor's exit are the black ops', not the World Daemon's.
+        // Live BN6 2026-10-01: the route committed 'blade' (~29h) while the
+        // install decision priced 'now' at 186h on the hacking route (TWO
+        // EXITS AT INSTALL; the 10:17Z install's EXIT JUMP 155.8h -> 29.2h).
+        if (bladeOn) {
+          gateExitInputs = inputs
+          const bc = await bladeInstallCompareOf(ns, info, { inputs, pending, futures, plan, statsOf: (n) => sing.augStats(n) })
+          if (bc) return bc
+        }
         // WHERE MONEY IS CAPITAL AND THE DAEDALUS COUNT IS SHORT (BitNode 8):
         // the count-aware exit (countexit.bestCountExit) — tickets per install
         // as the searched composition, NeuroFlux with the rest, the book reset
@@ -7504,7 +7659,7 @@ async function act(ns, canJoin, info, note) {
       // pass (point.committedGains) and the graft decision priced the last
       // pass's — one install minute, one noise key, two trajectories (live
       // BN9 13:56: 71.7h vs 74.3h, both on 24 draws: PLAN INCONSISTENT).
-      if (pcx?.post && inst?.key && gd?.key && typeof pcx.graftReprice === 'function' && (gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey) || (inst.gainsKey !== undefined && gd.basisGainsKey !== inst.gainsKey))) {
+      if (pcx?.post && inst?.key && inst.route !== 'blade' && gd?.key && typeof pcx.graftReprice === 'function' && (gd.basisNoiseKey !== inst.noiseKey || (inst.inputsKey && gd.inputsKey !== inst.inputsKey) || (inst.gainsKey !== undefined && gd.basisGainsKey !== inst.gainsKey))) {
         const spec = basisOf(inst, Date.now())
         if (spec) {
           const rp = pcx.graftReprice(spec, pcx.installInputs ?? null)
@@ -7533,7 +7688,9 @@ async function act(ns, canJoin, info, note) {
       // the install, and TWO EXITS AT INSTALL fired on the correction). [TX6]
       const cmt = pcx?.decisions?.install?.commitment
       if (cmt && cmt.ver == null) cmt.ver = cmt.at && Date.parse(cmt.at) < pcx.t0 ? pcx.prevAny?.ver ?? null : MODEL_VERSION
-      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02, atInstall: { actorH: typeof exitCompare?.nowH === 'number' && isFinite(exitCompare.nowH) ? exitCompare.nowH : null, now: Date.now(), ver: MODEL_VERSION } })
+      // On the Bladeburner route the graft decision prices the hacking exit
+      // (no new graft starts there): only the install's exits are compared.
+      if (pcx?.post) pcx.consistency = consistencyOf(pcx.decisions.install, pcx.decisions.install?.route === 'blade' ? null : pcx.decisions.grafts, { si: pcx.post.jitter?.si ?? 0.02, atInstall: { actorH: typeof exitCompare?.nowH === 'number' && isFinite(exitCompare.nowH) ? exitCompare.nowH : null, now: Date.now(), ver: MODEL_VERSION } })
       // GRAFTS DROPPED (plan.graftCarryCheckOf): the install decision's
       // inputs carry the committed graft set (or, with no graft decision, the
       // node's memory). Published as plan.graftCarry; planCheck fails on it.
@@ -7543,7 +7700,8 @@ async function act(ns, canJoin, info, note) {
           // trajectory's per-life gain against what the purchase model buys.
           try {
             const sp = basisOf(pcx.decisions.install ?? null, Date.now())
-            if (sp && pcx.installInputs) pcx.perLifeGain = perLifeGainCheckOf((await paced(policyGenOf(sp, pcx.installInputs), 'plan-perlife'))?.best ?? null)
+            if (pcx.decisions.install?.route === 'blade') pcx.perLifeGain = { ok: null, why: 'the install is priced on the Bladeburner exit: no hacking lives to check' }
+            else if (sp && pcx.installInputs) pcx.perLifeGain = perLifeGainCheckOf((await paced(policyGenOf(sp, pcx.installInputs), 'plan-perlife'))?.best ?? null)
           } catch (e) {
             pcx.perLifeGain = { ok: null, why: `per-life gain check threw: ${String(e).slice(0, 120)}` }
           }
@@ -7567,6 +7725,9 @@ async function act(ns, canJoin, info, note) {
     }
     const gate = shouldInstall({
       exitCompare,
+      // The committed Bladeburner route: the exit needs no Daedalus count and
+      // no hacking multiplier — the install decision priced on the black ops decides.
+      bladeRoute: exitCompare?.route === 'blade',
       // Money is the trader's compounding capital (BitNode 8): the count batch
       // installs on the count-aware simulated exit (installgate countBySim).
       capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0,
@@ -8095,6 +8256,21 @@ async function act(ns, canJoin, info, note) {
       // alternative (each wait's batch, holding for the rest), else nothing
       // in this batch is ordered and the next pass re-plans on the real state.
       const pricedBatch = [...pending, ...(plan?.buy ?? []).map((b) => b?.name)]
+      // ON THE BLADEBURNER ROUTE a trimmed batch is re-priced on the black-op
+      // exit (the route's own start, paced), never on the hacking policy.
+      const bladeRepricedH = await (async () => {
+        if (exitCompare?.route !== 'blade' || installRefused || forcedInstall || gate.terminal === true) return null
+        try {
+          const orderedBatch = [...pending, ...bought]
+          if (batchDiffOf(pricedBatch, orderedBatch).same) return null
+          const bc = planCtxOf(ns, info)?.bladeCtx
+          const c = bladeContentOf(orderedBatch, (n) => sing.augStats(n))
+          const r = bc ? await paced(bladeExitGen(bc.startFor({ kind: 'wait', waitH: 0, blade: { gains: c.gains, simulacrum: c.simulacrum } })), 'blade-batch-reprice') : null
+          return typeof r?.hours === 'number' && isFinite(r.hours) ? r.hours : null
+        } catch {
+          return null
+        }
+      })()
       const batchCheck = (() => {
         // A terminal install is decided on The Red Pill being in the ordered
         // batch (installOfOrderedBatch above), not on the rest of it.
@@ -8102,6 +8278,7 @@ async function act(ns, canJoin, info, note) {
         try {
           const orderedBatch = [...pending, ...bought]
           const same = batchDiffOf(pricedBatch, orderedBatch).same
+          if (!same && exitCompare?.route === 'blade') return installBatchVerdictOf({ priced: pricedBatch, bought: orderedBatch, pricedH: exitCompare?.nowH ?? null, repricedH: bladeRepricedH, alternatives: [{ key: 'never (the Bladeburner exit without an install)', H: exitCompare?.neverH ?? null }, ...(exitCompare?.waits ?? []).filter((w) => typeof w?.H === 'number').map((w) => ({ key: `wait ${(w.waitMs / 3600000).toFixed(2)}h`, H: w.H }))].filter((a) => typeof a.H === 'number') })
           const inputs = same ? null : gateExitInputs
           const g = inputs ? installGainsOf(orderedBatch, offers) : null
           const repricedH = inputs && g && !exitCompare?.countAware ? bestExitPolicy({ ...inputs, firstInstallH: 0, installGains: g, nextInstallGain: g.hacking ?? null }, 400, 1).best?.hours ?? null : null

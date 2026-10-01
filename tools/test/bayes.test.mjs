@@ -647,8 +647,8 @@ export async function run() {
     // put draws at ~0 ln(M)/h.)
     if (!(gOpt && Math.abs(gOpt.meanH - gd0.meanH) < 0.05 * gd0.meanH)) c12.fail("a trajectory with no further install cycles must not swing with the cadence draw");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/const basis = basisOf\(pc\.prev\?\.decisions\?\.install \?\? null, Date\.now\(\)\)\s*\n\s*const traj = trajectoryOf\(basis,/.test(prog)) c12.fail("graftDecisionOf must price on the committed install's trajectory (source guard)");
-    if (!/pcx\.consistency = consistencyOf\(pcx\.decisions\.install, pcx\.decisions\.grafts/.test(prog)) c12.fail("progress.js must check the install and graft decisions' consistency every pass (source guard)");
+    if (!/const basis = (?:hackBasisOf|basisOf)\(pc\.prev\?\.decisions\?\.install \?\? null, Date\.now\(\)\)\s*\n\s*const traj = trajectoryOf\(basis,/.test(prog)) c12.fail("graftDecisionOf must price on the committed install's trajectory (source guard)");
+    if (!/pcx\.consistency = consistencyOf\(pcx\.decisions\.install, (?:pcx\.decisions\.install\?\.route === 'blade' \? null : )?pcx\.decisions\.grafts/.test(prog)) c12.fail("progress.js must check the install and graft decisions' consistency every pass (source guard)");
     if (!/const spec = basisOf\(inst, Date\.now\(\)\)[\s\S]{0,200}pcx\.graftReprice\(spec(, pcx\.installInputs \?\? null)?\)/.test(prog)) c12.fail("progress.js must re-price the graft decision when the install decision switched this pass (source guard)");
   }
   checks.push(c12);

@@ -27,7 +27,8 @@
 //
 // Everything it does is published to /tel/act.txt with the reason.
 
-import { decide, gangKarmaTarget } from 'actplan.js'
+import { decide, gangKarmaTarget, reissueWorkOf } from 'actplan.js'
+import { GYMS } from 'bodyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: hacknet servers sort last — a GB used there costs that share of its
 // hashes (Hacknet/formulas/HacknetServers.ts:14), so an actor lands there only
@@ -435,6 +436,10 @@ export async function main(ns) {
   let lastOrdersAt = null
   let ordersReport = null
   const log = []
+  // The last work order of the batch executed (reissueWorkOf), and its re-issues.
+  let lastWork = null
+  let reissued = { n: 0, at: 0, batchAt: null }
+  let reissue = null
 
   while (true) {
     try {
@@ -570,6 +575,7 @@ export async function main(ns) {
           results.push({ id: o.id, kind: o.kind, args: o.args, why: o.why, ...r })
           if (CHAIN.has(o.kind) && r.ok !== true) chainFailed = `${o.kind}${o.kind === 'liquidate' ? ' ' + (o.args ?? []).join(' ') : ''}: ${String(r.result?.error ?? r.result?.refused ?? r.why ?? 'not ok').slice(0, 160)}`
           if (o.kind === 'buyaug' && r.ok === true) bought++
+          if (r.ok === true && ['gym', 'crime', 'work', 'company'].includes(o.kind)) lastWork = { kind: o.kind, args: o.args, at: r.result?.at ?? new Date().toISOString(), batchAt: batch.at }
           if (r.ok === true) {
             if (o.kind === 'work') work = { kind: 'work', faction: o.args[0], type: r.result?.type ?? o.args[1], since: r.result.at }
             else if (o.kind === 'crime') work = { kind: 'crime', type: o.args[0], since: r.result.at }
@@ -612,6 +618,28 @@ export async function main(ns) {
       const backdoor = backdoorIfRequested(ns)
       // ---- 1d. a priced spender asked for cash from the book ---------------
       const raise = await serveRaiseRequests(ns, info, ns.getServerMoneyAvailable('home'), stockRec)
+      // ---- 1e. the owner's work, re-issued when the game shows none -------
+      // (actplan.reissueWorkOf: the claimed slot left empty by a stop.)
+      {
+        if (reissued.batchAt !== lastOrdersAt) reissued = { n: 0, at: 0, batchAt: lastOrdersAt }
+        const repSnap = readSnapshot(ns, 'rep', info)
+        const ri = reissueWorkOf({
+          now: Date.now(),
+          progress: readJson(ns, '/tel/progress.txt'),
+          lastWork,
+          batchAt: lastOrdersAt,
+          work: repSnap.data ? repSnap.data.work ?? null : { unread: true },
+          workAt: repSnap.at ?? null,
+          cash: ns.getServerMoneyAvailable('home'),
+          gymCostMult: (name) => GYMS.find((g) => g.name === name)?.costMult ?? null,
+          reissued,
+        })
+        if (ri?.kind) {
+          const r = await runActor(ns, ri.kind, ri.args)
+          reissued = { n: reissued.n + 1, at: Date.now(), batchAt: lastOrdersAt }
+          reissue = { at: new Date().toISOString(), kind: ri.kind, args: ri.args, why: ri.why, ok: r.ok === true, n: reissued.n }
+        } else if (ri?.skip) reissue = { at: new Date().toISOString(), skipped: ri.skip, n: reissued.n }
+      }
 
       // ---- 2. the bootstrap ----------------------------------------------
       const state = {
@@ -667,7 +695,7 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
+      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, reissue, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
       await nap(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)

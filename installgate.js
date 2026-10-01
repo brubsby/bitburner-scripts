@@ -342,7 +342,10 @@ export function shouldInstall(o) {
   const countBanks = countShortEarly > 0 && countGainEarly > 0
   const countWants = timingPriced ? timing.installNow === true : countGainEarly >= countFloor
   const countDecidedBy = timingPriced ? 'priced' : 'floor'
-  if (!terminal && !countBanks) {
+  // THE BLADEBURNER ROUTE skips the two rate guards below (M <= 1, the first
+  // sample): both ask a hacking-multiplier question its exit does not pose.
+  const bladeDecides = o.bladeRoute === true
+  if (!terminal && !countBanks && !bladeDecides) {
     if (M <= 1) return no(`the queued augmentations give no gain on ${RATE_CHANNELS.join('/')} (M=${M})`, { countShort: countShortEarly, countGain: countGainEarly, countFloor })
   }
 
@@ -434,7 +437,7 @@ export function shouldInstall(o) {
   // DISTINCT, which the plan states directly; there is no rate for a second
   // sample to reveal, and batch size is the anti-thrash floor's job, not this
   // guard's. IG16 pins each guard separately, as the terminal case does.
-  if (!terminal && !countBanks && (!prev || !num(prev.ageMs) || !num(prev.M) || prev.M <= 0 || ageMs <= prev.ageMs)) {
+  if (!terminal && !countBanks && !bladeDecides && (!prev || !num(prev.ageMs) || !num(prev.M) || prev.M <= 0 || ageMs <= prev.ageMs)) {
     return {
       ...base(),
       install: false,
@@ -695,11 +698,23 @@ export function shouldInstall(o) {
   // installed straight through the Covenant campaign (binding.mandated) and
   // destroyed ~$8.5q plus the campaign's progress.
   const mandateHold = o.binding?.destroyedByInstall === true && o.binding?.mandated === true
-  const install = !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
+  // THE COMMITTED BLADEBURNER ROUTE (o.bladeRoute: progress.js priced every
+  // option on the black-op exit, bladeInstallCompareOf). That exit needs no
+  // Daedalus count and no hacking multiplier, so neither the count gate nor
+  // the rate channels' M speak for it: the plan's decision on that exit
+  // installs or holds (a mandated campaign and a destroyed gate still hold).
+  // No decision (unpriced): hold — an install only resets the combat the
+  // black ops are priced on.
+  const blade = bladeDecides
+  const install = blade
+    ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true))
+    : !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
   // THE PLAN AND THIS GATE AGREE, or the gate names why it overrode it.
   const planOverride =
     bayes && bayes.install !== install
-      ? mandateHold
+      ? blade
+        ? mandateHold ? 'a mandated campaign' : destructive ? `the ${o.binding?.gate ?? '?'} gate the plan's trajectory does not carry (${o.binding?.why ?? ''})` : null
+      : mandateHold
         ? 'a mandated campaign'
         : terminal
           ? 'the terminal install'
@@ -761,7 +776,14 @@ export function shouldInstall(o) {
     binding: o.binding ?? null,
     destructive,
     mandateHold: mandateHold || undefined,
-    why: mandateHold
+    bladeRoute: blade || undefined,
+    why: blade && !mandateHold && !terminal && !destructive
+      ? !exitDecides || !bayes
+        ? `hold: the committed Bladeburner route and its install exit is unpriced (${ex?.why ?? 'no comparison'}) — an install would only reset the combat the black ops are priced on`
+        : install
+          ? `install: ${queued} aug(s) on the Bladeburner route — the black-op exit installing now ${ex.nowH.toFixed(1)}h, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'} (plan ${bayes.key}: ${bayes.why ?? ''})`
+          : `hold: the Bladeburner route — the plan's install decision is ${bayes.key} (black-op exit installing now ${ex.nowH.toFixed(1)}h, never ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}, the best wait ${exitWait?.H != null ? exitWait.H.toFixed(1) + 'h' : '-'}): ${bayes.why ?? ''}`
+      : mandateHold
       ? `hold: ${o.binding?.why ?? 'a mandated campaign is running'} — held even though ${terminal ? 'The Red Pill is queued' : 'the gate would install'}; it installs once the campaign completes`
       : terminal
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`

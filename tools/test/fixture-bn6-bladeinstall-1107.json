@@ -1,0 +1,2523 @@
+{
+ "source": "live BN6 2026-10-01 ~11:07Z (/tel/plan.txt, installgate.txt, exitinputs.txt, bladeburner.txt, install-last.txt, progress.txt; the save for the player; snap-augstats for the batch augmentations; history.jsonl and act-history.txt for the 10:27Z gym incident)",
+ "plan": {
+  "at": "2026-10-01T11:07:03.519Z",
+  "node": 6,
+  "lastAugReset": 1790849820744,
+  "health": "inconsistent",
+  "exit": {
+   "meanH": 29.087,
+   "q10": 26.369,
+   "q50": 29.024,
+   "q90": 31.022,
+   "source": "the Bladeburner route (21 black ops, bbplan.bladeExit)",
+   "income": "measured",
+   "rep": "measured (or not needed)"
+  },
+  "decisions": {
+   "install": {
+    "key": "now",
+    "install": true,
+    "installAt": 1790852822927,
+    "waitH": 0,
+    "routeKey": null,
+    "extra": null,
+    "fixed": {
+     "n": null,
+     "lifeH": null
+    },
+    "gains": null,
+    "gainsKey": null,
+    "samples": [
+     115.708,
+     178.434,
+     181.139,
+     165.545,
+     93.129,
+     265.681,
+     99.446,
+     123.275,
+     59.988,
+     766.885,
+     118.38,
+     79.885,
+     156.396,
+     137.002,
+     84.831,
+     540.59,
+     81.84,
+     87.61,
+     52.502,
+     349.71,
+     214.961,
+     96.894,
+     174.382,
+     294.715
+    ],
+    "batchGains": {
+     "hacking": 1.0303090180067993,
+     "rep": 1.0303090180067993,
+     "income": 1.0962257603210674,
+     "exp": 1.0303090180067993
+    },
+    "spec": {
+     "kind": "wait",
+     "installAt": 1790852822927,
+     "waitH": 0,
+     "n": null,
+     "lifeH": null,
+     "gains": null
+    },
+    "noiseKey": "at:29847547|L12|g7",
+    "pFeasible": 1,
+    "meanH": 188.289,
+    "q10": 80.471,
+    "q50": 130.138,
+    "q90": 333.212,
+    "pBest": 1,
+    "pointH": 135.556,
+    "commitment": {
+     "key": "w0.083",
+     "meanH": 236.867,
+     "pointH": 143.455,
+     "q10": 80.232,
+     "q90": 402.929,
+     "at": "2026-10-01T10:52:02.719Z",
+     "installAt": 1790852222968,
+     "noiseKey": "at:29847537|L12|g7",
+     "n": 24,
+     "ver": "5xpo57.41"
+    },
+    "elapsedFrom": "now",
+    "held": true,
+    "why": "held (no event since 2026-10-01T10:57:02.976Z); at that decision: stays on now: the best alternative w0.32514017654185895 is expected 1.90h sooner net of a 0.05h switch cost and better in 50% of 24 paired draws (needs a positive gain and 80%)",
+    "decidedAt": "2026-10-01T10:57:02.976Z",
+    "options": [
+     {
+      "key": "now",
+      "pointH": 135.556,
+      "pFeasible": 1,
+      "meanH": 188.289,
+      "q10": 80.471,
+      "q50": 130.138,
+      "q90": 333.212,
+      "pBest": 1,
+      "noiseKey": "at:29847547|L12|g7",
+      "pricedAt": "2026-10-01T11:07:02.927Z"
+     }
+    ],
+    "pricedAt": "2026-10-01T11:07:02.927Z",
+    "n": 24,
+    "ms": 39.2,
+    "overBudget": false,
+    "inputsKey": "iflw8pu"
+   },
+   "bladeRoute": {
+    "key": "blade",
+    "pFeasible": 1,
+    "meanH": 29.087,
+    "q10": 26.369,
+    "q50": 29.024,
+    "q90": 31.022,
+    "pBest": 1,
+    "samples": [
+     31.054,
+     27.906,
+     28.862,
+     23.943,
+     30.24,
+     29.868,
+     28.883,
+     30.947,
+     32.605,
+     29.744,
+     28.153,
+     27.806,
+     30.104,
+     29.352,
+     25.015,
+     28.171,
+     29.164,
+     25.843,
+     27.599,
+     35.231,
+     29.61,
+     28.687,
+     30.627,
+     28.669
+    ],
+    "held": true,
+    "why": "held (no event since 2026-10-01T10:57:02.516Z); at that decision: stays on blade: the best alternative hack is expected -198.17h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)",
+    "decidedAt": "2026-10-01T10:57:02.516Z",
+    "options": [
+     {
+      "key": "blade",
+      "pointH": 28.884,
+      "pFeasible": 1,
+      "meanH": 29.087,
+      "q10": 26.369,
+      "q50": 29.024,
+      "q90": 31.022,
+      "pBest": 1,
+      "noiseKey": "bladeburner",
+      "pricedAt": "2026-10-01T11:07:02.463Z"
+     }
+    ],
+    "pricedAt": "2026-10-01T11:07:02.463Z",
+    "n": 24,
+    "ms": 0.2,
+    "overBudget": false,
+    "hackH": 135.581,
+    "bladeH": 28.884,
+    "bladeSims": 1,
+    "joined": true,
+    "rank": 73.28,
+    "blackOps": 0,
+    "sleeves": {
+     "infiltrate": 5,
+     "support": 0,
+     "fa": 0
+    },
+    "combatGain": 1,
+    "model": "bbplan.bladeExit \u2014 NOT CALIBRATED live; vs the game's classes -2..+15% (tools/sim/bb6.mjs)"
+   },
+   "batch": {
+    "key": "fresh",
+    "by": null,
+    "gainH": 0,
+    "rows": [],
+    "unbuyable": [],
+    "near": false,
+    "why": "one candidate batch (fresh, incumbent are one batch or not buyable)"
+   },
+   "bodyLeg": null
+  },
+  "consistency": {
+   "ok": false,
+   "sameBasis": true,
+   "installH": 188.289,
+   "graftsH": 188.289,
+   "diffH": 0,
+   "tolH": 4.348,
+   "common": {
+    "n": 24,
+    "of": [
+     24,
+     24
+    ]
+   },
+   "why": "TWO EXITS AT INSTALL: the plan's 'now' 188.289h vs its commitment w0.083 236.867h priced 15 min ago differ by -48.328h (tolerance 11.831h); the install actor's 135.56h vs the commitment w0.083's point 143.455h priced 15 min ago differ by -7.649h (tolerance 7.16h)",
+   "graftOk": true,
+   "graftWhy": "install and graft decisions price one trajectory: 188.289h vs 188.289h on the 24 draws both priced (of 24 and 24)",
+   "install": {
+    "ok": false,
+    "checks": [
+     {
+      "what": "plan now vs the plan's commitment",
+      "a": 188.289,
+      "b": 236.617,
+      "aName": "the plan's 'now' 188.289h",
+      "bName": "its commitment w0.083 236.867h priced 15 min ago",
+      "diffH": -48.328,
+      "tolH": 11.831,
+      "ok": false
+     },
+     {
+      "what": "install actor vs the plan's commitment",
+      "a": 135.556290719997,
+      "b": 143.205,
+      "aName": "the install actor's 135.56h",
+      "bName": "the commitment w0.083's point 143.455h priced 15 min ago",
+      "diffH": -7.649,
+      "tolH": 7.16,
+      "ok": false
+     },
+     {
+      "what": "install actor vs the plan's now",
+      "a": 135.556290719997,
+      "b": 135.556,
+      "aName": "the install actor's 135.56h",
+      "bName": "the plan's 'now' 135.556h",
+      "diffH": 0,
+      "tolH": 6.778,
+      "ok": true
+     }
+    ],
+    "diffH": -48.328,
+    "tolH": 11.831,
+    "why": "TWO EXITS AT INSTALL: the plan's 'now' 188.289h vs its commitment w0.083 236.867h priced 15 min ago differ by -48.328h (tolerance 11.831h); the install actor's 135.56h vs the commitment w0.083's point 143.455h priced 15 min ago differ by -7.649h (tolerance 7.16h)"
+   }
+  }
+ },
+ "gate": {
+  "at": "2026-10-01T11:07:03.500Z",
+  "install": false,
+  "why": "hold: 3 aug(s) give M=1.0747 but ZERO distinct augmentations, and the exit needs 28 more. Installing would bank the multiplier and reset the reputation that buys the next one \u2014 no distance toward Daedalus. Holding while at least one augmentation is still reachable by waiting.",
+  "exitH": 130.138,
+  "exitSource": "plan: median over the posterior (now, held), 80% interval 80.471-333.212h",
+  "decidedBy": "exit-sim",
+  "M": 1.0746882752816804,
+  "queued": 3,
+  "exitNowH": 135.556290719997,
+  "exitBestWaitH": null,
+  "exitNeverH": 6.45158400778592e+80,
+  "futures": [
+   {
+    "waitMs": 900000,
+    "M": 1.0746882752816804,
+    "moneyProjected": 25033080,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 1800000,
+    "M": 1.1008040390604983,
+    "moneyProjected": 55034279,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 3600000,
+    "M": 1.1008040390604983,
+    "moneyProjected": 136632565,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 7200000,
+    "M": 1.1549548890279129,
+    "moneyProjected": 471451523,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 14400000,
+    "M": 1.1830211941610342,
+    "moneyProjected": 4135952498,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 1224309.157497788,
+    "M": 1.0746882752816804,
+    "holdFor": "Chongqing",
+    "holdRepTarget": 3131,
+    "moneyProjected": 35199701,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 1243113.3077492795,
+    "M": 1.0746882752816804,
+    "holdFor": "Slum Snakes",
+    "holdRepTarget": 3131,
+    "moneyProjected": 35810205,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "LuminCloaking-V1 Skin Implant"
+    ]
+   },
+   {
+    "waitMs": 1254714.2413747883,
+    "M": 1.0746882752816804,
+    "holdFor": "New Tokyo",
+    "holdRepTarget": 3131,
+    "moneyProjected": 36188037,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 1254967.5098151397,
+    "M": 1.0746882752816804,
+    "holdFor": "Ishima",
+    "holdRepTarget": 3131,
+    "moneyProjected": 36196296,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 1268189.1992809311,
+    "M": 1.0746882752816804,
+    "holdFor": "Tetrads",
+    "holdRepTarget": 3131,
+    "moneyProjected": 36628049,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "LuminCloaking-V1 Skin Implant"
+    ]
+   },
+   {
+    "waitMs": 1311659.7970239965,
+    "M": 1.0491920887332782,
+    "holdFor": "Tian Di Hui",
+    "holdRepTarget": 6250,
+    "moneyProjected": 38055991,
+    "buy": [
+     "Nuoptimal Nootropic Injector Implant",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   },
+   {
+    "waitMs": 40212000,
+    "M": 1.1830211941610342,
+    "lifeTarget": 12,
+    "moneyProjected": 9529870321141,
+    "buy": [
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor",
+     "NeuroFlux Governor"
+    ]
+   }
+  ],
+  "pending": [],
+  "planDecision": {
+   "key": "now",
+   "install": true,
+   "meanH": 188.289,
+   "q10": 80.471,
+   "q50": 130.138,
+   "q90": 333.212,
+   "held": true,
+   "why": "held (no event since 2026-10-01T10:57:02.976Z); at that decision: stays on now: the best alternative w0.32514017654185895 is expected 1.90h sooner net of a 0.05h switch cost and better in 50% of 24 paired draws (needs a positive gain and 80%)"
+  },
+  "planOverride": "the batch banks zero distinct augmentations",
+  "countShort": 28
+ },
+ "gatePlanBuy": [
+  "NeuroFlux Governor",
+  "NeuroFlux Governor",
+  "NeuroFlux Governor"
+ ],
+ "exitinputs": {
+  "at": "2026-10-01T11:07:03.290Z",
+  "lastAugReset": 1790849820744,
+  "bitNode": 6,
+  "inputs": {
+   "money": 48524182.42095092,
+   "incomePerSec": 35004.43462073327,
+   "lifeIncome": 8691.351705750696,
+   "hacknet": {
+    "mults": {
+     "hacknet_node_money": 1.863741120890746,
+     "hacknet_node_purchase_cost": 0.5980778209261607,
+     "hacknet_node_level_cost": 0.5980778209261607,
+     "hacknet_node_ram_cost": 0.5980778209261607,
+     "hacknet_node_core_cost": 0.5980778209261607
+    },
+    "nodeMoney": 0.2
+   },
+   "hacking": 125,
+   "hackingExp": 418282.5094056517,
+   "hackingMult": 0.5839908917858391,
+   "expPerSec": 210.25427795563857,
+   "expScalesWithLevel": true,
+   "expFlatPerSec": 0,
+   "expSource": "exp posterior: prior 1.39e+2/s (x/\u00f7 1.6) updated by this life's 1.39e+2/s over 0.58h (the running scripts' exp (tel.js getTotalScriptExpGain), hours after the 0.25h fresh-life ramp; weight 46%) -> median 1.39e+2/s, x/\u00f7 1.4 at 80% [exp carried by the install (2026-10-01T10:16:46.929Z): 1.41e+2/s at level 132 x 1.020 (this life's multiplier over the install's) x (125 + 50)/(132 + 50) -> 1.39e+2/s, x/\u00f7 1.59 at 80% (the install's own sd with one life's scatter)]",
+   "repPerSec": 1.8514182927094414,
+   "repSdLn": 0.6867480256158359,
+   "repSource": "faction-work reputation: formula 1.92/s x k 0.966 = 1.85/s [k carried from 2026-10-01T10:16:46.929Z: 0.966 x/\u00f7 2.21, one life's scatter added]; no faction work measured this life",
+   "exitRep": 0,
+   "exitFavor": 0,
+   "rejoinMoney": 100000000000,
+   "rejoinLevel": 2500,
+   "preInstallRepMult": 1.26178,
+   "favorStream": {
+    "repPerH": 37547.68915544279,
+    "capRep": 100000
+   },
+   "favorStreamAt": "2026-10-01T10:56:39.126Z",
+   "favorStreamWhy": "carried from 2026-10-01T10:56:39.126Z: go.js plays Netburners for now, not Daedalus",
+   "cycleHours": 12,
+   "multGainPerCycle": 1.3241751471291676,
+   "nextInstallGain": 1.0303090180067993,
+   "installGains": {
+    "hacking": 1.0303090180067993,
+    "rep": 1.0303090180067993,
+    "income": 1.0962257603210674,
+    "exp": 1.0303090180067993
+   },
+   "persistBaseline": {
+    "hacking": 1.0303090180067993,
+    "rep": 1.0303090180067993,
+    "income": 1.0962257603210674,
+    "exp": 1.0303090180067993
+   },
+   "eRep": 0.0164,
+   "eBudget": 0.0491,
+   "exitLevel": 6000,
+   "joinMoney": 100000000000,
+   "joinLevel": 2500,
+   "finalRootCost": 287200000,
+   "freshExpLagH": 0.8523577044712916,
+   "terminalRep": 2500000,
+   "donationCost": null,
+   "favorToDonate": 150,
+   "flatIncomePerSec": 33072.817388659605,
+   "capitalReturnPerSec": 0.00020599160719535429,
+   "capitalWarmupH": 0.05218379121067234,
+   "capitalFit": "trader r(W) posterior (the draws' own distribution, its means the point): r(W) = r0 s(W/W*): r0 74.2%/h +- 8.8, W* $3.47e+11 x/\u00f7 1.85 (prior 79.8%/h, $2.68e+11, the sim's) \u2014 $1m 0.0%/h, $1b 74.2%/h, $100b 68.6%/h, $10t 3.0%/h; 7 run(s), 948 intervals over 15.8h past each life's first 1.00h, noise x0.85 the sim's; warm-up 0.052h from the realised fit (114.7%/h on the young runs alone, not the point)",
+   "capitalCap": 5754007674041.533,
+   "capitalScaleW": 347378418636.36945,
+   "capitalShape": {
+    "Wmin": 2240000,
+    "hLo": 0.584,
+    "Wr": 17000000,
+    "k": 2.79,
+    "n": 1.91
+   },
+   "installCash": 1262,
+   "workWhileDonating": false,
+   "cadence": {
+    "source": "purchase model",
+    "node": 6,
+    "lives": 3,
+    "stalls": 0,
+    "weight": 0.6746851142062319,
+    "rateMedian": 0.023399144593090313,
+    "why": "later lives of 12h: the plan's life length decision this pass (L12, held)",
+    "model": {
+     "lnPerHour": 0.009455704149578232,
+     "cycleHours": 12,
+     "multGainPerCycle": 1.1201565471661004
+    },
+    "post": {
+     "mean": -3.755055813137504,
+     "sd": 0.8330431330857557,
+     "weight": 0.9236627123357051
+    },
+    "posterior": "cadence posterior for BitNode 6 on the purchase model's prior: model ln(M) 0.0095/h (x/\u00f7 47.66 at 80%, 9 lives in other nodes recorded with the model's prediction) -> 0.0234/h (x2.91 either way at 80%); 3 own gaining lives carry 92% of the rate; 1 re-recorded ledger entry merged",
+    "measured": "cadence posterior for BitNode 6: ln(M) 0.0364/h (x2.49 either way at 80%), 2.69h a life -> x1.103 a cycle; 3 own gaining lives carry 67% of the rate, BitNode 1, 9 shrink it toward the cross-node mean; 1 re-recorded ledger entry merged",
+    "table": [
+     {
+      "L": 0.5,
+      "lives": 96,
+      "money": 47711300,
+      "gain": 1.0006,
+      "lnMean": 0.0006220578068255956,
+      "perHour": 0.0012,
+      "first": 0,
+      "firstNfg": 0
+     },
+     {
+      "L": 1,
+      "lives": 48,
+      "money": 117828432,
+      "gain": 1.0023,
+      "lnMean": 0.002280878625027186,
+      "perHour": 0.0023,
+      "first": 0,
+      "firstNfg": 4
+     },
+     {
+      "L": 2,
+      "lives": 24,
+      "money": 366738275,
+      "gain": 1.0087,
+      "lnMean": 0.008668206779866018,
+      "perHour": 0.0043,
+      "first": 1,
+      "firstNfg": 4
+     },
+     {
+      "L": 3,
+      "lives": 16,
+      "money": 889893871,
+      "gain": 1.0193,
+      "lnMean": 0.019097149119889245,
+      "perHour": 0.0064,
+      "first": 2,
+      "firstNfg": 4
+     },
+     {
+      "L": 4,
+      "lives": 12,
+      "money": 1986551319,
+      "gain": 1.0317,
+      "lnMean": 0.031187533325506594,
+      "perHour": 0.0078,
+      "first": 2,
+      "firstNfg": 6
+     },
+     {
+      "L": 6,
+      "lives": 8,
+      "money": 9092557272,
+      "gain": 1.0518,
+      "lnMean": 0.05051364682921347,
+      "perHour": 0.0084,
+      "first": 2,
+      "firstNfg": 8
+     },
+     {
+      "L": 8,
+      "lives": 6,
+      "money": 39864154524,
+      "gain": 1.0732,
+      "lnMean": 0.07066917074202111,
+      "perHour": 0.0088,
+      "first": 3,
+      "firstNfg": 10
+     },
+     {
+      "L": 12,
+      "lives": 4,
+      "money": 398137736649,
+      "gain": 1.1202,
+      "lnMean": 0.1134684497949388,
+      "perHour": 0.0095,
+      "first": 3,
+      "firstNfg": 13
+     },
+     {
+      "L": 16,
+      "lives": 3,
+      "money": 1013102335020,
+      "gain": 1.1711,
+      "lnMean": 0.15792654966605815,
+      "perHour": 0.0099,
+      "first": 3,
+      "firstNfg": 15
+     },
+     {
+      "L": 24,
+      "lives": 2,
+      "money": 2309876606803,
+      "gain": 1.2736,
+      "lnMean": 0.24186628695369194,
+      "perHour": 0.0101,
+      "first": 3,
+      "firstNfg": 16
+     }
+    ],
+    "moneyCalibration": "money model x0.638: 3 completed lives (earned/modelled 0.52, 1.38, 0.30) carry 81% of the scale",
+    "catalogue": "9 faction(s) joined in this node (1 not joined this life): 6 offer(s) from factions not joined this life",
+    "afterBatch": {
+     "augs": 0,
+     "nfgLevels": 3
+    }
+   },
+   "finalGrafts": [],
+   "lifeGrafts": [
+    {
+     "name": "SPTN-97 Gene Modification",
+     "cost": 14625000000,
+     "slotH": 1.6284760133192313,
+     "hacking": 1.127,
+     "exp": 0.98,
+     "rep": 0.98,
+     "money": 0.98,
+     "life": 2
+    },
+    {
+     "name": "PC Direct-Neural Interface",
+     "cost": 11250000000,
+     "slotH": 0.8084946338787197,
+     "hacking": 1.0584,
+     "exp": 0.98,
+     "rep": 0.98,
+     "money": 0.98,
+     "life": 2
+    },
+    {
+     "name": "PC Direct-Neural Interface Optimization Submodule",
+     "cost": 13500000000,
+     "slotH": 0.9285480305484083,
+     "hacking": 1.078,
+     "exp": 0.98,
+     "rep": 0.98,
+     "money": 0.98,
+     "life": 2
+    },
+    {
+     "name": "Embedded Netburner Module",
+     "cost": 750000000,
+     "slotH": 0.2821395652911505,
+     "hacking": 1.0584,
+     "exp": 0.98,
+     "rep": 0.98,
+     "money": 0.98,
+     "life": 2
+    },
+    {
+     "name": "Embedded Netburner Module Core Implant",
+     "cost": 7500000000,
+     "slotH": 1.3418222674924392,
+     "hacking": 1.0486,
+     "exp": 1.0486,
+     "rep": 0.98,
+     "money": 1.078,
+     "life": 2
+    },
+    {
+     "name": "Embedded Netburner Module Core V2 Upgrade",
+     "cost": 13500000000,
+     "slotH": 1.3820597549013485,
+     "hacking": 1.0584,
+     "exp": 1.127,
+     "rep": 0.98,
+     "money": 1.274,
+     "life": 2
+    },
+    {
+     "name": "Embedded Netburner Module Core V3 Upgrade",
+     "cost": 22500000000,
+     "slotH": 1.4132643765171806,
+     "hacking": 1.078,
+     "exp": 1.225,
+     "rep": 0.98,
+     "money": 1.3719999999999999,
+     "life": 2
+    }
+   ],
+   "graftStartMoney": 0,
+   "freshHacknet": [
+    {
+     "atH": 0.25,
+     "perSec": 0
+    },
+    {
+     "atH": 1.25,
+     "perSec": 409.57234662241973
+    },
+    {
+     "atH": 1.375,
+     "perSec": 1794.7826994177883
+    },
+    {
+     "atH": 1.75,
+     "perSec": 0
+    },
+    {
+     "atH": 2.625,
+     "perSec": 2502.850872812809
+    },
+    {
+     "atH": 2.75,
+     "perSec": 0
+    },
+    {
+     "atH": 2.875,
+     "perSec": 6249.702637868279
+    },
+    {
+     "atH": 3,
+     "perSec": 6572.09540466807
+    },
+    {
+     "atH": 3.75,
+     "perSec": 0
+    },
+    {
+     "atH": 4.125,
+     "perSec": 6807.833755457052
+    },
+    {
+     "atH": 4.25,
+     "perSec": 0
+    },
+    {
+     "atH": 5.25,
+     "perSec": 15300.867793846175
+    },
+    {
+     "atH": 5.375,
+     "perSec": 18493.620413070836
+    },
+    {
+     "atH": 5.5,
+     "perSec": 0
+    },
+    {
+     "atH": 21.625,
+     "perSec": 184499.6847760211
+    },
+    {
+     "atH": 21.75,
+     "perSec": 352888.4168842224
+    }
+   ],
+   "contractRep": {
+    "perContract": 2645.8333333333335,
+    "factions": 1,
+    "hashCum": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      18
+     ],
+     [
+      2,
+      59
+     ],
+     [
+      3,
+      147
+     ],
+     [
+      4,
+      250
+     ],
+     [
+      5,
+      454
+     ],
+     [
+      6,
+      814
+     ],
+     [
+      7,
+      1503
+     ],
+     [
+      8,
+      2763
+     ],
+     [
+      9,
+      4861
+     ],
+     [
+      10,
+      7998
+     ],
+     [
+      11,
+      12253
+     ],
+     [
+      12,
+      17160
+     ],
+     [
+      13,
+      22220
+     ],
+     [
+      14,
+      27302
+     ],
+     [
+      15,
+      32383
+     ],
+     [
+      16,
+      37465
+     ],
+     [
+      17,
+      42546
+     ],
+     [
+      18,
+      47628
+     ],
+     [
+      19,
+      52710
+     ],
+     [
+      20,
+      57791
+     ],
+     [
+      21,
+      62873
+     ],
+     [
+      22,
+      67954
+     ],
+     [
+      23,
+      73036
+     ],
+     [
+      24,
+      78117
+     ],
+     [
+      25,
+      83199
+     ],
+     [
+      26,
+      88281
+     ],
+     [
+      27,
+      93362
+     ],
+     [
+      28,
+      98444
+     ],
+     [
+      29,
+      103525
+     ],
+     [
+      30,
+      108607
+     ],
+     [
+      31,
+      113689
+     ],
+     [
+      32,
+      118770
+     ],
+     [
+      33,
+      123852
+     ],
+     [
+      34,
+      128933
+     ],
+     [
+      35,
+      134015
+     ],
+     [
+      36,
+      139097
+     ],
+     [
+      37,
+      144178
+     ],
+     [
+      38,
+      149260
+     ],
+     [
+      39,
+      154341
+     ],
+     [
+      40,
+      159423
+     ],
+     [
+      41,
+      164505
+     ],
+     [
+      42,
+      169586
+     ],
+     [
+      43,
+      174668
+     ],
+     [
+      44,
+      179749
+     ],
+     [
+      45,
+      184831
+     ],
+     [
+      46,
+      189913
+     ],
+     [
+      47,
+      194994
+     ],
+     [
+      48,
+      200076
+     ]
+    ],
+    "hashPerSec": 0.03476540682300278,
+    "level0": 1
+   },
+   "streams": {
+    "gang": "not in a gang this life (no fresh /tel/gang.txt)",
+    "sleeves": "the fleet's objective is karma, not money",
+    "hacknetFinalWindow": "the fleet a fresh life rebuilds (lifeplan.freshHacknetFlow): $0.00m/s to the balance at 8h, $0.35m/s at 24h (its purchases repaid from its own income first)",
+    "contractRep": "generated contracts from the Daedalus join: 2646 rep each over 1 hacking-work faction(s) (a later final window joins Daedalus alone), the live fleet 0.03 hashes/s from level 1"
+   },
+   "cadenceFrom": "purchase model",
+   "cadenceRateMedian": 0.023399144593090313
+  },
+  "eRep": 0.0164,
+  "eBudget": 0.0491,
+  "W": 0,
+  "finalWindow": false,
+  "moneyAtW": 48524183.49597679,
+  "lifeIncomeWhy": null,
+  "gainsByMoney": [
+   {
+    "money": 0,
+    "gains": null
+   },
+   {
+    "money": 12131045.873994198,
+    "gains": {
+     "hacking": 1.01000262,
+     "rep": 1.01000262,
+     "income": 1.0310981345296577,
+     "exp": 1.01000262
+    }
+   },
+   {
+    "money": 24262091.747988395,
+    "gains": {
+     "hacking": 1.0201052924068645,
+     "rep": 1.0201052924068645,
+     "income": 1.0631633630305402,
+     "exp": 1.0201052924068645
+    }
+   },
+   {
+    "money": 36393137.62198259,
+    "gains": {
+     "hacking": 1.0201052924068645,
+     "rep": 1.0201052924068645,
+     "income": 1.0631633630305402,
+     "exp": 1.0201052924068645
+    }
+   },
+   {
+    "money": 43671765.14637911,
+    "gains": {
+     "hacking": 1.0303090180067993,
+     "rep": 1.0303090180067993,
+     "income": 1.0962257603210674,
+     "exp": 1.0303090180067993
+    }
+   },
+   {
+    "money": 48524183.49597679,
+    "gains": {
+     "hacking": 1.0303090180067993,
+     "rep": 1.0303090180067993,
+     "income": 1.0962257603210674,
+     "exp": 1.0303090180067993
+    }
+   },
+   {
+    "money": 60655229.36997099,
+    "gains": {
+     "hacking": 1.0303090180067993,
+     "rep": 1.0303090180067993,
+     "income": 1.0962257603210674,
+     "exp": 1.0303090180067993
+    }
+   },
+   {
+    "money": 72786275.24396518,
+    "gains": {
+     "hacking": 1.0303090180067993,
+     "rep": 1.0303090180067993,
+     "income": 1.0962257603210674,
+     "exp": 1.0303090180067993
+    }
+   },
+   {
+    "money": 97048366.99195358,
+    "gains": {
+     "hacking": 1.0406148075964945,
+     "rep": 1.0406148075964945,
+     "income": 1.1303163364904085,
+     "exp": 1.0406148075964945
+    }
+   }
+  ],
+  "gainsByGangRep": null
+ },
+ "bladeburner": {
+  "at": "2026-10-01T11:07:38.838Z",
+  "health": "ok",
+  "errors": [],
+  "bitNode": 6,
+  "lastAugReset": 1790849820744,
+  "host": "home",
+  "result": "started",
+  "joined": true,
+  "factionJoined": true,
+  "rank": 74.26,
+  "rankPerHour": 17.89,
+  "skillPoints": 3,
+  "levels": {
+   "Blade's Intuition": 1,
+   "Cloak": 2,
+   "Short-Circuit": 1,
+   "Digital Observer": 1,
+   "Tracer": 1,
+   "Overclock": 1,
+   "Reaper": 1,
+   "Evasive System": 1,
+   "Datamancer": 0,
+   "Cyber's Edge": 0,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 39.67,
+  "maxStamina": 53.69,
+  "resting": false,
+  "city": "Chongqing",
+  "team": 0,
+  "slot": {
+   "owner": "bladeburner",
+   "ours": true,
+   "why": "progress.js holds the slot for bladeburner"
+  },
+  "action": {
+   "type": "Contracts",
+   "name": "Retirement",
+   "level": 6,
+   "city": "Chongqing",
+   "p": 0.5790318425253594,
+   "ev": 0.025052330688535927,
+   "why": "Retirement L6 in Chongqing at 58%: 0.0251 rank/s"
+  },
+  "running": {
+   "type": "Contracts",
+   "name": "Retirement"
+  },
+  "blackOps": {
+   "done": 0,
+   "next": "Operation Typhoon",
+   "reqdRank": 2500,
+   "chance": [
+    0.0276,
+    0.0282
+   ],
+   "formulaChance": 0.0276
+  },
+  "exitReady": false,
+  "exitNote": null,
+  "env": {
+   "contracts": 1.4707356669222553,
+   "operations": 1.4707356669222553
+  },
+  "counts": {
+   "Tracking": 0.1,
+   "Bounty Hunter": 152.7,
+   "Retirement": 167.4,
+   "Investigation": 144,
+   "Undercover Operation": 161.9,
+   "Sting Operation": 122.6,
+   "Raid": 65,
+   "Stealth Retirement Operation": 95.1,
+   "Assassination": 84.8
+  },
+  "maxLevels": {
+   "Tracking": 15,
+   "Bounty Hunter": 1,
+   "Retirement": 6,
+   "Investigation": 1,
+   "Undercover Operation": 1,
+   "Sting Operation": 1,
+   "Raid": 1,
+   "Stealth Retirement Operation": 1,
+   "Assassination": 1
+  },
+  "cities": [
+   {
+    "name": "Aevum",
+    "popEst": 1042550990,
+    "chaos": 0,
+    "comms": 145
+   },
+   {
+    "name": "Chongqing",
+    "popEst": 1717913816,
+    "chaos": 0.27,
+    "comms": 104
+   },
+   {
+    "name": "Sector-12",
+    "popEst": 1152684268,
+    "chaos": 0.76,
+    "comms": 26
+   },
+   {
+    "name": "New Tokyo",
+    "popEst": 1380334787,
+    "chaos": 1.03,
+    "comms": 53
+   },
+   {
+    "name": "Ishima",
+    "popEst": 646359814,
+    "chaos": 0.18,
+    "comms": 9
+   },
+   {
+    "name": "Volhaven",
+    "popEst": 1033321823,
+    "chaos": 0,
+    "comms": 147
+   }
+  ],
+  "outcomes": {
+   "n": 5,
+   "observed": 1,
+   "expected": 0.8080185977861213,
+   "last": [
+    {
+     "name": "Tracking",
+     "level": 12,
+     "p": 0.8182854754169988,
+     "ok": true
+    },
+    {
+     "name": "Tracking",
+     "level": 12,
+     "p": 0.8724368435438568,
+     "ok": true
+    },
+    {
+     "name": "Tracking",
+     "level": 13,
+     "p": 0.8759631262132908,
+     "ok": true
+    },
+    {
+     "name": "Tracking",
+     "level": 13,
+     "p": 0.8955413210381541,
+     "ok": true
+    },
+    {
+     "name": "Retirement",
+     "level": 6,
+     "p": 0.5778662227183058,
+     "ok": true
+    }
+   ]
+  },
+  "calibration": {
+   "timeFormulaS": 19,
+   "timeGameS": 19,
+   "maxStaminaFormula": 53.689,
+   "maxStaminaGame": 53.689
+  },
+  "purchases": [
+   {
+    "at": "2026-10-01T10:50:19.175Z",
+    "name": "Overclock",
+    "count": 1,
+    "cost": 3,
+    "got": 1,
+    "why": "rank/s +1.33%"
+   }
+  ],
+  "samples": [
+   {
+    "at": "2026-10-01T10:17:02.095Z",
+    "rank": 59.17,
+    "stamina": 1.05
+   },
+   {
+    "at": "2026-10-01T10:18:02.099Z",
+    "rank": 59.17,
+    "stamina": 6.08
+   },
+   {
+    "at": "2026-10-01T10:19:02.103Z",
+    "rank": 59.17,
+    "stamina": 9.15
+   },
+   {
+    "at": "2026-10-01T10:20:02.106Z",
+    "rank": 59.17,
+    "stamina": 10.11
+   },
+   {
+    "at": "2026-10-01T10:21:02.111Z",
+    "rank": 59.17,
+    "stamina": 22.42
+   },
+   {
+    "at": "2026-10-01T10:22:02.116Z",
+    "rank": 59.17,
+    "stamina": 24.73
+   },
+   {
+    "at": "2026-10-01T10:23:02.129Z",
+    "rank": 59.17,
+    "stamina": 25.11
+   },
+   {
+    "at": "2026-10-01T10:24:02.150Z",
+    "rank": 59.17,
+    "stamina": 25.49
+   },
+   {
+    "at": "2026-10-01T10:25:02.162Z",
+    "rank": 59.17,
+    "stamina": 25.87
+   },
+   {
+    "at": "2026-10-01T10:26:02.169Z",
+    "rank": 59.17,
+    "stamina": 26.25
+   },
+   {
+    "at": "2026-10-01T10:27:02.253Z",
+    "rank": 59.17,
+    "stamina": 26.25
+   },
+   {
+    "at": "2026-10-01T10:28:02.334Z",
+    "rank": 59.17,
+    "stamina": 26.62
+   },
+   {
+    "at": "2026-10-01T10:29:02.344Z",
+    "rank": 59.17,
+    "stamina": 26.99
+   },
+   {
+    "at": "2026-10-01T10:30:02.351Z",
+    "rank": 59.17,
+    "stamina": 26.99
+   },
+   {
+    "at": "2026-10-01T10:31:02.358Z",
+    "rank": 59.17,
+    "stamina": 27.36
+   },
+   {
+    "at": "2026-10-01T10:32:02.435Z",
+    "rank": 59.17,
+    "stamina": 27.73
+   },
+   {
+    "at": "2026-10-01T10:33:02.446Z",
+    "rank": 59.17,
+    "stamina": 28.1
+   },
+   {
+    "at": "2026-10-01T10:34:02.456Z",
+    "rank": 59.17,
+    "stamina": 28.1
+   },
+   {
+    "at": "2026-10-01T10:35:02.467Z",
+    "rank": 59.17,
+    "stamina": 28.47
+   },
+   {
+    "at": "2026-10-01T10:36:02.471Z",
+    "rank": 59.17,
+    "stamina": 28.84
+   },
+   {
+    "at": "2026-10-01T10:37:02.560Z",
+    "rank": 59.17,
+    "stamina": 29.2
+   },
+   {
+    "at": "2026-10-01T10:38:02.574Z",
+    "rank": 59.17,
+    "stamina": 29.2
+   },
+   {
+    "at": "2026-10-01T10:39:02.581Z",
+    "rank": 59.17,
+    "stamina": 29.57
+   },
+   {
+    "at": "2026-10-01T10:40:02.587Z",
+    "rank": 59.17,
+    "stamina": 29.93
+   },
+   {
+    "at": "2026-10-01T10:41:02.601Z",
+    "rank": 59.17,
+    "stamina": 29.93
+   },
+   {
+    "at": "2026-10-01T10:42:02.676Z",
+    "rank": 59.17,
+    "stamina": 30.29
+   },
+   {
+    "at": "2026-10-01T10:43:02.682Z",
+    "rank": 59.17,
+    "stamina": 34.56
+   },
+   {
+    "at": "2026-10-01T10:44:02.688Z",
+    "rank": 59.17,
+    "stamina": 40.06
+   },
+   {
+    "at": "2026-10-01T10:45:02.695Z",
+    "rank": 59.17,
+    "stamina": 44.06
+   },
+   {
+    "at": "2026-10-01T10:46:02.703Z",
+    "rank": 59.17,
+    "stamina": 47.32
+   },
+   {
+    "at": "2026-10-01T10:47:02.854Z",
+    "rank": 59.17,
+    "stamina": 49.89
+   },
+   {
+    "at": "2026-10-01T10:48:09.148Z",
+    "rank": 60.19,
+    "stamina": 48.32
+   },
+   {
+    "at": "2026-10-01T10:49:14.655Z",
+    "rank": 61.13,
+    "stamina": 43.81
+   },
+   {
+    "at": "2026-10-01T10:50:19.176Z",
+    "rank": 63.38,
+    "stamina": 39.24
+   },
+   {
+    "at": "2026-10-01T10:51:24.682Z",
+    "rank": 65.79,
+    "stamina": 34.87
+   },
+   {
+    "at": "2026-10-01T10:52:29.311Z",
+    "rank": 68.17,
+    "stamina": 30.19
+   },
+   {
+    "at": "2026-10-01T10:53:35.517Z",
+    "rank": 69.07,
+    "stamina": 29.29
+   },
+   {
+    "at": "2026-10-01T10:54:35.525Z",
+    "rank": 69.07,
+    "stamina": 31.1
+   },
+   {
+    "at": "2026-10-01T10:55:35.532Z",
+    "rank": 69.07,
+    "stamina": 32.91
+   },
+   {
+    "at": "2026-10-01T10:56:35.545Z",
+    "rank": 69.07,
+    "stamina": 34.72
+   },
+   {
+    "at": "2026-10-01T10:57:35.551Z",
+    "rank": 69.07,
+    "stamina": 36.53
+   },
+   {
+    "at": "2026-10-01T10:58:35.558Z",
+    "rank": 69.07,
+    "stamina": 38.34
+   },
+   {
+    "at": "2026-10-01T10:59:35.565Z",
+    "rank": 69.07,
+    "stamina": 40.39
+   },
+   {
+    "at": "2026-10-01T11:00:35.581Z",
+    "rank": 69.07,
+    "stamina": 42.21
+   },
+   {
+    "at": "2026-10-01T11:01:35.598Z",
+    "rank": 69.07,
+    "stamina": 44.05
+   },
+   {
+    "at": "2026-10-01T11:02:35.610Z",
+    "rank": 69.07,
+    "stamina": 45.87
+   },
+   {
+    "at": "2026-10-01T11:03:35.618Z",
+    "rank": 69.07,
+    "stamina": 47.68
+   },
+   {
+    "at": "2026-10-01T11:04:35.624Z",
+    "rank": 69.07,
+    "stamina": 49.5
+   },
+   {
+    "at": "2026-10-01T11:05:48.032Z",
+    "rank": 70.96,
+    "stamina": 46.89
+   },
+   {
+    "at": "2026-10-01T11:06:53.536Z",
+    "rank": 73.28,
+    "stamina": 42.33
+   }
+  ],
+  "detail": "Retirement L6 in Chongqing at 58%: 0.0251 rank/s"
+ },
+ "installLast": {
+  "at": "2026-10-01T10:17:00.536Z",
+  "lastAugReset": 1790843357214,
+  "batchAt": "2026-10-01T10:16:46.931Z",
+  "why": "install: 3 aug(s) \u2014 the simulated exit installing now is 131.9h, the best wait unpriced, never installing 5.256631473071846e+82h",
+  "terminal": false,
+  "planInstall": "now",
+  "batch": [
+   "Synaptic Enhancement Implant",
+   "NeuroFlux Governor",
+   "NeuroFlux Governor"
+  ],
+  "pricedBatch": [
+   "Synaptic Enhancement Implant",
+   "NeuroFlux Governor",
+   "NeuroFlux Governor"
+  ],
+  "batchCheck": {
+   "ok": true,
+   "same": true,
+   "install": true,
+   "action": "install",
+   "pricedN": 3,
+   "boughtN": 3,
+   "missing": [],
+   "extra": [],
+   "pricedH": 131.917,
+   "repricedH": 131.917,
+   "altKey": null,
+   "altH": null,
+   "tolH": null,
+   "why": "the batch ordered is the batch priced (3)"
+  },
+  "batchChoice": {
+   "key": "fresh",
+   "by": null,
+   "near": true,
+   "committed": null,
+   "gainH": 0,
+   "rows": [],
+   "unbuyable": [
+    {
+     "key": "committed",
+     "why": "the committed w0.133's batch (the plan record) is not buyable at the raise's reach: 1 missing (NeuroFlux Governor)"
+    }
+   ],
+   "n": null,
+   "why": "one candidate batch (fresh, incumbent, committed are one batch or not buyable)"
+  },
+  "exits": {
+   "ok": true,
+   "why": "one exit at install: the plan's 'now' 155.8h ~ its commitment w0.133 150.33h priced 12 min ago; the install actor's 131.92h ~ the commitment w0.133's point 130.633h priced 12 min ago; the install actor's 131.92h ~ the plan's 'now' 131.917h",
+   "actorH": 131.917,
+   "planKey": "now",
+   "planH": 155.8,
+   "planPointH": 131.917,
+   "commitment": {
+    "key": "w0.133",
+    "meanH": 150.33,
+    "pointH": 130.633,
+    "q10": 54.817,
+    "q90": 337.047,
+    "at": "2026-10-01T10:04:20.045Z",
+    "installAt": 1790849538885.9905,
+    "noiseKey": "at:29847492|L12|g7",
+    "n": 24,
+    "ver": "5xpo57.41"
+   },
+   "checks": [
+    {
+     "what": "plan now vs the plan's commitment",
+     "a": 155.8,
+     "b": 150.123,
+     "aName": "the plan's 'now' 155.8h",
+     "bName": "its commitment w0.133 150.33h priced 12 min ago",
+     "diffH": 5.677,
+     "tolH": 7.79,
+     "ok": true
+    },
+    {
+     "what": "install actor vs the plan's commitment",
+     "a": 131.91705098970243,
+     "b": 130.426,
+     "aName": "the install actor's 131.92h",
+     "bName": "the commitment w0.133's point 130.633h priced 12 min ago",
+     "diffH": 1.491,
+     "tolH": 6.596,
+     "ok": true
+    },
+    {
+     "what": "install actor vs the plan's now",
+     "a": 131.91705098970243,
+     "b": 131.917,
+     "aName": "the install actor's 131.92h",
+     "bName": "the plan's 'now' 131.917h",
+     "diffH": 0,
+     "tolH": 6.596,
+     "ok": true
+    }
+   ]
+  },
+  "carry": {
+   "at": "2026-10-01T10:16:46.929Z",
+   "exp": {
+    "perSec": 141.39675471505018,
+    "sdLn": 0.20091036349767852,
+    "level": 132,
+    "mult": 1.7135485534814077,
+    "at": "2026-10-01T10:16:46.929Z"
+   },
+   "gang": null,
+   "rep": {
+    "mean": -0.034583592886933606,
+    "sd": 0.6177563036402371,
+    "at": "2026-10-01T10:16:46.929Z"
+   }
+  },
+  "bought": 3,
+  "results": [
+   {
+    "kind": "liquidate",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   }
+  ]
+ },
+ "installLast1132": {
+  "at": "2026-10-01T11:32:10.810Z",
+  "lastAugReset": 1790849820744,
+  "batchAt": "2026-10-01T11:32:05.801Z",
+  "why": "install: 4 aug(s) \u2014 the simulated exit installing now is 137.6h, the best wait unpriced, never installing 5.149955826656253e+80h",
+  "terminal": false,
+  "planInstall": "now",
+  "batch": [
+   "Nuoptimal Nootropic Injector Implant",
+   "NeuroFlux Governor",
+   "NeuroFlux Governor",
+   "NutriGen Implant"
+  ],
+  "pricedBatch": [
+   "Nuoptimal Nootropic Injector Implant",
+   "NeuroFlux Governor",
+   "NeuroFlux Governor",
+   "NutriGen Implant"
+  ],
+  "batchCheck": {
+   "ok": true,
+   "same": true,
+   "install": true,
+   "action": "install",
+   "pricedN": 4,
+   "boughtN": 4,
+   "missing": [],
+   "extra": [],
+   "pricedH": 137.551,
+   "repricedH": 137.551,
+   "altKey": null,
+   "altH": null,
+   "tolH": null,
+   "why": "the batch ordered is the batch priced (4)"
+  },
+  "batchChoice": {
+   "key": "fresh",
+   "by": null,
+   "near": false,
+   "committed": null,
+   "gainH": 0,
+   "rows": [],
+   "unbuyable": [],
+   "n": null,
+   "why": "one candidate batch (fresh, incumbent are one batch or not buyable)"
+  },
+  "exits": {
+   "ok": false,
+   "why": "TWO EXITS AT INSTALL: the plan's 'now' 189.337h vs its commitment w0.083 236.867h priced 40 min ago differ by -46.863h (tolerance 11.81h)",
+   "actorH": 137.551,
+   "planKey": "now",
+   "planH": 189.337,
+   "planPointH": 137.551,
+   "commitment": {
+    "key": "w0.083",
+    "meanH": 236.867,
+    "pointH": 143.455,
+    "q10": 80.232,
+    "q90": 402.929,
+    "at": "2026-10-01T10:52:02.719Z",
+    "installAt": 1790852222968,
+    "noiseKey": "at:29847537|L12|g7",
+    "n": 24,
+    "ver": "5xpo57.41"
+   },
+   "checks": [
+    {
+     "what": "plan now vs the plan's commitment",
+     "a": 189.337,
+     "b": 236.2,
+     "aName": "the plan's 'now' 189.337h",
+     "bName": "its commitment w0.083 236.867h priced 40 min ago",
+     "diffH": -46.863,
+     "tolH": 11.81,
+     "ok": false
+    },
+    {
+     "what": "install actor vs the plan's commitment",
+     "a": 137.5512583023997,
+     "b": 142.788,
+     "aName": "the install actor's 137.55h",
+     "bName": "the commitment w0.083's point 143.455h priced 40 min ago",
+     "diffH": -5.237,
+     "tolH": 7.139,
+     "ok": true
+    },
+    {
+     "what": "install actor vs the plan's now",
+     "a": 137.5512583023997,
+     "b": 137.551,
+     "aName": "the install actor's 137.55h",
+     "bName": "the plan's 'now' 137.551h",
+     "diffH": 0,
+     "tolH": 6.878,
+     "ok": true
+    }
+   ]
+  },
+  "carry": {
+   "at": "2026-10-01T11:32:05.797Z",
+   "exp": {
+    "perSec": 160.11295228145192,
+    "sdLn": 0.23070068023106088,
+    "level": 136,
+    "mult": 1.747999948202511,
+    "at": "2026-10-01T11:32:05.797Z"
+   },
+   "gang": null,
+   "rep": {
+    "mean": -0.034583592886933606,
+    "sd": 0.6867480256158359,
+    "at": "2026-10-01T11:32:05.797Z"
+   }
+  },
+  "bought": 4,
+  "results": [
+   {
+    "kind": "liquidate",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   },
+   {
+    "kind": "buyaug",
+    "ok": true,
+    "skipped": null
+   }
+  ]
+ },
+ "progressSlot": {
+  "crime": "Heist",
+  "perHour": 76673624.48977363,
+  "wins": false,
+  "exitCrimeH": 135.58130285590204,
+  "exitFactionH": 135.58130285590204,
+  "decidedBy": "exit-sim",
+  "why": "faction work: exit 135.58h vs 135.58h (0.0h to the install)",
+  "owner": "bladeburner",
+  "gangBootstrapPending": false,
+  "routeLeg": null
+ },
+ "player": {
+  "skills": {
+   "hacking": 129,
+   "strength": 130,
+   "defense": 131,
+   "dexterity": 143,
+   "agility": 141,
+   "charisma": 44,
+   "intelligence": 132
+  },
+  "exp": {
+   "hacking": 516127.35275627335,
+   "strength": 7789.564666006809,
+   "defense": 7873.727626475813,
+   "dexterity": 8870.702912755376,
+   "agility": 8466.073295115943,
+   "charisma": 534.4500314564485,
+   "intelligence": 32115.316547760278
+  },
+  "mults": {
+   "hacking_chance": 1.589090862002283,
+   "hacking_speed": 1.6367635878623519,
+   "hacking_money": 1.589090862002283,
+   "hacking_grow": 1.7797817654425572,
+   "hacking": 1.6685454051023973,
+   "hacking_exp": 1.747999948202511,
+   "strength": 1.4713804277798916,
+   "strength_exp": 1.6185184705578806,
+   "defense": 1.4713804277798916,
+   "defense_exp": 1.6185184705578806,
+   "dexterity": 1.5449494491688855,
+   "dexterity_exp": 1.6185184705578806,
+   "agility": 1.5449494491688855,
+   "agility_exp": 1.6185184705578806,
+   "charisma": 1.9157373169694192,
+   "charisma_exp": 1.6994443940857746,
+   "hacknet_node_money": 1.950692109982385,
+   "hacknet_node_purchase_cost": 0.5980778209261607,
+   "hacknet_node_ram_cost": 0.5980778209261607,
+   "hacknet_node_core_cost": 0.5980778209261607,
+   "hacknet_node_level_cost": 0.5980778209261607,
+   "company_rep": 2.2464415753573173,
+   "faction_rep": 2.0422196139611977,
+   "work_money": 1.4713804277798916,
+   "crime_success": 1.8245117304470657,
+   "crime_money": 1.8245117304470657,
+   "dnet_money": 1.1495159592030404,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "bladeburner_analysis": 1,
+   "bladeburner_success_chance": 1
+  },
+  "money": 2068990.4286827068,
+  "augmentations": [
+   {
+    "level": 1,
+    "name": "Neurotrainer I"
+   },
+   {
+    "level": 1,
+    "name": "Wired Reflexes"
+   },
+   {
+    "level": 14,
+    "name": "NeuroFlux Governor"
+   },
+   {
+    "level": 1,
+    "name": "ADR-V1 Pheromone Gene"
+   },
+   {
+    "level": 1,
+    "name": "Speech Enhancement"
+   },
+   {
+    "level": 1,
+    "name": "BitWire"
+   },
+   {
+    "level": 1,
+    "name": "Synaptic Enhancement Implant"
+   }
+  ],
+  "queuedAugmentations": [],
+  "factions": [
+   "Chongqing",
+   "Ishima",
+   "New Tokyo",
+   "Tetrads",
+   "Slum Snakes",
+   "Tian Di Hui",
+   "CyberSec",
+   "Bladeburners"
+  ],
+  "bladeburner": {
+   "rank": 80.69525033739401
+  },
+  "bladeburnersFaction": {
+   "favor": 1.2864001848674775,
+   "playerReputation": 87.44469621915825,
+   "discovery": "known"
+  },
+  "bb": {
+   "rank": 80.69525033739401,
+   "maxRank": 80.69525033739401,
+   "staminaBonus": 0
+  },
+  "city": "Ishima",
+  "lastUpdate": 1790853519782
+ },
+ "equity": 26220842.158009343,
+ "lifePerSec": 8691.351705750696,
+ "augstats": {
+  "EsperTech Bladeburner Eyewear": {
+   "strength": 1,
+   "defense": 1,
+   "dexterity": 1.05,
+   "agility": 1,
+   "charisma": 1,
+   "strength_exp": 1,
+   "defense_exp": 1,
+   "dexterity_exp": 1,
+   "agility_exp": 1,
+   "charisma_exp": 1,
+   "bladeburner_success_chance": 1.03,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1
+  },
+  "LuminCloaking-V1 Skin Implant": {
+   "strength": 1,
+   "defense": 1,
+   "dexterity": 1,
+   "agility": 1.05,
+   "charisma": 1.03,
+   "strength_exp": 1,
+   "defense_exp": 1,
+   "dexterity_exp": 1,
+   "agility_exp": 1,
+   "charisma_exp": 1,
+   "bladeburner_success_chance": 1,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1
+  },
+  "NeuroFlux Governor": {
+   "strength": 1.01000262,
+   "defense": 1.01000262,
+   "dexterity": 1.01000262,
+   "agility": 1.01000262,
+   "charisma": 1.01000262,
+   "strength_exp": 1.01000262,
+   "defense_exp": 1.01000262,
+   "dexterity_exp": 1.01000262,
+   "agility_exp": 1.01000262,
+   "charisma_exp": 1.01000262,
+   "bladeburner_success_chance": 1,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1.01000262
+  },
+  "Nuoptimal Nootropic Injector Implant": {
+   "strength": 1,
+   "defense": 1,
+   "dexterity": 1,
+   "agility": 1,
+   "charisma": 1.03,
+   "strength_exp": 1,
+   "defense_exp": 1,
+   "dexterity_exp": 1,
+   "agility_exp": 1,
+   "charisma_exp": 1,
+   "bladeburner_success_chance": 1,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1
+  },
+  "NutriGen Implant": {
+   "strength": 1,
+   "defense": 1,
+   "dexterity": 1,
+   "agility": 1,
+   "charisma": 1,
+   "strength_exp": 1.2,
+   "defense_exp": 1.2,
+   "dexterity_exp": 1.2,
+   "agility_exp": 1.2,
+   "charisma_exp": 1,
+   "bladeburner_success_chance": 1,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1
+  },
+  "Synaptic Enhancement Implant": {
+   "strength": 1,
+   "defense": 1,
+   "dexterity": 1,
+   "agility": 1,
+   "charisma": 1,
+   "strength_exp": 1,
+   "defense_exp": 1,
+   "dexterity_exp": 1,
+   "agility_exp": 1,
+   "charisma_exp": 1,
+   "bladeburner_success_chance": 1,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1
+  },
+  "The Blade's Simulacrum": {
+   "strength": 1,
+   "defense": 1,
+   "dexterity": 1,
+   "agility": 1,
+   "charisma": 1,
+   "strength_exp": 1,
+   "defense_exp": 1,
+   "dexterity_exp": 1,
+   "agility_exp": 1,
+   "charisma_exp": 1,
+   "bladeburner_success_chance": 1,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "hacking": 1
+  }
+ },
+ "sleeves": 5,
+ "posteriorS": 0.042222166485585584,
+ "jitter": null,
+ "incident": {
+  "history": [
+   {
+    "at": "2026-10-01T10:20:26.266Z",
+    "work": "ClassWork",
+    "str": 39,
+    "def": 39,
+    "dex": 45,
+    "agi": 17
+   },
+   {
+    "at": "2026-10-01T10:20:56.235Z",
+    "work": "ClassWork",
+    "str": 40,
+    "def": 39,
+    "dex": 47,
+    "agi": 42
+   },
+   {
+    "at": "2026-10-01T10:21:26.184Z",
+    "work": "CrimeWork",
+    "str": 41,
+    "def": 40,
+    "dex": 48,
+    "agi": 50
+   },
+   {
+    "at": "2026-10-01T10:21:56.217Z",
+    "work": "CrimeWork",
+    "str": 43,
+    "def": 42,
+    "dex": 50,
+    "agi": 52
+   },
+   {
+    "at": "2026-10-01T10:22:26.266Z",
+    "work": "ClassWork",
+    "str": 50,
+    "def": 43,
+    "dex": 51,
+    "agi": 53
+   },
+   {
+    "at": "2026-10-01T10:22:56.179Z",
+    "work": "ClassWork",
+    "str": 64,
+    "def": 44,
+    "dex": 51,
+    "agi": 53
+   },
+   {
+    "at": "2026-10-01T10:23:26.186Z",
+    "work": "ClassWork",
+    "str": 74,
+    "def": 44,
+    "dex": 51,
+    "agi": 54
+   },
+   {
+    "at": "2026-10-01T10:23:56.263Z",
+    "work": "ClassWork",
+    "str": 82,
+    "def": 45,
+    "dex": 52,
+    "agi": 54
+   },
+   {
+    "at": "2026-10-01T10:24:26.165Z",
+    "work": "ClassWork",
+    "str": 90,
+    "def": 45,
+    "dex": 52,
+    "agi": 54
+   },
+   {
+    "at": "2026-10-01T10:24:56.242Z",
+    "work": "ClassWork",
+    "str": 96,
+    "def": 45,
+    "dex": 53,
+    "agi": 55
+   },
+   {
+    "at": "2026-10-01T10:25:26.190Z",
+    "work": "ClassWork",
+    "str": 101,
+    "def": 46,
+    "dex": 53,
+    "agi": 55
+   },
+   {
+    "at": "2026-10-01T10:25:56.242Z",
+    "work": "ClassWork",
+    "str": 106,
+    "def": 46,
+    "dex": 53,
+    "agi": 55
+   },
+   {
+    "at": "2026-10-01T10:26:26.235Z",
+    "work": "ClassWork",
+    "str": 111,
+    "def": 47,
+    "dex": 54,
+    "agi": 56
+   },
+   {
+    "at": "2026-10-01T10:26:56.168Z",
+    "work": "ClassWork",
+    "str": 115,
+    "def": 47,
+    "dex": 54,
+    "agi": 56
+   },
+   {
+    "at": "2026-10-01T10:27:26.193Z",
+    "work": "ClassWork",
+    "str": 119,
+    "def": 48,
+    "dex": 55,
+    "agi": 57
+   },
+   {
+    "at": "2026-10-01T10:27:56.181Z",
+    "work": null,
+    "str": 119,
+    "def": 51,
+    "dex": 55,
+    "agi": 57
+   },
+   {
+    "at": "2026-10-01T10:28:26.249Z",
+    "work": null,
+    "str": 119,
+    "def": 51,
+    "dex": 55,
+    "agi": 57
+   },
+   {
+    "at": "2026-10-01T10:28:56.266Z",
+    "work": null,
+    "str": 119,
+    "def": 52,
+    "dex": 56,
+    "agi": 58
+   },
+   {
+    "at": "2026-10-01T10:29:26.169Z",
+    "work": null,
+    "str": 119,
+    "def": 52,
+    "dex": 56,
+    "agi": 58
+   },
+   {
+    "at": "2026-10-01T10:29:56.173Z",
+    "work": null,
+    "str": 119,
+    "def": 53,
+    "dex": 56,
+    "agi": 58
+   },
+   {
+    "at": "2026-10-01T10:30:26.268Z",
+    "work": null,
+    "str": 119,
+    "def": 53,
+    "dex": 57,
+    "agi": 59
+   },
+   {
+    "at": "2026-10-01T10:30:56.197Z",
+    "work": null,
+    "str": 119,
+    "def": 53,
+    "dex": 57,
+    "agi": 59
+   },
+   {
+    "at": "2026-10-01T10:31:26.295Z",
+    "work": null,
+    "str": 119,
+    "def": 54,
+    "dex": 58,
+    "agi": 60
+   },
+   {
+    "at": "2026-10-01T10:31:56.208Z",
+    "work": null,
+    "str": 119,
+    "def": 54,
+    "dex": 58,
+    "agi": 60
+   },
+   {
+    "at": "2026-10-01T10:32:26.174Z",
+    "work": "ClassWork",
+    "str": 119,
+    "def": 62,
+    "dex": 58,
+    "agi": 60
+   },
+   {
+    "at": "2026-10-01T10:32:56.238Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 73,
+    "dex": 59,
+    "agi": 61
+   },
+   {
+    "at": "2026-10-01T10:33:26.193Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 82,
+    "dex": 59,
+    "agi": 61
+   },
+   {
+    "at": "2026-10-01T10:33:56.232Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 89,
+    "dex": 60,
+    "agi": 61
+   },
+   {
+    "at": "2026-10-01T10:34:26.228Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 95,
+    "dex": 60,
+    "agi": 62
+   },
+   {
+    "at": "2026-10-01T10:34:56.227Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 101,
+    "dex": 60,
+    "agi": 62
+   },
+   {
+    "at": "2026-10-01T10:35:26.645Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 106,
+    "dex": 61,
+    "agi": 62
+   },
+   {
+    "at": "2026-10-01T10:35:56.490Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 110,
+    "dex": 61,
+    "agi": 63
+   },
+   {
+    "at": "2026-10-01T10:36:26.553Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 115,
+    "dex": 61,
+    "agi": 63
+   },
+   {
+    "at": "2026-10-01T10:36:56.573Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 118,
+    "dex": 62,
+    "agi": 63
+   },
+   {
+    "at": "2026-10-01T10:37:26.371Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 121,
+    "dex": 65,
+    "agi": 64
+   },
+   {
+    "at": "2026-10-01T10:37:56.683Z",
+    "work": "ClassWork",
+    "str": 120,
+    "def": 121,
+    "dex": 76,
+    "agi": 64
+   },
+   {
+    "at": "2026-10-01T10:38:26.623Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 121,
+    "dex": 86,
+    "agi": 64
+   },
+   {
+    "at": "2026-10-01T10:38:56.660Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 121,
+    "dex": 93,
+    "agi": 65
+   },
+   {
+    "at": "2026-10-01T10:39:26.710Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 121,
+    "dex": 100,
+    "agi": 65
+   },
+   {
+    "at": "2026-10-01T10:39:56.568Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 121,
+    "dex": 106,
+    "agi": 65
+   },
+   {
+    "at": "2026-10-01T10:40:26.605Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 111,
+    "agi": 66
+   },
+   {
+    "at": "2026-10-01T10:40:56.600Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 116,
+    "agi": 66
+   },
+   {
+    "at": "2026-10-01T10:41:26.776Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 120,
+    "agi": 66
+   },
+   {
+    "at": "2026-10-01T10:41:56.709Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 124,
+    "agi": 67
+   },
+   {
+    "at": "2026-10-01T10:42:26.619Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 128,
+    "agi": 67
+   },
+   {
+    "at": "2026-10-01T10:42:56.665Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 128,
+    "agi": 77
+   },
+   {
+    "at": "2026-10-01T10:43:26.423Z",
+    "work": "ClassWork",
+    "str": 121,
+    "def": 122,
+    "dex": 128,
+    "agi": 86
+   },
+   {
+    "at": "2026-10-01T10:43:56.390Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 122,
+    "dex": 129,
+    "agi": 93
+   },
+   {
+    "at": "2026-10-01T10:44:26.657Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 122,
+    "dex": 129,
+    "agi": 100
+   },
+   {
+    "at": "2026-10-01T10:44:56.511Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 122,
+    "dex": 129,
+    "agi": 106
+   },
+   {
+    "at": "2026-10-01T10:45:26.459Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 122,
+    "dex": 129,
+    "agi": 111
+   },
+   {
+    "at": "2026-10-01T10:45:56.406Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 123,
+    "dex": 129,
+    "agi": 116
+   },
+   {
+    "at": "2026-10-01T10:46:26.333Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 123,
+    "dex": 129,
+    "agi": 120
+   },
+   {
+    "at": "2026-10-01T10:46:56.303Z",
+    "work": "ClassWork",
+    "str": 122,
+    "def": 123,
+    "dex": 129,
+    "agi": 124
+   },
+   {
+    "at": "2026-10-01T10:47:26.434Z",
+    "work": null,
+    "str": 122,
+    "def": 123,
+    "dex": 129,
+    "agi": 126
+   },
+   {
+    "at": "2026-10-01T10:47:56.278Z",
+    "work": null,
+    "str": 122,
+    "def": 123,
+    "dex": 130,
+    "agi": 127
+   },
+   {
+    "at": "2026-10-01T10:48:26.246Z",
+    "work": null,
+    "str": 122,
+    "def": 123,
+    "dex": 130,
+    "agi": 127
+   },
+   {
+    "at": "2026-10-01T10:48:56.262Z",
+    "work": null,
+    "str": 123,
+    "def": 123,
+    "dex": 130,
+    "agi": 128
+   },
+   {
+    "at": "2026-10-01T10:49:26.311Z",
+    "work": null,
+    "str": 123,
+    "def": 123,
+    "dex": 131,
+    "agi": 128
+   },
+   {
+    "at": "2026-10-01T10:49:56.276Z",
+    "work": null,
+    "str": 123,
+    "def": 123,
+    "dex": 132,
+    "agi": 129
+   }
+  ],
+  "actHistory": []
+ }
+}

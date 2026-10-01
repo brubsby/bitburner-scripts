@@ -58,6 +58,9 @@ import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, 
 
 const STATUS = '/tel/bladeburner.txt'
 const PROGRESS = '/tel/progress.txt'
+const ORDERS = '/tel/orders.txt'
+/** Orders that put the player's work slot on something else (act.js actors that start work). */
+const WORK_ORDERS = new Set(['gym', 'crime', 'work', 'graft', 'company', 'course', 'focus'])
 /** progress.js is a job that publishes every pass; a claim older than this is no claim (actplan.js PROGRESS_FRESH_MS). */
 const SLOT_FRESH_MS = 15 * 60e3
 /** Full static price, measured by the game's calculator ([R5]); no ns.singularity, so no `* mult` term. */
@@ -120,10 +123,24 @@ export async function main(ns) {
   }
 }
 
-/** progress.js's claim on the work slot, read from home (ns.read is local to this host). */
-function slotClaim(ns, host, info) {
+/**
+ * progress.js's claim on the work slot, read from home (ns.read is local to this host).
+ *
+ * A HANDOFF IS NOT A CLAIM. startAction calls Player.finishWork BEFORE it
+ * checks anything (Bladeburner.ts:179-186), so starting on a claim the
+ * planner has already moved on from kills the work it moved to. An order
+ * batch written after the claim that starts work (gym, crime, faction work,
+ * a graft...) means the slot is being handed to it — progress.js passes that
+ * flush orders without rewriting /tel/progress.txt (the Covenant batch path)
+ * leave the older claim standing beside them — so the claim does not hold
+ * until a newer progress.txt says it does.
+ */
+export function slotClaim(ns, host, info) {
   try {
-    if (host !== 'home') ns.scp(PROGRESS, host, 'home')
+    if (host !== 'home') {
+      ns.scp(PROGRESS, host, 'home')
+      ns.scp(ORDERS, host, 'home')
+    }
   } catch {
     /* fall through to whatever copy is here; its age decides */
   }
@@ -138,7 +155,18 @@ function slotClaim(ns, host, info) {
   if (at < info.lastAugReset) return { owner: null, ours: false, why: `/tel/progress.txt (${pr.at}) predates this life — no claim` }
   if (Date.now() - at > SLOT_FRESH_MS) return { owner: null, ours: false, why: `/tel/progress.txt is ${((Date.now() - at) / 60e3).toFixed(0)} min old — no claim` }
   const owner = pr?.slot?.owner ?? null
-  return { owner, ours: owner === 'bladeburner', why: owner === 'bladeburner' ? 'progress.js holds the slot for bladeburner' : `progress.js holds the slot for ${owner ?? 'nobody'}` }
+  if (owner === 'bladeburner') {
+    let ob = null
+    try {
+      ob = JSON.parse(ns.read(ORDERS) || 'null')
+    } catch {
+      ob = null
+    }
+    const oAt = Date.parse(ob?.at ?? '')
+    const work = Number.isFinite(oAt) && oAt > at && ob?.lastAugReset === info.lastAugReset && Array.isArray(ob.orders) ? ob.orders.find((o) => WORK_ORDERS.has(o?.kind)) : null
+    if (work) return { owner: `handoff:${work.kind}`, ours: false, at: pr.at, why: `an order batch (${ob.at}) newer than the claim (${pr.at}) starts ${work.kind} — the slot is being handed off; not starting an action until progress.js claims it again` }
+  }
+  return { owner, ours: owner === 'bladeburner', at: pr.at, why: owner === 'bladeburner' ? 'progress.js holds the slot for bladeburner' : `progress.js holds the slot for ${owner ?? 'nobody'}` }
 }
 
 async function operate(ns, say, info, mults) {
@@ -306,6 +334,15 @@ async function operate(ns, say, info, mults) {
       if (d && d.kind !== 'blackop') bb.setActionLevel(pick.type, pick.name, level)
       // Probes moved every level; put the running action back at the chosen level if it is the same action.
       const same = current && current.type === pick.type && current.name === pick.name
+      // RE-READ THE CLAIM IMMEDIATELY BEFORE startAction: it ends the
+      // player's work first (Bladeburner.ts:179-181), so it runs only on a
+      // claim read at this moment, never on the one this pass began with.
+      const recheck = !same && !flags['own-slot'] ? slotClaim(ns, host, info) : slot
+      if (!same && !recheck.ours) {
+        say('waiting', { ...base, result: 'slot-not-ours', joined: true, rank, slot: recheck, detail: `not starting ${pick.name}: ${recheck.why}` })
+        await ns.sleep(10e3)
+        continue
+      }
       if (!same) {
         started = bb.startAction(pick.type, pick.name)
         current = bb.getCurrentAction()

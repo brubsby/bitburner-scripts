@@ -778,15 +778,18 @@ if (!sleevesExpected) {
   // The Bayesian plan's install decision (/tel/plan.txt decisions.install,
   // install:false) is also a priced hold, and since 2026-09-26 the one that
   // decides; the NO INSTALL window prior (0.4-1.2h) knows nothing of it.
-  const planInstall = (() => {
+  const planDecisions = (() => {
     try {
-      const p = JSON.parse(fs.readFileSync(path.join(TEL, "plan.txt"), "utf8"));
-      return p?.decisions?.install ?? null;
+      return JSON.parse(fs.readFileSync(path.join(TEL, "plan.txt"), "utf8"))?.decisions ?? null;
     } catch {
       return null;
     }
   })();
-  const pricedHold = gate?.countDecidedBy === "exit-sim" || gate?.countDecidedBy === "plan" || planInstall?.install === false;
+  const planInstall = planDecisions?.install ?? null;
+  // On the committed Bladeburner route the exit is the black ops: an install
+  // only resets the combat they are priced on, and the install decision (on
+  // that exit, progress.js bladeInstallCompareOf) installs only a batch that pays.
+  const pricedHold = gate?.countDecidedBy === "exit-sim" || gate?.countDecidedBy === "plan" || planInstall?.install === false || planDecisions?.bladeRoute?.key === "blade";
   if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0 && pricedHold) note(`install held by the simulated exit (life ${lifeH.toFixed(1)}h): ${String(gate?.countTimingWhy ?? "").slice(0, 120)}`);
   else if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
   // F3: the planner must act, or change what it is waiting on.

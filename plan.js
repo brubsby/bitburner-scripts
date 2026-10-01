@@ -664,9 +664,18 @@ export function decideInstall(o = {}) {
   return drain(decideInstallGen(o))
 }
 /** The generator decideInstall drains (yields inside the Monte Carlo). */
-export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null } = {}) {
+export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev: prev0 = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null, route: onRoute = null, trajOf = null } = {}) {
   const opts = []
   const ctx = { count, repPoint }
+  // THE ROUTE THE OPTIONS ARE PRICED ON. 'blade' (the committed Bladeburner
+  // route, progress.js bladeInstallCompareOf): every option is the black-op
+  // exit (bbplan.bladeExit through `trajOf`), the install's effect on THAT
+  // trajectory. A record priced on the other route is not this decision's
+  // incumbent: its commitment is another model's exit (no hold, no carry) —
+  // the route switch re-decides.
+  const routeOf = (r) => r?.route ?? 'hack'
+  const prev = prev0 && routeOf(prev0) !== (onRoute ?? 'hack') ? null : prev0
+  const tOf = (spec) => (trajOf ? trajOf(spec, ctx) : { f: trajectoryOf(spec, ctx), fg: trajectoryGenOf(spec, ctx), noiseKey: noiseKeyOf(spec, inputs) })
   // Every option is a TRAJECTORY SPEC (trajectoryOf): the same spec prices the
   // same trajectory wherever it is used — here, and as the basis of every
   // other decision this plan makes (the graft decision prices on the
@@ -689,12 +698,13 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
       while (opts.some((o) => o.key === `${key0}#${k}`)) k++
       key = `${key0}#${k}`
     }
-    const f = trajectoryOf(spec, ctx)
-    const fg = trajectoryGenOf(spec, ctx)
-    opts.push({ key, spec, pointH, noiseKey: noiseKeyOf(spec, inputs), sim: (d) => f(applyDraw(inputs, d), d), simGen: (d) => fg(applyDraw(inputs, d), d), ...extra })
+    const { f, fg, noiseKey } = tOf(spec)
+    opts.push({ key, spec, pointH, noiseKey, sim: (d) => f(applyDraw(inputs, d), d), simGen: (d) => fg(applyDraw(inputs, d), d), ...extra })
   }
   const P0 = point ?? {}
-  if (P0.now && fin(P0.now.hours)) add('now', { kind: 'wait', installAt: now, waitH: 0, n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null, gains: null }, P0.now.hours)
+  // A point option's Bladeburner content (bladeInstallCompareOf): rides the spec, so the record keeps it (basisOf).
+  const bladeOf = (x) => (x?.blade ? { blade: x.blade } : {})
+  if (P0.now && fin(P0.now.hours)) add('now', { kind: 'wait', installAt: now, waitH: 0, n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null, gains: null, ...bladeOf(P0.now) }, P0.now.hours)
   for (const w of P0.waits ?? []) {
     if (!(fin(w?.waitH) && w.waitH > 0 && fin(w.hours))) continue
     if (w.route && count) {
@@ -714,7 +724,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     // worked, the next pass re-priced the commitment as a plain wait (x1.138,
     // +3.3h), and 30 min later the same hold won again: INSTALL DEFERRED
     // REPEATEDLY.
-    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null, ...(w.hold ? { hold: w.hold } : {}) }, w.hours)
+    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null, ...(w.hold ? { hold: w.hold } : {}), ...bladeOf(w) }, w.hours)
   }
   if (!count && P0.never && fin(P0.never.hours)) add('never', { kind: 'never' }, P0.never.hours)
   // The committed install time, on its remaining wait. A route option is
@@ -747,7 +757,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
         const specNow = g ? { ...spec, gains: g } : spec
         let pointH = null
         try {
-          pointH = trajectoryOf(specNow, ctx)(inputs)
+          pointH = tOf(specNow).f(inputs)
         } catch {
           pointH = null
         }
@@ -781,14 +791,14 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const pc = prev?.commitment ?? (prev && prev.key !== 'now' && fin(prev.meanH) ? { key: prev.key, meanH: prev.meanH, pointH: null, at: null, installAt: prev.installAt ?? null, noiseKey: prev.noiseKey ?? null, n: prev.n ?? null } : null)
     const carried = key === 'now' && elapsed && pc && fin(pc.meanH) && (!pc.at || now - Date.parse(pc.at) <= 60 * 60e3)
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
-    return { key: outKey, install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+    return { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
   }
   if (!redecide && committedKey) return record(committedKey, { ...heldFields(prev, rows, pricedAt), ...heldSanity(prev) })
   // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
   const prevH = committedKey ? (fin(prev?.commitment?.meanH) ? prev.commitment.meanH : fin(prev?.meanH) ? prev.meanH : null) : null
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
   const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
-  if (d.choice === null) return { key: null, install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, ...screened }
+  if (d.choice === null) return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, ...screened }
   return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
 }
 
@@ -1093,7 +1103,30 @@ export function basisOf(rec, now = Date.now()) {
   if (sp?.kind === 'route') return null // a route basis needs this pass's route object: priced by the install decision only
   if (!fin(rec.installAt)) return null
   const hold = sp?.hold ?? null
-  return { kind: 'wait', installAt: rec.installAt, waitH: Math.max(0, (rec.installAt - now) / 3.6e6), n: rec.fixed?.n ?? sp?.n ?? null, lifeH: rec.fixed?.lifeH ?? sp?.lifeH ?? null, gains: rec.gains ?? sp?.gains ?? null, ...(hold ? { hold } : {}) }
+  return { kind: 'wait', installAt: rec.installAt, waitH: Math.max(0, (rec.installAt - now) / 3.6e6), n: rec.fixed?.n ?? sp?.n ?? null, lifeH: rec.fixed?.lifeH ?? sp?.lifeH ?? null, gains: rec.gains ?? sp?.gains ?? null, ...(hold ? { hold } : {}), ...(sp?.blade ? { blade: sp.blade } : {}) }
+}
+
+/**
+ * The committed install as a basis for a HACKING trajectory: a record priced
+ * on the Bladeburner route (route 'blade') plans installs on the black-op
+ * exit — its 'never' is not the hacking route's plan — so the decisions that
+ * price the World Daemon exit (grafts, the life length, 4S, the batch) take
+ * the default policy there.
+ */
+export function hackBasisOf(rec, now = Date.now()) {
+  return rec?.route === 'blade' ? null : basisOf(rec, now)
+}
+
+/**
+ * THE BLADEBURNER TRAJECTORY'S NOISE KEY: one key per install plan on the
+ * black-op exit, so the route decision's blade arm and the install
+ * decision's committed option — the same trajectory — get the same
+ * structural draws and publish one exit (consistencyOf's rule for the
+ * hacking trajectories). No install (null basis, 'never'): 'bladeburner'.
+ */
+export function bladeNoiseKeyOf(spec) {
+  if (!spec || spec.kind === 'never' || !fin(spec.installAt)) return 'bladeburner'
+  return `bladeburner|at:${Math.round(spec.installAt / 60e3)}`
 }
 
 /**
@@ -2162,15 +2195,19 @@ export const seedOf = (lastAugReset, node) => hashOf(`${node ?? ''}:${lastAugRes
  *
  * Returns the decideAmong record plus { hackH, bladeH } (the points).
  */
-export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now() } = {}) {
+export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now() } = {}) {
   // The cadence in steps of e^0.25 (28%) around the point's: the drawn
   // cadences collapse to a handful of simulations (~50-100ms each), however
   // wide the cadence posterior is.
+  // `bladeStart` (the committed Bladeburner install plan, progress.js
+  // bladeRouteOf): ONE start, no cadence — the installs on this route are
+  // the install decision's (priced on this same trajectory), not the hacking
+  // route's cadence; the arm is then one simulation.
   const memo = new Map()
   const c0 = fin(base?.cycleHours) && base.cycleHours > 0 ? base.cycleHours : null
   function* bladeH(cyc) {
-    const k = c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
-    if (!memo.has(k)) memo.set(k, (yield* bladeExitGen(bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0))).hours)
+    const k = bladeStart ? 0 : c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
+    if (!memo.has(k)) memo.set(k, (yield* bladeExitGen(bladeStart ?? bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0))).hours)
     return memo.get(k)
   }
   let pointHack = null
@@ -2183,7 +2220,7 @@ export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, p
   const pointBlade = yield* bladeH(base?.cycleHours)
   const options = [
     { key: 'hack', noiseKey: noiseKeyOf(basis, base), sim: (d) => traj(applyDraw(base, d), d) },
-    { key: 'blade', noiseKey: 'bladeburner', sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours)), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours) },
+    { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours)), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours) },
   ]
   const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null
   const d = post
