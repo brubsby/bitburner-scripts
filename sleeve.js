@@ -103,7 +103,7 @@ import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen } from 'sleeveplan.js'
-import { bladeStartOf, SLEEVE_ACTION } from 'bbplan.js'
+import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION } from 'bbplan.js'
 import { makePacer } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES, GYMS, gymRate, bestGym } from 'bodyplan.js'
@@ -338,30 +338,35 @@ async function bladeFleetNow(ns, n, node) {
   const route = plan && plan.node === info.currentNode ? plan.decisions?.bladeRoute?.key ?? null : null
   const joined = !!tel && tel.bitNode === info.currentNode && tel.joined === true
   if (route !== 'blade' || !joined) return { on: false, why: route !== 'blade' ? `the plan's Bladeburner route is ${route ?? 'not decided in this node'}` : 'not in the Bladeburner division yet', route, joined }
-  const key = `${n}|${route}|${joined}`
+  // THE ROUTE'S OWN INSTALL PLAN (decisions.bladeRoute.installBasis — the
+  // black-op install decision's committed install, or none), never the
+  // hacking route's cadence: priced on installs every cycleHours (the
+  // exp reset each time), no fleet reached the 21st black op in 400h, the
+  // fleet kept its ordinary plan (Homicide) and the route priced five
+  // infiltrators nobody ran (live 2026-10-01 12:57Z).
+  const basis = plan?.decisions?.bladeRoute?.installBasis ?? null
+  const install = bladeInstallOfBasis(basis, Date.now())
+  const cal = plan?.decisions?.bladeRoute?.calibration ?? null
+  const key = `${n}|${route}|${joined}|${install ? install.firstH.toFixed(1) : 'none'}`
   if (bladeMemo && bladeMemo.key === key && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
   const p = ns.getPlayer()
   const mults = { ...p.mults }
   for (const [k, nk] of Object.entries(LEVEL_MULTS)) if (typeof node?.[nk] === 'number' && node[nk] > 0 && typeof mults[k] === 'number') mults[k] = mults[k] * node[nk]
   const person = { skills: { ...p.skills }, exp: { ...p.exp }, mults }
   const gym = bestGym(person)
-  let cyc = null
-  try {
-    const ei = JSON.parse(ns.read(EXIT_INPUTS) || 'null')
-    if (ei?.bitNode === info.currentNode && typeof ei?.inputs?.cycleHours === 'number') cyc = ei.inputs.cycleHours
-  } catch { cyc = null }
-  const lifeAgeH = Math.max(0, (Date.now() - info.lastAugReset) / 3600e3)
   const s0 = bladeStartOf({
     tel, person,
     gymExpPerSec: gym ? gymRate(gym, 'strength', person, 1) : null,
     bnRank: node?.BladeburnerRank ?? 1, skillCostMult: node?.BladeburnerSkillCost ?? 1,
-    install: cyc > 0 ? { everyH: cyc, firstH: Math.max(0.25, cyc - lifeAgeH), combatGain: 1 } : null,
+    install,
+    // The plan's calibration, as its own exits apply it (one model).
+    rankScale: cal?.rank?.applied ?? 1, successScale: cal?.success?.applied ?? 1,
     // Bounded: a fleet that does not reach the 21st black op in BLADE_FLEET_MAXH is not chosen.
     maxH: BLADE_FLEET_MAXH,
   })
   const pacer = makePacer({ sliceMs: 40, yieldFn: pageYield(ns) })
   const fleet = await pacer.slices(bladeFleetGen(s0, n), 'bladeFleet')
-  const result = { on: !!fleet.tasks, ...fleet, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), installEveryH: cyc }
+  const result = { on: !!fleet.tasks, ...fleet, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), install: install ? { firstH: +install.firstH.toFixed(2), from: basis?.kind ?? null } : null, installBasis: basis?.kind ?? 'none' }
   bladeMemo = { key, at: Date.now(), result }
   return result
 }

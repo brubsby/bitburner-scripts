@@ -92,11 +92,19 @@ export function bladeburnerHealth({ bb = null, pr = null, eg = null, state = {},
 
   // ---- outcomes -----------------------------------------------------------
   const oc = bb.outcomes
-  if (oc && num(oc.n) && oc.n >= 10 && num(oc.observed) && num(oc.expected) && oc.observed < 0.5 * oc.expected) fail(`ACTION FAILING: ${(oc.observed * 100).toFixed(0)}% of the last ${oc.n} attempts succeeded, the policy expected ${(oc.expected * 100).toFixed(0)}%`, `the chance is decided on the LOW end of the shown range (bbplan header): a rate this far under it means the ENV probe or the estimate is wrong — last: ${JSON.stringify(oc.last ?? []).slice(0, 200)}`)
+  if (oc && num(oc.n) && oc.n >= 10 && num(oc.observed) && num(oc.expected) && oc.observed < 0.5 * oc.expected) fail(`ACTION FAILING: ${(oc.observed * 100).toFixed(0)}% of the last ${oc.n} attempts succeeded, the policy expected ${(oc.expected * 100).toFixed(0)}%`, `the chance is the REAL one (the true population read off the black-op range, bbplan.popRatioFromRange): a rate this far under it means the ENV probe or the population read is wrong — last: ${JSON.stringify(oc.last ?? []).slice(0, 200)}`)
 
   // ---- the model ----------------------------------------------------------
   const cal = bb.calibration
   if (cal && num(cal.timeFormulaS) && num(cal.timeGameS) && Math.abs(cal.timeFormulaS - cal.timeGameS) > 1) fail(`MODEL OFF: bbplan.actionTime ${cal.timeFormulaS}s vs the game's getActionTime ${cal.timeGameS}s for ${bb.action?.name}`, 'every simulated Bladeburner exit uses this formula ([BB3] checks it against the game source; a live mismatch means the source moved or the inputs are wrong)')
+  // The success posterior (bbplan.successPosterior on the daemon's measured attempts): the
+  // formula is the game's, so a k away from 1 with the evidence to show it is an INPUT wrong.
+  const sc = cal?.success
+  if (sc && num(sc.k) && num(sc.sdLn) && num(sc.n)) {
+    const off = Math.abs(Math.log(sc.k))
+    if (sc.n >= 200 && off > 0.3 && off > 3 * sc.sdLn) fail(`MODEL OFF: success realised ${sc.s}/${sc.n} against ${sc.expected} predicted (k ${sc.k}, x/÷ ${Math.exp(1.2816 * sc.sdLn).toFixed(2)})`, 'the chance formula is the game\'s (bbplan [BB2]): an input is wrong — the true population read (cities[].r), the ENV probe, the stamina — every Bladeburner exit is priced with it (decisions.bladeRoute.calibration)')
+    else notes.push(`bladeburner model: ${sc.why}`)
+  }
   if (cal && num(cal.maxStaminaFormula) && num(cal.maxStaminaGame) && cal.maxStaminaGame > 0) {
     const e = cal.maxStaminaFormula / cal.maxStaminaGame - 1
     notes.push(`bladeburner model: max stamina formula ${cal.maxStaminaFormula} vs game ${cal.maxStaminaGame} (${(e * 100).toFixed(1)}%; Training's stamina bonus is not read)`)

@@ -344,8 +344,8 @@ export function runBladeburner(o) {
     const sharedDecide = () => {
       // Operations and black ops take the whole team (the daemon's setTeamSize).
       for (const a of [...Object.values(bb.operations), ...bb.blackOperationArray]) a.teamCount = bb.teamSize
-      if (t - lastSkillT >= 600) {
-        for (const b of bp.planSkills(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost)) bb.upgradeSkill(b.name, b.count)
+      if (t - lastSkillT >= (pol.skillEveryS ?? sharedPol.skillEveryS ?? 600)) {
+        for (const b of bp.planSkills(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost, sharedPol.skillChunks ?? 20)) bb.upgradeSkill(b.name, b.count)
         lastSkillT = t
       }
       if (bb.stamina <= sharedPol.restLow * bb.maxStamina) resting = true

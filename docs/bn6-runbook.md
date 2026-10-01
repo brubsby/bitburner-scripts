@@ -75,6 +75,31 @@ Live 2026-10-01 the route committed `blade` (~29h) while the install decision st
 - **The Blade's Simulacrum** (`decisions.bladeRoute.simulacrum`, `bbplan.simulacrumVerdictGen`): priced on the exit — reach (money and Bladeburners reputation at the measured rates), the exit installing it at the reach, and the no-cost bound. Live: $150b at ~$31m/h is ~4,800h away (reputation ~16h at 2 x faction_rep x favour per rank); installed now at no cost it would save ~3.1h of ~25.7h. Ordered only when the verdict buys and both are there now.
 - **The slot handoff**: `bladeburner.js` re-reads the claim immediately before `startAction` (which ends the player's work first, `Bladeburner.ts:179`) and treats an order batch newer than the claim that starts work as a handoff, not a claim. `act.js` re-issues the owner's last work order when the game shows no work (`actplan.reissueWorkOf`, `/tel/act.txt reissue`): the 10:27Z defense gym was gone 30s after it started and nothing ran until the 10:32Z batch.
 
+## The first live calibration (2026-10-01)
+
+`tools/sim/bbcal.mjs` replays it; `tools/test/bladecal.test.mjs` [BC1-BC11] holds it (fixture `tools/test/fixture-bn6-bladecal-1322.json`).
+
+- **The success formula is the game's.** At 13:22Z the formula gave Operation Typhoon 0.03696; the game showed [0.0363, 0.0370]. Retirement L10 at Chongqing's TRUE population: 0.566 predicted, 21/36 (12:40-13:23Z) and 81/135 (lifetime) realised. Success posterior on that window: k 1.03 x/÷ 1.06.
+- **The populations were estimates.** `getCityEstimatedPopulation` is the estimate. The game rolls on the true population, and the exit model priced the estimate. One end of every range the API shows is the chance at the estimate. A black op has no city term, so its range is [p·r, p] or [p, p·r], with r = pop/popEst (`bbplan.popRatioFromRange`). The daemon now reads r in all six cities every pass and decides on the REAL chance. It used to decide on the low end, which was 46% of the real chance while Chongqing's estimate read 1.72e9 against ~1.16e9. Field Analysis is now only for an unreadable range. Volhaven's true 1.42e9 (estimate 1.03e9) is the best city.
+- **The drift, attributed (11:07 -> 13:22Z, the model as shipped, one input group at a time):** the cities' estimates +2.96h (Field Analysis corrected Chongqing 1.72e9 -> 1.18e9 and New Tokyo 1.38e9 -> 1.16e9; New Tokyo is truly 0.80e9), maxLevels +0.89h (successes reset to 0 in the model), rank -0.17h, the player's stats -2.15h. Net +0.92h over 2.25h of wall time, against the -2.25h a held plan expects. The 12:17 -> 12:22Z +1.92h step left the no-install Simulacrum bound flat (21.73 -> 21.67h), so it was not in rank, counts or levels. The model's response to a city estimate is discontinuous: on the 13:22 state one estimate 1.30e9 -> 1.18e9 moves the exit +1.8h. On the true populations an estimate correction moves nothing.
+- **The fleet nobody ran.** sleeve.js priced every Bladeburner fleet with installs every `cycleHours` (8-12h). None finished in 400h, so the sleeves kept their ordinary plan (Homicide, later Recovery). progress.js then priced five infiltrators. The published exit was 26.6h; the sleeves as they ran give 42.7h. Now the route prices `bbplan.bladeFleetOf` (the committed config, else the tasks as assigned), and sleeve.js prices on the route's own install basis (`bladeInstallOfBasis`).
+- **The rank calibration ratio** (realised gain / model gain from 13:22Z, 8.8h, 162 -> 1028): the shipped model as published (popEst, five infiltrators) 1.21; the shipped model on the sleeves as run 1.02. By hour on the as-run start: 0.96, 1.11, 1.18, 1.29, 1.29, 1.31, 1.16, 1.07, 1.02. The plan now keeps this as a posterior (`decisions.bladeRoute.calibration.rank`): hour windows of the model's own path, prior k = 1 x/÷ 1.47, weighted by hours. It applies k to the exit (rankScale).
+- **Stamina is a state.** The start is banked or owed rest at the chamber's rate (passive 1.39/min + chamber 0.67/min = the logs' 2.06/min); the steps keep the duty cycle.
+- **Policy fixes:**
+  - The action is chosen per wall second, at its stamina duty: the player acts ~42% of the time.
+  - Cyber's Edge is priced. The daemon's skill view had `maxStaminaBase: false`, so no stamina skill ever moved its objective, and Cyber's Edge sat at 0.
+  - Skill points are saved for the best value per point.
+  - The daemon spends skill points hourly, as the model simulates (`POLICY.skillEveryS`). It used to spend every minute. Game physics, seed 1 from BN6 entry: spending every 60s takes 39.1h, every 600s 34.3h, hourly 28.1h (`tools/sim/bbskillcadence.mjs`).
+  - Resting stays in the chamber: Field Analysis instead pays less per stamina-bound second, (R > f·(1 + D/h): 0.029 vs 0.023 rank/s live).
+- Healthcheck MODEL OFF (success) fires at 200+ attempts, |ln k| > 0.3 and 3 sd. The plan applies the posterior k to every Bladeburner exit (`successScale`).
+- **Measured outcomes.** The old rule ("the rank moved by half a success") read a read spanning several completions as one success. It published 20/20 while the game counted 45/61. Now attempts come from the worked action's count against its growth twin, and successes from the rank (`attemptsOf`).
+- **The population read, checked on the game's own classes** (bbdaemon [BD5]). Every read population equals the true one (worst 0.1%). The measured success k is 0.98-1.08. That came after two fixes:
+  - The side of the range now comes from a city-dependent action's own range (`popRatioFromRanges`), not the formula's chance, which inverted r. The harness read k 1.1-2.5, e.g. 400/400 at 0.59 predicted.
+  - Attempts are kept out of the calibration where the estimate clamped (ENV a lower bound).
+- **Events (EXIT UNSTABLE):**
+  - These are events: the fleet changing, a black op, a random event in the best city (true population > 4%), a calibration update.
+  - These are not events: an estimate correction, and the model's own drift.
+
 ## If it goes wrong
 
 | symptom | where | fix |

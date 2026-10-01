@@ -54,7 +54,7 @@ import { canJoinBladeburner } from 'sfgate.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, pFrom, bestCity } from 'bbplan.js'
+import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
 const PROGRESS = '/tel/progress.txt'
@@ -184,10 +184,37 @@ async function operate(ns, say, info, mults) {
   let lastSkills = 0
   const autoOff = new Set()
   const samples = [] // {t, rank, stamina, maxStamina} once a minute, the last hour
-  const outcomes = [] // {name, level, p, ok} the last 30 completions
-  let pending = null // the attempt in flight: {type, name, level, p, rank0, gain, startedAt}
+  const outcomes = [] // {name, level, p, n, s} per read: the attempts since the last read (bbplan.attemptsOf)
+  let obs = null // what the last pass left running: {name, level, p, count, twin, rank}
+  let unmeasured = null // the last interval attemptsOf could not attribute, and why
   let teamSet = -1
   const purchases = []
+  // THE SUCCESS CALIBRATION survives a restart: the groups this script
+  // published last (same node), so the evidence keeps growing.
+  let calGroups = []
+  try {
+    // From home: this script mirrors its record there, and a restart may land on another host.
+    if (host !== 'home') ns.scp(STATUS, host, 'home')
+  } catch {
+    /* the copy here, if any */
+  }
+  try {
+    const prev = JSON.parse(ns.read(STATUS) || 'null')
+    if (prev?.bitNode === info.currentNode && Array.isArray(prev?.calibration?.success?.groups)) calGroups = prev.calibration.success.groups.filter((g) => g && g.p > 0 && g.n > 0)
+  } catch {
+    calGroups = []
+  }
+  const addGroup = (name, level, p, n, sN) => {
+    const pr = +p.toFixed(3)
+    const g = calGroups.find((x) => x.name === name && x.level === level && x.p === pr)
+    if (g) {
+      g.n += n
+      g.s += sN
+    } else calGroups.push({ name, level, p: pr, n, s: sN })
+    // Keep the newest SUCCESS_CAL.keep attempts (oldest groups go first).
+    let tot = calGroups.reduce((a, x) => a + x.n, 0)
+    while (calGroups.length > 1 && tot - calGroups[0].n >= SUCCESS_CAL.keep) tot -= calGroups.shift().n
+  }
 
   for (;;) {
     // ---- 1. in the division? -------------------------------------------
@@ -219,34 +246,53 @@ async function operate(ns, say, info, mults) {
     const levels = {}
     for (const name of Object.keys(SKILLS)) levels[name] = bb.getSkillLevel(name)
     const [stamina, maxStamina] = bb.getStamina()
-    const cities = CITY_NAMES.map((name) => ({ name, pop: bb.getCityEstimatedPopulation(name), chaos: bb.getCityChaos(name), comms: bb.getCityCommunities(name) }))
-    if (!city) city = bestCity(cities).name
-    bb.switchCity(city) // where the probes are read; getCity is not paid for, so the daemon always sets it
     const team = bb.getTeamSize()
     if (team !== teamSet) {
       // Operations and black ops take the whole team (supporting sleeves count, Bladeburner.ts:101-103).
       for (const d of [...Object.values(OPERATIONS), ...BLACK_OPS]) bb.setTeamSize(typeOf(d), d.name, team)
       teamSet = team
     }
-
-    // A completed attempt: compare the rank it moved with what success would have paid.
-    if (pending) {
-      const cur = bb.getCurrentAction()
-      const done = !cur || cur.name !== pending.name || bb.getActionCurrentTime() < pending.elapsedMs
-      if (done) {
-        const dr = rank - pending.rank0
-        outcomes.push({ name: pending.name, level: pending.level, p: pending.p, ok: dr >= 0.5 * pending.gain })
-        if (outcomes.length > 30) outcomes.shift()
-        pending = null
+    // THE TRUE POPULATION OF EVERY CITY (bbplan.popRatioFromRange): the
+    // hardest black op's shown range in each city is [p*r, p] or [p, p*r],
+    // r = pop / popEst, and p is the formula's (no city term). switchCity is
+    // free and instant and nothing ticks inside this synchronous block, so
+    // the running action never sees another city; the current one is set
+    // back below. `pop` null: the range could not say (an end clamped).
+    const smNow = skillMultsOf(levels)
+    const probeD = dataOf(POP_PROBE)
+    const probeP = successChance(probeD, 1, person, smNow, { int: person.skills.intelligence ?? 0, stamina, maxStamina, teamCount: team, augMult: person.mults.bladeburner_success_chance ?? 1 })
+    const cities = CITY_NAMES.map((name) => {
+      bb.switchCity(name)
+      const popEst = bb.getCityEstimatedPopulation(name)
+      const [lo, hi] = bb.getActionEstimatedSuccessChance(TYPE.blackOp, POP_PROBE)
+      // The side from a city-dependent action's own range (popRatioFromRanges), the formula's chance where none reads.
+      let r = null
+      for (const [tp, nm] of [[TYPE.operation, 'Assassination'], [TYPE.contract, 'Tracking'], [TYPE.contract, 'Retirement']]) {
+        const [cl, ch] = bb.getActionEstimatedSuccessChance(tp, nm)
+        r = popRatioFromRanges(lo, hi, cl, ch)
+        if (r !== null) break
       }
-    }
+      if (r === null) r = popRatioFromRange(lo, hi, probeP)
+      return { name, popEst, pop: r === null ? null : popEst * r, r, chaos: bb.getCityChaos(name), comms: bb.getCityCommunities(name) }
+    })
+    // The policy and the model decide on the TRUE population where it is known.
+    const truePop = (c) => (c.pop !== null && c.pop >= 0 ? c.pop : c.popEst)
+    if (!city) city = bestCity(cities.map((c) => ({ ...c, pop: truePop(c) }))).name
+    bb.switchCity(city) // where the probes are read; getCity is not paid for, so the daemon always sets it
 
     const readEnv = () => {
       const sm = skillMultsOf(levels)
       const ref = cities.find((c) => c.name === city)
+      // r known: one end of every action's range is its chance at the
+      // ESTIMATE (r < 1: the high end; r > 1: the low end, Action.ts:144-167),
+      // so ENV at popEst is exact, and with the cities at their true
+      // populations cityFactor gives the REAL chance — what the game rolls.
+      // r unknown: the low end, as before, and the width says how unsure.
+      const rCur = ref.r
       let Kc = 0
       let Ko = 0
-      let width = 0
+      let KcLo = 0
+      let KoLo = 0
       const actions = []
       for (const d of LEVELED) {
         const type = typeOf(d)
@@ -258,35 +304,55 @@ async function operate(ns, say, info, mults) {
         const maxLevel = bb.getActionMaxLevel(type, d.name)
         bb.setActionLevel(type, d.name, maxLevel)
         const [lo, hi] = bb.getActionEstimatedSuccessChance(type, d.name)
-        width = Math.max(width, hi - lo)
+        const est = rCur === null ? lo : rCur < 1 ? hi : lo
         if (!(d.name === 'Raid' && ref.comms < 1)) {
-          const K = envFromChance(lo, d, maxLevel, person, sm)
-          if (d.kind === 'contract') Kc = Math.max(Kc, K)
-          else Ko = Math.max(Ko, K)
+          // Every action of a family shares one ENV: the largest unclamped read is exact.
+          if (est < 0.999) {
+            const K = envFromChance(est, d, maxLevel, person, sm)
+            if (d.kind === 'contract') Kc = Math.max(Kc, K)
+            else Ko = Math.max(Ko, K)
+          }
+          const K0 = envFromChance(lo, d, maxLevel, person, sm)
+          if (d.kind === 'contract') KcLo = Math.max(KcLo, K0)
+          else KoLo = Math.max(KoLo, K0)
         }
-        actions.push({ d, count, maxLevel, width: hi - lo })
+        actions.push({ d, count, maxLevel, width: rCur === null ? hi - lo : 0 })
       }
+      // Every estimate clamped (a strong player): the low end, a lower bound — not exact.
+      const exact = { contracts: Kc > 0, operations: Ko > 0 }
+      if (!(Kc > 0)) Kc = KcLo
+      if (!(Ko > 0)) Ko = KoLo
       for (const a of actions) a.K = a.d.kind === 'contract' ? Kc : Ko
       const next = bb.getNextBlackOp()
       let blackOp = null
       if (next) {
         const d = dataOf(next.name)
         const [lo, hi] = bb.getActionEstimatedSuccessChance(TYPE.blackOp, next.name)
-        blackOp = { d, K: envFromChance(lo, d, 1, person, sm), width: hi - lo, lo, hi }
+        // A black op's real chance is its estimated one (no city term): the end the formula names.
+        const pF = successChance(d, 1, person, sm, { int: person.skills.intelligence ?? 0, stamina, maxStamina, teamCount: team, augMult: person.mults.bladeburner_success_chance ?? 1 })
+        const p = Math.abs(hi - pF) <= Math.abs(lo - pF) ? hi : lo
+        blackOp = { d, K: envFromChance(p, d, 1, person, sm), width: 0, lo, hi }
       }
       return {
         person, sm, levels, bnRank, rank, stamina, maxStamina,
-        staminaGain: staminaGainOf(person, sm, maxStamina), maxStaminaBase: false,
-        resting, ref: { pop: ref.pop, chaos: ref.chaos }, cities, city, actions, blackOp,
+        // maxStaminaBase: the skill planner re-derives max stamina and its
+        // regeneration under a candidate purchase (Cyber's Edge) from the
+        // formula plus Training's bonus read back out of the game. False, a
+        // stamina skill moved nothing and was never bought (live 13:22Z:
+        // Cyber's Edge 0 while stamina held the player to ~42% acting).
+        staminaGain: staminaGainOf(person, sm, maxStamina), maxStaminaBase: true, staminaBonus: staminaBonusOf(person, sm, maxStamina),
+        resting, ref: { pop: ref.popEst, chaos: ref.chaos }, cities: cities.map((c) => ({ name: c.name, pop: rCur === null ? c.popEst : truePop(c), chaos: c.chaos, comms: c.comms })), city, actions, blackOp,
         K: { contracts: Kc, operations: Ko },
+        Kexact: exact,
       }
     }
 
     // ---- 3. skills: no slot needed ----------------------------------------
     let sp = bb.getSkillPoints()
-    if (sp >= 1 && Date.now() - lastSkills > 60e3) {
+    // On the model's cadence (POLICY.skillEveryS, chunks POLICY.skillChunks): the exit prices this policy.
+    if (sp >= 1 && Date.now() - lastSkills > POLICY.skillEveryS * 1000) {
       const v = readEnv()
-      for (const b of planSkills(v, sp, POLICY, costMult)) {
+      for (const b of planSkills(v, sp, POLICY, costMult, POLICY.skillChunks)) {
         const before = bb.getSkillLevel(b.name)
         bb.upgradeSkill(b.name, b.count)
         const after = bb.getSkillLevel(b.name)
@@ -303,6 +369,25 @@ async function operate(ns, say, info, mults) {
     if (stamina <= POLICY.restLow * maxStamina) resting = true
     if (resting && stamina >= POLICY.restHigh * maxStamina) resting = false
     let v = readEnv()
+    // ---- what the last interval did (bbplan.attemptsOf): attempts from the
+    // worked action's count against its growth twin's, successes from the rank.
+    if (obs) {
+      const d0 = dataOf(obs.name)
+      const twin = COUNT_TWIN[obs.name]
+      const cnt = (n) => v.actions.find((a) => a.d.name === n)?.count
+      const a = twin ? attemptsOf({ d: d0, level: obs.level, bnRank, count0: obs.count, count1: cnt(obs.name), twin0: obs.twin, twin1: cnt(twin), rank0: obs.rank, rank1: rank }) : { n: null, why: `${obs.name} has no growth twin` }
+      if (a.n > 0 && obs.p > 0) {
+        outcomes.push({ name: obs.name, level: obs.level, p: obs.p, n: a.n, s: a.s })
+        while (outcomes.length > 60) outcomes.shift()
+        // The calibration only where the chance can say something: a predicted
+        // ~1 is often a clamped estimate (ENV a lower bound), and its successes
+        // would push k up on nothing (bbdaemon [BD5]).
+        // ...and only where the chance was the REAL one (the population read: obs.exact); on the
+        // low end of an unread range it is a lower bound and would push k up on nothing.
+        if (obs.p < SUCCESS_CAL.maxP && obs.exact) addGroup(obs.name, obs.level, obs.p, a.n, a.s)
+      } else if (a.n === null) unmeasured = { name: obs.name, why: a.why }
+      obs = null
+    }
     let pick = chooseAction(v, POLICY)
     if (pick.city && pick.city !== city) {
       // Another city prices better: move (free and instant) and decide again on its own probes.
@@ -354,10 +439,12 @@ async function operate(ns, say, info, mults) {
       }
       if (d) {
         calib.timeGameS = bb.getActionTime(pick.type, pick.name) / 1000 // ms (NetscriptFunctions/Bladeburner.ts:125-130)
-        if (!pending) pending = { type: pick.type, name: pick.name, level, p: pick.p, rank0: rank, gain: d.kind === 'blackop' ? d.rankGain * bnRank : d.rankGain * Math.pow(d.rewardFac, level - 1) * bnRank, elapsedMs: 0 }
+        // What runs until the next read: its counters now (bbplan.attemptsOf reads the change).
+        const twin = COUNT_TWIN[pick.name]
+        const cnt = (n) => v.actions.find((a) => a.d.name === n)?.count
+        if (d.kind !== 'blackop' && twin && pick.p > 0) obs = { name: pick.name, level, p: pick.p, exact: cities.find((c) => c.name === city)?.r != null && v.Kexact?.[d.kind === 'contract' ? 'contracts' : 'operations'] === true, count: cnt(pick.name), twin: cnt(twin), rank }
       }
     } else if (!slot.ours) {
-      pending = null
       // Not ours: nothing of ours may run. (The probes above moved every
       // action's level, so a leftover action would also be at the wrong one.)
       if (current) {
@@ -365,7 +452,6 @@ async function operate(ns, say, info, mults) {
         current = bb.getCurrentAction()
       }
     }
-    if (pending) pending.elapsedMs = bb.getActionCurrentTime()
 
     // ---- 5. publish --------------------------------------------------------
     const now = Date.now()
@@ -375,9 +461,17 @@ async function operate(ns, say, info, mults) {
     }
     const hourAgo = samples.find((s) => now - s.t <= 3600e3) ?? samples[0]
     const rankPerHour = samples.length > 1 && now > hourAgo.t ? ((rank - hourAgo.rank) / (now - hourAgo.t)) * 3600e3 : null
-    const recent = outcomes.slice(-20)
-    const observed = recent.length ? recent.filter((o) => o.ok).length / recent.length : null
-    const expected = recent.length ? recent.reduce((s, o) => s + (o.p ?? 0), 0) / recent.length : null
+    // The last >= 20 measured ATTEMPTS (a read can span several).
+    const recent = []
+    let rn = 0
+    for (let i = outcomes.length - 1; i >= 0 && rn < 20; i--) {
+      recent.unshift(outcomes[i])
+      rn += outcomes[i].n
+    }
+    const rs = recent.reduce((a, o) => a + o.s, 0)
+    const observed = rn ? rs / rn : null
+    const expected = rn ? recent.reduce((a, o) => a + o.n * o.p, 0) / rn : null
+    const sCal = successPosterior(calGroups)
     const bo = v.blackOp
     say(exitReady ? 'ok' : slot.ours ? 'ok' : 'waiting', {
       ...base,
@@ -408,9 +502,11 @@ async function operate(ns, say, info, mults) {
       env: { contracts: v.K.contracts, operations: v.K.operations },
       counts: Object.fromEntries(v.actions.map((a) => [a.d.name, +a.count.toFixed(1)])),
       maxLevels: Object.fromEntries(v.actions.map((a) => [a.d.name, a.maxLevel])),
-      cities: cities.map((c) => ({ name: c.name, popEst: Math.round(c.pop), chaos: +c.chaos.toFixed(2), comms: c.comms })),
-      outcomes: { n: recent.length, observed, expected, last: recent.slice(-5) },
-      calibration: calib,
+      // pop: the TRUE population read off the black-op range (r = pop/popEst), null where it could not be read.
+      cities: cities.map((c) => ({ name: c.name, popEst: Math.round(c.popEst), pop: c.pop === null ? null : Math.round(c.pop), r: c.r === null ? null : +c.r.toFixed(5), chaos: +c.chaos.toFixed(2), comms: c.comms })),
+      staminaBonus: +staminaBonusOf(person, v.sm, maxStamina).toFixed(4),
+      outcomes: { n: rn, observed, expected, last: recent.slice(-5), method: 'attempts from the count against its growth twin, successes from the rank (bbplan.attemptsOf)', unmeasured },
+      calibration: { ...calib, success: { ...sCal, groups: calGroups } },
       purchases: purchases.slice(-5),
       samples: samples.slice(-61).map((s) => ({ at: new Date(s.t).toISOString(), rank: s.rank, stamina: s.stamina })),
       detail: exitReady ? 'exit ready — waiting on endgame.js' : slot.ours ? pick.why : `not acting: ${slot.why}`,

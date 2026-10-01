@@ -160,7 +160,7 @@ import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -2514,15 +2514,38 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     const tel = tel0 && tel0.bitNode === info.currentNode ? tel0 : null
     const fleet = readJson(ns, '/tel/sleeve.txt')
     const ours = fleet && fleet.bitNode === info.currentNode
-    const nSleeves = ours && Number.isInteger(fleet.sleeves) ? fleet.sleeves : 0
-    // The fleet sleeve.js committed for Bladeburner (sleeve.txt blade.config), else all on Infiltrate.
-    const sleeves = ours && fleet.blade?.config ? fleet.blade.config : { infiltrate: nSleeves, support: 0, fa: 0 }
+    // THE FLEET AS IT WILL RUN (bbplan.bladeFleetOf): sleeve.js's committed
+    // Bladeburner fleet, else the sleeves as assigned — never a fleet nobody
+    // runs (live 13:22Z: all five priced on Infiltrate while all five did
+    // Homicide; 26.6h published, 42.7h on the sleeves as they were).
+    const fl = bladeFleetOf(ours ? fleet : null)
+    const sleeves = fl.sleeves
     const person = levelledPerson(player, info)
     const gym = bestGym(person)
     const gymExpPerSec = gym ? gymRate(gym, 'strength', person, ns.hacknet.getTrainingMult()) : null
     const simOwned = !!owned?.has?.(SIMULACRUM)
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned })
+    // THE CALIBRATION (bbplan successPosterior / rankRatePosterior): the
+    // success chance the game rolled over the formula's (the daemon's
+    // attempts), and the rank the game paid over the model's own path (the
+    // windows this pass keeps, across lives: k is the model's, not a life's).
+    // Both enter every Bladeburner exit of this pass through the one builder.
+    const sCal = tel?.calibration?.success && Number.isFinite(tel.calibration.success.k) ? tel.calibration.success : successPosterior([])
+    const prevCal = pc.prevAny?.decisions?.bladeRoute?.calibration?.rank ?? null
+    const rankPost0 = rankRatePosterior(prevCal?.samples ?? [])
+    const successScale = sCal.k > 0 ? sCal.k : 1
+    const rankScale = rankPost0.k > 0 ? rankPost0.k : 1
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale })
     pc.bladeCtx = { startFor, simOwned }
+    // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
+    // fleet, a black op, a random event in the best city, a calibration
+    // update. Raised before the decision, so it re-decides on them and EXIT
+    // UNSTABLE judges only what the model should have carried.
+    const bladeState = bladeStateOf({ tel, sleeves, cal: { rank: rankPost0, success: sCal } })
+    const bev = bladeEventsOf(pc.prev?.decisions?.bladeRoute?.state ?? null, bladeState)
+    if (bev.length) {
+      pc.events = [...(pc.events ?? []), ...bev]
+      pc.redecide = true
+    }
     return await planDecide(pc, 'bladeRoute', function* () {
       const base = inputsFn()
       yield
@@ -2530,6 +2553,22 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       const bladeCommitted = prevInst?.route === 'blade'
       const bladeBasis = bladeCommitted ? basisOf(prevInst, Date.now()) : null
       const basis = bladeCommitted ? null : basisOf(prevInst, Date.now())
+      // The rank ledger: the model's own path from this state (rankScale 1 —
+      // the formula with this pass's success calibration) opens a window;
+      // a window an hour old closes against the rank now (rankCalStep).
+      let rankCal = { pending: prevCal?.pending ?? null, samples: prevCal?.samples ?? [], closed: null }
+      try {
+        const actingNow = tel?.joined === true && tel?.slot?.ours === true && (tel.result === 'acting' || tel.result === 'started')
+        let path = null
+        if (actingNow) {
+          const pr = yield* bladeExitGen({ ...startFor(bladeBasis), rankScale: 1, maxH: RANK_CAL.pathH, pathEveryS: RANK_CAL.pathEveryS })
+          path = pr.path ?? null
+        }
+        rankCal = rankCalStep(prevCal, { at: new Date().toISOString(), lastAugReset: info.lastAugReset, rank: tel?.rank, ours: actingNow, path, successScale })
+      } catch (e) {
+        rankCal = { ...rankCal, error: `rank calibration threw: ${String(e).slice(0, 120)}` }
+      }
+      const rankPost = rankRatePosterior(rankCal.samples)
       const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
@@ -2564,6 +2603,13 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         rank: tel?.rank ?? null,
         blackOps: tel?.blackOps?.done ?? null,
         sleeves,
+        fleet: { source: fl.source, why: fl.why },
+        calibration: {
+          success: { k: sCal.k, lnK: sCal.lnK, sdLn: sCal.sdLn, n: sCal.n, s: sCal.s, expected: sCal.expected, why: sCal.why, applied: successScale },
+          // applied: what this pass's exits used (the posterior at the pass's start); the ledger's newest window is in the next pass's.
+          rank: { ...rankPost, applied: rankScale, pending: rankCal.pending, samples: rankCal.samples, closed: rankCal.closed, ...(rankCal.error ? { error: rankCal.error } : {}) },
+        },
+        state: bladeState,
         installBasis: bladeBasis ? { kind: bladeBasis.kind, waitH: bladeBasis.waitH ?? null, installAt: bladeBasis.installAt ?? null, from: prevInst?.key ?? null } : { kind: 'none', why: bladeCommitted ? `the committed install is ${prevInst?.key}` : 'no install priced on this route yet: none' },
         simulacrum,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
@@ -3548,7 +3594,7 @@ function publishPlan(ns, info, extra = {}) {
       events: pc.events,
       exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       // markBladeMoot: on the committed Bladeburner route the hack arm's decisions
-      // (grafts, lifeLength, fourS, batch, sleeveObjective) say they are not on the committed exit.
+      // (grafts, lifeLength, fourS, batch) say they are not on the committed exit.
       decisions: markBladeMoot({
         install: inst,
         // THE BATCH BY THE EXIT (batchChoiceStep / plan.chooseBatchGen): the

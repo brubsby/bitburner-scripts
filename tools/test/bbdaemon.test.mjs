@@ -225,6 +225,77 @@ export async function run() {
     const cal = s?.calibration
     if (cal && typeof cal.timeGameS === 'number' && cal.timeFormulaS !== cal.timeGameS) c.fail(`formula action time ${cal.timeFormulaS}s vs the game's ${cal.timeGameS}s`)
     if (s?.outcomes?.n >= 10 && s.outcomes.observed < 0.5 * s.outcomes.expected) c.fail(`observed success ${s.outcomes.observed} vs expected ${s.outcomes.expected}`)
+
+    // ---- BD5 (same world) ----
+    const c5 = new Check('BD5', "the daemon's READS against the game's own state: every city's true population off the black-op range; attempts and successes against the game's counters; the success posterior near 1")
+    checks.push(c5)
+    const cities = s?.cities ?? []
+    let worst = 0
+    for (const x of cities) {
+      const truth = bb.cities[x.name].pop
+      if (x.pop === null) continue
+      worst = Math.max(worst, Math.abs(x.pop / truth - 1))
+    }
+    c5.examined(cities.length)
+    c5.note(`cities: ${cities.map((x) => `${x.name} est ${(x.popEst / 1e9).toFixed(3)} read ${x.pop === null ? '-' : (x.pop / 1e9).toFixed(3)} true ${(bb.cities[x.name].pop / 1e9).toFixed(3)}`).join('; ')}; worst |error| ${(worst * 100).toFixed(3)}%`)
+    // Unread only where the range cannot say r: the probe's chance times r = pop/popEst clamps at 1
+    // (an estimate far below the truth, or 0). Those cities stay on their estimate, as before.
+    const probe = Object.values(bb.blackOperations ?? {}).find((b) => b.name === bp.POP_PROBE)
+    const probeP = probe ? probe.getSuccessChance(bb, w.P) : null
+    const bad = cities.filter((x) => x.pop === null).filter((x) => {
+      const c = bb.cities[x.name]
+      return !(c.popEst <= 0 || (probeP * c.pop) / c.popEst >= 0.999)
+    })
+    c5.note(`unread cities ${cities.filter((x) => x.pop === null).map((x) => x.name).join(', ') || 'none'}; the probe's chance ${probeP?.toFixed(4)}`)
+    if (cities.length !== 6) c5.fail('six cities')
+    if (bad.length) c5.fail(`unread where the range could say r: ${bad.map((x) => x.name).join(', ')}`)
+    if (!(worst < 0.002)) c5.fail(`the population read off the range is off by ${(worst * 100).toFixed(2)}%`)
+    const groups = s?.calibration?.success?.groups ?? []
+    const byName = {}
+    for (const gr of groups) {
+      byName[gr.name] = byName[gr.name] ?? { n: 0, s: 0 }
+      byName[gr.name].n += gr.n
+      byName[gr.name].s += gr.s
+    }
+    // The groups are the newest SUCCESS_CAL.keep attempts (a rolling window), so
+    // against the game's lifetime counters: never more than happened.
+    for (const [name, m] of Object.entries(byName)) {
+      const a = bb.contracts[name] ?? bb.operations[name]
+      const att = a.successes + a.failures
+      c5.examined(1)
+      c5.note(`${name}: the daemon measured ${m.s}/${m.n} (window); the game counted ${a.successes}/${att} (lifetime)`)
+      if (m.n > att || m.s > a.successes || m.n - m.s > a.failures) c5.fail(`${name}: measured more than happened (${m.s}/${m.n} vs ${a.successes}/${att})`)
+    }
+    if (!groups.some((gr) => gr.s < gr.n)) c5.fail('no failure was ever measured: the attempt count misses failures')
+    if (groups.some((gr) => gr.p >= bp.SUCCESS_CAL.maxP)) c5.fail('a near-certain (clamp-prone) chance entered the calibration')
+    {
+      // The daemon's chance for what it runs now against the game's own (same city, level, stamina).
+      const act = s?.action
+      const obj = act && act.level ? (bb.contracts[act.name] ?? bb.operations[act.name]) : null
+      if (obj) {
+        const real = obj.getSuccessChance(bb, w.P)
+        c5.note(`now: ${act.name} L${act.level} (game level ${obj.level}) in ${act.city} (game city ${bb.city}): the daemon's p ${act.p?.toFixed(4)}, the game's ${real.toFixed(4)}; stamina ${bb.stamina.toFixed(1)}/${bb.maxStamina.toFixed(1)}`)
+        if (act.p < 0.97 && Math.abs(real - act.p) > 0.02) c5.fail(`the daemon's chance ${act.p} for ${act.name} L${act.level} is not the game's ${real}`)
+      }
+    }
+    const totN = Object.values(byName).reduce((x, m) => x + m.n, 0)
+    {
+      const bk = {}
+      for (const gr of groups) {
+        const k = `${gr.name.split(' ')[0]} p${(Math.floor(gr.p * 5) / 5).toFixed(1)}`
+        bk[k] = bk[k] ?? { n: 0, s: 0, e: 0 }
+        bk[k].n += gr.n
+        bk[k].s += gr.s
+        bk[k].e += gr.n * gr.p
+      }
+      c5.note(`by action and chance: ${Object.entries(bk).map(([k, v]) => `${k} ${v.s}/${v.n} (pred ${v.e.toFixed(1)})`).join('; ')}`)
+    }
+    const sc = s?.calibration?.success
+    c5.note(`success posterior: ${sc?.why}; last unmeasured read: ${JSON.stringify(s?.outcomes?.unmeasured ?? null).slice(0, 200)}`)
+    if (!(totN >= 50)) c5.fail(`only ${totN} attempts measured in 30 game hours`)
+    // On the game's own rolls k is 1: before the side came from an action's own range and the
+    // clamped-estimate reads were kept out, this harness read k 1.1-2.5 (400/400 at 0.59 predicted).
+    if (!(sc && Math.abs(Math.log(sc.k)) < Math.max(3 * sc.sdLn, 0.12))) c5.fail(`on the game's own rolls k must be 1 within its sd: ${JSON.stringify(sc).slice(0, 200)}`)
   }
 
   // ---- BD4 ----
