@@ -282,7 +282,25 @@ export async function main(ns) {
   // at each write, so the snapshots-missing refusal, the error path and the
   // exit hook publish this pass's econNow like act()'s own report (live
   // 14:24:55 the snapshots-missing record had no income at all).
-  const note = reporter(ns, STATUS, () => ({ income: econNow, ...(econNow ? {} : { incomeWhy: 'income not read yet this pass (the record was written before the income read)' }) }))
+  // THE WORK SLOT SURVIVES A PASS THAT DOES NOT DECIDE IT. A waiting record
+  // (snapshots-missing, an error, an early exit) used to publish no `slot`,
+  // which every slot reader takes as "nobody": bladeburner.js stopped its
+  // action and the player sat idle until the next full pass (live BN6
+  // 2026-10-01 23:52Z and 2026-10-02 01:36Z). Carry the last decided owner,
+  // aged from when it was DECIDED, for at most 30 minutes; act()'s own report
+  // overwrites it with this pass's decision.
+  const prevSlot = (() => {
+    try {
+      const p = readJson(ns, STATUS)
+      const sl = p?.slot
+      const from = sl?.carriedFrom ?? p?.at
+      if (!sl?.owner || !from || !(Date.now() - Date.parse(from) < 30 * 60e3)) return null
+      return { ...sl, carriedFrom: from, carried: `kept from the pass at ${from}: this pass did not decide the slot` }
+    } catch {
+      return null
+    }
+  })()
+  const note = reporter(ns, STATUS, () => ({ income: econNow, ...(econNow ? {} : { incomeWhy: 'income not read yet this pass (the record was written before the income read)' }), ...(prevSlot ? { slot: prevSlot } : {}) }))
 
   // ns.atExit, added when progress.js entered watchdog.js's WATCHED list
   // (invariant C1: every managed script publishes on return, handled error,
