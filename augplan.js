@@ -307,30 +307,45 @@ const nodeMoneyMultOf = (o) => (typeof o?.nodeMoneyMult === 'number' && isFinite
 
 const EPS = 1e-9
 
+/** Would a point at (cost, value) be rejected — something already there at least as cheap and at least as good? */
+function paretoRejects(frontier, cost, value) {
+  for (let i = 0; i < frontier.length; i++) {
+    const q = frontier[i]
+    if (q.cost > cost + EPS) break
+    if (q.value >= value - EPS) return true
+  }
+  return false
+}
+
 function insertPareto(frontier, pt) {
-  // Reject if something already there is at least as cheap and at least as good.
-  for (const q of frontier) {
-    if (q.cost > pt.cost + EPS) break
-    if (q.value >= pt.value - EPS) return false
-  }
-  // Drop everything this dominates, then insert in cost order. Built into a new
-  // array rather than compacted in place: an in-place write advances past
-  // entries that have not been read yet the moment the insertion point is
-  // passed, which silently corrupts the frontier and therefore the answer.
-  const out = []
-  let inserted = false
-  for (const q of frontier) {
-    if (!inserted && q.cost >= pt.cost) {
-      out.push(pt)
-      inserted = true
-    }
-    if (q.cost >= pt.cost - EPS && q.value <= pt.value + EPS) continue
-    out.push(q)
-  }
-  if (!inserted) out.push(pt)
-  frontier.length = 0
-  for (const q of out) frontier.push(q)
+  if (paretoRejects(frontier, pt.cost, pt.value)) return false
+  insertAccepted(frontier, pt)
   return true
+}
+
+// Drop everything pt dominates, then insert it before the first entry (in the
+// original order) costing at least as much. ALLOCATION-FREE, and that is the
+// point: this runs once per DP transition, and the version that built a fresh
+// array per insert made augplan.js the largest allocator in the game — 613MB/min
+// of a 1.1GB/min page in a replica of the live BN6 save (2026-10-02), the churn
+// that took the page heap to 1.7-2.7GB between major GCs. Compacting in place is
+// safe because the write index never passes the read index; pt itself goes in
+// only after the compaction, so no unread entry is overwritten (the corruption
+// an in-place insert DURING the pass would cause).
+function insertAccepted(frontier, pt) {
+  const n = frontier.length
+  let w = 0
+  let at = -1
+  for (let i = 0; i < n; i++) {
+    const q = frontier[i]
+    if (at < 0 && q.cost >= pt.cost) at = w
+    if (q.cost >= pt.cost - EPS && q.value <= pt.value + EPS) continue
+    frontier[w++] = q
+  }
+  if (at < 0) at = w
+  frontier.length = w + 1
+  for (let i = w; i > at; i--) frontier[i] = frontier[i - 1]
+  frontier[at] = pt
 }
 
 /** Merge two frontiers under a budget: every affordable pairing, Pareto-reduced. */
@@ -340,7 +355,8 @@ function convolve(a, b, budget) {
     for (const y of b) {
       const cost = x.cost + y.cost
       if (cost > budget + EPS) continue
-      insertPareto(out, { cost, value: x.value + y.value, left: x, right: y })
+      const value = x.value + y.value
+      if (!paretoRejects(out, cost, value)) insertAccepted(out, { cost, value, left: x, right: y })
     }
   }
   return out
@@ -754,58 +770,76 @@ function runCore({ singles, chains, r, money, frontierCap }) {
   const radix = chains.map((c) => c.items.length + 1)
   const maxChain = chains.reduce((s, c) => s + c.items.length, 0)
   let capHit = null
+  const maxRank = n + maxChain
 
-  const code = (p) => {
-    let v = 0
-    for (let j = radix.length - 1; j >= 0; j--) v = v * radix[j] + p[j]
-    return v
+  // A state is (i, rank, p), p the position in each chain. p is encoded as a
+  // mixed-radix number (chain 0 the least significant digit) so the state key
+  // is one integer — the DP visits millions of transitions per plan on a full
+  // catalogue, and a template-string key and a fresh state object per
+  // transition were most of what made it the page's largest allocator (see
+  // insertAccepted). Only an accepted point and a NEW state allocate now.
+  const weight = []
+  for (let j = 0, w = 1; j < radix.length; j++) {
+    weight.push(w)
+    w *= radix[j]
   }
+  const pow = []
+  for (let k = 0; k <= maxRank; k++) pow.push(Math.pow(r, k))
 
   // Layer L = i + rank. Every transition raises it by exactly one, so a plain
   // sweep is a valid topological order and no sorting is needed.
   const layers = new Map()
-  const start = { i: 0, rank: 0, p: new Array(chains.length).fill(0) }
-  const put = (L, st, pt) => {
+  // `p` is the state's chain positions; when `bump` >= 0 the target state is p
+  // with chain `bump` advanced by one, and the array is only built if that
+  // state is new. A rejected point is never allocated; a skip carries its
+  // source point through unchanged (it adds no step, and walk() reads only
+  // the steps).
+  const put = (L, i, rank, p, c, bump, cost, value, from, it) => {
     let layer = layers.get(L)
     if (!layer) layers.set(L, (layer = new Map()))
-    const key = `${st.i},${st.rank},${code(st.p)}`
+    const key = (c * (maxRank + 1) + rank) * (n + 1) + i
     let e = layer.get(key)
-    if (!e) layer.set(key, (e = { st, f: [] }))
+    if (!e) {
+      let pp = p
+      if (bump >= 0) {
+        pp = p.slice()
+        pp[bump]++
+      }
+      layer.set(key, (e = { i, rank, p: pp, c, f: [] }))
+    }
     if (e.f.length >= frontierCap) {
-      capHit = capHit ?? key
+      capHit = capHit ?? `${i},${rank},${c}`
       return
     }
-    insertPareto(e.f, pt)
+    if (paretoRejects(e.f, cost, value)) return
+    insertAccepted(e.f, it === null ? from : { cost, value, from, act: { it, rank: rank - 1 } })
   }
-  put(0, start, { cost: 0, value: 0, from: null, act: null })
+  put(0, 0, 0, new Array(chains.length).fill(0), 0, -1, 0, 0, { cost: 0, value: 0, from: null, act: null }, null)
 
   const finals = []
   for (let L = 0; L <= n + maxChain; L++) {
     const layer = layers.get(L)
     if (!layer) continue
-    for (const { st, f } of layer.values()) {
-      if (st.i === n) for (const pt of f) finals.push(pt)
+    for (const { i, rank, p, c, f } of layer.values()) {
+      if (i === n) for (const pt of f) finals.push(pt)
+      const price = pow[rank]
       for (const pt of f) {
-        // skip singleton i
-        if (st.i < n) put(L + 1, { i: st.i + 1, rank: st.rank, p: st.p }, { cost: pt.cost, value: pt.value, from: pt, act: null })
-        // take singleton i at rank
-        if (st.i < n) {
-          const it = singles[st.i]
-          const cost = pt.cost + it.intrinsic * Math.pow(r, st.rank) + (it.donation ?? 0)
-          if (cost <= money + EPS) {
-            put(L + 1, { i: st.i + 1, rank: st.rank + 1, p: st.p }, { cost, value: pt.value + it.value, from: pt, act: { it, rank: st.rank } })
-          }
+        if (i < n) {
+          // skip singleton i
+          put(L + 1, i + 1, rank, p, c, -1, pt.cost, pt.value, pt, null)
+          // take singleton i at rank
+          const it = singles[i]
+          const cost = pt.cost + it.intrinsic * price + (it.donation ?? 0)
+          if (cost <= money + EPS) put(L + 1, i + 1, rank + 1, p, c, -1, cost, pt.value + it.value, pt, it)
         }
         // take the next item of each chain at rank
         for (let j = 0; j < chains.length; j++) {
-          const t = st.p[j]
+          const t = p[j]
           if (t >= chains[j].items.length) continue
           const it = chains[j].items[t]
-          const cost = pt.cost + it.intrinsic * Math.pow(r, st.rank) + (it.donation ?? 0)
+          const cost = pt.cost + it.intrinsic * price + (it.donation ?? 0)
           if (cost > money + EPS) continue
-          const p2 = st.p.slice()
-          p2[j] = t + 1
-          put(L + 1, { i: st.i, rank: st.rank + 1, p: p2 }, { cost, value: pt.value + it.value, from: pt, act: { it, rank: st.rank } })
+          put(L + 1, i, rank + 1, p, c + weight[j], j, cost, pt.value + it.value, pt, it)
         }
       }
     }
