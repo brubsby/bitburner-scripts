@@ -151,7 +151,11 @@ if (!status.__error) {
 /* ------------------------------------------------- C. liveness + health */
 // Fetched before the freshness loop, which needs the current life's start to
 // tell "this component is stalled" from "this component has not started yet".
-const state = await ctl("/state");
+// /poll, not /state: the daemon refreshes the save digest only every few
+// minutes now (SAVE_FILE_MS — getSaveFile is expensive on the page), and the
+// work-slot and movement checks below compare it with fresh /tel records.
+// One forced save per healthcheck run is cheap.
+const state = await ctl("/poll");
 // Budget per file: how stale is too stale. A job that runs every few minutes
 // gets a wider budget than a resident daemon.
 const FRESH = { "act.txt": 15, "progress.txt": 45, "watchdog.txt": 20, "batch.txt": 20, "go.txt": 30, "gang.txt": 20, "sleeve.txt": 20 };

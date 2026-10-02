@@ -23,6 +23,15 @@ const RFA_PORT = Number(process.env.RFA_PORT ?? 12525);
 const CTL_PORT = Number(process.env.CTL_PORT ?? 12526);
 const TEL_DIR = process.env.TEL_DIR ?? path.join(ROOT, ".telemetry");
 const SAVE_POLL_MS = Number(process.env.SAVE_POLL_MS ?? 30_000);
+// The SAVE itself is fetched far less often than the poll runs. getSaveFile
+// makes the game serialise every server (14.5MB of JSON on 2026-10-02), gzip
+// it and then build the reply string one byte at a time — ~165MB of page
+// garbage per minute at a 30s cadence, measured in a headless replica of the
+// live save, and one of the larger feeds of the 1.7-2.7GB heaps between major
+// GCs. The cheap half of the poll (the /tel mirror, the drift screen) keeps
+// SAVE_POLL_MS; the digest (state.json, history.jsonl, /state) refreshes every
+// SAVE_FILE_MS, and on demand through /poll, which healthcheck uses.
+const SAVE_FILE_MS = Number(process.env.SAVE_FILE_MS ?? 300_000);
 // Deploy drift: a cheap metadata screen runs on every telemetry poll; every
 // DRIFT_FULL_EVERY polls it compares full content instead, and every
 // DRIFT_SWEEP_EVERY polls it also checks the copies on other servers.
@@ -436,17 +445,22 @@ function digest(save) {
 }
 
 let lastDigest = null;
+let lastSaveAt = 0;
 
-async function pollTelemetry() {
+/** `save`: true fetches the save now, false never, undefined when SAVE_FILE_MS has passed. */
+async function pollTelemetry({ save } = {}) {
   if (!socket || socket.readyState !== socket.OPEN) return;
-  try {
-    const result = await rpc("getSaveFile");
-    const d = digest(await decodeSave(result));
-    lastDigest = d;
-    fs.writeFileSync(path.join(TEL_DIR, "state.json"), JSON.stringify(d, null, 2));
-    fs.appendFileSync(path.join(TEL_DIR, "history.jsonl"), JSON.stringify(d) + "\n");
-  } catch (e) {
-    log("telemetry poll failed:", e.message ?? e);
+  if (save ?? Date.now() - lastSaveAt >= SAVE_FILE_MS) {
+    lastSaveAt = Date.now();
+    try {
+      const result = await rpc("getSaveFile");
+      const d = digest(await decodeSave(result));
+      lastDigest = d;
+      fs.writeFileSync(path.join(TEL_DIR, "state.json"), JSON.stringify(d, null, 2));
+      fs.appendFileSync(path.join(TEL_DIR, "history.jsonl"), JSON.stringify(d) + "\n");
+    } catch (e) {
+      log("telemetry poll failed:", e.message ?? e);
+    }
   }
   // Anything the in-game scripts leave in /tel/ gets mirrored out to disk.
   try {
@@ -500,7 +514,7 @@ wss.on("connection", (ws) => {
       log("could not fetch definitions:", e.message ?? e);
     }
     await syncAll();
-    await pollTelemetry();
+    await pollTelemetry({ save: true });
   })();
 });
 
@@ -708,6 +722,10 @@ http
             connected: !!socket && socket.readyState === socket.OPEN,
             tracked: trackedFiles().length,
             lastTelemetry: lastDigest?.at ?? null,
+            // The save-derived digest refreshes every saveFileSec (the /tel
+            // mirror every pollSec); /poll forces one.
+            pollSec: SAVE_POLL_MS / 1000,
+            saveFileSec: SAVE_FILE_MS / 1000,
             // Auto-push delivery, so "is it actually pushing?" has an answer
             // other than waiting for drift. tools/healthcheck.mjs reads this and
             // shouts AUTO-PUSH NOT DELIVERING when anything stays pending.
@@ -737,7 +755,7 @@ http
         }
         if (url.pathname === "/state") return send(200, lastDigest ?? {});
         if (url.pathname === "/poll") {
-          await pollTelemetry();
+          await pollTelemetry({ save: true });
           return send(200, lastDigest ?? {});
         }
         if (url.pathname === "/sync") return send(200, await syncAll());
