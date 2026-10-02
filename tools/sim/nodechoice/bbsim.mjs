@@ -213,9 +213,10 @@ function pickCity(bb, pol) {
 const GYM = g.LocationName.Sector12PowerhouseGym
 
 /** One step of the player at the gym on the lowest combat stat (Work/Formulas.ts:108 calculateClassEarnings, per cycle). */
-function gymStep(P, seconds) {
+function gymStep(P, seconds, stat = null) {
   let low = COMBAT[0]
   for (const s of COMBAT) if (P.skills[s] < P.skills[low]) low = s
+  if (stat) low = stat
   const w = g.calculateClassEarnings(P, g.GymType[low], GYM)
   const cyc = seconds * 5
   P.gainStrengthExp(w.strExp * cyc)
@@ -311,6 +312,7 @@ export function runBladeburner(o) {
     let resting = false
     let lastSkillT = -Infinity
     let gymming = false
+    let leg = null // the retrain's current gym class {stat, until}
     let installs = 0
     let nextInstall = every ? every * 3600 : Infinity
     const maxS = maxH * 3600
@@ -416,6 +418,14 @@ export function runBladeburner(o) {
       bb.prestigeAugmentation() // resetAction + joinFaction (Bladeburner.ts:260)
       installs++
       gymming = true
+      leg = null
+      // The install restarts bladeburner.js, whose first pass spends at once
+      // (on the reset stats) and starts its hourly clock there — as the exit
+      // model's install does (bbplan bladeExitGen).
+      if (pol.shared) {
+        for (const b of bp.planSkills(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost, sharedPol.skillChunks ?? 20)) bb.upgradeSkill(b.name, b.count)
+        lastSkillT = t
+      }
     }
 
     decide()
@@ -425,9 +435,17 @@ export function runBladeburner(o) {
         nextInstall += every * 3600
       }
       if (gymming) {
+        // THE RETRAIN AS progress.js RUNS IT (bbplan POLICY.retrainLegS): one
+        // class per stat short of the bar, each held until a pass sees it
+        // there — at least one pass long, the stat training on past the bar.
         if (bb.action) bb.resetAction()
-        gymStep(P, STEP)
-        if (COMBAT.every((s) => P.skills[s] >= gymTarget())) {
+        const legS = pol.retrainLegS ?? bp.POLICY.retrainLegS ?? 0
+        if (!leg || (t >= leg.until && P.skills[leg.stat] >= gymTarget())) {
+          const short = COMBAT.filter((s) => P.skills[s] < gymTarget())
+          leg = short.length ? { stat: short.reduce((a, b) => (P.skills[b] < P.skills[a] ? b : a)), until: t + legS } : null
+        }
+        if (leg) gymStep(P, STEP, leg.stat)
+        if (!leg) {
           gymming = false
           decide()
         }

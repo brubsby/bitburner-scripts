@@ -125,7 +125,7 @@ export async function run() {
     if (!(tripped instanceof CO.LoopCapError)) c.fail('a step cap must throw LoopCapError')
     const sj = SRC('sleeve.js')
     if (/install\.firstH\.toFixed\(1\)/.test(sj.slice(sj.indexOf('const key = `${n}|${route}'), sj.indexOf('const key = `${n}|${route}') + 200))) c.fail('the memo key must not move with the clock (firstH)')
-    if (!/cappedFleetGen\(bladeFleetGen\(s0, n\), BLADE_FLEET_CAP/.test(sj)) c.fail('sleeve.js must run the fleet search under its cap')
+    if (!/cappedFleetGen\(bladeFleetGen\(s0, n(, [^)]*)?\), BLADE_FLEET_CAP/.test(sj)) c.fail('sleeve.js must run the fleet search under its cap')
     if (!/leave\('sleeve'\); try \{ await py\(\) \}/.test(sj)) c.fail('the page yields must close the trace section')
     c.examined(4)
   }

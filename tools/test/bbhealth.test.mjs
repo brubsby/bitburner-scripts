@@ -55,6 +55,8 @@ export async function run() {
     ['MODEL OFF', { bb: { ...healthy(), calibration: { timeFormulaS: 42, timeGameS: 60 } } }],
     ['EXIT READY, NOT TAKEN', { bb: { ...healthy(), exitReady: true }, eg: { at: iso(1), result: 'ready', detail: 'no --next' } }],
     ['EXIT READY, NOT TAKEN', { bb: { ...healthy(), exitReady: true }, eg: null }],
+    // Live 2026-10-02 10:33Z /tel/sleeve.txt: every fleet null (sleeve.js's gym rate was null).
+    ['BLADE FLEET UNPRICED', { sl: { bitNode: 6, blade: { on: false, route: 'blade', joined: true, config: null, byConfig: [{ config: { infiltrate: 0, support: 0, fa: 0 }, hours: null }, { config: { infiltrate: 5, support: 0, fa: 0 }, hours: null }], why: 'no configuration reaches the 21st black op within 200h in the model' } } }],
   ]
   for (const [name, o] of cases) {
     const r = run1(o)
@@ -69,6 +71,10 @@ export async function run() {
   c2.examined(1)
   if (held.fails.length) c2.fail('a held exit failed', JSON.stringify(held.fails))
   if (!held.notes.some((n) => n.includes('EXIT READY'))) c2.fail('a held exit left no note')
+  // A fleet priced (one configuration finishes): no failure, whether or not it commits.
+  const priced = run1({ sl: { bitNode: 6, blade: { on: true, route: 'blade', joined: true, config: { infiltrate: 5, support: 0, fa: 0 }, byConfig: [{ infiltrate: 5, support: 0, fa: 0, hours: 3.4 }] } } })
+  c2.examined(1)
+  if (priced.fails.length) c2.fail('a priced fleet failed', JSON.stringify(priced.fails))
   // Outside a Bladeburner node with no record: silence.
   const bn9 = bladeburnerHealth({ bb: null, pr, state: { ...state, bitNode: 9 }, nowMs: T0 })
   c2.examined(1)

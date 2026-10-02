@@ -353,7 +353,8 @@ async function operate(ns, say, info, mults) {
 
     // ---- 3. skills: no slot needed ----------------------------------------
     let sp = bb.getSkillPoints()
-    // On the model's cadence (POLICY.skillEveryS, chunks POLICY.skillChunks): the exit prices this policy.
+    // On the model's cadence (POLICY.skillEveryS, chunks POLICY.skillChunks): the exit prices this policy,
+    // on this clock (skillsAt: the model's hourly spends fall where these do).
     if (sp >= 1 && Date.now() - lastSkills > POLICY.skillEveryS * 1000) {
       const v = readEnv()
       for (const b of planSkills(v, sp, POLICY, costMult, POLICY.skillChunks)) {
@@ -517,6 +518,8 @@ async function operate(ns, say, info, mults) {
       outcomes: { n: rn, observed, expected, last: recent.slice(-5), method: 'attempts from the count against its growth twin, successes from the rank (bbplan.attemptsOf)', unmeasured },
       calibration: { ...calib, success: { ...sCal, groups: calGroups } },
       purchases: purchases.slice(-5),
+      // The skill clock the exit model runs on (bbplan.bladeStartOf skillSinceS): this process's last spend, null before its first.
+      skillsAt: lastSkills > 0 ? new Date(lastSkills).toISOString() : null,
       samples: samples.slice(-61).map((s) => ({ at: new Date(s.t).toISOString(), rank: s.rank, stamina: s.stamina })),
       detail: exitReady ? 'exit ready — waiting on endgame.js' : slot.ours ? pick.why : `not acting: ${slot.why}`,
     })

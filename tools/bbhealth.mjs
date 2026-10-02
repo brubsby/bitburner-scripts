@@ -13,7 +13,13 @@
 //   ACTION FAILING           >= 10 attempts at under half the success rate the policy expected
 //   MODEL OFF                the formula's action time disagrees with the game's getActionTime
 //   EXIT READY, NOT TAKEN    all 21 black ops done and endgame.js is not leaving (held is a note: a deliberate hold)
+//   BLADE FLEET UNPRICED     on the committed route, in the division, sleeve.js priced NO fleet configuration
+//                            (every exit null): the model could not price the sleeves, so they keep their
+//                            ordinary plan and the route prices them as assigned. Live 2026-10-02 its gym rate
+//                            was null (bestGym had no city): no fleet whenever an install was committed —
+//                            sleeves at the gym worth ~13h of exit, and the fleet flipped at the install (-15.1h)
 //
+// sl = /tel/sleeve.txt (its blade record),
 // bb = /tel/bladeburner.txt, pr = /tel/progress.txt, eg = /tel/endgame.txt,
 // state = the save digest (/state: bitNode, currentWork, home.ram,
 // playtimeSinceLastAug), prev = this function's own `snap` from the last run.
@@ -26,7 +32,7 @@ const ageMinOf = (iso, nowMs) => {
 export const BB_FRESH_MIN = 20
 export const MIN_INTERVAL_MIN = 15
 
-export function bladeburnerHealth({ bb = null, pr = null, eg = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
+export function bladeburnerHealth({ bb = null, pr = null, eg = null, sl = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
   const fails = []
   const notes = []
   const fail = (what, detail = null) => fails.push({ what, detail })
@@ -108,6 +114,12 @@ export function bladeburnerHealth({ bb = null, pr = null, eg = null, state = {},
   if (cal && num(cal.maxStaminaFormula) && num(cal.maxStaminaGame) && cal.maxStaminaGame > 0) {
     const e = cal.maxStaminaFormula / cal.maxStaminaGame - 1
     notes.push(`bladeburner model: max stamina formula ${cal.maxStaminaFormula} vs game ${cal.maxStaminaGame} (${(e * 100).toFixed(1)}%; Training's stamina bonus is not read)`)
+  }
+
+  // ---- the fleet (sleeve.js's Bladeburner configuration) ---------------------
+  const fb = sl && sl.bitNode === node ? sl.blade : null
+  if (fb && fb.route === 'blade' && fb.joined === true && !fb.config && Array.isArray(fb.byConfig) && fb.byConfig.length && fb.byConfig.every((c) => !num(c?.hours))) {
+    fail(`BLADE FLEET UNPRICED: sleeve.js priced none of ${fb.byConfig.length} Bladeburner fleets on the committed route — the sleeves keep their ordinary plan`, String(fb.why ?? '').slice(0, 240))
   }
 
   // ---- the exit -------------------------------------------------------------

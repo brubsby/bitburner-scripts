@@ -100,6 +100,31 @@ Live 2026-10-01 the route committed `blade` (~29h) while the install decision st
   - These are events: the fleet changing, a black op, a random event in the best city (true population > 4%), a calibration update.
   - These are not events: an estimate correction, and the model's own drift.
 
+## The 10:10Z install (2026-10-02): EXIT JUMP, and the fleet that was never priced
+
+The install priced the next life at 18.65h. The new life published 3.41h at 0.13h (EXIT JUMP AT INSTALL, -15.1h), 3.48h, then 13.39h and 14.35h (EXIT UNSTABLE, held, no event). `tools/sim/exitjump/attribute-bn6-1010.mjs` replays each pass from the fixture `tools/test/fixture-bn6-exitjump-1010.json`, within 1% for 10:18-10:33Z. It then swaps the install's own projection of the new life with the actual inputs, one group at a time. `tools/test/bladejump.test.mjs` [BJ1-BJ9] holds it.
+
+- **The fleet was the jump: -13.2h.** Every other group moved the exit by less than 0.4h: the retrain, stamina, the posteriors, the cities, the skills, the multipliers, rank, counts, and the install basis. sleeve.js built its person with no city and no money. `bestGym` therefore returned null, and so did the gym rate. With an install in the route's basis, the exit model priced every fleet as unfinishable: the retrain cost Infinity. With no install, the retrain below the bar came free. So sleeve.js committed infiltrators only in the new life's first passes, which had no blade-priced install yet (10:18-10:23Z, 4-5 infiltrate, ~3.4h). Everywhere else the sleeves stayed at the gym (~14-18h). Five infiltrators are worth ~13h here. Assassination and Stealth Retirement at level 22 are capped by their counts, and infiltration adds sqrt(n)/2 to every count each minute.
+- **Fixes.**
+  - sleeve.js prices on the plan's gym rate (`decisions.bladeRoute.start`), or else the player's own, now with city and money.
+  - The model refuses a retrain it cannot price, and names the reason. sleeveplan passes that reason on.
+  - The basis carries its batch (`installBasis.blade`).
+  - A committed fleet stands on a near tie (`FLEET_KEEP`, 0.1h).
+  - healthcheck fails BLADE FLEET UNPRICED.
+- **The retrain as it runs.** It is one gym leg per stat, and each leg lasts at least one progress.js pass (`POLICY.retrainLegS` 300s). The stat keeps training past the bar until the leg ends. Live this took 0.38h (strength 19 -> 247 in one leg). The model had charged 0.05h, so every install was 0.33h too cheap. bbsim runs the same legs.
+- **The skill clock is the daemon's.** bladeburner.js publishes `skillsAt`. The model spends hourly from that time, instead of at every pass's t = 0, where it spent points the daemon holds. An install restarts the daemon, which then spends at once, before the retrain. bbsim does the same. bb6 model vs game: worst 24% -> 19%.
+- **Posteriors are carried.** The rank windows cross lives through `pc.prevAny`: k 1.065 (7 windows) -> 1.078 (8). bladeburner.js re-reads its own success groups. They are empty anyway, because every chance read is >= 0.97 or unread. The group moves the exit by < 0.4h.
+- **After the fixes, on the fixture.** The fleet is i5 before and after the install. The install's 'now' prices 3.50h, and the new life gives 3.47h at 0.05h and 3.40h at 0.13h, off by +0.02h and +0.04h after the elapsed time. The held 10:28 -> 10:33Z move is +0.07h with no fleet and +0.05h with i5; it was +0.97h.
+- **Still in the model (named).** The black-op chance plateau is the remaining sensitivity. When the next black op is rank-eligible below `blackThr` 0.8, the exit is the hourly skill spend at which its chance crosses 0.8. That makes the exit discontinuous in its inputs by up to about an hour. It is ~10h long with no fleet and ~1.5h with five infiltrators. In the retrain window, 10:18 -> 10:23Z moved the no-install exit by +0.76h. Two cadence fixes were tried, daemon and model alike:
+  - spend every 300s while blocked;
+  - spend when a plan would unblock the op.
+
+  Each smoothed the 10:33Z state, which came out 1.5h faster, and each was 5.5-5.9h worse on the 11:07Z 2026-10-01 state, because points went to chance instead of to the rank skills that compound. Not adopted. Without a fleet, `blackThr` matters: on the 10:33Z state, 17.5h at 0.8 against 11.7h at 0.4-0.5. With five infiltrators it does not (3.5-3.7h).
+- **The install cadence.** `tools/sim/exitjump/cadence-bn6-1033.mjs` prices it on the 10:33Z state.
+  - With the fleet the route will run (i5), installing the 9-aug batch at 1.38h gives 3.81h against 3.94h never installing. That -0.13h is inside the model's resolution, and the old 0.05h retrain made it look 0.1h better than that.
+  - On the sleeves as they ran (none), the same install was worth -3.1h. That is the 10h plateau, where combat multipliers buy the chance.
+  - So the frequent installs were real on the inputs the plan had, and those inputs were the bug. With the fleet, an install ~1.4h out is not worth its retrain.
+
 ## If it goes wrong
 
 | symptom | where | fix |
@@ -109,6 +134,7 @@ Live 2026-10-01 the route committed `blade` (~29h) while the install decision st
 | `slot-not-ours` forever | plan.txt decisions.bladeRoute | the plan chose `hack` (read `why`, `hackH`, `bladeH`) — correct if the hacking exit is faster |
 | NO RANK PROGRESS / ACTION FAILING | bladeburner.txt action, env, cities | estimate wrong (Field Analysis should be chosen when the shown range is > 10% wide), or chaos (Diplomacy past 50) |
 | STAMINA STUCK | bladeburner.txt samples | the chamber is not running: is the slot ours? |
+| BLADE FLEET UNPRICED | sleeve.txt blade.why, plan.txt decisions.bladeRoute.start | the model's reason is in `why`; "no gym rate" means the start has none (plan.txt `start.gymExpPerSec`) |
 | MODEL OFF | bladeburner.txt calibration | the game source moved: `npm test -- bbplan` against the new source |
 | EXIT READY, NOT TAKEN | endgame.txt | `held` = /endgame-hold.txt (deliberate); `ready` = endgame has no `--next` |
 

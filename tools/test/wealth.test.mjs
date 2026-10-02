@@ -75,6 +75,7 @@ export const ALLOW = [
   { file: "nfg.js", has: "const money = ns.getServerMoneyAvailable('home')", cls: "a", why: "no-SF4 DOM purchase site (with Singularity the planner donates by order)" },
   { file: "progress.js", has: "const money = player?.money", cls: "a", why: "joinMoneyClaim: the Daedalus invitation needs CASH in hand, and the claim is what makes the trader raise it" },
   { file: "sleeve.js", has: "const cashNow = ns.getPlayer?.().money", cls: "a", why: "cash for the fee floor; wealth passed beside it" },
+  { file: "sleeve.js", has: "mults, city: p.city, money: p.money }", cls: "a", why: "bestGym's own travel test for the exit model's fallback gym rate (the plan's start.gymExpPerSec first): the flight is a cash-in-hand game check, and the fleet price only needs which gym" },
   { file: "sleeve.js", has: "} else if (player.money > travel_cost) {", cls: "a", why: "sleeve travel is a game-checked purchase with a local-gym/uni fallback" },
   { file: "sleeveaug.js", has: "ns.getServerMoneyAvailable('home') < first.raise.target", cls: "a", why: "waits for the requested raise to land in cash" },
   { file: "sleeveaug.js", has: "if (ns.getServerMoneyAvailable('home') >= target) return true", cls: "a", why: "cashFor: the purchase needs cash, else a raise request" },

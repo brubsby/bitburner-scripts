@@ -1330,10 +1330,25 @@ export function afterCombatInstall(player, batch) {
 //
 // s0 is bbplan.bladeStartOf's (one builder). Returns
 // { tasks (per sleeve index, sleeve.js order), config, hours, byConfig, why }.
-export function* bladeFleetGen(s0, n) {
+/** A committed fleet is kept unless another is faster by more than this (hours, or this share of the exit). */
+export const FLEET_KEEP = { h: 0.1, rel: 0.03 }
+export function* bladeFleetGen(s0, n, incumbent = null) {
   if (!(n > 0)) return { tasks: [], config: null, hours: null, byConfig: [], why: 'no sleeves' }
   const pick = yield* chooseSleeveConfigGen(s0, n)
-  if (!pick.config) return { tasks: null, config: null, hours: null, byConfig: pick.byConfig, why: `no configuration reaches the 21st black op within ${s0.maxH ?? 400}h in the model — the fleet keeps its ordinary plan` }
+  // THE INCUMBENT STANDS on a near tie: configurations a few minutes apart in
+  // the model flipped the committed fleet between passes (re-tasking five
+  // sleeves, and a fleet change is an exit event): live-state replay
+  // 2026-10-02 10:28 -> 10:33Z i5s0 -> i3s2 for 0.1h.
+  const same = (a, b) => !!a && !!b && a.infiltrate === b.infiltrate && a.support === b.support && a.fa === b.fa
+  const inc = incumbent && pick.config ? pick.byConfig.find((x) => same(x.config, incumbent) && Number.isFinite(x.hours)) : null
+  let kept = false
+  if (inc && !same(inc.config, pick.config) && inc.hours - pick.hours <= Math.max(FLEET_KEEP.h, FLEET_KEEP.rel * pick.hours)) {
+    pick.config = inc.config
+    pick.hours = inc.hours
+    kept = true
+  }
+  // The model's own reason (the first configuration's): "not finished in Nh" and "the retrain has no gym rate" are different faults.
+  if (!pick.config) return { tasks: null, config: null, hours: null, byConfig: pick.byConfig, why: `no configuration reaches the 21st black op within ${s0.maxH ?? 400}h in the model (${String(pick.byConfig.find((x) => x.why)?.why ?? 'no reason given').slice(0, 160)}) — the fleet keeps its ordinary plan` }
   const ranked = pick.byConfig.filter((x) => x.hours !== null).sort((a, b) => a.hours - b.hours)
   const worst = ranked[ranked.length - 1]
   return {
@@ -1341,6 +1356,6 @@ export function* bladeFleetGen(s0, n) {
     config: pick.config,
     hours: +pick.hours.toFixed(2),
     byConfig: ranked.slice(0, 6).map((x) => ({ ...x.config, hours: +x.hours.toFixed(2) })),
-    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model) vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
+    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model)${kept ? ` — the incumbent, within ${Math.max(FLEET_KEEP.h, FLEET_KEEP.rel * ranked[0].hours).toFixed(2)}h of the best (${ranked[0].config.infiltrate}/${ranked[0].config.support}/${ranked[0].config.fa} ${ranked[0].hours.toFixed(2)}h)` : ''} vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
   }
 }

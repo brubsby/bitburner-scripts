@@ -374,11 +374,22 @@ async function bladeFleetNow(ns, n, node) {
   const p = ns.getPlayer()
   const mults = { ...p.mults }
   for (const [k, nk] of Object.entries(LEVEL_MULTS)) if (typeof node?.[nk] === 'number' && node[nk] > 0 && typeof mults[k] === 'number') mults[k] = mults[k] * node[nk]
-  const person = { skills: { ...p.skills }, exp: { ...p.exp }, mults }
+  // THE GYM RATE IS THE PLAN'S (decisions.bladeRoute.start.gymExpPerSec: the
+  // route's own start, with the training multiplier) — one state model for
+  // the fleet, the route and the install decision. Else this player's own,
+  // with the city and money bestGym needs: without them it returned null, the
+  // exit model then priced every fleet unfinishable whenever the route's
+  // basis held an install (and, with none, a retrain for free) — live
+  // 2026-10-02 the fleet committed only in the new life's basis-less passes
+  // (10:18-10:23Z, 4-5 infiltrators, exit 3.4h) and fell back to the gym
+  // (13.4-15.5h) as soon as an install was committed again: EXIT JUMP AT
+  // INSTALL -15.1h, then EXIT UNSTABLE.
+  const person = { skills: { ...p.skills }, exp: { ...p.exp }, mults, city: p.city, money: p.money }
+  const planGym = plan?.decisions?.bladeRoute?.start?.gymExpPerSec
   const gym = bestGym(person)
   const s0 = bladeStartOf({
     tel, person,
-    gymExpPerSec: gym ? gymRate(gym, 'strength', person, 1) : null,
+    gymExpPerSec: typeof planGym === 'number' && planGym > 0 ? planGym : gym ? gymRate(gym, 'strength', person, 1) : null,
     bnRank: node?.BladeburnerRank ?? 1, skillCostMult: node?.BladeburnerSkillCost ?? 1,
     install,
     // The plan's calibration, as its own exits apply it (one model).
@@ -393,7 +404,8 @@ async function bladeFleetNow(ns, n, node) {
   const pacer = makePacer({ sliceMs: BLADE_SLICE_MS, yieldFn: async () => { leave('sleeve'); try { await py() } finally { enter('sleeve') } } })
   let fleet = null
   try {
-    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
+    // The committed fleet (the last answer's) stands on a near tie (sleeveplan.FLEET_KEEP).
+    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, bladeMemo?.result?.config ?? null), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
   } catch (e) {
     if (!(e instanceof LoopCapError)) throw e
     const last = bladeMemo?.result ?? null

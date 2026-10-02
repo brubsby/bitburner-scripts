@@ -523,6 +523,21 @@ export const POLICY = {
   raidChaos: 45,
   // Combat level below which (after an install reset) the player retrains before acting.
   gymTo: JOIN_COMBAT,
+  // THE RETRAIN AS IT RUNS (progress.js bladeGymStep): one gym class per
+  // stat short of the bar, each ordered by one progress.js pass and run by
+  // act.js until the next pass sees the stat there — so a leg lasts at least
+  // one pass (~300s), and the stat goes on training past the bar until then.
+  // Live 2026-10-02 after the 10:10:17Z install: four legs of ~5 min each
+  // (strength 10:13-10:18Z, 19 -> 247; defense, dexterity, agility to
+  // 10:33Z), 0.38h with the cash bootstrap, against 0.05h for exp-to-the-bar
+  // at the gym rate (the model as it was: every install 0.33h too cheap).
+  retrainLegS: 300,
+  // NOT a faster skill cadence while the next black op is blocked on its
+  // chance: tried 2026-10-02 (every 300s while blocked, daemon and model
+  // alike) — on the 11:07Z 2026-10-01 state the exit came out 5.9h WORSE
+  // (30.5h vs 24.7h: every point went to the black op's cheapest chance
+  // increments instead of the rank skills that compound), better on the
+  // 10:33Z 2026-10-02 state by 1.5h. Path-dependent both ways: not adopted.
   // What a skill point is scored on (skillScore): 'sum' = every action's best
   // rank/s, 'max' = the incumbent's. On the game's classes (BN6, 9 seeds,
   // three sleeve fleets) the two finish within 1.2h of each other; the exit
@@ -846,6 +861,35 @@ export function* planSkillsGen(v, sp, pol = POLICY, skillCostMult = 1, chunks = 
 // is below max(JOIN_COMBAT, pol.gymTo) on the committed route, the slot trains
 // at the gym before Bladeburner acts — at the start (a life that begins below
 // it, e.g. right after an install) as after each install.
+/**
+ * THE RETRAIN AS THE POLICY RUNS IT (POLICY.retrainLegS, progress.js
+ * bladeGymStep): one gym leg per combat stat short of `target`, each at least
+ * one pass long, the stat training on past the bar until the leg ends.
+ * gymExpPerSec is the exp STRENGTH gains per second at the gym with the
+ * strength_exp multiplier refExpMult (the quantity bodyplan measured live,
+ * 37.661/s 2026-09-19); a stat trains at it x its own exp multiplier over
+ * refExpMult (calculateClassEarnings: the same class gain x the stat's
+ * mult), so a batch's exp multipliers speed the retrain after its install.
+ * person.mults: LEVEL mults (strength..agility) and *_exp. Returns
+ * {secs, exp} (exp: the person's after the retrain); secs Infinity with no
+ * gym rate and a stat short.
+ */
+export function retrainOf(person, gymExpPerSec, refExpMult, target, pol = POLICY) {
+  const legS = Number.isFinite(pol.retrainLegS) && pol.retrainLegS > 0 ? pol.retrainLegS : 0
+  const exp = { ...person.exp }
+  let secs = 0
+  for (const c of ['strength', 'defense', 'dexterity', 'agility']) {
+    const want = expForLevel(target, person.mults[c] ?? 1)
+    const have = exp[c] ?? 0
+    if (have >= want) continue
+    const r = (gymExpPerSec ?? 0) * ((person.mults[`${c}_exp`] ?? 1) / (refExpMult || 1))
+    if (!(r > 0)) return { secs: Infinity, exp: person.exp }
+    const sd = Math.max((want - have) / r, legS)
+    exp[c] = have + r * sd
+    secs += sd
+  }
+  return { secs, exp }
+}
 export const CITY_NAMES = ['Aevum', 'Chongqing', 'Sector-12', 'New Tokyo', 'Ishima', 'Volhaven']
 const EVENT_MEAN_S = 420 // getRandomIntInclusive(240, 600)
 
@@ -914,22 +958,19 @@ export function* bladeExitGen(s0, pol = POLICY) {
   let joinH = 0
   let installs = 0
   const gymRate = s0.gymExpPerSec ?? 0
-  // gymExpPerSec is the exp a stat GAINS per second at the gym (after the exp
-  // multipliers), the quantity bodyplan measured live (37.661/s, 2026-09-19).
+  const startExpMult = person.mults.strength_exp ?? 1
+  // THE RETRAIN AS THE POLICY RUNS IT (retrainOf): Infinity with no gym rate
+  // (the caller refuses: a retrain it cannot price is not free).
   const gymTo = (target) => {
-    let need = 0
-    for (const c of ['strength', 'defense', 'dexterity', 'agility']) {
-      const want = expForLevel(target, lvMult(c))
-      need += Math.max(0, want - (person.exp[c] ?? 0))
-      if ((person.exp[c] ?? 0) < want) person.exp[c] = want
-    }
+    const r = retrainOf(person, gymRate, startExpMult, target, pol)
+    person.exp = r.exp
     relevel()
-    return need <= 0 ? 0 : gymRate > 0 ? need / gymRate : Infinity
+    return r.secs
   }
+  const noGym = (when) => ({ hours: null, joinH: null, installs: 0, why: `${when}: the retrain has no gym rate (gymExpPerSec ${s0.gymExpPerSec ?? 'absent'}) — unpriced, not free` })
   relevel()
   // THE SIMULACRUM: the gym beside the action (the lowest combat stat, one class at a time).
   let simOn = s0.simulacrum === true
-  const startExpMult = person.mults.strength_exp ?? 1
   const gymParallel = (secs) => {
     if (!(gymRate > 0)) return
     let low = 'strength'
@@ -937,6 +978,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     person.exp[low] = (person.exp[low] ?? 0) + gymRate * ((person.mults[`${low}_exp`] ?? 1) / startExpMult) * secs
     relevel()
   }
+  let retrainIdleS = 0 // a retrain at the start: the division's world goes on meanwhile (applied below, once its helpers exist)
   if (!s0.joined) {
     const h = gymTo(JOIN_COMBAT)
     if (!isFinite(h)) return { hours: null, why: 'not in the division and no gym rate to reach combat 100' }
@@ -944,17 +986,28 @@ export function* bladeExitGen(s0, pol = POLICY) {
     joinH = h / 3600
   } else if (!simOn) {
     // In the division but below the retrain bar (a life that began with an
-    // install): the policy trains first (progress.js bladeGymStep).
+    // install): the policy trains first (progress.js bladeGymStep). With no
+    // gym rate this used to skip the retrain AND keep the stats it had set
+    // to the bar — free stats (sleeve.js's start, whose person had no city:
+    // live 2026-10-02 its fleet search priced a life at the bar for nothing).
     const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo))
-    if (isFinite(h) && h > 0) {
+    if (!isFinite(h)) return noGym('below the retrain bar')
+    if (h > 0) {
       t += h
       joinH = h / 3600
+      retrainIdleS = h
     }
   }
   const inst = s0.install ?? null
   const firstInstallS = inst ? (Number.isFinite(inst.firstH) ? inst.firstH : inst.everyH) : null
   let nextInstall = Number.isFinite(firstInstallS) && firstInstallS >= 0 ? firstInstallS * 3600 : Infinity
-  let lastSkill = -Infinity
+  // THE SKILL CLOCK IS THE DAEMON'S (s0.skillSinceS: seconds since its last
+  // spend, bladeStartOf from /tel/bladeburner.txt skillsAt): the model's
+  // hourly spends fall where the daemon's will, not at every pass's t = 0
+  // (a pass spent the points the daemon holds until its next hour). Absent:
+  // the daemon spends at once (a fresh process — and after each install,
+  // which restarts it).
+  let lastSkill = Number.isFinite(s0.skillSinceS) && s0.skillSinceS >= 0 ? -s0.skillSinceS : -Infinity
   let smKey = null
   let smNow = null
   const viewOf = () => {
@@ -1005,6 +1058,12 @@ export function* bladeExitGen(s0, pol = POLICY) {
       c.pop *= 1 + ev * (0.05 * 0.15 + 0.2 * 0.16 - 0.2 * 0.14) // new community / new synthoids / fewer synthoids
     }
   }
+  const idle = (secs) => {
+    for (const d of LEVELED) st.counts[d.name] += (growthPerSec(d) + infPerSec) * secs
+    if (fa > 0) gainRank(fa * fieldAnalysisRank(bnRank) * (secs / 30))
+    cityTick(secs)
+  }
+  if (retrainIdleS > 0) idle(retrainIdleS)
   // THE STAMINA THE PLAYER HAS NOW (s0.stamina, s0.maxStamina from the
   // daemon). The steps below price stamina in expectation — the duty cycle
   // between restLow and restHigh, whose time-average is their midpoint — so
@@ -1056,9 +1115,21 @@ export function* bladeExitGen(s0, pol = POLICY) {
       relevel()
       installs++
       nextInstall = inst.everyH > 0 ? nextInstall + inst.everyH * 3600 : Infinity
+      // The install restarts the daemon, and its first pass spends at once —
+      // on the reset stats, before the retrain (live 2026-10-02: the 10:10:17Z
+      // install, purchases at 10:10:21Z); its hourly clock starts there.
+      if (st.sp >= 1) {
+        for (const b of yield* planSkillsGen(viewOf(), st.sp, pol, costMult, s0.skillChunks ?? pol.skillChunks ?? 8)) {
+          st.levels[b.name] = (st.levels[b.name] ?? 0) + b.count
+          st.sp -= b.cost
+        }
+      }
+      lastSkill = t
       if (simOn) continue // the retrain runs beside the actions (gymParallel)
-      const h = gymTo(pol.gymTo)
-      cityTick(h)
+      const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo))
+      if (!isFinite(h)) return { ...noGym(`the install at ${(t / 3600).toFixed(2)}h`), installs }
+      // The world goes on while the slot is at the gym (counts grow, sleeves infiltrate or analyse).
+      idle(h)
       t += h
       continue
     }
@@ -1188,7 +1259,10 @@ export function chooseSleeveConfig(s0, n, pol = POLICY) {
 }
 export function* chooseSleeveConfigGen(s0, n, pol = POLICY) {
   const byConfig = []
-  for (const config of sleeveConfigs(n)) byConfig.push({ config, hours: (yield* bladeExitGen({ ...s0, sleeves: config }, pol)).hours })
+  for (const config of sleeveConfigs(n)) {
+    const r = yield* bladeExitGen({ ...s0, sleeves: config }, pol)
+    byConfig.push({ config, hours: r.hours ?? null, ...(r.hours == null && r.why ? { why: r.why } : {}) })
+  }
   const ok = byConfig.filter((x) => x.hours !== null)
   ok.sort((a, b) => a.hours - b.hours)
   return { config: ok[0]?.config ?? null, hours: ok[0]?.hours ?? null, byConfig }
@@ -1355,9 +1429,12 @@ export function sleeveTasksOf(config, n) {
  *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
  *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1 }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, now = Date.now() }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
+  // The daemon's skill clock (bladeburner.js skillsAt: its last spend; null: none since it started).
+  const skillsAtMs = typeof tel?.skillsAt === 'string' ? Date.parse(tel.skillsAt) : NaN
+  const skillSinceS = joined && num(skillsAtMs) && num(now) ? Math.max(0, (now - skillsAtMs) / 1000) : undefined
   // A city's TRUE population where the daemon read it off the range
   // (popRatioFromRange: `pop`), else its estimate: the game rolls every
   // attempt on the true one (Action.ts getPopulationSuccessFactor, est false).
@@ -1378,6 +1455,7 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     stamina: joined && num(tel.stamina) ? tel.stamina : undefined,
     maxStamina: joined && num(tel.maxStamina) ? tel.maxStamina : undefined,
     staminaBonus: joined && num(tel.staminaBonus) ? tel.staminaBonus : 0,
+    skillSinceS,
     rankScale: num(rankScale) && rankScale > 0 ? rankScale : 1,
     successScale: num(successScale) && successScale > 0 ? successScale : 1,
     bnRank,
@@ -1438,15 +1516,17 @@ export function bladeInstallOfSpec(spec) {
 
 /**
  * The install a committed route basis makes (decisions.bladeRoute.installBasis:
- * {kind: 'wait', waitH, installAt} or {kind: 'none' | 'never'}), for a reader
- * of the plan record (sleeve.js): one install at its time — its batch's
- * content is the install decision's, not in the basis (gains null: named) —
- * or none. Never the hacking route's cadence.
+ * {kind: 'wait', waitH, installAt, blade?} or {kind: 'none' | 'never'}), for
+ * a reader of the plan record (sleeve.js): one install at its time with the
+ * batch's content the basis carries (blade.gains; a record without it: gains
+ * null, named) — or none. Never the hacking route's cadence.
  */
 export function bladeInstallOfBasis(basis, now = Date.now()) {
   if (!basis || basis.kind !== 'wait') return null
   const at = Number.isFinite(basis.installAt) ? (basis.installAt - now) / 3.6e6 : Number.isFinite(basis.waitH) ? basis.waitH : null
-  return at === null ? null : { firstH: Math.max(0, at), gains: null }
+  // The batch's content where the record carries it (progress.js publishes
+  // installBasis.blade since 2026-10-02): the same install the plan prices.
+  return at === null ? null : { firstH: Math.max(0, at), gains: basis.blade?.gains ?? null, simulacrum: basis.blade?.simulacrum === true }
 }
 
 /**
