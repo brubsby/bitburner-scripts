@@ -729,6 +729,15 @@ function withLevels(v, levels) {
  * did, now the one shared rule). Returns [{ name, count, cost, why }] in order.
  */
 export function planSkills(v, sp, pol = POLICY, skillCostMult = 1, chunks = 20) {
+  return drain(planSkillsGen(v, sp, pol, skillCostMult, chunks))
+}
+/**
+ * planSkills as a generator: it yields after every candidate skill priced
+ * (each a skillScore over every action), so a caller's pacer can slice it.
+ * Live 2026-10-02 00:17Z sleeve.js held the page 12.9s pricing its fleet:
+ * one exit-model step carried a whole skill plan (60 rounds x 9 skills).
+ */
+export function* planSkillsGen(v, sp, pol = POLICY, skillCostMult = 1, chunks = 20) {
   const out = []
   let levels = { ...(v.levels ?? {}) }
   let cur = withLevels(v, levels)
@@ -753,6 +762,7 @@ export function planSkills(v, sp, pol = POLICY, skillCostMult = 1, chunks = 20) 
       const gain = s1.kind === base.kind ? s1.v - base.v : s1.kind === 'rank' ? Infinity : -Infinity
       const val = (base.v > 0 ? gain / base.v : gain) / cost
       if (!pick || val > pick.val) pick = { name, k, cost, val }
+      yield
     }
     // SAVE FOR THE BEST VALUE PER POINT. Spending whatever fits as soon as
     // it fits (the daemon plans every minute it holds a point) bought the
@@ -1031,7 +1041,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
   const path = pathEvery ? [{ h: +((t + credit) / 3600).toFixed(4), rank: +st.rank.toFixed(3) }] : []
   let sinceYield = 0
   while (t < maxS && st.bo < BLACK_OPS.length) {
-    if (++sinceYield >= 10) {
+    if (++sinceYield >= 2) {
       sinceYield = 0
       yield
     }
@@ -1053,7 +1063,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       continue
     }
     if (t - lastSkill >= (s0.skillEveryS ?? pol.skillEveryS ?? 3600) && st.sp >= 1) {
-      for (const b of planSkills(viewOf(), st.sp, pol, costMult, s0.skillChunks ?? pol.skillChunks ?? 8)) {
+      for (const b of yield* planSkillsGen(viewOf(), st.sp, pol, costMult, s0.skillChunks ?? pol.skillChunks ?? 8)) {
         st.levels[b.name] = (st.levels[b.name] ?? 0) + b.count
         st.sp -= b.cost
       }

@@ -73,6 +73,7 @@ async function decide(bladeStartAt, base = INPUTS, sliceMs = P.PLAN.sliceMs) {
 
 export async function run() {
   const checks = []
+  await decide(startAt(veteranPerson, veteranTel)) // warm: the page runs this every pass, its JIT is warm
   const vet = await decide(startAt(veteranPerson, veteranTel))
   const frs = await decide(startAt(fresh, null))
   const rich = await decide(startAt(fresh, null), INPUTS_HI)

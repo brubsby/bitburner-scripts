@@ -104,7 +104,7 @@ import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen } from 'sleeveplan.js'
 import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION } from 'bbplan.js'
-import { makePacer } from 'coop.js'
+import { makePacer, LoopCapError } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES, GYMS, gymRate, bestGym } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
@@ -306,6 +306,22 @@ const PLAN_TEL = '/tel/plan.txt'
 const BLADE_REPRICE_MS = 30 * 60e3
 /** The fleet's exits are simulated this far at most (12 configurations, each bladeExitGen in 40ms slices). */
 const BLADE_FLEET_MAXH = 200
+/** The fleet search's hard cap: generator steps and work milliseconds (pacer cpu), and its slice. */
+const BLADE_FLEET_CAP = { steps: 200000, ms: 4000 }
+const BLADE_SLICE_MS = 20
+/** A generator under a step and work-time cap (coop LoopCapError past either). cpuMs: the pacer's work clock. */
+export function* cappedFleetGen(gen, { steps = 200000, ms = 4000 } = {}, cpuMs = () => 0) {
+  const c0 = cpuMs()
+  let n = 0
+  let r = gen.next()
+  while (!r.done) {
+    if (++n > steps) throw new LoopCapError(`${n} steps (cap ${steps})`)
+    if (cpuMs() - c0 > ms) throw new LoopCapError(`${(cpuMs() - c0).toFixed(0)}ms of work (cap ${ms}ms)`)
+    yield
+    r = gen.next()
+  }
+  return r.value
+}
 let bladeMemo = null
 function pageYield(ns) {
   let MC = null
@@ -347,8 +363,14 @@ async function bladeFleetNow(ns, n, node) {
   const basis = plan?.decisions?.bladeRoute?.installBasis ?? null
   const install = bladeInstallOfBasis(basis, Date.now())
   const cal = plan?.decisions?.bladeRoute?.calibration ?? null
-  const key = `${n}|${route}|${joined}|${install ? install.firstH.toFixed(1) : 'none'}`
+  // THE MEMO KEY IS THE PLAN, NOT THE CLOCK: the install's time to go
+  // (firstH) falls every minute, and keyed on it the whole fleet search re-ran
+  // every few minutes (live 2026-10-02 00:02-00:17Z, the page frozen twice).
+  // Keyed on the committed install's own time; re-priced every 30 minutes.
+  const key = `${n}|${route}|${joined}|${basis?.kind ?? 'none'}|${Number.isFinite(basis?.installAt) ? Math.round(basis.installAt / 900e3) : '-'}`
   if (bladeMemo && bladeMemo.key === key && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
+  // A search that ran past its cap waits out the reprice interval on the last answer.
+  if (bladeMemo && bladeMemo.capped && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
   const p = ns.getPlayer()
   const mults = { ...p.mults }
   for (const [k, nk] of Object.entries(LEVEL_MULTS)) if (typeof node?.[nk] === 'number' && node[nk] > 0 && typeof mults[k] === 'number') mults[k] = mults[k] * node[nk]
@@ -364,8 +386,21 @@ async function bladeFleetNow(ns, n, node) {
     // Bounded: a fleet that does not reach the 21st black op in BLADE_FLEET_MAXH is not chosen.
     maxH: BLADE_FLEET_MAXH,
   })
-  const pacer = makePacer({ sliceMs: 40, yieldFn: pageYield(ns) })
-  const fleet = await pacer.slices(bladeFleetGen(s0, n), 'bladeFleet')
+  // Sliced with page yields, the trace section closed across each yield, and
+  // HARD-CAPPED (BLADE_FLEET_CAP: steps and work ms); past the cap the last
+  // answer stands (or none), said so.
+  const py = pageYield(ns)
+  const pacer = makePacer({ sliceMs: BLADE_SLICE_MS, yieldFn: async () => { leave('sleeve'); try { await py() } finally { enter('sleeve') } } })
+  let fleet = null
+  try {
+    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
+  } catch (e) {
+    if (!(e instanceof LoopCapError)) throw e
+    const last = bladeMemo?.result ?? null
+    const result = last ? { ...last, capped: String(e.message) } : { on: false, why: `the fleet search ran past its cap (${e.message}): no Bladeburner fleet this interval`, route, joined, capped: String(e.message) }
+    bladeMemo = { key, at: Date.now(), result, capped: true }
+    return result
+  }
   const result = { on: !!fleet.tasks, ...fleet, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), install: install ? { firstH: +install.firstH.toFixed(2), from: basis?.kind ?? null } : null, installBasis: basis?.kind ?? 'none' }
   bladeMemo = { key, at: Date.now(), result }
   return result

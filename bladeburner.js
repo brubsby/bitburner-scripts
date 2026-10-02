@@ -204,7 +204,11 @@ async function operate(ns, say, info, mults) {
   } catch {
     calGroups = []
   }
+  let calVer = 0
+  let calDone = -1
+  let sCalMemo = null
   const addGroup = (name, level, p, n, sN) => {
+    calVer++
     const pr = +p.toFixed(3)
     const g = calGroups.find((x) => x.name === name && x.level === level && x.p === pr)
     if (g) {
@@ -471,7 +475,12 @@ async function operate(ns, say, info, mults) {
     const rs = recent.reduce((a, o) => a + o.s, 0)
     const observed = rn ? rs / rn : null
     const expected = rn ? recent.reduce((a, o) => a + o.n * o.p, 0) / rn : null
-    const sCal = successPosterior(calGroups)
+    // Re-computed only when an attempt was added (a 121-point grid over every group: ~1-3ms).
+    if (calVer !== calDone) {
+      sCalMemo = successPosterior(calGroups)
+      calDone = calVer
+    }
+    const sCal = sCalMemo
     const bo = v.blackOp
     say(exitReady ? 'ok' : slot.ours ? 'ok' : 'waiting', {
       ...base,

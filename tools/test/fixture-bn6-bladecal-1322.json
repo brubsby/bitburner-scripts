@@ -4110,5 +4110,244 @@
    "at": "2026-10-01T12:10:00Z",
    "rank": 107
   }
- ]
+ ],
+ "live0028": {
+  "bladeburner": {
+   "at": "2026-10-02T00:28:23.876Z",
+   "health": "waiting",
+   "errors": [],
+   "bitNode": 6,
+   "lastAugReset": 1790854331029,
+   "host": "netlink",
+   "result": "slot-not-ours",
+   "joined": true,
+   "factionJoined": true,
+   "rank": 1344.74,
+   "rankPerHour": 0.13,
+   "skillPoints": 5,
+   "levels": {
+    "Blade's Intuition": 6,
+    "Cloak": 12,
+    "Short-Circuit": 8,
+    "Digital Observer": 7,
+    "Tracer": 5,
+    "Overclock": 7,
+    "Reaper": 5,
+    "Evasive System": 6,
+    "Datamancer": 0,
+    "Cyber's Edge": 3,
+    "Hands of Midas": 0,
+    "Hyperdrive": 0
+   },
+   "stamina": 123.63,
+   "maxStamina": 123.63,
+   "resting": false,
+   "city": "Aevum",
+   "team": 0,
+   "slot": {
+    "owner": null,
+    "ours": false,
+    "at": "2026-10-02T00:27:14.091Z",
+    "why": "progress.js holds the slot for nobody"
+   },
+   "action": {
+    "type": "Operations",
+    "name": "Raid",
+    "level": 1,
+    "city": "Aevum",
+    "p": 0.6017625110797418,
+    "ev": 0.5534714549497439,
+    "why": "Raid L1 in Aevum at 60%: 0.553 rank/s acting, 0.477 at its stamina duty"
+   },
+   "running": null,
+   "blackOps": {
+    "done": 0,
+    "next": "Operation Typhoon",
+    "reqdRank": 2500,
+    "chance": [
+     0.104,
+     0.3258
+    ],
+    "formulaChance": 0.104
+   },
+   "exitReady": false,
+   "exitNote": null,
+   "env": {
+    "contracts": 1.0369720711964392,
+    "operations": 1.0369720711964392
+   },
+   "counts": {
+    "Tracking": 159.1,
+    "Bounty Hunter": 549.2,
+    "Retirement": 29.1,
+    "Investigation": 391.9,
+    "Undercover Operation": 348,
+    "Sting Operation": 334.6,
+    "Raid": 266.7,
+    "Stealth Retirement Operation": 198.8,
+    "Assassination": 188.8
+   },
+   "maxLevels": {
+    "Tracking": 25,
+    "Bounty Hunter": 1,
+    "Retirement": 28,
+    "Investigation": 1,
+    "Undercover Operation": 7,
+    "Sting Operation": 1,
+    "Raid": 2,
+    "Stealth Retirement Operation": 1,
+    "Assassination": 1
+   },
+   "cities": [
+    {
+     "name": "Aevum",
+     "popEst": 966322351,
+     "pop": 3026426421,
+     "r": 3.1319,
+     "chaos": 0,
+     "comms": 142
+    },
+    {
+     "name": "Chongqing",
+     "popEst": 1075811808,
+     "pop": 1047292012,
+     "r": 0.97349,
+     "chaos": 11.05,
+     "comms": 103
+    },
+    {
+     "name": "Sector-12",
+     "popEst": 1242730138,
+     "pop": 1448594245,
+     "r": 1.16565,
+     "chaos": 12.31,
+     "comms": 27
+    },
+    {
+     "name": "New Tokyo",
+     "popEst": 1084626762,
+     "pop": 1407332856,
+     "r": 1.29753,
+     "chaos": 0,
+     "comms": 54
+    },
+    {
+     "name": "Ishima",
+     "popEst": 646359814,
+     "pop": 887016922,
+     "r": 1.37233,
+     "chaos": 8.38,
+     "comms": 13
+    },
+    {
+     "name": "Volhaven",
+     "popEst": 1033321823,
+     "pop": 1845169718,
+     "r": 1.78567,
+     "chaos": 1.51,
+     "comms": 148
+    }
+   ],
+   "staminaBonus": 0,
+   "outcomes": {
+    "n": 0,
+    "observed": null,
+    "expected": null,
+    "last": [],
+    "method": "attempts from the count against its growth twin, successes from the rank (bbplan.attemptsOf)",
+    "unmeasured": null
+   },
+   "calibration": {
+    "timeFormulaS": 58,
+    "timeGameS": null,
+    "maxStaminaFormula": 123.63,
+    "maxStaminaGame": 123.63,
+    "success": {
+     "k": 1,
+     "lnK": 0,
+     "sdLn": 0.15,
+     "n": 0,
+     "s": 0,
+     "expected": 0,
+     "why": "no measured attempts: the formula (k = 1, x/\u00f7 1.21 at 80%, stated)",
+     "groups": []
+    }
+   },
+   "purchases": [],
+   "samples": [
+    {
+     "at": "2026-10-02T00:27:12.699Z",
+     "rank": 1344.74,
+     "stamina": 123.28
+    },
+    {
+     "at": "2026-10-02T00:28:13.875Z",
+     "rank": 1344.74,
+     "stamina": 123.63
+    }
+   ],
+   "detail": "not acting: progress.js holds the slot for nobody"
+  },
+  "installBasis": {
+   "kind": "wait",
+   "waitH": 4.618537777777778,
+   "installAt": 1790915663559,
+   "from": "w4.8"
+  },
+  "planAt": "2026-10-02T00:01:34.978Z",
+  "player": {
+   "skills": {
+    "hacking": 206,
+    "strength": 246,
+    "defense": 244,
+    "dexterity": 264,
+    "agility": 262,
+    "charisma": 244,
+    "intelligence": 132
+   },
+   "exp": {
+    "hacking": 26029260.005309105,
+    "strength": 86838.73094790892,
+    "defense": 83578.5701985188,
+    "dexterity": 97459.31636257676,
+    "agility": 94737.62982967988,
+    "charisma": 22395.487281307756,
+    "intelligence": 32283.61953417392
+   },
+   "mults": {
+    "hacking_chance": 1.6210399984439157,
+    "hacking_speed": 2.2529261974943178,
+    "hacking_money": 1.6210399984439157,
+    "hacking_grow": 1.8155647982571856,
+    "hacking": 1.7020919983661114,
+    "hacking_exp": 1.7831439982883066,
+    "strength": 1.500962961522144,
+    "strength_exp": 1.9812711092092294,
+    "defense": 1.500962961522144,
+    "defense_exp": 1.9812711092092294,
+    "dexterity": 1.5760111095982503,
+    "dexterity_exp": 1.9812711092092294,
+    "agility": 1.5760111095982503,
+    "agility_exp": 1.9812711092092294,
+    "charisma": 2.0128813891788866,
+    "charisma_exp": 1.733612220558076,
+    "hacknet_node_money": 2.238850410206112,
+    "hacknet_node_purchase_cost": 0.5862902833442215,
+    "hacknet_node_ram_cost": 0.5862902833442215,
+    "hacknet_node_core_cost": 0.5862902833442215,
+    "hacknet_node_level_cost": 0.5862902833442215,
+    "company_rep": 3.514355298319711,
+    "faction_rep": 2.6623903775149325,
+    "work_money": 1.500962961522144,
+    "crime_success": 1.8611940722874585,
+    "crime_money": 1.8611940722874585,
+    "dnet_money": 1.172627313689175,
+    "bladeburner_max_stamina": 1,
+    "bladeburner_stamina_gain": 1,
+    "bladeburner_analysis": 1,
+    "bladeburner_success_chance": 1
+   }
+  },
+  "note": "2026-10-02 00:28Z: rank 1345, the route committed an install at w4.6 (installBasis); sleeve.js killed after the page froze (00:02, 00:12; trace 12.9s in sleeve); the player from the 22:54Z save"
+ }
 }
