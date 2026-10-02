@@ -668,7 +668,18 @@ if (!sleevesExpected) {
 // OBJECTIVE — the exit — and fail when the run is not getting closer to it.
 // An unreadable objective is a failure, never a pass.
 {
-  const gate = readTel("installgate.txt");
+  // A gate from a PREVIOUS life (or BitNode) prices a stack that no longer
+  // exists: BN6's 0.1h exit read "EXIT NOT APPROACHING 0.1h -> 0.1h" through
+  // BN4's 32GB opening, before progress.js is placed (live 2026-10-02 15:41Z).
+  const gate = (() => {
+    const g = readTel("installgate.txt");
+    const lifeStartMs = num(state.playtimeSinceLastAug) ? Date.now() - state.playtimeSinceLastAug : null;
+    if (g && lifeStartMs !== null && num(Date.parse(g.at)) && Date.parse(g.at) < lifeStartMs) {
+      note(`/tel/installgate.txt is from a previous life (${g.at}) — its exit is not this life's`);
+      return null;
+    }
+    return g;
+  })();
   const prog = tel["progress.txt"];
   // The ONE published exit (progress.js exitH: the model that decides);
   // the sensitivity record's copy for records written before it existed.
@@ -768,7 +779,9 @@ if (!sleevesExpected) {
   if (hist.length < nodeHist.length) note(`exit history restarted: the exit model changed (${modelVer ?? "untagged"}); ${nodeHist.length - hist.length} older sample(s) priced on another model are not compared`);
   now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH, node: now.bitNode, ver: modelVer }] : [])].slice(-48);
 
-  if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
+  const inBootstrap = (() => { const t = now.homeRam !== null ? stackTierFromBoot(readTel("boot.txt"), now.homeRam) : null; return t !== null && now.homeRam < t; })();
+  if (now.exitH === null && inBootstrap) note(`exit not priced yet: home ${now.homeRam}GB is below the stack tier, progress.js is not placed`);
+  else if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
   else note(`exit ETA ${now.exitH.toFixed(1)}h`);
 
   // F1: the exit must approach. Over at least an hour of samples in this node,
