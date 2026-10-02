@@ -165,6 +165,16 @@ export const UPGRADES = [
 ].map(([name, cost, type, mults]) => ({ name, cost, type, mults }))
 
 export const STATS = ['hack', 'str', 'def', 'dex', 'agi', 'cha']
+// The per-stat property names, built once. A template literal key
+// (m[`${s}_exp`]) allocates a fresh string on every access — measured at 23
+// bytes each under V8 — and the gang simulation reads these per stat, per
+// member, per sub-step: in a replica of the live BN6 save (2026-10-02) that was
+// most of gangplan.js's 128MB/min of page garbage.
+const keysOf = (suffix) => Object.freeze(Object.fromEntries(STATS.map((s) => [s, `${s}${suffix}`])))
+const EXP_KEY = keysOf('_exp')
+const MULT_KEY = keysOf('_mult')
+const ASC_KEY = keysOf('_asc_points')
+const WEIGHT_KEY = keysOf('Weight')
 
 /** Player.canAccessGang (PlayerObjectGangMethods.ts:12): free in BN2, else SF2 and karma <= -54000. */
 export function gangAllowed({ bitNode, sf2, karma, disabled = false } = {}) {
@@ -212,8 +222,8 @@ export function expGain(task, m) {
   const d = Math.pow(task.difficulty, 0.9)
   const out = {}
   for (const s of STATS) {
-    const mult = ((m[`${s}_mult`] ?? 1) - 1) / 4 + 1
-    out[s] = ((task[`${s}Weight`] ?? 0) / 1500) * d * mult * ascMult(m[`${s}_asc_points`])
+    const mult = ((m[MULT_KEY[s]] ?? 1) - 1) / 4 + 1
+    out[s] = ((task[WEIGHT_KEY[s]] ?? 0) / 1500) * d * mult * ascMult(m[ASC_KEY[s]])
   }
   return out
 }
@@ -425,9 +435,11 @@ export function shouldAscend(m, result, g, o = {}) {
  * per dollar on the stats the gang uses. Returns `{name, cost, gainPerDollar}` or null.
  * `owned`: names held; `disc`: the gang discount (cost is base / disc).
  */
+const EQUIP_STATS_HACKING = ['hack', 'cha']
+const EQUIP_STATS_COMBAT = ['str', 'def', 'dex', 'agi', 'cha']
 export function bestEquipment(m, owned, budget, disc, isHacking) {
   if (!num(budget) || budget <= 0 || !num(disc) || disc < 1) return null
-  const stats = isHacking ? ['hack', 'cha'] : ['str', 'def', 'dex', 'agi', 'cha']
+  const stats = isHacking ? EQUIP_STATS_HACKING : EQUIP_STATS_COMBAT
   let best = null
   for (const u of UPGRADES) {
     if (owned?.includes(u.name)) continue
@@ -549,9 +561,9 @@ export function warfareSquad(plan, ms, fraction, at = {}) {
 export function freshMember(name) {
   const m = { name, task: 'Unassigned', earnedRespect: 0, upgrades: [], augmentations: [] }
   for (const s of STATS) {
-    m[`${s}_exp`] = 0
-    m[`${s}_mult`] = 1
-    m[`${s}_asc_points`] = 0
+    m[EXP_KEY[s]] = 0
+    m[MULT_KEY[s]] = 1
+    m[ASC_KEY[s]] = 0
     m[s] = skillOf(0, 1)
   }
   return m
@@ -614,10 +626,10 @@ export function* simulateGangGen(g, members, o = {}) {
   const ms = members.map((m) => {
     const c = { ...m, earnedRespect: num(m.earnedRespect) ? m.earnedRespect : 0, augmentations: Array.isArray(m.augmentations) ? m.augmentations : [] }
     for (const s of STATS) {
-      if (!num(c[`${s}_exp`])) c[`${s}_exp`] = 0
-      if (!num(c[`${s}_mult`])) c[`${s}_mult`] = 1
-      if (!num(c[`${s}_asc_points`])) c[`${s}_asc_points`] = 0
-      c[s] = skillOf(c[`${s}_exp`], c[`${s}_mult`] * ascMult(c[`${s}_asc_points`]))
+      if (!num(c[EXP_KEY[s]])) c[EXP_KEY[s]] = 0
+      if (!num(c[MULT_KEY[s]])) c[MULT_KEY[s]] = 1
+      if (!num(c[ASC_KEY[s]])) c[ASC_KEY[s]] = 0
+      c[s] = skillOf(c[EXP_KEY[s]], c[MULT_KEY[s]] * ascMult(c[ASC_KEY[s]]))
     }
     return c
   })
@@ -643,25 +655,25 @@ export function* simulateGangGen(g, members, o = {}) {
       const gains = {}
       let any = false
       for (const s of STATS) {
-        gains[s] = Math.max(m[`${s}_exp`] - ASC_POINTS_FLOOR, 0)
+        gains[s] = Math.max(m[EXP_KEY[s]] - ASC_POINTS_FLOOR, 0)
         if (gains[s] > 0) any = true
       }
       if (!any) continue
       const result = { respect: m.earnedRespect }
-      for (const s of STATS) result[s] = ascMult(m[`${s}_asc_points`] + gains[s]) / ascMult(m[`${s}_asc_points`])
+      for (const s of STATS) result[s] = ascMult(m[ASC_KEY[s]] + gains[s]) / ascMult(m[ASC_KEY[s]])
       const v = shouldAscend(m, result, state, { minGain: forced ? 1 : ascend.minGain, members: ms.length })
       if (!v.ascend) continue
       for (const s of STATS) {
-        m[`${s}_asc_points`] += gains[s]
-        m[`${s}_exp`] = 0
-        m[`${s}_mult`] = 1
+        m[ASC_KEY[s]] += gains[s]
+        m[EXP_KEY[s]] = 0
+        m[MULT_KEY[s]] = 1
       }
       m.upgrades = []
       for (const name of m.augmentations) {
         const u = UPGRADES.find((x) => x.name === name)
-        if (u) for (const s of STATS) if (u.mults[s]) m[`${s}_mult`] *= u.mults[s]
+        if (u) for (const s of STATS) if (u.mults[s]) m[MULT_KEY[s]] *= u.mults[s]
       }
-      for (const s of STATS) m[s] = skillOf(0, m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
+      for (const s of STATS) m[s] = skillOf(0, m[MULT_KEY[s]] * ascMult(m[ASC_KEY[s]]))
       state.respect = Math.max(1, state.respect - m.earnedRespect)
       m.earnedRespect = 0
       ascensions++
@@ -689,19 +701,28 @@ export function* simulateGangGen(g, members, o = {}) {
   const buyEquipment = () => {
     if (!(equipLeft > 0)) return
     const disc = discount(state.respect, terr ? terr.power : num(g.power) ? g.power : 0)
+    // Each member's owned list is built once per call and extended on a buy,
+    // not re-spread for every member on every round (a 60-round loop over the
+    // whole gang, once per simulated step).
+    const owned = new Map(ms.map((m) => [m, [...(m.upgrades ?? []), ...(m.augmentations ?? [])]]))
     for (let round = 0; round < 60 && equipLeft > 0; round++) {
       let best = null
+      let bestM = null
       for (const m of ms) {
-        const e = bestEquipment(m, [...(m.upgrades ?? []), ...(m.augmentations ?? [])], equipLeft, disc, state.isHacking)
-        if (e && (!best || e.gainPerDollar > best.gainPerDollar)) best = { ...e, m }
+        const e = bestEquipment(m, owned.get(m), equipLeft, disc, state.isHacking)
+        if (e && (!best || e.gainPerDollar > best.gainPerDollar)) {
+          best = e
+          bestM = m
+        }
       }
       if (!best) break
       const u = UPGRADES.find((x) => x.name === best.name)
-      const m = best.m
+      const m = bestM
+      owned.get(m).push(u.name)
       if (u.type === 'g') m.augmentations = [...m.augmentations, u.name]
       else m.upgrades = [...(m.upgrades ?? []), u.name]
-      for (const st of STATS) if (u.mults[st]) m[`${st}_mult`] *= u.mults[st]
-      for (const st of STATS) m[st] = skillOf(m[`${st}_exp`], m[`${st}_mult`] * ascMult(m[`${st}_asc_points`]))
+      for (const st of STATS) if (u.mults[st]) m[MULT_KEY[st]] *= u.mults[st]
+      for (const st of STATS) m[st] = skillOf(m[EXP_KEY[st]], m[MULT_KEY[st]] * ascMult(m[ASC_KEY[st]]))
       equipLeft -= best.cost
       equipSpent += best.cost
     }
@@ -724,8 +745,8 @@ export function* simulateGangGen(g, members, o = {}) {
       const e = expGain(tasks[k], ms[k])
       const m = ms[k]
       for (const s of STATS) {
-        m[`${s}_exp`] += e[s] * cycles
-        m[s] = skillOf(m[`${s}_exp`], m[`${s}_mult`] * ascMult(m[`${s}_asc_points`]))
+        m[EXP_KEY[s]] += e[s] * cycles
+        m[s] = skillOf(m[EXP_KEY[s]], m[MULT_KEY[s]] * ascMult(m[ASC_KEY[s]]))
       }
     }
   }
@@ -1440,7 +1461,7 @@ export function* policySearch(g, members, o = {}) {
   const ascendNow = []
   if (o.rollout !== false) {
     for (const m of members) {
-      const gains = STATS.map((s) => Math.max((num(m[`${s}_exp`]) ? m[`${s}_exp`] : 0) - ASC_POINTS_FLOOR, 0))
+      const gains = STATS.map((s) => Math.max((num(m[EXP_KEY[s]]) ? m[EXP_KEY[s]] : 0) - ASC_POINTS_FLOOR, 0))
       if (!gains.some((v) => v > 0)) continue
       const now = simAt(P, { forceAscend: [m.name] })
       yield
