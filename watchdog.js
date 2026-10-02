@@ -1149,6 +1149,22 @@ export async function main(ns) {
             rec.state = 'blocked: no host with room'
             continue
           }
+          // PROGRESS.JS'S HOME BLOCK IS NOT FREE RAM (CLAUDE.md "Home is not
+          // free real estate"). A daemon relaunched onto home must leave the
+          // planner's 13 + 6.25 x mult GB. Live 2026-10-02 19:21Z, after an
+          // install killed the stack, this loop put ctauto.js (22GB) back on a
+          // 64GB home first; progress.js was refused every cycle after, so
+          // /tel/installgate.txt stayed the previous life's and homeup.js read
+          // 'inputs unreadable' — the home upgrade and the planner each waiting
+          // on the other.
+          if (target === 'home' && kind === DAEMON && script !== 'progress.js') {
+            const block = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
+            const after = ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - ns.getScriptRam(script, 'home') * (threads ?? 1)
+            if (after < block && !running(ns, ['home'], 'progress.js')) {
+              rec.state = `deferred: home would keep ${Math.max(0, after).toFixed(2)}GB, under progress.js's ${block}GB block`
+              continue
+            }
+          }
 
           // Always copy from home before relaunching, not just when the file is
           // missing. A copy on another server does not track the original, so a

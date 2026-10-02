@@ -380,6 +380,7 @@ export async function run() {
     const ports = []
     const used = { home: 40, zer0: 10, 'silver-helix': 20 }
     const fake = {
+      getHostname: () => 'home',
       scan: (h) => (h === 'home' ? ['zer0', 'silver-helix'] : ['home']),
       hasRootAccess: () => true,
       getServerMaxRam: (h) => ({ home: 64, zer0: 32, 'silver-helix': 64 })[h],
@@ -409,6 +410,45 @@ export async function run() {
     if (!/\(h === liteRes\?\.host \? liteRes\.gb : 0\)/.test(src('batch.js')) || !/liteRes = \(\(\) => \{[\s\S]{0,400}liteReserveOf\(/.test(src('batch.js'))) c.fail("batch.js's reserveFor must hold bbliteplan.liteReserveOf's host and GB")
     if (!/const batching = all\.some\(\(h\) => ns\.hasRootAccess\(h\) && ns\.ps\(h\)\.some\(\(p\) => p\.filename === 'batch\.js'\)\)/.test(src('seed.js')) || !/if \(batching \|\| flags\.kill\)/.test(src('seed.js'))) c.fail('seed.js must retire early.js/hgw.js while batch.js runs')
     if (!/if \(worker && worker\.threads > 0 && !batching\)/.test(src('boot.js'))) c.fail('boot.js must not spawn its home worker beside batch.js')
+
+    // Live 19:20Z: the coordinator off home read the closure from ITS host, copied the actor alone,
+    // and the game refused every exec (the target could not price it without its imports).
+    // The closure is read from home's copies (scp'd here first), and the target's own price is checked.
+    const homeFiles = new Map()
+    for (const f of fs.readdirSync(REPO).filter((x) => x.endsWith('.js'))) homeFiles.set(f, fs.readFileSync(path.join(REPO, f), 'utf8'))
+    const local = new Map() // the coordinator's host (joesguns)
+    const atTarget = new Set()
+    const ports2 = []
+    const off = {
+      getHostname: () => 'joesguns',
+      scan: (h) => (h === 'home' ? ['pserv-0'] : ['home']),
+      hasRootAccess: () => true,
+      getServerMaxRam: (h) => ({ home: 64, 'pserv-0': 32 })[h],
+      getServerUsedRam: (h) => ({ home: 63, 'pserv-0': 15.75 })[h],
+      getScriptRam: (s, h) => (h === 'pserv-0' ? (['bbliteplan.js', 'bbplan.js', 'bbslot.js', 'coop.js', 'bayes.js'].every((d) => atTarget.has(d)) ? 14.6 : 0) : 14.6),
+      read: (f) => local.get(f) ?? '',
+      scp: (files, to, from) => {
+        for (const f of [files].flat()) {
+          if (to === 'joesguns' && from === 'home' && homeFiles.has(f)) local.set(f, homeFiles.get(f))
+          if (to === 'pserv-0') atTarget.add(f)
+        }
+        return true
+      },
+      clearPort: () => (ports2.length = 0),
+      exec: () => (ports2.push(JSON.stringify({ ok: true })), 9),
+      isRunning: () => false,
+      readPort: () => ports2.shift() ?? 'NULL PORT DATA',
+      sleep: async () => {},
+    }
+    const r2 = await coord.runActor(off, 'bb-lite-act.js', {}, {})
+    c.examined(2)
+    c.note(`off-home coordinator: ${JSON.stringify({ ok: r2.ok, host: r2.host, why: r2.why })}; copied to the target: ${[...atTarget].sort().join(', ')}`)
+    if (!r2.ok || r2.host !== 'pserv-0') c.fail(`an off-home coordinator must ship the actor's whole import closure (read from home) and run it: ${r2.why}`)
+    off.getScriptRam = (s, h) => (h === 'pserv-0' ? 0 : 14.6)
+    const r3 = await coord.runActor(off, 'bb-lite-read.js', {}, {})
+    if (r3.ok || !/cannot be computed there/.test(r3.why ?? '')) c.fail(`a target that cannot price the actor must be named, not exec'd blind: ${r3.why}`)
+    // The watchdog leaves progress.js's home block when it relaunches a home daemon (live 19:21Z: ctauto.js took it).
+    if (!/if \(target === 'home' && kind === DAEMON && script !== 'progress\.js'\) \{[\s\S]{0,300}const block = 13 \+ 6\.25 \* singularityRamMultiplier/.test(src('watchdog.js'))) c.fail("watchdog.js must not relaunch a home daemon into progress.js's block")
   }
   return checks
 }

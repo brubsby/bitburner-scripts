@@ -113,12 +113,33 @@ function hostsOf(ns) {
   return [...seen].filter((h) => ns.hasRootAccess(h))
 }
 
-/** A script and what it imports, read from home (0GB): what an actor off home needs beside it. */
+/**
+ * A script and what it imports, READ FROM HOME's copies: what an actor needs
+ * beside it on another host. ns.read is local, so off home each file is
+ * pulled from home before it is read — live 2026-10-02 19:20Z this read the
+ * coordinator's own host (joesguns), where the actor had never been copied:
+ * the closure came back as the actor alone, only it was copied to
+ * pserv-8475-0, its RAM could not be computed there without its imports
+ * (NetscriptWorker.createRunningScriptInstance: getRamUsage over the TARGET's
+ * scripts) and every exec was refused with 16GB free. Cached for 10 minutes.
+ */
+const closureMemo = new Map()
 function closureOf(ns, root) {
+  const memo = closureMemo.get(root)
+  if (memo && Date.now() - memo.at < 600e3) return memo.files
+  const here = ns.getHostname()
   const out = new Set([root])
   const queue = [root]
   while (queue.length) {
-    const src = String(ns.read(queue.shift()) || '')
+    const f = queue.shift()
+    if (here !== 'home') {
+      try {
+        ns.scp(f, here, 'home')
+      } catch {
+        /* the read below says what is here */
+      }
+    }
+    const src = String(ns.read(f) || '')
     for (const m of src.matchAll(/from\s+['"]([^'"]+\.js)['"]/g)) {
       const dep = m[1].replace(/^\//, '')
       if (!out.has(dep)) {
@@ -127,7 +148,10 @@ function closureOf(ns, root) {
       }
     }
   }
-  return [...out]
+  const files = [...out]
+  // Only a closure that found imports is worth remembering (an unreadable root reads as itself alone).
+  if (files.length > 1) closureMemo.set(root, { at: Date.now(), files })
+  return files
 }
 
 /**
@@ -158,6 +182,14 @@ export async function runActor(ns, script, input, { withSlot = false, prefer = n
     const free = freeOf(target)
     if (free < price) {
       refused.push(`${target} ${free.toFixed(2)}GB free`)
+      continue
+    }
+    // THE GAME'S OWN PRICE THERE: getRamUsage over the target's copies
+    // (createRunningScriptInstance). 0 = it cannot be computed (an import
+    // missing on that host) — the reason exec would refuse, said now.
+    const priceThere = target === 'home' ? price : ns.getScriptRam(script, target)
+    if (!(priceThere > 0) || priceThere > free) {
+      refused.push(`${target}: ${priceThere > 0 ? `${priceThere}GB there, ${free.toFixed(2)}GB free` : `its RAM cannot be computed there (an import missing; copied ${closureOf(ns, script).length} file(s))`}`)
       continue
     }
     ns.clearPort(LITE_PORT)
