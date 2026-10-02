@@ -860,7 +860,10 @@ export async function main(ns) {
   // moment the spawn kills us. Over-asking makes runScriptFromScript fail and
   // the worker never starts at all, which is the one outcome worse than
   // starting too few threads — seed.js's next pass tops home up either way.
-  if (worker && worker.threads > 0) {
+  // Not beside the batcher: batch.js places its own workers on home, and a
+  // spawned early.js holds its RAM forever (seed.js retires them on sight).
+  const batching = hosts.some((host) => ns.hasRootAccess(host) && ns.ps(host).some((proc) => proc.filename === 'batch.js'))
+  if (worker && worker.threads > 0 && !batching) {
     const already = hosts.some(
       (host) => ns.hasRootAccess(host) && ns.ps(host).some((proc) => proc.filename === worker.script),
     )

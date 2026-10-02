@@ -233,3 +233,50 @@ export function rankPerHourOf(samples, now) {
   const last = samples[samples.length - 1]
   return now > hourAgo.t && last.t > hourAgo.t ? ((last.rank - hourAgo.rank) / (last.t - hourAgo.t)) * 3600e3 : null
 }
+
+// ---------------------------------------------------------------------------
+// THE RESERVATION. Live 2026-10-02 18:10Z: boot could not place bb-lite.js
+// (5.6GB) and then its actors could not run ("exec of bb-lite-act.js refused
+// on silver-helix", 1GB free): batch.js refills every freed GB with workers
+// within seconds, and seed.js's early.js held ~31GB on seven hosts. So one
+// host carries a standing reservation the batcher honours (batch.js
+// reserveFor): the coordinator plus its largest actor while bb-lite is not
+// running yet (so boot/the watchdog can place it there), the largest actor
+// beside it once it runs, nothing once bladeburner.js has taken over.
+
+/** bb-lite.js's own price and its largest actor's (bb-lite-act.js), at every Source-File level ([BL8] asserts both). */
+export const LITE_COORD_GB = 5.6
+export const LITE_ACTOR_GB = 14.6
+
+/**
+ * The host bb-lite reserves its actor headroom on: its own host when that can
+ * hold coordinator + actor, else the largest rooted host that is neither home
+ * (the planner's block lives there) nor a hacknet server — `prev` first while
+ * it still qualifies, so the reservation does not wander.
+ * hosts: [{host, max, hacknet?}]
+ */
+export function reserveHostOf(self, hosts, prev = null) {
+  const ok = (x) => !!x && x.host !== 'home' && !x.hacknet && x.max >= LITE_COORD_GB + LITE_ACTOR_GB
+  const me = hosts.find((x) => x.host === self)
+  if (ok(me)) return self
+  const p = hosts.find((x) => x.host === prev)
+  if (ok(p)) return prev
+  const best = hosts.filter(ok).sort((a, b) => b.max - a.max || (a.host < b.host ? -1 : 1))[0]
+  return best ? best.host : null
+}
+
+/**
+ * What batch.js must leave free, and where: {host, gb, why} or null.
+ *   lite  /tel/bb-lite.txt, full  /tel/bladeburner.txt, canJoin  sfgate.canJoinBladeburner
+ *   hosts [{host, max, hacknet?}] (rooted)
+ */
+export function liteReserveOf({ lite = null, full = null, info, canJoin = false, hosts = [], now = Date.now() }) {
+  if (!canJoin) return null
+  // bladeburner.js in its loop (acting, or waiting for the handover): no lean daemon to hold room for.
+  const fAt = Date.parse(full?.at ?? '')
+  if (full?.daemon === 'bladeburner.js' && full.lastAugReset === info?.lastAugReset && full.health !== 'stopped' && full.exited !== true && Number.isFinite(fAt) && now - fAt <= FULL_FRESH_MS) return null
+  const alive = liteAliveOf(lite, info, now).alive
+  if (alive && lite?.reserve?.host && hosts.some((x) => x.host === lite.reserve.host)) return { host: lite.reserve.host, gb: num(lite.reserve.gb) ? lite.reserve.gb : LITE_ACTOR_GB, why: 'bb-lite.js is running: its actor headroom' }
+  const host = reserveHostOf(null, hosts)
+  return host ? { host, gb: LITE_COORD_GB + LITE_ACTOR_GB, why: 'bb-lite.js is not running: room to place it and its actors' } : null
+}

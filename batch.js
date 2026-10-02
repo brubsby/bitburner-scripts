@@ -71,7 +71,8 @@
 import { enter as traceEnter, leave as traceLeave } from 'trace.js'
 import { reporter, describe, record } from 'status.js'
 // Pure arithmetic over getResetInfo's output; no ns surface of its own.
-import { singularityRamMultiplier } from 'sfgate.js'
+import { singularityRamMultiplier, canJoinBladeburner } from 'sfgate.js'
+import { liteReserveOf } from 'bbliteplan.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure: the stock trader's record and which side of a batch it wants to move
@@ -1200,7 +1201,10 @@ export async function main(ns) {
   // BitNode change, and a BitNode change restarts everything anyway. ns.
   // getResetInfo is 1.00GB against this file's 8.80GB, which buys a reserve
   // that is right in every regime instead of one that was right in one.
-  const homeReserveGb = SETTINGS.homeReserve(singularityRamMultiplier(ns.getResetInfo()))
+  const resetInfo = ns.getResetInfo()
+  const homeReserveGb = SETTINGS.homeReserve(singularityRamMultiplier(resetInfo))
+  // bb-lite's reservation this tick (published in /tel/batch.txt `liteReserve`).
+  let liteRes = null
 
   const flags = ns.flags([
     ['hosts', ''],
@@ -1237,7 +1241,7 @@ export async function main(ns) {
   // writes. No new ns surface: ns.write and ns.atExit are both 0GB
   // (RamCostGenerator.ts:632,605), and ns.scp/ns.getHostname were already here.
   const errors = []
-  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, errors: errors.slice(-5) }))
+  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, liteReserve: liteRes, errors: errors.slice(-5) }))
   // The daemon only mirrors /tel/* off home, so a controller running anywhere
   // else has to ship its status there. This was already inline at both write
   // sites; hoisting it into a closure lets the exit path use it too, and
@@ -1560,10 +1564,25 @@ export async function main(ns) {
           }
         }
       }
+      // THE BLADEBURNER ACTORS' HEADROOM (bbliteplan.liteReserveOf): live
+      // 2026-10-02 18:10Z this loop refilled every freed GB within seconds,
+      // so bb-lite.js could not be placed and its 9.6-14.6GB one-shot actors
+      // were refused everywhere — the division's join blocked on RAM the
+      // batcher held. One host keeps bb-lite's footprint free while the
+      // division can exist and bladeburner.js has not taken over.
+      liteRes = (() => {
+        try {
+          const rd = (f) => JSON.parse(ns.read(f) || 'null')
+          return liteReserveOf({ lite: rd('/tel/bb-lite.txt'), full: rd('/tel/bladeburner.txt'), info: resetInfo, canJoin: canJoinBladeburner(resetInfo), hosts: hosts.map((h) => ({ host: h, max: ns.getServerMaxRam(h), hacknet: isHacknetServerHost(h) })) })
+        } catch {
+          return null
+        }
+      })()
       const reserveFor = (h) =>
         (h === self ? SETTINGS.selfReserve : 0) +
         (h === 'home' ? homeReserveGb : 0) +
-        (h === shareHost ? shareGb : 0)
+        (h === shareHost ? shareGb : 0) +
+        (h === liteRes?.host ? liteRes.gb : 0)
       const free = new Map()
       // Cores per host, read once per tick. Only home ever has more than one in
       // BN1 (purchased servers are always single-core), but reading it rather

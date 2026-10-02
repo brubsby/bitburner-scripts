@@ -107,8 +107,9 @@ export async function main(ns) {
     try {
       last = await pass(ns, flags)
       note(last.refused?.length ? 'degraded' : 'ok', {
-        result: 'ok',
+        result: last.why ? 'retired-for-batch' : 'ok',
         detail:
+          (last.why ? `${last.why}; ` : '') +
           `${last.placed.length} placed, ${last.newlyRooted.length} newly rooted` +
           (last.refused?.length ? `, ${last.refused.length} REFUSED: ${last.refused.join('; ')}` : ''),
       })
@@ -182,6 +183,22 @@ async function pass(ns, flags) {
   // Root anything that has become reachable since the last pass.
   const newlyRooted = all.filter((h) => h !== 'home' && root(ns, h))
 
+  // RETIRED WHILE THE BATCHER RUNS. batch.js places its own h/g/w on every
+  // host; early.js/hgw.js loop forever and hold their RAM. Live 2026-10-02
+  // 18:10Z (BN4, 64GB home): early.js held ~31GB on seven 32/64GB hosts long
+  // after the watchdog had batch.js running, so nothing else could be placed
+  // (bb-lite.js, its actors). Rooting carries on above; the workers go.
+  const batching = all.some((h) => ns.hasRootAccess(h) && ns.ps(h).some((p) => p.filename === 'batch.js'))
+  if (batching || flags.kill) {
+    const retired = []
+    for (const h of all) {
+      if (!ns.hasRootAccess(h)) continue
+      if (ns.ps(h).some((p) => p.filename === EARLY || p.filename === CHEAP)) retired.push(h)
+      ns.scriptKill(EARLY, h)
+      ns.scriptKill(CHEAP, h)
+    }
+    if (batching && !flags.kill) return { level, targets: [], placed: [], refused: [], newlyRooted, retired, why: `batch.js is running: early.js/hgw.js retired on ${retired.length} host(s); seed.js only roots` }
+  }
   if (flags.kill) {
     for (const h of all) {
       if (!ns.hasRootAccess(h)) continue

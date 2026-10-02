@@ -346,6 +346,70 @@ export async function run() {
     if (r1?.kind !== 'crime' || r1.args?.[0] !== 'Mug') c.fail(`an unpaid gym re-issue must fall back to the money crime: ${JSON.stringify(r1)}`)
     if (!r2?.skip) c.fail('without a fallback crime the unpaid gym is skipped, as before')
   }
+  // ---- BL8 -------------------------------------------------------------------
+  {
+    const c = new Check('BL8', "the reservation: batch.js keeps bb-lite's footprint free on one host; actors go to a host with the room (and past a refusal); early.js retires beside the batcher")
+    checks.push(c)
+    const ram = await import('./ram.mjs')
+    await ram.load()
+    for (const save of [{ bitNode: 4, sf: { 4: 2 } }, { bitNode: 1, sf: { 4: 3 } }]) {
+      ram.asSave(save)
+      const coordGb = ram.ramOf('bb-lite.js').cost
+      const actorGb = Math.max(...Object.values(lp.ACTOR).map((f) => ram.ramOf(f).cost))
+      c.examined(2)
+      if (coordGb !== lp.LITE_COORD_GB) c.fail(`LITE_COORD_GB ${lp.LITE_COORD_GB} but bb-lite.js prices ${coordGb}GB (BN${save.bitNode})`)
+      if (actorGb !== lp.LITE_ACTOR_GB) c.fail(`LITE_ACTOR_GB ${lp.LITE_ACTOR_GB} but the largest actor prices ${actorGb}GB (BN${save.bitNode})`)
+    }
+    // The pure reservation (live 18:10Z fleet: 32/64GB hosts, home 64).
+    const T = Date.parse('2026-10-02T18:10:00Z')
+    const info = { lastAugReset: T - 4 * 3600e3 }
+    const at = new Date(T - 30e3).toISOString()
+    const hosts = [{ host: 'home', max: 64 }, { host: 'zer0', max: 32 }, { host: 'silver-helix', max: 64 }, { host: 'foodnstuff', max: 16 }, { host: 'hacknet-server-0', max: 128, hacknet: true }]
+    const none = lp.liteReserveOf({ info, canJoin: true, hosts, now: T })
+    const runningOn = lp.liteReserveOf({ lite: { lastAugReset: info.lastAugReset, at, health: 'ok', result: 'acting', reserve: { host: 'zer0', gb: lp.LITE_ACTOR_GB } }, info, canJoin: true, hosts, now: T })
+    const full = lp.liteReserveOf({ full: { daemon: 'bladeburner.js', lastAugReset: info.lastAugReset, at, health: 'ok', result: 'acting' }, info, canJoin: true, hosts, now: T })
+    const noDiv = lp.liteReserveOf({ info, canJoin: false, hosts, now: T })
+    c.examined(4)
+    c.note(`not running: ${JSON.stringify(none)}; running on zer0: ${JSON.stringify(runningOn)}; bladeburner.js in its loop: ${full}; no division: ${noDiv}`)
+    if (none?.host !== 'silver-helix' || none.gb !== lp.LITE_COORD_GB + lp.LITE_ACTOR_GB) c.fail('with bb-lite not running, the largest non-home, non-hacknet host holds coordinator + actor')
+    if (runningOn?.host !== 'zer0' || runningOn.gb !== lp.LITE_ACTOR_GB) c.fail("with bb-lite running, its published reserve (the actor's headroom) is held")
+    if (full !== null || noDiv !== null) c.fail('no reservation once bladeburner.js runs, nor where the division cannot exist')
+    if (lp.reserveHostOf('foodnstuff', hosts) !== 'silver-helix') c.fail('a coordinator on a 16GB host reserves on the largest host that holds coordinator + actor')
+    if (lp.reserveHostOf('zer0', hosts) !== 'zer0') c.fail('a coordinator on a host that holds coordinator + actor reserves there')
+    // runActor: the reserved host first; a host whose free RAM vanished or whose exec refuses is skipped.
+    const ports = []
+    const used = { home: 40, zer0: 10, 'silver-helix': 20 }
+    const fake = {
+      scan: (h) => (h === 'home' ? ['zer0', 'silver-helix'] : ['home']),
+      hasRootAccess: () => true,
+      getServerMaxRam: (h) => ({ home: 64, zer0: 32, 'silver-helix': 64 })[h],
+      getServerUsedRam: (h) => used[h],
+      getScriptRam: () => 14.6,
+      read: () => '',
+      scp: (_, h) => {
+        // batch.js lands workers on silver-helix between the listing and the exec (the live race).
+        if (h === 'silver-helix') used['silver-helix'] = 63
+        return true
+      },
+      clearPort: () => (ports.length = 0),
+      exec: (s, h) => (h === 'home' ? 0 : (ports.push(JSON.stringify({ ok: true, host: h })), 7)),
+      isRunning: () => false,
+      readPort: () => ports.shift() ?? 'NULL PORT DATA',
+      sleep: async () => {},
+    }
+    const r1 = await coord.runActor(fake, 'bb-lite-act.js', {}, { prefer: 'silver-helix' })
+    c.examined(1)
+    c.note(`runActor: ${JSON.stringify({ ok: r1.ok, host: r1.host, refused: r1.refused, why: r1.why })}`)
+    if (!r1.ok || r1.host !== undefined && r1.out?.host !== r1.host) c.fail(`runActor must land the actor somewhere with room: ${r1.why}`)
+    if (r1.ok && r1.host !== 'zer0') c.fail(`runActor placed on ${r1.host}, which had no room / refused`)
+    if (!(r1.refused ?? []).some((x) => x.startsWith('silver-helix')) || !(r1.refused ?? []).some((x) => x.startsWith('home'))) c.fail('the reserved host (vanished room) and the refusing host must be tried and recorded, in that order of preference')
+    // The wiring: batch.js honours it, seed.js retires its workers beside the batcher, boot spawns none.
+    const src = (f) => fs.readFileSync(path.join(REPO, f), 'utf8')
+    c.examined(3)
+    if (!/\(h === liteRes\?\.host \? liteRes\.gb : 0\)/.test(src('batch.js')) || !/liteRes = \(\(\) => \{[\s\S]{0,400}liteReserveOf\(/.test(src('batch.js'))) c.fail("batch.js's reserveFor must hold bbliteplan.liteReserveOf's host and GB")
+    if (!/const batching = all\.some\(\(h\) => ns\.hasRootAccess\(h\) && ns\.ps\(h\)\.some\(\(p\) => p\.filename === 'batch\.js'\)\)/.test(src('seed.js')) || !/if \(batching \|\| flags\.kill\)/.test(src('seed.js'))) c.fail('seed.js must retire early.js/hgw.js while batch.js runs')
+    if (!/if \(worker && worker\.threads > 0 && !batching\)/.test(src('boot.js'))) c.fail('boot.js must not spawn its home worker beside batch.js')
+  }
   return checks
 }
 

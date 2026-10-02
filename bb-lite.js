@@ -49,9 +49,9 @@ import { canJoinBladeburner } from 'sfgate.js'
 import { reporter, describe, record } from 'status.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { slotClaim, SLOT_FILES } from 'bbslot.js'
-import { hacknetLast } from 'hacknetplan.js'
+import { hacknetLast, isHacknetServerHost } from 'hacknetplan.js'
 import { POLICY, BBC } from 'bbplan.js'
-import { LITE_FILE, BB_FILE, LITE_PORT, ACTOR, fullTakingOverOf, joinableOf, liteRecordOf, passWaitMs, rankPerHourOf, leanViewOf } from 'bbliteplan.js'
+import { LITE_FILE, BB_FILE, LITE_PORT, ACTOR, LITE_ACTOR_GB, reserveHostOf, fullTakingOverOf, joinableOf, liteRecordOf, passWaitMs, rankPerHourOf, leanViewOf } from 'bbliteplan.js'
 
 const ACTOR_WAIT_MS = 15e3
 
@@ -135,38 +135,57 @@ function closureOf(ns, root) {
  * there costs its hashes) and return its answer from the port.
  * {ok, out} or {ok: false, why}.
  */
-async function runActor(ns, script, input, { withSlot = false } = {}) {
+export async function runActor(ns, script, input, { withSlot = false, prefer = null } = {}) {
   const price = ns.getScriptRam(script, 'home')
   if (!(price > 0)) return { ok: false, why: `${script} does not price on home (missing, or it does not compile)` }
+  // The reserved host first (batch.js leaves LITE_ACTOR_GB free there), then
+  // home, then the rest by free RAM — hacknet servers last (a GB there costs
+  // its hashes). Free RAM is read again at the exec, and a refusal moves on to
+  // the next host rather than ending the pass.
+  const freeOf = (h) => ns.getServerMaxRam(h) - ns.getServerUsedRam(h)
   const cands = hostsOf(ns)
-    .map((h) => ({ h, free: ns.getServerMaxRam(h) - ns.getServerUsedRam(h) }))
+    .map((h) => ({ h, free: freeOf(h) }))
     .filter((x) => x.free >= price)
-    .sort((a, b) => hacknetLast(a.h, b.h) || b.free - a.free)
-  if (!cands.length) return { ok: false, why: `no rooted host has ${price}GB free for ${script}` }
-  const target = cands[0].h
-  if (target !== 'home') {
-    ns.scp(closureOf(ns, script), target, 'home')
-    // The act actor reads the claim from its own host's copies: pulled now, a moment before it runs.
-    if (withSlot) ns.scp(SLOT_FILES, target, 'home')
+    .sort((a, b) => (b.h === prefer) - (a.h === prefer) || (b.h === 'home') - (a.h === 'home') || hacknetLast(a.h, b.h) || b.free - a.free)
+  if (!cands.length) return { ok: false, why: `no rooted host has ${price}GB free for ${script}${prefer ? ` (the reserved ${prefer} has ${freeOf(prefer).toFixed(2)}GB)` : ''}` }
+  const refused = []
+  for (const { h: target } of cands) {
+    if (target !== 'home') {
+      ns.scp(closureOf(ns, script), target, 'home')
+      // The act actor reads the claim from its own host's copies: pulled now, a moment before it runs.
+      if (withSlot) ns.scp(SLOT_FILES, target, 'home')
+    }
+    const free = freeOf(target)
+    if (free < price) {
+      refused.push(`${target} ${free.toFixed(2)}GB free`)
+      continue
+    }
+    ns.clearPort(LITE_PORT)
+    const pid = ns.exec(script, target, 1, JSON.stringify(input ?? {}))
+    if (!pid) {
+      refused.push(`${target} refused with ${free.toFixed(2)}GB free`)
+      continue
+    }
+    const until = Date.now() + ACTOR_WAIT_MS
+    while (ns.isRunning(pid) && Date.now() < until) await ns.sleep(20)
+    const raw = ns.readPort(LITE_PORT)
+    let out = null
+    try {
+      out = typeof raw === 'string' ? JSON.parse(raw) : null
+    } catch {
+      out = null
+    }
+    if (!out) return { ok: false, why: `${script} on ${target} answered nothing (pid ${pid}, ${ns.isRunning(pid) ? 'still running' : 'exited'})`, host: target }
+    if (!out.ok) return { ok: false, why: `${script}: ${out.error ?? 'failed'}`, out, host: target }
+    return { ok: true, out, host: target, refused }
   }
-  ns.clearPort(LITE_PORT)
-  const pid = ns.exec(script, target, 1, JSON.stringify(input ?? {}))
-  if (!pid) return { ok: false, why: `exec of ${script} refused on ${target}` }
-  const until = Date.now() + ACTOR_WAIT_MS
-  while (ns.isRunning(pid) && Date.now() < until) await ns.sleep(20)
-  const raw = ns.readPort(LITE_PORT)
-  let out = null
-  try {
-    out = typeof raw === 'string' ? JSON.parse(raw) : null
-  } catch {
-    out = null
-  }
-  if (!out) return { ok: false, why: `${script} on ${target} answered nothing (pid ${pid}, ${ns.isRunning(pid) ? 'still running' : 'exited'})`, host: target }
-  if (!out.ok) return { ok: false, why: `${script}: ${out.error ?? 'failed'}`, out, host: target }
-  return { ok: true, out, host: target }
+  return { ok: false, why: `exec of ${script} (${price}GB) refused on every candidate: ${refused.join('; ')}` }
 }
 
-async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
+async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
+  // Every record carries the reservation: batch.js reads it off /tel/bb-lite.txt.
+  let reserveNow = null
+  const say = (health, fields) => say0(health, { reserve: reserveNow, ...fields })
   const bnRank = mults.BladeburnerRank
   const costMult = mults.BladeburnerSkillCost
   let resting = false
@@ -180,6 +199,7 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
   let maxStamina = null
   let factionJoined = null
   let blackFrom = 0
+  let reserveHost = null
   const samples = []
   const purchases = []
   const actorErrors = []
@@ -198,6 +218,11 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
       return
     }
 
+    // ---- 0b. the reservation batch.js honours (bbliteplan.liteReserveOf) ----
+    reserveHost = reserveHostOf(host, hostsOf(ns).map((h) => ({ host: h, max: ns.getServerMaxRam(h), hacknet: isHacknetServerHost(h) })), reserveHost)
+    reserveNow = reserveHost ? { host: reserveHost, gb: LITE_ACTOR_GB } : null
+    const act = (script, input, o = {}) => runActor(ns, script, input, { ...o, prefer: reserveHost })
+
     // ---- 1. the division ---------------------------------------------------
     const player = ns.getPlayer()
     const person = { skills: { ...player.skills }, mults: { ...player.mults } }
@@ -210,7 +235,7 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
         await ns.sleep(60e3)
         continue
       }
-      const r = await runActor(ns, ACTOR.join, { faction: false })
+      const r = await act(ACTOR.join, { faction: false })
       if (!r.ok || !r.out.joined) {
         const why = r.ok ? `joinBladeburnerDivision returned ${r.out.divisionCall} with combat ${j.low}+ and the division still refuses (the reason is in bb-lite-join.js's log)` : r.why
         fail(why)
@@ -222,7 +247,7 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
 
     // ---- 2. once per process: autolevel back on ------------------------------
     if (!leveled) {
-      const r = await runActor(ns, ACTOR.level, {})
+      const r = await act(ACTOR.level, {})
       if (r.ok) leveled = true
       else fail(r.why)
     }
@@ -230,14 +255,14 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
     // ---- 3. the faction at rank 25 --------------------------------------------
     factionJoined = (player.factions ?? []).includes('Bladeburners')
     if (!factionJoined && rank !== null && rank >= BBC.RankNeededForFaction) {
-      const r = await runActor(ns, ACTOR.join, { faction: true })
+      const r = await act(ACTOR.join, { faction: true })
       if (r.ok) factionJoined = r.out.factionCall === true
       else fail(r.why)
     }
 
     // ---- 4. the reads -------------------------------------------------------
     {
-      const r = await runActor(ns, ACTOR.read, { from: blackFrom })
+      const r = await act(ACTOR.read, { from: blackFrom })
       if (r.ok) {
         reads = { actions: r.out.actions, blackOp: r.out.blackOp, done: r.out.done }
         blackFrom = r.out.done
@@ -251,7 +276,7 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
 
     // ---- 5. skills, hourly ----------------------------------------------------
     if (Date.now() - lastSkills > POLICY.skillEveryS * 1000 && stamina !== null) {
-      const r = await runActor(ns, ACTOR.skill, { person, reads, stamina, maxStamina, rank, bnRank, costMult })
+      const r = await act(ACTOR.skill, { person, reads, stamina, maxStamina, rank, bnRank, costMult })
       if (r.ok) {
         levels = r.out.levels
         skillPoints = r.out.skillPoints
@@ -264,7 +289,7 @@ async function loop(ns, { info, host, mults, say, sayBB, setOwns }) {
     // ---- 6. decide and act (the claim is re-read in the actor) ------------------
     mirrorFrom(ns, host, ...SLOT_FILES)
     const claimHere = slotClaim(ns, host, info) // for the record; the actor's own read decides
-    const r = await runActor(ns, ACTOR.act, { person, reads, levels, bnRank, resting, lastAugReset: info.lastAugReset }, { withSlot: true })
+    const r = await act(ACTOR.act, { person, reads, levels, bnRank, resting, lastAugReset: info.lastAugReset }, { withSlot: true })
     let pick = null
     let current = null
     let slot = claimHere
