@@ -34,7 +34,15 @@
 //   raf    renderStart -> styleAndLayoutStart   requestAnimationFrame callbacks
 //   layout styleAndLayoutStart -> end  style, layout, paint
 // and "react" lists the game root's commits (Profiler, dev builds) inside it.
-// A RESUME EPISODE is the 120 s after the tab was shown following > 60 s hidden.
+// A RESUME EPISODE (v3) is the 10 min after an UNSEEN period >= 60 s ends.
+// Unseen = hidden (visibilitychange), or no rAF for > 5 s while the main thread
+// was free (cause blur-noframes when the window was blurred - a locked screen -
+// else framegap). Each episode carries the blocked time, every long task marked
+// before/after the first frame, React commits, a per-second slice and, where the
+// dev server sends `Document-Policy: js-profiling`, the profiler's top
+// self-time frames (the profiler runs from resume only), and whether the UI
+// was parked (page content unmounted after 60 s unseen; bbParkUI=off disables)
+// with the park/remount React ms. (v2 records: only hidden, 120 s window.)
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -161,6 +169,110 @@ export function interpret(marker, rec) {
   }
 }
 
+const markerText = (raw) => {
+  const m = parseMarker(raw)
+  return m ? `${m.label} [${KIND[m.kind] ?? m.kind}] @${hms(m.at)}` : 'none'
+}
+
+/** The unseen-period / rAF watchdog / profiler state lines (record v3). */
+export function unseenLines(rec) {
+  const out = []
+  const u = rec?.unseen
+  const pr = rec?.profiler
+  if (u) {
+    out.push(
+      `UNSEEN  ${u.open ? `OPEN: ${u.open.cause} since ${iso(u.open.since)}${u.open.parked ? ' (UI parked)' : ''}` : 'not now'};  UI parking ${u.parkUI === false ? 'OFF (bbParkUI=off)' : 'on'};  periods ${u.periods};  focused ${u.focused};  rAF callbacks ${u.rafs}, last ${hms(u.lastRafAt)};  watchdog last ${hms(u.lastWatchAt)}`,
+    )
+  } else if (rec && (rec.v ?? 0) < 3) {
+    out.push(`UNSEEN  record v${rec.v ?? '?'}: only visibilitychange is tracked (a locked screen with no hidden event is invisible here)`)
+  }
+  if (pr) {
+    out.push(
+      `PROFILER  ${pr.supported ? 'available' : `unavailable${pr.error ? '' : ' (no self.Profiler, or no Document-Policy: js-profiling header)'}`}` +
+        `${pr.error ? `; constructor failed: ${pr.error}` : ''}; started ${pr.started}, summarized ${pr.summarized}${pr.running ? ', running now' : ''}`,
+    )
+  }
+  if (out.length) out.push('')
+  return out
+}
+
+/**
+ * Lines for the resume episodes. v3: one per unseen period >= 60 s (hidden, or
+ * no frames while blurred/visible), with a 10 min post-resume window. v2: one
+ * per 'shown' after > 60 s hidden, 120 s window.
+ */
+export function episodeLines(rec) {
+  const eps = rec?.resumeEpisodes ?? []
+  const out = []
+  if (!eps.length) {
+    if (rec && (rec.v ?? 0) >= 3) out.push('RESUME EPISODES: none (no unseen period >= 60s on this page)', '')
+    return out
+  }
+  const cols = rec.episodeRingCols ?? []
+  out.push(`RESUME EPISODES (${eps.length}; unseen >= 60s; window ${dur(eps[0].windowMs)} after resume)`)
+  for (const e of eps) {
+    const unseenMs = e.unseenMs ?? e.hiddenMs
+    const cause = e.cause ?? 'hidden'
+    out.push(
+      `  ${cause.toUpperCase()} ${dur(unseenMs)}: unseen ${iso(e.unseenAt ?? e.shownAt - unseenMs)} -> resume ${iso(e.shownAt)}` +
+        (e.endedBy ? ` (ended by ${e.endedBy}${e.backdatedMs ? `, which arrived ${dur(e.backdatedMs)} late: main thread blocked, resume backdated` : ''})` : ''),
+    )
+    if (e.parked !== undefined) {
+      out.push(
+        e.parked
+          ? `    UI PARKED after ${dur(e.parkedAfterMs)} (park ${dur(e.parkMs)}, remount ${e.remountMs === undefined ? '?' : dur(e.remountMs)} of synchronous React work)${e.parkSkip ? `  ${e.parkSkip}` : ''}`
+          : `    UI not parked (${e.parkSkip ?? '?'})`,
+      )
+    }
+    if (e.markerAtStart !== undefined) {
+      out.push(`    open marker at start: ${markerText(e.markerAtStart)};  at resume: ${markerText(e.markerAtResume)}`)
+    }
+    if (e.heapAtStart !== undefined) out.push(`    heap MB: start ${e.heapAtStart ?? '-'}, resume ${e.heapAtResume ?? '-'}, max in window ${e.heapMax ?? '-'}`)
+    out.push(
+      `    first tick ${e.firstTickAfterMs === null ? 'NONE in window' : `+${dur(e.firstTickAfterMs)} (numCycles ${e.firstTickCycles}, took ${dur(e.firstTickMs)})`}` +
+        (e.firstRafAfterMs !== undefined ? `;  first frame (rAF) ${e.firstRafAfterMs === null ? 'NONE yet' : `+${dur(e.firstRafAfterMs)}`}` : ''),
+    )
+    out.push(`    window: ${e.ticks} ticks, ${e.cycles} cycles, engine ${dur(e.engMs)} (max tick ${dur(e.maxTickMs)}); ${e.longCount} long frames/tasks`)
+    if (e.blockedMs !== undefined) {
+      out.push(
+        `    blocked: ${dur(e.blockedMs)} (longtask - 50ms), LoAF blocking ${dur(e.loafBlockingMs)};  longest task ${dur(e.longestTaskMs)}, longest frame ${dur(e.longestFrameMs)}` +
+          `;  react ${e.react?.n ?? 0} commit(s), ${dur(e.react?.ms ?? 0)} (max ${dur(e.react?.maxMs ?? 0)})`,
+      )
+    }
+    if (e.tasks?.length) {
+      out.push('    long tasks (start after resume, length, type, before/after the first frame):')
+      for (const t of e.tasks) out.push(`      +${lpad(dur(t.after), 7)}  ${lpad(dur(t.ms), 8)}  ${pad(t.type, 20)} ${t.framed ? 'after first frame' : 'BEFORE first frame'}`)
+    }
+    if (e.longest) {
+      out.push(`    longest (starts +${dur(e.longest.at - e.shownAt)} after resume):`)
+      for (const l of frameLines(e.longest, '    ')) out.push(l)
+    } else out.push('    no long frame in the window')
+    const p = e.profile
+    if (p) {
+      if (p.pending) out.push('    profile: still running / not summarized when the record was flushed')
+      else if (p.error) out.push(`    profile: FAILED ${p.error}`)
+      else {
+        const marks = p.markers ? `;  markers ${Object.entries(p.markers).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''
+        out.push(
+          `    profile ${p.fromMs < 0 ? `-${dur(-p.fromMs)}` : `+${dur(p.fromMs)}`}..+${dur(p.toMs)} around resume @${p.sampleIntervalMs}ms: ${p.samples} samples, ${p.emptySamples} with no JS (${dur(p.emptyMs)}: browser work or idle)${marks}${p.truncated ? '  [BUFFER FULL: truncated]' : ''}`,
+        )
+        for (const f of p.top ?? []) {
+          out.push(`      ${lpad(dur(f.ms), 8)} ${lpad(f.n, 5)}  ${f.name}  ${f.res ? `${f.res}:${f.line ?? '?'}:${f.col ?? '?'}` : '(native)'}`)
+        }
+      }
+    }
+    if (e.ring?.length && cols.length) {
+      out.push(`    per second: ${cols.join(' ')}`)
+      for (const r of e.ring.slice(0, 20)) {
+        out.push(`      ${new Date(r[0] * 1000).toISOString().slice(11, 19)} ${r.slice(1).join(' ')}`)
+      }
+      if (e.ring.length > 20) out.push(`      ... ${e.ring.length - 20} more (--json for all)`)
+    }
+  }
+  out.push('')
+  return out
+}
+
 function pickPage(dump) {
   const pages = new Set()
   for (const k of Object.keys(dump)) {
@@ -262,21 +374,8 @@ function report(dump, from) {
   if (heaps.length > 1) say(`  heap over the ring: ${heaps[0]}MB -> ${heaps[heaps.length - 1]}MB (max ${Math.max(...heaps)}MB)`)
   say('')
 
-  const eps = rec.resumeEpisodes ?? []
-  if (eps.length) {
-    say(`RESUME EPISODES (tab shown after > 60s hidden; window ${dur(eps[0].windowMs)} after showing)`)
-    for (const e of eps) {
-      say(
-        `  shown ${iso(e.shownAt)} after ${dur(e.hiddenMs)} hidden;  first tick ${e.firstTickAfterMs === null ? 'NONE in window' : `+${dur(e.firstTickAfterMs)} (numCycles ${e.firstTickCycles}, took ${dur(e.firstTickMs)})`}`,
-      )
-      say(`    window: ${e.ticks} ticks, ${e.cycles} cycles, engine ${dur(e.engMs)} (max tick ${dur(e.maxTickMs)}); ${e.longCount} long frames/tasks`)
-      if (e.longest) {
-        say(`    longest (starts +${dur(e.longest.at - e.shownAt)} after showing):`)
-        for (const l of frameLines(e.longest, '    ')) say(l)
-      } else say('    no long frame in the window')
-    }
-    say('')
-  }
+  for (const l of unseenLines(rec)) say(l)
+  for (const l of episodeLines(rec)) say(l)
 
   const lt = rec.longTasks ?? {}
   say(`LONG TASKS, VISIBLE (observer: ${(lt.supported ?? []).join(', ') || 'unsupported'}; ${lt.count ?? 0} visible longtasks total)`)
