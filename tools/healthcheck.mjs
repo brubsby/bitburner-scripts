@@ -165,7 +165,14 @@ const tel = {};
 // started yet. go.js is tier 128 and a fresh node is back at 32GB.
 const staleFromLastLife = new Set();
 for (const [name, budget] of Object.entries(FRESH)) {
-  const d = readTel(name);
+  let d = readTel(name);
+  // A RECORD FROM ANOTHER BITNODE describes a stack that no longer exists:
+  // gang.txt from BN6 read 'respect not growing' in BN4, which has no gang
+  // yet (live 2026-10-02 14:56Z). Drop it as if absent.
+  if (d && num(d.bitNode) && num(state.bitNode) && d.bitNode !== state.bitNode) {
+    note(`/tel/${name} is from BitNode ${d.bitNode} (now ${state.bitNode}) — ignored`);
+    d = null;
+  }
   tel[name] = d;
   if (!d) {
     // gang.txt legitimately absent before a gang node's first gang.js run.
