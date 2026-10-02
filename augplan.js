@@ -794,7 +794,11 @@ function runCore({ singles, chains, r, money, frontierCap }) {
   // state is new. A rejected point is never allocated; a skip carries its
   // source point through unchanged (it adds no step, and walk() reads only
   // the steps).
-  const put = (L, i, rank, p, c, bump, cost, value, from, it) => {
+  // The target state's entry (created if new). No doubles cross this call:
+  // a double passed to a function V8 does not inline is boxed, and at ~5M
+  // transitions per plan on the live catalogue that boxing alone was ~160MB of
+  // garbage per call. Costs and values stay locals of the loop below.
+  const entryFor = (L, i, rank, p, c, bump) => {
     let layer = layers.get(L)
     if (!layer) layers.set(L, (layer = new Map()))
     const key = (c * (maxRank + 1) + rank) * (n + 1) + i
@@ -807,39 +811,66 @@ function runCore({ singles, chains, r, money, frontierCap }) {
       }
       layer.set(key, (e = { i, rank, p: pp, c, f: [] }))
     }
-    if (e.f.length >= frontierCap) {
-      capHit = capHit ?? `${i},${rank},${c}`
-      return
-    }
-    if (paretoRejects(e.f, cost, value)) return
-    insertAccepted(e.f, it === null ? from : { cost, value, from, act: { it, rank: rank - 1 } })
+    return e
   }
-  put(0, 0, 0, new Array(chains.length).fill(0), 0, -1, 0, 0, { cost: 0, value: 0, from: null, act: null }, null)
+  entryFor(0, 0, 0, new Array(chains.length).fill(0), 0, -1).f.push({ cost: 0, value: 0, from: null, act: null })
 
   const finals = []
+  const nChains = chains.length
   for (let L = 0; L <= n + maxChain; L++) {
     const layer = layers.get(L)
     if (!layer) continue
     for (const { i, rank, p, c, f } of layer.values()) {
       if (i === n) for (const pt of f) finals.push(pt)
       const price = pow[rank]
-      for (const pt of f) {
-        if (i < n) {
-          // skip singleton i
-          put(L + 1, i + 1, rank, p, c, -1, pt.cost, pt.value, pt, null)
-          // take singleton i at rank
-          const it = singles[i]
-          const cost = pt.cost + it.intrinsic * price + (it.donation ?? 0)
-          if (cost <= money + EPS) put(L + 1, i + 1, rank + 1, p, c, -1, cost, pt.value + it.value, pt, it)
-        }
-        // take the next item of each chain at rank
-        for (let j = 0; j < chains.length; j++) {
-          const t = p[j]
-          if (t >= chains[j].items.length) continue
-          const it = chains[j].items[t]
-          const cost = pt.cost + it.intrinsic * price + (it.donation ?? 0)
-          if (cost > money + EPS) continue
-          put(L + 1, i, rank + 1, p, c + weight[j], j, cost, pt.value + it.value, pt, it)
+      for (let fi = 0; fi < f.length; fi++) {
+        const pt = f[fi]
+        const pc = pt.cost
+        const pv = pt.value
+        // Transitions in the order the DP has always taken them: skip
+        // singleton i (t = -2), take singleton i at rank (t = -1), then take
+        // the next item of each chain at rank (t = 0..chains-1).
+        for (let t = i < n ? -2 : 0; t < nChains; t++) {
+          let it = null
+          let cost = pc
+          let value = pv
+          let e
+          if (t === -2) {
+            e = entryFor(L + 1, i + 1, rank, p, c, -1)
+          } else if (t === -1) {
+            it = singles[i]
+            cost = pc + it.intrinsic * price + (it.donation ?? 0)
+            if (!(cost <= money + EPS)) continue
+            value = pv + it.value
+            e = entryFor(L + 1, i + 1, rank + 1, p, c, -1)
+          } else {
+            const at = p[t]
+            if (at >= chains[t].items.length) continue
+            it = chains[t].items[at]
+            cost = pc + it.intrinsic * price + (it.donation ?? 0)
+            if (cost > money + EPS) continue
+            value = pv + it.value
+            e = entryFor(L + 1, i, rank + 1, p, c + weight[t], t)
+          }
+          const fr = e.f
+          if (fr.length >= frontierCap) {
+            capHit = capHit ?? `${e.i},${e.rank},${e.c}`
+            continue
+          }
+          // paretoRejects, inlined so cost and value are never boxed.
+          let rejected = false
+          for (let q = 0; q < fr.length; q++) {
+            const x = fr[q]
+            if (x.cost > cost + EPS) break
+            if (x.value >= value - EPS) {
+              rejected = true
+              break
+            }
+          }
+          if (rejected) continue
+          // A skip carries its source point through unchanged: it adds no
+          // step, and walk() reads only the steps.
+          insertAccepted(fr, it === null ? pt : { cost, value, from: pt, act: { it, rank } })
         }
       }
     }
@@ -945,6 +976,58 @@ function walk(pt) {
  *            restricted: Array, stats: object}}
  */
 export function planPurchases(o) {
+  // THE SAME QUESTION, ANSWERED ONCE. One progress.js pass asked 107 plans of
+  // which 57 repeated an earlier call exactly — a ladder of ten money levels
+  // swept three times (headless replica of the live BN6 save, 2026-10-02),
+  // 25s of planner CPU and a 1GB heap jump in one pass. The key is the
+  // whole input by VALUE (offers included), so an offers array mutated in
+  // place between calls is a different key, never a stale hit; each hit is a
+  // fresh structured clone, so a caller mutating its plan cannot reach the
+  // next caller's. Inputs that do not serialise are planned uncached.
+  let key = null
+  try {
+    key = JSON.stringify(o, (k, v) => {
+      if (typeof v === 'number' && !Number.isFinite(v)) return `#${v}`
+      // A closure is not a value (two with the same source can differ), so
+      // an input carrying one is planned uncached.
+      if (typeof v === 'function' || typeof v === 'symbol') throw new Error('uncacheable')
+      return v
+    })
+    if (typeof key !== 'string') key = null
+  } catch {
+    key = null
+  }
+  if (key !== null && planCache.has(key)) {
+    const hit = planCache.get(key)
+    planCache.delete(key)
+    planCache.set(key, hit) // most recently used last
+    planCacheStats.hits++
+    return structuredClone(hit)
+  }
+  const plan = planPurchasesUncached(o)
+  if (key !== null) {
+    let copy = null
+    try {
+      copy = structuredClone(plan)
+    } catch {
+      copy = null
+    }
+    if (copy !== null) {
+      planCache.set(key, copy)
+      while (planCache.size > PLAN_CACHE_SIZE) planCache.delete(planCache.keys().next().value)
+    }
+  }
+  planCacheStats.misses++
+  return plan
+}
+
+// Small on purpose: the repeats are a sweep of ~10 levels; anything older is a
+// different pass's offers. Per module instance, so it dies with its importer.
+const PLAN_CACHE_SIZE = 16
+const planCache = new Map()
+export const planCacheStats = { hits: 0, misses: 0 }
+
+function planPurchasesUncached(o) {
   const money = o?.money
   if (!num(money)) throw new Error(`augplan: money is unreadable (${String(money)}) — refusing to plan against a budget nobody can name`)
   const r = o.r ?? BASE_PRICE_MULT

@@ -10,6 +10,10 @@
 // change) it plans every case with both and fails on any difference in the
 // result, so an allocation change is shown to be a pure refactor.
 //
+// NOT CALIBRATED against the live game, and it decides nothing about play:
+// it measures allocation on a fixture, and its CHECK is the equivalence of
+// every plan against the reference copy (any difference fails the run).
+//
 // Why it exists: in a headless replica of the live BN6 save (2026-10-02,
 // sampling heap profiler with collected objects included) augplan.js's DP was
 // 613MB/min of a 1.1GB/min page — the churn behind 1.7-2.7GB page heaps
@@ -96,5 +100,5 @@ for (const [k, c] of cases.entries()) {
   }
   console.log(line)
 }
-console.log(`total new ${MB(tot.newB)} ${tot.newMs.toFixed(0)}ms` + (R ? ` | ref ${MB(tot.refB)} ${tot.refMs.toFixed(0)}ms | results differing: ${diffs}` : ''))
+console.log(`CHECK total new ${MB(tot.newB)} ${tot.newMs.toFixed(0)}ms` + (R ? ` | ref ${MB(tot.refB)} ${tot.refMs.toFixed(0)}ms | results differing: ${diffs}` : ''))
 process.exit(diffs ? 1 : 0)
