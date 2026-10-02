@@ -1,6 +1,8 @@
 // THE BLADEBURNER EXIT, simulated by running the game's own Bladeburner.
 //
 // ---------------------------------------------------------------------------
+// CALIBRATED 2026-10-02 on the live BN6 run (bbcal6.mjs: the live Bladeburner leg
+// was 0.916 x this model run on the same fleet timing). The text below predates it:
 // NOT CALIBRATED — and it cannot be yet. No node of this playthrough has had
 // Bladeburner access (it needs BitNode 6/7 or Source-File 6/7), so there is no
 // live quantity to reproduce. Every FORMULA below is the game's: the actions,
@@ -292,7 +294,11 @@ export function runBladeburner(o) {
       s.prestige()
       P.sleeves.push(s)
     }
-    P.sleeves.forEach((s, i) =>
+    // pol.sleevesFromH: the fleet idles until this many hours after the join (a replay of a
+    // run whose sleeves were assigned late — BN6 2026-10-01/02, infiltrating only from 11:20Z).
+    const sleevesFromS = (pol.sleevesFromH ?? 0) > 0 ? t + pol.sleevesFromH * 3600 : 0
+    let fleetStarted = false
+    const startFleet = () => P.sleeves.forEach((s, i) =>
       s.startWork(
         i < nInf
           ? new g.SleeveInfiltrateWork()
@@ -303,6 +309,10 @@ export function runBladeburner(o) {
               : new g.SleeveClassWork({ classType: g.GymType[COMBAT[i % 4]], location: GYM }),
       ),
     )
+    if (sleevesFromS <= 0) {
+      startFleet()
+      fleetStarted = true
+    }
 
     const gen = (name) => ({ type: T.General, name })
     const hrc = gen(g.BladeburnerGeneralActionName.HyperbolicRegen)
@@ -451,7 +461,11 @@ export function runBladeburner(o) {
         }
       }
       tick(bb, STEP)
-      for (const s of P.sleeves) s.process(STEP * 5)
+      if (!fleetStarted && t >= sleevesFromS) {
+        startFleet()
+        fleetStarted = true
+      }
+      if (fleetStarted) for (const s of P.sleeves) s.process(STEP * 5)
       t += STEP
       if (bb.rank >= C.RankNeededForFaction && !faction.isMember) bb.joinFaction()
       if (!gymming && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()

@@ -13,7 +13,7 @@ for (const j of jobs) {
   let out
   try {
     const r = runBladeburner(j.spec)
-    out = { key: j.key, hours: r.hours, rank: r.rank, blackOps: r.blackOps, installs: r.installs, why: r.why }
+    out = { key: j.key, hours: r.hours, joinH: r.joinH, rank: r.rank, blackOps: r.blackOps, installs: r.installs, why: r.why }
   } catch (e) {
     out = { key: j.key, hours: null, why: `threw: ${String(e?.stack ?? e).slice(0, 300)}` }
   }
