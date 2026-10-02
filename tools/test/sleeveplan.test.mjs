@@ -127,7 +127,10 @@ export async function run() {
     // SHOCK IS NOT A KARMA TERM. sleeve.js recovered shock before Homicide.
     const shocked = sp.sleeveCrimeRates(sleeve({ shock: 99 }), NODE1, "Homicide");
     if (Math.abs(shocked.karma - one.karma) > 1e-12) c2.fail("shock must not change karma at all — it scales exp and money only");
-    if (!(shocked.money < one.money)) c2.fail("shock DOES scale money");
+    // Nor money: SleeveCrimeWork.getExp is scaleWorkStats(stats, shockBonus, false) — the
+    // third argument leaves money unscaled (Work/WorkStats.ts:49-52). This asserted the
+    // opposite until 2026-10-02, which priced a freshly shocked fleet's crime money at zero.
+    if (Math.abs(shocked.money - one.money) > 1e-9 * Math.max(1, one.money)) c2.fail("shock must not change crime money (scaleWorkStats(.., shockBonus, false))");
     if (sp.sleeveCrimeRates(sleeve({ sync: undefined }), NODE1) !== null) c2.fail("an unreadable sync must refuse");
     if (sp.sleeveCrimeRates(sleeve(), NODE1, "Not A Crime") !== null) c2.fail("an unknown crime must refuse");
   }
@@ -854,7 +857,7 @@ export async function run() {
     if (!/\.sort\(\(a, b\) => \(Math\.abs\(a\[1\] - b\[1\]\) < 1 \/ 60 \? 0 : a\[1\] - b\[1\]\)\)/.test(fn)) c20.fail("the soonest exit must win (ties within a minute keep the earlier-listed objective)");
     // Each candidate is a trajectory of the base, run on the point AND on every posterior draw (the plan's commitment rule).
     if (!/for \(const \[o, f\] of fns\) cands\.push\(\[o, await paced\(cap\(f\(base, finishGen\)\)/.test(fn) || !/decideAmongGen\(\{ options: fns/.test(fn)) c20.fail("the objective must be priced on the base and committed through plan.decideAmong on the shared draws");
-    if (!/objectiveDecidedBy: byExit\?\.objective === 'covenant' \? 'covenant-mandate' : byExit\?\.gang \? 'gang-decision' : byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
+    if (!/objectiveDecidedBy: byExit\?\.objective === 'covenant' \? 'covenant-mandate' : byExit\?\.gang \? 'gang-decision' : byExit\?\.blade \? 'blade-route' : byExit\?\.objective \? 'exit-sim' : `ladder-fallback/.test(src)) c20.fail("the ladder survives only as the named fallback");
   }
   checks.push(c20);
 

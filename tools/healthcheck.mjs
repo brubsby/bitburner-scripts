@@ -351,6 +351,18 @@ if (!prev) {
     fail("go.js has answered no new solver moves since the last sample", "the farm is stalled or the solver stopped");
   }
 
+  // THE BLADEBURNER ROUTE, committed in this node (plan.txt
+  // decisions.bladeRoute 'blade') or presumed by act.js's bootstrap before
+  // the planner can run (actplan 0b): karma and the gang grind are not the
+  // route's gates.
+  const bladeRouteHere = (() => {
+    const pl = readTel("plan.txt");
+    if (pl?.node === now.bitNode && pl?.decisions?.bladeRoute?.key === "blade") return { why: `the committed route is Bladeburner (${pl.decisions.bladeRoute.bladeH?.toFixed?.(1) ?? "?"}h by the black ops vs ${pl.decisions.bladeRoute.hackH?.toFixed?.(1) ?? "?"}h by the World Daemon)` };
+    const act = readTel("act.txt");
+    const w = String(act?.decision?.why ?? "");
+    if (act?.slot?.owner === "bladeburner" || /Bladeburner route \(presumed/.test(w)) return { why: `act.js's bootstrap presumes the Bladeburner route (${w.slice(0, 100)})` };
+    return null;
+  })();
   // The gang is this node's whole plan: before it exists karma must fall
   // toward the gate; after it exists respect must climb.
   if (!now.gangFaction) {
@@ -376,10 +388,19 @@ if (!prev) {
       if (pk && verdict && pl.lastAugReset === gateLife && verdict.arm && verdict.arm !== pk) fail(`GANG TWO DECIDERS: plan.txt decisions.gang is '${pk}' but installgate gangWorth says '${verdict.arm}' (worth ${verdict.worth})`, "the gang verdict every consumer reads must be the plan's committed decision (gangworth.gangVerdict decision)");
       // THE FLEET FOLLOWS IT: a 'fleet'/'player' decision with no sleeve on crime is the grind not happening.
       const sl = readTel("sleeve.txt");
-      if (verdict?.worth === true && Array.isArray(sl?.assigned) && sl.assigned.length && !sl.assigned.some((x) => x?.task === "CRIME")) fail(`GANG GRIND NOT RUNNING: the gang decision is '${verdict.arm}' but no sleeve is committing a crime (${sl.assigned.map((x) => x?.task).join("/")})`, `sleeveplan objective '${readTel("sleeveplan.txt")?.objective}' (${String(readTel("sleeveplan.txt")?.objectiveDecidedBy ?? "").slice(0, 80)})`);
+      // ON THE COMMITTED BLADEBURNER ROUTE the gang verdict (priced on the
+      // World Daemon exit) does not govern the fleet: before the join the
+      // fleet's objective is priced on the black-op exit
+      // (sleeveplan.preJoinFleetObjectiveOf), after it the Bladeburner mix.
+      // Live BN4 2026-10-02 this fired on a fleet the plan had rightly moved
+      // off karma (and on a sleeve.txt from BitNode 6).
+      if (bladeRouteHere) note(`gang grind: not the route — ${bladeRouteHere.why}; sleeve objective '${readTel("sleeveplan.txt")?.objective ?? "?"}' (${String(readTel("sleeveplan.txt")?.objectiveDecidedBy ?? "").slice(0, 60)})`);
+      else if (verdict?.worth === true && sl?.bitNode === now.bitNode && Array.isArray(sl?.assigned) && sl.assigned.length && !sl.assigned.some((x) => x?.task === "CRIME")) fail(`GANG GRIND NOT RUNNING: the gang decision is '${verdict.arm}' but no sleeve is committing a crime (${sl.assigned.map((x) => x?.task).join("/")})`, `sleeveplan objective '${readTel("sleeveplan.txt")?.objective}' (${String(readTel("sleeveplan.txt")?.objectiveDecidedBy ?? "").slice(0, 80)})`);
     }
-    const karmaIsTheGate = verdict?.worth !== false;
-    if (!karmaIsTheGate) {
+    const karmaIsTheGate = verdict?.worth !== false && !bladeRouteHere;
+    if (bladeRouteHere) {
+      note(`karma ${Math.round(now.karma ?? 0)}: not a gate here — ${bladeRouteHere.why}`);
+    } else if (!karmaIsTheGate) {
       note(`karma flat at ${Math.round(now.karma ?? 0)} and that is CORRECT — the gang is priced NOT worth its gate in this node, so the work slot is elsewhere`);
     } else if (now.karma !== null && prev.karma !== null && now.karma >= prev.karma) {
       fail(
@@ -531,7 +552,7 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
 // exit taken once the 21st black op is done. Silent outside BN6/7 and SF6/7
 // nodes with no record. The rank comparison uses this run's previous snapshot.
 {
-  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), sl: readTel("sleeve.txt"), state, prev: prev?.bladeburner ?? null });
+  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), lite: readTel("bb-lite.txt"), pl: readTel("plan.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), sl: readTel("sleeve.txt"), state, prev: prev?.bladeburner ?? null });
   for (const f of r.fails) fail(f.what, f.detail);
   for (const n of r.notes) note(n);
   now.bladeburner = r.snap;

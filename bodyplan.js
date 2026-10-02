@@ -463,3 +463,111 @@ export function gymLegs(targets, person, trainingMult) {
   }
   return { hours, gym: gym.name, city: gym.city, legs }
 }
+
+/**
+ * THE COMBAT BAR WITH THE GYM FEE PRICED. Hours until every stat in
+ * `targets` ({stat: level}) reaches its level, under three policies run from
+ * the same person and the same cash — the choice is the fastest
+ * (CLAUDE.md "Decisions compare simulated trajectories"):
+ *
+ *   gym    the gym leg as ordered: one stat at a time at bestGym, and while
+ *          cash does not cover `holdS` of the fee nothing trains — the gym
+ *          is charged every second with no balance check (ClassWork.tsx:
+ *          57-72) and act.js's negative-cash escape stops it below zero;
+ *          only the flat income (`incomePerSec`) funds it. This is the stall
+ *          live 2026-10-02 17:42Z (BN4: cash ~$264k against Powerhouse's
+ *          $2,400/s, the player idle on a 'body' claim).
+ *   crime  the best single crime, all four combat stats at once
+ *          (simulateCrime), earning as it trains;
+ *   mixed  the gym while cash covers `holdS` of the fee, else the best MONEY
+ *          crime at the current stats — which also trains every combat stat.
+ *
+ * `holdS` is the decision's hold: progress.js re-decides each ~5-min pass
+ * (POLICY.retrainLegS 300s), so a gym session must be paid for that long.
+ * Returns { hours: {gym, crime, mixed}, best, now, why } — `now` is the
+ * first step of the best policy ({kind: 'gym', gym, city, stat, to} or
+ * {kind: 'crime', crime}) — or null when the person/node cannot be read.
+ */
+export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec = 0, trainingMult = 1, holdS = 300, maxHours = 200, expAssist = null, feeExtra = 0 } = {}) {
+  if (personProblem(person) || nodeProblem(node)) return null
+  const want = Object.entries(targets ?? {}).filter(([s, to]) => COMBAT.includes(s) && num(to))
+  const short = (p) => want.filter(([s, to]) => p.skills[s] < to)
+  const p0 = clonePerson(person)
+  p0.money = num(cash) ? cash : 0
+  if (!short(p0).length) return { hours: { gym: 0, crime: 0, mixed: 0 }, best: 'none', now: null, why: 'every stat is at its bar' }
+  const gym = bestGym({ ...person, money: p0.money })
+  const fee = gym ? GYM_BASE_COST * gym.costMult : null
+  const inc = num(incomePerSec) && incomePerSec > 0 ? incomePerSec : 0
+  const tm = num(trainingMult) && trainingMult > 0 ? trainingMult : 1
+  const stepS = Math.max(30, holdS)
+  const maxS = maxHours * 3600
+  // A trajectory under one policy, in hold-length steps.
+  const trajOf = (policy) => {
+    const p = clonePerson(p0)
+    let sec = 0
+    let first = null
+    while (sec < maxS) {
+      const left = short(p)
+      if (!left.length) return { hours: sec / 3600, first }
+      const secBefore = sec
+      const canGym = gym && p.money >= fee * stepS
+      let step = null
+      if (policy === 'gym' || (policy === 'mixed' && canGym)) {
+        if (canGym) {
+          const [stat, to] = left[0]
+          const r = gymRate(gym, stat, p, tm)
+          if (!num(r) || r <= 0) return { hours: Infinity, first }
+          // The leg ends at the bar or the step, whichever is first.
+          const needS = Math.max(1, (expForSkill(to, p.mults[stat]) * (1 + 1e-9) - p.exp[stat]) / r)
+          const dt = Math.min(stepS, Math.ceil(needS))
+          p.exp[stat] += r * dt
+          p.money += (inc - fee) * dt
+          sec += dt
+          step = { kind: 'gym', gym: gym.name, city: gym.city, stat, to }
+        } else {
+          // gym only and not fundable: wait on the flat income.
+          if (!(inc > 0)) return { hours: Infinity, first }
+          const dt = Math.max(stepS, Math.ceil((fee * stepS - p.money) / inc))
+          p.money += inc * dt
+          sec += dt
+          step = { kind: 'wait' }
+        }
+      } else {
+        const c = policy === 'mixed' ? bestCrimeFor('money', p, node) : null
+        const name = policy === 'mixed' ? c?.crime : policy
+        const r = name ? crimeRates(name, p, node, 1) : null
+        if (!r) return { hours: Infinity, first }
+        for (const s of SKILLS) p.exp[s] += r.exp[s] * stepS
+        p.money += (r.money + inc) * stepS
+        sec += stepS
+        step = { kind: 'crime', crime: name }
+      }
+      // Something beside the player (the sleeves at the gym): its exp per second, and its fees.
+      if (expAssist) for (const [st, r] of Object.entries(expAssist)) if (num(r) && r > 0 && st in p.exp) p.exp[st] += r * (sec - secBefore)
+      if (num(feeExtra) && feeExtra > 0) p.money -= feeExtra * (sec - secBefore)
+      relevel(p)
+      if (!first) first = step
+    }
+    return { hours: Infinity, first }
+  }
+  const g = trajOf('gym')
+  const m = trajOf('mixed')
+  // Crime alone: the best of the crimes that train every short stat.
+  let c = { hours: Infinity, first: null }
+  for (const name of Object.keys(CRIMES)) {
+    if (!short(p0).every(([s]) => (CRIMES[name].exp[s] ?? 0) > 0)) continue
+    const r = trajOf(name)
+    if (r.hours < c.hours) c = r
+  }
+  const hours = { gym: g.hours, crime: c.hours, mixed: m.hours }
+  const best = [['mixed', m], ['gym', g], ['crime', c]].reduce((a, b) => (b[1].hours < a[1].hours ? b : a))
+  const fmt = (h) => (num(h) ? `${h.toFixed(2)}h` : 'never')
+  const now = best[1].first?.kind === 'wait' ? null : best[1].first
+  return {
+    hours,
+    best: best[0],
+    now,
+    gym: gym ? { name: gym.name, city: gym.city, feePerSec: fee } : null,
+    why: `combat to the bar: ${best[0]} ${fmt(best[1].hours)} (gym only ${fmt(g.hours)}, crime only ${fmt(c.hours)}, gym when cash covers ${stepS}s of $${fee ?? '?'}/s else money crime ${fmt(m.hours)}; cash $${Math.round(p0.money)}, flat income $${Math.round(inc)}/s)`,
+  }
+}

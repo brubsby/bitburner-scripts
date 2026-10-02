@@ -76,7 +76,7 @@
 // 10 alone capping shock at 25 and flooring sync at 25
 // (PlayerObjectGeneralMethods.ts:142-152). The COUNT persists across nodes.
 // ---------------------------------------------------------------------------
-import { CRIMES, GYMS, crimeChance, crimeRates, gymRate, hoursToStat, intelligenceBonus, personProblem } from 'bodyplan.js'
+import { CRIMES, GYMS, crimeChance, crimeRates, gymRate, hoursToStat, intelligenceBonus, personProblem, combatBarPlanOf, COMBAT } from 'bodyplan.js'
 import { skillFromExp } from 'installgate.js'
 // Pure: the floor against our own unchecked fee spending.
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
@@ -167,9 +167,13 @@ export function sleeveCrimeRates(sleeve, node, crime = 'Homicide') {
     chance,
     karma: c.karma * syncBonus * chance * perSec,
     kills: c.kills * chance * perSec,
-    // Money a sleeve earns goes to the player too, scaled by shock
-    // (SleeveCrimeWork.getExp -> scaleWorkStats(..., shockBonus)).
-    money: c.money * (sleeve.mults?.crime_money ?? 1) * (node?.CrimeMoney ?? 1) * chance * perSec * ((100 - (num(sleeve.shock) ? sleeve.shock : 0)) / 100),
+    // Money a sleeve earns goes to the player UNSCALED by shock or sync:
+    // SleeveCrimeWork.getExp is scaleWorkStats(stats, shockBonus, false) —
+    // the third argument leaves money alone (Work/WorkStats.ts:49-52) — and
+    // applySleeveGains pays it with no sync term (Work.ts:18). This read
+    // x shockBonus until 2026-10-02, which priced a freshly shocked fleet's
+    // money (BitNode entry: shock 100) at zero.
+    money: c.money * (sleeve.mults?.crime_money ?? 1) * (node?.CrimeMoney ?? 1) * chance * perSec,
   }
 }
 
@@ -1357,5 +1361,91 @@ export function* bladeFleetGen(s0, n, incumbent = null) {
     hours: +pick.hours.toFixed(2),
     byConfig: ranked.slice(0, 6).map((x) => ({ ...x.config, hours: +x.hours.toFixed(2) })),
     why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model)${kept ? ` — the incumbent, within ${Math.max(FLEET_KEEP.h, FLEET_KEEP.rel * ranked[0].hours).toFixed(2)}h of the best (${ranked[0].config.infiltrate}/${ranked[0].config.support}/${ranked[0].config.fa} ${ranked[0].hours.toFixed(2)}h)` : ''} vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
+  }
+}
+
+
+/**
+ * THE FLEET BEFORE THE BLADEBURNER JOIN, priced on the black-op exit.
+ *
+ * On the committed Bladeburner route the exit is (the join) + (the leg after
+ * it), and nothing a sleeve does before the join moves the leg: rank, skill
+ * points and black ops start at the join, and the fleet's Bladeburner mix
+ * starts there too (sleeve.js bladeFleetNow: setToBladeburnerAction returns
+ * false outside the division, NetscriptFunctions/Sleeve.ts:276-279, and
+ * Infiltrate/Support stop themselves, SleeveInfiltrateWork.ts:21,
+ * SleeveSupportWork.ts:12). So each candidate is priced as the hours to the
+ * join — bodyplan.combatBarPlanOf, the player's combat bar under the fee —
+ * with the fleet's flow in it:
+ *
+ *   money  each sleeve on its best money crime: paid to the player UNSCALED
+ *          by shock and sync (SleeveCrimeWork.getExp scaleWorkStats(..,
+ *          false); Work.ts:18), success-gated — it funds the gym fee;
+ *   gym    each sleeve training a combat stat the player is short of at the
+ *          gym: the player gains its exp x sync/100 (Work.ts:20), and that
+ *          exp is the sleeve's x its shockBonus — ZERO at shock 100, which is
+ *          where every sleeve starts a BitNode outside BN10
+ *          (Sleeve.prestige, Sleeve.ts:252); the fee is paid per sleeve;
+ *   karma  the gang: priced on the World Daemon exit, not this one — no term
+ *          in the hours to the join.
+ *
+ * sleeves: [{shock, sync, skills: {strength..., hacking, charisma?,
+ * intelligence?}, mults?}] (sleeve.txt assigned[], this node) or null —
+ * unread, priced as ONE fresh sleeve (shock 100, skills 1) and said so.
+ * Returns {objective, hours: {money, gym, karma}, why, fleet}.
+ */
+export function preJoinFleetObjectiveOf({ person, node, sleeves = null, cash = 0, incomePerSec = 0, trainingMult = 1, bar = 100 } = {}) {
+  const targets = Object.fromEntries(COMBAT.filter((st) => (person?.skills?.[st] ?? 0) < bar).map((st) => [st, bar]))
+  if (!Object.keys(targets).length) return { objective: null, hours: null, why: `combat already at ${bar}: the join is bb-lite's to make — no fleet objective before it` }
+  const read = Array.isArray(sleeves) && sleeves.length
+  const fleet = (read ? sleeves : [{ shock: 100, sync: 1, skills: {} }]).map((x) => {
+    const sk = x.skills ?? {}
+    const lv = (k, short) => (num(sk[k]) ? sk[k] : num(sk[short]) ? sk[short] : 1)
+    const skills = { hacking: lv('hacking', 'hack'), strength: lv('strength', 'str'), defense: lv('defense', 'def'), dexterity: lv('dexterity', 'dex'), agility: lv('agility', 'agi'), charisma: lv('charisma', 'cha'), intelligence: lv('intelligence', 'int') }
+    const m = { crime_money: 1, crime_success: 1, ...(x.mults ?? {}) }
+    for (const k of GRIND_SKILLS) {
+      if (!num(m[k])) m[k] = 1
+      if (!num(m[`${k}_exp`])) m[`${k}_exp`] = 1
+    }
+    return { skills, exp: Object.fromEntries(GRIND_SKILLS.map((k) => [k, 0])), mults: m, shock: num(x.shock) ? x.shock : 100, sync: num(x.sync) ? x.sync : 1 }
+  })
+  // money: each sleeve's best money crime at its stats (sleeveCrimeRates).
+  let money = 0
+  for (const sl of fleet) {
+    let best = 0
+    for (const name of Object.keys(CRIMES)) {
+      const r = sleeveCrimeRates(sl, node, name)
+      if (r && r.money > best) best = r.money
+    }
+    money += best
+  }
+  // gym: the player's exp from the fleet at Powerhouse (x10), spread over the short stats.
+  const gym = GYMS.reduce((a, g) => (g.expMult > a.expMult ? g : a))
+  const shortStats = Object.keys(targets)
+  const assist = Object.fromEntries(shortStats.map((st) => [st, 0]))
+  fleet.forEach((sl, i) => {
+    const st = shortStats[i % shortStats.length]
+    const r = gymRate(gym, st, sl, trainingMult)
+    if (num(r)) assist[st] += r * ((100 - sl.shock) / 100) * (sl.sync / 100)
+  })
+  const fleetFee = CLASS_BASE_FEE.gym * gym.costMult * fleet.length
+  const base = { cash, incomePerSec, trainingMult }
+  const at = (o) => combatBarPlanOf(targets, person, node, { ...base, ...o })
+  const pM = at({ incomePerSec: incomePerSec + money })
+  const pG = at({ expAssist: assist, feeExtra: fleetFee })
+  const pK = at({})
+  const best = (p) => (p ? Math.min(p.hours.gym, p.hours.crime, p.hours.mixed) : Infinity)
+  const hours = { money: best(pM), gym: best(pG), karma: best(pK) }
+  // Within the plan's step (holdS 300s) two candidates are a tie, and a tie
+  // goes to money, then the gym: karma earns nothing on this exit, money never
+  // hurts it (fees, the next home tier).
+  const TIE_H = 300 / 3600
+  const pick = ['money', 'gym', 'karma'].map((k) => [k, hours[k]]).reduce((a, b) => (b[1] < a[1] - TIE_H ? b : a))
+  const f = (h) => (num(h) ? `${h.toFixed(2)}h` : 'never')
+  return {
+    objective: pick[0],
+    hours,
+    fleet: { read, n: fleet.length, moneyPerSec: +money.toFixed(1), gymExpToPlayer: +Object.values(assist).reduce((a, b) => a + b, 0).toFixed(3), meanShock: +(fleet.reduce((a, x) => a + x.shock, 0) / fleet.length).toFixed(1) },
+    why: `before the Bladeburner join the exit is the join plus a leg the fleet does not move: hours to combat ${bar} with the fleet on money ${f(hours.money)} (+$${Math.round(money)}/s, unscaled by shock), on the gym ${f(hours.gym)} (exp to the player ${Object.values(assist).reduce((a, b) => a + b, 0).toFixed(2)}/s = gym x shockBonus x sync), on karma ${f(hours.karma)} (the gang is priced on the World Daemon exit)${read ? '' : ' — fleet unread (no sleeve.txt this node): one fresh sleeve (shock 100) priced'}`,
   }
 }

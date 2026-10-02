@@ -106,7 +106,7 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { singularityRamMultiplier, canAccessFeature, SF_FILE } from 'sfgate.js'
+import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, SF_FILE } from 'sfgate.js'
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
@@ -269,6 +269,18 @@ const WATCHED = [
   // kills it; its positions are sold first (act.js stocksell) because the
   // install re-initialises the market and every share is lost.
   { script: 'stock.js', host: 'anywhere', args: [], invariant: (ns) => ns.stock.hasTixApiAccess() },
+  // THE LEAN BLADEBURNER DAEMON (bb-lite.js): revived wherever the division
+  // can exist, and STOPPED the moment bladeburner.js runs anywhere — the
+  // handover's second half (bladeburner.js does not act while bb-lite.txt is
+  // alive; this kill fires its atExit, which publishes 'stopped'). A DAEMON:
+  // the invariant describes whether it has any business existing. The guard
+  // asks the game (ps), not a file either script writes (invariants C4).
+  {
+    script: 'bb-lite.js',
+    host: 'anywhere',
+    args: [],
+    invariant: (ns) => canJoinBladeburner(ns.getResetInfo()) && !running(ns, scanAll(ns), 'bladeburner.js'),
+  },
   // Multiplies faction reputation gain by 1 + ln(threads)/25. Sized small on
   // purpose: the curve is steeply concave and the rest of the fleet is worth
   // more hacking. Restarted here because batch.js will reclaim the RAM if the

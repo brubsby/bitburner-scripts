@@ -6,7 +6,9 @@
 // evidence").
 //
 // Every check asks a question about the OUTCOME, not the component:
-//   BLADEBURNER SILENT       where the division can exist and boot.js has placed the daemon (home >= 128GB), /tel/bladeburner.txt is missing or stale
+//   BLADEBURNER SILENT       where the division can exist (BN6/7, SF6/7) and a daemon should be placed (home >= 128GB, or >= 32GB on the
+//                            Bladeburner route: bb-lite.js), /tel/bladeburner.txt is missing or stale
+//   BB-LITE STARVED          bb-lite.js's one-shot actors failed to place/answer 3+ times in 10 min
 //   ORDER NOT HELD           progress.js claims the slot for 'bladeburner' but the game runs other work, or no Bladeburner action
 //   NO RANK PROGRESS         the slot was ours at both ends of an interval >= 15 min and rank did not rise
 //   STAMINA STUCK            resting for 30+ min of samples and stamina is not rising
@@ -32,13 +34,24 @@ const ageMinOf = (iso, nowMs) => {
 export const BB_FRESH_MIN = 20
 export const MIN_INTERVAL_MIN = 15
 
-export function bladeburnerHealth({ bb = null, pr = null, eg = null, sl = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
+/** Source-File levels from the save digest (a JSONMap {ctor, data: [[n, lvl]]} or an array of pairs). */
+const sfOf = (state) => {
+  const data = Array.isArray(state?.sourceFiles) ? state.sourceFiles : state?.sourceFiles?.data ?? []
+  return new Map(data.map(([n, l]) => [Number(n), Number(l)]))
+}
+
+export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null, eg = null, sl = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
   const fails = []
   const notes = []
   const fail = (what, detail = null) => fails.push({ what, detail })
   const node = state?.bitNode ?? null
   const bbNode = bb?.bitNode ?? null
-  const bladeNode = node === 6 || node === 7
+  // The division exists in BN6/7 and wherever Source-File 6 or 7 is held
+  // (sfgate.canUseBladeburner). This read BN6/7 only, so in BN4 with SF6.1
+  // (2026-10-02) every check here was silent.
+  const sf = sfOf(state)
+  const bladeNode = node === 6 || node === 7 || (sf.get(6) ?? 0) > 0 || (sf.get(7) ?? 0) > 0
+  const routeBlade = !!pl && pl.node === node && pl?.decisions?.bladeRoute?.key === 'blade'
   const age = ageMinOf(bb?.at, nowMs)
   const lifeStart = num(state?.playtimeSinceLastAug) ? nowMs - state.playtimeSinceLastAug : null
   const ours = !!bb && bbNode === node
@@ -46,9 +59,18 @@ export function bladeburnerHealth({ bb = null, pr = null, eg = null, sl = null, 
 
   // ---- presence --------------------------------------------------------
   if (!ours) {
-    if (bladeNode && num(state?.home?.ram) && state.home.ram >= 128) fail(`BLADEBURNER SILENT: BitNode ${node} has the division and home is ${state.home.ram}GB (boot.js places bladeburner.js at tier 128), but /tel/bladeburner.txt is ${bb ? `from BitNode ${bbNode}` : 'missing'}`, 'boot.js /tel/boot.txt names why it was not placed (no host with 92.75GB free is the usual one)')
-    else if (bladeNode) notes.push(`bladeburner: no record this node yet (home ${state?.home?.ram ?? '?'}GB < the 128GB tier)`)
+    // bb-lite.js (tier 32) publishes this file from its first pass, joined or not.
+    if (bladeNode && num(state?.home?.ram) && (state.home.ram >= 128 || (routeBlade && state.home.ram >= 32))) fail(`BLADEBURNER SILENT: BitNode ${node} has the division${routeBlade ? ', the route is Bladeburner' : ''} and home is ${state.home.ram}GB (boot.js places bb-lite.js from tier 32, bladeburner.js at 128), but /tel/bladeburner.txt is ${bb ? `from BitNode ${bbNode}` : 'missing'}`, `/tel/boot.txt names why neither was placed; /tel/bb-lite.txt: ${lite ? `${lite.result} — ${String(lite.detail ?? '').slice(0, 120)}` : 'missing'}`)
+    else if (bladeNode) notes.push(`bladeburner: no record this node yet (home ${state?.home?.ram ?? '?'}GB)`)
     return { fails, notes, snap }
+  }
+  // ---- the lean daemon's actors -------------------------------------------
+  // bb-lite.js runs its 4GB calls in one-shot actors placed wherever there is
+  // room; three failures in ten minutes is a fleet with no room for them.
+  if (bb.daemon === 'bb-lite' && lite && lite.bitNode === node) {
+    const recent = (lite.actorErrors ?? []).filter((e) => { const a = ageMinOf(e.at, nowMs); return a !== null && a <= 10 })
+    if (recent.length >= 3) fail(`BB-LITE STARVED: ${recent.length} actor failures in 10 min — ${String(recent[recent.length - 1].why).slice(0, 160)}`, 'its actors need 9.6-14.6GB free on one rooted host (home\'s action slot is sized for act.js\'s); free RAM or a server is the fix')
+    else notes.push(`bladeburner: bb-lite.js is the actor (${bb.result}; ${String(bb.detail ?? '').slice(0, 100)})`)
   }
   if (bb.capability === false || bb.result === 'capability-absent' || bb.result === 'disabled-in-node') {
     notes.push(`bladeburner: ${bb.result} — ${String(bb.detail ?? '').slice(0, 120)}`)

@@ -28,13 +28,13 @@
 // Everything it does is published to /tel/act.txt with the reason.
 
 import { decide, gangKarmaTarget, reissueWorkOf } from 'actplan.js'
-import { GYMS } from 'bodyplan.js'
+import { GYMS, bestCrimeFor } from 'bodyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: hacknet servers sort last — a GB used there costs that share of its
 // hashes (Hacknet/formulas/HacknetServers.ts:14), so an actor lands there only
 // when no other rooted host has the room.
 import { hacknetLast } from 'hacknetplan.js'
-import { canUseSingularity, canUseGang } from 'sfgate.js'
+import { canUseSingularity, canUseGang, canJoinBladeburner } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { enter, leave } from 'trace.js'
@@ -633,6 +633,14 @@ export async function main(ns) {
           cash: ns.getServerMoneyAvailable('home'),
           gymCostMult: (name) => GYMS.find((g) => g.name === name)?.costMult ?? null,
           reissued,
+          // An unpaid gym falls back to the best money crime (it trains every combat stat and earns the fee).
+          fundCrime: (() => {
+            try {
+              return bestCrimeFor('money', levelledOf(player, node), node, { focus: 1 })?.crime ?? null
+            } catch {
+              return null
+            }
+          })(),
         })
         if (ri?.kind) {
           const r = await runActor(ns, ri.kind, ri.args)
@@ -673,6 +681,11 @@ export async function main(ns) {
         work,
         tried,
         gangFaction: ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction ?? null : null,
+        // THE BLADEBURNER ROUTE before the plan prices it (actplan 0b): open
+        // where the division exists; the route from this node's plan when it
+        // has decided; joined from this node's division record (a BitNode
+        // entry deletes the division, an install does not).
+        blade: bladeStateFor(ns, info, node, player),
       }
       let d = decide(state)
       // A bootstrap raise shares the cooldown and the hold release of every
@@ -695,7 +708,9 @@ export async function main(ns) {
         log.push(last)
         while (log.length > 20) log.shift()
       }
-      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, reissue, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
+      // THE BOOTSTRAP'S SLOT CLAIM (actplan 0b): read by bbslot.slotClaim only while no planner pass is fresh.
+      const slot = d.slot ? { owner: d.slot, at: new Date().toISOString(), lastAugReset: info.lastAugReset, why: d.why } : null
+      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', slot, decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, reissue, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
       await nap(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)
@@ -703,4 +718,28 @@ export async function main(ns) {
       await nap(15000)
     }
   }
+}
+
+/** The person with the node's level multipliers folded in (progress.js levelledPerson): what skill.ts levels exp with. */
+function levelledOf(player, node) {
+  if (!player?.mults) return player
+  const f = (k, key) => (typeof node?.[key] === 'number' && isFinite(node[key]) && node[key] > 0 ? (player.mults[k] ?? 1) * node[key] : player.mults[k])
+  return { ...player, mults: { ...player.mults, strength: f('strength', 'StrengthLevelMultiplier'), defense: f('defense', 'DefenseLevelMultiplier'), dexterity: f('dexterity', 'DexterityLevelMultiplier'), agility: f('agility', 'AgilityLevelMultiplier'), charisma: f('charisma', 'CharismaLevelMultiplier') } }
+}
+
+/**
+ * actplan 0b's input: is the division open here, what has this node's plan
+ * decided, and are we in it. All file reads (0GB) — /tel/plan.txt and
+ * /tel/bladeburner.txt are pulled from home first ([bitburner-offhome-reads]).
+ */
+function bladeStateFor(ns, info, node, player) {
+  const open = canJoinBladeburner(info) && (node?.BladeburnerRank ?? 0) > 0
+  if (!open) return { open: false }
+  fetchFromHome(ns, '/tel/plan.txt')
+  fetchFromHome(ns, '/tel/bladeburner.txt')
+  const plan = readJson(ns, '/tel/plan.txt')
+  const route = plan && plan.node === info.currentNode ? plan.decisions?.bladeRoute?.key ?? null : null
+  const bb = readJson(ns, '/tel/bladeburner.txt')
+  const joined = !!bb && bb.bitNode === info.currentNode && bb.joined === true
+  return { open, route, joined, bar: 100, person: levelledOf(player, node) }
 }

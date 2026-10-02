@@ -367,6 +367,27 @@ const STACK = [
       'not exist; never destroys w0r1d_d43m0n (endgame.js does, under its --next and hold).',
   },
   {
+    // THE LEAN BLADEBURNER DAEMON, from the minute the division is joinable.
+    // bladeburner.js above needs 92.75GB free on ONE host; live in BN6 the
+    // join waited ~5h for it after combat 100, and in BN4 (2026-10-02) at a
+    // 64GB home the largest rooted host was 32GB and full of workers. This
+    // coordinator is 5.6GB and references no 4GB call; its one-shot actors
+    // (bb-lite-*.js, 9.6-14.6GB, bbliteplan.ACTOR) run one at a time wherever
+    // act.js's actors run — home's action slot (19.4GB at 64GB in BN4, the
+    // largest act-*.js) — so it fits beside the 32GB stack. It hands over to
+    // bladeburner.js the moment a host holds that (bladeburner.txt daemon
+    // 'bladeburner.js', 'handover-wait'); the watchdog stops it then too.
+    // Exits in telemetry where the division does not exist.
+    script: 'bb-lite.js',
+    where: 'anywhere',
+    tier: 32,
+    rank: 34,
+    why:
+      'the Bladeburner route before a host can hold bladeburner.js (92.75GB): joins the division at combat 100, the ' +
+      'faction at rank 25, acts by bbplan.chooseAction on a lean view and spends skill points hourly, through 9.6-14.6GB ' +
+      'one-shot actors — acting only on the work-slot claim (progress.js, else act.js\'s bootstrap). Stands down for bladeburner.js.',
+  },
+  {
     // THE STOCK TRADER (stock.js + stockstrat.js). Waits in telemetry and
     // exits where there is no TIX API (watchdog.js relaunches it on the
     // invariant ns.stock.hasTixApiAccess()). In BitNode 8 WSE+TIX are free

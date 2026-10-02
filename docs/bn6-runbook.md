@@ -10,6 +10,7 @@ first hours exist to compare those numbers with what the game shows.
 | --- | --- | --- |
 | formulas, policy, exit model | `bbplan.js` (pure) | success chance, time, rank, stamina, skills ([BB1-BB9] check every formula against the game's classes); `chooseAction`, `planSkills`, `bladeExit` |
 | the daemon | `bladeburner.js` (boot tier 128, `anywhere`, 3.25GB declared, raised to 92.75GB) | joins at combat 100, joins the faction at rank 25, buys skills, picks city/action/level, acts **only while `slot.owner === 'bladeburner'`**, publishes `/tel/bladeburner.txt`. Never destroys anything. |
+| the lean daemon | `bb-lite.js` (boot tier 32, `anywhere`, 5.6GB; watched) + one-shot actors `bb-lite-{join,read,act,skill,level}.js` (9.6-14.6GB) | the division from combat 100 at any home size: joins, acts by `bbplan.chooseAction` under `LITE_POLICY` (pinTop: autolevel, one city), skills hourly; publishes `/tel/bb-lite.txt` and `/tel/bladeburner.txt` (`daemon: 'bb-lite'`); stands down for bladeburner.js (the handover below) |
 | the route decision | `plan.decideBladeRouteGen`, `progress.js bladeRouteOf` | `decisions.bladeRoute` in `/tel/plan.txt`: `hack` vs `blade`, both exits (`hackH`, `bladeH`) on the same draws |
 | the slot | `progress.js` | on `blade`: gym to combat 100 as a body leg (`slot.owner 'body'`, `bodyLeg.forFaction 'Bladeburners'`), then `slot.owner 'bladeburner'`; no new grafts; desk/crime/faction work yield |
 | sleeves | `sleeveplan.bladeFleetGen`, `sleeve.js` | on `blade` and joined: infiltrate / support / field-analysis mix priced as exits; `/tel/sleeve.txt` `blade` |
@@ -125,11 +126,24 @@ The install priced the next life at 18.65h. The new life published 3.41h at 0.13
   - On the sleeves as they ran (none), the same install was worth -3.1h. That is the 10h plateau, where combat multipliers buy the chance.
   - So the frequent installs were real on the inputs the plan had, and those inputs were the bug. With the fleet, an install ~1.4h out is not worth its retrain.
 
+## bb-lite: the division from combat 100 (2026-10-02)
+
+BN6's division waited for a host with 92.75GB free: combat 100 at +2.38h, home 1024GB (the first such host) at +4.01h, the install there reset combat, and the division existed by +6.10h (the Bladeburners faction record). BN4 at a 64GB home had no host over 32GB. bladeburner.js is 25 `ns.bladeburner` functions at 4GB each (not SF4-scaled).
+
+- **The shape.** `bb-lite.js` references no 4GB call (5.6GB). Its actors run one at a time wherever act.js's do (home's action slot, 19.4GB in BN4 and at SF4.3) and answer on port 12611: join (division, faction at rank 25), read (ranges, counts, max levels, the next black op), act (stamina, rank, the running action, the claim, startAction), skill (hourly, `planSkills`), level (autolevel back on, once per process). A Bladeburner action needs no resident script: the game repeats it (`Bladeburner.processAction`).
+- **What it gives up** (`bbliteplan.js` header): other cities, levels below the autolevel max, the team size, stopping a leftover action, the calibration reads. On the game's classes from a fresh join at combat 105: lean rank / full rank = 0.62-0.73 over the first 4h (`tools/sim/bblite-savings.mjs`).
+- **The slot.** `bbslot.slotClaim`: progress.js's `slot.owner` when the planner has a fresh pass this life, else act.js's bootstrap claim (`/tel/act.txt` `slot`, actplan 0b). The act actor re-reads it on its own host immediately before `startAction`.
+- **The handover.** bladeburner.js does nothing (no start, stop or skill) while `/tel/bb-lite.txt` is alive (`liteAliveOf`), publishing `handover-wait`; bb-lite sees `daemon: 'bladeburner.js'` and exits `handed-over`; the watchdog also stops bb-lite once bladeburner.js runs anywhere (invariant). The game repeats the last action through the gap.
+- **The route before the planner** (actplan 0b): where the division exists and the plan has not said `hack`, the bootstrap trains combat to 100 — the gym when its fee is paid for the hold, else the best money crime (`bodyplan.combatBarPlanOf`: on the 17:27Z BN4 state mixed 1.15h, gym only 2.76h — the live idle stall, crime only 4.92h) — then claims the slot for Bladeburner. progress.js's gym legs use the same pricing, and an unpaid gym never leaves a claimed slot idle.
+- **The fleet before the join** (`sleeveplan.preJoinFleetObjectiveOf`): the exit is the join plus a leg the fleet does not move, so the objective is what brings combat 100 soonest: money (sleeve crime money is NOT scaled by shock, `SleeveCrimeWork.getExp` scaleWorkStats(.., false) — `sleeveCrimeRates` scaled it until now), the gym (exp x shockBonus x sync: ~0 at the entry's shock 100), never karma (the gang is priced on the World Daemon exit). In the division: sleeve.js's Bladeburner mix.
+- **Hours saved** (`tools/sim/bblite-savings.mjs`, saved = (full join - lean join) x lean/full 0.625): BN6 1.4h (join at its earliest possible, +4.63h) to 2.3h (at the faction record's bound); BN4 this run ~3.3h (0.4-6.1h: the full daemon's first host projected at ~+9.1h from BN4's pace to 64GB, x0.5-x1.5); a future SF6 node with actplan 0b from the entry ~4.3h (1.5-7.2h).
+
 ## If it goes wrong
 
 | symptom | where | fix |
 | --- | --- | --- |
-| BLADEBURNER SILENT | boot.txt | no 92.75GB host: grow the fleet, `run boot.js` |
+| BLADEBURNER SILENT | boot.txt, bb-lite.txt | neither daemon placed: bb-lite.js needs 5.6GB anywhere (watchdog revives it); bladeburner.js a 92.75GB host |
+| BB-LITE STARVED | bb-lite.txt actorErrors | no rooted host has 9.6-14.6GB free for an actor: free home's action slot or buy a server |
 | ORDER NOT HELD (FactionWork) | act.txt decision.why, orders.txt | something started faction work while progress.js holds the slot for Bladeburner |
 | `slot-not-ours` forever | plan.txt decisions.bladeRoute | the plan chose `hack` (read `why`, `hackH`, `bladeH`) — correct if the hacking exit is faster |
 | NO RANK PROGRESS / ACTION FAILING | bladeburner.txt action, env, cities | estimate wrong (Field Analysis should be chosen when the shown range is > 10% wide), or chaos (Diplomacy past 50) |

@@ -607,13 +607,19 @@ export function bestLevel(a, v, pol = POLICY, f = 1) {
   const cap = (K * core) / pol.minP
   const hi = d.baseDifficulty > cap ? 0 : Math.min(top, 1 + Math.floor(Math.log(cap / d.baseDifficulty) / Math.log(d.difficultyFac) + 1e-9))
   if (hi < 1) return null
+  // pol.pinTop: the action runs at its max level and no other — the game's
+  // autolevel (LevelableAction.autoLevel, on by default; Bladeburner.ts:1005
+  // sets level = maxLevel after every attempt). bb-lite.js leaves it on rather
+  // than pay ns.bladeburner.setActionLevel (4GB): a candidate is its top level
+  // when that clears minP, else not a candidate.
+  if (pol.pinTop && hi < top) return null
   const sf = memoOf(v).statFac
   let best = null
   // rewardFac > difficultyFac^2 for every action (1.041/1.02^2 ... 1.14/1.06^2),
   // so rank per second rises with the level even as the chance falls; only the
   // failure loss and the whole-second time ceiling can make a lower level
   // better, and never by more than a couple of levels.
-  for (let L = hi; L >= Math.max(1, hi - 2); L--) {
+  for (let L = hi; L >= (pol.pinTop ? top : Math.max(1, hi - 2)); L--) {
     const p = Math.min(1, (K * core) / difficultyOf(d, L))
     const t = actionTime(d, L, v.person, v.sm, sf)
     const ev = (p * rankGainOf(d, L, v.bnRank) - (1 - p) * rankLossOf(d, L)) / t

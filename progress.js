@@ -143,7 +143,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
 import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangExitGen, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -158,7 +158,7 @@ import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERM
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, combatBarPlanOf } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
 import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -1701,7 +1701,11 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
   if (cv) byExit = { objective: 'covenant', why: `the mandated Covenant campaign is running: train ${cv.trainStat} beside the player`, trainStat: cv.trainStat }
   // THE GANG DECISION GOVERNS THE FLEET while it says grind: its arms were
   // priced WITH the sleeves on their best karma crime (gangworth.gangArms).
-  else if (verdict?.worth === true && verdict?.gatePaid !== true && verdict?.arm && verdict.arm !== 'none') byExit = { objective: 'karma', gang: true, why: `follows decisions.gang (${verdict.arm}): each sleeve on its best karma crime now, as the grind was simulated (no synchronise, training or shock recovery first — the ramp prices none of them) — ${String(verdict.why ?? '').slice(0, 200)}` }
+  // ON THE COMMITTED BLADEBURNER ROUTE the gang verdict does not govern the
+  // fleet: it was priced on the World Daemon exit (live BN4 2026-10-02:
+  // 6.1h of 389.8h) while the route's exit is the black ops (~49h) —
+  // sleeveObjectiveByExit priced the fleet on that exit (byExit.blade).
+  else if (byExit?.blade !== true && verdict?.worth === true && verdict?.gatePaid !== true && verdict?.arm && verdict.arm !== 'none') byExit = { objective: 'karma', gang: true, why: `follows decisions.gang (${verdict.arm}): each sleeve on its best karma crime now, as the grind was simulated (no synchronise, training or shock recovery first — the ramp prices none of them) — ${String(verdict.why ?? '').slice(0, 200)}` }
   ns.write(
     '/tel/sleeveplan.txt',
     JSON.stringify({
@@ -1736,7 +1740,9 @@ function writeSleevePlan(ns, info, verdict, rawHorizonHours, sharePower = null, 
       //   money  only when sleeve exp is impossible outright
       // The simulated-exit choice when it priced; the old ladder only as the
       // named fallback (objectiveDecidedBy).
-      objectiveDecidedBy: byExit?.objective === 'covenant' ? 'covenant-mandate' : byExit?.gang ? 'gang-decision' : byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
+      objectiveDecidedBy: byExit?.objective === 'covenant' ? 'covenant-mandate' : byExit?.gang ? 'gang-decision' : byExit?.blade ? 'blade-route' : byExit?.objective ? 'exit-sim' : `ladder-fallback (${byExit?.why ?? 'no comparison'})`,
+      // The Bladeburner route's fleet before the join, priced (sleeveplan.preJoinFleetObjectiveOf).
+      bladePreJoin: byExit?.preJoin ?? null,
       objectiveWhy: byExit?.why ?? null,
       trainStat: byExit?.trainStat ?? null,
       // THE GRIND AS SIMULATED (gangworth.gangArms / sleeveplan.fleetKarmaGrind):
@@ -1941,9 +1947,25 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     const pcB = planCtxOf(ns, info)
     const br = pcB?.decisions?.bladeRoute ?? pcB?.prev?.decisions?.bladeRoute ?? null
     if (br?.key === 'blade') {
-      const why = `not applicable: ${BLADE_MOOT.sleeveObjective}`
-      if (pcB) pcB.decisions.sleeveObjective = { key: null, applicable: false, notApplicable: BLADE_MOOT.sleeveObjective, why, held: false }
-      return out(null, why)
+      const why0 = `not applicable: ${BLADE_MOOT.sleeveObjective}`
+      if (pcB) pcB.decisions.sleeveObjective = { key: null, applicable: false, notApplicable: BLADE_MOOT.sleeveObjective, why: why0, held: false }
+      // IN THE DIVISION: sleeve.js's Bladeburner mix (bladeFleetGen) replaces
+      // the ordinary plan's tasks; money is the ladder it falls back to if
+      // that cannot be priced (never karma: the gang is not this route).
+      if (br.joined === true) return out('money', `${why0} — in the division: the fleet is sleeve.js's Bladeburner mix; money only where that mix cannot be priced`, { blade: true })
+      // BEFORE THE JOIN (sleeveplan.preJoinFleetObjectiveOf): the black-op
+      // exit is the join plus a leg the fleet does not move, so the fleet's
+      // objective is whichever brings the join soonest — priced through the
+      // player's combat bar under the gym fee.
+      try {
+        const sl = readJson(ns, '/tel/sleeve.txt')
+        const sleeves = sl && sl.bitNode === info?.currentNode && Array.isArray(sl.assigned) ? sl.assigned : null
+        const pj = preJoinFleetObjectiveOf({ person: levelledPerson(player, info), node: bitNodeMults(info?.currentNode), sleeves, cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult() })
+        if (pj?.objective) return out(pj.objective, pj.why, { blade: true, preJoin: { hours: pj.hours, fleet: pj.fleet } })
+        return out('money', `${why0} — ${pj?.why ?? 'the pre-join fleet could not be priced'}; money (never karma: the gang is not this route)`, { blade: true })
+      } catch (e) {
+        return out('money', `${why0} — the pre-join fleet pricing threw (${String(e).slice(0, 80)}); money (never karma: the gang is not this route)`, { blade: true })
+      }
     }
   }
   try {
@@ -6637,9 +6659,24 @@ async function act(ns, canJoin, info, note) {
     const target = Math.max(JOIN_COMBAT, BB_POLICY.gymTo)
     const short = Object.fromEntries(['strength', 'defense', 'dexterity', 'agility'].filter((k) => (player.skills?.[k] ?? 0) < target).map((k) => [k, target]))
     if (!Object.keys(short).length) return null
-    const legs = gymLegs(short, levelledPerson(player, info), ns.hacknet.getTrainingMult())
+    const person = levelledPerson(player, info)
+    const legs = gymLegs(short, person, ns.hacknet.getTrainingMult())
     const leg = legs?.legs?.[0]
-    return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: 'Bladeburners', stat: leg.stat, to: leg.to, hours: leg.hours } : null
+    if (!leg) return null
+    // THE FEE IS PRICED (bodyplan.combatBarPlanOf): gym only, crime only, or
+    // the gym while cash pays a pass of its fee and the best money crime
+    // otherwise — the fastest to the bar. Live 2026-10-02 17:42Z the gym leg
+    // alone stalled: cash ~$264k against Powerhouse's $2,400/s, the fee floor
+    // refused it every pass and the player sat idle on a 'body' claim.
+    const plan = (() => {
+      try {
+        return combatBarPlanOf(short, person, bitNodeMults(info?.currentNode), { cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+      } catch {
+        return null
+      }
+    })()
+    if (plan?.now?.kind === 'crime') return { kind: 'crime', type: plan.now.crime, hours: plan.hours[plan.best], forFaction: 'Bladeburners', fund: true, why: plan.why }
+    return { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: 'Bladeburners', stat: leg.stat, to: leg.to, hours: leg.hours, plan: plan?.why ?? null }
   })()
   const covenantStep = (() => {
     if (!canJoin || player.factions.includes(COVENANT.faction)) return null
@@ -6809,8 +6846,9 @@ async function act(ns, canJoin, info, note) {
           // commitCrime returns the crime's duration in ms and starts ONE
           // attempt; the game repeats it (CrimeWork.process loops) until the
           // work is replaced, so this is a start, not a per-attempt call.
-          const ms = order('crime', [bodyStep.type], `${bodyStep.karmaShort ? 'karma' : 'kills'} short for ${scheduleTarget}`) ? 1 : 0
-          if (ms > 0) did.push(`ordered ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
+          const reason = bodyStep.fund ? `combat to the bar for ${bodyStep.forFaction}, the gym fee unpayable now: ${bodyStep.why}` : `${bodyStep.karmaShort ? 'karma' : 'kills'} short for ${scheduleTarget}`
+          const ms = order('crime', [bodyStep.type], reason.slice(0, 300)) ? 1 : 0
+          if (ms > 0) did.push(bodyStep.fund ? `ordered ${bodyStep.type} for the ${bodyStep.forFaction} combat bar — ${bodyStep.why}` : `ordered ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
           else todo.push(`commitCrime(${bodyStep.type}) did not start`)
         } catch (e) {
           todo.push(`crime step failed: ${String(e).slice(0, 80)}`)
@@ -6824,7 +6862,21 @@ async function act(ns, canJoin, info, note) {
       // while cash covers FEE_FLOOR_S of it.
       const gymFee = CLASS_BASE_FEE.gym * (GYMS.find((g) => g.name === bodyStep.gym)?.costMult ?? Math.max(...GYMS.map((g) => g.costMult)))
       if (!already && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity, gymFee)) {
-        todo.push(`gym at ${bodyStep.gym} costs $${gymFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it (our spending must not take cash below zero)`)
+        // NOT IDLE: the slot is claimed, so an unpaid gym left the player
+        // doing nothing (live 2026-10-02 17:42Z). The priced fallback
+        // (bodyplan.combatBarPlanOf): the best money crime, which trains
+        // every combat stat while it earns the fee.
+        const fb = (() => {
+          try {
+            return combatBarPlanOf({ [bodyStep.stat]: bodyStep.to }, levelledPerson(player, info), bitNodeMults(info?.currentNode), { cash: ns.getServerMoneyAvailable('home') + stockEquity, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+          } catch {
+            return null
+          }
+        })()
+        const crime = fb?.now?.kind === 'crime' ? fb.now.crime : null
+        const inCrime = crime && work?.type === 'CRIME' && String(work.crimeType ?? '') === crime
+        if (crime && !inCrime && order('crime', [crime], `gym at ${bodyStep.gym} unpayable ($${gymFee}/s, cash under ${FEE_FLOOR_S}s of it): ${fb.why}`.slice(0, 300))) did.push(`ordered ${crime} while the ${bodyStep.gym} fee is unpayable — ${fb.why}`)
+        else if (!crime) todo.push(`gym at ${bodyStep.gym} costs $${gymFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it (our spending must not take cash below zero); no priced fallback: ${fb?.why ?? 'the combat plan could not be read'}`)
       } else if (!already) {
         try {
           if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)

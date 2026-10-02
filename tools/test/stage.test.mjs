@@ -623,6 +623,9 @@ function runB711() {
     // act-backdoor.js is launched by act.js from backdoor.js's /tel/backdoor-req.txt,
     // not through ACTORS: it runs for hacking time / 4 and is not waited on.
     "act-backdoor.js",
+    // bb-lite.js's one-shot Bladeburner actors (bbliteplan.ACTOR): it execs one
+    // at a time wherever there is room; each answers on a port and exits.
+    "bb-lite-join.js", "bb-lite-read.js", "bb-lite-act.js", "bb-lite-skill.js", "bb-lite-level.js",
     // Snapshot readers, one Singularity read family each, run by act.js (snapshot.js).
     "snap-owned.js", "snap-catalog.js", "snap-augprice.js", "snap-augstats.js", "snap-prereq.js", "snap-rep.js", "snap-invites.js", "snap-static.js",
     "killall.js", "process.js", "eval.js", "steve.js", "ctscan.js", "ctsolve.js",

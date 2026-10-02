@@ -23,6 +23,12 @@
 // THE RULES, in priority order
 //
 //   0. progress.js acted recently          -> idle (it owns the work slot)
+//   0b. the Bladeburner division can exist  -> the route is presumed until the
+//       and the plan has not said 'hack'       plan prices it: combat to 100
+//                                              (bodyplan.combatBarPlanOf: gym
+//                                              when its fee is paid, else the
+//                                              best money crime), then the
+//                                              slot is Bladeburner's (bb-lite)
 //   1. gang-capable node, no gang faction  -> the Slum Snakes bootstrap:
 //        requirements met                  -> join
 //        karma or money short              -> the crime loop (bodyplan picks
@@ -38,7 +44,7 @@
 //
 // Every action carries `why`, and the idle cases say why too.
 
-import { COMBAT, crimeLeg, bestCrimeFor } from 'bodyplan.js'
+import { COMBAT, crimeLeg, bestCrimeFor, combatBarPlanOf } from 'bodyplan.js'
 import { GANG_FACTIONS, KARMA_FOR_GANG } from 'gangplan.js'
 // Pure: a gang whose every channel is zero by the node's multipliers.
 import { gangChannelsDead } from 'gangworth.js'
@@ -131,6 +137,56 @@ export function decide(s = {}) {
   const owner = s.progress?.slot?.owner ?? null
   if (num(at) && s.now - at < PROGRESS_FRESH_MS && s.progress?.health !== 'error' && owner) {
     return { kind: 'idle', why: `progress.js holds the work slot for ${owner} work (${Math.round((s.now - at) / 60000)} min ago)` }
+  }
+
+  // 0b. THE BLADEBURNER ROUTE BEFORE THE PLANNER CAN PRICE IT.
+  //
+  // Where the division exists (BN6/7, or Source-File 6/7) the route is
+  // presumed from the first minute: the node choice priced these nodes on it
+  // (nodechoice/nextnode.mjs, 919b8ca) and the planner, once home holds it,
+  // re-decides on live inputs (decisions.bladeRoute). Live BN4 2026-10-02:
+  // the planner's first pass was 2h40m after entry (32GB home); until then
+  // this bootstrap ran Homicide for a gang priced on the World Daemon exit
+  // (6.1h of 389.8h), while the committed exit was the black ops at ~49h.
+  // Live BN6 2026-10-01: the join came 7.7h after entry for combat reached
+  // at 2.5h. So: combat to the division's bar, by the priced plan (gym when
+  // its fee is paid for a pass, else the best money crime, which trains all
+  // four stats while it earns the fee), then the slot is Bladeburner's —
+  // published (`slot`), read by bb-lite.js through bbslot.slotClaim.
+  const bl = s.blade
+  if (bl?.open === true && bl.route !== 'hack') {
+    const bar = num(bl.bar) ? bl.bar : 100
+    const short = Object.fromEntries(COMBAT.filter((st) => !(num(p.skills?.[st]) && p.skills[st] >= bar)).map((st) => [st, bar]))
+    const tag = bl.route === 'blade' ? 'the committed Bladeburner route' : "the Bladeburner route (presumed until the plan prices it)"
+    if (Object.keys(short).length) {
+      const plan = (() => {
+        try {
+          return combatBarPlanOf(short, bl.person ?? p, s.node, { cash: wealth ?? 0, incomePerSec: num(s.incomePerSec) ? s.incomePerSec : 0, trainingMult: num(s.trainingMult) ? s.trainingMult : 1, holdS: FEE_FLOOR_S })
+        } catch {
+          return null
+        }
+      })()
+      const now = plan?.now ?? null
+      if (now?.kind === 'crime') {
+        if (s.work?.kind === 'crime' && s.work.type === now.crime) return { kind: 'idle', why: `${now.crime} running for ${tag}: ${plan.why}` }
+        return { kind: 'crime', args: [now.crime], why: `combat to ${bar} for ${tag}: ${plan.why}` }
+      }
+      if (now?.kind === 'gym') {
+        if (p.city !== now.city) {
+          const r = raiseFor(TRAVEL_COST, `the fare to ${now.city}`)
+          if (r) return r
+          if (num(cash) && cash >= TRAVEL_COST) return { kind: 'travel', args: [now.city], why: `combat to ${bar} for ${tag}: ${now.gym} is in ${now.city}` }
+        } else {
+          if (s.work?.kind === 'gym' && s.work.stat === now.stat) return { kind: 'idle', why: `training ${now.stat} at ${now.gym} for ${tag}: ${p.skills[now.stat]}/${bar}` }
+          if (cash >= 0) return { kind: 'gym', args: [now.gym, GYM_CLASS[now.stat]], stat: now.stat, why: `combat ${now.stat} ${p.skills?.[now.stat]}/${bar} for ${tag}: ${plan.why}` }
+        }
+      }
+      // Unpriceable (unreadable person/node) or nothing affordable: the old bootstrap below.
+    } else if (bl.joined === true) {
+      return { kind: 'idle', slot: 'bladeburner', why: `the work slot is Bladeburner's: ${tag}, in the division, combat at ${bar} — bb-lite.js / bladeburner.js act on this claim (no planner pass yet)` }
+    } else {
+      return { kind: 'idle', slot: 'bladeburner', why: `combat at ${bar} for ${tag}: waiting for bb-lite.js to join the division (the slot is held for it)` }
+    }
   }
 
   // THE GANG'S WORTH: progress.js's priced verdict, OVERRIDDEN by the node's
@@ -317,7 +373,13 @@ export function reissueWorkOf(s) {
   if (lw.kind === 'gym') {
     const cm = s.gymCostMult?.(lw.args?.[0])
     const fee = CLASS_BASE_FEE.gym * (num(cm) ? cm : 20)
-    if (!feeFundable(s.cash, fee)) return { skip: `the ${lw.args?.[0] ?? 'gym'} fee ($${fee}/s) is not covered for ${FEE_FLOOR_S}s by cash $${Math.round(s.cash ?? 0)} — the negative-cash escape would stop it again` }
+    if (!feeFundable(s.cash, fee)) {
+      // NOT IDLE (live 2026-10-02 17:42Z: the body slot sat empty on an
+      // unpaid gym): the best money crime trains every combat stat and earns
+      // the fee (bodyplan.combatBarPlanOf prices the same fallback).
+      if (s.fundCrime) return { kind: 'crime', args: [s.fundCrime], why: `progress.js holds the slot for ${owner} and its gym order (batch ${lw.batchAt}) stopped; the ${lw.args?.[0] ?? 'gym'} fee ($${fee}/s) is not covered for ${FEE_FLOOR_S}s by cash $${Math.round(s.cash ?? 0)} — ${s.fundCrime} trains combat and earns it meanwhile` }
+      return { skip: `the ${lw.args?.[0] ?? 'gym'} fee ($${fee}/s) is not covered for ${FEE_FLOOR_S}s by cash $${Math.round(s.cash ?? 0)} — the negative-cash escape would stop it again` }
+    }
   }
   return { kind: lw.kind, args: lw.args, why: `progress.js holds the slot for ${owner} (${Math.round((s.now - at) / 60000)} min ago) and its ${lw.kind} order (batch ${lw.batchAt}, ran ${lw.at}) is no longer running — the game shows no work (snapshot ${s.workAt}): re-issued` }
 }

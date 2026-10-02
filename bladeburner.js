@@ -51,18 +51,16 @@
 // tools/test/ramoverride.test.mjs [R1..R5]; registered in tools/sim/bncheck.mjs.
 
 import { canJoinBladeburner } from 'sfgate.js'
+import { slotClaim as slotClaimHere, SLOT_FILES } from 'bbslot.js'
+import { liteAliveOf } from 'bbliteplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
-const PROGRESS = '/tel/progress.txt'
-const ORDERS = '/tel/orders.txt'
-/** Orders that put the player's work slot on something else (act.js actors that start work). */
-const WORK_ORDERS = new Set(['gym', 'crime', 'work', 'graft', 'company', 'course', 'focus'])
-/** progress.js is a job that publishes every pass; a claim older than this is no claim (actplan.js PROGRESS_FRESH_MS). */
-const SLOT_FRESH_MS = 15 * 60e3
+/** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
+const LITE = '/tel/bb-lite.txt'
 /** Full static price, measured by the game's calculator ([R5]); no ns.singularity, so no `* mult` term. */
 const RAISE_CEILING = (mult) => 92.75 + 0 * mult
 
@@ -124,49 +122,17 @@ export async function main(ns) {
 }
 
 /**
- * progress.js's claim on the work slot, read from home (ns.read is local to this host).
- *
- * A HANDOFF IS NOT A CLAIM. startAction calls Player.finishWork BEFORE it
- * checks anything (Bladeburner.ts:179-186), so starting on a claim the
- * planner has already moved on from kills the work it moved to. An order
- * batch written after the claim that starts work (gym, crime, faction work,
- * a graft...) means the slot is being handed to it — progress.js passes that
- * flush orders without rewriting /tel/progress.txt (the Covenant batch path)
- * leave the older claim standing beside them — so the claim does not hold
- * until a newer progress.txt says it does.
+ * The work-slot claim (bbslot.slotClaim: progress.js's, else act.js's
+ * bootstrap claim), read from home: ns.read is local to this host, so the
+ * files are pulled first ([bitburner-offhome-reads]).
  */
 export function slotClaim(ns, host, info) {
   try {
-    if (host !== 'home') {
-      ns.scp(PROGRESS, host, 'home')
-      ns.scp(ORDERS, host, 'home')
-    }
+    if (host !== 'home') ns.scp(SLOT_FILES, host, 'home')
   } catch {
     /* fall through to whatever copy is here; its age decides */
   }
-  let pr = null
-  try {
-    pr = JSON.parse(ns.read(PROGRESS) || 'null')
-  } catch {
-    pr = null
-  }
-  const at = Date.parse(pr?.at ?? '')
-  if (!Number.isFinite(at)) return { owner: null, ours: false, why: '/tel/progress.txt is absent or unreadable — no claim' }
-  if (at < info.lastAugReset) return { owner: null, ours: false, why: `/tel/progress.txt (${pr.at}) predates this life — no claim` }
-  if (Date.now() - at > SLOT_FRESH_MS) return { owner: null, ours: false, why: `/tel/progress.txt is ${((Date.now() - at) / 60e3).toFixed(0)} min old — no claim` }
-  const owner = pr?.slot?.owner ?? null
-  if (owner === 'bladeburner') {
-    let ob = null
-    try {
-      ob = JSON.parse(ns.read(ORDERS) || 'null')
-    } catch {
-      ob = null
-    }
-    const oAt = Date.parse(ob?.at ?? '')
-    const work = Number.isFinite(oAt) && oAt > at && ob?.lastAugReset === info.lastAugReset && Array.isArray(ob.orders) ? ob.orders.find((o) => WORK_ORDERS.has(o?.kind)) : null
-    if (work) return { owner: `handoff:${work.kind}`, ours: false, at: pr.at, why: `an order batch (${ob.at}) newer than the claim (${pr.at}) starts ${work.kind} — the slot is being handed off; not starting an action until progress.js claims it again` }
-  }
-  return { owner, ours: owner === 'bladeburner', at: pr.at, why: owner === 'bladeburner' ? 'progress.js holds the slot for bladeburner' : `progress.js holds the slot for ${owner ?? 'nobody'}` }
+  return slotClaimHere(ns, host, info)
 }
 
 async function operate(ns, say, info, mults) {
@@ -177,7 +143,7 @@ async function operate(ns, say, info, mults) {
   ])
   const bnRank = mults.BladeburnerRank
   const costMult = mults.BladeburnerSkillCost
-  const base = { bitNode: info.currentNode, lastAugReset: info.lastAugReset, host }
+  const base = { bitNode: info.currentNode, lastAugReset: info.lastAugReset, host, daemon: 'bladeburner.js' }
 
   let resting = false
   let city = null
@@ -221,6 +187,33 @@ async function operate(ns, say, info, mults) {
   }
 
   for (;;) {
+    // ---- 0. the handover from bb-lite.js ----------------------------------
+    // bb-lite.js acts with a lean surface until a host holds this daemon's
+    // 92.75GB. While it is alive (bbliteplan.liteAliveOf on /tel/bb-lite.txt)
+    // nothing here acts — no start, no stop, no skill — so there is never a
+    // second actor. It sees this record (daemon 'bladeburner.js', result
+    // 'handover-wait') and exits; the watchdog also stops it once this
+    // daemon is running. The game keeps repeating its last action meanwhile
+    // (Bladeburner.processAction :1313), so the slot never goes idle.
+    {
+      try {
+        if (host !== 'home') ns.scp(LITE, host, 'home')
+      } catch {
+        /* the copy here, if any; its age decides */
+      }
+      let liteRec = null
+      try {
+        liteRec = JSON.parse(ns.read(LITE) || 'null')
+      } catch {
+        liteRec = null
+      }
+      const lite = liteAliveOf(liteRec, info, Date.now())
+      if (lite.alive) {
+        say('waiting', { ...base, result: 'handover-wait', joined: bb.inBladeburner(), lite: lite.why, detail: `bb-lite.js is acting (${lite.why}); not acting until it stands down` })
+        await ns.sleep(10e3)
+        continue
+      }
+    }
     // ---- 1. in the division? -------------------------------------------
     if (!bb.inBladeburner()) {
       const p = ns.getPlayer()
