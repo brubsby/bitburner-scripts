@@ -19,3 +19,6 @@ tools/sim/nodechoice/game.bundle.mjs
 tools/sim/nodechoice/.entry.generated.ts
 tools/sim/nodechoice/.cache.json
 tools/sim/nodechoice/.cache-next.json
+
+# built by tools/sim/gameplan (surrogate cache: one entry per sim call)
+tools/sim/gameplan/.cache/
