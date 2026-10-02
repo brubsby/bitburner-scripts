@@ -23,7 +23,18 @@
 //
 // Options: --page <id> (default: the newest page older than the dumping page,
 // i.e. the one that died; --latest for the newest), --json (machine output),
-// --ring <n> seconds of per-second counters to print (default 30).
+// --ring <n> seconds of per-second counters to print (default 30), --minutes <n>
+// minutes of longest-visible-frame-per-minute to print (default 20).
+//
+// Long frames (record v2): entries overlapping a hidden period (a hidden tab
+// produces LoAF "frames" hours long) are counted apart under HIDDEN and never
+// reach the top list. Each visible frame is split into
+//   work   start -> renderStart        tasks: scripts, engine ticks, React renders
+//                                      triggered from them, GC
+//   raf    renderStart -> styleAndLayoutStart   requestAnimationFrame callbacks
+//   layout styleAndLayoutStart -> end  style, layout, paint
+// and "react" lists the game root's commits (Profiler, dev builds) inside it.
+// A RESUME EPISODE is the 120 s after the tab was shown following > 60 s hidden.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -39,7 +50,7 @@ const opt = (f, d) => {
   const i = argv.indexOf(f)
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d
 }
-const positional = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && ['--page', '--ring'].includes(argv[i - 1])))
+const positional = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && ['--page', '--ring', '--minutes'].includes(argv[i - 1])))
 
 async function loadDump() {
   const src = positional[0]
@@ -69,6 +80,37 @@ const dur = (ms) => {
 }
 const pad = (s, n) => String(s).padEnd(n)
 const lpad = (s, n) => String(s).padStart(n)
+
+/** "work 1.2s | raf 3ms | layout 40ms" from a frame record's renderAt/styleAt. */
+export function frameSplit(x) {
+  if (x.renderAt === undefined && x.styleAt === undefined) return x.type === 'long-animation-frame' ? `work ${dur(x.ms)} (no render)` : ''
+  const r = x.renderAt ?? x.styleAt
+  const sl = x.styleAt ?? x.ms
+  return `work ${dur(r)} | raf ${dur(sl - r)} | layout ${dur(x.ms - sl)}`
+}
+
+/** Lines describing one frame record (at, length, split, markers, scripts, React). */
+export function frameLines(x, indent = '  ') {
+  const out = []
+  const bits = [`${iso(x.at)}  ${lpad(dur(x.ms), 7)}  ${x.type}${x.clipped ? ' (visible part of a hidden-spanning entry)' : ''}`]
+  const split = frameSplit(x)
+  if (split) bits.push(split)
+  if (x.scriptMs !== undefined) bits.push(`scripts ${dur(x.scriptMs)}${x.forcedLayoutMs ? ` (forced layout ${dur(x.forcedLayoutMs)})` : ''}`)
+  if (x.blockingMs !== undefined) bits.push(`blocking ${dur(x.blockingMs)}`)
+  out.push(indent + bits.join('  '))
+  out.push(
+    `${indent}    markers: ${x.labels?.length ? x.labels.join(', ') : 'none inside'}` +
+      (x.prev ? `; last before: ${x.prev} (${dur(x.prevAgoMs)} earlier)` : ''),
+  )
+  if (x.react) out.push(`${indent}    react: ${x.react.n} commit(s) on the root, render ${dur(x.react.ms)} (max ${dur(x.react.maxMs)})`)
+  for (const sc of x.scripts ?? []) {
+    out.push(
+      `${indent}    ${lpad(dur(sc.ms), 7)} @+${dur(sc.start ?? 0)}  ${sc.invokerType ?? ''} ${sc.invoker}  ${sc.fn || '-'}  ${sc.src || '(no src: blob module or eval)'}` +
+        (sc.layoutMs ? `  forced layout ${dur(sc.layoutMs)}` : ''),
+    )
+  }
+  return out
+}
 
 export function parseMarker(s) {
   if (!s) return null
@@ -210,21 +252,50 @@ function report(dump, from) {
   const ring = [...(rec.ring ?? []), rec.cur].filter(Boolean)
   const n = Number(opt('--ring', 30))
   say(`LAST ${n} ACTIVE SECONDS (the last row is the unfinished second)`)
-  say('  time      starts ends resum mains execs  run ticks cycles  engMs maxTick  maxGap heapMB LT maxLT  writes/skip  top start / top resume')
+  say('  time      starts ends resum mains execs  run ticks cycles  engMs maxTick  maxGap heapMB LT maxLT  rc maxRc  writes/skip  top start / top resume')
   for (const b of ring.slice(-n)) {
     say(
-      `  ${new Date(b.t * 1000).toISOString().slice(11, 19)} ${lpad(b.starts, 6)} ${lpad(b.ends, 4)} ${lpad(b.resumes, 5)} ${lpad(b.mains, 5)} ${lpad(b.execs, 5)} ${lpad(b.running, 4)} ${lpad(b.ticks, 5)} ${lpad(b.cycles, 6)} ${lpad(Math.round(b.engMs), 6)} ${lpad(Math.round(b.maxTickMs), 7)} ${lpad(dur(b.maxGapMs), 7)} ${lpad(b.heapMB ?? '-', 6)} ${lpad(b.longTasks, 2)} ${lpad(Math.round(b.maxLongMs), 5)}  ${lpad(b.markerWrites, 5)}/${pad(b.markerSkips, 5)}  ${b.topStart ?? '-'} / ${b.topResume ?? '-'}`,
+      `  ${new Date(b.t * 1000).toISOString().slice(11, 19)} ${lpad(b.starts, 6)} ${lpad(b.ends, 4)} ${lpad(b.resumes, 5)} ${lpad(b.mains, 5)} ${lpad(b.execs, 5)} ${lpad(b.running, 4)} ${lpad(b.ticks, 5)} ${lpad(b.cycles, 6)} ${lpad(Math.round(b.engMs), 6)} ${lpad(Math.round(b.maxTickMs), 7)} ${lpad(dur(b.maxGapMs), 7)} ${lpad(b.heapMB ?? '-', 6)} ${lpad(b.longTasks, 2)} ${lpad(Math.round(b.maxLongMs), 5)} ${lpad(b.commits ?? '-', 3)} ${lpad(b.maxCommitMs !== undefined ? Math.round(b.maxCommitMs) : '-', 5)}  ${lpad(b.markerWrites, 5)}/${pad(b.markerSkips, 5)}  ${b.topStart ?? '-'} / ${b.topResume ?? '-'}`,
     )
   }
   const heaps = ring.map((b) => b.heapMB).filter((x) => Number.isFinite(x))
   if (heaps.length > 1) say(`  heap over the ring: ${heaps[0]}MB -> ${heaps[heaps.length - 1]}MB (max ${Math.max(...heaps)}MB)`)
   say('')
 
+  const eps = rec.resumeEpisodes ?? []
+  if (eps.length) {
+    say(`RESUME EPISODES (tab shown after > 60s hidden; window ${dur(eps[0].windowMs)} after showing)`)
+    for (const e of eps) {
+      say(
+        `  shown ${iso(e.shownAt)} after ${dur(e.hiddenMs)} hidden;  first tick ${e.firstTickAfterMs === null ? 'NONE in window' : `+${dur(e.firstTickAfterMs)} (numCycles ${e.firstTickCycles}, took ${dur(e.firstTickMs)})`}`,
+      )
+      say(`    window: ${e.ticks} ticks, ${e.cycles} cycles, engine ${dur(e.engMs)} (max tick ${dur(e.maxTickMs)}); ${e.longCount} long frames/tasks`)
+      if (e.longest) {
+        say(`    longest (starts +${dur(e.longest.at - e.shownAt)} after showing):`)
+        for (const l of frameLines(e.longest, '    ')) say(l)
+      } else say('    no long frame in the window')
+    }
+    say('')
+  }
+
   const lt = rec.longTasks ?? {}
-  say(`LONG TASKS (observer: ${(lt.supported ?? []).join(', ') || 'unsupported'}; ${lt.count ?? 0} longtasks total)`)
-  for (const x of lt.top ?? []) {
-    say(`  ${iso(x.at)}  ${lpad(dur(x.ms), 7)}  ${pad(x.type, 20)} ${x.labels?.length ? `markers: ${x.labels.join(', ')}` : 'no markers inside'}`)
-    for (const s of x.scripts ?? []) say(`      ${lpad(s.ms, 6)}ms  ${s.invoker}  ${s.fn}  ${s.src}`)
+  say(`LONG TASKS, VISIBLE (observer: ${(lt.supported ?? []).join(', ') || 'unsupported'}; ${lt.count ?? 0} visible longtasks total)`)
+  for (const x of lt.top ?? []) for (const l of frameLines(x)) say(l)
+  const hf = rec.hiddenFrames
+  if (hf?.count) {
+    say(`HIDDEN-PERIOD entries (throttled tab, not real work): ${hf.count}; longest:`)
+    for (const x of hf.top) say(`  ${iso(x.at)}  ${lpad(dur(x.ms), 8)}  ${pad(x.type, 20)} ${dur(x.hiddenMs)} of it hidden`)
+  }
+  say('')
+  const mins = rec.minutes ?? []
+  if (mins.length) {
+    const nm = Number(opt('--minutes', 20))
+    say(`LONGEST VISIBLE FRAME PER MINUTE (last ${Math.min(nm, mins.length)} of ${mins.length}; n = long frames/tasks that minute)`)
+    for (const m of mins.slice(-nm)) {
+      say(`  ${new Date(m.m * 60e3).toISOString().slice(11, 16)}  n ${m.n}`)
+      for (const l of frameLines(m.top, '    ')) say(l)
+    }
+    say('')
   }
   if (rec.slowExec?.length) {
     say('SLOWEST exec/compile (> 5ms, synchronous part)')
