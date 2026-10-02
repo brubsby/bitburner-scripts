@@ -2127,6 +2127,17 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
     pc.decisions.grafts = { key: 'none', why: 'grafting is not accessible here (BitNode 10 or Source-File 10: sfgate.canUseGrafting)', held: false }
     return pc.decisions.grafts
   }
+  // ON THE COMMITTED BLADEBURNER ROUTE no graft starts (plan.BLADE_MOOT): the
+  // search priced the World Daemon exit every pass only to be marked moot, and
+  // its steps held the page past 50ms (live BN6 2026-10-02 10:05Z, 41.9ms in
+  // 'plan-grafts'). Not run, as the sleeve objective. [BX5]
+  {
+    const br = pc?.decisions?.bladeRoute ?? pc?.prev?.decisions?.bladeRoute ?? null
+    if (br?.key === 'blade') {
+      pc.decisions.grafts = { key: null, applicable: false, notApplicable: BLADE_MOOT.grafts, why: `not applicable: ${BLADE_MOOT.grafts}`, held: false }
+      return pc.decisions.grafts
+    }
+  }
   return planDecide(pc, 'grafts', function* () {
     const t0 = Date.now()
     // The pass's FIRST exit inputs (the purchase model's exits are built
