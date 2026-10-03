@@ -1,0 +1,730 @@
+{
+ "captured": "2026-10-03T19:26:50.535Z",
+ "source": "live BN14.1 telemetry (.telemetry/*.txt), trimmed to the fields the Go-first code reads",
+ "reset": {
+  "currentNode": 14,
+  "lastAugReset": 1791053265841,
+  "ownedSF": [
+   [
+    1,
+    3
+   ],
+   [
+    4,
+    3
+   ],
+   [
+    5,
+    1
+   ],
+   [
+    2,
+    1
+   ],
+   [
+    10,
+    1
+   ],
+   [
+    8,
+    1
+   ],
+   [
+    9,
+    1
+   ],
+   [
+    6,
+    1
+   ]
+  ]
+ },
+ "state": {
+  "bitNode": 14,
+  "home": {
+   "ram": 32,
+   "cores": 1
+  },
+  "sourceFiles": {
+   "ctor": "JSONMap",
+   "data": [
+    [
+     1,
+     3
+    ],
+    [
+     4,
+     3
+    ],
+    [
+     5,
+     1
+    ],
+    [
+     2,
+     1
+    ],
+    [
+     10,
+     1
+    ],
+    [
+     8,
+     1
+    ],
+    [
+     9,
+     1
+    ],
+    [
+     6,
+     1
+    ]
+   ]
+  },
+  "playtimeSinceLastAug": 2225800,
+  "at": "2026-10-03T19:24:51.949Z"
+ },
+ "status": {
+  "at": "2026-10-03T19:26:50.536Z",
+  "incomePerSec": 8.59,
+  "hackingLevel": 16,
+  "processes": [
+   {
+    "host": "home",
+    "script": "hashspend.js",
+    "threads": 1,
+    "args": [],
+    "pid": 28
+   },
+   {
+    "host": "home",
+    "script": "go.js",
+    "threads": 1,
+    "args": [
+     "--opponent",
+     "The Black Hand"
+    ],
+    "pid": 114
+   },
+   {
+    "host": "n00dles",
+    "script": "rfalink.js",
+    "threads": 1,
+    "args": [],
+    "pid": 4
+   },
+   {
+    "host": "foodnstuff",
+    "script": "seed.js",
+    "threads": 1,
+    "args": [
+     "--watch"
+    ],
+    "pid": 2
+   },
+   {
+    "host": "foodnstuff",
+    "script": "homeup.js",
+    "threads": 1,
+    "args": [
+     "--watch",
+     "--reserve",
+     0
+    ],
+    "pid": 3
+   },
+   {
+    "host": "sigma-cosmetics",
+    "script": "errlog.js",
+    "threads": 1,
+    "args": [],
+    "pid": 5
+   },
+   {
+    "host": "sigma-cosmetics",
+    "script": "tel.js",
+    "threads": 1,
+    "args": [],
+    "pid": 7
+   },
+   {
+    "host": "sigma-cosmetics",
+    "script": "hgw.js",
+    "threads": 3,
+    "args": [
+     "joesguns",
+     0.05
+    ],
+    "pid": 109
+   },
+   {
+    "host": "joesguns",
+    "script": "hacknet.js",
+    "threads": 1,
+    "args": [],
+    "pid": 8
+   },
+   {
+    "host": "joesguns",
+    "script": "hgw.js",
+    "threads": 2,
+    "args": [
+     "n00dles",
+     0.05
+    ],
+    "pid": 110
+   },
+   {
+    "host": "hong-fang-tea",
+    "script": "act.js",
+    "threads": 1,
+    "args": [],
+    "pid": 9
+   },
+   {
+    "host": "hong-fang-tea",
+    "script": "bb-lite.js",
+    "threads": 1,
+    "args": [],
+    "pid": 11
+   },
+   {
+    "host": "hong-fang-tea",
+    "script": "hgw.js",
+    "threads": 1,
+    "args": [
+     "foodnstuff",
+     0.05
+    ],
+    "pid": 111
+   },
+   {
+    "host": "harakiri-sushi",
+    "script": "early.js",
+    "threads": 6,
+    "args": [
+     "sigma-cosmetics",
+     0.05
+    ],
+    "pid": 112
+   },
+   {
+    "host": "nectar-net",
+    "script": "early.js",
+    "threads": 6,
+    "args": [
+     "joesguns",
+     0.05
+    ],
+    "pid": 113
+   }
+  ]
+ },
+ "hacknet": {
+  "at": "2026-10-03T19:26:42.233Z",
+  "lastAugReset": 1791053265841,
+  "moneyPerSec": 588.6540800000001
+ },
+ "act": {
+  "at": "2026-10-03T19:26:50.535Z",
+  "lastAugReset": 1791053265841,
+  "work": {
+   "kind": "crime",
+   "type": "Shoplift",
+   "since": "2026-10-03T18:59:04.469Z"
+  },
+  "decision": {
+   "kind": "gym",
+   "args": [
+    "Powerhouse Gym",
+    "str"
+   ],
+   "stat": "strength",
+   "why": "combat strength 1/100 for the Bladeburner route (presumed until the plan prices it): combat to the bar: mixed 4.41h (gym only never, crime only 13.50h, gym when cash covers 120s of $2400/s else money crime 4.41h; cash $3771337, flat income $0/s)"
+  },
+  "last": {
+   "at": "2026-10-03T19:26:50.535Z",
+   "decision": {
+    "kind": "gym",
+    "args": [
+     "Powerhouse Gym",
+     "str"
+    ],
+    "stat": "strength",
+    "why": "combat strength 1/100 for the Bladeburner route (presumed until the plan prices it): combat to the bar: mixed 4.41h (gym only never, crime only 13.50h, gym when cash covers 120s of $2400/s else money crime 4.41h; cash $3771337, flat income $0/s)"
+   },
+   "outcome": {
+    "ran": false,
+    "why": "no rooted host has 4.25GB free for act-gym.js"
+   }
+  }
+ },
+ "bladeburner": {
+  "at": "2026-10-03T19:26:51.187Z",
+  "bitNode": 14,
+  "joined": false
+ },
+ "bbLite": {
+  "at": "2026-10-03T19:26:51.187Z",
+  "bitNode": 14,
+  "joined": false
+ },
+ "plan": {
+  "at": "2026-10-03T18:43:47.212Z",
+  "node": 4,
+  "lastAugReset": 1791040716099,
+  "decisions": {
+   "bladeRoute": {
+    "key": "blade",
+    "pFeasible": 1,
+    "meanH": 0.144,
+    "q10": 0.137,
+    "q50": 0.144,
+    "q90": 0.149,
+    "pBest": 1,
+    "samples": [
+     0.137,
+     0.14,
+     0.148,
+     0.144,
+     0.152,
+     0.151,
+     0.137,
+     0.147,
+     0.142,
+     0.144,
+     0.142,
+     0.137,
+     0.144,
+     0.143,
+     0.141,
+     0.136,
+     0.14,
+     0.148,
+     0.136,
+     0.149,
+     0.149,
+     0.148,
+     0.146,
+     0.147
+    ],
+    "held": false,
+    "switched": false,
+    "stays": true,
+    "gainH": -305.049,
+    "pWin": 0,
+    "vowH": 108.041,
+    "margins": [
+     {
+      "alt": "hack",
+      "meanH": 305.049,
+      "sdH": 214.504,
+      "n": 24
+     }
+    ],
+    "commit": {
+     "rule": "expected-loss",
+     "switch": false,
+     "agree": true,
+     "old": {
+      "switch": false,
+      "key": "blade",
+      "gainH": -305.049,
+      "pWin": 0
+     },
+     "new": {
+      "switch": false,
+      "key": "hack",
+      "gainH": -305.049,
+      "vowH": 108.041,
+      "netH": -413.09,
+      "sdH": 1321.452,
+      "pWin": 0
+     },
+     "widthMult": 6.293,
+     "rho": 0.879
+    },
+    "why": "stays on blade: the best alternative hack is expected -305.05h later net of a 0.05h switch cost, against the 108.04h that waiting one re-decide interval is worth (rho 0.879, spread x6.293, sd 1321.45h); better in 0% of 24 paired draws [the P >= 80% rule would hold]",
+    "decidedAt": "2026-10-03T18:43:46.341Z",
+    "options": [
+     {
+      "key": "blade",
+      "pointH": 0.145,
+      "pFeasible": 1,
+      "meanH": 0.144,
+      "q10": 0.137,
+      "q50": 0.144,
+      "q90": 0.149,
+      "pBest": 1,
+      "noiseKey": "bladeburner",
+      "pricedAt": "2026-10-03T18:43:46.341Z"
+     },
+     {
+      "key": "hack",
+      "pointH": 222.618,
+      "pFeasible": 1,
+      "meanH": 305.143,
+      "q10": 110.656,
+      "q50": 267.732,
+      "q90": 584.344,
+      "pBest": 0,
+      "noiseKey": "default|L12|g4",
+      "pricedAt": "2026-10-03T18:43:46.341Z"
+     }
+    ],
+    "pricedAt": "2026-10-03T18:43:46.341Z",
+    "n": 24,
+    "ms": 2,
+    "overBudget": false,
+    "alloc": {
+     "mode": "ocba",
+     "n0": 8,
+     "sims": 48,
+     "full": 48,
+     "saved": 0,
+     "savedFrac": 0,
+     "pcs": 1,
+     "settled": true,
+     "perOption": {
+      "hack": 24,
+      "blade": 24
+     },
+     "leaders": [
+      "blade",
+      "hack"
+     ],
+     "why": "48 of 48 simulations (0 saved): blade & hack on 24 draws, the rest none; P(correct selection) >= 1.000 (Bonferroni)"
+    },
+    "hackH": 222.618,
+    "bladeH": 0.145,
+    "bladeSims": 1,
+    "joined": true,
+    "rank": 441942.26,
+    "blackOps": 20,
+    "sleeves": {
+     "infiltrate": 0,
+     "support": 5,
+     "fa": 0
+    },
+    "fleet": {
+     "source": "committed",
+     "why": "sleeve.js's committed fleet (0 infiltrate / 5 support / 0 field analysis: exit 0.3h (model) vs 0.8h for the worst of 12)"
+    },
+    "calibration": {
+     "success": {
+      "k": 1.2061,
+      "lnK": 0.1874,
+      "sdLn": 0.07,
+      "n": 138,
+      "s": 80,
+      "expected": 62.61,
+      "why": "80 of 138 attempts succeeded against 62.6 predicted: k = 1.206 x/\u00f7 1.09 at 80% (prior k = 1 x/\u00f7 1.21, the game's formula; exact binomial likelihood)",
+      "applied": 1.2061
+     },
+     "rank": {
+      "k": 1.1696,
+      "lnK": 0.1567,
+      "sdLn": 0.1342,
+      "n": 4,
+      "hours": 4,
+      "measuredWeight": 0.8,
+      "why": "rank realised / the model's path: 4 window(s) over 4.00h, mean ratio 1.216 (weight 80%) -> k 1.170 x/\u00f7 1.19 at 80% [prior: the model as written (k = 1, x/\u00f7 1.47 at 80%, stated)]",
+      "applied": 1.1696,
+      "pending": null,
+      "samples": [
+       {
+        "at": "2026-10-02T20:03:44.593Z",
+        "to": "2026-10-02T21:03:47.203Z",
+        "h": 1.001,
+        "pred": 25.651,
+        "real": 28.72,
+        "lnK": 0.113,
+        "successScale": 1
+       },
+       {
+        "at": "2026-10-02T21:03:47.203Z",
+        "to": "2026-10-02T22:03:51.457Z",
+        "h": 1.001,
+        "pred": 29.681,
+        "real": 38.43,
+        "lnK": 0.2583,
+        "successScale": 1
+       },
+       {
+        "at": "2026-10-02T22:03:51.457Z",
+        "to": "2026-10-02T23:03:56.782Z",
+        "h": 1.001,
+        "pred": 37.358,
+        "real": 51.13,
+        "lnK": 0.3138,
+        "successScale": 1
+       },
+       {
+        "at": "2026-10-03T00:42:03.430Z",
+        "to": "2026-10-03T01:42:04.213Z",
+        "h": 1,
+        "pred": 33.139,
+        "real": 49.57,
+        "lnK": 0.4027,
+        "successScale": 1
+       },
+       {
+        "at": "2026-10-03T03:47:50.059Z",
+        "to": "2026-10-03T04:47:50.997Z",
+        "h": 1,
+        "pred": 72.26,
+        "real": 198.6,
+        "lnK": 1.011,
+        "successScale": 1
+       },
+       {
+        "at": "2026-10-03T04:47:50.997Z",
+        "to": "2026-10-03T05:47:51.938Z",
+        "h": 1,
+        "pred": 297.314,
+        "real": 248.62,
+        "lnK": -0.1789,
+        "successScale": 1.215
+       },
+       {
+        "at": "2026-10-03T05:47:51.938Z",
+        "to": "2026-10-03T06:47:52.512Z",
+        "h": 1,
+        "pred": 913.498,
+        "real": 345.88,
+        "lnK": -0.9712,
+        "successScale": 1.2045
+       },
+       {
+        "at": "2026-10-03T06:47:52.512Z",
+        "to": "2026-10-03T07:47:52.980Z",
+        "h": 1,
+        "pred": 1613.647,
+        "real": 1252.05,
+        "lnK": -0.2537,
+        "successScale": 1.2035
+       },
+       {
+        "at": "2026-10-03T07:47:52.980Z",
+        "to": "2026-10-03T08:47:53.520Z",
+        "h": 1,
+        "pred": 3008.531,
+        "real": 2503.35,
+        "lnK": -0.1838,
+        "successScale": 1.2061
+       },
+       {
+        "at": "2026-10-03T08:47:53.520Z",
+        "to": "2026-10-03T09:48:13.761Z",
+        "h": 1.006,
+        "pred": 4958.27,
+        "real": 4599.94,
+        "lnK": -0.075,
+        "successScale": 1.2061
+       },
+       {
+        "at": "2026-10-03T09:48:13.761Z",
+        "to": "2026-10-03T10:48:14.323Z",
+        "h": 1,
+        "pred": 7284.536,
+        "real": 6090.33,
+        "lnK": -0.1791,
+        "successScale": 1.2061
+       },
+       {
+        "at": "2026-10-03T10:48:14.323Z",
+        "to": "2026-10-03T11:48:15.725Z",
+        "h": 1,
+        "pred": 9410.064,
+        "real": 12229.63,
+        "lnK": 0.2621,
+        "successScale": 1.2061,
+        "v": 2
+       },
+       {
+        "at": "2026-10-03T11:48:15.725Z",
+        "to": "2026-10-03T12:48:16.073Z",
+        "h": 1,
+        "pred": 21774.352,
+        "real": 25010.25,
+        "lnK": 0.1386,
+        "successScale": 1.2061,
+        "v": 2
+       },
+       {
+        "at": "2026-10-03T12:48:16.073Z",
+        "to": "2026-10-03T13:48:17.792Z",
+        "h": 1,
+        "pred": 59802.963,
+        "real": 78674.27,
+        "lnK": 0.2743,
+        "successScale": 1.2061,
+        "v": 2
+       },
+       {
+        "at": "2026-10-03T15:48:37.983Z",
+        "to": "2026-10-03T16:48:39.098Z",
+        "h": 1,
+        "pred": 48242.145,
+        "real": 53760.04,
+        "lnK": 0.1083,
+        "successScale": 1.2061,
+        "v": 2
+       }
+      ],
+      "closed": null,
+      "skipped": "a city population is unread (the prior prices it)"
+     }
+    },
+    "state": {
+     "fleet": "i0s5f0",
+     "blackOps": 20,
+     "best": {
+      "name": "Volhaven",
+      "pop": 503464332,
+      "comms": 0
+     },
+     "kRank": {
+      "lnK": 0.1567,
+      "sdLn": 0.1342
+     },
+     "kSuccess": {
+      "lnK": 0.1874,
+      "sdLn": 0.07
+     }
+    },
+    "installBasis": {
+     "kind": "never",
+     "waitH": null,
+     "installAt": null,
+     "from": "never",
+     "blade": null
+    },
+    "start": {
+     "gymExpPerSec": 18.172229549391044,
+     "gym": "Powerhouse Gym",
+     "trainingMult": 1
+    },
+    "simulacrum": {
+     "cost": 150000000000,
+     "repReq": 1250,
+     "withoutH": 0.14,
+     "moneyH": 3152.27,
+     "repH": 0,
+     "reachH": 3152.27,
+     "boundH": 1.12,
+     "boundGainH": -0.97,
+     "buy": false,
+     "withH": null,
+     "gainH": null,
+     "why": "unreachable before the exit: money in 3152.3h ($150.0b against $93.080b at $18.1m/h), reputation in 0.0h (2405846 of 1250 at 936676.6/h) \u2014 the exit is 0.1h away; installed now at no cost it would be worth -0.97h",
+     "rankPerH": 108842.87
+    },
+    "model": "bbplan.bladeExit \u2014 NOT CALIBRATED live; vs the game's classes -2..+15% (tools/sim/bb6.mjs)"
+   }
+  }
+ },
+ "installgate": {
+  "at": "2026-10-03T18:43:47.202Z",
+  "lastAugReset": 1791040716099,
+  "objective": {
+   "windowH": 1.662,
+   "goWeights": {
+    "weights": {
+     "combat": 0.1336,
+     "hacking_money": 0,
+     "hacking_speed": 0,
+     "hacknet_node_money": 0,
+     "faction_rep": 0
+    },
+    "route": "blade",
+    "windowH": 0.1446,
+    "unit": "black-op exit hours per unit ln of the multiplier",
+    "horizon": "the black-op exit, in 0.14h (no install before it)",
+    "detail": {
+     "exitH": 0.145,
+     "installAtH": null,
+     "combatCurve": [
+      [
+       0.1,
+       0.127
+      ],
+      [
+       0.2,
+       0.111
+      ],
+      [
+       0.3,
+       0.103
+      ],
+      [
+       0.4,
+       0.097
+      ]
+     ],
+     "batch": "no install before the exit: money and reputation move this exit only through an install's batch \u2014 a known 0"
+    },
+    "why": null
+   }
+  }
+ },
+ "go": {
+  "at": "2026-10-03T19:26:40.388Z",
+  "opponent": "TheBlackHand",
+  "opponentWhy": "no derived channel weights \u2014 a flat-weights pass cannot tell the channels apart, so the incumbent stands (goWeights: gate is from another life)",
+  "remoteMoves": 468,
+  "localMoves": 0,
+  "processStartedAt": "2026-10-03T19:10:32.009Z",
+  "health": "ok",
+  "phase": "between games",
+  "thompson": {
+   "draw": {
+    "Daedalus": 0.894,
+    "Illuminati": 0.116,
+    "TheBlackHand": 1,
+    "SlumSnakes": 0.953,
+    "Netburners": 0.995,
+    "Tetrads": 0.877,
+    "w0r1d_d43m0n": 0.5
+   },
+   "arms": {
+    "Daedalus": {
+     "mean": 0.92,
+     "sd": 0.035,
+     "games": 274
+    },
+    "Illuminati": {
+     "mean": 0.206,
+     "sd": 0.065,
+     "games": 40
+    },
+    "TheBlackHand": {
+     "mean": 0.984,
+     "sd": 0.019,
+     "games": 54
+    },
+    "SlumSnakes": {
+     "mean": 0.933,
+     "sd": 0.075,
+     "games": 0
+    },
+    "Netburners": {
+     "mean": 0.997,
+     "sd": 0.007,
+     "games": 218
+    },
+    "Tetrads": {
+     "mean": 0.849,
+     "sd": 0.046,
+     "games": 2400
+    },
+    "w0r1d_d43m0n": {
+     "mean": 0.5,
+     "sd": 0.289,
+     "games": 0
+    }
+   }
+  }
+ }
+}
