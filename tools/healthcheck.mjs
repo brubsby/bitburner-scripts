@@ -162,6 +162,17 @@ const state = await ctl("/poll");
 // Budget per file: how stale is too stale. A job that runs every few minutes
 // gets a wider budget than a resident daemon.
 const FRESH = { "act.txt": 15, "progress.txt": 45, "watchdog.txt": 20, "batch.txt": 20, "go.txt": 30, "gang.txt": 20, "sleeve.txt": 20 };
+// BATCH.JS RETIRED BY TIER: below the 128GB home tier boot.js defers batch.js
+// and early.js/seed.js earn instead, so its stopped record is the design, not a
+// stall (live 2026-10-03 BN14 at 64GB: 'batch.txt stale' + '$0/s' fired every
+// pass). Only when its last record says stopped AND this life's boot.txt lists
+// it as deferred.
+const batchRetiredByTier = (bt) => {
+  if (!bt || bt.health !== "stopped") return false;
+  const boot = readTel("boot.txt");
+  const defer = boot?.defer ?? boot?.deferred;
+  return Array.isArray(defer) && defer.some((x) => x?.script === "batch.js");
+};
 const tel = {};
 // Files carried over from a previous life: their CONTENTS are history, so a
 // movement check comparing them reports a stall in a component that has not
@@ -209,6 +220,7 @@ for (const [name, budget] of Object.entries(FRESH)) {
       staleFromLastLife.add(name);
       note(`/tel/${name} is ${age.toFixed(0)} min old and from a PREVIOUS life — not yet republished this one`);
     }
+    else if (name === "batch.txt" && batchRetiredByTier(d)) note(`/tel/batch.txt is ${age.toFixed(0)} min old: batch.js is retired below its home tier (boot.txt defers it) — early.js/seed.js earn instead`);
     else fail(`/tel/${name} is ${age.toFixed(0)} min stale (budget ${budget})`, `health '${d.health}' — a stale file reporting 'ok' is the shape every silent failure here has taken`);
   }
   if (d.health === "error") fail(`${name} reports health 'error'`, String(d.detail ?? "").slice(0, 200));
@@ -335,6 +347,8 @@ if (!prev) {
   const farming = !!tel["batch.txt"]?.expFarm;
   if (farming) {
     if (num(prev.hackingExp) && num(now.hackingExp) && !(now.hackingExp > prev.hackingExp) && !(num(now.lifeMs) && num(prev.lifeMs) && now.lifeMs < prev.lifeMs)) fail(`EXP FARM NOT MOVING: hacking exp flat over ${dtMin.toFixed(0)} min while batch.js is in exp mode`);
+  } else if (now.batchPerSec !== null && !(now.batchPerSec > 0) && batchRetiredByTier(tel["batch.txt"])) {
+    note("batch.js earns $0/s because it is retired below its home tier (boot.txt defers it); early.js/seed.js are the earners at this tier");
   } else if (now.batchPerSec !== null && !(now.batchPerSec > 0)) {
     // Preparing a target (grow to max money, weaken to min security) earns $0
     // by design; early in a life that is the normal state, not a stall. It is
