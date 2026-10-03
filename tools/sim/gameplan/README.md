@@ -146,17 +146,20 @@ For measurements not tied to a node's completion (the Go agent's w0, a Go
 farm rate, a Daedalus rep rate), one JSON line per reading:
 
 ```
-{ "param": "w0", "value": 140, "sd": 0.3, "at": "2026-10-04T12:00:00Z",
-  "source": "go.js w0r1d_d43m0n 12 games 7x7", "node": 11 }
+{ "param": "w0", "value": 121.04, "sd": 4.1, "at": "2026-10-04T15:00:00Z",
+  "source": "go.js: 40 games vs ????????????" }
 ```
+
+(exactly what go.js publishes every 20 games against w0r1d_d43m0n, goplan.w0Obs)
 
 | field | |
 | --- | --- |
 | `param` | `w0`, `goP`, `rep14`, `lvl14`, `eps14`, `k`, `open`, `phi11`, `d10`, `d8`, `e43`, `z9`, or `g<n>` |
-| `value` | in the parameter's units (w0: w0r1d_d43m0n node power per hour; goP: Daedalus power/h / 4391) |
-| `sd` | standard error of ln(value) (`space: 'log'`, default: 0.2 = ~20%), or in the parameter's units (`space: 'lin'`) |
-| `space` | `'lin'` for a reading that can be 0 — a w0 of 0 (the opponent never lost) must be sent this way |
+| `value` | in the parameter's units (w0: raw node power per hour against w0r1d_d43m0n, before GoPower / the SF14 doubling — go.mjs applies the scale; goP: Daedalus power/h / 4391) |
+| `sd` | its standard error: in the parameter's units (`space: 'lin'`), or of ln(value) (`space: 'log'`: 0.2 = ~20%). A lin sd is floored at 1% of the hand p10-p90 width (w0: 10/h), so a "never scored" 0 +- 0 is a reading, not a certainty |
+| `space` | default `'lin'` for w0 (go.js's delta-method sd is absolute, and 0 is a real value), `'log'` for everything else |
 | `at`, `source` | ISO time and who measured it how; with `param` they form the default key |
+| `stream` | optional: readings of one stream are CUMULATIVE re-estimates, so only the latest (by `at`) is applied, the rest are logged as superseded. Inferred from a source of the form `<who>: <n> games vs <opponent>` (go.js's), as `param\|who\|opponent` |
 | `node`, `key` | optional: the BitNode; an explicit dedup key |
 
 Write it in-game with `recordObs(ns, {...})` from `gameplan-obs.js`: it appends
@@ -164,9 +167,10 @@ to `/tel/gameplan-obs.txt` **on home** (the daemon mirrors only home's `/tel/*`,
 to `.telemetry/gameplan-obs.txt`; the helper throws on any other host). Tools
 outside the game append the same lines to `.telemetry/gameplan-obs.jsonl`.
 observe.mjs reads both, validates each line (an unknown param, a non-positive
-sd or a value <= 0 in log space is rejected and printed), and logs it by key,
-so a mirrored file re-read every poll counts each reading once — and a reading
-already in posterior.json survives the game file being truncated.
+log sd or a value <= 0 in log space is rejected and printed), and logs it by
+key, so a mirrored file re-read every poll counts each reading once — and a
+reading already in posterior.json survives the game file being truncated.
+GP5 runs goplan.w0Obs's own output through the reader.
 
 ## The cache
 

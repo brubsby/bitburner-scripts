@@ -47,6 +47,7 @@ import { buildTable, solveDP, bestPath, firstMoves, bruteForce, localSearch, eva
 import { rng, normal, worldOf } from '../sim/gameplan/params.mjs'
 import { scalarPosterior, valueAt, gBase, gUpdate, gSummary, posteriorOf, emptyStore, mergeObs, summarise, scalarSpecs, normaliseObs, loadStore, POSTERIOR_FILE } from '../sim/gameplan/posterior.mjs'
 import { obsRecord } from '../../gameplan-obs.js'
+import { w0Obs, rateEstimate } from '../../goplan.js'
 import { readingsFromSegments } from '../sim/gameplan/observe.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -276,7 +277,7 @@ function gp5() {
       if (!o) c.fail(`gameplan-obs.js writes a ${param} reading observe rejects: ${why}`)
     }
     let threw = 0
-    for (const bad of [{ param: 'nope', value: 1, sd: 1, source: 's' }, { param: 'w0', value: 0, sd: 5, source: 's' }, { param: 'k', value: 1, sd: 0, source: 's' }]) {
+    for (const bad of [{ param: 'nope', value: 1, sd: 1, source: 's' }, { param: 'k', value: 0, sd: 0.1, source: 's' }, { param: 'k', value: 1, sd: 0, source: 's' }]) {
       try {
         obsRecord(bad)
       } catch {
@@ -285,9 +286,25 @@ function gp5() {
     }
     c.examined(1)
     if (threw !== 3) c.fail(`gameplan-obs.js accepted ${3 - threw} malformed readings`)
-    const ok = obsRecord({ param: 'w0', value: 0, sd: 5, space: 'lin', source: 's' })
+    const ok = obsRecord({ param: 'w0', value: 0, sd: 0, source: 's' })
     c.examined(1)
-    if (!normaliseObs(ok, specs)[0]) c.fail('a w0 reading of 0 in lin space must be accepted')
+    if (!normaliseObs(ok, specs)[0]) c.fail('a w0 reading of 0 (lin by default, sd 0 floored) must be accepted')
+    // go.js's own writer (goplan.w0Obs): cumulative re-estimates every 20 games -> one stream, only the latest applied
+    const games = (n, power) => Array.from({ length: n }, (_, i) => ({ power: power * (1 + 0.3 * Math.sin(i)), hours: 0.25, won: i % 3 === 0 }))
+    const o20 = w0Obs(rateEstimate(games(20, 30)), '2026-10-04T10:00:00Z')
+    const o40 = w0Obs(rateEstimate(games(40, 30)), '2026-10-04T15:00:00Z')
+    const zero = w0Obs(rateEstimate(games(20, 0)), '2026-10-05T10:00:00Z', 'go.js node 12')
+    const st = emptyStore()
+    const mg = mergeObs(st, [o20, o40, zero])
+    const e = econ([[1, 0.05]])
+    const pg = posteriorOf(st, e)
+    const streams = new Set(st.observations.map((o) => o.stream))
+    c.examined(1)
+    if (mg.added !== 3 || mg.rejected.length) c.fail(`go.js w0 readings: ${mg.added} added, rejected: ${mg.rejected.join('; ')}`)
+    if (streams.size !== 2 || pg.nObs !== 2) c.fail(`go.js w0 readings: ${streams.size} streams (want 2: go.js, go.js node 12), ${pg.nObs} applied (want 2: the latest of each)`)
+    const w0spec = specs.w0
+    const med = valueAt(w0spec, pg.scalar.w0.map(0))
+    c.note(`go.js w0 stream: readings ${o20.value}/h (sd ${o20.sd}, n 20) then ${o40.value}/h (n 40) -> one stream, latest applied; with a 0-power stream beside it the w0 median ${med.toFixed(1)}/h (hand 200)`)
     if (!fs.existsSync(POSTERIOR_FILE)) c.fail(`no committed ${path.basename(POSTERIOR_FILE)}`)
     else {
       const st = loadStore()

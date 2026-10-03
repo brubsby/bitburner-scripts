@@ -264,6 +264,30 @@ export function saveStore(st, file = POSTERIOR_FILE) {
   fs.writeFileSync(file, JSON.stringify(st, null, 1) + '\n')
 }
 
+/**
+ * The space a reading's sd is in when it does not say: w0 is 'lin' (absolute
+ * sd in node power/h, and a measured 0 is meaningful) — what go.js publishes
+ * (goplan.w0Obs: the ratio estimator's delta-method sd); everything else 'log'.
+ */
+export const DEFAULT_SPACE = { w0: 'lin' }
+/**
+ * A lin reading's sd floor: 1% of the hand prior's p10-p90 width (w0: 10/h).
+ * A run that never scored reads value 0, sd 0 — a real reading, not an infinitely precise one.
+ */
+export const linSdFloor = (spec) => 0.01 * Math.abs(spec.hi - spec.lo)
+/**
+ * The stream a reading belongs to: readings of one stream are CUMULATIVE
+ * estimates (each re-estimates from all the games so far), so only the latest
+ * (by `at`) is applied and the rest are superseded. Explicit `stream`, or a
+ * source of go.js's form '<who>: <n> games vs <opponent>' -> 'param|who|opponent'.
+ * null = an independent reading.
+ */
+export function streamOf(o) {
+  if (o.stream) return String(o.stream)
+  const m = /^(.+?): \d+ games vs (.+)$/.exec(String(o.source ?? ''))
+  return m ? `${o.param}|${m[1]}|${m[2]}` : null
+}
+
 /** Validate and normalise one reading; returns [obs, null] or [null, why]. */
 export function normaliseObs(o, specs = scalarSpecs()) {
   if (!o || typeof o !== 'object') return [null, 'not an object']
@@ -271,18 +295,32 @@ export function normaliseObs(o, specs = scalarSpecs()) {
   const isG = /^g([1-9]|1[0-4])$/.test(param)
   if (!isG && !specs[param]) return [null, `unknown param '${param}'`]
   const value = Number(o.value)
-  const sd = Number(o.sd ?? (isG ? OBS_SD.g : OBS_SD[param]))
   if (!isFinite(value)) return [null, `${param}: value ${o.value} not a number`]
-  if (!(sd > 0)) return [null, `${param}: sd ${o.sd} must be > 0`]
-  const space = o.space === 'lin' ? 'lin' : 'log'
-  if (space === 'log' && !(value > 0)) return [null, `${param}: value ${value} <= 0 in log space (send space:'lin' with an absolute sd)`]
+  const space = o.space === 'lin' || o.space === 'log' ? o.space : DEFAULT_SPACE[param] ?? 'log'
   if (isG && space !== 'log') return [null, `${param}: g readings are log space only`]
+  let sd = Number(o.sd ?? (isG ? OBS_SD.g : OBS_SD[param]))
+  if (space === 'lin' && sd >= 0) sd = Math.max(sd, linSdFloor(specs[param]))
+  if (!(sd > 0)) return [null, `${param}: sd ${o.sd} must be > 0`]
+  if (space === 'log' && !(value > 0)) return [null, `${param}: value ${value} <= 0 in log space (send space:'lin' with an absolute sd)`]
   const at = String(o.at ?? '')
   const source = String(o.source ?? 'unknown')
   const key = String(o.key ?? `${param}|${source}|${at}`)
   const out = { key, param, value, sd, space, at, source }
+  const stream = streamOf({ ...o, param })
+  if (stream) out.stream = stream
   for (const k of ['node', 'clear', 'inBase', 'note']) if (o[k] !== undefined) out[k] = o[k]
   return [out, null]
+}
+
+/** The readings the posterior applies: not in the base, and only the latest of each stream. */
+export function appliedObs(observations) {
+  const latest = new Map()
+  for (const o of observations) {
+    if (o.inBase || !o.stream) continue
+    const cur = latest.get(o.stream)
+    if (!cur || o.at > cur.at) latest.set(o.stream, o)
+  }
+  return observations.filter((o) => !o.inBase && (!o.stream || latest.get(o.stream) === o))
 }
 
 /** Merge readings into the store's log by key. Returns { added, dup, rejected[] }. */
@@ -315,7 +353,7 @@ export function mergeObs(st, readings, specs = scalarSpecs()) {
  */
 export function posteriorOf(st, econ, { rho = RHO, sigmaPlayed = SIGMA_PLAYED } = {}) {
   const specs = scalarSpecs()
-  const live = st.observations.filter((o) => !o.inBase)
+  const live = appliedObs(st.observations)
   const scalar = {}
   for (const [id, spec] of Object.entries(specs)) scalar[id] = scalarPosterior(spec, live.filter((o) => o.param === id))
   const G = gBase(econ, { rho, sigmaPlayed })

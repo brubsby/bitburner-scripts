@@ -54,7 +54,7 @@ const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, drawZ, worldOf, paramIds } = await im
 const { ROUTES, clearTime, hackParts, favorHours, favorRef } = await import('./routes.mjs')
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
 const { GO_MEASURED, goScale, goMaxRep, w0rldDiv } = await import('./go.mjs')
-const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability } = await import('./posterior.mjs')
+const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability, appliedObs } = await import('./posterior.mjs')
 const { runObserve, printMove } = await import('./observe.mjs')
 let t0 = performance.now()
 const { measureEconomy } = await import('./economy.mjs')
@@ -180,7 +180,7 @@ console.log(`    g(node) unplayed: ln g split-normal through the latent lo/mid/h
     const fmt = (x) => (Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 1 ? x.toFixed(2) : x.toFixed(3))
     console.log('  param        hand p10 / p50 / p90            posterior p10 / p50 / p90        readings')
     for (const [id, v] of moved) console.log(`  ${id.padEnd(12)} ${(v.prior ? v.prior.map(fmt).join(' / ') : '-').padEnd(31)} ${v.post.map(fmt).join(' / ').padEnd(32)} ${v.n ?? ''}${v.rho ? `  common share ${v.rho[0]} -> ${v.rho[1]}` : ''}`)
-    for (const o of store.observations.filter((x) => !x.inBase)) console.log(`    applied: ${o.key}  ${o.param} = ${+o.value.toPrecision(4)} (sd ${o.sd} ${o.space})  ${o.note ?? o.source}`)
+    for (const o of appliedObs(store.observations)) console.log(`    applied: ${o.key}  ${o.param} = ${+o.value.toPrecision(4)} (sd ${o.sd} ${o.space})  ${o.note ?? o.source}`)
   }
 }
 console.log('ROUTES (routes.mjs):')
