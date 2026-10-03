@@ -47,7 +47,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NC = path.join(HERE, '../nodechoice')
 const REPO = path.resolve(HERE, '../../..')
 export const CACHE_DIR = path.join(HERE, '.cache')
-export const SURROGATE_VERSION = 'gameplan-surrogate-1'
+export const SURROGATE_VERSION = 'gameplan-surrogate-2' // 2: hackexit reads HackingSpeedMultiplier (BN14 0.3)
 
 export const LN_G_N = 961
 export const LN_G = Array.from({ length: LN_G_N }, (_, i) => Math.log(0.002) + (i * (Math.log(1.2) - Math.log(0.002))) / (LN_G_N - 1))
@@ -223,6 +223,7 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
   }
   if (missing.length) throw new Error(`surrogate: ${missing.length} hack grid points not built (run plan.mjs --build) e.g. ${JSON.stringify(missing[0])}`)
   const legs = new Map()
+  const joins = new Map()
   const rank = new Map()
   let bbMissing = 0
   for (const n of NODES) rank.set(n, nodeMults(n).BladeburnerRank)
@@ -233,17 +234,24 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
         bbMissing += rs.filter((r) => !r).length
         const ls = rs.map((r) => (r?.hours ? r.hours - (r.joinH ?? 0) : null)).filter((x) => x !== null).sort((a, b) => a - b)
         legs.set(`${n}|${l6}|${l7}`, ls.length > bbSeeds / 2 ? { median: median(ls), q1: ls[Math.floor(ls.length / 4)], q3: ls[Math.floor((3 * ls.length) / 4)], legs: ls } : null)
+        // the gym to combat 100 before the join (bbsim joinH: the game's skill formula at the node's combat multipliers)
+        const js = rs.map((r) => r?.joinH).filter((x) => typeof x === 'number' && isFinite(x))
+        joins.set(`${n}|${l6}|${l7}`, js.length ? median(js) : null)
       }
   if (bbMissing) throw new Error(`surrogate: ${bbMissing} Bladeburner sims not built (run plan.mjs --build)`)
   const dmemo = new Map()
-  const hackDirect = (node, level, sf, g) => {
-    const k = `${node}|${level}|${sf}|${g}`
-    if (!dmemo.has(k)) dmemo.set(k, hackExitHours({ node, level, sf: sfKeyPairs(sf), profile, g }).hours ?? Infinity)
+  const multsMemo = new Map()
+  // opts.speed1: HackingSpeedMultiplier priced at 1 (phase 1's model; GP3's regression mode — direct only)
+  const hackDirect = (node, level, sf, g, opts) => {
+    const k = `${node}|${level}|${sf}|${g}|${opts?.speed1 ? 1 : 0}`
+    if (!dmemo.has(k)) dmemo.set(k, hackExitHours({ node, level, sf: sfKeyPairs(sf), profile, g, ...(opts?.speed1 ? { speedMult: 1 } : {}) }).hours ?? Infinity)
     return dmemo.get(k)
   }
   const lo = LN_G[0]
   const step = LN_G[1] - LN_G[0]
-  const hackInterp = (node, level, sf, g) => {
+  const hackInterp = (node, level, sf, g, opts) => {
+    // the grid is the current model; phase 1's BN14 (speed 1) exists only as direct sims
+    if (opts?.speed1 && nodeMults(node).HackingSpeedMultiplier !== 1) return hackDirect(node, level, sf, g, opts)
     const ys = curves.get(`${node}|${level}|${sf}`)
     if (!ys) throw new Error(`surrogate: no hack curve for BN${node} level ${level} sf ${sf}`)
     const x = (Math.log(g) - lo) / step
@@ -261,6 +269,11 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
     hackDirect,
     bbLeg: (n, l6, l7) => legs.get(`${n}|${l6}|${l7}`) ?? null,
     bbRank: (n) => rank.get(n),
+    bbJoin: (n, l6, l7) => joins.get(`${n}|${l6}|${l7}`) ?? null,
+    mults: (n) => {
+      if (!multsMemo.has(n)) multsMemo.set(n, nodeMults(n))
+      return multsMemo.get(n)
+    },
     meta: { curves: curves.size, gridPoints: curves.size * LN_G.length, bbCells: legs.size, bbSeeds, bbInt: BB_INT, direct },
   }
 }

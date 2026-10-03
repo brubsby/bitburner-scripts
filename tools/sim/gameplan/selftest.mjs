@@ -18,7 +18,7 @@ import { clearTime } from './routes.mjs'
 import { buildTable, solveDP, firstMoves, localSearch } from './search.mjs'
 
 const VERBOSE = process.argv.includes('--verbose')
-const out = { gp2: { examined: 0, notes: [], fails: [] }, gp3: { examined: 0, notes: [], fails: [] } }
+const out = { gp2: { examined: 0, notes: [], fails: [] }, gp3: { examined: 0, notes: [], fails: [] }, gp4: { examined: 0, notes: [], fails: [] } }
 const done = () => {
   console.log(JSON.stringify(out))
   process.exit(0)
@@ -31,7 +31,7 @@ try {
   const e = await measureEconomy()
   econ = { ...e, ownG: new Map(e.ownG) }
 } catch (err) {
-  out.gp2 = out.gp3 = { skip: `inputs unavailable: ${String(err?.message ?? err).slice(0, 300)}` }
+  out.gp2 = out.gp3 = out.gp4 = { skip: `inputs unavailable: ${String(err?.message ?? err).slice(0, 300)}` }
   done()
 }
 
@@ -42,7 +42,7 @@ try {
   Si = await loadSurrogate({ start: S0, profile: econ.profile, bbSeeds: 5 })
   Sd = await loadSurrogate({ start: S0, profile: econ.profile, bbSeeds: 5, direct: true })
 } catch (err) {
-  out.gp2 = out.gp3 = { skip: String(err?.message ?? err).slice(0, 300) }
+  out.gp2 = out.gp3 = out.gp4 = { skip: String(err?.message ?? err).slice(0, 300) }
   done()
 }
 
@@ -87,6 +87,10 @@ try {
 // ---------------------------------------------------------------- GP3
 {
   const c = out.gp3
+  // PHASE-1 MODE (worldOf phase1, hackHours speed1): the IPvGO model, the
+  // Bladeburner opening's gym scale and BN14's HackingSpeedMultiplier are
+  // phase-2 changes MEANT to move these numbers, so the regression runs the
+  // phase-1 pricing they reproduce; the phase-2 terms are checked by GP4.
   // /tmp/nextnode-bn6.out (nextnode.mjs at 919b8ca, run 2026-10-02): printed to 0.1h.
   const HACK_NOW = { 2: 21.7, 3: 49.9, 4: 34.6, 5: 32.0, 6: 47.2, 7: 69.3, 8: 54.6, 9: 56.2, 10: 82.1, 11: 43.3, 12: 22.1, 13: 58.9, 14: 67.4 }
   const BB_LEG = { // SF6.1/7.0, SF6.3/7.0, SF6.1/7.3, SF6.3/7.3 medians
@@ -101,11 +105,11 @@ try {
   const nodes = Object.keys(HACK_NOW).map(Number)
   const lv = (n) => lvl(S0, n)
   // (a) the hacking route's own hours from S0, mid world, before early-game savings
-  const mid = worldOf(econ, {}, { sigmaPlayed: 0 })
+  const mid = worldOf(econ, {}, { sigmaPlayed: 0, phase1: true })
   let worstA = 0
   for (const n of nodes) {
     const { gFactorOf, hackSfOf, sfKeyStr } = await import('./effects.mjs')
-    const h = Sd.hackHours(n, 1, sfKeyStr(hackSfOf(lv)), mid.g(n) * gFactorOf(lv, mid.sf))
+    const h = Sd.hackHours(n, 1, sfKeyStr(hackSfOf(lv)), mid.g(n) * gFactorOf(lv, mid.sf), { speed1: true })
     worstA = Math.max(worstA, Math.abs(h - HACK_NOW[n]))
     c.examined++
     if (Math.abs(h - HACK_NOW[n]) > 0.051 + 1e-9) c.fails.push(`hacking hours BN${n} from S0: ${h.toFixed(2)}h vs nextnode ${HACK_NOW[n]}h`)
@@ -128,7 +132,7 @@ try {
   // (c) the whole-game totals per first move, nextnode's local search on this planner's table (direct sims)
   const L = lattice(S0)
   for (const bb of ['cal', 'off']) {
-    const w = worldOf(econ, cellZ({ bb, sc: 'mid', sa: 'mid' }, nodes, econ), { sigmaPlayed: 0, bbOff: bb === 'off' })
+    const w = worldOf(econ, cellZ({ bb, sc: 'mid', sa: 'mid' }, nodes, econ), { sigmaPlayed: 0, bbOff: bb === 'off', phase1: true })
     const T = buildTable(L, (n, lvf) => clearTime(n, lvf, w, Sd).h, (n) => !isInert(n))
     const V = solveDP(L, T)
     const fm = firstMoves(L, T, V)
@@ -149,5 +153,51 @@ try {
     c.notes.push(`(c) ${bb}/mid/mid: local search vs nextnode, 13 first moves: worst |diff| ${worst.toFixed(2)}h (tol ${TOL}h); exact DP optimum ${V[0].toFixed(1)}h vs nextnode's best ${bestLS}h (DP <= LS for all: ${below ? 'NO' : 'yes'})`)
     if (VERBOSE) c.notes.push('    first LS/nextnode/DP: ' + rows.join('  '))
   }
+}
+// ---------------------------------------------------------------- GP4 (the simulation half)
+{
+  const c = out.gp4
+  const { hackExitHours } = await import('../nodechoice/hackexit.mjs')
+  const { exitShift } = await import('./go.mjs')
+  const sf = [[1, 3], [5, 1], [8, 1]]
+  // (a) the w0r1d_d43m0n exit divisor: H(g, E/W) ~= H(g, E) - ln(W)/g, against the simulation run at E/W
+  // Tolerance: the simulation's hours move in whole install cycles (the policy
+  // is an integer count), the shift is smooth, so a point may be off by up to
+  // one cycle; what would bias the plan is a SYSTEMATIC error: the mean signed
+  // error must stay under 0.3h.
+  let worst = { e: 0 }
+  const signed = []
+  const cyc = econ.profile.cycleHours
+  for (const node of [1, 11, 13, 14])
+    for (const gg of [0.03, 0.045, 0.06, 0.09, 0.12])
+      for (const W of [1.1, 1.2, 1.5, 2]) {
+        const h = hackExitHours({ node, sf, profile: econ.profile, g: gg }).hours
+        const d = hackExitHours({ node, sf, profile: econ.profile, g: gg, exitDiv: W }).hours
+        const a = exitShift(h, gg, W)
+        const e = Math.abs(a - d)
+        signed.push(a - d)
+        c.examined++
+        if (e > worst.e) worst = { e, node, gg, W, a, d }
+        if (e > cyc + 0.2) c.fails.push(`exitShift BN${node} g ${gg} W ${W}: ${a.toFixed(2)}h vs the sim at exit/W ${d.toFixed(2)}h (more than one install cycle)`)
+      }
+  const bias = signed.reduce((x, y) => x + y, 0) / signed.length
+  if (Math.abs(bias) > 0.3) c.fails.push(`exitShift is biased: mean signed error ${bias.toFixed(2)}h over ${signed.length} points`)
+  c.notes.push(`(a) the exit-level divisor W (w0r1d_d43m0n) as a shift ln(W)/g, vs exitplan run at exitLevel/W: BN1/11/13/14 x 5 g x W 1.1-2, mean signed error ${bias >= 0 ? '+' : ''}${bias.toFixed(2)}h (tol 0.3h), worst ${worst.e.toFixed(2)}h (BN${worst.node} g ${worst.gg} W ${worst.W}: ${worst.a.toFixed(2)} vs ${worst.d.toFixed(2)}h; tol one cycle ${cyc.toFixed(2)}h + 0.2h)`)
+  // (b) BN14's HackingSpeedMultiplier reaches the simulation (and nothing else moves: GP3's CHECKs are the measured nodes)
+  const g14 = 0.06
+  const h03 = hackExitHours({ node: 14, sf, profile: econ.profile, g: g14 }).hours
+  const h1 = hackExitHours({ node: 14, sf, profile: econ.profile, g: g14, speedMult: 1 }).hours
+  const h1b = hackExitHours({ node: 1, sf, profile: econ.profile, g: g14 }).hours
+  const h1c = hackExitHours({ node: 1, sf, profile: econ.profile, g: g14, speedMult: 1 }).hours
+  c.examined += 2
+  if (!(h03 > h1)) c.fails.push(`BN14 at HackingSpeed 0.3 (${h03}h) is not slower than at 1 (${h1}h)`)
+  if (h1b !== h1c) c.fails.push(`BN1's hours moved with the speed term (${h1b} vs ${h1c}) — its multiplier is 1`)
+  c.notes.push(`(b) BN14 at g ${g14}: ${h03.toFixed(2)}h with HackingSpeedMultiplier 0.3 vs ${h1.toFixed(2)}h at 1 (phase 1); BN1 unchanged ${h1b.toFixed(2)}h`)
+  // (c) the Bladeburner opening's gym scale: bbsim's time to combat 100, BN14 (x0.5 combat levels) vs BN6
+  const j6 = Si.bbJoin(6, 1, 0)
+  const j14 = Si.bbJoin(14, 1, 0)
+  c.examined++
+  if (!(j14 > j6)) c.fails.push(`bbsim's gym to combat 100 is not longer in BN14 (${j14}h) than BN6 (${j6}h)`)
+  c.notes.push(`(c) gym to combat 100 (bbsim joinH, SF6.1): BN6 ${j6?.toFixed(2)}h, BN14 ${j14?.toFixed(2)}h -> BN14's opening +${(j14 - j6).toFixed(2)}h over the measured 2.5h`)
 }
 done()

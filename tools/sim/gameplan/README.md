@@ -9,7 +9,7 @@ node tools/sim/gameplan/plan.mjs                       # state + node in progres
 node tools/sim/gameplan/plan.mjs --draws 200 --seed 7  # more draws
 node tools/sim/gameplan/plan.mjs --state 1.3,2.1,4.3,5.1,6.1,8.1,9.1,10.1 --in-progress none
 node tools/sim/gameplan/plan.mjs --build-only          # build / extend the surrogate cache only
-node tools/test/run.mjs gameplan                       # GP1-GP3
+node tools/test/run.mjs gameplan                       # GP1-GP4
 ```
 
 Run it after every clear: it reads the state from `.telemetry/history.jsonl`
@@ -29,14 +29,34 @@ treats as committed) and re-plans from there. Use one process, 2GB heap is plent
 | `routes.mjs` | the routes (hack, blade, and the node-special hooks) and `clearTime` = C(node, state, world) |
 | `search.mjs` | exact DP over the lattice; nextnode's local search ported for comparison; brute force for the tests |
 | `plan.mjs` | the CLI |
-| `selftest.mjs` | the game-dependent half of `tools/test/gameplan.test.mjs` (GP2, GP3), run in a child process |
+| `go.mjs` | the IPvGO model (phase 2): the Go bonus scale GoPower x the SF14 doubling, the favor life, the w0r1d_d43m0n exit divisor, the g channel — source formulas, measured BN9 farm, ASSUMED bounds, each labelled |
+| `selftest.mjs` | the game-dependent half of `tools/test/gameplan.test.mjs` (GP2, GP3, GP4's simulation half), run in a child process |
+| `gotest.mjs` | GP4's game-source half: go.mjs against the game's own CalculateEffect / getMaxRep / endGoGame / favor (tools/sim bundle), its own child |
 
 C(node, state) is `min` over the routes that apply:
 
-- **hack**: `max(0.5 H, H - early)`, `H` = `hackexit.hackExitHours` at
-  `g = g(node) x prod gFactor(SF)`; `early` = sum of the SFs' first-life savings.
-- **blade**: `open - min(early, open - 0.5) + leg(node, SF6, SF7) x k`, `leg` = bbsim median.
-- **go (BN14), stocks (BN8), corp (BN3), stanek (BN13)**: placeholders, return null — NOT CALIBRATED.
+- **hack**: `max(0.5 Hx, Hx - early)`, `Hx = max(min(H, .5), H - ln(W)/g) + favor(node, SF14) - favor_ref(node)`,
+  `H` = `hackexit.hackExitHours` at `g = g(node) x prod gFactor(SF) x goG(GoPower x SF14 doubling)`;
+  `W` the w0r1d_d43m0n exit divisor, `favor` the favor life (go.mjs); `early` = sum of the SFs' first-life savings.
+  Every node but BN14.
+- **blade**: `open' - min(early, open' - 0.5) + leg(node, SF6, SF7) x k`, `leg` = bbsim median,
+  `open' = open + gym(node) - gym(BN6)` (bbsim's time to combat 100 at the node's combat multipliers).
+- **go (BN14)**: the hack formula at GoPower 4 (BN14's own route; hack does not apply there) — MODELLED (phase 2).
+- **stocks (BN8), corp (BN3), stanek (BN13)**: placeholders, return null — NOT CALIBRATED.
+
+### The IPvGO model (go.mjs) — what is measured, from source, assumed
+
+| | |
+| --- | --- |
+| SOURCE | `effect = 1 + ln(n+1)(n+1)^0.3 x 0.002 x bonusPower x GoPower x (SF14?2:1)`; favor `getMaxRep()/200` per even-streak win to `getMaxRep()` = 100/200/300/400k at SF14 0-3; donations at favor 150 x FavorToDonate; faction rep `x FactionWorkRepGain x (1 + favor/100)`; node power zeroed per install; w0r1d_d43m0n (bonusPower 2, hacking level) after The Red Pill; BN14's multipliers. GP4 runs each against the game. |
+| MEASURED | Daedalus 4391 power/h, win 0.85 (goplan.js, 60 games at 5x5); 160 games/h (go.txt, BN9); Daedalus work rep/h per level 72/97/150 and the favor-life level 3500/4700/5900 (history.jsonl, BN1/4/5/8/9/10) |
+| ASSUMED | `eps14` (g's elasticity to the Go rate bonus, 0/0.12/0.3 — mid = nextnode's d14), `w0` (w0r1d_d43m0n power/h, 0/200/1000 — never played), 1h of Go before the favor grind and of w0r1d_d43m0n before the exit hack |
+| NOT PRICED | go.cheat (BN14.2, SF14.2+), the Tetrads bonus on the gym, hacknet |
+
+The favor life's reference is the one inside the g it was measured with: a
+played node's own (at SF14 0), else the measured runs' mean (BN2 excluded: the
+gang sold its Red Pill). So played nodes reproduce at SF14 0 and SF14 moves
+every node through its favor life, g and W.
 
 The order search is exact: V(s) = min_n C(n, s) + V(s + n) over the 1.5-3M states
 of the lattice, in reverse index order (a clear always raises the index). C is
@@ -110,4 +130,7 @@ Everything a phase-2 model needs to touch is one entry in one table:
 
 Keep GP3 green while doing it: it pins this planner to nextnode.mjs's numbers
 wherever the models still coincide; when a phase-2 change is *meant* to move
-them, update the expected values in `selftest.mjs` in the same commit and say why.
+them, update the expected values in `selftest.mjs` in the same commit and say why —
+or, as the IPvGO model does, put the change behind `worldOf(..., {phase1: true})`
+(and `hackHours(..., {speed1: true})`) so GP3 keeps reproducing phase 1 exactly
+and the new terms get their own check (GP4).

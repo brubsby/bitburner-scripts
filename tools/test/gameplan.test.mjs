@@ -9,6 +9,14 @@
 //       and off/mid/mid cells, the first-move totals of nextnode's own local search
 //       (ported onto this planner's clear-time table, direct sims) match
 //       /tmp/nextnode-bn6.out (919b8ca) to 0.15h, and the exact DP is <= each.
+//       Run in PHASE-1 MODE (no IPvGO model, no gym scale on the opening,
+//       HackingSpeedMultiplier at 1): phase 2 moves those numbers on purpose.
+//   GP4 THE IPvGO MODEL IS THE GAME'S: go.mjs's transcriptions against the game
+//       source functions (CalculateEffect at GoPower 4 and the SF14 doubling,
+//       getMaxRep per SF14 level, the favor award played through endGoGame and
+//       its cap, favor <-> rep, BN14's multipliers), the favor life's ordering
+//       in SF14, the w0r1d_d43m0n exit shift against exitplan at exitLevel/W,
+//       BN14's HackingSpeedMultiplier in the simulation, the gym scale.
 //
 // CALIBRATION: GP1 is a property of the optimiser (no game quantity). GP2 is a
 // numerical check of the surrogate against the simulation it tabulates. GP3 is a
@@ -80,22 +88,39 @@ function gp1() {
 
 function child() {
   const c2 = new Check('GP2', 'the surrogate: hacking hours interpolated in ln g vs the simulation called directly (off-grid points)')
-  const c3 = new Check('GP3', "nextnode.mjs reproduced where the models coincide (cal/mid/mid, off/mid/mid), and the DP <= its local search")
+  const c3 = new Check('GP3', "nextnode.mjs reproduced where the models coincide (cal/mid/mid, off/mid/mid, phase-1 mode), and the DP <= its local search")
+  const c4 = new Check('GP4', "the IPvGO model (go.mjs) against the game's own Go, favor and multiplier functions, and its exit shift against the simulation")
+  // the game-source half: the tools/sim bundle, in its own child (not the nodechoice bundle's process)
+  {
+    const r = spawnSync(process.execPath, ['--max-old-space-size=2048', path.join(GP, 'gotest.mjs')], { encoding: 'utf8', timeout: 600e3 })
+    let res
+    try {
+      res = JSON.parse(r.stdout.trim().split('\n').pop())
+    } catch {
+      res = { skip: 'gotest.mjs produced no result: ' + ((r.stderr || '').slice(-600) || `exit ${r.status}`) }
+    }
+    if (res.skip) c4.warn('could not check (game source): ' + res.skip)
+    else {
+      c4.examined(res.examined)
+      for (const n of res.notes) c4.note(n)
+      for (const f of res.fails) c4.fail(f)
+    }
+  }
   const need = [path.join(GP, '../nodechoice/game.bundle.mjs'), path.join(GP, '.cache/bb.json')]
   const missing = need.filter((f) => !fs.existsSync(f))
   if (missing.length) {
-    for (const c of [c2, c3]) c.warn('could not check: missing ' + missing.map((f) => path.relative(path.join(HERE, '../..'), f)).join(', '), 'build with: node tools/sim/gameplan/plan.mjs --build-only')
-    return [c2, c3]
+    for (const c of [c2, c3, c4]) c.warn('could not check: missing ' + missing.map((f) => path.relative(path.join(HERE, '../..'), f)).join(', '), 'build with: node tools/sim/gameplan/plan.mjs --build-only')
+    return [c2, c3, c4]
   }
   const r = spawnSync(process.execPath, ['--max-old-space-size=2048', path.join(GP, 'selftest.mjs')], { encoding: 'utf8', timeout: 600e3 })
   let out
   try {
     out = JSON.parse(r.stdout.trim().split('\n').pop())
   } catch {
-    for (const c of [c2, c3]) c.warn('could not check: selftest.mjs produced no result', (r.stderr || '').slice(-800) || `exit ${r.status}`)
-    return [c2, c3]
+    for (const c of [c2, c3, c4]) c.warn('could not check: selftest.mjs produced no result', (r.stderr || '').slice(-800) || `exit ${r.status}`)
+    return [c2, c3, c4]
   }
-  for (const [c, res] of [[c2, out.gp2], [c3, out.gp3]]) {
+  for (const [c, res] of [[c2, out.gp2], [c3, out.gp3], [c4, out.gp4]]) {
     if (res.skip) {
       c.warn('could not check: ' + res.skip)
       continue
@@ -104,7 +129,7 @@ function child() {
     for (const n of res.notes) c.note(n)
     for (const f of res.fails) c.fail(f)
   }
-  return [c2, c3]
+  return [c2, c3, c4]
 }
 
 export async function run() {

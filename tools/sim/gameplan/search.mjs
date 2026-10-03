@@ -230,3 +230,24 @@ export function localSearch(L, T, first) {
   }
   return { seq: [first, ...cur], T: curT }
 }
+
+/**
+ * The best total from the lattice start when the first clears are FIXED to
+ * `prefix` (array of node numbers): their own costs along the way plus V of
+ * the state they reach (the optimal continuation). null if the prefix is not
+ * owed. Used for "commit to these clears, then play optimally".
+ */
+export function prefixTotal(L, T, V, prefix) {
+  const digits = L.dims.map(() => 0)
+  const di = new Map(L.dims.map((d, i) => [d.n, i]))
+  let tot = 0
+  let idx = 0
+  for (const n of prefix) {
+    const d = di.get(n)
+    if (d === undefined || digits[d] >= L.dims[d].size - 1) return null
+    tot += edgeCost(L, T, digits, d)
+    digits[d]++
+    idx += L.dims[d].stride
+  }
+  return tot + V[idx]
+}

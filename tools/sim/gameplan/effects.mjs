@@ -8,6 +8,9 @@
 // planner reproduces it where the models coincide. Phase 2 replaces them one
 // at a time; an entry's `status` is what the plan prints, so a replaced entry
 // changes its own label. Nothing live has checked any ASSUMED number.
+// Phase 2 so far: SF14 (and BN14) — the IPvGO model, go.mjs: source formulas
+// (GP4 runs them against the game), the measured BN9 Go farm, and the Go
+// entries of SF_PARAMS (MEASURED mid with a spread, or ASSUMED, each says).
 //
 // HOW AN EFFECT REACHES A CLEAR TIME (clear.mjs):
 //   hackKey(l)      the level enters the hacking-exit simulation's key (the
@@ -17,6 +20,7 @@
 //   early(l, n, p)  hours the SF saves in node n's first life (both routes;
 //                   on the Bladeburner route it shortens the opening only)
 //   nodeLevel(l)    the level of the node the clear is played at (BN12 only)
+//   go              the level enters the IPvGO model (go.mjs, via routes.mjs)
 // A Source-File with none of these is INERT: it changes no clear time, so the
 // order search treats its clears as pure cost (they drift to where the stack
 // is best).
@@ -44,7 +48,12 @@ export const DEF93 = [0.3, 1.0, 3.0]
  */
 export const SF_PARAMS = {
   phi11: { lo: 0.3, mid: 0.6, hi: 1.0, min: 0, what: 'SF11: g x (ln1.9/ln(1.9 r))^phi, r = .96/.94/.93' },
-  d14: { lo: 0.0, mid: 0.02, hi: 0.05, min: 0, what: 'SF14.1: every Go bonus doubled -> g x (1+d)' },
+  // --- the IPvGO farm (go.mjs; read by routes.mjs for every node, scaled by GoPower x the SF14 doubling)
+  eps14: { lo: 0.0, mid: 0.12, hi: 0.3, min: 0, what: 'Go: elasticity of g to the Go rate bonus, g x ((1+s abar)/(1+abar))^eps (ASSUMED; mid = nextnode d14 2% at SF14.1)' },
+  goP: { lo: 0.7, mid: 1.0, hi: 1.16, min: 0.1, what: 'Go: Daedalus node power / the measured 4391/h (MEASURED mid; hi = BN9 streak x1.16; lo ASSUMED: games lost to other opponents)' },
+  rep14: { lo: 72, mid: 97, hi: 150, min: 10, what: 'Go: Daedalus work rep/h per hacking level, favor 0, FWRG 1 (MEASURED p10/p50/p90 over telemetry segments)' },
+  lvl14: { lo: 3500, mid: 4700, hi: 5900, min: 2500, what: 'Go: the hacking level a favor life is ground at (MEASURED range, BN1/4/5/8/9/10)' },
+  w0: { lo: 0, mid: 200, hi: 1000, min: 0, what: 'Go: w0r1d_d43m0n node power/h in the final window (UNMEASURED, ASSUMED: 19x19, never played)' },
   d10: { lo: 0.0, mid: 0.01, hi: 0.03, min: 0, what: 'SF10.2/10.3: +1 sleeve each -> g x (1+d) per level' },
   d8: { lo: 0.0, mid: 0.005, hi: 0.02, min: 0, what: 'SF8.2: shorts -> g x (1+d)' },
   e43: { lo: 0.2, mid: 0.7, hi: 1.5, min: 0, what: 'SF4.3: Singularity RAM 436->247GB -> hours saved in the first life' },
@@ -133,14 +142,14 @@ export const EFFECTS = {
     note: "Stanek's Gift is not run by this repo — phase 2 (routes.mjs stanek hook)",
   },
   14: {
-    status: 'ASSUMED',
-    source: 'Go/effects/effect.ts:18 every Go bonus x2 with SF14; netscriptGoImplementation.ts:488,564 cheats at 14.2, +25% at 14.3',
-    gFactor: (l, p) => (l >= 1 ? 1 + p.d14 : 1),
-    note: 'only the level-1 doubling is priced; 14.2/14.3 NOT PRICED',
+    status: 'MODELLED (go.mjs)',
+    source: 'Go/effects/effect.ts:18-21 every Go bonus x2 at SF14>=1; effect.ts:30-43 favor cap 100k->200/300/400k rep; cheats netscriptGoImplementation.ts:486-497,564',
+    go: true, // read by routes.mjs through go.mjs, for every node (the scale is GoPower x the doubling, so it is not a node-free gFactor)
+    note: 'x2 on the g channel (eps14), on the favor life (Daedalus rep bonus and the favor cap) and on w0r1d_d43m0n; 14.2/14.3 cheats NOT PRICED',
   },
 }
 
-const ROLES = ['hackKey', 'bbKey', 'gFactor', 'early', 'nodeLevel']
+const ROLES = ['hackKey', 'bbKey', 'gFactor', 'early', 'nodeLevel', 'go']
 /** The SFs a clear time reads (the non-inert ones). */
 export const LIVE_SFS = Object.keys(EFFECTS).map(Number).filter((n) => ROLES.some((r) => EFFECTS[n][r]))
 export const isInert = (n) => !LIVE_SFS.includes(n)

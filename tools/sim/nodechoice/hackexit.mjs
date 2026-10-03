@@ -86,24 +86,35 @@ export function defaultProfile(meas = {}) {
  * exitplan inputs for a fresh entry into `node` holding Source-Files `sf`.
  * `trader`: whether WSE+TIX are free (SF8 held or node 8).
  */
-export function freshInputs({ node, level = 1, sf, g: growth, profile, trader = null }) {
+export function freshInputs({ node, level = 1, sf, g: growth, profile, trader = null, exitDiv = 1, speedMult = null }) {
   const m = nodeMults(node, level)
   const s = sfMults(sf)
   const hasTrader = trader ?? (node === 8 || (new Map(sf).get(8) ?? 0) > 0)
   const poor = m.ScriptHackMoneyGain === 0
   const moneyFactor = m.ScriptHackMoney * m.ServerMaxMoney * m.ScriptHackMoneyGain
   const fr = s.faction_rep
+  // HackingSpeedMultiplier divides every hack/grow/weaken time (Hacking.ts:72-77
+  // calculateHackingTime, and grow/weaken are fixed multiples of it), so a
+  // RAM-bound fleet lands that many times fewer ops per second: its exp/s and
+  // its $/s both scale by it. 1 in every node played so far (it is 0.3 in BN14
+  // and 0.6 in BN15 only, BitNode.tsx:1045,1088), so no calibration moves.
+  // speedMult overrides it (gameplan's phase-1 regression prices it at 1).
+  const speed = speedMult ?? m.HackingSpeedMultiplier
   return {
     money: node === 8 ? 250e6 : 1262,
     installCash: node === 8 ? 250e6 : 1262, // Prestige.ts:158 in BN8; PlayerObjectGeneralMethods.ts:102 elsewhere
-    incomePerSec: poor ? 0 : profile.incomeL1 * moneyFactor * s.hacking_money,
+    incomePerSec: poor ? 0 : profile.incomeL1 * moneyFactor * s.hacking_money * speed,
     hacking: 1,
     hackingExp: 0,
     hackingMult: s.hacking * m.HackingLevelMultiplier, // Person.ts:59-62 (exitplan.effectiveHackingMultOf)
-    expPerSec: (poor ? profile.expPoor : profile.expRich * m.HackExpGain) * s.hacking_exp,
+    expPerSec: (poor ? profile.expPoor : profile.expRich * m.HackExpGain) * s.hacking_exp * speed,
     cycleHours: profile.cycleHours,
     multGainPerCycle: Math.exp(growth * profile.cycleHours),
-    exitLevel: 3000 * m.WorldDaemonDifficulty,
+    // exitDiv: a hacking-level multiplier present only at the exit (the IPvGO
+    // w0r1d_d43m0n bonus, playable once The Red Pill is installed —
+    // netscriptGoImplementation.ts:359): the level requirement is checked
+    // against the current skill, so it divides the exit level. Default 1.
+    exitLevel: (3000 * m.WorldDaemonDifficulty) / exitDiv,
     joinMoney: 100e9,
     terminalRep: 2.5e6 * m.AugmentationRepCost,
     donationCost: (2.5e6 * m.AugmentationRepCost * 1e6) / (fr * m.FactionWorkRepGain),

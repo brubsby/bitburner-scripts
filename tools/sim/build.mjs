@@ -71,11 +71,16 @@ export { calculateCurrentShareBonus } from "${GAME}/src/NetworkShare/Share";
 export { getMove } from "${GAME}/src/Go/boardAnalysis/goAI";
 export { getNewBoardState, makeMove, passTurn } from "${GAME}/src/Go/boardState/boardState";
 export { getAllValidMoves, simpleBoardFromBoard } from "${GAME}/src/Go/boardAnalysis/boardAnalysis";
-export { getScore, getOpponentStats } from "${GAME}/src/Go/boardAnalysis/scoring";
-export { CalculateEffect, getWinstreakMultiplier, getDifficultyMultiplier } from "${GAME}/src/Go/effects/effect";
+export { getScore, getOpponentStats, endGoGame } from "${GAME}/src/Go/boardAnalysis/scoring";
+export { CalculateEffect, getWinstreakMultiplier, getDifficultyMultiplier, getMaxRep } from "${GAME}/src/Go/effects/effect";
 export { GoColor, GoOpponent } from "${GAME}/src/Go/Enums";
 export { Go } from "${GAME}/src/Go/Go";
 export { opponentDetails } from "${GAME}/src/Go/Constants";
+// For tools/sim/gameplan/gotest.mjs (GP4): the favor award is played through
+// endGoGame, which reads Player.factions, Player.sourceFiles and the Factions table.
+export { PlayerObject } from "${GAME}/src/PersonObjects/Player/PlayerObject";
+export { Factions } from "${GAME}/src/Faction/Factions";
+export { initSourceFiles } from "${GAME}/src/SourceFile/SourceFiles";
 `;
 
 const rawPlugin = {

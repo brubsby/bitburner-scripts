@@ -13,6 +13,7 @@
 // move (common random numbers), so regret is a paired difference.
 
 import { SF_PARAMS, splitQ } from './effects.mjs'
+import { baseBonus } from './go.mjs'
 
 /** Bladeburner route: clear = open + leg x k - early savings (nextnode.mjs §3). */
 export const BB_PARAMS = {
@@ -60,8 +61,12 @@ export function drawZ(r, nodes, econ, { rho = RHO } = {}) {
   return z
 }
 
-/** A world from z's (missing z = 0, the median). econ: {ownG Map, gScen, gamma, amc}. */
-export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false } = {}) {
+/**
+ * A world from z's (missing z = 0, the median). econ: {ownG Map, gScen, gamma, amc, runs, profile}.
+ * `phase1: true` prices exactly as phase 1 did (no IPvGO model, SF14.1 = g x 1.02, the
+ * Bladeburner opening unscaled, HackingSpeedMultiplier unread): GP3's regression mode.
+ */
+export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false } = {}) {
   const zz = (k) => z[k] ?? 0
   const lg = { lo: Math.log(econ.gScen.lo), mid: Math.log(econ.gScen.mid), hi: Math.log(econ.gScen.hi) }
   const gCache = new Map()
@@ -78,13 +83,26 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
   const q = (p, k) => splitQ(p.lo, p.mid, p.hi, zz(k))
   const sf = {}
   for (const [k, p] of Object.entries(SF_PARAMS)) sf[k] = k === 'z9' ? zz(k) : Math.max(p.min ?? -Infinity, q(p, k))
+  // The Go model's per-world inputs (go.mjs): the measured runs' mean Daedalus
+  // bonus over one install window, and who calibrates the favor life's reference.
+  const cyc = econ.profile?.cycleHours ?? 2
+  const runs = econ.runs ?? []
   return {
     g,
     k: Math.max(0.3, q(BB_PARAMS.k, 'k')),
     open: Math.max(0.5, q(BB_PARAMS.open, 'open')),
     sf,
     bbOff,
+    phase1,
     z,
+    go: {
+      abar: baseBonus(cyc, sf.goP),
+      // a node whose own g was measured (BN12 borrows BN1's) carries its own favor life in it
+      played: (n) => econ.ownG.has(n),
+      // the runs the unplayed latent is the mean of; BN2's Red Pill came from the gang, not Daedalus favor
+      refNodes: runs.map((r) => r.bn).filter((n) => n !== 2),
+      memo: new Map(),
+    },
   }
 }
 

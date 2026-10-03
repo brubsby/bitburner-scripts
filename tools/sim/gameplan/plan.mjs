@@ -16,7 +16,9 @@
 //   NOT CALIBRATED  g on every unplayed node (the latent, lo/mid/hi over the
 //                measured runs); k's spread (one node); every ASSUMED
 //                Source-File effect (effects.mjs); the node-special routes
-//                (placeholders that price nothing: routes.mjs); the draw's
+//                (BN14's is MODELLED from source + the measured BN9 Go farm
+//                with two ASSUMED inputs, eps14 and w0 — go.mjs; BN3/8/13's
+//                are placeholders that price nothing: routes.mjs); the draw's
 //                correlation structure (params.mjs RHO, SIGMA_PLAYED).
 // So the output is a decision UNDER those assumptions, with the regret and the
 // value-of-information tables saying how much each one could move it.
@@ -46,8 +48,9 @@ const tick = (name, t0) => (phase[name] = (phase[name] ?? 0) + (performance.now(
 const { makeState, parseState, plus, lvl, owed, lattice, sig, clearLabel, pairsOf } = await import('./state.mjs')
 const { EFFECTS, SF_PARAMS, isInert, LIVE_SFS } = await import('./effects.mjs')
 const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, drawZ, worldOf, paramIds } = await import('./params.mjs')
-const { ROUTES, clearTime } = await import('./routes.mjs')
-const { buildTable, solveDP, bestPath, firstMoves, localSearch } = await import('./search.mjs')
+const { ROUTES, clearTime, hackParts, favorHours, favorRef } = await import('./routes.mjs')
+const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
+const { GO_MEASURED, goScale, goMaxRep, w0rldDiv } = await import('./go.mjs')
 let t0 = performance.now()
 const { measureEconomy } = await import('./economy.mjs')
 const { buildSurrogate, loadSurrogate, LN_G, BB_INT } = await import('./surrogate.mjs')
@@ -105,7 +108,8 @@ const lvOf = (s) => (n) => lvl(s, n)
 // ---------------------------------------------------------------------------
 // 3. The mid world: exact optimum, and nextnode's question from the entry
 // ---------------------------------------------------------------------------
-const wOpts = { sigmaPlayed: SIGMA_P }
+// --phase1: price as phase 1 did (no IPvGO model, no gym scale, BN14 speed 1) — the before/after comparison
+const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1') }
 const mid = worldOf(econ, {}, wOpts)
 const L0 = lattice(entry)
 const L1 = lattice(start)
@@ -152,8 +156,36 @@ console.log('  clear     hack   blade  special   via     own     T total   dT')
 const fm1 = firstMoves(L1, T1, V1).sort((a, b) => a.T - b.T)
 for (const x of fm1) {
   const c = clearTime(x.n, lvOf(start), mid, S)
-  const sp = ROUTES.filter((r) => r.node === x.n).map((r) => `${r.id}:-`).join(' ')
+  const sp = ROUTES.filter((r) => r.node === x.n).map((r) => `${r.id}:${c.by[r.id] === undefined || c.by[r.id] === null ? '-' : c.by[r.id].toFixed(1)}`).join(' ')
   console.log(`  ${clearLabel(x.n, start).padEnd(7)} ${f1(c.by.hack)} ${f1(c.by.blade)}  ${sp.padEnd(9)} ${String(c.via).padEnd(6)} ${f1(x.own)}  ${f1(x.T)}  +${(x.T - fm1[0].T).toFixed(1)}`)
+}
+
+// ---------------------------------------------------------------------------
+// The IPvGO model (go.mjs): BN14 term by term, and SF14's effect on every node
+// ---------------------------------------------------------------------------
+const lvWith = (s, n, l) => (m) => (m === n ? l : lvl(s, m))
+{
+  const w = mid
+  console.log(`\nTHE IPvGO MODEL (go.mjs), mid world — MEASURED: Daedalus ${GO_MEASURED.powerPerH}/h x goP ${w.sf.goP}, win ${GO_MEASURED.pWin}, ${GO_MEASURED.gamesPerH} games/h, rep ${w.sf.rep14}/h per level at level ${w.sf.lvl14}; abar (the measured runs' mean Daedalus bonus over a ${econ.profile.cycleHours.toFixed(2)}h window) ${w.go.abar.toFixed(3)}; ASSUMED eps14 ${w.sf.eps14}, w0 ${w.sf.w0}/h`)
+  console.log('  BN14 from the plan start, by the SF14 level it is entered with (the go route = the hacking route at GoPower 4):')
+  console.log('  entry   scale  Hsim     g      x goG   W(exit)  favor life (ref)   early   go route   blade   [hack w/o Go: phase-1 pricing]')
+  const p1 = worldOf(econ, {}, { ...wOpts, phase1: true })
+  for (let l = lvl(start, 14); l < 3; l++) {
+    const lv = lvWith(start, 14, l)
+    const hp = hackParts({ node: 14, lv, world: w, S })
+    const c = clearTime(14, lv, w, S)
+    const c1 = clearTime(14, lv, p1, S)
+    console.log(`  BN14.${l + 1}  x${goScale(S.mults(14).GoPower, l)}    ${f1(hp?.hsim)}  ${hp ? hp.g.toFixed(4) : '-'}  ${hp ? hp.goG.toFixed(3) : '-'}   ${hp ? hp.W.toFixed(2) : '-'}     ${f1(hp?.favor)}h (${f1(hp?.favorRef)}h)   ${f1(hp?.early)}  ${f1(c.by.go)}    ${f1(c.by.blade)}   [${f1(c1.by.hack)}]`)
+  }
+  console.log('  SF14 on every node (mid world, from the plan start): own hours of the hacking route at SF14 0/1/2/3, and the node\'s favor life at FWRG/FavorToDonate (cap 100/200/300/400k Go rep):')
+  console.log('  node   FWRG  ftd  route SF14=0    =1     =2     =3   | favor life 0     1     2     3   (ref)')
+  for (const n of [...new Set(owed(start))]) {
+    const m = S.mults(n)
+    const hs = [0, 1, 2, 3].map((l) => clearTime(n, lvWith(start, 14, l), w, S).h)
+    const fs = [0, 1, 2, 3].map((l) => (n === 2 ? 0 : favorHours(n, l, w, S)))
+    console.log(`  BN${String(n).padEnd(3)} ${(+m.FactionWorkRepGain.toFixed(2)).toString().padStart(5)} ${(+m.FavorToDonateToFaction.toFixed(2)).toString().padStart(4)}  ${hs.map(f1).join(' ')} | ${fs.map(f1).join(' ')}  (${f1(n === 2 ? 0 : favorRef(n, w, S))})`)
+  }
+  console.log(`  W (w0r1d_d43m0n at the exit, ${w.sf.w0}/h for 1h): GoPower 1: x${w0rldDiv(1, w.sf.w0).toFixed(3)} (SF14.1+ x${w0rldDiv(2, w.sf.w0).toFixed(3)}); BN14: x${w0rldDiv(4, w.sf.w0).toFixed(3)} (with SF14.1+ x${w0rldDiv(8, w.sf.w0).toFixed(3)})`)
 }
 
 function printPath(steps, from, world, title) {
@@ -199,6 +231,12 @@ const nodes = [...new Set(owed(start))]
 const r = rng(SEED)
 const moves = L1.dims.map((d) => d.n)
 const Ts = [] // [draw][move index]
+// THE USER'S PLAN "one node, then BN14 x (all owed)": for each first node n, the
+// total with [n, 14, 14, 14] fixed and the optimal continuation after; [14 x3]
+// alone as the n = 14 row. Priced on the same draws as the regret table.
+const k14 = owed(start).filter((n) => n === 14).length
+const patterns = k14 ? moves.map((n) => ({ n, seq: n === 14 ? Array(k14).fill(14) : [n, ...Array(k14).fill(14)] })) : []
+const Ps = [] // [draw][pattern index]
 const Zs = []
 const Vstart = []
 let sumC = null
@@ -210,6 +248,7 @@ for (let i = 0; i < DRAWS; i++) {
   const V = solveDP(L1, T)
   const fm = firstMoves(L1, T, V)
   Ts.push(moves.map((n) => fm.find((x) => x.n === n).T))
+  Ps.push(patterns.map((pt) => prefixTotal(L1, T, V, pt.seq)))
   Zs.push(z)
   Vstart.push(V[0])
   if (!sumC) sumC = new Float64Array(T.C.length)
@@ -219,6 +258,7 @@ for (let i = 0; i < DRAWS; i++) {
 const tDraws = (performance.now() - t0) / 1000
 tick('draws', t0)
 
+let patternRows = null
 const stats = moves.map((n, j) => {
   const regret = Ts.map((row) => row[j] - Math.min(...row))
   return { n, ET: mean(Ts.map((row) => row[j])), pBest: regret.filter((x) => x < 1e-9).length / DRAWS, r50: quant(regret, 0.5), r90: quant(regret, 0.9), rMax: Math.max(...regret), Er: mean(regret) }
@@ -264,6 +304,19 @@ console.log(`  the mid-world order priced on the mean table: ${(() => {
   return s.toFixed(1)
 })()}h (re-planning after each clear recovers part of the gap to ${mean(Vstart).toFixed(1)}h)`)
 
+if (patterns.length) {
+  const midP = patterns.map((pt) => prefixTotal(L1, T1, V1, pt.seq))
+  const rows = patterns.map((pt, j) => {
+    const ex = Ps.map((row, i) => row[j] - Vstart[i])
+    const vs = Ps.map((row, i) => row[j] - Ts[i][jRec])
+    return { ...pt, mid: midP[j], E: mean(Ps.map((row) => row[j])), exE: mean(ex), ex90: quant(ex, 0.9), vsRec: mean(vs) }
+  }).sort((a, b) => a.E - b.E)
+  console.log(`\n"ONE NODE, THEN BN14 x${k14}" — the first ${k14 + 1} clears fixed to [n, ${Array(k14).fill('14').join(', ')}], optimal after (same ${DRAWS} draws):`)
+  console.log('  plan                 T mid    E[T]    E[T] - E[best plan]   excess over each draw\'s optimum: mean   p90')
+  for (const r of rows) console.log(`  ${(r.n === 14 ? `BN14 x${k14} first` : `BN${r.n} then BN14 x${k14}`).padEnd(19)} ${f1(r.mid)}  ${f1(r.E)}      +${r.vsRec.toFixed(1)}                         ${r.exE.toFixed(1).padStart(6)}  ${r.ex90.toFixed(1).padStart(6)}`)
+  patternRows = rows
+}
+
 // ---------------------------------------------------------------------------
 // 5. Sensitivity / value of information
 // ---------------------------------------------------------------------------
@@ -300,7 +353,12 @@ if (!has('--no-sens')) {
       const V = solveDP(L1, T)
       const fm = firstMoves(L1, T, V).sort((a, b) => a.T - b.T)
       const regret = fm.find((x) => x.n === recMid).T - fm[0].T
-      oat.push({ id, zv, best: fm[0].n, regret, T: fm[0].T })
+      // where the first BN14 clear sits in that world's optimal order, and the
+      // "one node, then BN14 x3" plans' best excess there (phase 2b's question)
+      const pth = bestPath(L1, T, V)
+      const pos14 = pth.findIndex((st) => st.n === 14) + 1
+      const pat = patterns.length ? Math.min(...patterns.map((pt) => prefixTotal(L1, T, V, pt.seq))) - V[0] : null
+      oat.push({ id, zv, best: fm[0].n, regret, T: fm[0].T, pos14, pat })
     }
   tick('one-at-a-time sweep', t0)
 }
@@ -311,8 +369,25 @@ console.log(`  param    EVPPI    best first move per bin (low z -> high z)      
 for (const v of voi) {
   const o = oat.filter((x) => x.id === v.id)
   const os = o.map((x) => `${lab(x.best).padEnd(7)}${x.regret > 1e-6 ? ` (+${x.regret.toFixed(1)}h)` : ''}`.padEnd(22))
-  const desc = v.id.startsWith('g') ? `g of BN${v.id.slice(1)}${econ.ownG.has(Number(v.id.slice(1))) ? ' (played)' : ''}` : v.id
+  const desc = /^g\d+$/.test(v.id) ? `g of BN${v.id.slice(1)}${econ.ownG.has(Number(v.id.slice(1))) ? ' (played)' : ''}` : v.id
   console.log(`  ${desc.padEnd(17).slice(0, 17)} ${v.v.toFixed(2).padStart(5)}h  ${v.flips.map(lab).join(' ').padEnd(44)} ${os.join(' ')}`)
+}
+if (oat.length) {
+  // THE WHOLE ORDER, not just the first move (phase 2b's list): each parameter's
+  // p10 -> p90 swing of the optimal total, where BN14's first clear lands, and
+  // the best "one node, then BN14 x3" plan's excess over the optimum.
+  const pos0 = path1.findIndex((st) => st.n === 14) + 1
+  const pat0 = patterns.length ? Math.min(...patterns.map((pt) => prefixTotal(L1, T1, V1, pt.seq))) - V1[0] : null
+  const rows = ids.map((id) => {
+    const [lo, hi] = [-1.2816, 1.2816].map((zv) => oat.find((x) => x.id === id && x.zv === zv))
+    return { id, lo, hi, swing: Math.abs(hi.T - lo.T) }
+  }).sort((a, b) => b.swing - a.swing)
+  console.log(`\nSENSITIVITY OF THE WHOLE PLAN — one at a time, p10 / p90 (all else median): the optimal total, BN14's first slot in the optimal order (mid: ${pos0}), and the best "n then BN14 x${k14}" plan's excess over the optimum (mid: +${pat0 === null ? '-' : pat0.toFixed(1)}h)`)
+  console.log('  param             swing     T at p10   T at p90   BN14 slot p10/p90   "then BN14" excess p10/p90')
+  for (const r of rows.slice(0, 16)) {
+    const desc = /^g\d+$/.test(r.id) ? `g of BN${r.id.slice(1)}` : r.id
+    console.log(`  ${desc.padEnd(17).slice(0, 17)} ${r.swing.toFixed(1).padStart(6)}h  ${f1(r.lo.T)}    ${f1(r.hi.T)}       ${String(r.lo.pos14).padStart(2)} / ${String(r.hi.pos14).padEnd(2)}            +${r.lo.pat === null ? '-' : r.lo.pat.toFixed(1)} / +${r.hi.pat === null ? '-' : r.hi.pat.toFixed(1)}`)
+  }
 }
 const flippers = oat.filter((x) => x.best !== fm1[0].n)
 console.log(`  one-at-a-time flips of the mid recommendation ${lab(fm1[0].n)}: ${flippers.length ? flippers.map((x) => `${x.id}@${x.zv < 0 ? 'p10' : 'p90'} -> ${lab(x.best)} (+${x.regret.toFixed(1)}h)`).join('; ') : 'none'}`)
@@ -329,6 +404,6 @@ console.log(`  per draw: ${(tDraws / Math.max(1, DRAWS)).toFixed(2)}s (table ${T
 console.log(`  surrogate: ${S.meta.curves} hack curves x ${LN_G.length} = ${S.meta.gridPoints} sim points (${bstats.hack.computed} computed this run${bstats.hack.computed ? `, ${(bstats.hack.ms / bstats.hack.computed).toFixed(1)}ms each` : ''}); ${S.meta.bbCells} Bladeburner cells x ${BB_SEEDS} seeds = ${bstats.bb.needed} sims (${bstats.bb.computed} computed this run${bstats.bb.computed ? `, ${(bstats.bb.ms / bstats.bb.computed / 1000).toFixed(2)}s each` : ''}, ${bstats.bb.seeded} seeded from nextnode's cache)`)
 
 if (arg('--json')) {
-  fs.writeFileSync(arg('--json'), JSON.stringify({ at: new Date().toISOString(), entry: pairsOf(entry), inProgress: inProg, start: pairsOf(start), recommended: rec.n, midOrder: path1, robustOrder: robust, regret: stats, voi, oat }, null, 1))
+  fs.writeFileSync(arg('--json'), JSON.stringify({ at: new Date().toISOString(), entry: pairsOf(entry), inProgress: inProg, start: pairsOf(start), recommended: rec.n, midOrder: path1, robustOrder: robust, regret: stats, voi, oat, patterns: patternRows }, null, 1))
 }
 process.exit(0)
