@@ -50,6 +50,8 @@ import { expMode, expPerThread } from 'expfarm.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
+// Pure (0GB): the full Bladeburner daemon's reserved block, kept free of workers.
+import { fullReserveOf, FULL_RESERVE_FILE } from 'bbliteplan.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
@@ -314,6 +316,15 @@ async function pass(ns, flags) {
   // host that holds it — evicting that host's workers — when the priced
   // trajectory to the next home tier says it wins.
   const traderHost = await placeTrader(ns, all, hosts)
+  // The full Bladeburner daemon's reservation lives on home ([bitburner-offhome-reads]).
+  const fullHeld = (() => {
+    try {
+      if (here !== 'home') ns.scp(FULL_RESERVE_FILE, here, 'home')
+      return fullReserveOf(JSON.parse(ns.read(FULL_RESERVE_FILE) || 'null'), ns.getResetInfo(), all)
+    } catch {
+      return null
+    }
+  })()
   for (let i = 0; i < hosts.length; i++) {
     const h = hosts[i]
     if (h === traderHost) continue
@@ -324,6 +335,14 @@ async function pass(ns, flags) {
     // forever — and a host pointed at the WRONG target could never be
     // corrected, which is the whole job of a re-seed.
     const cur = ns.ps(h).find((p) => p.filename === EARLY || p.filename === CHEAP)
+    // bladeburner.js's reserved block (bbliteplan.fullReserveOf, the
+    // watchdog's): no worker of ours on that host — they loop forever, so
+    // one left there holds the block for good (live BN4 2026-10-03 02:10Z:
+    // 53 early.js threads on each 128GB host at the tier that admits it).
+    if (fullHeld && h === fullHeld.host) {
+      if (cur) ns.kill(cur.pid)
+      continue
+    }
     if (cur && cur.args[0] === target && Number(cur.args[1]) === floor) continue
     if (cur) {
       ns.kill(cur.pid)

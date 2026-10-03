@@ -328,6 +328,13 @@ export const FULL_RESERVE_FILE = '/tel/bb-full-reserve.txt'
 export const FULL_RESERVE_FRESH_MS = 2 * 60e3
 /** What a batch cycle frees by itself: batch.js's workers (SETTINGS.workers). */
 export const FULL_FREEABLE = ['h.js', 'g.js', 'w.js']
+/**
+ * What never frees itself: seed.js's workers loop forever (early.js, hgw.js).
+ * At the tier that admits bladeburner.js boot.js retires seed.js, but a seed.js
+ * left running elsewhere keeps them (live BN4 2026-10-03 02:10Z: 53 early.js
+ * threads on each 128GB host). The watchdog kills them on the host it reserves.
+ */
+export const FULL_EVICTABLE = ['early.js', 'hgw.js']
 
 /** Does the route want the full daemon? Only a committed HACKING route in this node says no. */
 export function fullRouteOf(plan, node) {
@@ -343,11 +350,12 @@ export function fullRouteOf(plan, node) {
  * Where bladeburner.js goes this cycle.
  *   homeMax       home's max RAM (the tier)
  *   plan, node    /tel/plan.txt and getResetInfo().currentNode (fullRouteOf)
- *   hosts         [{host, max, used, workerGb, hacknet?}] — ROOTED hosts; workerGb is the RAM
- *                 batch.js's h/g/w workers hold there (a batch cycle frees it)
+ *   hosts         [{host, max, used, workerGb, evictGb, hacknet?}] — ROOTED hosts; workerGb is the
+ *                 RAM batch.js's h/g/w workers hold there (a batch cycle frees it), evictGb seed.js's
+ *                 (FULL_EVICTABLE: freed only by a kill, which the watchdog makes on the reserved host)
  *   homeBlock     progress.js's home block (13 + 6.25 x mult), kept unless progress.js is running
  *   prev          the last reservation record (FULL_RESERVE_FILE): its host is kept while it qualifies
- * Returns {action: 'wait' | 'place' | 'reserve' | 'blocked', admitted, host?, gb?, why}.
+ * Returns {action: 'wait' | 'place' | 'reserve' | 'blocked', admitted, host?, gb?, evict?, why}.
  * `admitted`: the tier and the route want it — its absence is then a fault the
  * healthcheck times (BLADEBURNER FULL NOT PLACED).
  */
@@ -358,7 +366,7 @@ export function fullPlacementOf({ homeMax, plan = null, node = null, hosts = [],
   const ok = hosts.filter((h) => h && h.host && !h.hacknet && num(h.max) && num(h.used))
   const keep = (h) => (h.host === 'home' && !progressRunning ? homeBlock : 0)
   const free = (h) => h.max - h.used - keep(h)
-  const cap = (h) => free(h) + (num(h.workerGb) ? h.workerGb : 0)
+  const cap = (h) => free(h) + (num(h.workerGb) ? h.workerGb : 0) + (num(h.evictGb) ? h.evictGb : 0)
   const f = (x) => x.toFixed(2)
   const home = ok.find((h) => h.host === 'home')
   if (home && free(home) >= need) return { action: 'place', admitted: true, host: 'home', why: `home has ${f(free(home))}GB free beyond progress.js's block (${route.why})` }
@@ -367,10 +375,11 @@ export function fullPlacementOf({ homeMax, plan = null, node = null, hosts = [],
   const cands = ok.filter((h) => cap(h) >= need)
   if (!cands.length) {
     const best = [...ok].sort((a, b) => cap(b) - cap(a))[0]
-    return { action: 'blocked', admitted: true, why: `no rooted host can hold ${need}GB even with batch.js's workers gone — largest ${best ? `${best.host} ${f(cap(best))}GB of ${best.max}GB` : 'none'}: root a bigger server or grow home` }
+    return { action: 'blocked', admitted: true, why: `no rooted host can hold ${need}GB even with the batch and seed workers gone — largest ${best ? `${best.host} ${f(cap(best))}GB of ${best.max}GB` : 'none'}: root a bigger server or grow home` }
   }
   const pick = cands.find((h) => h.host === prev?.host) ?? cands.find((h) => h.host === 'home') ?? cands.sort((a, b) => cap(a) - cap(b) || (a.host < b.host ? -1 : 1))[0]
-  return { action: 'reserve', admitted: true, host: pick.host, gb: need, why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once batch.js's workers drain — batch.js leaves ${need}GB there (${FULL_RESERVE_FILE}) and the next cycle places it` }
+  const evict = num(pick.evictGb) && pick.evictGb > 0
+  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''} — batch.js and seed.js leave ${need}GB there (${FULL_RESERVE_FILE}) and the watchdog places it as soon as it is free` }
 }
 
 /** The record the watchdog writes to FULL_RESERVE_FILE: a host only while placing or reserving. */

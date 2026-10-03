@@ -111,7 +111,7 @@ import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, SF_FILE
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
-import { fullPlacementOf, fullReserveRecordOf, fullReserveOf, FULL_RESERVE_FILE, FULL_FREEABLE } from 'bbliteplan.js'
+import { fullPlacementOf, fullReserveRecordOf, fullReserveOf, FULL_RESERVE_FILE, FULL_FREEABLE, FULL_EVICTABLE } from 'bbliteplan.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -962,21 +962,33 @@ function fullPlace(ns, hosts, rec) {
     }
   }
   const rooted = hosts.filter((h) => ns.hasRootAccess(h))
-  const d = fullPlacementOf({
-    homeMax: ns.getServerMaxRam('home'),
-    plan: readRec('/tel/plan.txt'),
-    node: info.currentNode,
-    hosts: rooted.map((h) => ({
-      host: h,
-      max: ns.getServerMaxRam(h),
-      used: ns.getServerUsedRam(h),
-      workerGb: ns.ps(h).filter((p) => FULL_FREEABLE.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0),
-      hacknet: isHacknetServerHost(h),
-    })),
-    homeBlock: 13 + 6.25 * singularityRamMultiplier(info),
-    progressRunning: running(ns, ['home'], 'progress.js'),
-    prev: readRec(FULL_RESERVE_FILE),
-  })
+  const gbOf = (h, names) => ns.ps(h).filter((p) => names.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0)
+  const decide = () =>
+    fullPlacementOf({
+      homeMax: ns.getServerMaxRam('home'),
+      plan: readRec('/tel/plan.txt'),
+      node: info.currentNode,
+      hosts: rooted.map((h) => ({
+        host: h,
+        max: ns.getServerMaxRam(h),
+        used: ns.getServerUsedRam(h),
+        workerGb: gbOf(h, FULL_FREEABLE),
+        evictGb: gbOf(h, FULL_EVICTABLE),
+        hacknet: isHacknetServerHost(h),
+      })),
+      homeBlock: 13 + 6.25 * singularityRamMultiplier(info),
+      progressRunning: running(ns, ['home'], 'progress.js'),
+      prev: readRec(FULL_RESERVE_FILE),
+    })
+  let d = decide()
+  // seed.js's workers never exit: kill them on the host reserved, then decide
+  // again — where they were all that held the block, it is placed this cycle.
+  if (d.action === 'reserve' && d.evict) {
+    for (const s of FULL_EVICTABLE) ns.scriptKill(s, d.host)
+    ns.tprint(`watchdog: evicted ${FULL_EVICTABLE.join('/')} on ${d.host} for bladeburner.js's ${d.gb}GB block`)
+    const again = decide()
+    if (again.action === 'place' || again.action === 'reserve') d = { ...again, why: `${again.why} (after evicting seed.js's workers on ${d.host})` }
+  }
   ns.write(FULL_RESERVE_FILE, JSON.stringify(fullReserveRecordOf(d, info)), 'w')
   rec.placement = { action: d.action, host: d.host ?? null, why: d.why }
   if (d.admitted) rec.absentSince = rec.absentSince ?? new Date().toISOString()

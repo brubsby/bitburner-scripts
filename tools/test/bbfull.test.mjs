@@ -137,6 +137,7 @@ export async function run() {
       ['progress.js running: its block is already in used', { ...base, homeMax: 128, progressRunning: true, hosts: [H('home', 128, 30), H('rothman-uni', 128, 120, 110)] }, { action: 'place', host: 'home' }],
       ['no block free: reserve where the workers drain to it', { ...base, homeMax: 128, hosts: [H('home', 128, 100), H('rothman-uni', 128, 120, 110), H('millenium-fitness', 128, 125, 20)] }, { action: 'reserve', host: 'rothman-uni' }],
       ['the previous reservation is kept', { ...base, homeMax: 128, prev: { host: 'millenium-fitness' }, hosts: [H('home', 128, 100), H('rothman-uni', 128, 120, 110), H('millenium-fitness', 128, 125, 120)] }, { action: 'reserve', host: 'millenium-fitness' }],
+      ["seed.js's workers never drain: reserve and evict", { ...base, homeMax: 128, hosts: [H('home', 128, 102, 38), H('rothman-uni', 128, 127.2, 0, { evictGb: 127.2 }), H('millenium-fitness', 128, 127.2, 0, { evictGb: 127.2 })] }, { action: 'reserve', host: 'millenium-fitness', evict: true }],
       ['a hacknet server is never a candidate', { ...base, homeMax: 128, hosts: [H('home', 128, 100), H('hacknet-server-0', 256, 0, 0, { hacknet: true })] }, { action: 'blocked' }],
       ['nothing could ever hold it', { ...base, homeMax: 128, hosts: [H('home', 128, 100), H('rothman-uni', 64, 60, 60)] }, { action: 'blocked' }],
       ['below the tier', { ...base, homeMax: 64, hosts: [H('home', 64, 10), H('rothman-uni', 128, 0)] }, { action: 'wait', admitted: false }],
@@ -241,6 +242,41 @@ export async function run() {
       else if (bbExecs.some((e) => e.cycle === 0) && killedAt.cycle === 0) c.fail('BF2c bb-lite.js stopped on a cycle whose bladeburner.js launch failed its raise', JSON.stringify({ killedAt, bbExecs }))
       c.note(`(c) launches ${JSON.stringify(bbExecs)}; bb-lite stopped ${JSON.stringify(killedAt)}; started ${JSON.stringify(startedAt)}; ${w.log.filter((l) => /raise denied/.test(l)).join('; ')}`)
     }
+    // (d) LIVE BN4 2026-10-03 02:10Z: home bought to 128GB and filled to 102GB (batch.js, go.js, ctauto.js,
+    // fast.js, g.js workers); both 128GB hosts full of early.js (53 threads) with seed.js still running on
+    // CSEC, refilling every host it may. boot.js did not place bladeburner.js; nothing would have.
+    {
+      const early = (n) => [{ ...proc('early.js', 2.4, n) }]
+      const between = (cycle, world) => {
+        // seed.js's pass: every host but the reserved one gets early.js back (it honours fullReserveOf).
+        const held = LP.fullReserveOf(JSON.parse(world.files[LP.FULL_RESERVE_FILE] || 'null'), INFO, Object.keys(world.hosts), Date.now())
+        for (const [h, x] of Object.entries(world.hosts)) {
+          if (h === 'home' || h === 'CSEC' || h === held?.host) continue
+          const usedNow = x.procs.reduce((a, p) => a + p.ram * p.threads, 0)
+          const n = Math.floor((x.max - usedNow) / 2.4)
+          if (n > 0) x.procs.push(...early(n))
+        }
+      }
+      const home = { max: 128, procs: [proc('watchdog.js', 9), proc('batch.js', 8.8), proc('go.js', 20.3), proc('ctauto.js', 22), proc('fast.js', 2.6), proc('g.js', 1.75, 22)] }
+      const w = await drive(mockGame({ cycles: 3, between, hosts: { home, 'rothman-uni': { max: 128, procs: early(53) }, 'millenium-fitness': { max: 128, procs: early(53) }, CSEC: { max: 8, procs: [proc('seed.js', 6)] }, 'sigma-cosmetics': { max: 16, procs: [proc('bb-lite.js', 5.6)] } } }))
+      c.examined(3)
+      const ex = w.execs.find((e) => e.script === 'bladeburner.js')
+      const on = runningOn(w, 'bladeburner.js')
+      if (!ex || ex.cycle !== 0 || on.length !== 1 || !['rothman-uni', 'millenium-fitness'].includes(on[0])) c.fail('BF2d the live 02:10Z state does not get bladeburner.js placed on a 128GB host in the first cycle', JSON.stringify({ ex, on, state: wdRec(w)?.state, log: w.log }))
+      if (runningOn(w, 'bb-lite.js').length) c.fail('BF2d bb-lite.js not handed over')
+      if (w.hosts['millenium-fitness'].procs.every((p) => p.filename !== 'early.js') && w.hosts['rothman-uni'].procs.every((p) => p.filename !== 'early.js')) c.fail('BF2d seed.js workers evicted from both hosts — only the one the daemon needs')
+      c.note(`(d) live 02:10Z: placed ${JSON.stringify(ex)}; ${w.log.filter((l) => /evicted/.test(l)).join('; ')}; watchdog ${wdRec(w)?.state}`)
+    }
+    // (e) Already running anywhere (placed by hand on rothman-uni at 02:14Z): satisfied — no second launch,
+    // nothing reserved, bb-lite.js stood down.
+    {
+      const w = await drive(mockGame({ cycles: 2, hosts: { home: { max: 128, procs: [proc('stack.js', 100)] }, 'rothman-uni': { max: 128, procs: [{ ...proc('bladeburner.js', LP.FULL_GB) }] }, 'millenium-fitness': { max: 128, procs: [] }, 'sigma-cosmetics': { max: 16, procs: [proc('bb-lite.js', 5.6)] } } }))
+      c.examined(3)
+      if (w.execs.some((e) => e.script === 'bladeburner.js')) c.fail('BF2e a running bladeburner.js was placed again', JSON.stringify(w.execs))
+      if (reserveRec(w)?.host !== null) c.fail('BF2e a running bladeburner.js still holds a reservation', JSON.stringify(reserveRec(w)))
+      if (runningOn(w, 'bb-lite.js').length) c.fail('BF2e bb-lite.js not stood down beside a running bladeburner.js')
+      c.note(`(e) already on rothman-uni: watchdog '${wdRec(w)?.state}', reservation ${JSON.stringify(reserveRec(w)?.action)}`)
+    }
     checks.push(c)
   }
 
@@ -267,6 +303,9 @@ export async function run() {
     if (!/\(h === fullRes\?\.host \? fullRes\.gb : 0\)/.test(b)) c.fail("BF3 batch.js's reserveFor does not hold the full daemon's block")
     if (!/fullReserveOf\(JSON\.parse\(ns\.read\(FULL_RESERVE_FILE\)/.test(b)) c.fail('BF3 batch.js does not read the reservation every tick')
     if (!/fullReserve: fullRes/.test(b)) c.fail('BF3 batch.js does not publish the reservation it honours')
+    const sd = SRC('seed.js')
+    c.examined(1)
+    if (!/if \(fullHeld && h === fullHeld\.host\) \{\s*if \(cur\) ns\.kill\(cur\.pid\)\s*continue/.test(sd) || !/fullReserveOf\(JSON\.parse\(ns\.read\(FULL_RESERVE_FILE\)/.test(sd)) c.fail('BF3 seed.js refills the reserved host with workers that never exit')
     const wd = SRC('watchdog.js')
     c.examined(2)
     if (!/const free = ns\.getServerMaxRam\(h\) - ns\.getServerUsedRam\(h\) - heldFor\(held, h\)/.test(wd)) c.fail("BF3 the watchdog's placeFor takes the reserved block for another daemon")
