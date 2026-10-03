@@ -12,6 +12,7 @@
 //          --prior (the hand prior only, ignore posterior.json) | --posterior FILE
 //          --g-model auto|hand|exch|amc|full (gmodel.mjs; auto = best by leave-one-out)
 //          --no-disc (no model-discrepancy term) | --no-adapt (skip KG / bound / CVaR / multi-fidelity)
+//          --no-stanek (Stanek's Gift never accepted: the pre-Stanek plan, draw for draw)
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //
 // NOT CALIBRATED as a decision model. What is and is not:
@@ -22,8 +23,10 @@
 //                measured runs); k's spread (one node); every ASSUMED
 //                Source-File effect (effects.mjs); the node-special routes
 //                (BN14's is MODELLED from source + the measured BN9 Go farm
-//                with two ASSUMED inputs, eps14 and w0 — go.mjs; BN3/8/13's
-//                are placeholders that price nothing: routes.mjs); the draw's
+//                with two ASSUMED inputs, eps14 and w0 — go.mjs; Stanek's Gift
+//                (SF13, BN13) is MODELLED from source with MEASURED home RAM and
+//                four ASSUMED inputs — stanek.mjs; BN3/8's are placeholders that
+//                price nothing: routes.mjs); the draw's
 //                correlation structure (params.mjs RHO, SIGMA_PLAYED).
 // So the output is a decision UNDER those assumptions, with the regret and the
 // value-of-information tables saying how much each one could move it.
@@ -58,7 +61,8 @@ const tick = (name, t0) => (phase[name] = (phase[name] ?? 0) + (performance.now(
 const { makeState, parseState, plus, lvl, owed, lattice, sig, clearLabel, pairsOf } = await import('./state.mjs')
 const { EFFECTS, SF_PARAMS, isInert, LIVE_SFS } = await import('./effects.mjs')
 const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, normal, drawZ, worldOf, paramIds } = await import('./params.mjs')
-const { ROUTES, clearTime, hackParts, favorHours, favorRef } = await import('./routes.mjs')
+const { ROUTES, clearTime, hackParts, favorHours, favorRef, stanekParts } = await import('./routes.mjs')
+const { gridOf, layoutFor, layoutText, giftAvailable } = await import('./stanek.mjs')
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
 const { GO_MEASURED, goScale, goMaxRep, w0rldDiv } = await import('./go.mjs')
 const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability, appliedObs } = await import('./posterior.mjs')
@@ -152,15 +156,21 @@ const discRes = econ.runs.map((r, i) => {
 const discFit = fitDiscrepancy(discRes)
 if (!has('--no-disc')) econ.disc = { sd: discFit.sd, applies: (n) => !econ.ownG.has(n) }
 
-const live_ = (n) => !isInert(n)
-const tableFor = (L, world) => buildTable(L, (n, lv) => clearTime(n, lv, world, S).h, live_)
+// --no-stanek: the gift is never accepted, and SF13 is inert again (exactly the pre-Stanek table)
+const NO_STANEK = has('--no-stanek')
+const live_ = (n) => !isInert(n) && !(NO_STANEK && n === 13)
+const tableFor = (L, world) => {
+  const T = buildTable(L, (n, lv) => clearTime(n, lv, world, S).h, live_)
+  world._ct = undefined // clearTime's per-world memo (routes.mjs): the table holds what it was for
+  return T
+}
 const lvOf = (s) => (n) => lvl(s, n)
 
 // ---------------------------------------------------------------------------
 // 3. The mid world: exact optimum, and nextnode's question from the entry
 // ---------------------------------------------------------------------------
 // --phase1: price as phase 1 did (no IPvGO model, no gym scale, BN14 speed 1) — the before/after comparison
-const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1') }
+const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK }
 const mid = worldOf(econ, {}, wOpts)
 const L0 = lattice(entry)
 const L1 = lattice(start)
@@ -247,7 +257,7 @@ console.log('  clear     hack   blade  special   via     own     T total   dT')
 const fm1 = firstMoves(L1, T1, V1).sort((a, b) => a.T - b.T)
 for (const x of fm1) {
   const c = clearTime(x.n, lvOf(start), mid, S)
-  const sp = ROUTES.filter((r) => r.node === x.n).map((r) => `${r.id}:${c.by[r.id] === undefined || c.by[r.id] === null ? '-' : c.by[r.id].toFixed(1)}`).join(' ')
+  const sp = ROUTES.filter((r) => r.node === x.n || (r.id === 'stanek' && c.by.stanek !== undefined)).map((r) => `${r.id}:${c.by[r.id] === undefined || c.by[r.id] === null ? '-' : c.by[r.id].toFixed(1)}`).join(' ')
   console.log(`  ${clearLabel(x.n, start).padEnd(7)} ${f1(c.by.hack)} ${f1(c.by.blade)}  ${sp.padEnd(9)} ${String(c.via).padEnd(6)} ${f1(x.own)}  ${f1(x.T)}  +${(x.T - fm1[0].T).toFixed(1)}`)
 }
 
@@ -294,6 +304,47 @@ function printPath(steps, from, world, title) {
   console.log(`  total ${cum.toFixed(1)}h   (* = Bladeburner exit; unmarked = hacking exit)`)
   return cum
 }
+// ---------------------------------------------------------------------------
+// Stanek's Gift (stanek.mjs): accept or never, per node and SF13 level, and SF13's value
+// ---------------------------------------------------------------------------
+if (!NO_STANEK && !has('--phase1')) {
+  t0 = performance.now()
+  const w = mid
+  const sp = (k) => `${k} ${+w.sf[k].toFixed(3)}`
+  console.log(`\nSTANEK'S GIFT (stanekplan.js, stanek.mjs), mid world — MEASURED ${sp('stRam')} (log2 home GB at a no-gift exit); ASSUMED ${sp('stEpsM')}, ${sp('stEpsR')}, ${sp('stFr')}, ${sp('stDuty')}; layout chosen at Hg 2.5, f 0.2`)
+  console.log('  the gift accepted at the node\'s start vs never: own hours from the plan start with SF13 held at each level (BN13.k: the level on entry); f = home RAM charging, W = exit divisor, gMul = g factor, favor = favor-life factor, Aw/Se = the life Awakening / Serenity install after')
+  console.log('  clear     SF13 grid  power  layout                                     f      W    gMul  favor  Aw/Se   never   accept  saved  verdict')
+  for (const n of [...new Set(owed(start))]) {
+    const m = S.mults(n)
+    const from = lvl(start, 13)
+    const levels = n === 13 ? [0, 1, 2].filter((l) => l >= from) : [1, 2, 3].filter((l) => l >= from)
+    for (const l13 of levels) {
+      const lv = lvWith(start, 13, l13)
+      const c = clearTime(n, lv, w, S)
+      const never = Math.min(...Object.entries(c.by).filter(([k, v]) => k !== 'stanek' && v !== null && isFinite(v)).map(([, v]) => v))
+      const p = stanekParts({ node: n, lv, world: w, S })
+      const g = gridOf(m, l13)
+      const lay = layoutFor(m, l13)
+      const acc = p ? p.h : null
+      const label = n === 13 ? `BN13.${l13 + 1}` : `BN${n}`
+      console.log(`  ${label.padEnd(8)}  ${l13}  ${`${g.width}x${g.height}`.padEnd(5)} ${m.StaneksGiftPowerMultiplier.toFixed(2).padStart(5)}  ${(layoutText(lay.placed) + (lay.exact ? '' : ' ~')).padEnd(42)} ${p ? p.st.f.toFixed(3).padStart(5) : '    -'} ${p ? p.st.W.toFixed(2).padStart(5) : '    -'} ${p ? p.st.gMul.toFixed(3) : '    -'} ${p ? p.st.favorMul.toFixed(2).padStart(5) : '    -'}  ${p ? `${p.st.giftAt[2] ?? '-'}/${p.st.giftAt[3] ?? '-'}`.padEnd(6) : '-     '} ${f1(never)}  ${f1(acc)} ${f1(acc === null ? null : never - acc)}  ${acc !== null && acc < never ? 'ACCEPT' : 'never'}`)
+    }
+  }
+  console.log('  (~ = the layout search hit its node budget: the best layout found, not proven optimal)')
+  // SF13's value: the mid-world optimum with the gift everywhere, in BN13 only, and never
+  const totalOf = (opts) => {
+    const ww = worldOf(econ, {}, { ...wOpts, ...opts })
+    const TT = tableFor(L1, ww)
+    return solveDP(L1, TT)[0]
+  }
+  const tOnly = totalOf({ stanekBn13Only: true })
+  const tOff = totalOf({ stanekOff: true })
+  const tAll = V1[0]
+  console.log(`  SF13's VALUE (mid world, optimal order from ${sig(start)}): the gift everywhere ${tAll.toFixed(1)}h; in BN13 only (SF13 grants nothing elsewhere) ${tOnly.toFixed(1)}h; never ${tOff.toFixed(1)}h`)
+  console.log(`    -> SF13's own value ${(tOnly - tAll).toFixed(1)}h; BN13's gift (inside BN13) ${(tOff - tOnly).toFixed(1)}h; the gift in total ${(tOff - tAll).toFixed(1)}h`)
+  tick("Stanek's Gift (section)", t0)
+}
+
 printPath(path1, start, mid, `OPTIMAL ORDER — mid world (every parameter at its median), from ${sig(start)}:`)
 
 // nextnode's question, from the entry state, and the CHECK against its local search
@@ -321,6 +372,7 @@ console.log(`  CHECK the DP is <= the local search for every first move: ${lsBel
 const nodes = [...new Set(owed(start))]
 const r = rng(SEED)
 const rDisc = rng(SEED + 13) // the discrepancy's own stream: --no-disc leaves every other draw unchanged
+const rStanek = rng(SEED + 29) // Stanek's parameters' own stream: adding them left every other draw unchanged
 const moves = L1.dims.map((d) => d.n)
 const Ts = [] // [draw][move index]
 const tabs = [] // [draw] the clear-time table (Float32), for the adaptive analyses (KG, bound, CVaR)
@@ -335,7 +387,7 @@ const Vstart = []
 let sumC = null
 t0 = performance.now()
 for (let i = 0; i < DRAWS; i++) {
-  const z = drawZ(r, nodes, econ, { rho: RHO_DRAW, rDisc })
+  const z = drawZ(r, nodes, econ, { rho: RHO_DRAW, rDisc, rStanek })
   const w = worldOf(econ, z, wOpts)
   const T = tableFor(L1, w)
   const V = solveDP(L1, T)

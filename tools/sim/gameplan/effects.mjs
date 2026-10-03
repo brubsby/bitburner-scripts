@@ -11,6 +11,8 @@
 // Phase 2 so far: SF14 (and BN14) — the IPvGO model, go.mjs: source formulas
 // (GP4 runs them against the game), the measured BN9 Go farm, and the Go
 // entries of SF_PARAMS (MEASURED mid with a spread, or ASSUMED, each says).
+// SF13 (and BN13) — Stanek's Gift, stanekplan.js + stanek.mjs: source formulas
+// (ST1 runs them against the game), MEASURED home RAM, ASSUMED st* entries.
 //
 // HOW AN EFFECT REACHES A CLEAR TIME (clear.mjs):
 //   hackKey(l)      the level enters the hacking-exit simulation's key (the
@@ -21,6 +23,7 @@
 //                   on the Bladeburner route it shortens the opening only)
 //   nodeLevel(l)    the level of the node the clear is played at (BN12 only)
 //   go              the level enters the IPvGO model (go.mjs, via routes.mjs)
+//   stanek          the level enters Stanek's Gift (stanek.mjs, via routes.mjs's stanek route)
 // A Source-File with none of these is INERT: it changes no clear time, so the
 // order search treats its clears as pure cost (they drift to where the stack
 // is best).
@@ -58,6 +61,13 @@ export const SF_PARAMS = {
   d8: { lo: 0.0, mid: 0.005, hi: 0.02, min: 0, what: 'SF8.2: shorts -> g x (1+d)' },
   e43: { lo: 0.2, mid: 0.7, hi: 1.5, min: 0, what: 'SF4.3: Singularity RAM 436->247GB -> hours saved in the first life' },
   z9: { lo: -1.2816, mid: 0, hi: 1.2816, what: 'SF9.2/9.3: quantile position in the sf-early lo/mid/hi tables' },
+  // --- Stanek's Gift (stanekplan.js via stanek.mjs; read by routes.mjs's stanek route). stream: 'stanek'
+  // = drawn from their own random stream (params.drawZ), so every other draw is unchanged by them.
+  stRam: { lo: 15, mid: 21, hi: 22.5, min: 8, stream: 'stanek', what: "Stanek: log2 home GB at a no-gift hacking exit (MEASURED p10/p50/p90, history.jsonl: 10 exits 14..25)" },
+  stEpsM: { lo: 0.03, mid: 0.09, hi: 0.2, min: 0, stream: 'stanek', what: 'Stanek: elasticity of g to income (ASSUMED; mid = phi11 0.6 / (10 augs a life x ln 1.9))' },
+  stEpsR: { lo: 0.03, mid: 0.12, hi: 0.3, min: 0, stream: 'stanek', what: "Stanek: elasticity of g to faction rep (ASSUMED; mid = eps14's, the Go rep channel)" },
+  stFr: { lo: 2, mid: 4, hi: 8, min: 1, stream: 'stanek', what: "Stanek: the augs' faction_rep multiplier at a node's end (ASSUMED; the Church rep clock -> Awakening/Serenity)" },
+  stDuty: { lo: 0.6, mid: 0.9, hi: 1, min: 0.1, stream: 'stanek', what: 'Stanek: share of each life the charger holds its threads (ASSUMED: restarts, the first minutes of a life)' },
 }
 
 /** Split-normal quantile through (Q10 lo, Q50 mid, Q90 hi) at standard-normal z. */
@@ -137,9 +147,10 @@ export const EFFECTS = {
     note: 'owed once, so the BN12 level is always 1 and the NeuroFlux head start is unpriced',
   },
   13: {
-    status: 'NOT PRICED',
-    source: "CotMG/StaneksGift.ts:22 Stanek's Gift size + SF13 level",
-    note: "Stanek's Gift is not run by this repo — phase 2 (routes.mjs stanek hook)",
+    status: 'MODELLED (stanekplan.js, stanek.mjs)',
+    source: "CotMG/StaneksGift.ts:20-32 grid 9 + node StaneksGiftExtraSize + SF13 level; BitNodeUtils.ts:17 the gift outside BN13 at SF13>=1; formulas/effect.ts; Prestige.ts:125,184",
+    stanek: true, // read by routes.mjs's stanek route: access (any node at SF13 >= 1) and the grid's size
+    note: "the gift accepted or never at each node's start (min over routes); hacking route only — the Bladeburner route with the gift is NOT PRICED; st* ASSUMED/MEASURED in SF_PARAMS",
   },
   14: {
     status: 'MODELLED (go.mjs)',
@@ -149,7 +160,7 @@ export const EFFECTS = {
   },
 }
 
-const ROLES = ['hackKey', 'bbKey', 'gFactor', 'early', 'nodeLevel', 'go']
+const ROLES = ['hackKey', 'bbKey', 'gFactor', 'early', 'nodeLevel', 'go', 'stanek']
 /** The SFs a clear time reads (the non-inert ones). */
 export const LIVE_SFS = Object.keys(EFFECTS).map(Number).filter((n) => ROLES.some((r) => EFFECTS[n][r]))
 export const isInert = (n) => !LIVE_SFS.includes(n)

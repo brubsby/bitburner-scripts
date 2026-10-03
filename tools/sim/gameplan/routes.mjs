@@ -26,6 +26,10 @@
 //          node - in BN6), both simulated by bbsim (the game's own skill
 //          formula at the node's combat level multipliers: BN14 x0.5)
 //
+//   stanek H with the gift accepted at the node's start (stanek.mjs): g x gMul, W x the
+//          gift's exit divisor, the favor life x favorMul — wherever the gift is
+//          available (BN13, or SF13 >= 1); min over routes = accept or never, per node
+//
 // NODE-SPECIAL ROUTES are hooks; a placeholder prices nothing (returns null)
 // and is flagged NOT CALIBRATED in the plan's output. BN14's is a model (phase
 // 2): the hacking route with the Go farm at GoPower 4.
@@ -33,8 +37,9 @@
 // world.phase1 prices as phase 1 did (GP3's regression mode): no Go model,
 // SF14.1 = g x 1.02, the opening unscaled, BN14 on the plain hacking route.
 
-import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr } from './effects.mjs'
+import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr, LIVE_SFS } from './effects.mjs'
 import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf } from './go.mjs'
+import { giftAvailable, stanekFactors } from './stanek.mjs'
 
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
 export const PHASE1_D14 = 0.02
@@ -60,7 +65,7 @@ export function favorRef(n, world, S) {
  * The hacking route with the Go model, every term exposed (plan.mjs prints it).
  * Returns { h, hsim, g, goG, W, favor, favorRef, early } or null.
  */
-export function hackParts({ node, lv, world, S }) {
+export function hackParts({ node, lv, world, S, st = null }) {
   const nodeLevel = EFFECTS[node]?.nodeLevel ? EFFECTS[node].nodeLevel(lv(node)) : 1
   const l14 = lv(14)
   let g = world.g(node) * gFactorOf(lv, world.sf)
@@ -80,13 +85,58 @@ export function hackParts({ node, lv, world, S }) {
       favor = favorHours(node, l14, world, S)
       fref = favorRef(node, world, S)
     }
+    // Stanek's Gift accepted (stanek.mjs factors): g, the exit divisor, the favor life
+    if (st) {
+      g *= st.gMul
+      W *= st.W
+      favor *= st.favorMul
+    }
   }
   // world.disc: the model discrepancy on the simulated hours (discrepancy.mjs; 1 when there is none)
-  const hsim = S.hackHours(node, nodeLevel, sfKeyStr(hackSfOf(lv)), g, world.phase1 ? { speed1: true } : undefined) * (world.disc ? world.disc(node) : 1)
+  const sf = sfKeyStr(hackSfOf(lv))
+  const opts = world.phase1 ? { speed1: true } : undefined
+  const disc = world.disc ? world.disc(node) : 1
+  const hsim = S.hackHours(node, nodeLevel, sf, g, opts) * disc
   if (!isFinite(hsim)) return null
   const hx = exitShift(hsim, g, W) + favor - fref
   const early = earlyOf(lv, node, world.sf)
-  return { h: Math.max(0.5 * hx, hx - early), hsim, g, goG, W, favor, favorRef: fref, early }
+  // sim: the simulation's key, so the gift's run (giftParts) re-runs it at its own g without rebuilding it
+  return { h: Math.max(0.5 * hx, hx - early), hsim, g, goG, W, favor, favorRef: fref, early, sim: { nodeLevel, sf, opts, disc } }
+}
+
+/**
+ * The hacking route of `base` (hackParts, no gift) with Stanek's factors st: the same
+ * simulation at g x gMul, the exit divisor x W, the favor life x favorMul. Equal to
+ * hackParts({ ...a, st }) (tools/test/stanek.test.mjs ST5), without recomputing the rest.
+ */
+export function giftParts(base, st, { node, S }) {
+  const g = base.g * st.gMul
+  const hsim = S.hackHours(node, base.sim.nodeLevel, base.sim.sf, g, base.sim.opts) * base.sim.disc
+  if (!isFinite(hsim)) return null
+  const W = base.W * st.W
+  const favor = base.favor * st.favorMul
+  const hx = exitShift(hsim, g, W) + favor - base.favorRef
+  return { h: Math.max(0.5 * hx, hx - base.early), hsim, g, goG: base.goG, W, favor, favorRef: base.favorRef, early: base.early, sim: base.sim }
+}
+
+/**
+ * THE GIFT ACCEPTED at the node's start: the hacking route (BN14: its go route) run
+ * again with Stanek's factors (stanek.mjs), which depend on the no-gift run's hours and
+ * g. Returns { ...hackParts, st, base } (base = the no-gift parts) or null.
+ */
+export function stanekParts(a) {
+  const base = a.ctx && 'hack' in a.ctx ? a.ctx.hack : hackParts(a)
+  if (!base || !isFinite(base.h)) return null
+  const st = stanekFactors(a.node, a.lv(13), a.world, a.S.mults(a.node), { H0: base.h, g: base.g })
+  const p = giftParts(base, st, a)
+  return p ? { ...p, st, base } : null
+}
+
+/** hackParts, kept on the call's ctx for the routes that build on it (stanek). */
+const hackOnCtx = (a) => {
+  const p = hackParts(a)
+  if (a.ctx) a.ctx.hack = p
+  return p?.h ?? null
 }
 
 export const ROUTES = [
@@ -94,7 +144,7 @@ export const ROUTES = [
     id: 'hack',
     status: 'SIMULATED (exitplan via hackexit.mjs) + the IPvGO model (go.mjs); g calibrated on played nodes, NOT CALIBRATED on unplayed',
     applies: (node, lv, world) => node !== 14 || world.phase1,
-    hours: (a) => hackParts(a)?.h ?? null,
+    hours: hackOnCtx,
   },
   {
     id: 'blade',
@@ -116,7 +166,7 @@ export const ROUTES = [
     node: 14,
     status: 'MODELLED (go.mjs): the hacking route at GoPower 4 — Go favor + Daedalus bonus on the favor life at FWRG 0.2, g x goG, w0r1d_d43m0n at the exit; HackingSpeed 0.3 in the sim. eps14/w0 ASSUMED, cheats NOT PRICED',
     applies: (node, lv, world) => node === 14 && !world.phase1,
-    hours: (a) => hackParts(a)?.h ?? null,
+    hours: hackOnCtx,
   },
   {
     id: 'stocks',
@@ -134,10 +184,10 @@ export const ROUTES = [
   },
   {
     id: 'stanek',
-    node: 13,
-    status: "NOT CALIBRATED — placeholder: no Stanek's Gift model (this repo runs none)",
-    applies: (node) => node === 13,
-    hours: () => null,
+    status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; with the gift on the Bladeburner route NOT PRICED",
+    readsSf13: true, // the only route that reads SF13 (clearTime memoises the others without it)
+    applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13),
+    hours: (a) => stanekParts(a)?.h ?? null,
   },
 ]
 
@@ -146,13 +196,44 @@ export const ROUTES = [
  * `lv(n)` is the state's SF level of n; S is a loaded surrogate.
  */
 export function clearTime(node, lv, world, S, routes = ROUTES) {
-  const by = {}
-  let best = null
+  // The routes that do not read SF13 are memoised on the world by every other SF level
+  // the routes read (SF13 is live for the stanek route alone and would otherwise compute
+  // them 4 times over); the stanek route runs on top, from the memoised hacking parts.
+  let key = null
+  // only where SF13 can matter (with the gift off every SF13 level is the same call anyway)
+  if (routes === ROUTES && !world.stanekOff && !world.phase1) {
+    key = node
+    for (const n of CT_SFS) key = key * 8 + lv(n)
+  }
+  let memo = null
+  if (key !== null) {
+    // per world AND surrogate (a direct-sim surrogate on the same world is another table)
+    const byS = (world._ct ??= new WeakMap())
+    memo = byS.get(S)
+    if (!memo) byS.set(S, (memo = new Map()))
+  }
+  let base = memo ? memo.get(key) : undefined
+  if (!base) {
+    const by = {}
+    const ctx = {}
+    let best = null
+    for (const r of routes) {
+      if (r.readsSf13 || !r.applies(node, lv, world, S)) continue
+      const h = r.hours({ node, lv, world, S, ctx })
+      by[r.id] = h
+      if (h !== null && isFinite(h) && (best === null || h < best.h)) best = { h, via: r.id }
+    }
+    base = { best, by, ctx }
+    if (memo) memo.set(key, base)
+  }
+  let { best, by } = base
   for (const r of routes) {
-    if (!r.applies(node, lv, world, S)) continue
-    const h = r.hours({ node, lv, world, S })
-    by[r.id] = h
+    if (!r.readsSf13 || !r.applies(node, lv, world, S)) continue
+    const h = r.hours({ node, lv, world, S, ctx: base.ctx })
+    by = { ...by, [r.id]: h }
     if (h !== null && isFinite(h) && (best === null || h < best.h)) best = { h, via: r.id }
   }
   return best ? { ...best, by } : { h: Infinity, via: null, by }
 }
+/** The SFs the routes other than stanek read (clearTime's memo key): every live SF but 13. */
+const CT_SFS = LIVE_SFS.filter((n) => n !== 13)

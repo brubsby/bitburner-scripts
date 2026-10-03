@@ -85,6 +85,13 @@ export { cheatSuccessChance } from "${GAME}/src/Go/effects/netscriptGoImplementa
 export { PlayerObject } from "${GAME}/src/PersonObjects/Player/PlayerObject";
 export { Factions } from "${GAME}/src/Faction/Factions";
 export { initSourceFiles } from "${GAME}/src/SourceFile/SourceFiles";
+// Stanek's Gift, for tools/sim/gameplan/stanektest.mjs (ST1): stanekplan.js's catalogue,
+// grid, geometry, effect, charge and multipliers against the game's own classes.
+export { StaneksGift } from "${GAME}/src/CotMG/StaneksGift";
+export { ActiveFragment } from "${GAME}/src/CotMG/ActiveFragment";
+export { Fragments, FragmentById } from "${GAME}/src/CotMG/Fragment";
+export { CalculateEffect as StanekCalculateEffect } from "${GAME}/src/CotMG/formulas/effect";
+export { StanekConstants } from "${GAME}/src/CotMG/data/Constants";
 `;
 
 const rawPlugin = {

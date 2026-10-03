@@ -10,7 +10,8 @@
 // SCHEMA (tools/sim/gameplan/README.md "Observations"):
 //   { param, value, sd, at, source, node?, space?, stream?, key? }
 //   param   a planner parameter id: w0, goP, rep14, lvl14, eps14, k, open, phi11,
-//           d10, d8, e43, z9, or g<n> (node n's growth /h)
+//           d10, d8, e43, z9, stRam, stEpsM, stEpsR, stFr, stDuty (Stanek's Gift),
+//           or g<n> (node n's growth /h)
 //   value   the measured value, in the parameter's units (w0: raw node power per
 //           hour against w0r1d_d43m0n, before GoPower / the SF14 doubling)
 //   sd      its standard error: in the parameter's units when space is 'lin',
@@ -28,7 +29,7 @@
 // Pure apart from ns.write / ns.getHostname (0GB + 0.05GB).
 
 export const OBS_FILE = '/tel/gameplan-obs.txt'
-const PARAMS = new Set(['w0', 'goP', 'rep14', 'lvl14', 'eps14', 'k', 'open', 'phi11', 'd10', 'd8', 'e43', 'z9'])
+const PARAMS = new Set(['w0', 'goP', 'rep14', 'lvl14', 'eps14', 'k', 'open', 'phi11', 'd10', 'd8', 'e43', 'z9', 'stRam', 'stEpsM', 'stEpsR', 'stFr', 'stDuty'])
 const DEFAULT_SPACE = { w0: 'lin' }
 
 /** The record recordObs writes (exported for tests). Throws on a malformed reading. */

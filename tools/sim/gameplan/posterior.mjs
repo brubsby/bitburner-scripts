@@ -514,6 +514,15 @@ export function measurability(id, ctx) {
       return { how: 'a first life at SF4.3', before: false, cost: null, why: `needs SF4.3${ctx.node === 4 ? ` (from the end of ${cur})` : ''}` }
     case 'z9':
       return { how: 'a first life at SF9.2+', before: false, cost: null, why: 'needs SF9.2' }
+    case 'stRam':
+      return ctx.route === 'hack'
+        ? { how: 'home RAM at the exit (history.jsonl)', before: true, cost: 0, why: `passive: ${cur}'s exit adds a reading` }
+        : { how: 'home RAM at a hacking-route exit (history.jsonl)', before: false, cost: null, why: `${cur} is not a hacking-route clear` }
+    case 'stEpsM':
+    case 'stEpsR':
+    case 'stFr':
+    case 'stDuty':
+      return { how: "a node played with Stanek's Gift (stanekplan.js)", before: false, cost: null, why: 'needs the gift: BN13, or SF13 (after BN13)' }
     default:
       return { how: '?', before: false, cost: null, why: 'no measurement defined' }
   }

@@ -73,7 +73,7 @@ export function paramIds(nodes, econ = null) {
 }
 
 /** One draw: z per parameter (g's already combined with the common factor). */
-export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null } = {}) {
+export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null, rStanek = null } = {}) {
   const zc = normal(r)
   const z = { zc }
   const J = econ.gJoint
@@ -93,7 +93,10 @@ export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null } = 
     }
   z.k = normal(r)
   z.open = normal(r)
-  for (const k of Object.keys(SF_PARAMS)) z[k] = normal(r)
+  for (const k of Object.keys(SF_PARAMS)) if (!SF_PARAMS[k].stream) z[k] = normal(r)
+  // Stanek's parameters (effects.SF_PARAMS stream 'stanek') from their own stream rStanek when
+  // given (plan.mjs), so adding them left every other draw as it was
+  for (const k of Object.keys(SF_PARAMS)) if (SF_PARAMS[k].stream) z[k] = normal(rStanek ?? r)
   // the model discrepancy (discrepancy.mjs): one z per node it applies to, from its own
   // stream rDisc when given (plan.mjs), so the draws with and without it are paired
   if (econ.disc) for (const n of nodes) if (econ.disc.applies(n)) z[`delta${n}`] = normal(rDisc ?? r)
@@ -105,7 +108,7 @@ export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null } = 
  * `phase1: true` prices exactly as phase 1 did (no IPvGO model, SF14.1 = g x 1.02, the
  * Bladeburner opening unscaled, HackingSpeedMultiplier unread): GP3's regression mode.
  */
-export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false } = {}) {
+export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false } = {}) {
   // econ from posterior.mjs posteriorOf().applied carries the update: zMap (a
   // scalar's prior z -> posterior z), gShift/gScale (the unplayed latent's
   // location and spread), gSd (a node observed since the base: its own log sd).
@@ -142,6 +145,12 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     sf,
     bbOff,
     phase1,
+    // Stanek's Gift (stanek.mjs): off = the gift never accepted (the pre-Stanek plan exactly);
+    // bn13Only = the gift in BN13 alone (SF13 grants nothing outside it: SF13's own value)
+    stanekOff,
+    stanekBn13Only,
+    cycleHours: cyc,
+    profile: econ.profile,
     z,
     // the discrepancy factor on node n's hacking-route hours (1 without one; discrepancy.mjs)
     disc: (n) => (econ.disc && !phase1 && econ.disc.applies(n) ? Math.exp(econ.disc.sd * (z[`delta${n}`] ?? 0)) : 1),

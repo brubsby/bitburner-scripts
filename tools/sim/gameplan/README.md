@@ -40,6 +40,8 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | `routes.mjs` | the routes (hack, blade, and the node-special hooks) and `clearTime` = C(node, state, world) |
 | `search.mjs` | exact DP over the lattice; nextnode's local search ported for comparison; brute force for the tests |
 | `plan.mjs` | the CLI |
+| `stanek.mjs` | Stanek's Gift (SF13, BN13): the layout per grid (cached in `.cache/stanek-layouts.json`), the gift's factors on the hacking route (exit divisor W, g factor, favor-life factor) from `../../../stanekplan.js` (the pure model: catalogue, grid, effect, charge, placement optimiser, the per-life charging model) |
+| `stanektest.mjs` | ST1's game-source half: stanekplan.js against the game's own CotMG classes (tools/sim bundle), its own child |
 | `go.mjs` | the IPvGO model (phase 2): the Go bonus scale GoPower x the SF14 doubling, the favor life, the w0r1d_d43m0n exit divisor, the g channel — source formulas, measured BN9 farm, ASSUMED bounds, each labelled |
 | `selftest.mjs` | the game-dependent half of `tools/test/gameplan.test.mjs` (GP2, GP3, GP4's simulation half), run in a child process |
 | `gotest.mjs` | GP4's game-source half: go.mjs against the game's own CalculateEffect / getMaxRep / endGoGame / favor (tools/sim bundle), its own child |
@@ -53,7 +55,11 @@ C(node, state) is `min` over the routes that apply:
 - **blade**: `open' - min(early, open' - 0.5) + leg(node, SF6, SF7) x k`, `leg` = bbsim median,
   `open' = open + gym(node) - gym(BN6)` (bbsim's time to combat 100 at the node's combat multipliers).
 - **go (BN14)**: the hack formula at GoPower 4 (BN14's own route; hack does not apply there) — MODELLED (phase 2).
-- **stocks (BN8), corp (BN3), stanek (BN13)**: placeholders, return null — NOT CALIBRATED.
+- **stanek** (any node where the gift is available: BN13, or SF13 >= 1): the hack formula (BN14: go)
+  with Stanek's Gift accepted at the node's start — `g x gMul`, `W x W_gift`, `favor x favorMul`
+  (stanek.mjs). The min over routes IS the accept-or-never decision, per node and world.
+  MODELLED from source; the Bladeburner route with the gift is NOT PRICED.
+- **stocks (BN8), corp (BN3)**: placeholders, return null — NOT CALIBRATED.
 
 ### The IPvGO model (go.mjs) — what is measured, from source, assumed
 
@@ -69,10 +75,40 @@ played node's own (at SF14 0), else the measured runs' mean (BN2 excluded: the
 gang sold its Red Pill). So played nodes reproduce at SF14 0 and SF14 moves
 every node through its favor life, g and W.
 
+### Stanek's Gift (stanekplan.js, stanek.mjs) — source, measured, assumed
+
+| | |
+| --- | --- |
+| SOURCE | catalogue (Fragment.ts), geometry (fullAt/neighbors), grid `9 + StaneksGiftExtraSize + SF13` (StaneksGift.ts:20-32), effect `1 + ln(h+1)/60 x ((n+1)/5)^0.07 x power x boost x node power`, charge (numCharge x highest = sum of threads), Church rep per charge `faction_rep x t^0.95 x (favor+100)/1000`, 1 charge/s/script, 2GB a thread, cores bonus, charges cleared per install (layout kept), Genesis x0.9 / Awakening (1e6 rep) x0.95 / Serenity (1e8) x1, accept only before any non-NeuroFlux aug (Prestige.ts:184). ST1 runs every one against the game. |
+| MEASURED | home RAM at a no-gift hacking exit, log2 GB p10/p50/p90 15/21/22.5 (history.jsonl, 10 exits) and its shape `log2 R = 8 + (exit - 8) (t/H)^2`, 7 cores at the exit |
+| POLICY | one charging script on home, f of its RAM, round robin; f chosen per node and world (0.1%-50%); layout per grid optimised once at Hg 2.5, f 0.2 (exact up to 5x5 — ST2 vs brute force — best-found past it, marked `~`) |
+| ASSUMED | `stEpsM` 0.03/0.09/0.2 (g's elasticity to income), `stEpsR` 0.03/0.12/0.3 (to faction rep), `stFr` 2/4/8 (the augs' faction_rep at the node's end: the Church clock), `stDuty` 0.6/0.9/1; the hack threads' share of a batch's RAM 0.22 (FIXED); the favor life at 0.8 of the node (FIXED) |
+| NOT PRICED | the Bladeburner route with the gift (bbsim has no Stanek multipliers: a Bladeburner clear never accepts), bonus time, charging from purchased servers, ZOE sleeves |
+
+Channels into the SAME exit simulation the no-gift clear runs: the final life's
+hacking skill and exp term at the exit (W, through exitShift — at W 1.25-4 within
+~0.5-2h of hackexit at exitLevel/W on BN1/5/11/13, slightly optimistic at W >= 2),
+the node-averaged income (speed x skill x chance x money/grow mix x (1 - f)) and
+faction rep through the elasticities (g), and the favor life (1/(skill x rep)).
+The gift run's length feeds its own home-RAM curve (RAM is a function of hours
+into a no-gift node, so a shorter run exits on a smaller home: a fixed point).
+`--no-stanek` prices the gift never accepted: the pre-Stanek plan, draw for draw
+(Stanek's parameters have their own random stream).
+
+Results 2026-10-03 (BN14.1 in progress, posterior after BN4.3, 100 draws, seed 1):
+gift verdict ACCEPT on every hacking-route node (BN13 ~13.5-14.4h saved; BN5 ~10.5h;
+BN7 ~11h; BN10 6.5-8h; BN12 6-7h; BN9 4.5-6.5h; BN8 4h; BN2 2-4h; BN14 ~2.4h),
+never on the Bladeburner-route nodes (BN3, BN6, BN11: the blade route stays cheaper).
+SF13's own value 76.4h, BN13's gift inside BN13 35.3h (mid world). E[T] best first
+move 898.6h -> 794.0h; BN13.1 moves from the last three slots to 4th (mid world)
+and 1st in the robust order; the recommended next node stays BN11.1 (P(best) 72% ->
+57%, BN13.1 now +1.1 +- 0.4h behind). Cost: 2.1s a draw, peak RSS 1.7GB (0.8GB
+with `--no-stanek`): the table is 4x larger with SF13 live.
+
 The order search is exact: V(s) = min_n C(n, s) + V(s + n) over the 1.5-3M states
 of the lattice, in reverse index order (a clear always raises the index). C is
 tabulated over the *live* feature space only (SFs some effect reads); inert SFs
-(2, 3, 13 in phase 1) are pure cost.
+(2, 3 now; 13 too in phase 1 and with `--no-stanek`) are pure cost.
 
 ## Uncertainty
 
