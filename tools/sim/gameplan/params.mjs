@@ -108,7 +108,7 @@ export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null, rSt
  * `phase1: true` prices exactly as phase 1 did (no IPvGO model, SF14.1 = g x 1.02, the
  * Bladeburner opening unscaled, HackingSpeedMultiplier unread): GP3's regression mode.
  */
-export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false } = {}) {
+export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false, w0Window = null, w0Live = false } = {}) {
   // econ from posterior.mjs posteriorOf().applied carries the update: zMap (a
   // scalar's prior z -> posterior z), gShift/gScale (the unplayed latent's
   // location and spread), gSd (a node observed since the base: its own log sd).
@@ -160,6 +160,11 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
       played: (n) => econ.ownG.has(n),
       // the runs the unplayed latent is the mean of; BN2's Red Pill came from the gang, not Daedalus favor
       refNodes: runs.map((r) => r.bn).filter((n) => n !== 2),
+      // the w0r1d_d43m0n window: null = the post-TRP climb fixed point (go.mjs goWindow);
+      // a number = that many fixed hours (the old model: 1h, the regression mode)
+      w0Window,
+      // true: the bonus is worth only the climb's shortening (today's exitplan does not anticipate it)
+      w0Live,
       memo: new Map(),
     },
   }

@@ -346,14 +346,6 @@ export async function run() {
       write: (f, data, mode) => {
         if (f === "/go/req.txt") reqSizes.add(JSON.parse(data).size);
         files.set(f, mode === "a" ? (files.get(f) ?? "") + data : data);
-        // THE SOLVER ANSWERS: the measurement's precondition (exploreW0 stops
-        // measuring on the 20ms fallback, and the early-game pricing then
-        // picks a board — which is correct, and not what this check tests).
-        if (f === "/go/req.txt") {
-          const q = JSON.parse(data);
-          const [x, y] = q.valid?.[0] ?? [0, 0];
-          files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x, y }));
-        }
       },
       sleep: () => new Promise((r) => setTimeout(r, 0)),
       exec: () => 0,

@@ -10,7 +10,11 @@
 //          (BN12: SF12 + 1):
 //            Hx = max(min(Hsim, .5), Hsim - ln(W)/g) + favor(node, SF14) - favor_ref(node)
 //          goG    the Go rate bonus on g at scale GoPower x (SF14 ? 2 : 1)
-//          W      the w0r1d_d43m0n hacking-level bonus at the exit (divides the exit level)
+//          W      the w0r1d_d43m0n hacking-level bonus at the exit (divides the exit level):
+//                 effect(w0 x L*) at the node's scale, L* the window — the post-TRP
+//                 climb at this g (surrogate, phase-averaged) shortened by the bonus
+//                 it banks (go.mjs goWindow's fixed point). world.go.w0Window = h
+//                 fixes it at h hours (the old model: 1h)
 //          favor  the favor life: hours to bank 150 x FavorToDonate favor on
 //                 Daedalus with the Go farm on it (FactionWorkRepGain, the Go
 //                 Daedalus bonus, the Go favor stream and its cap); the
@@ -38,7 +42,7 @@
 // SF14.1 = g x 1.02, the opening unscaled, BN14 on the plain hacking route.
 
 import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr, LIVE_SFS } from './effects.mjs'
-import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf } from './go.mjs'
+import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf, goWindow } from './go.mjs'
 import { giftAvailable, stanekFactors } from './stanek.mjs'
 
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
@@ -71,15 +75,28 @@ export function hackParts({ node, lv, world, S, st = null }) {
   let g = world.g(node) * gFactorOf(lv, world.sf)
   let goG = 1
   let W = 1
+  let win = null
   let favor = 0
   let fref = 0
+  const sfKey = sfKeyStr(hackSfOf(lv))
   if (world.phase1) {
     if (l14 >= 1) g *= 1 + PHASE1_D14
   } else {
     const s = goScale(S.mults(node).GoPower, l14)
     goG = goGFactor(s, world.go.abar, world.sf.eps14)
     g *= goG
-    W = w0rldDiv(s, world.sf.w0)
+    // THE WINDOW (go.mjs goWindow): w0r1d_d43m0n is played from The Red Pill install to
+    // the exit — the post-TRP climb at this g, shortened by the bonus it banks.
+    // world.go.w0Window a number: the old fixed window (regression mode).
+    const fixed = world.go?.w0Window
+    if (typeof fixed === 'number') {
+      W = w0rldDiv(s, world.sf.w0, fixed)
+      win = { hours: fixed, L0: fixed, W }
+    } else {
+      const c = world.sf.w0 > 0 ? S.hackClimb(node, nodeLevel, sfKey, g) : null
+      win = c ? goWindow({ L0: c.L0, u0: c.u0, w0: world.sf.w0, s }) : { hours: 0, L0: 0, W: 1 }
+      W = win.W
+    }
     // BN2's Red Pill is sold by the gang (no Daedalus favor life in its g, nor in a replay)
     if (node !== 2) {
       favor = favorHours(node, l14, world, S)
@@ -93,15 +110,18 @@ export function hackParts({ node, lv, world, S, st = null }) {
     }
   }
   // world.disc: the model discrepancy on the simulated hours (discrepancy.mjs; 1 when there is none)
-  const sf = sfKeyStr(hackSfOf(lv))
+  const sf = sfKey
   const opts = world.phase1 ? { speed1: true } : undefined
   const disc = world.disc ? world.disc(node) : 1
   const hsim = S.hackHours(node, nodeLevel, sf, g, opts) * disc
   if (!isFinite(hsim)) return null
-  const hx = exitShift(hsim, g, W) + favor - fref
+  // the bonus's worth: the exit level divided by W with the installs re-planned (exitShift, the
+  // default), or — world.go.w0Live — only the climb's own shortening L0 - L*, what a final life
+  // that does not anticipate the bonus (today's exitplan) realises (go.mjs WHAT IT SAYS)
+  const hx = (world.go?.w0Live && win ? exitShift(hsim, g, st ? st.W : 1) - Math.max(0, win.L0 - win.hours) : exitShift(hsim, g, W)) + favor - fref
   const early = earlyOf(lv, node, world.sf)
   // sim: the simulation's key, so the gift's run (giftParts) re-runs it at its own g without rebuilding it
-  return { h: Math.max(0.5 * hx, hx - early), hsim, g, goG, W, favor, favorRef: fref, early, sim: { nodeLevel, sf, opts, disc } }
+  return { h: Math.max(0.5 * hx, hx - early), hsim, g, goG, W, win, favor, favorRef: fref, early, sim: { nodeLevel, sf, opts, disc, w0Live: !!world.go?.w0Live } }
 }
 
 /**
@@ -115,8 +135,10 @@ export function giftParts(base, st, { node, S }) {
   if (!isFinite(hsim)) return null
   const W = base.W * st.W
   const favor = base.favor * st.favorMul
-  const hx = exitShift(hsim, g, W) + favor - base.favorRef
-  return { h: Math.max(0.5 * hx, hx - base.early), hsim, g, goG: base.goG, W, favor, favorRef: base.favorRef, early: base.early, sim: base.sim }
+  // --w0-live: the hidden opponent's part is the climb's shortening (base.win), the gift's W shifts the exit
+  const live = base.sim.w0Live && base.win
+  const hx = (live ? exitShift(hsim, g, st.W) - Math.max(0, base.win.L0 - base.win.hours) : exitShift(hsim, g, W)) + favor - base.favorRef
+  return { h: Math.max(0.5 * hx, hx - base.early), hsim, g, goG: base.goG, W, win: base.win, favor, favorRef: base.favorRef, early: base.early, sim: base.sim }
 }
 
 /**
@@ -164,7 +186,7 @@ export const ROUTES = [
   {
     id: 'go',
     node: 14,
-    status: 'MODELLED (go.mjs): the hacking route at GoPower 4 — Go favor + Daedalus bonus on the favor life at FWRG 0.2, g x goG, w0r1d_d43m0n at the exit; HackingSpeed 0.3 in the sim. eps14/w0 ASSUMED, cheats NOT PRICED',
+    status: 'MODELLED (go.mjs): the hacking route at GoPower 4 — Go favor + Daedalus bonus on the favor life at FWRG 0.2, g x goG, w0r1d_d43m0n over the post-TRP climb; HackingSpeed 0.3 in the sim. eps14 ASSUMED, w0 DERIVED, cheats NOT PRICED',
     applies: (node, lv, world) => node === 14 && !world.phase1,
     hours: hackOnCtx,
   },

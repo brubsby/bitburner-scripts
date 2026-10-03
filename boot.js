@@ -571,14 +571,6 @@ const STACK = [
     where: 'home',
     tier: 128,
     rank: 20,
-    // NOT STOPPED below its tier. In a Go-first node (raiseplace.goFirstOf:
-    // BitNode 14) seed.js and watchdog.js place it from the opening, on a
-    // fleet host, and this launcher cannot tell that node from any other
-    // without getResetInfo (1GB of launcher). Live BN14.1 20:50Z: home was
-    // bought to 64GB, boot.js re-ran and stopped the running go.js as
-    // "below its tier of 128GB". The tier still decides where boot.js STARTS
-    // it; a running copy is the placers' business.
-    keepIfRunning: true,
     why: 'IPvGO node power feeds the faction_rep multiplier on every reputation stream, but 20.30GB is eight early.js threads and it needs the external solver running to beat a Daedalus-grade opponent',
   },
   {
@@ -744,7 +736,7 @@ export async function main(ns) {
   // It is exec'd only when a deferred entry is genuinely running.
   const stale = []
   for (const entry of plan.defer) {
-    if (wanted.has(entry.script) || stale.includes(entry.script) || entry.keepIfRunning) continue
+    if (wanted.has(entry.script) || stale.includes(entry.script)) continue
     for (const host of hosts) {
       if (!ns.hasRootAccess(host)) continue
       if (ns.ps(host).some((proc) => proc.filename === entry.script)) {
@@ -900,15 +892,8 @@ export async function main(ns) {
     const already = hosts.some(
       (host) => ns.hasRootAccess(host) && ns.ps(host).some((proc) => proc.filename === worker.script),
     )
-    // THE ACTION SLOT SURVIVES THE SPAWN, measured as well as planned. The
-    // plan holds `plan.action` back from the worker, but only against what
-    // the PLAN put on home. Anything else already there (go.js placed first
-    // in a Go node by seed.js, a daemon placeOff dropped on home) came out of
-    // the slot, and `room` alone handed the rest to the worker: live BN14.1
-    // 19:08Z, act.js refused "no rooted host has 4.25GB free for act-gym.js"
-    // every 5s.
-    const room = spare(ns, 'home') + costOf('boot.js') - plan.action
-    const threads = Math.max(0, Math.min(worker.threads, Math.floor(room / worker.cost)))
+    const room = spare(ns, 'home') + costOf('boot.js')
+    const threads = Math.min(worker.threads, Math.floor(room / worker.cost))
     if (dry) {
       ns.tprint(`boot: DRY RUN — would spawn ${worker.script} x${threads} on home (plan said x${worker.threads})`)
       return

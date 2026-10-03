@@ -23,7 +23,13 @@
 //       getMaxRep per SF14 level, the favor award played through endGoGame and
 //       its cap, favor <-> rep, BN14's multipliers), the favor life's ordering
 //       in SF14, the w0r1d_d43m0n exit shift against exitplan at exitLevel/W,
-//       BN14's HackingSpeedMultiplier in the simulation, the gym scale.
+//       BN14's HackingSpeedMultiplier in the simulation, the gym scale; the
+//       hidden opponent's payout played through endGoGame on the bitverse
+//       board; the w0 window's regression (w0 = 0 or a fixed 1h = the old model).
+//   GP8 THE w0 PRIOR IS DERIVED AND THE WINDOW CONVERGES (pure): the payout's
+//       hand cases, its stationary expectation vs a simulated chain, the
+//       Monte Carlo reproducing effects.SF_PARAMS.w0 and goplan.W0_PRIOR, a
+//       reading moving it, the window's fixed point (bisection = damped map).
 //
 // CALIBRATION: GP1 is a property of the optimiser (no game quantity). GP2 is a
 // numerical check of the surrogate against the simulation it tabulates. GP3 is a
@@ -47,7 +53,9 @@ import { buildTable, solveDP, bestPath, firstMoves, bruteForce, localSearch, eva
 import { rng, normal, worldOf } from '../sim/gameplan/params.mjs'
 import { scalarPosterior, valueAt, gBase, gUpdate, gSummary, posteriorOf, emptyStore, mergeObs, summarise, scalarSpecs, normaliseObs, loadStore, POSTERIOR_FILE } from '../sim/gameplan/posterior.mjs'
 import { obsRecord } from '../../gameplan-obs.js'
-import { w0Obs, rateEstimate } from '../../goplan.js'
+import { w0Obs, rateEstimate, W0_PRIOR } from '../../goplan.js'
+import { goGameStep, w0PerGame, w0PriorMC, goWindow, goWindowIterate, W0_DIFFICULTY, W0_PRIOR_INPUTS, W0_GAME_H } from '../sim/gameplan/go.mjs'
+import { SF_PARAMS } from '../sim/gameplan/effects.mjs'
 import { readingsFromSegments } from '../sim/gameplan/observe.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -304,7 +312,7 @@ function gp5() {
     if (streams.size !== 2 || pg.nObs !== 2) c.fail(`go.js w0 readings: ${streams.size} streams (want 2: go.js, go.js node 12), ${pg.nObs} applied (want 2: the latest of each)`)
     const w0spec = specs.w0
     const med = valueAt(w0spec, pg.scalar.w0.map(0))
-    c.note(`go.js w0 stream: readings ${o20.value}/h (sd ${o20.sd}, n 20) then ${o40.value}/h (n 40) -> one stream, latest applied; with a 0-power stream beside it the w0 median ${med.toFixed(1)}/h (hand 200)`)
+    c.note(`go.js w0 stream: readings ${o20.value}/h (sd ${o20.sd}, n 20) then ${o40.value}/h (n 40) -> one stream, latest applied; with a 0-power stream beside it the w0 median ${med.toFixed(1)}/h (derived prior ${w0spec.mid})`)
     if (!fs.existsSync(POSTERIOR_FILE)) c.fail(`no committed ${path.basename(POSTERIOR_FILE)}`)
     else {
       const st = loadStore()
@@ -318,6 +326,110 @@ function gp5() {
   return c
 }
 
+function gp8() {
+  const c = new Check('GP8', "the w0 prior is DERIVED (the payout x its inputs reproduces effects.SF_PARAMS.w0 and goplan's W0_PRIOR), a measured w0 still moves it, and the w0r1d_d43m0n window's fixed point converges")
+  // (a) the payout transcription on hand cases (the game itself plays the same rules in GP4 (7))
+  const HAND = [
+    // [streak before, won, black score, power, streak after]
+    [0, false, 60, 60 * 2.5 * 0.5, -1],
+    [-1, false, 30, 30 * 2.5 * 0.5, -2],
+    [-2, true, 150, 150 * 2.5 * 2, 1], // breaks a 2-loss dry streak: 1 + 0.5 x 2
+    [-11, true, 140, 140 * 2.5 * 5, 1], // a dry streak past 8 caps at x5
+    [1, true, 160, 160 * 2.5 * 1.5, 2],
+    [8, true, 200, 200 * 2.5 * 3, 9], // a streak past 8 caps at x3
+    [0, true, 139, 139 * 2.5 * 1.25, 1],
+  ]
+  for (const [s0, won, b, want, s1] of HAND) {
+    const r = goGameStep(s0, won, b)
+    c.examined(1)
+    if (Math.abs(r.power - want) > 1e-9 || r.streak !== s1) c.fail(`goGameStep(${s0}, ${won}, ${b}) = ${r.power}/${r.streak}, want ${want}/${s1}`)
+  }
+  c.note(`payout hand cases (endGoGame x getWinstreakMultiplier x komi 9.5 -> x${W0_DIFFICULTY}): ${HAND.map(([s0, w, b, p]) => `${b}${w ? 'W' : 'L'}@${s0}=${p}`).join(' ')}`)
+  // (b) the stationary expectation against a long simulated chain of the same steps
+  const r = rng(77)
+  for (const [p, sW, sL] of [[0.05, 150, 40], [0.19, 165, 67], [0.6, 180, 110]]) {
+    let st = 0
+    let tot = 0
+    const N = 400000
+    for (let i = 0; i < N; i++) {
+      const won = r() < p
+      const x = goGameStep(st, won, won ? sW : sL)
+      tot += x.power
+      st = x.streak
+    }
+    const model = w0PerGame(p, sW, sL)
+    c.examined(1)
+    if (Math.abs(tot / N / model - 1) > 0.01) c.fail(`w0PerGame(${p}) ${model.toFixed(2)} vs a simulated chain ${(tot / N).toFixed(2)}`)
+    if (p === 0.19) c.note(`stationary power/game at p 0.19, black 165 on a win / 67 on a loss: ${model.toFixed(1)} (a ${N}-game chain ${(tot / N).toFixed(1)})`)
+  }
+  // (c) the Monte Carlo reproduces the constants that replaced the hand prior
+  const mc = w0PriorMC()
+  const P = SF_PARAMS.w0
+  for (const [k, q] of [['lo', mc.q10], ['mid', mc.q50], ['hi', mc.q90]]) {
+    c.examined(1)
+    if (Math.abs(P[k] / q - 1) > 0.03) c.fail(`SF_PARAMS.w0.${k} ${P[k]} vs the derivation's ${q.toFixed(0)} (re-derive: go.mjs w0PriorMC)`)
+  }
+  const mc2 = w0PriorMC({ seed: 99 })
+  c.examined(1)
+  if (Math.abs(mc2.q50 / mc.q50 - 1) > 0.03) c.fail(`the derivation is seed-dependent: median ${mc.q50.toFixed(0)} vs ${mc2.q50.toFixed(0)}`)
+  // goplan.js (the live Go bot) starts the hidden opponent from the same number
+  c.examined(1)
+  if (W0_PRIOR.powerPerHour !== P.mid) c.fail(`goplan.W0_PRIOR.powerPerHour ${W0_PRIOR.powerPerHour} vs the gameplan's w0 median ${P.mid}`)
+  const [a, b] = W0_PRIOR_INPUTS.pWin.beta
+  c.examined(1)
+  if (Math.abs(W0_PRIOR.refP - a / (a + b)) > 0.005) c.fail(`goplan.W0_PRIOR.refP ${W0_PRIOR.refP} vs the win-rate prior's mean ${(a / (a + b)).toFixed(3)}`)
+  c.note(`w0 DERIVED: p10/p50/p90 ${mc.q10.toFixed(0)}/${mc.q50.toFixed(0)}/${mc.q90.toFixed(0)}/h (seed 99: ${mc2.q10.toFixed(0)}/${mc2.q50.toFixed(0)}/${mc2.q90.toFixed(0)}) = SF_PARAMS.w0 ${P.lo}/${P.mid}/${P.hi} = goplan W0_PRIOR ${W0_PRIOR.powerPerHour}/h at refP ${W0_PRIOR.refP}; rank corr ${Object.entries(mc.rank).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')}`)
+  // (d) a measured w0 still moves it (the gameplan-obs channel, lin space)
+  {
+    const specs = scalarSpecs()
+    const st = emptyStore()
+    mergeObs(st, [{ param: 'w0', value: 300, sd: 30, at: '2026-10-06T10:00:00Z', source: 'GP6 synthetic' }])
+    const pg = posteriorOf(st, { gScen: { lo: 0.04, mid: 0.065, hi: 0.13 }, gamma: 0.6, amc: Object.fromEntries([...Array(14)].map((_, i) => [i + 1, 1])), ownG: new Map([[1, 0.05]]), profile: { cycleHours: 2 }, runs: [] })
+    const med = valueAt(specs.w0, pg.scalar.w0.map(0))
+    c.examined(1)
+    if (!(Math.abs(med - 300) < 60)) c.fail(`a w0 reading of 300 +- 30 left the median at ${med.toFixed(0)} (prior ${P.mid})`)
+    c.note(`a reading of 300 +- 30/h moves the w0 median ${P.mid} -> ${med.toFixed(0)}/h`)
+  }
+  // (e) the window. Continuous limit (tau 0): the bisection root solves L = T(u0/W(w0 L)) and the
+  // damped map converges to it. Per finished game (tau = one game, the default): the first-passage
+  // scan converges to that root as tau -> 0, never runs past the climb, does not lengthen as w0
+  // grows, and a window shorter than one game banks nothing. w0 = 0 leaves the climb (W = 1).
+  let worst = 0
+  let worstIt = 0
+  let worstTau = 0
+  let n = 0
+  const rows = []
+  for (const L0 of [0.3, 1.2, 3])
+    for (const u0 of [150, 400, 900])
+      for (const w0 of [100, 1200, 5000])
+        for (const s of [1, 2, 4, 8]) {
+          const f = goWindow({ L0, u0, w0, s, tau: 0 })
+          const it = goWindowIterate({ L0, u0, w0, s })
+          c.examined(1)
+          n++
+          if (!it.converged) c.fail(`the fixed-point map did not converge: L0 ${L0} u0 ${u0} w0 ${w0} s ${s}`)
+          worst = Math.max(worst, Math.abs(f.hours - it.hours))
+          worstIt = Math.max(worstIt, it.iters)
+          if (!(f.hours > 0 && f.hours <= L0 + 1e-12 && f.W > 1)) c.fail(`window out of range: L0 ${L0} -> ${f.hours} W ${f.W}`)
+          if (!(goWindow({ L0, u0, w0: w0 * 2, s, tau: 0 }).hours < f.hours)) c.fail(`the continuous window does not shorten with w0 (L0 ${L0} u0 ${u0} w0 ${w0} s ${s})`)
+          // per game: tau -> 0 converges on the continuous root
+          const fine = goWindow({ L0, u0, w0, s, tau: 1e-5 })
+          worstTau = Math.max(worstTau, Math.abs(fine.hours - f.hours))
+          const d = goWindow({ L0, u0, w0, s })
+          const d2 = goWindow({ L0, u0, w0: w0 * 2, s })
+          if (!(d.hours <= L0 + 1e-12 && d2.hours <= d.hours + 1e-12 && d2.W >= 1)) c.fail(`per-game window: L0 ${L0} u0 ${u0} w0 ${w0} s ${s}: ${d.hours}h W ${d.W}, at 2 w0 ${d2.hours}h`)
+          if (L0 < W0_GAME_H && (d.hours !== L0 || d.W !== 1)) c.fail(`a climb shorter than one game (${L0}h < ${W0_GAME_H.toFixed(3)}h) must bank nothing: ${d.hours}h W ${d.W}`)
+          if (L0 === 1.2 && w0 === 1200 && u0 === 400) rows.push(`s${s}: ${f.hours.toFixed(3)}h x${f.W.toFixed(3)} | per game ${d.hours.toFixed(3)}h x${d.W.toFixed(3)} (${d.games} game${d.games === 1 ? '' : 's'})`)
+        }
+  if (worst > 1e-6) c.fail(`bisection vs the damped map: worst |diff| ${worst}h`)
+  if (worstTau > 1e-3) c.fail(`the per-game window does not converge on the continuous root as tau -> 0: worst |diff| ${worstTau}h at tau 1e-5`)
+  const z = goWindow({ L0: 1.2, u0: 400, w0: 0, s: 4 })
+  c.examined(1)
+  if (z.hours !== 1.2 || z.W !== 1) c.fail(`w0 = 0 must leave the climb and W = 1, got ${z.hours} / ${z.W}`)
+  c.note(`window: ${n} cases; continuous root (bisection) = the damped map to ${worst.toExponential(1)}h (map <= ${worstIt} iterations); the per-game first passage -> that root as tau -> 0 (${worstTau.toExponential(1)}h at tau 1e-5h); L0 1.2h, u0 400, w0 1200/h -> ${rows.join(', ')}`)
+  return c
+}
+
 export async function run() {
-  return [gp1(), gp5(), ...child()]
+  return [gp1(), gp5(), gp8(), ...child()]
 }

@@ -14,6 +14,10 @@
 //          --no-disc (no model-discrepancy term) | --no-adapt (skip KG / bound / CVaR / multi-fidelity)
 //          --no-stanek (Stanek's Gift never accepted: the pre-Stanek plan, draw for draw)
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
+//          --w0-window H (the w0r1d_d43m0n window fixed at H hours: 1 = the old model)
+//          --w0-prior lo,mid,hi (override the derived w0 prior: 0,200,1000 = the old hand one)
+//          --w0-live (the w0r1d_d43m0n bonus worth only the climb's shortening L0 - L*: a final
+//          life that does not anticipate it, as today's exitplan; default: the exit shift ln W/g)
 //
 // NOT CALIBRATED as a decision model. What is and is not:
 //   CALIBRATED   each played node's g (backed out of its measured hours; the
@@ -23,7 +27,8 @@
 //                measured runs); k's spread (one node); every ASSUMED
 //                Source-File effect (effects.mjs); the node-special routes
 //                (BN14's is MODELLED from source + the measured BN9 Go farm
-//                with two ASSUMED inputs, eps14 and w0 — go.mjs; Stanek's Gift
+//                with one ASSUMED input, eps14, and w0 DERIVED from the payout
+//                rules x uncertain inputs — go.mjs; Stanek's Gift
 //                (SF13, BN13) is MODELLED from source with MEASURED home RAM and
 //                four ASSUMED inputs — stanek.mjs; BN3/8's are placeholders that
 //                price nothing: routes.mjs); the draw's
@@ -60,11 +65,17 @@ const tick = (name, t0) => (phase[name] = (phase[name] ?? 0) + (performance.now(
 
 const { makeState, parseState, plus, lvl, owed, lattice, sig, clearLabel, pairsOf } = await import('./state.mjs')
 const { EFFECTS, SF_PARAMS, isInert, LIVE_SFS } = await import('./effects.mjs')
+// --w0-prior lo,mid,hi: replace the DERIVED w0 prior (e.g. 0,200,1000 = the old hand prior; with
+// --w0-window 1 that is the model before the derived prior and the climb window — the comparison run)
+if (arg('--w0-prior')) {
+  const [lo, mid, hi] = arg('--w0-prior').split(',').map(Number)
+  Object.assign(SF_PARAMS.w0, { lo, mid, hi, what: `${SF_PARAMS.w0.what} — OVERRIDDEN by --w0-prior to ${lo}/${mid}/${hi}` })
+}
 const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, normal, drawZ, worldOf, paramIds } = await import('./params.mjs')
 const { ROUTES, clearTime, hackParts, favorHours, favorRef, stanekParts } = await import('./routes.mjs')
 const { gridOf, layoutFor, layoutText, giftAvailable } = await import('./stanek.mjs')
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
-const { GO_MEASURED, goScale, goMaxRep, w0rldDiv } = await import('./go.mjs')
+const { GO_MEASURED, goScale, goMaxRep, w0PriorMC } = await import('./go.mjs')
 const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability, appliedObs } = await import('./posterior.mjs')
 const { runObserve, printMove } = await import('./observe.mjs')
 const { looCompare, MODEL_WHAT } = await import('./gmodel.mjs')
@@ -170,7 +181,9 @@ const lvOf = (s) => (n) => lvl(s, n)
 // 3. The mid world: exact optimum, and nextnode's question from the entry
 // ---------------------------------------------------------------------------
 // --phase1: price as phase 1 did (no IPvGO model, no gym scale, BN14 speed 1) — the before/after comparison
-const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK }
+// --w0-window H: the old fixed w0r1d_d43m0n window of H hours (1 = the model before the climb window; regression)
+const W0_WINDOW = arg('--w0-window') !== undefined ? Number(arg('--w0-window')) : null
+const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, w0Window: W0_WINDOW, w0Live: has('--w0-live') }
 const mid = worldOf(econ, {}, wOpts)
 const L0 = lattice(entry)
 const L1 = lattice(start)
@@ -267,7 +280,7 @@ for (const x of fm1) {
 const lvWith = (s, n, l) => (m) => (m === n ? l : lvl(s, m))
 {
   const w = mid
-  console.log(`\nTHE IPvGO MODEL (go.mjs), mid world — MEASURED: Daedalus ${GO_MEASURED.powerPerH}/h x goP ${w.sf.goP}, win ${GO_MEASURED.pWin}, ${GO_MEASURED.gamesPerH} games/h, rep ${w.sf.rep14}/h per level at level ${w.sf.lvl14}; abar (the measured runs' mean Daedalus bonus over a ${econ.profile.cycleHours.toFixed(2)}h window) ${w.go.abar.toFixed(3)}; ASSUMED eps14 ${w.sf.eps14}, w0 ${w.sf.w0}/h`)
+  console.log(`\nTHE IPvGO MODEL (go.mjs), mid world — MEASURED: Daedalus ${GO_MEASURED.powerPerH}/h x goP ${w.sf.goP}, win ${GO_MEASURED.pWin}, ${GO_MEASURED.gamesPerH} games/h, rep ${w.sf.rep14}/h per level at level ${w.sf.lvl14}; abar (the measured runs' mean Daedalus bonus over a ${econ.profile.cycleHours.toFixed(2)}h window) ${w.go.abar.toFixed(3)}; ASSUMED eps14 ${w.sf.eps14}; DERIVED w0 ${w.sf.w0.toFixed(0)}/h`)
   console.log('  BN14 from the plan start, by the SF14 level it is entered with (the go route = the hacking route at GoPower 4):')
   console.log('  entry   scale  Hsim     g      x goG   W(exit)  favor life (ref)   early   go route   blade   [hack w/o Go: phase-1 pricing]')
   const p1 = worldOf(econ, {}, { ...wOpts, phase1: true })
@@ -286,7 +299,24 @@ const lvWith = (s, n, l) => (m) => (m === n ? l : lvl(s, m))
     const fs = [0, 1, 2, 3].map((l) => (n === 2 ? 0 : favorHours(n, l, w, S)))
     console.log(`  BN${String(n).padEnd(3)} ${(+m.FactionWorkRepGain.toFixed(2)).toString().padStart(5)} ${(+m.FavorToDonateToFaction.toFixed(2)).toString().padStart(4)}  ${hs.map(f1).join(' ')} | ${fs.map(f1).join(' ')}  (${f1(n === 2 ? 0 : favorRef(n, w, S))})`)
   }
-  console.log(`  W (w0r1d_d43m0n at the exit, ${w.sf.w0}/h for 1h): GoPower 1: x${w0rldDiv(1, w.sf.w0).toFixed(3)} (SF14.1+ x${w0rldDiv(2, w.sf.w0).toFixed(3)}); BN14: x${w0rldDiv(4, w.sf.w0).toFixed(3)} (with SF14.1+ x${w0rldDiv(8, w.sf.w0).toFixed(3)})`)
+  {
+    // THE w0r1d_d43m0n WINDOW per node (go.mjs goWindow): the post-TRP climb L0 (phase-averaged), the
+    // fixed point L* with the bonus banking, W at the exit, and what it is worth two ways — the plan's
+    // exitShift (the exit level divided by W, installs re-planned: ln W / g) and the climb alone (L0 - L*,
+    // what a final life that does not anticipate the bonus — today's exitplan — realises)
+    const mc = w0PriorMC()
+    const I = mc.inputs
+    const f3 = (a) => a.map((x) => (Math.abs(x) >= 10 ? x.toFixed(0) : x.toFixed(2))).join('/')
+    console.log(`  w0 (DERIVED, go.mjs w0PriorMC, ${mc.n} draws): p10/p50/p90 ${f3([mc.q10, mc.q50, mc.q90])}/h (was 0/200/1000 ASSUMED) — win rate ${f3(I.p)}, score on a win ${f3(I.fWin.map((x) => x * 267))}, on a loss ${f3(I.fLoss.map((x) => x * 267))}, games/h ${f3(I.gamesPerH)}, power/game ${f3(I.perGame)}; rank corr with w0: ${Object.entries(mc.rank).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')}`)
+    console.log(`  the window at this world's w0 ${w.sf.w0.toFixed(0)}/h${W0_WINDOW !== null ? ` — FIXED at ${W0_WINDOW}h (--w0-window)` : ''} (node: post-TRP climb L0 -> L* with the bonus banked per game (games), W at the exit, worth ln W/g [exit shift] / L0-L* [climb only]; priced: ${w.go.w0Live ? 'CLIMB ONLY (--w0-live)' : 'the exit shift'}):`)
+    const rows = []
+    for (const n of [...new Set(owed(start))]) {
+      const hp = hackParts({ node: n, lv: lvOf(start), world: w, S })
+      if (!hp?.win) continue
+      rows.push(`BN${n} ${hp.win.L0.toFixed(2)}->${hp.win.hours.toFixed(2)}h${hp.win.games !== null && hp.win.games !== undefined ? ` (${hp.win.games}g)` : ''} W x${hp.W.toFixed(3)} ${(Math.log(hp.W) / hp.g).toFixed(1)}h/${(hp.win.L0 - hp.win.hours).toFixed(2)}h`)
+    }
+    for (let i = 0; i < rows.length; i += 4) console.log('    ' + rows.slice(i, i + 4).map((r) => r.padEnd(40)).join(''))
+  }
 }
 
 function printPath(steps, from, world, title) {

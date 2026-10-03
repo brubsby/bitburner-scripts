@@ -12,7 +12,7 @@
 import '../env.mjs' // the DOM shim, synchronous, before the bundle (CLAUDE.md load-order traps)
 import { effectAt } from '../../../goplan.js'
 import { favorToRep, repToFavor, goFavorStreamOf } from '../../../favor.js'
-import { goMaxRep, goScale, w0rldDiv, favorLife, BONUS_POWER } from './go.mjs'
+import { goMaxRep, goScale, w0rldDiv, favorLife, BONUS_POWER, goGameStep, w0PerGame, W0_KOMI, W0_DIFFICULTY, BITVERSE_POINTS } from './go.mjs'
 
 const out = { examined: 0, notes: [], fails: [] }
 const done = () => {
@@ -136,6 +136,58 @@ try {
   check(L(8, 0).hours === 0, 'BN8 (FavorToDonateToFaction 0) needs no favor life')
   check(near(l14[0].need, g.favorToRep(150), 1e-12), `the favor life's target ${l14[0].need} vs favorToRep(150)`)
   out.notes.push(`(6) favor life at level 4700, 97 rep/h/level: BN14 SF14 0/1/2/3 ${l14.map((x) => x.hours.toFixed(2) + 'h').join(' / ')} (Go rep ${l14.map((x) => Math.round(x.goRep / 1e3) + 'k').join('/')}); BN1 ${L(1, 0).hours.toFixed(2)}h; BN8 0h`)
+
+  // (7) THE HIDDEN OPPONENT'S PAYOUT (the derived w0 prior's composition), played through the
+  // game's endGoGame on the bitverse board: hand cases of black's score, result and streak —
+  // a loss pays 0.5, a win breaking a dry streak 1 + 0.5 min(dry, 8), a streak 1 + 0.25 min(s, 8),
+  // all x 2.5 (komi 9.5) — then a long Bernoulli run against the stationary per-game expectation.
+  {
+    setNode(1)
+    setSf14(0)
+    const W0 = g.GoOpponent.w0r1d_d43m0n
+    const fresh = () => g.getNewBoardState(19, W0, false)
+    const points = (b) => b.board.flat().filter(Boolean)
+    const n0 = points(fresh()).length
+    check(n0 === BITVERSE_POINTS, `the bitverse board has ${n0} playable points, the model ${BITVERSE_POINTS}`)
+    // black owns the first nb points, white the rest: black.sum = nb, white.sum = 267 - nb + 9.5
+    const boardWith = (nb) => {
+      const b = fresh()
+      points(b).forEach((pt, i) => (pt.color = i < nb ? g.GoColor.black : g.GoColor.white))
+      return b
+    }
+    g.Go.stats = {}
+    const st = () => g.getOpponentStats(W0)
+    let streak = 0
+    let worstRel = 0
+    const CASES = [60, 30, 20, 150, 160, 140, 0, 200, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 139, 138, 267, 145, 150, 155, 160, 165, 170, 175, 180, 185, 190]
+    const rows = []
+    for (const nb of CASES) {
+      const won = nb >= BITVERSE_POINTS - nb + W0_KOMI
+      const before = st().nodePower
+      g.endGoGame(boardWith(nb))
+      const got = st().nodePower - before
+      const m = goGameStep(streak, won, nb)
+      worstRel = Math.max(worstRel, Math.abs(got - m.power) / Math.max(1, m.power))
+      check(near(got, m.power, 1e-12), `endGoGame on the bitverse board, black ${nb} (${won ? 'win' : 'loss'}) from streak ${streak}: game +${got} node power, model ${m.power}`)
+      check(st().winStreak === m.streak, `streak after black ${nb}: game ${st().winStreak}, model ${m.streak}`)
+      if (rows.length < 12) rows.push(`${nb}${won ? 'W' : 'L'}:+${+got.toFixed(1)}`)
+      streak = m.streak
+    }
+    check(W0_DIFFICULTY === g.getDifficultyMultiplier(W0_KOMI, 19), `difficulty ${W0_DIFFICULTY} vs the game's ${g.getDifficultyMultiplier(W0_KOMI, 19)}`)
+    out.notes.push(`(7) the hidden opponent's payout (go.mjs goGameStep) through endGoGame on the bitverse board (${n0} points, komi ${W0_KOMI}, x${W0_DIFFICULTY}): ${CASES.length} hand games incl. a 10-loss dry streak broken (x5) and a 13-win streak (x3), worst relative error ${worstRel.toExponential(1)}; ${rows.join(' ')}`)
+    // the stationary expectation (w0PerGame) against a long played Bernoulli run
+    let s = 11
+    const rnd = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648)
+    for (const [p, sW, sL] of [[0.2, 165, 60], [0.5, 150, 100]]) {
+      g.Go.stats = {}
+      const N = 3000
+      for (let i = 0; i < N; i++) g.endGoGame(boardWith(rnd() < p ? sW : sL))
+      const per = st().nodePower / N
+      const model = w0PerGame(p, sW, sL)
+      check(Math.abs(per - model) / model < 0.04, `p ${p}: ${per.toFixed(1)}/game played through endGoGame vs w0PerGame ${model.toFixed(1)}`)
+      out.notes.push(`(7b) ${N} games at p ${p}, black ${sW} on a win / ${sL} on a loss, through endGoGame: ${per.toFixed(1)} node power/game vs the stationary chain's ${model.toFixed(1)} (${((100 * (per - model)) / model).toFixed(1)}%, tol 4%)`)
+    }
+  }
 } catch (err) {
   out.fails.push(`threw: ${String(err?.stack ?? err).slice(0, 600)}`)
 }

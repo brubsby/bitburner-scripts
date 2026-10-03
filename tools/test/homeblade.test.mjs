@@ -254,8 +254,7 @@ export async function run() {
     if ((src.match(/await bladeGoWeightsOf\(/g)?.length ?? 0) !== 2) c.fail('HB7 progress.js does not price the blade Go weights at both installgate writes')
     if (!/if \(goBlade0\) weightsMeta = \{ \.\.\.weightsMeta, goWeights: goBlade0 \}/.test(src) || !/if \(goBlade1\) weightsMeta = \{ \.\.\.weightsMeta, goWeights: goBlade1 \}/.test(src)) c.fail('HB7 the blade Go weights are not published as objective.goWeights')
     if (!/goWeights: goBlade0 \}\)/.test(src) || !/goWeights: goBlade1 \}\)/.test(src)) c.fail('HB7 the home verdict does not take the blade Go weights')
-    // Through goplan.weightsFor since 2026-10-03: go.js passes wf.windowH, which is the goWeights' own window.
-    if (!/windowH: gw\.windowH \?\? gate\?\.objective\?\.windowH/.test(SRC('goplan.js')) || !/windowH: wf\.windowH/.test(SRC('go.js'))) c.fail("HB7 go.js does not read the blade weights' own window")
+    if (!/windowH: gw\?\.windowH \?\? gate\?\.objective\?\.windowH/.test(SRC('go.js'))) c.fail("HB7 go.js does not read the blade weights' own window")
     checks.push(c)
   }
 

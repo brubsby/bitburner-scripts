@@ -272,7 +272,7 @@ export function saveStore(st, file = POSTERIOR_FILE) {
  */
 export const DEFAULT_SPACE = { w0: 'lin' }
 /**
- * A lin reading's sd floor: 1% of the hand prior's p10-p90 width (w0: 10/h).
+ * A lin reading's sd floor: 1% of the prior's p10-p90 width (w0: 14/h, the derived prior).
  * A run that never scored reads value 0, sd 0 — a real reading, not an infinitely precise one.
  */
 export const linSdFloor = (spec) => 0.01 * Math.abs(spec.hi - spec.lo)

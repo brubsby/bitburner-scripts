@@ -56,7 +56,8 @@ export const SF_PARAMS = {
   goP: { lo: 0.7, mid: 1.0, hi: 1.16, min: 0.1, what: 'Go: Daedalus node power / the measured 4391/h (MEASURED mid; hi = BN9 streak x1.16; lo ASSUMED: games lost to other opponents)' },
   rep14: { lo: 72, mid: 97, hi: 150, min: 10, what: 'Go: Daedalus work rep/h per hacking level, favor 0, FWRG 1 (MEASURED p10/p50/p90 over telemetry segments)' },
   lvl14: { lo: 3500, mid: 4700, hi: 5900, min: 2500, what: 'Go: the hacking level a favor life is ground at (MEASURED range, BN1/4/5/8/9/10)' },
-  w0: { lo: 0, mid: 200, hi: 1000, min: 0, what: 'Go: w0r1d_d43m0n node power/h in the final window (UNMEASURED, ASSUMED: 19x19, never played)' },
+  // DERIVED, not hand: go.mjs w0PriorMC (endGoGame's payout x W0_PRIOR_INPUTS: win rate, black's scores, games/h); GP8 re-derives it
+  w0: { lo: 1020, mid: 1570, hi: 2380, min: 0, what: 'Go: w0r1d_d43m0n node power/h (DERIVED p10/p50/p90: the payout rules x win rate ~0.04, loss score ~87/267, ~8.8 games/h; was ASSUMED 0/200/1000)' },
   d10: { lo: 0.0, mid: 0.01, hi: 0.03, min: 0, what: 'SF10.2/10.3: +1 sleeve each -> g x (1+d) per level' },
   d8: { lo: 0.0, mid: 0.005, hi: 0.02, min: 0, what: 'SF8.2: shorts -> g x (1+d)' },
   e43: { lo: 0.2, mid: 0.7, hi: 1.5, min: 0, what: 'SF4.3: Singularity RAM 436->247GB -> hours saved in the first life' },

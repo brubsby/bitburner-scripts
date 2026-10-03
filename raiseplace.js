@@ -54,12 +54,6 @@ export const RAISED = {
   'bladeburner.js': { gb: 92.75, tier: 128, file: '/tel/bb-full-reserve.txt', route: 'blade' },
   'sleeve.js': { gb: 49.75, tier: 64, file: '/tel/reserve-sleeve.txt', route: null },
   'hashspend.js': { gb: 7.25, tier: 32, file: '/tel/reserve-hashspend.txt', route: null },
-  // NOT raise-sized: go.js's static price, placed by goPlacementOf only in a
-  // Go-first node (see GO FIRST below), at any home size. In RAISED so that
-  // its reservation is honoured exactly like the others (batch.js and seed.js
-  // read reservesOf). Callers size it by ns.getScriptRam; [GF] holds this
-  // figure to the priced script.
-  'go.js': { gb: 20.75, tier: 8, file: '/tel/reserve-go.txt', route: null },
 }
 
 const num = (x) => typeof x === 'number' && isFinite(x)
@@ -87,21 +81,16 @@ export function routeWantsOf(plan, node) {
  * `admitted`: the tier and the route want it — its absence is then a fault the
  * healthcheck times.
  */
-export function raisedPlacementOf({ script = null, homeMax, plan = null, node = null, hosts = [], homeBlock = 0, progressRunning = false, prev = null, need = RAISED[script]?.gb, tier = RAISED[script]?.tier, route = RAISED[script]?.route ?? null, homeKeep = 0 }) {
+export function raisedPlacementOf({ script = null, homeMax, plan = null, node = null, hosts = [], homeBlock = 0, progressRunning = false, prev = null, need = RAISED[script]?.gb, tier = RAISED[script]?.tier, route = RAISED[script]?.route ?? null }) {
   const name = script ?? 'the daemon'
   if (!num(need) || !num(tier)) return { action: 'blocked', admitted: false, why: `${name}: no raised price or tier (not in RAISED)` }
   if (!(num(homeMax) && homeMax >= tier)) return { action: 'wait', admitted: false, why: `home ${homeMax}GB is under the ${tier}GB tier boot.js admits ${name} at` }
   const rw = route === 'blade' ? routeWantsOf(plan, node) : { wants: true, why: 'not route-gated' }
   if (!rw.wants) return { action: 'wait', admitted: false, why: rw.why }
   const ok = hosts.filter((h) => h && h.host && !h.hacknet && num(h.max) && num(h.used))
-  // homeKeep: room kept free on home BESIDES progress.js's block (go.js keeps
-  // act.js's actor headroom there: GO FIRST below). 0 for every other caller.
-  const keep = (h) => (h.host === 'home' ? (!progressRunning ? homeBlock : 0) + (num(homeKeep) && homeKeep > 0 ? homeKeep : 0) : 0)
+  const keep = (h) => (h.host === 'home' && !progressRunning ? homeBlock : 0)
   const free = (h) => h.max - h.used - keep(h)
-  const capNoReloc = (h) => free(h) + (num(h.workerGb) ? h.workerGb : 0) + (num(h.evictGb) ? h.evictGb : 0)
-  // relocGb: daemons that can be moved OFF this host (only seed.js's go
-  // placement passes it, for home: RELOCATABLE below). 0 when absent.
-  const cap = (h) => capNoReloc(h) + (num(h.relocGb) ? h.relocGb : 0)
+  const cap = (h) => free(h) + (num(h.workerGb) ? h.workerGb : 0) + (num(h.evictGb) ? h.evictGb : 0)
   const f = (x) => x.toFixed(2)
   const home = ok.find((h) => h.host === 'home')
   if (home && free(home) >= need) return { action: 'place', admitted: true, host: 'home', gb: need, why: `home has ${f(free(home))}GB free beyond progress.js's block (${rw.why})` }
@@ -114,134 +103,7 @@ export function raisedPlacementOf({ script = null, homeMax, plan = null, node = 
   }
   const pick = cands.find((h) => h.host === prev?.host) ?? cands.find((h) => h.host === 'home') ?? cands.sort((a, b) => cap(a) - cap(b) || (a.host < b.host ? -1 : 1))[0]
   const evict = num(pick.evictGb) && pick.evictGb > 0
-  // Moved off only when the block needs them: workers and evictions first.
-  const relocate = num(pick.relocGb) && pick.relocGb > 0 && capNoReloc(pick) < need
-  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, relocate, why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''}${relocate ? ` (and ${f(pick.relocGb)}GB of daemons moved off it)` : ''} — batch.js and seed.js leave ${need}GB there and the watchdog places ${name} as soon as it is free` }
-}
-
-// ---------------------------------------------------------------------------
-// GO FIRST: go.js in a node where Go is strong.
-//
-// boot.js admits go.js on home at the 128GB tier (rank 20): elsewhere 20.75GB
-// is eight worker threads for a bonus measured in percent. In BitNode 14 the
-// node's GoPower is 4 (BitNode.tsx:1042), so the same games are worth four
-// times as much, and the node is entered for Go. Live BN14.1 (2026-10-03,
-// entered ~18:45Z) home was 32GB and go.js was not running at all until the
-// lead killed early.js on home at 19:02Z and ran it by hand.
-//
-// The rule: effective Go power = GoPower x (Source-File 14 >= 1 ? 2 : 1)
-// (effect.ts:16-22, the sourceFileBonus). Go-first when that is >= 4, which is
-// BitNode 14 with or without SF14 (4 / 8). SF14 alone (x2 in every node) is
-// not: there Go is half what made BitNode 14 worth the home, and the tier-128
-// placement stands. SF14 enters the PRICING everywhere (goplan effectAt).
-//
-// Placement in a Go-first node, by RANK and not by squeezing the plan:
-// boot.js's manifest and its tier checks are unchanged (no Go-node branch in
-// the planner: boot.js would need getResetInfo, 1GB of launcher, which at the
-// 64GB tier is the watchdog's slot). Instead the two placers that already pay
-// for the reads do it, from any home size:
-//   - seed.js (tier 8 until 128), every pass, and watchdog.js (64 up), every
-//     cycle, through goPlacementOf -> raisedPlacementOf, script 'go.js';
-//   - home only with act.js's WHOLE action slot kept beside it
-//     (goHomeKeepOf: the largest act-*.js, 19.4GB in BN14) and progress.js's
-//     block where the watchdog runs it. It outranks the home worker
-//     (early.js/hgw.js are EVICTABLE) and, from seed.js, the RELOCATABLE
-//     daemons, never the slot: at 32GB and 64GB home cannot hold it, so the
-//     fleet is the main path (a rooted 32GB host, or a purchased server such
-//     as the 'go-host' bought live at 20:50Z);
-//   - else the tightest fleet host with the room, else a host RESERVED and its
-//     seed workers evicted (seed.js and batch.js honour the reservation),
-//     else blocked by name (an 8GB opening with no 32GB host rooted).
-// go.js talks to the solver through home's /go files from wherever it runs.
-
-/** Effective Go power at or above which go.js is placed first (BitNode 14). */
-export const GO_FIRST_EFFECT = 4
-
-/** Is this a Go-first node? goPower = the node's GoPower multiplier, sf14 = the Source-File 14 level. */
-export function goFirstOf({ goPower, sf14 = 0 } = {}) {
-  if (!num(goPower) || goPower <= 0) return { goFirst: false, effective: null, why: 'GoPower unknown (no BitNode table entry): not Go-first' }
-  const effective = goPower * (num(sf14) && sf14 >= 1 ? 2 : 1)
-  const goFirst = effective >= GO_FIRST_EFFECT
-  return {
-    goFirst,
-    effective,
-    why: `effective Go power ${effective} (GoPower ${goPower}${num(sf14) && sf14 >= 1 ? ' x2 for SF14' : ''}) ${goFirst ? '>=' : '<'} ${GO_FIRST_EFFECT}: ${goFirst ? 'go.js placed first, at any home size' : 'go.js at its 128GB home tier'}`,
-  }
-}
-
-/**
- * act.js's actors (act-*.js). go.js on home keeps the WHOLE action slot free
- * beside it: the largest actor, the same figure boot.js reserves (stack.js's
- * action slot). An earlier version kept only the largest routine actor
- * (8.25GB in BN14) and ran go.js on a 32GB home; live BN14.1 from 18:59Z to
- * 20:49Z act.js then placed nothing (no gym, no home-RAM purchase) and
- * BOOTSTRAP STALLED fired. go.js outranks the home WORKER (early.js), never
- * act.js's slot, so at the 32GB and 64GB tiers it goes off home. [GF] fails
- * when a new act-*.js is in neither list.
- */
-export const ROUTINE_ACTORS = ['act-backdoor.js', 'act-buyaug.js', 'act-buyprogram.js', 'act-company.js', 'act-course.js', 'act-crime.js', 'act-donate.js', 'act-focus.js', 'act-gym.js', 'act-homeram.js', 'act-install.js', 'act-join.js', 'act-softreset.js', 'act-stop.js', 'act-travel.js', 'act-work.js']
-export const RARE_ACTORS = ['act-liquidate.js', 'act-graft.js']
-
-/** The action slot go.js keeps on home: the largest act-*.js, priced by `ramOf` (ns.getScriptRam). */
-export function goHomeKeepOf(ramOf) {
-  let max = 0
-  for (const a of [...ROUTINE_ACTORS, ...RARE_ACTORS]) {
-    const r = Number(ramOf(a))
-    if (num(r) && r > max) max = r
-  }
-  return max
-}
-
-/**
- * Daemons boot.js places 'anywhere' that can land on home only because the
- * fleet was full when it ran: stateless loops, safe to kill and start on a
- * fleet host. seed.js moves them off home when go.js needs the room there.
- */
-export const RELOCATABLE = ['hashspend.js', 'tel.js', 'errlog.js', 'rfalink.js', 'hacknet.js']
-
-/** The watchdog tier: below it nothing runs progress.js, so its home block is not kept. */
-export const JOB_RUNNER_TIER = 64
-
-/**
- * Where go.js goes this pass in a Go-first node; {action: 'wait'} elsewhere.
- * Same inputs as raisedPlacementOf, plus `go` (goFirstOf's verdict) and
- * `homeKeep` (goHomeKeepOf). A host's `relocGb` (home only, from seed.js) is
- * the RELOCATABLE daemons on it.
- */
-export function goPlacementOf({ go, ...rest }) {
-  if (!go?.goFirst) return { action: 'wait', admitted: false, why: go?.why ?? 'not a Go-first node' }
-  const d = raisedPlacementOf({ script: 'go.js', tier: RAISED['go.js'].tier, route: null, ...rest })
-  return { ...d, why: `${d.why} [${go.why}]` }
-}
-
-/**
- * go.js RUNNING ON HOME still keeps act.js's actor headroom. Something placed
- * after it (boot.js's worker spawn, a daemon boot.js dropped on home because
- * the fleet was full) can eat the room. Live BN14.1 19:08Z: go.js 20.75GB plus
- * hashspend.js 7.25GB on a 32GB home left 4GB, and act.js refused
- * "no rooted host has 4.25GB free for act-gym.js" every 5s while the gym
- * order waited.
- *
- * Which processes on home to stop, cheapest first: the EVICTABLE worker
- * threads, then RELOCATABLE daemons (largest first, to move the fewest), only
- * until `keep` GB is free. procs: [{script, gb}] on home (gb = RAM x threads).
- * Returns {stop: [script], freeAfter, ok}. ok false: even all of them would
- * not free `keep`, and nothing is stopped.
- */
-export function goHomeRepairOf({ max, used, keep, procs = [] }) {
-  if (!num(max) || !num(used) || !num(keep)) return { stop: [], freeAfter: null, ok: false }
-  let free = max - used
-  if (free >= keep) return { stop: [], freeAfter: free, ok: true }
-  const ev = procs.filter((p) => EVICTABLE.includes(p.script))
-  const rl = procs.filter((p) => RELOCATABLE.includes(p.script)).sort((a, b) => b.gb - a.gb)
-  const stop = []
-  for (const p of [...ev, ...rl]) {
-    if (free >= keep) break
-    stop.push(p.script)
-    free += p.gb
-  }
-  if (free < keep) return { stop: [], freeAfter: max - used, ok: false }
-  return { stop: [...new Set(stop)], freeAfter: free, ok: true }
+  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''} — batch.js and seed.js leave ${need}GB there and the watchdog places ${name} as soon as it is free` }
 }
 
 /** The reservation record: a host only while placing or reserving. */

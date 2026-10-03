@@ -185,12 +185,14 @@ function st5() {
   const econ = { gScen: { lo: 0.04, mid: 0.065, hi: 0.13 }, gamma: 0.6, amc: Object.fromEntries([...Array(14)].map((_, i) => [i + 1, 1])), ownG: new Map([[1, 0.05], [5, 0.06]]), profile: { cycleHours: 2.6, expRich: 2e9 }, runs: [] }
   const mults = { GoPower: 1, FavorToDonateToFaction: 1, FactionWorkRepGain: 1, StaneksGiftPowerMultiplier: 1.3, StaneksGiftExtraSize: 0, AugmentationRepCost: 1, HackExpGain: 1, HackingSpeedMultiplier: 1, BladeburnerRank: 0 }
   // a stub surrogate: a smooth exit curve in g (the real one is a grid of exitplan runs)
-  const S = { hackHours: (n, l, sf, g) => 1.8 / g + l + sf.length / 10, mults: () => mults, bbRank: () => 0 }
+  // hackClimb: the post-TRP climb the w0r1d_d43m0n window is solved on (go.mjs goWindow), a constant stub
+  const S = { hackHours: (n, l, sf, g) => 1.8 / g + l + sf.length / 10, hackClimb: () => ({ L0: 0.8, u0: 700 }), mults: () => mults, bbRank: () => 0 }
   const levels = new Map([[1, 3], [4, 3], [5, 1], [8, 1], [9, 1], [10, 1], [11, 0], [12, 0], [13, 0], [14, 1]])
   const lv = (n) => levels.get(n) ?? 0
   const world = worldOf(econ, {})
-  for (const node of [1, 5]) {
-    const a = { node, lv, world, S }
+  // both valuations of the w0r1d_d43m0n bonus (the exit shift; --w0-live, the climb's shortening)
+  for (const [node, wd] of [[1, world], [5, world], [1, worldOf(econ, {}, { w0Live: true })]]) {
+    const a = { node, lv, world: wd, S }
     const base = hackParts(a)
     const st = { gMul: 1.031, W: 1.74, favorMul: 0.81 }
     const viaGift = giftParts(base, st, a)

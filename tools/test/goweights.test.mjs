@@ -168,12 +168,7 @@ export async function run() {
     if (!/goWeightsGen\(/.test(p) || !/goWeights:\s*goPub/.test(p)) c5.fail("progress.js must run goWeightsGen and publish it as weightsMeta.goWeights");
     if (!/draws:\s*pcGo\?\.draws/.test(p)) c5.fail("progress.js must price the Go weights on the plan's draws (common random numbers)");
     const g = read("go.js");
-    // Through goplan.weightsFor since 2026-10-03 (the early-game fallback):
-    // go.js hands chooseOpponent wf.weights, and weightsFor returns the gate's
-    // goWeights whenever the gate is this life's and carries them ([GF2]).
-    if (!/weightsFor\(gate, reset\?\.lastAugReset/.test(g) || !/weights:\s*\{\s*\.\.\.wf\.weights/.test(g)) c5.fail("go.js must hand chooseOpponent the goWeights (via goplan.weightsFor)");
-    const gpSrc = read("goplan.js");
-    if (!/objective\?\.goWeights/.test(gpSrc) || /objective\?\.weights\b/.test(gpSrc)) c5.fail("goplan.weightsFor must read objective.goWeights, never objective.weights");
+    if (!/weights:\s*gw\?\.weights/.test(g)) c5.fail("go.js must hand chooseOpponent the goWeights");
     if (/weights:\s*gate\?\.objective\?\.weights/.test(g)) c5.fail("go.js prices the opponent on objective.weights again — those price an augmentation, not a Go bonus");
   }
   checks.push(c5);

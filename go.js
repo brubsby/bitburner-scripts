@@ -127,7 +127,7 @@
 // ---------------------------------------------------------------------------
 
 import { chooseMove, applyMove, cheatChance, cheatWaitS } from 'golib.js'
-import { canUseGoCheat, canJoinBladeburner, sfLevel } from 'sfgate.js'
+import { canUseGoCheat, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
   nodePowerFromBonus,
@@ -153,7 +153,6 @@ import {
   w0RecordAdd,
   w0Obs,
   obsDue,
-  weightsFor,
 } from 'goplan.js'
 // Pure data module (no ns surface): the BitNode table, for GoPower.
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -471,14 +470,6 @@ export async function main(ns) {
     ['remotems', 14000],
     ['games', -1],
     ['opponent', SETTINGS.opponent],
-    // THE USER'S PIN. Hold --opponent until this life's goWeights exist
-    // (progress.js's priced weights), instead of the early-game pricing. A
-    // human's standing choice (live BN14.1, 19:10Z: the user put the farm on
-    // The Black Hand) must not be undone by a heuristic five games later; the
-    // planner's own weights, once published, do re-price. The same pin
-    // survives a relaunch (the watchdog starts go.js with no args) as the
-    // file /go/pin.txt on home holding the opponent's name.
-    ['pin', false],
   ])
   ns.disableLog('ALL')
   const duty = Math.round((100 * flags.maxms) / (flags.maxms + flags.idle))
@@ -604,57 +595,6 @@ export async function main(ns) {
     for (const [name, meta] of Object.entries(OPPONENTS)) out[name] = stats?.[meta.game]?.winStreak ?? 0
     return out
   }
-  // THE EARLY-GAME READINGS (goplan.earlyGoWeights): income streams, what the
-  // work slot is doing, the Bladeburner route. All /tel reads from home (0GB),
-  // each dropped when stale or from another life.
-  let earlyWhy = null
-  let weightsSource = null
-  let pinned = null
-  const PIN_FILE = '/go/pin.txt'
-  /** The pinned opponent's key, or null: --pin with --opponent, else /go/pin.txt on home. */
-  const pinOf = () => {
-    if (flags.pin) return keyOfGame(flags.opponent)
-    return keyOfGame(String(readHome(PIN_FILE) || '').trim())
-  }
-  const earlyInputs = () => {
-    const rec = (file) => {
-      try {
-        return JSON.parse(readHome(file) || 'null')
-      } catch {
-        return null
-      }
-    }
-    const fresh = (r, min) => !!r && Date.now() - Date.parse(r.at) < min * 60e3
-    const thisLife = (r) => !!r && r.lastAugReset === reset?.lastAugReset
-    const st = rec('/tel/status.txt')
-    const bt = rec('/tel/batch.txt')
-    const hn = rec('/tel/hacknet.txt')
-    const pr = rec('/tel/progress.txt')
-    const act = rec('/tel/act.txt')
-    const bbFull = rec('/tel/bladeburner.txt')
-    const bbLite = rec('/tel/bb-lite.txt')
-    let planRec = null
-    try {
-      planRec = JSON.parse(readHome(PLAN_FILE) || 'null')
-    } catch {
-      /* no plan: the route is presumed */
-    }
-    const batchPerSec = fresh(bt, 10) ? bt?.totals?.earnedPerSec : null
-    const node = reset?.currentNode
-    const mults = bitNodeMults(node)
-    const joined = [bbFull, bbLite].some((b) => b?.bitNode === node && b?.joined === true)
-    return {
-      // The batcher's own figure when it runs; else all script income, which
-      // before the trader runs is the hacking workers'.
-      hackIncome: typeof batchPerSec === 'number' ? batchPerSec : fresh(st, 10) ? st?.incomePerSec ?? null : null,
-      hacknetIncome: fresh(hn, 10) && thisLife(hn) ? hn?.moneyPerSec ?? null : null,
-      // progress.js's claim on the slot when it is live, else what act.js
-      // has the player doing this life.
-      work: (fresh(pr, 15) && pr?.slot?.owner) || (fresh(act, 15) && thisLife(act) ? act?.work?.kind ?? null : null),
-      blade: { open: canJoinBladeburner(reset) && (mults?.BladeburnerRank ?? 0) > 0, route: routeOf(planRec, node), joined },
-      nodeMults: mults,
-    }
-  }
   const pickOpponent = (current, stats, dwellH) => {
     try {
       // MEASUREMENT FIRST: a capped batch against the hidden opponent while
@@ -671,20 +611,11 @@ export async function main(ns) {
       // exp) and only until the next install, which zeroes it. NOT
       // objective.weights: those price an augmentation — the whole income,
       // every later life — and overstated hacking_speed ~10^5x (2026-09-29).
-      //
-      // NO goWeights FOR THIS LIFE (another life's gate, no gate, or a
-      // refusing pass) -> the early-game weights (goplan.earlyGoWeights): what
-      // the current life is using, from cheap telemetry. Until 2026-10-03 this
-      // path refused and the incumbent stood, which in a fresh node is
-      // whatever the last process happened to be playing (BN14.1: Daedalus,
-      // with no faction joined). goplan.weightsFor makes the choice.
-      const wf = weightsFor(gate, reset?.lastAugReset, earlyInputs)
-      earlyWhy = wf.source === 'early' ? wf.why : null
-      weightsSource = wf.source
-      // THE PIN holds only while the weights are the early heuristic.
-      const pin = pinOf()
-      pinned = pin
-      if (pin && wf.source === 'early') return { opponent: pin, why: `pinned to ${pin} (${flags.pin ? '--pin' : PIN_FILE}) until this life's goWeights exist; the early pricing would say: ${wf.why}`, switched: current !== pin }
+      // Another life's gate, or a refusing pass, publishes no weights, and
+      // chooseOpponent keeps the incumbent and says why. That is the
+      // intended path, not a defect.
+      const sameLife = gate?.lastAugReset === reset?.lastAugReset
+      const gw = sameLife ? gate?.objective?.goWeights ?? null : null
       //
       // goPower comes from the BitNode table, which is the authority — the
       // gate file never carried it, and defaulting to 1 would under-price
@@ -711,10 +642,10 @@ export async function main(ns) {
       lastDraw = Object.fromEntries(Object.entries(draw).map(([k, v]) => [k, Number(v.toFixed(3))]))
       const w0r = w0RateOf()
       const pick = chooseOpponent({
-        weights: { ...wf.weights, ...hackW },
+        weights: gw?.weights ? { ...gw.weights, ...hackW } : null,
         // The Bladeburner route's weights carry their own life (the committed
         // install, or the black-op exit): goweights.bladeGoWeightsGen.
-        windowH: wf.windowH,
+        windowH: gw?.windowH ?? gate?.objective?.windowH ?? null,
         incumbent: current,
         nodePower: nodePowerOf(stats),
         dwellH,
@@ -728,9 +659,9 @@ export async function main(ns) {
         refWinRates: { ...WIN_RATE, [W0]: w0r.ref },
         redPill: w0.eligible,
       })
-      const why = wf.source === 'early' ? `[early-game weights: ${wf.phase}; goWeights: ${wf.gwWhy}] ${pick.why}` : pick.why
+      const why = pick.refused && !gw?.weights ? `${pick.why} (goWeights: ${sameLife ? gw?.why ?? 'not published' : 'gate is from another life'})` : pick.why
       if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why, switched: false }
-      return { opponent: pick.opponent, why, switched: true }
+      return { opponent: pick.opponent, why: pick.why, switched: true }
     } catch (e) {
       return { opponent: current, why: `opponent pricing failed: ${String(e).slice(0, 80)}`, switched: false }
     }
@@ -814,15 +745,6 @@ export async function main(ns) {
   const note = reporter(ns, SETTINGS.statusFile, () => ({
     opponent,
     opponentWhy,
-    // Which weights priced the last choice: progress.js's goWeights for this
-    // life, or the early-game weights (and the readings behind them).
-    weightsSource,
-    earlyWhy,
-    pinned,
-    host: here,
-    bitNode: reset?.currentNode ?? null,
-    lastAugReset: reset?.lastAugReset ?? null,
-    goPower,
     boardSize: gameSize,
     // The Thompson state behind the choice: the last draw, each arm's posterior
     // mean/sd/raw games, and why the counts are empty if they are.
@@ -868,16 +790,9 @@ export async function main(ns) {
     phase,
     errors: errors.slice(-5),
   }))
-  // Off home the status file is written locally and the daemon mirrors /tel
-  // from home only: push every publish to home (C10; scp is already paid for).
-  const toHome = () => {
-    if (here !== 'home') ns.scp(SETTINGS.statusFile, 'home', here)
-  }
   const publishAt = (health, fields) => {
     lastPublishAt = Date.now()
-    const out = note(health, fields)
-    toHome()
-    return out
+    return note(health, fields)
   }
 
   // PUBLISH ON A TIMER, NOT ONLY PER GAME. The per-game write was the only
@@ -913,7 +828,6 @@ export async function main(ns) {
   // replace the 'ui-lock' callback lock.js registers.
   ns.atExit(() => {
     note.exit('stopped', { detail: 'go.js is no longer playing — the faction_rep bonus has stopped growing' })
-    toHome()
   }, 'status')
 
   publishAt('ok', { detail: `starting vs ${opponent} on ${N}x${N}` })
@@ -979,19 +893,11 @@ export async function main(ns) {
       const askSolver = async (board, validList) => {
         seq++
         const opts = solverReq.opts ? { ...solverReq.opts, opponentPassed: oppPassed } : undefined
-        // THE SOLVER TALKS TO HOME. tools/go-solver.mjs reads /go/req.txt and
-        // writes /go/move.txt on home over the Remote File API, and ns.read
-        // and ns.write are local — so off home (a Go node places this
-        // wherever the room is: raiseplace goPlacementOf) the request is
-        // pushed to home after the write and the reply pulled before every
-        // read. Without this an off-home go.js asks a solver that never sees
-        // the question and plays every move on the 20ms fallback (C10).
         ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}) }), 'w')
-        if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
         for (let waited = 0; waited < remoteWait; waited += 250) {
           await ns.sleep(250)
           try {
-            const reply = JSON.parse(readHome('/go/move.txt') || '{}')
+            const reply = JSON.parse(ns.read('/go/move.txt') || '{}')
             if (reply.seq === seq) return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
           } catch {
             /* not written yet */
@@ -1038,8 +944,7 @@ export async function main(ns) {
         }
         let st = null
         try {
-          // go-cheat.js runs on home and writes its result there.
-          st = JSON.parse(readHome('/tel/go-cheat.txt') || 'null')
+          st = JSON.parse(ns.read('/tel/go-cheat.txt') || 'null')
         } catch {
           /* unreadable is handled below */
         }

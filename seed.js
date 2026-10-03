@@ -43,7 +43,7 @@
 import { reporter, describe } from 'status.js'
 // Pure: the trader's placement priced as trajectories (nodeecon), the home tier's price (homecost).
 import { traderPlacement } from 'nodeecon.js'
-import { canAccessFeature, sfLevel, singularityRamMultiplier } from 'sfgate.js'
+import { canAccessFeature } from 'sfgate.js'
 import { ramUpgradeCost } from 'homecost.js'
 // Pure: the exp-mode gate and the exp-per-thread rule, and the node table.
 import { expMode, expPerThread } from 'expfarm.js'
@@ -51,7 +51,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): the full Bladeburner daemon's reserved block, kept free of workers.
-import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, JOB_RUNNER_TIER, goFirstOf, goPlacementOf, goHomeKeepOf, goHomeRepairOf, reserveRecordOf } from 'raiseplace.js'
+import { reservesOf, RAISED } from 'raiseplace.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
@@ -110,7 +110,6 @@ export async function main(ns) {
       last = await pass(ns, flags)
       note(last.refused?.length ? 'degraded' : 'ok', {
         result: last.why ? 'retired-for-batch' : 'ok',
-        go: lastGo,
         detail:
           (last.why ? `${last.why}; ` : '') +
           `${last.placed.length} placed, ${last.newlyRooted.length} newly rooted` +
@@ -185,15 +184,6 @@ async function pass(ns, flags) {
 
   // Root anything that has become reachable since the last pass.
   const newlyRooted = all.filter((h) => h !== 'home' && root(ns, h))
-
-  // GO FIRST (raiseplace.js): in a node where Go is strong, go.js is placed
-  // before any worker is, at any home size. Its own try: a placement fault
-  // must not cost the pass that keeps the fleet working.
-  try {
-    await placeGo(ns, all)
-  } catch (err) {
-    lastGo = { ...(lastGo ?? {}), error: describe(err) }
-  }
 
   // RETIRED WHILE THE BATCHER RUNS. batch.js places its own h/g/w on every
   // host; early.js/hgw.js loop forever and hold their RAM. Live 2026-10-02
@@ -408,172 +398,6 @@ async function pass(ns, flags) {
 
 let lastTrader = null
 const TRADER = 'stock.js'
-
-// ---------------------------------------------------------------------------
-// GO FIRST (raiseplace.js GO FIRST). Below 64GB nothing else places go.js:
-// boot.js plans once (and admits it at 128GB), the watchdog is tier 64. This
-// pass is the placer from the 8GB opening to 128GB, where seed.js retires.
-let lastGo = null
-const GO = 'go.js'
-
-/**
- * Place go.js in a Go-first node. Home only with act.js's whole action slot
- * kept beside it; otherwise (the usual case below 128GB) a fleet host. A
- * go.js already on home that is eating the slot (live BN14.1 18:59-20:49Z) is
- * moved to a fleet host once one can hold it, with its args (a pin) kept.
- */
-export async function placeGo(ns, all) {
-  const reset = ns.getResetInfo()
-  const go = goFirstOf({ goPower: bitNodeMults(reset.currentNode)?.GoPower, sf14: sfLevel(reset, 14) })
-  if (!go.goFirst) {
-    lastGo = { goFirst: false, why: go.why }
-    return null
-  }
-  const here = ns.getHostname()
-  const file = RAISED[GO].file
-  const writeRec = (d) => {
-    ns.write(file, JSON.stringify(reserveRecordOf(d, reset, Date.now(), GO)), 'w')
-    if (here !== 'home') ns.scp(file, 'home', here)
-  }
-  const rooted = all.filter((h) => ns.hasRootAccess(h))
-  const homeMax = ns.getServerMaxRam('home')
-  const homeKeep = goHomeKeepOf((a) => ns.getScriptRam(a, 'home'))
-  const gbOn = (h, names) => ns.ps(h).filter((p) => names.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0)
-  const homeProcs = () => ns.ps('home').map((p) => ({ script: p.filename, gb: ns.getScriptRam(p.filename, 'home') * p.threads, args: p.args }))
-  let prev = null
-  try {
-    if (here !== 'home') ns.scp(file, here, 'home')
-    prev = JSON.parse(ns.read(file) || 'null')
-  } catch {
-    prev = null
-  }
-  // Another daemon's live reservation is not room for go.js.
-  const others = reservesOf((f) => ns.read(f), reset, rooted).filter((r) => r.script !== GO)
-  const held = (h) => others.reduce((a, r) => a + (r.host === h ? r.gb : 0), 0)
-  const progressRunning = ns.ps('home').some((p) => p.filename === 'progress.js')
-  const decide = (offHome = false) =>
-    goPlacementOf({
-      go,
-      homeMax,
-      need: ns.getScriptRam(GO, 'home'),
-      homeKeep,
-      // progress.js's block only where something runs it (the watchdog tier).
-      homeBlock: homeMax >= JOB_RUNNER_TIER ? 13 + 6.25 * singularityRamMultiplier(reset) : 0,
-      progressRunning,
-      prev,
-      hosts: rooted
-        .filter((h) => !(offHome && h === 'home'))
-        .map((h) => ({
-          host: h,
-          max: ns.getServerMaxRam(h),
-          used: ns.getServerUsedRam(h) + held(h),
-          workerGb: gbOn(h, ['h.js', 'g.js', 'w.js']),
-          evictGb: gbOn(h, EVICTABLE),
-          relocGb: h === 'home' ? gbOn(h, RELOCATABLE) : 0,
-          hacknet: isHacknetServerHost(h),
-        })),
-    })
-
-  const running = rooted.find((h) => ns.ps(h).some((p) => p.filename === GO)) ?? null
-  if (running && running !== 'home') {
-    writeRec({ action: 'running', why: `${GO} is running on ${running}: nothing reserved` })
-    lastGo = { goFirst: true, action: 'running', host: running, why: go.why }
-    return running
-  }
-  if (running === 'home') {
-    // On home it must leave act.js's whole action slot (goHomeRepairOf):
-    // first by moving the worker and the relocatable daemons, else by moving
-    // go.js itself to the fleet.
-    const procs = homeProcs()
-    const r = goHomeRepairOf({ max: homeMax, used: ns.getServerUsedRam('home'), keep: homeKeep, procs })
-    if (r.ok) {
-      const repaired = r.stop.length ? await moveOffHome(ns, rooted, r.stop, procs.filter((p) => r.stop.includes(p.script))) : []
-      writeRec({ action: 'running', why: `${GO} is running on home with the action slot kept` })
-      lastGo = { goFirst: true, action: 'running', host: 'home', homeKeep, repaired, why: go.why }
-      return 'home'
-    }
-    const goArgs = ns.ps('home').find((p) => p.filename === GO)?.args ?? []
-    let off = decide(true)
-    if (off.action === 'reserve' && off.evict) {
-      for (const w of EVICTABLE) ns.scriptKill(w, off.host)
-      await ns.sleep(0)
-      const again = decide(true)
-      if (again.action === 'place' || again.action === 'reserve') off = again
-    }
-    if (off.action === 'place') {
-      ns.scp(importClosure(ns, GO), off.host, 'home')
-      const pid = ns.exec(GO, off.host, 1, ...goArgs)
-      if (pid) {
-        ns.scriptKill(GO, 'home')
-        ns.tprint(`seed: moved ${GO} off home to ${off.host}: home could not keep the ${homeKeep}GB action slot beside it`)
-      }
-      writeRec(pid ? { action: 'running', why: `${GO} moved off home to ${off.host}` } : off)
-      lastGo = { goFirst: true, action: pid ? 'moved-off-home' : 'blocked', host: off.host, pid, homeKeep, why: off.why }
-      return pid ? off.host : 'home'
-    }
-    writeRec(off.action === 'reserve' ? off : { action: 'running', why: `${GO} on home, no fleet host for it yet: ${off.why}` })
-    lastGo = { goFirst: true, action: 'running', host: 'home', homeKeep, slotEaten: true, pending: off.action, why: off.why }
-    return 'home'
-  }
-
-  let d = decide(false)
-  let moved = []
-  if (d.action === 'reserve' && (d.evict || d.relocate)) {
-    const procs = d.relocate ? homeProcs() : []
-    for (const w of EVICTABLE) ns.scriptKill(w, d.host)
-    if (d.relocate) for (const r of RELOCATABLE) ns.scriptKill(r, 'home')
-    await ns.sleep(0)
-    const again = decide(false)
-    if (again.action === 'place' || again.action === 'reserve') d = { ...again, why: `${again.why} (after clearing ${d.host})` }
-    moved = procs.filter((p) => RELOCATABLE.includes(p.script))
-  }
-  let pid = 0
-  if (d.action === 'place') {
-    if (d.host !== 'home') ns.scp(importClosure(ns, GO), d.host, 'home')
-    pid = ns.exec(GO, d.host, 1)
-    if (pid) ns.tprint(`seed: placed ${GO} on ${d.host} (Go-first node)`)
-  }
-  writeRec(pid ? { action: 'running', why: `${GO} placed on ${d.host}` } : d)
-  // The daemons moved off home start again on a fleet host, after go.js has its block.
-  const relocated = moved.length ? await moveOffHome(ns, rooted, [], moved) : []
-  lastGo = { goFirst: true, action: pid ? 'placed' : d.action, host: d.host ?? null, pid, homeKeep, relocated, why: d.why }
-  return pid ? d.host : null
-}
-
-/**
- * Start `procs` (stopping the named scripts on home first) on fleet hosts:
- * the tightest host with the room, else the one whose seed workers, once
- * evicted, leave it. Returns ['script@host' | 'script: no host'].
- */
-export async function moveOffHome(ns, rooted, stopNames, procs) {
-  for (const s of stopNames) ns.scriptKill(s, 'home')
-  if (stopNames.length) await ns.sleep(0)
-  const out = []
-  for (const p of procs) {
-    if (!RELOCATABLE.includes(p.script)) continue
-    // A raise-sized daemon needs its raised block, not its declared floor.
-    const need = Math.max(ns.getScriptRam(p.script, 'home'), RAISED[p.script]?.gb ?? 0)
-    const hosts = rooted.filter((h) => h !== 'home' && !isHacknetServerHost(h) && !ns.ps(h).some((q) => q.filename === GO))
-    const free = (h) => ns.getServerMaxRam(h) - ns.getServerUsedRam(h)
-    const evictable = (h) => ns.ps(h).filter((q) => EVICTABLE.includes(q.filename)).reduce((a, q) => a + ns.getScriptRam(q.filename, h) * q.threads, 0)
-    let host = hosts.filter((h) => free(h) >= need).sort((a, b) => free(a) - free(b))[0] ?? null
-    if (!host) {
-      host = hosts.filter((h) => free(h) + evictable(h) >= need).sort((a, b) => free(a) + evictable(a) - (free(b) + evictable(b)))[0] ?? null
-      if (host) {
-        for (const w of EVICTABLE) ns.scriptKill(w, host)
-        await ns.sleep(0)
-      }
-    }
-    if (!host) {
-      out.push(`${p.script}: no host`)
-      continue
-    }
-    ns.scp(importClosure(ns, p.script), host, 'home')
-    const pid = ns.exec(p.script, host, 1, ...(p.args ?? []))
-    out.push(pid ? `${p.script}@${host}` : `${p.script}: exec refused on ${host}`)
-  }
-  return out
-}
 
 /** Every file a script imports, transitively (import lines read free, ns.read). */
 function importClosure(ns, root) {

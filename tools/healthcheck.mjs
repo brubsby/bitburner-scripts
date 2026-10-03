@@ -37,7 +37,6 @@ import { fileURLToPath } from "node:url";
 import { autoPushVerdict } from "./pushwatch.mjs";
 import { bladeburnerHealth, installLoopOf } from "./bbhealth.mjs";
 import { raisedHealth } from "./raisehealth.mjs";
-import { goNodeHealth, sfOfState } from "./gohealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -51,7 +50,6 @@ import "./test/gameresolve.mjs";
 const { wealthNegativeCheck, stackTierFromBoot, graftHoldCauseOf } = await import("../nodeecon.js");
 const { ramUpgradeCost } = await import("../homecost.js");
 const { bitNodeMults } = await import("../bitNodeMultipliers.js");
-const { goFirstOf } = await import("../raiseplace.js");
 const { gangActivity, wantedBindsCheck, whyContradictions } = await import("../gangplan.js");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -568,16 +566,6 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   for (const f of r.fails) fail(f.what, f.detail);
   for (const n of r.notes) note(n);
   now.raised = r.snap;
-}
-// GO NOT PLAYING IN A GO NODE (tools/gohealth.mjs): in a Go-first node
-// (BitNode 14) go.js absent or idle for > 10 min of the life. Live BN14.1
-// 2026-10-03: nothing ran it for the node's first 17 minutes.
-{
-  const verdict = goFirstOf({ goPower: bitNodeMults(state.bitNode)?.GoPower, sf14: sfOfState(state, 14) });
-  const r = goNodeHealth({ state, go: readTel("go.txt"), prev: prev?.goNode ?? null, verdict });
-  if (r.fail) fail(r.fail.what, r.fail.detail);
-  if (r.note) note(r.note);
-  now.goNode = r.snap;
 }
 // THE STOCK TRADER (stock.js). In BitNode 8 it is the whole income, so a dead
 // or erroring trader is a stalled node, and a live one earning far below what

@@ -204,5 +204,38 @@ try {
   c.examined++
   if (!(j14 > j6)) c.fails.push(`bbsim's gym to combat 100 is not longer in BN14 (${j14}h) than BN6 (${j6}h)`)
   c.notes.push(`(c) gym to combat 100 (bbsim joinH, SF6.1): BN6 ${j6?.toFixed(2)}h, BN14 ${j14?.toFixed(2)}h -> BN14's opening +${(j14 - j6).toFixed(2)}h over the measured 2.5h`)
+  // (d) REGRESSION: the w0r1d_d43m0n window. w0 = 0 prices every clear exactly as the old
+  // fixed 1h window did (W = 1 in both), and a fixed 1h window reproduces the old W =
+  // effect(w0 x 1h) — so the old numbers are this model at (w0 0) or (window 1h).
+  const { hackParts } = await import('./routes.mjs')
+  const { w0rldDiv, goScale } = await import('./go.mjs')
+  const lv0 = (n) => lvl(S0, n)
+  const nodes = lattice(S0).dims.map((d) => d.n)
+  let nd = 0
+  let worstW = 0
+  const rowsD = []
+  for (const w0 of [0, 200, 1500]) {
+    const wc = worldOf(econ, {}, { sigmaPlayed: 0 })
+    const wf = worldOf(econ, {}, { sigmaPlayed: 0, w0Window: 1 })
+    wc.sf.w0 = w0
+    wf.sf.w0 = w0
+    for (const n of nodes) {
+      const a = hackParts({ node: n, lv: lv0, world: wc, S: Si })
+      const b = hackParts({ node: n, lv: lv0, world: wf, S: Si })
+      if (!a || !b) continue
+      c.examined++
+      if (w0 === 0 && (a.h !== b.h || a.W !== 1 || b.W !== 1)) c.fails.push(`w0 = 0: BN${n} prices ${a.h}h with the climb window vs ${b.h}h with the fixed 1h (W ${a.W}/${b.W}) — must be identical`)
+      const want = w0rldDiv(goScale(Si.mults(n).GoPower, lv0(14)), w0, 1)
+      worstW = Math.max(worstW, Math.abs(b.W - want))
+      if (Math.abs(b.W - want) > 1e-12) c.fails.push(`fixed 1h window, w0 ${w0}: BN${n} W ${b.W} vs the old effect(w0 x 1h) ${want}`)
+      if (w0 > 0 && !(a.win.hours <= a.win.L0 + 1e-12)) c.fails.push(`BN${n} w0 ${w0}: the window ${a.win.hours}h exceeds the climb ${a.win.L0}h`)
+      if (w0 === 1500 && nd < 8) {
+        nd++
+        rowsD.push(`    BN${n} w0 1500: climb ${a.win.L0.toFixed(2)}h -> window ${a.win.hours.toFixed(2)}h, W x${a.W.toFixed(3)} (fixed 1h: x${b.W.toFixed(3)}); hours ${a.h.toFixed(1)} vs ${b.h.toFixed(1)}`)
+      }
+    }
+  }
+  c.notes.push(`(d) regression: w0 = 0 prices BN${nodes.join('/')} identically with the climb window and the old fixed 1h; the fixed 1h reproduces the old W = effect(w0 x 1h) at w0 200/1500 (worst |dW| ${worstW.toExponential(1)})`)
+  c.notes.push(...rowsD)
 }
 done()

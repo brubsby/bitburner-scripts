@@ -452,125 +452,6 @@ export function chooseOpponent(o = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// THE EARLY-GAME WEIGHTS: what the current life can use, before progress.js.
-//
-// chooseOpponent needs channel weights, and until this existed the only
-// source was progress.js's goWeights (installgate.txt objective.goWeights).
-// progress.js needs a 13 + 6.25 x mult GB block on home and the watchdog's
-// job runner (64GB), so a fresh node at 32GB has no planner. The gate on home
-// is the PREVIOUS life's, rejected as "from another life", and chooseOpponent
-// refused, so the incumbent stood. Live BN14.1 (2026-10-03 19:02Z): the Go node
-// (GoPower x4) played Daedalus (faction_rep) by inertia, with no faction
-// joined and $18/s of income.
-//
-// WHAT TO PRICE. A Go bonus is a STOCK: node power banked now pays from now
-// until the next install (Go.ts:34-47), on the channel it feeds. Power on a
-// channel the life is not using yet can be banked later at the same value,
-// while power on the leg the life is on NOW starts paying now. So the price
-// is the current bottleneck. Each weight is the elasticity of a LIVE leg's
-// rate to the channel's multiplier (goweights.js's elasticities), read from
-// cheap telemetry:
-//
-//   hacking_speed       x the hack share of measured income. Every H/G/W time scales as
-//                       1/speed (Hacking.ts:75), so a RAM-bound worker loop (early.js,
-//                       hgw.js, the batcher) cycles its RAM, and earns, that much faster
-//   hacking_money       x the hack share x HACK_SIDE. Only the hack side of the loop gets
-//                       richer; the grow and weaken sides are unchanged (goweights' hackShare)
-//   hacknet_node_money  x the hacknet share of measured income (HacknetHelpers.tsx:414)
-//   faction_rep         1 while the work slot is on faction or company work, the leg the first
-//                       augmentation batch waits on (Daedalus also feeds company_rep)
-//   combat              only on the Bladeburner route (the division exists and no plan in this
-//                       node has decided 'hack': actplan 0b presumes it from the first minute).
-//                       Before the join, the bar is the leg, and a level multiplier m cuts the
-//                       exp to level L by d ln exp / d ln m = L / (32 m)
-//                       (skill.ts: level = m (32 ln(exp + 534.6) - 200)), which is 6.25 at
-//                       the 100 bar in BN14 (level multiplier 0.5). After the join it is 1:
-//                       action success and rank scale with the stats (assumed elasticity 1)
-//
-// This is a RANKING. The unit is "ln of a live leg's rate per ln of the
-// multiplier", not exit hours. NOT PRICED (floors, named): the hacking exp
-// that hacking_speed also speeds (the level gates targets and joins), and
-// crime_success (Slum Snakes), because crime money is not in the income
-// readings. Once progress.js publishes goWeights for this life, they replace
-// this entirely (go.js pickOpponent).
-
-/**
- * Constants of the early pricing. hackSide: the hack side's share of a worker
- * loop's threads (ASSUMED, not measured; goweights takes batch.txt's measured
- * share once the batcher runs). combatBar: the division's join bar
- * (actplan's `bar`). windowH: chooseOpponent only checks this is positive, so
- * the value is inert. It is not a life estimate.
- */
-export const EARLY = { hackSide: 0.25, combatBar: 100, windowH: 8 }
-
-/**
- * Channel weights for chooseOpponent from what the current life is doing.
- *
- * @param {object} o
- * @param {number|null} o.hackIncome     $/s the hacking workers earn (batch.txt earnedPerSec, else
- *                                       status.txt incomePerSec), null if unmeasured
- * @param {number|null} o.hacknetIncome  $/s from hacknet (hacknet.txt moneyPerSec), null if unmeasured
- * @param {string|null} o.work           what the work slot is doing: 'faction' | 'company' | 'crime' |
- *                                       'gym' | 'bladeburner' | ... | null
- * @param {object} [o.blade]             { open, route: 'blade'|'hack'|null, joined }
- * @param {object} [o.nodeMults]         the BitNode table (bitNodeMults): the combat level multipliers
- * @returns {{weights, windowH, phase, why}}
- */
-export function earlyGoWeights(o = {}) {
-  const h = num(o.hackIncome) && o.hackIncome > 0 ? o.hackIncome : 0
-  const n = num(o.hacknetIncome) && o.hacknetIncome > 0 ? o.hacknetIncome : 0
-  const tot = h + n
-  // No income measured yet: the first income a life has is the hacking worker.
-  const sh = tot > 0 ? h / tot : 1
-  const sn = tot > 0 ? n / tot : 0
-  const legs = []
-  const weights = {
-    hacking_speed: sh,
-    hacking_money: sh * EARLY.hackSide,
-    hacknet_node_money: sn,
-    faction_rep: 0,
-  }
-  legs.push(tot > 0 ? `income (hack ${Math.round(100 * sh)}% of $${tot.toFixed(1)}/s, hacknet ${Math.round(100 * sn)}%)` : 'income (unmeasured: the hacking worker)')
-  const rep = o.work === 'faction' || o.work === 'company'
-  if (rep) {
-    weights.faction_rep = 1
-    legs.push(`reputation (${o.work} work)`)
-  }
-  const b = o.blade
-  if (b?.open === true && b.route !== 'hack') {
-    if (b.joined === true) {
-      weights.combat = 1
-      legs.push('Bladeburner actions (combat, after the join)')
-    } else {
-      const m = o.nodeMults
-      const lv = [m?.StrengthLevelMultiplier, m?.DefenseLevelMultiplier, m?.DexterityLevelMultiplier, m?.AgilityLevelMultiplier].filter((x) => num(x) && x > 0)
-      const mult = lv.length ? lv.reduce((a, x) => a + x, 0) / lv.length : 1
-      weights.combat = EARLY.combatBar / (32 * mult)
-      legs.push(`the combat bar ${EARLY.combatBar} for the Bladeburner ${b.route === 'blade' ? 'route' : 'route (presumed)'}: d ln exp/d ln m = ${weights.combat.toFixed(2)}`)
-    }
-  }
-  const fmt = Object.entries(weights).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(', ')
-  return { weights, windowH: EARLY.windowH, phase: legs.join(' + '), why: `early-game weights, live legs: ${legs.join(' + ')} -> ${fmt}` }
-}
-
-/**
- * Which weights price the next choice. progress.js's goWeights when the gate
- * is THIS life's and carries them; otherwise the early-game weights, which
- * replace the old refusal ("the incumbent stands"). `earlyInputs` is a thunk
- * so the telemetry is read only when it is needed.
- *
- * @returns {{source: 'goWeights'|'early', weights, windowH, why, phase?}}
- */
-export function weightsFor(gate, lastAugReset, earlyInputs) {
-  const sameLife = !!gate && gate.lastAugReset === lastAugReset
-  const gw = sameLife ? gate?.objective?.goWeights ?? null : null
-  if (gw?.weights) return { source: 'goWeights', weights: gw.weights, windowH: gw.windowH ?? gate?.objective?.windowH ?? null, why: gw.why ?? null }
-  const gwWhy = !gate ? 'no gate' : !sameLife ? 'gate is from another life' : gw?.why ?? 'not published this pass'
-  const e = earlyGoWeights(typeof earlyInputs === 'function' ? earlyInputs() : earlyInputs ?? {})
-  return { source: 'early', weights: e.weights, windowH: e.windowH, phase: e.phase, why: `${e.why} (goWeights: ${gwWhy})`, gwWhy }
-}
-
-// ---------------------------------------------------------------------------
 // THOMPSON SAMPLING OVER THE WIN RATES.
 //
 // WIN_RATE and POWER_PER_HOUR are one study's point estimates (60 games per
@@ -601,13 +482,16 @@ export function weightsFor(gate, lastAugReset, earlyInputs) {
 export const THOMPSON = { priorN: 10, decay: 0.98, file: '/tel/go-posterior.txt' }
 
 /**
- * The hidden opponent's prior. Win rate: uniform (never measured). Power per
- * hour: 200 — tools/sim/gameplan/README.md's ASSUMED mid for `w0` (0/200/1000,
- * "never played"), so the two planners start from one number; refP is the win
- * rate that figure is taken to stand at. Replaced by the measured rate once
- * W0_MEASURED_MIN games exist (go.js).
+ * The hidden opponent's prior. Win rate for Thompson: uniform (never measured
+ * live — the exploration batch's prior, kept wide). Power per hour: 1570 — the
+ * median of tools/sim/gameplan's DERIVED w0 prior (go.mjs w0PriorMC: the
+ * endGoGame payout x win rate, black's scores and games/h; p10/p50/p90
+ * 1020/1570/2380, was an ASSUMED 0/200/1000), so the two planners start from
+ * one number; refP is the win rate that figure stands at (the derivation's
+ * mean, 1.4/27.5). Replaced by the measured rate once W0_MEASURED_MIN games
+ * exist (go.js). tools/test/gameplan.test.mjs [GP8] fails if the two drift.
  */
-export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 200, refP: 0.5 }
+export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 1570, refP: 0.051 }
 
 /** Games against the hidden opponent before its measured rate replaces the prior. */
 export const W0_MEASURED_MIN = 10

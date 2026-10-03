@@ -75,6 +75,20 @@ const writeJson = (f, o) => {
 
 const sfKeyPairs = (s) => (s ? s.split(',').map((t) => t.split('.').map(Number)) : [])
 
+/**
+ * The post-Red-Pill climb of one hacking exit, for the w0r1d_d43m0n window
+ * (go.mjs goWindow): [hours of the 'climb to exit level' leg, u0 = exitLevel /
+ * the final multiplier]. A rooting excess past the climb is not window: the
+ * level is already reached. null when the exit does not price.
+ */
+export function climbOf(r) {
+  if (!(r?.hours > 0) || !Array.isArray(r.legs)) return null
+  const leg = (name) => r.legs.find((l) => l.leg === name)?.hours ?? 0
+  const L = leg('climb to exit level')
+  const u0 = r.inputs?.exitLevel / r.finalMult
+  return isFinite(L) && isFinite(u0) ? [+L.toPrecision(6), +u0.toPrecision(6)] : null
+}
+
 // ---------------------------------------------------------------------------
 // The grid the plan can reach from `start`
 // ---------------------------------------------------------------------------
@@ -116,20 +130,26 @@ export async function buildSurrogate({ start, profile, bbSeeds = 5, jobs = 1, lo
   const stats = { hack: { needed: 0, computed: 0, ms: 0 }, bb: { needed: 0, computed: 0, ms: 0, seeded: 0 } }
   // --- hacking curves
   const hf = path.join(CACHE_DIR, 'hack.json')
+  const cf = path.join(CACHE_DIR, 'climb.json')
   const hack = readJson(hf)
+  const climb = readJson(cf)
   const curves = hackCurvesFor(start)
   const t0 = performance.now()
   for (const c of curves)
     for (const lg of LN_G) {
       stats.hack.needed++
       const key = hackKeyOf(c, Math.exp(lg), profile)
-      if (key in hack) continue
+      if (key in hack && key in climb) continue
       const r = hackExitHours({ node: c.node, level: c.level, sf: sfKeyPairs(c.sf), profile, g: Math.exp(lg) })
       hack[key] = r.hours ?? null
+      climb[key] = climbOf(r)
       stats.hack.computed++
     }
   stats.hack.ms = performance.now() - t0
-  if (stats.hack.computed) writeJson(hf, hack)
+  if (stats.hack.computed) {
+    writeJson(hf, hack)
+    writeJson(cf, climb)
+  }
   log(`[surrogate] hack: ${curves.length} curves x ${LN_G.length} = ${stats.hack.needed} points, ${stats.hack.computed} computed in ${(stats.hack.ms / 1000).toFixed(1)}s`)
 
   // --- Bladeburner legs
@@ -222,6 +242,47 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
     curves.set(`${c.node}|${c.level}|${c.sf}`, Float64Array.from(ys))
   }
   if (missing.length) throw new Error(`surrogate: ${missing.length} hack grid points not built (run plan.mjs --build) e.g. ${JSON.stringify(missing[0])}`)
+  // THE POST-RED-PILL CLIMB (the w0r1d_d43m0n window, go.mjs goWindow), PHASE-AVERAGED.
+  // The leg is a sawtooth in g: the policy installs a whole number of times, so the
+  // climb left after the last install jumps between ~0 and ~a cycle's worth as g
+  // moves (BN1 g 0.05: 0.51h; BN11 g 0.03: 2.35h; BN14 g 0.03: 0.79h). Where in a
+  // tooth a real run lands is not knowable at the precision g is known to, so each
+  // point is the mean over one tooth: the install count moves by one when H moves
+  // by one cycle, and H ~ 1/g, so one tooth spans cycleHours / H in ln g.
+  const climbRaw = readJson(path.join(CACHE_DIR, 'climb.json'))
+  const climbs = new Map()
+  let climbMissing = 0
+  const step0 = LN_G[1] - LN_G[0]
+  const cyc = profile?.cycleHours ?? 2
+  for (const c of hackCurvesFor(start)) {
+    const id = `${c.node}|${c.level}|${c.sf}`
+    const ys = curves.get(id)
+    const raw = LN_G.map((lg) => {
+      const k = hackKeyOf(c, Math.exp(lg), profile)
+      if (!(k in climbRaw)) climbMissing++
+      return climbRaw[k] ?? null
+    })
+    const L = new Float64Array(LN_G.length)
+    const U = new Float64Array(LN_G.length)
+    for (let i = 0; i < LN_G.length; i++) {
+      const H = Math.exp(ys[i])
+      const half = isFinite(H) && H > 0 ? Math.max(1, Math.min(120, Math.round(cyc / (2 * H) / step0))) : 1
+      let sl = 0
+      let su = 0
+      let m = 0
+      for (let j = Math.max(0, i - half); j <= Math.min(LN_G.length - 1, i + half); j++) {
+        const r = raw[j]
+        if (!r) continue
+        sl += r[0]
+        su += r[1]
+        m++
+      }
+      L[i] = m ? sl / m : NaN
+      U[i] = m ? su / m : NaN
+    }
+    climbs.set(id, { L, U })
+  }
+  if (climbMissing) throw new Error(`surrogate: ${climbMissing} climb grid points not built (run plan.mjs --build-only: tools/sim/gameplan/.cache/climb.json)`)
   const legs = new Map()
   const joins = new Map()
   const rank = new Map()
@@ -264,7 +325,20 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
     if (!isFinite(a) || !isFinite(b)) return f < 0.5 ? Math.exp(a) : Math.exp(b)
     return Math.exp(a + f * (b - a))
   }
+  /** The phase-averaged post-Red-Pill climb at g: { L0 hours, u0 = exitLevel / M } (linear in ln g), or null. */
+  const hackClimb = (node, level, sf, g) => {
+    const cl = climbs.get(`${node}|${level}|${sf}`)
+    if (!cl) throw new Error(`surrogate: no climb curve for BN${node} level ${level} sf ${sf}`)
+    const x = Math.max(0, Math.min(LN_G.length - 1, (Math.log(g) - lo) / step))
+    const i = Math.min(LN_G.length - 2, Math.floor(x))
+    const f = x - i
+    const at = (A) => (isFinite(A[i]) && isFinite(A[i + 1]) ? A[i] + f * (A[i + 1] - A[i]) : isFinite(A[i]) ? A[i] : A[i + 1])
+    const L0 = at(cl.L)
+    const u0 = at(cl.U)
+    return isFinite(L0) && isFinite(u0) ? { L0, u0 } : null
+  }
   return {
+    hackClimb,
     hackHours: direct ? hackDirect : hackInterp,
     hackDirect,
     bbLeg: (n, l6, l7) => legs.get(`${n}|${l6}|${l7}`) ?? null,
