@@ -392,6 +392,24 @@ export function bestGym(person) {
   return here ?? null
 }
 
+/**
+ * The gym a PRICED retrain runs at (the Bladeburner exit's gym rate): bestGym
+ * where it answers, else the best gym anywhere — the $200k flight is not
+ * affordable on cash this minute, but the retrain the exit prices comes after
+ * an install or hours from now, and the stream refills the fare in minutes.
+ * bestGym alone answered null whenever the player stood in a city with no gym
+ * holding < $200k: live BN4 2026-10-03 02:37Z (Ishima, $23.7k) the blade exit
+ * was unpriced for every arm with an install committed (the retrain had no
+ * rate), the route's hack-vs-blade compare read -1.7e14h, and the Go weights
+ * refused. {gym, why}: why null when bestGym answered.
+ */
+export function retrainGymOf(person) {
+  const g = bestGym(person)
+  if (g) return { gym: g, why: null }
+  const best = [...GYMS].sort((a, b) => b.expMult - a.expMult)[0] ?? null
+  return { gym: best, why: best ? `no gym in ${person?.city ?? 'an unknown city'} and $${Math.round(person?.money ?? 0)} cash, under the $${TRAVEL_COST} flight: priced at ${best.name} (${best.city}) — the fare is not modelled` : 'no gym table' }
+}
+
 /** Exp per second of one stat at `gym` — Work/Formulas.ts:calculateClassEarnings, per second. */
 export function gymRate(gym, stat, person, trainingMult) {
   const m = person?.mults?.[`${stat}_exp`]

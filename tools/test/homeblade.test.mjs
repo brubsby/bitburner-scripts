@@ -286,5 +286,47 @@ export async function run() {
     if (!/Tetrads \(combat: objective carries no weight this pass\)/.test(hack.why)) c.fail('HB8 the hacking route does not skip Tetrads by name', hack.why)
     checks.push(c)
   }
+
+  // ---- HB9 -----------------------------------------------------------------
+  // LIVE 02:37Z (tools/test/fixture-bn4-gymless-0237.json): the player stood in
+  // Ishima (no gym) with $23.7k, under the $200k flight, so bestGym answered
+  // null, bladeRoute.start.gymExpPerSec was null, and every blade arm holding
+  // an install was unpriced ("the retrain has no gym rate") — the route's
+  // compare read -1.7e14h and objective.goWeights refused ("the black-op exit
+  // is unpriced from this start"), so go.js stayed on Daedalus.
+  {
+    const c = new Check('HB9', 'a player with no gym in town and no fare still prices the retrain: the blade exit and the Go weights price with an install committed (live 02:37Z)')
+    const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tools/test/fixture-bn4-gymless-0237.json'), 'utf8'))
+    const BP = await import('bodyplan.js')
+    const GW = await import('goweights.js')
+    const lp = { ...L.player, mults: person.mults }
+    c.examined(2)
+    if (L.bladeRoute.start.gymExpPerSec !== null || L.goWeights.weights !== null) c.fail('HB9 the fixture does not reproduce the incident', JSON.stringify({ start: L.bladeRoute.start, gw: L.goWeights }))
+    if (BP.bestGym(lp) !== null) c.fail('HB9 bestGym answers for the live person — the incident is not reproduced')
+    const rg = BP.retrainGymOf(lp)
+    const rate = rg.gym ? BP.gymRate(rg.gym, 'strength', lp, L.bladeRoute.start.trainingMult) : null
+    c.examined(1)
+    if (!(rate > 0) || !rg.why) c.fail('HB9 retrainGymOf gives no rate (or does not say why it travelled)', JSON.stringify(rg))
+    const sf = (g) => (sp) => BB.bladeStartOf({ tel: L.bladeburner, person: lp, sleeves: L.bladeRoute.sleeves, gymExpPerSec: g, bnRank: n4.BladeburnerRank, skillCostMult: n4.BladeburnerSkillCost, install: BB.bladeInstallOfSpec(sp), simulacrum: false, rankScale: L.bladeRoute.calibration.rank, successScale: L.bladeRoute.calibration.success, now: Date.parse(L.captured) })
+    const spec = { kind: 'wait', waitH: 2, blade: { gains: {}, simulacrum: false } }
+    const before = BB.bladeExit({ ...sf(null)(spec), maxH: 200 })
+    const after = BB.bladeExit({ ...sf(rate)(spec), maxH: 200 })
+    c.examined(2)
+    if (before.hours !== null) c.fail('HB9 with no gym rate the install arm priced — the incident is not reproduced', String(before.hours))
+    if (!(after.hours > 0)) c.fail('HB9 the install arm is still unpriced with the retrain gym', after.why)
+    const batchAt = (m) => (m >= 60e6 ? { gains: { strength: 1.1, defense: 1.1, dexterity: 1.1, agility: 1.1, bladeburner_success_chance: 1.1 } } : m >= 25e6 ? { gains: { strength: 1.05, defense: 1.05, dexterity: 1.05, agility: 1.05 } } : { gains: {} })
+    const gw = drain(GW.bladeGoWeightsGen({ startFor: sf(rate), spec, maxH: 200, batchAt, moneyAtInstall: 30e6, batchMoneyPerSec: 3000, hackShare: 0.3 }))
+    c.examined(1)
+    if (!gw.weights) c.fail('HB9 the Go weights still refuse', gw.why)
+    else {
+      const pick = HP.goOpponentOnBlade({ weights: gw.weights, windowH: gw.windowH })
+      c.note(`retrain gym: ${rg.why}; install arm ${before.hours} -> ${after.hours?.toFixed(3)}h; Go weights (install at 2h, stub batch): ${JSON.stringify(gw.weights)}; combat curve ${JSON.stringify(gw.detail?.combatCurve)} vs ${gw.detail?.exitH}h; pick ${pick.opponent}`)
+    }
+    const src = SRC('progress.js')
+    c.examined(2)
+    if (!/const \{ gym, why: gymWhy \} = retrainGymOf\(person\)/.test(src)) c.fail('HB9 progress.js bladeRouteOf does not price the retrain with retrainGymOf')
+    if (!/const gym = retrainGymOf\(person\)\.gym/.test(SRC('sleeve.js'))) c.fail("HB9 sleeve.js's Bladeburner fleet does not price the retrain with retrainGymOf")
+    checks.push(c)
+  }
   return checks
 }

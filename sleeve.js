@@ -106,7 +106,7 @@ import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments,
 import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION } from 'bbplan.js'
 import { makePacer, LoopCapError } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
-import { CRIMES, GYMS, gymRate, bestGym } from 'bodyplan.js'
+import { CRIMES, GYMS, gymRate, bestGym, retrainGymOf } from 'bodyplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { enter, leave } from 'trace.js'
@@ -386,7 +386,7 @@ async function bladeFleetNow(ns, n, node) {
   // INSTALL -15.1h, then EXIT UNSTABLE.
   const person = { skills: { ...p.skills }, exp: { ...p.exp }, mults, city: p.city, money: p.money }
   const planGym = plan?.decisions?.bladeRoute?.start?.gymExpPerSec
-  const gym = bestGym(person)
+  const gym = retrainGymOf(person).gym
   const s0 = bladeStartOf({
     tel, person,
     gymExpPerSec: typeof planGym === 'number' && planGym > 0 ? planGym : gym ? gymRate(gym, 'strength', person, 1) : null,

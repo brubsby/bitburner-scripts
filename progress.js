@@ -158,7 +158,7 @@ import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERM
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen, bladeGoWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, combatBarPlanOf } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
 import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
@@ -2576,7 +2576,9 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     const fl = bladeFleetOf(ours ? fleet : null)
     const sleeves = fl.sleeves
     const person = levelledPerson(player, info)
-    const gym = bestGym(person)
+    // The retrain's gym (bodyplan.retrainGymOf): never null for want of the
+    // flight fare this minute — that made every arm with an install unpriced.
+    const { gym, why: gymWhy } = retrainGymOf(person)
     const gymExpPerSec = gym ? gymRate(gym, 'strength', person, ns.hacknet.getTrainingMult()) : null
     const simOwned = !!owned?.has?.(SIMULACRUM)
     // THE CALIBRATION (bbplan successPosterior / rankRatePosterior): the
@@ -2668,7 +2670,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         // The basis WITH its batch's content (blade): sleeve.js prices its fleet on this same install (bbplan.bladeInstallOfBasis).
         installBasis: bladeBasis ? { kind: bladeBasis.kind, waitH: bladeBasis.waitH ?? null, installAt: bladeBasis.installAt ?? null, from: prevInst?.key ?? null, blade: bladeBasis.blade ?? null } : { kind: 'none', why: bladeCommitted ? `the committed install is ${prevInst?.key}` : 'no install priced on this route yet: none' },
         // The start's inputs a reader re-prices with (sleeve.js's fleet search): one state model.
-        start: { gymExpPerSec, gym: gym?.name ?? null, trainingMult: ns.hacknet.getTrainingMult() },
+        start: { gymExpPerSec, gym: gym?.name ?? null, trainingMult: ns.hacknet.getTrainingMult(), ...(gymWhy ? { gymWhy } : {}) },
         simulacrum,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }

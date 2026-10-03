@@ -1,0 +1,503 @@
+{
+ "captured": "2026-10-03T02:38:05.910Z",
+ "note": "live BN4.3 2026-10-03 02:37Z: bladeburner.js acting on rothman-uni; player in Ishima (no gym) with $23.7k cash; bladeRoute.start.gymExpPerSec null, every blade arm with an install unpriced; objective.goWeights refused. Player mults: same life as fixture-bn4-homeblade-0100.json (lastAugReset 1790985409081).",
+ "player": {
+  "skills": {
+   "hacking": 314,
+   "strength": 124,
+   "defense": 124,
+   "dexterity": 137,
+   "agility": 135,
+   "charisma": 115,
+   "intelligence": 134
+  },
+  "exp": {
+   "hacking": 547856.9879062754,
+   "strength": 7676.163836830314,
+   "defense": 7676.163836830363,
+   "dexterity": 10387.737612854173,
+   "agility": 9983.546850378292,
+   "charisma": 4255.4488621633145,
+   "intelligence": 33865.82333852602
+  },
+  "city": "Ishima",
+  "money": 23682.264448375103
+ },
+ "bladeburner": {
+  "at": "2026-10-03T02:41:14.246Z",
+  "health": "ok",
+  "errors": [],
+  "bitNode": 4,
+  "lastAugReset": 1790985409081,
+  "host": "rothman-uni",
+  "daemon": "bladeburner.js",
+  "result": "acting",
+  "joined": true,
+  "factionJoined": true,
+  "rank": 325.32,
+  "rankPerHour": 133.23,
+  "skillPoints": 20,
+  "levels": {
+   "Blade's Intuition": 3,
+   "Cloak": 5,
+   "Short-Circuit": 3,
+   "Digital Observer": 3,
+   "Tracer": 2,
+   "Overclock": 0,
+   "Reaper": 2,
+   "Evasive System": 3,
+   "Datamancer": 0,
+   "Cyber's Edge": 2,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 42.41,
+  "maxStamina": 59.47,
+  "resting": true,
+  "city": "New Tokyo",
+  "team": 3,
+  "slot": {
+   "owner": "bladeburner",
+   "ours": true,
+   "at": "2026-10-03T02:37:47.126Z",
+   "by": "progress.js",
+   "why": "progress.js holds the slot for bladeburner"
+  },
+  "action": {
+   "type": "General",
+   "name": "Hyperbolic Regeneration Chamber",
+   "level": null,
+   "city": "New Tokyo",
+   "p": null,
+   "ev": null,
+   "why": "stamina 42.4/59.5: resting to 95%"
+  },
+  "running": {
+   "type": "General",
+   "name": "Hyperbolic Regeneration Chamber"
+  },
+  "blackOps": {
+   "done": 0,
+   "next": "Operation Typhoon",
+   "reqdRank": 2500,
+   "chance": [
+    0.0402,
+    0.0402
+   ],
+   "formulaChance": 0.0402
+  },
+  "exitReady": false,
+  "exitNote": null,
+  "env": {
+   "contracts": 2.124820160807443,
+   "operations": 2.2773258610155165
+  },
+  "counts": {
+   "Tracking": 401.9,
+   "Bounty Hunter": 222.7,
+   "Retirement": 93.9,
+   "Investigation": 195.7,
+   "Undercover Operation": 192.7,
+   "Sting Operation": 168.1,
+   "Raid": 218.4,
+   "Stealth Retirement Operation": 140.9,
+   "Assassination": 210.6
+  },
+  "maxLevels": {
+   "Tracking": 1,
+   "Bounty Hunter": 10,
+   "Retirement": 13,
+   "Investigation": 5,
+   "Undercover Operation": 4,
+   "Sting Operation": 1,
+   "Raid": 1,
+   "Stealth Retirement Operation": 1,
+   "Assassination": 1
+  },
+  "cities": [
+   {
+    "name": "Aevum",
+    "popEst": 1343455550,
+    "pop": 2167905123,
+    "r": 1.61368,
+    "chaos": 0,
+    "comms": 131
+   },
+   {
+    "name": "Chongqing",
+    "popEst": 627718622,
+    "pop": 1449427145,
+    "r": 2.30904,
+    "chaos": 0,
+    "comms": 17
+   },
+   {
+    "name": "Sector-12",
+    "popEst": 1756039624,
+    "pop": 1903509155,
+    "r": 1.08398,
+    "chaos": 2.89,
+    "comms": 104
+   },
+   {
+    "name": "New Tokyo",
+    "popEst": 2690057835,
+    "pop": 2690057835,
+    "r": 1,
+    "chaos": 1.99,
+    "comms": 135
+   },
+   {
+    "name": "Ishima",
+    "popEst": 1299334072,
+    "pop": 1589930914,
+    "r": 1.22365,
+    "chaos": 0.5,
+    "comms": 136
+   },
+   {
+    "name": "Volhaven",
+    "popEst": 607376808,
+    "pop": 1193162573,
+    "r": 1.96445,
+    "chaos": 0.98,
+    "comms": 11
+   }
+  ],
+  "staminaBonus": 0,
+  "outcomes": {
+   "n": 20,
+   "observed": 0.55,
+   "expected": 0.5443577960102921,
+   "last": [
+    {
+     "name": "Undercover Operation",
+     "level": 4,
+     "p": 0.49683920846124086,
+     "n": 1,
+     "s": 1
+    },
+    {
+     "name": "Undercover Operation",
+     "level": 4,
+     "p": 0.4981711566578212,
+     "n": 1,
+     "s": 1
+    },
+    {
+     "name": "Undercover Operation",
+     "level": 4,
+     "p": 0.49870576887666035,
+     "n": 1,
+     "s": 1
+    },
+    {
+     "name": "Undercover Operation",
+     "level": 4,
+     "p": 0.5006193437009633,
+     "n": 1,
+     "s": 0
+    },
+    {
+     "name": "Undercover Operation",
+     "level": 4,
+     "p": 0.5014730229726353,
+     "n": 1,
+     "s": 1
+    }
+   ],
+   "method": "attempts from the count against its growth twin, successes from the rank (bbplan.attemptsOf)",
+   "unmeasured": {
+    "name": "Undercover Operation",
+    "why": "rank moved 0.009 where 0 of 1 explain -0.400 (+-0.128): something else moved it"
+   }
+  },
+  "calibration": {
+   "timeFormulaS": null,
+   "timeGameS": null,
+   "maxStaminaFormula": 59.47,
+   "maxStaminaGame": 59.47,
+   "success": {
+    "k": 0.9879,
+    "lnK": -0.0121,
+    "sdLn": 0.1185,
+    "n": 20,
+    "s": 11,
+    "expected": 10.89,
+    "why": "11 of 20 attempts succeeded against 10.9 predicted: k = 0.988 x/÷ 1.16 at 80% (prior k = 1 x/÷ 1.21, the game's formula; exact binomial likelihood)",
+    "groups": [
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.572,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.573,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.577,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.582,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.584,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.587,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.589,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.507,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.552,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.554,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.555,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.556,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.495,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.497,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.498,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.499,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.501,
+      "n": 2,
+      "s": 1
+     }
+    ]
+   }
+  },
+  "purchases": [
+   {
+    "at": "2026-10-03T02:14:36.080Z",
+    "name": "Short-Circuit",
+    "count": 1,
+    "cost": 6,
+    "got": 1,
+    "why": "rank/s +4.53%"
+   }
+  ],
+  "skillsAt": "2026-10-03T02:14:36.080Z",
+  "samples": [
+   {
+    "at": "2026-10-03T02:14:36.081Z",
+    "rank": 266.18,
+    "stamina": 44.14
+   },
+   {
+    "at": "2026-10-03T02:15:46.369Z",
+    "rank": 271.71,
+    "stamina": 43.89
+   },
+   {
+    "at": "2026-10-03T02:17:09.594Z",
+    "rank": 281.1,
+    "stamina": 42.35
+   },
+   {
+    "at": "2026-10-03T02:18:30.830Z",
+    "rank": 286.67,
+    "stamina": 40.76
+   },
+   {
+    "at": "2026-10-03T02:19:53.118Z",
+    "rank": 287.12,
+    "stamina": 38.96
+   },
+   {
+    "at": "2026-10-03T02:21:15.333Z",
+    "rank": 291.85,
+    "stamina": 37.37
+   },
+   {
+    "at": "2026-10-03T02:22:37.588Z",
+    "rank": 297.27,
+    "stamina": 35.55
+   },
+   {
+    "at": "2026-10-03T02:23:37.600Z",
+    "rank": 297.67,
+    "stamina": 36.94
+   },
+   {
+    "at": "2026-10-03T02:24:37.615Z",
+    "rank": 297.67,
+    "stamina": 38.29
+   },
+   {
+    "at": "2026-10-03T02:25:37.634Z",
+    "rank": 297.67,
+    "stamina": 39.92
+   },
+   {
+    "at": "2026-10-03T02:26:37.641Z",
+    "rank": 297.67,
+    "stamina": 41.29
+   },
+   {
+    "at": "2026-10-03T02:27:37.648Z",
+    "rank": 297.67,
+    "stamina": 42.64
+   },
+   {
+    "at": "2026-10-03T02:28:48.752Z",
+    "rank": 297.29,
+    "stamina": 42.42
+   },
+   {
+    "at": "2026-10-03T02:30:09.958Z",
+    "rank": 301.59,
+    "stamina": 40.85
+   },
+   {
+    "at": "2026-10-03T02:31:32.491Z",
+    "rank": 300.79,
+    "stamina": 39.05
+   },
+   {
+    "at": "2026-10-03T02:32:59.697Z",
+    "rank": 304.32,
+    "stamina": 37.49
+   },
+   {
+    "at": "2026-10-03T02:34:25.904Z",
+    "rank": 314.8,
+    "stamina": 35.64
+   },
+   {
+    "at": "2026-10-03T02:35:28.110Z",
+    "rank": 319.97,
+    "stamina": 33.41
+   },
+   {
+    "at": "2026-10-03T02:36:34.214Z",
+    "rank": 325.32,
+    "stamina": 33
+   },
+   {
+    "at": "2026-10-03T02:37:34.220Z",
+    "rank": 325.32,
+    "stamina": 34.98
+   },
+   {
+    "at": "2026-10-03T02:38:34.227Z",
+    "rank": 325.32,
+    "stamina": 36.97
+   },
+   {
+    "at": "2026-10-03T02:39:34.234Z",
+    "rank": 325.32,
+    "stamina": 38.92
+   },
+   {
+    "at": "2026-10-03T02:40:34.240Z",
+    "rank": 325.32,
+    "stamina": 40.9
+   }
+  ],
+  "detail": "stamina 42.4/59.5: resting to 95%"
+ },
+ "bladeRoute": {
+  "start": {
+   "gymExpPerSec": null,
+   "gym": null,
+   "trainingMult": 1
+  },
+  "sleeves": {
+   "infiltrate": 2,
+   "support": 3,
+   "fa": 0
+  },
+  "calibration": {
+   "rank": 1.243,
+   "success": 0.9879
+  },
+  "why": "held (no event since 2026-10-03T02:32:46.717Z); at that decision: stays on blade: the best alternative hack is expected -169528667637731.16h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)"
+ },
+ "goWeights": {
+  "weights": null,
+  "route": "blade",
+  "why": "the black-op exit is unpriced from this start"
+ }
+}
