@@ -189,7 +189,7 @@ export async function run() {
     const pg = code("progress.js");
     const act = code("act.js");
     const checks = [
-      ["progress.js plans at batchReach", /money: reachOf\(liveMoney\)/.test(pg) && /replanAt = \(m, offersAt = null\) => planPurchases\(\{ \.\.\.planArgs, money: reachOf\(m\)/.test(pg)],
+      ["progress.js plans at batchReach", /money: reachOf\(liveMoney\)/.test(pg) && /replanAt = replanner\(\(m, offersAt = null\) => \(\{ \.\.\.planArgs, money: reachOf\(m\)/.test(pg)],
       ["the purchase model gets the next batch", /purchaseCadenceGen\(ns, info, out, cOffers, ownedAugsNow, nextBatch\)/.test(pg) && /ownedAfterBatch\(owned0, batch\)/.test(pg)],
       ["the verdict gates the install order", pg.indexOf("installBatchVerdictOf({ priced: pricedBatch") > 0 && pg.indexOf("installBatchVerdictOf({ priced: pricedBatch") < pg.indexOf("order('install', ['boot.js'], gate.why)") && /if \(batchCheck && batchCheck\.install === false && !installRefused\) installRefused = batchCheck\.why/.test(pg)],
       ["the order carries pricedBatch and batchCheck", /\.pricedBatch = pricedBatch/.test(pg) && /\.batchCheck = batchCheck/.test(pg)],

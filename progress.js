@@ -167,7 +167,7 @@ import { leanUntilOf } from 'bbliteplan.js'
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
 import { addRepToFavor, donationUplift, repLadder, favorNeededToDonate, donationForRep, nfgLevelsByDonation, repToCross, goFavorStreamOf } from 'favor.js'
-import { planPurchases, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
+import { planPurchases, planPurchasesGen, NFG, isSoa, BASE_PRICE_MULT, NFG_LEVEL_MULT, genericPriceMultiplier } from 'augplan.js'
 import { enter, leave, pageBoot } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
@@ -3003,6 +3003,23 @@ function ramIncomePerGB(ns, inputs) {
  * money claim (Daedalus's $100b) is not on this trajectory — watchdog.js's
  * homeup trigger holds no join money for a verdict that carries it.
  */
+/**
+ * A RE-PLANNER (replanAt): replanAt(m, offersAt) is the purchase step's plan
+ * at money m, synchronous; replanAt.gen(m, offersAt) is the same plan as an
+ * augplan.planPurchasesGen generator, for a caller running under the pass's
+ * pacer — one plan at the node's money is ~90ms (live BN4.3 2026-10-03
+ * 11:23Z: "PLAN BLOCKED THE PAGE: 94.1ms ... 92.9ms in 'goweights-blade'").
+ */
+function replanner(argsOf) {
+  const f = (m, offersAt = null) => planPurchases(argsOf(m, offersAt))
+  f.gen = (m, offersAt = null) => planPurchasesGen(argsOf(m, offersAt))
+  return f
+}
+/** replanAt's plan inside a generator: sliced when it carries .gen, else synchronous. */
+function* replanGen(replanAt, m, offersAt = null) {
+  return typeof replanAt?.gen === 'function' ? yield* replanAt.gen(m, offersAt) : replanAt(m, offersAt)
+}
+
 async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replanAt = null, pending = [], statsOf = null, goWeights = null }) {
   const pc = planCtxOf(ns, info)
   const br = pc?.decisions?.bladeRoute
@@ -3059,7 +3076,7 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
       const c = bladeContentOf(names, statsOf)
       return { gains: c.gains, simulacrum: c.simulacrum }
     }
-    const batchAt = typeof replanAt === 'function' && typeof statsOf === 'function' ? (m) => content([...(replanAt(Math.max(0, m))?.buy ?? []).map((b) => b?.name).filter(Boolean), ...(pending ?? [])]) : null
+    const batchAt = typeof replanAt === 'function' && typeof statsOf === 'function' ? function* (m) { return content([...((yield* replanGen(replanAt, Math.max(0, m)))?.buy ?? []).map((b) => b?.name).filter(Boolean), ...(pending ?? [])]) } : null
     const r = await paced(
       bladeHomeExitGen({
         startFor: pc.bladeCtx.startFor,
@@ -3131,8 +3148,8 @@ async function bladeGoWeightsOf(ns, info, { liveMoney, moneyBy, replanAt = null,
     const installAtH = spec?.kind === 'wait' && fin1(spec.waitH) ? spec.waitH : Infinity
     const exitH = fin1(br.bladeH) ? br.bladeH : 400
     const batchAt = typeof replanAt === 'function' && typeof statsOf === 'function'
-      ? (m) => {
-          const c = bladeContentOf([...(replanAt(Math.max(0, m))?.buy ?? []).map((b) => b?.name).filter(Boolean), ...(pending ?? [])], statsOf)
+      ? function* (m) {
+          const c = bladeContentOf([...((yield* replanGen(replanAt, Math.max(0, m)))?.buy ?? []).map((b) => b?.name).filter(Boolean), ...(pending ?? [])], statsOf)
           return { gains: c.gains, simulacrum: c.simulacrum }
         }
       : null
@@ -5915,7 +5932,7 @@ async function act(ns, canJoin, info, note) {
       oneoff: oneoffBase,
     }
     plan = planPurchases(planArgs)
-    replanAt = (m, offersAt = null) => planPurchases({ ...planArgs, money: reachOf(m), ...(offersAt ? { offers: offersAt } : {}) })
+    replanAt = replanner((m, offersAt = null) => ({ ...planArgs, money: reachOf(m), ...(offersAt ? { offers: offersAt } : {}) }))
 
     // ------------------------------------------------------------------
     // THE DERIVED OBJECTIVE (objective.js has the model). Two stages,
@@ -6136,15 +6153,14 @@ async function act(ns, canJoin, info, note) {
           // gangplan.perWindowMoneyLn. Null when unmeasured; never guessed.
           const winH = measureWindow(ns, info)?.windowH
           weightsMeta = { source: derived?.source ?? 'derived', exitSensitivity: byExit ? { hoursPerLn: byExit.sensitivities, exitH: byExit.exitH, W: byExit.W } : null, eBudget: +eBudget.toFixed(4), eBudgetRaw: +eBudgetRaw.toFixed(4), eBudgetObs, eRep: +eRep.toFixed(4), eRepRaw: +eRepRaw.toFixed(4), eRepObs, remainingWindows: +(+remainingWindows).toFixed(1), windowH: typeof winH === 'number' && isFinite(winH) && winH > 0 ? +winH.toFixed(4) : null, probeMoney, probedAtProjected: probePlan !== plan, chanceObs, growShare, calSource, weights: Object.fromEntries(Object.entries(channelWeights).map(([k, v]) => [k, +v.toFixed(4)])) }
-          replanAt = (m, offersAt = null) =>
-            planPurchases({
-              ...planArgs,
-              money: reachOf(m),
-              ...(offersAt ? { offers: offersAt } : {}),
-              channelWeights,
-              channels: channelsUsed,
-              oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed, exit: oneoffExit },
-            })
+          replanAt = replanner((m, offersAt = null) => ({
+            ...planArgs,
+            money: reachOf(m),
+            ...(offersAt ? { offers: offersAt } : {}),
+            channelWeights,
+            channels: channelsUsed,
+            oneoff: { ...oneoffBase, money: probeMoney, eBudget, remainingWindows, weights: channelWeights, channels: channelsUsed, exit: oneoffExit },
+          }))
           plan = planPurchases({
             ...planArgs,
             channelWeights,

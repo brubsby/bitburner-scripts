@@ -421,7 +421,39 @@ export async function run() {
     // The Bladeburner home verdict re-plans twice in a row too: one call a step.
     const hp = SRC('homeplan.js')
     c.examined(1)
-    if (!/const b0 = batchAt\(moneyAtInstall\)\n\s*yield[^\n]*\n\s*const b1 = batchAt\(Math\.max\(0, after\)\)\n\s*yield\n/.test(hp)) c.fail('HB10 homeplan.bladeHomeExitGen re-plans both batches in one step')
+    // HB10b, LIVE 11:23Z (after the above): "92.9ms in 'goweights-blade' (step
+    // 7797 of 10508)" — ONE re-plan at ~$9.3b. batchAt now re-plans through
+    // augplan.planPurchasesGen inside the weights' own steps: the real planner
+    // on the fixture catalogue at $10b, sliced vs synchronous — the same
+    // weights, and every step under the block limit where the synchronous
+    // planner holds one step past it.
+    {
+      const A = await import('augplan.js')
+      const fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tools/test/fixture-augs.json'), 'utf8'))
+      const offers = fx.augmentations.map((a) => ({ name: a.name, faction: a.factions[0], baseCost: a.baseCost, repReq: a.baseRepRequirement, factionRep: 1e9, mults: a.mults, prereqs: a.prereqs, isNFG: a.isNFG, isSoA: a.isSoA, nfgLevel: 0 })).filter((o) => o.faction)
+      const statsOf = (n) => fx.augmentations.find((a) => a.name === n)?.mults ?? null
+      const contentOf = (p) => {
+        const b = BB.bladeContentOf((p?.buy ?? []).map((x) => x.name), statsOf)
+        return { gains: b.gains, simulacrum: b.simulacrum }
+      }
+      const base = { startFor, spec: spec8, maxH: 80, moneyAtInstall: 10e9, batchMoneyPerSec: 2000, hackShare: 0.3, eRep: 0.4, ageH: 3 }
+      const syncO = { ...base, batchAt: (m) => contentOf(A.planPurchases({ offers, money: m })) }
+      const genO = { ...base, batchAt: function* (m) { return contentOf(yield* A.planPurchasesGen({ offers, money: m }, { cache: false })) } }
+      const paced2 = async (o) => {
+        const pacer = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)), memory: new Map() })
+        const r = await pacer.slices(GW.bladeGoWeightsGen(o), 'goweights-blade')
+        return { r, sec: pacer.stats.sections['goweights-blade'] }
+      }
+      const s = await paced2(genO)
+      const y = await paced2({ ...syncO, batchAt: (m) => contentOf(A.planPurchases({ offers, money: m * (1 + 1e-12) })) })
+      const ref = JSON.stringify(drain(GW.bladeGoWeightsGen(syncO)))
+      c.examined(2)
+      if (JSON.stringify(s.r) !== ref) c.fail('HB10 the sliced re-plan gives other weights than the synchronous one', `${JSON.stringify(s.r?.weights)} vs ${JSON.parse(ref).weights && JSON.stringify(JSON.parse(ref).weights)}`)
+      if (!(s.sec.maxStepMs < P.PLAN.maxBlockMs)) c.fail(`HB10 a ${s.sec.maxStepMs.toFixed(1)}ms step with the sliced re-plan at $10b (step ${s.sec.maxStepAt} of ${s.sec.steps})`)
+      // The defect's own detection is AG2's (work units: wall time here varies with the machine).
+      c.note(`$10b re-plans: synchronous longest step ${y.sec.maxStepMs.toFixed(1)}ms (of ${y.sec.steps}) -> sliced ${s.sec.maxStepMs.toFixed(1)}ms (step ${s.sec.maxStepAt} of ${s.sec.steps}; GC pauses land in whichever step runs); weights ${JSON.stringify(s.r?.weights)}`)
+    }
+    if (!/const b0 = yield\* callOut\(batchAt\(moneyAtInstall\)\)\n\s*yield[^\n]*\n\s*const b1 = yield\* callOut\(batchAt\(Math\.max\(0, after\)\)\)\n\s*yield\n/.test(hp)) c.fail('HB10 homeplan.bladeHomeExitGen re-plans both batches in one step (or runs a sliced re-plan synchronously)')
     checks.push(c)
   }
 

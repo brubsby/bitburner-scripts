@@ -348,11 +348,23 @@ function insertAccepted(frontier, pt) {
   frontier[at] = pt
 }
 
+/** A yield point: the step's work units into the run's tally (total, longest step), and a fresh count. */
+function stepEnd(work) {
+  work.total += work.units
+  if (work.units > work.maxStep) work.maxStep = work.units
+  work.units = 0
+  work.yields++
+}
+
 /** Merge two frontiers under a budget: every affordable pairing, Pareto-reduced. */
-function convolve(a, b, budget) {
+function* convolveGen(a, b, budget, work) {
   const out = []
   for (const x of a) {
     for (const y of b) {
+      if ((work.units += 1 + out.length) >= work.every) {
+        stepEnd(work)
+        yield
+      }
       const cost = x.cost + y.cost
       if (cost > budget + EPS) continue
       const value = x.value + y.value
@@ -765,7 +777,13 @@ function normalise(o) {
 /* The DP                                                                    */
 /* ------------------------------------------------------------------------ */
 
-function runCore({ singles, chains, r, money, frontierCap }) {
+// THE DP IS A PLAIN FUNCTION; the generator below only drives it. The hot
+// loop inside a generator body ran ~20% slower in V8 (measured on the
+// fixture-augs catalogue at $10b-$100b), so the loop lives in expand(), which
+// runs one state's points from `fi` until `budget` work units are spent and
+// returns where it stopped. The order of work is the order it always had, so
+// a yield between two calls changes nothing but when the page gets control.
+function coreDP({ singles, chains, r, money, frontierCap }) {
   const n = singles.length
   const radix = chains.map((c) => c.items.length + 1)
   const maxChain = chains.reduce((s, c) => s + c.items.length, 0)
@@ -817,73 +835,105 @@ function runCore({ singles, chains, r, money, frontierCap }) {
 
   const finals = []
   const nChains = chains.length
-  for (let L = 0; L <= n + maxChain; L++) {
-    const layer = layers.get(L)
+  /** Expand state `st` (layer L) from point fi; stop once `budget` units are spent. Returns [nextFi, units]. */
+  const expand = (st, L, fi, budget) => {
+    const { i, rank, p, c, f } = st
+    const price = pow[rank]
+    let units = 0
+    for (; fi < f.length; fi++) {
+      if (units >= budget) return [fi, units]
+      const pt = f[fi]
+      const pc = pt.cost
+      const pv = pt.value
+      // Transitions in the order the DP has always taken them: skip
+      // singleton i (t = -2), take singleton i at rank (t = -1), then take
+      // the next item of each chain at rank (t = 0..chains-1).
+      for (let t = i < n ? -2 : 0; t < nChains; t++) {
+        let it = null
+        let cost = pc
+        let value = pv
+        let e
+        if (t === -2) {
+          e = entryFor(L + 1, i + 1, rank, p, c, -1)
+        } else if (t === -1) {
+          it = singles[i]
+          cost = pc + it.intrinsic * price + (it.donation ?? 0)
+          if (!(cost <= money + EPS)) continue
+          value = pv + it.value
+          e = entryFor(L + 1, i + 1, rank + 1, p, c, -1)
+        } else {
+          const at = p[t]
+          if (at >= chains[t].items.length) continue
+          it = chains[t].items[at]
+          cost = pc + it.intrinsic * price + (it.donation ?? 0)
+          if (cost > money + EPS) continue
+          value = pv + it.value
+          e = entryFor(L + 1, i, rank + 1, p, c + weight[t], t)
+        }
+        const fr = e.f
+        // THE WORK UNIT: one transition plus the frontier it scans and
+        // compacts (paretoRejects + insertAccepted are each O(fr.length)).
+        units += 1 + fr.length
+        if (fr.length >= frontierCap) {
+          capHit = capHit ?? `${e.i},${e.rank},${e.c}`
+          continue
+        }
+        // paretoRejects, inlined so cost and value are never boxed.
+        let rejected = false
+        for (let q = 0; q < fr.length; q++) {
+          const x = fr[q]
+          if (x.cost > cost + EPS) break
+          if (x.value >= value - EPS) {
+            rejected = true
+            break
+          }
+        }
+        if (rejected) continue
+        // A skip carries its source point through unchanged: it adds no
+        // step, and walk() reads only the steps.
+        insertAccepted(fr, it === null ? pt : { cost, value, from: pt, act: { it, rank } })
+      }
+    }
+    return [fi, units]
+  }
+  return { n, maxL: n + maxChain, layers, finals, expand, capHit: () => capHit }
+}
+
+function* runCoreGen(args, work) {
+  const dp = coreDP(args)
+  const every = work.every
+  for (let L = 0; L <= dp.maxL; L++) {
+    const layer = dp.layers.get(L)
     if (!layer) continue
-    for (const { i, rank, p, c, f } of layer.values()) {
-      if (i === n) for (const pt of f) finals.push(pt)
-      const price = pow[rank]
-      for (let fi = 0; fi < f.length; fi++) {
-        const pt = f[fi]
-        const pc = pt.cost
-        const pv = pt.value
-        // Transitions in the order the DP has always taken them: skip
-        // singleton i (t = -2), take singleton i at rank (t = -1), then take
-        // the next item of each chain at rank (t = 0..chains-1).
-        for (let t = i < n ? -2 : 0; t < nChains; t++) {
-          let it = null
-          let cost = pc
-          let value = pv
-          let e
-          if (t === -2) {
-            e = entryFor(L + 1, i + 1, rank, p, c, -1)
-          } else if (t === -1) {
-            it = singles[i]
-            cost = pc + it.intrinsic * price + (it.donation ?? 0)
-            if (!(cost <= money + EPS)) continue
-            value = pv + it.value
-            e = entryFor(L + 1, i + 1, rank + 1, p, c, -1)
-          } else {
-            const at = p[t]
-            if (at >= chains[t].items.length) continue
-            it = chains[t].items[at]
-            cost = pc + it.intrinsic * price + (it.donation ?? 0)
-            if (cost > money + EPS) continue
-            value = pv + it.value
-            e = entryFor(L + 1, i, rank + 1, p, c + weight[t], t)
-          }
-          const fr = e.f
-          if (fr.length >= frontierCap) {
-            capHit = capHit ?? `${e.i},${e.rank},${e.c}`
-            continue
-          }
-          // paretoRejects, inlined so cost and value are never boxed.
-          let rejected = false
-          for (let q = 0; q < fr.length; q++) {
-            const x = fr[q]
-            if (x.cost > cost + EPS) break
-            if (x.value >= value - EPS) {
-              rejected = true
-              break
-            }
-          }
-          if (rejected) continue
-          // A skip carries its source point through unchanged: it adds no
-          // step, and walk() reads only the steps.
-          insertAccepted(fr, it === null ? pt : { cost, value, from: pt, act: { it, rank } })
+    for (const st of layer.values()) {
+      if (st.i === dp.n) for (const pt of st.f) dp.finals.push(pt)
+      let fi = 0
+      while (fi < st.f.length) {
+        const [next, units] = dp.expand(st, L, fi, every - work.units)
+        fi = next
+        work.units += units
+        if (work.units >= every) {
+          stepEnd(work)
+          yield
         }
       }
     }
-    layers.delete(L - 1)
+    dp.layers.delete(L - 1)
   }
 
   const frontier = []
-  for (const pt of finals) insertPareto(frontier, pt)
-  return { frontier, capHit }
+  for (const pt of dp.finals) {
+    if ((work.units += 1 + frontier.length) >= every) {
+      stepEnd(work)
+      yield
+    }
+    insertPareto(frontier, pt)
+  }
+  return { frontier, capHit: dp.capHit() }
 }
 
 /** The SoA sub-problem: ratio 7, its own counter, rank-dependent rep gate. */
-function runSoa({ soa, soaOwned, soaRepMult, frontierCap }, money) {
+function* runSoaGen({ soa, soaOwned, soaRepMult, frontierCap }, money, work) {
   // Descending base cost, for the same rearrangement reason as the main set.
   let frontier = [{ cost: 0, value: 0, from: null, act: null }]
   let capHit = null
@@ -907,6 +957,10 @@ function runSoa({ soa, soaOwned, soaRepMult, frontierCap }, money) {
       const price = it.baseCost * Math.pow(SOA_COST_MULT, soaOwned + k)
       const repNeeded = it.repReq * Math.pow(soaRepMult, soaOwned + k)
       for (const pt of f) {
+        if ((work.units += 2 * (1 + f.length)) >= work.every) {
+          stepEnd(work)
+          yield
+        }
         push(k, { cost: pt.cost, value: pt.value, from: pt, act: null })
         if (it.factionRep < repNeeded) continue
         const cost = pt.cost + price
@@ -976,6 +1030,31 @@ function walk(pt) {
  *            restricted: Array, stats: object}}
  */
 export function planPurchases(o) {
+  const g = planPurchasesGen(o)
+  // Capped as coop.drain is: a $100b catalogue plan is ~2,300 steps.
+  for (let steps = 0; ; steps++) {
+    if (steps > 2e6) throw new Error('augplan: planPurchasesGen did not finish in 2e6 steps')
+    const r = g.next()
+    if (r.done) return r.value
+  }
+}
+
+/**
+ * planPurchases AS A GENERATOR, for coop.js's pacer: the same plan, the same
+ * cache, the same order of work — it only `yield`s every `yieldEvery` work
+ * units (a DP transition plus the frontier it scans; PLAN_YIELD_UNITS by
+ * default). Live BN4.3 2026-10-03 11:23Z: one re-plan at ~$9.3b ran ~90ms in
+ * a single 'goweights-blade' step ("PLAN BLOCKED THE PAGE: 94.1ms"); a
+ * catalogue plan at $100b is ~0.4s. The yields are pacing only, so
+ * drain(planPurchasesGen(o)) === planPurchases(o) value for value
+ * (tools/test/augplangen.test.mjs).
+ */
+export function* planPurchasesGen(o, { yieldEvery = PLAN_YIELD_UNITS, cache = true, work = null } = {}) {
+  // `work` (optional, the caller's object): filled with {units, total,
+  // maxStep, yields, every} — the run's work units and its longest step in
+  // them (augplangen.test.mjs prices a unit and holds a step to the budget).
+  // `cache: false` plans afresh (the tests compare uncached runs).
+  const w = Object.assign(work ?? {}, { units: 0, total: 0, maxStep: 0, yields: 0, every: yieldEvery })
   // THE SAME QUESTION, ANSWERED ONCE. One progress.js pass asked 107 plans of
   // which 57 repeated an earlier call exactly — a ladder of ten money levels
   // swept three times (headless replica of the live BN6 save, 2026-10-02),
@@ -997,6 +1076,7 @@ export function planPurchases(o) {
   } catch {
     key = null
   }
+  if (!cache) key = null
   if (key !== null && planCache.has(key)) {
     const hit = planCache.get(key)
     planCache.delete(key)
@@ -1004,7 +1084,8 @@ export function planPurchases(o) {
     planCacheStats.hits++
     return structuredClone(hit)
   }
-  const plan = planPurchasesUncached(o)
+  const plan = yield* planPurchasesUncachedGen(o, w)
+  stepEnd(w)
   if (key !== null) {
     let copy = null
     try {
@@ -1024,10 +1105,12 @@ export function planPurchases(o) {
 // Small on purpose: the repeats are a sweep of ~10 levels; anything older is a
 // different pass's offers. Per module instance, so it dies with its importer.
 const PLAN_CACHE_SIZE = 16
+/** Work units between planPurchasesGen's yields: ~1-2ms of DP on a dev machine (augplangen.test.mjs AG2 measures it). */
+export const PLAN_YIELD_UNITS = 100000
 const planCache = new Map()
 export const planCacheStats = { hits: 0, misses: 0 }
 
-function planPurchasesUncached(o) {
+function* planPurchasesUncachedGen(o, work) {
   const money = o?.money
   if (!num(money)) throw new Error(`augplan: money is unreadable (${String(money)}) — refusing to plan against a budget nobody can name`)
   const r = o.r ?? BASE_PRICE_MULT
@@ -1049,13 +1132,15 @@ function planPurchasesUncached(o) {
   if (!o.offers || o.offers.length === 0) return empty('no offers')
 
   const norm = normalise({ ...o, money })
-  const core = runCore({ singles: norm.singles, chains: norm.chains, r, money, frontierCap })
-  const soaRes = runSoa(
+  yield
+  const core = yield* runCoreGen({ singles: norm.singles, chains: norm.chains, r, money, frontierCap }, work)
+  const soaRes = yield* runSoaGen(
     { soa: norm.soa, soaOwned: o.soaOwned ?? 0, soaRepMult: SOA_REP_MULT, frontierCap },
     money,
+    work,
   )
 
-  const combined = convolve(core.frontier, soaRes.frontier, money)
+  const combined = yield* convolveGen(core.frontier, soaRes.frontier, money, work)
   if (!combined.length) {
     return {
       ...empty('nothing affordable'),

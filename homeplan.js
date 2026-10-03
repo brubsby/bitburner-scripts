@@ -56,6 +56,11 @@ import { bladeExitGen } from 'bbplan.js'
 import { LITE_OVER_FULL } from 'bbliteplan.js'
 import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame, chooseOpponent } from 'goplan.js'
 
+/** batchAt may return a generator (progress.js re-plans through augplan.planPurchasesGen): run it in this generator's steps. */
+function* callOut(x) {
+  return x && typeof x.next === 'function' && typeof x[Symbol.iterator] === 'function' ? yield* x : x
+}
+
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
 /** What each script the next tier admits does to the black-op exit. */
@@ -227,9 +232,9 @@ export function* bladeHomeExitGen(o) {
   if (fin(installAtH) && buyAtH < installAtH) {
     if (typeof batchAt !== 'function' || !fin(moneyAtInstall)) return { deltaH: null, why: 'bought before the committed install, but the batch re-plan is unavailable' }
     const after = moneyAtInstall - cost + (fin(gainPerSec) && gainPerSec > 0 ? gainPerSec * (installAtH - buyAtH) * 3600 : 0)
-    const b0 = batchAt(moneyAtInstall)
-    yield // each re-plan its own step (planPurchases, several ms; goweights.bladeGoWeightsGen)
-    const b1 = batchAt(Math.max(0, after))
+    const b0 = yield* callOut(batchAt(moneyAtInstall))
+    yield // each re-plan its own steps (planPurchasesGen through progress.js; goweights.bladeGoWeightsGen)
+    const b1 = yield* callOut(batchAt(Math.max(0, after)))
     yield
     if (!b0 || !b1) return { deltaH: null, why: 'the install batch could not be re-planned' }
     displaced = { moneyWithout: Math.round(moneyAtInstall), moneyWith: Math.round(after), without: b0, with: b1 }

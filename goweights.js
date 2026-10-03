@@ -305,7 +305,8 @@ const COMBAT = ['strength', 'defense', 'dexterity', 'agility']
  *   startFor(spec)     the route's start builder (progress.js pc.bladeCtx.startFor)
  *   spec               the committed install spec ({kind:'wait', waitH, blade}) or null
  *   maxH               the exit simulation's horizon
- *   batchAt(m)         the install's batch content ({gains, simulacrum}) bought with $m
+ *   batchAt(m)         the install's batch content ({gains, simulacrum}) bought with $m,
+ *                      or a generator returning it (run in this generator's steps)
  *   moneyAtInstall     money at the committed install
  *   batchMoneyPerSec   what hack() earns ($/s); streamSource names where it came from
  *   hackShare          the batch's hack-side thread share (absent: 1, an upper bound)
@@ -365,7 +366,7 @@ export function* bladeGoWeightsGen(o = {}) {
     const m0 = Math.max(0, o.moneyAtInstall)
     const specOf = (b) => ({ ...spec, blade: { gains: b?.gains ?? {}, simulacrum: b?.simulacrum === true } })
     const keyOf = (b) => JSON.stringify(b?.gains ?? {}) + (b?.simulacrum === true ? '+sim' : '')
-    const b0 = batchAt(m0)
+    const b0 = yield* callOut(batchAt(m0))
     yield
     if (!b0) return refuse('the install batch could not be planned')
     const Tb = yield* exitOf(specOf(b0), [])
@@ -376,7 +377,7 @@ export function* bladeGoWeightsGen(o = {}) {
     let hi = null
     let bHi = null
     for (let m = base * 1.25; m <= base * 8; m *= 1.25) {
-      const b = batchAt(m)
+      const b = yield* callOut(batchAt(m))
       yield
       if (b && keyOf(b) !== keyOf(b0)) {
         hi = m
@@ -386,7 +387,7 @@ export function* bladeGoWeightsGen(o = {}) {
     }
     let lo = 0
     for (let m = m0 / 1.25; m >= m0 / 8 && m > 0; m /= 1.25) {
-      const b = batchAt(m)
+      const b = yield* callOut(batchAt(m))
       yield
       if (b && keyOf(b) !== keyOf(b0)) {
         lo = m
@@ -432,6 +433,15 @@ export function* bladeGoWeightsGen(o = {}) {
     detail,
     why: null,
   }
+}
+
+/**
+ * A call out that may itself be sliced: a batchAt returning a generator (progress.js
+ * re-plans through augplan.planPurchasesGen) runs inside this one's steps; a plain
+ * value passes through.
+ */
+export function* callOut(x) {
+  return x && typeof x.next === 'function' && typeof x[Symbol.iterator] === 'function' ? yield* x : x
 }
 
 /** extraIncome steps [{atH, perSec}] with `add` $/s on top of every step from now on. */
