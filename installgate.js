@@ -230,6 +230,76 @@ export function multiplierNeeded(target, exp) {
  * a fifteen-minute constant that is wrong for every life that is not fifteen
  * minutes long.
  */
+/**
+ * THE INSTALL LOOP ON THE BLADEBURNER ROUTE (live BN4.3 2026-10-03).
+ *
+ * An install on this route resets every combat stat; the black-op exit model
+ * (bbplan.bladeExit) prices the retrain, but not what the life actually goes
+ * through after it: the $1262 the install leaves cannot pay Powerhouse's fee,
+ * so the body step crimes for cash before and between gym legs (14:38:51Z ->
+ * 15:12Z: 0.55h to the bar against the model's 0.33h, zero rank meanwhile),
+ * and the pre-install pass priced 'now' 0.5h under the new life's own price.
+ * Measured: the 14:38Z install's new life priced itself +1.04h over the
+ * actor's 'now', the 15:18Z one's +0.89h (EXIT JUMP AT INSTALL) — while each
+ * install was bought for a priced saving of 0.27h. Every new life then sees
+ * an install that resets nothing it has yet (its stats are the retrain's),
+ * priced as nearly free: an install every ~40 minutes, each one a retrain.
+ *
+ * The guard: the plan's 'install' stands only when the gate's OWN fresh
+ * comparison, with the measured install bias (the realised jump of this
+ * node's earlier installs on this route, bladeInstallBiasOf) added to the
+ * install arm, still beats never; and in a life younger than BLADE_LOOP.
+ * youngLifeH it must beat it by BLADE_LOOP.youngGainH (a new life whose
+ * stats are the retrain's is exactly where the model under-prices the next
+ * retrain). Returns {ok, gainH, biasH, why}; ok null when unpriceable.
+ */
+export const BLADE_LOOP = { youngLifeH: 1, youngGainH: 0.5, keep: 6 }
+export function bladeLoopGuardOf({ nowH, neverH, biasH = null, biasWhy = null, lifeH = null } = {}) {
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  const bias = fin(biasH) ? Math.max(0, biasH) : 0
+  const biasText = fin(biasH) ? `the measured install bias +${bias.toFixed(2)}h (${biasWhy ?? 'realised exit jumps'})` : 'no measured install bias yet'
+  if (!fin(nowH)) return { ok: null, gainH: null, biasH: bias, why: 'the install-now exit is unpriced' }
+  // 'never' unpriced: the plan alone decided before this guard; keep it, but say so.
+  if (!fin(neverH)) return { ok: null, gainH: null, biasH: bias, why: 'never-installing is unpriced: the plan decides alone' }
+  const gainH = +(neverH - (nowH + bias)).toFixed(3)
+  const young = fin(lifeH) && lifeH < BLADE_LOOP.youngLifeH
+  const need = young ? BLADE_LOOP.youngGainH : 0
+  const ok = gainH > need
+  const head = `install now ${nowH.toFixed(2)}h + ${biasText} against never ${neverH.toFixed(2)}h: ${gainH >= 0 ? 'saves' : 'costs'} ${Math.abs(gainH).toFixed(2)}h`
+  return {
+    ok,
+    gainH,
+    biasH: +bias.toFixed(3),
+    young,
+    needH: need,
+    why: ok
+      ? `${head}${young ? ` (life ${lifeH.toFixed(2)}h old: needs > ${need}h, has it)` : ''}`
+      : young
+        ? `${head} — a life ${lifeH.toFixed(2)}h old needs > ${need}h (its stats are the last retrain's; the next retrain is what the model under-prices)`
+        : `${head} — the fresh comparison does not carry the install`,
+  }
+}
+/**
+ * The install bias on this route from the realised exit jumps (plan.exitJump
+ * first samples, one per install, carried in plan.txt bladeInstallJumps):
+ * the mean point diff (new life's exit minus the actor's 'now' less the
+ * elapsed time). Same node only. Returns {biasH, n, why} (biasH null: none).
+ */
+export function bladeInstallBiasOf(ledger, { node = null } = {}) {
+  const xs = (Array.isArray(ledger) ? ledger : []).filter((x) => x && typeof x.diffH === 'number' && isFinite(x.diffH) && (node === null || x.node === node))
+  if (!xs.length) return { biasH: null, n: 0, why: 'no realised install on this route in this node' }
+  const m = xs.reduce((a, x) => a + x.diffH, 0) / xs.length
+  return { biasH: +m.toFixed(3), n: xs.length, why: `${xs.length} realised install(s) in BitNode ${node ?? '?'}: ${xs.map((x) => `${x.at.slice(11, 16)}Z ${x.diffH > 0 ? '+' : ''}${x.diffH.toFixed(2)}h`).join(', ')}` }
+}
+/** The ledger after this pass: the exit jump's first sample of the install that began this life, once, newest BLADE_LOOP.keep. */
+export function bladeInstallJumpsNext(prevLedger, exitJump, { node = null, blade = false } = {}) {
+  const led = (Array.isArray(prevLedger) ? prevLedger : []).filter((x) => x && (node === null || x.node === node))
+  const at = exitJump?.install?.at
+  const pt = (exitJump?.first?.checks ?? []).find((k) => k.what === 'point') ?? (exitJump?.first?.checks ?? [])[0]
+  if (!blade || !at || !pt || typeof pt.diffH !== 'number' || led.some((x) => x.at === at)) return led
+  return [...led, { at, node, diffH: pt.diffH, what: pt.what, elapsedH: exitJump.first.elapsedH ?? null }].slice(-BLADE_LOOP.keep)
+}
+
 export function shouldInstall(o) {
   // FIRST STATEMENT IN THE FUNCTION, and it has to stay that way. rho decides
   // WHICH stopping rule is in force — measured marginal-vs-rho, or the
@@ -706,14 +776,21 @@ export function shouldInstall(o) {
   // No decision (unpriced): hold — an install only resets the combat the
   // black ops are priced on.
   const blade = bladeDecides
+  // THE INSTALL LOOP GUARD (bladeLoopGuardOf): on this route the plan's
+  // 'install' must survive the gate's OWN fresh comparison with the realised
+  // install bias added — live BN4.3 2026-10-03 the 14:38Z install ran on a
+  // decision held from 14:28Z while the fresh pricing read now 3.4h vs never
+  // 3.1h, and the 15:18Z install priced +0.27h while each new life priced
+  // itself +0.89-1.04h (EXIT JUMP AT INSTALL).
+  const bladeGuard = blade && !terminal && exitDecides && !!bayes && bayes.install === true ? bladeLoopGuardOf({ nowH: ex.nowH, neverH: ex.neverH, biasH: o.bladeInstallBiasH, biasWhy: o.bladeInstallBiasWhy, lifeH: num(ageMs) ? ageMs / 3.6e6 : null }) : null
   const install = blade
-    ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true))
+    ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true && bladeGuard?.ok !== false))
     : !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
   // THE PLAN AND THIS GATE AGREE, or the gate names why it overrode it.
   const planOverride =
     bayes && bayes.install !== install
       ? blade
-        ? mandateHold ? 'a mandated campaign' : destructive ? `the ${o.binding?.gate ?? '?'} gate the plan's trajectory does not carry (${o.binding?.why ?? ''})` : null
+        ? mandateHold ? 'a mandated campaign' : destructive ? `the ${o.binding?.gate ?? '?'} gate the plan's trajectory does not carry (${o.binding?.why ?? ''})` : bladeGuard?.ok === false ? `INSTALL LOOP GUARD: ${bladeGuard.why}` : null
       : mandateHold
         ? 'a mandated campaign'
         : terminal
@@ -777,9 +854,12 @@ export function shouldInstall(o) {
     destructive,
     mandateHold: mandateHold || undefined,
     bladeRoute: blade || undefined,
+    bladeLoopGuard: bladeGuard || undefined,
     why: blade && !mandateHold && !terminal && !destructive
       ? !exitDecides || !bayes
         ? `hold: the committed Bladeburner route and its install exit is unpriced (${ex?.why ?? 'no comparison'}) — an install would only reset the combat the black ops are priced on`
+        : bladeGuard?.ok === false
+        ? `hold: INSTALL LOOP GUARD on the Bladeburner route — ${bladeGuard.why} (plan ${bayes.key}: ${bayes.why ?? ''})`
         : install
           ? `install: ${queued} aug(s) on the Bladeburner route — the black-op exit installing now ${ex.nowH.toFixed(1)}h, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'} (plan ${bayes.key}: ${bayes.why ?? ''})`
           : `hold: the Bladeburner route — the plan's install decision is ${bayes.key} (black-op exit installing now ${ex.nowH.toFixed(1)}h, never ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}, the best wait ${exitWait?.H != null ? exitWait.H.toFixed(1) + 'h' : '-'}): ${bayes.why ?? ''}`

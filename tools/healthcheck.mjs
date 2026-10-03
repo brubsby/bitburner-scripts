@@ -35,7 +35,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoPushVerdict } from "./pushwatch.mjs";
-import { bladeburnerHealth } from "./bbhealth.mjs";
+import { bladeburnerHealth, installLoopOf } from "./bbhealth.mjs";
 import { raisedHealth } from "./raisehealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
@@ -847,6 +847,17 @@ if (!sleevesExpected) {
   const pricedHold = gate?.countDecidedBy === "exit-sim" || gate?.countDecidedBy === "plan" || planInstall?.install === false || planDecisions?.bladeRoute?.key === "blade";
   if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0 && pricedHold) note(`install held by the simulated exit (life ${lifeH.toFixed(1)}h): ${String(gate?.countTimingWhy ?? "").slice(0, 120)}`);
   else if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
+  // F2b: INSTALL LOOP — on the Bladeburner route every install resets combat
+  // and retrains it, so a life the planner ends within an hour of its start is
+  // a retrain bought and thrown away (live BN4.3 2026-10-03: installs 14:38Z
+  // and 15:18Z, the 14:38Z life 0.66h long, zero rank in it; each new life
+  // priced +0.9-1.0h over the install's own price). installgate.
+  // bladeLoopGuardOf holds such installs; this fails if one gets through.
+  {
+    const lt = readTel("lifetimes.txt");
+    const loop = installLoopOf(Array.isArray(lt) ? lt : [], { bitNode: now.bitNode, nowMs: Date.parse(now.at), lifeStartMs: num(now.lifeMs) ? Date.parse(now.at) - now.lifeMs : null });
+    if (loop.short.length) fail(`INSTALL LOOP: ${loop.why}`, "an install on the Bladeburner route resets the combat the black ops are priced on; installgate.bladeLoopGuardOf must hold it (installgate.txt bladeLoopGuard, plan.txt bladeInstallJumps)");
+  }
   // F3: the planner must act, or change what it is waiting on.
   if (prev && sameNode && dtMin >= 30 && now.didCount === 0 && prev.didCount === 0 && now.todo0 !== null && now.todo0 === prev.todo0) fail(`PLANNER IDLE: progress.js did nothing across ${dtMin.toFixed(0)} min, still waiting on: ${now.todo0.slice(0, 160)}`);
   // F4: a measured income the planner cannot see.

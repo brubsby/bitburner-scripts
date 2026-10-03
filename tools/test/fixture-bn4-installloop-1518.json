@@ -1,0 +1,532 @@
+{
+ "why": "BN4.3 2026-10-03 install loop: the 15:18Z pre-install state (history.jsonl 15:15:51Z person, the save's multipliers read 15:25Z after the 3-NFG install, bladeburner.txt 15:21Z division), the plan/gate numbers of the 14:38Z and 15:18Z installs, and the realised exit jumps",
+ "tel": {
+  "bitNode": 4,
+  "joined": true,
+  "joinedAt": "2026-10-03T11:18:44.895Z",
+  "rank": 182774.51,
+  "skillPoints": 8,
+  "levels": {
+   "Blade's Intuition": 78,
+   "Cloak": 44,
+   "Short-Circuit": 59,
+   "Digital Observer": 56,
+   "Tracer": 2,
+   "Overclock": 90,
+   "Reaper": 94,
+   "Evasive System": 101,
+   "Datamancer": 0,
+   "Cyber's Edge": 116,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 660.62,
+  "maxStamina": 660.62,
+  "city": "Chongqing",
+  "blackOps": {
+   "done": 10,
+   "next": "Operation Tyrell",
+   "reqdRank": 50000,
+   "chance": [
+    0.325,
+    1
+   ],
+   "formulaChance": 0.325
+  },
+  "counts": {
+   "Tracking": 934.5,
+   "Bounty Hunter": 736,
+   "Retirement": 625.5,
+   "Investigation": 582.9,
+   "Undercover Operation": 451.3,
+   "Sting Operation": 521.9,
+   "Raid": 63.7,
+   "Stealth Retirement Operation": 355.5,
+   "Assassination": 335
+  },
+  "maxLevels": {
+   "Tracking": 1,
+   "Bounty Hunter": 11,
+   "Retirement": 13,
+   "Investigation": 5,
+   "Undercover Operation": 12,
+   "Sting Operation": 1,
+   "Raid": 29,
+   "Stealth Retirement Operation": 5,
+   "Assassination": 14
+  },
+  "cities": [
+   {
+    "name": "Aevum",
+    "popEst": 435159384,
+    "pop": 728960158,
+    "r": 1.67516,
+    "chaos": 55.18,
+    "comms": 43
+   },
+   {
+    "name": "Chongqing",
+    "popEst": 320743582,
+    "pop": 1601062530,
+    "r": 4.99172,
+    "chaos": 5.66,
+    "comms": 0
+   },
+   {
+    "name": "Sector-12",
+    "popEst": 440241459,
+    "pop": 1216192605,
+    "r": 2.76256,
+    "chaos": 50.92,
+    "comms": 23
+   },
+   {
+    "name": "New Tokyo",
+    "popEst": 167984307,
+    "pop": 648755068,
+    "r": 3.862,
+    "chaos": 58.11,
+    "comms": 0
+   },
+   {
+    "name": "Ishima",
+    "popEst": 311561949,
+    "pop": 349198023,
+    "r": 1.1208,
+    "chaos": 46.62,
+    "comms": 22
+   },
+   {
+    "name": "Volhaven",
+    "popEst": 503464453,
+    "pop": 1185171615,
+    "r": 2.35403,
+    "chaos": 1.64,
+    "comms": 0
+   }
+  ],
+  "staminaBonus": 0,
+  "daemon": "bladeburner.js",
+  "skillsAt": "2026-10-03T15:18:37.398Z"
+ },
+ "person1515": {
+  "skills": {
+   "hacking": 488,
+   "strength": 159,
+   "defense": 167,
+   "dexterity": 183,
+   "agility": 252,
+   "charisma": 1,
+   "intelligence": 134
+  },
+  "exp": {
+   "hacking": 7007771.832068667,
+   "strength": 5254.2558476643735,
+   "defense": 4619.300458218483,
+   "dexterity": 5843.706100866686,
+   "agility": 11573.825737621717,
+   "charisma": 0,
+   "intelligence": 34601.479117004375
+  }
+ },
+ "mults": {
+  "strength": 1.924434472567359,
+  "strength_exp": 1.8172229549391046,
+  "defense": 2.1168779198240952,
+  "defense_exp": 1.8172229549391046,
+  "dexterity": 2.121689006005514,
+  "dexterity_exp": 1.9989452504330152,
+  "agility": 2.3338579066060654,
+  "agility_exp": 1.8172229549391046,
+  "charisma": 2.0094867169248687,
+  "charisma_exp": 2.326814577223615,
+  "bladeburner_max_stamina": 1.1550000000000002,
+  "bladeburner_stamina_gain": 1.0924200000000002,
+  "bladeburner_analysis": 1.32825,
+  "bladeburner_success_chance": 1.2778632772838403
+ },
+ "gymExpPerSec": 17.637649706829134,
+ "sleeves": {
+  "infiltrate": 0,
+  "support": 5,
+  "fa": 0
+ },
+ "rankScale": 1.1838,
+ "successScale": 1.2061,
+ "nfg3": {
+  "strength": 1.030309,
+  "defense": 1.030309,
+  "dexterity": 1.030309,
+  "agility": 1.030309,
+  "charisma": 1.030309,
+  "strength_exp": 1.030309,
+  "defense_exp": 1.030309,
+  "dexterity_exp": 1.030309,
+  "agility_exp": 1.030309,
+  "charisma_exp": 1.030309
+ },
+ "live": {
+  "1438": {
+   "nowH": 3.44,
+   "neverH": 3.1,
+   "lifeH": 11.5,
+   "planKey": "now",
+   "planWhy": "held (no event since 2026-10-03T14:28:20.811Z); at that decision: stays on committed: no alternative",
+   "jumpDiffH": 1.041
+  },
+  "1518": {
+   "nowH": 3.469388832692308,
+   "neverH": 3.7444736790566613,
+   "lifeH": 0.66,
+   "planKey": "now",
+   "jumpDiffH": 0.894
+  }
+ },
+ "exitJump1518": {
+  "at": "2026-10-03T15:28:37.983Z",
+  "lastAugReset": 1791040716099,
+  "ok": true,
+  "install": {
+   "at": "2026-10-03T15:18:35.869Z",
+   "actorH": 3.469,
+   "planH": 3.517,
+   "q10": 3.365,
+   "q90": 3.749
+  },
+  "first": {
+   "at": "2026-10-03T15:23:38.117Z",
+   "elapsedH": 0.084,
+   "meanH": 4.252,
+   "pointH": 4.279,
+   "source": "count route",
+   "ok": true,
+   "checks": [
+    {
+     "what": "point",
+     "a": 4.279,
+     "b": 3.385,
+     "aName": "the new life's point 4.28h",
+     "bName": "the install actor's 3.47h less 0.08h",
+     "diffH": 0.894,
+     "tolH": 1,
+     "ok": true
+    },
+    {
+     "what": "mean",
+     "a": 4.252,
+     "b": 3.433,
+     "aName": "the new life's mean 4.25h",
+     "bName": "the plan's 'now' mean 3.52h less 0.08h",
+     "diffH": 0.819,
+     "tolH": 1,
+     "ok": true
+    }
+   ]
+  },
+  "worst": {
+   "at": "2026-10-03T15:23:38.117Z",
+   "elapsedH": 0.084,
+   "meanH": 4.252,
+   "pointH": 4.279,
+   "source": "count route",
+   "ok": true,
+   "checks": [
+    {
+     "what": "point",
+     "a": 4.279,
+     "b": 3.385,
+     "aName": "the new life's point 4.28h",
+     "bName": "the install actor's 3.47h less 0.08h",
+     "diffH": 0.894,
+     "tolH": 1,
+     "ok": true
+    },
+    {
+     "what": "mean",
+     "a": 4.252,
+     "b": 3.433,
+     "aName": "the new life's mean 4.25h",
+     "bName": "the plan's 'now' mean 3.52h less 0.08h",
+     "diffH": 0.819,
+     "tolH": 1,
+     "ok": true
+    }
+   ]
+  },
+  "ver": "1g9zy5.47",
+  "n": 2,
+  "why": "one trajectory across the install (2026-10-03T15:18:35.869Z): the new life's point 4.15h ~ the install actor's 3.47h less 0.17h; the new life's mean 4.13h ~ the plan's 'now' mean 3.52h less 0.17h"
+ },
+ "lifetimes": [
+  {
+   "at": "2026-10-02T19:20:51.576Z",
+   "lifeH": 4.67,
+   "hackMult": 1.3824,
+   "bitNode": 4,
+   "lnM": 0.15749787666718468,
+   "exitFavor": 0,
+   "augs": 0,
+   "installWhy": "install: 1 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 41.7h, never installing 43.2h (plan now: held (no event since 2026-10-02T19:10:51.514Z); at that decision: stays on committed: the best alternative w0.25 is expected 0.63h sooner net of a 0.05h switch cost and better in 71",
+   "cadenceModel": {
+    "lnPerHour": 0.015909251084531898,
+    "cycleHours": 24
+   },
+   "terminal": false,
+   "installBatch": [
+    "NeuroFlux Governor"
+   ],
+   "capStart": 5334262.7682436155,
+   "capEnd": 9589472,
+   "predicted": {
+    "nextMult": 1.4294016,
+    "nextLifeH": 1.72
+   }
+  },
+  {
+   "at": "2026-10-02T23:56:22.762Z",
+   "lifeH": 4.59,
+   "hackMult": 1.396227621888,
+   "bitNode": 4,
+   "lnM": 0.04217917185366259,
+   "exitFavor": 0,
+   "augs": 1,
+   "installWhy": "install: 1 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 31.6h, never installing 32.5h (plan now: held (no event since 2026-10-02T23:41:22.222Z); at that decision: no committed option: the least expected exit (31.795h, P(best) 0.667))",
+   "cadenceModel": {
+    "lnPerHour": 0.01964337315916514,
+    "cycleHours": 24
+   },
+   "terminal": false,
+   "installBatch": [
+    "NeuroFlux Governor"
+   ],
+   "predicted": {
+    "nextMult": 1.4436993610321922,
+    "nextLifeH": 1.72
+   },
+   "scores": {
+    "mult": 0.977,
+    "lifeH": 2.669
+   }
+  },
+  {
+   "at": "2026-10-03T02:42:48.023Z",
+   "lifeH": 2.77,
+   "hackMult": 1.4101935562232495,
+   "bitNode": 4,
+   "lnM": 0.30162023705143465,
+   "exitFavor": 0,
+   "augs": 1,
+   "installWhy": "install: 7 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 15.8h, never installing 16.1h (plan now: no committed option: the least expected exit (15.577h, P(best) 0.375))",
+   "cadenceModel": {
+    "lnPerHour": 0.01765236269149405,
+    "cycleHours": 16
+   },
+   "terminal": false,
+   "installBatch": [
+    "Cranial Signal Processors - Gen I",
+    "Cranial Signal Processors - Gen II",
+    "BitWire",
+    "Neurotrainer I",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 698275.0423854494,
+   "capEnd": 504517321,
+   "predicted": {
+    "nextMult": 1.4242991864925993,
+    "nextLifeH": 4.59,
+    "nextAugs": 2
+   },
+   "scores": {
+    "mult": 0.977,
+    "lifeH": 1.61
+   }
+  },
+  {
+   "at": "2026-10-03T03:07:48.139Z",
+   "lifeH": 3.18,
+   "hackMult": 1.4101935562232495,
+   "bitNode": 4,
+   "lnM": 0.2758854421293878,
+   "exitFavor": 0,
+   "augs": 1,
+   "installWhy": "install: 8 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 15.7h, never installing 15.8h (plan now: switch committed -> now: expected 0.64h sooner net of a 0.05h switch cost, more than the 0.10h that waiting one re-decide interval is worth (rho 0.931, spread x5.449, sd 2.64h); bet",
+   "cadenceModel": {
+    "lnPerHour": 0.019456321814736097,
+    "cycleHours": 16
+   },
+   "terminal": false,
+   "installBatch": [
+    "BitWire",
+    "Neurotrainer I",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 698275.0423854494,
+   "capEnd": 351234093,
+   "predicted": {
+    "nextMult": 1.4242991864925993,
+    "nextLifeH": 4.59,
+    "nextAugs": 1.5
+   },
+   "scores": {
+    "mult": 0.99,
+    "lifeH": 0.693,
+    "augs": 0.5
+   }
+  },
+  {
+   "at": "2026-10-03T14:38:24.018Z",
+   "lifeH": 11.5,
+   "hackMult": 1.5718207841444196,
+   "bitNode": 4,
+   "lnM": 0.08939565915833958,
+   "exitFavor": 0,
+   "augs": 3,
+   "installWhy": "install: 20 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 3.4h, never installing 3.1h (plan now: held (no event since 2026-10-03T14:28:20.811Z); at that decision: stays on committed: no alternative)",
+   "cadenceModel": {
+    "lnPerHour": 0.021529847837488084,
+    "cycleHours": 6
+   },
+   "terminal": false,
+   "installBatch": [
+    "Blade's Runners",
+    "I.N.T.E.R.L.I.N.K.E.D",
+    "Hyperion Plasma Cannon V1",
+    "Vangelis Virus",
+    "Glibness Enhancement",
+    "BLADE-51b Tesla Armor",
+    "BLADE-51b Tesla Armor: IPU Upgrade",
+    "ORION-MKIV Shoulder",
+    "EMS-4 Recombination",
+    "EsperTech Bladeburner Eyewear",
+    "HemoRecirculator",
+    "Hacknet Node Kernel Direct-Neural Interface",
+    "LuminCloaking-V1 Skin Implant",
+    "LuminCloaking-V2 Skin Implant",
+    "Hacknet Node CPU Architecture Neural-Upload",
+    "Hacknet Node Cache Architecture Neural-Upload",
+    "Hacknet Node NIC Architecture Neural-Upload",
+    "Wired Reflexes",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 337952.34626961395,
+   "capEnd": 1923375436546,
+   "predicted": {
+    "nextMult": 1.5822849382224944,
+    "nextLifeH": 4.452,
+    "nextAugs": 3.3333333333333335
+   },
+   "scores": {
+    "mult": 1.104,
+    "lifeH": 2.505,
+    "augs": 2
+   }
+  },
+  {
+   "at": "2026-10-03T15:08:23.861Z",
+   "lifeH": 0.49,
+   "hackMult": 1.6034227006208306,
+   "bitNode": 4,
+   "lnM": 0.03236211837872313,
+   "exitFavor": 0,
+   "augs": 21,
+   "installWhy": "install: 3 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 3.5h, never installing 3.8h (plan now: no committed option: the least expected exit (3.513h, P(best) 1))",
+   "cadenceModel": {
+    "lnPerHour": 0.01862691140563531,
+    "cycleHours": 16
+   },
+   "terminal": false,
+   "installBatch": [
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 1262,
+   "capEnd": 29777937,
+   "predicted": {
+    "nextMult": 1.655733185624579,
+    "nextLifeH": 6.425999999999999,
+    "nextAugs": 21.75
+   },
+   "scores": {
+    "mult": 1.013,
+    "lifeH": 0.11,
+    "augs": 6.3
+   }
+  },
+  {
+   "at": "2026-10-03T15:13:23.890Z",
+   "lifeH": 0.58,
+   "hackMult": 1.6034227006208306,
+   "bitNode": 4,
+   "lnM": 0.05837731581732729,
+   "exitFavor": 0,
+   "augs": 21,
+   "installWhy": "install: 5 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 3.5h, never installing 3.7h (plan now: held (no event since 2026-10-03T15:08:23.625Z); at that decision: no committed option: the least expected exit (3.513h, P(best) 1))",
+   "cadenceModel": {
+    "lnPerHour": 0.01999048234473314,
+    "cycleHours": 16
+   },
+   "terminal": false,
+   "installBatch": [
+    "Synaptic Enhancement Implant",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 1262,
+   "capEnd": 117133052,
+   "predicted": {
+    "nextMult": 1.651698933723243,
+    "nextLifeH": 3.056671304815068,
+    "nextAugs": 25.2
+   },
+   "scores": {
+    "mult": 0.968,
+    "lifeH": 0.09,
+    "augs": 0.966
+   }
+  },
+  {
+   "at": "2026-10-03T15:18:24.159Z",
+   "lifeH": 0.66,
+   "hackMult": 1.6034227006208306,
+   "bitNode": 4,
+   "lnM": 0.047451603144125006,
+   "exitFavor": 0,
+   "augs": 21,
+   "installWhy": "install: 3 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 3.5h, never installing 3.7h (plan now: stays on now: the best alternative w2 is expected -0.21h later net of a 0.05h switch cost, against the 0.00h that waiting one re-decide interval is worth (rho 0.947, spread x6.292, sd",
+   "cadenceModel": {
+    "lnPerHour": 0.02028573222383689,
+    "cycleHours": 8
+   },
+   "terminal": false,
+   "installBatch": [
+    "NeuroFlux Governor",
+    "NeuroFlux Governor",
+    "NeuroFlux Governor"
+   ],
+   "capStart": 1262,
+   "capEnd": 39419369,
+   "predicted": {
+    "nextMult": 1.6435531194642485,
+    "nextLifeH": 2.0597707575074136,
+    "nextAugs": 24.5
+   },
+   "scores": {
+    "mult": 0.971,
+    "lifeH": 0.216,
+    "augs": 0.833
+   }
+  }
+ ],
+ "lifeStartMs": 1791040716099
+}

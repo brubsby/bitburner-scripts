@@ -123,7 +123,7 @@ import {
   expForSkill,
   scoreFutures,
   discountFutures,
-  carryPredictions, installOfOrderedBatch } from 'installgate.js'
+  carryPredictions, installOfOrderedBatch, bladeInstallBiasOf, bladeInstallJumpsNext } from 'installgate.js'
 import { planSchedule, bestCompatibleSet, holdCandidates, advancedOffersOf, logValue } from 'factionplan.js'
 import { joinWait, timeToMeet } from 'joinplan.js'
 import { snapshotView } from 'snapshot.js'
@@ -3888,8 +3888,14 @@ function publishPlan(ns, info, extra = {}) {
     } catch (e) {
       exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }
     }
+    pc.exitJumpNow = exitJump
+    // THE REALISED INSTALL BIAS on the Bladeburner route (installgate.
+    // bladeInstallBiasOf / bladeLoopGuardOf): each install's first exit-jump
+    // sample, kept across lives (prevAny) within the node.
+    const bladeInstallJumps = bladeLedgerOf(pc, info)
     const rec = {
       at,
+      bladeInstallJumps,
       node: info?.currentNode ?? null,
       lastAugReset: info?.lastAugReset ?? null,
       health: pc.error || Object.values(pc.decisions).some((d) => d?.error) ? 'error' : blocked ? 'blocked' : pc.consistency?.ok === false ? 'inconsistent' : 'ok',
@@ -5078,6 +5084,13 @@ function exitExpPerSec(ns, schedule, scriptPosterior = null) {
  * strength 470 as 850, reported 0h of combat, and stalled with nothing to
  * train. Hacking is NOT folded here: effectiveHackingMult owns it.
  */
+/** This node's realised blade-route install jumps (installgate.bladeInstallJumpsNext), from the carried record and this pass's exit jump. */
+function bladeLedgerOf(pc, info) {
+  const node = info?.currentNode ?? null
+  const blade = pc?.decisions?.bladeRoute?.key === 'blade' || pc?.prevAny?.decisions?.bladeRoute?.key === 'blade'
+  const prevLed = (pc?.prevAny?.node ?? node) === node ? pc?.prevAny?.bladeInstallJumps ?? null : null
+  return bladeInstallJumpsNext(prevLed, pc?.exitJumpNow ?? pc?.prev?.exitJump ?? null, { node, blade })
+}
 function levelledPerson(player, info) {
   const n = bitNodeMults(info?.currentNode)
   const f = (k, key) => (typeof n?.[key] === 'number' && isFinite(n[key]) && n[key] > 0 ? (player?.mults?.[k] ?? 1) * n[key] : player?.mults?.[k])
@@ -8201,6 +8214,16 @@ async function act(ns, canJoin, info, note) {
       // The committed Bladeburner route: the exit needs no Daedalus count and
       // no hacking multiplier — the install decision priced on the black ops decides.
       bladeRoute: exitCompare?.route === 'blade',
+      // THE INSTALL LOOP GUARD's measured bias (installgate.bladeLoopGuardOf): this node's realised exit jumps at install on this route.
+      ...(() => {
+        if (exitCompare?.route !== 'blade') return {}
+        try {
+          const b = bladeInstallBiasOf(bladeLedgerOf(planCtx, info), { node: info?.currentNode ?? null })
+          return { bladeInstallBiasH: b.biasH, bladeInstallBiasWhy: b.why }
+        } catch (e) {
+          return { bladeInstallBiasH: null, bladeInstallBiasWhy: `the install bias threw: ${String(e).slice(0, 100)}` }
+        }
+      })(),
       // Money is the trader's compounding capital (BitNode 8): the count batch
       // installs on the count-aware simulated exit (installgate countBySim).
       capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0,

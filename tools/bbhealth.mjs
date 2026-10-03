@@ -188,3 +188,38 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   } else if (bb.blackOps) notes.push(`bladeburner: rank ${num(bb.rank) ? bb.rank.toFixed(0) : '?'} (${num(bb.rankPerHour) ? bb.rankPerHour.toFixed(0) : '?'}/h), black ops ${bb.blackOps.done}/21, next ${bb.blackOps.next} at rank ${bb.blackOps.reqdRank} chance ${JSON.stringify(bb.blackOps.chance)}; ${bb.result}: ${String(bb.detail ?? '').slice(0, 100)}`)
   return { fails, notes, snap }
 }
+
+/**
+ * INSTALL LOOP (healthcheck F2b): lives on the Bladeburner route that the
+ * planner ended by an install within `minLifeH` of their start, ended inside
+ * the last `windowH`. From the lifetimes ledger (/tel/lifetimes.txt): each
+ * entry's life began at at - lifeH (entries of the same life — orders that
+ * did not complete — share a start); consecutive distinct starts bound a life.
+ * lifeStartMs: this life's start (getResetInfo().lastAugReset).
+ * Returns {short: [{startAt, endAt, lifeH}], why}.
+ */
+export function installLoopOf(lifetimes, { bitNode = null, nowMs = Date.now(), lifeStartMs = null, minLifeH = 1, windowH = 3 } = {}) {
+  const rows = (lifetimes ?? []).filter((r) => r && (bitNode == null || r.bitNode === bitNode) && typeof r.lifeH === 'number' && Number.isFinite(Date.parse(r.at)))
+  const startMin = new Map()
+  for (const r of rows) {
+    const s = Math.round((Date.parse(r.at) - r.lifeH * 3.6e6) / 60000)
+    const blade = /Bladeburner route/.test(String(r.installWhy ?? ''))
+    // within a minute of a known start: the same life (lifeH is rounded to 0.01h)
+    const k = [...startMin.keys()].find((x) => Math.abs(x - s) <= 1) ?? s
+    startMin.set(k, (startMin.get(k) ?? false) || blade)
+  }
+  // The current life's start (the install that began it): bounds the last recorded life.
+  if (Number.isFinite(lifeStartMs)) {
+    const s = Math.round(lifeStartMs / 60000)
+    if (![...startMin.keys()].some((x) => Math.abs(x - s) <= 1)) startMin.set(s, false)
+  }
+  const starts = [...startMin.entries()].sort((a, b) => a[0] - b[0])
+  const short = []
+  for (let i = 0; i + 1 < starts.length; i++) {
+    const [s0, blade] = starts[i]
+    const s1 = starts[i + 1][0]
+    const lifeH = (s1 - s0) / 60
+    if (blade && lifeH < minLifeH && nowMs - s1 * 60000 <= windowH * 3.6e6) short.push({ startAt: new Date(s0 * 60000).toISOString(), endAt: new Date(s1 * 60000).toISOString(), lifeH: +lifeH.toFixed(2) })
+  }
+  return { short, why: short.length ? `${short.length} Bladeburner-route life/lives ended by an install under ${minLifeH}h in the last ${windowH}h: ${short.map((x) => `${x.startAt.slice(11, 16)}Z-${x.endAt.slice(11, 16)}Z (${x.lifeH}h)`).join(', ')}` : 'no short Bladeburner-route life' }
+}
