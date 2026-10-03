@@ -8,6 +8,8 @@
 //   Tetrads      -> str/def/dex/agi           bonusPower 0.7  komi 5.5
 //   Daedalus     -> company_rep + faction_rep bonusPower 1.1  komi 5.5
 //   Illuminati   -> hacking_speed             bonusPower 0.7  komi 7.5
+//   ????????????  -> hacking (the skill level) bonusPower 2    komi 9.5   (the hidden
+//                   opponent GoOpponent.w0r1d_d43m0n — see THE HIDDEN OPPONENT below)
 //
 // go.js carried `opponent: 'Daedalus'` as a CONSTANT from the BitNode 2 run,
 // where the whole trajectory was reputation-bound and the gang sold The Red
@@ -67,7 +69,14 @@ export const OPPONENTS = {
   SlumSnakes: { power: 1.2, channel: 'crime_success', game: 'Slum Snakes' },
   Netburners: { power: 1.3, channel: 'hacknet_node_money', game: 'Netburners' },
   Tetrads: { power: 0.7, channel: 'combat', game: 'Tetrads' },
+  // THE HIDDEN OPPONENT. Not the w0r1d_d43m0n SERVER: this is a Go board, and
+  // nothing here paths to, roots or backdoors that server (endgame.js alone
+  // may). See THE HIDDEN OPPONENT below for every fact and its source line.
+  w0r1d_d43m0n: { power: 2, channel: 'hacking', game: '????????????', board: 19, komi: 9.5, needs: 'The Red Pill' },
 }
+
+/** Our key for the hidden opponent (GoOpponent.w0r1d_d43m0n, Go/Enums.ts:9). */
+export const W0 = 'w0r1d_d43m0n'
 
 /** Our key -> the game's GoOpponent value (resetBoardState, getStats keys). Null for an unknown key. */
 export function gameName(key) {
@@ -317,14 +326,23 @@ export const MEASURED_BOARD = 5
  * @param {number} [o.boardSize] the board being played; the rate table is 5x5 only.
  * @param {number} [o.goPower]  currentNodeMults.GoPower (4 in BitNode 14).
  * @param {number} [o.sf14]     Source-File 14 level; >=1 doubles the effect.
- * @param {object} [o.powerPerHour] override the measured table (tests).
+ * @param {object} [o.powerPerHour] override the measured table (tests; go.js adds the
+ *                              hidden opponent's measured-or-prior rate).
+ * @param {object} [o.winRates]  { opponent: win rate } — a THOMPSON DRAW (drawWinRates).
+ *                              Absent: the point estimates (WIN_RATE), as before.
+ * @param {object} [o.refWinRates] { opponent: the win rate its powerPerHour was measured
+ *                              at }. Absent: WIN_RATE, and W0_PRIOR.refP for the hidden one.
+ * @param {boolean} [o.redPill] The Red Pill INSTALLED (w0Eligible): the hidden opponent
+ *                              exists. Absent/false: it is skipped by name.
  * @returns {{opponent, why, refused, table}}
  */
 export function chooseOpponent(o = {}) {
   const { weights, windowH, incumbent } = o
   const goPower = num(o.goPower) && o.goPower > 0 ? o.goPower : 1
   const sf14 = num(o.sf14) ? o.sf14 : 0
-  const table = o.powerPerHour ?? POWER_PER_HOUR
+  const table = { [W0]: W0_PRIOR.powerPerHour, ...(o.powerPerHour ?? POWER_PER_HOUR) }
+  const refs = { ...WIN_RATE, [W0]: W0_PRIOR.refP, ...(o.refWinRates ?? {}) }
+  const drawn = o.winRates && typeof o.winRates === 'object' ? o.winRates : null
   const dwellH = num(o.dwellH) && o.dwellH > 0 ? o.dwellH : 0
   const boardSize = num(o.boardSize) ? o.boardSize : MEASURED_BOARD
   const keep = (why) => ({ opponent: incumbent ?? null, why, refused: true, table: null })
@@ -349,7 +367,11 @@ export function chooseOpponent(o = {}) {
   const skipped = []
   const scored = []
   for (const [name, meta] of Object.entries(OPPONENTS)) {
-    const optional = OPTIONAL.includes(meta.channel)
+    if (name === W0 && o.redPill !== true) {
+      skipped.push(`${name} (${meta.channel}: not discovered — needs The Red Pill INSTALLED, netscriptGoImplementation.ts:359)`)
+      continue
+    }
+    const optional = OPTIONAL.includes(meta.channel) || name === W0
     if (!PRICEABLE.includes(meta.channel) && !optional) {
       skipped.push(`${name} (${meta.channel}: no exit weight)`)
       continue
@@ -361,13 +383,25 @@ export function chooseOpponent(o = {}) {
     }
     if (!num(w) || w < 0) return keep(`weight for ${meta.channel} is unreadable — refusing rather than ranking on a partial basket`)
     const measured = table[name]
+    if (name === W0 && !(num(measured) && measured > 0)) {
+      skipped.push(`${name} (measured power/hour ${measured}: nothing to price)`)
+      continue
+    }
     if (!num(measured) || measured <= 0) return keep(`no measured power/hour for ${name}`)
     // The next dwell earns at this opponent's own paused streak, not the
     // steady state: the switching cost, priced (see streakFactor).
+    // THE WIN RATE: the Thompson draw when one is given, else the point
+    // estimate. The measured rate is rescaled from the win rate it was
+    // measured at to this one (rateScale) — that is how a draw moves the price.
+    const ref = refs[name]
+    const p = drawn && num(drawn[name]) ? drawn[name] : ref
+    if (!num(p) || p < 0 || p > 1) return keep(`no win rate for ${name}`)
+    const scale = p === ref ? 1 : rateScale(p, ref)
+    if (!num(scale)) return keep(`could not rescale ${name}'s rate to win rate ${p}`)
     const s0 = streaks ? streaks[name] ?? 0 : null
-    const phi = streaks && dwellGames && num(s0) ? streakFactor(WIN_RATE[name], s0, dwellGames) : 1
+    const phi = streaks && dwellGames && num(s0) ? streakFactor(p, s0, dwellGames) : 1
     if (!num(phi)) return keep(`could not price ${name}'s streak (winStreak ${s0})`)
-    const pph = measured * phi
+    const pph = measured * scale * phi
     const n = o.nodePower[name] ?? 0
     if (!num(n) || n < 0) return keep(`nodePower for ${name} is unreadable (${o.nodePower[name]})`)
     const e = effectAt(n, meta.power, goPower, sf14)
@@ -376,7 +410,7 @@ export function chooseOpponent(o = {}) {
     const marginal = w * (slope / e) * pph
     const eD = effectAt(n + pph * dwellH, meta.power, goPower, sf14)
     const block = w * (Math.log(eD) - Math.log(e))
-    scored.push({ name, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, powerPerHour: pph, marginal, block })
+    scored.push({ name, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, winRate: p, powerPerHour: pph, marginal, block })
   }
   if (!scored.length) return keep('no priceable opponent')
 
@@ -394,7 +428,8 @@ export function chooseOpponent(o = {}) {
   const head =
     `${best.name} (${best.channel}) marginal ${best.marginal.toExponential(3)}/h = weight ${best.weight.toPrecision(3)} x dlnE/dn ` +
     `${(best.marginal / best.weight / best.powerPerHour).toExponential(3)} @n=${Math.round(best.nodePower)} x ${Math.round(best.powerPerHour)}/h` +
-    (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of the measured ${table[best.name]})` : '')
+    (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of the measured ${table[best.name]})` : '') +
+    (drawn ? ` [Thompson: win rate drawn ${best.winRate.toFixed(3)}]` : '')
   const inc = scored.find((s) => s.name === incumbent)
   if (best.name !== incumbent && inc && dwellH > 0 && !(best.block > inc.block)) {
     return {
@@ -411,4 +446,390 @@ export function chooseOpponent(o = {}) {
     (best.name !== incumbent && inc && dwellH > 0 ? `; dwell block ${best.block.toExponential(3)} > ${incumbent} ${inc.block.toExponential(3)}` : '') +
     `; runners-up ${runners}`
   return { opponent: best.name, why, refused: false, table: scored }
+}
+
+// ---------------------------------------------------------------------------
+// THOMPSON SAMPLING OVER THE WIN RATES.
+//
+// WIN_RATE and POWER_PER_HOUR are one study's point estimates (60 games per
+// arm, one solver build). The bot's strength moves with the solver, so the
+// rate an opponent yields is a belief, and a point estimate never revisits a
+// board it once priced low. Each opponent (per board size: the hidden one is
+// always 19x19) carries a Beta posterior on its win rate:
+//
+//   prior     Beta(k p0, k (1-p0)), p0 = WIN_RATE (today's point), k =
+//             THOMPSON.priorN — so with no evidence the draws centre where the
+//             fixed estimates stood and behaviour starts where it was.
+//             The hidden opponent: Beta(1, 1) — never played, so WIDE.
+//   evidence  every finished game, decayed by THOMPSON.decay per game on that
+//             arm (half-life ~34 games): the solver changes, old games fade.
+//   choice    per GAME BOUNDARY (never per move): one draw per arm
+//             (Beta = Ga(a)/(Ga(a)+Ga(b)), Marsaglia-Tsang — microseconds),
+//             then the SAME marginal pricing as before on the drawn rates.
+//
+// HOW A DRAWN WIN RATE MOVES THE PRICE (rateScale). The measured power/hour
+// was taken at the study's win rate; a game's power is score x difficulty x
+// the win-streak multiplier (scoring.ts:86-89), and the streak multiplier is
+// the term the win rate drives (0.5 while losing to 3x on a run, effect.ts:
+// 119-130). So the rate is rescaled by steadyStreakMult(p)/steadyStreakMult(p0).
+// NOT MODELLED (named): a lost game also scores fewer points than a won one,
+// so the true sensitivity to p is steeper than this — a floor.
+
+/** Pseudo-count of the prior, the per-game decay, and where the counts live (home). */
+export const THOMPSON = { priorN: 10, decay: 0.98, file: '/tel/go-posterior.txt' }
+
+/**
+ * The hidden opponent's prior. Win rate: uniform (never measured). Power per
+ * hour: 200 — tools/sim/gameplan/README.md's ASSUMED mid for `w0` (0/200/1000,
+ * "never played"), so the two planners start from one number; refP is the win
+ * rate that figure is taken to stand at. Replaced by the measured rate once
+ * W0_MEASURED_MIN games exist (go.js).
+ */
+export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 200, refP: 0.5 }
+
+/** Games against the hidden opponent before its measured rate replaces the prior. */
+export const W0_MEASURED_MIN = 10
+
+const ssmMemo = new Map()
+function ssm(p) {
+  const k = Math.round(p * 1e4)
+  let v = ssmMemo.get(k)
+  if (v === undefined) {
+    v = steadyStreakMult(k / 1e4)
+    ssmMemo.set(k, v)
+  }
+  return v
+}
+
+/** Power/hour at win rate p over power/hour at the measured rate `ref` (see the header). */
+export function rateScale(p, ref) {
+  if (!num(p) || !num(ref) || p < 0 || p > 1 || ref < 0 || ref > 1) return null
+  return ssm(p) / ssm(ref)
+}
+
+/** Posterior key: opponent @ the board size it is played on. */
+export function armKey(name, size) {
+  return `${name}@${OPPONENTS[name]?.board ?? size}`
+}
+
+/** The prior Beta for an opponent: today's point estimate with priorN pseudo-games, or W0_PRIOR. */
+export function priorOf(name) {
+  if (name === W0) return { a: W0_PRIOR.a, b: W0_PRIOR.b }
+  const p0 = WIN_RATE[name]
+  if (!num(p0)) return { a: 1, b: 1 }
+  const k = THOMPSON.priorN
+  // Floors keep a 0.983 prior a proper Beta (b = 0.17 > 0).
+  return { a: Math.max(0.05, k * p0), b: Math.max(0.05, k * (1 - p0)) }
+}
+
+/** A fresh, empty posterior state (what a missing or unreadable file becomes). */
+export function emptyPosterior() {
+  return { v: 1, arms: {} }
+}
+
+/** Parse the persisted state; anything unreadable is an empty state, and says so. */
+export function parsePosterior(text) {
+  try {
+    const s = JSON.parse(text || 'null')
+    if (s && s.v === 1 && s.arms && typeof s.arms === 'object') return { state: s, why: null }
+    return { state: emptyPosterior(), why: text ? 'posterior file unreadable (wrong shape) — starting from the priors' : 'no posterior file yet — starting from the priors' }
+  } catch (e) {
+    return { state: emptyPosterior(), why: `posterior file unreadable (${String(e).slice(0, 60)}) — starting from the priors` }
+  }
+}
+
+/** Beta posterior of one arm: prior + decayed counts. n is the decayed evidence. */
+export function posteriorOf(state, name, size) {
+  const pr = priorOf(name)
+  const arm = state?.arms?.[armKey(name, size)] ?? null
+  const w = num(arm?.w) ? arm.w : 0
+  const l = num(arm?.l) ? arm.l : 0
+  const a = pr.a + w
+  const b = pr.b + l
+  const mean = a / (a + b)
+  const sd = Math.sqrt((a * b) / ((a + b) ** 2 * (a + b + 1)))
+  return { a, b, n: w + l, games: num(arm?.games) ? arm.games : 0, mean, sd }
+}
+
+/**
+ * One finished game on an arm: decay the arm's counts, add the outcome.
+ * Pure — returns a new state. `games` is the RAW count (never decayed): it is
+ * what the measurement cap counts.
+ */
+export function updatePosterior(state, name, size, won, decay = THOMPSON.decay, at = new Date().toISOString()) {
+  const key = armKey(name, size)
+  const s = state && state.arms ? state : emptyPosterior()
+  const arm = s.arms[key] ?? { w: 0, l: 0, games: 0 }
+  const d = num(decay) && decay > 0 && decay <= 1 ? decay : 1
+  const next = { w: arm.w * d + (won ? 1 : 0), l: arm.l * d + (won ? 0 : 1), games: (arm.games ?? 0) + 1, at }
+  return { ...s, arms: { ...s.arms, [key]: next } }
+}
+
+function normalDraw(rng) {
+  let u = 0
+  while (u <= 1e-300) u = rng()
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng())
+}
+
+/** Gamma(shape, 1) by Marsaglia-Tsang; shape < 1 by the boost Ga(a+1) U^(1/a). */
+export function gammaDraw(shape, rng = Math.random) {
+  if (!(shape > 0)) return null
+  if (shape < 1) {
+    let u = 0
+    while (u <= 1e-300) u = rng()
+    return gammaDraw(shape + 1, rng) * Math.pow(u, 1 / shape)
+  }
+  const d = shape - 1 / 3
+  const c = 1 / Math.sqrt(9 * d)
+  for (;;) {
+    let x, v
+    do {
+      x = normalDraw(rng)
+      v = 1 + c * x
+    } while (v <= 0)
+    v = v * v * v
+    const u = rng()
+    if (u < 1 - 0.0331 * x ** 4) return d * v
+    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v
+  }
+}
+
+/** Beta(a, b) as Ga(a) / (Ga(a) + Ga(b)). */
+export function betaDraw(a, b, rng = Math.random) {
+  const x = gammaDraw(a, rng)
+  const y = gammaDraw(b, rng)
+  if (!num(x) || !num(y) || x + y <= 0) return null
+  return x / (x + y)
+}
+
+/** One Thompson draw per opponent: { opponent: win rate }. */
+export function drawWinRates(state, names, size, rng = Math.random) {
+  const out = {}
+  for (const name of names) {
+    const { a, b } = posteriorOf(state, name, size)
+    const p = betaDraw(a, b, rng)
+    if (num(p)) out[name] = p
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// THE HIDDEN OPPONENT "????????????" (GoOpponent.w0r1d_d43m0n). A Go board,
+// NOT the w0r1d_d43m0n server — nothing here touches that server. From game
+// source (~/Repos/bitburner/src/Go):
+//
+//   exists      Enums.ts:9 — the enum value is the twelve question marks.
+//   available   netscriptGoImplementation.ts:359-361: resetBoardState throws
+//               "this opponent has not yet been discovered" unless
+//               Player.hasAugmentation(TheRedPill, true) — ignoreQueued, so The
+//               Red Pill must be INSTALLED, not merely bought (Person.ts:232-
+//               240). The UI also wants SF1 (goAI.ts:885-887 showWorldDemon);
+//               the API does not. In BN14 an install with TRP pre-creates its
+//               stats row (Go.ts:26-33).
+//   bonus       effect.ts:95-96: mults.hacking — the hacking SKILL multiplier
+//               (applied through updateSkillLevels, effect.ts:59-63), at
+//               bonusPower 2 (Constants.ts:62-68), the largest of any opponent.
+//   komi        9.5 (Constants.ts:63) -> difficultyMultiplier (9.5+0.5)*0.25 =
+//               2.5 per point (effect.ts:132-135; the x8 is 5x5 Illuminati only).
+//   board       ALWAYS 19x19 with a fixed shape: getNewBoardState replaces the
+//               board with bitverseBoardShape, rotated, size 19, no random
+//               obstacles (boardState.ts:26-30, Constants.ts:88-108) whatever
+//               size is requested — the size check is waived for it
+//               (netscriptGoImplementation.ts:355).
+//   handicap    7 starting white routers on 19x19 (boardState.ts:100-112).
+//   AI          isSmart true (goAI.ts:247-259) and the Illuminati priority move
+//               set (getFactionMove's fall-through, goAI.ts:225-241).
+//   reset       nodePower zeroed at every install like the rest (Go.ts:34-47).
+//   favor       none: its name is no FactionName, so a win banks no faction
+//               favor (scoring.ts:66-79).
+//
+// WHAT IT IS WORTH. mults.hacking multiplies the skill level, and the level is
+// logarithmic in exp (skill.ts:7-15), so on a HACKING-route exit after The
+// Red Pill — the climb to the World Daemon's required level — a few percent
+// on the multiplier removes a large fraction of the climb (hackLevelWeight).
+// On the BLADEBURNER route the exit is the black ops, no hacking level is on
+// the path, and the weight is a known 0.
+
+const RED_PILL = 'The Red Pill' // Augmentation/Enums.ts
+
+/**
+ * Can the hidden opponent be played? From ns.getResetInfo() (ownedAugs: the
+ * INSTALLED augmentations, a Map) — the probe go.js already pays for.
+ */
+export function w0Eligible(reset) {
+  const owned = reset?.ownedAugs
+  let has = null
+  if (owned instanceof Map) has = owned.has(RED_PILL)
+  else if (Array.isArray(owned)) has = owned.includes(RED_PILL)
+  else if (owned && typeof owned === 'object') has = RED_PILL in owned
+  if (has === null) return { eligible: false, why: 'installed augmentations unreadable (getResetInfo().ownedAugs) — the hidden opponent is not offered' }
+  return has
+    ? { eligible: true, why: 'The Red Pill is installed — the hidden opponent is open (netscriptGoImplementation.ts:359)' }
+    : { eligible: false, why: 'The Red Pill is not installed — resetBoardState refuses the hidden opponent until it is (netscriptGoImplementation.ts:359)' }
+}
+
+/** 'blade' | 'hack' | null from /tel/plan.txt (decisions.bladeRoute.key), this node only. */
+export function routeOf(plan, node) {
+  if (!plan || typeof plan !== 'object') return null
+  if (num(node) && num(plan.node) && plan.node !== node) return null
+  // No division (no bladeRoute decision at all) is the hack route too.
+  return plan.decisions?.bladeRoute?.key === 'blade' ? 'blade' : 'hack'
+}
+
+/** Continuous hacking level at exp E and multiplier m (skill.ts:7-15 without the floor). */
+export function levelAt(exp, mult) {
+  return mult * (32 * Math.log(exp + 534.6) - 200)
+}
+
+/**
+ * Hours from exp0 to `target` hacking level at multiplier `mult`, the exp rate
+ * flat + k (level + 50) (exitplan's affine law: an op's time scales as
+ * 1/(level+50)). In u = level/mult the exp to climb is e^((u+200)/32), so
+ *   T = integral_{u0}^{ut} e^((u+200)/32)/32 / (flat + k (mult u + 50)) du
+ * by Simpson's rule; u0 = 32 ln(exp0+534.6) - 200 does not depend on mult.
+ * Same arithmetic as exitplan.hoursToLevelShaped (cross-checked in GO12).
+ */
+export function climbHours({ target, mult, exp0, flat = 0, k = 0 }) {
+  if (!num(target) || !num(mult) || mult <= 0 || !num(exp0) || exp0 < 0 || !num(flat) || !num(k) || flat < 0 || k < 0) return null
+  const u0 = 32 * Math.log(exp0 + 534.6) - 200
+  const ut = target / mult
+  if (ut <= u0) return 0
+  if (!(flat + k > 0)) return Infinity
+  const f = (u) => Math.exp((u + 200) / 32) / 32 / (flat + k * (Math.max(1, mult * u) + 50))
+  const STEPS = 2000
+  const h = (ut - u0) / STEPS
+  let acc = f(u0) + f(ut)
+  for (let i = 1; i < STEPS; i++) acc += (i % 2 ? 4 : 2) * f(u0 + i * h)
+  return (acc * h) / 3 / 3600
+}
+
+/**
+ * Exit hours per unit ln of mults.hacking — the hidden opponent's weight, in
+ * goweights' unit. Two runs on the SAME inputs, the climb with and without the
+ * multiplier raised by e^D (CLAUDE.md: decisions compare simulated
+ * trajectories): the terminal sprint progress.js prices once The Red Pill is
+ * installed (the exp to the exit level at the current multiplier over the
+ * measured exp flow).
+ *
+ *   record  /tel/exitinputs.txt (progress.js): inputs.{hackingExp, hackingMult,
+ *           expPerSec, expFlatPerSec, expScalesWithLevel, exitLevel}
+ *   o.route 'blade' -> 0 (known: the exit does not run through a hacking level)
+ *
+ * ASSUMES the sprint: no further install (an install would zero the bonus).
+ * Returns { weight, why, sprintH } — weight null when it cannot price (the
+ * opponent is then skipped by name, never scored 0).
+ */
+export function hackLevelWeight(record, o = {}) {
+  if (o.route === 'blade') return { weight: 0, why: 'Bladeburner route: the exit is the black ops, no hacking level on the path — a known 0', sprintH: null }
+  if (!record?.inputs) return { weight: null, why: 'no exit inputs (/tel/exitinputs.txt) to price the climb' }
+  if (o.lastAugReset !== undefined && record.lastAugReset !== o.lastAugReset) return { weight: null, why: 'exit inputs are from another life' }
+  const now = num(o.now) ? o.now : Date.now()
+  if (!(now - Date.parse(record.at) < 30 * 60e3)) return { weight: null, why: 'exit inputs are stale (>30 min)' }
+  const i = record.inputs
+  const target = i.exitLevel
+  const mult = i.hackingMult
+  const exp0 = i.hackingExp
+  if (![target, mult, exp0, i.expPerSec].every(num) || mult <= 0 || exp0 < 0) return { weight: null, why: 'exit inputs lack exitLevel/hackingMult/hackingExp/expPerSec' }
+  const flat = num(i.expFlatPerSec) && i.expFlatPerSec >= 0 ? i.expFlatPerSec : 0
+  const scales = i.expScalesWithLevel === true
+  const lvl = levelAt(exp0, mult)
+  const k = scales ? Math.max(0, i.expPerSec - flat) / (Math.max(1, lvl) + 50) : 0
+  const F = scales ? flat : Math.max(0, i.expPerSec)
+  const D = num(o.D) && o.D > 0 ? o.D : 0.01
+  const T0 = climbHours({ target, mult, exp0, flat: F, k })
+  const T1 = climbHours({ target, mult: mult * Math.exp(D), exp0, flat: F, k })
+  if (!num(T0) || !num(T1)) return { weight: null, why: `the climb to hacking ${target} does not price (exp rate ${i.expPerSec})` }
+  return {
+    weight: Math.max(0, (T0 - T1) / D),
+    why: `hacking route: sprint to hacking ${target} ${T0.toFixed(2)}h at mult ${mult.toFixed(3)}, ${T1.toFixed(2)}h at x e^${D}`,
+    sprintH: T0,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MEASURING THE HIDDEN OPPONENT — the explore value.
+//
+// Its power/hour is unmeasured (W0_PRIOR is an assumption). The node-order
+// planner (tools/sim/gameplan) carries it as `w0`, and its value-of-
+// information table puts a ~128h swing in the whole-game total on that one
+// number. A reading is worth far more there than the few hours of play it
+// costs here, so when the board is open and the posterior is still wide go.js
+// spends a CAPPED batch on it regardless of the in-node price.
+
+/**
+ * The cap: at most this many games against the hidden opponent are played FOR
+ * MEASUREMENT (raw games on its arm, never decayed). 30 games give a win-rate
+ * sd <= ~0.09 and a power/hour to roughly +-20%; each is a 19x19 game (~10 min
+ * at the solver's pace), so the batch costs ~5h of farm time once per save —
+ * small beside the ~128h the gameplan's swing on `w0` is worth. Priced play
+ * against it continues past the cap whenever its marginal leads.
+ */
+export const W0_EXPLORE_GAMES = 30
+/** Exploration stops early once the win-rate posterior's sd is under this. */
+export const W0_WIDE_SD = 0.05
+
+/** Should the next game be a measurement game against the hidden opponent? */
+export function exploreW0({ eligible, state, solverOk = true, cap = W0_EXPLORE_GAMES } = {}) {
+  if (!eligible) return { explore: false, why: 'hidden opponent not open' }
+  const post = posteriorOf(state, W0, 19)
+  if (post.games >= cap) return { explore: false, why: `measurement batch done (${post.games}/${cap} games)`, post }
+  if (post.sd < W0_WIDE_SD) return { explore: false, why: `posterior already narrow (sd ${post.sd.toFixed(3)} < ${W0_WIDE_SD})`, post }
+  if (!solverOk) return { explore: false, why: 'the external solver is not answering — a measurement on the 20ms fallback would describe nothing', post }
+  return {
+    explore: true,
+    why: `MEASURING the hidden opponent: game ${post.games + 1} of a ${cap}-game batch (win-rate posterior sd ${post.sd.toFixed(3)}; its power/hour is the gameplan's w0, worth more measured than the farm time it costs)`,
+    post,
+  }
+}
+
+/** Games kept in the measurement record (the estimate uses all of them). */
+const W0_KEEP = 200
+/** A rate estimate goes to the gameplan observation channel every this many games against it. */
+export const OBS_EVERY = 20
+/** The gameplan observation channel (tools/sim/gameplan/README.md). */
+export const OBS_FILE = '/tel/gameplan-obs.txt'
+/** The hidden opponent's own measurement record. */
+export const W0_FILE = '/tel/go-w0.txt'
+
+/**
+ * Node power per hour from per-game {power, hours}: the ratio estimator
+ * sum(power)/sum(hours), sd by the delta method. null below 2 games.
+ */
+export function rateEstimate(games) {
+  const g = (games ?? []).filter((x) => num(x?.power) && num(x?.hours) && x.hours > 0)
+  const n = g.length
+  if (n < 2) return null
+  const P = g.reduce((s, x) => s + x.power, 0)
+  const H = g.reduce((s, x) => s + x.hours, 0)
+  const R = P / H
+  const v = g.reduce((s, x) => s + (x.power - R * x.hours) ** 2, 0) / (n - 1)
+  return { value: R, sd: Math.sqrt(v / n) / (H / n), n, wins: g.filter((x) => x.won).length }
+}
+
+/** Fold one finished game into the measurement record (pure). */
+export function w0RecordAdd(prev, game) {
+  const r = prev && prev.v === 1 && Array.isArray(prev.games) ? prev : { v: 1, games: [], totals: { games: 0, wins: 0, power: 0, hours: 0 } }
+  const games = [...r.games, game].slice(-W0_KEEP)
+  const t = r.totals
+  const totals = {
+    games: t.games + 1,
+    wins: t.wins + (game.won ? 1 : 0),
+    power: t.power + (num(game.power) ? game.power : 0),
+    hours: t.hours + (num(game.hours) ? game.hours : 0),
+  }
+  return { v: 1, at: game.at, unit: 'node power per hour (raw nodePower, before GoPower/SF14)', totals, rate: rateEstimate(games), games }
+}
+
+/**
+ * The observation record for the gameplan channel: {param, value, sd, at,
+ * source} — `w0` is node power per hour against w0r1d_d43m0n.
+ */
+export function w0Obs(rate, at, source = 'go.js') {
+  if (!rate || !num(rate.value) || !num(rate.sd)) return null
+  return { param: 'w0', value: +rate.value.toPrecision(5), sd: +rate.sd.toPrecision(4), at, source: `${source}: ${rate.n} games vs ????????????` }
+}
+
+/** Is this game count (raw, against the hidden opponent) a publishing point? */
+export function obsDue(gamesOnW0) {
+  return num(gamesOnW0) && gamesOnW0 > 0 && gamesOnW0 % OBS_EVERY === 0
 }

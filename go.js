@@ -87,7 +87,32 @@
 
 import { chooseMove } from 'golib.js'
 import { canUseGoCheat, sfLevel } from 'sfgate.js'
-import { chooseOpponent, nodePowerFromBonus, OPPONENTS, gameName, keyOfGame } from 'goplan.js'
+import {
+  chooseOpponent,
+  nodePowerFromBonus,
+  OPPONENTS,
+  gameName,
+  keyOfGame,
+  W0,
+  W0_PRIOR,
+  W0_MEASURED_MIN,
+  W0_FILE,
+  OBS_FILE,
+  THOMPSON,
+  WIN_RATE,
+  POWER_PER_HOUR,
+  parsePosterior,
+  posteriorOf,
+  updatePosterior,
+  drawWinRates,
+  w0Eligible,
+  routeOf,
+  hackLevelWeight,
+  exploreW0,
+  w0RecordAdd,
+  w0Obs,
+  obsDue,
+} from 'goplan.js'
 // Pure data module (no ns surface): the BitNode table, for GoPower.
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
@@ -438,7 +463,50 @@ export async function main(ns) {
    * boot.js may place this script off home (invariant C10).
    */
   const GATE_FILE = '/tel/installgate.txt'
+  const PLAN_FILE = '/tel/plan.txt'
+  const EXIT_FILE = '/tel/exitinputs.txt'
   const goPower = bitNodeMults(reset?.currentNode)?.GoPower ?? 1
+  // Home's /tel files from wherever this runs (C10): ns.read is local, so off
+  // home a file is pulled first. Writes go back to home the same way, since the
+  // daemon mirrors /tel only off home. scp/getHostname are already paid for.
+  const here = ns.getHostname()
+  const readHome = (file) => {
+    if (here !== 'home') ns.scp(file, here, 'home')
+    return ns.read(file)
+  }
+  const writeHome = (file, text, mode = 'w') => {
+    // An append off home appends to home's CURRENT copy, not a stale local one.
+    if (mode === 'a' && here !== 'home') ns.scp(file, here, 'home')
+    ns.write(file, text, mode)
+    if (here !== 'home') ns.scp(file, 'home', here)
+  }
+
+  // THOMPSON SAMPLING (goplan.js). The posterior counts survive restarts in a
+  // small file on home; an unreadable one starts from the priors — which ARE
+  // the old point estimates — and says so in /tel/go.txt.
+  const loaded = parsePosterior(readHome(THOMPSON.file))
+  let posterior = loaded.state
+  let posteriorWhy = loaded.why
+  let lastDraw = null
+  // THE HIDDEN OPPONENT (goplan.js THE HIDDEN OPPONENT). Eligibility is the
+  // installed Red Pill, read from the getResetInfo() this script already pays
+  // for; an install restarts go.js, so reading it once is exact.
+  const w0 = w0Eligible(reset)
+  let w0Rec = null
+  try {
+    const r = JSON.parse(readHome(W0_FILE) || 'null')
+    w0Rec = r?.v === 1 ? r : null
+  } catch {
+    /* no record yet */
+  }
+  let w0Explore = null
+  let w0Weight = null
+  /** The hidden opponent's rate: measured once W0_MEASURED_MIN games exist, else the prior. */
+  const w0RateOf = () => {
+    const r = w0Rec?.rate
+    if (r && r.n >= W0_MEASURED_MIN && r.value > 0) return { pph: r.value, ref: r.wins / r.n, source: `measured, ${r.n} games` }
+    return { pph: W0_PRIOR.powerPerHour, ref: W0_PRIOR.refP, source: 'prior (unmeasured)' }
+  }
   /** { opponent: nodePower } for every priced opponent; 0 for one never played this life. */
   const nodePowerOf = (stats) => {
     const out = {}
@@ -457,8 +525,13 @@ export async function main(ns) {
   }
   const pickOpponent = (current, stats, dwellH) => {
     try {
-      if (ns.getHostname() !== 'home') ns.scp(GATE_FILE, ns.getHostname(), 'home')
-      const gate = JSON.parse(ns.read(GATE_FILE) || 'null')
+      // MEASUREMENT FIRST: a capped batch against the hidden opponent while
+      // its posterior is wide (goplan.exploreW0) — its rate is worth more to
+      // the node-order planner than the in-node price says.
+      const ex = exploreW0({ eligible: w0.eligible, state: posterior, solverOk: solverHealth({ remoteMoves, localMoves }).health === 'ok' })
+      w0Explore = ex.why
+      if (ex.explore) return { opponent: W0, why: ex.why, switched: current !== W0 }
+      const gate = JSON.parse(readHome(GATE_FILE) || 'null')
       // THE WEIGHTS ARE THE GO BONUS'S OWN (goweights.js, published by
       // progress.js as objective.goWeights): exit hours per ln of each
       // channel with the multiplier applied only to the stream it moves
@@ -475,8 +548,29 @@ export async function main(ns) {
       // goPower comes from the BitNode table, which is the authority — the
       // gate file never carried it, and defaulting to 1 would under-price
       // every opponent by 4x in BitNode 14.
+      //
+      // THE HIDDEN OPPONENT'S WEIGHT is not goweights' (no Go channel there
+      // feeds the skill level): goplan.hackLevelWeight prices the post-Red-Pill
+      // climb with and without the bonus on progress.js's exit inputs, and the
+      // Bladeburner route (plan.txt decisions.bladeRoute) is a known 0.
+      if (w0.eligible) {
+        let planRec = null
+        let exitRec = null
+        try {
+          planRec = JSON.parse(readHome(PLAN_FILE) || 'null')
+          exitRec = JSON.parse(readHome(EXIT_FILE) || 'null')
+        } catch {
+          /* unreadable: hackLevelWeight refuses by name */
+        }
+        w0Weight = hackLevelWeight(exitRec, { route: routeOf(planRec, reset?.currentNode), lastAugReset: reset?.lastAugReset })
+      }
+      const hackW = typeof w0Weight?.weight === 'number' ? { hacking: w0Weight.weight } : {}
+      // ONE THOMPSON DRAW PER ARM, per game boundary; priced exactly as before.
+      const draw = drawWinRates(posterior, Object.keys(OPPONENTS), N)
+      lastDraw = Object.fromEntries(Object.entries(draw).map(([k, v]) => [k, Number(v.toFixed(3))]))
+      const w0r = w0RateOf()
       const pick = chooseOpponent({
-        weights: gw?.weights ?? null,
+        weights: gw?.weights ? { ...gw.weights, ...hackW } : null,
         windowH: gate?.objective?.windowH ?? null,
         incumbent: current,
         nodePower: nodePowerOf(stats),
@@ -486,6 +580,10 @@ export async function main(ns) {
         boardSize: N,
         goPower,
         sf14,
+        winRates: draw,
+        powerPerHour: { ...POWER_PER_HOUR, [W0]: w0r.pph },
+        refWinRates: { ...WIN_RATE, [W0]: w0r.ref },
+        redPill: w0.eligible,
       })
       const why = pick.refused && !gw?.weights ? `${pick.why} (goWeights: ${sameLife ? gw?.why ?? 'not published' : 'gate is from another life'})` : pick.why
       if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why, switched: false }
@@ -549,6 +647,9 @@ export async function main(ns) {
   // The last completed game's fields, carried on every heartbeat so a
   // timer-driven write never drops factionRepBonusPct (progress.js reads it).
   let gameFields = {}
+  // The board actually being played: N for every opponent but the hidden one,
+  // which the game always plays on its fixed 19x19 (boardState.ts:26-30).
+  let gameSize = N
   let lastPublishAt = 0
   let phase = 'starting'
 
@@ -559,7 +660,27 @@ export async function main(ns) {
   const note = reporter(ns, SETTINGS.statusFile, () => ({
     opponent,
     opponentWhy,
-    boardSize: N,
+    boardSize: gameSize,
+    // The Thompson state behind the choice: the last draw, each arm's posterior
+    // mean/sd/raw games, and why the counts are empty if they are.
+    thompson: {
+      draw: lastDraw,
+      arms: Object.fromEntries(
+        Object.keys(OPPONENTS).map((k) => {
+          const p = posteriorOf(posterior, k, N)
+          return [k, { mean: Number(p.mean.toFixed(3)), sd: Number(p.sd.toFixed(3)), games: p.games }]
+        }),
+      ),
+      ...(posteriorWhy ? { why: posteriorWhy } : {}),
+    },
+    w0: {
+      eligible: w0.eligible,
+      why: w0.why,
+      explore: w0Explore,
+      weight: w0Weight,
+      rate: w0RateOf(),
+      games: w0Rec?.totals?.games ?? 0,
+    },
     maxms: flags.maxms,
     idle: flags.idle,
     sf14,
@@ -641,9 +762,18 @@ export async function main(ns) {
           ns.print(`switching opponent ${was} -> ${opponent}`)
         }
       }
+      // What this opponent had banked before the game, for the per-game
+      // outcome and power (the posterior update and the hidden opponent's
+      // measurement). getStats is keyed by the game's enum value.
+      const preStats = ns.go.analysis.getStats()?.[gameName(opponent)] ?? null
+      const gameStartedAt = Date.now()
       // The game's enum value, never our key: "TheBlackHand" throws (Go/Enums.ts).
       ns.go.resetBoardState(gameName(opponent), N)
       await ns.sleep(100)
+      // The hidden opponent's board is 19x19 whatever was asked; every loop
+      // below sizes itself from the board the game actually dealt.
+      gameSize = ns.go.getBoardState().length || N
+      const size = gameSize
 
       const komi = ns.go.getGameState()?.komi ?? 5.5
       let done = false
@@ -666,8 +796,8 @@ export async function main(ns) {
         let ranked = null
         seq++
         const validList = []
-        for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (valid[x]?.[y]) validList.push([x, y])
-        ns.write('/go/req.txt', JSON.stringify({ seq, size: N, komi, board: boardStrings, valid: validList }), 'w')
+        for (let x = 0; x < size; x++) for (let y = 0; y < size; y++) if (valid[x]?.[y]) validList.push([x, y])
+        ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board: boardStrings, valid: validList }), 'w')
         for (let waited = 0; waited < flags.remotems; waited += 250) {
           await ns.sleep(250)
           try {
@@ -682,7 +812,7 @@ export async function main(ns) {
           }
         }
         if (ranked === null) {
-          ranked = chooseMove(boardStrings, valid, N, komi, flags.maxms, flags.topk)
+          ranked = chooseMove(boardStrings, valid, size, komi, flags.maxms, flags.topk)
           localMoves++
         }
 
@@ -829,6 +959,40 @@ export async function main(ns) {
       // the exit's favorStream).
       const favorRep = {}
       for (const [name, st] of Object.entries(all)) if (typeof st?.rep === 'number') favorRep[name] = Math.round(st.rep)
+
+      // THE OUTCOME, INTO THE POSTERIOR. Won = the game's own win counter
+      // moved (scoring.ts:56-58), not our reading of the score. Its own try:
+      // a failed persist must not cost this game's status write.
+      try {
+        const won = (s.wins ?? 0) > (preStats?.wins ?? 0)
+        posterior = updatePosterior(posterior, opponent, size, won)
+        posteriorWhy = null
+        writeHome(THOMPSON.file, JSON.stringify(posterior))
+        if (opponent === W0) {
+          // THE MEASUREMENT: node power this game banked (getStats' bonus,
+          // inverted exactly) over the wall-clock it took.
+          const bp = OPPONENTS[W0].power
+          const n0 = preStats?.bonusPercent === undefined ? 0 : nodePowerFromBonus(preStats.bonusPercent, bp, goPower, sf14)
+          const n1 = s.bonusPercent === undefined ? null : nodePowerFromBonus(s.bonusPercent, bp, goPower, sf14)
+          const at = new Date().toISOString()
+          w0Rec = w0RecordAdd(w0Rec, {
+            at,
+            won,
+            black: finalScore?.black ?? null,
+            white: finalScore?.white ?? null,
+            power: typeof n0 === 'number' && typeof n1 === 'number' ? Math.max(0, n1 - n0) : null,
+            hours: (Date.now() - gameStartedAt) / 3600e3,
+            solverShare: solverHealth({ remoteMoves, localMoves }).solverShare,
+          })
+          writeHome(W0_FILE, JSON.stringify(w0Rec))
+          // The gameplan observation channel, every OBS_EVERY games against it.
+          const obs = obsDue(w0Rec.totals.games) ? w0Obs(w0Rec.rate, at) : null
+          if (obs) writeHome(OBS_FILE, JSON.stringify(obs) + '\n', 'a')
+        }
+      } catch (e) {
+        record(errors, e)
+        posteriorWhy = `posterior/measurement write failed: ${describe(e)}`
+      }
 
       // The solver alarm rides the same write as everything else, so a reader
       // that already parses /tel/go.txt gets it for free and one that only
