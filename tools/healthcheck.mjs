@@ -552,7 +552,7 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
 // exit taken once the 21st black op is done. Silent outside BN6/7 and SF6/7
 // nodes with no record. The rank comparison uses this run's previous snapshot.
 {
-  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), lite: readTel("bb-lite.txt"), pl: readTel("plan.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), sl: readTel("sleeve.txt"), state, prev: prev?.bladeburner ?? null });
+  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), lite: readTel("bb-lite.txt"), pl: readTel("plan.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), sl: readTel("sleeve.txt"), wd: tel["watchdog.txt"] ?? readTel("watchdog.txt"), state, prev: prev?.bladeburner ?? null });
   for (const f of r.fails) fail(f.what, f.detail);
   for (const n of r.notes) note(n);
   now.bladeburner = r.snap;

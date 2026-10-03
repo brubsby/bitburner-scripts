@@ -293,3 +293,98 @@ export function liteReserveOf({ lite = null, full = null, info, canJoin = false,
   const host = reserveHostOf(null, hosts)
   return host ? { host, gb: LITE_COORD_GB + LITE_ACTOR_GB, why: 'bb-lite.js is not running: room to place it and its actors' } : null
 }
+
+// ---------------------------------------------------------------------------
+// THE FULL DAEMON'S PLACEMENT GUARANTEE (watchdog.js, batch.js).
+//
+// bladeburner.js declares 3.25GB (its ramOverride, which the game's static
+// calculator honours — RamCalculations.ts:354-384 — so ns.getScriptRam reads
+// 3.25 too) and raises to FULL_GB on the SAME host before its first
+// ns.bladeburner call (ramgrow.js; a denied raise exits). So the binding block
+// is FULL_GB free on one host at launch, never the declared figure: placed by
+// getScriptRam it lands on a 4GB host and exits four seconds later (the
+// sleeve.js incident boot.js records).
+//
+// Until 2026-10-03 only boot.js placed it, once per boot, and nothing retried:
+// at the 128GB tier batch.js fills the same 128GB hosts during the same boot
+// (live BN4: rothman-uni, millenium-fitness), and a home upgrade priced on the
+// full daemon (homeplan.js, -10.2h) bought a tier whose one credited effect
+// might never arrive. The watchdog now places it every cycle the tier admits
+// it and the route wants it — home first, else the tightest rooted host with
+// the block free — and when no host has the block it RESERVES one
+// (FULL_RESERVE_FILE): batch.js stops placing workers into it, its h/g/w
+// workers finish within a batch cycle, and the next watchdog cycle places the
+// daemon there. The handover is unchanged: bb-lite.js stands down when
+// bladeburner.js runs anywhere (the watchdog's bb-lite invariant), and
+// bladeburner.js does not act while bb-lite.txt is alive.
+
+/** bladeburner.js's raised price (its RAISE_CEILING; [BL9] holds the copies equal). */
+export const FULL_GB = 92.75
+/** The home tier boot.js admits bladeburner.js at (its manifest entry; [BL9]). */
+export const FULL_TIER = 128
+/** The reservation the watchdog publishes and batch.js honours (both on home). */
+export const FULL_RESERVE_FILE = '/tel/bb-full-reserve.txt'
+/** A reservation older than this is ignored (the watchdog rewrites it every 30s cycle). */
+export const FULL_RESERVE_FRESH_MS = 2 * 60e3
+/** What a batch cycle frees by itself: batch.js's workers (SETTINGS.workers). */
+export const FULL_FREEABLE = ['h.js', 'g.js', 'w.js']
+
+/** Does the route want the full daemon? Only a committed HACKING route in this node says no. */
+export function fullRouteOf(plan, node) {
+  if (plan && typeof plan === 'object' && plan.node === node) {
+    const key = plan.decisions?.bladeRoute?.key
+    if (key === 'hack') return { wants: false, why: `the route is 'hack' in BitNode ${node} (plan.txt decisions.bladeRoute): no 92.75GB taken from the batcher for a division the plan is not playing` }
+    if (key === 'blade') return { wants: true, why: 'the committed Bladeburner route' }
+  }
+  return { wants: true, why: 'the route is undecided this node: the division exists, placed as boot.js places it' }
+}
+
+/**
+ * Where bladeburner.js goes this cycle.
+ *   homeMax       home's max RAM (the tier)
+ *   plan, node    /tel/plan.txt and getResetInfo().currentNode (fullRouteOf)
+ *   hosts         [{host, max, used, workerGb, hacknet?}] — ROOTED hosts; workerGb is the RAM
+ *                 batch.js's h/g/w workers hold there (a batch cycle frees it)
+ *   homeBlock     progress.js's home block (13 + 6.25 x mult), kept unless progress.js is running
+ *   prev          the last reservation record (FULL_RESERVE_FILE): its host is kept while it qualifies
+ * Returns {action: 'wait' | 'place' | 'reserve' | 'blocked', admitted, host?, gb?, why}.
+ * `admitted`: the tier and the route want it — its absence is then a fault the
+ * healthcheck times (BLADEBURNER FULL NOT PLACED).
+ */
+export function fullPlacementOf({ homeMax, plan = null, node = null, hosts = [], homeBlock = 0, progressRunning = false, prev = null, need = FULL_GB }) {
+  if (!(num(homeMax) && homeMax >= FULL_TIER)) return { action: 'wait', admitted: false, why: `home ${homeMax}GB is under the ${FULL_TIER}GB tier boot.js admits bladeburner.js at (bb-lite.js is the daemon below it)` }
+  const route = fullRouteOf(plan, node)
+  if (!route.wants) return { action: 'wait', admitted: false, why: route.why }
+  const ok = hosts.filter((h) => h && h.host && !h.hacknet && num(h.max) && num(h.used))
+  const keep = (h) => (h.host === 'home' && !progressRunning ? homeBlock : 0)
+  const free = (h) => h.max - h.used - keep(h)
+  const cap = (h) => free(h) + (num(h.workerGb) ? h.workerGb : 0)
+  const f = (x) => x.toFixed(2)
+  const home = ok.find((h) => h.host === 'home')
+  if (home && free(home) >= need) return { action: 'place', admitted: true, host: 'home', why: `home has ${f(free(home))}GB free beyond progress.js's block (${route.why})` }
+  const fits = ok.filter((h) => h.host !== 'home' && free(h) >= need).sort((a, b) => free(a) - free(b) || (a.host < b.host ? -1 : 1))
+  if (fits.length) return { action: 'place', admitted: true, host: fits[0].host, why: `${fits[0].host} has ${f(free(fits[0]))}GB free (tightest fit; home ${home ? f(free(home)) : '?'}GB) — ${route.why}` }
+  const cands = ok.filter((h) => cap(h) >= need)
+  if (!cands.length) {
+    const best = [...ok].sort((a, b) => cap(b) - cap(a))[0]
+    return { action: 'blocked', admitted: true, why: `no rooted host can hold ${need}GB even with batch.js's workers gone — largest ${best ? `${best.host} ${f(cap(best))}GB of ${best.max}GB` : 'none'}: root a bigger server or grow home` }
+  }
+  const pick = cands.find((h) => h.host === prev?.host) ?? cands.find((h) => h.host === 'home') ?? cands.sort((a, b) => cap(a) - cap(b) || (a.host < b.host ? -1 : 1))[0]
+  return { action: 'reserve', admitted: true, host: pick.host, gb: need, why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once batch.js's workers drain — batch.js leaves ${need}GB there (${FULL_RESERVE_FILE}) and the next cycle places it` }
+}
+
+/** The record the watchdog writes to FULL_RESERVE_FILE: a host only while placing or reserving. */
+export function fullReserveRecordOf(d, info, now = Date.now()) {
+  const holds = d?.action === 'reserve' || d?.action === 'place'
+  return { at: new Date(now).toISOString(), lastAugReset: info?.lastAugReset ?? null, action: d?.action ?? null, host: holds ? d.host : null, gb: holds ? d.gb ?? FULL_GB : 0, why: d?.why ?? null }
+}
+
+/** What batch.js leaves free for the full daemon: {host, gb, why} from a fresh, this-life record on a host it knows, else null. */
+export function fullReserveOf(rec, info, hostNames = [], now = Date.now()) {
+  if (!rec?.host || !num(rec.gb) || rec.gb <= 0) return null
+  if (rec.lastAugReset !== info?.lastAugReset) return null
+  const at = Date.parse(rec.at ?? '')
+  if (!(Number.isFinite(at) && now - at <= FULL_RESERVE_FRESH_MS)) return null
+  if (!hostNames.includes(rec.host)) return null
+  return { host: rec.host, gb: rec.gb, why: `bladeburner.js (${rec.action}): ${String(rec.why ?? '').slice(0, 120)}` }
+}

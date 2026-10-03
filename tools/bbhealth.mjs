@@ -9,6 +9,9 @@
 //   BLADEBURNER SILENT       where the division can exist (BN6/7, SF6/7) and a daemon should be placed (home >= 128GB, or >= 32GB on the
 //                            Bladeburner route: bb-lite.js), /tel/bladeburner.txt is missing or stale
 //   BB-LITE STARVED          bb-lite.js's one-shot actors failed to place/answer 3+ times in 10 min
+//   BLADEBURNER FULL NOT PLACED  home >= 128GB (the tier admits bladeburner.js), the route is not 'hack', and the full
+//                            daemon has not run for > 15 min — the watchdog's placement/reservation is not converging
+//                            (wd = /tel/watchdog.txt: its bladeburner.js state and absentSince)
 //   ORDER NOT HELD           progress.js claims the slot for 'bladeburner' but the game runs other work, or no Bladeburner action
 //   NO RANK PROGRESS         the slot was ours at both ends of an interval >= 15 min and rank did not rise
 //   STAMINA STUCK            resting for 30+ min of samples and stamina is not rising
@@ -40,7 +43,11 @@ const sfOf = (state) => {
   return new Map(data.map(([n, l]) => [Number(n), Number(l)]))
 }
 
-export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null, eg = null, sl = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
+/** bladeburner.js's tier (boot.js manifest; bbliteplan.FULL_TIER) and how long it may be absent there. */
+export const FULL_TIER_GB = 128
+export const FULL_ABSENT_MIN = 15
+
+export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null, eg = null, sl = null, wd = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
   const fails = []
   const notes = []
   const fail = (what, detail = null) => fails.push({ what, detail })
@@ -55,7 +62,33 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   const age = ageMinOf(bb?.at, nowMs)
   const lifeStart = num(state?.playtimeSinceLastAug) ? nowMs - state.playtimeSinceLastAug : null
   const ours = !!bb && bbNode === node
-  const snap = { at: new Date(nowMs).toISOString(), bitNode: node, rank: ours && num(bb.rank) ? bb.rank : null, owned: false, acting: false }
+  const snap = { at: new Date(nowMs).toISOString(), bitNode: node, rank: ours && num(bb.rank) ? bb.rank : null, owned: false, acting: false, fullAbsentSince: null }
+
+  // ---- the full daemon's placement (watchdog.js fullPlace) ----------------
+  // Where the tier admits bladeburner.js (home >= 128GB) and the route is not
+  // 'hack', it must be running within FULL_ABSENT_MIN: the watchdog places it
+  // or reserves a host for it every 30s, so a longer absence is a placement
+  // that is not converging (no host can ever hold 92.75GB, batch.js not
+  // honouring the reservation, the launch failing its raise). The clock is
+  // the earlier of this check's own previous snapshot and the watchdog's
+  // absentSince (fresh records only).
+  {
+    const tierOk = bladeNode && num(state?.home?.ram) && state.home.ram >= FULL_TIER_GB
+    const routeHack = !!pl && pl.node === node && pl?.decisions?.bladeRoute?.key === 'hack'
+    const fullUp = ours && bb.daemon === 'bladeburner.js' && age !== null && age <= BB_FRESH_MIN && bb.health !== 'stopped'
+    if (tierOk && !routeHack && !fullUp) {
+      const wdRec = wd?.daemons?.['bladeburner.js'] ?? null
+      const wdAge = ageMinOf(wd?.at, nowMs)
+      const wdSince = wdAge !== null && wdAge < 5 ? Date.parse(wdRec?.absentSince ?? '') : NaN
+      const prevSince = prev && prev.bitNode === node && num(prev.fullAbsentSince) ? prev.fullAbsentSince : null
+      const since = Math.min(prevSince ?? nowMs, Number.isFinite(wdSince) ? wdSince : nowMs)
+      snap.fullAbsentSince = since
+      const mins = (nowMs - since) / 60000
+      const where = wdRec ? `watchdog: ${String(wdRec.state ?? '?').slice(0, 200)}` : 'watchdog.txt has no bladeburner.js entry (a watchdog from before the placement guarantee: restart it)'
+      if (mins > FULL_ABSENT_MIN) fail(`BLADEBURNER FULL NOT PLACED: home is ${state.home.ram}GB (the ${FULL_TIER_GB}GB tier admits bladeburner.js) and it has not run for ${mins.toFixed(0)} min — ${bb?.daemon === 'bb-lite' ? 'bb-lite.js is still the daemon' : 'no Bladeburner daemon record'}`, where)
+      else notes.push(`bladeburner: full daemon not placed yet (${mins.toFixed(0)} of ${FULL_ABSENT_MIN} min) — ${where}`)
+    }
+  }
 
   // ---- presence --------------------------------------------------------
   if (!ours) {

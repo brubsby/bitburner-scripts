@@ -110,6 +110,8 @@ import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, SF_FILE
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
+// Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
+import { fullPlacementOf, fullReserveRecordOf, fullReserveOf, FULL_RESERVE_FILE, FULL_FREEABLE } from 'bbliteplan.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -269,6 +271,24 @@ const WATCHED = [
   // kills it; its positions are sold first (act.js stocksell) because the
   // install re-initialises the market and every share is lost.
   { script: 'stock.js', host: 'anywhere', args: [], invariant: (ns) => ns.stock.hasTixApiAccess() },
+  // THE FULL BLADEBURNER DAEMON (bladeburner.js): placed wherever the division
+  // can exist, the 128GB tier admits it and the route wants it
+  // (bbliteplan.fullPlacementOf). Before this entry only boot.js placed it —
+  // once, at a boot where batch.js was filling the same 128GB hosts — and
+  // nothing retried. Its declared 3.25GB is not what it needs: it raises to
+  // FULL_GB on its own host before its first ns.bladeburner call, so `place`
+  // sizes it by that block (home first, else the tightest rooted host with the
+  // block free) and, when no host has it, RESERVES one for batch.js to drain
+  // (FULL_RESERVE_FILE). Listed BEFORE bb-lite.js so the handover's kill
+  // fires the same cycle the full daemon starts.
+  {
+    script: 'bladeburner.js',
+    host: 'anywhere',
+    args: [],
+    invariant: (ns) => canJoinBladeburner(ns.getResetInfo()),
+    place: (ns, hosts, rec) => fullPlace(ns, hosts, rec),
+    onRunning: (ns, rec) => fullRunning(ns, rec),
+  },
   // THE LEAN BLADEBURNER DAEMON (bb-lite.js): revived wherever the division
   // can exist, and STOPPED the moment bladeburner.js runs anywhere — the
   // handover's second half (bladeburner.js does not act while bb-lite.txt is
@@ -847,12 +867,13 @@ function shareThreads(ns, hosts, frac = 0.8) {
   // import graph into the watchdog's price. [R6] is the check that keeps the
   // copies honest; change one and it fails.
   const homeReserve = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
+  const held = fullHeld(ns)
   let biggest = 0
   for (const h of hosts) {
     // Never a hacknet server: share's bonus is not priced against the hashes
     // its RAM would cost there.
     if (!ns.hasRootAccess(h) || isHacknetServerHost(h)) continue
-    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h) - (h === 'home' ? homeReserve : 0)
+    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h) - (h === 'home' ? homeReserve : 0) - heldFor(held, h)
     if (free > biggest) biggest = free
   }
   const fits = Math.floor((biggest * frac) / perThread)
@@ -888,21 +909,34 @@ function scanAll(ns) {
  * on home.
  *
  * Costs nothing: ns.read is 0GB (RamCostGenerator.ts:634) and ns.scp is already
- * referenced below. One level deep is enough and is asserted rather than
- * assumed — status.js, lock.js, homecost.js, sfgate.js, storyservers.js,
- * golib.js and ctsolvers.js all import nothing at all, which is what makes them
- * free to import in the first place. If a shared module ever gains an import of
- * its own, make this recurse.
+ * referenced below. It used to stop one level deep, on the reasoning that the
+ * shared modules imported nothing; that stopped being true (below).
  */
+// TRANSITIVE since 2026-10-03: bladeburner.js is now placed off home by this
+// file, and its graph is two deep (bbliteplan.js -> bbplan.js -> coop.js,
+// bayes.js) — one level copied bbplan.js without coop.js and the launch
+// would fail to compile on the target.
 function modulesOf(ns, script) {
-  try {
-    const src = ns.read(script)
-    return [...src.matchAll(/^\s*import[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1].replace(/^\.?\//, ''))
-  } catch {
-    // Unreadable source is not a reason to refuse the relaunch; scp'ing the
-    // script alone is exactly the old behaviour.
-    return []
+  const out = new Set()
+  const queue = [script]
+  while (queue.length) {
+    let src = ''
+    try {
+      src = String(ns.read(queue.shift()) || '')
+    } catch {
+      // Unreadable source is not a reason to refuse the relaunch; scp'ing
+      // what was found is exactly the old behaviour.
+      continue
+    }
+    for (const m of src.matchAll(/^\s*import[^'"]*['"]([^'"]+)['"]/gm)) {
+      const dep = m[1].replace(/^\.?\//, '')
+      if (dep !== script && !out.has(dep)) {
+        out.add(dep)
+        queue.push(dep)
+      }
+    }
   }
+  return [...out]
 }
 
 /** Is this script running anywhere at all? */
@@ -910,17 +944,77 @@ function running(ns, hosts, script) {
   return hosts.some((h) => ns.hasRootAccess(h) && ns.ps(h).some((p) => p.filename === script))
 }
 
+/**
+ * bladeburner.js's placement this cycle (bbliteplan.fullPlacementOf), and the
+ * reservation batch.js honours when no host has its block free. Publishes the
+ * decision on the entry's record (`placement`) and keeps `absentSince` while
+ * the tier and the route want it and it is not running — the clock
+ * tools/bbhealth.mjs times BLADEBURNER FULL NOT PLACED against.
+ * Returns {host} to launch on, or {host: null, state}.
+ */
+function fullPlace(ns, hosts, rec) {
+  const info = ns.getResetInfo()
+  const readRec = (f) => {
+    try {
+      return JSON.parse(ns.read(f) || 'null')
+    } catch {
+      return null
+    }
+  }
+  const rooted = hosts.filter((h) => ns.hasRootAccess(h))
+  const d = fullPlacementOf({
+    homeMax: ns.getServerMaxRam('home'),
+    plan: readRec('/tel/plan.txt'),
+    node: info.currentNode,
+    hosts: rooted.map((h) => ({
+      host: h,
+      max: ns.getServerMaxRam(h),
+      used: ns.getServerUsedRam(h),
+      workerGb: ns.ps(h).filter((p) => FULL_FREEABLE.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0),
+      hacknet: isHacknetServerHost(h),
+    })),
+    homeBlock: 13 + 6.25 * singularityRamMultiplier(info),
+    progressRunning: running(ns, ['home'], 'progress.js'),
+    prev: readRec(FULL_RESERVE_FILE),
+  })
+  ns.write(FULL_RESERVE_FILE, JSON.stringify(fullReserveRecordOf(d, info)), 'w')
+  rec.placement = { action: d.action, host: d.host ?? null, why: d.why }
+  if (d.admitted) rec.absentSince = rec.absentSince ?? new Date().toISOString()
+  else delete rec.absentSince
+  return d.action === 'place' ? { host: d.host } : { host: null, state: `${d.action}: ${d.why}` }
+}
+
+/** bladeburner.js is up: the reservation is released (batch.js gets the room back) and the absence clock stops. */
+function fullRunning(ns, rec) {
+  delete rec.absentSince
+  rec.placement = { action: 'running', host: null, why: 'bladeburner.js is running' }
+  ns.write(FULL_RESERVE_FILE, JSON.stringify(fullReserveRecordOf({ action: 'running', why: 'bladeburner.js is running: nothing reserved' }, ns.getResetInfo())), 'w')
+}
+
+/** The full daemon's live reservation ({host, gb}) or null — what the watchdog's other placements must not take either. */
+function fullHeld(ns) {
+  try {
+    const r = JSON.parse(ns.read(FULL_RESERVE_FILE) || 'null')
+    return fullReserveOf(r, ns.getResetInfo(), [r?.host])
+  } catch {
+    return null
+  }
+}
+const heldFor = (held, h) => (held && held.host === h ? held.gb : 0)
+
 /** Tightest-fitting rooted host with room, so big hosts stay whole for the batcher. */
 function placeFor(ns, hosts, script, threads) {
   const need = ns.getScriptRam(script, 'home') * threads
+  // bladeburner.js's reserved block is not free room (fullPlace).
+  const held = fullHeld(ns)
   let best = null
   for (const h of hosts) {
     if (!ns.hasRootAccess(h) || h === 'home' || isHacknetServerHost(h)) continue
-    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h)
+    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h) - heldFor(held, h)
     if (free >= need && (!best || free < best.free)) best = { host: h, free }
   }
   if (best) return best.host
-  if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') >= need) return 'home'
+  if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - heldFor(held, 'home') >= need) return 'home'
   // Last resort only: a hacknet server pays for the RAM in hashes.
   for (const h of hosts) if (isHacknetServerHost(h) && ns.hasRootAccess(h) && ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= need) return h
   return null
@@ -1107,6 +1201,7 @@ export async function main(ns) {
           // ---- 2. Already alive? ---------------------------------------------
           if (running(ns, hosts, script)) {
             rec.state = 'running'
+            if (typeof entry.onRunning === 'function') entry.onRunning(ns, rec)
             continue
           }
 
@@ -1148,7 +1243,18 @@ export async function main(ns) {
             rec.state = 'declined: too little free RAM to be worth launching'
             continue
           }
-          const target = host === 'anywhere' ? placeFor(ns, hosts, script, threads ?? 1) : host
+          // An entry with its own `place` sizes itself (bladeburner.js: the
+          // block it raises to, not the floor it declares) and says why when
+          // it places nowhere this cycle.
+          let target = null
+          if (typeof entry.place === 'function') {
+            const p = entry.place(ns, hosts, rec)
+            if (!p?.host) {
+              rec.state = p?.state ?? 'blocked: no placement'
+              continue
+            }
+            target = p.host
+          } else target = host === 'anywhere' ? placeFor(ns, hosts, script, threads ?? 1) : host
           if (!target) {
             rec.state = 'blocked: no host with room'
             continue
@@ -1161,7 +1267,7 @@ export async function main(ns) {
           // /tel/installgate.txt stayed the previous life's and homeup.js read
           // 'inputs unreadable' — the home upgrade and the planner each waiting
           // on the other.
-          if (target === 'home' && kind === DAEMON && script !== 'progress.js') {
+          if (target === 'home' && kind === DAEMON && script !== 'progress.js' && typeof entry.place !== 'function') {
             const block = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
             const after = ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - ns.getScriptRam(script, 'home') * (threads ?? 1)
             if (after < block && !running(ns, ['home'], 'progress.js')) {

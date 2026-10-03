@@ -3031,7 +3031,7 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
       const big = hosts.reduce((a, h) => (h.maxRam > (a?.maxRam ?? 0) ? h : a), null)
       if (!fin1(need) || !big) return { ok: false, why: "the fleet (status.txt servers) or the daemon's raised RAM is unread" }
       return big.maxRam >= need
-        ? { ok: true, why: `${big.host} (${big.maxRam}GB, rooted) holds its ${need}GB once seed.js's workers retire at the tier — the race with batch.js for it at that boot is not simulated` }
+        ? { ok: true, why: `${big.host} (${big.maxRam}GB, rooted) holds its ${need}GB once seed.js's workers retire at the tier — the watchdog places it there or reserves it from batch.js (bbliteplan.fullPlacementOf)` }
         : { ok: false, why: `the largest rooted host is ${big.host} at ${big.maxRam}GB, under its ${need}GB` }
     })()
     const content = (names) => {

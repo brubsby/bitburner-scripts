@@ -72,7 +72,7 @@ import { enter as traceEnter, leave as traceLeave } from 'trace.js'
 import { reporter, describe, record } from 'status.js'
 // Pure arithmetic over getResetInfo's output; no ns surface of its own.
 import { singularityRamMultiplier, canJoinBladeburner } from 'sfgate.js'
-import { liteReserveOf } from 'bbliteplan.js'
+import { liteReserveOf, fullReserveOf, FULL_RESERVE_FILE } from 'bbliteplan.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure: the stock trader's record and which side of a batch it wants to move
@@ -1205,6 +1205,8 @@ export async function main(ns) {
   const homeReserveGb = SETTINGS.homeReserve(singularityRamMultiplier(resetInfo))
   // bb-lite's reservation this tick (published in /tel/batch.txt `liteReserve`).
   let liteRes = null
+  // bladeburner.js's reserved block this tick (published as `fullReserve`).
+  let fullRes = null
 
   const flags = ns.flags([
     ['hosts', ''],
@@ -1241,7 +1243,7 @@ export async function main(ns) {
   // writes. No new ns surface: ns.write and ns.atExit are both 0GB
   // (RamCostGenerator.ts:632,605), and ns.scp/ns.getHostname were already here.
   const errors = []
-  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, liteReserve: liteRes, errors: errors.slice(-5) }))
+  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, liteReserve: liteRes, fullReserve: fullRes, errors: errors.slice(-5) }))
   // The daemon only mirrors /tel/* off home, so a controller running anywhere
   // else has to ship its status there. This was already inline at both write
   // sites; hoisting it into a closure lets the exit path use it too, and
@@ -1578,11 +1580,24 @@ export async function main(ns) {
           return null
         }
       })()
+      // THE FULL DAEMON'S BLOCK (bbliteplan.fullReserveOf): the watchdog
+      // reserves 92.75GB on one host when no host has bladeburner.js's raised
+      // block free (at the 128GB tier this loop fills the same 128GB hosts).
+      // No new worker goes into it, the h/g/w already there finish within a
+      // batch cycle, and the watchdog places the daemon on its next cycle.
+      fullRes = (() => {
+        try {
+          return fullReserveOf(JSON.parse(ns.read(FULL_RESERVE_FILE) || 'null'), resetInfo, hosts)
+        } catch {
+          return null
+        }
+      })()
       const reserveFor = (h) =>
         (h === self ? SETTINGS.selfReserve : 0) +
         (h === 'home' ? homeReserveGb : 0) +
         (h === shareHost ? shareGb : 0) +
-        (h === liteRes?.host ? liteRes.gb : 0)
+        (h === liteRes?.host ? liteRes.gb : 0) +
+        (h === fullRes?.host ? fullRes.gb : 0)
       const free = new Map()
       // Cores per host, read once per tick. Only home ever has more than one in
       // BN1 (purchased servers are always single-core), but reading it rather

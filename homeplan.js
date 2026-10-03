@@ -44,9 +44,11 @@
 //
 // Not simulated, named in the result: The Blade's Simulacrum when either arm
 // can reach its price before the exit (the verdict then refuses rather than
-// guess), the placement race between batch.js and bladeburner.js at the boot
-// that follows the purchase, and later installs (each is the next decision's,
-// as in bladeInstallCompareOf).
+// guess), the minutes between the purchase and bladeburner.js running (the
+// watchdog places it, or reserves a host batch.js drains for it within a
+// batch cycle — bbliteplan.fullPlacementOf; the healthcheck fails BLADEBURNER
+// FULL NOT PLACED after 15 min), and later installs (each is the next
+// decision's, as in bladeInstallCompareOf).
 
 import { bladeExitGen } from 'bbplan.js'
 import { LITE_OVER_FULL } from 'bbliteplan.js'

@@ -448,7 +448,8 @@ export async function run() {
     const r3 = await coord.runActor(off, 'bb-lite-read.js', {}, {})
     if (r3.ok || !/cannot be computed there/.test(r3.why ?? '')) c.fail(`a target that cannot price the actor must be named, not exec'd blind: ${r3.why}`)
     // The watchdog leaves progress.js's home block when it relaunches a home daemon (live 19:21Z: ctauto.js took it).
-    if (!/if \(target === 'home' && kind === DAEMON && script !== 'progress\.js'\) \{[\s\S]{0,300}const block = 13 \+ 6\.25 \* singularityRamMultiplier/.test(src('watchdog.js'))) c.fail("watchdog.js must not relaunch a home daemon into progress.js's block")
+    // (An entry with its own `place` — bladeburner.js — keeps the block in fullPlacementOf: [BF1].)
+    if (!/if \(target === 'home' && kind === DAEMON && script !== 'progress\.js'( && typeof entry\.place !== 'function')?\) \{[\s\S]{0,300}const block = 13 \+ 6\.25 \* singularityRamMultiplier/.test(src('watchdog.js'))) c.fail("watchdog.js must not relaunch a home daemon into progress.js's block")
   }
   return checks
 }
