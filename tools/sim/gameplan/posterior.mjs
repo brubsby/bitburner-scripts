@@ -56,6 +56,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SF_PARAMS, splitQ } from './effects.mjs'
 import { BB_PARAMS, RHO, SIGMA_PLAYED } from './params.mjs'
+import { looCompare, gJointOf, MODEL_WHAT } from './gmodel.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const POSTERIOR_FILE = path.join(HERE, 'posterior.json')
@@ -347,15 +348,59 @@ export function mergeObs(st, readings, specs = scalarSpecs()) {
 }
 
 /**
+ * The g model with covariates (gmodel.mjs) on the base runs + the applied g
+ * readings. gModel: 'auto' (the best of hand / exch / amc / full by LOO over
+ * the runs) or a model name. Returns { chosen, loo, joint (the unplayed
+ * nodes' joint posterior predictive, null under hand), ownG, gSd }.
+ * A node with readings since the base: its own posterior = the model's
+ * predictive for it fitted WITHOUT its readings, times their likelihood.
+ */
+export function regressionG(econ, live, { gModel = 'auto', multsOf, gOpts = {} } = {}) {
+  if (typeof multsOf !== 'function') throw new Error(`posterior: gModel '${gModel}' needs multsOf(n) (the BitNode multipliers)`)
+  const runs = econ.runs.map((r) => ({ bn: r.bn, g: r.g, sd: OBS_SD.g }))
+  const loo = runs.length >= 3 ? looCompare(runs, multsOf, { opts: gOpts }) : null
+  const chosen = gModel === 'auto' ? loo?.best ?? 'hand' : gModel
+  const out = { chosen, loo, what: MODEL_WHAT[chosen], joint: null, ownG: new Map(econ.ownG), gSd: new Map() }
+  if (chosen === 'hand') return out
+  const readings = live.filter((x) => /^g\d+$/.test(x.param)).map((o) => ({ bn: Number(o.param.slice(1)), y: Math.log(o.value), sd: o.sd }))
+  const data = [...runs.map((r) => ({ bn: r.bn, y: Math.log(r.g), sd: r.sd })), ...readings]
+  const seen = [...new Set(readings.map((r) => r.bn))]
+  for (const n of seen) {
+    const pr = gJointOf(chosen, data.filter((d) => !(d.bn === n && readings.includes(d))), [n], multsOf, gOpts)
+    let prec = 1 / pr.sd.get(n) ** 2
+    let num = pr.mean.get(n) * prec
+    for (const r of readings.filter((x) => x.bn === n)) {
+      prec += 1 / r.sd ** 2
+      num += r.y / r.sd ** 2
+    }
+    out.ownG.set(n, Math.exp(num / prec))
+    out.gSd.set(n, Math.sqrt(1 / prec))
+  }
+  const unplayed = [...Array(14)].map((_, i) => i + 1).filter((n) => !out.ownG.has(n))
+  out.joint = gJointOf(chosen, data, unplayed, multsOf, gOpts)
+  return out
+}
+
+/**
  * The posterior from (hand prior + log): { scalar{id: {map, n}}, G, g (gSummary),
  * applied: econ with gShift/gScale/rho/gSd and the newly observed nodes' g }.
  * econ is economy.measureEconomy()'s (ownG as a Map).
  */
-export function posteriorOf(st, econ, { rho = RHO, sigmaPlayed = SIGMA_PLAYED } = {}) {
+export function posteriorOf(st, econ, { rho = RHO, sigmaPlayed = SIGMA_PLAYED, gModel = 'hand', multsOf = null, gOpts = {} } = {}) {
   const specs = scalarSpecs()
   const live = appliedObs(st.observations)
   const scalar = {}
   for (const [id, spec] of Object.entries(specs)) scalar[id] = scalarPosterior(spec, live.filter((o) => o.param === id))
+  if (gModel !== 'hand') {
+    const reg = regressionG(econ, live, { gModel, multsOf, gOpts })
+    if (reg.chosen !== 'hand') {
+      const applied = { ...econ, ownG: reg.ownG, gSd: reg.gSd, gJoint: reg.joint, zMap: Object.fromEntries(Object.entries(scalar).filter(([, v]) => v.n).map(([k, v]) => [k, v.map])) }
+      return { scalar, specs, G: null, g: null, gReg: reg, applied, nObs: live.length }
+    }
+    const out = posteriorOf(st, econ, { rho, sigmaPlayed })
+    out.gReg = reg
+    return out
+  }
   const G = gBase(econ, { rho, sigmaPlayed })
   for (const o of live.filter((x) => /^g\d+$/.test(x.param))) {
     const n = Number(o.param.slice(1))
@@ -385,6 +430,18 @@ export function summarise(post, econ) {
     const sc = post.scalar[id]
     out[id] = { prior: qs.map((z) => r(valueAt(spec, z))), post: qs.map((z) => r(valueAt(spec, sc.map(z)))), n: sc.n }
   }
+  if (post.gReg?.joint) {
+    // the covariate model: every unplayed node's own p10/p50/p90 (no AMC normalisation — AMC is a feature)
+    const J = post.gReg.joint
+    const lg = ['lo', 'mid', 'hi'].map((k) => Math.log(econ.gScen[k]))
+    for (const n of J.nodes) {
+      const hand = qs.map((z) => r(Math.exp(splitQ(lg[0], lg[1], lg[2], z)) * Math.pow(econ.amc[n], -econ.gamma)))
+      out[`g${n}`] = { prior: hand, post: qs.map((z) => r(Math.exp(J.mean.get(n) + z * J.sd.get(n)))), n: 0, what: `g /h of unplayed BN${n}: hand latent (prior) vs the ${J.name} model (post)` }
+    }
+    for (const [n, sd] of post.gReg.gSd) out[`g${n}`] = { prior: econ.ownG.get(n) ? [r(econ.ownG.get(n)), SIGMA_PLAYED] : null, post: [r(post.applied.ownG.get(n)), r(sd)], what: 'g /h and its log sd' }
+    out.gModel = { chosen: post.gReg.chosen, what: post.gReg.what, elpd: post.gReg.loo ? Object.fromEntries(Object.entries(post.gReg.loo.models).map(([k, v]) => [k, r(v.elpd)])) : null, beta: J.beta.mean.map(r), betaSd: J.beta.sd.map(r), feats: J.feats, tau: [r(J.beta.tauMean), r(J.beta.tauSd)] }
+    return out
+  }
   // g of an unplayed node, AMC-normalised (x AMC^-gamma per node)
   const lg = ['lo', 'mid', 'hi'].map((k) => Math.log(econ.gScen[k]))
   const gq = (z, shift, scale) => Math.exp(lg[1] + shift + (splitQ(lg[0], lg[1], lg[2], z) - lg[1]) * scale)
@@ -395,6 +452,7 @@ export function summarise(post, econ) {
     n: post.G.observed.size,
     what: 'normalised g (x AMC^-gamma) of an unplayed node; rho = common-factor share',
   }
+  if (post.gReg) out.gModel = { chosen: 'hand', what: post.gReg.what, elpd: post.gReg.loo ? Object.fromEntries(Object.entries(post.gReg.loo.models).map(([k, v]) => [k, r(v.elpd)])) : null }
   for (const n of post.G.observed) {
     const { m, sd } = post.g.node(n)
     const g0 = econ.ownG.get(n)
@@ -423,6 +481,9 @@ export function measurability(id, ctx) {
     const d = ctx.dRec(n)
     return { how: `play BN${n}`, before: false, cost: null, why: `only by playing it, after this decision${d === null || d === undefined ? '' : `; playing it next costs +${d.toFixed(1)}h in expectation`}` }
   }
+  const d = /^delta(\d+)$/.exec(id)
+  if (d) return { how: `play BN${d[1]}`, before: false, cost: null, why: 'the model discrepancy of an unplayed node: only its own clear measures it' }
+  if (id === 'tauG') return { how: 'play unplayed nodes on the hacking route', before: false, cost: null, why: "the g population's spread (gmodel.mjs tau): every new node's g reading sharpens it" }
   const W0 = 'w0r1d_d43m0n games after The Red Pill (gameplan-obs channel)'
   switch (id) {
     case 'w0':

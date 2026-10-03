@@ -10,6 +10,9 @@
 //   flags: --in-progress none | --no-sens | --json out.json | --telemetry DIR
 //          --sigma-played 0.15 | --rho 0.5 | --direct (mid world on direct sims)
 //          --prior (the hand prior only, ignore posterior.json) | --posterior FILE
+//          --g-model auto|hand|exch|amc|full (gmodel.mjs; auto = best by leave-one-out)
+//          --no-disc (no model-discrepancy term) | --no-adapt (skip KG / bound / CVaR / multi-fidelity)
+//          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //
 // NOT CALIBRATED as a decision model. What is and is not:
 //   CALIBRATED   each played node's g (backed out of its measured hours; the
@@ -28,7 +31,11 @@
 // PIPELINE: economy.mjs (telemetry -> g) -> surrogate.mjs (sims -> cached grid)
 // -> posterior.mjs (the hand prior updated by observe.mjs's log) -> routes.mjs
 // (C = min over routes) -> search.mjs (exact DP over the SF lattice) -> draws
-// (params.mjs, through the posterior) -> regret, robust plan, sensitivity, explore.
+// (params.mjs, through the posterior) -> regret, robust plan, sensitivity, explore
+// -> learning (adaptive.mjs): the knowledge gradient of each first move, the
+// information-relaxation bound, CVaR, and the surrogate re-priced on the
+// simulation (multi-fidelity). The g prior is gmodel.mjs's covariate model when
+// leave-one-out keeps it; unplayed nodes carry a model discrepancy (discrepancy.mjs).
 
 import '../../test/gameresolve.mjs'
 import path from 'node:path'
@@ -50,12 +57,15 @@ const tick = (name, t0) => (phase[name] = (phase[name] ?? 0) + (performance.now(
 
 const { makeState, parseState, plus, lvl, owed, lattice, sig, clearLabel, pairsOf } = await import('./state.mjs')
 const { EFFECTS, SF_PARAMS, isInert, LIVE_SFS } = await import('./effects.mjs')
-const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, drawZ, worldOf, paramIds } = await import('./params.mjs')
+const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, normal, drawZ, worldOf, paramIds } = await import('./params.mjs')
 const { ROUTES, clearTime, hackParts, favorHours, favorRef } = await import('./routes.mjs')
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
 const { GO_MEASURED, goScale, goMaxRep, w0rldDiv } = await import('./go.mjs')
 const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability, appliedObs } = await import('./posterior.mjs')
 const { runObserve, printMove } = await import('./observe.mjs')
+const { looCompare, MODEL_WHAT } = await import('./gmodel.mjs')
+const { fitDiscrepancy, lnHoursMoments, PRIOR_SD } = await import('./discrepancy.mjs')
+const { cvar, infoRelaxation, foldsOf, openLoop, kgOfMove, mfmc, seMean } = await import('./adaptive.mjs')
 let t0 = performance.now()
 const { measureEconomy } = await import('./economy.mjs')
 const { buildSurrogate, loadSurrogate, LN_G, BB_INT } = await import('./surrogate.mjs')
@@ -69,6 +79,10 @@ const BB_SEEDS = Number(arg('--bb-seeds', 15))
 const JOBS = Number(arg('--jobs', 1))
 const SIGMA_P = Number(arg('--sigma-played', SIGMA_PLAYED))
 const RHO_ = Number(arg('--rho', RHO))
+const G_MODEL = arg('--g-model', 'auto')
+const ADAPT = !has('--no-adapt')
+const KG_BINS = Number(arg('--kg-bins', 5))
+const MF_K = Number(arg('--mf-k', 20))
 
 const f1 = (x) => (x === null || x === undefined || !isFinite(x) ? '    -' : x.toFixed(1).padStart(6))
 const pct = (x) => `${(100 * x).toFixed(0)}%`.padStart(4)
@@ -114,15 +128,29 @@ const POST_FILE = arg('--posterior') ? path.resolve(arg('--posterior')) : POSTER
 if (has('--observe')) {
   t0 = performance.now()
   const { TELEMETRY } = await import('../nodechoice/measure.mjs')
-  await runObserve({ econ: econRaw, S, telemetry: TELEMETRY, file: POST_FILE })
+  await runObserve({ econ: econRaw, S, telemetry: TELEMETRY, file: POST_FILE, gModel: G_MODEL })
   console.log('')
   tick('observe', t0)
 }
 const store = has('--prior') ? emptyStore() : loadStore(POST_FILE)
-const post = posteriorOf(store, econRaw, { rho: RHO_, sigmaPlayed: SIGMA_P })
+const post = posteriorOf(store, econRaw, { rho: RHO_, sigmaPlayed: SIGMA_P, gModel: G_MODEL, multsOf: S.mults })
 Object.assign(econ, post.applied)
 const postSum = summarise(post, econRaw)
 const RHO_DRAW = arg('--rho') ? RHO_ : econ.rho
+
+// ---------------------------------------------------------------------------
+// 2c. The g model's leave-one-out, and the model discrepancy fitted to it
+// ---------------------------------------------------------------------------
+const OBS_SD_G = 0.15
+const loo = looCompare(econ.runs.map((r) => ({ bn: r.bn, g: r.g, sd: OBS_SD_G })), S.mults)
+const gChosen = post.gReg?.chosen ?? 'hand'
+const discRes = econ.runs.map((r, i) => {
+  const p = loo.models[gChosen].per[i]
+  const mom = lnHoursMoments((g) => hackExitHours({ node: r.bn, sf: r.sfOnEntry, profile: econ.profile, g }).hours ?? Infinity, p.mean, p.sd)
+  return { bn: r.bn, name: r.name, T: r.T, r: Math.log(r.T) - mom.mean, v: mom.var, predH: Math.exp(mom.mean) }
+})
+const discFit = fitDiscrepancy(discRes)
+if (!has('--no-disc')) econ.disc = { sd: discFit.sd, applies: (n) => !econ.ownG.has(n) }
 
 const live_ = (n) => !isInert(n)
 const tableFor = (L, world) => buildTable(L, (n, lv) => clearTime(n, lv, world, S).h, live_)
@@ -170,7 +198,7 @@ for (const n of Object.keys(EFFECTS).map(Number)) {
 console.log('  ASSUMED parameters (lo / mid / hi = 10th / 50th / 90th percentile):')
 for (const [k, p] of Object.entries(SF_PARAMS)) console.log(`    ${k.padEnd(6)} ${p.lo} / ${p.mid} / ${p.hi}   ${p.what}`)
 for (const [k, p] of Object.entries(BB_PARAMS)) console.log(`    ${k.padEnd(6)} ${p.lo} / ${p.mid} / ${p.hi}   ${p.what}`)
-console.log(`    g(node) unplayed: ln g split-normal through the latent lo/mid/hi x AMC^-gamma, common-factor share ${RHO_}; played: measured x exp(${SIGMA_P} z)`)
+console.log(`    g(node) unplayed: ${econ.gJoint ? `the ${gChosen} covariate model's joint posterior (gmodel.mjs, below)` : `ln g split-normal through the latent lo/mid/hi x AMC^-gamma, common-factor share ${RHO_}`}; played: measured x exp(${SIGMA_P} z)`)
 {
   const src = has('--prior') ? 'IGNORED (--prior): every draw is the hand prior' : `${path.relative(path.resolve(HERE, '../../..'), POST_FILE)}, ${store.observations.length} logged readings, ${post.nObs} applied (the rest are inside the hand prior), updated ${store.updatedAt ?? 'never'}`
   console.log(`POSTERIOR (posterior.mjs) — the draws below use it: ${src}`)
@@ -182,6 +210,34 @@ console.log(`    g(node) unplayed: ln g split-normal through the latent lo/mid/h
     for (const [id, v] of moved) console.log(`  ${id.padEnd(12)} ${(v.prior ? v.prior.map(fmt).join(' / ') : '-').padEnd(31)} ${v.post.map(fmt).join(' / ').padEnd(32)} ${v.n ?? ''}${v.rho ? `  common share ${v.rho[0]} -> ${v.rho[1]}` : ''}`)
     for (const o of appliedObs(store.observations)) console.log(`    applied: ${o.key}  ${o.param} = ${+o.value.toPrecision(4)} (sd ${o.sd} ${o.space})  ${o.note ?? o.source}`)
   }
+}
+{
+  // THE g MODEL (gmodel.mjs): leave-one-out over the played runs, the model kept, the unplayed nodes' new posterior
+  const names = Object.keys(loo.models)
+  console.log(`\nTHE g MODEL (gmodel.mjs) — leave-one-out over the ${econ.runs.length} played runs (log predictive density of each held-out run's ln g, reading sd ${OBS_SD_G}); --g-model ${G_MODEL} -> ${gChosen.toUpperCase()}`)
+  console.log('  model   elpd     vs best (+- s.e.)   rmse ln g   standardised LOO residual per run (' + econ.runs.map((r) => 'BN' + r.bn).join(' ') + ')')
+  const bestPer = loo.models[loo.best].per
+  for (const k of names.sort((a, b) => loo.models[b].elpd - loo.models[a].elpd)) {
+    const m = loo.models[k]
+    const d = m.per.map((p, i) => p.lp - bestPer[i].lp)
+    console.log(`  ${k.padEnd(6)} ${m.elpd.toFixed(2).padStart(6)}   ${k === loo.best ? '   best        ' : `${d.reduce((a, x) => a + x, 0).toFixed(2).padStart(6)} +- ${(seMean(d) * d.length).toFixed(2)}`}     ${m.rmse.toFixed(3)}      ${m.z.map((z) => z.toFixed(2).padStart(5)).join(' ')}   ${MODEL_WHAT[k]}`)
+  }
+  const J = econ.gJoint
+  if (J) {
+    const fn = ['b0', ...J.feats]
+    console.log(`  ${gChosen}: ${fn.map((f, i) => `${f} ${J.beta.mean[i].toFixed(3)} +- ${J.beta.sd[i].toFixed(3)}`).join(', ')} (standardised features; slope prior N(0, 0.3^2)); tau ${J.beta.tauMean.toFixed(3)} +- ${J.beta.tauSd.toFixed(3)} (half-normal 0.5)`)
+    console.log('  unplayed node   hand latent p10 / p50 / p90      ' + gChosen.padEnd(5) + ' model p10 / p50 / p90     corr with the others (mean)')
+    const lg = ['lo', 'mid', 'hi'].map((k) => Math.log(econ.gScen[k]))
+    J.nodes.forEach((n, i) => {
+      const hand = [-1.2816, 0, 1.2816].map((z) => Math.exp(lg[1] + (((z < 0 ? lg[1] - lg[0] : lg[2] - lg[1]) * z) / 1.2816)) * Math.pow(econ.amc[n], -econ.gamma))
+      const mo = [-1.2816, 0, 1.2816].map((z) => Math.exp(J.mean.get(n) + z * J.sd.get(n)))
+      const cs = J.nodes.map((_, j) => (j === i ? null : J.cov[i][j] / Math.sqrt(J.cov[i][i] * J.cov[j][j]))).filter((x) => x !== null)
+      console.log(`  BN${String(n).padEnd(13)} ${hand.map((x) => x.toFixed(4)).join(' / ')}         ${mo.map((x) => x.toFixed(4)).join(' / ')}       ${(cs.reduce((a, b) => a + b, 0) / cs.length).toFixed(2)}`)
+    })
+  } else console.log(`  kept: ${gChosen} — the draws use economy.mjs's hand latent (common share ${RHO_DRAW})`)
+  console.log(`\nMODEL DISCREPANCY (discrepancy.mjs) — each played run's measured hours vs the simulated hours under the ${gChosen} model's leave-one-out g (residual r in ln hours, v = the predictive's own variance):`)
+  for (const d of discRes) console.log(`  BN${String(d.bn).padEnd(3)} measured ${d.T.toFixed(1).padStart(6)}h  predicted (median) ${d.predH.toFixed(1).padStart(6)}h  r ${d.r.toFixed(3).padStart(7)}  sqrt v ${Math.sqrt(d.v).toFixed(3)}  r/sqrt v ${(d.r / Math.sqrt(d.v)).toFixed(2)}`)
+  console.log(`  discrepancy sd (ln hours, prior half-normal ${PRIOR_SD}): posterior mean ${discFit.mean.toFixed(3)}, p10 ${discFit.p10.toFixed(3)} p90 ${discFit.p90.toFixed(3)}; the draws use sqrt E[sd^2] = ${discFit.sd.toFixed(3)} on every unplayed node's hacking-route hours${has('--no-disc') ? ' — DISABLED (--no-disc)' : ''}`)
 }
 console.log('ROUTES (routes.mjs):')
 for (const r of ROUTES) console.log(`  ${r.id.padEnd(7)}${r.node ? `BN${r.node} `.padEnd(6) : 'all   '}${r.status}`)
@@ -264,8 +320,10 @@ console.log(`  CHECK the DP is <= the local search for every first move: ${lsBel
 // ---------------------------------------------------------------------------
 const nodes = [...new Set(owed(start))]
 const r = rng(SEED)
+const rDisc = rng(SEED + 13) // the discrepancy's own stream: --no-disc leaves every other draw unchanged
 const moves = L1.dims.map((d) => d.n)
 const Ts = [] // [draw][move index]
+const tabs = [] // [draw] the clear-time table (Float32), for the adaptive analyses (KG, bound, CVaR)
 // THE USER'S PLAN "one node, then BN14 x (all owed)": for each first node n, the
 // total with [n, 14, 14, 14] fixed and the optimal continuation after; [14 x3]
 // alone as the n = 14 row. Priced on the same draws as the regret table.
@@ -277,7 +335,7 @@ const Vstart = []
 let sumC = null
 t0 = performance.now()
 for (let i = 0; i < DRAWS; i++) {
-  const z = drawZ(r, nodes, econ, { rho: RHO_DRAW })
+  const z = drawZ(r, nodes, econ, { rho: RHO_DRAW, rDisc })
   const w = worldOf(econ, z, wOpts)
   const T = tableFor(L1, w)
   const V = solveDP(L1, T)
@@ -286,6 +344,7 @@ for (let i = 0; i < DRAWS; i++) {
   Ps.push(patterns.map((pt) => prefixTotal(L1, T, V, pt.seq)))
   Zs.push(z)
   Vstart.push(V[0])
+  if (ADAPT) tabs.push(Float32Array.from(T.C))
   if (!sumC) sumC = new Float64Array(T.C.length)
   for (let j = 0; j < T.C.length; j++) sumC[j] += T.C[j]
   if ((i + 1) % 20 === 0) process.stderr.write(`[draws] ${i + 1}/${DRAWS} (${((performance.now() - t0) / 1000 / (i + 1)).toFixed(2)}s/draw)\n`)
@@ -355,7 +414,7 @@ if (patterns.length) {
 // ---------------------------------------------------------------------------
 // 5. Sensitivity / value of information
 // ---------------------------------------------------------------------------
-const ids = paramIds(nodes)
+const ids = paramIds(nodes, econ)
 const BINS = 5
 function evppi(zOf) {
   const order = Ts.map((_, i) => i).sort((a, b) => zOf(a) - zOf(b))
@@ -446,6 +505,104 @@ for (const e of explore) {
 const worthIt = explore.filter((e) => e.worth)
 console.log(`  EXPLORATION: ${worthIt.length ? worthIt.map((e) => `measure ${e.id} (${e.m.how}) — saves ${e.net.toFixed(2)}h for ${e.m.cost.toFixed(2)}h`).join('; ') : 'no measurement is worth taking before the next decision — every parameter that could move it is either measured for free by what is already running or measurable only after it'}`)
 
+
+// ---------------------------------------------------------------------------
+// 5b. Learning as we play: the knowledge gradient, the information-relaxation
+//     bound, the tails, and the surrogate checked against the simulation
+//     (adaptive.mjs; every policy chosen on one half of the draws, charged on the other)
+// ---------------------------------------------------------------------------
+let adaptOut = null
+if (ADAPT && DRAWS >= 10) {
+  t0 = performance.now()
+  const folds = foldsOf(DRAWS)
+  const ol = openLoop(L1, T1, tabs, moves, folds)
+  // what playing A next reveals: its g on the hacking route, k on the Bladeburner route (mid world's route)
+  const Z90_ = 1.2816
+  const kScale = (Math.log(BB_PARAMS.k.hi) - Math.log(BB_PARAMS.k.lo)) / (2 * Z90_)
+  const gScaleOf = (n) => (econ.gJoint?.sd.has(n) ? econ.gJoint.sd.get(n) : econ.ownG.has(n) ? econ.gSd?.get(n) ?? SIGMA_P : ((Math.log(econ.gScen.hi) - Math.log(econ.gScen.lo)) / (2 * Z90_)) * (econ.gScale ?? 1))
+  const er = rng(SEED + 7)
+  const eps = Zs.map(() => new Map(moves.map((n) => [n, normal(er)])))
+  const owedOf = (n) => owed(start).filter((x) => x === n).length
+  const kgRows = moves.map((A) => {
+    const via = clearTime(A, lvOf(start), mid, S).via
+    const param = via === 'blade' ? 'k' : `g${A}`
+    const noise = via === 'blade' ? 0.1 / kScale : OBS_SD_G / gScaleOf(A) // one reading's sd in z units (OBS_SD k 0.1, g 0.15)
+    const ms = [...new Set([1, owedOf(A)])]
+    const byM = new Map()
+    for (const m of [...ms, Infinity]) {
+      const sig = Zs.map((z, i) => (z[param] ?? 0) + (m === Infinity ? 0 : (noise / Math.sqrt(m)) * eps[i].get(A)))
+      byM.set(m, kgOfMove(L1, T1, tabs, sig, A, { bins: KG_BINS, folds, ol }))
+    }
+    const k1 = byM.get(1)
+    const kstar = Math.max(...ms.map((m) => byM.get(m).kg / m))
+    return { n: A, via, param, noise, ms, kg1: k1.kg, se1: k1.se, kgOwed: byM.get(ms[ms.length - 1]).kg, kgInf: byM.get(Infinity).kg, kstar, myopic: kstar > k1.kg + 1e-9, J: k1.J, J0: k1.J0, EJ: mean(k1.J), EJ0: mean(k1.J0), cv: cvar(k1.J0, 0.9), cvJ: cvar(k1.J, 0.9), cvPI: cvar(Ts.map((row) => row[moves.indexOf(A)]), 0.9) }
+  })
+  kgRows.sort((a, b) => a.EJ - b.EJ)
+  const rowRec = kgRows.find((r) => r.n === rec.n)
+  const learnBest = kgRows[0]
+  console.log(`\nEXPLORE BY THE KNOWLEDGE GRADIENT — playing A next reveals its g (hacking route) or k (Bladeburner route); the reading moves every correlated parameter${econ.gJoint ? ` (the ${gChosen} model: shared beta and tau)` : ` (the hand latent's common factor, share ${RHO_DRAW})`}, and the order after A is re-chosen on the CONDITIONAL mean table (cross-fitted, ${KG_BINS} signal bins)`)
+  console.log("  J0 = E[total] playing A then the best fixed order (no learning); J = with the one update; KG = J0 - J; KG(m) = m readings (A's owed levels), KG(inf) = a perfect reading; KG* = max_m KG(m)/m (Frazier-Powell KG(*); '!' = above KG(1): one step is myopically low)")
+  console.log('  first     reads    E[J0]     E[J]    KG(1) +- se    KG(m)   KG(inf)   KG*    J - J(rec)   EVPPI of the read param (old EXPLORE)')
+  for (const r of kgRows) {
+    const ev = voi.find((v) => v.id === r.param)?.v ?? 0
+    console.log(`  ${lab(r.n).padEnd(7)} ${r.param.padEnd(5)} ${f1(r.EJ0)}  ${f1(r.EJ)}   ${r.kg1.toFixed(2).padStart(6)} +- ${r.se1.toFixed(2)}  ${r.kgOwed.toFixed(2).padStart(6)}  ${r.kgInf.toFixed(2).padStart(6)}  ${r.kstar.toFixed(2).padStart(6)}${r.myopic ? '!' : ' '}  ${(r.EJ - rowRec.EJ >= 0 ? '+' : '') + (r.EJ - rowRec.EJ).toFixed(2).padStart(6)}        ${ev.toFixed(2)}h`)
+  }
+  const dLearn = learnBest.J.map((x, i) => x - rowRec.J[i])
+  const better = kgRows.filter((r) => r.n !== rec.n && r.EJ < rowRec.EJ - 2 * seMean(r.J.map((x, i) => x - rowRec.J[i])))
+  console.log(`  learning-aware next clear: ${lab(learnBest.n)} (E[J] ${learnBest.EJ.toFixed(1)}h)${learnBest.n === rec.n ? ' = the recommendation' : `; vs ${lab(rec.n)} ${mean(dLearn).toFixed(2)} +- ${seMean(dLearn).toFixed(2)}h (paired)`}. Playing a node out of order to learn is worth it only when J(A) < J(rec) beyond noise: ${better.map((r) => lab(r.n)).join(', ') || 'none beyond 2 s.e.'}`)
+  console.log("  (the k reading of BN4.3 in progress arrives before this decision at no cost, so the Bladeburner rows' KG is partly in hand already)")
+
+  // the information-relaxation bound
+  const irOL = infoRelaxation(Vstart, ol.robust)
+  const irKG = infoRelaxation(Vstart, rowRec.J)
+  const irBest = irKG.policy <= irOL.policy ? irKG : irOL
+  console.log(`\nINFORMATION-RELAXATION BOUND (Brown, Smith & Sun 2010, zero penalty) — the mean over the ${DRAWS} draws of each draw's own perfect-information optimum: ${irOL.bound.toFixed(1)}h. No policy that learns as it plays beats it in expectation.`)
+  console.log('  our policies, charged on held-out draws (paired with the bound):')
+  console.log(`    open loop, the best fixed order:                  ${irOL.policy.toFixed(1)}h   gap ${irOL.gap.toFixed(2)} +- ${irOL.se.toFixed(2)}h   (draws below the bound: ${irOL.violations})`)
+  console.log(`    ${lab(rec.n).padEnd(7)} then re-plan once on its reading:     ${irKG.policy.toFixed(1)}h   gap ${irKG.gap.toFixed(2)} +- ${irKG.se.toFixed(2)}h   (draws below the bound: ${irKG.violations})`)
+  const gapV = irBest.gap
+  console.log(`  => the most ANY learning scheme could still save over our best policy: ${gapV.toFixed(1)}h (${((100 * gapV) / irBest.policy).toFixed(1)}% of the total). ${gapV < 1 ? 'Under 1h: a Bayes-adaptive outer loop is not worth building.' : 'Over 1h: a Bayes-adaptive outer loop could pay, up to this much — the zero-penalty bound credits foresight of every parameter, including SF effects nothing measures before their SF is held, so it is an upper limit; README "Learning as we play" sketches the belief-state DP.'}`)
+
+  // the tails
+  const robustCv = cvar(ol.robust, 0.9)
+  const ru = kgRows.filter((r) => r.n !== learnBest.n)[0]
+  console.log('\nRISK — CVaR(0.9) = the mean of the worst 10% of draws (Lin, Ren & Zhou 2022); the objective stays the expectation. Per first move: playing it then the best fixed order (held-out), with the one update, and with each draw\'s own optimum after it (the regret table\'s, anticipative):')
+  console.log('  first     E[T]     CVaR.9   CVaR.9 (learning)   CVaR.9 (perfect info after)')
+  for (const r of kgRows) console.log(`  ${lab(r.n).padEnd(7)} ${f1(r.EJ0)}   ${f1(r.cv)}       ${f1(r.cvJ)}             ${f1(r.cvPI)}`)
+  console.log(`  the robust fixed order (held-out): E[T] ${mean(ol.robust).toFixed(1)}h, CVaR.9 ${robustCv.toFixed(1)}h`)
+  const tailGap = learnBest.cv - ru.cv
+  const tailFlag = tailGap > 5
+  console.log(`  ${tailFlag ? 'FLAG' : 'ok  '}: the risk-neutral choice ${lab(learnBest.n)} has CVaR.9 ${learnBest.cv.toFixed(1)}h vs the runner-up ${lab(ru.n)}'s ${ru.cv.toFixed(1)}h (${tailGap >= 0 ? '+' : ''}${tailGap.toFixed(1)}h; flagged when > +5h)`)
+
+  // the surrogate against the simulation: multi-fidelity Monte Carlo on two fixed orders
+  const Sd = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: true })
+  const orderTotal = (seq, w, SS) => {
+    let st = start
+    let tot = 0
+    for (const n of seq) {
+      tot += clearTime(n, lvOf(st), w, SS).h
+      st = plus(st, n)
+    }
+    return tot
+  }
+  const K = Math.min(MF_K, DRAWS)
+  const mfOrders = [
+    { name: `the robust order (${lab(robust[0].n)} first)`, seq: robust.map((x) => x.n) },
+    { name: `${lab(ru.n)} first, then the best fixed order`, seq: ol.fits[0].cont.get(ru.n) },
+  ]
+  const mfRows = mfOrders.map((o) => {
+    const lfN = Zs.map((z) => orderTotal(o.seq, worldOf(econ, z, wOpts), S))
+    const hf = Zs.slice(0, K).map((z) => orderTotal(o.seq, worldOf(econ, z, wOpts), Sd))
+    return { ...o, ...mfmc(hf, lfN.slice(0, K), lfN) }
+  })
+  console.log(`\nMULTI-FIDELITY CHECK (Peherstorfer et al. 2018) — ${K} draws re-priced on the simulation itself (hackexit called directly, no interpolation) as the high fidelity, the surrogate on all ${DRAWS} as the control variate:`)
+  for (const m of mfRows) console.log(`  ${m.name.padEnd(46)} surrogate E[T] ${m.lfMean.toFixed(2)}h   multi-fidelity ${m.est.toFixed(2)}h   surrogate bias ${m.bias >= 0 ? '+' : ''}${m.bias.toFixed(3)} +- ${m.biasSe.toFixed(3)}h (corr ${m.rho.toFixed(4)}, alpha ${m.alpha.toFixed(3)})`)
+  const dLF = mfRows[0].lfMean - mfRows[1].lfMean
+  const dMF = mfRows[0].est - mfRows[1].est
+  console.log(`  robust minus runner-up: surrogate ${dLF.toFixed(2)}h, corrected ${dMF.toFixed(2)}h — the correction ${Math.sign(dLF) === Math.sign(dMF) ? 'does not change' : 'CHANGES'} which is better`)
+  tick('adaptive (KG, bound, CVaR, multi-fidelity)', t0)
+  adaptOut = { kg: kgRows.map(({ J, J0, ...r }) => r), ir: { openLoop: irOL, kgPolicy: irKG, gap: gapV }, risk: { robustCvar: robustCv, tailFlag, tailGap }, mfmc: mfRows, learnBest: learnBest.n }
+}
 // ---------------------------------------------------------------------------
 // 6. Verdict and cost
 // ---------------------------------------------------------------------------
@@ -458,6 +615,6 @@ console.log(`  per draw: ${(tDraws / Math.max(1, DRAWS)).toFixed(2)}s (table ${T
 console.log(`  surrogate: ${S.meta.curves} hack curves x ${LN_G.length} = ${S.meta.gridPoints} sim points (${bstats.hack.computed} computed this run${bstats.hack.computed ? `, ${(bstats.hack.ms / bstats.hack.computed).toFixed(1)}ms each` : ''}); ${S.meta.bbCells} Bladeburner cells x ${BB_SEEDS} seeds = ${bstats.bb.needed} sims (${bstats.bb.computed} computed this run${bstats.bb.computed ? `, ${(bstats.bb.ms / bstats.bb.computed / 1000).toFixed(2)}s each` : ''}, ${bstats.bb.seeded} seeded from nextnode's cache)`)
 
 if (arg('--json')) {
-  fs.writeFileSync(arg('--json'), JSON.stringify({ at: new Date().toISOString(), entry: pairsOf(entry), inProgress: inProg, start: pairsOf(start), recommended: rec.n, midOrder: path1, robustOrder: robust, regret: stats, voi, oat, patterns: patternRows, explore: explore.map(({ id, v, net, m, worth }) => ({ id, evppi: v, net, ...m, worth })), posterior: postSum }, null, 1))
+  fs.writeFileSync(arg('--json'), JSON.stringify({ at: new Date().toISOString(), entry: pairsOf(entry), inProgress: inProg, start: pairsOf(start), recommended: rec.n, midOrder: path1, robustOrder: robust, regret: stats, voi, oat, patterns: patternRows, explore: explore.map(({ id, v, net, m, worth }) => ({ id, evppi: v, net, ...m, worth })), posterior: postSum, gModel: { chosen: gChosen, loo: Object.fromEntries(Object.entries(loo.models).map(([k, v]) => [k, { elpd: v.elpd, rmse: v.rmse, z: v.z }])) }, discrepancy: { ...discFit, residuals: discRes, enabled: !has('--no-disc') }, adaptive: adaptOut }, null, 1))
 }
 process.exit(0)

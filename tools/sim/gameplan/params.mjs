@@ -48,21 +48,35 @@ export function normal(r) {
 }
 
 /** The ids of every uncertain parameter, for the value-of-information table. */
-export function paramIds(nodes) {
-  return [...nodes.map((n) => `g${n}`), 'k', 'open', ...Object.keys(SF_PARAMS)]
+export function paramIds(nodes, econ = null) {
+  return [...nodes.map((n) => `g${n}`), ...(econ?.gJoint ? ['tauG'] : []), ...(econ?.disc ? nodes.filter((n) => econ.disc.applies(n)).map((n) => `delta${n}`) : []), 'k', 'open', ...Object.keys(SF_PARAMS)]
 }
 
 /** One draw: z per parameter (g's already combined with the common factor). */
-export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO } = {}) {
+export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null } = {}) {
   const zc = normal(r)
   const z = { zc }
-  for (const n of nodes) {
-    const zn = normal(r)
-    z[`g${n}`] = econ.ownG.has(n) ? zn : Math.sqrt(rho) * zc + Math.sqrt(1 - rho) * zn
-  }
+  const J = econ.gJoint
+  if (J) {
+    // the covariate model (gmodel.mjs): tau from its posterior by zTau, then the
+    // unplayed nodes' ln g jointly (their correlation is the shared beta and tau);
+    // z[g n] is node n's standardised value, so worldOf / the VOI binning read it as before
+    z.tauG = zc
+    const u = J.nodes.map(() => normal(r))
+    const lg = J.sampler.sample(zc, u)
+    J.nodes.forEach((n, i) => (z[`g${n}`] = (lg[i] - J.mean.get(n)) / J.sd.get(n)))
+    for (const n of nodes) if (!J.mean.has(n)) z[`g${n}`] = normal(r)
+  } else
+    for (const n of nodes) {
+      const zn = normal(r)
+      z[`g${n}`] = econ.ownG.has(n) ? zn : Math.sqrt(rho) * zc + Math.sqrt(1 - rho) * zn
+    }
   z.k = normal(r)
   z.open = normal(r)
   for (const k of Object.keys(SF_PARAMS)) z[k] = normal(r)
+  // the model discrepancy (discrepancy.mjs): one z per node it applies to, from its own
+  // stream rDisc when given (plan.mjs), so the draws with and without it are paired
+  if (econ.disc) for (const n of nodes) if (econ.disc.applies(n)) z[`delta${n}`] = normal(rDisc ?? r)
   return z
 }
 
@@ -87,6 +101,8 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     if (v === undefined) {
       v = econ.ownG.has(n)
         ? econ.ownG.get(n) * Math.exp((econ.gSd?.get(n) ?? sigmaPlayed) * zz(`g${n}`))
+        : econ.gJoint?.mean.has(n)
+        ? Math.exp(econ.gJoint.mean.get(n) + econ.gJoint.sd.get(n) * zz(`g${n}`))
         : Math.exp(gShift === 0 && gScale === 1 ? splitQ(lg.lo, lg.mid, lg.hi, zz(`g${n}`)) : lg.mid + gShift + (splitQ(lg.lo, lg.mid, lg.hi, zz(`g${n}`)) - lg.mid) * gScale) * Math.pow(econ.amc[n], -econ.gamma)
       gCache.set(n, v)
     }
@@ -107,6 +123,8 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     bbOff,
     phase1,
     z,
+    // the discrepancy factor on node n's hacking-route hours (1 without one; discrepancy.mjs)
+    disc: (n) => (econ.disc && !phase1 && econ.disc.applies(n) ? Math.exp(econ.disc.sd * (z[`delta${n}`] ?? 0)) : 1),
     go: {
       abar: baseBonus(cyc, sf.goP),
       // a node whose own g was measured (BN12 borrows BN1's) carries its own favor life in it

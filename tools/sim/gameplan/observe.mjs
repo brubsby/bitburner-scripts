@@ -131,7 +131,8 @@ export function printMove(before, after, log = console.log) {
  * Observe: telemetry -> log -> posterior. econ = measureEconomy() with ownG a Map;
  * S = a loaded surrogate (bbLeg, bbJoin). Writes the store unless dryRun.
  */
-export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dryRun = false, log = console.log }) {
+export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dryRun = false, log = console.log, gModel = 'auto' }) {
+  const gOpt = { gModel, multsOf: S.mults }
   const { nodeSegments } = await import('../nodechoice/measure.mjs')
   const { backOutG } = await import('../nodechoice/hackexit.mjs')
   const { earlyOf, sfParamsMid } = await import('./effects.mjs')
@@ -148,7 +149,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   })
   const files = readingsFromFiles(telemetry)
   const st = loadStore(file)
-  const before = summarise(posteriorOf(st, econ), econ)
+  const before = summarise(posteriorOf(st, econ, gOpt), econ)
   // the base can grow (a run moved into economy.MEASURED_RUNS): re-flag logged readings from history
   const fresh = new Map(fromHistory.map((o) => [o.key, o.inBase]))
   for (const o of st.observations) {
@@ -157,7 +158,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
     else delete o.inBase
   }
   const m = mergeObs(st, [...fromHistory, ...files.readings])
-  const post = posteriorOf(st, econ)
+  const post = posteriorOf(st, econ, gOpt)
   const after = summarise(post, econ)
   st.posterior = after
   st.updatedAt = new Date().toISOString()
@@ -172,7 +173,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   // cross-check: the hand latent against a full hierarchical fit of the base runs
   const ys = econ.runs.map((r) => Math.log(r.g) + econ.gamma * Math.log(econ.amc[r.bn]))
   const hf = hierFit(ys, OBS_SD.g)
-  log(`  CROSS-CHECK the hand latent (lo/mid/hi = min / gm / max of ${ys.length} runs as p10/p50/p90): ${tri([econ.gScen.lo, econ.gScen.mid, econ.gScen.hi])}; a hierarchical fit of the same runs (flat mu, tau on a grid, sd ${OBS_SD.g}): ${tri([hf.p10, hf.p50, hf.p90].map(Math.exp))}, tau ${hf.tauMean.toFixed(2)} (hand: total ${(post.G.s).toFixed(2)}, tau ${Math.sqrt(post.G.tau2).toFixed(2)})`)
+  log(`  CROSS-CHECK the hand latent (lo/mid/hi = min / gm / max of ${ys.length} runs as p10/p50/p90): ${tri([econ.gScen.lo, econ.gScen.mid, econ.gScen.hi])}; a hierarchical fit of the same runs (flat mu, tau on a grid, sd ${OBS_SD.g}): ${tri([hf.p10, hf.p50, hf.p90].map(Math.exp))}, tau ${hf.tauMean.toFixed(2)} ${post.G ? `(hand: total ${post.G.s.toFixed(2)}, tau ${Math.sqrt(post.G.tau2).toFixed(2)})` : `(the draws use the ${post.gReg.chosen} covariate model, tau ${post.gReg.joint.beta.tauMean.toFixed(2)}: plan.mjs prints its leave-one-out)`}`)
   return { ...m, before, after, post, readings: fromHistory, channel: files.readings }
 }
 

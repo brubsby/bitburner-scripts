@@ -81,7 +81,8 @@ export function hackParts({ node, lv, world, S }) {
       fref = favorRef(node, world, S)
     }
   }
-  const hsim = S.hackHours(node, nodeLevel, sfKeyStr(hackSfOf(lv)), g, world.phase1 ? { speed1: true } : undefined)
+  // world.disc: the model discrepancy on the simulated hours (discrepancy.mjs; 1 when there is none)
+  const hsim = S.hackHours(node, nodeLevel, sfKeyStr(hackSfOf(lv)), g, world.phase1 ? { speed1: true } : undefined) * (world.disc ? world.disc(node) : 1)
   if (!isFinite(hsim)) return null
   const hx = exitShift(hsim, g, W) + favor - fref
   const early = earlyOf(lv, node, world.sf)
