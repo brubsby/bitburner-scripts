@@ -50,6 +50,10 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
     prevP = p
     const exp = r.exp?.hacking
     cur.intelligence = r.skills?.intelligence ?? cur.intelligence ?? null
+    // the Bladeburner opening (entry -> every combat stat 100, first life) and the Bladeburner faction join (gameplan/observe.mjs)
+    const sk = r.skills ?? {}
+    if (cur.combat100H === undefined && Math.min(sk.strength ?? 0, sk.defense ?? 0, sk.dexterity ?? 0, sk.agility ?? 0) >= 100) cur.combat100H = h
+    if (cur.bbJoinH === undefined && (r.factions ?? []).includes('Bladeburners')) cur.bbJoinH = h
     cur.rows.push({ h, level: r.skills?.hacking ?? null, exp: typeof exp === 'number' ? exp : null, mult: multOf(r.skills?.hacking, exp), augs: (r.augmentations ?? []).length })
     cur.atEnd = r.at
   }
@@ -87,6 +91,8 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
       multMax: withMult.length ? Math.max(...withMult.map((x) => x.mult)) : null,
       expRateEnd: expRate,
       intelligence: s.intelligence ?? null,
+      combat100H: s.combat100H ?? null,
+      bbJoinH: s.bbJoinH ?? null,
     }
   })
 }

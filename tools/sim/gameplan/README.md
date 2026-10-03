@@ -9,13 +9,17 @@ node tools/sim/gameplan/plan.mjs                       # state + node in progres
 node tools/sim/gameplan/plan.mjs --draws 200 --seed 7  # more draws
 node tools/sim/gameplan/plan.mjs --state 1.3,2.1,4.3,5.1,6.1,8.1,9.1,10.1 --in-progress none
 node tools/sim/gameplan/plan.mjs --build-only          # build / extend the surrogate cache only
-node tools/test/run.mjs gameplan                       # GP1-GP4
+node tools/sim/gameplan/plan.mjs --observe             # ingest telemetry into posterior.json, then plan on it
+node tools/sim/gameplan/observe.mjs [--dry-run]        # the ingest alone: how the posterior moved
+node tools/sim/gameplan/plan.mjs --prior               # the hand prior only (ignore posterior.json)
+node tools/test/run.mjs gameplan                       # GP1-GP5
 ```
 
-Run it after every clear: it reads the state from `.telemetry/history.jsonl`
-(the Source-Files on entry to the current node, and the node itself, which it
-treats as committed) and re-plans from there. Use one process, 2GB heap is plenty
-(peak RSS ~0.6GB).
+Run `plan.mjs --observe` after every clear: it reads the state from
+`.telemetry/history.jsonl` (the Source-Files on entry to the current node, and
+the node itself, which it treats as committed), folds what the finished nodes
+measured into `posterior.json` (commit it), and re-plans from there. Use one
+process, 2GB heap is plenty (peak RSS ~0.6GB).
 
 ## The pieces
 
@@ -24,7 +28,11 @@ treats as committed) and re-plans from there. Use one process, 2GB heap is plent
 | `state.mjs` | the state (SF level vector + intelligence), what is owed, the lattice and its mixed-radix index |
 | `effects.mjs` | **one entry per Source-File**: its effect on a clear, the game source it rests on, and its status (SIMULATED / ASSUMED / NOT PRICED), with the ASSUMED lo/mid/hi |
 | `economy.mjs` | telemetry -> the measured g of every played node (the calibration), the latent g for unplayed nodes |
-| `params.mjs` | the uncertain parameters, their distributions (lo/mid/hi = p10/p50/p90 split normal), worlds and draws |
+| `params.mjs` | the uncertain parameters, their hand distributions (lo/mid/hi = p10/p50/p90 split normal), worlds and draws (through the posterior when one is applied) |
+| `posterior.mjs` | the posterior store: the hand prior + the observation log -> every parameter's posterior (z-grid update for scalars, hierarchical Gaussian for g), the measurability table behind EXPLORE |
+| `posterior.json` | the store (committed): the observation log, keyed, and the posterior summary it produces |
+| `observe.mjs` | telemetry (history.jsonl + the in-run channel) -> readings -> the log; prints how the posterior moved |
+| `../../../gameplan-obs.js` | the game-side writer of the in-run channel (`/tel/gameplan-obs.txt` on home) |
 | `surrogate.mjs` | the slow sims precomputed over the reachable grid, cached on disk, interpolated |
 | `routes.mjs` | the routes (hack, blade, and the node-special hooks) and `clearTime` = C(node, state, world) |
 | `search.mjs` | exact DP over the lattice; nextnode's local search ported for comparison; brute force for the tests |
@@ -83,6 +91,83 @@ its p10 / p90 with everything else at the median: a parameter whose sweep
 changes the best first move is a model that, if wrong, flips the decision. The
 EVPPI noise floor (a placebo parameter) is printed beside it.
 
+The **EXPLORE** table puts each parameter's EVPPI (net of the floor) beside
+what measuring it costs before the next decision (`posterior.measurability`):
+w0 ~0h in any node after The Red Pill (the Go agent's w0r1d_d43m0n games), goP
+free from the running farm, rep14/lvl14 free in a hacking-route node, k/open
+free with a Bladeburner clear, a node's g only by playing it (after the
+decision; the row prints what playing it next costs), the SF-effect parameters
+only once their Source-File is held. A row is worth taking when it can happen
+before the decision and saves more than it costs; the EXPLORATION line names
+them, or says none is.
+
+## The posterior: learning from finished nodes
+
+`posterior.json` = the hand prior (the lo/mid/hi above, kept as the base) +
+a log of readings. The posterior is recomputed from the two on every read;
+the file's `posterior` block is that result written out for diffs.
+
+- **Scalars** (k, open, every SF_PARAMS entry): prior = the hand split normal
+  over its z; likelihood **log-normal** on the value (`ln obs ~ N(ln v, sd^2)`,
+  the shape the calibrations use: g in ln g, k a ratio), or normal for a
+  `space: 'lin'` reading (a w0 of 0). Posterior on a z grid; a draw maps its z
+  through `z -> Qpost(Phi(z))`, so the draws, VOI and sweeps are unchanged in
+  form and a clipped prior (w0's mass at 0) is exact.
+- **g, hierarchical**: `x_n = ln(g_n AMC_n^gamma)`; every node not measured in
+  the base is `mu + tau e_n` with `mu ~ N(ln mid, RHO s^2)`, `tau^2 = (1-RHO) s^2`
+  (exactly the hand draw's variance and common share); a base-measured node is
+  `N(ln g, SIGMA_PLAYED^2)`. A reading is a Kalman update of the joint
+  Gaussian: an observed unplayed node pulls `mu`, hence every unplayed node,
+  by `vMu/(vMu+tau^2+sd^2)` of its surprise, and shrinks the common share.
+  tau is not learned (observe prints a full hierarchical fit of the base runs
+  as a cross-check of the hand latent).
+- **What observe reads** from history.jsonl (from the first measured run on,
+  segments >= 2h): a finished hacking-route clear (hacking level >= 1000) ->
+  `g<n>` backed out of its hours (economy's calibration, sd 0.15); a finished
+  Bladeburner clear -> `k = (hours - opening) / bbsim leg` (the k that makes
+  routes.mjs reproduce it, sd 0.1); a Bladeburner node's opening (entry ->
+  combat 100, first life, less the node's gym scale; in progress or not) ->
+  `open` (sd 0.25). The sds are ASSUMED.
+- **Idempotent**: a reading's key is `param|BNn.l|completion time` (open: the
+  node's start time); a key already in the log is skipped. Evidence the hand
+  prior was built from — economy.MEASURED_RUNS for g, BN6.1 for k (bbcal6) and
+  open — is logged `inBase: true` and never applied twice.
+- **An open discrepancy, logged not applied**: BN6.1 read through the
+  planner's own blade formula gives k = 1.22 ((35.79 - 2.38)/27.32), not the
+  base 0.916 — bbcal6 divided by the leg *as run* (the sleeve fleet joined
+  24.8h late), the grid's leg is the clean one (fleet from the join). If the
+  next Bladeburner clear (BN4.3) also reads above 1, the base k is the wrong
+  one. Priced with the BN6 reading applied (2026-10-03): E[T] 913.8 -> 963.5h,
+  BN11.1 still first (P(best) 59%).
+
+### Observations: the in-run channel
+
+For measurements not tied to a node's completion (the Go agent's w0, a Go
+farm rate, a Daedalus rep rate), one JSON line per reading:
+
+```
+{ "param": "w0", "value": 140, "sd": 0.3, "at": "2026-10-04T12:00:00Z",
+  "source": "go.js w0r1d_d43m0n 12 games 7x7", "node": 11 }
+```
+
+| field | |
+| --- | --- |
+| `param` | `w0`, `goP`, `rep14`, `lvl14`, `eps14`, `k`, `open`, `phi11`, `d10`, `d8`, `e43`, `z9`, or `g<n>` |
+| `value` | in the parameter's units (w0: w0r1d_d43m0n node power per hour; goP: Daedalus power/h / 4391) |
+| `sd` | standard error of ln(value) (`space: 'log'`, default: 0.2 = ~20%), or in the parameter's units (`space: 'lin'`) |
+| `space` | `'lin'` for a reading that can be 0 — a w0 of 0 (the opponent never lost) must be sent this way |
+| `at`, `source` | ISO time and who measured it how; with `param` they form the default key |
+| `node`, `key` | optional: the BitNode; an explicit dedup key |
+
+Write it in-game with `recordObs(ns, {...})` from `gameplan-obs.js`: it appends
+to `/tel/gameplan-obs.txt` **on home** (the daemon mirrors only home's `/tel/*`,
+to `.telemetry/gameplan-obs.txt`; the helper throws on any other host). Tools
+outside the game append the same lines to `.telemetry/gameplan-obs.jsonl`.
+observe.mjs reads both, validates each line (an unknown param, a non-positive
+sd or a value <= 0 in log space is rejected and printed), and logs it by key,
+so a mirrored file re-read every poll counts each reading once — and a reading
+already in posterior.json survives the game file being truncated.
+
 ## The cache
 
 `.cache/hack.json` and `.cache/bb.json` (gitignored), one entry per sim call,
@@ -118,11 +203,13 @@ Everything a phase-2 model needs to touch is one entry in one table:
    dependency enlarges the surrogate grid automatically (rebuild with
    `--build-only`). An SF that gains any role stops being inert and enters the
    feature table — the DP's cost grows by its level count, nothing else.
-3. **A newly played node.** When a node finishes on the hacking route, add the
-   run to `economy.MEASURED_RUNS` (pinned by its start time): its own g then
-   replaces the latent for that node, and the CHECK line reproduces its hours.
-   A Bladeburner clear is a calibration of `k` instead: rerun
-   `nodechoice/bbcal6.mjs`'s method on it and update `BB_PARAMS.k`.
+3. **A newly played node.** Run `plan.mjs --observe` and commit
+   `posterior.json`: a hacking-route clear becomes that node's g (and pulls the
+   unplayed population), a Bladeburner clear a reading of k and open. Adding
+   the run to `economy.MEASURED_RUNS` instead (the phase-1 way) rebuilds the
+   hand latent around it; the next observe re-flags its logged reading
+   `inBase` (observe.mjs `baseIn` is derived from MEASURED_RUNS), so it is not
+   counted twice.
 4. **A new state dimension** (intelligence on the lattice, SF12 past level 1):
    add it to `state.lattice`; the DP is exact over whatever the lattice is, but
    its size multiplies. Past ~20M states switch to A* with the bound

@@ -1,0 +1,311 @@
+{
+ "schema": "gameplan-posterior",
+ "version": 1,
+ "updatedAt": "2026-10-03T00:37:53.562Z",
+ "model": {
+  "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
+  "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
+  "RHO": 0.5,
+  "SIGMA_PLAYED": 0.15,
+  "OBS_SD": {
+   "g": 0.15,
+   "k": 0.1,
+   "open": 0.25
+  }
+ },
+ "observations": [
+  {
+   "key": "g|BN1.3|2026-09-28T18:38:01.517Z",
+   "param": "g1",
+   "value": 0.05208666295775621,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-09-28T18:38:01.517Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 1,
+   "clear": "BN1.3",
+   "inBase": true,
+   "note": "21.79h"
+  },
+  {
+   "key": "g|BN10.1|2026-09-25T12:51:51.937Z",
+   "param": "g10",
+   "value": 0.0345691218475102,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-09-25T12:51:51.937Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 10,
+   "clear": "BN10.1",
+   "inBase": true,
+   "note": "82.76h"
+  },
+  {
+   "key": "g|BN2.1|2026-09-20T14:57:31.448Z",
+   "param": "g2",
+   "value": 0.13807218016769682,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-09-20T14:57:31.448Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 2,
+   "clear": "BN2.1",
+   "inBase": true,
+   "note": "22.42h"
+  },
+  {
+   "key": "g|BN4.2|2026-09-22T02:06:02.297Z",
+   "param": "g4",
+   "value": 0.06744519758934872,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-09-22T02:06:02.297Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 4,
+   "clear": "BN4.2",
+   "inBase": true,
+   "note": "34.71h"
+  },
+  {
+   "key": "g|BN8.1|2026-09-27T20:50:07.197Z",
+   "param": "g8",
+   "value": 0.04054500408883542,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-09-27T20:50:07.197Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 8,
+   "clear": "BN8.1",
+   "inBase": true,
+   "note": "55.96h"
+  },
+  {
+   "key": "g|BN9.1|2026-10-01T02:48:25.544Z",
+   "param": "g9",
+   "value": 0.05019075260244759,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-10-01T02:48:25.544Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 9,
+   "clear": "BN9.1",
+   "inBase": true,
+   "note": "56.17h"
+  },
+  {
+   "key": "k|BN6.1|2026-10-02T14:36:19.989Z",
+   "param": "k",
+   "value": 1.2227814380998863,
+   "sd": 0.1,
+   "space": "log",
+   "at": "2026-10-02T14:36:19.989Z",
+   "source": "history.jsonl: Bladeburner clear, (hours - opening) / bbsim leg",
+   "node": 6,
+   "clear": "BN6.1",
+   "inBase": true,
+   "note": "35.79h, opening 2.38h, leg 27.32h"
+  },
+  {
+   "key": "open|BN4.3|start 2026-10-02T14:41:19.074Z",
+   "param": "open",
+   "value": 3.3585555555555557,
+   "sd": 0.25,
+   "space": "log",
+   "at": "2026-10-02T14:41:19.074Z",
+   "source": "history.jsonl: entry -> combat 100, first life, less the gym scale",
+   "node": 4,
+   "clear": "BN4.3",
+   "inBase": false,
+   "note": "combat 100 at 3.36h (node in progress)"
+  },
+  {
+   "key": "open|BN6.1|start 2026-10-01T02:48:55.590Z",
+   "param": "open",
+   "value": 2.383388888888889,
+   "sd": 0.25,
+   "space": "log",
+   "at": "2026-10-01T02:48:55.590Z",
+   "source": "history.jsonl: entry -> combat 100, first life, less the gym scale",
+   "node": 6,
+   "clear": "BN6.1",
+   "inBase": true,
+   "note": "combat 100 at 2.38h"
+  }
+ ],
+ "posterior": {
+  "k": {
+   "prior": [
+    0.8,
+    0.916,
+    1.15
+   ],
+   "post": [
+    0.8,
+    0.916,
+    1.15
+   ],
+   "n": 0
+  },
+  "open": {
+   "prior": [
+    1.5,
+    2.5,
+    4
+   ],
+   "post": [
+    2.358,
+    3.135,
+    4.035
+   ],
+   "n": 1
+  },
+  "phi11": {
+   "prior": [
+    0.3,
+    0.6,
+    1
+   ],
+   "post": [
+    0.3,
+    0.6,
+    1
+   ],
+   "n": 0
+  },
+  "eps14": {
+   "prior": [
+    0,
+    0.12,
+    0.3
+   ],
+   "post": [
+    0,
+    0.12,
+    0.3
+   ],
+   "n": 0
+  },
+  "goP": {
+   "prior": [
+    0.7,
+    1,
+    1.16
+   ],
+   "post": [
+    0.7,
+    1,
+    1.16
+   ],
+   "n": 0
+  },
+  "rep14": {
+   "prior": [
+    72,
+    97,
+    150
+   ],
+   "post": [
+    72,
+    97,
+    150
+   ],
+   "n": 0
+  },
+  "lvl14": {
+   "prior": [
+    3500,
+    4700,
+    5900
+   ],
+   "post": [
+    3500,
+    4700,
+    5900
+   ],
+   "n": 0
+  },
+  "w0": {
+   "prior": [
+    0,
+    200,
+    1000
+   ],
+   "post": [
+    0,
+    200,
+    1000
+   ],
+   "n": 0
+  },
+  "d10": {
+   "prior": [
+    0,
+    0.01,
+    0.03
+   ],
+   "post": [
+    0,
+    0.01,
+    0.03
+   ],
+   "n": 0
+  },
+  "d8": {
+   "prior": [
+    0,
+    0.005,
+    0.02
+   ],
+   "post": [
+    0,
+    0.005,
+    0.02
+   ],
+   "n": 0
+  },
+  "e43": {
+   "prior": [
+    0.2,
+    0.7,
+    1.5
+   ],
+   "post": [
+    0.2,
+    0.7,
+    1.5
+   ],
+   "n": 0
+  },
+  "z9": {
+   "prior": [
+    -1.282,
+    0,
+    1.282
+   ],
+   "post": [
+    -1.282,
+    0,
+    1.282
+   ],
+   "n": 0
+  },
+  "gUnplayed": {
+   "prior": [
+    0.04055,
+    0.06293,
+    0.1381
+   ],
+   "post": [
+    0.04055,
+    0.06293,
+    0.1381
+   ],
+   "rho": [
+    0.5,
+    0.5
+   ],
+   "n": 0,
+   "what": "normalised g (x AMC^-gamma) of an unplayed node; rho = common-factor share"
+  }
+ }
+}

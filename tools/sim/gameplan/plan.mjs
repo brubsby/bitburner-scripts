@@ -6,8 +6,10 @@
 //   node tools/sim/gameplan/plan.mjs --state 1.3,2.1,4.2,5.1,6.1,8.1,9.1,10.1 --in-progress 4
 //   node tools/sim/gameplan/plan.mjs --draws 200 --seed 7 --bb-seeds 5 --jobs 1
 //   node tools/sim/gameplan/plan.mjs --build-only        build / extend the surrogate cache and stop
+//   node tools/sim/gameplan/plan.mjs --observe           ingest telemetry into posterior.json first (observe.mjs)
 //   flags: --in-progress none | --no-sens | --json out.json | --telemetry DIR
 //          --sigma-played 0.15 | --rho 0.5 | --direct (mid world on direct sims)
+//          --prior (the hand prior only, ignore posterior.json) | --posterior FILE
 //
 // NOT CALIBRATED as a decision model. What is and is not:
 //   CALIBRATED   each played node's g (backed out of its measured hours; the
@@ -24,8 +26,9 @@
 // value-of-information tables saying how much each one could move it.
 //
 // PIPELINE: economy.mjs (telemetry -> g) -> surrogate.mjs (sims -> cached grid)
-// -> routes.mjs (C = min over routes) -> search.mjs (exact DP over the SF
-// lattice) -> draws (params.mjs) -> regret, robust plan, sensitivity.
+// -> posterior.mjs (the hand prior updated by observe.mjs's log) -> routes.mjs
+// (C = min over routes) -> search.mjs (exact DP over the SF lattice) -> draws
+// (params.mjs, through the posterior) -> regret, robust plan, sensitivity, explore.
 
 import '../../test/gameresolve.mjs'
 import path from 'node:path'
@@ -51,6 +54,8 @@ const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, drawZ, worldOf, paramIds } = await im
 const { ROUTES, clearTime, hackParts, favorHours, favorRef } = await import('./routes.mjs')
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
 const { GO_MEASURED, goScale, goMaxRep, w0rldDiv } = await import('./go.mjs')
+const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability } = await import('./posterior.mjs')
+const { runObserve, printMove } = await import('./observe.mjs')
 let t0 = performance.now()
 const { measureEconomy } = await import('./economy.mjs')
 const { buildSurrogate, loadSurrogate, LN_G, BB_INT } = await import('./surrogate.mjs')
@@ -79,6 +84,7 @@ const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
 t0 = performance.now()
 const econ0 = await measureEconomy()
 const econ = { ...econ0, ownG: new Map(econ0.ownG) }
+const econRaw = { ...econ, ownG: new Map(econ.ownG) } // the hand economy, before the posterior
 tick('telemetry + g back-out', t0)
 const live = econ.live
 const entry = arg('--state') ? parseState(arg('--state'), live.intelligence) : makeState(live.sfOnEntry, live.intelligence)
@@ -100,6 +106,23 @@ if (has('--build-only')) {
 t0 = performance.now()
 const S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct') })
 tick('surrogate load', t0)
+
+// ---------------------------------------------------------------------------
+// 2b. The posterior: the hand prior + the observation log (posterior.mjs)
+// ---------------------------------------------------------------------------
+const POST_FILE = arg('--posterior') ? path.resolve(arg('--posterior')) : POSTERIOR_FILE
+if (has('--observe')) {
+  t0 = performance.now()
+  const { TELEMETRY } = await import('../nodechoice/measure.mjs')
+  await runObserve({ econ: econRaw, S, telemetry: TELEMETRY, file: POST_FILE })
+  console.log('')
+  tick('observe', t0)
+}
+const store = has('--prior') ? emptyStore() : loadStore(POST_FILE)
+const post = posteriorOf(store, econRaw, { rho: RHO_, sigmaPlayed: SIGMA_P })
+Object.assign(econ, post.applied)
+const postSum = summarise(post, econRaw)
+const RHO_DRAW = arg('--rho') ? RHO_ : econ.rho
 
 const live_ = (n) => !isInert(n)
 const tableFor = (L, world) => buildTable(L, (n, lv) => clearTime(n, lv, world, S).h, live_)
@@ -148,6 +171,18 @@ console.log('  ASSUMED parameters (lo / mid / hi = 10th / 50th / 90th percentile
 for (const [k, p] of Object.entries(SF_PARAMS)) console.log(`    ${k.padEnd(6)} ${p.lo} / ${p.mid} / ${p.hi}   ${p.what}`)
 for (const [k, p] of Object.entries(BB_PARAMS)) console.log(`    ${k.padEnd(6)} ${p.lo} / ${p.mid} / ${p.hi}   ${p.what}`)
 console.log(`    g(node) unplayed: ln g split-normal through the latent lo/mid/hi x AMC^-gamma, common-factor share ${RHO_}; played: measured x exp(${SIGMA_P} z)`)
+{
+  const src = has('--prior') ? 'IGNORED (--prior): every draw is the hand prior' : `${path.relative(path.resolve(HERE, '../../..'), POST_FILE)}, ${store.observations.length} logged readings, ${post.nObs} applied (the rest are inside the hand prior), updated ${store.updatedAt ?? 'never'}`
+  console.log(`POSTERIOR (posterior.mjs) — the draws below use it: ${src}`)
+  const moved = Object.entries(postSum).filter(([, v]) => JSON.stringify(v.prior) !== JSON.stringify(v.post) || v.n)
+  if (!moved.length) console.log('  no parameter has moved off its hand prior')
+  else {
+    const fmt = (x) => (Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 1 ? x.toFixed(2) : x.toFixed(3))
+    console.log('  param        hand p10 / p50 / p90            posterior p10 / p50 / p90        readings')
+    for (const [id, v] of moved) console.log(`  ${id.padEnd(12)} ${(v.prior ? v.prior.map(fmt).join(' / ') : '-').padEnd(31)} ${v.post.map(fmt).join(' / ').padEnd(32)} ${v.n ?? ''}${v.rho ? `  common share ${v.rho[0]} -> ${v.rho[1]}` : ''}`)
+    for (const o of store.observations.filter((x) => !x.inBase)) console.log(`    applied: ${o.key}  ${o.param} = ${+o.value.toPrecision(4)} (sd ${o.sd} ${o.space})  ${o.note ?? o.source}`)
+  }
+}
 console.log('ROUTES (routes.mjs):')
 for (const r of ROUTES) console.log(`  ${r.id.padEnd(7)}${r.node ? `BN${r.node} `.padEnd(6) : 'all   '}${r.status}`)
 
@@ -242,7 +277,7 @@ const Vstart = []
 let sumC = null
 t0 = performance.now()
 for (let i = 0; i < DRAWS; i++) {
-  const z = drawZ(r, nodes, econ, { rho: RHO_ })
+  const z = drawZ(r, nodes, econ, { rho: RHO_DRAW })
   const w = worldOf(econ, z, wOpts)
   const T = tableFor(L1, w)
   const V = solveDP(L1, T)
@@ -392,6 +427,25 @@ if (oat.length) {
 const flippers = oat.filter((x) => x.best !== fm1[0].n)
 console.log(`  one-at-a-time flips of the mid recommendation ${lab(fm1[0].n)}: ${flippers.length ? flippers.map((x) => `${x.id}@${x.zv < 0 ? 'p10' : 'p90'} -> ${lab(x.best)} (+${x.regret.toFixed(1)}h)`).join('; ') : 'none'}`)
 
+// EXPLORE: is measuring a parameter before the next decision worth its cost?
+// value = its EVPPI (hours a perfect reading saves on this decision, net of the
+// placebo floor); cost = posterior.measurability (hours of game time, or not
+// measurable before the decision). Worth taking when it can happen before the
+// decision and value > cost.
+const liveRoute = inProg ? (live.bbJoinH !== null && live.bbJoinH !== undefined && !(live.maxLevel >= 1000) ? 'blade' : 'hack') : null
+const ctx = { node: inProg, route: liveRoute, rec: rec.n, dRec: (n) => stats.find((x) => x.n === n)?.dRec ?? null }
+const explore = voi.map((v) => ({ ...v, net: Math.max(0, v.v - Math.max(0, floor)), m: measurability(v.id, ctx) }))
+console.log(`\nEXPLORE — per parameter: the hours learning it before the next decision would save (EVPPI net of the placebo floor ${floor.toFixed(2)}h) vs what measuring it costs; node in progress ${inProg ? `${clearLabel(inProg, entry)} (${liveRoute} route)` : 'none'}`)
+console.log('  param             value    cost     before the decision?   worth it?   how / why')
+for (const e of explore) {
+  const desc = /^g\d+$/.test(e.id) ? `g of BN${e.id.slice(1)}` : e.id
+  const worth = e.m.before && e.net > (e.m.cost ?? Infinity) && e.net > 0.05
+  e.worth = worth
+  console.log(`  ${desc.padEnd(17)} ${e.net.toFixed(2).padStart(5)}h  ${e.m.cost === null ? '   -  ' : `${e.m.cost.toFixed(2).padStart(5)}h`}  ${(e.m.before ? 'yes' : 'no').padEnd(22)} ${(worth ? 'YES' : 'no').padEnd(10)}  ${e.m.how}: ${e.m.why}`)
+}
+const worthIt = explore.filter((e) => e.worth)
+console.log(`  EXPLORATION: ${worthIt.length ? worthIt.map((e) => `measure ${e.id} (${e.m.how}) — saves ${e.net.toFixed(2)}h for ${e.m.cost.toFixed(2)}h`).join('; ') : 'no measurement is worth taking before the next decision — every parameter that could move it is either measured for free by what is already running or measurable only after it'}`)
+
 // ---------------------------------------------------------------------------
 // 6. Verdict and cost
 // ---------------------------------------------------------------------------
@@ -404,6 +458,6 @@ console.log(`  per draw: ${(tDraws / Math.max(1, DRAWS)).toFixed(2)}s (table ${T
 console.log(`  surrogate: ${S.meta.curves} hack curves x ${LN_G.length} = ${S.meta.gridPoints} sim points (${bstats.hack.computed} computed this run${bstats.hack.computed ? `, ${(bstats.hack.ms / bstats.hack.computed).toFixed(1)}ms each` : ''}); ${S.meta.bbCells} Bladeburner cells x ${BB_SEEDS} seeds = ${bstats.bb.needed} sims (${bstats.bb.computed} computed this run${bstats.bb.computed ? `, ${(bstats.bb.ms / bstats.bb.computed / 1000).toFixed(2)}s each` : ''}, ${bstats.bb.seeded} seeded from nextnode's cache)`)
 
 if (arg('--json')) {
-  fs.writeFileSync(arg('--json'), JSON.stringify({ at: new Date().toISOString(), entry: pairsOf(entry), inProgress: inProg, start: pairsOf(start), recommended: rec.n, midOrder: path1, robustOrder: robust, regret: stats, voi, oat, patterns: patternRows }, null, 1))
+  fs.writeFileSync(arg('--json'), JSON.stringify({ at: new Date().toISOString(), entry: pairsOf(entry), inProgress: inProg, start: pairsOf(start), recommended: rec.n, midOrder: path1, robustOrder: robust, regret: stats, voi, oat, patterns: patternRows, explore: explore.map(({ id, v, net, m, worth }) => ({ id, evppi: v, net, ...m, worth })), posterior: postSum }, null, 1))
 }
 process.exit(0)

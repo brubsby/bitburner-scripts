@@ -7,6 +7,11 @@
 // What IS measured: the played nodes' g (economy.mjs), the Bladeburner k
 // = 0.916 (nodechoice/bbcal6.mjs, the live BN6 leg / the model's median).
 //
+// These hand distributions are the BASE of posterior.mjs: plan.mjs draws
+// through posterior.json (the hand prior updated by observe.mjs's readings of
+// finished nodes and the in-run channel); with an empty log, or --prior, every
+// draw here is exactly the hand one.
+//
 // A WORLD is one setting of every parameter: { g(n), k, open, sf{...}, bbOff }.
 // The deterministic "mid" world (every z = 0) is nextnode's cal/mid/mid cell.
 // A DRAW is a vector of standard-normal z's; the same draws price every first
@@ -48,7 +53,7 @@ export function paramIds(nodes) {
 }
 
 /** One draw: z per parameter (g's already combined with the common factor). */
-export function drawZ(r, nodes, econ, { rho = RHO } = {}) {
+export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO } = {}) {
   const zc = normal(r)
   const z = { zc }
   for (const n of nodes) {
@@ -67,15 +72,22 @@ export function drawZ(r, nodes, econ, { rho = RHO } = {}) {
  * Bladeburner opening unscaled, HackingSpeedMultiplier unread): GP3's regression mode.
  */
 export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false } = {}) {
-  const zz = (k) => z[k] ?? 0
+  // econ from posterior.mjs posteriorOf().applied carries the update: zMap (a
+  // scalar's prior z -> posterior z), gShift/gScale (the unplayed latent's
+  // location and spread), gSd (a node observed since the base: its own log sd).
+  // A plain economy (no posterior) prices exactly the hand prior.
+  const zm = econ.zMap ?? {}
+  const zz = (k) => (zm[k] ? zm[k](z[k] ?? 0) : z[k] ?? 0)
+  const gShift = econ.gShift ?? 0
+  const gScale = econ.gScale ?? 1
   const lg = { lo: Math.log(econ.gScen.lo), mid: Math.log(econ.gScen.mid), hi: Math.log(econ.gScen.hi) }
   const gCache = new Map()
   const g = (n) => {
     let v = gCache.get(n)
     if (v === undefined) {
       v = econ.ownG.has(n)
-        ? econ.ownG.get(n) * Math.exp(sigmaPlayed * zz(`g${n}`))
-        : Math.exp(splitQ(lg.lo, lg.mid, lg.hi, zz(`g${n}`))) * Math.pow(econ.amc[n], -econ.gamma)
+        ? econ.ownG.get(n) * Math.exp((econ.gSd?.get(n) ?? sigmaPlayed) * zz(`g${n}`))
+        : Math.exp(gShift === 0 && gScale === 1 ? splitQ(lg.lo, lg.mid, lg.hi, zz(`g${n}`)) : lg.mid + gShift + (splitQ(lg.lo, lg.mid, lg.hi, zz(`g${n}`)) - lg.mid) * gScale) * Math.pow(econ.amc[n], -econ.gamma)
       gCache.set(n, v)
     }
     return v

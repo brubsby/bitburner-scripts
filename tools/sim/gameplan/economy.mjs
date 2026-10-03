@@ -66,6 +66,6 @@ export async function measureEconomy() {
   const ownG = new Map(runs.map((c) => [c.bn, c.g]))
   ownG.set(12, ownG.get(1) * Math.pow(1.02, -gamma))
   const last = segs[segs.length - 1]
-  const live = { bitNode: last.bitNode, hours: last.hours, sfOnEntry: last.sfOnEntry, intelligence: last.intelligence, startedAt: last.startedAt }
+  const live = { bitNode: last.bitNode, hours: last.hours, sfOnEntry: last.sfOnEntry, intelligence: last.intelligence, startedAt: last.startedAt, maxLevel: last.maxLevel, bbJoinH: last.bbJoinH, combat100H: last.combat100H }
   return { runs: runs.map(({ s, ...r }) => ({ ...r, sfOnEntry: s.sfOnEntry, meanLifeH: s.meanLifeH })), profile, gamma, gScen, ownG: [...ownG.entries()], amc: Object.fromEntries([...Array(14)].map((_, i) => [i + 1, AMC(i + 1)])), live }
 }
