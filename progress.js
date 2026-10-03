@@ -156,7 +156,7 @@ import { repModel, incomeModel, estimateBaseRepPerSec } from 'trajectory.js'
 import { installPointH, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn, ONEOFF_EFFECTS } from 'objective.js'
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
-import { goWeightsGen } from 'goweights.js'
+import { goWeightsGen, bladeGoWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, combatBarPlanOf } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
@@ -2982,7 +2982,7 @@ function ramIncomePerGB(ns, inputs) {
  * money claim (Daedalus's $100b) is not on this trajectory — watchdog.js's
  * homeup trigger holds no join money for a verdict that carries it.
  */
-async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replanAt = null, pending = [], statsOf = null }) {
+async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replanAt = null, pending = [], statsOf = null, goWeights = null }) {
   const pc = planCtxOf(ns, info)
   const br = pc?.decisions?.bladeRoute
   if (br?.key !== 'blade' || !pc?.bladeCtx) return null
@@ -3048,7 +3048,12 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
         unlocks,
         daemonNow,
         fullHost,
-        go: { opponent: readJson(ns, '/tel/go.txt')?.opponent ?? null, goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1 },
+        // The opponent is the one go.js will choose on THIS exit's weights
+        // (bladeGoWeightsOf, the record the gate publishes as
+        // objective.goWeights) from node power 0 — the farm the tier starts;
+        // go.txt does not publish node power (NOT priced: a farm already
+        // running, whose banked power lowers its own marginal).
+        go: { opponent: readJson(ns, '/tel/go.txt')?.opponent ?? null, goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1, weights: goWeights?.weights ?? null, windowH: goWeights?.windowH ?? null },
         batchAt,
         moneyAtInstall: fin1(installAtH) ? moneyAt(installAtH) : null,
         gainPerSec,
@@ -3076,10 +3081,70 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
       notCredited: r.notCredited,
       displaced: r.displaced,
       conservative: r.conservative,
+      goPick: r.goPick ?? null,
       why: `the black-op exit ${r.withH.toFixed(2)}h with the ${unlocks?.homeRam ?? '?'}GB tier bought at ${r.buyAtH.toFixed(2)}h vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h${top ? `; most: ${top.name} ${top.deltaH}h` : ''})${pd ? ` — plan: ${pd.why}` : ''}`,
     }
   } catch (e) {
     return { ...base, buy: false, deltaH: null, why: `the Bladeburner home verdict threw: ${String(e).slice(0, 120)}` }
+  }
+}
+
+/**
+ * THE GO OPPONENT'S WEIGHTS ON THE COMMITTED BLADEBURNER ROUTE
+ * (goweights.bladeGoWeightsGen): every channel priced on the black-op exit,
+ * the bonus alive until the committed install — combat (Tetrads) through the
+ * level multipliers, money and reputation through the batch that install
+ * buys (re-planned here, as bladeHomeVerdictOf does). Published as
+ * objective.goWeights in place of the hacking exit's (goWeightsGen), which
+ * are not this route's hours; go.js chooses on it and bladeHomeVerdictOf
+ * credits go.js with the opponent it picks. Null off the blade route.
+ */
+async function bladeGoWeightsOf(ns, info, { liveMoney, moneyBy, replanAt = null, pending = [], statsOf = null, eRep = null }) {
+  const pc = planCtxOf(ns, info)
+  const br = pc?.decisions?.bladeRoute
+  if (br?.key !== 'blade' || !pc?.bladeCtx) return null
+  const fin1 = (x) => typeof x === 'number' && isFinite(x)
+  try {
+    const prevInst = pc.prev?.decisions?.install ?? null
+    const spec = prevInst?.route === 'blade' ? basisOf(prevInst, Date.now()) : null
+    const installAtH = spec?.kind === 'wait' && fin1(spec.waitH) ? spec.waitH : Infinity
+    const exitH = fin1(br.bladeH) ? br.bladeH : 400
+    const batchAt = typeof replanAt === 'function' && typeof statsOf === 'function'
+      ? (m) => {
+          const c = bladeContentOf([...(replanAt(Math.max(0, m))?.buy ?? []).map((b) => b?.name).filter(Boolean), ...(pending ?? [])], statsOf)
+          return { gains: c.gains, simulacrum: c.simulacrum }
+        }
+      : null
+    // What hack() earns: the batcher's own measure; without batch.js (a home
+    // under its tier) the script income is the bound (it carries any trader
+    // income too — an upper bound, conservative against combat).
+    const fresh = (x) => !!x && Date.now() - Date.parse(x.at) < 5 * 60e3
+    const bt = readJson(ns, '/tel/batch.txt')
+    const st = readJson(ns, '/tel/status.txt')
+    const plans = fresh(bt) ? (bt?.targets ?? []).map((t) => t?.plan).filter((q) => q && q.h + q.g + q.w1 + q.w2 > 0) : []
+    const fromBatch = fresh(bt) && fin1(bt.totals?.earnedPerSec)
+    const stream = fromBatch ? bt.totals.earnedPerSec : fresh(st) && fin1(st.incomePerSec) ? st.incomePerSec : null
+    if (stream === null) return { weights: null, route: 'blade', why: 'no hack() income measure (batch.txt or status.txt fresh) for the money channels' }
+    const gw = await paced(
+      bladeGoWeightsGen({
+        startFor: pc.bladeCtx.startFor,
+        spec,
+        maxH: Math.max(exitH * 2, 50),
+        batchAt,
+        moneyAtInstall: fin1(installAtH) ? liveMoney + moneyBy(installAtH) : null,
+        batchMoneyPerSec: stream,
+        streamSource: fromBatch ? 'batch.txt totals.earnedPerSec' : 'status.txt incomePerSec (no batcher: an upper bound)',
+        hackShare: plans.length ? plans.reduce((a, q) => a + (q.h + q.w1) / (q.h + q.g + q.w1 + q.w2), 0) / plans.length : null,
+        hacknetPerSec: hacknetLifeIncome(ns, info)?.perSec ?? 0,
+        eRep,
+        ageH: typeof info?.lastAugReset === 'number' ? Math.max(0, (Date.now() - info.lastAugReset) / 3.6e6) : 0,
+      }),
+      'goweights-blade',
+    )
+    const r4 = (v) => (typeof v === 'number' && isFinite(v) ? +v.toPrecision(4) : v)
+    return gw?.weights ? { ...gw, weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])) } : { weights: null, route: 'blade', why: gw?.why ?? 'bladeGoWeightsGen returned nothing' }
+  } catch (e) {
+    return { weights: null, route: 'blade', why: `bladeGoWeightsGen threw: ${String(e).slice(0, 160)}` }
   }
 }
 
@@ -7403,7 +7468,11 @@ async function act(ns, canJoin, info, note) {
     }
     // THE HOME UPGRADE ON THE COMMITTED BLADEBURNER ROUTE (bladeHomeVerdictOf),
     // priced before the write: it runs the black-op exit through the pacer.
-    const homeBlade0 = await bladeHomeVerdictOf(ns, info, { inputs: gangInputs0(), liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n) })
+    // THE GO WEIGHTS ON THAT ROUTE (bladeGoWeightsOf) replace the hacking
+    // exit's in the published objective, and price go.js in the home verdict.
+    const goBlade0 = await bladeGoWeightsOf(ns, info, { liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n), eRep: weightsMeta?.eRep ?? null })
+    if (goBlade0) weightsMeta = { ...weightsMeta, goWeights: goBlade0 }
+    const homeBlade0 = await bladeHomeVerdictOf(ns, info, { inputs: gangInputs0(), liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n), goWeights: goBlade0 })
     ns.write(
       GATE,
       JSON.stringify(
@@ -8355,7 +8424,9 @@ async function act(ns, canJoin, info, note) {
     // THE HOME UPGRADE ON THE COMMITTED BLADEBURNER ROUTE (bladeHomeVerdictOf),
     // on the same money stream the spend verdicts below use.
     const spendMoneyBy = (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600)
-    const homeBlade1 = await bladeHomeVerdictOf(ns, info, { inputs: exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n) })
+    const goBlade1 = await bladeGoWeightsOf(ns, info, { liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n), eRep: weightsMeta?.eRep ?? null })
+    if (goBlade1) weightsMeta = { ...weightsMeta, goWeights: goBlade1 }
+    const homeBlade1 = await bladeHomeVerdictOf(ns, info, { inputs: exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n), goWeights: goBlade1 })
     // Persist BEFORE acting. An install never returns, so a write afterwards
     // would never happen and the next life would start with no history — and
     // the lastAugReset stamp is what stops that stale sample being reused.

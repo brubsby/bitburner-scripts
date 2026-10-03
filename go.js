@@ -571,7 +571,9 @@ export async function main(ns) {
       const w0r = w0RateOf()
       const pick = chooseOpponent({
         weights: gw?.weights ? { ...gw.weights, ...hackW } : null,
-        windowH: gate?.objective?.windowH ?? null,
+        // The Bladeburner route's weights carry their own life (the committed
+        // install, or the black-op exit): goweights.bladeGoWeightsGen.
+        windowH: gw?.windowH ?? gate?.objective?.windowH ?? null,
         incumbent: current,
         nodePower: nodePowerOf(stats),
         dwellH,

@@ -20,9 +20,13 @@
 //   bladeburner.js   the full daemon instead of bb-lite: the trajectory's
 //                    rank scale x 1/LITE_OVER_FULL from the purchase on — only
 //                    where a rooted non-home host can hold its raised 92.75GB
-//   go.js            its channel on this exit: combat (Tetrads) as a growing
-//                    level multiplier, reset at an install; any other channel
-//                    (faction_rep, hacking_*) is not on the black-op exit
+//   go.js            the opponent it will choose on THIS exit's channel
+//                    weights (goweights.bladeGoWeightsGen through
+//                    goplan.chooseOpponent — go.js reads the same weights from
+//                    the gate): combat (Tetrads) as a growing level
+//                    multiplier, reset at an install; any other channel
+//                    (faction_rep, hacking_*) reaches this exit only through
+//                    an install's batch and is not stepped here (named)
 //   batch.js         money: on this exit only through the batch an install
 //                    buys (below) — its income over early.js is UNMEASURED in
 //                    a node where it never ran, so only the linear perGB x
@@ -46,7 +50,7 @@
 
 import { bladeExitGen } from 'bbplan.js'
 import { LITE_OVER_FULL } from 'bbliteplan.js'
-import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame } from 'goplan.js'
+import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame, chooseOpponent } from 'goplan.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -148,7 +152,9 @@ export function goCombatSteps({ opponent, fromH, toH, installAtH = Infinity, goP
  *   daemonNow       'bb-lite' | 'bladeburner.js' (who runs the division now)
  *   fullHost        {ok, why}: a rooted non-home host can hold bladeburner.js's raised RAM
  *   liteOverFull    bbliteplan.LITE_OVER_FULL.mid unless the caller says
- *   go              {opponent, goPower}: the farm's opponent (go.js's own choice)
+ *   go              {opponent, goPower, weights, windowH, nodePower}: the blade-route
+ *                   Go weights (bladeGoWeightsGen) the opponent is chosen on
+ *                   (goOpponentOnBlade); opponent = /tel/go.txt's, the fallback
  *   batchAt(m)      the install's batch content ({gains, simulacrum}) bought with $m (re-planned)
  *   moneyAtInstall  money at the committed install without the purchase
  *   gainPerSec      the linear income term the RAM adds (perGB x homeRam), money only
@@ -180,15 +186,21 @@ export function* bladeHomeExitGen(o) {
     rankStep = { atH: buyAtH, rankScaleMult: 1 / liteOverFull }
     credited.push({ script: 'bladeburner.js', why: `rank x${(1 / liteOverFull).toFixed(3)} from ${buyAtH.toFixed(2)}h (${fullHost.why})` })
   }
-  // 2. The Go farm.
+  // 2. The Go farm: the opponent go.js WILL choose once the tier admits it —
+  // goplan.chooseOpponent on this exit's own channel weights
+  // (goweights.bladeGoWeightsGen), the same pricing go.js reads from the gate
+  // — else the one /tel/go.txt says it farms now.
   let goSteps = []
+  let goPick = null
   if (unlocks.unlocked.some((u) => u.script === 'go.js')) {
-    const key = keyOfGame(go?.opponent)
+    const pick = goOpponentOnBlade(go)
+    goPick = pick
+    const key = pick.opponent
     const ch = key ? OPPONENTS[key]?.channel : null
     if (ch === 'combat') {
       goSteps = goCombatSteps({ opponent: key, fromH: buyAtH, toH: maxH, installAtH, goPower: fin(go?.goPower) ? go.goPower : 1 })
-      credited.push({ script: 'go.js', why: `${key}: combat levels x effect(nodes) from ${buyAtH.toFixed(2)}h` })
-    } else notCredited.push({ script: 'go.js', why: key ? `go.js farms ${key} (${ch}) — not on the black-op exit` : 'no opponent read from /tel/go.txt' })
+      credited.push({ script: 'go.js', why: `${key} (${pick.source}): combat levels x effect(nodes) from ${buyAtH.toFixed(2)}h` })
+    } else notCredited.push({ script: 'go.js', why: key ? `go.js farms ${key} (${ch}, ${pick.source}) — its channel reaches this exit only through the install's batch, not simulated as a step` : `no opponent: ${pick.why}` })
   }
   // 3. The rest, named.
   for (const u of unlocks.unlocked) {
@@ -240,5 +252,25 @@ export function* bladeHomeExitGen(o) {
     const h = yield* exitOf(withSpec, [{ ...rankStep, rankScaleMult: 1 / LITE_OVER_FULL.hi }, ...goSteps])
     conservative = fin(h) ? { liteOverFull: LITE_OVER_FULL.hi, withH: +h.toFixed(3), deltaH: +(h - withoutH).toFixed(3) } : null
   }
-  return { deltaH: withH - withoutH, withH, withoutH, buyAtH, buyLife: buy.life, effects, credited, notCredited, displaced, conservative }
+  return { deltaH: withH - withoutH, withH, withoutH, buyAtH, buyLife: buy.life, effects, credited, notCredited, displaced, conservative, goPick }
+}
+
+/**
+ * The opponent go.js plays on this route: chooseOpponent on the black-op
+ * exit's channel weights (go.weights, goweights.bladeGoWeightsGen) at the
+ * farm's current node power (go.nodePower; absent: 0 — a farm the tier is
+ * about to start), the point win rates (a price, not a Thompson draw). When
+ * the weights refuse or are absent: go.opponent (/tel/go.txt). Returns
+ * {opponent, source, why}.
+ */
+export function goOpponentOnBlade(go) {
+  const fallback = (why) => {
+    const key = keyOfGame(go?.opponent)
+    return { opponent: key, source: key ? '/tel/go.txt' : null, why: key ? `${why}; go.js's current opponent` : `${why}; no opponent read from /tel/go.txt` }
+  }
+  if (!go?.weights) return fallback('no Bladeburner-route Go weights')
+  const nodePower = go.nodePower && typeof go.nodePower === 'object' ? go.nodePower : Object.fromEntries(Object.keys(OPPONENTS).map((k) => [k, 0]))
+  const r = chooseOpponent({ weights: go.weights, windowH: go.windowH, incumbent: keyOfGame(go.opponent) ?? undefined, nodePower, goPower: fin(go.goPower) ? go.goPower : 1 })
+  if (r.refused || !r.opponent) return fallback(`the blade weights refused: ${r.why}`)
+  return { opponent: r.opponent, source: 'priced on the black-op exit', why: r.why }
 }

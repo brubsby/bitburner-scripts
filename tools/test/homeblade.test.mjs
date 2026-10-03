@@ -221,5 +221,70 @@ export async function run() {
     if (!/nextTier: \{\s*fromHomeRam: homeRam,\s*homeRam: homeRam \* 2/.test(SRC('boot.js'))) c.fail('HB6 boot.js does not publish the next tier plan')
     checks.push(c)
   }
+
+  // ---- HB7 -----------------------------------------------------------------
+  {
+    const c = new Check('HB7', "go.js credited by the opponent it will choose on the black-op exit's own weights (live BN4.3)")
+    const GW = await import('goweights.js')
+    const gw = drain(GW.bladeGoWeightsGen({ startFor, spec: null, maxH: 80, batchMoneyPerSec: F.incomePerSec }))
+    c.examined(1)
+    if (!(gw.weights?.combat > 0)) c.fail('HB7 the combat channel weighs nothing on the black-op exit', JSON.stringify(gw).slice(0, 300))
+    const pick = HP.goOpponentOnBlade({ opponent: F.go.opponent, weights: gw.weights, windowH: gw.windowH, goPower: n4.GoPower ?? 1 })
+    c.examined(1)
+    if (pick.opponent !== 'Tetrads') c.fail(`HB7 the farm does not choose Tetrads on the blade weights (live go.txt: ${F.go.opponent})`, pick.why)
+    const moneyAt = (h) => F.wealth + F.incomePerSec * h * 3600
+    const buy = HP.homeBuyAtOf({ cost: COST, moneyAt, installAtH: Infinity, post: null, maxH: F.bladeRoute.bladeH })
+    const base = { startFor, spec: null, cost: COST, buy, unlocks: unlocks128, daemonNow: 'bb-lite', fullHost: FULL_HOST, maxH: 80 }
+    const old = drain(HP.bladeHomeExitGen({ ...base, go: { opponent: F.go.opponent, goPower: n4.GoPower ?? 1 } }))
+    const v = drain(HP.bladeHomeExitGen({ ...base, go: { opponent: F.go.opponent, goPower: n4.GoPower ?? 1, weights: gw.weights, windowH: gw.windowH } }))
+    c.examined(2)
+    const goAlone = v.effects?.find((e) => e.name.startsWith('Go farm'))
+    if (!v.credited?.some((x) => x.script === 'go.js')) c.fail('HB7 go.js is not credited on the blade weights', JSON.stringify(v.notCredited))
+    if (!(goAlone?.deltaH < 0)) c.fail('HB7 the Go farm alone does not shorten the black-op exit', JSON.stringify(v.effects))
+    if (!(v.deltaH < old.deltaH)) c.fail('HB7 crediting go.js does not improve the verdict', `${v.deltaH} vs ${old.deltaH}`)
+    // Without the weights, the fallback is go.txt's opponent, as before.
+    if (old.credited?.some((x) => x.script === 'go.js')) c.fail('HB7 go.js credited with no weights on a non-combat go.txt opponent')
+    c.note(`blade weights: combat ${gw.weights?.combat?.toFixed(2)} h/ln (curve ${JSON.stringify(gw.detail?.combatCurve)}), money/rep ${gw.detail?.batch ?? ''}`)
+    c.note(`pick: ${pick.why.slice(0, 160)}`)
+    c.note(`home 64->128GB: deltaH ${fmt(old.deltaH)}h without go.js credited -> ${fmt(v.deltaH)}h with (Go farm alone ${goAlone?.deltaH}h; full daemon alone ${v.effects?.find((e) => e.name.startsWith('full'))?.deltaH}h; conservative ${v.conservative?.deltaH}h)`)
+    // The wiring: progress.js publishes the blade weights as the gate's
+    // goWeights and hands them to the home verdict; go.js reads their window.
+    const src = SRC('progress.js')
+    c.examined(3)
+    if ((src.match(/await bladeGoWeightsOf\(/g)?.length ?? 0) !== 2) c.fail('HB7 progress.js does not price the blade Go weights at both installgate writes')
+    if (!/if \(goBlade0\) weightsMeta = \{ \.\.\.weightsMeta, goWeights: goBlade0 \}/.test(src) || !/if \(goBlade1\) weightsMeta = \{ \.\.\.weightsMeta, goWeights: goBlade1 \}/.test(src)) c.fail('HB7 the blade Go weights are not published as objective.goWeights')
+    if (!/goWeights: goBlade0 \}\)/.test(src) || !/goWeights: goBlade1 \}\)/.test(src)) c.fail('HB7 the home verdict does not take the blade Go weights')
+    if (!/windowH: gw\?\.windowH \?\? gate\?\.objective\?\.windowH/.test(SRC('go.js'))) c.fail("HB7 go.js does not read the blade weights' own window")
+    checks.push(c)
+  }
+
+  // ---- HB8 -----------------------------------------------------------------
+  {
+    const c = new Check('HB8', "the blade Go weights' batch channels: through the committed install's batch, refused when it cannot be re-planned; the hacking route still skips Tetrads by name")
+    const GW = await import('goweights.js')
+    const GP = await import('goplan.js')
+    const spec = { kind: 'wait', waitH: 8, blade: { gains: {}, simulacrum: false } }
+    const batchAt = (m) => (m >= 40e6 ? { gains: { strength: 1.08, defense: 1.08, dexterity: 1.08, agility: 1.08, bladeburner_success_chance: 1.05 }, simulacrum: false } : { gains: {}, simulacrum: false })
+    const o = { startFor, spec, maxH: 80, batchAt, moneyAtInstall: 30e6, batchMoneyPerSec: 2000, hackShare: 0.3 }
+    const w = drain(GW.bladeGoWeightsGen(o))
+    c.examined(4)
+    if (!w.weights) c.fail('HB8 refused with a re-plannable batch', w.why)
+    else {
+      if (!(w.weights.hacking_money > 0 && w.weights.hacking_speed > w.weights.hacking_money)) c.fail('HB8 the money channels do not reach the exit through the batch', JSON.stringify(w.weights))
+      // A bonus that dies at the 8h install is priced by the model, whatever it says (a number, never null).
+      if (!(typeof w.weights.combat === 'number' && w.weights.combat >= 0) || w.detail?.combatCurve?.length !== GW.BLADE_D_GRID.length) c.fail('HB8 the combat bonus up to the install is unpriced', JSON.stringify(w.detail?.combatCurve))
+      if (w.windowH !== 8) c.fail(`HB8 the window is not the committed install (${w.windowH})`)
+      c.note(`install at 8h: ${JSON.stringify(w.weights)}; combat curve ${JSON.stringify(w.detail?.combatCurve)} vs ${w.detail?.exitH}h; plateau ${JSON.stringify(w.detail?.plateau)}`)
+    }
+    const zero = drain(GW.bladeGoWeightsGen({ ...o, batchMoneyPerSec: 0 }))
+    if (zero.weights?.hacking_money !== 0) c.fail('HB8 no hack() income: hacking_money must be exactly 0', JSON.stringify(zero.weights))
+    const noPlan = drain(GW.bladeGoWeightsGen({ ...o, batchAt: null }))
+    if (noPlan.weights !== null || !/re-planned/.test(noPlan.why ?? '')) c.fail('HB8 a committed install with no batch re-plan is not refused by name', JSON.stringify(noPlan))
+    // The hacking route's weights carry no combat key: Tetrads skipped by name, not scored 0.
+    c.examined(1)
+    const hack = GP.chooseOpponent({ weights: { faction_rep: 1, hacking_speed: 1, hacking_money: 1 }, windowH: 2, incumbent: 'Daedalus', nodePower: Object.fromEntries(Object.keys(GP.OPPONENTS).map((k) => [k, 0])) })
+    if (!/Tetrads \(combat: objective carries no weight this pass\)/.test(hack.why)) c.fail('HB8 the hacking route does not skip Tetrads by name', hack.why)
+    checks.push(c)
+  }
   return checks
 }

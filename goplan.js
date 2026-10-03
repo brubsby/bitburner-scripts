@@ -119,9 +119,12 @@ export const PRICEABLE = ['faction_rep', 'hacking_speed', 'hacking_money']
  * Priced when the weights carry it, skipped BY NAME when they do not.
  * goweights.js prices hacknet_node_money as the exit's sensitivity to hacknet
  * production until the next install (the life of a Go bonus), 0 with no
- * hacknet stream.
+ * hacknet stream. combat (Tetrads) is priced on the Bladeburner route only —
+ * goweights.bladeGoWeightsGen, the black-op exit's sensitivity to the combat
+ * level multipliers; the hacking exit has no combat term, so there it is
+ * absent and skipped by name.
  */
-export const OPTIONAL = ['hacknet_node_money']
+export const OPTIONAL = ['hacknet_node_money', 'combat']
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 

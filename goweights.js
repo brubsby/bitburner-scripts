@@ -75,6 +75,7 @@
 // applicator are injected, as objective.exitWeights takes them.
 
 import { drain } from 'coop.js'
+import { bladeExitGen } from 'bbplan.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -246,6 +247,179 @@ export function* goWeightsGen(record, o = {}) {
 
 function mean(a) {
   return a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0
+}
+
+// ---------------------------------------------------------------------------
+// THE BLADEBURNER ROUTE (bladeGoWeightsGen).
+//
+// goWeightsGen above prices every channel on the HACKING exit
+// (/tel/exitinputs.txt, exitplan's policies). On the committed Bladeburner
+// route (plan.txt decisions.bladeRoute.key === 'blade') the exit is the 21
+// black ops (bbplan.bladeExit), and the hacking exit's hours are not this
+// trajectory's. Live BN4.3 2026-10-03: go.js read "Tetrads (combat: no exit
+// weight)" while the combat levels are what every black op's success chance
+// is made of (bbplan.successChance) — and the channels it did price were
+// priced on an exit the route is not taking.
+//
+// So on that route every channel is priced on the black-op exit, the bonus
+// alive from now to the committed install (Go.prestigeAugmentation zeroes it,
+// Go/Go.ts:34-47), with and without, on the route's one start builder
+// (progress.js pc.bladeCtx.startFor):
+//
+//   combat              str/def/dex/agi level multipliers x e^D from now,
+//                       x e^-D at the install (bbplan s0.steps: a multiplier
+//                       that keeps exp). THE EXIT IS LUMPY in D: an op's
+//                       success crosses the policy's bar or does not, so a
+//                       small D moves the exit by nothing or by a whole step
+//                       (live BN4.3 fixture: D 0.05 -> 39.8 h/ln, 0.1 ->
+//                       11.4). The weight is the least-squares slope through
+//                       the origin over BLADE_D_GRID — a Tetrads farm moves
+//                       the multiplier by ln 1.3-1.7 over a window, the scale
+//                       the slope is read at.
+//   hacking_money       dollars at the install (stream x elasticity x W x
+//   hacking_speed       3600 per ln, goWeightsGen's arithmetic) x exit hours
+//   hacknet_node_money  per dollar of the install's batch (batchAt, the
+//                       planner re-run, on this exit through bladeContentOf:
+//                       the plateau secant across the batch's money step).
+//                       No install before the exit: a known 0 (money moves
+//                       this exit only through an install's batch).
+//   faction_rep         eRep (d ln planM / d ln rep) x the life's share still
+//                       to come x exit hours per ln of the batch (every gain
+//                       raised to e^D).
+//   crime_success       not on this route (SlumSnakes stays skipped by name).
+//
+// NOT SIMULATED (named): installs after the committed one (each is the next
+// decision's), and the hack-side share when batch.txt is unmeasured (1, an
+// upper bound — conservative against combat).
+//
+// Pure: startFor and batchAt are the caller's (progress.js).
+
+/** The combat bonus sizes (ln) the slope is fit over — see above. */
+export const BLADE_D_GRID = [0.1, 0.2, 0.3, 0.4]
+
+const COMBAT = ['strength', 'defense', 'dexterity', 'agility']
+
+/**
+ * Exit hours per unit ln of each Go channel on the black-op exit.
+ *
+ *   startFor(spec)     the route's start builder (progress.js pc.bladeCtx.startFor)
+ *   spec               the committed install spec ({kind:'wait', waitH, blade}) or null
+ *   maxH               the exit simulation's horizon
+ *   batchAt(m)         the install's batch content ({gains, simulacrum}) bought with $m
+ *   moneyAtInstall     money at the committed install
+ *   batchMoneyPerSec   what hack() earns ($/s); streamSource names where it came from
+ *   hackShare          the batch's hack-side thread share (absent: 1, an upper bound)
+ *   hacknetPerSec      hacknet production ($/s)
+ *   eRep, ageH, playerRepShare   as goWeightsGen
+ *
+ * Returns {weights: {combat, hacking_money, hacking_speed, hacknet_node_money,
+ * faction_rep}, route: 'blade', windowH, unit, horizon, detail, why: null} or
+ * {weights: null, route: 'blade', why}.
+ */
+export function* bladeGoWeightsGen(o = {}) {
+  const refuse = (why) => ({ weights: null, route: 'blade', why })
+  const { startFor, spec = null, batchAt = null } = o
+  if (typeof startFor !== 'function') return refuse('no Bladeburner start to price from')
+  const maxH = pos(o.maxH) ? o.maxH : 400
+  const W = spec?.kind === 'wait' && num(spec.waitH) ? Math.max(0, spec.waitH) : Infinity
+  const exitOf = function* (sp, steps) {
+    const s0 = startFor(sp)
+    const r = yield* bladeExitGen({ ...s0, maxH, ...(steps.length ? { steps } : {}) })
+    return num(r?.hours) ? r.hours : null
+  }
+  const T0 = yield* exitOf(spec, [])
+  if (!num(T0)) return refuse('the black-op exit is unpriced from this start')
+  const installs = num(W) && W < T0
+  const detail = { exitH: +T0.toFixed(3), installAtH: num(W) ? +W.toFixed(3) : null }
+
+  // ---- combat: the slope over the grid -----------------------------------
+  let sxy = 0
+  let sxx = 0
+  const curve = []
+  for (const D of BLADE_D_GRID) {
+    const up = Object.fromEntries(COMBAT.map((k) => [k, Math.exp(D)]))
+    const down = Object.fromEntries(COMBAT.map((k) => [k, Math.exp(-D)]))
+    const T = yield* exitOf(spec, [{ atH: 0, gains: up }, ...(installs ? [{ atH: W, gains: down }] : [])])
+    if (!num(T)) return refuse(`the black-op exit with combat x e^${D} is unpriced`)
+    curve.push([D, +T.toFixed(3)])
+    sxy += D * (T0 - T)
+    sxx += D * D
+  }
+  const w = { combat: Math.max(0, sxy / sxx), hacking_money: 0, hacking_speed: 0, hacknet_node_money: 0, faction_rep: 0 }
+  detail.combatCurve = curve
+
+  // ---- the batch's channels: only through the committed install ----------
+  if (!installs) {
+    detail.batch = "no install before the exit: money and reputation move this exit only through an install's batch — a known 0"
+  } else {
+    if (typeof batchAt !== 'function' || !num(o.moneyAtInstall)) return refuse('an install is committed but its batch cannot be re-planned (batchAt / moneyAtInstall) — the money and reputation channels act through it')
+    const m0 = Math.max(0, o.moneyAtInstall)
+    const specOf = (b) => ({ ...spec, blade: { gains: b?.gains ?? {}, simulacrum: b?.simulacrum === true } })
+    const keyOf = (b) => JSON.stringify(b?.gains ?? {}) + (b?.simulacrum === true ? '+sim' : '')
+    const b0 = batchAt(m0)
+    if (!b0) return refuse('the install batch could not be planned')
+    const Tb = yield* exitOf(specOf(b0), [])
+    if (!num(Tb)) return refuse('the black-op exit on the re-planned batch is unpriced')
+    // THE PLATEAU SECANT: the nearest money up and down whose batch differs
+    // (x1.25 a probe, at most x8 / ÷8), the exit read at the upper one.
+    const base = Math.max(1e6, m0)
+    let hi = null
+    let bHi = null
+    for (let m = base * 1.25; m <= base * 8; m *= 1.25) {
+      const b = batchAt(m)
+      if (b && keyOf(b) !== keyOf(b0)) {
+        hi = m
+        bHi = b
+        break
+      }
+    }
+    let lo = 0
+    for (let m = m0 / 1.25; m >= m0 / 8 && m > 0; m /= 1.25) {
+      const b = batchAt(m)
+      if (b && keyOf(b) !== keyOf(b0)) {
+        lo = m
+        break
+      }
+    }
+    let hpd = 0
+    if (bHi) {
+      const Thi = yield* exitOf(specOf(bHi), [])
+      if (!num(Thi)) return refuse('the black-op exit on the next batch up is unpriced')
+      hpd = Math.max(0, Tb - Thi) / (hi - lo)
+      detail.plateau = { lo: Math.round(lo), hi: Math.round(hi), moneyAtInstall: Math.round(m0), exitAtHi: +Thi.toFixed(3) }
+    } else detail.plateau = `no different batch within x8 of $${(m0 / 1e6).toFixed(1)}m: a dollar buys nothing nearby (a known 0)`
+    const batch = num(o.batchMoneyPerSec) && o.batchMoneyPerSec >= 0 ? o.batchMoneyPerSec : 0
+    const hackShare = frac(o.hackShare) ? o.hackShare : 1
+    const hacknet = num(o.hacknetPerSec) && o.hacknetPerSec >= 0 ? o.hacknetPerSec : 0
+    const perLn = { hacking_money: batch * hackShare * W * 3600, hacking_speed: batch * W * 3600, hacknet_node_money: hacknet * W * 3600 }
+    for (const k of Object.keys(perLn)) w[k] = hpd * perLn[k]
+    detail.hoursPerMDollar = +(hpd * 1e6).toPrecision(4)
+    detail.streams = { batchMoneyPerSec: batch, source: o.streamSource ?? null, hackShare, hacknetPerSec: hacknet }
+    // Reputation: exit hours per ln of the batch (every gain raised to e^D,
+    // so ln of the batch grows by exactly D in relative terms).
+    const eRep = num(o.eRep) && o.eRep > 0 ? o.eRep : 0
+    const nonEmpty = Object.values(b0.gains ?? {}).some((g) => pos(g) && g !== 1)
+    if (eRep > 0 && nonEmpty) {
+      const D = 0.1
+      const g1 = Object.fromEntries(Object.entries(b0.gains).map(([k, g]) => [k, pos(g) ? Math.pow(g, Math.exp(D)) : g]))
+      const Tr = yield* exitOf(specOf({ ...b0, gains: g1 }), [])
+      if (!num(Tr)) return refuse('the black-op exit on the scaled batch is unpriced')
+      const hpl = Math.max(0, Tb - Tr) / D
+      const ageH = num(o.ageH) && o.ageH >= 0 ? o.ageH : 0
+      const repShare = frac(o.playerRepShare) ? o.playerRepShare : 1
+      w.faction_rep = eRep * repShare * (W / (ageH + W)) * hpl
+      detail.rep = { eRep, hoursPerLnBatch: +hpl.toFixed(3), repFrac: +(W / (ageH + W)).toFixed(4) }
+    } else detail.rep = eRep > 0 ? 'the batch is empty: reputation has nothing to buy into it (a known 0)' : 'eRep 0 or unmeasured: reputation is not binding the batch (a known 0)'
+  }
+  return {
+    weights: w,
+    route: 'blade',
+    windowH: +Math.min(installs ? W : T0, T0).toFixed(4),
+    unit: 'black-op exit hours per unit ln of the multiplier',
+    horizon: installs ? `the committed install, in ${W.toFixed(2)}h` : `the black-op exit, in ${T0.toFixed(2)}h (no install before it)`,
+    detail,
+    why: null,
+  }
 }
 
 /** extraIncome steps [{atH, perSec}] with `add` $/s on top of every step from now on. */
