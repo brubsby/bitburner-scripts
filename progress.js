@@ -270,6 +270,18 @@ import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, lifeTableGen, li
 // no longer touches the planner at all — only the actors, one at a time.
 const RAISE_CEILING = (mult) => 8.45 + 0 * mult
 
+/**
+ * Home RAM from the FRESHER of homeup.txt and boot.txt. homeup.js only runs
+ * when an upgrade is affordable, so its homeRam goes stale the moment
+ * something else buys RAM (live 2026-10-03: 64 for 8h after the 128GB buy,
+ * which priced the 64->128 step against boot's 128->256 tier — HOME UNPRICED).
+ */
+export function homeRamOf(hu, boot) {
+  const t = (r) => (r && Date.parse(r.at)) || 0
+  const cands = [hu, boot].filter((r) => r?.homeRam > 0).sort((a, b) => t(b) - t(a))
+  return cands.length ? cands[0].homeRam : undefined
+}
+
 export async function main(ns) {
   ns.ramOverride(2.6)
   PAGE_BOOT = pageBoot()
@@ -2995,7 +3007,7 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
     const hu = readJson(ns, '/tel/homeup.txt')
     const boot = readJson(ns, '/tel/boot.txt')
     const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
-    const homeRam = hu?.homeRam > 0 ? hu.homeRam : boot?.homeRam
+    const homeRam = homeRamOf(hu, boot)
     if (!(next?.cost > 0) || !(homeRam > 0)) return { ...base, buy: false, deltaH: null, why: 'the next home upgrade or home RAM is unreadable' }
     Object.assign(base, { kind: next.kind, cost: next.cost })
     // Cores admit nothing (boot's tiers are RAM): only the money term.
@@ -6203,7 +6215,7 @@ async function act(ns, canJoin, info, note) {
       const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
       // homeup.js publishes homeRam when it runs; between runs boot.txt's
       // figure (written at every boot, i.e. after every install) stands in.
-      const homeRam = hu?.homeRam > 0 ? hu.homeRam : readJson(ns, '/tel/boot.txt')?.homeRam
+      const homeRam = homeRamOf(hu, readJson(ns, '/tel/boot.txt'))
       const deltaGB = next?.kind === 'RAM' && homeRam > 0 ? homeRam : null
       const h = homeLn({
         incomePerSec: hackInc > 0 ? hackInc : null,
