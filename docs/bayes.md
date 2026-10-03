@@ -274,6 +274,47 @@ through `countexit.countExitAt` (the same inner body `bestCountExit` loops
 over; not a fork). Options: install now / wait w / the committed install time;
 the top-K (6) count routes by point estimate plus the committed one.
 
+ADAPTIVE ALLOCATION ON A RE-DECISION (`plan.ocbaEvaluateGen`, PLAN.ocba;
+OCBA, Chen et al. 2000, on paired differences as in sequential Bayesian R&S
+with CRN, Görder & Kolonko arXiv:1410.6782). Every option used to get all 24
+draws, an option 30h behind the incumbent as many as its closest rival. Now a
+re-decision prices n0 = 8 paired draws for every option; the LEADERS — the
+committed option and the best alternative by paired mean net of its switch
+cost (no incumbent: the best option) — then run draw-major to every draw
+(they are the pair decide() gates on and the exits the plan publishes, which
+the consistency and exit-stability checks compare, so they are priced exactly
+as before); every other option gets further draws only while its paired
+difference with the best leader is uncertain relative to its mean — OCBA's
+n_k ∝ (σ_k/δ_k)², scaled so each non-leader's Φ(δ_k√n_k/σ_k) reaches its
+Bonferroni share of pcs = 0.95 (n_k* = (zσ_k/δ_k)²). Under the expected-loss
+commitment (COMMIT.rule) δ_k is the gap to the best alternative LESS that
+alternative's value of waiting: an option is out of the running only once its
+gain cannot exceed the best one's net (its own net is at most its gain). A leader promoted
+mid-run catches up on the draws it skipped. CRN is kept: an option's samples
+are the prefix 0..n_k-1 of the one draw sequence (value for value the full
+run's, noise keyed by trajectory as before); decide() pairs over the draws
+both options priced (`pairedD`), and summarize's mean of a short option is
+the CRN control-variate estimate on all N (the anchor's mean plus the paired
+difference; `meanOwnH` keeps its own, `nDraws` its count). Each decision
+publishes `alloc` {sims, full, saved, pcs (the Bonferroni APCS), perOption,
+leaders}; plan.txt `cpu.alloc` sums the pass (healthcheck note "plan
+draws"). `simBudget` caps the simulations per decision; `on: false` restores
+every option on every draw. Held passes price only the incumbent, unchanged.
+The batch choice (chooseBatchGen) keeps every candidate on every draw (it
+ranks by unpaired means).
+Measured (`node tools/sim/plancpu-bench.mjs`, fresh process per run, 4
+alternating runs; [OC2] asserts the answers): the same choice and committed
+exit on all 10 fixture decisions; simulations 1248 -> 825 (-34%), dominated
+by the live 21:12Z re-decision with all 26 waits (624 -> 290, ~6.0s -> ~2.4s of
+work); the screened decisions save less (21:12Z screened 96 -> 87; the PP3
+pass's grafts 48 -> 32, gang 72 -> 56, sleeve objective 96 -> 80; two-option
+decisions with an incumbent that is not the best save nothing — both lead).
+The PP3 re-deciding pass in slices: 541 -> 427ms of work (PP3c 617 -> 546ms),
+same machine, different load — the simulation counts are the load-free
+measure. PCS on the fixtures is 0.72-1.0: with several options within an
+hour of each other 24 draws cannot reach 0.95, and the near ones get every
+draw (the full run's answer, at the full run's cost).
+
 CPU — THE PASS YIELDS (`coop.js`). Every long search is a generator that
 yields after each exit simulation: the Monte Carlo (`plan.*Gen`), the graft
 search (`graftplan.chooseGraftsGen`), and the count-route / count-exit scans

@@ -69,6 +69,12 @@ export const PLAN = {
   lifeTopK: 2,
   lifeReach: 3,
   lifeSwitchCostH: 0.05,
+  // ADAPTIVE SIMULATION ALLOCATION on a re-decision (ocbaEvaluateGen): n0
+  // paired draws for every option, then the leaders (incumbent + best
+  // alternative) to every draw and the rest by OCBA until P(correct
+  // selection) >= pcs; simBudget caps the simulations (null: options x N).
+  // on: false restores every option on every draw.
+  ocba: { on: true, n0: 8, pcs: 0.95, simBudget: null },
   traderMoveSd: 1, // posterior mean moved by this many sds = an event
   driftMoveFactor: 1.5, // structural error scale moved by this factor = an event
 }
@@ -329,9 +335,21 @@ export function discrepancyOf(d, key) {
 }
 
 /**
- * Evaluate every option on every draw, DRAW-MAJOR so a budget stop leaves all
- * options at the same N (still paired). options [{key, sim: (d) => hours|null}].
- * Returns {samples: {key: (number|null)[]}, n, ms, overBudget, raw}.
+ * Evaluate the options on the shared draws. Two modes, both PAIRED (common
+ * random numbers: draw i is the same parameter vector, and the same
+ * structural-noise z for a trajectory, in every option that prices it):
+ *
+ *   alloc null — every option on every draw, DRAW-MAJOR so a budget stop
+ *     leaves all options at the same N (the held passes, the batch choice);
+ *   alloc {committed, switchCost, n0, pcs, simBudget} — ADAPTIVE ALLOCATION
+ *     (OCBA, Chen et al. 2000, on paired differences as in sequential
+ *     Bayesian R&S with CRN, Gorder & Kolonko arXiv:1410.6782): see
+ *     ocbaEvaluateGen.
+ *
+ * options [{key, sim: (d) => hours|null}]. Returns {samples: {key:
+ * (number|null)[]}, n, ms, overBudget, raw, alloc}; under adaptive
+ * allocation an option's samples are a PREFIX of the draws (draws 0..n_k-1),
+ * so any two options compare on the draws both priced.
  */
 export function evaluate(options, draws, opts = {}) {
   return drain(evaluateGen(options, draws, opts))
@@ -341,12 +359,13 @@ export function evaluate(options, draws, opts = {}) {
  * caller can run it in slices (coop.js). `now` is the budget's clock — the
  * pacer's WORK clock in progress.js, so a pause never truncates the draws.
  */
-export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = clock } = {}) {
+export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = clock, alloc = null } = {}) {
   // Keys index the samples: a repeated key merges two trajectories into one
   // array and breaks every per-draw pairing after it (decideInstallGen add).
   // Loud, never merged.
   const dup = options.map((o) => o.key).find((k, i, a) => a.indexOf(k) !== i)
   if (dup !== undefined) throw new Error(`evaluateGen: option key '${dup}' appears twice — two trajectories would share one samples array`)
+  if (alloc && alloc.on !== false && options.length > 1) return yield* ocbaEvaluateGen(options, draws, { budgetMs, now, ...alloc })
   const t0 = now()
   const samples = Object.fromEntries(options.map((o) => [o.key, []]))
   const raw = Object.fromEntries(options.map((o) => [o.key, []]))
@@ -357,26 +376,272 @@ export function* evaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = c
       overBudget = true
       break
     }
-    for (const o of options) {
-      let h = null
-      try {
-        // o.simGen: the same simulation as a generator that yields inside
-        // (one policy priced per step, exitplan.bestExitPolicyGen), so one
-        // exit simulation never blocks the page for its whole search.
-        h = typeof o.simGen === 'function' ? yield* o.simGen(d) : o.sim(d)
-      } catch {
-        h = null
-      }
-      raw[o.key].push(fin(h) ? h : null)
-      // The structural noise belongs to the TRAJECTORY (o.noiseKey), not the
-      // option's label: the same trajectory priced by two decisions gets the
-      // same draws of it, so their exits agree exactly (consistencyOf).
-      samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null)
-      yield
-    }
+    for (const o of options) yield* simInto(o, d, samples, raw)
     n++
   }
-  return { samples, raw, n, ms: +(now() - t0).toFixed(1), overBudget }
+  return { samples, raw, n, ms: +(now() - t0).toFixed(1), overBudget, alloc: { mode: 'full', sims: n * options.length, full: n * options.length, saved: 0 } }
+}
+
+/** One simulation of option o on draw d, appended to its samples (the structural noise keyed by its trajectory). */
+function* simInto(o, d, samples, raw) {
+  let h = null
+  try {
+    // o.simGen: the same simulation as a generator that yields inside
+    // (one policy priced per step, exitplan.bestExitPolicyGen), so one
+    // exit simulation never blocks the page for its whole search.
+    h = typeof o.simGen === 'function' ? yield* o.simGen(d) : o.sim(d)
+  } catch {
+    h = null
+  }
+  raw[o.key].push(fin(h) ? h : null)
+  // The structural noise belongs to the TRAJECTORY (o.noiseKey), not the
+  // option's label: the same trajectory priced by two decisions gets the
+  // same draws of it, so their exits agree exactly (consistencyOf).
+  samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null)
+  yield
+}
+
+/** Φ⁻¹ by bisection on phi (60 halvings of [-8, 8]). */
+export function phiInv(p) {
+  let lo = -8
+  let hi = 8
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2
+    if (phi(mid) < p) lo = mid
+    else hi = mid
+  }
+  return (lo + hi) / 2
+}
+
+/**
+ * ADAPTIVE SIMULATION ALLOCATION. The plan prices on the browser's main
+ * thread, and a re-decision spent the same 24 draws on an option 30h behind
+ * the incumbent as on its closest rival. Now:
+ *
+ *   stage 1  n0 paired draws for every option (draw-major);
+ *   then     the LEADERS — the committed option and the best alternative by
+ *            paired mean net of its switch cost (no incumbent: the best
+ *            option) — run draw-major to every draw: they are the pair
+ *            decide() gates on and the exits the plan publishes (the
+ *            trajectory-consistency and exit-stability checks read them), so
+ *            they are priced exactly as the full run prices them. Every other
+ *            option gets further draws only while its paired difference with
+ *            the best leader is uncertain relative to its mean: OCBA's ratio
+ *            n_k ∝ (σ_k/δ_k)², scaled so that each non-leader's
+ *            P(correctly behind) = Φ(δ_k √n_k / σ_k) reaches its Bonferroni
+ *            share of `pcs`: n_k* = (z σ_k / δ_k)², z = Φ⁻¹(1 − (1−pcs)/(K−L)).
+ *            An option promoted to leader mid-run catches up on the draws it
+ *            skipped, so the leaders always share their draws.
+ *
+ * Stops at the draws, the work budget (`budgetMs`; the leaders stay in
+ * lockstep) or `simBudget` simulations. CRN is kept: an option's samples are
+ * the prefix 0..n_k-1 of the one draw sequence, its noise keyed as before.
+ *
+ * `alloc` on the result: {mode 'ocba', n0, sims, full (options x the
+ * leaders' draws: what the full run spends for the same leaders), saved,
+ * savedFrac, pcs (the Bonferroni APCS of the final state), settled,
+ * perOption {key: n}, leaders, why}.
+ */
+export function* ocbaEvaluateGen(options, draws, { budgetMs = PLAN.budgetMs, now = clock, committed = null, switchCost = {}, n0 = PLAN.ocba.n0, pcs: pcsTarget = PLAN.ocba.pcs, simBudget = PLAN.ocba.simBudget } = {}) {
+  const t0 = now()
+  const N = draws.length
+  const K = options.length
+  const samples = Object.fromEntries(options.map((o) => [o.key, []]))
+  const raw = Object.fromEntries(options.map((o) => [o.key, []]))
+  const byKey = new Map(options.map((o) => [o.key, o]))
+  const keys = options.map((o) => o.key)
+  const inc = committed !== null && byKey.has(committed) ? committed : null
+  const costOf = (k) => (inc === null || k === inc ? 0 : fin(switchCost?.[k]) ? switchCost[k] : PLAN.switchCostH)
+  const cap = fin(simBudget) && simBudget > 0 ? Math.floor(simBudget) : K * N
+  const first = Math.max(2, Math.min(N, fin(n0) ? Math.floor(n0) : 8))
+  let sims = 0
+  let overBudget = false
+  const nOf = (k) => samples[k].length
+  const timeUp = () => now() - t0 > budgetMs
+  const stop = () => {
+    if (sims >= cap) return true
+    if (timeUp()) {
+      overBudget = true
+      return true
+    }
+    return false
+  }
+  // STAGE 1: n0 draws for every option, draw-major (the full loop's budget rule: at least 2 draws).
+  for (let i = 0; i < first && sims < cap; i++) {
+    if (i >= 2 && timeUp()) {
+      overBudget = true
+      break
+    }
+    for (let j = 0; j < K && sims < cap; j++) {
+      yield* simInto(byKey.get(keys[j]), draws[i], samples, raw)
+      sims++
+    }
+  }
+  // Paired (H_b + c_b) - (H_a + c_a) over the draws both priced, feasible in both.
+  const pairOf = (a, b) => {
+    const m = Math.min(nOf(a), nOf(b))
+    let s = 0
+    let s2 = 0
+    let n = 0
+    for (let i = 0; i < m; i++) {
+      const x = samples[a][i]
+      const y = samples[b][i]
+      if (!fin(x) || !fin(y)) continue
+      const dd = y + costOf(b) - (x + costOf(a))
+      s += dd
+      s2 += dd * dd
+      n++
+    }
+    const mean = n ? s / n : null
+    const sd = n >= 2 ? Math.sqrt(Math.max(0, (s2 - n * mean * mean) / (n - 1))) : null
+    return { mean, sd, n }
+  }
+  const feasOf = (k) => (nOf(k) ? samples[k].filter(fin).length / nOf(k) : 0)
+  // Feasibility (decide: half the draws) still open at this n: within 2 binomial sd of a half.
+  const feasOpen = (k) => nOf(k) > 0 && nOf(k) < N && Math.abs(feasOf(k) - 0.5) <= 2 * Math.sqrt(0.25 / nOf(k))
+  // THE LEADERS: the incumbent, and the best other feasible option by paired
+  // mean net of its switch cost against the option with the most draws.
+  const leadersOf = () => {
+    // The anchor is FEASIBLE (an infeasible one pairs with nothing); with no
+    // feasible option at all every option leads — the full run, unchanged.
+    const feasible = keys.filter((k) => feasOf(k) >= 0.5)
+    if (!feasible.length) return [...keys]
+    const anchor = feasible.reduce((a, k) => (nOf(k) > nOf(a) ? k : a), inc !== null && feasible.includes(inc) ? inc : feasible[0])
+    let best = null
+    let bestNet = Infinity
+    for (const k of keys) {
+      if (k === inc || feasOf(k) < 0.5) continue
+      const net = k === anchor ? 0 : pairOf(anchor, k).mean
+      if (fin(net) && net < bestNet) {
+        best = k
+        bestNet = net
+      }
+    }
+    const L = []
+    if (inc !== null) L.push(inc)
+    if (best !== null && !L.includes(best)) L.push(best)
+    if (!L.length) L.push(anchor)
+    return L
+  }
+  // The best leader: every non-leader is compared with it, as OCBA compares with the best.
+  const refOf = (L) => {
+    if (L.length === 1) return L[0]
+    const p = pairOf(L[0], L[1])
+    return fin(p.mean) && p.mean < 0 ? L[1] : L[0]
+  }
+  // THE MARGIN A NON-LEADER MUST BE BEHIND BY. Under the expected-loss
+  // commitment (COMMIT.rule) an alternative is ranked by its gain over the
+  // incumbent LESS its value of waiting (valueOfWaiting), so with the
+  // reference an alternative b (it beats the incumbent by mean) an option k
+  // can only be chosen over b if gain_k > gain_b - VOW_b: k is out of the
+  // running once it is behind b by more than VOW_b (its own net is at most its
+  // gain). Under the P(better) rule, or with the incumbent the reference, 0.
+  const shiftOf = (ref) => {
+    if (inc === null || ref === inc || COMMIT.rule !== 'expected-loss') return 0
+    const D = []
+    const m = Math.min(nOf(inc), nOf(ref))
+    for (let i = 0; i < m; i++) if (fin(samples[inc][i]) && fin(samples[ref][i])) D.push(samples[inc][i] - (samples[ref][i] + costOf(ref)))
+    const v = valueOfWaiting(D, { widthMult: COMMIT.widthMult, rho: COMMIT.rho ?? COMMIT.rhoDefault }).vowH
+    return fin(v) && v > 0 ? v : 0
+  }
+  // n_k* for a non-leader against the reference: OCBA's (σ/δ)² ratio at the
+  // Bonferroni z, δ the paired gap less the margin above.
+  const targetOf = (k, ref, z, shift = 0) => {
+    if (feasOf(k) < 0.5) return feasOpen(k) ? N : nOf(k)
+    const p = pairOf(ref, k)
+    if (!(p.n >= 2) || !fin(p.mean) || !fin(p.sd)) return N
+    const gap = p.mean - shift
+    // A deterministic difference: settled behind (or tied: the full run's tie-break reads the same draws).
+    if (p.sd === 0) return gap >= 0 ? nOf(k) : N
+    if (!(gap > 0)) return N
+    return Math.min(N, Math.max(first, Math.ceil(((z * p.sd) / gap) ** 2)))
+  }
+  // P(a non-leader is behind `ref` by more than `shift`), from its paired mean and standard error.
+  const behind = (k, ref, shift) => {
+    const p = pairOf(ref, k)
+    if (!fin(p.mean)) return 0
+    const gap = p.mean - shift
+    const se = fin(p.sd) && p.n > 0 ? p.sd / Math.sqrt(p.n) : Infinity
+    return se === 0 ? (gap >= 0 ? 1 : 0) : phi(gap / se)
+  }
+  const apcsOf = (L) => {
+    const ref = refOf(L)
+    const shift = shiftOf(ref)
+    let miss = 0
+    for (const k of keys) {
+      if (L.includes(k)) continue
+      if (feasOf(k) < 0.5) {
+        if (feasOpen(k)) miss += 0.5
+        continue
+      }
+      miss += 1 - behind(k, ref, shift)
+    }
+    return Math.max(0, 1 - miss)
+  }
+  let level = Math.min(...keys.map(nOf))
+  // Bounded rounds: each adds a draw to the leaders, or (at the last draw)
+  // promotes and catches up a new leader — at most K of those.
+  const rounds = N + K + 2
+  for (let r = 0; r < rounds && !overBudget && sims < cap; r++) {
+    const leaders = leadersOf()
+    // Leaders catch up to the level (a promoted leader prices the draws it skipped).
+    for (const l of leaders) {
+      for (let i = nOf(l); i < level && !stop(); i++) {
+        yield* simInto(byKey.get(l), draws[i], samples, raw)
+        sims++
+      }
+    }
+    if (overBudget || sims >= cap) break
+    // Non-leaders: OCBA targets against the best leader, never past the leaders' level.
+    const others = keys.filter((k) => !leaders.includes(k))
+    if (others.length) {
+      const z = phiInv(1 - (1 - pcsTarget) / others.length)
+      const ref = refOf(leaders)
+      const shift = shiftOf(ref)
+      for (const k of others) {
+        const t = Math.min(level, targetOf(k, ref, z, shift))
+        for (let i = nOf(k); i < t && !stop(); i++) {
+          yield* simInto(byKey.get(k), draws[i], samples, raw)
+          sims++
+        }
+      }
+    }
+    if (overBudget || sims >= cap) break
+    if (level >= N) {
+      // Done when the leaders on the final data are all at the last draw.
+      if (leadersOf().every((l) => nOf(l) >= N)) break
+      continue
+    }
+    if (stop()) break
+    level++
+  }
+  const leaders = leadersOf()
+  const n = Math.min(...leaders.map(nOf))
+  const full = n * K
+  const pcs = apcsOf(leaders)
+  const perOption = Object.fromEntries(keys.map((k) => [k, nOf(k)]))
+  const saved = Math.max(0, full - sims)
+  const rest = keys.filter((k) => !leaders.includes(k)).map((k) => `${k} ${perOption[k]}`).join(', ')
+  return {
+    samples,
+    raw,
+    n,
+    ms: +(now() - t0).toFixed(1),
+    overBudget,
+    alloc: {
+      mode: 'ocba',
+      n0: first,
+      sims,
+      full,
+      saved,
+      savedFrac: full ? +(saved / full).toFixed(3) : 0,
+      pcs: +pcs.toFixed(4),
+      settled: pcs >= pcsTarget,
+      perOption,
+      leaders,
+      why: `${sims} of ${full} simulations (${saved} saved): ${leaders.join(' & ')} on ${n} draws, the rest ${rest || 'none'}; P(correct selection) >= ${pcs.toFixed(3)} (Bonferroni)${sims >= cap && cap < K * N ? `; stopped by the ${cap}-simulation budget` : ''}${overBudget ? '; stopped by the work budget' : ''}`,
+    },
+  }
 }
 
 const quant = (s, q) => {
@@ -391,6 +656,15 @@ const quant = (s, q) => {
  * Per option: feasible fraction, mean, 10/50/90%, P(best). An infeasible draw
  * (null) of a mostly-feasible option is filled with 1.5x that option's worst
  * feasible draw — pessimistic, named, never 0.
+ *
+ * RAGGED SAMPLES (adaptive allocation, ocbaEvaluateGen): an option priced on
+ * fewer draws (a prefix) has its feasibility and quantiles over its own
+ * draws (`nDraws`), and its meanH is the CRN CONTROL-VARIATE estimate on all
+ * N: the mean of an option priced on every draw (the anchor) plus the
+ * paired mean difference over the draws both priced (`meanOwnH` keeps its
+ * raw mean) — so means on different draw counts compare as the paired
+ * differences do, not across different draws. P(best) counts each draw among
+ * the options that priced it.
  */
 export function summarize(samples) {
   const keys = Object.keys(samples)
@@ -399,20 +673,46 @@ export function summarize(samples) {
   const out = {}
   for (const k of keys) {
     const xs = samples[k]
+    const nk = xs.length
     const ok = xs.filter(fin)
-    const pFeasible = N ? ok.length / N : 0
+    const pFeasible = nk ? ok.length / nk : 0
     const worst = ok.length ? Math.max(...ok) : null
     filled[k] = pFeasible >= 0.5 ? xs.map((x) => (fin(x) ? x : 1.5 * worst)) : null
     const s = filled[k] ? [...filled[k]].sort((a, b) => a - b) : []
     out[k] = { pFeasible: +pFeasible.toFixed(3), meanH: s.length ? +(s.reduce((a, b) => a + b, 0) / s.length).toFixed(3) : null, q10: fin(quant(s, 0.1)) ? +quant(s, 0.1).toFixed(3) : null, q50: fin(quant(s, 0.5)) ? +quant(s, 0.5).toFixed(3) : null, q90: fin(quant(s, 0.9)) ? +quant(s, 0.9).toFixed(3) : null, pBest: 0 }
   }
+  const anchor = keys.find((k) => filled[k] && filled[k].length === N) ?? null
+  if (anchor !== null) {
+    const fa = filled[anchor]
+    const meanA = fa.reduce((a, b) => a + b, 0) / N
+    for (const k of keys) {
+      const fk = filled[k]
+      if (!fk || fk.length >= N || !fk.length) continue
+      let dsum = 0
+      for (let i = 0; i < fk.length; i++) dsum += fk[i] - fa[i]
+      out[k] = { ...out[k], meanOwnH: out[k].meanH, meanH: +(meanA + dsum / fk.length).toFixed(3), nDraws: fk.length }
+    }
+  }
+  for (const k of keys) if (!filled[k] && samples[k].length < N) out[k] = { ...out[k], nDraws: samples[k].length }
   for (let d = 0; d < N; d++) {
     let best = null
-    for (const k of keys) if (filled[k] && (best === null || filled[k][d] < filled[best][d])) best = k
+    for (const k of keys) if (filled[k] && d < filled[k].length && (best === null || filled[k][d] < filled[best][d])) best = k
     if (best !== null) out[best].pBest += 1 / N
   }
   for (const k of keys) out[k].pBest = +out[k].pBest.toFixed(3)
   return { stats: out, filled, N }
+}
+
+/**
+ * The paired differences H_c,d - (H_a,d + cost) over the draws BOTH priced
+ * (adaptive allocation prices some options on a prefix of the draws; with
+ * equal counts this is every draw, as before).
+ */
+export function pairedD(c, a, cost = 0) {
+  const m = Math.min(c.length, a.length)
+  const D = []
+  for (let d = 0; d < m; d++) D.push(c[d] - (a[d] + cost))
+  return D
 }
 
 /**
@@ -489,10 +789,10 @@ function pairedOf(samples, committed, switchCost) {
     for (const k of feasible) {
       if (k === committed) continue
       const cost = fin(switchCost[k]) ? switchCost[k] : PLAN.switchCostH
-      const D = c.map((hc, d) => hc - (filled[k][d] + cost))
-      const gain = D.reduce((a, b) => a + b, 0) / N
-      const pWin = D.filter((x) => x > 0).length / N
-      regret = Math.max(regret, D.reduce((a, b) => a + Math.max(0, b), 0) / N)
+      const D = pairedD(c, filled[k], cost)
+      const gain = D.reduce((a, b) => a + b, 0) / D.length
+      const pWin = D.filter((x) => x > 0).length / D.length
+      regret = Math.max(regret, D.reduce((a, b) => a + Math.max(0, b), 0) / D.length)
       alts.push({ key: k, D, gain, pWin, cost })
     }
   }
@@ -739,6 +1039,56 @@ export function withObs(buf, v, at, max = 48, tags = {}) {
 // ---------------------------------------------------------------------------
 
 const r3 = (x) => (fin(x) ? +x.toFixed(3) : null)
+
+/** The evaluation's adaptive allocation for a re-decision (null: every option on every draw). */
+const allocOf = (ocba, committed, switchCost = {}) => (ocba && ocba.on !== false ? { ...ocba, committed, switchCost } : null)
+
+/**
+ * THE CHOICE'S MARGINS (for the timer's value-of-computation gate):
+ * per alternative a, the paired D = (H_a + switch cost) - H_choice over the
+ * draws both priced (mean and per-draw sd: the posterior spread of the
+ * difference), closest first, up to `max`. [] = no alternative was priced.
+ */
+export function marginsOf(samples, choice, { switchCost = {}, defaultCost = PLAN.switchCostH, max = 4 } = {}) {
+  const { filled } = summarize(samples)
+  const c = filled[choice]
+  if (!c) return null
+  const out = []
+  for (const k of Object.keys(filled)) {
+    if (k === choice || !filled[k]) continue
+    const cost = fin(switchCost[k]) ? switchCost[k] : defaultCost
+    const D = pairedD(filled[k], c, -cost)
+    if (D.length < 2) continue
+    const m = D.reduce((a, b) => a + b, 0) / D.length
+    const v = D.reduce((a, b) => a + (b - m) * (b - m), 0) / (D.length - 1)
+    out.push({ alt: k, meanH: +m.toFixed(3), sdH: +Math.sqrt(v).toFixed(3), n: D.length })
+  }
+  return out.sort((a, b) => a.meanH - b.meanH).slice(0, max)
+}
+/**
+ * A pass's adaptive allocation over its decisions (plan.txt cpu.alloc): the
+ * simulations run against what the full run would have spent for the same
+ * leaders' draws, and the weakest P(correct selection). Null when no decision
+ * this pass ran the adaptive allocation (a held pass).
+ */
+export function allocSummaryOf(decisions) {
+  let sims = 0
+  let full = 0
+  let pcsMin = null
+  const per = {}
+  for (const [name, d] of Object.entries(decisions ?? {})) {
+    const a = d?.alloc
+    if (!a || a.mode !== 'ocba' || d.held === true) continue
+    sims += a.sims
+    full += a.full
+    if (fin(a.pcs)) pcsMin = pcsMin === null ? a.pcs : Math.min(pcsMin, a.pcs)
+    per[name] = { sims: a.sims, full: a.full, pcs: a.pcs }
+  }
+  const n = Object.keys(per).length
+  if (!n) return null
+  const saved = Math.max(0, full - sims)
+  return { decisions: n, sims, full, saved, savedFrac: full ? +(saved / full).toFixed(3) : 0, pcsMin, per, why: `${sims} of ${full} simulations over ${n} re-decided decision(s) (${full ? ((100 * saved) / full).toFixed(0) : 0}% saved by the adaptive allocation), weakest P(correct selection) ${pcsMin ?? '?'}` }
+}
 export const routeKey = (r) => `${r?.name ?? ''}|${r?.faction ?? ''}|${r?.via ?? ''}`
 
 // Every row carries the trajectory it priced (noiseKey) and the pass that
@@ -759,7 +1109,7 @@ function optionRows(options, stats, pointOf, pricedAt = null) {
  * dated, as what it said then.
  */
 function heldFields(prev, rows, pricedAt) {
-  return { held: true, why: `held (no event since ${prev?.decidedAt ?? '?'}); at that decision: ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev?.decidedAt ?? null, options: rows, pricedAt }
+  return { held: true, why: `held (no event since ${prev?.decidedAt ?? '?'}); at that decision: ${heldWhy(prev)}`.slice(0, 400), decidedAt: prev?.decidedAt ?? null, options: rows, pricedAt, ...(prev && 'margins' in prev ? { margins: prev.margins } : {}) }
 }
 const pick = (r) => (r ? { name: r.name, faction: r.faction ?? null, via: r.via ?? null, price: fin(r.price) ? Math.round(r.price) : null, detourH: r3(r.detourH), joinH: r3(r.joinH), grindH: r3(r.grindH) } : {})
 
@@ -774,7 +1124,7 @@ export function decideRoute(o = {}) {
   return drain(decideRouteGen(o))
 }
 /** The generator decideRoute drains (yields inside the Monte Carlo). */
-export function* decideRouteGen({ inputs, count, routes, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, topK = PLAN.topK, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock } = {}) {
+export function* decideRouteGen({ inputs, count, routes, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, topK = PLAN.topK, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock, ocba = PLAN.ocba } = {}) {
   const byKey = new Map((routes ?? []).map((r) => [routeKey(r), r]))
   const lifeOf = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.lifeH ?? null]))
   const pointH = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.hours]))
@@ -792,17 +1142,17 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   }
   if (!keys.length) return { key: null, why: `no priced route (${point?.why ?? 'none'})`, decidedAt: prev?.decidedAt ?? null }
   const options = keys.map((k) => ({ key: k, sim: sim(byKey.get(k)) }))
-  const ev = yield* evaluateGen(options, draws, { budgetMs, now: budgetClock })
+  const ev = yield* evaluateGen(options, draws, { budgetMs, now: budgetClock, alloc: !redecide && committedKey ? null : allocOf(ocba, committedKey) })
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
   const rows = optionRows(options, stats, (o) => pointH.get(o.key), pricedAt)
-  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   if (!redecide && committedKey) {
     return { ...pick(byKey.get(committedKey)), key: committedKey, ...stats[committedKey], ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
   }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
-  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
+  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
 
 /**
@@ -817,7 +1167,7 @@ export function decideInstall(o = {}) {
   return drain(decideInstallGen(o))
 }
 /** The generator decideInstall drains (yields inside the Monte Carlo). */
-export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev: prev0 = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null, route: onRoute = null, trajOf = null } = {}) {
+export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev: prev0 = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null, route: onRoute = null, trajOf = null, ocba = PLAN.ocba } = {}) {
   const opts = []
   const ctx = { count, repPoint }
   // THE ROUTE THE OPTIONS ARE PRICED ON. 'blade' (the committed Bladeburner
@@ -922,7 +1272,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   if (!opts.length) return { key: null, install: false, why: 'no install option priced', decidedAt: prev?.decidedAt ?? null }
   const screen = !redecide && committedKey ? null : installScreenOf(opts, committedKey, { topK: installTopK, reach: installReach, sd: reachSd })
   const use = screen ? screen.use : opts.filter((o) => o.key === committedKey)
-  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
+  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock, alloc: screen ? allocOf(ocba, committedKey) : null })
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
   const rows = optionRows(use, stats, (o) => o.pointH, pricedAt)
@@ -944,15 +1294,15 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     const pc = prev?.commitment ?? (prev && prev.key !== 'now' && fin(prev.meanH) ? { key: prev.key, meanH: prev.meanH, pointH: null, at: null, installAt: prev.installAt ?? null, noiseKey: prev.noiseKey ?? null, n: prev.n ?? null } : null)
     const carried = key === 'now' && elapsed && pc && fin(pc.meanH) && (!pc.at || now - Date.parse(pc.at) <= 60 * 60e3)
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
-    return { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+    return { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   }
   if (!redecide && committedKey) return record(committedKey, { ...heldFields(prev, rows, pricedAt), ...heldSanity(prev) })
   // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
   const prevH = committedKey ? (fin(prev?.commitment?.meanH) ? prev.commitment.meanH : fin(prev?.meanH) ? prev.meanH : null) : null
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
   const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
-  if (d.choice === null) return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, ...screened }
-  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+  if (d.choice === null) return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc, ...screened }
+  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
 }
 
 /**
@@ -1151,7 +1501,7 @@ export const lifeKeyOf = (L) => `L${+(+L).toFixed(3)}`
 export function decideLifeLength(o = {}) {
   return drain(decideLifeLengthGen(o))
 }
-export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx = {}, prev = null, draws = [], redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock, topK = PLAN.lifeTopK, reach = PLAN.lifeReach, reachSd = null, switchCostH = PLAN.lifeSwitchCostH } = {}) {
+export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx = {}, prev = null, draws = [], redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock, topK = PLAN.lifeTopK, reach = PLAN.lifeReach, reachSd = null, switchCostH = PLAN.lifeSwitchCostH, ocba = PLAN.ocba } = {}) {
   const f = trajectoryOf(basis, ctx)
   const fg = trajectoryGenOf(basis, ctx)
   const opts = (optsIn ?? [])
@@ -1176,12 +1526,13 @@ export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx =
   }
   const screen = hold ? null : installScreenOf(opts, committedKey, { topK, reach, sd: reachSd })
   const use = screen ? screen.use : opts.filter((o) => o.key === committedKey)
-  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
+  const lifeCost = Object.fromEntries(use.filter((o) => o.key !== committedKey).map((o) => [o.key, switchCostH]))
+  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock, alloc: screen ? allocOf(ocba, committedKey, lifeCost) : null })
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
   const rows = optionRows(use, stats, (o) => o.pointH, pricedAt).map((r) => ({ ...r, L: opts.find((o) => o.key === r.key)?.L ?? null }))
   const table = opts.map((o) => ({ L: o.L, pointH: r3(o.pointH), perLife: o.cad && fin(o.cad.gain) ? +o.cad.gain.toFixed(6) : null, model: o.cad && fin(o.cad.model) ? +o.cad.model.toPrecision(4) : null, drawn: use.includes(o) }))
-  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   const record = (key, extra) => {
     const o = opts.find((x) => x.key === key)
     return { key, lifeH: o.L, ...stats[key], pointH: r3(o.pointH), samples: samplesOf(ev.samples[key]), noiseKey: o.noiseKey, perLife: o.cad && fin(o.cad.gain) ? +o.cad.gain.toFixed(6) : null, basis: basisOut, table, ...extra, ...cpu }
@@ -1196,7 +1547,7 @@ export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx =
   const gone = prev?.key && committedKey === null
   const switched = d.switched === true || (gone && d.choice !== prev.key)
   const why = gone ? `the committed ${prev.key} is no longer priced (nothing bought at that length): ${d.why}` : d.why
-  return record(d.choice, { held: false, switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why, ...(switched && prev?.key ? { from: prev.key } : {}), ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+  return record(d.choice, { held: false, switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice, { defaultCost: switchCostH }), ...(d.commit ? { commit: d.commit } : {}), why, ...(switched && prev?.key ? { from: prev.key } : {}), ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
 }
 
 /**
@@ -1865,20 +2216,20 @@ export function decideAmong(o = {}) {
   return drain(decideAmongGen(o))
 }
 /** The generator decideAmong drains (yields inside the Monte Carlo). */
-export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock } = {}) {
+export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock, ocba = PLAN.ocba } = {}) {
   const keys = new Set((options ?? []).map((o) => o.key))
   const committedKey = prev?.key && keys.has(prev.key) ? prev.key : null
   const use = !redecide && committedKey ? options.filter((o) => o.key === committedKey) : options
   if (!use?.length) return { key: null, why: 'no option', decidedAt: prev?.decidedAt ?? null }
-  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock })
+  const ev = yield* evaluateGen(use, draws, { budgetMs, now: budgetClock, alloc: !redecide && committedKey ? null : allocOf(ocba, committedKey) })
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
   const rows = optionRows(use, stats, (o) => pointOf(o.key), pricedAt)
-  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget }
+  const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
-  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
+  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
 
 /** Standard normal CDF (Abramowitz-Stegun 7.1.26 via erf). */
@@ -2257,6 +2608,8 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const es = plan.exitStability ?? null
   if (es?.ok === false || es?.lastFail) fail(es.ok === false ? es.why : `${es.lastFail.why} [at ${es.lastFail.at}, within the hour]`, 'the committed exit moved beyond its own Monte Carlo noise on a pass that re-decided nothing — an input or a committed choice changed without being an event (a graft set replaced under a held key, a noisy point input); diff the two passes\' exitinputs field by field')
   else if (es?.why) notes.push(`plan exit stability: ${es.why}`)
+  // ADAPTIVE ALLOCATION (ocbaEvaluateGen): the simulations a re-decision saved, and its weakest P(correct selection).
+  if (plan.cpu?.alloc?.decisions) notes.push(`plan draws: ${plan.cpu.alloc.why}`)
   const ob = optionsBasisOf(plan)
   if (ob.ok === false) fail(ob.why, "a decision published options priced on another basis than the committed exit they are compared with (a held decision's old options, a graft set the install did not price) — every number in a decision must be one pass's pricing of one trajectory")
   else if (ob.why) notes.push(`plan options basis: ${ob.why}`)

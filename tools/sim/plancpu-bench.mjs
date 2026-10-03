@@ -3,7 +3,14 @@
 // comparing the exit simulation's CPU before and after a change without the
 // slice pacer's noise.
 //
-//   node tools/sim/plancpu-bench.mjs [--reps 5] [--flat]
+//   node tools/sim/plancpu-bench.mjs [--reps 5] [--flat] [--ocba both|on|off]
+//
+// --ocba (default both): every decision with the adaptive allocation
+// (plan.ocbaEvaluateGen, PLAN.ocba) and with every option on every draw,
+// INTERLEAVED rep by rep so machine load hits both alike; prints the
+// simulations each ran, the ms, P(correct selection) and whether the two
+// chose the same option. Adds the 21:12Z re-decision (fixture-bn9-redecide-2112)
+// with every one of its 26 waits in the draws, and screened (PP5).
 //
 // CALIBRATION: a timing tool; its answers are the planner's own functions on
 // the PP3c fixture, and it decides nothing.
@@ -25,6 +32,8 @@ const { bitNodeMults } = await import(path.join(REPO_ROOT, "bitNodeMultipliers.j
 const argv = process.argv.slice(2);
 const reps = +(argv[argv.indexOf("--reps") + 1] || 1) || 1;
 const flat = argv.includes("--flat");
+const ocbaArg = argv.includes("--ocba") ? argv[argv.indexOf("--ocba") + 1] : "both";
+const MODES = ocbaArg === "on" ? ["ocba"] : ocbaArg === "off" ? ["full"] : ["full", "ocba"];
 const F = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-plancpu-1341.json"), "utf8"));
 function postOf(ps) {
   const c = ps.cadence;
@@ -82,28 +91,63 @@ const sleeveFns = [
 ];
 const I2 = CURVE ? { ...F.exitinputs1416, ...CURVE.inputs } : F.exitinputs1416;
 const { inputs: b0 } = GW.withRepEstimate(I2);
-const decs = {
-  grafts: () => P.decideAmong({ options: graftOpts(basisOf(F.install1341.gains)), draws: DRAWS, redecide: true, budgetMs: 1e9 }),
-  install: () => P.decideInstall({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: 1e9, now: NOW }),
-  graftsRebased: () => P.decideAmong({ options: graftOpts(basisOf(F.install1356.gains)), draws: DRAWS, redecide: true, budgetMs: 1e9 }),
-  gang: () => P.decideAmong({ options: ["none", "fleet", "player"].map((k) => ({ key: k, sim: (dr) => armH(k, P.applyDraw(b0, dr)) })), draws: DRAWS, redecide: true, budgetMs: 1e9 }),
-  sleeveObjective: () => P.decideAmong({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)) })), draws: DRAWS, redecide: true, budgetMs: 1e9 }),
+// THE 21:12Z RE-DECISION (PP5): 26 waits on 21 grafts.
+const R = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn9-redecide-2112.json"), "utf8"));
+const RD = P.makeDraws(postOf(R.posteriors), P.PLAN.N, P.seedOf(R.lastAugReset, R.node));
+const RH = (spec) => P.trajectoryOf(spec)(R.exitinputs);
+const Rpoint = {
+  now: { hours: RH({ kind: "wait", waitH: 0 }) },
+  waits: R.install.options.filter((o) => /^w[\d.]+$/.test(o.key)).map((o) => {
+    const w = +o.key.slice(1);
+    const gw = w >= 2 ? R.install.gains : null;
+    return { waitH: w, hours: RH({ kind: "wait", waitH: w, gains: gw }), installGains: gw };
+  }),
+  never: { hours: RH({ kind: "never" }) },
+  committedGains: R.prev.gains,
 };
-const times = Object.fromEntries(Object.keys(decs).map((k) => [k, []]));
+const off = { ...P.PLAN.ocba, on: false };
+const decs = {
+  grafts: (ocba) => P.decideAmong({ options: graftOpts(basisOf(F.install1341.gains)), draws: DRAWS, redecide: true, budgetMs: 1e9, ocba }),
+  install: (ocba) => P.decideInstall({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: 1e9, now: NOW, ocba }),
+  installAll: (ocba) => P.decideInstall({ inputs: INPUTS, point, prev, draws: DRAWS, redecide: true, budgetMs: 1e9, now: NOW, installTopK: Infinity, installReach: Infinity, ocba }),
+  graftsRebased: (ocba) => P.decideAmong({ options: graftOpts(basisOf(F.install1356.gains)), draws: DRAWS, redecide: true, budgetMs: 1e9, ocba }),
+  gang: (ocba) => P.decideAmong({ options: ["none", "fleet", "player"].map((k) => ({ key: k, sim: (dr) => armH(k, P.applyDraw(b0, dr)) })), draws: DRAWS, redecide: true, budgetMs: 1e9, ocba }),
+  gangHeldNone: (ocba) => P.decideAmong({ options: ["none", "fleet", "player"].map((k) => ({ key: k, sim: (dr) => armH(k, P.applyDraw(b0, dr)) })), prev: { key: "none" }, draws: DRAWS, redecide: true, budgetMs: 1e9, ocba }),
+  sleeveObjective: (ocba) => P.decideAmong({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)) })), draws: DRAWS, redecide: true, budgetMs: 1e9, ocba }),
+  sleeveHeldRep: (ocba) => P.decideAmong({ options: sleeveFns.map(([k, f]) => ({ key: k, sim: (dr) => f(P.applyDraw(I2, dr)) })), prev: { key: "rep" }, draws: DRAWS, redecide: true, budgetMs: 1e9, ocba }),
+  redecide2112: (ocba) => P.decideInstall({ inputs: R.exitinputs, point: Rpoint, prev: R.prev, draws: RD, redecide: true, budgetMs: 1e9, now: Date.parse(R.at), reachSd: R.posteriors.s, ocba }),
+  redecide2112All: (ocba) => P.decideInstall({ inputs: R.exitinputs, point: Rpoint, prev: R.prev, draws: RD, redecide: true, budgetMs: 1e9, now: Date.parse(R.at), installTopK: Infinity, installReach: Infinity, ocba }),
+};
+const times = Object.fromEntries(MODES.flatMap((m) => Object.keys(decs).map((k) => [`${m}:${k}`, []])));
 const ans = {};
 for (let r = 0; r < reps; r++) {
   for (const [k, f] of Object.entries(decs)) {
-    const t0 = performance.now();
-    const d = f();
-    times[k].push(performance.now() - t0);
-    ans[k] = { key: d.key, meanH: d.meanH, options: (d.options ?? []).map((o) => `${o.key}:${o.meanH}`).join(" ") };
+    for (const m of r % 2 ? [...MODES].reverse() : MODES) {
+      const t0 = performance.now();
+      const d = f(m === "ocba" ? P.PLAN.ocba : off);
+      times[`${m}:${k}`].push(performance.now() - t0);
+      ans[`${m}:${k}`] = { key: d.key, meanH: d.meanH, n: d.n, alloc: d.alloc ?? null, margins: d.margins ?? null, options: (d.options ?? []).map((o) => `${o.key}:${o.meanH}${o.nDraws ? `/${o.nDraws}` : ""}`).join(" ") };
+    }
   }
 }
 const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
-let tot = 0;
+const tot = Object.fromEntries(MODES.map((m) => [m, { ms: 0, sims: 0 }]));
+let same = 0;
 for (const k of Object.keys(decs)) {
-  const m = med(times[k]);
-  tot += m;
-  console.log(`${k.padEnd(16)} ${m.toFixed(1).padStart(7)}ms  ${ans[k].key} ${ans[k].meanH}h  [${ans[k].options}]`);
+  for (const m of MODES) {
+    const x = ans[`${m}:${k}`];
+    const ms = med(times[`${m}:${k}`]);
+    tot[m].ms += ms;
+    tot[m].sims += x.alloc?.sims ?? 0;
+    console.log(`${m.padEnd(5)} ${k.padEnd(16)} ${ms.toFixed(1).padStart(7)}ms  ${String(x.alloc?.sims ?? "?").padStart(4)} sims  ${x.key} ${x.meanH}h n${x.n}${x.alloc?.mode === "ocba" ? `  PCS>=${x.alloc.pcs}` : ""}  [${x.options}]`);
+  }
+  if (MODES.length === 2) {
+    const a = ans[`full:${k}`];
+    const o = ans[`ocba:${k}`];
+    const ok = a.key === o.key && a.meanH === o.meanH;
+    same += ok ? 1 : 0;
+    console.log(`      ${k.padEnd(16)} ${ok ? "SAME choice and committed mean" : `DIFFERENT: full ${a.key} ${a.meanH}h, ocba ${o.key} ${o.meanH}h`}`);
+  }
 }
-console.log(`total ${tot.toFixed(1)}ms (median of ${reps}, first rep included)`);
+for (const m of MODES) console.log(`total ${m.padEnd(5)} ${tot[m].ms.toFixed(1)}ms, ${tot[m].sims} simulations (median of ${reps}, first rep included)`);
+if (MODES.length === 2) console.log(`saved: ${(100 * (1 - tot.ocba.ms / tot.full.ms)).toFixed(1)}% of the ms, ${(100 * (1 - tot.ocba.sims / tot.full.sims)).toFixed(1)}% of the simulations; ${same}/${Object.keys(decs).length} decisions the same`);
