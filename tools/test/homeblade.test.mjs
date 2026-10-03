@@ -328,5 +328,101 @@ export async function run() {
     if (!/const gym = retrainGymOf\(person\)\.gym/.test(SRC('sleeve.js'))) c.fail("HB9 sleeve.js's Bladeburner fleet does not price the retrain with retrainGymOf")
     checks.push(c)
   }
+
+  // ---- HB10 ----------------------------------------------------------------
+  // LIVE 2026-10-03 10:53Z: "PLAN BLOCKED THE PAGE: a 91.1ms synchronous block
+  // against 50ms — longest step 89ms in 'goweights-blade' (step 9058 of
+  // 10564)". The plateau search's batchAt calls (progress.js: a planPurchases
+  // re-plan each, several ms) ran back to back inside one generator step — up
+  // to 18 of them. Each call out is now its own step.
+  //
+  // BEFORE is the same source with the bare yields stripped from
+  // bladeGoWeightsGen (written beside the OS temp dir, bbplan.js shared), so
+  // the comparison survives any change to the exit model: the yields are
+  // pacing only, and the results must be identical on the HB7/HB8/HB9 inputs.
+  // THE BUDGET is counted in calls out per step (load-independent: at most
+  // one startFor or batchAt a step, and BEFORE must break it, so the check is
+  // seen to fail), then timed under the real pacer with batchAt costing
+  // BATCH_MS — a planPurchases on this node's batch scale (2-8ms on the
+  // fixture-augs catalogue at $10m-$1b) — every step under PLAN.maxBlockMs.
+  {
+    const c = new Check('HB10', "the blade Go weights yield between calls out: no 'goweights-blade' step holds the page past the block limit, and the weights are identical (live 10:53Z)")
+    const GW = await import('goweights.js')
+    const CO = await import('coop.js')
+    const os = await import('node:os')
+    const src = SRC('goweights.js')
+    const at = src.indexOf('export function* bladeGoWeightsGen(')
+    const end = src.indexOf('\n}\n', at)
+    const body = src.slice(at, end)
+    const nYield = (body.match(/^\s*yield\s*$/gm) ?? []).length
+    c.examined(1)
+    if (nYield < 4) c.fail(`HB10 bladeGoWeightsGen carries ${nYield} bare yields (startFor, b0, and both plateau ladders each need one)`)
+    const beforeFile = path.join(os.tmpdir(), `goweights-noyield-${process.pid}.mjs`)
+    fs.writeFileSync(beforeFile, src.slice(0, at) + body.replace(/^\s*yield\s*$/gm, '') + src.slice(end))
+    const BEFORE = await import(beforeFile)
+    fs.rmSync(beforeFile, { force: true })
+    const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tools/test/fixture-bn4-gymless-0237.json'), 'utf8'))
+    const BP = await import('bodyplan.js')
+    const lp = { ...L.player, mults: person.mults }
+    const rate = BP.gymRate(BP.retrainGymOf(lp).gym, 'strength', lp, L.bladeRoute.start.trainingMult)
+    const sf9 = (sp) => BB.bladeStartOf({ tel: L.bladeburner, person: lp, sleeves: L.bladeRoute.sleeves, gymExpPerSec: rate, bnRank: n4.BladeburnerRank, skillCostMult: n4.BladeburnerSkillCost, install: BB.bladeInstallOfSpec(sp), simulacrum: false, rankScale: L.bladeRoute.calibration.rank, successScale: L.bladeRoute.calibration.success, now: Date.parse(L.captured) })
+    const ba8 = (m) => (m >= 40e6 ? { gains: { strength: 1.08, defense: 1.08, dexterity: 1.08, agility: 1.08, bladeburner_success_chance: 1.05 }, simulacrum: false } : { gains: {}, simulacrum: false })
+    const ba9 = (m) => (m >= 60e6 ? { gains: { strength: 1.1, defense: 1.1, dexterity: 1.1, agility: 1.1, bladeburner_success_chance: 1.1 } } : m >= 25e6 ? { gains: { strength: 1.05, defense: 1.05, dexterity: 1.05, agility: 1.05 } } : { gains: {} })
+    const spec8 = { kind: 'wait', waitH: 8, blade: { gains: {}, simulacrum: false } }
+    const cases = {
+      HB7: { startFor, spec: null, maxH: 80, batchMoneyPerSec: F.incomePerSec },
+      HB8: { startFor, spec: spec8, maxH: 80, batchAt: ba8, moneyAtInstall: 30e6, batchMoneyPerSec: 2000, hackShare: 0.3 },
+      'HB8+rep': { startFor, spec: spec8, maxH: 80, batchAt: ba8, moneyAtInstall: 45e6, batchMoneyPerSec: 2000, hackShare: 0.3, eRep: 0.4, ageH: 3 },
+      HB9: { startFor: sf9, spec: { kind: 'wait', waitH: 2, blade: { gains: {}, simulacrum: false } }, maxH: 200, batchAt: ba9, moneyAtInstall: 30e6, batchMoneyPerSec: 3000, hackShare: 0.3 },
+    }
+    for (const [k, o] of Object.entries(cases)) {
+      const a = JSON.stringify(drain(BEFORE.bladeGoWeightsGen(o)))
+      const b = JSON.stringify(drain(GW.bladeGoWeightsGen(o)))
+      c.examined(1)
+      if (a !== b) c.fail(`HB10 ${k}: the weights differ with the yields`, `before ${a.slice(0, 200)} / after ${b.slice(0, 200)}`)
+      else c.note(`${k}: identical — ${JSON.stringify(JSON.parse(b).weights)}`)
+    }
+    // Calls out per step (work units, not wall time).
+    const callsPerStep = (mod, o) => {
+      let calls = 0
+      const counted = { ...o, startFor: (sp) => (calls++, o.startFor(sp)), batchAt: (m) => (calls++, o.batchAt(m)) }
+      const g = mod.bladeGoWeightsGen(counted)
+      let worst = 0
+      for (let r = { done: false }; !r.done; ) {
+        calls = 0
+        r = g.next()
+        worst = Math.max(worst, calls)
+      }
+      return worst
+    }
+    const after8 = callsPerStep(GW, cases.HB8)
+    const before8 = callsPerStep(BEFORE, cases.HB8)
+    c.examined(2)
+    if (after8 > 1) c.fail(`HB10 a step makes ${after8} calls out (startFor/batchAt): each must be its own step`)
+    if (!(before8 > 1)) c.fail(`HB10 the stripped version makes at most ${before8} call a step — the count cannot see the live defect`)
+    // Timed under the pacer, the live block limit.
+    const BATCH_MS = 6
+    const spin = (ms) => {
+      const t = performance.now()
+      while (performance.now() - t < ms);
+    }
+    const costed = { ...cases.HB8, batchAt: (m) => (spin(BATCH_MS), ba8(m)) }
+    const paced = async (mod) => {
+      const pacer = CO.makePacer({ sliceMs: P.PLAN.sliceMs, yieldFn: () => new Promise((r) => setImmediate(r)), memory: new Map() })
+      const r = await pacer.slices(mod.bladeGoWeightsGen(costed), 'goweights-blade')
+      return { r, sec: pacer.stats.sections['goweights-blade'], block: pacer.stats.maxBlockMs }
+    }
+    const now = await paced(GW)
+    const was = await paced(BEFORE)
+    c.examined(1)
+    if (JSON.stringify(now.r) !== JSON.stringify(drain(GW.bladeGoWeightsGen(cases.HB8)))) c.fail('HB10 the paced run is not the drained one')
+    if (!(now.sec.maxStepMs < P.PLAN.maxBlockMs)) c.fail(`HB10 a ${now.sec.maxStepMs.toFixed(1)}ms step in 'goweights-blade' (step ${now.sec.maxStepAt} of ${now.sec.steps}) against the ${P.PLAN.maxBlockMs}ms block limit`)
+    c.note(`calls out per step: ${before8} before -> ${after8} after; batchAt at ${BATCH_MS}ms: longest step ${was.sec.maxStepMs.toFixed(1)}ms (step ${was.sec.maxStepAt} of ${was.sec.steps}) before -> ${now.sec.maxStepMs.toFixed(1)}ms (step ${now.sec.maxStepAt} of ${now.sec.steps}) after; longest block ${was.block.toFixed(1)} -> ${now.block.toFixed(1)}ms (limit ${P.PLAN.maxBlockMs}ms)`)
+    // The Bladeburner home verdict re-plans twice in a row too: one call a step.
+    const hp = SRC('homeplan.js')
+    c.examined(1)
+    if (!/const b0 = batchAt\(moneyAtInstall\)\n\s*yield[^\n]*\n\s*const b1 = batchAt\(Math\.max\(0, after\)\)\n\s*yield\n/.test(hp)) c.fail('HB10 homeplan.bladeHomeExitGen re-plans both batches in one step')
+    checks.push(c)
+  }
   return checks
 }

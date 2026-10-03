@@ -322,8 +322,17 @@ export function* bladeGoWeightsGen(o = {}) {
   if (typeof startFor !== 'function') return refuse('no Bladeburner start to price from')
   const maxH = pos(o.maxH) ? o.maxH : 400
   const W = spec?.kind === 'wait' && num(spec.waitH) ? Math.max(0, spec.waitH) : Infinity
+  // EVERY CALL OUT IS ITS OWN STEP. startFor and batchAt are the caller's
+  // (progress.js: batchAt is a planPurchases re-plan, several ms each), and
+  // the plateau search below asks up to 18 of them. Run back to back they
+  // were one step under the pacer — live BN4.3 2026-10-03 10:53Z: "PLAN
+  // BLOCKED THE PAGE: 91.1ms ... longest step 89ms in 'goweights-blade'
+  // (step 9058 of 10564)", the ladder after the re-planned batch's exit. A
+  // yield after each keeps a step to one call; the work and its order are
+  // unchanged, so the weights are identical.
   const exitOf = function* (sp, steps) {
     const s0 = startFor(sp)
+    yield
     const r = yield* bladeExitGen({ ...s0, maxH, ...(steps.length ? { steps } : {}) })
     return num(r?.hours) ? r.hours : null
   }
@@ -357,6 +366,7 @@ export function* bladeGoWeightsGen(o = {}) {
     const specOf = (b) => ({ ...spec, blade: { gains: b?.gains ?? {}, simulacrum: b?.simulacrum === true } })
     const keyOf = (b) => JSON.stringify(b?.gains ?? {}) + (b?.simulacrum === true ? '+sim' : '')
     const b0 = batchAt(m0)
+    yield
     if (!b0) return refuse('the install batch could not be planned')
     const Tb = yield* exitOf(specOf(b0), [])
     if (!num(Tb)) return refuse('the black-op exit on the re-planned batch is unpriced')
@@ -367,6 +377,7 @@ export function* bladeGoWeightsGen(o = {}) {
     let bHi = null
     for (let m = base * 1.25; m <= base * 8; m *= 1.25) {
       const b = batchAt(m)
+      yield
       if (b && keyOf(b) !== keyOf(b0)) {
         hi = m
         bHi = b
@@ -376,6 +387,7 @@ export function* bladeGoWeightsGen(o = {}) {
     let lo = 0
     for (let m = m0 / 1.25; m >= m0 / 8 && m > 0; m /= 1.25) {
       const b = batchAt(m)
+      yield
       if (b && keyOf(b) !== keyOf(b0)) {
         lo = m
         break

@@ -219,7 +219,9 @@ export function* bladeHomeExitGen(o) {
     if (typeof batchAt !== 'function' || !fin(moneyAtInstall)) return { deltaH: null, why: 'bought before the committed install, but the batch re-plan is unavailable' }
     const after = moneyAtInstall - cost + (fin(gainPerSec) && gainPerSec > 0 ? gainPerSec * (installAtH - buyAtH) * 3600 : 0)
     const b0 = batchAt(moneyAtInstall)
+    yield // each re-plan its own step (planPurchases, several ms; goweights.bladeGoWeightsGen)
     const b1 = batchAt(Math.max(0, after))
+    yield
     if (!b0 || !b1) return { deltaH: null, why: 'the install batch could not be re-planned' }
     displaced = { moneyWithout: Math.round(moneyAtInstall), moneyWith: Math.round(after), without: b0, with: b1 }
     // Both arms re-planned by the one planner: they differ by the purchase alone.
@@ -229,6 +231,7 @@ export function* bladeHomeExitGen(o) {
   else displaced = { none: 'no install is committed on this route: nothing is displaced' }
   const exitOf = function* (sp, steps) {
     const s0 = startFor(sp)
+    yield
     const r = yield* bladeExitGen(steps.length ? { ...s0, steps } : s0)
     return fin(r?.hours) ? r.hours : null
   }
