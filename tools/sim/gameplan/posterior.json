@@ -1,7 +1,7 @@
 {
  "schema": "gameplan-posterior",
  "version": 1,
- "updatedAt": "2026-10-03T02:44:55.337Z",
+ "updatedAt": "2026-10-03T18:49:30.410Z",
  "model": {
   "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
   "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
@@ -93,6 +93,19 @@
    "note": "56.17h"
   },
   {
+   "key": "k|BN4.3|2026-10-03T18:45:23.337Z",
+   "param": "k",
+   "value": 0.9001943044507863,
+   "sd": 0.1,
+   "space": "log",
+   "at": "2026-10-03T18:45:23.337Z",
+   "source": "history.jsonl: Bladeburner clear, (hours - opening) / bbsim leg",
+   "node": 4,
+   "clear": "BN4.3",
+   "inBase": false,
+   "note": "28.07h, opening 3.36h, leg 27.45h"
+  },
+  {
    "key": "k|BN6.1|2026-10-02T14:36:19.989Z",
    "param": "k",
    "value": 1.2227814380998863,
@@ -139,11 +152,11 @@
     1.535
    ],
    "post": [
-    1.068,
-    1.223,
-    1.535
+    0.9326,
+    1.034,
+    1.139
    ],
-   "n": 0
+   "n": 1
   },
   "open": {
    "prior": [
