@@ -151,3 +151,18 @@ for (const k of Object.keys(decs)) {
 }
 for (const m of MODES) console.log(`total ${m.padEnd(5)} ${tot[m].ms.toFixed(1)}ms, ${tot[m].sims} simulations (median of ${reps}, first rep included)`);
 if (MODES.length === 2) console.log(`saved: ${(100 * (1 - tot.ocba.ms / tot.full.ms)).toFixed(1)}% of the ms, ${(100 * (1 - tot.ocba.sims / tot.full.sims)).toFixed(1)}% of the simulations; ${same}/${Object.keys(decs).length} decisions the same`);
+// THE VOC GATE ON THESE DECISIONS (plan.redecideGateOf): their margins as a
+// held plan would carry them, the timer's event, the adaptive pass's work as
+// the cost — would the 30-minute re-decide run?
+if (MODES.includes("ocba")) {
+  const decisions = {};
+  for (const k of ["install", "gang", "sleeveObjective", "graftsRebased", "redecide2112"]) {
+    const d = ans[`ocba:${k}`];
+    decisions[k === "redecide2112" ? "countRoute" : k === "graftsRebased" ? "grafts" : k === "sleeveObjective" ? "sleeveObjective" : k] = { key: d.key, options: [{}], margins: d.margins };
+  }
+  for (const [k, d] of Object.entries(decisions)) console.log(`voc   ${k.padEnd(16)} margins ${JSON.stringify(d.margins)}  VOC ${(d.margins ?? []).reduce((s, m) => s + P.marginVoc(m.meanH, m.sdH), 0).toPrecision(3)}h`);
+  const prevRec = { decidedAt: new Date(Date.now() - 31 * 60e3).toISOString(), decisions };
+  const ev = P.redecideEvents({ ...prevRec, lastAugReset: 1 }, { lastAugReset: 1, now: Date.now() });
+  const g = P.redecideGateOf(prevRec, ev, { now: Date.now(), costMs: tot.ocba.ms });
+  console.log(`voc   gate: ${g.verdict} — ${g.why}`);
+}

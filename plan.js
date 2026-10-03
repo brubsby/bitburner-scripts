@@ -75,6 +75,14 @@ export const PLAN = {
   // selection) >= pcs; simBudget caps the simulations (null: options x N).
   // on: false restores every option on every draw.
   ocba: { on: true, n0: 8, pcs: 0.95, simBudget: null },
+  // RATIONAL METAREASONING for the scheduled re-decide (redecideGateOf): skip
+  // the timer's re-decision when the value of computing it (the expected exit
+  // hours a re-decision would recover, from the committed margins' spread) is
+  // below its cost — the re-deciding pass's main-thread work in hours times
+  // stallCostH exit-hours per hour of stall (STATED, NOT CALIBRATED: an upper
+  // bound, everything the page runs waits on the stall). Never past maxSkipH
+  // since the last decision; never on any other event.
+  voc: { on: true, stallCostH: 1, maxSkipH: 4, unstableNoteH: 2 },
   traderMoveSd: 1, // posterior mean moved by this many sds = an event
   driftMoveFactor: 1.5, // structural error scale moved by this factor = an event
 }
@@ -963,6 +971,94 @@ export function redecideEvents(prev, cur, o = {}) {
 }
 
 /**
+ * RATIONAL METAREASONING FOR THE SCHEDULED RE-DECIDE (Hay, Russell, Tolpin &
+ * Shimony, UAI 2012; Callaway et al. 2018). The plan re-decides on events —
+ * those always run — and, failing any, every PLAN.maxAgeMin. That timer's
+ * re-decision is a computation with a price: a full Monte Carlo over every
+ * option, on the game's main thread. Its VALUE is what it could recover: the
+ * committed choice changes only if an alternative turns out better, so per
+ * decision and alternative, with the paired margin D = H_alt + switch cost -
+ * H_choice ~ N(m, s²) as the deciding pass priced it (marginsOf: s is the
+ * per-draw spread, the whole posterior uncertainty of the difference — far
+ * more than one re-decision's new data can move it, so this over-states the
+ * value, never under-states it):
+ *
+ *   VOC = Σ E[max(0, -D)] = Σ s φ(m/s) - m Φ(-m/s)        (exit hours)
+ *
+ * — the probability a re-decision changes the action times the gain when it
+ * does. COST = the last re-deciding pass's plan work in hours x
+ * PLAN.voc.stallCostH (exit-hours per hour of main-thread stall, stated).
+ * SKIP iff VOC < COST. Never skipped: any event that is not the timer (a new
+ * life / install, a model-version change, a committed option gone, a route,
+ * node, regime, posterior or stream change — every one of them is new
+ * evidence or a new structure); a decision whose margins are unknown (a
+ * record from before the gate, a margin that could not be priced); and past
+ * PLAN.voc.maxSkipH since the last decision.
+ *
+ * prev: the last plan record; events: redecideEvents(prev, cur).
+ * Returns {verdict: 'none' | 'run' | 'skip', skip, voc, costH, costMs, per
+ * {decision: VOC}, ageH, why}.
+ */
+export const isScheduledEvent = (e) => typeof e === 'string' && / min since the last decision$/.test(e)
+/** E[max(0, -D)] for D ~ N(m, s²): the expected gain a re-decision recovers on one margin. */
+export function marginVoc(m, s) {
+  if (!fin(m)) return Infinity
+  if (!fin(s) || s <= 0) return Math.max(0, -m)
+  const z = m / s
+  return Math.max(0, s * Math.exp(-(z * z) / 2) / Math.sqrt(2 * Math.PI) - m * phi(-z))
+}
+export const VOC_DECISIONS = ['install', 'countRoute', 'lifeLength', 'grafts', 'gang', 'sleeveObjective', 'fourS', 'bladeRoute']
+export function redecideGateOf(prev, events, { now = Date.now(), costMs = null, voc = PLAN.voc } = {}) {
+  const ev = Array.isArray(events) ? events : []
+  if (!ev.length) return { verdict: 'none', skip: false, voc: null, costH: null, why: 'no event: the committed plan is held' }
+  const other = ev.filter((e) => !isScheduledEvent(e))
+  if (other.length) return { verdict: 'run', skip: false, voc: null, costH: null, why: `re-decides on ${other.length === 1 ? 'an event' : `${other.length} events`} (never gated): ${other.join('; ').slice(0, 200)}` }
+  if (!voc || voc.on === false) return { verdict: 'run', skip: false, voc: null, costH: null, why: 'the value-of-computation gate is off (PLAN.voc.on)' }
+  if (!prev) return { verdict: 'run', skip: false, voc: null, costH: null, why: 'no previous plan to read margins from' }
+  const ageH = (now - Date.parse(prev.decidedAt ?? '')) / 3.6e6
+  if (!(ageH < voc.maxSkipH)) return { verdict: 'run', skip: false, voc: null, costH: null, ageH: fin(ageH) ? +ageH.toFixed(3) : null, why: `the last decision is ${fin(ageH) ? ageH.toFixed(2) : '?'}h old (>= ${voc.maxSkipH}h): re-decided whatever its value` }
+  const cMs = fin(costMs) && costMs > 0 ? costMs : PLAN.budgetMs
+  const costH = (cMs / 3.6e6) * voc.stallCostH
+  const per = {}
+  const unknown = []
+  let total = 0
+  for (const name of VOC_DECISIONS) {
+    const d = prev.decisions?.[name]
+    // Only the Monte Carlo decisions (their priced option rows) are what the timer re-decides.
+    if (!d || d.key === null || d.key === undefined || d.applicable === false || !Array.isArray(d.options)) continue
+    if (!Array.isArray(d.margins)) {
+      unknown.push(name)
+      continue
+    }
+    let v = 0
+    for (const m of d.margins) v += marginVoc(m?.meanH, m?.sdH)
+    per[name] = +v.toPrecision(3)
+    total += v
+  }
+  const base = { voc: fin(total) ? +total.toPrecision(3) : null, costH: +costH.toPrecision(3), costMs: Math.round(cMs), per, ageH: +ageH.toFixed(3) }
+  if (unknown.length) return { verdict: 'run', skip: false, ...base, voc: null, why: `margins unknown for ${unknown.join(', ')} (a record from before the gate, or unpriced): re-decided` }
+  const skip = fin(total) && total < costH
+  const top = Object.entries(per).sort((a, b) => b[1] - a[1])[0]
+  const why = skip
+    ? `skipped the scheduled re-decide: value of computation ${total.toExponential(2)}h < its cost ${costH.toExponential(2)}h (${Math.round(cMs)}ms of main thread x ${voc.stallCostH}) — every committed margin is far outside its posterior spread${top ? ` (largest: ${top[0]} ${top[1]}h)` : ''}`
+    : `ran the scheduled re-decide: value of computation ${fin(total) ? total.toExponential(2) : '?'}h >= its cost ${costH.toExponential(2)}h${top ? ` (largest: ${top[0]} ${top[1]}h)` : ''}`
+  return { verdict: skip ? 'skip' : 'run', skip, ...base, why }
+}
+/**
+ * The gate's record on the plan (plan.txt redecideGate): this pass's verdict,
+ * since when the timer's re-decides have been skipped (null once one runs),
+ * and a short log of verdicts.
+ */
+export function redecideGateRecordOf(prevRec, gate, at, max = 24) {
+  const last = prevRec?.redecideGate ?? null
+  const skippedSince = gate?.skip ? last?.skippedSince ?? at : null
+  const skips = gate?.skip ? (last?.skips ?? 0) + 1 : 0
+  const entry = { at, verdict: gate?.verdict ?? 'none', voc: gate?.voc ?? null, costH: gate?.costH ?? null }
+  const log = gate?.verdict && gate.verdict !== 'none' ? [...(Array.isArray(last?.log) ? last.log : []), entry].slice(-max) : Array.isArray(last?.log) ? last.log : []
+  return { ...gate, at, skippedSince, skips, log }
+}
+
+/**
  * THE CARRIED STREAMS AS AN EVENT. exitInputsOf carries the plan's committed
  * money streams (carriedIncome {name: [{atH, perSec}]}: the gang's simulated
  * income, the sleeves on crime) into every exit; a stream re-simulated on a
@@ -1044,7 +1140,7 @@ const r3 = (x) => (fin(x) ? +x.toFixed(3) : null)
 const allocOf = (ocba, committed, switchCost = {}) => (ocba && ocba.on !== false ? { ...ocba, committed, switchCost } : null)
 
 /**
- * THE CHOICE'S MARGINS (for the timer's value-of-computation gate):
+ * THE CHOICE'S MARGINS, for the value-of-computation gate (redecideGateOf):
  * per alternative a, the paired D = (H_a + switch cost) - H_choice over the
  * draws both priced (mean and per-draw sd: the posterior spread of the
  * difference), closest first, up to `max`. [] = no alternative was priced.
@@ -2608,6 +2704,14 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   const es = plan.exitStability ?? null
   if (es?.ok === false || es?.lastFail) fail(es.ok === false ? es.why : `${es.lastFail.why} [at ${es.lastFail.at}, within the hour]`, 'the committed exit moved beyond its own Monte Carlo noise on a pass that re-decided nothing — an input or a committed choice changed without being an event (a graft set replaced under a held key, a noisy point input); diff the two passes\' exitinputs field by field')
   else if (es?.why) notes.push(`plan exit stability: ${es.why}`)
+  // THE VALUE-OF-COMPUTATION GATE (redecideGateOf) holding the timer's
+  // re-decides while the held exit moves beyond its noise: the margins it
+  // reads are the deciding pass's, and EXIT UNSTABLE says the pricing under
+  // them moved. A note, not a fail — EXIT UNSTABLE fails on its own.
+  const rg = plan.redecideGate ?? null
+  const skippedH = rg?.skippedSince ? (Date.parse(plan.at) - Date.parse(rg.skippedSince)) / 3.6e6 : null
+  if (fin(skippedH) && skippedH > (PLAN.voc?.unstableNoteH ?? 2) && (es?.ok === false || es?.lastFail)) notes.push(`VOC GATE HOLDING THROUGH EXIT UNSTABLE: the scheduled re-decides skipped for ${skippedH.toFixed(1)}h (${rg.skips ?? '?'} passes, since ${rg.skippedSince}) while the held exit moves beyond its noise — the margins the gate reads are the last decision's (${String(rg.why ?? '').slice(0, 160)})`)
+  else if (rg?.verdict && rg.verdict !== 'none') notes.push(`plan re-decide gate: ${rg.verdict}${fin(skippedH) ? ` (skipping for ${skippedH.toFixed(1)}h)` : ''} — ${String(rg.why ?? '').slice(0, 200)}`)
   // ADAPTIVE ALLOCATION (ocbaEvaluateGen): the simulations a re-decision saved, and its weakest P(correct selection).
   if (plan.cpu?.alloc?.decisions) notes.push(`plan draws: ${plan.cpu.alloc.why}`)
   const ob = optionsBasisOf(plan)

@@ -389,6 +389,36 @@ set changed, posterior moved materially (trader mean by > 1 posterior sd, s by
 > 1.5x), or 30 min since the last decision. Otherwise the committed plan is
 re-published with `held: 'no event'` and the MC is skipped.
 
+THE TIMER'S RE-DECIDE IS GATED BY ITS VALUE (`plan.redecideGateOf`,
+PLAN.voc; rational metareasoning, Hay, Russell, Tolpin & Shimony UAI 2012,
+Callaway et al. 2018). When the 30-minute timer is the ONLY event, the
+re-decision is a computation with a price — a full Monte Carlo on the game's
+main thread — and its value is what it could recover. Every decided record
+carries the choice's paired margins (`marginsOf`: per alternative, D = H_alt +
+switch cost − H_choice over the draws both priced, its mean and per-draw sd —
+the posterior spread of the difference); held records carry the deciding
+pass's. VOC = Σ E[max(0, −D)] = Σ s φ(m/s) − m Φ(−m/s) over the Monte Carlo
+decisions' margins (exit hours: the probability a re-decision changes the
+action times the gain when it does — with the whole posterior spread as the
+change, an upper bound: one re-decision's new data moves the mean far less).
+COST = the last re-deciding pass's plan work (plan.txt `redecideCostMs`) in
+hours × `stallCostH` (1 exit-hour per hour of main-thread stall: STATED, NOT
+CALIBRATED — an upper bound, everything the page runs waits on a stall).
+Skip iff VOC < COST; at ~1s of work that is every margin beyond ~3.2 of its
+own sds. NEVER skipped: any other event (install / new life, model version,
+committed option gone, route / node / regime / posterior / stream / life
+length change, a forced re-decide — each is evidence or structure), a
+decision whose margins are unknown (a record from before the gate), and past
+`maxSkipH` (4h) since the last decision. plan.txt `redecideGate`: verdict,
+VOC, cost, per-decision VOC, `skippedSince`, `skips` and a log of the last 24
+verdicts. Healthcheck note VOC GATE HOLDING THROUGH EXIT UNSTABLE when the
+timer has been skipped for more than `unstableNoteH` (2h) while EXIT UNSTABLE
+fires (the margins it reads are the last decision's, and the held exit is
+moving beyond its noise). On the PP3/21:12Z fixtures the gate RUNS (VOC 15.5h
+against 1e-3h: the gang arms 2.6h apart with a 15h paired sd, the sleeve
+objectives 0.5h apart with 13h): it skips only where every Monte Carlo
+decision is decided by many sds (or has no feasible alternative). [VG1-2]
+
 ### The install cadence is a posterior, not a borrowed node
 
 `bayes.cadencePosterior` (via `exitplan.installCadence`). The old rule priced a

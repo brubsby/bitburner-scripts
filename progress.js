@@ -172,7 +172,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
@@ -3472,10 +3472,15 @@ function planCtxOf(ns, info) {
     setCommitCalibration({ widthMult: post.calibration?.recal?.applied ?? 1, rho: post.calibration?.rho?.rho ?? null, source: post.calibration?.recal ? `${post.calibration.recal.why}; ${post.calibration.rho?.why ?? 'rho stated'}` : null })
     const committedAvailable = null // set by the route decision
     const traderRegime = typeof stockNow?.mode === 'string' ? rwRegimeOf(stockNow.mode) : null
-    const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime, ver: MODEL_VERSION })
+    const events0 = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime, ver: MODEL_VERSION })
+    // THE VALUE-OF-COMPUTATION GATE (plan.redecideGateOf): the timer's
+    // re-decide alone is skipped when no committed margin could flip for
+    // more than the pass's main-thread work is worth; every other event runs.
+    const gate = redecideGateOf(sameLife ? prev : null, events0, { now: Date.now(), costMs: sameLife ? prev?.redecideCostMs ?? null : null })
+    const events = gate.skip ? [] : events0
     const seed = seedOf(info?.lastAugReset, info?.currentNode)
     const draws = makeDraws(post, PLAN.N, seed)
-    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, draws, seed, obs, points, runDropped, decisions: {}, setupMs: 0, pacer: passPacer, error: null, traderRegime }
+    planCtx = { t0, prev: sameLife ? prev : null, prevAny: prev, post, events, redecide: events.length > 0, gate, draws, seed, obs, points, runDropped, decisions: {}, setupMs: 0, pacer: passPacer, error: null, traderRegime }
   } catch (e) {
     planCtx = { t0, prev: null, prevAny: graftMemoryCarryOf(ns, info), post: null, events: [], redecide: false, draws: [], decisions: {}, setupMs: 0, pacer: passPacer, error: `plan context threw: ${String(e).slice(0, 160)}` }
   }
@@ -3899,6 +3904,11 @@ function publishPlan(ns, info, extra = {}) {
       // Per section (the label each slices() run names): its work, longest
       // block, and longest single step with its index — a step longer than
       // the slice is the un-sliced piece, and this says where.
+      // THE TIMER'S RE-DECIDE GATE (plan.redecideGateOf): verdict, VOC against
+      // cost, since when skipped, and a log of verdicts.
+      redecideGate: redecideGateRecordOf(pc.prevAny ?? null, pc.gate ?? null, at),
+      // The plan work of the last re-deciding pass: the gate's cost.
+      redecideCostMs: redecided && st ? Math.round(st.cpuMs) : pc.prevAny?.redecideCostMs ?? null,
       cpu: { sections: st ? Object.fromEntries(Object.entries(st.sections).map(([k, v]) => [k, { cpuMs: Math.round(v.cpuMs), maxBlockMs: +v.maxBlockMs.toFixed(1), maxStepMs: +v.maxStepMs.toFixed(1), maxStepAt: v.maxStepAt, steps: v.steps, runs: v.runs }])) : null, cpuMs: st ? Math.round(st.cpuMs) : null, wallMs: Date.now() - passT0, waitMs: st ? Math.round(st.waitMs) : null, maxBlockMs: st ? +st.maxBlockMs.toFixed(1) : null, maxBlockLimitMs: PLAN.maxBlockMs, sliceMs: PLAN.sliceMs, yields: st?.yields ?? null, setupMs: pc.setupMs ?? null, budgetMs: PLAN.budgetMs, blocked, truncated, N: PLAN.N, draws: Math.min(...[route?.n, inst?.n].filter((x) => typeof x === 'number'), PLAN.N), alloc: allocSummaryOf(pc.decisions) },
       rule: commitRuleText(),
       obs,
