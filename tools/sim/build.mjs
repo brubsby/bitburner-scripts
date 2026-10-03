@@ -76,6 +76,10 @@ export { CalculateEffect, getWinstreakMultiplier, getDifficultyMultiplier, getMa
 export { GoColor, GoOpponent } from "${GAME}/src/Go/Enums";
 export { Go } from "${GAME}/src/Go/Go";
 export { opponentDetails } from "${GAME}/src/Go/Constants";
+// The RNG the Go cheat rolls (netscriptGoImplementation.ts:512) and the AI seeds
+// (goAI.ts:184): golib.cheatRoll is checked against it (go-cheatroll-check.mjs).
+export { WHRNG } from "${GAME}/src/Casino/RNG";
+export { cheatSuccessChance } from "${GAME}/src/Go/effects/netscriptGoImplementation";
 // For tools/sim/gameplan/gotest.mjs (GP4): the favor award is played through
 // endGoGame, which reads Player.factions, Player.sourceFiles and the Factions table.
 export { PlayerObject } from "${GAME}/src/PersonObjects/Player/PlayerObject";

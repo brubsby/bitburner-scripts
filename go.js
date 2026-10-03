@@ -41,33 +41,74 @@
 // own loop, hence the playout budget and the periodic yields.
 //
 // ---------------------------------------------------------------------------
-// Cheat policy: exactly one per game, and only with Source-File 14.2.
+// CHEAT POLICY: as many two-move cheats as the clock allows, never a failed one.
 //
-// ns.go.cheat.* throws "The go.cheat API requires Source-File 14.2" without it,
-// so this life cannot use it — but the policy is implemented and gated rather
-// than removed, because these scripts have to be correct at every stage of the
-// game, not just the current one.
+// ACCESS (netscriptGoImplementation.ts:487-496, sfgate.canUseGoCheat): SF14
+// level >= 2 anywhere, or level exactly 1 while inside BitNode 14. So the
+// FIRST BN14 run (holding no SF14: BN14.1) has NO cheats; BN14.2 does, and
+// SF14.2+ opens them in every node. Without access every ns.go.cheat call
+// throws "requires Source-File 14.2".
 //
-//   chance = 0.6 * (0.7 - 0.02*cheatCount)^cheatCount * crime_success
-//            (netscriptGoImplementation.ts:561-567)
+//   chance(k) = min(1, 0.6 * (0.7 - 0.02k)^k * crime_success + (SF14.3 ? 0.25 : 0))
+//               (:561-567; k = cheats already tried THIS game; crime_success is
+//               the player multiplier — BN14's CrimeSuccessRate 0.4 does NOT
+//               enter, it is applied only in Crime.ts:132)
+//   k:  0     1     2     3     4     5     6     7     8     9
+//       .600  .408  .261  .157  .089  .047  .023  .010  .0043 .0017
 //
-// so the first cheat of a game is 60% and the fourth is under 9%. The asymmetry
-// that decides the policy is the failure branch (:504-531):
+//   success: the effect, then the AI replies (it IS our turn)          (:517-520)
+//   failure: k == 0 -> our turn is passed;                              (:528-530)
+//            k >= 1 -> 10% ejected: forceEndGoGame — a loss, the streak
+//            reset, and NO node power for the game (scoring.ts:101-108) (:521-527)
 //
-//   - with `priorCheatCount === 0` a failure only **skips a turn**; the eject
-//     branch is gated on priorCheatCount being truthy, so the first cheat of a
-//     game carries no tail risk at all.
-//   - with any prior cheat, a failure has a 10% chance of forceEndGoGame, which
-//     calls resetWinstreak and **never runs the nodePower accrual** — that
-//     lives only in endGoGame (scoring.ts:46). An ejection therefore forfeits
-//     the entire game's farming *and* resets the streak multiplier.
+// THE ROLL IS A CLOCK. It is `new WHRNG(Player.totalPlaytime).random()`
+// (:512), and one Wichmann-Hill step from a seed of T/1000 is a sawtooth in
+// playtime rising 0.01693/s with a 59.06s period (golib.cheatRoll — checked
+// bit-for-bit against the game's class, tools/sim/go-cheatroll-check.mjs).
+// getPlayer().totalPlaytime is the same number, and an ns call runs its body
+// synchronously (Netscript/APIWrapper.ts:77-82), so go-cheat.js reads T and
+// calls in one tick, only when roll <= chance: every cheat it plays succeeds,
+// so the eject branch is unreachable and there is no tail risk to price.
+// The window is chance x 59s wide and comes round every 59s, so at k = 0-3 it
+// is usually open on some turn soon and at k = 8 it needs a wait of up to a
+// minute; maxWaitMs caps that. (A hidden, throttled tab advances playtime in
+// 60s jumps — nearly the period — so windows are then rarely hit; harmless,
+// go-cheat.js just declines.)
 //
-// One cheat is free; the second risks everything the game was worth. So: one.
+// WHAT EACH CHEAT IS WORTH (netscriptGoImplementation.ts:572-672, RAM from
+// Netscript/RamCostGenerator.ts go.cheat):
+//   playTwoMoves   +1 stone of tempo for us, every time.             8GB  USED
+//   removeRouter   deletes ANY router — but costs our move, so vs a
+//                  plain move it is -1 white stone instead of +1
+//                  black: a wash except at a cutting/eye point.     8GB
+//   destroyNode    an empty point goes offline — same move cost; a
+//                  liberty/eye-killer, never territory for us.      8GB
+//   repairOfflineNode  '#' -> empty: one point of possible territory
+//                  for a whole move.                                8GB
+//   getCheatSuccessChance / getCheatCount                           1GB each
+// Only playTwoMoves dominates a normal move unconditionally; the other three
+// need tactical reading to beat one, so they are not referenced (8GB each).
 //
-// The call itself lives in go-cheat.js. Netscript bills a script for every ns
-// function in its import graph whether or not it is reachable, so referencing
-// ns.go.cheat.* here would cost 8GB in every BitNode including the ones where
-// it cannot be called. The probe (ns.getResetInfo().ownedSF) costs 1GB.
+// MEASURED (tools/sim/go-w0.mjs --cheat, the game's own AI, 800ms solver,
+// crime_success 1; harness, NOT CALIBRATED live):
+//   5x5 Illuminati  none       n=60  win 30%  black 7.5   10.7k power/h
+//                   blind x1   n=60  win 38%  black 6.6   12.0k  (one unseen roll a game)
+//                   predicted  n=60  win 90%  black 15.9  37.7k  (2.2 cheats/game, 0 ejections)
+//   5x5 Daedalus    none       n=50  win 100% black 15.7  10.2k
+//                   predicted  n=50  win 100% black 16.6  11.1k  (+9%)
+//   19x19 hidden    none       n=6   win 0%   black 86.7   961/h
+//                   predicted  n=4   win 0%   black 89.8   876/h  (9 cheats/game,
+//                   58s of waiting and a second solver round trip each: the
+//                   game is lost either way, so +3 area does not pay the time)
+// Priced positive on the small boards only: SETTINGS.cheat.maxSize.
+// So with cheats open, 5x5 Illuminati (x8 difficulty) out-earns everything by
+// ~3.5x; the Thompson posterior learns that from the live outcomes.
+//
+// RAM: the calls live in go-cheat.js (11.1GB, exec'd only when the gate is
+// open), because Netscript bills every ns function in the import graph
+// whether or not it is reachable. go.js itself gains nothing: exec, isRunning
+// and read were already referenced. Each game's cheats are logged in
+// /tel/go.txt (`cheat`, `cheatLog`) and each helper run in /tel/go-cheat.txt.
 //
 // ---------------------------------------------------------------------------
 // CPU budget — this runs forever in the background on someone's laptop.
@@ -85,7 +126,7 @@
 // and the win streak is worth up to 3x — more than the extra territory.
 // ---------------------------------------------------------------------------
 
-import { chooseMove } from 'golib.js'
+import { chooseMove, applyMove, cheatChance, cheatWaitS } from 'golib.js'
 import { canUseGoCheat, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
@@ -161,6 +202,25 @@ import { reporter, describe, record } from 'status.js'
 //
 // idle 100 not 400: fixed loop overhead was 745ms/turn, LARGER than the search
 // itself at this budget. Pair with `--poll 150` on tools/go-solver.mjs.
+//
+// 19x19 — THE HIDDEN OPPONENT (w0r1d_d43m0n). Measured 2026-10-03 headless
+// against the game's own getMove on the board the game deals (bitverse shape,
+// 7 white handicap routers, komi 9.5; tools/sim/go-w0.mjs, report
+// go-w0-report.mjs). NOT CALIBRATED live: no game against it has been played.
+// Wall clock is modelled (our think + ~0.55s round trip per move, 200ms per AI
+// waitCycle, 10ms per pattern row, plus the AI's compute under node).
+//
+//   solver @800ms                      n   win   black        power/h
+//   as on 5x5 (binary win objective)   6   0%    68.5+-11.3    697+-121
+//   + node-power objective, may pass   6   0%    84.3+-5.7     948+-80
+//   + widening, ordered replies        6   0%    86.7+-6.4     961+-80   <- bigBoard
+//   same @2500ms                       1   0%    82            ~620
+//   same @400ms                        6   0%    64.0+-11.6    709+-134
+//
+// It is NOT winnable at this strength — 7 handicap stones plus 9.5 komi; every
+// playout loses, which is exactly why the binary objective was flat — so the
+// lever is black's AREA (node power credits it win or lose, x2.5 x0.5 on a
+// loss) and game length. More think time bought nothing per hour.
 const SETTINGS = {
   opponent: 'Daedalus',
   size: 5,
@@ -168,9 +228,21 @@ const SETTINGS = {
   idle: 100,      // pause between moves; with maxms this sets the duty cycle
   topK: 8,
   statusFile: '/tel/go.txt',
-  // Which cheat, when available. playTwoMoves nets +1 stone of tempo at 60%
-  // against -1 turn at 40%.
-  cheat: 'twoMoves',
+  // THE CHEAT POLICY, when the API is open (see the header): playTwoMoves,
+  // only on a turn where go-cheat.js can SEE the roll succeed — so up to
+  // `maxPerGame` free stones of tempo a game and never a failure. A cheat is
+  // skipped while the window is estimated further than `maxWaitMs` away, and
+  // abandoned for the game once chance(k) is narrower than one engine tick
+  // (minChance: 200ms of a 59.06s sawtooth = 0.0034), where the window can be
+  // stepped over. fromTurn: not on the first move (no shape to extend).
+  // maxSize: cheats only on boards up to this size — measured positive on 5x5
+  // and negative per hour on the hidden opponent's 19x19 (header).
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9 },
+  // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
+  // solver per request; 5x5 requests carry nothing and search exactly as
+  // measured. Measured headless against the game's own AI on the bitverse
+  // board (tools/sim/go-w0.mjs) — see the header's 19x19 block.
+  bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true } },
   // The solver-absence alarm. See solverHealth() below.
   solverWarnAfter: 10,
   solverMinShare: 0.5,
@@ -598,6 +670,17 @@ export async function main(ns) {
   let opponent = keyOfGame(flags.opponent) ?? 'Daedalus'
   let opponentWhy = 'startup default'
   const canCheat = canUseGoCheat(reset) && ns.fileExists('go-cheat.js', 'home')
+  // Cheats are switched off for the rest of the process if a played cheat's
+  // stones are missing from the next board twice — the prediction would then
+  // be wrong (a game update to the RNG or the formula), and a wrong prediction
+  // is the one thing that makes a cheat costly. Said in /tel/go.txt.
+  let cheatOn = canCheat
+  let cheatOffWhy = canCheat ? null : 'the go.cheat API is closed (needs SF14 >= 2, or SF14 == 1 inside BitNode 14)'
+  // Playtime calibration from go-cheat.js's last run: {T, at, crime}.
+  let cheatCalib = null
+  let cheatsPlayed = 0
+  let cheatUnverified = 0
+  const cheatLog = []
 
   // PER-PROCESS counters: they restart at 0 whenever go.js restarts (every
   // deploy). wins/losses/winStreak below are the game's own per-LIFE stats for
@@ -687,6 +770,11 @@ export async function main(ns) {
     idle: flags.idle,
     sf14,
     cheatsTried,
+    cheatsPlayed,
+    cheatOn,
+    cheatOffWhy,
+    cheatUnverified,
+    cheatLog: cheatLog.slice(-10),
     remoteMoves,
     localMoves,
     mirrorPasses,
@@ -781,12 +869,125 @@ export async function main(ns) {
       let done = false
       let stalled = false
       let guard = 0
-      let cheated = !canCheat
       phase = 'playing'
+      // This game's cheats: played (all succeed by construction), declined
+      // (go-cheat.js saw the window too far off), skipped (estimated too far
+      // to exec at all), waitedMs (playtime waited for windows).
+      const cheat = { played: 0, declined: 0, skipped: 0, waitedMs: 0, noRam: false }
+      let pendingVerify = null
+      // The opponent's last action was a pass: our pass would END the game.
+      let oppPassed = false
+      // What the solver is told beyond the position (SETTINGS.bigBoard): on
+      // 19x19 a time budget and search options, including the NODE POWER
+      // objective at this opponent's streak multipliers (effect.ts:119-130:
+      // a win after streak s pays 1+0.25*min(s+1,8), or 1+0.5*min(-s,8) when
+      // it breaks a dry streak; a loss pays 0.5). Empty below 13x13.
+      const solverReq = (() => {
+        if (size < 13) return {}
+        const st = preStats?.winStreak ?? 0
+        const win = st < 0 ? 1 + 0.5 * Math.min(-st, 8) : 1 + 0.25 * Math.min(st + 1, 8)
+        return { maxms: SETTINGS.bigBoard.maxms, opts: { ...SETTINGS.bigBoard.opts, objective: { win, loss: 0.5 } } }
+      })()
+      const remoteWait = Math.max(flags.remotems, (solverReq.maxms ?? 0) + 6000)
+      /** One solver round trip; null if no reply in time. */
+      const askSolver = async (board, validList) => {
+        seq++
+        const opts = solverReq.opts ? { ...solverReq.opts, opponentPassed: oppPassed } : undefined
+        ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}) }), 'w')
+        for (let waited = 0; waited < remoteWait; waited += 250) {
+          await ns.sleep(250)
+          try {
+            const reply = JSON.parse(ns.read('/go/move.txt') || '{}')
+            if (reply.seq === seq) return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
+          } catch {
+            /* not written yet */
+          }
+        }
+        return null
+      }
+      /**
+       * One two-move cheat, if the window allows; see CHEAT POLICY. Returns
+       * {played, reply}. Never plays a cheat it cannot see succeed.
+       */
+      const tryCheat = async (board, validList, first) => {
+        const k = cheat.played
+        const p = cheatChance(k, cheatCalib?.crime ?? 1, sf14)
+        if (p < SETTINGS.cheat.minChance) return { played: false }
+        if (cheatCalib) {
+          // Playtime advances with the wall clock while the tab is live; a
+          // throttled tab only makes this optimistic, and go-cheat.js decides
+          // on the exact value anyway.
+          const w = cheatWaitS(cheatCalib.T + (Date.now() - cheatCalib.at), p) * 1000
+          if (w > SETTINGS.cheat.maxWaitMs + 1500) {
+            cheat.skipped++
+            return { played: false }
+          }
+        }
+        const board2 = applyMove(board, first.x, first.y)
+        if (!board2) return { played: false }
+        // playTwoMoves validates BOTH points on the board before either stone.
+        const valid2 = validList.filter(([x, y]) => !(x === first.x && y === first.y) && board2[x][y] === '.')
+        if (!valid2.length) return { played: false }
+        const second = await askSolver(board2, valid2)
+        if (!second || !second.length) return { played: false }
+        const execAt = Date.now()
+        const pid = ns.exec('go-cheat.js', 'home', 1, first.x, first.y, second[0].x, second[0].y, SETTINGS.cheat.maxWaitMs)
+        if (!pid) {
+          record(errors, new Error('go-cheat.js did not start (pid 0): no room on home for its 11.1GB — no more cheats this game'))
+          cheat.noRam = true
+          return { played: false }
+        }
+        cheatsTried++
+        while (ns.isRunning(pid)) {
+          await ns.sleep(50)
+          heartbeat()
+        }
+        let st = null
+        try {
+          st = JSON.parse(ns.read('/tel/go-cheat.txt') || 'null')
+        } catch {
+          /* unreadable is handled below */
+        }
+        if (!st || !(Date.parse(st.at) >= execAt - 2000)) {
+          record(errors, new Error('go-cheat.js left no result for this run'))
+          return { played: false }
+        }
+        if (st.calib && Number.isFinite(st.calib.T)) {
+          const base = 0.6 * (0.7 - 0.02 * k) ** k
+          const crime = (st.calib.p - (sf14 === 3 ? 0.25 : 0)) / base
+          cheatCalib = { T: st.calib.T, at: st.calib.at, crime: Number.isFinite(crime) && crime > 0 ? crime : 1 }
+        }
+        if (st.error) {
+          record(errors, new Error(`go-cheat.js: ${st.error}`))
+          return { played: false }
+        }
+        if (!st.cheated) {
+          cheat.declined++
+          return { played: false }
+        }
+        cheat.played++
+        cheatsPlayed++
+        cheat.waitedMs += st.waitedMs ?? 0
+        pendingVerify = [[first.x, first.y], [second[0].x, second[0].y]]
+        return { played: true, reply: st.reply }
+      }
 
       while (!done && guard++ < 4000) {
         const boardStrings = ns.go.getBoardState()
         const valid = ns.go.analysis.getValidMoves()
+        // A played cheat's two stones must be on the board the AI handed back.
+        if (pendingVerify) {
+          const ok = pendingVerify.every(([x, y]) => boardStrings[x]?.[y] === 'X')
+          pendingVerify = null
+          if (!ok) {
+            cheatUnverified++
+            record(errors, new Error(`a predicted cheat's stones are missing from the next board (${cheatUnverified} so far) — captured by the reply, or the prediction is wrong`))
+            if (cheatUnverified >= 2) {
+              cheatOn = false
+              cheatOffWhy = 'two predicted cheats were not on the board afterwards — the roll prediction no longer matches the game; cheats OFF for this process'
+            }
+          }
+        }
 
         // Remote-first: hand the position to the external solver (real UCT on
         // its own nice-19 OS process — see tools/go-solver.mjs) and wait
@@ -795,38 +996,22 @@ export async function main(ns) {
         // out there costs the game thread nothing. If no reply arrives (solver
         // not running, daemon down), fall back to the local flat search — the
         // bot degrades instead of stopping.
-        let ranked = null
-        seq++
         const validList = []
         for (let x = 0; x < size; x++) for (let y = 0; y < size; y++) if (valid[x]?.[y]) validList.push([x, y])
-        ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board: boardStrings, valid: validList }), 'w')
-        for (let waited = 0; waited < flags.remotems; waited += 250) {
-          await ns.sleep(250)
-          try {
-            const reply = JSON.parse(ns.read('/go/move.txt') || '{}')
-            if (reply.seq === seq) {
-              ranked = reply.pass ? [] : [{ x: reply.x, y: reply.y }]
-              remoteMoves++
-              break
-            }
-          } catch {
-            /* not written yet */
-          }
-        }
-        if (ranked === null) {
+        let ranked = await askSolver(boardStrings, validList)
+        if (ranked !== null) remoteMoves++
+        else {
           ranked = chooseMove(boardStrings, valid, size, komi, flags.maxms, flags.topk)
           localMoves++
         }
 
-        // The single permitted cheat, once the position has some shape.
-        if (!cheated && ranked && ranked.length >= 2 && guard > 4) {
-          cheated = true
-          cheatsTried++
-          const pid = ns.exec('go-cheat.js', 'home', 1, SETTINGS.cheat, ranked[0].x, ranked[0].y, ranked[1].x, ranked[1].y)
-          if (pid) {
-            while (ns.isRunning(pid)) await ns.sleep(40)
-            // No return value needed: every cheat acts on the board, which the
-            // next iteration re-reads. A failed cheat simply skipped our turn.
+        // A cheat replaces this turn's move when the clock allows (CHEAT POLICY).
+        if (cheatOn && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
+          const c = await tryCheat(boardStrings, validList, ranked[0])
+          if (c.played) {
+            moves++
+            oppPassed = c.reply === 'pass'
+            if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)
             continue
           }
@@ -843,6 +1028,7 @@ export async function main(ns) {
         if (ranked && ranked.length) moves++
 
         if (!res || res.type === 'gameOver') done = true
+        oppPassed = res?.type === 'pass'
 
         // MIRROR THE OPPONENT'S PASS WHEN AHEAD.
         //
@@ -985,6 +1171,7 @@ export async function main(ns) {
             power: typeof n0 === 'number' && typeof n1 === 'number' ? Math.max(0, n1 - n0) : null,
             hours: (Date.now() - gameStartedAt) / 3600e3,
             solverShare: solverHealth({ remoteMoves, localMoves }).solverShare,
+            cheats: cheat.played,
           })
           writeHome(W0_FILE, JSON.stringify(w0Rec))
           // The gameplan observation channel, every OBS_EVERY games against it.
@@ -1006,7 +1193,12 @@ export async function main(ns) {
       const solver = solverHealth({ remoteMoves, localMoves })
       const h = goHealth({ solver, moveStalls, lastStallAt, throttle })
       phase = 'between games'
+      if (canCheat) {
+        cheatLog.push({ at: new Date().toISOString(), opponent, ...cheat, won: (s.wins ?? 0) > (preStats?.wins ?? 0), black: finalScore?.black ?? null, white: finalScore?.white ?? null })
+        if (cheatLog.length > 50) cheatLog.splice(0, cheatLog.length - 50)
+      }
       gameFields = {
+        cheat: canCheat ? { ...cheat } : null,
         wins: s.wins ?? 0,
         losses: s.losses ?? 0,
         winStreak: s.winStreak ?? 0,

@@ -161,12 +161,11 @@ export function play(b, nbrs, idx, colour, scratch) {
  * Playouts previously accepted any legal non-eye point, which meant they
  * cheerfully played stones that were captured on the opponent's reply. A
  * playout full of those is not a sample of how the position plays out, it is
- * noise, and no amount of search budget fixes a biased estimator. The undo is a
- * board memcpy — 81 bytes on 9x9 — which is far cheaper than the alternative of
- * computing resulting liberties analytically.
+ * noise, and no amount of search budget fixes a biased estimator. The undo is
+ * a single point (see below), far cheaper than computing the resulting
+ * liberties analytically.
  */
 export function tryPlay(b, nbrs, idx, colour, scratch) {
-  scratch.undo.set(b)
   const cap = play(b, nbrs, idx, colour, scratch)
   if (cap < 0) return false
   if (cap === 0) {
@@ -175,8 +174,15 @@ export function tryPlay(b, nbrs, idx, colour, scratch) {
     // walk can stop there. The `cap === 0` gate is preserved deliberately —
     // removing it was measured HARMFUL (it deletes legitimate captures and ko
     // recaptures from the tree, since tryPlay gates expansion).
+    //
+    // The undo is ONE point. This used to snapshot the whole board before
+    // every play and restore it here — but on this branch nothing was
+    // captured, so the only change `play` made is the stone itself. Clearing
+    // it is the exact inverse. At 19x19 the snapshot was a 361-byte copy per
+    // playout move and tryPlay was 22.5% of the solver's profile; on 5x5 it
+    // was 25 bytes and nobody noticed. Output-identical (same rand stream).
     if (!libsAtLeast(b, nbrs, idx, 2, scratch.out, scratch.seen, ++scratch.mark)) {
-      b.set(scratch.undo)
+      b[idx] = EMPTY
       return false
     }
   }
@@ -270,6 +276,11 @@ export function scoreBoard(b, nbrs, N, komi, scratch) {
     if (touchUs && !touchThem) us += n
     else if (touchThem && !touchUs) them += n
   }
+  // The area split rides out on the scratch for score-aware objectives
+  // (chooseMoveUCT's opts.objective), which need black's AREA, not only the
+  // sign of the margin. Two stores; free to callers that ignore them.
+  scratch.us = us
+  scratch.them = them
   return us - them - komi
 }
 
@@ -386,7 +397,7 @@ export function playout(b, nbrs, N, komi, colour, scratch, rand, amaf) {
  * plausible moves and sampling each properly is what turns the same budget into
  * an actual decision.
  */
-export function heuristic(b, nbrs, idx, scratch) {
+export function heuristic(b, nbrs, idx, scratch, colour = US) {
   const { out, seen } = scratch
   // `scratch.scan2`, NOT `scratch.probe`. makeScratch has never created a
   // `probe` field — the name was changed there to dodge a phantom RAM
@@ -403,7 +414,10 @@ export function heuristic(b, nbrs, idx, scratch) {
   // for restarting deliberately rather than discovering it later.
   const scan2 = scratch.scan2
   scan2.set(b)
-  const captured = play(scan2, nbrs, idx, US, scratch)
+  // `colour` is the side placing the stone (default US, the only caller there
+  // was until the 19x19 widening needed opponent nodes ordered too).
+  const enemy = colour === US ? THEM : US
+  const captured = play(scan2, nbrs, idx, colour, scratch)
   if (captured < 0) return -1e9
   const mine = group(scan2, nbrs, idx, out, seen, ++scratch.mark)
 
@@ -412,10 +426,10 @@ export function heuristic(b, nbrs, idx, scratch) {
   const ns = nbrs[idx]
   for (let j = 0; j < ns.length; j++) {
     const p = ns[j]
-    if (b[p] === US) {
+    if (b[p] === colour) {
       const before = group(b, nbrs, p, out, seen, ++scratch.mark)
       if (before.libs === 1) rescued += before.size
-    } else if (scan2[p] === THEM) {
+    } else if (scan2[p] === enemy) {
       const g = group(scan2, nbrs, p, out, seen, ++scratch.mark)
       if (g.libs === 1) atari += g.size
     }
@@ -548,10 +562,48 @@ export function chooseMove(boardStrings, valid, N, komi, maxms, topK) {
  */
 const RAVE_K = 300
 
-export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
+/**
+ * opts (all optional; `{}` is exactly the search measured on 5x5):
+ *
+ *   objective {win, loss}  Score playouts by the NODE POWER they would bank
+ *                rather than by win/loss. scoring.ts:85-88 credits every game,
+ *                win or lose, with black's AREA x difficulty x streak, and the
+ *                streak factor is 0.5 on a loss (effect.ts:119-130). So the
+ *                value of a finished playout is proportional to
+ *                    area/points x (won ? 1 : loss/win)
+ *                where `win`/`loss` are the streak multipliers this game would
+ *                be credited at. A binary win/loss signal is FLAT when every
+ *                playout loses — which is the hidden opponent's 19x19 with 7
+ *                handicap stones and komi 9.5 — and the search then has
+ *                nothing to choose between moves by.
+ *   widen {k0, k}  Progressive widening: a node may hold at most
+ *                k0 + k*sqrt(visits) children. Without it, the root of an open
+ *                19x19 has ~300 untried moves and a few hundred iterations
+ *                per second expand each ONCE — the "tree" is one ply of single
+ *                playouts. PASS is placed inside the first k0.
+ *   themHeur     Order the opponent's expansions by the same static heuristic
+ *                (from its side) instead of shuffling them — with widening,
+ *                only the first few are ever searched.
+ *   opponentPassed  The opponent's last action was a pass, so OUR pass ends
+ *                the game: the root starts with one pass on the streak and the
+ *                PASS child is scored exactly.
+ *   allowPass    Return [] (pass) when PASS is the most-visited root child.
+ *                Without it the search always plays its best stone, which in
+ *                a lost endgame is the long tail of score-neutral moves the
+ *                opponent answers at ~1s each.
+ */
+export function chooseMoveUCT(boardStrings, valid, N, komi, maxms, opts = {}) {
   const nbrs = makeGeometry(N)
   const root = parseBoard(boardStrings)
   const scratch = makeScratch(N)
+  const objective = opts.objective && opts.objective.win > 0 ? opts.objective : null
+  const widen = opts.widen && opts.widen.k0 >= 1 ? opts.widen : null
+  let points = 0
+  for (let i = 0; i < N * N; i++) if (root[i] !== DEAD) points++
+  const lossRatio = objective ? Math.max(0, objective.loss / objective.win) : 0
+  // A finished simulation's value for US. scoreBoard has just run (playout's
+  // last act, or the double-pass branch), so scratch.us is that board's area.
+  const simValue = (won) => (objective ? (scratch.us / points) * (won ? 1 : lossRatio) : won)
   let seed = (Date.now() ^ 0x2545f491) >>> 0
   const rand = () => {
     seed ^= seed << 13; seed >>>= 0
@@ -582,8 +634,9 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
     const moves = legal(b, colour)
     // Order expansion by the static heuristic so the plausible moves enter the
     // tree first; UCT then corrects the ordering with real samples.
-    const scored = moves.map((idx) => ({ idx, h: colour === US ? heuristic(b, nbrs, idx, scratch) : 0 }))
-    if (colour === US) scored.sort((a, z) => z.h - a.h)
+    const heurThem = colour === THEM && opts.themHeur
+    const scored = moves.map((idx) => ({ idx, h: colour === US || heurThem ? heuristic(b, nbrs, idx, scratch, colour) : 0 }))
+    if (colour === US || heurThem) scored.sort((a, z) => z.h - a.h)
     else {
       // Shuffle opponent moves so expansion order is not systematically biased.
       for (let i = scored.length - 1; i > 0; i--) {
@@ -591,7 +644,8 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
         const t = scored[i]; scored[i] = scored[j]; scored[j] = t
       }
     }
-    scored.push({ idx: PASS, h: -1e6 })
+    if (widen) scored.splice(Math.min(scored.length, widen.k0 - 1), 0, { idx: PASS, h: -1e6 })
+    else scored.push({ idx: PASS, h: -1e6 })
     // raveV/raveW: AMAF statistics — for each point, how often it was played
     // (first, by this node's side-to-move) anywhere later in a simulation
     // through this node, and how those simulations ended for US.
@@ -643,7 +697,7 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
     board.set(root)
     let node = rootNode
     let colour = US
-    let passStreak = 0
+    let passStreak = opts.opponentPassed ? 1 : 0
     const path = [rootNode]
     stamp++
     playedN = 0
@@ -652,10 +706,10 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
     let result = null
     while (true) {
       if (passStreak >= 2) {
-        result = scoreBoard(board, nbrs, N, komi, scratch) > 0 ? 1 : 0
+        result = simValue(scoreBoard(board, nbrs, N, komi, scratch) > 0 ? 1 : 0)
         break
       }
-      if (node.untried.length) {
+      if (node.untried.length && (!widen || node.children.size < widen.k0 + widen.k * Math.sqrt(node.visits))) {
         const { idx } = node.untried.shift()
         if (idx === PASS) passStreak++
         else if (tryPlay(board, nbrs, idx, colour, scratch)) {
@@ -671,9 +725,9 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
         node.children.set(idx, next)
         path.push(next)
         // --- playout from the new leaf ---
-        result = passStreak >= 2
+        result = simValue(passStreak >= 2
           ? (scoreBoard(board, nbrs, N, komi, scratch) > 0 ? 1 : 0)
-          : playout(board, nbrs, N, komi, colour === US ? THEM : US, scratch, rand, amaf)
+          : playout(board, nbrs, N, komi, colour === US ? THEM : US, scratch, rand, amaf))
         break
       }
       // fully expanded: UCB1 descent
@@ -698,7 +752,7 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
         const u = value + Math.sqrt((1.2 * logv) / (child.visits + 1))
         if (u > bestU) { bestU = u; best = { idx, child } }
       }
-      if (!best) { result = scoreBoard(board, nbrs, N, komi, scratch) > 0 ? 1 : 0; break }
+      if (!best) { result = simValue(scoreBoard(board, nbrs, N, komi, scratch) > 0 ? 1 : 0); break }
       if (best.idx === PASS) passStreak++
       else if (tryPlay(board, nbrs, best.idx, colour, scratch)) {
         amaf.record(best.idx, colour)
@@ -732,6 +786,75 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms) {
     if (idx === PASS) continue
     if (child.visits > bestVisits) { bestVisits = child.visits; bestIdx = idx }
   }
+  if (opts.allowPass) {
+    const passNode = rootNode.children.get(PASS)
+    if (passNode && passNode.visits > bestVisits) return []
+  }
   if (bestIdx === null) return null
   return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters }]
+}
+
+/**
+ * The board strings after OUR stone at (x, y), captures resolved — or null if
+ * the move is suicide. For choosing the second stone of a two-move cheat on the
+ * position the first one leaves (go.js). ns.go.cheat.playTwoMoves validates
+ * BOTH points against the board before either is placed (NetscriptFunctions/
+ * Go.ts playTwoMoves), so the caller also keeps the second inside the original
+ * valid set.
+ */
+export function applyMove(boardStrings, x, y) {
+  const N = boardStrings.length
+  const b = parseBoard(boardStrings)
+  if (play(b, makeGeometry(N), x * N + y, US, makeScratch(N)) < 0) return null
+  const ch = ['.', 'X', 'O', '#']
+  const out = []
+  for (let i = 0; i < N; i++) {
+    let row = ''
+    for (let j = 0; j < N; j++) row += ch[b[i * N + j]]
+    out.push(row)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// THE CHEAT ROLL IS A CLOCK. ns.go.cheat.* rolls `new WHRNG(Player.totalPlaytime)
+// .random()` (Go/effects/netscriptGoImplementation.ts:512,518) — a Wichmann-Hill
+// generator seeded s1=s2=s3=(T/1000)%30000 and stepped ONCE (Casino/RNG.ts:40-63).
+// One step multiplies the seed by 171/172/170 mod 30269/30307/30323, so the
+// draw is frac(v*(171/30269 + 172/30307 + 170/30323)) up to the moduli: a
+// SAWTOOTH in playtime, rising 0.016932 per second, period 59.06s. Success is
+// `roll <= cheatSuccessChance(cheatCount)` (:518, :561-567), so a script that
+// reads getPlayer().totalPlaytime and calls the cheat in the same synchronous
+// tick (no await between) knows the outcome before it commits.
+// ---------------------------------------------------------------------------
+
+/** The game's WHRNG first draw for a playtime T (ms) — bit-for-bit Casino/RNG.ts:40-63. */
+export function cheatRoll(T) {
+  const v = (T / 1000) % 30000
+  const s1 = (171 * v) % 30269
+  const s2 = (172 * v) % 30307
+  const s3 = (170 * v) % 30323
+  return (s1 / 30269.0 + s2 / 30307.0 + s3 / 30323.0) % 1.0
+}
+
+/** Rise of the roll per second of playtime (between wraps). */
+export const CHEAT_ROLL_RATE = 171 / 30269 + 172 / 30307 + 170 / 30323
+
+/**
+ * cheatSuccessChance (netscriptGoImplementation.ts:561-567):
+ *   min(1, 0.6 * (0.7 - 0.02k)^k * crime_success + (SF14.3 ? 0.25 : 0)), floored at 0.
+ */
+export function cheatChance(k, crimeSuccess = 1, sf14 = 0) {
+  const c = 0.6 * (0.7 - 0.02 * k) ** k * crimeSuccess + (sf14 === 3 ? 0.25 : 0)
+  return Math.max(Math.min(c, 1), 0)
+}
+
+/**
+ * Seconds of playtime until the roll is next <= p (0 if it is now). The roll
+ * wraps from ~1 to ~0 and then rises, so the window opens at the wrap.
+ */
+export function cheatWaitS(T, p) {
+  const r = cheatRoll(T)
+  if (r <= p) return 0
+  return (1 - r) / CHEAT_ROLL_RATE
 }

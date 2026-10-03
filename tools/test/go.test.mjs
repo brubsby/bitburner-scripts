@@ -628,5 +628,113 @@ export async function run() {
   }
   checks.push(c8);
 
+  /* ------------------------------------------------------------------ GO11 */
+  // THE CHEAT IS ONLY FREE IF THE PREDICTION IS EXACT. go-cheat.js plays a
+  // cheat only when golib.cheatRoll(T) <= chance, reading T and calling in one
+  // synchronous block. A drifted roll, a drifted chance, or an `await` slipped
+  // between the read and the call each turn "never fails" into "fails
+  // sometimes" — and a failed cheat after the first can eject the whole game.
+  const c11 = new Check("GO11", "the predicted Go cheat: roll and chance match the game's own code, and go-cheat.js reads the clock and calls in ONE tick");
+  {
+    const golib = await import("../../golib.js");
+    await import("../sim/env.mjs");
+    const g = await import("../sim/game.bundle.mjs");
+    if (typeof g.WHRNG !== "function" || typeof g.cheatSuccessChance !== "function") {
+      c11.fail("game.bundle.mjs lacks WHRNG / cheatSuccessChance — rebuild it (node tools/sim/build.mjs)", "without the game's own code there is nothing to compare against, which is NOT a pass");
+    } else {
+      let bad = 0;
+      for (let i = 0; i < 50000; i++) {
+        const T = i % 2 ? Math.floor(Math.random() * 5e7) * 200 : Math.random() * 1e10;
+        if (new g.WHRNG(T).random() !== golib.cheatRoll(T)) bad++;
+      }
+      c11.examined(50000);
+      if (bad) c11.fail(`golib.cheatRoll disagrees with the game's WHRNG on ${bad} of 50000 playtimes`, "go-cheat.js would call into a failing roll it believes succeeds");
+      // The chance: the game's function under a stand-in player, k x crime x SF14.
+      const prev = g.Player;
+      try {
+        for (const sf14 of [0, 1, 2, 3]) {
+          for (const crime of [0.4, 1, 1.37, 3]) {
+            g.setPlayer({ mults: { crime_success: crime }, activeSourceFileLvl: (n) => (n === 14 ? sf14 : 0) });
+            for (let k = 0; k < 14; k++) {
+              c11.examined(1);
+              const game = g.cheatSuccessChance(k, false);
+              const ours = golib.cheatChance(k, crime, sf14);
+              if (Math.abs(game - ours) > 1e-12) c11.fail(`cheatChance(${k}, ${crime}, SF14.${sf14}) = ${ours}, the game says ${game}`);
+            }
+          }
+        }
+      } finally {
+        if (prev) g.setPlayer(prev);
+      }
+    }
+    // One tick from the read to the call. Strip comments, then the text between
+    // getPlayer() and playTwoMoves( must hold no `await`.
+    const tickBlock = (src) => {
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      const a = code.indexOf("ns.getPlayer()");
+      const b = code.indexOf("ns.go.cheat.playTwoMoves(");
+      if (a < 0 || b < 0 || b < a) return { error: "getPlayer() then playTwoMoves( not found in that order" };
+      const between = code.slice(a, b);
+      if (/\bawait\b/.test(between)) return { error: "an `await` sits between the playtime read and the cheat call" };
+      if (!/cheatRoll\(\s*T\s*\)/.test(between) || !/<=\s*p\b/.test(between)) return { error: "the call is not gated on cheatRoll(T) <= p" };
+      return { ok: true };
+    };
+    const cheatSrc = read("go-cheat.js");
+    c11.examined(1);
+    const t = tickBlock(cheatSrc);
+    if (!t.ok) c11.fail(`go-cheat.js: ${t.error}`, "the outcome is only known if nothing yields between reading Player.totalPlaytime and the call");
+    // Seen to fail: the same check against an awaited read.
+    const mutated = cheatSrc.replace("const T = ns.getPlayer().totalPlaytime", "await ns.sleep(0)\n      const T = ns.getPlayer().totalPlaytime\n      await ns.sleep(0)");
+    c11.examined(1);
+    if (mutated === cheatSrc || tickBlock(mutated).ok) c11.fail("the one-tick check does not catch an await inserted between the read and the call");
+    // go.js must never reference the cheat API itself (8GB each, in every node).
+    const goCode = read("go.js").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    c11.examined(1);
+    if (/ns\.go\.cheat\b/.test(goCode)) c11.fail("go.js references ns.go.cheat — that bills 8GB+ in every BitNode; it belongs in go-cheat.js only");
+    // go-cheat.js references only the one cheat it uses.
+    c11.examined(1);
+    for (const fn of ["removeRouter", "repairOfflineNode", "destroyNode"]) {
+      if (new RegExp(`ns\\.go\\.cheat\\.${fn}\\b`).test(cheatSrc.replace(/\/\/.*$/gm, ""))) c11.fail(`go-cheat.js references ns.go.cheat.${fn} (8GB) that nothing calls`);
+    }
+  }
+  checks.push(c11);
+
+  /* ------------------------------------------------------------------ GO12 */
+  // The 19x19 search options (golib chooseMoveUCT opts) on the hidden
+  // opponent's real board, and applyMove for the cheat's second stone.
+  const c12 = new Check("GO12", "the big-board search returns a legal move on the bitverse board under every option go.js sends, and applyMove resolves captures");
+  {
+    const golib = await import("../../golib.js");
+    const g = await import("../sim/game.bundle.mjs");
+    if (typeof g.getNewBoardState !== "function") {
+      c12.fail("game.bundle.mjs lacks getNewBoardState");
+    } else {
+      const st = g.getNewBoardState(19, g.GoOpponent.w0r1d_d43m0n, true);
+      const board = g.simpleBoardFromBoard(st.board);
+      const valid = Array.from({ length: 19 }, () => new Array(19).fill(false));
+      for (const p of g.getAllValidMoves(st, g.GoColor.black)) valid[p.x][p.y] = true;
+      c12.examined(1);
+      if (board.length !== 19 || !board.some((r) => r.includes("#")) || board.join("").split("O").length - 1 !== 7) {
+        c12.fail("the hidden opponent's board is not the 19x19 bitverse shape with 7 white handicap routers", board.join("|"));
+      }
+      for (const opts of [{}, { objective: { win: 1.25, loss: 0.5 }, allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true }, { opponentPassed: true, allowPass: true, objective: { win: 1.25, loss: 0.5 } }]) {
+        c12.examined(1);
+        const r = golib.chooseMoveUCT(board, valid, 19, 9.5, 150, opts);
+        if (!Array.isArray(r)) c12.fail(`chooseMoveUCT(${JSON.stringify(opts)}) returned ${r} on an open board`);
+        else if (r.length && !valid[r[0].x][r[0].y]) c12.fail(`chooseMoveUCT(${JSON.stringify(opts)}) chose an invalid point ${r[0].x},${r[0].y}`);
+        else if (!r.length && !opts.opponentPassed) c12.fail(`chooseMoveUCT(${JSON.stringify(opts)}) passed on an open 19x19 board without the opponent having passed`);
+      }
+    }
+    // applyMove: a capture is resolved, a suicide is refused.
+    c12.examined(2);
+    // board[x][y]: (0,0) is the corner, its neighbours (1,0) and (0,1).
+    const suicide = golib.applyMove([".O...", "O....", ".....", ".....", "....."], 0, 0);
+    if (suicide !== null) c12.fail("applyMove allowed a suicide (a stone with no liberties capturing nothing)", JSON.stringify(suicide));
+    // White (0,1) has (0,0) as its last liberty: (0,2) and (1,1) are ours.
+    const took = golib.applyMove([".OX..", ".X...", ".....", ".....", "....."], 0, 0);
+    if (!took || took[0][1] !== "." || took[0][0] !== "X") c12.fail("applyMove did not capture the surrounded white stone", JSON.stringify(took));
+  }
+  checks.push(c12);
+
   return checks;
 }

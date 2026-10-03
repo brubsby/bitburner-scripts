@@ -13,7 +13,14 @@
 //
 // Protocol, via the RFA daemon's /rpc bridge (files on home):
 //   /go/req.txt   written by go.js each turn:
-//                 { seq, size, komi, board: [...], valid: [[x,y]...] }
+//                 { seq, size, komi, board: [...], valid: [[x,y]...],
+//                   maxms?, opts? }  — the optional pair only on 19x19 (the
+//                 hidden opponent): a per-request budget and chooseMoveUCT
+//                 options (node-power objective, widening, pass). A 5x5 request
+//                 omits both and is searched at --maxms exactly as measured.
+//                 golib.js changes need THIS process restarted to take effect
+//                 (it imported golib once); the daemon's supervisor restarts it
+//                 on exit, so killing it is the restart.
 //   /go/move.txt  written back by this: { seq, x, y } or { seq, pass: true }
 //
 // go.js matches on `seq` and falls back to its own cheap local search if no
@@ -63,8 +70,14 @@ while (true) {
         const valid = Array.from({ length: N }, () => new Array(N).fill(false));
         for (const [x, y] of req.valid || []) valid[x][y] = true;
 
+        // A request may carry its own budget and search options (go.js sends
+        // them for the 19x19 hidden-opponent board, SETTINGS.bigBoard); a 5x5
+        // request carries neither and searches exactly as measured. The budget
+        // is clamped so a malformed request cannot pin a core for minutes.
+        const maxms = Number.isFinite(req.maxms) ? Math.min(Math.max(req.maxms, 50), 20000) : MAXMS;
+        const opts = req.opts && typeof req.opts === "object" ? req.opts : {};
         const t0 = Date.now();
-        const ranked = chooseMoveUCT(req.board, valid, N, req.komi ?? 5.5, MAXMS);
+        const ranked = chooseMoveUCT(req.board, valid, N, req.komi ?? 5.5, maxms, opts);
         const move = ranked && ranked.length ? { seq: req.seq, x: ranked[0].x, y: ranked[0].y } : { seq: req.seq, pass: true };
 
         await rpc("pushFile", { filename: "/go/move.txt", server: "home", content: JSON.stringify(move) });
