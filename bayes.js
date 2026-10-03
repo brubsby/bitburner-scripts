@@ -177,7 +177,7 @@ export const igDraw = (p, rand) => p.b / gammaOf(p.a, rand)
 // Student-t CDF (for PIT). Regularised incomplete beta by continued fraction
 // (Numerical Recipes 6.4).
 // ---------------------------------------------------------------------------
-function lgamma(x) {
+export function lgamma(x) {
   const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5]
   let y = x
   const t = x + 5.5 - (x + 0.5) * Math.log(x + 5.5)
@@ -764,7 +764,7 @@ export function driftPairs(samples, { minGapH = 0.2, maxGapH = PAIR_MAX_GAP_H } 
  * 2026-09-27 05:32: one pass read 108h between 16h and 13h) moves s by its
  * share, not by its square: the Gaussian fit read 60% from that pass alone.
  */
-function robustIG(prior, xs, nu) {
+export function robustIG(prior, xs, nu) {
   if (!xs.length) return { a: prior.a, b: prior.b, weights: [] }
   let p = igUpdate(prior, xs)
   let w = xs.map(() => 1)

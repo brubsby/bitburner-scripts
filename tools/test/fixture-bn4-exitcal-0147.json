@@ -1,0 +1,353 @@
+{
+"about": "live BN4 2026-10-02 17:20Z-2026-10-03 01:47Z: installgate exitCalibration.samples (48) when healthcheck read PLAN MISCALIBRATED (100% of the 80% one-step interval); plan.txt exit and blade route decision at 01:47Z. The Bladeburner route, 3 lives.",
+"at": "2026-10-03T02:17:30.969Z",
+"samples": [
+{
+"at": "2026-10-02T17:20:50.731Z",
+"exitH": 48.08,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 43.447-54.277h",
+"ver": "1ft08b1.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T17:35:48.949Z",
+"exitH": 46.95,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 42.434-53.01h",
+"ver": "1ft08b1.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T17:50:49.157Z",
+"exitH": 47.23,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 43.463-52.672h",
+"ver": "1ft08b1.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T18:05:49.376Z",
+"exitH": 48.1,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 44.807-53.153h",
+"ver": "1ft08b1.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T18:20:50.062Z",
+"exitH": 44.05,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 41.378-48.366h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T18:35:50.460Z",
+"exitH": 43.06,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 40.451-47.282h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T18:50:50.736Z",
+"exitH": 42.8,
+"life": 1790952048325,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 40.475-46.742h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T19:05:51.379Z",
+"exitH": 41.99,
+"life": 1790952048325,
+"source": "plan: median over the posterior (w0.25), 80% interval 40.085-45.769h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T19:20:51.575Z",
+"exitH": 40.68,
+"life": 1790952048325,
+"source": "plan: median over the posterior (now, held), 80% interval 38.926-44.159h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T19:38:44.404Z",
+"exitH": 42.94,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 40.957-45.616h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T19:53:44.404Z",
+"exitH": 41.67,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 39.744-44.264h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T20:08:45.120Z",
+"exitH": 41.5,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 39.656-43.955h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T20:23:45.774Z",
+"exitH": 41.19,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 39.446-43.505h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T20:38:46.289Z",
+"exitH": 40.87,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 39.203-43.07h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T20:53:47.006Z",
+"exitH": 40.66,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 39.049-42.752h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T21:08:47.729Z",
+"exitH": 38.77,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 37.28-40.688h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T21:23:48.664Z",
+"exitH": 38.42,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 36.956-40.291h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T21:38:49.881Z",
+"exitH": 38.23,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 36.812-40.029h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T21:53:51.004Z",
+"exitH": 37.02,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 35.677-38.7h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T22:08:52.846Z",
+"exitH": 34.84,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 33.612-36.403h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T22:23:53.846Z",
+"exitH": 34.54,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 33.319-36.093h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T22:38:54.816Z",
+"exitH": 35.37,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 34.149-36.919h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T22:53:56.824Z",
+"exitH": 33.18,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 32.049-34.622h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T23:08:57.423Z",
+"exitH": 32.97,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 31.834-34.406h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T23:21:20.470Z",
+"exitH": 32.62,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 31.522-34.019h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T23:36:21.463Z",
+"exitH": 33.31,
+"life": 1790968861655,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 32.199-34.702h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-02T23:51:22.625Z",
+"exitH": 31.46,
+"life": 1790968861655,
+"source": "plan: median over the posterior (w0.083, held), 80% interval 30.362-32.896h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-03T00:01:51.243Z",
+"exitH": 33.52,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 31.872-35.276h",
+"ver": "iq93uf.41",
+"boot": 1790944434028
+},
+{
+"at": "2026-10-03T00:17:03.205Z",
+"exitH": 33.14,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 31.512-34.877h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T00:32:03.629Z",
+"exitH": 32.14,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 30.558-33.821h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T00:47:03.705Z",
+"exitH": 31.89,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 30.333-33.527h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T01:02:03.696Z",
+"exitH": 31.84,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 30.306-33.437h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T01:17:03.971Z",
+"exitH": 31.57,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 30.074-33.126h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T01:32:04.360Z",
+"exitH": 30.33,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 28.91-31.793h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T01:47:04.316Z",
+"exitH": 29.01,
+"life": 1790985409081,
+"source": "plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval 27.664-30.401h",
+"ver": "iq93uf.41",
+"boot": 1790986097397
+},
+{
+"at": "2026-10-03T02:12:30.939Z",
+"exitH": 20.45,
+"life": 1790985409081,
+"source": "plan: median over the posterior (w2), 80% interval 19.758-21.272h \u2014 income posterior (life 3): income posterior: prior $3.18e+5/s (x/\u00f7 9.4) updated by this life's $2.17e+4/s over 2.18h (the running scripts' hacking stream; weight 99%) -> median $2.25e+4/s, x/\u00f7 1.3 at 80% [income from the formula (freshlife.js) at age 2.26h: $7.16e+5/s x 0.44 (income formula error for BitNode 4: ln(realised/model) -0.81 (x0.44), one life x/\u00f7 9.42 at 80% (t, df 22); 0 own lives carry 0% of the node's bias, 21 lives in 3 other node(s) the cross-node mean x0.44 (between nodes x/\u00f7 2.94, fitted); one life's scatter x/\u00f7 5.33; 4 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $3.18e+5/s, x/\u00f7 9.4 at 80%]",
+"ver": "ntpvqg.45",
+"boot": 1790986097397
+}
+],
+"planExit": {
+"meanH": 15.423,
+"q10": 14.798,
+"q50": 15.317,
+"q90": 15.932,
+"source": "install decision (w1.917, the Bladeburner route)",
+"income": "measured",
+"rep": "measured (or not needed)"
+},
+"planCalibration": {
+"n": 30,
+"cover80": 1,
+"pitMean": 0.431,
+"pitVar": 0.0217,
+"ks": 0.346,
+"excluded": {
+"life": 2,
+"version": 2,
+"boot": 1,
+"stale": 0,
+"untagged": 0,
+"gap": 0
+},
+"why": "30 sequential one-step predictions: 100% inside the 80% interval (PIT mean 0.43 vs 0.5, var 0.022 vs 0.083)"
+},
+"bladeRoute": {
+"key": "blade",
+"meanH": 15.423,
+"q10": 14.798,
+"q50": 15.317,
+"q90": 15.932,
+"samples": [
+15.668,
+15.148,
+16.641,
+14.929,
+15.212,
+15.948,
+15.871,
+12.406,
+15.037,
+15.504,
+14.718,
+15.1,
+15.137,
+15.291,
+15.312,
+15.827,
+15.71,
+14.742,
+15.086,
+15.731,
+15.321,
+15.893,
+18.147,
+15.775
+],
+"why": "held (no event since 2026-10-03T02:12:29.775Z); at that decision: stays on blade: the best alternative hack is expected -1283551540922657.75h later net of a 0.05h switch cost and better in 0% of 24 paired draws (needs a positive gain and 80%)"
+}
+}

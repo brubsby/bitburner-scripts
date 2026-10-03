@@ -23,7 +23,9 @@ pass observations   ─┘
 countexit.countExitAt / routeExitAt  (the existing simulators, one fixed policy per option)
         │ H[option][draw]  x  structural-discrepancy factor
         ▼
-plan.js  decide(): expected exit + switch cost, commitment (regret rule)
+plan.js  decide(): expected exit + switch cost, commitment (expected loss vs value of waiting)
+        ▲ width multiplier m, information rate ρ
+exitcal.js  calibration: revisions vs the published interval, e-processes
         ▼
 /tel/plan.txt  (ONE committed plan; other deciders read it)
 ```
@@ -33,7 +35,8 @@ plan.js  decide(): expected exit + switch cost, commitment (regret rule)
 | input | likelihood | prior | data |
 | --- | --- | --- | --- |
 | trader return r(W) (/s) = r0 s(W/W*) | per interval of Δt ticks past each life's first hour: x = ln(1+ΔPnl/W)/Δt_h ~ N(r0 (1+d_j) s(W; W*), κ² σ(W)²/Δt_h) at the book W it started from; the life's level d_j ~ N(0, τ²) integrated out in closed form; grid posterior on (ln r0, ln W*) (`bayes.traderRwPosterior`) | the shipped trader on the game's market (`traderw.RW_PRIOR`, tools/sim/stocks/rw.mjs + rwfit.mjs): pre-4S r0 0.798/h, W* $2.68e11, sd ln 0.4 / 0.8 (stated), τ 0.22 and σ(W) from the sim, κ² ~ IG(3, 2) | `/tel/stock-hist.txt` (flows excluded exactly as `nodeecon.realisedCapital`; 4S rows `s4` are the 4S curve's) |
-| structural error s² | relative forecast residual per same-life pair r = (E_b − (E_a − Δh))/E_a ~ N(0, 2s²) (Inverse-Gamma, known mean 0) | IG(a0 = 2, b0 = 2·0.1²) — 10% prior | `exitCalibration.samples` |
+| structural error s² | relative forecast residual per same-life pair r = (E_b − (E_a − Δh))/E_a ~ N(0, 2s²) (Inverse-Gamma, known mean 0) | IG(a0 = 2, b0 = 2·0.1²) — 10% prior (dominates b while the realised pairs are far below 10%: see Calibration, suspect (a)) | `exitCalibration.samples` |
+| exit predictive width multiplier m | adaptive conformal on the martingale predictive's hit/miss (exitcal.js) | m = 1, applied shrunk by n/(n + 8) | the same samples' revisions and published intervals |
 | install cadence: ln M per life-hour r_n and life length L_n | per node y_n = ln(Σg/ΣL) ~ N(θ_n, σ²/n_eff) and ln(mean L) ~ N(θ_n, σ_L²/n); θ_n = μ + β·c_n + u_n, u_n ~ N(0, τ²) (random effect per node, covariate c = ln aug money × rep cost); σ² pooled over nodes (IG) | μ ~ N(ln 0.05/h, 1.5²), N(ln 3h, 1.5²); τ 1.0 / 0.7; β ~ N(−0.5, 0.5²) / N(+0.3, 0.5²) — all stated | lifetimes ledger, re-records merged, stall lives excluded (see below) |
 | fresh-life hacking income (prior) | per life y = ln(Σ realised / Σ formula) over its 0.5h windows; y = θ_n + u (t, ν 4), θ_n = μ + v_n (node effect), σ² pooled (IG) | freshlife.js's simulated fresh life at this age × exp(E θ_n); μ ~ N(0, ln 10²·2) (formula unbiased, stated), τ 0.5 stated below 3 other nodes | 7 lives (history.jsonl + earnings ledger, `FRESH_CALIBRATION`) + every life tel.js records with its inputs (`/tel/freshcal.txt`) |
 | script exp rate (prior) | the same, on exp | freshlife.js's exp/s at this age × exp(E θ_n); stated scatter ln 3 | 37 lives |
@@ -299,13 +302,46 @@ measured.
 ### Decision rule (plan.js decide)
 
 With c the committed option and a an alternative, per draw
-D_d = H_c,d − (H_a,d + switchCost_a). Switch to the a with the largest E[D]
-only if E[D] > 0 AND P(D > 0) ≥ θ (θ = 0.8). The committed option's H is its
-REMAINING path from the current state (sunk progress is already in the state:
-strength 202 shortens the remaining detour), so lost progress is not charged
-twice; switchCost carries only what a switch itself spends (travel, liquidation
-commission, a stated 0.05h re-order). No incumbent (new life, leg finished,
-committed option gone) -> argmin E[H].
+D_d = H_c,d − (H_a,d + switchCost_a) (hours, common random numbers). The
+committed option's H is its REMAINING path from the current state (sunk
+progress is already in the state: strength 202 shortens the remaining
+detour), so lost progress is not charged twice; switchCost carries only what
+a switch itself spends (travel, liquidation commission, a stated 0.05h
+re-order). No incumbent (new life, leg finished, committed option gone) ->
+argmin E[H].
+
+THE EXPECTED-LOSS RULE (default since 2026-10-02; Eckman & Henderson, IJOC
+2022, decide on the expected loss rather than a probability; switching-cost
+bandits): switch to the a with the largest E[D] − VOW, if it is > 0. VOW, the
+value of waiting one more re-decide interval (30 min), is a preposterior on
+the draws (`plan.valueOfWaiting`): the posterior sd of D shrinks by ρ per
+interval, so the mean it will have then is drawn with sd σ√(1 − ρ²) —
+approximated by the draws' own shape shrunk toward E[D] by
+k = m·√(1 − ρ²) (m the calibration's width multiplier, below; skew kept) —
+and VOW = E[max(μ′, 0)] − max(E[D], 0) ≥ 0: the expected loss a switch now
+locks in that the information would have avoided. ρ is MEASURED: the exit's
+80% interval's shrink per interval (`exitcal.infoRateOf`, median over the run
+pairs; live BN4 2026-10-02: x0.853/h, ρ 0.924); 0.9 stated below 4 pairs.
+Waiting itself is charged nothing (stated). For a Gaussian D,
+VOW = τψ(μ/τ), ψ(x) = φ(x) − x(1 − Φ(x)) [EC6].
+
+What changes: a large expected gain at a low P(better) now switches (D ~
+N(2.05, 10²), P 0.61: VOW 0.90h < 2.10h), where θ = 0.8 held it; a small gain
+at a high P over a rare large loss now holds (+0.05h in 92% of draws, −0.4h in
+8%: E[D] 0.004h < VOW 0.02h), where θ took it [EC5]. On a Gaussian D the hold
+band is narrow (μ ≲ 0.28τ): the rule switches more often than θ = 0.8 did,
+and churn is bounded by the switch cost and the event-driven re-decision, not
+by a probability threshold. A wider calibrated spread (m > 1) widens the hold
+band in proportion.
+
+THE OLD RULE IS ONE FLAG AWAY: switch only if E[D] > 0 AND P(D > 0) ≥ θ
+(θ = 0.8) — `plan.decideByPBetter`, unchanged; `setCommitCalibration({rule:
+'p-better'})` makes it the active rule. Either way every fresh decision
+records both verdicts (`commit` {rule, switch, agree, old, new}), plan.txt
+`rule` states the active and the shadow rule, the calibration state keeps the
+last 40 (`calibration.state.commitLog`), and the healthcheck notes how many
+disagreed. NOT CHANGED: `decideSpend` (a purchase against the option-specific
+error) still uses P ≥ θ.
 
 Re-decide only on an EVENT: new life, committed option gone/finished, invite
 set changed, posterior moved materially (trader mean by > 1 posterior sd, s by
@@ -428,13 +464,95 @@ as `plan`), and the one published `exitH` = the plan's median (q10/q90 in
 cannot decide. Healthcheck F (`plan.planCheck`): PLAN MISSING / STALE / FROM
 ANOTHER LIFE / BROKEN / OVER CPU BUDGET / MISCALIBRATED.
 
-### Calibration
+### Calibration (exitcal.js)
 
-Each forecast sample carries its predictive for the next sample (E_a − Δh,
-scale s√2 from the posterior AS IT STOOD then). For every later same-life
-sample: coverage of the 80% interval and the PIT u = F(E_b). Published as
-`calibration {n, cover80, pitMean, pitVar, ks}`; healthcheck F fails
-(PLAN MISCALIBRATED) when n ≥ 8 and cover80 is outside [0.55, 0.97].
-The node's realised exit is not observed until the node ends, so this
-calibrates the one-step predictive of the forecast, which is exactly the
-quantity whose error the decisions are protected against.
+The node's realised exit is not observed until the node ends, so what is
+calibrated is how the forecast MOVES. Two predictives are scored on the same
+consecutive same-run sample pairs (u = E_b − (E_a − Δh), hours):
+
+- THE ONE-STEP iid MODEL (legacy, `bayes.driftCalibration`, unchanged): each
+  published exit is truth × exp(e), e iid per sample, so r/√2 ~ t(0, s) with
+  s from the robust posterior of the pairs before. Its fields stay at the top
+  of `calibration` {n, cover80, pitMean, pitVar, ks}.
+- THE MARTINGALE PREDICTIVE: a rational forecast is a martingale (Augenblick &
+  Rabin, QJE 2021), and its revisions resolve its own level interval: u ~ N(0,
+  σ_a² · Δh / E_a), σ_a the published 80% interval's sd (q10/q90 fields, else
+  the "80% interval a-bh" in the sample's source), resolved uniformly over the
+  hours left (stated). This is what scores the LEVEL interval the plan
+  publishes and decides on.
+
+DIAGNOSIS (Gneiting, Balabdaoui & Raftery 2007), `calibration`:
+`pit.{legacy, martingale}` (5-bin histogram; hump = too wide, U = too narrow,
+skew = bias), `horizons` (coverage 1/2/4 samples ahead, split by whether an
+install falls inside), `crps` (mean CRPS in hours for both predictives and the
+recalibrated one — a narrowing that scores worse is caught), and the two
+suspects: (a) `suspects.prior` — IG(a0, b0 = a0·s0²) enters b as a0
+pseudo-pairs of size s0², so with realised pairs far below s0 it dominates b
+long after a is outweighed (`priorShareB`, the predictive sd against the
+realised rms, coverage under a vague prior); (b) `suspects.serial` — lag-1
+correlation of the residuals (the iid model itself predicts −0.5: consecutive
+pairs share an endpoint) and of the hits, n_eff = n(1 − ρ)/(1 + ρ).
+
+THE FORECAST-REVISION TEST (Augenblick & Rabin 2021; Patton & Timmermann
+2012), `calibration.martingale`, per life run and pooled: the bias Σu/ΣΔh
+(the exit's movement beyond −1h/h, t on n_eff), the lag-1 autocorrelation of
+u, the excess movement X = Σu² / (σ_first² − σ_last²) (1 for a calibrated
+martingale), the jumps across installs (in level sds). VERDICT: STRUCTURAL
+ERROR when the revisions are biased (|t| ≥ 2), autocorrelated (|ρ1| >
+2/√n), jump (> 3 sd), or move more than the interval resolves (X > 2);
+OVERSTATED UNCERTAINTY when they are small inside the forecast's own interval
+(X < 0.5, or > 90% inside); both can hold; below 8 revisions, insufficient.
+
+ONLINE RECALIBRATION (Gibbs & Candès 2021, adaptive conformal; decaying step
+as Angelopoulos et al. 2023), `calibration.recal`: one width multiplier m on
+the martingale predictive, m ← m·exp(γ_t(miss − 0.2)), γ_t = 1/(1 + n)^0.6,
+bounded [0.2, 10], starting at 1, persisted; APPLIED as exp(ln m · n/(n + 8))
+(tiny n moves nothing). Because the predictive is the level interval's own
+resolution, one m scales (i) the published exit interval — plan.txt `exit`
+q10/q90 about q50, with `rawQ10`/`rawQ90` and `widthMult` beside it (the
+exit samples keep carrying the RAW interval, or m would compound) — and (ii)
+the spread of D the commitment rule reads (`plan.COMMIT.widthMult`, set each
+pass by progress.js). Synthetic [EC1]: revisions at 0.4x the interval ->
+m 0.43 after 160, CRPS 0.116h -> 0.093h; a calibrated forecast stays ~1.
+
+E-PROCESSES (Ramdas, Grünwald, Vovk & Shafer, Stat Sci 2023),
+`calibration.eprocess`: two test martingales on the recalibrated standardized
+revisions z = u / (m_applied σ) — m_applied fixed before each revision is
+seen, so the sequence is predictable — each a mixture over a λ grid:
+NARROW Π(1 + λ(z² − 1)) (H0: mean 0 and variance ≤ predicted, i.e. E z² ≤ 1)
+and WIDE Π(1 + λ(1{|z| < 1.28} − 0.8)) (H0: coverage ≤ 80%); the same two on
+the unscaled model (`rawNarrow`, `rawWide`, notes only). Under H0
+P(ever ≥ 1/α) ≤ α (Ville), so healthcheck may read them every 15 minutes
+forever: simulated false-alarm rates 0.021 / 0.037 at α = 0.05 over 200
+looks [EC4]. They REPLACE the band [0.55, 0.97] at n ≥ 8 (kept only for a
+record without them). healthcheck F (`plan.calibrationCheckOf`) FAILS: PLAN
+MISCALIBRATED (either e-process ≥ 20), PLAN RECALIBRATION AT BOUND, PLAN
+RECALIBRATION WORSENED ACCURACY (CRPS recalibrated > 1.1x raw over ≥ 8),
+PLAN CALIBRATION BROKEN (the report threw); notes the verdict, m, CRPS, the
+suspects, the differences and the commitment shadow.
+
+VALUE EQUIVALENCE (Grimm et al. 2020), `calibration.values`: the quantities
+that flip decisions are the differences between options. (i) `diff`: the
+ranking's pass-to-pass relative exits Δln(H_k/H_ref)/2, scored sequentially
+against the jitter predictive (bayes.jitterPosterior's model) — coverage,
+PIT, ρ1; (ii) `switches`: every committed switch with its promised gain, and
+the exit's drift over the following hour against a followed plan's −1h/h
+(`erosionH`; a switch whose gain was real does not erode by its gain).
+
+STATE: `calibration.state` {recal, eproc, crps, switches, commitLog, lastAt}
+rides on plan.txt and is read back next pass from the last plan WHATEVER node
+wrote it (the width error is the model's); only pairs newer than `lastAt` are
+fed, so nothing is counted twice [EC7].
+
+LIVE, BN4 2026-10-02 (the 100% that raised this; fixture
+fixture-bn4-exitcal-0147.json, [EC9]): the legacy one-step interval was too
+wide because of suspect (a) — the prior held 69% of b after 30 pairs (s 3.0%
+against 1.7% realised; a vague prior covers 59%); suspect (b) was not the
+cause (ρ1 −0.14, no streaks). The LEVEL interval was the opposite: 37% of
+revisions inside the martingale predictive's 80% (PIT U-shaped, skewed low),
+X 7.2 and 4.7 in the two longer lives, and the revisions BIASED — the exit
+fell 2.54h per hour against the 1 predicted (t −2.6). Verdict STRUCTURAL
+ERROR (a pessimistic Bladeburner exit). The multiplier went to m 7.6 (applied
+x4.97; CRPS 0.601h -> 0.566h): the published interval widens, it does not
+shrink. A multiplier fixes width, not bias — the fix for the bias is the
+model's.

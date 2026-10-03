@@ -14,14 +14,20 @@
 // THE RULE (decide): options are evaluated on the SAME parameter draws
 // (common random numbers), so a comparison is paired; the committed option is
 // priced on its REMAINING path from the current state (its sunk progress is
-// already in the state), and an alternative pays its switch cost. Switch only
-// when the expected gain net of that cost is positive AND the probability that
-// the alternative is better net of it is at least THETA — an expected-regret
-// rule whose scale comes from the posterior, not a hand-set hour tolerance.
+// already in the state), and an alternative pays its switch cost. Switch when
+// the expected gain net of that cost exceeds the value of waiting one more
+// re-decide interval for information (a preposterior on the paired draws,
+// valueOfWaiting) — the expected-loss rule, default since 2026-10-02. The rule
+// before it (switch only when the expected gain is positive AND P(better) >=
+// THETA) is one flag away (COMMIT.rule 'p-better', decideByPBetter) and its
+// verdict is logged beside every decision. The spreads are the CALIBRATED
+// ones: exitcal.js measures how the forecast moves against its own interval
+// and scales them by one width multiplier (docs/bayes.md "Calibration").
 
 import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderRwPosterior, rwLedgerOf, driftPosterior, driftCalibration, logRatePosterior, jitterPosterior } from 'bayes.js'
 import { routeExitFixed, countExitFixed } from 'countexit.js'
 import { drain } from 'coop.js'
+import { exitCalibrationReport } from 'exitcal.js'
 import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
 import { realisedCapital } from 'nodeecon.js'
 import { RW_PRIOR, rwShape } from 'traderw.js'
@@ -83,14 +89,25 @@ const clock = () => {
  * Each is null when its data is absent — and then the draw keeps the point
  * input (named in `missing`), never a silent zero.
  */
-export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null, expPost = null, traderBelief = null } = {}) {
+export function posteriorsOf({ stockRows = null, warmupH = 0, exitSamples = null, obs = {}, optionPoints = null, income = null, cadence = null, expPost = null, traderBelief = null, calState = null, prevPlan = null } = {}) {
   const jitter = jitterPosterior(optionPoints ?? [])
   // THE TRADER'S RETURN: the belief the exit inputs' point was taken from
   // (traderBeliefOf), so the point and the draws are one distribution; the
   // rows path is kept for callers that have no belief.
   const trader = traderBelief ? traderBelief.post ?? null : stockRows ? traderBeliefOf(stockRows, { warmupH })?.post ?? null : null
   const drift = driftPosterior(exitSamples ?? [])
-  const calibration = driftCalibration(exitSamples ?? [])
+  // THE EXIT FORECAST'S CALIBRATION (exitcal.js): the legacy one-step
+  // coverage (driftCalibration, its top-level fields unchanged), the
+  // diagnosis, the forecast-revision test, the width multiplier and the
+  // e-processes, carried pass to pass in `state` (calState: the last plan's
+  // calibration.state, any node). A report that throws is published as
+  // such, never as calibrated.
+  let calibration
+  try {
+    calibration = exitCalibrationReport(exitSamples ?? [], { state: calState, points: optionPoints, prevPlan, legacy: driftCalibration(exitSamples ?? []) })
+  } catch (e) {
+    calibration = { ...driftCalibration(exitSamples ?? []), error: `exitcal threw: ${String(e).slice(0, 160)}`, state: calState }
+  }
   const exp = logRatePosterior(obs?.exp)
   // Faction-work samples only (progress.js tags them `work: 'faction'`): an
   // untagged entry is a pass's published rate, whatever the slot was doing.
@@ -399,35 +416,99 @@ export function summarize(samples) {
 }
 
 /**
- * THE COMMITMENT RULE. `committed` = the key of the option the plan holds (or
- * null); switchCost {key: hours} = what moving TO that option costs beyond
- * its own simulated path. Returns {choice, switched, stays, why, gainH, pWin,
- * regretH, stats}.
+ * THE COMMITMENT RULE — which rule decides, and the calibration it reads.
+ *   'expected-loss' (default, 2026-10-02): switch to the alternative with the
+ *     largest E[D] - VOW > 0, D the CRN paired difference in hours net of the
+ *     switch cost (H_committed - (H_alt + c)), VOW the value of waiting one
+ *     more re-decide interval for information (valueOfWaiting). Eckman &
+ *     Henderson (IJOC 2022): decide on the expected loss, not a probability.
+ *   'p-better' (the rule until 2026-10-02): switch only when E[D] > 0 AND
+ *     P(D > 0) >= theta. ONE FLAG AWAY: setCommitCalibration({rule:
+ *     'p-better'}) restores it; either way every decision records both
+ *     verdicts (`commit`), and exitcal.commitLogOf keeps the last 40.
+ * widthMult: the exit predictive's width multiplier (exitcal recal.applied —
+ * one multiplier on the plan's spreads: the exit interval and D's spread
+ * about its mean). rho: the posterior sd's shrink per re-decide interval
+ * (exitcal.infoRateOf), rhoDefault (stated) without one. Set once per pass by
+ * progress.js (planCtxOf) from the calibration report.
  */
-export function decide({ samples, committed = null, switchCost = {}, theta = PLAN.theta, committedPrevH = null } = {}) {
+export const COMMIT = { rule: 'expected-loss', widthMult: 1, rho: null, rhoDefault: 0.9, source: 'no calibration set: width x1, rho stated' }
+export function setCommitCalibration({ rule = COMMIT.rule, widthMult = 1, rho = null, source = null } = {}) {
+  const prev = { ...COMMIT }
+  COMMIT.rule = rule === 'p-better' ? 'p-better' : 'expected-loss'
+  COMMIT.widthMult = fin(widthMult) && widthMult > 0 ? widthMult : 1
+  COMMIT.rho = fin(rho) && rho >= 0 && rho < 1 ? rho : null
+  COMMIT.source = source ?? `width x${COMMIT.widthMult}, rho ${COMMIT.rho ?? `${COMMIT.rhoDefault} (stated)`}`
+  return prev
+}
+/** The rule as plan.txt states it. */
+export function commitRuleText() {
+  const rho = COMMIT.rho ?? COMMIT.rhoDefault
+  const el = `switch to the alternative with the largest expected gain net of switch cost less the value of waiting one re-decide interval (rho ${rho}, spread x${COMMIT.widthMult})`
+  const pb = `switch only when P(alternative better net of switch cost) >= ${PLAN.theta} and the expected gain is positive`
+  return `${COMMIT.rule === 'expected-loss' ? el : pb} [shadow: ${COMMIT.rule === 'expected-loss' ? pb : el}]; re-decide on events (${PLAN.maxAgeMin} min max age)`
+}
+
+/**
+ * THE VALUE OF WAITING one re-decide interval, a preposterior on the paired
+ * draws D (hours, net of the switch cost). Today the posterior of D has sd
+ * sigma (x widthMult, the calibration's multiplier on every spread); after
+ * one more interval it is rho sigma, so the mean it will then have is drawn
+ * with sd tau = sigma sqrt(1 - rho^2) — approximated by the draws' own shape
+ * shrunk toward their mean by k = widthMult sqrt(1 - rho^2) (skew kept: a
+ * small likely gain over a rare large loss is worth waiting on). Deciding
+ * then is worth E[max(mu', 0)]; deciding now max(mu, 0). VOW = the
+ * difference (>= 0, Jensen): the expected loss a switch now locks in that the
+ * information would have avoided. Waiting itself is charged nothing (stated —
+ * a remaining-path gain is not lost by holding one interval).
+ * Returns {gainH, vowH, netH, sdH, k}.
+ */
+export function valueOfWaiting(D, { widthMult = 1, rho = COMMIT.rhoDefault } = {}) {
+  const x = (D ?? []).filter(fin)
+  const N = x.length
+  if (!N) return { gainH: null, vowH: null, netH: null, sdH: null, k: null }
+  const m = fin(widthMult) && widthMult > 0 ? widthMult : 1
+  const gain = x.reduce((a, b) => a + b, 0) / N
+  const k = m * Math.sqrt(Math.max(0, 1 - rho * rho))
+  let later = 0
+  for (const v of x) later += Math.max(0, gain + k * (v - gain))
+  const vow = Math.max(0, later / N - Math.max(0, gain))
+  const sd = Math.sqrt(x.reduce((a, v) => a + (v - gain) * (v - gain), 0) / N) * m
+  return { gainH: gain, vowH: vow, netH: gain - vow, sdH: sd, k }
+}
+
+/** The paired comparison both rules read: per alternative D (net of its switch cost), E[D], P(D > 0). */
+function pairedOf(samples, committed, switchCost) {
   const { stats, filled, N } = summarize(samples)
   const feasible = Object.keys(stats).filter((k) => filled[k])
-  if (!feasible.length || !N) return { choice: null, switched: false, stays: false, why: 'no option is feasible in half the draws', stats }
-  const argmin = feasible.reduce((a, k) => (stats[k].meanH < stats[a].meanH ? k : a), feasible[0])
-  if (committed === null || !filled[committed]) {
-    const why = committed === null ? `no committed option: the least expected exit (${stats[argmin].meanH}h, P(best) ${stats[argmin].pBest})` : `the committed option ${committed} is no longer feasible (${stats[committed]?.pFeasible ?? 0} of draws): the least expected exit, ${argmin}`
-    // An incumbent priced finite last pass and unpriceable now is the same
-    // artefact as a 10x gain (an input it needs went missing): flagged.
-    const sanity = committed !== null && fin(committedPrevH) ? switchSanityOf({ from: committed, to: argmin, gainH: Infinity, exitH: stats[argmin].meanH, fromH: null, prevH: committedPrevH }) : null
-    return { choice: argmin, switched: committed !== null, stays: false, why: sanity ? `${sanity.why} — ${why}` : why, ...(sanity ? { switchSanity: sanity } : {}), stats }
-  }
-  const c = filled[committed]
-  let best = null
+  const argmin = feasible.length ? feasible.reduce((a, k) => (stats[k].meanH < stats[a].meanH ? k : a), feasible[0]) : null
+  const alts = []
   let regret = 0
-  for (const k of feasible) {
-    if (k === committed) continue
-    const cost = fin(switchCost[k]) ? switchCost[k] : PLAN.switchCostH
-    const D = c.map((hc, d) => hc - (filled[k][d] + cost))
-    const gain = D.reduce((a, b) => a + b, 0) / N
-    const pWin = D.filter((x) => x > 0).length / N
-    regret = Math.max(regret, D.reduce((a, b) => a + Math.max(0, b), 0) / N)
-    if (!best || gain > best.gain) best = { key: k, gain, pWin, cost }
+  if (committed !== null && filled[committed]) {
+    const c = filled[committed]
+    for (const k of feasible) {
+      if (k === committed) continue
+      const cost = fin(switchCost[k]) ? switchCost[k] : PLAN.switchCostH
+      const D = c.map((hc, d) => hc - (filled[k][d] + cost))
+      const gain = D.reduce((a, b) => a + b, 0) / N
+      const pWin = D.filter((x) => x > 0).length / N
+      regret = Math.max(regret, D.reduce((a, b) => a + Math.max(0, b), 0) / N)
+      alts.push({ key: k, D, gain, pWin, cost })
+    }
   }
+  return { stats, filled, N, feasible, argmin, alts, regret }
+}
+
+/**
+ * THE P(BETTER) RULE, exactly as it decided until 2026-10-02 (kept computable:
+ * the shadow verdict, and the active rule under COMMIT.rule 'p-better').
+ */
+export function decideByPBetter({ samples, committed = null, switchCost = {}, theta = PLAN.theta, committedPrevH = null } = {}) {
+  const { stats, filled, N, feasible, argmin, alts, regret } = pairedOf(samples, committed, switchCost)
+  if (!feasible.length || !N) return { choice: null, switched: false, stays: false, why: 'no option is feasible in half the draws', stats }
+  if (committed === null || !filled[committed]) return noIncumbentOf(stats, committed, argmin, committedPrevH)
+  let best = null
+  for (const a of alts) if (!best || a.gain > best.gain) best = a
   if (best && best.gain > 0 && best.pWin >= theta) {
     const why = `switch ${committed} -> ${best.key}: expected ${best.gain.toFixed(2)}h sooner net of a ${best.cost.toFixed(2)}h switch cost, better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws (>= ${(100 * theta).toFixed(0)}%)`
     const sanity = switchSanityOf({ from: committed, to: best.key, gainH: best.gain, exitH: stats[best.key]?.meanH, fromH: stats[committed]?.meanH, prevH: committedPrevH })
@@ -442,6 +523,64 @@ export function decide({ samples, committed = null, switchCost = {}, theta = PLA
     regretH: +regret.toFixed(3),
     why: best ? `stays on ${committed}: the best alternative ${best.key} is expected ${best.gain.toFixed(2)}h ${best.gain >= 0 ? 'sooner' : 'later'} net of a ${best.cost.toFixed(2)}h switch cost and better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws (needs a positive gain and ${(100 * theta).toFixed(0)}%)` : `stays on ${committed}: no alternative`,
     stats,
+  }
+}
+function noIncumbentOf(stats, committed, argmin, committedPrevH) {
+  const why = committed === null ? `no committed option: the least expected exit (${stats[argmin].meanH}h, P(best) ${stats[argmin].pBest})` : `the committed option ${committed} is no longer feasible (${stats[committed]?.pFeasible ?? 0} of draws): the least expected exit, ${argmin}`
+  // An incumbent priced finite last pass and unpriceable now is the same
+  // artefact as a 10x gain (an input it needs went missing): flagged.
+  const sanity = committed !== null && fin(committedPrevH) ? switchSanityOf({ from: committed, to: argmin, gainH: Infinity, exitH: stats[argmin].meanH, fromH: null, prevH: committedPrevH }) : null
+  return { choice: argmin, switched: committed !== null, stays: false, why: sanity ? `${sanity.why} — ${why}` : why, ...(sanity ? { switchSanity: sanity } : {}), stats }
+}
+
+/**
+ * THE COMMITMENT RULE. `committed` = the key of the option the plan holds (or
+ * null); switchCost {key: hours} = what moving TO that option costs beyond
+ * its own simulated path. The active rule is COMMIT.rule (see COMMIT); BOTH
+ * verdicts are returned in `commit` {rule, switch, agree, old: {switch, key,
+ * gainH, pWin}, new: {switch, key, gainH, vowH, netH, sdH, pWin}, widthMult,
+ * rho}. Returns {choice, switched, stays, why, gainH, pWin, regretH, vowH,
+ * stats, commit}.
+ */
+export function decide({ samples, committed = null, switchCost = {}, theta = PLAN.theta, committedPrevH = null, rule = COMMIT.rule, widthMult = COMMIT.widthMult, rho = COMMIT.rho ?? COMMIT.rhoDefault } = {}) {
+  const old = decideByPBetter({ samples, committed, switchCost, theta, committedPrevH })
+  const { stats, filled, N, alts, regret } = pairedOf(samples, committed, switchCost)
+  if (old.choice === null || committed === null || !filled[committed]) return { ...old, commit: { rule, switch: old.switched === true, agree: true, why: 'no incumbent to hold: the least expected exit under either rule' } }
+  let best = null
+  for (const a of alts) {
+    const v = valueOfWaiting(a.D, { widthMult, rho })
+    if (!best || v.netH > best.netH) best = { ...a, ...v }
+  }
+  const newSwitch = !!best && best.netH > 0
+  const oldSwitch = old.switched === true
+  const commit = {
+    rule,
+    switch: rule === 'p-better' ? oldSwitch : newSwitch,
+    agree: oldSwitch === newSwitch && (!newSwitch || old.choice === best.key),
+    old: { switch: oldSwitch, key: old.choice, gainH: old.gainH ?? null, pWin: old.pWin ?? null },
+    new: best ? { switch: newSwitch, key: best.key, gainH: +best.gainH.toFixed(3), vowH: +best.vowH.toFixed(3), netH: +best.netH.toFixed(3), sdH: +best.sdH.toFixed(3), pWin: +best.pWin.toFixed(3) } : { switch: false, key: null },
+    widthMult: +(+widthMult).toFixed(3),
+    rho: +(+rho).toFixed(3),
+  }
+  if (rule === 'p-better') return { ...old, commit }
+  const shadow = `[the P >= ${(100 * theta).toFixed(0)}% rule would ${oldSwitch ? `switch to ${old.choice}` : 'hold'}]`
+  const vowWhy = (b) => `the ${b.vowH.toFixed(2)}h that waiting one re-decide interval is worth (rho ${commit.rho}, spread x${commit.widthMult}, sd ${b.sdH.toFixed(2)}h)`
+  if (newSwitch) {
+    const why = `switch ${committed} -> ${best.key}: expected ${best.gainH.toFixed(2)}h sooner net of a ${best.cost.toFixed(2)}h switch cost, more than ${vowWhy(best)}; better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws ${shadow}`
+    const sanity = switchSanityOf({ from: committed, to: best.key, gainH: best.gainH, exitH: stats[best.key]?.meanH, fromH: stats[committed]?.meanH, prevH: committedPrevH })
+    return { choice: best.key, switched: true, stays: false, gainH: +best.gainH.toFixed(3), pWin: +best.pWin.toFixed(3), regretH: +regret.toFixed(3), vowH: +best.vowH.toFixed(3), why: sanity ? `${sanity.why} — ${why}` : why, ...(sanity ? { switchSanity: sanity } : {}), stats, commit }
+  }
+  return {
+    choice: committed,
+    switched: false,
+    stays: true,
+    gainH: best ? +best.gainH.toFixed(3) : null,
+    pWin: best ? +best.pWin.toFixed(3) : null,
+    regretH: +regret.toFixed(3),
+    vowH: best ? +best.vowH.toFixed(3) : null,
+    why: best ? `stays on ${committed}: the best alternative ${best.key} is expected ${best.gainH.toFixed(2)}h ${best.gainH >= 0 ? 'sooner' : 'later'} net of a ${best.cost.toFixed(2)}h switch cost, ${best.gainH > 0 ? 'not more than' : 'against'} ${vowWhy(best)}; better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws ${shadow}` : `stays on ${committed}: no alternative`,
+    stats,
+    commit,
   }
 }
 
@@ -663,7 +802,7 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
-  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
+  return { ...pick(byKey.get(d.choice)), key: d.choice, ...stats[d.choice], held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
 
 /**
@@ -813,7 +952,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
   const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
   if (d.choice === null) return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, ...screened }
-  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+  return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
 }
 
 /**
@@ -1057,7 +1196,7 @@ export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx =
   const gone = prev?.key && committedKey === null
   const switched = d.switched === true || (gone && d.choice !== prev.key)
   const why = gone ? `the committed ${prev.key} is no longer priced (nothing bought at that length): ${d.why}` : d.why
-  return record(d.choice, { held: false, switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, why, ...(switched && prev?.key ? { from: prev.key } : {}), ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+  return record(d.choice, { held: false, switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why, ...(switched && prev?.key ? { from: prev.key } : {}), ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
 }
 
 /**
@@ -1739,7 +1878,7 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
-  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
+  return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, vowH: d.vowH ?? null, ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
 
 /** Standard normal CDF (Abramowitz-Stegun 7.1.26 via erf). */
@@ -1846,7 +1985,9 @@ function exitStabilityNow(prev, rec) {
       return Math.sqrt(v / s.length)
     }
     // No per-draw exits: the 80% interval's width as ~2.56 sd, over N draws.
-    return fin(x.q10) && fin(x.q90) ? (x.q90 - x.q10) / 2.563 / Math.sqrt(Math.max(1, d?.n ?? 24)) : null
+    const lo = fin(x.rawQ10) ? x.rawQ10 : x.q10
+    const hi = fin(x.rawQ90) ? x.rawQ90 : x.q90
+    return fin(lo) && fin(hi) ? (hi - lo) / 2.563 / Math.sqrt(Math.max(1, d?.n ?? 24)) : null
   }
   const se1 = seOf(px, prev.decisions?.install)
   const se2 = seOf(ex, rec.decisions?.install)
@@ -2018,6 +2159,44 @@ export function graftCarryCheckOf({ install = null, installInputs = null, grafts
     why: `GRAFTS DROPPED: the install decision (${install.key}) priced ${carried.length} graft(s) where ${source} holds ${expected.length}${missing.length ? ` — missing ${missing.length} (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', ...' : ''})` : ''}${extra.length ? ` — ${extra.length} not committed (${extra.slice(0, 3).join(', ')})` : ''}`,
   }
 }
+/**
+ * THE FORECAST'S CALIBRATION, read for the healthcheck (exitcal.js). The
+ * alarm is ANYTIME-VALID: the e-processes on the recalibrated revisions
+ * (narrow: E z^2 <= 1, wide: P(inside 80%) <= 0.8) fail at e >= 1/alpha, so
+ * the check may be read every 15 minutes forever with a false-alarm
+ * probability <= alpha per test. It replaced the coverage band [0.55, 0.97]
+ * at n >= 8 (PLAN_CAL lo/hi — still used for a record written before the
+ * e-processes, which carries none). Also FAILS: the width multiplier pinned
+ * at its bound (one multiplier cannot correct it), the recalibration scoring
+ * WORSE in CRPS than the raw intervals (a narrowing that loses accuracy), a
+ * report that threw. Notes: the verdict (overstated / structural), the
+ * multiplier, CRPS, the suspects, the differences, the commitment shadow.
+ */
+export function calibrationCheckOf(c, fail, notes) {
+  if (!c) return
+  if (c.error) fail(`PLAN CALIBRATION BROKEN: ${c.error}`, 'the exit calibration report threw: no e-process, no multiplier — the plan runs on its raw intervals (exitcal.js)')
+  const ep = c.eprocess
+  if (!ep) {
+    if (fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
+    else notes.push(`plan calibration: ${c.why ?? 'none'}`)
+    return
+  }
+  const verdict = c.martingale?.why ?? c.why ?? ''
+  if (ep.narrow?.alarm) fail(`PLAN MISCALIBRATED: the exit forecast's revisions exceed its recalibrated intervals — e-process ${ep.narrow.e.toPrecision(3)} >= ${1 / ep.alpha} over ${ep.narrow.n} revisions (anytime-valid at ${ep.alpha}; first crossed ${ep.narrow.crossedAt})`, `too narrow or biased even at x${c.recal?.applied ?? '?'} (exitcal recal): ${verdict.slice(0, 400)}`)
+  if (ep.wide?.alarm) fail(`PLAN MISCALIBRATED: the exit forecast's recalibrated intervals are too wide — e-process ${ep.wide.e.toPrecision(3)} >= ${1 / ep.alpha} over ${ep.wide.n} revisions (anytime-valid at ${ep.alpha}; first crossed ${ep.wide.crossedAt})`, `underconfident even at x${c.recal?.applied ?? '?'}: ${verdict.slice(0, 400)}`)
+  if (c.recal?.atBound) fail(`PLAN RECALIBRATION AT BOUND: ${c.recal.why}`, 'the forecast is off by more than one width multiplier can correct — the structural error is the fix (the verdict and its reasons)')
+  if (c.crps?.since?.worse) fail(`PLAN RECALIBRATION WORSENED ACCURACY: CRPS ${c.crps.since.recalH}h recalibrated against ${c.crps.since.rawH}h raw over ${c.crps.since.n} revisions`, 'the multiplier moved the intervals and the forecast scored worse: the recalibration is chasing coverage at the cost of accuracy')
+  notes.push(`plan calibration: ${String(c.why ?? '').slice(0, 500)}`)
+  if (c.recal) notes.push(`plan width multiplier: ${c.recal.why}`)
+  if (c.crps?.window) notes.push(`plan CRPS (mean, hours, this node's window of ${c.crps.window.n}): one-step iid model ${c.crps.window.legacyH}, martingale raw ${c.crps.window.martingaleH}, recalibrated ${c.crps.window.recalH}; since the state began raw ${c.crps.since?.rawH} vs recalibrated ${c.crps.since?.recalH} over ${c.crps.since?.n}`)
+  if (c.suspects) notes.push(`plan calibration suspects: (a) ${c.suspects.prior?.why} (b) ${c.suspects.serial?.why}`)
+  if (!ep.narrow?.alarm && !ep.wide?.alarm) notes.push(`plan e-processes: ${ep.narrow?.why}; ${ep.wide?.why}`)
+  notes.push(`plan e-processes, unscaled model: ${ep.rawNarrow?.why}; ${ep.rawWide?.why}`)
+  if (c.values) notes.push(`plan differences: ${c.values.diff?.why ?? 'none'}; switches: ${c.values.switches?.why ?? 'none'}`)
+  const log = c.state?.commitLog ?? []
+  const dis = log.filter((x) => x.agree === false)
+  if (log.length) notes.push(`plan commitment shadow: ${log.length} decision(s) logged, ${dis.length} where the expected-loss and P >= 0.8 rules disagree${dis.length ? ` (last: ${dis[dis.length - 1].name} at ${dis[dis.length - 1].at}: ${dis[dis.length - 1].rule} ${dis[dis.length - 1].switch ? 'switched' : 'held'})` : ''}`)
+}
 export function planCheck(plan, { gate = null, progress = null, now = Date.now(), bootstrap = null } = {}) {
   const fails = []
   const notes = []
@@ -2099,9 +2278,7 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
     const ss = dd?.switchSanity
     if (ss?.ok === false) fail(`${String(ss.why).startsWith('SWITCH ARTEFACT') ? ss.why : `SWITCH ARTEFACT: ${ss.why}`} [${name}${dd.held ? ', held since' : ''} ${dd.decidedAt ?? ''}]`, 'a switch gained more than 10x the exit it chose: the incumbent was priced on something the plan does not hold (a dropped input, an unpriceable leg) — the switch was taken; find what the incumbent lost')
   }
-  const c = plan.calibration
-  if (c && fin(c.cover80) && c.n >= PLAN_CAL.minN && (c.cover80 < PLAN_CAL.lo || c.cover80 > PLAN_CAL.hi)) fail(`PLAN MISCALIBRATED: the 80% forecast interval covered ${(100 * c.cover80).toFixed(0)}% of ${c.n} realised moves`, `${c.why} — ${c.cover80 < PLAN_CAL.lo ? 'intervals too narrow: the posterior is overconfident, so switches and holds are being made on noise' : 'intervals too wide: the posterior is underconfident, so real differences are being ignored'}`)
-  else if (c) notes.push(`plan calibration: ${c.why ?? 'none'}`)
+  calibrationCheckOf(plan.calibration, fail, notes)
   // THE FINAL INSTALL VERDICT agrees with the plan, or the gate names the
   // rule that overrode it (installgate planOverride). Live 2026-09-26 the plan
   // said "now" while the legacy join-money veto held, with nothing recording

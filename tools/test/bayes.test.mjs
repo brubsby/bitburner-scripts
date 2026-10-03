@@ -211,9 +211,11 @@ export async function run() {
     if (r7.choice !== "A") c5.fail("an alternative better in 90% of draws but worse in expectation must not be taken", r7.why);
     const r5 = P.decide({ samples: clear, committed: null });
     if (r5.choice !== "B") c5.fail("without an incumbent the least expected exit wins", r5.why);
-    // Monotone in theta: a stricter threshold never switches more.
-    const r6 = P.decide({ samples: clear, committed: "A", theta: 1.01 });
-    if (r6.switched) c5.fail("theta above 1 can never switch");
+    // Monotone in theta: a stricter threshold never switches more — under the
+    // P(better) rule (one flag away; the expected-loss rule reads no theta).
+    const r6 = P.decide({ samples: clear, committed: "A", theta: 1.01, rule: "p-better" });
+    if (r6.switched) c5.fail("theta above 1 can never switch under the P(better) rule");
+    if (r6.commit?.new?.switch !== true) c5.fail("the expected-loss verdict is still logged beside it (shadow) and would switch on an 8h gain", JSON.stringify(r6.commit));
     // Events.
     const prev = { lastAugReset: 1, decidedAt: new Date(0).toISOString(), posteriors: { trader: { mean: 2e-4, sd: 2e-5 }, s: 0.15 } };
     const now = 10 * 60e3;
@@ -424,7 +426,7 @@ export async function run() {
   // -----------------------------------------------------------------------
   const c9 = new Check("BY9", "healthcheck F reads the plan: missing / stale / broken / over budget / miscalibrated each FAIL loud; a sound plan passes with its interval and calibration noted");
   {
-    c9.examined(11);
+    c9.examined(17);
     const now = Date.parse("2026-09-26T13:00:00Z");
     const at = new Date(now - 5 * 60e3).toISOString();
     const good = { at, lastAugReset: 1, health: "ok", cpu: { cpuMs: 900, wallMs: 1400, waitMs: 20, maxBlockMs: 41.2, maxBlockLimitMs: 50, yields: 22, budgetMs: 1200, blocked: false, truncated: false, N: 24, draws: 24 }, calibration: { n: 20, cover80: 0.8, why: "20 sequential one-step predictions" }, exit: { meanH: 64, q10: 57, q50: 63, q90: 71, source: "install decision (now)" }, decisions: {} };
@@ -453,6 +455,16 @@ export async function run() {
     if (!chk({ ...good, calibration: { n: 20, cover80: 0.4, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("40% coverage of an 80% interval must fail");
     if (!chk({ ...good, calibration: { n: 20, cover80: 1.0, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("100% coverage of an 80% interval (underconfident) must fail");
     if (chk({ ...good, calibration: { n: 5, cover80: 0.2, why: "x" } }, "PLAN MISCALIBRATED")) c9.fail("five pairs are too few to call miscalibration");
+    // [EC] The e-processes replace the band where the record carries them: a
+    // 100% coverage with no e-process alarm passes; an alarm fails either way.
+    const ep = (narrow, wide) => ({ alpha: 0.05, narrow: { e: narrow, n: 30, alarm: narrow >= 20, crossedAt: narrow >= 20 ? at : null, why: "n" }, wide: { e: wide, n: 30, alarm: wide >= 20, crossedAt: wide >= 20 ? at : null, why: "w" }, rawNarrow: { why: "rn" }, rawWide: { why: "rw" } });
+    const calE = (narrow, wide, extra = {}) => ({ ...good, calibration: { n: 30, cover80: 1.0, why: "x", eprocess: ep(narrow, wide), recal: { m: 1, applied: 1, atBound: false, why: "m" }, ...extra } });
+    if (chk(calE(3, 0.5), "PLAN MISCALIBRATED")) c9.fail("100% coverage with no e-process alarm must not fail: the band is replaced");
+    if (!chk(calE(25, 0.5), "PLAN MISCALIBRATED")) c9.fail("a too-narrow e-process at 25 >= 1/alpha must fail");
+    if (!chk(calE(0.5, 40), "PLAN MISCALIBRATED")) c9.fail("a too-wide e-process at 40 must fail");
+    if (!chk(calE(1, 1, { recal: { m: 10, applied: 9, atBound: true, why: "at bound" } }), "PLAN RECALIBRATION AT BOUND")) c9.fail("a multiplier at its bound must fail");
+    if (!chk(calE(1, 1, { crps: { since: { n: 20, rawH: 1, recalH: 1.3, worse: true } } }), "PLAN RECALIBRATION WORSENED")) c9.fail("a recalibration that scores worse in CRPS must fail");
+    if (!chk(calE(1, 1, { error: "boom" }), "PLAN CALIBRATION BROKEN")) c9.fail("a calibration report that threw must fail");
     const hc = fs.readFileSync(path.join(REPO_ROOT, "tools/healthcheck.mjs"), "utf8");
     if (!/planCheck\(readTel\("plan\.txt"\), \{ gate, progress: prog, now: Date\.now\(\), bootstrap \}\)/.test(hc)) c9.fail("healthcheck section F must run planCheck on /tel/plan.txt (with the bootstrap state)");
   }

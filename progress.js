@@ -172,7 +172,8 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText } from 'plan.js'
+import { recalIntervalOf } from 'exitcal.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -3428,6 +3429,10 @@ function planCtxOf(ns, info) {
     } catch {
       prev = null
     }
+    // THE CALIBRATION STATE (exitcal.js: the width multiplier, the
+    // e-processes, the switch and commitment logs) is the model's, not the
+    // node's: carried from the last plan whatever node wrote it.
+    const calState = prev?.calibration?.state ?? null
     if (prev && prev.node !== info?.currentNode) prev = null
     const sameLife = prev?.lastAugReset === info?.lastAugReset
     // THE TRADER'S RETURN: the belief the exit inputs' point is (traderBeliefNow)
@@ -3459,7 +3464,10 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? tail('points', prev.points) : []
-    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null })
+    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null, calState, prevPlan: prev })
+    // ONE MULTIPLIER ON THE PLAN'S SPREADS (exitcal recal.applied) and the
+    // information rate: every decide() this pass reads them (plan.COMMIT).
+    setCommitCalibration({ widthMult: post.calibration?.recal?.applied ?? 1, rho: post.calibration?.rho?.rho ?? null, source: post.calibration?.recal ? `${post.calibration.recal.why}; ${post.calibration.rho?.why ?? 'rho stated'}` : null })
     const committedAvailable = null // set by the route decision
     const traderRegime = typeof stockNow?.mode === 'string' ? rwRegimeOf(stockNow.mode) : null
     const events = redecideEvents(prev, { lastAugReset: info?.lastAugReset, now: Date.now(), trader: post.trader, drift: post.drift, committedAvailable, invitesKey: undefined, traderRegime, ver: MODEL_VERSION })
@@ -3846,7 +3854,10 @@ function publishPlan(ns, info, extra = {}) {
       error: pc.error ?? (Object.values(pc.decisions).find((d) => d?.error)?.why ?? null),
       decidedAt: redecided ? at : pc.prevAny?.decidedAt ?? at,
       events: pc.events,
-      exit: ex ? { meanH: ex.meanH, q10: ex.q10, q50: ex.q50, q90: ex.q90, source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
+      // THE EXIT INTERVAL RECALIBRATED (exitcal.recalIntervalOf): q10/q90 scaled
+      // about the median by the width multiplier, the raw pair kept beside it
+      // (rawQ10/rawQ90 — the exit samples carry the raw one, never this).
+      exit: ex ? { meanH: ex.meanH, ...recalIntervalOf({ q10: ex.q10, q50: ex.q50, q90: ex.q90 }, pc.post?.calibration?.recal?.applied ?? 1), source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       // markBladeMoot: on the committed Bladeburner route the hack arm's decisions
       // (grafts, lifeLength, fourS, batch) say they are not on the committed exit.
       decisions: markBladeMoot({
@@ -3887,7 +3898,7 @@ function publishPlan(ns, info, extra = {}) {
       // block, and longest single step with its index — a step longer than
       // the slice is the un-sliced piece, and this says where.
       cpu: { sections: st ? Object.fromEntries(Object.entries(st.sections).map(([k, v]) => [k, { cpuMs: Math.round(v.cpuMs), maxBlockMs: +v.maxBlockMs.toFixed(1), maxStepMs: +v.maxStepMs.toFixed(1), maxStepAt: v.maxStepAt, steps: v.steps, runs: v.runs }])) : null, cpuMs: st ? Math.round(st.cpuMs) : null, wallMs: Date.now() - passT0, waitMs: st ? Math.round(st.waitMs) : null, maxBlockMs: st ? +st.maxBlockMs.toFixed(1) : null, maxBlockLimitMs: PLAN.maxBlockMs, sliceMs: PLAN.sliceMs, yields: st?.yields ?? null, setupMs: pc.setupMs ?? null, budgetMs: PLAN.budgetMs, blocked, truncated, N: PLAN.N, draws: Math.min(...[route?.n, inst?.n].filter((x) => typeof x === 'number'), PLAN.N) },
-      rule: `switch only when P(alternative better net of switch cost) >= ${PLAN.theta} and the expected gain is positive; re-decide on events (${PLAN.maxAgeMin} min max age)`,
+      rule: commitRuleText(),
       obs,
       points: [...(pc.points ?? []), ...(pc.point ? [pc.point] : [])].slice(-16),
       // ONE PLAN, ONE EXIT: the install decision's committed trajectory and

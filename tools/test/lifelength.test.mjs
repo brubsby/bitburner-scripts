@@ -70,8 +70,18 @@ const F = preQueue(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/f
 const PASSES = F.passes;
 const code = (f) => fs.readFileSync(path.join(REPO_ROOT, f), "utf8");
 const byStamp = (rows, s) => rows.find((r) => r.stamp === s);
+// THE RULE THESE REPLAYS ENCODE is the P >= theta commitment rule (the
+// passes were recorded under it, 2026-09-30, and LL1/LL2 assert its
+// anti-churn property): pinned to it. Since 2026-10-02 the default is the
+// expected-loss rule (plan.COMMIT, docs/bayes.md "Decision rule"); its
+// verdicts on the same passes are replayed beside (ROWS_EL) and reported in
+// LL2 — a behaviour change, stated, not hidden.
+const ruleWas = P.setCommitCalibration({ rule: "p-better" });
 const ROWS = R.replay(PASSES);
 const PAIRS = R.lengthPairs(PASSES, ROWS);
+P.setCommitCalibration({ rule: "expected-loss" });
+const ROWS_EL = R.replay(PASSES);
+P.setCommitCalibration(ruleWas);
 const THETA = P.PLAN.theta;
 
 export async function run() {
@@ -136,6 +146,14 @@ export async function run() {
     const r0824 = byStamp(ROWS, "082459");
     c.note(`08:24: ${r0824.why.slice(0, 200)}`);
     if (!(r0824.decision.stays === true && r0824.gainH > 0 && r0824.pWin < THETA)) c.fail("08:24: a challenger better on average but short of theta must not win", JSON.stringify({ stays: r0824.decision.stays, gainH: r0824.gainH, pWin: r0824.pWin }));
+    // The expected-loss rule on the same passes (uncalibrated: width x1, rho
+    // 0.9 stated): it takes 08:24's 0.42h at P 0.67 (the value of waiting is
+    // smaller), and every one of its switches carries the P >= theta verdict
+    // beside it.
+    const el = ROWS_EL.filter((r) => r.switched);
+    const e0824 = byStamp(ROWS_EL, "082459");
+    c.note(`expected-loss rule on the same ${ROWS_EL.length} passes: ${el.length} switch(es) (P >= theta: ${ROWS.filter((r) => r.switched).length}); 08:24: ${String(e0824?.why ?? "").slice(0, 240)}`);
+    if (!el.every((r) => r.decision?.commit && typeof r.decision.commit.old?.switch === "boolean")) c.fail("every expected-loss switch must log the P >= theta verdict beside it");
     // A synthetic incumbent the evidence rejects: L24 on the 07:24 pass.
     const ps = PASSES.find((x) => x.stamp === "072459");
     const prevPlan = PASSES.find((x) => x.stamp === "071957").plan;
