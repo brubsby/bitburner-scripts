@@ -869,6 +869,35 @@ if (!sleevesExpected) {
       else note(`bootstrap: ${msg} (${forMin.toFixed(0)} min)`);
     }
   }
+  // F7: HOME UNPRICED / HOME APPROVED NOT BOUGHT. Home RAM is the one
+  // purchase that lasts the node, so its verdict must exist and be acted on.
+  // Live BN4.3 2026-10-03: plan.txt spends.home {deltaH: null} for 10.4h at
+  // 64GB on the Bladeburner route (priced only on the hacking exit, "not
+  // affordable by the install"), with the 128GB tier admitting the full
+  // daemon (progress.js bladeHomeVerdictOf). And an approved buy must land:
+  // a $100b join claim held one at $32m in the watchdog trigger.
+  {
+    const sp = planDecisions?.spends?.home ?? null;
+    const huNext = readTel("homeup.txt")?.next ?? null;
+    const gh = gate?.spendExit?.home ?? null;
+    const unpriced = !!(huNext && sp && sp.deltaH === null && now.exitH !== null); // exitH priced = progress.js runs (boot may still call it deferred)
+    now.homeUnpricedSince = unpriced ? (prev && sameNode ? (prev.homeUnpricedSince ?? now.at) : now.at) : null;
+    if (unpriced) {
+      const forH = (Date.parse(now.at) - Date.parse(now.homeUnpricedSince)) / 3.6e6;
+      const msg = `the next home upgrade (${huNext.kind} $${(huNext.cost / 1e6).toFixed(2)}m) has no exit verdict: ${String(gh?.why ?? "spendExit.home absent").slice(0, 200)}`;
+      if (forH >= 1) fail(`HOME UNPRICED for ${forH.toFixed(1)}h: ${msg}`, "the one purchase that survives every install is decided by nothing — boot.txt nextTier (rerun boot.js) on the blade route, else spendExit.home's why");
+      else note(`home unpriced (${(forH * 60).toFixed(0)} min): ${msg}`);
+    }
+    const approved = !!(sp?.buy === true && huNext && num(huNext.cost) && num(now.wealth) && now.wealth >= huNext.cost);
+    now.homeApprovedSince = approved ? (prev && sameNode && prev.homeApprovedCost === huNext.cost ? (prev.homeApprovedSince ?? now.at) : now.at) : null;
+    now.homeApprovedCost = approved ? huNext.cost : null;
+    if (approved) {
+      const forMin = (Date.parse(now.at) - Date.parse(now.homeApprovedSince)) / 60e3;
+      const msg = `the exit approved ${huNext.kind} $${(huNext.cost / 1e6).toFixed(2)}m (${num(sp.deltaH) ? sp.deltaH.toFixed(2) : "?"}h) and wealth $${(now.wealth / 1e6).toFixed(1)}m covers it`;
+      if (forMin > 20) fail(`HOME APPROVED NOT BOUGHT for ${forMin.toFixed(0)} min: ${msg}`, `watchdog homeup.js: ${JSON.stringify(tel["watchdog.txt"]?.jobs?.["homeup.js"] ?? null).slice(0, 200)}; homeup.txt: ${String(readTel("homeup.txt")?.notes?.[0] ?? "").slice(0, 120)}`);
+      else note(`home approved, waiting to buy (${forMin.toFixed(0)} min): ${msg}`);
+    }
+  }
   // F5: the player's work slot must be in use.
   if (!now.working && prev && sameNode && prev.working === false && dtMin >= MIN_INTERVAL_MIN) fail("PLAYER IDLE: no current work across two samples", "the work slot is the one resource that cannot be bought");
 }

@@ -581,9 +581,16 @@ export function gammaDraw(shape, rng = Math.random) {
   }
   const d = shape - 1 / 3
   const c = 1 / Math.sqrt(9 * d)
-  for (;;) {
+  // Capped (tools/test LP1): Marsaglia-Tsang accepts > 95% of proposals, so
+  // a cap this far out is reached only by a broken rng — which then throws
+  // instead of freezing the page (homeplan.js brought this into progress.js's
+  // import graph).
+  for (let tries = 0; ; tries++) {
+    if (tries > 1e4) throw new Error(`gammaDraw(${shape}): no acceptance in ${tries} proposals — rng broken`)
     let x, v
+    let k = 0
     do {
+      if (++k > 1e4) throw new Error(`gammaDraw(${shape}): no positive proposal in ${k} draws — rng broken`)
       x = normalDraw(rng)
       v = 1 + c * x
     } while (v <= 0)

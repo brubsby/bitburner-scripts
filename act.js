@@ -317,7 +317,13 @@ async function homeUpgradeIfBlocked(ns) {
   if (!(h?.blockedByCity || h?.viaActor) || !h.next || Date.now() - Date.parse(h.at) > 3 * 60e3) return null
   if (ns.getServerMoneyAvailable('home') < h.next.cost) return null
   const r = await runActor(ns, 'homeram', [h.next.kind])
-  return { kind: h.next.kind, cost: h.next.cost, ok: r.ok }
+  // RE-ENTER boot.js on the bigger home, as bootstrapHome does: the next
+  // tier's daemons (bladeburner.js, batch.js, go.js at 128GB) are what the
+  // purchase was priced for (progress.js bladeHomeVerdictOf), and only
+  // boot.js admits them — homeup.js --watch, which re-enters it otherwise,
+  // retired when the watchdog came up.
+  const bootPid = r.ok === true && h.next.kind === 'RAM' ? ns.exec('boot.js', 'home', 1) : null
+  return { kind: h.next.kind, cost: h.next.cost, ok: r.ok, bootPid, ...(bootPid === 0 ? { warn: 'boot.js exec refused on home after the purchase' } : {}) }
 }
 
 // Raises this process served (a spender's request, the negative-cash escape,

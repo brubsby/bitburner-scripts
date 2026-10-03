@@ -49,6 +49,19 @@ export const ACTOR = {
 }
 /** The lean policy: bbplan.POLICY with every action at its (auto) max level. */
 export const LITE_POLICY = { ...POLICY, pinTop: true }
+/**
+ * THE LEAN DAEMON'S RANK OVER THE FULL ONE'S, same start, same game time —
+ * everything the lean surface gives up (above) at once, measured on the
+ * game's own classes and ns.bladeburner (tools/sim/bblite-savings.mjs part A:
+ * a fresh join at combat 105, BN4 multipliers, the first 4 game hours, 0.62
+ * to 0.73 over its seeds; docs/bn6-runbook.md). NOT CALIBRATED live:
+ * bladeburner.js has never run in BN4, and the rank calibration k this node
+ * publishes (decisions.bladeRoute.calibration.rank) was measured on bb-lite,
+ * so the full daemon's exit is the lean one's x 1/mid. homeplan.js prices
+ * the home upgrade that admits the full daemon with it (and publishes the
+ * verdict at `hi`, the conservative end, beside it).
+ */
+export const LITE_OVER_FULL = { mid: 0.625, lo: 0.62, hi: 0.73, source: 'tools/sim/bblite-savings.mjs part A (game classes, BN4 multipliers, fresh join at combat 105, 4 game hours) — not calibrated live' }
 /** bb-lite.txt older than this is no lean actor (a pass is <= 60s). */
 export const LITE_FRESH_MS = 3 * 60e3
 /** bladeburner.txt from bladeburner.js younger than this means the full daemon is in its loop. */

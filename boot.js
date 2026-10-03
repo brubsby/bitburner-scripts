@@ -677,6 +677,12 @@ export async function main(ns) {
     return max
   })()
   const plan = planStack(STACK, { homeRam, costOf, bootRam: costOf('boot.js'), minOps: MIN_OPS, actionRam })
+  // THE NEXT TIER'S PLAN, for the home upgrade's price (progress.js prices
+  // the next RAM block by what it ADMITS — homeplan.tierUnlocksOf; a tier is
+  // a step, not a slope). The same planner at the next block (a RAM upgrade
+  // doubles home, homecost.js); no ns call beyond the prices above. At the
+  // cap there is no next block and no reader (homeup's next is null).
+  const nextPlan = planStack(STACK, { homeRam: homeRam * 2, costOf, bootRam: costOf('boot.js'), minOps: MIN_OPS, actionRam })
 
   const started = []
   const stopped = []
@@ -701,6 +707,13 @@ export async function main(ns) {
     stopped,
     failed,
     admit: plan.admit.map((e) => ({ script: e.script, where: e.where, cost: e.cost, threads: e.threads })),
+    nextTier: {
+      fromHomeRam: homeRam,
+      homeRam: homeRam * 2,
+      tier: nextPlan.tier,
+      admit: nextPlan.admit.map((e) => ({ script: e.script, where: e.where, cost: e.cost, ...(e.raisesTo ? { raisesTo: e.raisesTo } : {}), ...(e.kind ? { kind: e.kind } : {}) })),
+      defer: nextPlan.defer.map((e) => e.script),
+    },
     defer: plan.defer.map((e) => ({ script: e.script, why: e.why })),
   }))
   ns.atExit(() => note.exit('stopped', { detail: 'boot.js exited (spawned its worker, or finished)' }))

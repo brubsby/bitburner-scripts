@@ -1,0 +1,756 @@
+{
+ "captured": "2026-10-03T01:25:14.981Z",
+ "note": "BN4.3 live ~01:00Z 2026-10-03: home 64GB all node, next RAM $31.86m, the committed Bladeburner route (bb-lite acting), decisions.spends.home UNPRICED",
+ "bitNode": 4,
+ "player": {
+  "skills": {
+   "hacking": 195,
+   "strength": 112,
+   "defense": 112,
+   "dexterity": 121,
+   "agility": 119,
+   "charisma": 49,
+   "intelligence": 134
+  },
+  "exp": {
+   "hacking": 38850.28477363258,
+   "strength": 5694.834033499408,
+   "defense": 5694.834033499457,
+   "dexterity": 7036.572119610907,
+   "agility": 6746.072247028872,
+   "charisma": 812.0374633495767,
+   "intelligence": 33806.877279711895
+  },
+  "mults": {
+   "hacking_chance": 1.4101935562232495,
+   "hacking_speed": 1.4101935562232495,
+   "hacking_money": 1.4101935562232495,
+   "hacking_grow": 1.5794167829700396,
+   "hacking": 1.4101935562232495,
+   "hacking_exp": 1.4101935562232495,
+   "strength": 1.4101935562232495,
+   "strength_exp": 1.4101935562232495,
+   "defense": 1.4101935562232495,
+   "defense_exp": 1.4101935562232495,
+   "dexterity": 1.4101935562232495,
+   "dexterity_exp": 1.4101935562232495,
+   "agility": 1.4101935562232495,
+   "agility_exp": 1.4101935562232495,
+   "charisma": 1.6191111201081754,
+   "charisma_exp": 1.3057347742807865,
+   "hacknet_node_money": 1.4624229471944812,
+   "hacknet_node_purchase_cost": 0.6739500374298554,
+   "hacknet_node_ram_cost": 0.6739500374298554,
+   "hacknet_node_core_cost": 0.6739500374298554,
+   "hacknet_node_level_cost": 0.6739500374298554,
+   "company_rep": 1.3057347742807865,
+   "faction_rep": 1.3057347742807865,
+   "work_money": 1.3057347742807865,
+   "crime_success": 1.6191111201081754,
+   "crime_money": 1.6191111201081754,
+   "dnet_money": 1.0201052924068645,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "bladeburner_analysis": 1,
+   "bladeburner_success_chance": 1
+  },
+  "city": "Sector-12",
+  "money": 1203948.4809672534
+ },
+ "bladeburner": {
+  "at": "2026-10-03T01:24:35.116Z",
+  "health": "ok",
+  "bitNode": 4,
+  "lastAugReset": 1790985409081,
+  "host": "sigma-cosmetics",
+  "daemon": "bb-lite",
+  "result": "acting",
+  "joined": true,
+  "factionJoined": true,
+  "rank": 227.43,
+  "rankPerHour": 42.92,
+  "skillPoints": 0,
+  "levels": {
+   "Blade's Intuition": 3,
+   "Cloak": 5,
+   "Short-Circuit": 1,
+   "Digital Observer": 3,
+   "Tracer": 2,
+   "Overclock": 0,
+   "Reaper": 2,
+   "Evasive System": 3,
+   "Datamancer": 0,
+   "Cyber's Edge": 1,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 47.93,
+  "maxStamina": 52.73,
+  "resting": false,
+  "city": null,
+  "slot": {
+   "owner": "bladeburner",
+   "ours": true,
+   "at": "2026-10-03T01:22:04.070Z",
+   "by": "progress.js",
+   "why": "progress.js holds the slot for bladeburner"
+  },
+  "action": {
+   "type": "Operations",
+   "name": "Investigation",
+   "level": 5,
+   "p": 0.40140742505323035,
+   "ev": 0.027044124344485304,
+   "why": "Investigation L5 in this city at 40%: 0.0270 rank/s acting, 0.0146 at its stamina duty"
+  },
+  "running": {
+   "type": "Operations",
+   "name": "Investigation"
+  },
+  "blackOps": {
+   "done": 0,
+   "next": "Operation Typhoon",
+   "reqdRank": 2500,
+   "chance": [
+    0.0309,
+    0.0324
+   ]
+  },
+  "exitReady": false,
+  "counts": {
+   "Tracking": 349,
+   "Bounty Hunter": 177.6,
+   "Retirement": 83.9,
+   "Investigation": 162.1,
+   "Undercover Operation": 177.2,
+   "Sting Operation": 133,
+   "Stealth Retirement Operation": 116.2,
+   "Assassination": 186
+  },
+  "maxLevels": {
+   "Tracking": 1,
+   "Bounty Hunter": 10,
+   "Retirement": 11,
+   "Investigation": 5,
+   "Undercover Operation": 2,
+   "Sting Operation": 1,
+   "Stealth Retirement Operation": 1,
+   "Assassination": 1
+  },
+  "skillsAt": "2026-10-03T01:09:18.150Z",
+  "samples": [
+   {
+    "at": "2026-10-03T00:17:48.517Z",
+    "rank": 185.36,
+    "stamina": 18.94
+   },
+   {
+    "at": "2026-10-03T00:18:48.609Z",
+    "rank": 185.36,
+    "stamina": 19.38
+   },
+   {
+    "at": "2026-10-03T00:19:48.700Z",
+    "rank": 185.36,
+    "stamina": 19.81
+   },
+   {
+    "at": "2026-10-03T00:20:48.788Z",
+    "rank": 185.36,
+    "stamina": 20.23
+   },
+   {
+    "at": "2026-10-03T00:21:48.880Z",
+    "rank": 185.36,
+    "stamina": 20.66
+   },
+   {
+    "at": "2026-10-03T00:22:48.973Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:23:49.075Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:24:49.160Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:25:49.248Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:26:49.337Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:27:49.428Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:28:49.514Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:29:49.600Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:30:49.702Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:31:49.787Z",
+    "rank": 185.36,
+    "stamina": 21.08
+   },
+   {
+    "at": "2026-10-03T00:32:49.870Z",
+    "rank": 185.36,
+    "stamina": 24.8
+   },
+   {
+    "at": "2026-10-03T00:33:49.957Z",
+    "rank": 185.36,
+    "stamina": 32.23
+   },
+   {
+    "at": "2026-10-03T00:34:50.049Z",
+    "rank": 185.36,
+    "stamina": 37.43
+   },
+   {
+    "at": "2026-10-03T00:35:50.141Z",
+    "rank": 185.36,
+    "stamina": 41.4
+   },
+   {
+    "at": "2026-10-03T00:36:50.226Z",
+    "rank": 185.36,
+    "stamina": 44.23
+   },
+   {
+    "at": "2026-10-03T00:37:50.567Z",
+    "rank": 185.46,
+    "stamina": 45.62
+   },
+   {
+    "at": "2026-10-03T00:38:51.611Z",
+    "rank": 185.66,
+    "stamina": 45.62
+   },
+   {
+    "at": "2026-10-03T00:40:16.486Z",
+    "rank": 188.87,
+    "stamina": 42.38
+   },
+   {
+    "at": "2026-10-03T00:41:41.364Z",
+    "rank": 192.1,
+    "stamina": 39.69
+   },
+   {
+    "at": "2026-10-03T00:43:06.241Z",
+    "rank": 193.55,
+    "stamina": 37
+   },
+   {
+    "at": "2026-10-03T00:44:31.117Z",
+    "rank": 195.16,
+    "stamina": 34.3
+   },
+   {
+    "at": "2026-10-03T00:45:55.993Z",
+    "rank": 198.37,
+    "stamina": 31.56
+   },
+   {
+    "at": "2026-10-03T00:47:22.869Z",
+    "rank": 203.58,
+    "stamina": 28.81
+   },
+   {
+    "at": "2026-10-03T00:48:50.745Z",
+    "rank": 205.4,
+    "stamina": 26.04
+   },
+   {
+    "at": "2026-10-03T00:49:51.646Z",
+    "rank": 205.4,
+    "stamina": 27.82
+   },
+   {
+    "at": "2026-10-03T00:50:52.229Z",
+    "rank": 205.4,
+    "stamina": 29.57
+   },
+   {
+    "at": "2026-10-03T00:51:52.813Z",
+    "rank": 205.4,
+    "stamina": 31.35
+   },
+   {
+    "at": "2026-10-03T00:52:53.397Z",
+    "rank": 205.4,
+    "stamina": 33.1
+   },
+   {
+    "at": "2026-10-03T00:53:53.981Z",
+    "rank": 205.4,
+    "stamina": 34.88
+   },
+   {
+    "at": "2026-10-03T00:54:54.565Z",
+    "rank": 205.4,
+    "stamina": 36.65
+   },
+   {
+    "at": "2026-10-03T00:55:55.149Z",
+    "rank": 205.4,
+    "stamina": 38.41
+   },
+   {
+    "at": "2026-10-03T00:56:55.732Z",
+    "rank": 205.4,
+    "stamina": 40.19
+   },
+   {
+    "at": "2026-10-03T00:57:56.316Z",
+    "rank": 205.4,
+    "stamina": 41.94
+   },
+   {
+    "at": "2026-10-03T00:58:56.903Z",
+    "rank": 205.4,
+    "stamina": 43.72
+   },
+   {
+    "at": "2026-10-03T00:59:57.492Z",
+    "rank": 205.4,
+    "stamina": 45.49
+   },
+   {
+    "at": "2026-10-03T01:01:26.373Z",
+    "rank": 207.05,
+    "stamina": 44.47
+   },
+   {
+    "at": "2026-10-03T01:02:54.258Z",
+    "rank": 210.27,
+    "stamina": 41.8
+   },
+   {
+    "at": "2026-10-03T01:04:22.145Z",
+    "rank": 212.15,
+    "stamina": 39.12
+   },
+   {
+    "at": "2026-10-03T01:05:50.039Z",
+    "rank": 215.41,
+    "stamina": 36.42
+   },
+   {
+    "at": "2026-10-03T01:07:17.932Z",
+    "rank": 217.29,
+    "stamina": 33.48
+   },
+   {
+    "at": "2026-10-03T01:08:47.846Z",
+    "rank": 220.74,
+    "stamina": 30.73
+   },
+   {
+    "at": "2026-10-03T01:09:48.498Z",
+    "rank": 224.26,
+    "stamina": 30.36
+   },
+   {
+    "at": "2026-10-03T01:10:49.143Z",
+    "rank": 227.67,
+    "stamina": 28.61
+   },
+   {
+    "at": "2026-10-03T01:11:49.770Z",
+    "rank": 227.67,
+    "stamina": 30.45
+   },
+   {
+    "at": "2026-10-03T01:12:50.554Z",
+    "rank": 227.67,
+    "stamina": 32.31
+   },
+   {
+    "at": "2026-10-03T01:13:51.380Z",
+    "rank": 227.67,
+    "stamina": 34.17
+   },
+   {
+    "at": "2026-10-03T01:14:52.019Z",
+    "rank": 227.67,
+    "stamina": 36.03
+   },
+   {
+    "at": "2026-10-03T01:15:52.678Z",
+    "rank": 227.67,
+    "stamina": 37.86
+   },
+   {
+    "at": "2026-10-03T01:16:53.298Z",
+    "rank": 227.67,
+    "stamina": 39.72
+   },
+   {
+    "at": "2026-10-03T01:17:53.928Z",
+    "rank": 227.67,
+    "stamina": 41.58
+   },
+   {
+    "at": "2026-10-03T01:18:54.564Z",
+    "rank": 227.67,
+    "stamina": 43.42
+   },
+   {
+    "at": "2026-10-03T01:19:55.197Z",
+    "rank": 227.67,
+    "stamina": 45.28
+   },
+   {
+    "at": "2026-10-03T01:20:55.830Z",
+    "rank": 227.67,
+    "stamina": 47.11
+   },
+   {
+    "at": "2026-10-03T01:21:56.515Z",
+    "rank": 227.67,
+    "stamina": 48.97
+   },
+   {
+    "at": "2026-10-03T01:22:57.167Z",
+    "rank": 227.67,
+    "stamina": 50.83
+   },
+   {
+    "at": "2026-10-03T01:23:57.808Z",
+    "rank": 227.67,
+    "stamina": 48.9
+   }
+  ],
+  "detail": "Investigation L5 in this city at 40%: 0.0270 rank/s acting, 0.0146 at its stamina duty"
+ },
+ "bladeRoute": {
+  "key": "blade",
+  "bladeH": 30.582,
+  "q50": 30.473,
+  "start": {
+   "gymExpPerSec": 14.101935562232494,
+   "gym": "Powerhouse Gym",
+   "trainingMult": 1
+  },
+  "rankK": 1.1869,
+  "successK": 1,
+  "installBasis": {
+   "kind": "none",
+   "why": "no install priced on this route yet: none"
+  },
+  "simulacrum": {
+   "cost": 150000000000,
+   "repReq": 1250,
+   "withoutH": 30.58,
+   "moneyH": 115642.88,
+   "repH": 10.07,
+   "reachH": 115642.88,
+   "boundH": 29.81,
+   "boundGainH": 0.77,
+   "buy": false,
+   "withH": null,
+   "gainH": null,
+   "why": "unreachable before the exit: money in 115642.9h ($150.0b against $0.005b at $1.3m/h), reputation in 10.1h (111 of 1250 at 113.1/h) — the exit is 30.6h away; installed now at no cost it would be worth 0.77h",
+   "rankPerH": 42.94
+  }
+ },
+ "spendsHome": {
+  "buy": false,
+  "pBuy": null,
+  "deltaH": null
+ },
+ "spendExitHome": {
+  "buy": false,
+  "cost": 31861958.97004852,
+  "why": "unpriced: the spend is not affordable by the install",
+  "kind": "RAM"
+ },
+ "joinClaim": 100000000000,
+ "homeup": {
+  "at": "2026-10-03T00:08:31.960Z",
+  "health": "waiting",
+  "dry": false,
+  "reserve": 0,
+  "bought": [],
+  "notes": [
+   "waiting: next is RAM at $31.862m, have $693.418k (reserve $0.000)"
+  ],
+  "errors": [],
+  "next": {
+   "kind": "RAM",
+   "cost": 31861958.97004852
+  },
+  "blockedByCity": false,
+  "viaActor": false,
+  "homeRam": 64,
+  "cores": 1,
+  "money": 693418,
+  "nextCost": 31861959
+ },
+ "boot": {
+  "homeRam": 64,
+  "tier": 64,
+  "admit": [
+   {
+    "script": "seed.js",
+    "where": "anywhere",
+    "cost": 7.8
+   },
+   {
+    "script": "homeup.js",
+    "where": "anywhere",
+    "cost": 7.6
+   },
+   {
+    "script": "rfalink.js",
+    "where": "anywhere",
+    "cost": 2.25
+   },
+   {
+    "script": "errlog.js",
+    "where": "anywhere",
+    "cost": 2.25
+   },
+   {
+    "script": "torbuy.js",
+    "where": "home",
+    "cost": 2.45
+   },
+   {
+    "script": "cmd.js",
+    "where": "home",
+    "cost": 8.15
+   },
+   {
+    "script": "autobuy.js",
+    "where": "home",
+    "cost": 4.15
+   },
+   {
+    "script": "backdoor.js",
+    "where": "home",
+    "cost": 4.6
+   },
+   {
+    "script": "settings.js",
+    "where": "home",
+    "cost": 2.3
+   },
+   {
+    "script": "tel.js",
+    "where": "anywhere",
+    "cost": 6
+   },
+   {
+    "script": "watchdog.js",
+    "where": "home",
+    "cost": 8.95
+   },
+   {
+    "script": "buyserv.js",
+    "where": "anywhere",
+    "cost": 9.6
+   },
+   {
+    "script": "hacknet.js",
+    "where": "anywhere",
+    "cost": 11.4
+   },
+   {
+    "script": "gang.js",
+    "where": "anywhere",
+    "cost": 31.9
+   },
+   {
+    "script": "act.js",
+    "where": "anywhere",
+    "cost": 7.8
+   },
+   {
+    "script": "sleeve.js",
+    "where": "anywhere",
+    "cost": 3.25
+   },
+   {
+    "script": "stock.js",
+    "where": "anywhere",
+    "cost": 28.6
+   },
+   {
+    "script": "hashspend.js",
+    "where": "anywhere",
+    "cost": 3.25
+   },
+   {
+    "script": "bb-lite.js",
+    "where": "anywhere",
+    "cost": 5.6
+   },
+   {
+    "script": "early.js",
+    "where": "home",
+    "cost": 2.4,
+    "threads": 6
+   }
+  ],
+  "defer": [
+   "upkeep.js",
+   "batch.js",
+   "fast.js",
+   "progress.js",
+   "share.js",
+   "go.js",
+   "bootnag.js",
+   "nfg.js",
+   "ctauto.js",
+   "homeup.js",
+   "faction.js",
+   "endgame.js",
+   "sleeveaug.js",
+   "bladeburner.js"
+  ]
+ },
+ "fleet": [
+  {
+   "host": "rho-construction",
+   "maxRam": 16
+  },
+  {
+   "host": "catalyst",
+   "maxRam": 32
+  },
+  {
+   "host": "netlink",
+   "maxRam": 16
+  },
+  {
+   "host": "millenium-fitness",
+   "maxRam": 128
+  },
+  {
+   "host": "computek",
+   "maxRam": 0
+  },
+  {
+   "host": "summit-uni",
+   "maxRam": 64
+  },
+  {
+   "host": "rothman-uni",
+   "maxRam": 128
+  },
+  {
+   "host": "the-hub",
+   "maxRam": 32
+  },
+  {
+   "host": "johnson-ortho",
+   "maxRam": 0
+  },
+  {
+   "host": "omega-net",
+   "maxRam": 32
+  },
+  {
+   "host": "crush-fitness",
+   "maxRam": 0
+  },
+  {
+   "host": "silver-helix",
+   "maxRam": 64
+  },
+  {
+   "host": "phantasy",
+   "maxRam": 32
+  },
+  {
+   "host": "iron-gym",
+   "maxRam": 32
+  },
+  {
+   "host": "max-hardware",
+   "maxRam": 32
+  },
+  {
+   "host": "zer0",
+   "maxRam": 32
+  },
+  {
+   "host": "neo-net",
+   "maxRam": 32
+  },
+  {
+   "host": "harakiri-sushi",
+   "maxRam": 16
+  },
+  {
+   "host": "hong-fang-tea",
+   "maxRam": 16
+  },
+  {
+   "host": "nectar-net",
+   "maxRam": 16
+  },
+  {
+   "host": "joesguns",
+   "maxRam": 16
+  },
+  {
+   "host": "sigma-cosmetics",
+   "maxRam": 16
+  },
+  {
+   "host": "foodnstuff",
+   "maxRam": 16
+  },
+  {
+   "host": "n00dles",
+   "maxRam": 4
+  },
+  {
+   "host": "home",
+   "maxRam": 64
+  },
+  {
+   "host": "CSEC",
+   "maxRam": 8
+  },
+  {
+   "host": "avmnite-02h",
+   "maxRam": 16
+  },
+  {
+   "host": "I.I.I.I",
+   "maxRam": 32
+  }
+ ],
+ "go": {
+  "opponent": "Daedalus"
+ },
+ "wealth": 5921364,
+ "incomePerSec": 1865.94
+}

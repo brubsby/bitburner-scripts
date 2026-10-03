@@ -161,6 +161,7 @@ import { goWeightsGen } from 'goweights.js'
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, combatBarPlanOf } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
 import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
+import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -2854,7 +2855,7 @@ function carriedGraftsOf(pc, installed, work, intel = 0) {
  * `spendExit`; home/hacknet/buyserv follow it when fresh and fall back to
  * their old rules, named, when not.
  */
-function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, replanAt, pending, offers) {
+function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, replanAt, pending, offers, homeOverride = null) {
   const out = { at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, W, finalWindow }
   try {
     const gainsAt = (m) => {
@@ -2869,9 +2870,8 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     // RAM's income response is the level-scaled (script) part only: a flat
     // realised stock rate is not bought by RAM, and attributing it per GB would
     // price servers by the trader's income. Hacknet money is not in it either.
-    const income = (inputs?.incomePerSec ?? 0) - (inputs?.flatIncomePerSec ?? 0)
     const ramTotal = readJson(ns, '/tel/batch.txt')?.ram?.total
-    const perGB = income > 0 && ramTotal > 0 ? income / ramTotal : null
+    const perGB = ramIncomePerGB(ns, inputs)
     // WHERE HACKING PAYS NOTHING (BitNode 8) RAM's only return is hacking exp,
     // and home RAM keeps it across installs — so home's verdict carries the
     // exp its RAM adds to the climb (exitplan.spendExit expGainPerSec). The
@@ -2912,6 +2912,11 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       if (next.kind === 'RAM') out.home = verdict(next.cost, 0, true, { kind: next.kind, channel: 'exp' }, expPerGB * homeRam)
       else out.home = { buy: false, why: 'cores add no hacking exp and hacking pays no money in this node' }
     } else out.home = { buy: false, why: 'next home upgrade, home RAM or income per GB unreadable' }
+    // ON THE COMMITTED BLADEBURNER ROUTE the exit is the black ops, and the
+    // upgrade is priced there (bladeHomeVerdictOf: the tier's admissions as
+    // a step, the displaced batch through the install machinery). The
+    // hacking-exit verdict above is not this trajectory's; kept beside it.
+    if (homeOverride) out.home = { ...homeOverride, hackExit: out.home ? { buy: out.home.buy === true, deltaH: out.home.deltaH ?? null, why: out.home.why ?? null } : null }
     // Hacknet: its own best upgrade (game formula, hacknetplan).
     const hn = readJson(ns, '/tel/hacknet.txt')
     // Servers (BitNode 9 / SF9): the WHOLE batch hacknet.js planned — every
@@ -2946,6 +2951,134 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     out.why = `spend verdicts threw: ${String(e).slice(0, 80)}`
   }
   return out
+}
+
+/**
+ * Income per GB of RAM: the batcher's average (batch.txt ram.total against
+ * the level-scaled script income) — the linear response of a RAM-bound
+ * batcher. A flat realised stock rate is not bought by RAM. Null unreadable.
+ */
+function ramIncomePerGB(ns, inputs) {
+  const income = (inputs?.incomePerSec ?? 0) - (inputs?.flatIncomePerSec ?? 0)
+  const ramTotal = readJson(ns, '/tel/batch.txt')?.ram?.total
+  return income > 0 && ramTotal > 0 ? income / ramTotal : null
+}
+
+/**
+ * THE NEXT HOME UPGRADE ON THE COMMITTED BLADEBURNER ROUTE (homeplan.js),
+ * trajectory against trajectory on the black-op exit. With: bought at the
+ * earliest hour this pass's money stream (liveMoney + moneyBy) affords it —
+ * before the committed install (whose batch is then re-planned on what is
+ * left, both arms by the one planner) or else in the next life — and from
+ * that hour the next tier's admissions as a STEP (boot.txt nextTier:
+ * bladeburner.js over bb-lite, go.js's channel, the rest named), plus the
+ * linear perGB x homeRam money term. Without: the committed trajectory.
+ * Decided by plan.decideSpend like every other spend. Null off the blade
+ * route (the hacking-exit verdict stands).
+ *
+ * `noJoin`: the black-op exit has no faction join, so the exit faction's
+ * money claim (Daedalus's $100b) is not on this trajectory — watchdog.js's
+ * homeup trigger holds no join money for a verdict that carries it.
+ */
+async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replanAt = null, pending = [], statsOf = null }) {
+  const pc = planCtxOf(ns, info)
+  const br = pc?.decisions?.bladeRoute
+  if (br?.key !== 'blade' || !pc?.bladeCtx) return null
+  const fin1 = (x) => typeof x === 'number' && isFinite(x)
+  const base = { route: 'blade', noJoin: "the committed exit is the 21 black ops: no faction join (the exit faction's money claim) is on it" }
+  try {
+    const hu = readJson(ns, '/tel/homeup.txt')
+    const boot = readJson(ns, '/tel/boot.txt')
+    const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
+    const homeRam = hu?.homeRam > 0 ? hu.homeRam : boot?.homeRam
+    if (!(next?.cost > 0) || !(homeRam > 0)) return { ...base, buy: false, deltaH: null, why: 'the next home upgrade or home RAM is unreadable' }
+    Object.assign(base, { kind: next.kind, cost: next.cost })
+    // Cores admit nothing (boot's tiers are RAM): only the money term.
+    const unlocks = next.kind === 'RAM' ? tierUnlocksOf(boot, homeRam) : { homeRam, unlocked: [], retired: [] }
+    const prevInst = pc.prev?.decisions?.install ?? null
+    const spec = prevInst?.route === 'blade' ? basisOf(prevInst, Date.now()) : null
+    const installAtH = spec?.kind === 'wait' && fin1(spec.waitH) ? spec.waitH : Infinity
+    const moneyAt = (h) => liveMoney + moneyBy(h)
+    const exitH = fin1(br.bladeH) ? br.bladeH : 400
+    // The next life from $0 at this pass's average rate (the post-install
+    // balance is $1262 + startingMoney; its ramp is not simulated).
+    const post = { money0: 0, perSec: moneyBy(1) / 3600 }
+    const buy = homeBuyAtOf({ cost: next.cost, moneyAt, installAtH, post, maxH: exitH })
+    const perGB = ramIncomePerGB(ns, inputs)
+    const gainPerSec = next.kind === 'RAM' && perGB !== null ? perGB * homeRam : 0
+    // THE SIMULACRUM: money moves it on this exit too. Reachable before the
+    // exit in either arm -> its reach moves with this purchase, which is not
+    // simulated here, so the verdict refuses rather than guess.
+    const sim = br.simulacrum
+    if (sim && fin1(sim.cost) && sim.buy !== true && !/installed|bought and waits/.test(sim.why ?? '')) {
+      const repH = fin1(sim.repH) ? sim.repH : 0
+      const m0 = homeBuyAtOf({ cost: sim.cost, moneyAt, installAtH, post, maxH: exitH })
+      const withAt = (h) => moneyAt(h) + (fin1(buy.atH) && h > buy.atH ? gainPerSec * (h - buy.atH) * 3600 : 0)
+      const m1 = homeBuyAtOf({ cost: sim.cost + next.cost, moneyAt: withAt, installAtH, post, maxH: exitH })
+      const reach = Math.min(fin1(m0.atH) ? Math.max(m0.atH, repH) : Infinity, fin1(m1.atH) ? Math.max(m1.atH, repH) : Infinity)
+      if (reach < exitH) return { ...base, buy: false, deltaH: null, why: `The Blade's Simulacrum is reachable at ${reach.toFixed(1)}h in an arm (the exit ${exitH.toFixed(1)}h): its reach moves with this purchase and is not simulated here` }
+    }
+    const daemon = readJson(ns, '/tel/bladeburner.txt')?.daemon
+    const daemonNow = daemon === 'bladeburner.js' ? 'bladeburner.js' : 'bb-lite'
+    const full = unlocks?.unlocked?.find((u) => u.script === 'bladeburner.js')
+    const fullHost = (() => {
+      if (!full) return { ok: false, why: 'not admitted' }
+      const need = full.raisesTo ?? full.cost
+      const st = readJson(ns, '/tel/status.txt')
+      const hosts = Array.isArray(st?.servers) ? st.servers.filter((h) => h?.host && h.host !== 'home' && !String(h.host).startsWith('hacknet-')) : []
+      const big = hosts.reduce((a, h) => (h.maxRam > (a?.maxRam ?? 0) ? h : a), null)
+      if (!fin1(need) || !big) return { ok: false, why: "the fleet (status.txt servers) or the daemon's raised RAM is unread" }
+      return big.maxRam >= need
+        ? { ok: true, why: `${big.host} (${big.maxRam}GB, rooted) holds its ${need}GB once seed.js's workers retire at the tier — the race with batch.js for it at that boot is not simulated` }
+        : { ok: false, why: `the largest rooted host is ${big.host} at ${big.maxRam}GB, under its ${need}GB` }
+    })()
+    const content = (names) => {
+      const c = bladeContentOf(names, statsOf)
+      return { gains: c.gains, simulacrum: c.simulacrum }
+    }
+    const batchAt = typeof replanAt === 'function' && typeof statsOf === 'function' ? (m) => content([...(replanAt(Math.max(0, m))?.buy ?? []).map((b) => b?.name).filter(Boolean), ...(pending ?? [])]) : null
+    const r = await paced(
+      bladeHomeExitGen({
+        startFor: pc.bladeCtx.startFor,
+        spec,
+        cost: next.cost,
+        buy,
+        unlocks,
+        daemonNow,
+        fullHost,
+        go: { opponent: readJson(ns, '/tel/go.txt')?.opponent ?? null, goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1 },
+        batchAt,
+        moneyAtInstall: fin1(installAtH) ? moneyAt(installAtH) : null,
+        gainPerSec,
+        maxH: Math.max(exitH * 2, 50),
+      }),
+      'plan-home-blade',
+    )
+    const tier = unlocks ? { homeRam: unlocks.homeRam, unlocked: unlocks.unlocked.map((u) => u.script), retired: unlocks.retired } : null
+    if (!fin1(r?.deltaH)) return { ...base, buy: false, deltaH: null, buyAtH: buy.atH ?? null, tier, why: r?.why ?? 'unpriced' }
+    const pd = decideSpend({ deltaH: r.deltaH, withoutH: r.withoutH, si: pc.post?.jitter?.si ?? null })
+    const top = [...(r.effects ?? [])].sort((a, b) => (a.deltaH ?? 0) - (b.deltaH ?? 0))[0]
+    return {
+      ...base,
+      buy: pd ? pd.buy : r.deltaH < 0,
+      pBuy: pd?.pBuy ?? null,
+      gainPerSec,
+      deltaH: r.deltaH,
+      withH: r.withH,
+      withoutH: r.withoutH,
+      buyAtH: +r.buyAtH.toFixed(3),
+      buyLife: r.buyLife,
+      tier,
+      effects: r.effects,
+      credited: r.credited,
+      notCredited: r.notCredited,
+      displaced: r.displaced,
+      conservative: r.conservative,
+      why: `the black-op exit ${r.withH.toFixed(2)}h with the ${unlocks?.homeRam ?? '?'}GB tier bought at ${r.buyAtH.toFixed(2)}h vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h${top ? `; most: ${top.name} ${top.deltaH}h` : ''})${pd ? ` — plan: ${pd.why}` : ''}`,
+    }
+  } catch (e) {
+    return { ...base, buy: false, deltaH: null, why: `the Bladeburner home verdict threw: ${String(e).slice(0, 120)}` }
+  }
 }
 
 const PORT_OPENERS = [
@@ -7244,6 +7377,9 @@ async function act(ns, canJoin, info, note) {
       }
       writeSleevePlan(ns, info, await gangWorthNow(ns, info, player, gangInputs0), null, ns.getSharePower(), repF, expOff, byExit)
     }
+    // THE HOME UPGRADE ON THE COMMITTED BLADEBURNER ROUTE (bladeHomeVerdictOf),
+    // priced before the write: it runs the black-op exit through the pacer.
+    const homeBlade0 = await bladeHomeVerdictOf(ns, info, { inputs: gangInputs0(), liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n) })
     ns.write(
       GATE,
       JSON.stringify(
@@ -7346,7 +7482,7 @@ async function act(ns, canJoin, info, note) {
             // remainder — the median window minus this life's age — stated.
             const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
             return {
-              spendExit: winLeft === null ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => cashNow * h * 3600, replanAt, pending, offers),
+              spendExit: winLeft === null && !homeBlade0 ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => cashNow * h * 3600, replanAt, pending, offers, homeBlade0),
               covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf, offers, [...allCount.keys()]),
               sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home') + stockEquity),
             }
@@ -8192,6 +8328,10 @@ async function act(ns, canJoin, info, note) {
       await sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, pf), sleeveRepFaction(player, schedule, ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction : null), planFleet?.expDisabled === true),
     )
 
+    // THE HOME UPGRADE ON THE COMMITTED BLADEBURNER ROUTE (bladeHomeVerdictOf),
+    // on the same money stream the spend verdicts below use.
+    const spendMoneyBy = (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600)
+    const homeBlade1 = await bladeHomeVerdictOf(ns, info, { inputs: exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n) })
     // Persist BEFORE acting. An install never returns, so a write afterwards
     // would never happen and the next life would start with no history — and
     // the lastAugReset stamp is what stops that stale sample being reused.
@@ -8232,8 +8372,8 @@ async function act(ns, canJoin, info, note) {
             installPointOf(ns, info, gate).W,
             gate.holdForever === true,
             liveCapital,
-            (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600),
-            replanAt, pending, offers,
+            spendMoneyBy,
+            replanAt, pending, offers, homeBlade1,
           ),
           futurePredictions,
           // The objective the plan was priced under — derived per pass from

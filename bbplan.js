@@ -954,7 +954,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
   // the game rolled over the formula's, and the rank the game paid over the
   // model's own one-hour trajectory. Both 1 (the formula) until measured.
   const successScale = Number.isFinite(s0.successScale) && s0.successScale > 0 ? s0.successScale : 1
-  const rankScale = Number.isFinite(s0.rankScale) && s0.rankScale > 0 ? s0.rankScale : 1
+  let rankScale = Number.isFinite(s0.rankScale) && s0.rankScale > 0 ? s0.rankScale : 1
   const augSuccess = () => (person.mults.bladeburner_success_chance ?? 1) * successScale
   const env = { int: s0.int ?? 0, pop: BBC.PopulationThreshold, chaos: 0, teamCount: sup, augMult: augSuccess() }
   const bnRank = s0.bnRank ?? 1
@@ -1105,7 +1105,28 @@ export function* bladeExitGen(s0, pol = POLICY) {
   const pathEvery = s0.pathEveryS > 0 ? s0.pathEveryS : 0
   const path = pathEvery ? [{ h: +((t + credit) / 3600).toFixed(4), rank: +st.rank.toFixed(3) }] : []
   let sinceYield = 0
+  // MID-TRAJECTORY STEPS (s0.steps: [{atH, rankScaleMult?, gains?}]): a
+  // change at a time that is not an install, keeping every exp — the full
+  // daemon taking over from bb-lite when a home upgrade admits it (the rank
+  // the full daemon realises over the lean one's, bbliteplan.LITE_OVER_FULL),
+  // a multiplier that grows with no reset (the Go farm's combat channel).
+  // homeplan.js prices the next home upgrade with these. Absent: none (every
+  // other caller).
+  const steps = (Array.isArray(s0.steps) ? s0.steps : []).filter((x) => Number.isFinite(x?.atH)).map((x) => ({ ...x, atS: Math.max(0, x.atH) * 3600 })).sort((a, b) => a.atS - b.atS)
+  let stepAt = 0
+  const applySteps = () => {
+    while (stepAt < steps.length && steps[stepAt].atS <= t) {
+      const x = steps[stepAt++]
+      if (Number.isFinite(x.rankScaleMult) && x.rankScaleMult > 0) rankScale *= x.rankScaleMult
+      if (x.gains) {
+        for (const [k, g] of Object.entries(x.gains)) if (Number.isFinite(g) && g > 0) person.mults[k] = (person.mults[k] ?? 1) * g
+        env.augMult = augSuccess()
+        relevel()
+      }
+    }
+  }
   while (t < maxS && st.bo < BLACK_OPS.length) {
+    if (steps.length) applySteps()
     if (++sinceYield >= 2) {
       sinceYield = 0
       yield

@@ -664,7 +664,11 @@ const WATCHED = [
         const v = x?.home
         if (x && x.lastAugReset === claimLife && Date.now() - Date.parse(x.at) < 15 * 60e3 && v?.cost > 0 && v.kind === next.kind && Math.abs(v.cost / next.cost - 1) < 0.01) {
           if (!v.buy) return false
-          const join = joinClaim(claimSrc, claimLife)
+          // A verdict priced on a trajectory with no faction join (the
+          // committed Bladeburner route: the exit is the black ops,
+          // progress.js bladeHomeVerdictOf) holds no join money — the $100b
+          // Daedalus claim held an approved 128GB block at $32m forever.
+          const join = typeof v.noJoin === 'string' && v.noJoin ? 0 : joinClaim(claimSrc, claimLife)
           return Number.isFinite(join) && ns.getServerMoneyAvailable('home') >= next.cost + join
         }
       } catch {
