@@ -24,6 +24,12 @@
 //         join (hours), median over seeds. No interpolation: the levels are the
 //         grid. Every other Source-File is held at BB_BASE and intelligence at
 //         BB_INT (nextnode.mjs's spec, byte for byte, so its cache is reusable).
+//   fleet: the sleeve-count axis (BB_FLEET_N = 5, 6, 7; sleeves.mjs): per (node, n) the
+//         live chooser's pick (the fastest of bbplan.sleeveConfigs(n) on BB_SEL_SEEDS at
+//         SF6.1/SF7.0), then that pick on every (SF6, SF7) cell x the evaluation seeds;
+//         bbLeg(n, l6, l7, k) = the 5-infiltrator leg x median(pick k) / median(pick 5),
+//         floored at the k-1 ratio. 13 nodes x (39 configs x 5 + 3 x 12 cells x 15) = 9555
+//         sims, ~0.15s each (~25 min once, on one process); bb.json ~2.4MB.
 //
 // THE CACHE: tools/sim/gameplan/.cache/{hack,bb}.json, one entry per sim call,
 // keyed by sha1(code hash + the call's full spec). The hack code hash covers
@@ -57,6 +63,21 @@ export const BB_INT = 133
 export const BB_SLEEVES = 5
 export const L6 = [1, 2, 3]
 export const L7 = [0, 1, 2, 3]
+// THE FLEET-SIZE AXIS (sleeves.mjs: the count is min(3, SF10 + (BN10 ? 1 : 0)) + 4 Covenant, so
+// 5..7 here). Each size runs under the live fleet rule — sleeve.js commits
+// bbplan.chooseSleeveConfigGen's pick, "every configuration of sleeveConfigs(n), the fastest
+// kept" — with the fastest chosen ON THE GAME'S CLASSES per (node, n) at the cell
+// BB_SEL_CELL over the selection seeds BB_SEL_SEEDS (disjoint from the evaluation seeds
+// 1..bbSeeds, so the pick's winner's curse does not enter the leg). The plan's leg at n
+// sleeves is the 5-infiltrator leg (the old grid, the one k is defined on) x
+// leg(pick n) / leg(pick 5), paired seed for seed, and never longer than at n-1: an extra
+// sleeve may idle (Sleeve idle work does nothing to the division).
+export const BB_FLEET_N = [5, 6, 7]
+export const BB_SEL_SEEDS = [101, 102, 103, 104, 105]
+export const BB_SEL_CELL = [1, 0]
+/** sleeveConfigs(n) without the all-idle fleet: the mixes the live chooser compares. */
+export const fleetConfigs = (bp, n) => bp.sleeveConfigs(n).filter((c) => c.infiltrate + c.support + c.fa > 0)
+const cfgKey = (c) => `i${c.infiltrate}s${c.support}f${c.fa}`
 
 const sha = (...parts) => {
   const h = crypto.createHash('sha1')
@@ -115,10 +136,31 @@ export function hackCurvesFor(start) {
 }
 
 export const hackKeyOf = (curve, g, profile) => sha(HACK_CODE, JSON.stringify({ node: curve.node, level: curve.level, sf: curve.sf, profile, g }))
-export const bbSpec = (n, l6, l7, seed, bbPolicy) => ({
+/** fleet: null = the planner's 5 infiltrators (the old grid's key, byte for byte); else {infiltrate, support, fa}. */
+export const bbSpec = (n, l6, l7, seed, bbPolicy, fleet = null) => ({
   node: n, sf: [...BB_BASE, ...(l6 ? [[6, l6]] : []), ...(l7 ? [[7, l7]] : [])], g: 0, installEveryH: null, intelligence: BB_INT, hacking: 200, seed, maxH: 400,
-  policy: { shared: true, sharedPolicy: bbPolicy, sleeves: { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
+  policy: { shared: true, sharedPolicy: bbPolicy, sleeves: fleet ? { infiltrate: fleet.infiltrate, support: fleet.support, fa: fleet.fa } : { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
 })
+const legOf = (r) => (r?.hours ? r.hours - (r.joinH ?? 0) : null)
+/**
+ * The live chooser's pick for n sleeves in node `node`, from the selection runs in `bb`:
+ * the configuration with the shortest median leg over BB_SEL_SEEDS (ties: sleeveConfigs
+ * order). null while any selection run is missing. Returns {config, median, byConfig}.
+ */
+export function pickFleet(bb, bp, node, n) {
+  const rows = []
+  for (const c of fleetConfigs(bp, n)) {
+    const ls = []
+    for (const s of BB_SEL_SEEDS) {
+      const r = bb[bbKeyOf(bbSpec(node, ...BB_SEL_CELL, s, bp.POLICY, c))]
+      if (r === undefined) return null
+      ls.push(legOf(r) ?? Infinity)
+    }
+    rows.push({ config: c, median: median(ls) })
+  }
+  const best = rows.reduce((a, b) => (b.median < a.median ? b : a))
+  return { config: best.config, median: best.median, byConfig: rows.map((x) => ({ k: cfgKey(x.config), median: x.median })) }
+}
 export const bbKeyOf = (spec) => sha(BB_CODE, JSON.stringify(spec)) // == nextnode.mjs keyOf
 export const bbNodes = () => NODES.filter((n) => nodeMults(n).BladeburnerRank > 0)
 
@@ -187,6 +229,41 @@ export async function buildSurrogate({ start, profile, bbSeeds = 5, jobs = 1, lo
     writeJson(bf, bb)
   }
   log(`[surrogate] bb: ${stats.bb.needed} sims needed, ${stats.bb.seeded} taken from nextnode's cache, ${stats.bb.computed} computed in ${(stats.bb.ms / 1000).toFixed(1)}s`)
+
+  // --- the fleet-size axis: (1) the live chooser's pick per (node, n) on the selection seeds,
+  // (2) the pick on every (SF6, SF7) cell x the evaluation seeds
+  stats.fleet = { needed: 0, computed: 0, ms: 0 }
+  const runTodo = async (list, what) => {
+    const todo = list.filter((j) => !(j.key in bb))
+    if (!todo.length) return
+    log(`[surrogate] fleet ${what}: ${todo.length} Bladeburner sims on ${jobs} process(es)...`)
+    const t1 = performance.now()
+    let done = 0
+    await runBbJobs(todo, jobs, (r) => {
+      bb[r.key] = r
+      stats.fleet.computed++
+      if (++done % 200 === 0) {
+        writeJson(bf, bb)
+        log(`[surrogate] fleet ${what} ${done}/${todo.length} (${((performance.now() - t1) / 1000 / done).toFixed(2)}s/sim)`)
+      }
+    })
+    stats.fleet.ms += performance.now() - t1
+    writeJson(bf, bb)
+  }
+  const sel = []
+  for (const n of bbNodes()) for (const k of BB_FLEET_N) for (const c of fleetConfigs(bp, k)) for (const s of BB_SEL_SEEDS) sel.push(bbSpec(n, ...BB_SEL_CELL, s, bp.POLICY, c))
+  stats.fleet.needed += sel.length
+  await runTodo(sel.map((spec) => ({ key: bbKeyOf(spec), spec })), 'selection')
+  const ev = []
+  for (const n of bbNodes())
+    for (const k of BB_FLEET_N) {
+      const pick = pickFleet(bb, bp, n, k)
+      if (!pick) throw new Error(`surrogate: the fleet selection for BN${n} x ${k} sleeves is incomplete after its build`)
+      for (const l6 of L6) for (const l7 of L7) for (let s = 1; s <= bbSeeds; s++) ev.push(bbSpec(n, l6, l7, s, bp.POLICY, pick.config))
+    }
+  stats.fleet.needed += ev.length
+  await runTodo(ev.map((spec) => ({ key: bbKeyOf(spec), spec })), 'evaluation')
+  log(`[surrogate] fleet: ${stats.fleet.needed} sims needed (${sel.length} selection, ${ev.length} evaluation), ${stats.fleet.computed} computed in ${(stats.fleet.ms / 1000).toFixed(1)}s`)
   return stats
 }
 
@@ -300,6 +377,49 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
         joins.set(`${n}|${l6}|${l7}`, js.length ? median(js) : null)
       }
   if (bbMissing) throw new Error(`surrogate: ${bbMissing} Bladeburner sims not built (run plan.mjs --build)`)
+  // THE FLEET-SIZE AXIS: per (node, SF6, SF7), the ratio of the live pick's median leg at n
+  // sleeves to its median at 5 (paired seeds), held <= the ratio at n-1 (an extra sleeve may
+  // idle); the plan's leg at n = the 5-infiltrator leg x that ratio. n = 5 is the old grid.
+  const fleets = new Map() // `${n}|${k}` -> pickFleet
+  const ratios = new Map() // `${n}|${l6}|${l7}|${k}` -> {ratio, raw}
+  let fleetMissing = 0
+  for (const n of bbNodes()) {
+    for (const k of BB_FLEET_N) {
+      const p = pickFleet(bb, bp, n, k)
+      if (!p) fleetMissing++
+      fleets.set(`${n}|${k}`, p)
+    }
+    for (const l6 of L6)
+      for (const l7 of L7) {
+        const med = (k) => {
+          const p = fleets.get(`${n}|${k}`)
+          if (!p) return null
+          const rs = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY, p.config))])
+          fleetMissing += rs.filter((r) => !r).length
+          const ls = rs.map(legOf).filter((x) => x !== null)
+          return ls.length > bbSeeds / 2 ? median(ls) : null
+        }
+        const m5 = med(BB_FLEET_N[0])
+        let prev = 1
+        for (const k of BB_FLEET_N) {
+          const mk = k === BB_FLEET_N[0] ? m5 : med(k)
+          const raw = m5 && mk ? mk / m5 : null
+          // no finishing run at n sleeves (or at 5): the extra sleeve is priced as idle
+          const ratio = raw === null ? prev : Math.min(prev, raw)
+          ratios.set(`${n}|${l6}|${l7}|${k}`, { ratio, raw })
+          prev = ratio
+        }
+      }
+  }
+  if (fleetMissing) throw new Error(`surrogate: ${fleetMissing} fleet-axis Bladeburner sims not built (run plan.mjs --build-only)`)
+  const legAt = (n, l6, l7, k) => {
+    const base = legs.get(`${n}|${l6}|${l7}`) ?? null
+    if (!base || k === BB_SLEEVES) return base
+    const kk = Math.min(BB_FLEET_N[BB_FLEET_N.length - 1], Math.max(BB_FLEET_N[0], k))
+    const r = ratios.get(`${n}|${l6}|${l7}|${kk}`)
+    if (!r) throw new Error(`surrogate: no fleet ratio for BN${n} SF6.${l6} SF7.${l7} at ${k} sleeves`)
+    return { ...base, median: base.median * r.ratio, q1: base.q1 * r.ratio, q3: base.q3 * r.ratio, legs: base.legs.map((x) => x * r.ratio), sleeves: kk, ratio: r.ratio, raw: r.raw }
+  }
   const dmemo = new Map()
   const multsMemo = new Map()
   // opts.speed1: HackingSpeedMultiplier priced at 1 (phase 1's model; GP3's regression mode — direct only)
@@ -341,7 +461,11 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
     hackClimb,
     hackHours: direct ? hackDirect : hackInterp,
     hackDirect,
-    bbLeg: (n, l6, l7) => legs.get(`${n}|${l6}|${l7}`) ?? null,
+    // sleeves: the fleet size (sleeves.mjs sleeveCount); 5 (the default) is the old grid exactly
+    bbLeg: (n, l6, l7, sleeves = BB_SLEEVES) => legAt(n, l6, l7, sleeves),
+    /** The live chooser's pick for k sleeves in node n ({config, median, byConfig}) and the fleet ratio of a cell. */
+    bbFleet: (n, k) => fleets.get(`${n}|${k}`) ?? null,
+    bbFleetRatio: (n, l6, l7, k) => ratios.get(`${n}|${l6}|${l7}|${k}`) ?? null,
     bbRank: (n) => rank.get(n),
     bbJoin: (n, l6, l7) => joins.get(`${n}|${l6}|${l7}`) ?? null,
     mults: (n) => {

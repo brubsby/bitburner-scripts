@@ -92,6 +92,9 @@ export { ActiveFragment } from "${GAME}/src/CotMG/ActiveFragment";
 export { Fragments, FragmentById } from "${GAME}/src/CotMG/Fragment";
 export { CalculateEffect as StanekCalculateEffect } from "${GAME}/src/CotMG/formulas/effect";
 export { StanekConstants } from "${GAME}/src/CotMG/data/Constants";
+// The sleeve count, for tools/sim/gameplan/sleevetest.mjs (SL1): sleeves.mjs's count rule and the
+// Covenant's price against the game's own recalculateNumberOfOwnedSleeves / getSleeveCost.
+export { recalculateNumberOfOwnedSleeves, getSleeveCost, MaxSleevesFromCovenant } from "${GAME}/src/PersonObjects/Sleeve/SleeveCovenantPurchases";
 `;
 
 const rawPlugin = {

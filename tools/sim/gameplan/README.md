@@ -12,7 +12,8 @@ node tools/sim/gameplan/plan.mjs --build-only          # build / extend the surr
 node tools/sim/gameplan/plan.mjs --observe             # ingest telemetry into posterior.json, then plan on it
 node tools/sim/gameplan/observe.mjs [--dry-run]        # the ingest alone: how the posterior moved
 node tools/sim/gameplan/plan.mjs --prior               # the hand prior only (ignore posterior.json)
-node tools/test/run.mjs gameplan                       # GP1-GP7
+node tools/test/run.mjs gameplan                       # GP1-GP8, SL1-SL4
+TELEMETRY=<.telemetry> node tools/sim/gameplan/sleeves.mjs   # re-derive the hacking route's d10 and the 5th Covenant sleeve's price
 ```
 
 Run `plan.mjs --observe` after every clear: it reads the state from
@@ -42,6 +43,8 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | `plan.mjs` | the CLI |
 | `stanek.mjs` | Stanek's Gift (SF13, BN13): the layout per grid (cached in `.cache/stanek-layouts.json`), the gift's factors on the hacking route (exit divisor W, g factor, favor-life factor) from `../../../stanekplan.js` (the pure model: catalogue, grid, effect, charge, placement optimiser, the per-life charging model) |
 | `stanektest.mjs` | ST1's game-source half: stanekplan.js against the game's own CotMG classes (tools/sim bundle), its own child |
+| `sleeves.mjs` | the sleeve fleet: the count rule (min(3, SF10 + (BN10 ? 1 : 0)) + 4 Covenant), the hacking route's DERIVED d10 (an extra sleeve's money-crime trajectory through exitplan's per-life lift on the measured lives) and the 5th Covenant sleeve's price; its CLI re-derives them |
+| `sleevetest.mjs` | SL1-SL3's game half: the count against the game's recalculateNumberOfOwnedSleeves (tools/sim bundle); 5 sleeves = the old surrogate, monotone in sleeves (the cache) |
 | `go.mjs` | the IPvGO model (phase 2): the Go bonus scale GoPower x the SF14 doubling, the favor life, the w0r1d_d43m0n exit divisor over its window (the post-TRP climb fixed point), the derived w0 prior, the g channel — source formulas, measured BN9 farm, ASSUMED bounds, each labelled |
 | `selftest.mjs` | the game-dependent half of `tools/test/gameplan.test.mjs` (GP2, GP3, GP4's simulation half), run in a child process |
 | `gotest.mjs` | GP4's game-source half: go.mjs against the game's own CalculateEffect / getMaxRep / endGoGame / favor (tools/sim bundle), its own child |
@@ -52,8 +55,10 @@ C(node, state) is `min` over the routes that apply:
   `H` = `hackexit.hackExitHours` at `g = g(node) x prod gFactor(SF) x goG(GoPower x SF14 doubling)`;
   `W` the w0r1d_d43m0n exit divisor (effect(w0 x the window), the window the post-TRP climb's fixed point), `favor` the favor life (go.mjs); `early` = sum of the SFs' first-life savings.
   Every node but BN14.
-- **blade**: `open' - min(early, open' - 0.5) + leg(node, SF6, SF7) x k`, `leg` = bbsim median,
-  `open' = open + gym(node) - gym(BN6)` (bbsim's time to combat 100 at the node's combat multipliers).
+- **blade**: `open' - min(early, open' - 0.5) + leg(node, SF6, SF7, sleeves) x k`, `leg` = bbsim median,
+  `open' = open + gym(node) - gym(BN6)` (bbsim's time to combat 100 at the node's combat multipliers);
+  `sleeves` = the fleet the clear runs with (sleeves.mjs: 5 today, 6/7 at SF10.2/10.3, +1 inside BN10),
+  the leg at 6/7 = the 5-infiltrator leg x leg(live pick, n) / leg(live pick, 5) (surrogate's fleet axis).
 - **go (BN14)**: the hack formula at GoPower 4 (BN14's own route; hack does not apply there) — MODELLED (phase 2).
 - **stanek** (any node where the gift is available: BN13, or SF13 >= 1): the hack formula (BN14: go)
   with Stanek's Gift accepted at the node's start — `g x gMul`, `W x W_gift`, `favor x favorMul`
@@ -106,6 +111,30 @@ move 898.6h -> 794.0h; BN13.1 moves from the last three slots to 4th (mid world)
 and 1st in the robust order; the recommended next node stays BN11.1 (P(best) 72% ->
 57%, BN13.1 now +1.1 +- 0.4h behind). Cost: 2.1s a draw, peak RSS 1.7GB (0.8GB
 with `--no-stanek`): the table is 4x larger with SF13 live.
+
+### The sleeve fleet (sleeves.mjs) — source, simulated, derived, assumed
+
+| | |
+| --- | --- |
+| SOURCE | `sleeves = min(3, SF10 + (BN10 ? 1 : 0)) + sleevesFromCovenant` (SleeveCovenantPurchases.tsx:63; SL1 runs the game's recalculateNumberOfOwnedSleeves over 96 cases); 4 Covenant sleeves held, so 5 today, 6 at SF10.2, 7 at SF10.3, and one more inside BN10 (BN10.2 at SF10.1: 6; BN10.3 at SF10.2: 7). The 5th Covenant sleeve: getSleeveCost(4) = 10^4 x $10t = $1e17, BN10 only. |
+| SIMULATED (Bladeburner) | bbsim (the game's classes) at 5, 6, 7 sleeves under the live fleet rule — sleeve.js's committed mix is bbplan.chooseSleeveConfigGen's "the fastest of sleeveConfigs(n)"; here the fastest on the game's classes per (node, n) at SF6.1/SF7.0 on selection seeds 101-105 (the picks: i1/f4 at 5 on BN6/11, i2/f4 and i3/f4 at 6/7 — infiltrate/field analysis). The plan's leg = the 5-infiltrator leg (k's definition) x leg(pick n)/leg(pick 5) on seeds 1..15, floored at the n-1 ratio (an extra sleeve may idle). 9555 sims, ~30 min once, bb.json 2.4MB. |
+| DERIVED (hacking) | the live policy gives one sleeve a faction (setToFactionWork throws on a second), so a 6th/7th sleeve falls through to its best money crime. exitplan prices that money as a per-life lift k^eBudget; on hackexit's fresh inputs (income NOT CALIBRATED, $1e7-5e8/s at level 1) it is ~0, so the lift is applied to the six measured runs' lives (peak money / life length) with the new sleeve's own trajectory (skills 1, shock 100 falling passively, training by its crime and the fleet's hand-off): d10 per unit CrimeMoney 0.03% / 0.72% / 3.8% (lo/mid/hi; was the hand 0 / 1% / 3% node-free), the node's g x (1 + d10 x CrimeMoney) per sleeve past 5. |
+| ASSUMED | eBudget 0.05/0.15/0.3 (ln 1.1 / ln 1.9 mid), a life's income / its peak-money bound 3/1.5/1 |
+| NOT PRICED | a sleeve on a second faction's rep (the live policy never assigns one), the exp transfer (<= 16 exp/s at sync 1), the 5th Covenant sleeve as a move (no Covenant axis in the state: printed against its price), the fleet before the Bladeburner join |
+
+`--five-sleeves` prices 5 sleeves everywhere (SF10.2/10.3 and BN10's own sleeve worth nothing).
+
+Results 2026-10-03 (BN14.1 in progress, 100 draws, seed 1). Bladeburner leg ratio at 6 / 7
+sleeves (SF6.1/SF7.0): BN3, BN6, BN11, BN2 1.000 / 1.000 (the 5-fleet already saturates the
+21 black ops: these are the plan's Bladeburner clears), BN10 0.980, BN13 0.993, BN5 0.935,
+BN9 0.908, BN12 0.839, BN7 1.000 / 0.922, BN14 1.000 / 0.949. Hacking route per sleeve
+(mid): BN11 -1.2h, BN14 -0.5h, BN9 -0.2h, BN2 -0.1h. SF10.2/10.3's two sleeves are worth
+8.1h, BN10's own temporary sleeve 4.0h (12.1h together; the old d10 guess credited
+~6.7h); BN10's clears move to the Bladeburner route (70.4h at SF10.1, 6 sleeves) and to
+slots 17-18 (were 10 and 15, hacking with the gift). E[T] best first move 809.2h ->
+802.2h; the recommendation stays BN11.1 (P(best) 60%, BN13.1 +1.5 +- 0.5h). The 5th
+Covenant sleeve costs 22.4h of BN10's late income plus the Covenant's 850s in one
+window, against ~4h for one more sleeve: not worth holding for.
 
 The order search is exact: V(s) = min_n C(n, s) + V(s + n) over the 1.5-3M states
 of the lattice, in reverse index order (a clear always raises the index). C is

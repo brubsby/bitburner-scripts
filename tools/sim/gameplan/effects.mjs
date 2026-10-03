@@ -18,7 +18,8 @@
 //   hackKey(l)      the level enters the hacking-exit simulation's key (the
 //                   game's applySourceFile on a fresh player: hackexit.sfMults)
 //   bbKey(l)        the level enters the Bladeburner simulation's key (bbsim)
-//   gFactor(l, p)   a factor on the hacking route's latent growth g
+//   gFactor(l, p, ctx)  a factor on the hacking route's latent growth g (ctx: node, mults, phase1, fleet)
+//   sleeves(l, node) the sleeve fleet the clear runs with (SF10; the Bladeburner leg's fleet axis)
 //   early(l, n, p)  hours the SF saves in node n's first life (both routes;
 //                   on the Bladeburner route it shortens the opening only)
 //   nodeLevel(l)    the level of the node the clear is played at (BN12 only)
@@ -32,6 +33,11 @@
 // lo = 10th percentile, mid = median, hi = 90th (split normal, z = ±1.2816).
 
 // Source: SourceFile/applySourceFile.ts (multiplier SFs) — quoted per entry.
+import { D10, extraSleeves, sleeveCount } from './sleeves.mjs'
+
+/** phase 1's SF10.2/10.3 effect (nextnode d10 mid, node-free, per level): GP3's regression mode only. */
+export const PHASE1_D10 = 0.01
+
 const SF11_R = [1, 0.96, 0.94, 0.93] // AugmentationHelpers.ts:30 [1, .96, .94, .93][activeSourceFileLvl(11)]
 
 // SF9.2 / SF9.3 hours saved in the node's first life, MARGINAL over the level
@@ -58,7 +64,8 @@ export const SF_PARAMS = {
   lvl14: { lo: 3500, mid: 4700, hi: 5900, min: 2500, what: 'Go: the hacking level a favor life is ground at (MEASURED range, BN1/4/5/8/9/10)' },
   // DERIVED, not hand: go.mjs w0PriorMC (endGoGame's payout x W0_PRIOR_INPUTS: win rate, black's scores, games/h); GP8 re-derives it
   w0: { lo: 1020, mid: 1570, hi: 2380, min: 0, what: 'Go: w0r1d_d43m0n node power/h (DERIVED p10/p50/p90: the payout rules x win rate ~0.04, loss score ~87/267, ~8.8 games/h; was ASSUMED 0/200/1000)' },
-  d10: { lo: 0.0, mid: 0.01, hi: 0.03, min: 0, what: 'SF10.2/10.3: +1 sleeve each -> g x (1+d) per level' },
+  // DERIVED, not hand: sleeves.mjs (the extra sleeve's money crime trajectory lifting every measured life through exitplan's eBudget lift; was ASSUMED 0/0.01/0.03 node-free)
+  d10: { lo: D10.lo, mid: D10.mid, hi: D10.hi, min: 0, what: 'SF10.2/10.3 (+1 sleeve each; +1 more inside BN10): hacking route g x (1 + d x CrimeMoney) per sleeve past 5 (DERIVED, sleeves.mjs: the live fall-through to a money crime x the measured lives; eBudget and income ASSUMED)' },
   d8: { lo: 0.0, mid: 0.005, hi: 0.02, min: 0, what: 'SF8.2: shorts -> g x (1+d)' },
   e43: { lo: 0.2, mid: 0.7, hi: 1.5, min: 0, what: 'SF4.3: Singularity RAM 436->247GB -> hours saved in the first life' },
   z9: { lo: -1.2816, mid: 0, hi: 1.2816, what: 'SF9.2/9.3: quantile position in the sf-early lo/mid/hi tables' },
@@ -131,10 +138,22 @@ export const EFFECTS = {
     },
   },
   10: {
-    status: 'ASSUMED',
-    source: 'PersonObjects/Sleeve/SleeveCovenantPurchases.tsx:63 sleeves = min(3, SF10 lvl) + covenant',
-    gFactor: (l, p) => Math.pow(1 + p.d10, Math.max(0, l - 1)),
-    note: 'the extra sleeves are NOT simulated on the Bladeburner route (5 infiltrators fixed: conservative)',
+    status: 'SIMULATED (Bladeburner: bbsim fleet axis) + DERIVED (hacking: sleeves.mjs)',
+    source: 'PersonObjects/Sleeve/SleeveCovenantPurchases.tsx:63 sleeves = min(3, SF10 lvl + (BN10 ? 1 : 0)) + covenant (4 held)',
+    // the hacking route: g x (1 + d10 x CrimeMoney)^(sleeves past 5) (sleeves.mjs); BN10's own extra
+    // sleeve counts inside BN10. ctx.phase1: phase 1's g x 1.01^(l-1) (GP3's regression mode)
+    gFactor: (l, p, ctx = {}) => {
+      if (ctx.phase1) return Math.pow(1 + PHASE1_D10, Math.max(0, l - 1))
+      if (ctx.fleet === 'five') return 1
+      const x = extraSleeves(l, ctx.fleet === 'noBn10' ? null : ctx.node)
+      if (x === 0) return 1
+      // no silent CrimeMoney 1: a caller pricing extra sleeves must say which node's multipliers
+      if (typeof ctx.mults?.CrimeMoney !== 'number') throw new Error(`SF10 gFactor: ${x} extra sleeve(s) at SF10.${l} in BN${ctx.node} need the node's CrimeMoney (gFactorOf ctx.mults)`)
+      return Math.pow(1 + p.d10 * ctx.mults.CrimeMoney, x)
+    },
+    // the Bladeburner route: the leg at sleeveCount(l, node) sleeves (surrogate bbLeg's fleet axis)
+    sleeves: (l, node, fleet = 'live') => (fleet === 'five' ? 5 : sleeveCount(l, fleet === 'noBn10' ? null : node)),
+    note: 'Bladeburner: the leg x leg(live pick, n)/leg(live pick, 5) (surrogate BB_FLEET_N); hacking: the extra sleeve on its best money crime (the live fall-through: one sleeve per faction); a 2nd faction\'s rep and the exp transfer NOT PRICED; the 5th Covenant sleeve ($1e17, BN10 only) NOT a move (no Covenant axis)',
   },
   11: {
     status: 'ASSUMED',
@@ -161,17 +180,20 @@ export const EFFECTS = {
   },
 }
 
-const ROLES = ['hackKey', 'bbKey', 'gFactor', 'early', 'nodeLevel', 'go', 'stanek']
+const ROLES = ['hackKey', 'bbKey', 'gFactor', 'early', 'nodeLevel', 'go', 'stanek', 'sleeves']
 /** The SFs a clear time reads (the non-inert ones). */
 export const LIVE_SFS = Object.keys(EFFECTS).map(Number).filter((n) => ROLES.some((r) => EFFECTS[n][r]))
 export const isInert = (n) => !LIVE_SFS.includes(n)
 
 /** The product of every gFactor (nextnode.phi). `lv(n)` gives the level. */
-export function gFactorOf(lv, p) {
+export function gFactorOf(lv, p, ctx = {}) {
+  // ctx: { node, mults (the node's BitNode multipliers), phase1, fleet } — read by SF10's (the sleeve count is per node)
   let f = 1
-  for (const n of LIVE_SFS) if (EFFECTS[n].gFactor) f *= EFFECTS[n].gFactor(lv(n), p)
+  for (const n of LIVE_SFS) if (EFFECTS[n].gFactor) f *= EFFECTS[n].gFactor(lv(n), p, ctx)
   return f
 }
+/** The sleeve fleet a clear of `node` runs with (SF10's sleeves role; 5 when SF10 has none). */
+export const sleevesOf = (lv, node, fleet = 'live') => (EFFECTS[10]?.sleeves ? EFFECTS[10].sleeves(lv(10), node, fleet) : 5)
 /** The sum of every early-game saving for a clear of node `node` (nextnode.early). */
 export function earlyOf(lv, node, p) {
   let h = 0

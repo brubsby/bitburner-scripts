@@ -109,7 +109,7 @@ try {
   let worstA = 0
   for (const n of nodes) {
     const { gFactorOf, hackSfOf, sfKeyStr } = await import('./effects.mjs')
-    const h = Sd.hackHours(n, 1, sfKeyStr(hackSfOf(lv)), mid.g(n) * gFactorOf(lv, mid.sf), { speed1: true })
+    const h = Sd.hackHours(n, 1, sfKeyStr(hackSfOf(lv)), mid.g(n) * gFactorOf(lv, mid.sf, { node: n, mults: Sd.mults(n), phase1: true }), { speed1: true })
     worstA = Math.max(worstA, Math.abs(h - HACK_NOW[n]))
     c.examined++
     if (Math.abs(h - HACK_NOW[n]) > 0.051 + 1e-9) c.fails.push(`hacking hours BN${n} from S0: ${h.toFixed(2)}h vs nextnode ${HACK_NOW[n]}h`)

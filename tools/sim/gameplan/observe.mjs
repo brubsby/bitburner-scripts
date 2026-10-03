@@ -135,14 +135,15 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   const gOpt = { gModel, multsOf: S.mults }
   const { nodeSegments } = await import('../nodechoice/measure.mjs')
   const { backOutG } = await import('../nodechoice/hackexit.mjs')
-  const { earlyOf, sfParamsMid } = await import('./effects.mjs')
+  const { earlyOf, sfParamsMid, sleevesOf } = await import('./effects.mjs')
   const { MEASURED_RUNS } = await import('./economy.mjs')
   const segs = await nodeSegments(path.join(telemetry, 'history.jsonl'))
   const sfMid = sfParamsMid()
   const l67 = (lv) => [Math.max(1, Math.min(3, lv(6))), Math.min(3, lv(7))]
   const fromHistory = readingsFromSegments(segs, {
     gOf: (bn, sf, T) => backOutG({ node: bn, sf, profile: econ.profile }, T).g,
-    bbLeg: (bn, lv) => S.bbLeg(bn, ...l67(lv))?.median ?? null,
+    // the fleet the clear ran with (sleeves.mjs; every Bladeburner clear so far: 5)
+    bbLeg: (bn, lv) => S.bbLeg(bn, ...l67(lv), sleevesOf(lv, bn))?.median ?? null,
     gymDiff: (bn, lv) => (S.bbJoin(bn, ...l67(lv)) ?? 0) - (S.bbJoin(6, ...l67(lv)) ?? 0),
     earlyOf: (lv, bn) => earlyOf(lv, bn, sfMid),
     base: baseIn(MEASURED_RUNS),

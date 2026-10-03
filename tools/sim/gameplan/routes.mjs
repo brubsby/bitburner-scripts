@@ -21,7 +21,9 @@
 //                 reference is the favor life inside the g it was measured
 //                 with (the node's own if played, else the measured runs' mean)
 //          BN14's is the 'go' route below (the same formula at GoPower 4; hack does not apply there)
-//   blade  B = open - min(early, max(0, open - 0.5)) + leg(node, SF6, SF7) x k
+//   blade  B = open - min(early, max(0, open - 0.5)) + leg(node, SF6, SF7, sleeves) x k
+//          sleeves = min(3, SF10 + (BN10 ? 1 : 0)) + 4 (sleeves.mjs); the leg at 6/7 = the
+//          5-infiltrator leg x the live fleet pick's leg ratio (surrogate BB_FLEET_N)
 //          available where the node has Bladeburner (BladeburnerRank > 0) and
 //          the player can join it (BN6/BN7, or SF6/SF7 held)
 //   C = min over available routes (the route is chosen per clear, knowing the world)
@@ -41,7 +43,7 @@
 // world.phase1 prices as phase 1 did (GP3's regression mode): no Go model,
 // SF14.1 = g x 1.02, the opening unscaled, BN14 on the plain hacking route.
 
-import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr, LIVE_SFS } from './effects.mjs'
+import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr, LIVE_SFS, sleevesOf } from './effects.mjs'
 import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf, goWindow } from './go.mjs'
 import { giftAvailable, stanekFactors } from './stanek.mjs'
 
@@ -72,7 +74,7 @@ export function favorRef(n, world, S) {
 export function hackParts({ node, lv, world, S, st = null }) {
   const nodeLevel = EFFECTS[node]?.nodeLevel ? EFFECTS[node].nodeLevel(lv(node)) : 1
   const l14 = lv(14)
-  let g = world.g(node) * gFactorOf(lv, world.sf)
+  let g = world.g(node) * gFactorOf(lv, world.sf, { node, mults: S.mults(node), phase1: !!world.phase1, fleet: world.fleet })
   let goG = 1
   let W = 1
   let win = null
@@ -175,7 +177,8 @@ export const ROUTES = [
     hours({ node, lv, world, S }) {
       const l6 = Math.max(1, Math.min(3, lv(6)))
       const l7 = Math.min(3, lv(7))
-      const leg = S.bbLeg(node, l6, l7)
+      // the fleet: sleeves.mjs sleeveCount (SF10 + BN10's own + 4 Covenant); phase 1 priced 5 infiltrators
+      const leg = S.bbLeg(node, l6, l7, world.phase1 ? 5 : sleevesOf(lv, node, world.fleet))
       if (!leg) return null
       // the opening measured in BN6 (2.5h), plus the gym hours this node's combat multipliers add over BN6's
       const open = world.phase1 ? world.open : Math.max(0.5, world.open + (S.bbJoin(node, l6, l7) ?? 0) - (S.bbJoin(6, l6, l7) ?? 0))

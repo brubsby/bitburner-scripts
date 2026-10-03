@@ -13,6 +13,7 @@
 //          --g-model auto|hand|exch|amc|full (gmodel.mjs; auto = best by leave-one-out)
 //          --no-disc (no model-discrepancy term) | --no-adapt (skip KG / bound / CVaR / multi-fidelity)
 //          --no-stanek (Stanek's Gift never accepted: the pre-Stanek plan, draw for draw)
+//          --five-sleeves (5 sleeves everywhere: SF10.2/10.3 and BN10's own extra sleeve worth nothing — the pre-fleet plan)
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //          --w0-window H (the w0r1d_d43m0n window fixed at H hours: 1 = the old model)
 //          --w0-prior lo,mid,hi (override the derived w0 prior: 0,200,1000 = the old hand one)
@@ -183,7 +184,9 @@ const lvOf = (s) => (n) => lvl(s, n)
 // --phase1: price as phase 1 did (no IPvGO model, no gym scale, BN14 speed 1) — the before/after comparison
 // --w0-window H: the old fixed w0r1d_d43m0n window of H hours (1 = the model before the climb window; regression)
 const W0_WINDOW = arg('--w0-window') !== undefined ? Number(arg('--w0-window')) : null
-const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, w0Window: W0_WINDOW, w0Live: has('--w0-live') }
+// --five-sleeves: 5 sleeves everywhere (SF10.2/10.3 and BN10's own extra sleeve priced at nothing: the pre-fleet plan)
+const FLEET = has('--five-sleeves') ? 'five' : 'live'
+const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, w0Window: W0_WINDOW, w0Live: has('--w0-live'), fleet: FLEET }
 const mid = worldOf(econ, {}, wOpts)
 const L0 = lattice(entry)
 const L1 = lattice(start)
@@ -373,6 +376,45 @@ if (!NO_STANEK && !has('--phase1')) {
   console.log(`  SF13's VALUE (mid world, optimal order from ${sig(start)}): the gift everywhere ${tAll.toFixed(1)}h; in BN13 only (SF13 grants nothing elsewhere) ${tOnly.toFixed(1)}h; never ${tOff.toFixed(1)}h`)
   console.log(`    -> SF13's own value ${(tOnly - tAll).toFixed(1)}h; BN13's gift (inside BN13) ${(tOff - tOnly).toFixed(1)}h; the gift in total ${(tOff - tAll).toFixed(1)}h`)
   tick("Stanek's Gift (section)", t0)
+}
+
+// ---------------------------------------------------------------------------
+// The sleeve fleet (sleeves.mjs): SF10.2/10.3's extra sleeves and BN10's own, on both routes
+// ---------------------------------------------------------------------------
+if (!has('--phase1') && FLEET === 'live') {
+  t0 = performance.now()
+  const { sleeveCount, D10, COVENANT5 } = await import('./sleeves.mjs')
+  const { BB_FLEET_N } = await import('./surrogate.mjs')
+  const w = mid
+  const l10 = lvl(start, 10)
+  console.log(`\nTHE SLEEVE FLEET (sleeves.mjs) — sleeves = min(3, SF10 + (BN10 ? 1 : 0)) + 4 Covenant: SF10.1 ${sleeveCount(1, 1)} (BN10 ${sleeveCount(1, 10)}), SF10.2 ${sleeveCount(2, 1)} (BN10 ${sleeveCount(2, 10)}), SF10.3 ${sleeveCount(3, 1)}`)
+  console.log(`  hacking route: g x (1 + d10 x CrimeMoney) per sleeve past 5, d10 DERIVED ${D10.lo.toExponential(1)} / ${D10.mid.toExponential(1)} / ${D10.hi.toExponential(1)} (mid world ${w.sf.d10.toExponential(2)}): the extra sleeve's money crime x the measured lives (one sleeve per faction: the rep slot is taken)`)
+  console.log('  Bladeburner route: the leg x leg(live pick, n) / leg(live pick, 5) — the pick = the fastest of sleeveConfigs(n) on the game\'s classes (selection seeds 101-105, SF6.1/SF7.0)')
+  console.log(`  own hours from the plan start at SF10 = 1 / 2 / 3 (other SFs as at the start), each route; the Bladeburner pick per fleet size (i/s/f = infiltrate/support/field analysis), the leg ratio at the start's SF6/SF7`)
+  console.log('  clear     CM    hack  @10.1   10.2   10.3 | blade @10.1  10.2   10.3 | pick 5        6         7          ratio 6   7')
+  const l6 = Math.max(1, Math.min(3, lvl(start, 6)))
+  const l7 = Math.min(3, lvl(start, 7))
+  const ck = (c) => (c ? `i${c.infiltrate}s${c.support}f${c.fa}` : '-')
+  for (const n of [...new Set(owed(start))].sort((a, b) => a - b)) {
+    const row = [1, 2, 3].map((l) => clearTime(n, lvWith(start, 10, l), w, S).by)
+    const hk = row.map((b) => f1(b.hack ?? b.go ?? null))
+    const bl = row.map((b) => f1(b.blade ?? null))
+    const bb = S.bbRank(n) > 0
+    const picks = bb ? BB_FLEET_N.map((k) => ck(S.bbFleet(n, k)?.config).padEnd(9)).join(' ') : '-'.padEnd(29)
+    const rt = bb ? BB_FLEET_N.slice(1).map((k) => (S.bbFleetRatio(n, l6, l7, k)?.ratio ?? NaN).toFixed(3)).join(' ') : '  -'
+    const label = n === 10 ? `BN10.${l10 + 1}*` : `BN${n}`
+    console.log(`  ${label.padEnd(8)} ${S.mults(n).CrimeMoney.toFixed(2).padStart(4)}  ${hk.join(' ')} | ${bl.join(' ')} | ${picks}  ${rt}`)
+  }
+  console.log(`  (* BN10 runs one sleeve more than the state outside it: its own clear at SF10.${l10} has ${sleeveCount(l10, 10)} sleeves)`)
+  // the values: the mid-world optimum with the fleet as it is, without BN10's own sleeve, and with 5 sleeves everywhere
+  const totalOf = (opts) => solveDP(L1, tableFor(L1, worldOf(econ, {}, { ...wOpts, ...opts })))[0]
+  const tLive = V1[0]
+  const tNoBn10 = totalOf({ fleet: 'noBn10' })
+  const tFive = totalOf({ fleet: 'five' })
+  console.log(`  SF10's VALUE (mid world, optimal order from ${sig(start)}): the fleet as the game counts it ${tLive.toFixed(1)}h; without BN10's own extra sleeve ${tNoBn10.toFixed(1)}h; 5 sleeves everywhere (the old pricing of the Bladeburner route) ${tFive.toFixed(1)}h`)
+  console.log(`    -> SF10.2/10.3's extra sleeves ${(tFive - tNoBn10).toFixed(1)}h; BN10's own temporary sleeve ${(tNoBn10 - tLive).toFixed(1)}h; together ${(tFive - tLive).toFixed(1)}h`)
+  console.log(`  THE 5TH COVENANT SLEEVE: $${COVENANT5.cost.toExponential(0)} (10^4 x $10t), BN10 only, Covenant membership (hacking and every combat stat 850, 20 augs) in the same install window: ${COVENANT5.hours.toFixed(1)}h of BN10's measured late-life income ($${COVENANT5.income.toExponential(2)}/s) — NOT a move the plan searches (no Covenant axis); a 6th sleeve is worth ~${((tFive - tNoBn10) / 2).toFixed(1)}h over the rest of the game here (half SF10.2/10.3's), so it does not repay the hold`)
+  tick('the sleeve fleet (section)', t0)
 }
 
 printPath(path1, start, mid, `OPTIMAL ORDER — mid world (every parameter at its median), from ${sig(start)}:`)
