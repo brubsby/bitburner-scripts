@@ -424,5 +424,38 @@ export async function run() {
     if (!/const b0 = batchAt\(moneyAtInstall\)\n\s*yield[^\n]*\n\s*const b1 = batchAt\(Math\.max\(0, after\)\)\n\s*yield\n/.test(hp)) c.fail('HB10 homeplan.bladeHomeExitGen re-plans both batches in one step')
     checks.push(c)
   }
+
+  // ---- HB11 ----------------------------------------------------------------
+  {
+    const c = new Check('HB11', "bb-lite's lean phase in the start: the full daemon is the model's own policy from the purchase, not a rank ratio over a trajectory that already priced it (2026-10-03)")
+    // bb-lite at 64GB: the full daemon comes only with the upgrade (bbliteplan.leanUntilOf -> Infinity).
+    const untilH = LP.leanUntilOf(F.bladeburner, 64)
+    c.examined(1)
+    if (untilH !== Infinity || LP.leanUntilOf(F.bladeburner, 128) !== LP.LEAN_PLACE_H || LP.leanUntilOf({ ...F.bladeburner, daemon: 'bladeburner.js' }, 64) !== null) c.fail('HB11 leanUntilOf: bb-lite under the tier -> Infinity, at the tier -> the placement, the full daemon -> none')
+    // An approved purchase of the tier (installgate spendExit.home, this life): the handover is its hour plus the placement.
+    const appr = { buy: true, buyAtH: 2, tier: { homeRam: 128 }, at: new Date(NOW - 1800e3).toISOString(), lastAugReset: F.bladeburner.lastAugReset }
+    const hAppr = LP.leanUntilOf(F.bladeburner, 64, { spendHome: appr, lastAugReset: F.bladeburner.lastAugReset, now: NOW })
+    const hOther = LP.leanUntilOf(F.bladeburner, 64, { spendHome: { ...appr, lastAugReset: 1 }, lastAugReset: F.bladeburner.lastAugReset, now: NOW })
+    const hSmall = LP.leanUntilOf(F.bladeburner, 64, { spendHome: { ...appr, tier: { homeRam: 96 } }, lastAugReset: F.bladeburner.lastAugReset, now: NOW })
+    c.examined(3)
+    if (Math.abs(hAppr - (1.5 + LP.LEAN_PLACE_H)) > 1e-9 || hOther !== Infinity || hSmall !== Infinity) c.fail('HB11 an approved tier purchase ends the lean phase at its hour (this life, a tier that admits the full daemon)', JSON.stringify({ hAppr, hOther, hSmall }))
+    const startLean = (spec) => ({ ...startFor(spec), ...BB.bladeStartOf({ tel: F.bladeburner, person, sleeves: { infiltrate: 0, support: 0, fa: 0 }, gymExpPerSec: F.bladeRoute.start.gymExpPerSec, bnRank: n4.BladeburnerRank, skillCostMult: n4.BladeburnerSkillCost, install: BB.bladeInstallOfSpec(spec), simulacrum: false, rankScale: 1, successScale: 1, leanUntilH: untilH, now: NOW }) })
+    const moneyAt = (h) => F.wealth + F.incomePerSec * h * 3600
+    const buy = HP.homeBuyAtOf({ cost: COST, moneyAt, installAtH: Infinity, post: null, maxH: F.bladeRoute.bladeH })
+    const v = drain(HP.bladeHomeExitGen({ startFor: startLean, spec: null, cost: COST, buy, unlocks: unlocks128, daemonNow: 'bb-lite', fullHost: FULL_HOST, go: null, maxH: 120 }))
+    c.examined(3)
+    const step = v.credited?.find((x) => x.script === 'bladeburner.js')
+    if (!step || !/policy/.test(step.why)) c.fail('HB11 the full daemon is not credited as its policy from the purchase', JSON.stringify(v.credited))
+    if (!(v.deltaH < 0)) c.fail('HB11 the tier that admits the full daemon does not shorten the lean exit', JSON.stringify({ withH: v.withH, withoutH: v.withoutH }))
+    if (v.conservative) c.fail('HB11 the lean/full ratio bound is published where no ratio was applied')
+    // The lean exit is the lean policy: slower than the full daemon's from the same start (bbliteplan's lean surface gives up cities, levels, Raid, the team).
+    const full = BB.bladeExit({ ...startFor(null), rankScale: 1 }).hours
+    const leanOnly = BB.bladeExit(startLean(null)).hours
+    c.examined(1)
+    if (!(leanOnly > full)) c.fail('HB11 the lean policy is not slower than the full one', `${leanOnly} vs ${full}`)
+    c.note(`bb-lite at 64GB: exit ${fmt(leanOnly)}h lean throughout vs ${fmt(full)}h full from now; the 128GB tier bought at ${fmt(buy.atH)}h -> ${fmt(v.withH)}h (deltaH ${fmt(v.deltaH)}h; the ratio form gave the full-daemon trajectory x1/${LP.LITE_OVER_FULL.mid} on top of k ${F.bladeRoute.rankK})`)
+    if (!/leanUntilOf\(tel, /.test(SRC('progress.js'))) c.fail('HB11 progress.js does not put the lean phase in the route\'s start')
+    checks.push(c)
+  }
   return checks
 }

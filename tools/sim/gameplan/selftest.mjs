@@ -132,7 +132,12 @@ try {
   // (c) the whole-game totals per first move, nextnode's local search on this planner's table (direct sims)
   const L = lattice(S0)
   for (const bb of ['cal', 'off']) {
-    const w = worldOf(econ, cellZ({ bb, sc: 'mid', sa: 'mid' }, nodes, econ), { sigmaPlayed: 0, bbOff: bb === 'off', phase1: true })
+    const w0 = worldOf(econ, cellZ({ bb, sc: 'mid', sa: 'mid' }, nodes, econ), { sigmaPlayed: 0, bbOff: bb === 'off', phase1: true })
+    // nextnode at 919b8ca priced its cal cell at k 0.916 (bbcal6's as-run
+    // ratio); the base is 1.223 since 2026-10-03 (params.BB_PARAMS: one
+    // definition). The regression reproduces the printed run, so it prices
+    // that run's k; the clear formula and the tables are what it checks.
+    const w = bb === 'cal' ? { ...w0, k: 0.916 } : w0
     const T = buildTable(L, (n, lvf) => clearTime(n, lvf, w, Sd).h, (n) => !isInert(n))
     const V = solveDP(L, T)
     const fm = firstMoves(L, T, V)

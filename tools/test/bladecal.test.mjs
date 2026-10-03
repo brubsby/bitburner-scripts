@@ -203,8 +203,17 @@ export async function run() {
     if (!led.closed || Math.abs(led.closed.lnK - Math.log(40 / 50)) > 1e-3 || led.pending?.at !== '2026-10-01T11:00:00Z') c.fail(`the hour closes at ln(40/50) and the next opens: ${JSON.stringify(led.closed)}`)
     const inst = BB.rankCalStep(led, { at: '2026-10-01T12:05:00Z', lastAugReset: 2, rank: 10, path: null })
     if (inst.closed || inst.pending) c.fail('an install closes nothing and opens nothing without a path')
-    const post1 = BB.rankRatePosterior([{ lnK: Math.log(0.8), h: 1 }])
-    const post9 = BB.rankRatePosterior(Array.from({ length: 9 }, () => ({ lnK: Math.log(0.8), h: 1 })))
+    const V = BB.RANK_CAL.v
+    const post1 = BB.rankRatePosterior([{ lnK: Math.log(0.8), h: 1, v: V }])
+    const post9 = BB.rankRatePosterior(Array.from({ length: 9 }, () => ({ lnK: Math.log(0.8), h: 1, v: V })))
+    // A window of the old definition (any daemon, any inputs) measures nothing now.
+    const old = BB.rankRatePosterior(Array.from({ length: 9 }, () => ({ lnK: Math.log(0.8), h: 1 })))
+    if (old.n !== 0 || old.k !== 1) c.fail(`windows without the definition's version are dropped: ${old.why}`)
+    if (led.closed?.v !== V) c.fail('a closed window carries the definition version')
+    // Not the model's trajectory (the lean daemon, an unread city, a stale fleet): no window opens, an open one is dropped.
+    const lean = BB.rankCalStep(null, { at: '2026-10-01T10:00:00Z', lastAugReset: 1, rank: 100, full: false, path })
+    const dropped = BB.rankCalStep(led, { at: '2026-10-01T11:30:00Z', lastAugReset: 1, rank: 150, full: false, path })
+    if (lean.pending || dropped.pending || dropped.closed) c.fail('a window opens and closes only on the full daemon from complete inputs')
     c.note(`one hour at 0.8: ${post1.why}`)
     c.note(`nine hours at 0.8: k ${post9.k} x/÷ ${Math.exp(1.2816 * post9.sdLn).toFixed(2)} (weight ${post9.measuredWeight})`)
     if (!(post1.k > 0.8 && post1.k < 0.95 && post9.k < post1.k && post9.sdLn < post1.sdLn)) c.fail('k moves toward the measured ratio as the hours grow')
@@ -304,8 +313,9 @@ export async function run() {
     const pr = SRC('progress.js')
     const bj = SRC('bladeburner.js')
     const need = [
-      [pr, /const fl = bladeFleetOf\(ours \? fleet : null\)/, 'progress.js: the fleet as it runs'],
-      [pr, /rankScale, successScale \}\)/, 'progress.js: the calibration into the one builder'],
+      [pr, /const fl = bladeFleetOf\(ours \? fleet : null, \{ lifeStart: info\.lastAugReset \}\)/, 'progress.js: the fleet as it runs (none from before the install)'],
+      [pr, /rankWindowOkOf\(\{ tel, fleetSource: fl\.source \}\)/, 'progress.js: only the model\'s own trajectory is a rank window'],
+      [pr, /rankScale, successScale, leanUntilH \}\)/, 'progress.js: the calibration (and the lean phase) into the one builder'],
       [pr, /bladeEventsOf\(pc\.prev\?\.decisions\?\.bladeRoute\?\.state/, 'progress.js: the state events before the decision'],
       [pr, /rankCalStep\(prevCal/, 'progress.js: the rank ledger'],
       [bj, /popRatioFromRanges\(lo, hi, cl, ch\)/, 'bladeburner.js: the true population of every city (the side from an action\'s own range)'],

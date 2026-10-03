@@ -23,7 +23,7 @@
 // The hacking exit is hackexit.mjs (exitplan.bestExitPolicy from a fresh
 // entry, the game's applySourceFile for SF1/SF5); the Bladeburner exit is
 // bbsim.mjs (the game's own Bladeburner classes), CALIBRATED on the live BN6 run
-// (bbcal6.mjs: live leg / model 0.916) — section 3.
+// (k = (hours - opening) / the clean leg, 1.223 on BN6) — section 3.
 //
 // WHAT IS MEASURED vs ASSUMED is printed in the header of the output: the
 // latent g of every node we have played is backed out of its measured hours;
@@ -178,23 +178,26 @@ function early(n, stack, sa) {
 // 3. BLADEBURNER EXITS — bbsim.mjs (the game's classes running bladeburner.js's
 //    own policy, bbplan pol.shared), CALIBRATED on the live BN6 run
 // ---------------------------------------------------------------------------
-// BN6 (2026-10-01 02:49Z -> ~10-02 14:30Z) is the calibration: bbcal6.mjs
-// replays the run as it went (the fleet idle until join + 24.8h) and the live
-// Bladeburner leg (join -> exit, 27.9h) came in at 0.916 x the model's median
-// (seeds IQR 29.7-31.4h); the in-game rank posterior over 8 windows says the
-// same direction (realised / model 1.078). So a clear on the Bladeburner route is
+// BN6 (2026-10-01 02:49Z -> 10-02 14:36Z) is the calibration, read with the
+// ONE definition the formula below applies (gameplan params.BB_PARAMS, its
+// observe.mjs): k = (node hours - opening) / leg, leg = this clean leg (the
+// fleet from the join) = (35.79 - 2.38) / 27.32 = 1.223. Until 2026-10-03 the
+// cal cell was 0.916, bbcal6.mjs's live leg over the leg AS RUN (the fleet
+// 24.8h late) — another denominator than the one it multiplied. So a clear on
+// the Bladeburner route is
 //   open + leg(node, SF6 level, SF7 level) x k  -  the early-game hours SF9.2/9.3/4.3 save (capped at open - 0.5h)
 // with leg = bbsim hours after the join (5 infiltrating sleeves from the join,
 // no installs: the live install decision found them worth < 0.2h with the fleet),
 // open = entry -> combat 100 with the gym affordable (MEASURED BN6: 2.5h from a
-// 32GB home by crime; the live join came at 7.7h because the route was not
-// committed until then — a loss, not the opening).
-// Bounds: pess k 1.15 / open 4h, cal k 0.916 / open 2.5h, opt k 0.80 / open 1.5h.
+// 32GB home by crime). k carries what the clean leg leaves out: the late join
+// (BN6: the route committed at 7.7h), the fleet's delays, the lean daemon.
+// Bounds: pess k 1.535 / open 4h, cal k 1.223 / open 2.5h, opt k 1.068 / open 1.5h
+// (the old opt/pess spread around the measured mid).
 // The node's own Bladeburner multipliers (BladeburnerRank, BladeburnerSkillCost,
 // AugmentationRepCost, combat level multipliers) are the game's
 // getBitNodeMultipliers inside bbsim; SF6 (combat level/exp) and SF7
 // (Bladeburner multipliers) are the game's applySourceFile, simulated per level.
-const BB_K = { pess: { k: 1.15, open: 4.0 }, cal: { k: 0.916, open: 2.5 }, opt: { k: 0.8, open: 1.5 } }
+const BB_K = { pess: { k: 1.535, open: 4.0 }, cal: { k: 1.223, open: 2.5 }, opt: { k: 1.068, open: 1.5 } }
 const BB_NODES = []
 for (let n = 1; n <= 14; n++) if (nodeMults(n).BladeburnerRank > 0 && !EXCLUDED.has(n)) BB_NODES.push(n)
 const bp = await import('bbplan.js')
@@ -370,8 +373,8 @@ console.log('  SF9.2/9.3: hours saved per node from tools/sim/sf-early (simulate
 console.log('  NOT PRICED (0h): SF2.2/2.3, SF3, SF12, SF13; SF7.3\'s Blade\'s Simulacrum (the policy holds the slot for Bladeburner and does not install, so it frees nothing);')
 console.log('  SF10.2/10.3 extra sleeves on the Bladeburner route (5 infiltrators simulated); Bladeburner installs buying combat augs (the live decision: < 0.2h with the fleet).')
 
-console.log(`\nBLADEBURNER LEG (hours after the join, bbsim median [IQR] over ${BB_SEEDS} seeds, 5 infiltrators, no installs) — CALIBRATED on BN6: live/model 0.916 (bbcal6.mjs)`)
-console.log('  clear = open + leg x k - early-game savings;  pess k 1.15 open 4h | cal k 0.916 open 2.5h | opt k 0.80 open 1.5h')
+console.log(`\nBLADEBURNER LEG (hours after the join, bbsim median [IQR] over ${BB_SEEDS} seeds, 5 infiltrators, no installs) — CALIBRATED on BN6: k = (hours - opening) / this leg = 1.223`)
+console.log('  clear = open + leg x k - early-game savings;  pess k 1.535 open 4h | cal k 1.223 open 2.5h | opt k 1.068 open 1.5h')
 console.log('  node   SF6.1 SF7.0          SF6.3 SF7.0          SF6.1 SF7.3          SF6.3 SF7.3        | cal clear now | hack mid (stack now)')
 const lg = (x) => (x ? `${f1(x.median)} [${f1(x.q1)},${f1(x.q3)}]` : '   -').padEnd(21)
 for (const n of BB_NODES) console.log(`  BN${String(n).padEnd(3)} ${lg(BB_LEG.get(`${n}|1|0`))}${lg(BB_LEG.get(`${n}|3|0`))}${lg(BB_LEG.get(`${n}|1|3`))}${lg(BB_LEG.get(`${n}|3|3`))}| ${f1(hasBB(n, S0) ? bbClearH(n, S0, { bb: 'cal', sa: 'mid' }) : null)}       | ${f1(hackH(n, S0, 'mid', 'mid'))}`)

@@ -160,8 +160,9 @@ import { goWeightsGen, bladeGoWeightsGen } from 'goweights.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
+import { leanUntilOf } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -2585,7 +2586,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // Bladeburner fleet, else the sleeves as assigned — never a fleet nobody
     // runs (live 13:22Z: all five priced on Infiltrate while all five did
     // Homicide; 26.6h published, 42.7h on the sleeves as they were).
-    const fl = bladeFleetOf(ours ? fleet : null)
+    // A record from before this life's install is no fleet (bladeFleetOf lifeStart: the install stopped every sleeve).
+    const fl = bladeFleetOf(ours ? fleet : null, { lifeStart: info.lastAugReset })
     const sleeves = fl.sleeves
     const person = levelledPerson(player, info)
     // The retrain's gym (bodyplan.retrainGymOf): never null for want of the
@@ -2603,7 +2605,9 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     const rankPost0 = rankRatePosterior(prevCal?.samples ?? [])
     const successScale = sCal.k > 0 ? sCal.k : 1
     const rankScale = rankPost0.k > 0 ? rankPost0.k : 1
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale })
+    // bb-lite acting: its lean policy until the full daemon is expected (bbliteplan.leanUntilOf: placed at the 128GB tier, else a home upgrade).
+    const leanUntilH = leanUntilOf(tel, Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0), { spendHome: readJson(ns, '/tel/installgate.txt')?.spendExit?.home ?? null, lastAugReset: info.lastAugReset })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, leanUntilH })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration
@@ -2628,12 +2632,14 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       let rankCal = { pending: prevCal?.pending ?? null, samples: prevCal?.samples ?? [], closed: null }
       try {
         const actingNow = tel?.joined === true && tel?.slot?.ours === true && (tel.result === 'acting' || tel.result === 'started')
+        // Only the model's own trajectory is a window (bbplan.rankWindowOkOf: the full daemon, every city read, this life's fleet).
+        const win = rankWindowOkOf({ tel, fleetSource: fl.source })
         let path = null
-        if (actingNow) {
+        if (actingNow && win.ok) {
           const pr = yield* bladeExitGen({ ...startFor(bladeBasis), rankScale: 1, maxH: RANK_CAL.pathH, pathEveryS: RANK_CAL.pathEveryS })
           path = pr.path ?? null
         }
-        rankCal = rankCalStep(prevCal, { at: new Date().toISOString(), lastAugReset: info.lastAugReset, rank: tel?.rank, ours: actingNow, path, successScale })
+        rankCal = { ...rankCalStep(prevCal, { at: new Date().toISOString(), lastAugReset: info.lastAugReset, rank: tel?.rank, ours: actingNow, full: win.ok, path, successScale }), ...(win.ok ? {} : { skipped: win.why }) }
       } catch (e) {
         rankCal = { ...rankCal, error: `rank calibration threw: ${String(e).slice(0, 120)}` }
       }
@@ -2676,7 +2682,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         calibration: {
           success: { k: sCal.k, lnK: sCal.lnK, sdLn: sCal.sdLn, n: sCal.n, s: sCal.s, expected: sCal.expected, why: sCal.why, applied: successScale },
           // applied: what this pass's exits used (the posterior at the pass's start); the ledger's newest window is in the next pass's.
-          rank: { ...rankPost, applied: rankScale, pending: rankCal.pending, samples: rankCal.samples, closed: rankCal.closed, ...(rankCal.error ? { error: rankCal.error } : {}) },
+          rank: { ...rankPost, applied: rankScale, pending: rankCal.pending, samples: rankCal.samples, closed: rankCal.closed, ...(rankCal.skipped ? { skipped: rankCal.skipped } : {}), ...(rankCal.error ? { error: rankCal.error } : {}) },
         },
         state: bladeState,
         // The basis WITH its batch's content (blade): sleeve.js prices its fleet on this same install (bbplan.bladeInstallOfBasis).

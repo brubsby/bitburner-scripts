@@ -5,7 +5,8 @@
 // 90th percentile of a split normal (z = ±1.2816); the correlation structure
 // (RHO, SIGMA_PLAYED) is new in this file and is NOT measured by anything.
 // What IS measured: the played nodes' g (economy.mjs), the Bladeburner k
-// = 0.916 (nodechoice/bbcal6.mjs, the live BN6 leg / the model's median).
+// = 1.223 (BN6.1: the live leg / the planner's own leg — ONE definition,
+// below).
 //
 // These hand distributions are the BASE of posterior.mjs: plan.mjs draws
 // through posterior.json (the hand prior updated by observe.mjs's readings of
@@ -20,9 +21,28 @@
 import { SF_PARAMS, splitQ } from './effects.mjs'
 import { baseBonus } from './go.mjs'
 
-/** Bladeburner route: clear = open + leg x k - early savings (nextnode.mjs §3). */
+/**
+ * Bladeburner route: clear = open + leg x k - early savings (nextnode.mjs §3).
+ *
+ * k: ONE DEFINITION, the one the route formula applies and observe.mjs reads
+ * a clear with: k = (hours - opening + early) / leg, leg = the planner's own
+ * leg (surrogate.bbLeg: bbsim, the game's classes, the fleet from the join).
+ * BN6.1 reads 1.223 ((35.79 - 2.38) / 27.32). The base used to be 0.916 —
+ * bbcal6.mjs's live leg over the leg AS RUN (the fleet 24.8h late), a
+ * different denominator than the one it multiplied, so the prior was 25%
+ * optimistic about every Bladeburner route it priced. k is everything
+ * between the clean simulated leg and a live one: the operations (a fleet
+ * idle after an install, the lean daemon until a host holds the full one,
+ * the placement waits) and the exit model's own error. The in-game exit
+ * (bbplan.bladeExit) prices the state AS IT IS — the fleet running, the
+ * daemon acting, the cities read — so its rank calibration (bbplan
+ * rankWindowOkOf/rankRatePosterior, v2) is the model's error alone, measured
+ * only where the model's own trajectory runs, and is ~1 where the model
+ * reproduces bbsim. lo/hi: the old opt/pess spread (x0.873, x1.255) around
+ * the measured mid.
+ */
 export const BB_PARAMS = {
-  k: { lo: 0.8, mid: 0.916, hi: 1.15, what: 'live / model leg; mid MEASURED on BN6 (bbcal6.mjs); lo/hi = nextnode opt/pess' },
+  k: { lo: 1.068, mid: 1.223, hi: 1.535, what: 'live leg / the planner\'s own (clean) leg; mid MEASURED on BN6.1 (observe.mjs reading, 1.223); lo/hi = the opt/pess spread around it' },
   open: { lo: 1.5, mid: 2.5, hi: 4.0, what: 'hours entry -> combat 100 (MEASURED BN6 2.5h); lo/hi = nextnode opt/pess' },
 }
 /** Economy: share of an unplayed node's ln g deviation that is common to all unplayed nodes. ASSUMED. */

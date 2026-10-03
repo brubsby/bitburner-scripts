@@ -28,8 +28,8 @@
 // Segments shorter than MIN_CLEAR_H are transits, not clears.
 //
 // BASE_IN marks the evidence the hand prior was built from — logged, flagged
-// inBase, never applied: economy.MEASURED_RUNS (g) and BN6.1 (k = 0.916 by
-// bbcal6.mjs, open = 2.5h).
+// inBase, never applied: economy.MEASURED_RUNS (g) and BN6.1 (k = 1.223, the
+// reading below — params.BB_PARAMS.k's mid IS it; open = 2.5h).
 
 import '../../test/gameresolve.mjs'
 import fs from 'node:fs'

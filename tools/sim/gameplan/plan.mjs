@@ -17,7 +17,7 @@
 // NOT CALIBRATED as a decision model. What is and is not:
 //   CALIBRATED   each played node's g (backed out of its measured hours; the
 //                CHECK below re-runs the sim at that g and prints the error);
-//                the Bladeburner k = 0.916 (live BN6 leg / model, bbcal6.mjs).
+//                the Bladeburner k = 1.223 (live BN6 leg / the planner's own leg, params.BB_PARAMS).
 //   NOT CALIBRATED  g on every unplayed node (the latent, lo/mid/hi over the
 //                measured runs); k's spread (one node); every ASSUMED
 //                Source-File effect (effects.mjs); the node-special routes

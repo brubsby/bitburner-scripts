@@ -203,11 +203,12 @@ export const BLACK_OP_NAMES = BLACK_OPS.map((b) => b.name)
 /**
  * The lean record for /tel/bladeburner.txt: the fields the plan
  * (bbplan.bladeStartOf), sleeve.js and the health checks read, from the lean
- * reads — `daemon: 'bb-lite'` says which daemon wrote it, and `cities`,
- * `calibration` and `outcomes` are absent (the lean surface does not read
- * them; bladeStartOf then prices the six cities at the threshold population).
+ * reads — `daemon: 'bb-lite'` says which daemon wrote it. `cities` and
+ * `calibration` are the full daemon's last reads where there were any
+ * (carriedOf, `citiesAt` dates them); else absent, and the exit model prices
+ * the cities at the division's age (bbplan.cityPriorOf). `outcomes` is absent.
  */
-export function liteRecordOf({ info, host, result, joined, factionJoined = null, rank = null, rankPerHour = null, skillPoints = null, levels = null, stamina = null, maxStamina = null, resting = false, slot = null, pick = null, running = null, reads = null, skillsAt = null, samples = [], detail = '' }) {
+export function liteRecordOf({ info, host, result, joined, factionJoined = null, rank = null, rankPerHour = null, skillPoints = null, levels = null, stamina = null, maxStamina = null, resting = false, slot = null, pick = null, running = null, reads = null, skillsAt = null, samples = [], detail = '', carried = null }) {
   const bo = reads?.blackOp ?? null
   const done = num(reads?.done) ? reads.done : null
   const d = bo ? dataOf(bo.name) : null
@@ -237,7 +238,32 @@ export function liteRecordOf({ info, host, result, joined, factionJoined = null,
     skillsAt,
     samples,
     detail,
+    // What the lean surface cannot read, as the full daemon last read it (carriedOf): real, if old.
+    ...(carried ?? {}),
   }
+}
+
+/**
+ * WHAT THE LEAN RECORD CARRIES from the record before it (same node): the
+ * full daemon's last city reads (with citiesAt, when they were read) and its
+ * success calibration (the groups bladeburner.js re-reads on its next start).
+ * bb-lite reads neither, and overwriting /tel/bladeburner.txt without them
+ * made every exit priced while it acted forget both: live BN4 2026-10-03
+ * after the 03:08Z install the plan priced the six cities at the start's
+ * order statistics (1.07-1.43e9; read at 02:41Z: 1.19-2.69e9) and the
+ * success chance at the bare formula (the 1.2 the daemon had measured came
+ * back with it ~04:30Z), and the exit fell 11h in the 1.75h to the handover.
+ * Returns {cities, citiesAt, calibration} (the keys present) or null.
+ */
+export function carriedOf(prev, info) {
+  if (!prev || prev.bitNode !== info?.currentNode) return null
+  const out = {}
+  if (Array.isArray(prev.cities) && prev.cities.length) {
+    out.cities = prev.cities
+    out.citiesAt = typeof prev.citiesAt === 'string' ? prev.citiesAt : prev.daemon === 'bladeburner.js' ? prev.at ?? null : null
+  }
+  if (prev.calibration?.success) out.calibration = { success: prev.calibration.success }
+  return Object.keys(out).length ? out : null
 }
 
 /** Rank per hour over the last hour of minute samples ([{t, rank}]). */
@@ -310,3 +336,26 @@ export const fullRouteOf = routeWantsOf
 export const fullPlacementOf = (o) => raisedPlacementOf({ ...o, script: 'bladeburner.js' })
 export const fullReserveRecordOf = (d, info, now = Date.now()) => reserveRecordOf(d, info, now, 'bladeburner.js')
 export const fullReserveOf = reserveOf
+
+/**
+ * HOW LONG THE LEAN DAEMON ACTS, as the exit model prices it (bbplan
+ * bladeStartOf leanUntilH -> s0.lean): bb-lite.js on the record (tel.daemon)
+ * at a home that admits bladeburner.js (FULL_TIER) -> the watchdog's
+ * placement, LEAN_PLACE_H (its guarantee: bbhealth FULL_ABSENT_MIN, 15 min);
+ * under the tier -> the approved home purchase that admits it (spendHome:
+ * installgate spendExit.home {buy, buyAtH, tier, at, lastAugReset}) plus the
+ * placement, else Infinity: the full daemon comes only with a home upgrade,
+ * which homeplan.js prices as its own step ({full: true} at the purchase,
+ * from a start whose lean phase never ends).
+ * Not bb-lite: null (the full daemon is the actor).
+ */
+export const LEAN_PLACE_H = 0.25
+export function leanUntilOf(tel, homeRam, { spendHome = null, lastAugReset = null, now = Date.now() } = {}) {
+  if (!tel || tel.daemon !== 'bb-lite' || tel.joined !== true) return null
+  if (num(homeRam) && homeRam >= FULL_TIER) return LEAN_PLACE_H
+  // The plan has approved the purchase that admits it (installgate spendExit.home, this life): the full daemon from then on.
+  const h = spendHome
+  const at = Date.parse(h?.at ?? '')
+  if (h?.buy === true && num(h.buyAtH) && num(h.tier?.homeRam) && h.tier.homeRam >= FULL_TIER && Number.isFinite(at) && (lastAugReset === null || h.lastAugReset === lastAugReset)) return Math.max(0, h.buyAtH - (now - at) / 3.6e6) + LEAN_PLACE_H
+  return Infinity
+}

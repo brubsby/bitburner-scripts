@@ -255,13 +255,21 @@ the file's `posterior` block is that result written out for diffs.
   node's start time); a key already in the log is skipped. Evidence the hand
   prior was built from — economy.MEASURED_RUNS for g, BN6.1 for k (bbcal6) and
   open — is logged `inBase: true` and never applied twice.
-- **An open discrepancy, logged not applied**: BN6.1 read through the
-  planner's own blade formula gives k = 1.22 ((35.79 - 2.38)/27.32), not the
-  base 0.916 — bbcal6 divided by the leg *as run* (the sleeve fleet joined
-  24.8h late), the grid's leg is the clean one (fleet from the join). If the
-  next Bladeburner clear (BN4.3) also reads above 1, the base k is the wrong
-  one. Priced with the BN6 reading applied (2026-10-03): E[T] 913.8 -> 963.5h,
-  BN11.1 still first (P(best) 59%).
+- **k has ONE definition** (resolved 2026-10-03): `k = (hours - opening +
+  early) / leg`, `leg` = the planner's own (bbsim, the fleet from the join) —
+  the quantity the route formula multiplies, and the one this step reads a
+  clear with. BN6.1 reads **1.223** ((35.79 - 2.38)/27.32), and that is now
+  the base mid (`params.BB_PARAMS.k`: 1.068 / 1.223 / 1.535, the old
+  opt/pess spread around it). The old base 0.916 was bbcal6's live leg over
+  the leg *as run* (the sleeve fleet 24.8h late): another denominator than
+  the one it multiplied, 25% optimistic on every Bladeburner route.
+  `nodechoice/bbcal6.mjs` and `nextnode.mjs` print and use the same
+  definition. What k holds: everything between the clean simulated leg and
+  a live one — operations (sleeves idle after an install, the lean bb-lite
+  daemon until a host holds the full one) and model error. The in-game exit
+  model's own calibration (`bbplan` rank windows, v2) is the model's error
+  alone: it prices the state as it is and measures only the full daemon's
+  windows on complete inputs, so it reads ~1 where bladeExit tracks bbsim.
 
 ### Observations: the in-run channel
 

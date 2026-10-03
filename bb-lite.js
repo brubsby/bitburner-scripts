@@ -50,8 +50,8 @@ import { reporter, describe, record } from 'status.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { slotClaim, SLOT_FILES } from 'bbslot.js'
 import { hacknetLast, isHacknetServerHost } from 'hacknetplan.js'
-import { POLICY, BBC } from 'bbplan.js'
-import { LITE_FILE, BB_FILE, LITE_PORT, ACTOR, LITE_ACTOR_GB, reserveHostOf, fullTakingOverOf, joinableOf, liteRecordOf, passWaitMs, rankPerHourOf, leanViewOf } from 'bbliteplan.js'
+import { POLICY, BBC, joinedAtOf } from 'bbplan.js'
+import { LITE_FILE, BB_FILE, LITE_PORT, ACTOR, LITE_ACTOR_GB, reserveHostOf, fullTakingOverOf, joinableOf, liteRecordOf, carriedOf, passWaitMs, rankPerHourOf, leanViewOf } from 'bbliteplan.js'
 
 const ACTOR_WAIT_MS = 15e3
 
@@ -234,6 +234,11 @@ async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
   let reserveHost = null
   const samples = []
   const purchases = []
+  // The division's age rides on the record (bbplan.joinedAtOf): kept from the record before this one (either daemon's).
+  mirrorFrom(ns, host, BB_FILE)
+  const prevRec = readJson(ns, BB_FILE)
+  let joinedAt = null
+  const carried = carriedOf(prevRec, info)
   const actorErrors = []
   const fail = (why) => {
     actorErrors.push({ at: new Date().toISOString(), why })
@@ -346,7 +351,9 @@ async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
         skillsAt: lastSkills > 0 ? new Date(lastSkills).toISOString() : null,
         samples: samples.map((s) => ({ at: new Date(s.t).toISOString(), rank: +s.rank.toFixed(2), stamina: s.stamina === null ? null : +s.stamina.toFixed(2) })),
         detail,
+        carried,
       }),
+      joinedAt: (joinedAt ??= joinedAtOf(prevRec, info.currentNode, true)),
       health: r.ok ? (ours ? 'ok' : 'waiting') : 'waiting',
     })
 

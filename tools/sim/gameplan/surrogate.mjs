@@ -10,8 +10,8 @@
 //                  runs (economy.mjs): calibrated on played nodes, NOT
 //                  CALIBRATED on unplayed ones;
 //   Bladeburner    nodechoice/bbsim.mjs (the game's Bladeburner classes,
-//                  bbplan's policy) — CALIBRATED on the live BN6 run, k = 0.916
-//                  (nodechoice/bbcal6.mjs); one node, so the per-node shape is not.
+//                  bbplan's policy) — CALIBRATED on the live BN6 run, k = 1.223
+//                  (live leg / this leg, params.BB_PARAMS); one node, so the per-node shape is not.
 //
 // THE GRID
 //   hack: one curve per (node, node level, the hacking sim's SF key) over

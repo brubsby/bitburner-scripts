@@ -56,7 +56,7 @@ import { liteAliveOf } from 'bbliteplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL } from 'bbplan.js'
+import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
 /** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
@@ -158,6 +158,9 @@ async function operate(ns, say, info, mults) {
   // THE SUCCESS CALIBRATION survives a restart: the groups this script
   // published last (same node), so the evidence keeps growing.
   let calGroups = []
+  // The division's age rides on the record (bbplan.joinedAtOf): the exit model prices unread inputs at it.
+  let prevRec = null
+  let joinedAt = null
   try {
     // From home: this script mirrors its record there, and a restart may land on another host.
     if (host !== 'home') ns.scp(STATUS, host, 'home')
@@ -166,6 +169,7 @@ async function operate(ns, say, info, mults) {
   }
   try {
     const prev = JSON.parse(ns.read(STATUS) || 'null')
+    prevRec = prev
     if (prev?.bitNode === info.currentNode && Array.isArray(prev?.calibration?.success?.groups)) calGroups = prev.calibration.success.groups.filter((g) => g && g.p > 0 && g.n > 0)
   } catch {
     calGroups = []
@@ -480,6 +484,7 @@ async function operate(ns, say, info, mults) {
       ...base,
       result: exitReady ? 'exit-ready' : slot.ours ? (started === null ? 'acting' : 'started') : 'slot-not-ours',
       joined: true,
+      joinedAt: (joinedAt ??= joinedAtOf(prevRec, info.currentNode, true)),
       factionJoined,
       rank: +rank.toFixed(2),
       rankPerHour: rankPerHour === null ? null : +rankPerHour.toFixed(2),

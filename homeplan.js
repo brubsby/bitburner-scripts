@@ -17,9 +17,11 @@
 // what it does to THIS exit (UNLOCK_ON_BLADE below), from the hour the
 // purchase is made:
 //
-//   bladeburner.js   the full daemon instead of bb-lite: the trajectory's
-//                    rank scale x 1/LITE_OVER_FULL from the purchase on — only
-//                    where a rooted non-home host can hold its raised 92.75GB
+//   bladeburner.js   the full daemon instead of bb-lite: where the start carries
+//                    bb-lite's lean phase (bbplan s0.lean), the full policy
+//                    from the purchase on (a {full: true} step); else the
+//                    trajectory's rank scale x 1/LITE_OVER_FULL — only where a
+//                    rooted non-home host can hold its raised 92.75GB
 //   go.js            the opponent it will choose on THIS exit's channel
 //                    weights (goweights.bladeGoWeightsGen through
 //                    goplan.chooseOpponent — go.js reads the same weights from
@@ -184,7 +186,14 @@ export function* bladeHomeExitGen(o) {
   else if (!fullAdmitted) notCredited.push({ script: 'bladeburner.js', why: `not admitted at ${unlocks.homeRam}GB` })
   else if (!fullHost?.ok) notCredited.push({ script: 'bladeburner.js', why: `admitted, but no host can hold it: ${fullHost?.why ?? 'unread'}` })
   else if (!(liteOverFull > 0 && liteOverFull <= 1)) notCredited.push({ script: 'bladeburner.js', why: 'the lean/full rank ratio is unreadable' })
-  else {
+  else if (startFor(spec)?.lean) {
+    // THE LEAN DAEMON IS IN THE START (bbplan s0.lean, bbliteplan.leanUntilOf:
+    // under the tier it acts until this purchase): the full daemon's policy
+    // from the purchase on, simulated — not a rank ratio on top of a
+    // trajectory that already priced the full daemon.
+    rankStep = { atH: buyAtH, full: true }
+    credited.push({ script: 'bladeburner.js', why: `the full daemon's policy from ${buyAtH.toFixed(2)}h, bb-lite's before (${fullHost.why})` })
+  } else {
     rankStep = { atH: buyAtH, rankScaleMult: 1 / liteOverFull }
     credited.push({ script: 'bladeburner.js', why: `rank x${(1 / liteOverFull).toFixed(3)} from ${buyAtH.toFixed(2)}h (${fullHost.why})` })
   }
@@ -230,7 +239,11 @@ export function* bladeHomeExitGen(o) {
   } else if (fin(installAtH)) displaced = { none: `bought at ${buyAtH.toFixed(2)}h, after the committed install at ${installAtH.toFixed(2)}h: its batch is untouched` }
   else displaced = { none: 'no install is committed on this route: nothing is displaced' }
   const exitOf = function* (sp, steps) {
-    const s0 = startFor(sp)
+    // Both arms from a start whose lean phase never ends: the route's own start
+    // carries an approved purchase's handover (bbliteplan.leanUntilOf), which
+    // here is the decision itself.
+    const s1 = startFor(sp)
+    const s0 = s1?.lean ? { ...s1, lean: { ...s1.lean, untilH: Infinity } } : s1
     yield
     const r = yield* bladeExitGen(steps.length ? { ...s0, steps } : s0)
     return fin(r?.hours) ? r.hours : null
@@ -253,7 +266,7 @@ export function* bladeHomeExitGen(o) {
   }
   // The conservative end of the lean/full ratio, published beside the verdict.
   let conservative = null
-  if (rankStep && LITE_OVER_FULL.hi > liteOverFull) {
+  if (rankStep?.rankScaleMult && LITE_OVER_FULL.hi > liteOverFull) {
     const h = yield* exitOf(withSpec, [{ ...rankStep, rankScaleMult: 1 / LITE_OVER_FULL.hi }, ...goSteps])
     conservative = fin(h) ? { liteOverFull: LITE_OVER_FULL.hi, withH: +h.toFixed(3), deltaH: +(h - withoutH).toFixed(3) } : null
   }
