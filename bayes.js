@@ -876,7 +876,21 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
 // The purchase model's ln(M) per hour this life was priced at (progress.js
 // records it at the install: `cadenceModel`), or null.
 const modelOf = (e) => (fin(e?.cadenceModel?.lnPerHour) && e.cadenceModel.lnPerHour > 0 ? e.cadenceModel.lnPerHour : null)
-const regimeOf = (e) => (typeof e?.installWhy === 'string' && /^install: COUNT BATCH/.test(e.installWhy) ? 'count' : 'multiplier')
+// A life installed ON THE BLADEBURNER ROUTE (installgate's "... on the
+// Bladeburner route — the black-op exit ..."; a record's own `route: 'blade'`
+// where it carries one) is its own regime too: its batches are the black-op
+// exit's (combat, Bladeburner augs) and its slot is on Bladeburner, so its
+// ln(hacking multiplier) per hour is not what a HACKING-route life buys. Live
+// 2026-10-03: BN14's hack arm drew its cadence from BN9, BN6 and BN4, and 10
+// of the ledger's 20 lives were BN6/BN4 blade-route lives (BN4 0.016/h) — the
+// prior 0.026/h priced BN14's hacking exit at 192h, against ~0.05-0.07/h on
+// the hacking route's own lives.
+const regimeOf = (e) =>
+  e?.route === 'blade' || (typeof e?.installWhy === 'string' && /on the Bladeburner route/.test(e.installWhy))
+    ? 'blade'
+    : typeof e?.installWhy === 'string' && /^install: COUNT BATCH/.test(e.installWhy)
+      ? 'count'
+      : 'multiplier'
 export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
   const rows = (Array.isArray(ledger) ? ledger : []).filter((e) => e && fin(e.bitNode) && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
   const lives = []
@@ -955,9 +969,10 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
   const lives = ledgerLives(ledger, { node, hackMultNow })
   const byNode = new Map()
   for (const l of lives) {
-    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0, count: 0 })
+    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0, count: 0, blade: 0 })
     const b = byNode.get(l.node)
-    if (l.g === null) b.open++
+    if (l.regime === 'blade') b.blade++
+    else if (l.g === null) b.open++
     else if (l.regime === 'count') b.count++
     else if (!(l.g >= C.stallLn)) b.stalls++
     else b.gained.push(l)
@@ -982,7 +997,7 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     resid.rate.b += sr / 2
     resid.life.a += (G.length - 1) / 2
     resid.life.b += sl / 2
-    stats.set(n, { lives: G.length + b.stalls + b.open + b.count, gained: G.length, stalls: b.stalls, countLives: b.count, yR, yL, nEff: (H * H) / H2, n: G.length })
+    stats.set(n, { lives: G.length + b.stalls + b.open + b.count + b.blade, gained: G.length, stalls: b.stalls, countLives: b.count, bladeLives: b.blade, yR, yL, nEff: (H * H) / H2, n: G.length })
   }
   const mp = modelPrior && fin(modelPrior.lnPerHour) && modelPrior.lnPerHour > 0 ? modelPrior : null
   if (!stats.size && !mp) return null
@@ -1058,7 +1073,9 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
   const gained = st?.gained ?? 0
   const stalls = b?.stalls ?? 0
   const countLives = b?.count ?? 0
-  const own = { lives: st?.lives ?? (b ? b.stalls + b.open + b.count : 0), gained, stalls, countLives, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
+  const bladeLives = b?.blade ?? 0
+  const bladeAll = [...byNode.values()].reduce((t, x) => t + x.blade, 0)
+  const own = { lives: st?.lives ?? (b ? b.stalls + b.open + b.count + b.blade : 0), gained, stalls, countLives, bladeLives, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
   const nodes = Object.fromEntries([...stats].map(([n, x]) => [n, { lives: x.lives, gained: x.gained, stalls: x.stalls, perHour: Math.exp(x.yR), cycleHours: Math.exp(x.yL), sdRate: Math.sqrt(s2R / x.nEff) }]))
   const others = [...stats.keys()].filter((n) => n !== node)
   const pct = (x) => `${Math.round(100 * x)}%`
@@ -1078,10 +1095,12 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     why: mp
       ? `cadence posterior for BitNode ${node} on the purchase model's prior: model ln(M) ${mp.lnPerHour.toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * modelErr.sd).toFixed(2)} at 80%, ${modelErr.source}) -> ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%); ` +
         `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded)` : ''} carry ${pct(rate.weight)} of the rate` +
+        (bladeAll ? `; ${bladeAll} Bladeburner-route li${bladeAll === 1 ? 'fe' : 'ves'} excluded (not the hacking route's cadence)` : '') +
         (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : '')
       : `cadence posterior for BitNode ${node}: ln(M) ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%), ${cycleHours.toFixed(2)}h a life -> x${Math.exp(lnPerHour * cycleHours).toFixed(3)} a cycle; ` +
       `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded: their length was the rule's)` : ''} carry ${pct(rate.weight)} of the rate` +
       (others.length ? `, BitNode ${others.join(', ')} shrink${others.length === 1 ? 's' : ''} it toward the cross-node mean` : ', no other node') +
+      (bladeAll ? `; ${bladeAll} Bladeburner-route li${bladeAll === 1 ? 'fe' : 'ves'} excluded (not the hacking route's cadence)` : '') +
       (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : ''),
   }
 }

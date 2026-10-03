@@ -268,6 +268,9 @@ export function applyDraw(inputs, d) {
     const kw = fin(d.Wstar) && d.Wstar > 0 && fin(inputs.capitalScaleW) && inputs.capitalScaleW > 0 ? d.Wstar / inputs.capitalScaleW : 1
     o.fourS = { ...inputs.fourS, r0PerSec: inputs.fourS.r0PerSec * kr, ...(fin(inputs.fourS.Wstar) ? { Wstar: inputs.fourS.Wstar * kw } : {}) }
   }
+  // THE GO RATE BONUS ON g (inputs.goCadenceMult, goplan.goExitInputsOf): the
+  // point's ln(M) carries it, so every drawn ln(M) does too.
+  const gm = fin(inputs.goCadenceMult) && inputs.goCadenceMult > 0 ? inputs.goCadenceMult : 1
   if (inputs.cadenceFrom === 'purchase model') {
     // The life's length is the purchase model's DECISION (lifeplan), not a
     // random input: kept. What a life of that length buys is this draw's
@@ -281,11 +284,11 @@ export function applyDraw(inputs, d) {
     // multGainPerCycle); the draw takes it with its own z, so the point and
     // the draws are one distribution and every length is paired.
     const cp = inputs.cadence?.post
-    if (cp && fin(cp.mean) && fin(cp.sd) && fin(d.zCad) && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(Math.exp(cp.mean + cp.sd * d.zCad) * inputs.cycleHours)
-    else if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours)
+    if (cp && fin(cp.mean) && fin(cp.sd) && fin(d.zCad) && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(Math.exp(cp.mean + cp.sd * d.zCad) * inputs.cycleHours * gm)
+    else if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * inputs.cycleHours * gm)
   } else {
     if (fin(d.cycleH) && d.cycleH > 0 && fin(inputs.cycleHours) && inputs.cycleHours > 0) o.cycleHours = d.cycleH
-    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours)
+    if (fin(d.lnPerHour) && d.lnPerHour > 0 && fin(o.cycleHours) && o.cycleHours > 0) o.multGainPerCycle = Math.exp(d.lnPerHour * o.cycleHours * gm)
   }
   if (fin(inputs.expPerSec)) o.expPerSec = inputs.expPerSec * d.expMult
   // THE FACTION-WORK RATE'S OWN POSTERIOR (inputs.repSdLn, progress.js
@@ -1444,8 +1447,15 @@ export function installScreenOf(opts, committedKey = null, { topK = PLAN.install
  * Returns (inputs, d?) => hours | null.
  */
 export function trajectoryOf(spec, { count = null, repPoint = null } = {}) {
-  if (!spec) return (x) => bestExitPolicy(x).best?.hours ?? null
-  if (spec.kind === 'never') return (x) => bestExitPolicy(x, 0, 0).best?.hours ?? null
+  // A DEGENERATE EXIT IS UNPRICED, not a duration (exitplan.DEGENERATE_H: past
+  // 1e5h no node is played). The wait kind always refused it; the default and
+  // never kinds passed it on, and one draw of a slow cadence (ln(M) 0.006/h)
+  // priced live BN14's hacking arm at 3.4e78h — its mean 1.4e77h, the paired
+  // gain -1.4e77h and the value of waiting 2.3e77h decided the route on
+  // overflow (decisions.bladeRoute 2026-10-03 21:20Z). null is "infeasible in
+  // this draw": summarize fills it at 1.5x the option's worst priced draw.
+  if (!spec) return (x) => hoursOrNull(bestExitPolicy(x))
+  if (spec.kind === 'never') return (x) => hoursOrNull(bestExitPolicy(x, 0, 0))
   if (spec.kind === 'route') {
     return (x, d = null) => {
       const det = d ? detourOf(spec.route, d, repPoint, x?.repSdLn ?? null) : spec.route?.detourH
@@ -1461,6 +1471,9 @@ export function trajectoryOf(spec, { count = null, repPoint = null } = {}) {
   }
 }
 
+/** A policy search's best hours, or null when it is unpriced or degenerate (past DEGENERATE_H). */
+export const hoursOrNull = (r) => (!r || r.degenerate || !fin(r.best?.hours) ? null : r.best.hours)
+
 /**
  * trajectoryOf as a GENERATOR per simulation: (inputs, d?) => a generator
  * returning the same hours, yielding after each policy the no-count wait and
@@ -1472,7 +1485,7 @@ export function trajectoryGenOf(spec, ctx = {}) {
   if (spec && !count && (spec.kind === 'never' || spec.kind === 'wait')) {
     if (spec.kind === 'never') {
       return function* (x) {
-        return (yield* bestExitPolicyGen(x, 0, 0)).best?.hours ?? null
+        return hoursOrNull(yield* bestExitPolicyGen(x, 0, 0))
       }
     }
     const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0

@@ -488,7 +488,10 @@ export async function run() {
     c.note(`screened + floored (${Math.max(left, P.PLAN.installFloorMs)}ms): ${fixed.d.key} ${fixed.d.meanH}h on ${fixed.d.n}/24, ${fixed.d.options?.length} of ${optsN} options (${fixed.d.screen}), ${fixed.d.ms}ms work, longest step ${fixed.sec.maxStepMs.toFixed(1)}ms`);
     c.note(`every option, unbounded: ${all.d.key} ${all.d.meanH}h on ${all.d.n}/24, ${all.d.options?.length} options, ${all.d.ms}ms work (x${(all.d.ms / fixed.d.ms).toFixed(1)})`);
     if (!(fixed.d.n === P.PLAN.N && fixed.d.overBudget === false)) c.fail(`the install decision must price all ${P.PLAN.N} draws on the 21:12Z re-decision (${fixed.d.n}, over budget ${fixed.d.overBudget})`);
-    if (!(optsN === R.install.options.length)) c.fail(`fixture: the replay must offer the live ${R.install.options.length} options (${optsN})`);
+    // A degenerate option (past exitplan.DEGENERATE_H: live 'never' at 176,147h) is unpriced since
+    // 2026-10-03 (plan.trajectoryOf -> hoursOrNull) and so not offered.
+    const liveN = R.install.options.filter((o) => !(o.pointH > X.DEGENERATE_H)).length;
+    if (!(optsN === liveN)) c.fail(`fixture: the replay must offer the live ${liveN} priced options (${optsN})`);
     if (!(fixed.d.options.some((o) => o.key === "committed"))) c.fail("the committed incumbent must always be in the draws");
     if (!(fixed.d.options.length <= P.PLAN.installTopK + 1)) c.fail(`at most the incumbent and ${P.PLAN.installTopK} challengers (${fixed.d.options.length})`);
     if (!(fixed.d.key === all.d.key)) c.fail(`the screen must not change the choice here: ${fixed.d.key} vs every option's ${all.d.key}`);

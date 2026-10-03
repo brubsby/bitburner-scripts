@@ -965,3 +965,81 @@ export function w0Obs(rate, at, source = 'go.js') {
 export function obsDue(gamesOnW0) {
   return num(gamesOnW0) && gamesOnW0 > 0 && gamesOnW0 % OBS_EVERY === 0
 }
+
+/**
+ * Finished 19x19 games an hour against the hidden opponent: the median of
+ * tools/sim/gameplan/go.mjs W0_PRIOR_INPUTS.gamesPerH (7.5/8.8/10.5, the AI's
+ * own timers plus the 800ms search). Node power lands once per game.
+ */
+export const W0_GAMES_PER_H = 8.8
+
+/**
+ * The elasticity of the hacking route's growth (ln M per hour) to the Go
+ * rate bonus — ASSUMED, the mid of tools/sim/gameplan/effects.mjs eps14
+ * (0 / 0.12 / 0.3): the one number of the Go model the source does not give.
+ */
+export const GO_EPS14 = 0.12
+
+/** Finished 5x5 games an hour with the solver answering (BN9's last go.js, 2026-10-02; go.mjs GO_MEASURED.gamesPerH). */
+export const GAMES_PER_H_5X5 = 160
+
+/**
+ * THE GO FARM IN THE LIVE HACKING EXIT (exitplan o.go and goCadenceMult) —
+ * the offline whole-game plan's Go terms (tools/sim/gameplan/go.mjs,
+ * routes.mjs hackParts) on the live simulator, one formula each:
+ *
+ *   w0      The Red Pill installed, the farm plays w0r1d_d43m0n through the
+ *           climb (hacking skill x effect, bonusPower 2): exitplan prices the
+ *           first passage per game (go.mjs goWindow). Rate: go.js's measured
+ *           one (>= W0_MEASURED_MIN games, /tel/go.txt w0.rate) else W0_PRIOR.
+ *   rep     The final window's farm on the exit faction (Daedalus, bonusPower
+ *           1.1, faction_rep): its power from the window's install at the
+ *           measured 5x5 rate (POWER_PER_HOUR.Daedalus) — the faction_rep
+ *           factor on the ground reputation leg.
+ *   favorStream  the same games' favor (favor.goFavorStreamOf: games/h x
+ *           p^2/(1+p) x getMaxRep/200, to getMaxRep), from the join — passed
+ *           so exitplan uses it where no MEASURED stream exists (go.js not on
+ *           the exit faction today).
+ *   cadenceMult  the Go rate bonus on g: ((1 + s abar)/(1 + abar))^eps14
+ *           (go.mjs goGFactor), s = GoPower x (SF14 ? 2 : 1), abar the
+ *           measured runs' mean Daedalus bonus over a life (meanEffect at
+ *           GoPower 1) — the nodes the cadence was measured in played at
+ *           s = 1. Applied to ln(M) only for the share of the cadence that is
+ *           NOT this node's own lives ((1 - ownWeight)): its own lives
+ *           already carry the node's GoPower.
+ *
+ * o: { goPower, sf14, goTel (/tel/go.txt, this life's), cycleHours, ownWeight,
+ *      exitFaction, favorStreamOf (favor.goFavorStreamOf) }.
+ * Returns { go: {w0, rep, favorStream|null, why}, goCadenceMult }.
+ * NOT PRICED, named: the hacking_money / hacking_speed channels on the money
+ * legs (goweights prices them for the opponent choice; here they reach the
+ * exit only through cadenceMult), go.cheat (BN14.2 / SF14.2+), combat on the
+ * gym (the Bladeburner arm's).
+ */
+export function goExitInputsOf(o = {}) {
+  const goPower = num(o.goPower) && o.goPower > 0 ? o.goPower : 1
+  const sf14 = num(o.sf14) ? o.sf14 : 0
+  const s = goPower * (sf14 >= 1 ? 2 : 1)
+  const tel = o.goTel && typeof o.goTel === 'object' ? o.goTel : null
+  const r = tel?.w0?.rate
+  const measured = r && typeof r.source === 'string' && r.source.startsWith('measured') && num(r.pph) && r.pph > 0
+  const w0 = { powerPerH: measured ? r.pph : W0_PRIOR.powerPerHour, gamesPerH: W0_GAMES_PER_H, bonusPower: OPPONENTS.w0r1d_d43m0n.power, goPower, sf14, source: measured ? r.source : `prior ${W0_PRIOR.powerPerHour}/h (goplan.W0_PRIOR, unmeasured)` }
+  const rep = { powerPerH: POWER_PER_HOUR.Daedalus, bonusPower: OPPONENTS.Daedalus.power, goPower, sf14 }
+  let favorStream = null
+  let favorWhy = 'no favor-stream builder passed'
+  if (typeof o.favorStreamOf === 'function') {
+    const hrs = tel && Date.parse(tel.at ?? '') > Date.parse(tel.processStartedAt ?? '') ? (Date.parse(tel.at) - Date.parse(tel.processStartedAt)) / 3.6e6 : 0
+    const gph = hrs > 0 && num(tel?.gamesThisProcess) && tel.gamesThisProcess >= 10 ? tel.gamesThisProcess / hrs : GAMES_PER_H_5X5
+    const banked = num(tel?.favorRep?.[o.exitFaction ?? 'Daedalus']) ? tel.favorRep[o.exitFaction ?? 'Daedalus'] : 0
+    const st = o.favorStreamOf({ gamesPerHour: gph, pWin: WIN_RATE.Daedalus, sf14, banked })
+    favorStream = num(st?.repPerH) && st.repPerH > 0 ? { repPerH: st.repPerH, capRep: st.capRep } : null
+    favorWhy = st?.why ?? 'unpriced'
+  }
+  const cyc = num(o.cycleHours) && o.cycleHours > 0 ? o.cycleHours : null
+  const abar = cyc ? meanEffect(POWER_PER_HOUR.Daedalus, OPPONENTS.Daedalus.power, cyc, 1, 0) - 1 : null
+  const w = num(o.ownWeight) ? Math.min(1, Math.max(0, o.ownWeight)) : 0
+  const gG = num(abar) ? Math.pow((1 + s * abar) / (1 + abar), GO_EPS14) : 1
+  const goCadenceMult = Math.pow(gG, 1 - w)
+  const why = `the farm on the hacking route at GoPower ${goPower}${sf14 >= 1 ? ' x2 (SF14)' : ''}: w0r1d_d43m0n on the climb at ${Math.round(w0.powerPerH)}/h (${w0.source}), ${W0_GAMES_PER_H} games/h; ${'Daedalus'} in the final window at ${POWER_PER_HOUR.Daedalus}/h (faction_rep), favor ${favorStream ? `${Math.round(favorStream.repPerH)} rep-eq/h (${favorWhy})` : `none (${favorWhy})`}; g x${goCadenceMult.toFixed(3)} (eps ${GO_EPS14} ASSUMED, abar ${num(abar) ? abar.toFixed(3) : '-'}, own lives' share ${w.toFixed(2)} excluded)`
+  return { go: { w0, rep, favorStream, why }, goCadenceMult }
+}

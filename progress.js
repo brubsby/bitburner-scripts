@@ -157,6 +157,7 @@ import { installPointH, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn, ONEOFF_EFFECTS } from 'objective.js'
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen, bladeGoWeightsGen } from 'goweights.js'
+import { goExitInputsOf } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
@@ -4764,6 +4765,19 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
   // "never install", whose climb is ~1e26h, and every comparison ties.
   const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, cadenceOptsOf(player))
   const cyc = cadence?.stats ?? null
+  // THE GO FARM ON THE HACKING ROUTE (goplan.goExitInputsOf): w0r1d_d43m0n on
+  // the post-Red-Pill climb, the exit faction's bonus and favor in the final
+  // window, the GoPower on g — the offline plan's Go terms (tools/sim/gameplan
+  // go.mjs) in the live exit. go.txt only when it is this life's.
+  const goNow = (() => {
+    try {
+      const g = readJson(ns, '/tel/go.txt')
+      const tel = g && g.lastAugReset === info?.lastAugReset && g.bitNode === info?.currentNode ? g : null
+      return goExitInputsOf({ goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1, sf14: sfLevel(info, 14), goTel: tel, cycleHours: cyc?.cycleHours, ownWeight: cadence?.weight ?? 0, exitFaction: EXIT_FACTION, favorStreamOf: goFavorStreamOf })
+    } catch (e) {
+      return { go: null, goCadenceMult: 1, goWhy: `goExitInputsOf threw: ${String(e).slice(0, 120)}` }
+    }
+  })()
   const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
   const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
   return {
@@ -4878,8 +4892,11 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // favorStream, favor.goFavorStreamOf): while go.js plays the exit
     // faction's AI, measured on its games and wins.
     ...goFavorStreamInputOf(ns, info),
+    go: goNow.go,
+    goCadenceMult: goNow.goCadenceMult,
+    ...(goNow.goWhy ? { goWhy: goNow.goWhy } : {}),
     cycleHours: cyc?.cycleHours,
-    multGainPerCycle: cyc?.multGainPerCycle,
+    multGainPerCycle: typeof cyc?.multGainPerCycle === 'number' && cyc.multGainPerCycle > 0 ? Math.exp(Math.log(cyc.multGainPerCycle) * goNow.goCadenceMult) : cyc?.multGainPerCycle,
     nextInstallGain: nextInstallGainOf(plan, pending, offers),
     installGains: installGainsOf([...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers),
     // The batch the measured cadence already represents: alternatives lift or

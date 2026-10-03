@@ -564,7 +564,8 @@ export function lifeInputsOf(base, rec, L, post, { lifeLength = null, catalogue 
   return {
     ...base,
     cycleHours: L,
-    multGainPerCycle: c.gain,
+    // The Go rate bonus on g (base.goCadenceMult, goplan.goExitInputsOf), as on the measured cadence.
+    multGainPerCycle: num(base?.goCadenceMult) && base.goCadenceMult > 0 && c.gain > 0 ? Math.exp(Math.log(c.gain) * base.goCadenceMult) : c.gain,
     cadenceFrom: 'purchase model',
     cadenceRateMedian: c.r,
     cadence: {

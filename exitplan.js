@@ -74,6 +74,7 @@ import { cadencePosterior } from 'bayes.js'
 import { capitalFV } from 'hacknetplan.js'
 import { contractsForHashes } from 'contractplan.js'
 import { favorToRep, repToFavor, addRepToFavor } from 'favor.js'
+import { effectAt } from 'goplan.js'
 import { drain } from 'coop.js'
 import { capitalOf, isShaped, capitalEarnAt, capitalRateAt, capitalGain, capitalStepFn, rateTab } from 'traderw.js'
 
@@ -1853,9 +1854,22 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // `capRep` of it left: rep-equivalent per hour from the join. Contracts
     // are paid without favor (gainCodingContractReward).
     const fav0 = favorBanked
-    const fStream = o.favorStream && pos(o.favorStream.repPerH) ? o.favorStream : null
+    // THE PLANNED FARM (o.go, goplan.goExitInputsOf): where go.js does not play
+    // the exit faction today, the final window's farm on it is the plan's —
+    // its favor stream from the join (o.go.favorStream, the same formula) and
+    // its faction_rep bonus (o.go.rep below). A measured stream wins.
+    const fsIn = o.favorStream && pos(o.favorStream.repPerH) ? o.favorStream : o.go?.favorStream && pos(o.go.favorStream.repPerH) ? o.go.favorStream : null
+    const fStream = fsIn
     const fCap = fStream ? (num(fStream.capRep) && fStream.capRep >= 0 ? fStream.capRep : Infinity) : 0
-    const fmAt = fStream ? (tj) => 1 + repToFavor(favorToRep(fav0) + Math.min(fCap, fStream.repPerH * Math.max(0, tj))) / 100 : () => 1 + fav0 / 100
+    // THE DAEDALUS GO BONUS ON THE GRIND (o.go.rep {powerPerH, bonusPower,
+    // goPower, sf14}): faction_rep x effect(node power) (Go/effects/effect.ts
+    // CalculateEffect, goplan.effectAt), the power banked from the final
+    // window's install (Go.prestigeAugmentation zeroes it, Go/Go.ts:34-47) at
+    // the farm's rate — tj hours after the join, h - finalStart into the window.
+    const gRep = o.go?.rep && pos(o.go.rep.powerPerH) && pos(o.go.rep.bonusPower) ? o.go.rep : null
+    const goRepAt = gRep ? ((t0) => (tj) => effectAt(gRep.powerPerH * (t0 + Math.max(0, tj)), gRep.bonusPower, gRep.goPower ?? 1, gRep.sf14 ?? 0))(Math.max(0, h - finalStart)) : null
+    const fmBase = fStream ? (tj) => 1 + repToFavor(favorToRep(fav0) + Math.min(fCap, fStream.repPerH * Math.max(0, tj))) / 100 : () => 1 + fav0 / 100
+    const fmAt = goRepAt ? (tj) => fmBase(tj) * goRepAt(tj) : fmBase
     const fm0 = fmAt(0)
     const P0 = pos(repRate) ? repRate : 0
     let r = hoursToRep(terminalRep, {
@@ -1995,7 +2009,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       }
       return { hours: t, slot: Math.max(0, t - qW), how: 'ground', contracts: cRep && num(t) ? Math.min(need, cAt(t)) : 0 }
     }
-    const trajectory = fleetOn || installsFirst > 0 || cRep || fStream
+    const trajectory = fleetOn || installsFirst > 0 || cRep || fStream || goRepAt
     if (r.how === 'ground' && trajectory) r = groundLeg()
     // DONATING IS AN OPTION, NOT AN OBLIGATION (o.repRoute 'donate' |
     // 'ground'; absent: both): past the threshold the player may still
@@ -2047,59 +2061,109 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     legs.push({ leg: 'grafts finish', hours: graftDone - h, detail: D(() => 'the climb waits for the last graft (an install cancels one in progress)') })
     h = graftDone
   }
-  let climb
   const expOn = !!sleeveExp && (pos(sleeveExp.perSec) || (Array.isArray(sleeveExp.steps) && sleeveExp.steps.some((x) => pos(x?.perSec))))
-  if (expOn) {
-    // Segment by segment between the sleeve's rate changes: constant rate in
-    // each, so each lands exactly.
-    const need = expForLevel(exitLevel, mult)
-    const P = pos(expRate) ? expRate : 0
-    const sExp = sleeveRateFn(sleeveExp)
-    if (!pos(mult)) climb = null
-    else if (need <= 0) climb = 0
-    else if (shaped) {
-      // Rising with the level: per segment the player's shaped rate plus the
-      // sleeve's constant one, the level chunks of hoursToLevelShaped.
-      let acc = 0
-      let t = h
-      climb = Infinity
-      const base = expAt()
-      for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
-        const s = sExp(t)
-        const rateAt = base.affine ? affineRate(base.affine.F + (pos(s) ? s : 0), base.affine.k) : (l) => base(l) + s
-        const span = b - t
-        const tn = hoursToLevelShaped(exitLevel, mult, acc, rateAt)
-        if (num(tn) && tn <= span) {
-          climb = t - h + tn
-          break
+  // Hours from exp 0 to hacking `lvl` at `mult` in the fresh life after the terminal install.
+  const climbFor = (lvl) => {
+    let climb
+    if (expOn) {
+      // Segment by segment between the sleeve's rate changes: constant rate in
+      // each, so each lands exactly.
+      const need = expForLevel(lvl, mult)
+      const P = pos(expRate) ? expRate : 0
+      const sExp = sleeveRateFn(sleeveExp)
+      if (!pos(mult)) climb = null
+      else if (need <= 0) climb = 0
+      else if (shaped) {
+        // Rising with the level: per segment the player's shaped rate plus the
+        // sleeve's constant one, the level chunks of hoursToLevelShaped.
+        let acc = 0
+        let t = h
+        climb = Infinity
+        const base = expAt()
+        for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
+          const s = sExp(t)
+          const rateAt = base.affine ? affineRate(base.affine.F + (pos(s) ? s : 0), base.affine.k) : (l) => base(l) + s
+          const span = b - t
+          const tn = hoursToLevelShaped(lvl, mult, acc, rateAt)
+          if (num(tn) && tn <= span) {
+            climb = t - h + tn
+            break
+          }
+          if (!isFinite(span)) break
+          acc = expAfterHours(acc, span, mult, rateAt)
+          t = b
         }
-        if (!isFinite(span)) break
-        acc = expAfterHours(acc, span, mult, rateAt)
-        t = b
-      }
-    } else {
-      let acc = 0
-      let t = h
-      climb = Infinity
-      for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
-        const rate = P + sExp(t)
-        const span = b - t
-        if (rate > 0 && acc + rate * span * 3600 >= need) {
-          climb = t - h + (need - acc) / rate / 3600
-          break
+      } else {
+        let acc = 0
+        let t = h
+        climb = Infinity
+        for (const b of [...sleeveBreaks(sleeveExp, h), Infinity]) {
+          const rate = P + sExp(t)
+          const span = b - t
+          if (rate > 0 && acc + rate * span * 3600 >= need) {
+            climb = t - h + (need - acc) / rate / 3600
+            break
+          }
+          if (!isFinite(span)) break
+          acc += rate * span * 3600
+          t = b
         }
-        if (!isFinite(span)) break
-        acc += rate * span * 3600
-        t = b
       }
+    } else climb = climbTo(lvl, 0)
+    return climb
+  }
+  // THE HIDDEN OPPONENT ON THE CLIMB (o.go.w0 {powerPerH, gamesPerH,
+  // bonusPower 2, goPower, sf14}): The Red Pill installed, go.js can play
+  // w0r1d_d43m0n (netscriptGoImplementation.ts:359), whose bonus is the
+  // hacking SKILL multiplier (Go/Constants.ts bonusPower 2; effect.ts) — so
+  // the exit level is reached at exitLevel / W of the climb's own multiplier
+  // (expForLevel(L, mult x W) = expForLevel(L / W, mult)). Node power lands
+  // once per FINISHED game (endGoGame), so W steps: W_k = effect(w0 tau k)
+  // after k games (tau = 1/gamesPerH), and the climb ends at the first
+  // passage — T(exitLevel / W_k) inside game k's span, or the moment game k
+  // ends when the jump to W_k already clears the level (tools/sim/gameplan
+  // go.mjs goWindow, the same scan; bisected here: T(W_k) falls and the
+  // span's end rises in k). The policy search then prices WHEN to install The
+  // Red Pill (fewer installs, a lower multiplier, a longer farmed climb).
+  // Not priced, named: the higher level's faster exp (the shaped rate reads
+  // the level without W — a floor), the openers' money leg's level.
+  const w0 = o.go?.w0 && pos(o.go.w0.powerPerH) && pos(o.go.w0.gamesPerH) && pos(o.go.w0.bonusPower) ? o.go.w0 : null
+  let climb = climbFor(exitLevel)
+  let w0Out = null
+  // A climb with no farm past any played horizon can be hours with it — the
+  // low-install policies the farm makes feasible: the scan runs to
+  // DEGENERATE_H of games at most (past it the exit is unpriced either way).
+  if (w0 && num(climb) && climb > 0) {
+    const tau = 1 / w0.gamesPerH
+    const Wk = (k) => (k > 0 ? effectAt((w0.powerPerH / w0.gamesPerH) * k, w0.bonusPower, w0.goPower ?? 1, w0.sf14 ?? 0) : 1)
+    const Tk = (k) => (k > 0 ? climbFor(exitLevel / Wk(k)) : climb)
+    const done = (k) => {
+      const t = Tk(k)
+      return num(t) && t <= (k + 1) * tau
     }
-  } else climb = climbTo(exitLevel, 0)
+    let lo = 0
+    let hi = Math.max(0, Math.ceil(Math.min(climb, DEGENERATE_H) / tau))
+    // done(hi) holds when climb <= DEGENERATE_H: T(W_hi) <= T(1) = climb <= (hi + 1) tau.
+    if (!done(lo) && done(hi)) {
+      while (hi - lo > 1) {
+        const m = Math.floor((lo + hi) / 2)
+        if (done(m)) hi = m
+        else lo = m
+      }
+      lo = hi
+    }
+    const t = Math.max(Tk(lo), lo * tau)
+    if (num(t) && t < climb) {
+      w0Out = { games: lo, W: Wk(lo), withoutH: climb }
+      climb = t
+    }
+  }
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
   // The climb starts in a FRESH life: exp reset, fleet re-rooted, low targets
   // first — its measured lag behind a constant rate is charged once.
   const lagH = climb > 0 && num(freshExpLagH) && freshExpLagH > 0 ? freshExpLagH : 0
   h += climb + lagH
-  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: D(() => `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})`) })
+  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: D(() => `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})${w0Out ? `; w0r1d_d43m0n farmed from The Red Pill: x${w0Out.W.toFixed(3)} after ${w0Out.games} game(s), ${w0Out.withoutH.toFixed(2)}h without it` : ''}`) })
   // Rooting w0r1d_d43m0n: the openers bought again from the reset balance,
   // concurrent with the climb — only the excess binds.
   if (pos(finalRootCost)) {

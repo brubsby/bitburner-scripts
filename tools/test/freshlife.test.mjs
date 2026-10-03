@@ -289,7 +289,7 @@ export async function run() {
     if (!/expScalesWithLevel: true/.test(prog)) c.fail("the exit's exp rate must rise with the level");
     if (!/curve: countCurveOf\(ns, info, exitInputsOf\(/.test(prog)) c.fail("the count timing must price on the structural curve");
     if (/MIN_LIVES|need \$\{need\}/.test(cp)) c.fail("countplan must not gate on a count of lives");
-    if (!/modelPrior: cadenceModelPriorOf\(ns, info\)/.test(prog) || !/o\.multGainPerCycle = Math\.exp\(d\.lnPerHour \* inputs\.cycleHours\)/.test(plan)) c.fail("the cadence draws must come from the posterior on the purchase model's prior");
+    if (!/modelPrior: cadenceModelPriorOf\(ns, info\)/.test(prog) || !/o\.multGainPerCycle = Math\.exp\(d\.lnPerHour \* inputs\.cycleHours \* gm\)/.test(plan)) c.fail("the cadence draws must come from the posterior on the purchase model's prior");
     if (!/FRESH_PRIOR_FILE/.test(prog) || !/cached\?\.key === key/.test(prog)) c.fail("the simulation must be cached by its inputs (a pass re-runs it only when they change)");
     // CPU: one simulation well inside a pacer slice (40ms).
     const bn = bitNodeMults(9);
