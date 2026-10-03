@@ -30,6 +30,7 @@ import { REPO_ROOT } from './gameresolve.mjs'
 
 const SRC = (f) => fs.readFileSync(path.join(REPO_ROOT, f), 'utf8')
 const LP = await import('bbliteplan.js')
+const RP = await import('raiseplace.js')
 const WD = await import('watchdog.js')
 const { bladeburnerHealth } = await import('../bbhealth.mjs')
 
@@ -46,7 +47,7 @@ const STOP = new Error('mock: stop after the planned cycles')
  * a flat file map on home, and `between(cycle, world)` run at every ns.sleep (batch.js's side).
  * bladeburner.js raises itself to FULL_GB at launch and exits when its host cannot hold it.
  */
-function mockGame({ hosts, files = {}, cycles = 1, between = null }) {
+function mockGame({ hosts, files = {}, cycles = 1, between = null, info = INFO }) {
   const world = { hosts, files: { '/tel/plan.txt': JSON.stringify(BLADE_PLAN), ...files }, log: [], execs: [], kills: [], cycle: 0 }
   let pid = 100
   const used = (h) => world.hosts[h].procs.reduce((a, p) => a + p.ram * p.threads, 0)
@@ -62,7 +63,7 @@ function mockGame({ hosts, files = {}, cycles = 1, between = null }) {
     },
     rm: (f) => delete world.files[f],
     fileExists: () => true,
-    getResetInfo: () => INFO,
+    getResetInfo: () => info,
     scan: (h) => (h === 'home' ? Object.keys(world.hosts).filter((x) => x !== 'home') : ['home']),
     hasRootAccess: (h) => world.hosts[h]?.rooted !== false,
     ps: (h) => world.hosts[h].procs.map((p) => ({ filename: p.filename, threads: p.threads, pid: p.pid, args: [] })),
@@ -75,11 +76,12 @@ function mockGame({ hosts, files = {}, cycles = 1, between = null }) {
       if (world.hosts[h].max - used(h) < ram * threads) return 0
       const p = { filename: s, threads, ram, pid: ++pid }
       world.execs.push({ script: s, host: h, cycle: world.cycle })
-      if (s === 'bladeburner.js') {
+      if (RP.RAISED[s]) {
         // ramgrow.js: the raise to the full price on its own host, or the script exits.
-        if (world.hosts[h].max - used(h) - ram >= LP.FULL_GB - ram) p.ram = LP.FULL_GB
+        const full = RP.RAISED[s].gb
+        if (world.hosts[h].max - used(h) - ram >= full - ram) p.ram = full
         else {
-          world.log.push(`bladeburner.js raise denied on ${h}`)
+          world.log.push(`${s} raise denied on ${h}`)
           return p.pid
         }
       }
@@ -120,6 +122,8 @@ async function drive(game) {
 const proc = (filename, ram, threads = 1) => ({ filename, ram, threads, pid: Math.floor(Math.random() * 1e6) })
 const workers = (gb) => [proc('w.js', 1.75, Math.round(gb / 1.75))]
 const runningOn = (world, s) => Object.entries(world.hosts).filter(([, x]) => x.procs.some((p) => p.filename === s)).map(([h]) => h)
+/** The mock game, shared with raiseplace.test.mjs (every raise-sized daemon). */
+export { mockGame, drive, proc, workers, runningOn, INFO, LAR, BLADE_PLAN }
 const reserveRec = (world) => JSON.parse(world.files[LP.FULL_RESERVE_FILE] || 'null')
 const wdRec = (world) => JSON.parse(world.files['/tel/watchdog.txt'] || 'null')?.daemons?.['bladeburner.js'] ?? null
 
@@ -300,12 +304,12 @@ export async function run() {
     }
     const b = SRC('batch.js')
     c.examined(3)
-    if (!/\(h === fullRes\?\.host \? fullRes\.gb : 0\)/.test(b)) c.fail("BF3 batch.js's reserveFor does not hold the full daemon's block")
-    if (!/fullReserveOf\(JSON\.parse\(ns\.read\(FULL_RESERVE_FILE\)/.test(b)) c.fail('BF3 batch.js does not read the reservation every tick')
-    if (!/fullReserve: fullRes/.test(b)) c.fail('BF3 batch.js does not publish the reservation it honours')
+    if (!/\+\s*heldOn\(fullRes, h\)/.test(b)) c.fail("BF3 batch.js's reserveFor does not hold the reserved blocks")
+    if (!/return reservesOf\(\(f\) => ns\.read\(f\), resetInfo, hosts\)/.test(b)) c.fail('BF3 batch.js does not read the reservations every tick')
+    if (!/raiseReserves: fullRes/.test(b)) c.fail('BF3 batch.js does not publish the reservations it honours')
     const sd = SRC('seed.js')
     c.examined(1)
-    if (!/if \(fullHeld && h === fullHeld\.host\) \{\s*if \(cur\) ns\.kill\(cur\.pid\)\s*continue/.test(sd) || !/fullReserveOf\(JSON\.parse\(ns\.read\(FULL_RESERVE_FILE\)/.test(sd)) c.fail('BF3 seed.js refills the reserved host with workers that never exit')
+    if (!/if \(fullHeld && fullHeld\.has\(h\)\) \{\s*if \(cur\) ns\.kill\(cur\.pid\)\s*continue/.test(sd) || !/reservesOf\(\(f\) => ns\.read\(f\), ns\.getResetInfo\(\), all\)/.test(sd)) c.fail('BF3 seed.js refills the reserved host with workers that never exit')
     const wd = SRC('watchdog.js')
     c.examined(2)
     if (!/const free = ns\.getServerMaxRam\(h\) - ns\.getServerUsedRam\(h\) - heldFor\(held, h\)/.test(wd)) c.fail("BF3 the watchdog's placeFor takes the reserved block for another daemon")

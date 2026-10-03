@@ -382,6 +382,12 @@ const STACK = [
     where: 'anywhere',
     tier: 32,
     rank: 34,
+    // NOT STARTED while bladeburner.js runs anywhere (the loop below): live
+    // BN4 2026-10-03 09:18Z boot started it on the-hub beside bladeburner.js
+    // on rothman-uni; it saw the handover record and exited, but it is a
+    // second Bladeburner daemon for its first pass. The watchdog's invariant
+    // says the same.
+    standsDownFor: 'bladeburner.js',
     why:
       'the Bladeburner route before a host can hold bladeburner.js (92.75GB): joins the division at combat 100, the ' +
       'faction at rank 25, acts by bbplan.chooseAction on a lean view and spends skill points hourly, through 9.6-14.6GB ' +
@@ -767,6 +773,12 @@ export async function main(ns) {
         (host) => ns.hasRootAccess(host) && ns.ps(host).some((proc) => proc.filename === entry.script),
       )
       if (running.length) continue
+      // A daemon that stands down for another (bb-lite.js for bladeburner.js)
+      // is not started while that one runs on any host.
+      if (entry.standsDownFor && hosts.some((host) => ns.hasRootAccess(host) && ns.ps(host).some((proc) => proc.filename === entry.standsDownFor))) {
+        stopped.push(`${entry.script} not started: ${entry.standsDownFor} is running`)
+        continue
+      }
 
       const threads = entry.threads || 1
       // PLACE AGAINST THE RAISED COST, not the declared one.

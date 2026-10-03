@@ -51,7 +51,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): the full Bladeburner daemon's reserved block, kept free of workers.
-import { fullReserveOf, FULL_RESERVE_FILE } from 'bbliteplan.js'
+import { reservesOf, RAISED } from 'raiseplace.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
@@ -316,11 +316,20 @@ async function pass(ns, flags) {
   // host that holds it — evicting that host's workers — when the priced
   // trajectory to the next home tier says it wins.
   const traderHost = await placeTrader(ns, all, hosts)
-  // The full Bladeburner daemon's reservation lives on home ([bitburner-offhome-reads]).
+  // The raise-sized daemons' reservations (raiseplace.js) live on home
+  // ([bitburner-offhome-reads]); one copy each, so a missing file costs only itself.
   const fullHeld = (() => {
     try {
-      if (here !== 'home') ns.scp(FULL_RESERVE_FILE, here, 'home')
-      return fullReserveOf(JSON.parse(ns.read(FULL_RESERVE_FILE) || 'null'), ns.getResetInfo(), all)
+      if (here !== 'home') {
+        for (const r of Object.values(RAISED)) {
+          try {
+            ns.scp(r.file, here, 'home')
+          } catch {
+            /* none published: nothing reserved */
+          }
+        }
+      }
+      return new Set(reservesOf((f) => ns.read(f), ns.getResetInfo(), all).map((r) => r.host))
     } catch {
       return null
     }
@@ -335,11 +344,11 @@ async function pass(ns, flags) {
     // forever — and a host pointed at the WRONG target could never be
     // corrected, which is the whole job of a re-seed.
     const cur = ns.ps(h).find((p) => p.filename === EARLY || p.filename === CHEAP)
-    // bladeburner.js's reserved block (bbliteplan.fullReserveOf, the
-    // watchdog's): no worker of ours on that host — they loop forever, so
+    // A raise-sized daemon's reserved block (raiseplace.reservesOf, the
+    // watchdog's: bladeburner.js, sleeve.js, hashspend.js): no worker of ours on that host — they loop forever, so
     // one left there holds the block for good (live BN4 2026-10-03 02:10Z:
     // 53 early.js threads on each 128GB host at the tier that admits it).
-    if (fullHeld && h === fullHeld.host) {
+    if (fullHeld && fullHeld.has(h)) {
       if (cur) ns.kill(cur.pid)
       continue
     }

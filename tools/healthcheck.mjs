@@ -36,6 +36,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoPushVerdict } from "./pushwatch.mjs";
 import { bladeburnerHealth } from "./bbhealth.mjs";
+import { raisedHealth } from "./raisehealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -556,6 +557,15 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   for (const f of r.fails) fail(f.what, f.detail);
   for (const n of r.notes) note(n);
   now.bladeburner = r.snap;
+}
+// THE RAISE-SIZED DAEMONS (tools/raisehealth.mjs): SLEEVES NOT RUNNING and
+// HASHSPEND NOT RUNNING where the capability exists and the tier admits them,
+// absent > 15 min — the watchdog's placement/reservation not converging.
+{
+  const r = raisedHealth({ tel: { "sleeve.txt": readTel("sleeve.txt"), "hashspend.txt": readTel("hashspend.txt") }, wd: tel["watchdog.txt"] ?? readTel("watchdog.txt"), state, prev: prev?.raised ?? null });
+  for (const f of r.fails) fail(f.what, f.detail);
+  for (const n of r.notes) note(n);
+  now.raised = r.snap;
 }
 // THE STOCK TRADER (stock.js). In BitNode 8 it is the whole income, so a dead
 // or erroring trader is a stalled node, and a live one earning far below what

@@ -106,12 +106,12 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, SF_FILE } from 'sfgate.js'
+import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, hasHacknetServers, SF_FILE } from 'sfgate.js'
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
-import { fullPlacementOf, fullReserveRecordOf, fullReserveOf, FULL_RESERVE_FILE, FULL_FREEABLE, FULL_EVICTABLE } from 'bbliteplan.js'
+import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn } from 'raiseplace.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -286,8 +286,31 @@ const WATCHED = [
     host: 'anywhere',
     args: [],
     invariant: (ns) => canJoinBladeburner(ns.getResetInfo()),
-    place: (ns, hosts, rec) => fullPlace(ns, hosts, rec),
-    onRunning: (ns, rec) => fullRunning(ns, rec),
+    place: (ns, hosts, rec) => raisedPlace(ns, hosts, rec, 'bladeburner.js'),
+    onRunning: (ns, rec) => raisedRunning(ns, rec, 'bladeburner.js'),
+  },
+  // THE SLEEVE DRIVER (sleeve.js) and THE HASH SPENDER (hashspend.js): the
+  // same guarantee (raiseplace.js). Both declare 3.25GB and raise to 49.75 /
+  // 7.25GB on their own host, and only boot.js placed them, once. Live BN4
+  // 2026-10-03: sleeve.js absent from the 03:08Z install until 09:20Z — boot
+  // placed it at 09:18Z on millenium-fitness, which batch.js had filled, and
+  // the raise was denied. The invariant is the capability (sfgate): where it
+  // is absent each script refuses in telemetry and exits anyway.
+  {
+    script: 'sleeve.js',
+    host: 'anywhere',
+    args: [],
+    invariant: (ns) => canUseSleeve(ns.getResetInfo()),
+    place: (ns, hosts, rec) => raisedPlace(ns, hosts, rec, 'sleeve.js'),
+    onRunning: (ns, rec) => raisedRunning(ns, rec, 'sleeve.js'),
+  },
+  {
+    script: 'hashspend.js',
+    host: 'anywhere',
+    args: [],
+    invariant: (ns) => hasHacknetServers(ns.getResetInfo()),
+    place: (ns, hosts, rec) => raisedPlace(ns, hosts, rec, 'hashspend.js'),
+    onRunning: (ns, rec) => raisedRunning(ns, rec, 'hashspend.js'),
   },
   // THE LEAN BLADEBURNER DAEMON (bb-lite.js): revived wherever the division
   // can exist, and STOPPED the moment bladeburner.js runs anywhere — the
@@ -945,15 +968,17 @@ function running(ns, hosts, script) {
 }
 
 /**
- * bladeburner.js's placement this cycle (bbliteplan.fullPlacementOf), and the
- * reservation batch.js honours when no host has its block free. Publishes the
- * decision on the entry's record (`placement`) and keeps `absentSince` while
- * the tier and the route want it and it is not running — the clock
- * tools/bbhealth.mjs times BLADEBURNER FULL NOT PLACED against.
+ * A raise-sized daemon's placement this cycle (raiseplace.raisedPlacementOf),
+ * and the reservation batch.js and seed.js honour when no host has its block
+ * free. Publishes the decision on the entry's record (`placement`) and keeps
+ * `absentSince` while the tier (and route) want it and it is not running —
+ * the clock tools/raisehealth.mjs times SLEEVES NOT RUNNING / HASHSPEND NOT
+ * RUNNING and tools/bbhealth.mjs BLADEBURNER FULL NOT PLACED against.
  * Returns {host} to launch on, or {host: null, state}.
  */
-function fullPlace(ns, hosts, rec) {
+function raisedPlace(ns, hosts, rec, script) {
   const info = ns.getResetInfo()
+  const file = RAISED[script].file
   const readRec = (f) => {
     try {
       return JSON.parse(ns.read(f) || 'null')
@@ -963,56 +988,58 @@ function fullPlace(ns, hosts, rec) {
   }
   const rooted = hosts.filter((h) => ns.hasRootAccess(h))
   const gbOf = (h, names) => ns.ps(h).filter((p) => names.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0)
+  // Another daemon's live reservation is not room for this one.
+  const others = reservesOf((f) => ns.read(f), info, rooted).filter((r) => r.script !== script)
   const decide = () =>
-    fullPlacementOf({
+    raisedPlacementOf({
+      script,
       homeMax: ns.getServerMaxRam('home'),
       plan: readRec('/tel/plan.txt'),
       node: info.currentNode,
       hosts: rooted.map((h) => ({
         host: h,
         max: ns.getServerMaxRam(h),
-        used: ns.getServerUsedRam(h),
-        workerGb: gbOf(h, FULL_FREEABLE),
-        evictGb: gbOf(h, FULL_EVICTABLE),
+        used: ns.getServerUsedRam(h) + heldOn(others, h),
+        workerGb: gbOf(h, FREEABLE),
+        evictGb: gbOf(h, EVICTABLE),
         hacknet: isHacknetServerHost(h),
       })),
       homeBlock: 13 + 6.25 * singularityRamMultiplier(info),
       progressRunning: running(ns, ['home'], 'progress.js'),
-      prev: readRec(FULL_RESERVE_FILE),
+      prev: readRec(file),
     })
   let d = decide()
   // seed.js's workers never exit: kill them on the host reserved, then decide
   // again — where they were all that held the block, it is placed this cycle.
   if (d.action === 'reserve' && d.evict) {
-    for (const s of FULL_EVICTABLE) ns.scriptKill(s, d.host)
-    ns.tprint(`watchdog: evicted ${FULL_EVICTABLE.join('/')} on ${d.host} for bladeburner.js's ${d.gb}GB block`)
+    for (const s of EVICTABLE) ns.scriptKill(s, d.host)
+    ns.tprint(`watchdog: evicted ${EVICTABLE.join('/')} on ${d.host} for ${script}'s ${d.gb}GB block`)
     const again = decide()
     if (again.action === 'place' || again.action === 'reserve') d = { ...again, why: `${again.why} (after evicting seed.js's workers on ${d.host})` }
   }
-  ns.write(FULL_RESERVE_FILE, JSON.stringify(fullReserveRecordOf(d, info)), 'w')
+  ns.write(file, JSON.stringify(reserveRecordOf(d, info, Date.now(), script)), 'w')
   rec.placement = { action: d.action, host: d.host ?? null, why: d.why }
   if (d.admitted) rec.absentSince = rec.absentSince ?? new Date().toISOString()
   else delete rec.absentSince
   return d.action === 'place' ? { host: d.host } : { host: null, state: `${d.action}: ${d.why}` }
 }
 
-/** bladeburner.js is up: the reservation is released (batch.js gets the room back) and the absence clock stops. */
-function fullRunning(ns, rec) {
+/** It is up (anywhere — a copy placed by boot.js or by hand counts): the reservation is released and the absence clock stops. */
+function raisedRunning(ns, rec, script) {
   delete rec.absentSince
-  rec.placement = { action: 'running', host: null, why: 'bladeburner.js is running' }
-  ns.write(FULL_RESERVE_FILE, JSON.stringify(fullReserveRecordOf({ action: 'running', why: 'bladeburner.js is running: nothing reserved' }, ns.getResetInfo())), 'w')
+  rec.placement = { action: 'running', host: null, why: `${script} is running` }
+  ns.write(RAISED[script].file, JSON.stringify(reserveRecordOf({ action: 'running', why: `${script} is running: nothing reserved` }, ns.getResetInfo(), Date.now(), script)), 'w')
 }
 
-/** The full daemon's live reservation ({host, gb}) or null — what the watchdog's other placements must not take either. */
+/** Every raise-sized daemon's live reservation — what the watchdog's other placements must not take either. */
 function fullHeld(ns) {
   try {
-    const r = JSON.parse(ns.read(FULL_RESERVE_FILE) || 'null')
-    return fullReserveOf(r, ns.getResetInfo(), [r?.host])
+    return reservesOf((f) => ns.read(f), ns.getResetInfo(), scanAll(ns))
   } catch {
-    return null
+    return []
   }
 }
-const heldFor = (held, h) => (held && held.host === h ? held.gb : 0)
+const heldFor = (held, h) => heldOn(held, h)
 
 /** Tightest-fitting rooted host with room, so big hosts stay whole for the batcher. */
 function placeFor(ns, hosts, script, threads) {
