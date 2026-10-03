@@ -355,7 +355,12 @@ if (!prev) {
     // a stall only if preparation outlasts PREP_BUDGET_MIN of the life.
     const PREP_BUDGET_MIN = 90;
     const prepping = tel["batch.txt"]?.health === "prepping";
-    const lifeMin = num(now.lifeMs) ? now.lifeMs / 60000 : null;
+    // Measured from the later of the life's start and batch.js's own start: a
+    // batcher admitted mid-life (home crossing its 128GB tier, BN14 at 271 min,
+    // 2026-10-03) starts preparing then, not at the install.
+    const lifeMinRaw = num(now.lifeMs) ? now.lifeMs / 60000 : null;
+    const upMin = num(tel["batch.txt"]?.uptimeSec) ? tel["batch.txt"].uptimeSec / 60 : null;
+    const lifeMin = lifeMinRaw !== null && upMin !== null ? Math.min(lifeMinRaw, upMin) : lifeMinRaw;
     if (prepping && lifeMin !== null && lifeMin < PREP_BUDGET_MIN) note(`batch.js is preparing ${(tel["batch.txt"]?.targets ?? []).map((t) => t.host).join(", ") || "a target"} ($0/s by design, life ${lifeMin.toFixed(0)} min)`);
     else fail("batch.js reports $0/s earned", prepping ? `still preparing ${lifeMin?.toFixed(0) ?? "?"} min into the life (budget ${PREP_BUDGET_MIN}) — preparation that never finishes is a stall` : "the batcher is running but landing nothing");
   }
