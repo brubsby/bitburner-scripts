@@ -20,6 +20,9 @@
 import { findAnswer } from 'ctsolvers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
+// Pure (no ns call): parses each reward string for the log the forecast is
+// checked against (contractplan.js, [CP6]).
+import { parseRewardText } from 'contractplan.js'
 
 const STATUS = '/tel/ctauto.txt'
 
@@ -44,7 +47,11 @@ export async function main(ns) {
   ns.disableLog('ALL')
   ns.tprint(`ctauto.js: solving contracts every ${flags.every} min`)
 
-  const totals = { solved: 0, wrong: 0, skipped: 0, rewards: [] }
+  // `log`: one entry per reward — type, difficulty, the route the game paid
+  // (money / faction / factionAll / company) and the amount, parsed from the
+  // attempt's own return string, so contractplan.js's route x difficulty
+  // mixture can be checked against what was actually paid.
+  const totals = { solved: 0, wrong: 0, skipped: 0, rewards: [], log: [] }
 
   const errors = []
   // The running totals ride on EVERY write, healthy or not, so the error and
@@ -103,6 +110,12 @@ export async function main(ns) {
           totals.solved++
           totals.rewards.push(reward)
           if (totals.rewards.length > 30) totals.rewards.shift()
+          try {
+            totals.log.push({ at: new Date().toISOString(), ...parseRewardText(reward, c.type) })
+            if (totals.log.length > 100) totals.log.shift()
+          } catch {
+            /* the log is evidence, never a reason to stop solving */
+          }
           ns.tprint(`ctauto: solved ${c.contract} @ ${c.hostname} — ${reward}`)
         } else {
           totals.wrong++

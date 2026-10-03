@@ -129,7 +129,7 @@ import { joinWait, timeToMeet } from 'joinplan.js'
 import { snapshotView } from 'snapshot.js'
 // Pure: the expected contract stream, which is NOT script income and so is
 // invisible to getTotalScriptIncome (contractplan.js has the derivation).
-import { contractIncome, expectedReward, contractFactionCount, HACKING_WORK_FACTIONS, finalWindowJoinOf, finalWindowContractFactions } from 'contractplan.js'
+import { contractStream, expectedReward, contractFactionCount, HACKING_WORK_FACTIONS, finalWindowJoinOf, finalWindowContractFactions, solverStateOf } from 'contractplan.js'
 // Pure: the stock-market entry as an investment decision (stockplan.js).
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
@@ -1584,7 +1584,7 @@ function joinAllowed(ns, info, faction, todo) {
 function contractRepOf(ns, info, player, inputs, streams) {
   if (!inputs?.hacknet) return { rec: null, why: 'no hacknet servers this life: no hashes to spend' }
   const ct = readJson(ns, '/tel/ctauto.txt')
-  if (!(Date.now() - Date.parse(ct?.at ?? '') < 15 * 60e3)) return { rec: null, why: 'ctauto.js is not reporting: a generated contract would sit unsolved' }
+  if (!solverStateOf(ct).solving) return { rec: null, why: 'ctauto.js is not reporting: a generated contract would sit unsolved' }
   if (!HACKING_WORK_FACTIONS.has(EXIT_FACTION)) return { rec: null, why: `${EXIT_FACTION} offers no hacking work: contracts cannot pay it` }
   const r = expectedReward({ totalSourceFileLevels: totalSfLevels(info), nodeContractMoney: bitNodeMults(info?.currentNode)?.CodingContractMoney, hasHackingFaction: true, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
   // THE SHARE COUNT OF THE FINAL WINDOW'S CONTRACTS: when the final window is
@@ -1616,6 +1616,8 @@ let gangSchedMemo = null
 /** This pass's stock record and split income (nodeecon.js), for exitInputsOf and spendVerdictsOf. */
 let stockNow = null
 let econNow = null
+/** This pass's contract stream (contractplan.contractStream), for exitInputsBaseOf's variance. */
+let contractNow = null
 function gangExitNow(ns, info, inputs, grindHours) {
   return gangExitCtx(ns, info)(inputs, grindHours)
 }
@@ -4641,6 +4643,10 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // are money the exit can spend. 0 with no fresh record.
     money: (player.money ?? 0) + (stockNow?.ok ? stockNow.equity : 0),
     incomePerSec: incomePerSec + contractMoneyPerSec,
+    // THE CONTRACT STREAM'S SPREAD (contractplan: compound Poisson, variance
+    // rate x E[R^2] per second): plan.applyDraw draws its realised mean over
+    // the life beside the rest. Absent while no solver runs (the rate is 0).
+    ...(contractMoneyPerSec > 0 && contractNow?.moneyVarPerSec > 0 ? { contractMoneyPerSec, contractMoneyVarPerSec: contractNow.moneyVarPerSec } : {}),
     // THIS LIFE'S INCOME NOT MEASURABLE YET (nothing earning, no trader
     // return): the previous-lives prior's median here, and a draw from it in
     // every Monte Carlo draw (plan.applyDraw), marked so every reader knows.
@@ -5189,24 +5195,42 @@ async function act(ns, canJoin, info, note) {
   // is invisible to a 5-minute income sample and is not script income at all.
   // Folded into every money leg below (join money, the exit hoard) as a rate
   // alongside script income; NOT into the script-income calibration, which
-  // scores a different quantity. hasHackingFaction is approximated by "any
-  // faction joined" — the first faction this stack ever joins offers hacking
-  // work, and the term only moves reputation between money and rep shares.
+  // scores a different quantity. REALISED ONLY WHILE ctauto.js SOLVES
+  // (contractplan.solverStateOf on /tel/ctauto.txt): a contract pays when
+  // solved, so with the solver deferred (BN4 2026-10-02: the watchdog keeps
+  // it off a 64GB home) the rate is 0 and the stream piles up as a backlog
+  // (count, expected value) that pays when it next runs — or is lost at the
+  // install. Faction reputation reaches only the joined HACKING-WORK
+  // factions (contractFactionCount): with none, those draws pay money.
   const contractForecast = (() => {
     try {
       const sf = totalSfLevels(info)
       const ct = readJson(ns, '/tel/ctauto.txt')
-      return contractIncome({
+      const solver = solverStateOf(ct)
+      const k = contractFactionCount(player.factions ?? []) ?? 0
+      // The backlog starts when the solver last looked, or at this life's
+      // start (an install deletes every contract on the network).
+      const life0 = typeof info?.lastAugReset === 'number' ? info.lastAugReset : 0
+      const since = Math.max(solver.lastRunMs ?? 0, life0)
+      const s = contractStream({
         totalSourceFileLevels: sf,
         nodeContractMoney: bitNodeMults(info?.currentNode)?.CodingContractMoney,
-        hasHackingFaction: (player.factions?.length ?? 0) > 0,
+        hasHackingFaction: k > 0,
         hasJob: Object.keys(player.jobs ?? {}).length > 0,
+        factions: k > 0 ? k : undefined,
+        successRate: solver.successRate ?? undefined,
+        solving: solver.solving,
+        backlogSec: since > 0 ? (Date.now() - since) / 1000 : 0,
         pending: typeof ct?.lastScanFound === 'number' ? ct.lastScanFound : 0,
       })
+      if (!s) return null
+      const { routes, ...reward } = s.reward
+      return { ...s, reward, solver: solver.why }
     } catch {
       return null
     }
   })()
+  contractNow = contractForecast
   const contractMoneyPerSec = contractForecast?.moneyPerSec ?? 0
   // THE STOCK TRADER'S RECORD (nodeecon.js has the interface): its equity is
   // money the planner may spend once act-liquidate.js has sold it, and its

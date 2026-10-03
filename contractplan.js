@@ -29,15 +29,35 @@
 // REWARD getRandomReward draws uniformly over {faction rep, faction rep all,
 //        company rep} plus {money} when CodingContractMoney > 0
 //        (ContractGenerator.ts:179-190). gainCodingContractReward
-//        (PlayerObjectGeneralMethods.ts:502-566) then pays, with
-//        adjustedScaling = rewardScaling / 3 and rewardScaling 1 for random
-//        contracts (Contract.ts:18):
-//          money        75e6 x difficulty x CodingContractMoney / 3
-//          faction rep  2500 x difficulty / 3 to ONE joined hacking faction
-//                       (or spread over all; or converted to MONEY when no
-//                       hacking faction is joined)
-//          company rep  4000 x difficulty / 3 to a held job, or, with no job,
-//                       re-rolled as faction rep (single or all, 50/50)
+//        (PlayerObjectGeneralMethods.ts:501-566) pays at
+//        adjustedScaling = rewardScaling / 3 (rewardScaling 1 for random and
+//        hash-bought contracts, Contract.ts) — AND EVERY RE-ROUTE RECURSES WITH
+//        adjustedScaling AS THE NEW rewardScaling, so it divides by 3 again:
+//          money                         75e6 x d x CodingContractMoney / 3
+//          faction rep (hacking faction) 2500 x d / 3, ONE joined hacking-work
+//                                        faction at random
+//          faction rep ALL               floor(2500 x d / 3 / k) to EACH of the k
+//          either, no hacking faction    -> money at / 9
+//          company rep (a job held)      4000 x d / 3
+//          company rep, no job           -> faction rep single/all 50/50 at / 9,
+//                                        and with no hacking faction either
+//                                        -> money at / 27
+//        The live sweep of 2026-09-18 (BN5, SF1.2+SF4.1, nothing joined, no
+//        job: 49 rewards, all money) shows all three tiers — $2.778m is
+//        75e6/27 at difficulty 1, $8.333m is 75e6/9 — and [CP4] fits it.
+//        This file paid every route at / 3 until 2026-10-02.
+//
+// SOLVED, NOT SPAWNED: a contract pays only when ctauto.js solves it, and
+// only the types ctsolvers.js has a solver for (SOLVER_TYPES, read from its
+// table). While no solver runs the stream accrues as a BACKLOG on the
+// network (contractStream: count and expected value), which pays when one
+// next runs — or is lost at an install, which deletes every non-home server
+// (prestigeAllServers) and the contracts on them.
+//
+// THE DISTRIBUTION: the reward is a mixture (route x difficulty) and the count
+// is Poisson, so the money over T seconds is compound Poisson with mean
+// rate x E[R] x T and variance rate x E[R^2] x T (moneyVarPerSec) — what
+// plan.applyDraw carries as the stream's uncertainty.
 //
 // What comes out is an EXPECTATION per second: money, and faction reputation
 // (spread thinly — it is reported, not scheduled). Both are small against a
@@ -45,9 +65,13 @@
 // forecast and not a measurement is needed: the stream is the same size in
 // both, and only the forecast knows that on the first pass of a new life.
 
+// The solver table (ctsolvers.js: no ns call, 0GB to import). Read, not
+// copied, so coverage cannot drift from what ctauto.js actually dispatches.
+import { codingContractTypesMetadata } from 'ctsolvers.js'
+
 const num = (x) => typeof x === 'number' && isFinite(x)
 
-/** engine.tsx:205-206: three tries every 3000 cycles of 200ms. */
+/** engine.tsx: three tries every 3000 cycles of 200ms. */
 export const TRIES_PER_WINDOW = 3
 export const WINDOW_SEC = 600
 
@@ -56,15 +80,52 @@ export const BASE_MONEY_GAIN = 75e6
 export const BASE_FACTION_REP_GAIN = 2500
 export const BASE_COMPANY_REP_GAIN = 4000
 
-/** Contract.ts:18 rewardScaling = 1, PlayerObjectGeneralMethods.ts:511 / 3. */
+/** Contract.ts rewardScaling = 1, PlayerObjectGeneralMethods.ts:511 / 3 — the FIRST step only; a re-route divides again. */
 export const REWARD_SCALING = 1 / 3
 
 /**
- * Every contract type's difficulty (CodingContract/contracts/*.ts). Thirty
- * types; [CP1] re-parses the source and fails on drift. Only the multiset
- * matters — the draw is uniform over the types under the cap.
+ * Every contract type and its difficulty (CodingContract/Enums.ts names,
+ * CodingContract/contracts/*.ts difficulties), in the enum's order. [CP1]
+ * re-parses the source and fails on drift.
  */
-export const DIFFICULTIES = [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 5, 6, 6, 7, 7, 8, 9, 10, 10, 10]
+export const TYPE_DIFFICULTY = {
+  'Find Largest Prime Factor': 1,
+  'Subarray with Maximum Sum': 1,
+  'Total Ways to Sum': 1,
+  'Total Ways to Sum II': 2,
+  'Spiralize Matrix': 2,
+  'Array Jumping Game': 2,
+  'Array Jumping Game II': 3,
+  'Merge Overlapping Intervals': 3,
+  'Generate IP Addresses': 3,
+  'Algorithmic Stock Trader I': 1,
+  'Algorithmic Stock Trader II': 2,
+  'Algorithmic Stock Trader III': 4,
+  'Algorithmic Stock Trader IV': 8,
+  'Minimum Path Sum in a Triangle': 5,
+  'Unique Paths in a Grid I': 3,
+  'Unique Paths in a Grid II': 5,
+  'Shortest Path in a Grid': 7,
+  'Sanitize Parentheses in Expression': 10,
+  'Find All Valid Math Expressions': 10,
+  'HammingCodes: Integer to Encoded Binary': 6,
+  'HammingCodes: Encoded Binary to Integer': 9,
+  'Proper 2-Coloring of a Graph': 7,
+  'Compression I: RLE Compression': 2,
+  'Compression II: LZ Decompression': 4,
+  'Compression III: LZ Compression': 10,
+  'Encryption I: Caesar Cipher': 1,
+  'Encryption II: Vigenère Cipher': 2,
+  'Square Root': 5,
+  'Total Number of Primes': 2,
+  'Largest Rectangle in a Matrix': 6,
+}
+
+/** Every type's difficulty — the draw is uniform over the types under the cap. */
+export const DIFFICULTIES = Object.values(TYPE_DIFFICULTY)
+
+/** The types ctauto.js can answer: ctsolvers.js's table, by exact name (findAnswer dispatches on it). */
+export const SOLVER_TYPES = new Set((codingContractTypesMetadata ?? []).filter((m) => typeof m?.solver === 'function').map((m) => m.name))
 
 /** ContractGenerator.ts: the per-try success probability at `pending` contracts outstanding. */
 export const spawnChance = (pending = 0) => 100 / (399 + Math.exp(0.0012 * Math.max(0, pending)))
@@ -72,54 +133,134 @@ export const spawnChance = (pending = 0) => 100 / (399 + Math.exp(0.0012 * Math.
 /** Expected contracts per second. */
 export const spawnPerSec = (pending = 0) => (TRIES_PER_WINDOW * spawnChance(pending)) / WINDOW_SEC
 
-/** ContractGenerator.ts:80-82 — the difficulty cap from Source-File levels. */
+/** ContractGenerator.ts — the difficulty cap from Source-File levels. */
 export const maxDifficulty = (totalSourceFileLevels) => 2 * totalSourceFileLevels + 1
+
+/** The types a contract can be drawn from under the cap: [{ name, d }]; null on unreadable input. */
+export function typePool(totalSourceFileLevels) {
+  if (!num(totalSourceFileLevels) || totalSourceFileLevels < 0) return null
+  const cap = maxDifficulty(totalSourceFileLevels)
+  return Object.entries(TYPE_DIFFICULTY)
+    .filter(([, d]) => d <= cap)
+    .map(([name, d]) => ({ name, d }))
+}
 
 /** Mean difficulty of a uniform draw over the types under the cap; null if none qualify. */
 export function expectedDifficulty(totalSourceFileLevels) {
-  if (!num(totalSourceFileLevels) || totalSourceFileLevels < 0) return null
-  const cap = maxDifficulty(totalSourceFileLevels)
-  const pool = DIFFICULTIES.filter((d) => d <= cap)
-  if (!pool.length) return null
-  return pool.reduce((a, b) => a + b, 0) / pool.length
+  const pool = typePool(totalSourceFileLevels)
+  if (!pool?.length) return null
+  return pool.reduce((a, t) => a + t.d, 0) / pool.length
 }
 
 /**
- * Expected reward of ONE contract: `{ money, factionRep }`.
+ * The fraction of drawn contracts ctauto.js can solve under the cap:
+ * `{ coverage, unsolved: [names] }`. A type with no solver is skipped (a
+ * wrong answer burns an attempt) and stays pending on the network.
+ */
+export function solverCoverage(totalSourceFileLevels, solvable = SOLVER_TYPES) {
+  const pool = typePool(totalSourceFileLevels)
+  if (!pool?.length) return null
+  const unsolved = pool.filter((t) => !solvable.has(t.name)).map((t) => t.name)
+  return { coverage: (pool.length - unsolved.length) / pool.length, unsolved }
+}
+
+// gainCodingContractReward's reward types (Contract.ts CodingContractRewardType).
+const FACTION = 'faction'
+const FACTION_ALL = 'factionAll'
+const COMPANY = 'company'
+const MONEY = 'money'
+
+/**
+ * EVERY TERMINAL PATH of gainCodingContractReward for one solved contract,
+ * transliterated from source: `[{ route, kind, p, scale }]`, p summing to 1.
+ * `route` names the path ('company>faction>money'), `kind` what is paid,
+ * `scale` the factor on the base gain (1/3, 1/9 or 1/27). Each re-route
+ * recurses with the ADJUSTED scaling as its rewardScaling, dividing by 3 again.
+ */
+export function rewardRoutes({ moneyOffered = true, hasHackingFaction, hasJob } = {}) {
+  const out = []
+  const pay = (kind, rewardScaling, p, path) => {
+    const adj = rewardScaling / 3
+    const route = path ? `${path}>${kind}` : kind
+    if (kind === FACTION || kind === FACTION_ALL) {
+      if (!hasHackingFaction) return pay(MONEY, adj, p, route)
+      out.push({ route, kind, p, scale: adj })
+    } else if (kind === COMPANY) {
+      if (!hasJob) {
+        pay(FACTION, adj, p / 2, route)
+        pay(FACTION_ALL, adj, p / 2, route)
+        return
+      }
+      out.push({ route, kind: COMPANY, p, scale: adj })
+    } else out.push({ route, kind: MONEY, p, scale: adj })
+  }
+  const kinds = [FACTION, FACTION_ALL, COMPANY, ...(moneyOffered ? [MONEY] : [])]
+  for (const t of kinds) pay(t, 1, 1 / kinds.length, '')
+  return out
+}
+
+/**
+ * Expected reward of ONE SPAWNED contract — solved by ctauto.js where a solver
+ * exists, at its measured `successRate` — and its money's second moment.
  *
- * `o`: `{ totalSourceFileLevels, nodeContractMoney, hasHackingFaction, hasJob }`.
- * Company reputation is valued at 0 here — it is real, but this file has no
- * price for it; it is reported as `companyRepShare` so the omission is visible.
- * Refuses (null) when any input is unreadable.
+ * `o`: `{ totalSourceFileLevels, nodeContractMoney, hasHackingFaction, hasJob,
+ *         factions?, solvable?, successRate? }`.
+ *   factions     the joined hacking-work factions (k): adds `factionRepEach`,
+ *                one faction's expected share — total/k for the single
+ *                route (one at random), floor(total/k) for the all route
+ *   solvable     the set of solvable type names (default SOLVER_TYPES)
+ *   successRate  solved / attempted, measured (default 1)
+ *
+ * Returns `{ money, moneySq, factionRep, factionRepEach?, companyRep,
+ * companyRepShare, meanDifficulty, coverage, successRate, routes }`:
+ * `factionRep` is the TOTAL over every faction it reaches (a caller pricing
+ * one faction divides by k, or reads factionRepEach), `moneySq` E[R^2] for
+ * the compound-Poisson variance. Company reputation has no price here; it is
+ * reported. Refuses (null) when any input is unreadable.
  */
 export function expectedReward(o = {}) {
-  const d = expectedDifficulty(o.totalSourceFileLevels)
-  if (d === null) return null
+  const pool = typePool(o.totalSourceFileLevels)
+  if (!pool?.length) return null
   if (!num(o.nodeContractMoney) || o.nodeContractMoney < 0) return null
   if (typeof o.hasHackingFaction !== 'boolean' || typeof o.hasJob !== 'boolean') return null
-  const moneyOffered = o.nodeContractMoney > 0
-  const types = moneyOffered ? 4 : 3
-  const p = 1 / types
-  const moneyEach = BASE_MONEY_GAIN * d * o.nodeContractMoney * REWARD_SCALING
-  const repEach = BASE_FACTION_REP_GAIN * d * REWARD_SCALING
-  // Faction-rep draws (single and all) pay money instead when no hacking
-  // faction is joined; a company-rep draw with no job re-rolls as faction rep.
-  let pMoney = moneyOffered ? p : 0
-  let pFaction = 2 * p
-  let pCompany = p
-  if (!o.hasJob) {
-    pFaction += pCompany
-    pCompany = 0
-  }
-  if (!o.hasHackingFaction) {
-    pMoney += pFaction
-    pFaction = 0
+  const solvable = o.solvable instanceof Set ? o.solvable : SOLVER_TYPES
+  const succ = num(o.successRate) ? Math.min(1, Math.max(0, o.successRate)) : 1
+  const k = num(o.factions) && o.factions >= 1 ? Math.floor(o.factions) : null
+  const routes = rewardRoutes({ moneyOffered: o.nodeContractMoney > 0, hasHackingFaction: o.hasHackingFaction, hasJob: o.hasJob })
+  const solved = pool.filter((t) => solvable.has(t.name))
+  const n = pool.length
+  let money = 0
+  let moneySq = 0
+  let factionRep = 0
+  let factionRepEach = 0
+  let companyRep = 0
+  for (const t of solved) {
+    const q = succ / n
+    for (const r of routes) {
+      const w = q * r.p
+      if (r.kind === MONEY) {
+        const x = BASE_MONEY_GAIN * t.d * o.nodeContractMoney * r.scale
+        money += w * x
+        moneySq += w * x * x
+      } else if (r.kind === COMPANY) companyRep += w * BASE_COMPANY_REP_GAIN * t.d * r.scale
+      else {
+        const total = BASE_FACTION_REP_GAIN * t.d * r.scale
+        factionRep += w * total
+        if (k !== null) factionRepEach += w * (r.kind === FACTION_ALL ? Math.floor(total / k) : total / k)
+      }
+    }
   }
   return {
-    money: pMoney * moneyEach,
-    factionRep: pFaction * repEach,
-    companyRepShare: pCompany,
-    meanDifficulty: d,
+    money,
+    moneySq,
+    factionRep,
+    ...(k !== null ? { factions: k, factionRepEach } : {}),
+    companyRep,
+    companyRepShare: routes.filter((r) => r.kind === COMPANY).reduce((a, r) => a + r.p, 0),
+    meanDifficulty: pool.reduce((a, t) => a + t.d, 0) / n,
+    coverage: solved.length / n,
+    successRate: succ,
+    routes,
   }
 }
 
@@ -193,19 +334,104 @@ export function contractsForHashes(hashes, level0 = 0, costPerLevel = 25) {
 }
 
 /**
- * The stream, per second: `{ perSec, moneyPerSec, factionRepPerSec, reward }`.
- * `pending` is how many contracts are outstanding (unsolved on the network) —
- * with ctauto.js running it is ~0 and the spawn chance sits at its maximum.
+ * IS A SOLVER RUNNING, from ctauto.js's own record (/tel/ctauto.txt, written
+ * every pass and on exit by status.js's reporter): `{ solving, lastRunMs,
+ * successRate, why }`. Solving = a write within `freshMs` that is not the
+ * exit record. `lastRunMs` is when it last looked (an exit record's
+ * `staleSince`, else its `at`) — where the backlog starts — or null.
+ * `successRate`: solved / (solved + wrong), null before any attempt.
  */
-export function contractIncome(o = {}) {
+export function solverStateOf(rec, nowMs = Date.now(), freshMs = 15 * 60e3) {
+  const at = Date.parse(rec?.at ?? '')
+  if (!isFinite(at)) return { solving: false, lastRunMs: null, successRate: null, why: 'ctauto.js has no record' }
+  const exited = rec.exited === true || rec.health === 'stopped'
+  const lastRunMs = exited && isFinite(Date.parse(rec.staleSince ?? '')) ? Date.parse(rec.staleSince) : at
+  const att = (num(rec.solved) ? rec.solved : 0) + (num(rec.wrong) ? rec.wrong : 0)
+  const successRate = att > 0 ? rec.solved / att : null
+  if (exited) return { solving: false, lastRunMs, successRate, why: `ctauto.js stopped (${rec.detail ?? rec.health})` }
+  if (nowMs - at > freshMs) return { solving: false, lastRunMs, successRate, why: `ctauto.js silent for ${((nowMs - at) / 60e3).toFixed(0)} min` }
+  return { solving: true, lastRunMs, successRate, why: 'ctauto.js is solving' }
+}
+
+/**
+ * THE STREAM, per second, REALISED ONLY WHILE A SOLVER RUNS.
+ *
+ * `o`: expectedReward's inputs, plus
+ *   pending     contracts outstanding (ctauto.js's lastScanFound) while solving
+ *   solving     false when no solver runs (default true: the old contract)
+ *   backlogSec  seconds the stream has accrued unsolved (since the solver
+ *               last ran, or the life began — an install deletes them)
+ *
+ * Returns `{ perSec, perHour, moneyPerSec, moneyVarPerSec, factionRepPerSec,
+ * solving, expected: {moneyPerSec, moneyVarPerSec, factionRepPerSec},
+ * backlog: {count, solvable, money, factionRep} | null, reward }`.
+ * The realised rates (moneyPerSec, ...) are the expected ones while solving
+ * and 0 while not; `expected` is what a running solver would earn; the
+ * backlog is what has piled up and pays as a lump when one next runs. The
+ * backlog's count is the pending count, so it lowers the spawn chance.
+ * moneyVarPerSec = rate x E[R^2]: over T seconds the stream's money is
+ * compound Poisson, variance moneyVarPerSec x T.
+ */
+export function contractStream(o = {}) {
   const reward = expectedReward(o)
   if (!reward) return null
-  const perSec = spawnPerSec(num(o.pending) ? o.pending : 0)
+  const solving = o.solving !== false
+  const backlogSec = !solving && num(o.backlogSec) && o.backlogSec > 0 ? o.backlogSec : 0
+  // The backlog count at the base rate (it lowers the spawn chance only past
+  // thousands, so the first-order count is exact enough), then the rate at it.
+  const count = backlogSec * spawnPerSec(0)
+  const pending = solving ? (num(o.pending) ? o.pending : 0) : count
+  const perSec = spawnPerSec(pending)
+  const expected = { moneyPerSec: perSec * reward.money, moneyVarPerSec: perSec * reward.moneySq, factionRepPerSec: perSec * reward.factionRep }
   return {
     perSec,
     perHour: perSec * 3600,
-    moneyPerSec: perSec * reward.money,
-    factionRepPerSec: perSec * reward.factionRep,
+    moneyPerSec: solving ? expected.moneyPerSec : 0,
+    moneyVarPerSec: solving ? expected.moneyVarPerSec : 0,
+    factionRepPerSec: solving ? expected.factionRepPerSec : 0,
+    solving,
+    expected,
+    backlog: solving ? null : { count, solvable: count * reward.coverage, money: count * reward.money, factionRep: count * reward.factionRep },
     reward,
   }
+}
+
+/** The old name: the stream with a solver assumed running unless `solving: false` says otherwise. */
+export const contractIncome = contractStream
+
+/**
+ * ONE REWARD, PARSED from attempt()'s return string (gainCodingContractReward's
+ * four messages) for ctauto.js's log: `{ type, d, route, amount, scale? }`.
+ *   'Gained $8.333m'                                     money
+ *   'Gained 833.3 faction reputation for NiteSec'        faction
+ *   'Gained 277 reputation for each of the following factions: A, B'  factionAll (amount per faction, n)
+ *   'Gained 1333.3 company reputation for ECorp'         company
+ * `scale` = amount / (base x difficulty): 1/3 direct, 1/9 re-routed once,
+ * 1/27 twice (money: before the node's CodingContractMoney). Unparsed -> route 'unknown'.
+ */
+const MONEY_SUFFIX = { '': 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15, Q: 1e18, s: 1e21, S: 1e24, o: 1e27, n: 1e30 }
+export function parseRewardText(text, type) {
+  const d = TYPE_DIFFICULTY[type] ?? null
+  const s = String(text ?? '')
+  const out = { type: type ?? null, d, route: 'unknown', amount: null }
+  let m
+  if ((m = s.match(/^Gained \$([\d.,]+)([a-zA-Z]?)$/))) {
+    out.route = MONEY
+    out.amount = Number(m[1].replace(/,/g, '')) * (MONEY_SUFFIX[m[2]] ?? NaN)
+  } else if ((m = s.match(/^Gained ([\d.e+]+) faction reputation for (.+)$/))) {
+    out.route = FACTION
+    out.amount = Number(m[1])
+    out.faction = m[2]
+  } else if ((m = s.match(/^Gained ([\d.e+]+) reputation for each of the following factions: (.+)$/))) {
+    out.route = FACTION_ALL
+    out.amount = Number(m[1])
+    out.n = m[2].split(', ').length
+  } else if ((m = s.match(/^Gained ([\d.e+]+) company reputation for (.+)$/))) {
+    out.route = COMPANY
+    out.amount = Number(m[1])
+  }
+  if (!num(out.amount)) out.amount = null
+  const base = { [MONEY]: BASE_MONEY_GAIN, [FACTION]: BASE_FACTION_REP_GAIN, [FACTION_ALL]: BASE_FACTION_REP_GAIN, [COMPANY]: BASE_COMPANY_REP_GAIN }[out.route]
+  if (base && d && out.amount !== null) out.scale = (out.amount * (out.route === FACTION_ALL ? out.n : 1)) / (base * d)
+  return out
 }

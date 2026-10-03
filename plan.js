@@ -208,7 +208,10 @@ export function makeDraws(post, N, seed) {
     const tw = post.trader?.lnWstar
     const rho = fin(post.trader?.rho) ? post.trader.rho : 0
     const Wstar = tw && fin(tw.mean) && fin(tw.sd) ? Math.exp(tw.mean + tw.sd * (rho * zT + Math.sqrt(1 - rho * rho) * normalOf(st('traderW')))) : null
-    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zRep, zc, zCad, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
+    // The contract stream's realised mean over the life (applyDraw): its own
+    // sub-stream, so no other component's z moves.
+    const zContract = normalOf(st('contract'))
+    out.push({ i, seed, r, Wstar, s2, si2, incomeLn, repResid, zRep, zc, zCad, zContract, lnPerHour: ln, cycleH, cadOwnW: fin(cad?.own?.weight) ? cad.own.weight : null, expMult: Math.exp(e), repRate: repLn === null ? null : Math.exp(repLn), gymMult: Math.exp(gym) })
   }
   return out
 }
@@ -265,6 +268,17 @@ export function applyDraw(inputs, d) {
   // The hacking stream is a draw from its posterior (earlier lives, updated
   // by this life's measurement); the flat part measured beside it is kept.
   if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = (fin(inputs.incomeFlatPerSec) && inputs.incomeFlatPerSec > 0 ? inputs.incomeFlatPerSec : 0) + Math.exp(d.incomeLn)
+  // THE CONTRACT STREAM IS COMPOUND POISSON (contractplan.contractStream):
+  // its money over a life of H hours has variance contractMoneyVarPerSec x H
+  // x 3600, so the life's mean rate moves by sqrt(var / (H x 3600)) z — never
+  // below zero contract money. The flat income carries it too (it is flat).
+  if (fin(inputs.contractMoneyVarPerSec) && inputs.contractMoneyVarPerSec > 0 && fin(inputs.contractMoneyPerSec) && inputs.contractMoneyPerSec > 0 && fin(d.zContract) && fin(o.incomePerSec)) {
+    const H = fin(o.cycleHours) && o.cycleHours > 0 ? o.cycleHours : 24
+    const dx = Math.max(-inputs.contractMoneyPerSec, Math.sqrt(inputs.contractMoneyVarPerSec / (H * 3600)) * d.zContract)
+    o.incomePerSec = Math.max(0, o.incomePerSec + dx)
+    if (fin(o.flatIncomePerSec)) o.flatIncomePerSec = Math.max(0, o.flatIncomePerSec + dx)
+    if (fin(o.incomeFlatPerSec)) o.incomeFlatPerSec = Math.max(0, o.incomeFlatPerSec + dx)
+  }
   if (!repPost && inputs.repFromEstimate === true && fin(inputs.repPerSec) && fin(d.repResid)) o.repPerSec = inputs.repPerSec * d.repResid
   return o
 }
