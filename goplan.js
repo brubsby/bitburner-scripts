@@ -54,18 +54,36 @@
 //   Netburners     200ms 100%  6553/h          | 100%   5395     | 100%  4437
 //   Tetrads        400ms  97% 10360/h          | 100%   9628     |  93%  8725
 // The budget per opponent is go.js SETTINGS.model.maxmsBy.
+//
+// PONDERED (2026-10-04, the table below): tools/go-solver.mjs now searches
+// the AI's most likely reply (sampled from the model) at the full budget
+// while the AI's reply crawls through its timer hops, and answers a matching
+// position at once. Same harness, 30 games per arm, paired layouts (seed 2),
+// ponder overrun past the AI's live reply time charged:
+//   arm            model+ponder        | same-day model control
+//   Daedalus       97% 13643/h         | 100% 13707  (no gain: 400ms hides behind the reply anyway)
+//   Illuminati     97% 67897/h         |  97% 54298  (+25%: 800ms is longer than the reply)
+//   TheBlackHand  100% 11122/h         | (10-03: 9535)
+//   SlumSnakes    100% 11824/h         |  97% 10997
+//   Netburners     97%  6569/h         | (10-03: 6553)
+//   Tetrads        97% 11550/h         | (10-03: 10360)
+// Win rates are unchanged within one game in 30 (paired black per game
+// -0.03..-0.27). KataGo (tools/katago, GPU or CPU) loses to the model on
+// EVERY small board and never beats the 5x5 rate on 7x7/9x9/13x13 (the AI's
+// own reply time per turn is the floor, and 5x5 earns the most area per
+// turn): tools/katago/README.md has the full opponent x board table.
 // (The previous table, 60 games/arm with go-boardsize.mjs, was ~2x lower
 // across the board: that harness never mirror-passed and dealt ONE offline-
 // node layout for every game — tools/sim/go-board.mjs.)
 
-/** Measured node power per hour at 5x5, model backend, go.js's per-opponent budget. */
+/** Measured node power per hour at 5x5, model backend pondered, go.js's per-opponent budget. */
 export const POWER_PER_HOUR = {
-  Daedalus: 12978,
-  Illuminati: 51885,
-  TheBlackHand: 9535,
-  SlumSnakes: 10485,
-  Netburners: 6553,
-  Tetrads: 10360,
+  Daedalus: 13643,
+  Illuminati: 67897,
+  TheBlackHand: 11122,
+  SlumSnakes: 11824,
+  Netburners: 6569,
+  Tetrads: 11550,
 }
 
 /**
@@ -107,17 +125,18 @@ export function keyOfGame(name) {
 }
 
 /**
- * Measured win rate per opponent, same study as POWER_PER_HOUR (30 games per
- * arm, 5x5 @800ms, model backend; tools/sim/go-study-report.mjs).
+ * Measured win rate per opponent: every model arm at go.js's budget pooled
+ * (2026-10-03 tune, 2026-10-04 control and pondered: 60-130 games each,
+ * 5x5; tools/sim/go-study-report.mjs).
  * Used ONLY to price the win-streak state an opponent resumes from — the
  * steady-state effect of the win rate is already inside POWER_PER_HOUR.
  */
 export const WIN_RATE = {
-  Daedalus: 1,
-  Illuminati: 0.986,
+  Daedalus: 0.989,
+  Illuminati: 0.977,
   TheBlackHand: 1,
-  SlumSnakes: 0.967,
-  Netburners: 1,
+  SlumSnakes: 0.978,
+  Netburners: 0.983,
   Tetrads: 0.967,
 }
 

@@ -90,21 +90,46 @@ const OPTS = JSON.parse(str("opts", "{}"));
 // --model: search with golib.chooseMoveModel against the game's own AI policy
 // (tools/goai — the opponent's getMove bundled from game source), as the
 // external solver does when the model is available.
-let MODEL = null;
+let MODEL = null, MODELRAW = null;
 if (argv.includes("--model")) {
   const { loadModel } = await import("../goai/model.mjs");
   const m = await loadModel({ quiet: false });
   if (!m) throw new Error("--model: tools/goai could not build or load the opponent model");
   MODEL = { reply: (b, o) => m.reply(b, { ...o, opponent: OPP }) };
+  MODELRAW = m;
 }
 
-// --katago V: moves from KataGo (tools/katago, analysis engine, V visits/move)
-// instead of golib — the external-engine evaluation. Think time is measured.
-let KATAGO = null;
+// --katago V: moves from KataGo (tools/katago/service.mjs — the service
+// go-solver runs, V visits a move) instead of golib. Think time is measured.
+//   --katago-remote HOST   the GPU engine on HOST over ssh (tools/katago/gpu),
+//                          the local CPU engine only if it fails (as live)
+//   --katago-no-local      no CPU fallback (a GPU arm must be all-GPU)
+//   --katago-override K=V,...  engine config overrides (threads, batch)
+//   --ponder               after each of our moves, answer the AI's likely
+//                          replies (sampled from tools/goai, the AI's own code)
+//                          while its reply is "thinking": the harness waits
+//                          the AI's LIVE reply time (its waitCycles and pattern
+//                          rows), or less if the ponders finish, before asking
+//                          — so a hit is charged what it costs live.
+let KATAGO = null, KVISITS = 0, KMODEL = null;
+const PONDER = argv.includes("--ponder");
+// --ponder also applies to --model: after our move, the AI's most likely
+// reply (sampled from the model) is searched at the full budget while the AI
+// "thinks"; a hit is answered at once, charged only the ponder's overrun past
+// the AI's live reply time. As go-solver does live.
+const { ponderPositions } = await import("../katago/service.mjs");
 if (argv.includes("--katago")) {
-  const { startKataGo } = await import("../katago/katago.mjs");
-  KATAGO = await startKataGo({ visits: Number(str("katago", 200)), log: (m) => process.stderr.write(m + "\n") });
-  if (!KATAGO) throw new Error("--katago: KataGo could not start (tools/katago/install.sh)");
+  if (argv.includes("--kcal")) throw new Error("--kcal was measured worse and is not wired to the service (katago.mjs startKataGo still has it)");
+  const svc = await import("../katago/service.mjs");
+  KVISITS = Number(str("katago", 200));
+  KATAGO = new svc.KataGoService({ remote: str("katago-remote", null), local: !argv.includes("--katago-no-local"), remoteOverride: str("katago-override", ""), remoteNet: str("katago-remote-net", null), settings: JSON.parse(str("katago-settings", "null")), queryOpts: argv.includes("--katago-old-pass") ? { allowUnsettledPass: true } : {}, log: (m) => process.stderr.write(m + "\n") });
+  // Warm before game 0: live, the engine is kept warm across games.
+  if (!(await KATAGO.engineFor(SIZE))) throw new Error("--katago: no KataGo engine could start (tools/katago/install.sh, tools/katago/gpu)");
+  if (PONDER) {
+    const { loadModel } = await import("../goai/model.mjs");
+    KMODEL = await loadModel({ quiet: false });
+    if (!KMODEL) throw new Error("--ponder: tools/goai model could not load");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -170,11 +195,36 @@ async function playGame(stats, gameIndex) {
   let cheats = 0, cheatOk = 0, cheatWaitS = 0, ejected = false;
   let phase = Math.random();
   let turnLiveS = 0;
+  const kWhere = { gpu: 0, cpu: 0 };
+  const kPonder = { none: 0, hit: 0, partial: 0 };
+  // The model's ponder (--model --ponder): the searched answer for the
+  // predicted reply, and the ponder time not hidden behind the AI's reply.
+  let mPonder = null;
+  let ponderCarry = 0;
+  const mStats = { hit: 0, miss: 0, none: 0, carryMs: 0 };
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
   const note = (who, mv) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board) });
   const solve = async () => {
     const simple = g.simpleBoardFromBoard(state.board);
     const valid = validGrid(state, N);
+    if (MODEL && PONDER) {
+      const p = mPonder;
+      mPonder = null;
+      const top = p?.ranked?.[0];
+      if (p && p.key === simple.join("/") && !oppPassed && top && valid[top.x]?.[top.y]) {
+        mStats.hit++;
+        ourMs += ponderCarry;
+        mStats.carryMs += ponderCarry;
+        ponderCarry = 0;
+        modelCalls += top.modelCalls ?? 0;
+        iters += top.iters ?? 0;
+        return p.ranked;
+      }
+      mStats[p ? "miss" : "none"]++;
+    }
+    ourMs += ponderCarry;
+    mStats.carryMs += ponderCarry;
+    ponderCarry = 0;
     const t0 = performance.now();
     const opts = { ...OPTS, opponentPassed: oppPassed };
     if (OPTS.objective === "auto") opts.objective = objectiveFor(stats);
@@ -182,8 +232,10 @@ async function playGame(stats, gameIndex) {
       ? await (async () => {
           const vl = [];
           for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (valid[x][y]) vl.push([x, y]);
-          if (ourTurns === 0) KATAGO.bias = 0; // a new game
-          const r = await KATAGO.choose(simple, vl, komi, { calibrate: argv.includes("--kcal") });
+          const r = await KATAGO.choose({ size: N, board: simple, valid: vl, komi, visits: KVISITS });
+          if (!r) throw new Error("katago: no engine answered");
+          kWhere[r.where.startsWith("gpu") ? "gpu" : "cpu"]++;
+          kPonder[r.pondered || "none"]++;
           return r.pass ? [] : [{ x: r.x, y: r.y, iters: r.visits }];
         })()
       : MODEL
@@ -244,11 +296,42 @@ async function playGame(stats, gameIndex) {
     } else note("B", [ranked[0].x, ranked[0].y]);
     if (state.passCount >= 2) break;
 
+    // PONDER while the AI "thinks" (see --ponder above).
+    let ponderT0 = null;
+    if (PONDER && MODEL) {
+      ponderT0 = performance.now();
+      const after = g.simpleBoardFromBoard(state.board);
+      const [pos] = await ponderPositions({ model: MODELRAW, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: 0, size: N, maxPositions: 1, samples: 8 });
+      if (pos && pos.reply !== "pass") {
+        const grid = Array.from({ length: N }, () => new Array(N).fill(false));
+        for (const [x, y] of pos.valid) grid[x][y] = true;
+        const ranked2 = await golib.chooseMoveModel(pos.board, grid, N, komi, budgetFor(ourTurns), { ...OPTS, opponentPassed: false, history: pos.history }, MODEL);
+        mPonder = { key: pos.board.join("/"), ranked: ranked2 };
+      }
+    }
+    if (PONDER && KATAGO) {
+      const after = g.simpleBoardFromBoard(state.board);
+      const positions = await ponderPositions({ model: KMODEL, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: KVISITS, size: N, samples: N >= 13 ? 4 : 8, maxPositions: N >= 13 ? 2 : 3 }); // as go-solver.mjs
+      ponderT0 = performance.now();
+      await KATAGO.ponder(positions);
+    }
     cycles = 0;
     rows = 0;
     const t1 = performance.now();
     const reply = await g.getMove(state, GoColor.white, OPP, true, rngSeed());
     oppMs += performance.now() - t1;
+    if (ponderT0 !== null) {
+      const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
+      if (KATAGO) {
+        const left = liveMs - (performance.now() - ponderT0);
+        if (left > 0) await Promise.race([new Promise((r) => realSetTimeout(r, left)), KATAGO.pondersSettled()]);
+      } else {
+        // The model ponder ran synchronously before the reply: charge what
+        // the AI's live reply time did not cover (the solver is busy until
+        // the ponder ends, hit or miss).
+        ponderCarry = Math.max(0, t1 - ponderT0 - liveMs);
+      }
+    }
     oppCycles += cycles + (reply.type === "move" ? 1 : 0);
     oppRows += rows;
     turnLiveS += ((cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10) / 1000;
@@ -283,6 +366,8 @@ async function playGame(stats, gameIndex) {
     ourMsTotal: Math.round(ourMs),
     itersPerMove: Math.round(iters / ourTurns),
     ...(MODEL ? { modelCallsPerMove: Math.round(modelCalls / ourTurns) } : {}),
+    ...(KATAGO ? { kWhere, ...(PONDER ? { kPonder } : {}) } : {}),
+    ...(MODEL && PONDER ? { mPonder: { ...mStats, carryMs: Math.round(mStats.carryMs) } } : {}),
     oppTurns,
     oppMs: Math.round(oppMs),
     oppCycles,
@@ -295,7 +380,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, katago: KATAGO ? Number(str("katago", 200)) + (argv.includes("--kcal") ? "cal" : "") : null, maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
@@ -328,5 +413,6 @@ for (let i = START; i < GAMES; i++) {
   emit({ kind: "game", i, ...r, won, streak, power: +power.toFixed(1), liveS: Math.round(liveS), simS: Math.round((Date.now() - w0) / 1000) });
 }
 emit({ kind: "end", ...stats });
+if (KATAGO) emit({ kind: "katago", ...KATAGO.status() });
 KATAGO?.close();
 process.exit(0); // jsdom keeps the event loop alive

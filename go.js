@@ -277,13 +277,21 @@ const SETTINGS = {
   // measured. Measured headless against the game's own AI on the bitverse
   // board (tools/sim/go-w0.mjs) — see the header's 19x19 block.
   //
-  // backend: 'katago' sends the big board to KataGo instead (tools/katago,
-  // EXPERIMENTAL, OFF: leave unset). Measured headless on the hidden opponent:
-  // 400 visits won 4 of 5 (black 135-145 vs uct's 0/6 at ~87; 2336 power/h
-  // vs ~961), at ~7s a move on two CPU threads; 200 visits 2/4; 100 visits 0/3. The
-  // offline nodes are approximated as white stones (tools/katago/README.md),
-  // which is what still loses games. Needs bash tools/katago/install.sh.
-  bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true }, backend: null, visits: 400 },
+  // backend: which engine plays the big board.
+  //   'auto'   KataGo whenever the solver says an engine can answer
+  //            (/go/katago.txt: the GPU host, else the local CPU engine —
+  //            katagoAvailable below), else uct. THE DEFAULT: the hidden
+  //            opponent's explore batch (goplan.exploreW0) plays it as soon as
+  //            The Red Pill is installed, with no setting to flip.
+  //   'katago' always ask KataGo (the solver answers uct, and says why, if it cannot)
+  //   'uct'    never KataGo
+  // Measured headless on the hidden opponent (tools/katago/README.md):
+  // uct 0/6 (black ~87, ~961 power/h); KataGo b10 CPU 400 visits 4/5 (black
+  // 135-145, ~2336/h, ~7s a move on two threads); the GPU figures are in the
+  // README. visits: per engine — the GPU affords more in less time.
+  // historyCap: boards of move history sent (the solver's ponder needs only
+  // the AI's recent superko window; 19x19 boards are 361 characters each).
+  bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true }, backend: 'auto', visits: { gpu: 800, cpu: 400 }, historyCap: 8 },
   // THE OPPONENT-MODEL SEARCH (tools/go-solver.mjs backend 'model'): boards up
   // to maxSize are searched against the game's own getMove. maxms is the
   // per-move budget sent with each request; historyCap bounds the superko
@@ -531,6 +539,29 @@ export function goHealth({ solver, model = null, moveStalls = 0, lastStallAt = n
  * be visible: a farm on the fallback earns a fraction of what the opponent
  * pricing assumes. Same thresholds as solverHealth.
  */
+/**
+ * Can a KataGo engine answer? Read from /go/katago.txt, which
+ * tools/go-solver.mjs publishes (every 5 min and on change): `gpu` (the remote
+ * host answers its probe and is not marked down), `cpu` (the local engine is
+ * installed). Stale (> 15 min: the solver is not running or not publishing),
+ * missing or unparseable is NOT available — and says which. Pure; tested.
+ * @returns {{ok: boolean, gpu: boolean, cpu: boolean, why: string|null}}
+ */
+export function katagoAvailable(text, now = Date.now()) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return { ok: false, gpu: false, cpu: false, why: '/go/katago.txt unparseable' }
+  }
+  if (!rec || typeof rec !== 'object') return { ok: false, gpu: false, cpu: false, why: 'no /go/katago.txt (a go-solver older than the KataGo service, or not running)' }
+  const age = now - Date.parse(rec.at)
+  if (!(age <= 15 * 60e3)) return { ok: false, gpu: false, cpu: false, why: `/go/katago.txt is ${Number.isFinite(age) ? Math.round(age / 60e3) + ' min' : 'undated'} old — the solver is not publishing` }
+  const gpu = rec.gpu === true
+  const cpu = rec.cpu === true
+  return { ok: gpu || cpu, gpu, cpu, why: gpu || cpu ? null : `no engine: GPU ${rec.remote?.why ?? 'off'}; CPU not installed` }
+}
+
 export function modelHealth({ modelAsked = 0, modelAnswered = 0, modelFallbackWhy = null } = {}) {
   if (modelAsked < SETTINGS.solverWarnAfter) return { health: 'ok', detail: null }
   if (modelAnswered / modelAsked >= SETTINGS.solverMinShare) return { health: 'ok', detail: null }
@@ -872,6 +903,12 @@ export async function main(ns) {
   let modelAsked = 0
   let modelAnswered = 0
   let modelFallbackWhy = null
+  // KataGo (the big board): whether the solver reported an engine at the last
+  // game start, which engine answered, and answers served from a ponder
+  // (also the model's: the solver precomputes the reply it predicts).
+  let katagoAvail = null
+  const katagoWhere = { gpu: 0, cpu: 0 }
+  let ponderHits = 0
   // Times we ended a game by mirroring the opponent's pass while ahead, and
   // times we saw their pass but were behind so had to keep playing. Both are
   // reported: a mirrorPasses that stays 0 across many games means the rule is
@@ -946,6 +983,8 @@ export async function main(ns) {
     modelAsked,
     modelAnswered,
     modelFallbackWhy,
+    katago: { available: katagoAvail, where: katagoWhere, backend: SETTINGS.bigBoard.backend },
+    ponderHits,
     mirrorPasses,
     passedBehind,
     gamesThisProcess,
@@ -1073,7 +1112,8 @@ export async function main(ns) {
       const useModel = size <= SETTINGS.model.maxSize
       // KataGo on the big board (SETTINGS.bigBoard.backend): the solver answers
       // with uct and says why when it is not installed (tools/katago/install.sh).
-      const useKatago = size >= 13 && SETTINGS.bigBoard.backend === 'katago'
+      if (size >= 13) katagoAvail = katagoAvailable(readHome('/go/katago.txt'))
+      const useKatago = size >= 13 && (SETTINGS.bigBoard.backend === 'katago' || (SETTINGS.bigBoard.backend === 'auto' && !!katagoAvail?.ok))
       const wantBackend = useModel ? 'model' : useKatago ? 'katago' : null
       const remoteWait = Math.max(flags.remotems, (solverReq.maxms ?? 0) + 6000, useModel ? SETTINGS.model.maxms + 6000 : 0, useKatago ? 60000 : 0)
       /** One solver round trip; null if no reply in time. */
@@ -1091,7 +1131,15 @@ export async function main(ns) {
           modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }) }
           modelAsked++
         } else if (useKatago) {
-          modelReq = { backend: 'katago', visits: SETTINGS.bigBoard.visits }
+          // The opponent and recent history let the solver PONDER the AI's
+          // likely replies (tools/go-solver.mjs); fallback: uct, said in the reply.
+          let history = []
+          try {
+            history = ns.go.getMoveHistory().slice(0, SETTINGS.bigBoard.historyCap).map((b) => b.join(''))
+          } catch (e) {
+            record(errors, new Error(`getMoveHistory: ${describe(e)} — KataGo runs without ponder history`))
+          }
+          modelReq = { backend: 'katago', visits: SETTINGS.bigBoard.visits, opponent: gameName(opponent), history, fallback: 'uct' }
           modelAsked++
         }
         // THE SOLVER TALKS TO HOME. tools/go-solver.mjs reads /go/req.txt and
@@ -1115,6 +1163,8 @@ export async function main(ns) {
                 if (reply.backend === wantBackend) modelAnswered++
                 else modelFallbackWhy = reply.fallback ?? `solver answered with backend ${reply.backend ?? 'unknown (a solver older than the model backend?)'}`
               }
+              if (reply.backend === 'katago') katagoWhere[String(reply.where ?? '').startsWith('gpu') ? 'gpu' : 'cpu']++
+              if (reply.pondered === 'hit') ponderHits++
               return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
             }
           } catch {

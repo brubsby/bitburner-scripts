@@ -52,8 +52,44 @@ export const RULES = {
   friendlyPassOk: false,
 };
 
+/**
+ * Black's territory by the game's own rule (scoring.ts getTerritoryScores /
+ * checkTerritoryOwnership): an empty region whose neighbours, offline nodes
+ * excluded (findNeighbors skips them), are all black — and not a region of
+ * more than N*N-3 points. A Set of x*N+y.
+ */
+export function ourTerritory(board) {
+  const N = board.length;
+  const out = new Set();
+  const seen = new Set();
+  for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
+    if (board[x][y] !== "." || seen.has(x * N + y)) continue;
+    const region = [];
+    let black = false, white = false;
+    const stack = [[x, y]];
+    seen.add(x * N + y);
+    while (stack.length) {
+      const [a, b] = stack.pop();
+      region.push(a * N + b);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const u = a + dx, v = b + dy;
+        if (u < 0 || v < 0 || u >= N || v >= N) continue;
+        const c = board[u][v];
+        if (c === "X") black = true;
+        else if (c === "O") white = true;
+        else if (c === "." && !seen.has(u * N + v)) {
+          seen.add(u * N + v);
+          stack.push([u, v]);
+        }
+      }
+    }
+    if (black && !white && region.length <= N * N - 3) for (const i of region) out.add(i);
+  }
+  return out;
+}
+
 /** The KataGo query for one position (pure; tested). */
-export function toQuery(board, validList, komi, { id = "q", visits = 200, holes = "white", komiAdjust = 0, ownership = false } = {}) {
+export function toQuery(board, validList, komi, { id = "q", visits = 200, holes = "white", komiAdjust = 0, ownership = false, allowUnsettledPass = false, settings = null } = {}) {
   const N = board.length;
   const stones = [];
   for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
@@ -109,11 +145,24 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
     return hole;
   };
   let rootList = validList.filter(([x, y]) => !eyeByHole(x, y));
+  const ours = ourTerritory(board);
   // Nothing else left: PASS, never the eye. (Falling back to the full list
   // here is how a 128-stone group filled its own last eyes and died,
   // go-w0.mjs 400 visits game 1, move 321.)
   const moves = rootList.map(([x, y]) => COLS[x] + (y + 1));
-  moves.push("pass");
+  // NO PASS WHILE A POINT IS STILL OPEN. Under this mapping KataGo's score is
+  // biased by the holes (it reads hole clusters as dead white stones it will
+  // capture, on top of the komi credit for them), so it can believe it is far
+  // ahead on a board the game scores as level — and pass. On 7x7 it passed
+  // its first FOUR moves on an empty board and lost 8-32.5 (go-w0.mjs, 100
+  // visits, Slum Snakes deal 2). Passing only ever hands the AI a free move:
+  // the game ends on OUR pass only after the AI passed, and go.js's mirror
+  // pass already ends a game we lead by the game's own count. So pass is
+  // offered only when every legal point is already OUR territory by the
+  // game's own rule (scoring.ts checkTerritoryOwnership: an empty region whose
+  // non-hole neighbours are all black) — filling it is worth nothing and
+  // may fill an eye. `allowUnsettledPass` restores the old root.
+  if (allowUnsettledPass || rootList.every(([x, y]) => ours.has(x * N + y))) moves.push("pass");
   // KataGo accepts integer or half-integer komi in [-150, 150].
   const k = Math.max(-150, Math.min(150, Math.round((komi - holeStones + komiAdjust) * 2) / 2));
   return {
@@ -128,6 +177,7 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
     maxVisits: visits,
     allowMoves: [{ player: "B", moves, untilDepth: 1 }],
     ...(ownership ? { includeOwnership: true } : {}),
+    ...(settings ? { overrideSettings: settings } : {}),
   };
 }
 
@@ -189,20 +239,50 @@ export function pickMove(moveInfos) {
   return best;
 }
 
+/**
+ * THE NET'S BUFFER IS 19x19 UNLESS TOLD OTHERWISE. KataGo runs every network
+ * evaluation on a maxBoardSize buffer (default 19) and masks the off-board
+ * points, so a 5x5 eval costs what a 19x19 one does (~15ms on two Eigen
+ * threads: 100 visits ~1.5s on 5x5 and 9x9 alike). Pinning the buffer to the
+ * board (requireMaxBoardSize) makes the eval scale with the points. One engine
+ * then serves ONE board size; the caller starts one per size.
+ */
+export function sizeOverride(size, extra = "") {
+  const kv = [];
+  if (Number.isInteger(size) && size >= 2 && size < 19) kv.push(`maxBoardXSizeForNNBuffer=${size}`, `maxBoardYSizeForNNBuffer=${size}`, "requireMaxBoardSize=true");
+  if (extra) kv.push(...String(extra).split(",").filter((s) => /^[A-Za-z0-9]+=[A-Za-z0-9.]+$/.test(s)));
+  return kv.length ? ["-override-config", kv.join(",")] : [];
+}
+
 export function installed() {
   return fs.existsSync(BIN) && fs.existsSync(NET);
 }
 
+/**
+ * THE REMOTE GPU ENGINE (tools/katago/gpu/README.md). `remote: "bubtop"` runs
+ * the engine on that host's GPU through ONE ssh session: the JSON lines go
+ * over the session's stdin/stdout, so there is no per-move connection cost,
+ * and closing stdin (close(), or this process dying) ends the engine there.
+ * BatchMode: never prompt; ConnectTimeout: an unreachable host fails in
+ * seconds, not minutes; ServerAlive: a dead link is noticed in ~30s.
+ */
+export const SSH_OPTS = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"];
+export const REMOTE_CMD = "katago/run-analysis.sh";
+
 /** Start the engine; null (never a throw) when it is not installed or will not start. */
-export async function startKataGo({ visits = 200, log = () => {} } = {}) {
-  if (!installed()) {
+export async function startKataGo({ visits = 200, size = null, remote = null, remoteNet = null, override = "", log = () => {}, startTimeoutMs = 120000 } = {}) {
+  if (!remote && !installed()) {
     log(`katago not installed (${BIN} / ${NET}) — run tools/katago/install.sh`);
     return null;
   }
-  const child = spawn("nice", ["-n", "19", BIN, "analysis", "-config", path.join(HERE, "analysis.cfg"), "-model", NET], {
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, LD_LIBRARY_PATH: [path.join(APPDIR, "usr/lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") },
-  });
+  const child = remote
+    ? spawn("ssh", [...SSH_OPTS, remote, ...(remoteNet && /^[A-Za-z0-9._-]+$/.test(remoteNet) ? [`KATAGO_NET=$HOME/katago/${remoteNet}`] : []), REMOTE_CMD, ...sizeOverride(size, override)], { stdio: ["pipe", "pipe", "pipe"] })
+    : spawn("nice", ["-n", "19", BIN, "analysis", "-config", path.join(HERE, "analysis.cfg"), "-model", NET, ...sizeOverride(size, override)], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, LD_LIBRARY_PATH: [path.join(APPDIR, "usr/lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") },
+      });
+  child.on("error", () => {}); // reported through "exit" / the start timeout
+  child.stdin.on("error", () => {});
   const pending = new Map();
   let stderr = "";
   let ready = false;
@@ -230,7 +310,7 @@ export async function startKataGo({ visits = 200, log = () => {} } = {}) {
     pending.clear();
   });
   const t0 = Date.now();
-  while (!ready && !exited && Date.now() - t0 < 120000) await new Promise((r) => setTimeout(r, 100));
+  while (!ready && !exited && Date.now() - t0 < startTimeoutMs) await new Promise((r) => setTimeout(r, 50));
   if (!ready) {
     log(`katago did not start: ${exited ?? "timeout"} ${stderr.slice(-400)}`);
     child.kill();
@@ -245,10 +325,21 @@ export async function startKataGo({ visits = 200, log = () => {} } = {}) {
     });
   return {
     pid: child.pid,
+    where: remote ? `gpu@${remote}` : "cpu",
+    size,
+    startMs: Date.now() - t0,
     bias: 0,
+    alive: () => !exited,
+    why: () => exited,
     async analyze(board, validList, komi, opts = {}) {
-      return query(toQuery(board, validList, komi, { id: `q${++seq}`, visits, ...opts }));
+      return query(toQuery(board, validList, komi, { id: opts.id ?? `q${++seq}`, visits, ...opts }));
     },
+    /** Stop a running query early; its promise resolves with what it has (KataGo "terminate"). */
+    terminate(id) {
+      if (exited || !pending.has(id)) return;
+      child.stdin.write(JSON.stringify({ id: `t-${id}`, action: "terminate", terminateId: id }) + "\n");
+    },
+    nextId: () => `q${++seq}`,
     async choose(board, validList, komi, opts = {}) {
       const cal = opts.calibrate ? { komiAdjust: this.bias, ownership: true } : {};
       const r = await this.analyze(board, validList, komi, { ...opts, ...cal });

@@ -2,7 +2,7 @@
 // a time (this box runs the live game in Chrome; memory is the constraint).
 //
 //   node tools/sim/go-study.mjs --out /tmp/study [--games5 30 --games7 12 --games9 12 --games13 6]
-//        [--only 5x5] [--solvers model,uct] [--opponents Illuminati,...] [--maxms 800] [--seed 2]
+//        [--only 5x5] [--solvers model,model+p,uct,katago100,katago200gpup] [--opponents Illuminati,...] [--maxms 800] [--seed 2]
 //   node tools/sim/go-study-report.mjs /tmp/study/*.jsonl
 //
 // Each arm is one tools/sim/go-w0.mjs run (the harness that plays like go.js:
@@ -42,7 +42,7 @@ for (const size of SIZES) {
   for (const opp of OPPONENTS) {
     for (const solver of SOLVERS) {
       const want = GAMES[size];
-      const file = path.join(OUT, `${opp}-${size}-${solver}-${MAXMS}${EXTRA ? "-" + EXTRA.replace(/[^a-z0-9]+/gi, "_") : ""}.jsonl`);
+      const file = path.join(OUT, `${opp}-${size}-${solver.replace("+", "_")}-${MAXMS}${EXTRA ? "-" + EXTRA.replace(/[^a-z0-9]+/gi, "_") : ""}.jsonl`);
       const have = gamesIn(file);
       if (have >= want) continue;
       // A partial file is restarted, not appended: streak replay needs one
@@ -57,7 +57,13 @@ for (const size of SIZES) {
         "--maxms", MAXMS,
         "--layoutseed", SEED,
         "--out", file,
-        ...(solver === "model" ? ["--model"] : []),
+        // model | model+p (pondered) | uct | katagoV[gpu][p]: KataGo at V
+        // visits a move (maxms ignored), on the GPU host (KATAGO_REMOTE,
+        // default bubtop; no CPU fallback inside a GPU arm), pondered.
+        ...(/^model(\+p)?$/.test(solver) ? ["--model"] : []),
+        ...(/^(model\+p|katago\d+(gpu)?p)$/.test(solver) ? ["--ponder"] : []),
+        ...(/^katago\d+/.test(solver) ? ["--katago", solver.match(/^katago(\d+)/)[1]] : []),
+        ...(/^katago\d+gpu/.test(solver) ? ["--katago-remote", process.env.KATAGO_REMOTE ?? "bubtop", "--katago-no-local"] : []),
         ...(EXTRA ? EXTRA.split(" ") : []),
       ];
       const t0 = Date.now();

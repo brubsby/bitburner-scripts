@@ -152,7 +152,9 @@ export async function run() {
       [go, /backend: 'model', opponent: gameName\(opponent\), history/, "go.js must send backend 'model' with the game's opponent name and the move history"],
       [go, /ns\.go\.getMoveHistory\(\)/, "go.js must read the history from ns.go.getMoveHistory (0GB)"],
       [go, /reply\.backend === wantBackend\) modelAnswered\+\+/, "go.js must count which backend answered"],
-      [go, /modelReq = \{ backend: 'katago', visits: SETTINGS\.bigBoard\.visits \}/, "go.js must ask for katago on the big board when SETTINGS.bigBoard.backend says so"],
+      [go, /modelReq = \{ backend: 'katago', visits: SETTINGS\.bigBoard\.visits, opponent: gameName\(opponent\), history, fallback: 'uct' \}/, "go.js must ask for katago on the big board (with the opponent and history the solver ponders with, and uct as the named fallback)"],
+      [go, /useKatago = size >= 13 && \(SETTINGS\.bigBoard\.backend === 'katago' \|\| \(SETTINGS\.bigBoard\.backend === 'auto' && !!katagoAvail\?\.ok\)\)/, "go.js must use KataGo on the big board whenever the solver reports an engine (backend 'auto')"],
+      [go, /bigBoard: \{[^\n]*backend: 'auto'/, "SETTINGS.bigBoard.backend must default to 'auto' (the hidden opponent's explore batch plays KataGo once The Red Pill is installed)"],
       [solver, /req\.backend === "katago"/, "go-solver.mjs must serve backend 'katago'"],
       [go, /model: modelHealth\(\{ modelAsked, modelAnswered, modelFallbackWhy \}\)/, "go.js must fold modelHealth into its published health"],
       [solver, /req\.backend === "model"/, "go-solver.mjs must serve backend 'model'"],
@@ -192,7 +194,7 @@ export async function run() {
     });
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const port = server.address().port;
-    const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "150", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "150", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`, "--katago-remote", "none", "--no-ponder"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KATAGO_DIR: "/nonexistent-katago" } });
     let stderr = "";
     child.stderr.on("data", (d) => (stderr += d));
     const board = ["....#", ".....", "..O..", ".....", "....."];
@@ -212,7 +214,17 @@ export async function run() {
       const a = await ask(1, { backend: "model", opponent: "Illuminati", history: [] });
       const b = await ask(2, { backend: "model" });
       const l = await ask(3, {});
-      c5.examined(3);
+      const k = await ask(4, { backend: "katago", visits: 50, opponent: "Illuminati", history: [], fallback: "model" });
+      c5.examined(4);
+      if (!k) c5.fail("no reply to a katago request with no engine installed");
+      else if (k.backend !== "model" || !/katago unavailable/.test(k.fallback ?? "")) c5.fail("a katago request with no engine must be answered by its named fallback (model) and SAY why", JSON.stringify(k));
+      const st = files.get("/go/katago.txt");
+      c5.examined(1);
+      if (!st) c5.fail("the solver must publish /go/katago.txt (go.js reads it to choose the big board's backend)");
+      else {
+        const rec = JSON.parse(st);
+        if (rec.gpu !== false || rec.cpu !== false || !rec.at) c5.fail("with no remote and no local engine, /go/katago.txt must say gpu:false cpu:false, dated", st);
+      }
       if (!a) c5.fail("no reply to a model request within 30s", stderr.slice(-400));
       else {
         if (a.backend !== "model") c5.fail(`a model request was answered by '${a.backend}' (fallback: ${a.fallback})`, stderr.slice(-400));
@@ -253,7 +265,19 @@ export async function run() {
     if ([...st.values()].filter((c) => c === "B").length !== 2) c6.fail("only real black stones may be black");
     if (q.komi !== 7.5 - 8) c6.fail(`komi must drop by the 8 hole stones sent: want -0.5, got ${q.komi}`);
     const allowed = q.allowMoves?.[0];
-    if (!allowed || allowed.player !== "B" || allowed.untilDepth !== 1 || allowed.moves.join() !== "D4,pass") c6.fail("root must be the game's valid list plus pass, less A2 (our point walled by A1 and holes A3/B2)", JSON.stringify(allowed));
+    if (!allowed || allowed.player !== "B" || allowed.untilDepth !== 1 || allowed.moves.join() !== "D4") c6.fail("root must be the game's valid list, less A2 (our point walled by A1 and holes A3/B2), and NO pass while D4 is open (not our territory)", JSON.stringify(allowed));
+    // Pass is offered once every legal point is already our territory by the
+    // game's rule (an empty region whose non-hole neighbours are all black).
+    const settled = ["XX...", "X.X..", "XXX..", "OOOOO", "....."];
+    const qs = toQuery(settled, [[1, 1]], 5.5);
+    c6.examined(2);
+    if (qs.allowMoves[0].moves.join() !== "B2,pass") c6.fail("with only our own territory left (B2), pass must be offered beside it", JSON.stringify(qs.allowMoves[0].moves));
+    const { ourTerritory } = await import("../katago/katago.mjs");
+    const t = ourTerritory(["X#.", "XX.", "..O"]);
+    // board[x][y]: regions {(0,2),(1,2)} and {(2,0),(2,1)} both touch O at (2,2).
+    if (t.size !== 0) c6.fail("a region touching a white stone is not our territory", JSON.stringify([...t]));
+    const t2 = ourTerritory(["X#.", "XXX", "OOO"]);
+    if (!t2.has(0 * 3 + 2) || t2.size !== 1) c6.fail("an empty point bordered only by black and a hole IS our territory (holes are transparent, scoring.ts)", JSON.stringify([...t2]));
     if (q.rules.scoring !== "AREA" || q.rules.ko !== "POSITIONAL" || q.rules.suicide !== false || q.rules.friendlyPassOk !== false) c6.fail("rules must be area/positional/no-suicide/no friendly pass", JSON.stringify(q.rules));
     // A hole group with no liberty is dropped and does not move komi.
     const sealed = ["#X...", "X....", ".....", ".....", "....."];
@@ -292,6 +316,113 @@ export async function run() {
     if (j.x !== 8) c6.fail(`GTP skips 'I': J is column 8, got ${j.x}`);
   }
   checks.push(c6);
+
+  /* ------------------------------------------------------------------ GM7 */
+  // The KataGo service (tools/katago/service.mjs) with stub engines: the GPU
+  // first, the CPU engine when the GPU will not start or dies, a ponder hit
+  // answered without a new query, a miss terminating the ponders, idle engines
+  // closed; and go.js's reading of the solver's /go/katago.txt.
+  const c7 = new Check("GM7", "KataGo service: GPU first, CPU fallback, ponder hit/miss, idle close; go.js katagoAvailable");
+  {
+    const { KataGoService, visitsOn, applyStone } = await import("../katago/service.mjs");
+    const queries = [];
+    const terminated = [];
+    let gpuStarts = 0;
+    let gpuFails = false;
+    const stub = (where) => {
+      let seq = 0;
+      let alive = true;
+      const e = {
+        where,
+        startMs: 1,
+        alive: () => alive,
+        why: () => (alive ? null : "killed"),
+        nextId: () => `${where}${++seq}`,
+        terminate: (id) => terminated.push(id),
+        close: () => (alive = false),
+        kill: () => (alive = false),
+        analyze: async (board, valid, komi, o) => {
+          queries.push({ where, board: board.join("/"), visits: o.visits, id: o.id });
+          if (!alive) throw new Error("katago exited");
+          const [x, y] = valid[0];
+          return { moveInfos: [{ move: "ABCDEFGHJ"[x] + (y + 1), order: 0, visits: o.visits, scoreLead: 1, winrate: 0.9 }] };
+        },
+      };
+      return e;
+    };
+    let gpuEngine = null;
+    const start = async ({ remote }) => {
+      if (remote) {
+        gpuStarts++;
+        if (gpuFails) return null;
+        gpuEngine = stub("gpu@stub");
+        return gpuEngine;
+      }
+      return stub("cpu");
+    };
+    const svc = new KataGoService({ remote: "stub", start, idleMs: 1000, remoteRetryMs: 60e3 });
+    const b = [".....", ".....", ".....", ".....", "....."];
+    const v = [[2, 2], [1, 1]];
+    const r1 = await svc.choose({ size: 5, board: b, valid: v, komi: 5.5, visits: { gpu: 300, cpu: 100 } });
+    c7.examined(1);
+    if (r1?.where !== "gpu@stub" || r1.x !== 2 || r1.y !== 2) c7.fail("the GPU engine must answer first", JSON.stringify(r1));
+    if (queries.at(-1)?.visits !== 300) c7.fail("visits {gpu, cpu} must give the GPU its own count", JSON.stringify(queries.at(-1)));
+    // Ponder two positions; a hit is served from the ponder without a new query.
+    const b2 = applyStone(b, 2, 2, "X");
+    const p1 = applyStone(b2, 1, 1, "O");
+    const p2 = applyStone(b2, 3, 3, "O");
+    await svc.ponder([{ size: 5, board: p1, valid: [[0, 0]], komi: 5.5, visits: 50 }, { size: 5, board: p2, valid: [[4, 4]], komi: 5.5, visits: 50 }]);
+    await svc.pondersSettled();
+    const before = queries.length;
+    const hit = await svc.choose({ size: 5, board: p1, valid: [[0, 0]], komi: 5.5, visits: 50 });
+    c7.examined(2);
+    if (hit?.pondered !== "hit" || queries.length !== before) c7.fail("a pondered position must be answered from the ponder, with no new query", JSON.stringify({ hit, q: queries.length - before }));
+    // A pondered move that is no longer legal is NOT trusted.
+    await svc.ponder([{ size: 5, board: p2, valid: [[4, 4]], komi: 5.5, visits: 50 }]);
+    await svc.pondersSettled();
+    const stale = await svc.choose({ size: 5, board: p2, valid: [[0, 1]], komi: 5.5, visits: 50 });
+    c7.examined(1);
+    if (stale?.pondered || stale?.x !== 0 || stale?.y !== 1) c7.fail("a pondered move outside the request's valid list must be recomputed", JSON.stringify(stale));
+    // The GPU engine dies: the request is answered by the CPU engine, and the GPU is marked down.
+    gpuEngine.kill();
+    gpuFails = true;
+    const r2 = await svc.choose({ size: 5, board: b, valid: v, komi: 5.5, visits: { gpu: 300, cpu: 100 } });
+    c7.examined(2);
+    if (r2?.where !== "cpu") c7.fail("with the GPU engine dead, the CPU engine must answer", JSON.stringify(r2));
+    if (!(svc.status().remote.downFor > 0) || !svc.status().remote.why) c7.fail("a dead GPU engine must be marked down with its reason", JSON.stringify(svc.status()));
+    if (queries.at(-1)?.visits !== 100) c7.fail("the CPU engine must get the cpu visit count");
+    // Idle engines close.
+    svc.lastUse = Date.now() - 5000;
+    for (const e of svc.localEngines.values()) e.lastUse = Date.now() - 5000;
+    svc.reapIdle();
+    c7.examined(1);
+    if (svc.localEngines.size !== 0) c7.fail("an engine idle past idleMs must be closed");
+    svc.close();
+    c7.examined(1);
+    if (visitsOn({ where: "cpu" }, 7) !== 7) c7.fail("a plain visit count applies to every engine");
+    // go.js: which /go/katago.txt makes the big board play KataGo.
+    const { katagoAvailable } = await import(path.join(REPO, "go.js")).catch(() => ({}));
+    if (typeof katagoAvailable !== "function") c7.fail("go.js must export katagoAvailable");
+    else {
+      const now = Date.parse("2026-10-04T12:00:00Z");
+      const at = (min) => new Date(now - min * 60e3).toISOString();
+      const cases = [
+        [JSON.stringify({ at: at(1), gpu: true, cpu: false }), true],
+        [JSON.stringify({ at: at(1), gpu: false, cpu: true }), true],
+        [JSON.stringify({ at: at(1), gpu: false, cpu: false }), false],
+        [JSON.stringify({ at: at(30), gpu: true, cpu: true }), false],
+        ["", false],
+        ["{bad", false],
+      ];
+      for (const [text, ok] of cases) {
+        c7.examined(1);
+        const r = katagoAvailable(text, now);
+        if (r.ok !== ok) c7.fail(`katagoAvailable(${text || "''"}) must be ok=${ok}`, JSON.stringify(r));
+        if (!r.ok && !r.why) c7.fail("an unavailable KataGo must say why", text);
+      }
+    }
+  }
+  checks.push(c7);
 
   return checks;
 }

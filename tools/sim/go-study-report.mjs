@@ -81,7 +81,7 @@ for (const f of FILES) {
     if (o.kind === "start") start = o;
     if (o.kind !== "game" || !start) continue;
     const opts = start.opts && Object.keys(start.opts).length ? JSON.stringify(start.opts) : "";
-    const solver = (start.katago ? `katago${start.katago}v` : start.model ? "model" : "uct") + (start.cheat ? "+cheat" : "") + (start.opening ? ` open${start.opening.k}:${start.opening.ms}` : "") + (opts ? " " + opts : "");
+    const solver = (start.katago ? `katago${start.katago}v` : start.model ? "model" : "uct") + (start.ponder && !start.katago ? "+ponder" : "") + (start.katagoSettings ? ` ${JSON.stringify(start.katagoSettings)}` : "") + (start.katagoOldPass ? " oldpass" : "") + (start.katagoRemoteNet ? ` net=${start.katagoRemoteNet.slice(0, 13)}` : "") + (start.katagoOverride ? ` ${start.katagoOverride}` : "") + (start.cheat ? "+cheat" : "") + (start.opening ? ` open${start.opening.k}:${start.opening.ms}` : "") + (opts ? " " + opts : "");
     const key = `${start.opponent}|${o.size}|${start.maxms}|${solver}`;
     if (!arms.has(key)) arms.set(key, { opponent: start.opponent, size: o.size, maxms: start.maxms, solver, games: [] });
     arms.get(key).games.push(o);
