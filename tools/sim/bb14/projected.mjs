@@ -2,7 +2,7 @@
 import '../../test/gameresolve.mjs'
 import { loadFx, modelStartOf } from '../bb14.mjs'
 const bp = await import('bbplan.js')
-const fx = loadFx()
+const fx = loadFx(process.env.FX || undefined)
 const cal = fx.bladeRoute.calibration
 const base = modelStartOf(fx)
 const s0 = { ...base, rankScale: cal.rank.applied, successScale: cal.success.applied, rankSdLn: cal.rank.sdLn, successSdLn: cal.success.sdLn, skillSinceS: (Date.parse(fx.at) - Date.parse(fx.tel.skillsAt)) / 1000 }

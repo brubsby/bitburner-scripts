@@ -34,6 +34,18 @@ const O = (sp = {}, extra = {}) => ({ skillEveryS: sp.skillEveryS ?? 3600, ...ex
 export const ARMS = {
   base: {},
   old: O(),
+  'near0.05': { sharedPolicy: { skillBlackNear: 0.05 } },
+  'near0.1': { sharedPolicy: { skillBlackNear: 0.1 } },
+  'near0.2': { sharedPolicy: { skillBlackNear: 0.2 } },
+  'near0.3': { sharedPolicy: { skillBlackNear: 0.3 } },
+  'from20k': { sharedPolicy: { skillBlackFrom: 20000 } },
+  'from50k': { sharedPolicy: { skillBlackFrom: 50000 } },
+  'from100k': { sharedPolicy: { skillBlackFrom: 100000 } },
+  'from200k': { sharedPolicy: { skillBlackFrom: 200000 } },
+  'near0.1-bt0.7': { sharedPolicy: { skillBlackNear: 0.1, blackThr: 0.7 } },
+  'bt0.7': { sharedPolicy: { blackThr: 0.7 } },
+  'bt0.6': { sharedPolicy: { blackThr: 0.6 } },
+
   'exp-T1h': { choose: expValueChooser(3600) },
   'exp-T3h': { choose: expValueChooser(3 * 3600) },
   'exp-T10h': { choose: expValueChooser(10 * 3600) },

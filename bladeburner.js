@@ -56,7 +56,7 @@ import { liteAliveOf } from 'bbliteplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf } from 'bbplan.js'
+import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, unreadPopOf, anchorAfter, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
 /** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
@@ -185,9 +185,19 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
   } catch {
     /* the copy here, if any */
   }
+  // THE POPULATION ANCHORS (bbplan.unreadPopOf): each city's last true read
+  // {pop, comms}, for a city whose estimate has collapsed so its range can no
+  // longer show it. Carried on the record across restarts (same node).
+  const anchors = {}
   try {
     const prev = JSON.parse(ns.read(STATUS) || 'null')
     prevRec = prev
+    if (prev?.bitNode === info.currentNode && Array.isArray(prev?.cities)) {
+      for (const c of prev.cities) {
+        if (c?.anchor && c.anchor.pop > 0) anchors[c.name] = { ...c.anchor }
+        if (c?.r != null && c.pop > 0) anchors[c.name] = { pop: c.pop, comms: c.comms }
+      }
+    }
     if (prev?.bitNode === info.currentNode && Array.isArray(prev?.calibration?.success?.groups)) calGroups = prev.calibration.success.groups.filter((g) => g && g.p > 0 && g.n > 0)
   } catch {
     calGroups = []
@@ -292,8 +302,23 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         if (r !== null) break
       }
       if (r === null) r = popRatioFromRange(lo, hi, probeP)
-      return { name, popEst, pop: r === null ? null : popEst * r, r, chaos: bb.getCityChaos(name), comms: bb.getCityCommunities(name) }
+      const comms = bb.getCityCommunities(name)
+      const pop = r === null ? null : popEst * r
+      if (pop !== null && pop > 0) anchors[name] = { pop, comms }
+      return { name, popEst, pop, r, popFrom: pop === null ? null : 'range', chaos: bb.getCityChaos(name), comms }
     })
+    // An unreadable city (r null — the estimate collapsed under Raid's equal
+    // shifts, bbplan.unreadPopOf): its anchor carried by the communities
+    // consumed since, else a typical city; never the collapsed estimate.
+    const readable = cities.filter((c) => c.pop !== null).map((c) => c.pop)
+    for (const c of cities) {
+      if (c.pop !== null) continue
+      const u = unreadPopOf(c, anchors[c.name] ?? null, readable)
+      if (u) {
+        c.pop = u.pop
+        c.popFrom = u.from
+      }
+    }
     // The policy and the model decide on the TRUE population where it is known.
     const truePop = (c) => (c.pop !== null && c.pop >= 0 ? c.pop : c.popEst)
     if (!city) city = bestCity(cities.map((c) => ({ ...c, pop: truePop(c) }))).name
@@ -301,12 +326,20 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
 
     const readEnv = () => {
       const sm = skillMultsOf(levels)
-      const ref = cities.find((c) => c.name === city)
+      const here = cities.find((c) => c.name === city)
       // r known: one end of every action's range is its chance at the
       // ESTIMATE (r < 1: the high end; r > 1: the low end, Action.ts:144-167),
       // so ENV at popEst is exact, and with the cities at their true
       // populations cityFactor gives the REAL chance — what the game rolls.
       // r unknown: the low end, as before, and the width says how unsure.
+      // HERE UNREADABLE (a collapsed estimate, popFrom anchor/median): the
+      // ranges here say nothing (an estimate of ~0 puts every low end at ~0),
+      // so ENV is read in the largest city whose r is known — ENV is the same
+      // in every city but for population and chaos, which cityFactor carries
+      // (bbdaemon [BD6]). switchCity is free and instant; back below.
+      const readable = here.r === null && here.popFrom ? cities.filter((c) => c.r !== null).sort((a, b) => b.pop - a.pop)[0] ?? null : null
+      const ref = readable ?? here
+      if (readable) bb.switchCity(ref.name)
       const rCur = ref.r
       let Kc = 0
       let Ko = 0
@@ -337,6 +370,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         }
         actions.push({ d, count, maxLevel, width: rCur === null ? hi - lo : 0 })
       }
+      if (readable) bb.switchCity(city)
       // Every estimate clamped (a strong player): the low end, a lower bound — not exact.
       const exact = { contracts: Kc > 0, operations: Ko > 0 }
       if (!(Kc > 0)) Kc = KcLo
@@ -398,6 +432,8 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       const a = twin ? attemptsOf({ d: d0, level: obs.level, bnRank, count0: obs.count, count1: cnt(obs.name), twin0: obs.twin, twin1: cnt(twin), rank0: obs.rank, rank1: rank }) : { n: null, why: `${obs.name} has no growth twin` }
       if (a.n > 0 && obs.p > 0) {
         outcomes.push({ name: obs.name, level: obs.level, p: obs.p, n: a.n, s: a.s })
+        // Our own attempts move the population the anchor carries (bbplan.anchorAfter).
+        if (obs.city && anchors[obs.city]) anchors[obs.city] = anchorAfter(anchors[obs.city], obs.name, a.n, a.s)
         while (outcomes.length > 60) outcomes.shift()
         // The calibration only where the chance can say something: a predicted
         // ~1 is often a clamped estimate (ENV a lower bound), and its successes
@@ -462,7 +498,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         // What runs until the next read: its counters now (bbplan.attemptsOf reads the change).
         const twin = COUNT_TWIN[pick.name]
         const cnt = (n) => v.actions.find((a) => a.d.name === n)?.count
-        if (d.kind !== 'blackop' && twin && pick.p > 0) obs = { name: pick.name, level, p: pick.p, exact: cities.find((c) => c.name === city)?.r != null && v.Kexact?.[d.kind === 'contract' ? 'contracts' : 'operations'] === true, count: cnt(pick.name), twin: cnt(twin), rank }
+        if (d.kind !== 'blackop' && twin && pick.p > 0) obs = { name: pick.name, level, p: pick.p, city, exact: cities.find((c) => c.name === city)?.r != null && v.Kexact?.[d.kind === 'contract' ? 'contracts' : 'operations'] === true, count: cnt(pick.name), twin: cnt(twin), rank }
       }
     } else if (!slot.ours) {
       // Not ours: nothing of ours may run. (The probes above moved every
@@ -528,8 +564,8 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       env: { contracts: v.K.contracts, operations: v.K.operations },
       counts: Object.fromEntries(v.actions.map((a) => [a.d.name, +a.count.toFixed(1)])),
       maxLevels: Object.fromEntries(v.actions.map((a) => [a.d.name, a.maxLevel])),
-      // pop: the TRUE population read off the black-op range (r = pop/popEst), null where it could not be read.
-      cities: cities.map((c) => ({ name: c.name, popEst: Math.round(c.popEst), pop: c.pop === null ? null : Math.round(c.pop), r: c.r === null ? null : +c.r.toFixed(5), chaos: +c.chaos.toFixed(2), comms: c.comms })),
+      // pop: the TRUE population read off the black-op range (r = pop/popEst; popFrom range), else carried from its anchor or a typical city (popFrom anchor | median, bbplan.unreadPopOf), null with nothing to go on.
+      cities: cities.map((c) => ({ name: c.name, popEst: Math.round(c.popEst), pop: c.pop === null ? null : Math.round(c.pop), r: c.r === null ? null : +c.r.toFixed(5), popFrom: c.popFrom ?? null, anchor: anchors[c.name] ? { pop: Math.round(anchors[c.name].pop), comms: anchors[c.name].comms } : null, chaos: +c.chaos.toFixed(2), comms: c.comms })),
       // Read this pass: dated now, never the carried date of an older read (bbplan.divisionCarryOf).
       citiesAt: new Date(now).toISOString(),
       staminaBonus: +staminaBonusOf(person, v.sm, maxStamina).toFixed(4),

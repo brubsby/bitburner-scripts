@@ -329,6 +329,47 @@ export function popRatioFromRanges(boLo, boHi, cLo, cHi) {
   const errOut = Math.abs(predHiOut - cHi) / Math.max(cHi, 1e-12)
   return errIn <= errOut ? rIn : rOut
 }
+/**
+ * A CITY WHOSE TRUE POPULATION THE RANGES CANNOT SHOW (r null). Raid,
+ * Stealth Retirement and Sting move the estimate by the same COUNT as the
+ * population (Bladeburner.ts:822-855 changeEstEqually), so in a city whose
+ * estimate sat far below the truth every Raid drained the estimate to the 0
+ * clamp while the population kept ~75%: live BN14.1 20:00Z Aevum popEst 4,
+ * true ~1.5e9 with 75 communities left, and the hardest probe's range was
+ * [p, 1] (r > 1/p) — unreadable. Taking popEst (4) as the truth dropped the
+ * division's best city from the policy, the model and the sim alike
+ * (tools/sim/bb14: 12.4h from 20:01Z on popEst, 10.7h on the true city).
+ *   anchor {pop, comms}: the last read with r known; each Raid success since
+ *     took 1% of the population and one community (Bladeburner.ts:832-837):
+ *     pop x 0.99^(communities consumed). Failures (-0.5..-1%, uncounted) and
+ *     random events are not followed: optimistic by those.
+ *   no anchor: the median of the readable cities' true populations — a
+ *     typical city, not an empty one.
+ * Returns {pop, from} or null (nothing to go on: the estimate stands).
+ */
+/**
+ * What our own attempts did to a city's population since its anchor
+ * (Bladeburner.ts:822-855): Raid fails take 0.5-1% (mean 0.75%; its
+ * successes are counted by the communities), Stealth Retirement successes
+ * 0.5%, Sting successes 0.1%. n attempts, s successes. Returns the anchor moved.
+ */
+export const POP_SHIFT = { Raid: { fail: 0.9925 }, 'Stealth Retirement Operation': { success: 0.995 }, 'Sting Operation': { success: 0.999 } }
+export function anchorAfter(anchor, name, n, s) {
+  const k = POP_SHIFT[name]
+  if (!anchor || !k || !(n >= 0) || !(s >= 0)) return anchor
+  return { ...anchor, pop: anchor.pop * Math.pow(k.success ?? 1, s) * Math.pow(k.fail ?? 1, Math.max(0, n - s)) }
+}
+export function unreadPopOf(c, anchor, readablePops = []) {
+  const num = (x) => typeof x === 'number' && isFinite(x)
+  if (anchor && num(anchor.pop) && anchor.pop > 0) {
+    const used = num(anchor.comms) && num(c.comms) ? Math.max(0, anchor.comms - c.comms) : 0
+    return { pop: anchor.pop * Math.pow(0.99, used), from: 'anchor' }
+  }
+  const sorted = readablePops.filter((x) => num(x) && x > 0).sort((a, b) => a - b)
+  if (!sorted.length) return null
+  const m = Math.floor(sorted.length / 2)
+  return { pop: sorted.length % 2 ? sorted[m] : (sorted[m - 1] + sorted[m]) / 2, from: 'median' }
+}
 const PopulationExponentOf = () => BBC.PopulationExponent
 /** The probe the daemon reads r from in every city: the hardest black op (its chance never clamps at 1). */
 export const POP_PROBE = 'Operation Daedalus'
@@ -729,12 +770,14 @@ export function bestCity(cities) {
  * under skillBlackFrom 'daedalus' only once rank covers the last black op
  * (POLICY note), under 'eligible' (the BN6-era rule) as soon as the next one is.
  */
-export const blackFromRankOf = (pol = POLICY) => (pol.skillBlackFrom === 'daedalus' ? BLACK_OPS[BLACK_OPS.length - 1].reqdRank : 0)
+export const blackFromRankOf = (pol = POLICY) => (pol.skillBlackFrom === 'daedalus' ? BLACK_OPS[BLACK_OPS.length - 1].reqdRank : Number.isFinite(pol.skillBlackFrom) ? pol.skillBlackFrom : 0)
 export function skillScore(v, pol = POLICY) {
   const bo = v.blackOp
-  if (bo && v.rank >= bo.d.reqdRank && v.rank >= blackFromRankOf(pol)) {
+  if (bo && v.rank >= bo.d.reqdRank) {
     const p = pFrom(bo.K, bo.d, 1, v.person, v.sm)
-    if (p < pol.blackThr) return { kind: 'blackop', v: p }
+    // skillBlackNear: a short black op within this much of the bar takes the objective whatever the rank.
+    const near = Number.isFinite(pol.skillBlackNear) && p >= pol.blackThr - pol.skillBlackNear
+    if (p < pol.blackThr && (v.rank >= blackFromRankOf(pol) || near)) return { kind: 'blackop', v: p }
   }
   const duty = (b) => dutyOf(staminaCostOf(b.a.d, b.L), b.t, v.staminaGain ?? Infinity, v.maxStamina ?? 1)
   if (pol.skillObjective === 'sum') {

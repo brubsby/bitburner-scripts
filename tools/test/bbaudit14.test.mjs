@@ -69,5 +69,17 @@ export async function run() {
   if (kind(3000, BB.POLICY) !== 'rank') c4.fail('below Daedalus\'s rank the shipped objective must stay rank/s')
   if (kind(BB.BLACK_OPS[20].reqdRank, BB.POLICY) !== 'blackop') c4.fail('at Daedalus\'s rank a short black op must take the objective')
   if (kind(3000, { ...BB.POLICY, ...BB.POLICY_V1 }) !== 'blackop') c4.fail('POLICY_V1 must switch as soon as the black op is eligible')
+
+  const c5 = new Check('BA5', 'A COLLAPSED ESTIMATE (20:00Z Aevum popEst 4) is priced from its anchor (communities consumed, our own attempts) or a typical city — never the estimate')
+  checks.push(c5)
+  c5.examined(4)
+  const a = BB.unreadPopOf({ comms: 75 }, { pop: 2.025e9, comms: 104 }, [1e9])
+  if (!(a?.from === 'anchor' && Math.abs(a.pop / (2.025e9 * Math.pow(0.99, 29)) - 1) < 1e-9)) c5.fail(`anchor: 29 communities consumed take 1% each (got ${JSON.stringify(a)})`)
+  const med = BB.unreadPopOf({ comms: 75 }, null, [1.565e9, 0.97e9, 0.92e9, 1.39e9, 1.28e9])
+  if (!(med?.from === "median" && med.pop === 1.28e9)) c5.fail(`no anchor: the median of the readable cities (got ${JSON.stringify(med)})`)
+  if (BB.unreadPopOf({ comms: 1 }, null, []) !== null) c5.fail('nothing to go on must be null (the estimate stands, named)')
+  const moved = BB.anchorAfter({ pop: 1e9, comms: 10 }, 'Stealth Retirement Operation', 10, 8)
+  if (!(Math.abs(moved.pop - 1e9 * Math.pow(0.995, 8)) < 1)) c5.fail(`Stealth Retirement successes take 0.5% each (got ${moved.pop})`)
+  c5.note(`anchor ${f2(a.pop / 1e9)}e9, median ${f2(med.pop / 1e9)}e9, after 8 SRO successes ${f2(moved.pop / 1e9)}e9`)
   return checks
 }

@@ -233,7 +233,7 @@ export async function run() {
     let worst = 0
     for (const x of cities) {
       const truth = bb.cities[x.name].pop
-      if (x.pop === null) continue
+      if (x.pop === null || x.r === null) continue // assumed (popFrom anchor/median): BD6
       worst = Math.max(worst, Math.abs(x.pop / truth - 1))
     }
     c5.examined(cities.length)
@@ -242,11 +242,11 @@ export async function run() {
     // (an estimate far below the truth, or 0). Those cities stay on their estimate, as before.
     const probe = Object.values(bb.blackOperations ?? {}).find((b) => b.name === bp.POP_PROBE)
     const probeP = probe ? probe.getSuccessChance(bb, w.P) : null
-    const bad = cities.filter((x) => x.pop === null).filter((x) => {
+    const bad = cities.filter((x) => x.r === null).filter((x) => {
       const c = bb.cities[x.name]
       return !(c.popEst <= 0 || (probeP * c.pop) / c.popEst >= 0.999)
     })
-    c5.note(`unread cities ${cities.filter((x) => x.pop === null).map((x) => x.name).join(', ') || 'none'}; the probe's chance ${probeP?.toFixed(4)}`)
+    c5.note(`unread cities ${cities.filter((x) => x.r === null).map((x) => `${x.name} (${x.popFrom ?? 'estimate'}${x.pop ? ` ${(x.pop / 1e9).toFixed(3)} vs true ${(bb.cities[x.name].pop / 1e9).toFixed(3)}` : ''})`).join(', ') || 'none'}; the probe's chance ${probeP?.toFixed(4)}`)
     if (cities.length !== 6) c5.fail('six cities')
     if (bad.length) c5.fail(`unread where the range could say r: ${bad.map((x) => x.name).join(', ')}`)
     if (!(worst < 0.002)) c5.fail(`the population read off the range is off by ${(worst * 100).toFixed(2)}%`)
@@ -296,6 +296,43 @@ export async function run() {
     // On the game's own rolls k is 1: before the side came from an action's own range and the
     // clamped-estimate reads were kept out, this harness read k 1.1-2.5 (400/400 at 0.59 predicted).
     if (!(sc && Math.abs(Math.log(sc.k)) < Math.max(3 * sc.sdLn, 0.12))) c5.fail(`on the game's own rolls k must be 1 within its sd: ${JSON.stringify(sc).slice(0, 200)}`)
+  }
+
+  // ---- BD6 ----
+  {
+    const c = new Check('BD6', "A COLLAPSED ESTIMATE (live BN14.1 20:00Z Aevum popEst 4): the city is priced from its anchor, not dropped, and the daemon acts there on the game's chance")
+    checks.push(c)
+    const w = world({ combat: 300, mult: 2, joined: true, owner: 'bladeburner', seed: 11 })
+    await w.runFor(0.2)
+    const bb = w.P.bladeburner
+    // Every other city small, the best one's estimate collapsed under the truth (Raid's equal shifts to the 0 clamp, then an analysis).
+    const best = 'Aevum'
+    for (const [n, cty] of Object.entries(bb.cities)) {
+      if (n === best) continue
+      cty.pop = 0.6e9
+      cty.popEst = 0.6e9
+    }
+    bb.cities[best].pop = 2.0e9
+    bb.cities[best].popEst = 2.0e9
+    bb.cities[best].comms = 80
+    await w.runFor(0.1) // a read with r known: the anchor
+    bb.cities[best].popEst = 4
+    await w.runFor(0.5)
+    const s = w.status()
+    const x = (s?.cities ?? []).find((y) => y.name === best)
+    const truth = bb.cities[best].pop
+    c.examined(3)
+    c.note(`${best}: popEst ${x?.popEst}, published pop ${x?.pop} (${x?.popFrom}), anchor ${JSON.stringify(x?.anchor)}, true ${Math.round(truth)}; action ${s?.action?.name} L${s?.action?.level} in ${s?.action?.city} p ${s?.action?.p?.toFixed?.(3)}`)
+    if (x?.popFrom !== 'anchor') c.fail(`the collapsed city must be priced from its anchor, got popFrom ${x?.popFrom}`)
+    if (!(x?.pop > 0 && Math.abs(x.pop / truth - 1) < 0.1)) c.fail(`the anchored population ${x?.pop} must be within 10% of the truth ${truth}`)
+    const act = s?.action
+    if (act?.city !== best) c.fail(`with every other city a third of its size, the daemon should act in ${best}, got ${act?.city} (${act?.why})`)
+    const obj = act?.level ? (bb.contracts[act.name] ?? bb.operations[act.name]) : null
+    if (obj && act.city === bb.city) {
+      const real = obj.getSuccessChance(bb, w.P)
+      c.examined(1)
+      if (act.p < 0.97 && Math.abs(real / act.p - 1) > 0.1) c.fail(`the daemon's chance ${act.p} in the collapsed city is not the game's ${real} within 10%`)
+    }
   }
 
   // ---- BD4 ----
