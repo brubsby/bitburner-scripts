@@ -9,6 +9,11 @@
 //       (s0.policy = POLICY_V1 reproduces the old model's exit exactly).
 //   BA4 THE SKILL OBJECTIVE: below Daedalus's rank a short, rank-eligible black op does not take the
 //       objective; at it, it does; POLICY_V1's 'eligible' still switches as before.
+//   BA6 THE RANK k DOES NOT DOUBLE-COUNT ITS INPUTS (bbplan.rankCalStep v3): from a state as read, the
+//       model's next hour of rank is the game's (14:13Z and 20:01Z), so the residual k measures is ~1;
+//       the live hour after 14:13Z ran +884 against both (+599 model, ~+608 game) — inputs that moved
+//       (the fleet, the cities, the skills), which v2 read as k. On the 20:01Z state (Aevum anchored,
+//       06cf3dc) the members' exit at k 1 is the game's within 5%; at the v2 k 1.196 it is >1h short.
 import './gameresolve.mjs'
 import { Check } from './harness.mjs'
 
@@ -81,5 +86,45 @@ export async function run() {
   const moved = BB.anchorAfter({ pop: 1e9, comms: 10 }, 'Stealth Retirement Operation', 10, 8)
   if (!(Math.abs(moved.pop - 1e9 * Math.pow(0.995, 8)) < 1)) c5.fail(`Stealth Retirement successes take 0.5% each (got ${moved.pop})`)
   c5.note(`anchor ${f2(a.pop / 1e9)}e9, median ${f2(med.pop / 1e9)}e9, after 8 SRO successes ${f2(moved.pop / 1e9)}e9`)
+
+  const c6 = new Check('BA6', "THE RANK k DOES NOT DOUBLE-COUNT ITS INPUTS: from a state as read the model's next hour is the game's; on 20:01Z the members' exit at k 1 is the game's, at the v2 k 1.196 it is >1h short")
+  checks.push(c6)
+  const hourOf = (f, N) => {
+    const r0 = f.tel.rank
+    const m = BB.bladeExit({ ...A.modelStartOf(f), maxH: 1.1, pathEveryS: 300 })
+    const g = []
+    for (let seed = 1; seed <= N; seed++) {
+      let at1 = null
+      A.runFrom(f, { onStep: ({ t, bb }) => { if (at1 === null && t >= 3600) at1 = bb.rank - r0 } }, { seed, maxH: 1.05 })
+      g.push(at1)
+    }
+    return { model: BB.rankOnPath(m.path, 1) - r0, game: mean(g) }
+  }
+  // 14:13Z (fixture-bn14-bbaudit.json): rank 1134.38; the plan records 15:11:22Z 1973.89, 15:16:21Z 2075.39 (/tmp/fx/hist).
+  const live1413 = 1973.89 + ((2075.39 - 1973.89) * (Date.parse('2026-10-04T15:13:34.824Z') - Date.parse('2026-10-04T15:11:22Z'))) / (Date.parse('2026-10-04T15:16:21Z') - Date.parse('2026-10-04T15:11:22Z')) - 1134.38
+  const h1 = hourOf(fx, 12)
+  const fx20 = A.loadFx(A.FX_PATH.replace('fixture-bn14-bbaudit.json', 'fixture-bn14-bbaudit-2001.json'))
+  const aev = fx20.tel.cities.find((c) => c.name === 'Aevum')
+  aev.pop = BB.unreadPopOf(aev, { pop: 2.025e9, comms: 104 }).pop
+  const h2 = hourOf(fx20, 12)
+  c6.examined(2)
+  c6.note(`14:13Z next hour: model +${h1.model.toFixed(0)}, game +${h1.game.toFixed(0)} (12 seeds), live +${live1413.toFixed(0)}; 20:01Z: model +${h2.model.toFixed(0)}, game +${h2.game.toFixed(0)}`)
+  for (const [lab, h] of [['14:13Z', h1], ['20:01Z', h2]]) if (!(Math.abs(h.model / h.game - 1) < 0.1)) c6.fail(`${lab}: the model's hour from the state as read must be the game's within 10% (model ${h.model.toFixed(0)} vs game ${h.game.toFixed(0)})`)
+  if (!(live1413 / h1.game > 1.3)) c6.fail(`the live hour after 14:13Z ran past the game's from that state (the inputs moved): ${live1413.toFixed(0)} vs ${h1.game.toFixed(0)}`)
+  const sc = fx20.bladeRoute.calibration.success
+  const exitAt = (k) => {
+    const s0 = { ...A.modelStartOf(fx20), successScale: sc.k, successSdLn: sc.sdLn, rankScale: k, rankSdLn: fx20.bladeRoute.calibration.rank.sdLn }
+    const Q = BB.BLADE_ENSEMBLE.Q
+    return BB.bladeMeanOf(Array.from({ length: Q }, (_, m) => BB.bladeExit(BB.bladeMemberOf(s0, m, Q)).hours)).hours
+  }
+  const game = []
+  for (let seed = 1; seed <= 16; seed++) game.push(A.runFrom(fx20, {}, { seed, maxH: 40 }).hours)
+  const g20 = mean(game)
+  const e1 = exitAt(1)
+  const eV2 = exitAt(fx20.bladeRoute.calibration.rank.k)
+  c6.examined(3)
+  c6.note(`20:01Z exit: game ${f2(g20)}h (16 seeds); members at k 1 ${f2(e1)}h (${(100 * (e1 / g20 - 1)).toFixed(1)}%); at the v2 k ${fx20.bladeRoute.calibration.rank.k} ${f2(eV2)}h (${(100 * (eV2 / g20 - 1)).toFixed(1)}%)`)
+  if (!(Math.abs(e1 / g20 - 1) < 0.05)) c6.fail(`at k 1 the members' exit must be the game's within 5% (${f2(e1)} vs ${f2(g20)}h)`)
+  if (!(g20 - eV2 > 1)) c6.fail(`the v2 k must price the state > 1h short (the double count): ${f2(eV2)} vs ${f2(g20)}h`)
   return checks
 }

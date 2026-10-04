@@ -638,6 +638,27 @@ share an endpoint's error). A sample with no `seH` (every earlier one, the
 hacking route's) is scored exactly as before. Replayed on the recorder's
 passes (fleet held): mean z² 1620 → 0.53.
 
+THE RANK k MEASURES THE MODEL, NOT ITS INPUTS' DRIFT (2026-10-04, live
+BN14.1; bbplan.rankCalStep v3, tools/sim/bb14/kchain.mjs, kfix.mjs, [BA6],
+[BC7]): v2 predicted each one-hour window from its FIRST state's path, so
+every input that moved during the hour — the fleet sleeve.js flipped, a
+city's population, skills bought, the Go farm's effect — entered
+ln(realised/predicted) as if it were the model's error. The next start
+re-reads those inputs, so the exit applied them twice: k 1.196 (12 windows)
+priced the 20:01Z state at 9.33h against the game's own classes' 10.72h
+(40 seeds, Aevum anchored), the uncalibrated model 10.59h. From a state as
+read, the model's next hour is the game's (14:13Z +599 vs +608; 20:01Z +6526
+vs +6528), while the live hour after 14:13Z ran +885 — inputs, not the
+model. v3 chains SEGMENTS, one per plan pass: segment i is predicted from
+pass i's own path to pass i+1 and realised as the rank between the two
+reads; a window closes when its segments cover an hour (a segment over
+RANK_CAL.maxSegH drops it: the inputs between are unread). Black ops leave
+both sides (their reward is the game's constant; a lump the model expects
+inside a five-minute segment would recount every pass the real attempt
+fails). v2 samples are dropped: k restarts at the prior (1) and is re-earned
+on v3 windows. Named, not corrected: bladeExit still scales a black op's
+reward by k ((k − 1) × the reward, which vanishes at k ≈ 1).
+
 LIVE, BN4 2026-10-02 (the 100% that raised this; fixture
 fixture-bn4-exitcal-0147.json, [EC9]): the legacy one-step interval was too
 wide because of suspect (a) — the prior held 69% of b after 30 pairs (s 3.0%

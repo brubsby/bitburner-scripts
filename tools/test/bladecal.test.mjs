@@ -17,8 +17,9 @@
 //   BC4 STAMINA is a state: the start's stamina is banked or owed rest at the chamber's rate
 //   BC5 ATTEMPTS AND SUCCESSES from counters (attemptsOf); the old rule read several completions as one
 //   BC6 THE SUCCESS POSTERIOR: prior k = 1, binomial evidence, weight grows with attempts
-//   BC7 THE RANK-RATE POSTERIOR: non-overlapping windows of the model's own path, an install closes
-//       none, weight grows with hours; on the realised 13:22-22:15Z rank
+//   BC7 THE RANK-RATE POSTERIOR: non-overlapping windows, each a chain of segments predicted from its
+//       own pass's state as read (v3), black ops apart, an install closes none, weight grows with
+//       hours; on the realised 13:22-22:15Z rank
 //   BC8 EVENTS: real state moves raise one; an estimate correction and the model's own drift do not
 //   BC9 POLICY: the action at its stamina duty; Cyber's Edge priced (maxStaminaBase); skills saved
 //       for the best value per point
@@ -193,14 +194,35 @@ export async function run() {
   }
 
   {
-    const c = new Check('BC7', "THE RANK-RATE POSTERIOR on the model's own path: non-overlapping windows, none across an install, weight by hours; the realised 13:22-22:15Z rank")
+    const c = new Check('BC7', "THE RANK-RATE POSTERIOR on the model's own path: non-overlapping windows of segments from each pass's state as read (v3), black ops apart, none across an install, weight by hours; the realised 13:22-22:15Z rank")
     checks.push(c)
+    // v3: each segment from its own pass's path (the inputs as read then). The second pass's path runs
+    // faster (an input moved — the Go effect grew): that is the start's, not k's.
     const path = [{ h: 0, rank: 100 }, { h: 1, rank: 150 }, { h: 2, rank: 220 }]
     let led = BB.rankCalStep(null, { at: '2026-10-01T10:00:00Z', lastAugReset: 1, rank: 100, path })
-    led = BB.rankCalStep(led, { at: '2026-10-01T10:30:00Z', lastAugReset: 1, rank: 120, path: [{ h: 0, rank: 120 }] })
-    if (led.closed || led.pending.at !== '2026-10-01T10:00:00Z') c.fail('a window under an hour stays open, and no second window opens over it')
-    led = BB.rankCalStep(led, { at: '2026-10-01T11:00:00Z', lastAugReset: 1, rank: 140, path: [{ h: 0, rank: 140 }, { h: 1, rank: 200 }] })
-    if (!led.closed || Math.abs(led.closed.lnK - Math.log(40 / 50)) > 1e-3 || led.pending?.at !== '2026-10-01T11:00:00Z') c.fail(`the hour closes at ln(40/50) and the next opens: ${JSON.stringify(led.closed)}`)
+    led = BB.rankCalStep(led, { at: '2026-10-01T10:30:00Z', lastAugReset: 1, rank: 120, path: [{ h: 0, rank: 120 }, { h: 1, rank: 180 }] })
+    if (led.closed || led.pending.at !== '2026-10-01T10:00:00Z' || led.pending.segs !== 1) c.fail('a window under an hour stays open with its segment, and no second window opens over it')
+    const same = BB.rankCalStep(led, { at: '2026-10-01T10:30:00Z', lastAugReset: 1, rank: 120, path: [{ h: 0, rank: 120 }, { h: 1, rank: 180 }] })
+    if (same.pending?.segs !== 1 || same.pending.last.at !== '2026-10-01T10:30:00Z') c.fail('the same read again adds no segment and keeps the window')
+    led = BB.rankCalStep(led, { at: '2026-10-01T11:00:00Z', lastAugReset: 1, rank: 150, path: [{ h: 0, rank: 150 }, { h: 1, rank: 200 }] })
+    // segments: pred 25 + 30, real 20 + 30 -> ln(50/55); v2 (the first path alone) read ln(50/50) only by luck of the drift.
+    if (!led.closed || Math.abs(led.closed.lnK - Math.log(50 / 55)) > 1e-3 || led.closed.segs !== 2 || led.pending?.at !== '2026-10-01T11:00:00Z') c.fail(`the hour closes at ln(50/55) over its two segments and the next opens: ${JSON.stringify(led.closed)}`)
+    // A black op inside a segment: its reward leaves the realised side, the path's (bo) the predicted one.
+    const T = BB.BLACK_OPS[0]
+    const bnR = 0.9
+    const boPath = [{ h: 0, rank: 3000 }, { h: 0.5, rank: 3050 + T.rankGain * bnR, bo: T.rankGain * bnR }, { h: 1, rank: 3100 + T.rankGain * bnR, bo: T.rankGain * bnR }]
+    let lb = BB.rankCalStep(null, { at: '2026-10-01T10:00:00Z', lastAugReset: 1, rank: 3000, path: boPath, blackOps: 0, bnRank: bnR })
+    // 10:30: the black op done (the path had it too); the next segment from a path with none ahead.
+    lb = BB.rankCalStep(lb, { at: '2026-10-01T10:30:00Z', lastAugReset: 1, rank: 3060 + T.rankGain * bnR, path: [{ h: 0, rank: 3060 + T.rankGain * bnR }, { h: 1, rank: 3160 + T.rankGain * bnR }], blackOps: 1, bnRank: bnR })
+    lb = BB.rankCalStep(lb, { at: '2026-10-01T11:00:00Z', lastAugReset: 1, rank: 3120 + T.rankGain * bnR, path: boPath, blackOps: 1, bnRank: bnR })
+    if (!lb.closed || Math.abs(lb.closed.lnK - Math.log(120 / 100)) > 1e-3) c.fail(`black ops leave both sides: ln((60 + 60) / (50 + 50)) expected, got ${JSON.stringify(lb.closed)}`)
+    // Passes missed (a segment over RANK_CAL.maxSegH): the inputs between are unread — the window is dropped.
+    const gap = BB.rankCalStep(BB.rankCalStep(null, { at: '2026-10-01T10:00:00Z', lastAugReset: 1, rank: 100, path }), { at: '2026-10-01T11:30:00Z', lastAugReset: 1, rank: 200, path })
+    if (gap.closed || gap.pending?.at !== '2026-10-01T11:30:00Z') c.fail('a segment past maxSegH closes nothing; a new window opens at the read')
+    // A v2 window (one path from its opening state) does not continue under v3.
+    const v2 = BB.rankCalStep({ pending: { at: '2026-10-01T10:00:00Z', lastAugReset: 1, rank: 100, path, successScale: 1 }, samples: [] }, { at: '2026-10-01T11:00:00Z', lastAugReset: 1, rank: 150, path })
+    if (v2.closed || v2.pending?.at !== '2026-10-01T11:00:00Z') c.fail('a v2 pending window is dropped, not closed')
+    c.examined(5)
     const inst = BB.rankCalStep(led, { at: '2026-10-01T12:05:00Z', lastAugReset: 2, rank: 10, path: null })
     if (inst.closed || inst.pending) c.fail('an install closes nothing and opens nothing without a path')
     const V = BB.RANK_CAL.v
@@ -318,6 +340,8 @@ export async function run() {
       [pr, /rankScale, successScale, (rankSdLn: rankPost0\.sdLn, successSdLn: sCal\.sdLn, )?leanUntilH(, retrainSecsOf)?(, goCombat)? \}\)/, 'progress.js: the calibration (its posterior sds for the members, and the lean phase) into the one builder'],
       [pr, /bladeEventsOf\(pc\.prev\?\.decisions\?\.bladeRoute\?\.state/, 'progress.js: the state events before the decision'],
       [pr, /rankCalStep\(prevCal/, 'progress.js: the rank ledger'],
+      [pr, /blackOps: tel\?\.blackOps\?\.done \?\? 0, bnRank: mults\.BladeburnerRank/, 'progress.js: the v3 ledger leaves black ops apart (the reward at the node\'s BladeburnerRank)'],
+      [pr, /maxH: RANK_CAL\.pathH, pathEveryS: RANK_CAL\.pathEveryS/, 'progress.js: each pass\'s path from its own state (the segment\'s prediction)'],
       [bj, /popRatioFromRanges\(lo, hi, cl, ch\)/, 'bladeburner.js: the true population of every city (the side from an action\'s own range)'],
       [bj, /attemptsOf\(\{/, 'bladeburner.js: attempts from the counters'],
       [bj, /successPosterior\(calGroups\)/, 'bladeburner.js: the success posterior'],

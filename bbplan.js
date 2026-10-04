@@ -1124,6 +1124,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     levels: { ...(s0.levels ?? {}) },
     bonus: s0.staminaBonus ?? 0,
     bo: s0.blackOpsDone ?? 0,
+    boRank: 0,
     counts: {},
     maxL: {},
     succ: {},
@@ -1322,13 +1323,24 @@ export function* bladeExitGen(s0, pol = POLICY) {
       blackOp: bd ? { d: bd, K: envOf(bd, e) / successScale, width: 0 } : null,
     }
   }
+  // rankScale (the rank calibration) scales every rank gain, a black op's
+  // reward included. NAMED, NOT CORRECTED: the v3 windows measure k on the
+  // rest (rankCalStep: a black op's reward is the game's constant,
+  // Formulas.ts calculateActionRankGain), so a k away from 1 lifts that
+  // constant by (k - 1) x the reward too — optimistic by that much rank.
+  // Left as it was because the exit is rough in it (BN6 10:10Z, k 1.065:
+  // unscaled rewards moved one install's single exit +0.9h and its
+  // neighbour none — tools/test/bladejump.test.mjs BJ3/BJ7/BJ8) and the v3
+  // k sits near 1, where the term vanishes. Returns the rank moved.
   const gainRank = (dr) => {
+    const r0 = st.rank
     st.rank = Math.max(0, st.rank + (dr > 0 ? dr * rankScale : dr))
     if (st.rank > st.maxRank) {
       const before = totalSkillPointsAt(st.maxRank)
       st.maxRank = st.rank
       st.sp += totalSkillPointsAt(st.maxRank) - before
     }
+    return st.rank - r0
   }
   // Bladeburner.ts:792-888: what n attempts (expected successes ns) do to the city they are done in.
   const cityEffect = (c, name, n, ns) => {
@@ -1511,8 +1523,9 @@ export function* bladeExitGen(s0, pol = POLICY) {
       // Expected attempts 1/p, each a full action time; failures cost rank (the stamina is rested between).
       const f = dutyOf(staminaCostOf(d, 1), tt, v.staminaGain, v.maxStamina)
       t += tt / p / f
-      gainRank(-((1 - p) / p) * rankLossOf(d, 1))
-      gainRank(rankGainOf(d, 1, bnRank))
+      // The black op's own rank (its expected failures' losses and its reward) is kept apart on the path (bo): the rank windows measure the rest.
+      st.boRank += gainRank(-((1 - p) / p) * rankLossOf(d, 1))
+      st.boRank += gainRank(rankGainOf(d, 1, bnRank))
       gainExp(actionExpOf(d, 1, person, v.sm, true), 1)
       relevel()
       st.bo++
@@ -1566,7 +1579,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     if (trace.length < 400 && Math.floor(t / tEvery) !== Math.floor((t - dt) / tEvery)) trace.push({ h: +(t / 3600).toFixed(1), rank: Math.round(st.rank), bo: st.bo, str: person.skills.strength, agi: person.skills.agility })
     // THE RANK PATH in wall hours from now (rankCalStep's prediction): a
     // banked-stamina credit moved the clock back without wall time passing.
-    if (pathEvery && path.length < 400 && Math.floor((t + credit) / pathEvery) !== Math.floor((t + credit - dt) / pathEvery)) path.push({ h: +((t + credit) / 3600).toFixed(4), rank: +st.rank.toFixed(3) })
+    if (pathEvery && path.length < 400 && Math.floor((t + credit) / pathEvery) !== Math.floor((t + credit - dt) / pathEvery)) path.push({ h: +((t + credit) / 3600).toFixed(4), rank: +st.rank.toFixed(3), ...(st.boRank ? { bo: +st.boRank.toFixed(3) } : {}) })
   }
   const done = st.bo >= BLACK_OPS.length
   return {
@@ -1816,28 +1829,55 @@ export function bladeFleetOf(fleet, { lifeStart = null } = {}) {
 }
 
 /**
- * THE RANK RATE, REALISED AGAINST THE MODEL'S OWN TRAJECTORY. Each window
- * opens with the model's rank path from that pass's state (bladeExit,
- * rankScale 1: the formula, with the success calibration it had then) and
- * closes RANK_CAL.windowH or more later on the same life, with the slot on
- * Bladeburner at both ends; its sample is ln(realised gain / predicted gain)
- * over the elapsed hours. Windows do not overlap (a new one opens when one
- * closes), so the samples are independent. The posterior is ratePosterior's
- * (bayes.js): prior ln k ~ N(0, PRIORS.repEstimateSdLn) — the model as
- * written — and the windows' hour-weighted mean with sd
- * PRIORS.rateSdLn x sqrt(1h / hours): a minute of rank moves nothing, a day
- * of it pins k. Not the last few minutes' rate (rankPerHour), which swings
- * with every rest.
+ * THE RANK RATE, REALISED AGAINST THE MODEL ON THE INPUTS THAT HELD (v3).
+ * k is the model's own residual: the rank the game paid over the rank the
+ * model predicts FROM THE STATE AS READ. A window is a chain of segments,
+ * one per plan pass: segment i is predicted from pass i's own path (its
+ * rank, stats, skills, stamina, cities, fleet and the Go farm's combat
+ * effect as read then; rankScale 1) over the hours to pass i+1, and
+ * realised as the rank between the two reads. The window closes once its
+ * segments cover RANK_CAL.windowH; its sample is ln(sum realised / sum
+ * predicted). Windows do not overlap, so the samples are independent.
+ *
+ * WHY SEGMENTS (v2 -> v3, live BN14.1 2026-10-04): v2 predicted the whole
+ * hour from the window's FIRST state, so every input that moved over the
+ * hour entered k as if it were the model's error — above all the Tetrads
+ * farm's combat effect regrowing faster than the opening start's rate, and
+ * the fleet sleeve.js flipped pass to pass. The next start reads that
+ * drift (it carries the realised effect), so the exit applied it twice: k
+ * 1.196 priced the 20:01Z state at 9.33h (members' mean) against the game's
+ * own classes' 10.72h, the model at k 1 10.59h (tools/sim/bb14/kfix.mjs).
+ * From a state as read the model's next hour IS the game's (14:13Z +599 vs
+ * +608, 20:01Z +6526 vs +6528; the live hour after 14:13Z ran +885): the
+ * lead was the inputs [BA6]. Re-read every pass, drift is an input, not a
+ * residual (tools/sim/bb14/kchain.mjs replays a recorder's passes).
+ *
+ * BLACK OPS are left out on both sides: the path carries the model's
+ * black-op rank apart (path[].bo) and the realised side subtracts each
+ * black op completed in the segment (its reward, Formulas.ts
+ * calculateActionRankGain: rankGain x BladeburnerRank). That rank is the
+ * game's constant — what moves is WHEN, which the success calibration
+ * prices — and a lump the model expects inside a five-minute segment would
+ * be counted again every pass the real attempt fails. (bladeExit still
+ * scales a black op's reward by k too: named at its gainRank.)
+ *
+ * The posterior is ratePosterior's (bayes.js): prior ln k ~ N(0,
+ * PRIORS.repEstimateSdLn) — the model as written — and the windows'
+ * hour-weighted mean with the pooled scatter (rankRatePosterior).
  */
-// v: the window definition (rankWindowOkOf). Samples of another version are
-// dropped by rankRatePosterior: v1's (any daemon, any inputs) measured the
-// lean daemon and the unread inputs, not the model.
-export const RANK_CAL = { windowH: 1, maxWindowH: 2.5, keep: 48, pathH: 3, pathEveryS: 900, v: 2, obsNu0: 4 }
+// v: the window definition. Samples of another version are dropped by
+// rankRatePosterior: v1's (any daemon, any inputs) measured the lean
+// daemon and the unread inputs; v2's (one path from the window's opening
+// state) measured the inputs' drift over the hour.
+// maxSegH: a segment longer than this (passes missed) is not "the inputs as
+// read" — the window is dropped. pathH covers it; pathEveryS is the model's
+// step (dt 300s), so a five-minute segment reads the path's own points.
+export const RANK_CAL = { windowH: 1, maxSegH: 0.75, keep: 48, pathH: 1, pathEveryS: 300, v: 3, obsNu0: 4 }
 /**
  * WHAT A WINDOW MAY MEASURE (rankCalStep `full`). k is the model's error on
  * the trajectory it simulates — bladeburner.js's policy from complete
  * inputs — and nothing else, so the planner applies the same quantity it
- * measures. A window counts only when, at BOTH ends:
+ * measures. A segment counts only when, at BOTH ends:
  *   - bladeburner.js is the daemon acting (bb-lite runs a lean policy,
  *     LITE_POLICY: pinned levels, one city, no Raid — another trajectory);
  *   - every city's population is read (tel.cities with pop): an unread city
@@ -1856,41 +1896,71 @@ export function rankWindowOkOf({ tel = null, fleetSource = null } = {}) {
   if (fleetSource === 'stale') return { ok: false, why: "the fleet record is from before this life's install" }
   return { ok: true, why: null }
 }
-export function rankCalStep(prev, { at, lastAugReset, rank, ours = true, full = true, path = null, successScale = 1 }) {
+/** The game's rank for black ops number from..to-1 completed (Formulas.ts calculateActionRankGain BlackOp; addOffset is +-10% about it). */
+export function blackOpRankOf(from, to, bnRank = 1) {
+  let r = 0
+  if (!(Number.isFinite(from) && Number.isFinite(to))) return 0
+  for (let n = Math.max(0, from); n < Math.min(to, BLACK_OPS.length); n++) r += rankGainOf(BLACK_OPS[n], 1, bnRank)
+  return r
+}
+/**
+ * One plan pass on the rank ledger. path: this pass's model path (bladeExit
+ * with pathEveryS, rankScale 1) from the state as read, or null; blackOps:
+ * the black ops done as read; bnRank: the node's BladeburnerRank. Returns
+ * {pending, samples, closed}; pending holds the window's sums and the last
+ * pass's {at, rank, blackOps, path}.
+ */
+export function rankCalStep(prev, { at, lastAugReset, rank, ours = true, full = true, path = null, successScale = 1, blackOps = 0, bnRank = 1 }) {
   const atMs = Date.parse(at)
   const samples = Array.isArray(prev?.samples) ? prev.samples.slice(-RANK_CAL.keep) : []
   let pending = prev?.pending ?? null
   let closed = null
-  // Not the model's trajectory at this end (rankWindowOkOf): the window is dropped, not closed.
-  if (pending && (pending.lastAugReset !== lastAugReset || !ours || !full)) pending = null
+  // Another definition's window (v2: one path from its opening state) does not continue.
+  if (pending && (pending.v !== RANK_CAL.v || !pending.last)) pending = null
+  // Not the model's trajectory at this end (rankWindowOkOf), or another life: the window is dropped, not closed.
+  if (pending && (pending.lastAugReset !== lastAugReset || !ours || !full || !Number.isFinite(rank))) pending = null
   if (pending && Number.isFinite(atMs)) {
-    const e = (atMs - Date.parse(pending.at)) / 3.6e6
-    if (e >= RANK_CAL.windowH) {
-      if (e <= RANK_CAL.maxWindowH) {
-        const pred = rankOnPath(pending.path, e) - pending.rank
-        const real = rank - pending.rank
-        if (pred > 0 && real > 0) {
-          closed = { at: pending.at, to: at, h: +e.toFixed(3), pred: +pred.toFixed(3), real: +real.toFixed(3), lnK: +Math.log(real / pred).toFixed(4), successScale: pending.successScale ?? 1, v: RANK_CAL.v }
+    const L = pending.last
+    const dh = (atMs - Date.parse(L.at)) / 3.6e6
+    // The same read again (the daemon has not written since): nothing to add, the segment runs on.
+    if (dh === 0) return { pending, samples, closed: null }
+    if (!(dh > 0) || dh > RANK_CAL.maxSegH) pending = null
+    else {
+      const pred = rankOnPath(L.path, dh, { exBlackOps: true }) - L.rank
+      const real = rank - L.rank - blackOpRankOf(L.blackOps ?? 0, blackOps ?? 0, bnRank)
+      pending = { ...pending, h: pending.h + dh, pred: pending.pred + pred, real: pending.real + real, segs: pending.segs + 1, last: null }
+      if (pending.h >= RANK_CAL.windowH) {
+        if (pending.pred > 0 && pending.real > 0) {
+          closed = { at: pending.at, to: at, h: +pending.h.toFixed(3), segs: pending.segs, pred: +pending.pred.toFixed(3), real: +pending.real.toFixed(3), lnK: +Math.log(pending.real / pending.pred).toFixed(4), successScale: pending.successScale ?? 1, v: RANK_CAL.v }
           samples.push(closed)
         }
+        pending = null
       }
-      pending = null
     }
   }
-  if (!pending && ours && full && Array.isArray(path) && path.length && Number.isFinite(rank)) pending = { at, lastAugReset, rank, path, successScale }
+  if (!(ours && full && Array.isArray(path) && path.length && Number.isFinite(rank))) pending = null
+  else {
+    if (!pending) pending = { at, lastAugReset, h: 0, pred: 0, real: 0, segs: 0, successScale, v: RANK_CAL.v }
+    pending.last = { at, rank, blackOps: blackOps ?? 0, path }
+  }
   return { pending, samples: samples.slice(-RANK_CAL.keep), closed }
 }
-/** Rank at hour e on a path [{h, rank}] (h from the path's start, linear between points). */
-export function rankOnPath(path, e) {
+/**
+ * Rank at hour e on a path [{h, rank, bo?}] (h from the path's start, linear
+ * between points). exBlackOps: less the path's black-op rank (bo) — the
+ * quantity the v3 windows measure.
+ */
+export function rankOnPath(path, e, { exBlackOps = false } = {}) {
   if (!Array.isArray(path) || !path.length) return NaN
+  const r = (p) => p.rank - (exBlackOps ? p.bo ?? 0 : 0)
   let p0 = path[0]
-  if (e <= p0.h) return p0.rank
+  if (e <= p0.h) return r(p0)
   for (let i = 1; i < path.length; i++) {
     const p1 = path[i]
-    if (e <= p1.h) return p0.rank + ((p1.rank - p0.rank) * (e - p0.h)) / (p1.h - p0.h || 1)
+    if (e <= p1.h) return r(p0) + ((r(p1) - r(p0)) * (e - p0.h)) / (p1.h - p0.h || 1)
     p0 = p1
   }
-  return p0.rank
+  return r(p0)
 }
 export function rankRatePosterior(samples, { priorSdLn = PRIORS.repEstimateSdLn, obsSdLn = PRIORS.rateSdLn, v = RANK_CAL.v } = {}) {
   const S = (Array.isArray(samples) ? samples : []).filter((x) => Number.isFinite(x?.lnK) && x.h > 0 && (v === null || x.v === v))

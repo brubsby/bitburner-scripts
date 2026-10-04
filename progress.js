@@ -2678,9 +2678,13 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       const bladeCommitted = prevInst?.route === 'blade'
       const bladeBasis = bladeCommitted ? basisOf(prevInst, Date.now()) : null
       const basis = bladeCommitted ? null : basisOf(prevInst, Date.now())
-      // The rank ledger: the model's own path from this state (rankScale 1 —
-      // the formula with this pass's success calibration) opens a window;
-      // a window an hour old closes against the rank now (rankCalStep).
+      // The rank ledger (rankCalStep v3): the model's own path from THIS
+      // pass's state as read (rankScale 1 — the formula with this pass's
+      // success calibration) predicts the segment to the next pass; a
+      // window closes once its segments cover an hour. Every input the next
+      // pass re-reads (the Go effect, stats, skills, cities, the fleet) is
+      // the start's, not k's. Dated at the record's own read (tel.at): the
+      // rank and the state the path starts from are both of that moment.
       let rankCal = { pending: prevCal?.pending ?? null, samples: prevCal?.samples ?? [], closed: null }
       try {
         const actingNow = tel?.joined === true && tel?.slot?.ours === true && (tel.result === 'acting' || tel.result === 'started')
@@ -2691,7 +2695,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
           const pr = yield* bladeExitGen({ ...startFor(bladeBasis), rankScale: 1, maxH: RANK_CAL.pathH, pathEveryS: RANK_CAL.pathEveryS })
           path = pr.path ?? null
         }
-        rankCal = { ...rankCalStep(prevCal, { at: new Date().toISOString(), lastAugReset: info.lastAugReset, rank: tel?.rank, ours: actingNow, full: win.ok, path, successScale }), ...(win.ok ? {} : { skipped: win.why }) }
+        rankCal = { ...rankCalStep(prevCal, { at: typeof tel?.at === 'string' && Number.isFinite(Date.parse(tel.at)) ? tel.at : new Date().toISOString(), lastAugReset: info.lastAugReset, rank: tel?.rank, ours: actingNow, full: win.ok, path, successScale, blackOps: tel?.blackOps?.done ?? 0, bnRank: mults.BladeburnerRank }), ...(win.ok ? {} : { skipped: win.why }) }
       } catch (e) {
         rankCal = { ...rankCal, error: `rank calibration threw: ${String(e).slice(0, 120)}` }
       }

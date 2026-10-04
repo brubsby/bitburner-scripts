@@ -144,7 +144,8 @@ export async function run() {
   {
     const c = add('B14-4', "THE RANK POSTERIOR: the windows' own scatter is the observation sd; the 03:37Z move is inside the posterior")
     const W = FX.rankWindows
-    const steps = W.map((_, i) => BB.rankRatePosterior(W.slice(0, i + 1)))
+    // The fixture's windows are v2 (one path from the opening state): the pooled-scatter arithmetic is the same under v3.
+    const steps = W.map((_, i) => BB.rankRatePosterior(W.slice(0, i + 1), { v: 2 }))
     c.examined(W.length)
     c.note(`windows ${W.map((w) => w.lnK.toFixed(2)).join(' ')}: k ${steps.map((s) => s.k).join(' ')}, sdLn ${steps.map((s) => s.sdLn).join(' ')}, window sd ${steps.map((s) => s.obsSdLn).join(' ')}`)
     if (!steps.every((s) => s.obsSdLn >= 0.3 - 1e-9)) c.fail('the observation sd is never below the stated one')
