@@ -253,7 +253,7 @@ export async function run() {
     if ([...st.values()].filter((c) => c === "B").length !== 2) c6.fail("only real black stones may be black");
     if (q.komi !== 7.5 - 8) c6.fail(`komi must drop by the 8 hole stones sent: want -0.5, got ${q.komi}`);
     const allowed = q.allowMoves?.[0];
-    if (!allowed || allowed.player !== "B" || allowed.untilDepth !== 1 || allowed.moves.join() !== "A2,D4,pass") c6.fail("root must be restricted to the game's valid list plus pass", JSON.stringify(allowed));
+    if (!allowed || allowed.player !== "B" || allowed.untilDepth !== 1 || allowed.moves.join() !== "D4,pass") c6.fail("root must be the game's valid list plus pass, less A2 (our point walled by A1 and holes A3/B2)", JSON.stringify(allowed));
     if (q.rules.scoring !== "AREA" || q.rules.ko !== "POSITIONAL" || q.rules.suicide !== false || q.rules.friendlyPassOk !== false) c6.fail("rules must be area/positional/no-suicide/no friendly pass", JSON.stringify(q.rules));
     // A hole group with no liberty is dropped and does not move komi.
     const sealed = ["#X...", "X....", ".....", ".....", "....."];
@@ -265,6 +265,18 @@ export async function run() {
     const v = fromVertex("D4");
     if (v.x !== 3 || v.y !== 3) c6.fail(`fromVertex('D4') must be {x:3,y:3}, got ${JSON.stringify(v)}`);
     if (!fromVertex("pass").pass) c6.fail("fromVertex('pass') must be a pass");
+    // An eye of ours that borders a hole is withheld from the root.
+    const eyeB = ["X#...", "X.X..", "XXX..", ".....", "....."];
+    const q3 = toQuery(eyeB, [[1, 1], [3, 3]], 7.5);
+    c6.examined(1);
+    if (q3.allowMoves[0].moves.includes("B2")) c6.fail("B2 (our eye, bordered by a hole) must not be offered to KataGo — it fills it to 'capture' the hole");
+    if (!q3.allowMoves[0].moves.includes("D4")) c6.fail("ordinary moves must stay allowed");
+    const { pickMove } = await import("../katago/katago.mjs");
+    const P = (move, order, scoreLead, visits = 10) => ({ move, order, scoreLead, visits });
+    c6.examined(3);
+    if (pickMove([P("pass", 0, 5), P("D4", 1, 4.5)]).move !== "D4") c6.fail("a free stone (within the margin) must be played over KataGo's pass");
+    if (pickMove([P("pass", 0, 5), P("D4", 1, 2)]).move !== "pass") c6.fail("a costly stone must not overrule a real pass");
+    if (pickMove([P("C3", 0, 1), P("pass", 1, 9)]).move !== "C3") c6.fail("KataGo's own stone choice stands");
     const j = fromVertex("J1");
     if (j.x !== 8) c6.fail(`GTP skips 'I': J is column 8, got ${j.x}`);
   }

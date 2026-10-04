@@ -36,7 +36,7 @@
 // priced as a committed dwell rather than a veto on banked power. A flat-
 // weights pass still cannot distinguish the channels, and it still REFUSES.
 //
-// CALIBRATION: the power table below is MEASURED, 30 games per arm at 5x5
+// CALIBRATION: the power table below is MEASURED, 30-70 games per arm at 5x5
 // against the game's own getMove, with the solver's OPPONENT-MODEL backend
 // (tools/go-solver.mjs backend 'model', golib.chooseMoveModel; 2026-10-03,
 // tools/sim/go-study.mjs + go-study-report.mjs: go-w0.mjs games with a fresh
@@ -46,25 +46,26 @@
 // 9.7 vs 9.0). It is valid only while the solver answers WITH THE MODEL —
 // go.js reports health 'warn' (modelHealth) when model requests fall back to
 // uct, and the uct figures are the old ones below.
-//   arm             model win  power/h   | uct win  power/h (same boards)
-//   Daedalus           100%      9656    |   90%      8767
-//   Illuminati          97%     50086    |   30%     11631
-//   TheBlackHand       100%      7396    |   93%      6420
-//   SlumSnakes          97%      8218    |   97%      8569
-//   Netburners         100%      5395    |  100%      4437
-//   Tetrads            100%      9628    |   93%      8725
+//   arm            model @ go.js budget        | model 800ms     | uct 800ms
+//   Daedalus       400ms 100% 12978/h          | 100%   9656     |  90%  8767
+//   Illuminati     800ms  99% 51885/h (n=70)   |  as left        |  30% 11631
+//   TheBlackHand   400ms 100%  9535/h          | 100%   7396     |  93%  6420
+//   SlumSnakes     400ms  97% 10485/h          |  97%   8218     |  97%  8569
+//   Netburners     200ms 100%  6553/h          | 100%   5395     | 100%  4437
+//   Tetrads        400ms  97% 10360/h          | 100%   9628     |  93%  8725
+// The budget per opponent is go.js SETTINGS.model.maxmsBy.
 // (The previous table, 60 games/arm with go-boardsize.mjs, was ~2x lower
 // across the board: that harness never mirror-passed and dealt ONE offline-
 // node layout for every game — tools/sim/go-board.mjs.)
 
-/** Measured node power per hour at 5x5, maxms 800, solver answering with the model backend. */
+/** Measured node power per hour at 5x5, model backend, go.js's per-opponent budget. */
 export const POWER_PER_HOUR = {
-  Daedalus: 9656,
-  Illuminati: 50086,
-  TheBlackHand: 7396,
-  SlumSnakes: 8218,
-  Netburners: 5395,
-  Tetrads: 9628,
+  Daedalus: 12978,
+  Illuminati: 51885,
+  TheBlackHand: 9535,
+  SlumSnakes: 10485,
+  Netburners: 6553,
+  Tetrads: 10360,
 }
 
 /**
@@ -113,11 +114,11 @@ export function keyOfGame(name) {
  */
 export const WIN_RATE = {
   Daedalus: 1,
-  Illuminati: 0.967,
+  Illuminati: 0.986,
   TheBlackHand: 1,
   SlumSnakes: 0.967,
   Netburners: 1,
-  Tetrads: 1,
+  Tetrads: 0.967,
 }
 
 /**

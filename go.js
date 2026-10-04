@@ -122,7 +122,8 @@
 // Measured headless (tools/sim/go-w0.mjs, the game's own AI, 800ms, a fresh
 // paired offline-node layout per game — the old 30% figure below was ONE
 // layout, see tools/sim/go-board.mjs):
-//   5x5 Illuminati   uct 28% (n=40)  ->  model 97% (n=30)
+//   5x5 Illuminati   uct 30% (n=30)  ->  model 99% (n=70); every other
+//   opponent 97-100% (goplan POWER_PER_HOUR has the table)
 // Full per-opponent table: the MODEL block above SETTINGS. A solver that
 // cannot load the model answers with uct and says so (`backend`/`fallback`
 // in its reply); modelHealth() turns that into health 'warn'.
@@ -177,6 +178,21 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 
+// RE-CHECKED 2026-10-03 with the current solver (tools/sim/go-study.mjs +
+// go-study-report.mjs: go-w0.mjs games, paired fresh layouts, mirror pass,
+// live clock from the AI's waitCycles and pattern rows, effect.ts payout with
+// streak and difficulty multipliers). Best power/h per opponent, any solver:
+//                 5x5            7x7           9x9           13x13 (uct, n=3)
+//   Illuminati    50201 model    3519 model    3721 model    3010
+//   Daedalus       9657 model    4882 uct      8772 uct      3570
+//   Tetrads        9629 model   10045 uct*     4628 uct        -
+//   SlumSnakes     8574 uct      8513 uct      5894 uct        -
+//   TheBlackHand   7393 model    5919 model    5614 model      -
+//   Netburners     5398 model    4554 model    3543 uct      3126
+// (* n=8, 8/8 won; within noise of 5x5.) 5x5 stays best for every opponent;
+// Illuminati's x8 difficulty exists only there. 30 games/arm at 5x5, 6-8 at
+// 7/9. Live CHECK passed (Tetrads 5x5: harness 93.3% vs live 92.7%).
+//
 // Board size and pacing are MEASURED, not chosen — 1,099 games against the
 // game's own getMove (tools/sim/go-boardsize.mjs).
 //
@@ -260,13 +276,34 @@ const SETTINGS = {
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
   // board (tools/sim/go-w0.mjs) — see the header's 19x19 block.
-  bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true } },
+  //
+  // backend: 'katago' sends the big board to KataGo instead (tools/katago,
+  // EXPERIMENTAL, OFF: leave unset). Measured headless on the hidden opponent:
+  // 400 visits won 2 of 3 games (black 134-139 vs uct's 0/6 at ~87), at
+  // 6-8s a move on two CPU threads; 200 visits 2/4; 100 visits 0/3. The
+  // offline nodes are approximated as white stones (tools/katago/README.md),
+  // which is what still loses games. Needs bash tools/katago/install.sh.
+  bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true }, backend: null, visits: 400 },
   // THE OPPONENT-MODEL SEARCH (tools/go-solver.mjs backend 'model'): boards up
   // to maxSize are searched against the game's own getMove. maxms is the
   // per-move budget sent with each request; historyCap bounds the superko
   // history sent (previousBoards, most recent first). See the MODEL block in
   // the header for the measurements.
-  model: { maxSize: 9, maxms: 800, historyCap: 120 },
+  // maxSize 5: on 7x7 and 9x9 the model search measured no better than uct
+  // and often worse (the model costs 3-8ms a call there, so the tree is
+  // shallow; Daedalus 9x9 model 67% vs uct 100%, n=6) — see go-study-report.
+  // maxmsBy: the per-move budget per opponent (goplan keys), measured
+  // 2026-10-03 at 200/400/800ms, 30 games each (go-study-report): the easy
+  // opponents are won at 100% with less thought, and a shorter move is a
+  // shorter game — Daedalus 9656 -> 12978/h at 400ms, Netburners 5399 ->
+  // 6553/h at 200ms. Illuminati needs the full 800 (400ms: 87% won, -14%/h).
+  // maxms is the default for anything unlisted.
+  model: {
+    maxSize: 5,
+    maxms: 800,
+    maxmsBy: { Illuminati: 800, Daedalus: 400, Tetrads: 400, TheBlackHand: 400, SlumSnakes: 400, Netburners: 200 },
+    historyCap: 120,
+  },
   // The solver-absence alarm. See solverHealth() below.
   solverWarnAfter: 10,
   solverMinShare: 0.5,
@@ -1051,7 +1088,7 @@ export async function main(ns) {
           } catch (e) {
             record(errors, new Error(`getMoveHistory: ${describe(e)} — the model search runs without superko history`))
           }
-          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxms }) }
+          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }) }
           modelAsked++
         } else if (useKatago) {
           modelReq = { backend: 'katago', visits: SETTINGS.bigBoard.visits }

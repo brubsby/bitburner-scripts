@@ -90,7 +90,27 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
       holeStones += comp.length;
     }
   }
-  const moves = validList.map(([x, y]) => COLS[x] + (y + 1));
+  // NEVER FILL OUR OWN EYE TO "CAPTURE" A HOLE. A hole cluster inside our
+  // territory is, to KataGo, a dead white group — and with friendlyPassOk off
+  // it plays to capture it, filling the cluster's liberties, which are OUR eye
+  // points. In IPvGO the hole is never captured, so each fill only destroys an
+  // eye (go-w0.mjs, 200 visits: a 90-stone black group died this way, final
+  // black 0). An empty point whose every neighbour is ours or a hole, with at
+  // least one hole, is withheld from the root (if anything else is legal).
+  const eyeByHole = (x, y) => {
+    let hole = false;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const u = x + dx, v = y + dy;
+      if (u < 0 || v < 0 || u >= N || v >= N) continue;
+      const c = board[u][v];
+      if (c === "#") hole = true;
+      else if (c !== "X") return false;
+    }
+    return hole;
+  };
+  let rootList = validList.filter(([x, y]) => !eyeByHole(x, y));
+  if (!rootList.length) rootList = validList;
+  const moves = rootList.map(([x, y]) => COLS[x] + (y + 1));
   moves.push("pass");
   // KataGo accepts integer or half-integer komi in [-150, 150].
   const k = Math.max(-150, Math.min(150, Math.round((komi - holeStones) * 2) / 2));
@@ -112,6 +132,30 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
 export function fromVertex(v) {
   if (!v || v.toLowerCase() === "pass") return { pass: true };
   return { x: COLS.indexOf(v[0].toUpperCase()), y: Number(v.slice(1)) - 1 };
+}
+
+/**
+ * KataGo's choice, with its passes overruled.
+ *
+ * KataGo passes when it thinks the game is settled UNDER ITS OWN MAPPING —
+ * hole stones it reads as dead white groups, territory it would count after
+ * dead-stone removal. IPvGO counts the board as it stands, and a pass hands the
+ * AI a free move (go-w0.mjs, 100 visits: 13 and 20 passes in two lost games,
+ * black 126 and 93; at 400 visits, 0 passes and two wins). So a pass is taken
+ * only when no stone is within PASS_MARGIN points of it on KataGo's own score
+ * estimate (a stone that costs nothing is free insurance: under area scoring a
+ * stone in our own territory is score-neutral). go.js's mirror pass still ends
+ * a game we lead when the AI passes. Pure; tested by GM6.
+ */
+export const PASS_MARGIN = 1.0;
+export function pickMove(moveInfos) {
+  const sorted = [...moveInfos].sort((a, b) => a.order - b.order);
+  const best = sorted[0];
+  if (!best) return null;
+  if (best.move.toLowerCase() !== "pass") return best;
+  const stone = sorted.find((m) => m.move.toLowerCase() !== "pass" && m.visits > 0);
+  if (stone && stone.scoreLead >= best.scoreLead - PASS_MARGIN) return stone;
+  return best;
 }
 
 export function installed() {
@@ -175,9 +219,9 @@ export async function startKataGo({ visits = 200, log = () => {} } = {}) {
     },
     async choose(board, validList, komi, opts = {}) {
       const r = await this.analyze(board, validList, komi, opts);
-      const best = (r.moveInfos ?? []).sort((a, b) => a.order - b.order)[0];
-      if (!best) return { pass: true, info: r.rootInfo };
-      return { ...fromVertex(best.move), winrate: best.winrate, scoreLead: best.scoreLead, visits: best.visits };
+      const pick = pickMove(r.moveInfos ?? []);
+      if (!pick) return { pass: true, info: r.rootInfo };
+      return { ...fromVertex(pick.move), winrate: pick.winrate, scoreLead: pick.scoreLead, visits: pick.visits };
     },
     close() {
       child.kill();
