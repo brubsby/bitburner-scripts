@@ -117,6 +117,7 @@ export async function run() {
     // TheBlackHand is right; at a true 0.6 Illuminati stays right.
     const W = { faction_rep: 0, hacking_speed: 1, hacking_money: 2 };
     const NP = { Daedalus: 0, Illuminati: 0, TheBlackHand: 0 };
+    const R2_PPH = { Daedalus: 22138, Illuminati: 101929, TheBlackHand: 15083, SlumSnakes: 19137, Netburners: 12230, Tetrads: 16032 };
     for (const [trueI, want] of [[0.05, "TheBlackHand"], [0.6, "Illuminati"]]) {
       c2.examined(1);
       const truth = { ...gp.WIN_RATE, Illuminati: trueI };
@@ -125,7 +126,8 @@ export async function run() {
       const picks = [];
       for (let g = 0; g < 600; g++) {
         const draw = gp.drawWinRates(state, Object.keys(gp.OPPONENTS), 5, rng);
-        const r = gp.chooseOpponent({ weights: W, windowH: 2, incumbent: picks.at(-1) ?? "Daedalus", nodePower: NP, winRates: draw });
+        // The release-2 table, pinned: this checks the Thompson mechanics, not the measured rates.
+        const r = gp.chooseOpponent({ weights: W, windowH: 2, incumbent: picks.at(-1) ?? "Daedalus", nodePower: NP, winRates: draw, powerPerHour: R2_PPH });
         if (r.refused) { c2.fail("a decidable objective refused under Thompson draws", r.why); break; }
         picks.push(r.opponent);
         state = gp.updatePosterior(state, r.opponent, 5, rng() < truth[r.opponent]);

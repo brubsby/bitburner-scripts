@@ -140,6 +140,21 @@ let sessRate = null; // work (model-calling iterations) per ms of a fresh full-b
 // --local: go.js's in-game fallback (golib.chooseMove, 20ms, top 8) plays every
 // move — what a game costs when the solver is absent (SETTINGS.solverWait).
 const LOCAL = argv.includes("--local");
+// --adaptive THR:MULT  ADAPTIVE BUDGET: when the chosen move's own win rate
+//                     (the search's top[0] winRate) is below THR, search on for
+//                     (MULT-1) x the budget more (the hard layouts: a broken
+//                     streak costs ~8 games of multiplier ramp).
+const ADAPTIVE = (() => {
+  const v = str("adaptive", null);
+  if (!v) return null;
+  const [thr, mult] = v.split(":").map(Number);
+  return { thr, mult };
+})();
+// --layouts I,J,...   play only these paired layout indices (with --layoutseed).
+const LAYOUTS = str("layouts", null) ? str("layouts", "").split(",").map(Number) : null;
+// --scan              per layout: the first move's fresh search only; emit
+//                     {kind: "scan", i, v0} (v0 = the chosen move's win rate).
+const SCAN = argv.includes("--scan");
 const OBJECTIVE = str("objective", null);
 const LOSS_SCALE = num("loss-scale", 1);
 const LEAF_K = num("leafk", 0);
@@ -276,6 +291,9 @@ async function playGame(stats, gameIndex) {
   let preMoves = 0, rtTotal = 0;
   const seedG = { informative: 0, predicted: 0, observed: 0 };
   let pendingSeed = null; // { path, Tref, board, history, passCount }
+  // The first move's chosen win rate, the lowest seen, and the moves the
+  // adaptive budget extended.
+  let v0 = null, minWr = 1, adaptiveMoves = 0;
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
   const note = (who, mv) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board) });
   const solve = async () => {
@@ -326,7 +344,18 @@ async function playGame(stats, gameIndex) {
           const its = await sess.search({ maxms: budget, untilWork: r.reused && SESSION !== "deep" ? target : Infinity });
           if (!r.reused) sessRate = sessRate ? 0.8 * sessRate + 0.2 * (sess.rootWork / budget) : sess.rootWork / budget;
           else if (its <= 1) sStats.early++;
-          return sess.best();
+          let b = sess.best();
+          const wr = b?.[0]?.top?.[0]?.[4];
+          if (typeof wr === "number") {
+            if (v0 === null) v0 = wr;
+            minWr = Math.min(minWr, wr);
+          }
+          if (ADAPTIVE && b && b.length && typeof wr === "number" && wr < ADAPTIVE.thr) {
+            await sess.search({ maxms: (ADAPTIVE.mult - 1) * budget });
+            b = sess.best();
+            adaptiveMoves++;
+          }
+          return b;
         })()
       : MODEL
       ? await golib.chooseMoveModel(simple, valid, N, komi, budgetFor(ourTurns), { ...opts, history: state.previousBoards.slice() }, MODEL)
@@ -371,6 +400,7 @@ async function playGame(stats, gameIndex) {
     const seedPath = pre ? "pre" : "req";
     const seedRef = playtimeAt(pre ? wall : tReq);
     ourTurns++;
+    if (SCAN) return { scan: true, v0 };
     const hasMove = ranked && ranked.length;
     let cheatNow = false;
     let cheatSucceeds = false;
@@ -524,6 +554,9 @@ async function playGame(stats, gameIndex) {
     ...(MODEL && PONDER ? { mPonder: { ...mStats, carryMs: Math.round(mStats.carryMs) } } : {}),
     oppTurns,
     preMoves,
+    v0,
+    minWr: +minWr.toFixed(3),
+    adaptiveMoves,
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
@@ -537,12 +570,17 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
+  if (LAYOUTS && !LAYOUTS.includes(i)) continue;
   const w0 = Date.now();
   const r = await playGame(stats, i);
+  if (r.scan) {
+    emit({ kind: "scan", i, v0: r.v0 });
+    continue;
+  }
   const won = !r.ejected && r.black >= r.white;
   stats.oldWinStreak = stats.winStreak;
   if (r.ejected) {

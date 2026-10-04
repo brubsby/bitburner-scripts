@@ -343,7 +343,9 @@ const SETTINGS = {
   // the time it takes (golib.powerObjective), at this opponent's live streak.
   //   turnS: seconds a turn costs until this process has timed 20 moves;
   //   lossScale: the priced streak-reset cost x this (1 = as priced).
-  power: { on: false, turnS: 1.2, lossScale: 1 },
+  // lossScaleBy: per opponent (Illuminati 2: at difficulty 8 the loss-scale-1
+  // arm lost 2 of 30, the scale-2 arm none).
+  power: { on: false, turnS: 1.2, lossScale: 1, lossScaleBy: { Illuminati: 2 } },
   // mirror, PER OPPONENT (default for the rest): when the AI passes and we
   // are ahead — 'always' pass at once (release 2), or 'search': PLAY ON, the
   // solver decides (PASS ends the game exactly; a stone only when its line
@@ -353,12 +355,20 @@ const SETTINGS = {
   // Measured (tools/sim/go-w0.mjs, 30 paired games, harness):
   //   Tetrads     control 20425/h (black 16.3)  play-on+time 23991/h (black 20.4, 30/30)  ON
   //               play-on with no time cost 17878/h (black 21.3, 19.3 s/game): the area costs more time than it earns
-  //   Illuminati  control 103626/h (29/30)  play-on+time 102825/h (28/30)  off until loss-scale is measured
-  // An opponent switches on here once its arm beats control with no extra losses.
-  mirror: { default: 'always', Tetrads: 'search' },
+  //   Illuminati  control 104215/h (29/30)  play-on+time 102825/h (28/30); with lossScale 2
+  //               125180/h (black 19.3, 30/30)  ON at lossScale 2 (power.lossScaleBy)
+  //   Daedalus    control 22892/h (black 16.1, 30/30)  play-on+time 27608/h (black 19.0, 30/30)  ON
+  //   SlumSnakes  control 20180/h (black 16.6, 30/30)  play-on+time 22813/h (black 19.7, 30/30)  ON
+  // (play-on arms ran with pre-send on; without it they are ~5% slower in the
+  // harness, still above control.) An opponent switches on here once its arm
+  // beats control with no extra losses.
+  mirror: { default: 'always', Tetrads: 'search', Illuminati: 'search', Daedalus: 'search', SlumSnakes: 'search' },
   // presend: play the solver's pre-sent answer (/go/ponder.txt) the moment the
   // AI's reply matches its board, with no request.
-  presend: false,
+  // Measured neutral on play (Tetrads control+pre-send -0.77 black vs a
+  // control re-run -0.70, paired), ~72% of moves pre-sent on Tetrads; live it
+  // saves the ~40-50ms a pondered answer's round trip takes (release 3c).
+  presend: true,
   // clock: send the playtime (the AI's RNG seed, playtimeReader) with each
   // request, so the solver draws the AI's next reply from its seeds.
   clock: false,
@@ -1453,7 +1463,7 @@ export async function main(ns) {
       const turnS = timing.moves >= 20 ? timing.loop / timing.moves / 1000 : SETTINGS.power.turnS
       const eBlack = meanBlack[opponent] ?? 0.68 * points
       const ratePerS = (POWER_PER_HOUR[opponent] ?? 0) / 3600
-      const priced = powerObjective({ streak: preStats?.winStreak ?? 0, komi, size, eBlack, rate: ratePerS, turnS, lossScale: SETTINGS.power.lossScale })
+      const priced = powerObjective({ streak: preStats?.winStreak ?? 0, komi, size, eBlack, rate: ratePerS, turnS, lossScale: SETTINGS.power.lossScaleBy[opponent] ?? SETTINGS.power.lossScale })
       // Play-on for this opponent (SETTINGS.mirror) brings the objective with it.
       const mirrorMode = SETTINGS.mirror[opponent] ?? SETTINGS.mirror.default
       const objective = useModel && (SETTINGS.power.on || mirrorMode === 'search') ? priced : null
