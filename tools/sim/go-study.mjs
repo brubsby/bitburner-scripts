@@ -60,7 +60,9 @@ for (const size of SIZES) {
         // model | model+p (pondered) | uct | katagoV[gpu][p]: KataGo at V
         // visits a move (maxms ignored), on the GPU host (KATAGO_REMOTE,
         // default bubtop; no CPU fallback inside a GPU arm), pondered.
-        ...(/^model(\+p)?$/.test(solver) ? ["--model"] : []),
+        // model+reuse / model+sponder: golib.modelSession (go-w0 --session).
+        ...(/^model(\+p|\+reuse|\+sponder|\+sdeep)?$/.test(solver) ? ["--model"] : []),
+        ...(solver === "model+reuse" ? ["--session", "reuse"] : solver === "model+sponder" ? ["--session", "ponder"] : solver === "model+sdeep" ? ["--session", "deep"] : []),
         ...(/^(model\+p|katago\d+(gpu)?p)$/.test(solver) ? ["--ponder"] : []),
         ...(/^katago\d+/.test(solver) ? ["--katago", solver.match(/^katago(\d+)/)[1]] : []),
         ...(/^katago\d+gpu/.test(solver) ? ["--katago-remote", process.env.KATAGO_REMOTE ?? "bubtop", "--katago-no-local"] : []),

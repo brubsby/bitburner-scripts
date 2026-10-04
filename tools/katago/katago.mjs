@@ -98,13 +98,18 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
     else if (c === "O") stones.push(["W", COLS[x] + (y + 1)]);
   }
   // Hole components with at least one empty neighbour.
+  // holes: "white" (every cluster a white stone) or "owner" (release 2
+  // experiment): a cluster that touches black stones and no white stone is
+  // sent BLACK — inside our area it is then part of our wall, not a dead white
+  // group to "capture" — and komi rises by its size instead of falling.
   let holeStones = 0;
-  if (holes === "white") {
+  if (holes === "white" || holes === "owner") {
     const seen = new Set();
     for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
       if (board[x][y] !== "#" || seen.has(x * N + y)) continue;
       const comp = [];
       let libs = 0;
+      let nearB = false, nearW = false;
       const stack = [[x, y]];
       seen.add(x * N + y);
       while (stack.length) {
@@ -114,7 +119,9 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
           const u = a + dx, v = b + dy;
           if (u < 0 || v < 0 || u >= N || v >= N) continue;
           const c = board[u][v];
-          if (c === "." ) libs++;
+          if (c === ".") libs++;
+          else if (c === "X") nearB = true;
+          else if (c === "O") nearW = true;
           else if (c === "#" && !seen.has(u * N + v)) {
             seen.add(u * N + v);
             stack.push([u, v]);
@@ -122,8 +129,9 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
         }
       }
       if (libs === 0) continue;
-      for (const [a, b] of comp) stones.push(["W", COLS[a] + (b + 1)]);
-      holeStones += comp.length;
+      const asBlack = holes === "owner" && nearB && !nearW;
+      for (const [a, b] of comp) stones.push([asBlack ? "B" : "W", COLS[a] + (b + 1)]);
+      holeStones += asBlack ? -comp.length : comp.length;
     }
   }
   // NEVER FILL OUR OWN EYE TO "CAPTURE" A HOLE. A hole cluster inside our

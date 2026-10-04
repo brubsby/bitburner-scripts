@@ -158,6 +158,10 @@ export async function run() {
       [solver, /req\.backend === "katago"/, "go-solver.mjs must serve backend 'katago'"],
       [go, /model: modelHealth\(\{ modelAsked, modelAnswered, modelFallbackWhy \}\)/, "go.js must fold modelHealth into its published health"],
       [solver, /req\.backend === "model"/, "go-solver.mjs must serve backend 'model'"],
+      [go, /waited \+= SETTINGS\.replyPollMs\) \{\s*await ns\.sleep\(SETTINGS\.replyPollMs\)/, "go.js must poll the solver's answer at SETTINGS.replyPollMs (the fast pipeline), not a fixed 250ms"],
+      [go, /replyPollMs: 25,/, "SETTINGS.replyPollMs must stay 25ms (release 2: 250ms cost ~0.2s a turn)"],
+      [solver, /Date\.now\(\) - lastReqAt < 60e3 \? FAST_POLL : POLL/, "go-solver.mjs must poll fast while a game is on"],
+      [solver, /MODEL_PONDER = str\("model-ponder", "session"\)/, "go-solver.mjs must default to the session search (release 2)"],
       [solver, /move\.backend = backend/, "go-solver.mjs must say which backend answered"],
       [solver, /move\.fallback = fallback/, "go-solver.mjs must name why a model request fell back"],
     ];
@@ -423,6 +427,65 @@ export async function run() {
     }
   }
   checks.push(c7);
+
+  /* ------------------------------------------------------------------ GM8 */
+  // golib.modelSession (release 2): the subtree under the AI's ACTUAL reply
+  // becomes the next root (with the visits pondered into it), the AI is shown
+  // the right history while we ponder, a position outside the tree is fresh,
+  // and a reused root is re-filtered to the game's valid list.
+  const c8 = new Check("GM8", "modelSession: tree reuse under the AI's reply, ponder history, valid re-filter");
+  {
+    const N = 5;
+    const validAll = (b) => b.map((col) => [...col].map((c) => c === "."));
+    const seen = [];
+    // A deterministic AI: plays the first empty point in column-major order.
+    const ai = {
+      reply: async (board, o) => {
+        seen.push(o.history);
+        for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (board[x][y] === ".") return { x, y };
+        return null;
+      },
+    };
+    const root = [".....", ".....", ".....", ".....", "....."];
+    const s = golib.modelSession(N, 5.5, ai, {});
+    const r0 = s.setRoot(root, validAll(root), { history: [] });
+    await s.search({ maxms: 3 }); // short, so the reply's subtree keeps untried moves
+    const [mv] = s.best();
+    s.commit(mv.x, mv.y);
+    seen.length = 0;
+    await s.ponder(2); // short: the reused root keeps unexpanded (untried) moves
+    const after = root.map((c, x) => (x === mv.x ? c.slice(0, mv.y) + "X" + c.slice(mv.y + 1) : c));
+    c8.examined(2);
+    if (r0?.reused !== false) c8.fail("the first root must be fresh", JSON.stringify(r0));
+    // Every model call while pondering sees the board before OUR move as the
+    // oldest entry (it moved from the root into the session's history).
+    if (!seen.length || seen.some((h) => h.at(-1) !== root.join(""))) c8.fail("while pondering, the AI's history must end with the board before OUR move", JSON.stringify(seen.find((h) => h.at(-1) !== root.join(""))));
+    // The AI's actual reply = what ai.reply gives on `after`.
+    const rep = await ai.reply(after, { history: [] });
+    const next = after.map((c, x) => (x === rep.x ? c.slice(0, rep.y) + "O" + c.slice(rep.y + 1) : c));
+    const valid = validAll(next);
+    // Forbid one point (as the game's superko would): it must vanish from the root.
+    let banned = null;
+    for (let x = 0; x < N && !banned; x++) for (let y = 0; y < N; y++) if (valid[x][y]) { banned = [x, y]; break; }
+    valid[banned[0]][banned[1]] = false;
+    // ...and every other point in the last column, searched or not.
+    for (let y = 0; y < N; y++) valid[N - 1][y] = false;
+    const r1 = s.setRoot(next, valid, { history: [after.join(""), root.join("")] });
+    c8.examined(2);
+    if (!r1?.reused || !(r1.visits > 0)) c8.fail("the position after the AI's pondered reply must reuse its subtree, with visits", JSON.stringify(r1));
+    c8.examined(1)
+    if (s.rootMoves.some(([x, y]) => !valid[x][y])) c8.fail("a reused root must drop every point the game's valid list forbids (searched or not)", JSON.stringify(s.rootMoves))
+    await s.search({ maxms: 40 });
+    const b1 = s.best();
+    if (b1?.[0] && b1[0].x === banned[0] && b1[0].y === banned[1]) c8.fail("a reused root must not offer a point the game's valid list forbids");
+    // A position not in the tree is searched fresh.
+    s.commit(b1[0].x, b1[0].y);
+    const other = ["O....", ".....", ".....", ".....", "....X"];
+    const r2 = s.setRoot(other, validAll(other), { history: [] });
+    c8.examined(1);
+    if (r2?.reused !== false || r2.visits !== 0) c8.fail("a position outside the ponder tree must be fresh", JSON.stringify(r2));
+  }
+  checks.push(c8);
 
   return checks;
 }

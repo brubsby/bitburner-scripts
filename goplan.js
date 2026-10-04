@@ -72,18 +72,45 @@
 // EVERY small board and never beats the 5x5 rate on 7x7/9x9/13x13 (the AI's
 // own reply time per turn is the floor, and 5x5 earns the most area per
 // turn): tools/katago/README.md has the full opponent x board table.
+//
+// SESSION SEARCH (2026-10-04, release 2, the table below): go-solver keeps
+// ONE model search tree across moves (golib.modelSession) — the subtree under
+// the AI's actual reply becomes the next root, the search continues under our
+// move for the AI's whole reply time (the chance node weights it by the AI's
+// reply distribution), and a root already holding a budget's worth of work
+// answers at once (58% of moves; 82% of roots reused). Paired against the
+// pondered arms above, 30 games each: black +0.4..+1.1 per game on every
+// opponent, wins unchanged within noise:
+//   Daedalus 15436 (100%), Illuminati 73318 (97%), TheBlackHand 10706 (100%,
+//   -4%: slower games, noise), SlumSnakes 13328 (100%), Netburners 7636
+//   (100%), Tetrads 11665 (93%).
+// THE TABLE BELOW IS RE-TIMED (go-study-report ROUND_TRIP_MS 275ms per move,
+// was 550): calibrated on 53 live Tetrads games, 16.4 s/game live vs 19.4 in
+// the harness. Every opponent's rate rises ~20% together; the ranking is
+// unchanged. Session arms re-timed: Daedalus 18806, Illuminati 87865,
+// TheBlackHand 12927, SlumSnakes 16243, Netburners 9820, Tetrads 13937.
+// THE FAST PIPELINE (release 2): go.js reads the answer every 25ms (was
+// 250) and idles 10ms (was 100); go-solver polls every 25ms during a game
+// (was 150). Observed live before it, over the RFA bridge: request -> answer
+// 196ms, read at 250, idle 100 — ~0.35s of a ~1.55s turn. Priced at 85ms a
+// turn (go-w0 ROUND_TRIP_MS), the table below is the session arms at the
+// fast pipeline. NOT YET CHECKED LIVE: go.js publishes turnTiming and
+// go-study-report's s/stone CHECK tests it once 30 games have run.
+// Measured and NOT shipped: tree reuse without pondering (Illuminati 58053),
+// reuse + ponder spending the full budget anyway ("deep", Illuminati 52663,
+// Tetrads 10945, Slum Snakes 11705: depth bought no wins, only time).
 // (The previous table, 60 games/arm with go-boardsize.mjs, was ~2x lower
 // across the board: that harness never mirror-passed and dealt ONE offline-
 // node layout for every game — tools/sim/go-board.mjs.)
 
-/** Measured node power per hour at 5x5, model backend pondered, go.js's per-opponent budget. */
+/** Node power per hour at 5x5, model session search, fast pipeline (release 2; go-study-report at 85ms/turn), go.js's per-opponent budget. */
 export const POWER_PER_HOUR = {
-  Daedalus: 13643,
-  Illuminati: 67897,
-  TheBlackHand: 11122,
-  SlumSnakes: 11824,
-  Netburners: 6569,
-  Tetrads: 11550,
+  Daedalus: 22138,
+  Illuminati: 101929,
+  TheBlackHand: 15083,
+  SlumSnakes: 19137,
+  Netburners: 12230,
+  Tetrads: 16032,
 }
 
 /**
@@ -126,18 +153,18 @@ export function keyOfGame(name) {
 
 /**
  * Measured win rate per opponent: every model arm at go.js's budget pooled
- * (2026-10-03 tune, 2026-10-04 control and pondered: 60-130 games each,
+ * (2026-10-03 tune, 2026-10-04 control, pondered and session: 90-130 games each,
  * 5x5; tools/sim/go-study-report.mjs).
  * Used ONLY to price the win-streak state an opponent resumes from — the
  * steady-state effect of the win rate is already inside POWER_PER_HOUR.
  */
 export const WIN_RATE = {
-  Daedalus: 0.989,
+  Daedalus: 0.992,
   Illuminati: 0.977,
   TheBlackHand: 1,
-  SlumSnakes: 0.978,
-  Netburners: 0.983,
-  Tetrads: 0.967,
+  SlumSnakes: 0.983,
+  Netburners: 0.989,
+  Tetrads: 0.956,
 }
 
 /**

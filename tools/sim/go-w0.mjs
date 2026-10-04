@@ -40,6 +40,9 @@ try {
 import "./env.mjs";
 
 const realSetTimeout = globalThis.setTimeout;
+// Per-move overhead outside both searches (see liveS below). Exported in the
+// start record as rtMs so the report can re-time records made at another value.
+const ROUND_TRIP_MS = 85;
 let cycles = 0;
 let rows = 0;
 globalThis.setTimeout = function (fn, ms, ...rest) {
@@ -98,6 +101,17 @@ if (argv.includes("--model")) {
   MODEL = { reply: (b, o) => m.reply(b, { ...o, opponent: OPP }) };
   MODELRAW = m;
 }
+// --session reuse|ponder (with --model): golib.modelSession — ONE tree kept
+// across moves. reuse: the subtree under the AI's actual reply becomes the
+// next root, and a root already holding the budget's worth of visits
+// (measured iterations per ms of fresh searches) answers at once. ponder: the
+// same, plus the search continues under the AI's reply for its whole LIVE
+// reply time (waitCycles x 200ms + pattern rows x 10ms) — probability-
+// weighted over its replies by the chance node. As go-solver does live.
+// deep: ponder as above, but a reused root still searches the FULL budget —
+// the time ponder saves spent on depth instead (release 2 item 4).
+const SESSION = str("session", null);
+let sessRate = null; // work (model-calling iterations) per ms of a fresh full-budget search
 
 // --katago V: moves from KataGo (tools/katago/service.mjs — the service
 // go-solver runs, V visits a move) instead of golib. Think time is measured.
@@ -122,7 +136,7 @@ if (argv.includes("--katago")) {
   if (argv.includes("--kcal")) throw new Error("--kcal was measured worse and is not wired to the service (katago.mjs startKataGo still has it)");
   const svc = await import("../katago/service.mjs");
   KVISITS = Number(str("katago", 200));
-  KATAGO = new svc.KataGoService({ remote: str("katago-remote", null), local: !argv.includes("--katago-no-local"), remoteOverride: str("katago-override", ""), remoteNet: str("katago-remote-net", null), settings: JSON.parse(str("katago-settings", "null")), queryOpts: argv.includes("--katago-old-pass") ? { allowUnsettledPass: true } : {}, log: (m) => process.stderr.write(m + "\n") });
+  KATAGO = new svc.KataGoService({ remote: str("katago-remote", null), local: !argv.includes("--katago-no-local"), remoteOverride: str("katago-override", ""), remoteNet: str("katago-remote-net", null), settings: JSON.parse(str("katago-settings", "null")), queryOpts: { ...(argv.includes("--katago-old-pass") ? { allowUnsettledPass: true } : {}), ...(str("katago-holes", null) ? { holes: str("katago-holes", null) } : {}) }, log: (m) => process.stderr.write(m + "\n") });
   // Warm before game 0: live, the engine is kept warm across games.
   if (!(await KATAGO.engineFor(SIZE))) throw new Error("--katago: no KataGo engine could start (tools/katago/install.sh, tools/katago/gpu)");
   if (PONDER) {
@@ -202,6 +216,8 @@ async function playGame(stats, gameIndex) {
   let mPonder = null;
   let ponderCarry = 0;
   const mStats = { hit: 0, miss: 0, none: 0, carryMs: 0 };
+  const sess = MODEL && SESSION ? golib.modelSession(N, komi, MODEL, OPTS) : null;
+  const sStats = { reused: 0, fresh: 0, early: 0, ponderIters: 0, rootVisits: 0 };
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
   const note = (who, mv) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board) });
   const solve = async () => {
@@ -237,6 +253,21 @@ async function playGame(stats, gameIndex) {
           kWhere[r.where.startsWith("gpu") ? "gpu" : "cpu"]++;
           kPonder[r.pondered || "none"]++;
           return r.pass ? [] : [{ x: r.x, y: r.y, iters: r.visits }];
+        })()
+      : sess
+      ? await (async () => {
+          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed });
+          if (!r) return null;
+          const budget = budgetFor(ourTurns);
+          const target = sessRate ? Math.round(sessRate * budget) : Infinity;
+          sStats[r.reused ? "reused" : "fresh"]++;
+          sStats.rootVisits += r.visits;
+          sStats.rootWork = (sStats.rootWork ?? 0) + r.work;
+          // The early stop counts WORK (model calls), not visits: see golib iterate.
+          const its = await sess.search({ maxms: budget, untilWork: r.reused && SESSION !== "deep" ? target : Infinity });
+          if (!r.reused) sessRate = sessRate ? 0.8 * sessRate + 0.2 * (sess.rootWork / budget) : sess.rootWork / budget;
+          else if (its <= 1) sStats.early++;
+          return sess.best();
         })()
       : MODEL
       ? await golib.chooseMoveModel(simple, valid, N, komi, budgetFor(ourTurns), { ...opts, history: state.previousBoards.slice() }, MODEL)
@@ -293,7 +324,11 @@ async function playGame(stats, gameIndex) {
       g.passTurn(state, GoColor.black, false);
       ourPasses++;
       note("B", "pass");
-    } else note("B", [ranked[0].x, ranked[0].y]);
+      if (sess) sess.commit(null);
+    } else {
+      note("B", [ranked[0].x, ranked[0].y]);
+      if (sess) sess.commit(ranked[0].x, ranked[0].y);
+    }
     if (state.passCount >= 2) break;
 
     // PONDER while the AI "thinks" (see --ponder above).
@@ -320,6 +355,10 @@ async function playGame(stats, gameIndex) {
     const t1 = performance.now();
     const reply = await g.getMove(state, GoColor.white, OPP, true, rngSeed());
     oppMs += performance.now() - t1;
+    if (sess && (SESSION === "ponder" || SESSION === "deep") && sess.pondering) {
+      const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
+      sStats.ponderIters += await sess.ponder(liveMs);
+    }
     if (ponderT0 !== null) {
       const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
       if (KATAGO) {
@@ -367,6 +406,7 @@ async function playGame(stats, gameIndex) {
     itersPerMove: Math.round(iters / ourTurns),
     ...(MODEL ? { modelCallsPerMove: Math.round(modelCalls / ourTurns) } : {}),
     ...(KATAGO ? { kWhere, ...(PONDER ? { kPonder } : {}) } : {}),
+    ...(sess ? { session: sStats } : {}),
     ...(MODEL && PONDER ? { mPonder: { ...mStats, carryMs: Math.round(mStats.carryMs) } } : {}),
     oppTurns,
     oppMs: Math.round(oppMs),
@@ -380,7 +420,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
@@ -409,7 +449,18 @@ for (let i = START; i < GAMES; i++) {
   // 10ms per pattern row, plus go.js's own idle (100ms) per move.
   // Our think time as MEASURED (ourMsTotal: budgets vary with --opening, and a
   // search returns early when only a pass is legal), plus the round trip.
-  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + r.ourTurns * (450 + 100) + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
+  // ROUND_TRIP_MS: go.js writes the request, the solver (polling 150ms) reads
+  // it, go.js (polling 250ms) reads the answer and plays, plus go.js's idle.
+  // Was 450 + 100 = 550ms; CALIBRATED 2026-10-04 against 53 live Tetrads 5x5
+  // games (go.txt: 16.4 s/game, harness 19.4 at 550ms, 11.0 turns a game ->
+  // 275ms). Then the fast pipeline (release 2: go.js reads every 25ms, idle
+  // 10ms; go-solver polls every 25ms in a game). Observed live over the RFA
+  // bridge before it (40 turns): request -> answer 196ms (pickup ~76 + search),
+  // read at go.js's 250ms poll (+54), idle 100. The cut saves ~190ms a turn
+  // -> 85ms. NOT YET CHECKED LIVE: go.js now publishes turnTiming, and the
+  // report's s/game CHECK re-tests this on every run.
+  // go-study-report re-times older records to this constant.
+  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + r.ourTurns * ROUND_TRIP_MS + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
   emit({ kind: "game", i, ...r, won, streak, power: +power.toFixed(1), liveS: Math.round(liveS), simS: Math.round((Date.now() - w0) / 1000) });
 }
 emit({ kind: "end", ...stats });

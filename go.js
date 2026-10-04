@@ -259,7 +259,17 @@ const SETTINGS = {
   opponent: 'Daedalus',
   size: 5,
   maxms: 20,      // local fallback only; the external solver does the real search
-  idle: 100,      // pause between moves; with maxms this sets the duty cycle
+  // idle: pause between moves. 100ms until 2026-10-04; with the external
+  // solver this process does no search, so the pause bought nothing but wall
+  // clock (live: 100 of the ~1545ms a 5x5 turn took). The throttle detector
+  // (throttleHealth) needs >= 5s regardless, so it is unaffected.
+  idle: 10,
+  // replyPollMs: how often the solver's answer (/go/move.txt, ns.read: 0GB)
+  // is checked. 250ms until 2026-10-04: every answer, even an instant
+  // pondered one, then waited for the first 250ms poll (live, observed over
+  // the RFA bridge: request -> answer 196ms, read at 250). Paired with
+  // go-solver's 25ms request poll while a game is on.
+  replyPollMs: 25,
   topK: 8,
   statusFile: '/tel/go.txt',
   // THE CHEAT POLICY, when the API is open (see the header): playTwoMoves,
@@ -909,6 +919,10 @@ export async function main(ns) {
   let katagoAvail = null
   const katagoWhere = { gpu: 0, cpu: 0 }
   let ponderHits = 0
+  const timing = { moves: 0, ask: 0, play: 0, loop: 0 }
+  // How the solver's model search ran ('session': tree reuse + continuous
+  // ponder, release 2), from its replies; the study report matches on it.
+  let solverMode = null
   // Times we ended a game by mirroring the opponent's pass while ahead, and
   // times we saw their pass but were behind so had to keep playing. Both are
   // reported: a mirrorPasses that stays 0 across many games means the rule is
@@ -985,6 +999,12 @@ export async function main(ns) {
     modelFallbackWhy,
     katago: { available: katagoAvail, where: katagoWhere, backend: SETTINGS.bigBoard.backend },
     ponderHits,
+    // Where a turn's wall clock goes (mean ms per move this process): ask =
+    // request written -> answer read (solver pickup + search + our poll),
+    // play = makeMove's await (the AI's reply, its timer hops), loop = the
+    // whole move iteration. The per-turn breakdown tools/sim calibrates to.
+    turnTiming: timing.moves ? { moves: timing.moves, askMs: Math.round(timing.ask / timing.moves), playMs: Math.round(timing.play / timing.moves), loopMs: Math.round(timing.loop / timing.moves) } : null,
+    solverMode,
     mirrorPasses,
     passedBehind,
     gamesThisProcess,
@@ -1151,8 +1171,8 @@ export async function main(ns) {
         // the question and plays every move on the 20ms fallback (C10).
         ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }), 'w')
         if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
-        for (let waited = 0; waited < remoteWait; waited += 250) {
-          await ns.sleep(250)
+        for (let waited = 0; waited < remoteWait; waited += SETTINGS.replyPollMs) {
+          await ns.sleep(SETTINGS.replyPollMs)
           try {
             const reply = JSON.parse(readHome('/go/move.txt') || '{}')
             if (reply.seq === seq) {
@@ -1165,6 +1185,7 @@ export async function main(ns) {
               }
               if (reply.backend === 'katago') katagoWhere[String(reply.where ?? '').startsWith('gpu') ? 'gpu' : 'cpu']++
               if (reply.pondered === 'hit') ponderHits++
+              if (reply.mode) solverMode = reply.mode
               return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
             }
           } catch {
@@ -1242,6 +1263,7 @@ export async function main(ns) {
       }
 
       while (!done && guard++ < 4000) {
+        const loop0 = Date.now()
         const boardStrings = ns.go.getBoardState()
         const valid = ns.go.analysis.getValidMoves()
         // A played cheat's two stones must be on the board the AI handed back.
@@ -1267,7 +1289,9 @@ export async function main(ns) {
         // bot degrades instead of stopping.
         const validList = []
         for (let x = 0; x < size; x++) for (let y = 0; y < size; y++) if (valid[x]?.[y]) validList.push([x, y])
+        const ask0 = Date.now()
         let ranked = await askSolver(boardStrings, validList)
+        const askMs = Date.now() - ask0
         if (ranked !== null) remoteMoves++
         else {
           ranked = chooseMove(boardStrings, valid, size, komi, flags.maxms, flags.topk)
@@ -1286,6 +1310,7 @@ export async function main(ns) {
           }
         }
 
+        const play0 = Date.now()
         const played = await watched(
           !ranked || !ranked.length ? ns.go.passTurn() : ns.go.makeMove(ranked[0].x, ranked[0].y),
         )
@@ -1294,6 +1319,7 @@ export async function main(ns) {
           break
         }
         const res = played.value
+        const playMs = Date.now() - play0
         if (ranked && ranked.length) moves++
 
         if (!res || res.type === 'gameOver') done = true
@@ -1359,6 +1385,10 @@ export async function main(ns) {
         await ns.sleep(flags.idle)
         lastSleepMs = Date.now() - slept0
         throttle = throttleHealth(lastSleepMs, flags.idle)
+        timing.moves++
+        timing.ask += askMs
+        timing.play += playMs
+        timing.loop += Date.now() - loop0
         heartbeat()
       }
 

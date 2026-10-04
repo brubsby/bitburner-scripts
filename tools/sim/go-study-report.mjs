@@ -38,6 +38,11 @@ import { checkWithin, uncheckable, report as calibrationReport, TELEMETRY } from
 const args = process.argv.slice(2);
 const flag = (n, d) => (args.includes(`--${n}`) ? Number(args[args.indexOf(`--${n}`) + 1]) : d);
 const BOOT = flag("bootstrap", 200000);
+// The per-move round trip outside both searches, calibrated against the live
+// game (go-w0.mjs ROUND_TRIP_MS; the CHECK block re-tests it every run).
+// --rt-ms N prices the same games under another pipeline (275: the release-1
+// pipeline, 250ms/150ms polls and 100ms idle; 85: release 2's fast polls).
+const ROUND_TRIP_MS = flag("rt-ms", 85);
 // --telemetry DIR: where go.txt lives (a worktree has no .telemetry of its own).
 const TEL_DIR = args.includes("--telemetry") ? args[args.indexOf("--telemetry") + 1] : TELEMETRY;
 const FILES = args.filter((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1].startsWith("--") && args[i - 1] !== "--json"));
@@ -81,9 +86,9 @@ for (const f of FILES) {
     if (o.kind === "start") start = o;
     if (o.kind !== "game" || !start) continue;
     const opts = start.opts && Object.keys(start.opts).length ? JSON.stringify(start.opts) : "";
-    const solver = (start.katago ? `katago${start.katago}v` : start.model ? "model" : "uct") + (start.ponder && !start.katago ? "+ponder" : "") + (start.katagoSettings ? ` ${JSON.stringify(start.katagoSettings)}` : "") + (start.katagoOldPass ? " oldpass" : "") + (start.katagoRemoteNet ? ` net=${start.katagoRemoteNet.slice(0, 13)}` : "") + (start.katagoOverride ? ` ${start.katagoOverride}` : "") + (start.cheat ? "+cheat" : "") + (start.opening ? ` open${start.opening.k}:${start.opening.ms}` : "") + (opts ? " " + opts : "");
+    const solver = (start.katago ? `katago${start.katago}v` : start.model ? "model" : "uct") + (start.ponder && !start.katago ? "+ponder" : "") + (start.session ? `+session:${start.session}` : "") + (start.katagoSettings ? ` ${JSON.stringify(start.katagoSettings)}` : "") + (start.katagoOldPass ? " oldpass" : "") + (start.katagoHoles ? ` holes=${start.katagoHoles}` : "") + (start.katagoRemoteNet ? ` net=${start.katagoRemoteNet.slice(0, 13)}` : "") + (start.katagoOverride ? ` ${start.katagoOverride}` : "") + (start.cheat ? "+cheat" : "") + (start.opening ? ` open${start.opening.k}:${start.opening.ms}` : "") + (opts ? " " + opts : "");
     const key = `${start.opponent}|${o.size}|${start.maxms}|${solver}`;
-    if (!arms.has(key)) arms.set(key, { opponent: start.opponent, size: o.size, maxms: start.maxms, solver, games: [] });
+    if (!arms.has(key)) arms.set(key, { opponent: start.opponent, size: o.size, maxms: start.maxms, solver, rtMs: start.rtMs ?? 550, games: [] });
     arms.get(key).games.push(o);
   }
 }
@@ -97,7 +102,9 @@ for (const arm of arms.values()) {
   const pairs = gs.map((g) => ({ won: !!g.won, black: g.black }));
   const boot = Array.from({ length: BOOT }, () => pairs[(rnd() * n) | 0]);
   const st = replay(boot, diff);
-  const secs = gs.map((g) => g.liveS + (g.oppMs ?? 0) / 1000 + 0.1);
+  // Re-timed to the calibrated per-move round trip (go-w0 ROUND_TRIP_MS): a
+  // record made at another value (550ms before 2026-10-04) is shifted per turn.
+  const secs = gs.map((g) => g.liveS + (g.ourTurns * (ROUND_TRIP_MS - (arm.rtMs ?? 550))) / 1000 + (g.oppMs ?? 0) / 1000 + 0.1);
   const secPerGame = secs.reduce((a, b) => a + b, 0) / n;
   const wins = pairs.filter((p) => p.won).length;
   const p = wins / n;
@@ -127,6 +134,11 @@ rows.sort((a, b) => a.opponent.localeCompare(b.opponent) || a.size - b.size || a
 for (const r of rows) {
   const arm = [...arms.values()].find((a) => a.opponent === r.opponent && a.size === r.size && a.solver === r.solver && a.maxms === r.maxms);
   r.ourTurns = +(arm.games.reduce((t, g) => t + g.ourTurns, 0) / arm.games.length).toFixed(1);
+  // go.js counts STONES (moves++ only after a stone, go.js main loop); our
+  // turns include passes. The live check compares like with like.
+  r.ourStones = +(arm.games.reduce((t, g) => t + g.ourTurns - (g.ourPasses ?? 0), 0) / arm.games.length).toFixed(2);
+  const sd = Math.sqrt(arm.games.reduce((t, g) => t + (g.ourTurns - (g.ourPasses ?? 0) - r.ourStones) ** 2, 0) / Math.max(1, arm.games.length - 1));
+  r.stonesSd = +sd.toFixed(2);
 }
 
 function liveCheck() {
@@ -149,7 +161,10 @@ function liveCheck() {
   const liveSolver = (live.modelAnswered ?? 0) > 0 && (live.modelAnswered ?? 0) >= 0.5 * (live.modelAsked ?? 0) ? "model" : "uct";
   const OPP = { TheBlackHand: "The Black Hand", SlumSnakes: "Slum Snakes" };
   const liveOpp = OPP[live.opponent] ?? live.opponent;
-  const arm = rows.find((r) => r.opponent === liveOpp && r.size === live.boardSize && r.solver === liveSolver);
+  // The live solver's variant: go.txt `solverMode` when go-solver reports it
+  // (release 2), else pondering inferred from ponderHits. Longest match first.
+  const variants = liveSolver === "model" ? [live.solverMode === "session" ? "model+session:ponder" : null, (live.ponderHits ?? 0) > 0 ? "model+ponder" : null, "model"].filter(Boolean) : [liveSolver];
+  const arm = variants.map((v) => rows.find((r) => r.opponent === liveOpp && r.size === live.boardSize && r.solver === v)).find(Boolean);
   if (!arm) {
     uncheckable("go-study", `live is ${liveOpp} ${live.boardSize}x${live.boardSize} on ${liveSolver}; no measured arm matches`);
     calibrationReport("go-study calibration");
@@ -160,8 +175,28 @@ function liveCheck() {
   if (decided < 20) uncheckable("go-study win rate", `live record ${live.wins ?? 0}W/${live.losses ?? 0}L — under 20 decided games`);
   else checkWithin("go-study win rate", arm.winRate, live.wins / decided, 0.15, (x) => `${(100 * x).toFixed(1)}%`);
   const g = live.gamesThisProcess ?? 0;
-  if (g < 5 || !(live.moves > 0)) uncheckable("go-study turns/game", `only ${g} live games this go.js session`);
-  else checkWithin("go-study turns/game", arm.ourTurns, live.moves / g, 0.1, (x) => x.toFixed(1));
+  // Stones per game, harness vs live. The live mean over g games has a
+  // standard error of ~sd/sqrt(g) (sd ~3 stones on 5x5): with 15 games that
+  // alone is ~7% of the mean, so fewer than 30 live games cannot test a 10%
+  // tolerance and the check says so rather than failing on noise (2026-10-04:
+  // 12.2 live over 15 games vs 10.8, 1.7 standard errors; it had been 10.5).
+  // Seconds per STONE (our move): the live process's wall clock over its
+  // stones (go.txt processStartedAt .. at, moves). Per game drifts with how
+  // long the opponent's games run (live 16.4 s/game over one 53-game window,
+  // 12.9 over the next 70: shorter games, the same ~1.5s per turn), so the
+  // turn is what is checked; games per hour then follow from stones/game.
+  const liveSec = (Date.parse(live.at) - (typeof live.processStartedAt === "number" ? live.processStartedAt : Date.parse(live.processStartedAt))) / 1000 / live.moves;
+  if (g < 30 || !(liveSec > 0)) uncheckable("go-study s/stone", `only ${g} live games this go.js session (need 30)`);
+  else {
+    // A go.js without turnTiming runs the release-1 pipeline (250ms reply
+    // poll, 100ms idle): price the arm at that pipeline's 275ms for the check.
+    const rt = live.turnTiming ? ROUND_TRIP_MS : 275;
+    const sec = (arm.secPerGame + (arm.ourTurns * (rt - ROUND_TRIP_MS)) / 1000) / arm.ourStones;
+    checkWithin(`go-study s/stone (pipeline ${rt}ms/turn)`, sec, liveSec, 0.1, (x) => x.toFixed(2));
+    if (live.turnTiming) console.log(`  live turn: ask ${live.turnTiming.askMs}ms, AI ${live.turnTiming.playMs}ms, whole move ${live.turnTiming.loopMs}ms over ${live.turnTiming.moves} moves`);
+  }
+  if (g < 30 || !(live.moves > 0)) uncheckable("go-study stones/game", `only ${g} live games this go.js session (need 30: the live mean's standard error is ~${(100 * arm.stonesSd / Math.sqrt(Math.max(g, 1)) / arm.ourStones).toFixed(0)}% at ${g})`);
+  else checkWithin("go-study stones/game", arm.ourStones, live.moves / g, 0.1, (x) => x.toFixed(1));
   uncheckable("go-study other arms", "every other row is the same harness on a configuration the live game is not playing — an extrapolation of the arm checked above");
   calibrationReport("go-study calibration");
 }

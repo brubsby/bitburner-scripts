@@ -94,6 +94,30 @@ AI's own reply time (~0.85s a turn plus the ~0.55s round trip) is a floor
 per turn, and 5x5 earns the most area per turn, so no board beats the 5x5
 rate. 13x13 Daedalus/Tetrads (n=3) come closest (-16%, -8%); not enabled.
 
+## Release 2 (2026-10-04): hole colouring, and bigger boards after the latency cut
+
+**Holes by owner** (`toQuery({ holes: "owner" })`, go-w0 `--katago-holes owner`):
+a hole cluster touching black stones and no white stone is sent BLACK (komi
+up by its size). 19x19 GPU 800 visits, the same 6 deals: black 118 vs 102 a
+game, but 0/6 won vs 2/6 — 1736 vs 4112 power/h (wins break the dry streak,
+worth up to 5x). NOT shipped; `holes: "white"` stays the default.
+
+**Board size with the fast pipeline** (go.js 25ms reply poll, 10ms idle,
+go-solver 25ms poll; go-study-report at 85ms a turn). Best per board, power/h:
+
+| opponent | 5x5 model session | 7x7 best | 9x9 best | 13x13 KataGo GPU (n=2-3) |
+| --- | --- | --- | --- | --- |
+| Illuminati | 101929 | model 4421 | KataGo 4671 | - |
+| Daedalus | 22138 | KataGo 12860 | uct 11038 | 15875 |
+| Tetrads | 16032 | uct 12403 | KataGo 13305 | 14372 |
+| Slum Snakes | 19137 | uct 10861 | KataGo 9635 | - |
+| The Black Hand | 15083 | model 7468 | KataGo 12187 | - |
+| Netburners | 12230 | KataGo 6646 | KataGo 7908 | - |
+
+Cutting the per-turn overhead helps every board, and 5x5 most (it has the
+most turns per point of area): the AI's own reply (~1s a turn live, its timer
+hops) is the floor, and no bigger board beats 5x5 for any opponent.
+
 ## The service (tools/katago/service.mjs) and the GPU (tools/katago/gpu)
 
 go-solver keeps ONE warm engine (GPU on bubtop over a persistent ssh session,

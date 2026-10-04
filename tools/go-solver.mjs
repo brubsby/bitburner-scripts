@@ -55,7 +55,9 @@
 // answered by uct with `backend: "uct", fallback: <why>` in the reply, which
 // go.js counts — degraded, never silent.
 //
-// PONDERING (off with --no-ponder). After answering, the solver predicts the
+// PONDERING (off with --no-ponder). The model's default (--model-ponder
+// session, release 2) keeps ONE search tree across moves — see MODEL_PONDER.
+// The release-1 scheme (--model-ponder reply), and KataGo's: after answering, the solver predicts the
 // AI's reply from the model (the AI's own code, sampled) and works on OUR
 // answer to it while the AI's reply crawls through its timer hops in the game:
 //   katago: the answers to the likely replies, on the engine (service.ponder);
@@ -66,7 +68,7 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession } from "../golib.js";
 import { loadModel } from "./goai/model.mjs";
 
 const argv = process.argv.slice(2);
@@ -87,6 +89,23 @@ const REMOTE_RAW = str("katago-remote", process.env.KATAGO_REMOTE ?? "bubtop");
 const REMOTE = REMOTE_RAW && REMOTE_RAW !== "none" ? REMOTE_RAW : null;
 const IDLE_MS = flag("katago-idle-min", 30) * 60e3;
 const PONDER = !argv.includes("--no-ponder");
+// How the MODEL ponders (release 2, tools/sim/go-w0.mjs --session):
+//   session  one search tree kept across moves (golib.modelSession): the
+//            subtree under the AI's actual reply is the next root, the search
+//            continues under our move for the AI's whole reply time (weighted
+//            over its replies by the chance node), and a root that already
+//            holds the budget's worth of visits answers at once.
+//   reply    release 1: search the single most likely reply for one budget.
+const MODEL_PONDER = str("model-ponder", "session");
+// A ponder never runs longer than this without a request (go.js gone quiet).
+const PONDER_CAP_MS = flag("ponder-cap-ms", 15000);
+// While a game is on (a request in the last minute) the request file is polled
+// every FAST_POLL ms — between ponder slices of the same length — instead of
+// --poll. Live before 2026-10-04 (150ms poll, go.js reading every 250ms) a
+// pondered, instant answer still took ~200ms to be picked up and ~250ms to be
+// read: a third of a 5x5 turn. One getFile over the RFA bridge costs ~4ms.
+const FAST_POLL = flag("fast-poll", 25);
+let lastReqAt = 0;
 
 // Lowest scheduling priority: only ever runs on CPU the rest of the machine
 // is not using. This is the entire heat budget enforcement.
@@ -204,11 +223,19 @@ async function runModel(req, board, validList, maxms, opts, history, opponentPas
 // The model's ponder: { key, ranked } for the most likely next position.
 let modelPonder = null;
 const ponderStats = { modelHit: 0, modelMiss: 0 };
+// The session (MODEL_PONDER 'session'): one per opponent x board x komi;
+// sessRate = work (model-calling iterations) per ms of a fresh full-budget
+// search: what a reused root must already hold to answer at once.
+let sess = null;
+let sessKey = null;
+let sessRate = null;
 
 await publishKatagoStatus(true);
 let lastStatusTick = Date.now();
 
+let skipSleep = false;
 while (true) {
+  skipSleep = false;
   try {
     if (Date.now() - lastStatusTick > 60e3) {
       lastStatusTick = Date.now();
@@ -219,6 +246,7 @@ while (true) {
       const req = JSON.parse(r.result);
       if (req.seq !== lastSeq && Array.isArray(req.board)) {
         lastSeq = req.seq;
+        lastReqAt = Date.now();
         const N = req.size;
 
         // A request may carry its own budget and search options (go.js sends
@@ -239,6 +267,38 @@ while (true) {
         const tryModel = async () => {
           if (!model) return modelWhy;
           if (!req.opponent) return "request carries no opponent";
+          if (MODEL_PONDER === "session") {
+            try {
+              const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
+              if (!sess || sessKey !== key) {
+                const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
+                sess = modelSession(N, req.komi ?? 5.5, { reply }, opts);
+                sessKey = key;
+              }
+              const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed });
+              backend = "model";
+              extra.mode = "session";
+              if (!r) {
+                ranked = null; // PASS is all there is
+                return null;
+              }
+              const target = sessRate ? Math.round(sessRate * maxms) : Infinity;
+              // Early stop on WORK (model-calling iterations), never visits:
+              // pass-pass terminal lines inflate visits for free (golib iterate).
+              const its = await sess.search({ maxms, untilWork: r.reused ? target : Infinity });
+              if (!r.reused) sessRate = sessRate ? 0.8 * sessRate + 0.2 * (sess.rootWork / maxms) : sess.rootWork / maxms;
+              ranked = sess.best();
+              extra.rootWork = r.work;
+              if (r.reused) {
+                extra.pondered = its <= 1 ? "hit" : "partial";
+                ponderStats.modelHit += its <= 1 ? 1 : 0;
+              } else ponderStats.modelMiss++;
+              return null;
+            } catch (err) {
+              sess = null;
+              return `model session threw: ${String(err).slice(0, 160)}`;
+            }
+          }
           // A pondered answer for exactly this position (see PONDERING).
           const key = req.board.join("/");
           const p = modelPonder;
@@ -310,7 +370,29 @@ while (true) {
         // predict (8% hits, 6% partial over 4 games, go-w0 --ponder) and each
         // ponder is a full GPU search — it roughly doubled KataGo's share of
         // the card the cipher jobs run on, for nothing.
-        const ponderThis = backend === "model" || (backend === "katago" && N < 13);
+        // The session ponders itself: commit our move, then search under it
+        // in slices until the next request arrives (or PONDER_CAP_MS).
+        if (backend === "model" && extra.mode === "session" && sess) {
+          sess.commit(move.pass ? null : move.x, move.pass ? null : move.y);
+          if (PONDER && sess.pondering) {
+            const until = Date.now() + PONDER_CAP_MS;
+            while (Date.now() < until) {
+              await sess.ponder(FAST_POLL);
+              const r2 = await rpc("getFile", { filename: "/go/req.txt", server: "home" });
+              let next = null;
+              try {
+                next = r2.result ? JSON.parse(r2.result).seq : null;
+              } catch {
+                /* half-written: poll again */
+              }
+              if (next !== null && next !== lastSeq) {
+                skipSleep = true;
+                break;
+              }
+            }
+          }
+        }
+        const ponderThis = (backend === "model" && extra.mode !== "session") || (backend === "katago" && N < 13);
         if (PONDER && model && req.opponent && !move.pass && ponderThis) {
           try {
             kgMod = kgMod ?? (await import("./katago/service.mjs"));
@@ -338,5 +420,5 @@ while (true) {
     console.error(`go-solver: ${String(err).slice(0, 120)}`);
     await new Promise((r) => setTimeout(r, 3000));
   }
-  await new Promise((r) => setTimeout(r, POLL));
+  if (!skipSleep) await new Promise((r) => setTimeout(r, Date.now() - lastReqAt < 60e3 ? FAST_POLL : POLL));
 }

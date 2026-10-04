@@ -919,15 +919,47 @@ export function modelRootPasses({ passMean, passVisits, stoneMean, stoneVisits }
  * null when black has no legal stone and passing is all there is.
  */
 export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts = {}, model) {
+  const s = modelSession(N, komi, model, opts)
+  if (!s.setRoot(boardStrings, valid, { history: opts.history, opponentPassed: opts.opponentPassed })) return null // PASS only
+  await s.search({ maxms })
+  return s.best()
+}
+
+/**
+ * THE MODEL SEARCH AS A SESSION: one tree kept across moves (release 2).
+ *
+ *   const s = modelSession(N, komi, model, opts)
+ *   s.setRoot(board, valid, { history, opponentPassed }) -> { reused, visits } | null (PASS only)
+ *   await s.search({ maxms, untilVisits })   // grow the tree at the root
+ *   s.best()                                 // as chooseMoveModel
+ *   s.commit(x, y)                           // we played (x, y): its W node becomes the PONDER root
+ *   await s.ponder(ms)                       // grow the tree under the AI's reply, while it thinks
+ *
+ * TREE REUSE. After commit, the W node (white to move, after our stone) is
+ * kept with every reply the model has drawn there and their subtrees. When the
+ * next position arrives, setRoot finds the reply that produced it among that
+ * node's samples (same board string, same pass count) and makes that B node
+ * the root: everything searched under it — before our move, and while
+ * pondering — counts. A position not in the tree is searched fresh.
+ *
+ * PONDERING IS THE SAME SEARCH, FROM THE W NODE: each iteration draws the
+ * AI's reply from the model (a chance node), so the effort spreads over the
+ * replies in proportion to how likely the AI is to play them — the
+ * probability-weighted ponder over every likely reply, for as long as the AI
+ * takes, with no separate bookkeeping.
+ *
+ * The reused root is re-filtered to the game's valid list (the AI's superko
+ * history for black lives there, not in the tree), and its stale PASS
+ * decision is recomputed by best() exactly as for a fresh root.
+ */
+export function modelSession(N, komi, model, opts = {}) {
   const nbrs = makeGeometry(N)
-  const root = parseBoard(boardStrings)
   const scratch = makeScratch(N)
   const areaW = Number.isFinite(opts.areaWeight) ? opts.areaWeight : 0.1
   const C = Number.isFinite(opts.c) ? opts.c : 0.6
   const SAMPLES = Number.isFinite(opts.samples) ? opts.samples : 6
-  const rootHistory = Array.isArray(opts.history) ? opts.history : []
+  let rootHistory = []
   let points = 0
-  for (let i = 0; i < N * N; i++) if (root[i] !== DEAD) points++
   let seed = (Date.now() ^ 0x5bd1e995) >>> 0
   const rand = () => {
     seed ^= seed << 13; seed >>>= 0
@@ -955,11 +987,11 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
   // Black's candidate actions at a node: stones (not own-eye fills, not
   // self-atari unless capturing — the same gate tryPlay applies) best-first by
   // the static heuristic, then PASS. The root uses the game's own valid list.
-  const actions = (b, isRoot) => {
+  const actions = (b, valid) => {
     const out = []
     for (let i = 0; i < N * N; i++) {
       if (b[i] !== EMPTY) continue
-      if (isRoot && valid) {
+      if (valid) {
         const x = (i / N) | 0
         if (!valid[x] || !valid[x][i % N]) continue
       }
@@ -976,14 +1008,14 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
     return out
   }
 
-  const mkB = (b, parent, passCount, isRoot) => {
-    const node = { kind: 0, b, s: toStr(b), parent, passCount, visits: 0, sum: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0 }
+  const mkB = (b, parent, passCount, valid) => {
+    const node = { kind: 0, b, s: toStr(b), parent, passCount, visits: 0, work: 0, sum: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0 }
     if (node.terminal) node.tv = valueNow(b)
-    else node.untried = actions(b, isRoot)
+    else node.untried = actions(b, valid)
     return node
   }
   const mkW = (b, parent, passCount, moved) => {
-    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, visits: 0, sum: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0 }
+    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, visits: 0, work: 0, sum: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0 }
     if (node.terminal) node.tv = valueNow(b)
     return node
   }
@@ -1000,12 +1032,10 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
     return h.concat(rootHistory)
   }
 
-  const rootNode = mkB(root, null, opts.opponentPassed ? 1 : 0, true)
-  if (rootNode.untried.length === 1) return null // PASS only
-
-  const deadline = Date.now() + maxms
-  let iters = 0
+  let rootNode = null
+  let ponderNode = null
   let modelCalls = 0
+  let lastIters = 0
 
   // opts.leaf === 'model': leaves are scored by playing the game out with
   // WHITE ON THE MODEL (the opponent as it will actually play) and black on
@@ -1013,6 +1043,7 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
   // ordinary light playout to the end. Costs one model call per white move.
   const LEAF_MODEL = opts.leaf === 'model'
   const LEAF_DEPTH = Number.isFinite(opts.leafDepth) ? opts.leafDepth : Infinity
+  const work = new Uint8Array(N * N)
   const modelPlayout = async (node, lastWhite) => {
     work.set(node.b)
     const hist = historyOf(node.parent)
@@ -1022,7 +1053,6 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
     let last = lastWhite
     let whiteMoves = 0
     for (let turn = 0; turn < N * N * 2 && passes < 2; turn++) {
-      // black
       const before = toStr(work)
       const mv = lightMove(work, nbrs, N, US, last, scratch, rand)
       if (mv < 0) passes++
@@ -1035,7 +1065,6 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
         const won = playout(work, nbrs, N, komi, THEM, scratch, rand)
         return (1 - areaW) * won + areaW * (scratch.us / points)
       }
-      // white, by the model
       const ws = toStr(work)
       modelCalls++
       whiteMoves++
@@ -1051,11 +1080,17 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
     }
     return valueNow(work)
   }
-  const work = new Uint8Array(N * N)
-  while (Date.now() < deadline || iters < 1) {
-    let node = rootNode
-    const path = [rootNode]
+
+  /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
+  const iterate = async (start) => {
+    let node = start
+    const path = [start]
     let v = null
+    // WORK: an iteration that called the model. Iterations that only walk to
+    // an already-scored terminal (a pass-pass line) are nearly free and can
+    // run millions of times while pondering, so visits overstate how much a
+    // reused subtree was searched; work does not.
+    let worked = false
     while (v === null) {
       if (node.terminal) {
         v = node.tv
@@ -1094,6 +1129,7 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
       if (node.draws < cap) {
         node.draws++
         modelCalls++
+        worked = true
         const r = await model.reply(toSimple(node.s), { history: historyOf(node), passCount: node.passCount, rng: 1 + Math.floor(rand() * 3e7) })
         const key = r ? r.x * N + r.y : PASS
         let e = node.samples.get(key)
@@ -1101,12 +1137,11 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
           const b = node.b.slice()
           let ok = true
           if (key !== PASS) ok = play(b, nbrs, key, THEM, scratch) >= 0
-          e = { n: 0, child: mkB(ok ? b : node.b.slice(), node, key !== PASS && ok ? 0 : node.passCount + 1, false) }
+          e = { n: 0, child: mkB(ok ? b : node.b.slice(), node, key !== PASS && ok ? 0 : node.passCount + 1, null) }
           node.samples.set(key, e)
           e.n++
           node = e.child
           path.push(node)
-          // Leaf: score it by a playout from black's turn.
           if (node.terminal) v = node.tv
           else if (LEAF_MODEL) v = await modelPlayout(node, key)
           else {
@@ -1134,23 +1169,119 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
     for (const n of path) {
       n.visits++
       n.sum += v
+      if (worked) n.work++
     }
-    iters++
+    return true
   }
 
-  let bestIdx = null
-  let bestVisits = -1
-  for (const [idx, child] of rootNode.children) {
-    if (idx === PASS) continue
-    if (child.visits > bestVisits) { bestVisits = child.visits; bestIdx = idx }
+  return {
+    /**
+     * The position to decide. Reuses the ponder tree when this board is one of
+     * the replies drawn there. Returns null when PASS is black's only action.
+     */
+    setRoot(boardStrings, valid, { history = [], opponentPassed = false } = {}) {
+      const b = parseBoard(boardStrings)
+      // A fresh root may be a new game (a new offline-node layout): recount.
+      const countPoints = () => { points = 0; for (let i = 0; i < N * N; i++) if (b[i] !== DEAD) points++ }
+      if (!points) countPoints()
+      rootHistory = Array.isArray(history) ? history : []
+      const s = toStr(b)
+      const passCount = opponentPassed ? 1 : 0
+      let reused = null
+      if (ponderNode && !opts.noReuse) {
+        for (const e of ponderNode.samples.values()) {
+          if (e.child.s === s && e.child.passCount === passCount && !e.child.terminal) { reused = e.child; break }
+        }
+      }
+      ponderNode = null
+      if (reused) {
+        reused.parent = null
+        // Re-filter to the game's valid list (superko against the real history).
+        const ok = (idx) => idx === PASS || (valid && valid[(idx / N) | 0] && valid[(idx / N) | 0][idx % N])
+        for (const idx of [...reused.children.keys()]) if (!ok(idx)) {
+          const c = reused.children.get(idx)
+          reused.visits -= c.visits
+          reused.work -= c.work
+          reused.sum -= c.sum
+          reused.children.delete(idx)
+        }
+        reused.untried = reused.untried.filter((a) => ok(a.idx))
+        rootNode = reused
+      } else {
+        countPoints()
+        rootNode = mkB(b, null, passCount, valid)
+      }
+      const stones = [...rootNode.children.keys()].filter((k) => k !== PASS).length + rootNode.untried.filter((a) => a.idx !== PASS).length
+      if (!stones) return null
+      return { reused: !!reused, visits: rootNode.visits, work: rootNode.work }
+    },
+    /** Grow the root's tree for maxms, stopping early once it holds untilVisits. */
+    async search({ maxms, untilVisits = Infinity, untilWork = Infinity } = {}) {
+      const deadline = Date.now() + maxms
+      let iters = 0
+      while ((Date.now() < deadline && rootNode.visits < untilVisits && rootNode.work < untilWork) || iters < 1) {
+        await iterate(rootNode)
+        iters++
+      }
+      lastIters = iters
+      return iters
+    },
+    best() {
+      let bestIdx = null
+      let bestVisits = -1
+      for (const [idx, child] of rootNode.children) {
+        if (idx === PASS) continue
+        if (child.visits > bestVisits) { bestVisits = child.visits; bestIdx = idx }
+      }
+      const passNode = rootNode.children.get(PASS)
+      const meanOf = (c) => (c && c.visits ? c.sum / c.visits : null)
+      const stone = bestIdx === null ? null : rootNode.children.get(bestIdx)
+      if (passNode && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits })) return []
+      if (bestIdx === null) return null
+      const ch = rootNode.children.get(bestIdx)
+      return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters: lastIters, rootVisits: rootNode.visits, modelCalls, value: ch.visits ? ch.sum / ch.visits : null }]
+    },
+    /** We played (x, y) (or passed: x null): keep its W node to ponder and reuse. */
+    commit(x, y) {
+      const idx = x === null || x === undefined ? PASS : x * N + y
+      const w = rootNode?.children.get(idx) ?? null
+      ponderNode = w && !w.terminal ? w : null
+      if (ponderNode) {
+        // The history at the W node is the root's plus the root board.
+        if (ponderNode.moved) rootHistory = [rootNode.s, ...rootHistory]
+        ponderNode.parent = null
+        ponderNode.moved = false
+      }
+      rootNode = null
+      return !!ponderNode
+    },
+    /** Search under the AI's reply for up to ms (a time slice; call again to continue). */
+    async ponder(ms) {
+      if (!ponderNode) return 0
+      const deadline = Date.now() + ms
+      let iters = 0
+      while (Date.now() < deadline) {
+        await iterate(ponderNode)
+        iters++
+      }
+      return iters
+    },
+    get pondering() {
+      return !!ponderNode
+    },
+    get rootVisits() {
+      return rootNode ? rootNode.visits : 0
+    },
+    get rootWork() {
+      return rootNode ? rootNode.work : 0
+    },
+    /** The root's stone candidates, searched or not, as [x, y] (tests). */
+    get rootMoves() {
+      if (!rootNode) return []
+      const idxs = [...rootNode.children.keys(), ...(rootNode.untried ?? []).map((a) => a.idx)].filter((i) => i !== PASS)
+      return idxs.map((i) => [(i / N) | 0, i % N])
+    },
   }
-  const passNode = rootNode.children.get(PASS)
-  const meanOf = (c) => (c && c.visits ? c.sum / c.visits : null)
-  const stone = bestIdx === null ? null : rootNode.children.get(bestIdx)
-  if (passNode && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits })) return []
-  if (bestIdx === null) return null
-  const ch = rootNode.children.get(bestIdx)
-  return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters, modelCalls, value: ch.visits ? ch.sum / ch.visits : null }]
 }
 
 /**
