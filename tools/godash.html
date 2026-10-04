@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- The page has its own dark theme; Dark Reader repainting inline swatch colours made them vanish. -->
+<meta name="darkreader-lock">
+<meta name="color-scheme" content="light dark">
+<title>IPvGO Bandit</title>
+<!--
+  Served by tools/godash.mjs at /go (read fresh per request: edit and reload).
+  Polls /go.json every 3s. Everything is inline SVG; no network beyond /go.json.
+  Fields the page does not know yet are still visible under "raw go.txt".
+-->
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f4f4f1;--surface:#fcfcfb;--surface-2:#f0efec;--line:#e2e1dc;--grid:#ecebe7;
+  --ink:#0b0b0b;--ink-2:#52514e;--ink-3:#8a8984;
+  --accent:#2a78d6;--good:#008300;--warn:#b37a00;--bad:#d03b3b;
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:#121211;--surface:#1a1a19;--surface-2:#232321;--line:#2e2e2b;--grid:#262624;
+  --ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#8a897f;
+  --accent:#3987e5;--good:#3fae3f;--warn:#d9a03a;--bad:#e66767;
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#3fae3f;--s7:#9085e9;--s8:#e66767;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#121211;--surface:#1a1a19;--surface-2:#232321;--line:#2e2e2b;--grid:#262624;
+  --ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#8a897f;
+  --accent:#3987e5;--good:#3fae3f;--warn:#d9a03a;--bad:#e66767;
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#3fae3f;--s7:#9085e9;--s8:#e66767;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.num,.mono{font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12px}
+main{max-width:1440px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:14px}
+header h1{font-size:18px;margin:0;font-weight:650;letter-spacing:-.01em}
+header .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:12px;color:var(--ink-2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3)}
+.pill.live .dot{background:var(--good);box-shadow:0 0 0 0 var(--good);animation:beat 2s infinite}
+.pill.stale .dot{background:var(--warn)}.pill.down .dot{background:var(--bad)}
+@keyframes beat{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+button{font:inherit;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer}
+button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.card h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.card h2 .r{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400}
+.grid{display:grid;gap:12px}
+.kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px}
+.kpi .v{font-size:28px;font-weight:650;line-height:1.1;letter-spacing:-.02em}
+.kpi .s{color:var(--ink-2);font-size:12px;margin-top:2px}
+.flash{animation:flash 1.2s ease-out}
+@keyframes flash{0%{background:color-mix(in srgb,var(--accent) 22%,var(--surface))}100%{background:var(--surface)}}
+.chosen{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;margin-bottom:12px}
+.chosen .who{display:flex;align-items:center;gap:10px}
+.chosen .who b{font-size:22px;letter-spacing:-.01em}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.badge{display:inline-block;padding:1px 7px;border-radius:5px;background:var(--surface-2);color:var(--ink-2);font-size:11px;font-weight:600}
+.why{color:var(--ink-2);font-size:12.5px;max-height:5.6em;overflow:auto}
+.why .ru{display:block;color:var(--ink-3);margin-top:3px}
+.row2{grid-template-columns:minmax(0,3fr) minmax(0,2fr);margin-bottom:12px}
+@media (max-width:900px){.row2{grid-template-columns:1fr}.chosen{grid-template-columns:1fr}}
+.arms{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.arm{position:relative;border:1px solid var(--line);border-radius:9px;padding:10px 11px 6px;background:var(--surface);transition:border-color .3s,box-shadow .3s}
+.arm.is-chosen{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.arm .top{display:flex;align-items:center;gap:7px}
+.arm .top b{font-weight:620}
+.arm .tag{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--accent);visibility:hidden}
+.arm.is-chosen .tag{visibility:visible}
+.arm .stats{display:flex;gap:12px;color:var(--ink-2);font-size:12px;margin:4px 0 2px;flex-wrap:wrap}
+.arm .stats b{color:var(--ink);font-weight:600}
+.arm svg{width:100%;height:92px;display:block;overflow:visible}
+.arm .ineligible{opacity:.55}
+.draw-g{transition:transform .9s cubic-bezier(.2,.8,.2,1)}
+.ripple{transform-box:fill-box;transform-origin:center;animation:ripple 1.1s ease-out}
+@keyframes ripple{0%{opacity:.9;transform:scale(.4)}100%{opacity:0;transform:scale(2.6)}}
+svg text{fill:var(--ink-3);font-size:10px;font-family:system-ui,sans-serif}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.timeline{display:flex;gap:2px;align-items:flex-end;height:46px;overflow:hidden}
+.timeline i{flex:1 1 0;min-width:3px;max-width:14px;border-radius:2px 2px 0 0;position:relative}
+.timeline i.loss{background:transparent!important;border:2px solid var(--bad);border-bottom:0}
+.tl-axis{display:flex;justify-content:space-between;color:var(--ink-3);font-size:11px;margin-top:3px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--grid);font-weight:400;white-space:nowrap}
+th{color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+td.n,th.n{text-align:right}
+.spark{width:110px;height:24px;display:block}
+.tbar{display:flex;height:14px;border-radius:4px;overflow:hidden;gap:2px;margin:6px 0}
+.tbar i{display:block;height:100%}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.5px}
+.kv dt{color:var(--ink-3)}.kv dd{margin:0;text-align:right}
+.chart{position:relative}
+.chart svg{width:100%;height:150px;display:block;overflow:visible}
+.tip{position:fixed;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:6px 9px;font-size:12px;box-shadow:0 4px 18px rgba(0,0,0,.18);display:none;z-index:10;max-width:340px}
+.tip .t{color:var(--ink-3);font-size:11px}
+.warnbox{background:color-mix(in srgb,var(--warn) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--warn) 45%,var(--line));color:var(--ink);border-radius:8px;padding:6px 10px;margin-bottom:12px;display:none}
+details summary{cursor:pointer;color:var(--ink-3);font-size:12px}
+pre{white-space:pre-wrap;word-break:break-all;max-height:420px;overflow:auto;background:var(--surface-2);padding:8px;border-radius:6px}
+.muted{color:var(--ink-3)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>IPvGO · Thompson arms</h1>
+    <span class="pill" id="live"><span class="dot"></span><span id="liveTxt">connecting…</span></span>
+    <span class="sp"></span>
+    <span class="muted" id="armsBy"></span>
+    <button id="zoom" aria-pressed="true" title="Zoom each density to its own posterior, or show all on 0–1">zoom: fit</button>
+    <button id="theme" title="Toggle light/dark">theme</button>
+  </header>
+  <div class="warnbox" id="warn"></div>
+
+  <section class="card chosen" id="chosenCard">
+    <div>
+      <h2>In play</h2>
+      <div class="who"><span class="sw" id="chSw"></span><b id="chName">–</b><span class="badge" id="chSize"></span></div>
+      <div class="muted" style="margin-top:4px" id="chMeta"></div>
+    </div>
+    <div>
+      <h2>Why this arm</h2>
+      <div class="why" id="chWhy">–</div>
+    </div>
+  </section>
+
+  <section class="grid kpis" id="kpis"></section>
+
+  <section class="card" style="margin-bottom:12px">
+    <h2>Posterior win rate per arm <span class="r muted">Beta density · line = mean · dot = last Thompson draw</span></h2>
+    <div class="grid arms" id="arms"></div>
+  </section>
+
+  <section class="grid row2">
+    <div class="card">
+      <h2>Picks, oldest → newest <span class="r muted" id="tlSrc"></span></h2>
+      <div class="timeline" id="tl"></div>
+      <div class="tl-axis"><span id="tlFrom"></span><span id="tlTo"></span></div>
+      <div class="legend" id="tlLegend" style="margin-top:8px"></div>
+      <div id="tlMix" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h2>Win streak <span class="r muted" id="streakSub"></span></h2>
+      <div class="chart" id="streakChart"></div>
+    </div>
+  </section>
+
+  <section class="grid row2">
+    <div class="card">
+      <h2>Go bonuses &amp; node power by channel <span class="r muted" id="npSub"></span></h2>
+      <table id="channels"></table>
+    </div>
+    <div class="card">
+      <h2>Turn timing &amp; solver</h2>
+      <div id="timing"></div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-bottom:12px">
+    <h2>Node power over time <span class="r muted">per channel · from bonus % (goplan.nodePowerFromBonus)</span></h2>
+    <div class="chart" id="npChart"></div>
+    <div class="legend" id="npLegend" style="margin-top:6px"></div>
+  </section>
+
+  <details class="card"><summary>raw go.txt</summary><pre id="raw"></pre></details>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const POLL_MS = 3000, STALE_MS = 150_000;
+const ORDER = ["Daedalus", "Illuminati", "TheBlackHand", "SlumSnakes", "Netburners", "Tetrads", "w0r1d_d43m0n"];
+const CHANNEL = { Daedalus: "faction rep", Illuminati: "hacking speed", TheBlackHand: "hacking money", SlumSnakes: "crime success", Netburners: "hacknet money", Tetrads: "combat", w0r1d_d43m0n: "hacking" };
+const LABEL = { TheBlackHand: "The Black Hand", SlumSnakes: "Slum Snakes", w0r1d_d43m0n: "????????????" };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const isNum = (x) => typeof x === "number" && isFinite(x);
+const colorOf = (opp) => { const i = ORDER.indexOf(opp); return i >= 0 ? `var(--s${i + 1})` : "var(--s8)"; };
+const nameOf = (opp) => LABEL[opp] ?? opp ?? "?";
+const sizeTxt = (s) => (isNum(s) ? `${s}×${s}` : "");
+function fmt(x, d = 0) {
+  if (!isNum(x)) return "–";
+  const a = Math.abs(x);
+  if (a >= 1e9) return (x / 1e9).toFixed(2) + "b";
+  if (a >= 1e6) return (x / 1e6).toFixed(2) + "m";
+  if (a >= 1e4) return (x / 1e3).toFixed(1) + "k";
+  return x.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+}
+const pct = (x, d = 1) => (isNum(x) ? (x * 100).toFixed(d) + "%" : "–");
+function ago(ms) {
+  if (!isNum(ms)) return "–";
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 90) return s + "s";
+  const m = Math.round(s / 60);
+  if (m < 90) return m + "m";
+  return (m / 60).toFixed(1) + "h";
+}
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/* ---- theme + zoom (per-viewer, wrapped: storage can throw) */
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; } }
+function applyTheme(t) { if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); }
+applyTheme(store("godash.theme"));
+$("theme").onclick = () => {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const cur = document.documentElement.getAttribute("data-theme") ?? (dark ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  applyTheme(next); store("godash.theme", next);
+};
+let zoomFit = store("godash.zoom") !== "full";
+function syncZoom() { $("zoom").textContent = zoomFit ? "zoom: fit" : "zoom: 0–1"; $("zoom").setAttribute("aria-pressed", String(zoomFit)); }
+syncZoom();
+$("zoom").onclick = () => { zoomFit = !zoomFit; store("godash.zoom", zoomFit ? "fit" : "full"); syncZoom(); armCards.clear(); $("arms").innerHTML = ""; if (last) render(last); };
+
+/* ---- tooltip */
+const tip = $("tip");
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = "block"; const w = tip.offsetWidth, h = tip.offsetHeight; let x = e.clientX + 14, y = e.clientY + 14; if (x + w > innerWidth - 8) x = e.clientX - w - 14; if (y + h > innerHeight - 8) y = e.clientY - h - 14; tip.style.left = x + "px"; tip.style.top = y + "px"; }
+function hideTip() { tip.style.display = "none"; }
+
+/* ---- Beta density */
+function lgamma(z) {
+  const g = 7, c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - lgamma(1 - z);
+  z -= 1; let x = c[0]; for (let i = 1; i < g + 2; i++) x += c[i] / (z + i);
+  const t = z + g + 0.5; return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+function betaPdf(x, a, b) {
+  if (x <= 0 || x >= 1) return (x <= 0 && a < 1) || (x >= 1 && b < 1) ? Infinity : (x <= 0 && a === 1) ? b : (x >= 1 && b === 1) ? a : 0;
+  return Math.exp((a - 1) * Math.log(x) + (b - 1) * Math.log(1 - x) - (lgamma(a) + lgamma(b) - lgamma(a + b)));
+}
+function rangeOf(arm) {
+  if (!zoomFit) return [0, 1];
+  const m = isNum(arm.mean) ? arm.mean : 0.5, sd = isNum(arm.sd) ? arm.sd : 0.1;
+  let lo = m - 4 * sd, hi = m + 4 * sd;
+  if (isNum(arm.draw)) { lo = Math.min(lo, arm.draw - sd * 0.5); hi = Math.max(hi, arm.draw + sd * 0.5); }
+  lo = Math.max(0, lo); hi = Math.min(1, hi);
+  if (hi - lo < 0.02) { const c = (hi + lo) / 2; lo = Math.max(0, c - 0.01); hi = Math.min(1, c + 0.01); }
+  return [lo, hi];
+}
+
+/* ---- arm cards: created once per key, updated in place so the draw dot can glide */
+const W = 240, H = 78, PADB = 14;
+const armCards = new Map();
+function armCard(arm) {
+  let c = armCards.get(arm.key);
+  if (c) return c;
+  const el = document.createElement("div");
+  el.className = "arm";
+  el.innerHTML = `<div class="top"><span class="sw" style="background:${colorOf(arm.opponent)}"></span><b>${esc(nameOf(arm.opponent))}</b>${arm.size ? `<span class="badge">${sizeTxt(arm.size)}</span>` : ""}<span class="tag">CHOSEN</span></div>
+    <div class="stats"></div>
+    <svg viewBox="0 0 ${W} ${H + PADB}" preserveAspectRatio="none" role="img">
+      <g class="ax"></g>
+      <path class="area" fill="${colorOf(arm.opponent)}" fill-opacity=".18"></path>
+      <path class="curve" fill="none" stroke="${colorOf(arm.opponent)}" stroke-width="2" stroke-linejoin="round"></path>
+      <line class="mean" y1="0" y2="${H}" stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="3 3"></line>
+      <g class="draw-g" style="transform:translateX(0px)"><line y1="4" y2="${H}" stroke="var(--ink)" stroke-width="1.5"></line><circle class="dd" cy="${H - 1}" r="5" fill="${colorOf(arm.opponent)}" stroke="var(--surface)" stroke-width="2"></circle><g class="rp"></g></g>
+      <rect class="hit" x="0" y="0" width="${W}" height="${H + PADB}" fill="transparent"></rect>
+    </svg>`;
+  c = { el, prevDraw: undefined, sig: "" };
+  el.querySelector(".hit").addEventListener("mousemove", (e) => showTip(e, c.tip ?? ""));
+  el.querySelector(".hit").addEventListener("mouseleave", hideTip);
+  armCards.set(arm.key, c);
+  return c;
+}
+function renderArms(arms) {
+  const box = $("arms");
+  const sorted = [...arms].sort((a, b) => (ORDER.indexOf(a.opponent) - ORDER.indexOf(b.opponent)) || ((a.size ?? 0) - (b.size ?? 0)));
+  const keys = new Set(sorted.map((a) => a.key));
+  for (const [k, c] of armCards) if (!keys.has(k)) { c.el.remove(); armCards.delete(k); }
+  sorted.forEach((arm, i) => {
+    const c = armCard(arm);
+    if (box.children[i] !== c.el) box.insertBefore(c.el, box.children[i] ?? null);
+    c.el.classList.toggle("is-chosen", !!arm.chosen);
+    c.el.classList.toggle("ineligible", arm.eligible === false);
+    const [lo, hi] = rangeOf(arm);
+    const X = (v) => ((v - lo) / (hi - lo)) * W;
+    c.el.querySelector(".stats").innerHTML =
+      `<span>mean <b class="num">${pct(arm.mean)}</b> <span class="num">± ${pct(arm.sd)}</span></span><span><b class="num">${fmt(arm.games)}</b> games</span>` +
+      (isNum(arm.powerPerHour) ? `<span><b class="num">${fmt(arm.powerPerHour)}</b> power/h</span>` : "");
+    const sig = [lo, hi, arm.a, arm.b, arm.mean].join();
+    if (sig !== c.sig) {
+      c.sig = sig;
+      let pts = [], ymax = 0;
+      if (isNum(arm.a) && isNum(arm.b)) {
+        // Bin midpoints: a Beta with a or b < 1 is infinite at its edge, and
+        // sampling the edge itself would flatten the rest of the curve to zero.
+        const N = 120, dx = (hi - lo) / N;
+        for (let k = 0; k <= N; k++) { const x = Math.min(hi - dx / 2, Math.max(lo + dx / 2, lo + dx * k)); let y = betaPdf(x, arm.a, arm.b); if (!isFinite(y)) y = 0; pts.push([x, y]); }
+        const ys = pts.map((p) => p[1]).sort((u, v) => u - v);
+        // Only an edge singularity gets clipped; an ordinary peak keeps its shape.
+        ymax = ys.at(-1);
+        const p95 = ys[Math.floor(ys.length * 0.95)];
+        if (ymax > 4 * p95 && p95 > 0) { ymax = p95 * 1.6; for (const p of pts) p[1] = Math.min(p[1], ymax); }
+        if (pts.length) { pts[0][0] = lo; pts.at(-1)[0] = hi; }
+      }
+      const Y = (y) => H - (ymax > 0 ? (y / ymax) * (H - 8) : 0);
+      const d = pts.map(([x, y], k) => `${k ? "L" : "M"}${X(x).toFixed(1)},${Y(y).toFixed(1)}`).join("");
+      c.el.querySelector(".curve").setAttribute("d", d);
+      c.el.querySelector(".area").setAttribute("d", pts.length ? `${d}L${W},${H}L0,${H}Z` : "");
+      const m = c.el.querySelector(".mean");
+      if (isNum(arm.mean)) { m.setAttribute("x1", X(arm.mean)); m.setAttribute("x2", X(arm.mean)); m.style.display = ""; } else m.style.display = "none";
+      const ticks = [lo, (lo + hi) / 2, hi];
+      const dp = hi - lo < 0.05 ? 1 : 0;
+      c.el.querySelector(".ax").innerHTML = `<line x1="0" x2="${W}" y1="${H}" y2="${H}" stroke="var(--line)"></line>` +
+        ticks.map((t, k) => `<text x="${X(t)}" y="${H + 12}" text-anchor="${k === 0 ? "start" : k === 2 ? "end" : "middle"}">${(t * 100).toFixed(dp)}%</text>`).join("");
+    }
+    const g = c.el.querySelector(".draw-g");
+    if (isNum(arm.draw)) {
+      g.style.display = "";
+      const x = Math.max(0, Math.min(W, X(arm.draw)));
+      g.style.transform = `translateX(${x.toFixed(1)}px)`;
+      if (c.prevDraw !== undefined && c.prevDraw !== arm.draw) {
+        const rp = g.querySelector(".rp");
+        rp.innerHTML = `<circle class="ripple" cy="${H - 1}" r="6" fill="none" stroke="${colorOf(arm.opponent)}" stroke-width="2"></circle>`;
+      }
+      c.prevDraw = arm.draw;
+    } else g.style.display = "none";
+    c.tip = `<b>${esc(nameOf(arm.opponent))}</b> ${sizeTxt(arm.size)}<br>posterior mean ${pct(arm.mean, 2)} ± ${pct(arm.sd, 2)}` +
+      (isNum(arm.a) ? `<br><span class="t">≈ Beta(${arm.a.toFixed(1)}, ${arm.b.toFixed(1)})</span>` : "") +
+      `<br>games ${fmt(arm.games)}${isNum(arm.draw) ? `<br>last draw <b>${pct(arm.draw, 1)}</b>` : "<br><span class='t'>no draw published</span>"}` +
+      (isNum(arm.powerPerHour) ? `<br>power/h ${fmt(arm.powerPerHour)}` : "") + (arm.chosen ? "<br><b>chosen</b>" : "");
+  });
+}
+
+/* ---- generic line chart (one y axis), with crosshair tooltip */
+function lineChart(el, series, { yFmt = (v) => fmt(v), height = 150, steps = false } = {}) {
+  const all = series.flatMap((s) => s.pts);
+  if (all.length < 2) { el.innerHTML = `<div class="muted" style="padding:20px 0">collecting samples… (history fills as the dashboard and the daemon observe go.txt)</div>`; return; }
+  const w = Math.max(320, el.clientWidth || 600), h = height, L = 46, R = 8, T = 8, B = 20;
+  const t0 = Math.min(...all.map((p) => p[0])), t1 = Math.max(...all.map((p) => p[0]));
+  let y0 = Math.min(0, ...all.map((p) => p[1])), y1 = Math.max(...all.map((p) => p[1]));
+  if (y1 === y0) y1 = y0 + 1;
+  const X = (t) => L + ((t - t0) / Math.max(1, t1 - t0)) * (w - L - R);
+  const Y = (v) => T + (1 - (v - y0) / (y1 - y0)) * (h - T - B);
+  let s = `<svg viewBox="0 0 ${w} ${h}" style="height:${h}px">`;
+  for (let k = 0; k <= 3; k++) { const v = y0 + ((y1 - y0) * k) / 3; s += `<line x1="${L}" x2="${w - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"></line><text x="${L - 6}" y="${Y(v) + 3}" text-anchor="end">${yFmt(v)}</text>`; }
+  for (let k = 0; k <= 4; k++) { const t = t0 + ((t1 - t0) * k) / 4; s += `<text x="${X(t)}" y="${h - 4}" text-anchor="${k === 0 ? "start" : k === 4 ? "end" : "middle"}">${clock(t)}</text>`; }
+  for (const se of series) {
+    if (!se.pts.length) continue;
+    let d = "";
+    se.pts.forEach(([t, v], k) => { d += k === 0 ? `M${X(t).toFixed(1)},${Y(v).toFixed(1)}` : steps ? `H${X(t).toFixed(1)}V${Y(v).toFixed(1)}` : `L${X(t).toFixed(1)},${Y(v).toFixed(1)}`; });
+    s += `<path d="${d}" fill="none" stroke="${se.color}" stroke-width="2" stroke-linejoin="round"></path>`;
+    for (const m of se.marks ?? []) s += `<circle cx="${X(m[0])}" cy="${Y(m[1])}" r="4.5" fill="var(--bad)" stroke="var(--surface)" stroke-width="2"></circle>`;
+  }
+  s += `<line class="xh" y1="${T}" y2="${h - B}" stroke="var(--ink-3)" stroke-width="1" style="display:none"></line><rect class="hit" x="${L}" y="0" width="${w - L - R}" height="${h}" fill="transparent"></rect></svg>`;
+  el.innerHTML = s;
+  const svg = el.querySelector("svg"), xh = el.querySelector(".xh");
+  el.querySelector(".hit").addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect(); const px = ((e.clientX - r.left) / r.width) * w;
+    const t = t0 + ((px - L) / (w - L - R)) * (t1 - t0);
+    xh.setAttribute("x1", px); xh.setAttribute("x2", px); xh.style.display = "";
+    const rows = series.map((se) => { let best = null; for (const p of se.pts) if (!best || Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p; return best ? `<div><span class="sw" style="background:${se.color}"></span> ${esc(se.name)} <b class="num">${yFmt(best[1])}</b></div>` : ""; });
+    showTip(e, `<div class="t">${new Date(t).toLocaleTimeString()}</div>${rows.join("")}`);
+  });
+  el.querySelector(".hit").addEventListener("mouseleave", () => { xh.style.display = "none"; hideTip(); });
+}
+function sparkline(pts, color) {
+  if (pts.length < 2) return `<span class="muted">–</span>`;
+  const w = 110, h = 24, t0 = pts[0][0], t1 = pts.at(-1)[0];
+  let y0 = Math.min(...pts.map((p) => p[1])), y1 = Math.max(...pts.map((p) => p[1])); if (y1 === y0) { y1 += 1; y0 -= 1; }
+  const d = pts.map(([t, v], k) => `${k ? "L" : "M"}${(((t - t0) / Math.max(1, t1 - t0)) * (w - 4) + 2).toFixed(1)},${(h - 3 - ((v - y0) / (y1 - y0)) * (h - 6)).toFixed(1)}`).join("");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}"><path d="${d}" fill="none" stroke="${color}" stroke-width="2"></path></svg>`;
+}
+
+/* ---- the rest of the page */
+let last = null, lastGames = null;
+function kpi(id, label, value, sub, flash) {
+  let el = $(id);
+  if (!el) { el = document.createElement("div"); el.className = "card kpi"; el.id = id; $("kpis").appendChild(el); }
+  el.innerHTML = `<h2>${label}</h2><div class="v num">${value}</div><div class="s">${sub ?? ""}</div>`;
+  if (flash) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+}
+function render(j) {
+  last = j;
+  const g = j.go ?? {}, s = j.summary ?? {};
+  // liveness
+  const live = $("live"), age = j.ageMs;
+  live.className = "pill " + (!j.ok ? "down" : age > STALE_MS ? "stale" : "live");
+  $("liveTxt").textContent = !j.ok ? `no go.txt${j.error ? " — " + j.error : ""}` : `${age > STALE_MS ? "STALE " : ""}go.txt ${ago(age)} old · ${j.source ?? "?"}`;
+  const warns = [];
+  if (j.error) warns.push(esc(j.error));
+  if (g.health && g.health !== "ok") warns.push(`go.js health: <b>${esc(g.health)}</b>`);
+  if (g.throttled) warns.push("game tab throttled (hidden tab: timers once a minute)");
+  if (s.errors?.length) warns.push("errors: " + esc(JSON.stringify(s.errors.at(-1))).slice(0, 300));
+  if (j.source === "mirror") warns.push("reading the daemon's 30s disk mirror — the game is not connected or the live read failed");
+  $("warn").style.display = warns.length ? "block" : "none"; $("warn").innerHTML = warns.join("<br>");
+  $("armsBy").textContent = j.arms.length ? `arms: ${j.armsBy}` : "";
+
+  // chosen
+  const ch = j.chosen ?? {};
+  $("chSw").style.background = colorOf(ch.opponent);
+  $("chName").textContent = nameOf(ch.opponent);
+  $("chSize").textContent = sizeTxt(ch.size);
+  $("chMeta").innerHTML = [ch.opponent ? `channel: ${esc(CHANNEL[ch.opponent] ?? "?")}` : "", ch.pinned ? `pinned: ${esc(ch.pinned)}` : "", g.phase ? `phase: ${esc(g.phase)}` : "", isNum(g.gamesSinceSwitch) ? `${g.gamesSinceSwitch} games since switch` : ""].filter(Boolean).join(" · ");
+  const why = String(ch.why ?? "–");
+  const cut = why.indexOf("; runners-up");
+  $("chWhy").innerHTML = cut > 0 ? `${esc(why.slice(0, cut))}<span class="ru">${esc(why.slice(cut + 2))}</span>` : esc(why);
+
+  // KPIs
+  const games = (s.wins ?? 0) + (s.losses ?? 0);
+  const newGame = lastGames !== null && games !== lastGames; lastGames = games;
+  kpi("k-streak", "Win streak", fmt(s.winStreak), `best ${fmt(s.highestWinStreak)}`, newGame);
+  kpi("k-wl", "Wins / losses", `${fmt(s.wins)}<span class="muted" style="font-weight:400"> / </span>${fmt(s.losses)}`, games ? `${pct(s.wins / games, 2)} won` : "", newGame);
+  const up = s.processStartedAt ? Date.now() - Date.parse(s.processStartedAt) : null;
+  kpi("k-games", "Games this process", fmt(s.gamesThisProcess), up ? `${fmt((s.gamesThisProcess / up) * 3600e3, 0)}/h · up ${ago(up)}` : "");
+  kpi("k-ponder", "Ponder hit rate", pct(s.ponderRate, 0), `${fmt(s.ponderHits)} of ${fmt(s.modelAnswered)} model answers`);
+  const tt = s.turnTiming;
+  kpi("k-turn", "Turn (avg)", tt ? `${fmt(tt.loopMs)}<span class="muted" style="font-size:14px;font-weight:400"> ms</span>` : "–", tt ? `ours ${fmt(tt.askMs)} · AI ${fmt(tt.playMs)} ms` : "");
+  kpi("k-mode", "Solver", esc(s.solverMode ?? "–"), isNum(s.solverShare) ? `${pct(s.solverShare, 1)} of moves by the model` : "");
+
+  renderArms(j.arms);
+
+  // timeline
+  const picks = (j.picks ?? []).slice(-120);
+  $("tlSrc").textContent = j.picksSource === "go.txt" ? "from go.txt" : "derived from W/L changes";
+  $("tl").innerHTML = picks.map((p, i) => {
+    const loss = p.won === false || (isNum(p.lost) && p.lost > 0);
+    const hgt = isNum(p.size) ? Math.min(100, 30 + p.size * 5) : 70;
+    return `<i data-i="${i}" class="${loss ? "loss" : ""}" style="background:${colorOf(p.opponent)};height:${hgt}%;${loss ? `border-color:var(--bad)` : ""}"></i>`;
+  }).join("") || `<span class="muted">no games observed yet</span>`;
+  $("tl").onmousemove = (e) => { const i = e.target.dataset?.i; if (i === undefined) return hideTip(); const p = picks[i]; showTip(e, `<div class="t">${p.t ? new Date(p.t).toLocaleTimeString() : ""}</div><b>${esc(nameOf(p.opponent))}</b> ${sizeTxt(p.size)}<br>${isNum(p.games) ? `${p.games} game${p.games > 1 ? "s" : ""}: ${p.won ?? 0} W / ${p.lost ?? 0} L` : p.won === true ? "won" : p.won === false ? "lost" : ""}${isNum(p.draw) ? `<br>draw ${pct(p.draw)}` : ""}${p.why ? `<br>${esc(p.why)}` : ""}${isNum(p.streak) ? `<br>streak ${p.streak}` : ""}`); };
+  $("tl").onmouseleave = hideTip;
+  $("tlFrom").textContent = picks[0]?.t ? clock(picks[0].t) : "";
+  $("tlTo").textContent = picks.at(-1)?.t ? clock(picks.at(-1).t) : "";
+  const mix = {};
+  for (const p of picks) { const k = `${p.opponent}|${p.size ?? ""}`; mix[k] = (mix[k] ?? 0) + (isNum(p.games) ? p.games : 1); }
+  const tot = Object.values(mix).reduce((a, b) => a + b, 0);
+  $("tlLegend").innerHTML = Object.entries(mix).sort((a, b) => b[1] - a[1]).map(([k, n]) => { const [o, sz] = k.split("|"); return `<span><span class="sw" style="background:${colorOf(o)}"></span>${esc(nameOf(o))} ${sz ? sizeTxt(+sz) : ""} <b class="num">${pct(n / tot, 0)}</b></span>`; }).join("") + (picks.length ? `<span class="muted">outlined = a loss · bar height = board size</span>` : "");
+
+  // streak chart
+  const hist = j.history ?? [];
+  const sp = hist.filter((h) => isNum(h.streak)).map((h) => [h.t, h.streak]);
+  const lossMarks = []; for (let i = 1; i < hist.length; i++) if (isNum(hist[i].l) && isNum(hist[i - 1].l) && hist[i].l > hist[i - 1].l) lossMarks.push([hist[i].t, hist[i].streak ?? 0]);
+  lineChart($("streakChart"), [{ name: "win streak", color: "var(--s1)", pts: sp, marks: lossMarks }], { steps: true });
+  $("streakSub").textContent = hist.length ? `last ${ago(Date.now() - hist[0].t)} · red = a loss` : "";
+
+  // channels
+  const bon = s.bonuses ?? {}, np = s.nodePower ?? {};
+  const keyOf = (name) => ORDER.find((k) => nameOf(k) === name || k === name) ?? name;
+  const rows = Object.keys(bon).map((name) => {
+    const k = keyOf(name);
+    const pts = hist.filter((h) => isNum(h.np?.[k])).map((h) => [h.t, h.np[k]]);
+    // growth since the last drop (an install zeroes node power)
+    let st = 0; for (let i = 1; i < pts.length; i++) if (pts[i][1] < pts[i - 1][1]) st = i;
+    const seg = pts.slice(st);
+    const rate = seg.length > 1 && seg.at(-1)[0] > seg[0][0] ? ((seg.at(-1)[1] - seg[0][1]) / (seg.at(-1)[0] - seg[0][0])) * 3600e3 : null;
+    return `<tr><td><span class="sw" style="background:${colorOf(k)}"></span> ${esc(nameOf(k))}</td><td class="muted">${esc(CHANNEL[k] ?? "")}</td><td class="n num"><b>+${fmt(bon[name], 1)}%</b></td><td class="n num">${fmt(np[k])}</td><td class="n num">${rate === null ? "–" : (rate >= 0 ? "+" : "") + fmt(rate)}</td><td>${sparkline(pts, colorOf(k))}</td></tr>`;
+  });
+  $("channels").innerHTML = `<tr><th>opponent</th><th>channel</th><th class="n">bonus</th><th class="n">node power</th><th class="n">Δ/h</th><th>trend</th></tr>` + (rows.join("") || `<tr><td colspan="6" class="muted">no bonuses in go.txt</td></tr>`);
+  $("npSub").textContent = hist.length ? `Δ/h over the last ${ago(Date.now() - hist[0].t)}` : "";
+
+  // node power chart
+  const npSeries = ORDER.filter((k) => hist.some((h) => isNum(h.np?.[k]))).map((k) => ({ name: nameOf(k), color: colorOf(k), pts: hist.filter((h) => isNum(h.np?.[k])).map((h) => [h.t, h.np[k]]) }));
+  lineChart($("npChart"), npSeries, { height: 180 });
+  $("npLegend").innerHTML = npSeries.map((se) => `<span><span class="sw" style="background:${se.color}"></span>${esc(se.name)}</span>`).join("");
+
+  // timing + solver
+  if (tt) {
+    const other = Math.max(0, tt.loopMs - tt.askMs - tt.playMs), sum = Math.max(1, tt.askMs + tt.playMs + other);
+    $("timing").innerHTML = `<div class="legend"><span><span class="sw" style="background:var(--s1)"></span>ours (solver ask) <b class="num">${fmt(tt.askMs)} ms</b></span><span><span class="sw" style="background:var(--s2)"></span>AI reply (makeMove) <b class="num">${fmt(tt.playMs)} ms</b></span><span><span class="sw" style="background:var(--ink-3)"></span>loop rest <b class="num">${fmt(other)} ms</b></span></div>
+      <div class="tbar"><i style="width:${(tt.askMs / sum) * 100}%;background:var(--s1)"></i><i style="width:${(tt.playMs / sum) * 100}%;background:var(--s2)"></i><i style="width:${(other / sum) * 100}%;background:var(--ink-3)"></i></div>
+      <div class="muted" style="font-size:11.5px;margin-bottom:8px">averages over ${fmt(tt.moves)} moves this process</div>`;
+  } else $("timing").innerHTML = `<div class="muted">no turnTiming in go.txt yet</div>`;
+  const kv = [["solver mode", esc(s.solverMode ?? "–")], ["model asked / answered", `${fmt(s.modelAsked)} / ${fmt(s.modelAnswered)}`], ["ponder hits", `${fmt(s.ponderHits)} (${pct(s.ponderRate, 1)})`], ["remote / local moves", `${fmt(g.remoteMoves)} / ${fmt(g.localMoves)}`], ["mirror passes", fmt(g.mirrorPasses)], ["move stalls", fmt(g.moveStalls)], ["model fallback", esc(g.modelFallbackWhy ?? "none")], ["last score", g.finalScore ? `${g.finalScore.black} – ${g.finalScore.white}` : "–"]];
+  $("timing").innerHTML += `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd class="num">${v}</dd>`).join("")}</dl>`;
+
+  $("raw").textContent = JSON.stringify(g, null, 2);
+}
+
+async function poll() {
+  try {
+    const r = await fetch("go.json", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+  } catch (e) {
+    $("live").className = "pill down";
+    $("liveTxt").textContent = "dashboard endpoint unreachable — " + e.message;
+  }
+  setTimeout(poll, document.hidden ? POLL_MS * 4 : POLL_MS);
+}
+addEventListener("resize", () => { if (last) render(last); });
+poll();
+</script>
+</body>
+</html>

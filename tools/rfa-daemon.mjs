@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DirWatcher, PushLedger, TRACKED_EXT } from "./pushwatch.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -473,6 +473,47 @@ async function pollTelemetry({ save } = {}) {
   } catch {
     /* non-fatal */
   }
+  // The Go dashboard keeps its history even while no page is open.
+  try {
+    (await loadGoDash())?.onTelemetry?.(goDashCtx);
+  } catch (e) {
+    log(`godash onTelemetry: ${e.message ?? e}`);
+  }
+}
+
+/* ------------------------------------------------------------ Go dashboard */
+//
+// GET /go (page) and /go.json (data) live in tools/godash.mjs, re-imported
+// whenever its mtime changes, so the dashboard can be iterated on without
+// restarting this daemon (a restart drops the game's websocket). The store is
+// owned here so the history survives a reload of the module.
+
+const GODASH = path.join(ROOT, "tools", "godash.mjs");
+const goDash = { mtime: 0, mod: null };
+const goDashCtx = {
+  rpc,
+  TEL_DIR,
+  connected: () => !!socket && socket.readyState === socket.OPEN,
+  store: null,
+};
+async function loadGoDash() {
+  let mtime;
+  try {
+    mtime = fs.statSync(GODASH).mtimeMs;
+  } catch {
+    return null;
+  }
+  if (mtime !== goDash.mtime) {
+    goDash.mtime = mtime;
+    try {
+      goDash.mod = await import(`${pathToFileURL(GODASH).href}?v=${mtime}`);
+      goDashCtx.store ??= goDash.mod.newStore();
+      log(`godash loaded (${new Date(mtime).toISOString()})`);
+    } catch (e) {
+      log(`godash failed to load, keeping the previous one: ${e.message ?? e}`);
+    }
+  }
+  return goDash.mod;
 }
 
 /* ----------------------------------------------------------------- server */
@@ -762,6 +803,10 @@ http
         if (url.pathname === "/rpc") {
           const { method, params } = JSON.parse(Buffer.concat(body).toString() || "{}");
           return send(200, { result: await rpc(method, params) });
+        }
+        if (url.pathname === "/go" || url.pathname.startsWith("/go.") || url.pathname.startsWith("/go/")) {
+          const m = await loadGoDash();
+          if (m && (await m.handle(req, url, res, goDashCtx))) return;
         }
         send(404, { error: "unknown endpoint" });
       } catch (e) {
