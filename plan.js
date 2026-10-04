@@ -2504,6 +2504,7 @@ export const BLADE_MOOT = {
   fourS: 'a money purchase priced on the World Daemon exit; the committed black-op exit prices no money: the hack arm\'s decision, not on the committed exit\'s basis',
   sleeveObjective: 'the fleet\'s objective (karma, reputation, exp, money) priced on the World Daemon exit; on the committed Bladeburner route the fleet is sleeve.js\'s Bladeburner mix, priced on the black-op exit — not run (live 22:59Z it opened and never closed before the page froze)',
   batch: 'chosen on the World Daemon exit\'s channel weights; on the committed Bladeburner route the install decision prices the bought batch\'s content on the black-op exit — a batch chosen by the black-op exit is not simulated',
+  gang: 'the gang (none / the fleet grinds / the fleet and the slot grind) is priced on the World Daemon exit; on the committed Bladeburner route nothing acts on it — act.js hands the work slot to the division before its gang branches (0b), and the fleet is never on karma (sleeveObjectiveByExit: blade) — so this life\'s last priced verdict is carried, not re-priced (live BN14 2026-10-04 00:19Z the re-pricing held the page 261.7ms, \'gang-grind\')',
 }
 export function bladeMootOf(decisions) {
   const br = decisions?.bladeRoute

@@ -178,6 +178,8 @@ export function sleeveCrimeRates(sleeve, node, crime = 'Homicide') {
 }
 
 const GRIND_SKILLS = ['hacking', 'strength', 'defense', 'dexterity', 'agility', 'charisma']
+/** `${skill}_exp`, built once: the grind reads it 30 times an iteration. */
+const GRIND_EXP_KEY = Object.fromEntries(GRIND_SKILLS.map((k) => [k, `${k}_exp`]))
 
 /**
  * THE KARMA GRIND WITH THE FLEET RAMPING — the trajectory, not a snapshot.
@@ -214,11 +216,21 @@ export function fleetKarmaGrind(sleeves, node, o = {}) {
   return r.value
 }
 
-/** Iterations between yields of fleetKarmaGrindGen: each slice stays well under the plan's ~40ms block. */
-export const GRIND_YIELD_EVERY = 40
+/**
+ * Iterations between yields of fleetKarmaGrindGen: ONE. Each step is one
+ * simulated time step, and the pass pacer (coop.makePacer) packs steps into
+ * ~40ms slices itself. It was 40 — sized for a typical iteration — and live
+ * BN14 2026-10-04 00:19Z one 40-iteration step held the page 261.7ms
+ * ('gang-grind' step 65 of 108; the average step there was ~5.5ms): the
+ * iterations near the grind's end, where every sleeve's skills move each
+ * step and its crime is re-picked, plus whatever the collector does inside
+ * them, are not the typical iteration, and a fixed batch cannot see that.
+ * One iteration a step lets the pacer's look-ahead bound the block.
+ */
+export const GRIND_YIELD_EVERY = 1
 
 /**
- * fleetKarmaGrind as a GENERATOR that yields every GRIND_YIELD_EVERY steps,
+ * fleetKarmaGrind as a GENERATOR that yields every GRIND_YIELD_EVERY iterations,
  * so progress.js runs it through the pass pacer (coop) instead of blocking the
  * page: live 2026-09-28 the plan's longest step was 182ms. The crime choice is
  * memoised on the integer skills (and sync), which change far more slowly
@@ -293,7 +305,7 @@ export function* fleetKarmaGrindGen(sleeves, node, o = {}) {
       const m = pick.rates.chance + 0.25 * (1 - pick.rates.chance)
       const sb = (100 - sl.shock) / 100
       const g = {}
-      for (const k of GRIND_SKILLS) g[k] = (c.exp[k] ?? 0) * (sl.mults[`${k}_exp`] ?? 1) * node.CrimeExpGain * sb * m * perSec
+      for (const k of GRIND_SKILLS) g[k] = (c.exp[k] ?? 0) * (sl.mults[GRIND_EXP_KEY[k]] ?? 1) * node.CrimeExpGain * sb * m * perSec
       gains[idx] = { g, sync: sl.sync / 100 }
       kps += pick.rates.karma
       crimes.push(pick.crime)

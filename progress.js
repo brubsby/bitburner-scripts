@@ -1370,6 +1370,36 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
   try {
     const live = readJson(ns, '/tel/gang.txt')
     const inGang = live?.lastAugReset === info?.lastAugReset && !!live?.faction
+    // ON THE COMMITTED BLADEBURNER ROUTE THE GANG IS MOOT (plan.BLADE_MOOT.gang).
+    // The verdict prices the World Daemon exit, and nothing on the route acts
+    // on it: act.js's 0b returns the work slot to the division (or its combat
+    // bar) before any gang branch, on plan.txt's decisions.bladeRoute 'blade';
+    // sleeveObjectiveByExit puts the fleet on the Bladeburner mix (never
+    // karma: 'blade' outranks decisions.gang in writeSleevePlan); healthcheck
+    // already reads the gang grind as 'not the route'. Its one reader left is
+    // the hack arm's karma channel (gangIsPending on the gate's verdict) —
+    // so the verdict is not dropped: this life's last PRICED verdict is
+    // carried unchanged (once priced per life, on the first pass that has
+    // none), and the two fleet grinds ('gang-grind', ~600ms of page a pass
+    // live, one step 261.7ms at BN14 00:19Z) and the gang decision
+    // ('plan-gang') are not run.
+    if (!inGang) {
+      const fromFile = (() => {
+        const p = readJson(ns, PLAN_FILE)
+        return p && p.node === info?.currentNode ? p : null
+      })()
+      const brM = planCtx?.decisions?.bladeRoute ?? planCtx?.prev?.decisions?.bladeRoute ?? fromFile?.decisions?.bladeRoute ?? null
+      if (brM?.key === 'blade') {
+        const gate = readJson(ns, GATE)
+        const was = gate?.lastAugReset === info?.lastAugReset ? gate?.gangWorth : null
+        if (was && typeof was === 'object' && typeof was.worth === 'boolean') {
+          const prevD = planCtx?.prev?.decisions?.gang ?? null
+          const key = prevD?.key ?? was.arm ?? null
+          if (planCtx) planCtx.decisions.gang = { ...(prevD ?? { key }), applicable: false, notApplicable: BLADE_MOOT.gang, why: `not applicable (carried '${key}'): ${BLADE_MOOT.gang}` }
+          return { ...was, moot: BLADE_MOOT.gang, carriedFrom: was.carriedFrom ?? gate.at ?? null }
+        }
+      }
+    }
     let arms = null
     let kctx = null
     try {

@@ -132,6 +132,8 @@ export const CRIMES = {
 }
 
 const SKILLS = ['hacking', 'strength', 'defense', 'dexterity', 'agility', 'charisma']
+// `${skill}_exp`, built once: personProblem runs per crime per re-pick in the grind (sleeveplan.fleetKarmaGrindGen).
+const SKILL_EXP_KEY = Object.fromEntries(SKILLS.map((s) => [s, `${s}_exp`]))
 
 /** PersonObjects/formulas/intelligence.ts:1. */
 export const intelligenceBonus = (int, weight = 1) => 1 + (weight * Math.pow(num(int) ? int : 0, 0.8)) / 600
@@ -146,7 +148,8 @@ export function personProblem(person) {
     if (!num(person.skills?.[s])) return `skills.${s} unreadable`
     if (!num(person.exp?.[s]) || person.exp[s] < 0) return `exp.${s} unreadable`
     if (!num(person.mults?.[s]) || person.mults[s] <= 0) return `mults.${s} unreadable`
-    if (!num(person.mults?.[`${s}_exp`]) || person.mults[`${s}_exp`] < 0) return `mults.${s}_exp unreadable`
+    const ek = SKILL_EXP_KEY[s]
+    if (!num(person.mults?.[ek]) || person.mults[ek] < 0) return `mults.${ek} unreadable`
   }
   if (!num(person.skills?.intelligence)) return 'skills.intelligence unreadable'
   return null
