@@ -475,6 +475,8 @@ export async function run() {
       c7.examined(4);
       if (afterPass.length !== 1) c7.fail(`Tetrads: after the AI's pass the solver must be asked once with opponentPassed (asked ${afterPass.length}x)`, JSON.stringify(t.reqs.map((q) => [q.seq, q.opponentPassed])));
       if (!t.reqs.every((q) => q.objective?.kind === "power")) c7.fail("Tetrads: play-on brings the power objective into every request");
+      // The adaptive budget rides along, scaled by the streak at stake (0 here: no extra).
+      if (!t.reqs.every((q) => q.adaptive?.thr === 0.3 && q.adaptive?.mult === 1)) c7.fail("Tetrads: requests carry the adaptive budget scaled by the streak (streak 0 -> mult 1)", JSON.stringify(t.reqs.map((q) => q.adaptive)));
       if (t.calls.move !== 2 || t.calls.pass !== 0) c7.fail(`Tetrads: the solver's stone must be played (moves ${t.calls.move}, passes ${t.calls.pass})`);
       if (t.tel?.playOn?.games !== 1 || t.tel?.playOn?.stones !== 1) c7.fail("Tetrads: /tel/go.txt playOn must count the game and the stone", JSON.stringify(t.tel?.playOn));
       const d = await runPinned("TheBlackHand");

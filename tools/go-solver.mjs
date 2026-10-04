@@ -296,9 +296,13 @@ const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats });
 const clockFor = (req, path) => (CLOCK && req.T > 0 ? { T: req.T, kw: calib[path].weights(), turnTicks: ((Number.isFinite(req.turnS) ? req.turnS : 1.2) * 1000) / 200, jitter: 5, eps: 0.1 } : undefined);
 
 let lastAnswers = null;
+let lastAdaptive = null;
 /** Publish the session's pre-sent answers (only when they changed). */
 async function publishAnswers(minWork) {
-  const answers = sess && sess.pondering ? sess.ponderAnswers({ minWork, max: 4 }) : [];
+  let answers = sess && sess.pondering ? sess.ponderAnswers({ minWork, max: 4 }) : [];
+  // A position going badly is never pre-sent: it comes back as a request,
+  // where the adaptive budget extends the search.
+  if (lastAdaptive) answers = answers.filter((a) => !(typeof a.wr === "number" && a.wr < lastAdaptive.thr));
   const text = JSON.stringify(answers);
   if (text === lastAnswers) return;
   lastAnswers = text;
@@ -357,6 +361,7 @@ while (true) {
         lastSeq = req.seq;
         lastReqAt = Date.now();
         const N = req.size;
+        lastAdaptive = req.adaptive && typeof req.adaptive === "object" ? req.adaptive : null;
         await calibrateSeed(req);
 
         // A NOTICE (release 3): go.js already played a pre-sent answer on this
@@ -423,6 +428,16 @@ while (true) {
               const its = await sess.search({ maxms, untilWork: r.reused ? target : Infinity });
               if (!r.reused) sessRate = sessRate ? 0.8 * sessRate + 0.2 * (sess.rootWork / maxms) : sess.rootWork / maxms;
               ranked = sess.best();
+              // ADAPTIVE BUDGET (req.adaptive {thr, mult}, go.js SETTINGS.adaptive):
+              // the chosen move's own line wins under thr -> search on for
+              // (mult - 1) x the budget (a hard layout; the streak is at stake).
+              const wr = ranked?.[0]?.top?.[0]?.[4];
+              const ad = req.adaptive && typeof req.adaptive === "object" ? req.adaptive : null;
+              if (ad && ranked && ranked.length && typeof wr === "number" && wr < ad.thr && ad.mult > 1) {
+                await sess.search({ maxms: Math.min(20000, (ad.mult - 1) * maxms) });
+                ranked = sess.best();
+                extra.adaptive = true;
+              }
               extra.rootWork = r.work;
               if (r.reused) {
                 extra.pondered = its <= 1 ? "hit" : "partial";

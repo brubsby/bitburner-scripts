@@ -263,6 +263,31 @@ import { reporter, describe, record } from 'status.js'
 // playout loses, which is exactly why the binary objective was flat — so the
 // lever is black's AREA (node power credits it win or lose, x2.5 x0.5 on a
 // loss) and game length. More think time bought nothing per hour.
+// RELEASE 3 (2026-10-04). Harness: tools/sim/go-w0.mjs, 5x5, 30-40 paired
+// layouts per arm (layout seed 2), same-day controls, the game's own AI;
+// power/h by go-study-report (streak replay, 85ms a turn). Live: /tel/go-games.txt.
+//
+//   PLAY ON after the AI's pass (SETTINGS.mirror per opponent) WITH the
+//   power objective's time cost — black +3..+5 a game:
+//     Tetrads     20425 -> 23991/h   LIVE: 18660 -> 21950/h (184 games, 182 won)
+//     Illuminati  104215 -> 125180/h (loss-scale 2; at 1 it lost 2/30)
+//     Daedalus    22892 -> 27608/h    Slum Snakes 20180 -> 22813/h
+//     Black Hand  15725 -> 15226 (1 loss), Netburners 15164 -> 14951: off
+//     play-on without the time cost: Tetrads 17878/h — longer games eat it
+//   THE POWER OBJECTIVE alone (mirror always): within noise of control.
+//   PRE-SEND: neutral on play, ~60-72% of moves; live askMs 138 -> 87ms mean.
+//   ADAPTIVE BUDGET on hard layouts: Tetrads 38/40 -> 40/40 (on), Illuminati
+//   no gain at 4x the time (off).
+//   CLOCK-SEEDED AI prediction: predicts the reply exactly when T is read at
+//   the move (pre path: ~100% of informative replies), but no consistent gain
+//   in wins or area across 7 paired arms (Tetrads -1.3..+0.3 black,
+//   Illuminati -0.4..+0.5): off (SETTINGS.clock). Steering isSmart by timing
+//   our move is not worth it for Slum Snakes / The Black Hand: their draw
+//   moves 0.017/s on a 59s sawtooth, so reaching the non-smart window costs
+//   up to ~18s / ~47s of waiting on a ~1.2s turn, against opponents we
+//   already beat 100%.
+//   THE 20ms FALLBACK loses Tetrads 37%, Illuminati 73%, Daedalus 23% of
+//   games: SETTINGS.solverWait waits for the solver accordingly.
 const SETTINGS = {
   opponent: 'Daedalus',
   size: 5,
@@ -378,7 +403,21 @@ const SETTINGS = {
   // streak. So the wait for a slow or restarting solver is PRICED per game:
   // up to localLoss x (the loss's cost in node power) / (the power rate) of
   // waiting, capped at capMs, before the fallback plays.
-  solverWait: { localLoss: { default: 0.5 }, capMs: 180000 },
+  // localLoss MEASURED 2026-10-04 (go-w0.mjs --local: every move on the 20ms
+  // fallback, 30 paired 5x5 games each): Tetrads lost 37%, Illuminati 73%,
+  // Daedalus 23%, The Black Hand 10%, Netburners 3%, Slum Snakes 0% (floored
+  // at 3%). At the streak plateau that buys a game ~15s of waiting on Tetrads
+  // and ~50s on Illuminati before the fallback plays.
+  solverWait: { localLoss: { default: 0.5, Tetrads: 0.37, Illuminati: 0.73, Daedalus: 0.23, TheBlackHand: 0.1, Netburners: 0.03, SlumSnakes: 0.03 }, capMs: 180000 },
+  // THE ADAPTIVE BUDGET, per opponent: { thr, mult } — when the chosen move's
+  // own line wins under thr, the solver searches on for (mult - 1) x the
+  // budget, scaled by the streak at stake (0 extra at streak 0, all of it from
+  // 8), and such positions are never pre-sent. MEASURED on the HARD layouts
+  // (the 40 lowest first-move win rates of 300, go-w0.mjs --scan; play-on +
+  // power objective + pre-send in both arms): Tetrads 38/40 -> 40/40 won,
+  // 20456 -> 23486/h (+2% seconds a game); Illuminati 36/40 both, 93214 ->
+  // 68826/h (the extra search is 4x longer at 800ms and bought nothing): off.
+  adaptive: { Tetrads: { thr: 0.3, mult: 3 } },
   // THE PER-GAME LOG: one JSON line per game, the last `keep` kept.
   gameLog: { file: '/tel/go-games.txt', keep: 500, slack: 100 },
   // THOMPSON OVER OPPONENT x BOARD SIZE (release 3a, goplan ARM_PRIOR): each
@@ -1467,6 +1506,11 @@ export async function main(ns) {
       // Play-on for this opponent (SETTINGS.mirror) brings the objective with it.
       const mirrorMode = SETTINGS.mirror[opponent] ?? SETTINGS.mirror.default
       const objective = useModel && (SETTINGS.power.on || mirrorMode === 'search') ? priced : null
+      // THE ADAPTIVE BUDGET (SETTINGS.adaptive), scaled by the streak at stake:
+      // the extra search grows to the full multiple at the 8-game plateau.
+      const ad = SETTINGS.adaptive[opponent] ?? null
+      const st0 = Math.max(0, preStats?.winStreak ?? 0)
+      const adaptive = useModel && ad ? { thr: ad.thr, mult: 1 + (ad.mult - 1) * Math.min(1, st0 / 8) } : null
       // THE PRICED WAIT for an absent solver (SETTINGS.solverWait), this game.
       let waitedExtra = 0
       const waitBudget = () => (useModel ? solverWaitBudgetMs({ objective: priced, eBlack, ratePerS, localLoss: SETTINGS.solverWait.localLoss[opponent] ?? SETTINGS.solverWait.localLoss.default, capMs: SETTINGS.solverWait.capMs, waitedMs: waitedExtra }) : 0)
@@ -1488,7 +1532,7 @@ export async function main(ns) {
           }
           // T: the playtime the AI's RNG is seeded from (playtimeReader).
           const T = SETTINGS.clock ? clockRead.now() : null
-          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }), ...(T ? { T } : {}), turnS, ...(objective ? { objective } : {}) }
+          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }), ...(T ? { T } : {}), turnS, ...(objective ? { objective } : {}), ...(adaptive ? { adaptive } : {}) }
           if (count) modelAsked++
         } else if (useKatago) {
           // The opponent and recent history let the solver PONDER the AI's

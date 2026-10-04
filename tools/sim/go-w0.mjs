@@ -482,6 +482,9 @@ async function playGame(stats, gameIndex) {
       const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
       sStats.ponderIters += await sess.ponder(liveMs);
       if (PRESEND) answers = sess.ponderAnswers({ minWork: sessRate ? Math.round(sessRate * budgetFor(ourTurns)) : Infinity, max: 4 });
+      // ADAPTIVE: a position the search thinks is going badly is never
+      // pre-sent — it goes through a request, where the budget is extended.
+      if (ADAPTIVE) answers = answers.filter((a) => !(typeof a.wr === "number" && a.wr < ADAPTIVE.thr));
     }
     wall += (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
     // THE SEED LAG, calibrated online from the reply just seen: which k make

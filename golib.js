@@ -1483,7 +1483,7 @@ export function modelSession(N, komi, model, opts = {}) {
         const r = bestOf(c, 0)
         if (r === null) continue
         const top = r[0]
-        out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null })
+        out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null, wr: top?.top?.[0]?.[4] ?? null })
         if (out.length >= max) break
       }
       return out
