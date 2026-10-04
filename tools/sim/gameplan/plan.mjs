@@ -19,6 +19,9 @@
 //          --w0-prior lo,mid,hi (override the derived w0 prior: 0,200,1000 = the old hand one)
 //          --w0-live (the w0r1d_d43m0n bonus worth only the climb's shortening L0 - L*: a final
 //          life that does not anticipate it, as today's exitplan; default: the exit shift ln W/g)
+//          --rates fit|const (the hacking exit's exp/s and $/s: fit = rates.mjs's progress model fitted to
+//          history.jsonl, the node in progress through its posterior readings; const = the old constants,
+//          expRich/expPoor/incomeL1 — the regression mode, reproducing the numbers before the fit)
 //
 // NOT CALIBRATED as a decision model. What is and is not:
 //   CALIBRATED   each played node's g (backed out of its measured hours; the
@@ -85,7 +88,8 @@ const { cvar, infoRelaxation, foldsOf, openLoop, kgOfMove, mfmc, seMean } = awai
 let t0 = performance.now()
 const { measureEconomy } = await import('./economy.mjs')
 const { buildSurrogate, loadSurrogate, LN_G, BB_INT } = await import('./surrogate.mjs')
-const { hackExitHours } = await import('../nodechoice/hackexit.mjs')
+const { hackExitHours, finalRatesOf } = await import('../nodechoice/hackexit.mjs')
+const { sfMultsOf } = await import('./economy.mjs')
 tick('boot (game bundle)', t0)
 
 const DRAWS = Math.max(1, Number(arg('--draws', 100)))
@@ -112,7 +116,8 @@ const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
 // 1. Measurements and the state
 // ---------------------------------------------------------------------------
 t0 = performance.now()
-const econ0 = await measureEconomy()
+const RATES = arg('--rates', 'fit')
+const econ0 = await measureEconomy({ rates: RATES, posteriorFile: arg('--posterior') ? path.resolve(arg('--posterior')) : undefined, inRun: has('--prior') ? [] : null })
 const econ = { ...econ0, ownG: new Map(econ0.ownG) }
 const econRaw = { ...econ, ownG: new Map(econ.ownG) } // the hand economy, before the posterior
 tick('telemetry + g back-out', t0)
@@ -134,7 +139,7 @@ if (has('--build-only')) {
   process.exit(0)
 }
 t0 = performance.now()
-const S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct') })
+let S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct') })
 tick('surrogate load', t0)
 
 // ---------------------------------------------------------------------------
@@ -147,6 +152,19 @@ if (has('--observe')) {
   await runObserve({ econ: econRaw, S, telemetry: TELEMETRY, file: POST_FILE, gModel: G_MODEL })
   console.log('')
   tick('observe', t0)
+  // observe may have logged a new in-run rates reading (xr/ir of the node in progress): re-fit the
+  // rates on it and rebuild that node's curves (the cache is keyed per node: only its curves move)
+  if (RATES === 'fit') {
+    t0 = performance.now()
+    const e2 = await measureEconomy({ rates: RATES, posteriorFile: POST_FILE })
+    if (JSON.stringify(e2.profile) !== JSON.stringify(econ.profile)) {
+      for (const x of [econ, econRaw]) Object.assign(x, { profile: e2.profile, rates: e2.rates })
+      await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, log: (s) => process.stderr.write(s + '\n') })
+      S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct') })
+      console.log('  rates re-fitted on the new in-run reading(s); the surrogate rebuilt for the changed nodes\n')
+    }
+    tick('observe: rates re-fit', t0)
+  }
 }
 const store = has('--prior') ? emptyStore() : loadStore(POST_FILE)
 const post = posteriorOf(store, econRaw, { rho: RHO_, sigmaPlayed: SIGMA_P, gModel: G_MODEL, multsOf: S.mults })
@@ -205,7 +223,8 @@ console.log('='.repeat(118))
 console.log(`state on entry: ${sig(entry)}   intelligence ${entry.int ?? '?'}   ${inProg ? `IN PROGRESS: ${clearLabel(inProg, entry)} (${live.hours.toFixed(1)}h in, since ${live.startedAt}) — planning from the state after it` : 'nothing in progress'}`)
 const ow = owed(start)
 console.log(`owed from the plan's start (${sig(start)}): ${ow.length} clears  ${[...new Set(ow)].map((n) => `BN${n}x${ow.filter((x) => x === n).length}`).join(' ')}   lattice ${L1.size.toLocaleString()} states`)
-console.log(`profile: life ${econ.profile.cycleHours.toFixed(2)}h | exp rich ${econ.profile.expRich.toExponential(2)}/s poor ${econ.profile.expPoor.toExponential(2)}/s | gamma ${econ.gamma.toFixed(3)} | latent g lo ${econ.gScen.lo.toFixed(3)} mid ${econ.gScen.mid.toFixed(3)} hi ${econ.gScen.hi.toFixed(3)}`)
+console.log(`profile: life ${econ.profile.cycleHours.toFixed(2)}h | ${econ.profile.rates ? `exp/s and $/s FITTED (rates.mjs ${econ.profile.rates.version}: slope in ln progress level exp ${econ.profile.rates.b.toFixed(2)}, income ${econ.profile.rates.bI.toFixed(2)}; --rates const for the old constants)` : `exp rich ${econ.profile.expRich.toExponential(2)}/s poor ${econ.profile.expPoor.toExponential(2)}/s, income $${econ.profile.incomeL1.toExponential(1)}/s at level 1 (CONSTANTS, --rates const)`} | gamma ${econ.gamma.toFixed(3)} | latent g lo ${econ.gScen.lo.toFixed(3)} mid ${econ.gScen.mid.toFixed(3)} hi ${econ.gScen.hi.toFixed(3)}`)
+if (econ.rates) printRates(econ, entry)
 
 console.log('\nCHECK — each played node\'s g reproduces its measured hours (the sim re-run at the backed-out g; the g IS this calibration):')
 let worstCal = 0
@@ -320,6 +339,35 @@ const lvWith = (s, n, l) => (m) => (m === n ? l : lvl(s, m))
     }
     for (let i = 0; i < rows.length; i += 4) console.log('    ' + rows.slice(i, i + 4).map((r) => r.padEnd(40)).join(''))
   }
+}
+
+/**
+ * THE RATES MODEL (rates.mjs): the fit, every node's final-window exp/s and $/s at the SFs held on
+ * entry, the node in progress's own reading, and the leave-one-out check of the transfer.
+ */
+function printRates(econ, st) {
+  const R = econ.rates
+  const sf = pairsOf(st)
+  const sfm = sfMultsOf(sf)
+  console.log(`\nTHE RATES (rates.mjs ${R.version}) — exp/s and $/s of the hacking route's final window, fitted to ${R.channels.exp.runs} / ${R.channels.income.runs} measured runs (history.jsonl, 10-min windows inside a life):`)
+  for (const [ch, c] of Object.entries(R.channels)) {
+    const fe = ch === 'exp' ? ['alpha', 'gamma ln money'] : ['alpha']
+    console.log(`  ${ch.padEnd(6)} ln rate = offset + a_n + b ln(Lpk/${R.LREF}): b ${c.b.toFixed(3)} +- ${c.sdB.toFixed(3)} (pooled within-node), window scatter ${c.sdWin.toFixed(2)}; a_n = ${fe.map((f, i) => `${f} ${c.beta.mean[i].toFixed(2)} +- ${c.beta.sd[i].toFixed(2)}`).join(', ')}, node spread tau ${c.beta.tauMean.toFixed(2)} +- ${c.beta.tauSd.toFixed(2)}`)
+  }
+  console.log('  node  exit lvl   exp/s (final window)      a_n +- sd    readings          $/s (final window)       a_n +- sd    readings')
+  for (let n = 1; n <= 14; n++) {
+    const m = S.mults(n)
+    const fr = finalRatesOf({ m, s: sfm, rates: econ.profile.rates, node: n })
+    const cell = (ch) => {
+      const v = R.channels[ch].nodes[n]
+      const rd = v.readings.map((r) => (r.inRun ? 'IN RUN' : 'run')).join(',') || 'predicted'
+      return `${v.mean.toFixed(2).padStart(6)} +- ${v.sd.toFixed(2)}   ${rd.padEnd(16)}`
+    }
+    console.log(`  BN${String(n).padEnd(3)} ${String(fr.Lx).padStart(6)}   ${fr.expPerSec.toExponential(2).padStart(10)}            ${cell('exp')}  ${fr.incomePerSec.toExponential(2).padStart(10)}            ${cell('income')}`)
+  }
+  if (R.liveRun) console.log(`  the node in progress BN${R.liveRun.bn} (${R.liveRun.hours.toFixed(1)}h, ${R.liveRun.windows.length} windows to level ${R.liveRun.windows.at(-1)?.lpk ?? '?'}): its own exp/income readings enter through posterior.json (xr${R.liveRun.bn}/ir${R.liveRun.bn}, observe.mjs) — ${['exp', 'income'].map((ch) => `${ch} ${R.channels[ch].nodes[R.liveRun.bn].readings.some((r) => r.inRun) ? 'APPLIED' : 'none yet'}`).join(', ')}`)
+  console.log('  CHECK (leave-one-out): each measured run\'s final-window rate (median window of its last 3h, at its own progress level) vs the model fitted without its node; z = ln error / predictive sd')
+  for (const [ch, c] of Object.entries(R.channels)) for (const l of c.loo) console.log(`  CHECK ${ch.padEnd(6)} BN${String(l.bn).padEnd(3)} ${l.key.slice(0, 10)} level ${String(l.lpk).padStart(6)}  measured ${l.measured.toExponential(2)}  predicted ${l.predicted.toExponential(2)}  ln error ${l.err.toFixed(2).padStart(6)}  sd ${l.sd.toFixed(2)}  z ${l.z.toFixed(2).padStart(5)}${Math.abs(l.z) > 2 ? '  OUTSIDE 2 sd' : ''}`)
 }
 
 function printPath(steps, from, world, title) {

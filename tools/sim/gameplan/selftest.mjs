@@ -28,7 +28,9 @@ let econ, loadSurrogate, hackCurvesFor
 try {
   ;({ loadSurrogate, hackCurvesFor } = await import('./surrogate.mjs'))
   const { measureEconomy } = await import('./economy.mjs')
-  const e = await measureEconomy()
+  // the OLD constants (--rates const): GP3 is a regression against nextnode's printed numbers,
+  // which priced them; GP2's interpolation and GP4's terms do not depend on the profile
+  const e = await measureEconomy({ rates: 'const' })
   econ = { ...e, ownG: new Map(e.ownG) }
 } catch (err) {
   out.gp2 = out.gp3 = out.gp4 = { skip: `inputs unavailable: ${String(err?.message ?? err).slice(0, 300)}` }

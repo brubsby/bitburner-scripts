@@ -28,14 +28,16 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | --- | --- |
 | `state.mjs` | the state (SF level vector + intelligence), what is owed, the lattice and its mixed-radix index |
 | `effects.mjs` | **one entry per Source-File**: its effect on a clear, the game source it rests on, and its status (SIMULATED / ASSUMED / NOT PRICED), with the ASSUMED lo/mid/hi |
-| `economy.mjs` | telemetry -> the measured g of every played node (the calibration), the latent g for unplayed nodes |
+| `economy.mjs` | telemetry -> the measured g of every played node (the calibration), the latent g for unplayed nodes; the profile the hacking exit runs on (`--rates fit`: rates.mjs's fitted exp/s and $/s; `--rates const`: the old constants) |
+| `rates.mjs` | the hacking route's exp/s and $/s FITTED: a progress-level model per channel (`ln rate = offset_n + a_n + b ln(Lpk/1000)`, the offset the node's multipliers from source, b pooled within-node, a_n hierarchical on the money factor), evaluated at the node's exit level for the final window; the node in progress's own reading (`xr<n>`/`ir<n>`, observe.mjs); its leave-one-out CHECK |
+| `ratestest.mjs` | RT3-RT5's game half (`tools/test/gameplan-rates.test.mjs`): the old constants reproduce the old numbers, the played nodes' leave-one-out hours and rates, the in-run reading's reach |
 | `params.mjs` | the uncertain parameters, their hand distributions (lo/mid/hi = p10/p50/p90 split normal), worlds and draws (through the posterior when one is applied) |
 | `posterior.mjs` | the posterior store: the hand prior + the observation log -> every parameter's posterior (z-grid update for scalars, hierarchical Gaussian for g), the measurability table behind EXPLORE |
 | `gmodel.mjs` | the g prior with covariates: hierarchical regression of ln g on the BitNode multipliers, tau on a grid, leave-one-out model choice, the joint sampler the draws use |
 | `discrepancy.mjs` | the model-discrepancy term on unplayed nodes' hours, its sd fitted to the played runs' leave-one-out residuals |
 | `adaptive.mjs` | knowledge gradient with correlated beliefs, the information-relaxation bound, CVaR, multi-fidelity Monte Carlo — over the per-draw tables, cross-fitted |
 | `posterior.json` | the store (committed): the observation log, keyed, and the posterior summary it produces |
-| `observe.mjs` | telemetry (history.jsonl + the in-run channel) -> readings -> the log; prints how the posterior moved |
+| `observe.mjs` | telemetry (history.jsonl + the in-run channel) -> readings -> the log; prints how the posterior moved; the node in progress's own readings (its opening, its exp/income levels `xr<n>`/`ir<n>`, its g once two hacking-route lives are finished) |
 | `../../../gameplan-obs.js` | the game-side writer of the in-run channel (`/tel/gameplan-obs.txt` on home) |
 | `surrogate.mjs` | the slow sims precomputed over the reachable grid, cached on disk, interpolated |
 | `routes.mjs` | the routes (hack, blade, and the node-special hooks) and `clearTime` = C(node, state, world) |
@@ -52,7 +54,8 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 C(node, state) is `min` over the routes that apply:
 
 - **hack**: `max(0.5 Hx, Hx - early)`, `Hx = max(min(H, .5), H - ln(W)/g) + favor(node, SF14) - favor_ref(node)`,
-  `H` = `hackexit.hackExitHours` at `g = g(node) x prod gFactor(SF) x goG(GoPower x SF14 doubling)`;
+  `H` = `hackexit.hackExitHours` at `g = g(node) x prod gFactor(SF) x goG(GoPower x SF14 doubling)`,
+  its final window at the node's FITTED exp/s and $/s (rates.mjs; `--rates const`: the old constants);
   `W` the w0r1d_d43m0n exit divisor (effect(w0 x the window), the window the post-TRP climb's fixed point), `favor` the favor life (go.mjs); `early` = sum of the SFs' first-life savings.
   Every node but BN14.
 - **blade**: `open' - min(early, open' - 0.5) + leg(node, SF6, SF7, sleeves) x k`, `leg` = bbsim median,
@@ -260,6 +263,44 @@ measured.
 - **CVaR(0.9).** BN11.1 1191.7h vs BN14.1 1190.4h: +1.3h, under the 5h flag.
   The risk-neutral choice is not worse in the tail.
 
+### Fitted rates, the gang covariate, BN14's in-run readings (2026-10-04, BN14.1 in progress, 100 draws, seed 1)
+
+The reconciliation of 2821627 (offline BN14.1 ~30-34h on the Go route against live 96-278h hack /
+~77h blade) blamed three offline inputs. Each, re-examined:
+
+- **exp/s and $/s (rates.mjs).** The constants are replaced by a progress-level model fitted to
+  every run since BN2 (history.jsonl, 10-min windows): exp slope b 3.34 +- 0.09 in ln(peak level),
+  income 3.57 +- 0.14; node level a_n hierarchical (exp: alpha 11.9, money elasticity 0.28 +- 0.31,
+  node spread tau 2.2; income: tau 2.7). Leave-one-out on the finished runs' final windows: every
+  |z| <= 2.2, but the predictive sd is ~2.9 in ln (a factor ~18): the transfer of a rate to an
+  unplayed node is uncertain to an order of magnitude, and the plan prints it. BN14's final window:
+  exp 3.7e8/s (constant: 8.9e8), $6.8e11/s (constant: $3.5e7/s at level 1). **The hours barely
+  move**: the exit's level term is logarithmic in exp (BN14 at g 0.0929: 40.2h constant, 40.6h
+  fitted). The live 72.9 exp/s and $1273/s at level 98, extrapolated with (level + 50) and no fleet
+  growth, ARE material on the same simulation: 65.6h at g 0.093, +25-30h at every g. That is the
+  live exit's own extrapolation, not an offline error. Played nodes re-back-out: BN1 0.052 -> 0.0725,
+  BN4.2 0.067 -> 0.074, the rest within 3%. `--rates const` reproduces the old numbers (RT3).
+- **g (gmodel.mjs `gang`).** With BN2 marked as the native gang node, the WDD slope falls
+  0.223 -> 0.130 and BN14's g 0.093 -> 0.073 (fullG). LOO keeps **full** (elpd -3.67; exchG -4.29,
+  amcG -4.34, fullG -4.42; all within 1 s.e.), so the draws are unchanged: BN14 g p10/p50/p90
+  0.054 / 0.093 / 0.160. Under the old constants the same comparison picked amcG (-3.07 vs -4.28,
+  BN14 0.048): six runs cannot separate "WDD" from "BN2's gang", and BN1's re-backed-out g tips it.
+  Live's cadence reads g ~0.012/h (exitinputs: x1.346 per 24h): at that g the same simulation gives
+  295h. g is the gap, and no BN14 data can read it yet (0 installs; the node is on the Bladeburner
+  route, whose lives do not read g).
+- **In-run readings (observe.mjs).** BN14.1 adds `xr14` (its exp level at the pooled slope:
+  1.08e5, sd 1.07; BN14's level 11.40 +- 2.64 -> 11.56 +- 0.99, final window 3.4e8 -> 3.7e8/s),
+  no `ir14` (no spending-free window past level 50 yet), no `g14` (Bladeburner route), and its
+  opening (combat 100 at 3.09h, less a simulated gym scale of ~2.7h: 0.39h), which pulls the shared
+  `open` 3.13 -> 1.28h. That reading probably holds the gym scale's error for BN14's 0.5 combat
+  multipliers as much as an opening.
+
+Results: BN14.1 offline (entry state): go route 36.5h (g 0.098, Hsim 39.4h), Bladeburner 124.9h
+(live ~77h blade). Next after BN14.1: **BN11.1** (E[T] 801.3h, P(best) 72%; BN13.1 +2.7 +- 0.4h),
+against 802.2h before. BN14.2/14.3 stay 25th/26th (stanek, 20.7h/20.6h; robust order the same).
+Hindsight from the entry state: BN14.1 first E[T] 838.2h vs BN11.1 first 833.7h (+4.5 +- 0.5h,
+P(best) 1%) on the model's own 36.5h BN14.1; priced at the live ~77h it is ~+45h.
+
 ### A Bayes-adaptive outer loop: not built, sketched
 
 The gap between the bound and our best policy is 11.4 +- 0.7h (1.2%). That is
@@ -352,7 +393,7 @@ farm rate, a Daedalus rep rate), one JSON line per reading:
 
 | field | |
 | --- | --- |
-| `param` | `w0`, `goP`, `rep14`, `lvl14`, `eps14`, `k`, `open`, `phi11`, `d10`, `d8`, `e43`, `z9`, or `g<n>` |
+| `param` | `w0`, `goP`, `rep14`, `lvl14`, `eps14`, `k`, `open`, `phi11`, `d10`, `d8`, `e43`, `z9`, `g<n>`, or `xr<n>` / `ir<n>` (node n's exp / income level exp(a_n), rates.mjs; log space) |
 | `value` | in the parameter's units (w0: raw node power per hour against w0r1d_d43m0n, before GoPower / the SF14 doubling — go.mjs applies the scale; goP: Daedalus power/h / 4391) |
 | `sd` | its standard error: in the parameter's units (`space: 'lin'`), or of ln(value) (`space: 'log'`: 0.2 = ~20%). A lin sd is floored at 1% of the prior's p10-p90 width (w0: 14/h), so a "never scored" 0 +- 0 is a reading, not a certainty |
 | `space` | default `'lin'` for w0 (go.js's delta-method sd is absolute, and 0 is a real value), `'log'` for everything else |

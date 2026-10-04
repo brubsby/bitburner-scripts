@@ -11,7 +11,9 @@
 //   { param, value, sd, at, source, node?, space?, stream?, key? }
 //   param   a planner parameter id: w0, goP, rep14, lvl14, eps14, k, open, phi11,
 //           d10, d8, e43, z9, stRam, stEpsM, stEpsR, stFr, stDuty (Stanek's Gift),
-//           or g<n> (node n's growth /h)
+//           g<n> (node n's growth /h), or xr<n> / ir<n> (node n's exp / income level
+//           exp(a_n) of the rates model, tools/sim/gameplan/rates.mjs; observe.mjs reads
+//           the node in progress's own from history.jsonl)
 //   value   the measured value, in the parameter's units (w0: raw node power per
 //           hour against w0r1d_d43m0n, before GoPower / the SF14 doubling)
 //   sd      its standard error: in the parameter's units when space is 'lin',
@@ -34,7 +36,7 @@ const DEFAULT_SPACE = { w0: 'lin' }
 
 /** The record recordObs writes (exported for tests). Throws on a malformed reading. */
 export function obsRecord({ param, value, sd, source, node, space, stream, key }, at = new Date().toISOString()) {
-  if (!PARAMS.has(param) && !/^g([1-9]|1[0-4])$/.test(param)) throw new Error(`gameplan-obs: unknown param '${param}'`)
+  if (!PARAMS.has(param) && !/^(g|xr|ir)([1-9]|1[0-4])$/.test(param)) throw new Error(`gameplan-obs: unknown param '${param}'`)
   if (!Number.isFinite(value)) throw new Error(`gameplan-obs: ${param} value ${value} is not a number`)
   const sp = space ?? DEFAULT_SPACE[param] ?? 'log'
   if (sp === 'lin' ? !(sd >= 0) : !(sd > 0)) throw new Error(`gameplan-obs: ${param} sd ${sd} must be ${sp === 'lin' ? '>= 0' : '> 0'}`)

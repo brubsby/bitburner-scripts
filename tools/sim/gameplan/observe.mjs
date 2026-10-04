@@ -92,6 +92,32 @@ export function readingsFromSegments(segs, { gOf, bbLeg, gymDiff, earlyOf, base 
   return out
 }
 
+/**
+ * THE NODE IN PROGRESS'S g, as far as it has gone: the growth of ln(hacking multiplier) per hour
+ * over its finished lives (the quantity g is: hackexit's multGainPerCycle = exp(g x cycleHours)),
+ * from the first install to the last, on the hacking route only (a Bladeburner-route life buys
+ * combat, not ln M — bayes.cadencePosterior's regime rule). Needs IN_PROGRESS_G_LIVES finished
+ * lives after the first (the first life's length is the node's opening, not its cadence). The sd
+ * is ASSUMED: OBS_SD.g plus 0.5/sqrt(lives) (a partial node: the cadence's spread over few lives).
+ * seg: nodechoice/measure.mjs nodeSegments' last segment (with multFirst/multLast/installs) — its
+ * rows' mults are read from history.jsonl's level and exp (skill.ts:13 inverted).
+ * Returns { reading } or { why }.
+ */
+export const IN_PROGRESS_G_LIVES = 2
+export function inProgressG(seg) {
+  if (!seg) return { why: 'no node in progress' }
+  const name = `g${seg.bitNode}`
+  if (seg.bbJoinH !== null && seg.bbJoinH !== undefined && !(seg.maxLevel >= HACK_LEVEL)) return { why: `${name}: BN${seg.bitNode} joined the Bladeburners at ${seg.bbJoinH.toFixed(2)}h (the Bladeburner route): its lives do not read the hacking route's g` }
+  if (!(seg.installs >= IN_PROGRESS_G_LIVES + 1) || !Array.isArray(seg.installsH) || !(seg.multAtInstalls?.length >= 2)) return { why: `${name}: ${seg.installs ?? 0} install(s) in ${seg.hours.toFixed(1)}h — needs ${IN_PROGRESS_G_LIVES} finished lives after the first to read g` }
+  const a = seg.multAtInstalls[0]
+  const b = seg.multAtInstalls[seg.multAtInstalls.length - 1]
+  const dh = b.h - a.h
+  const g = Math.log(b.mult / a.mult) / dh
+  if (!(g > 0) || !(dh > 0)) return { why: `${name}: ln M did not grow between the first and last install (${a.mult.toFixed(3)} -> ${b.mult.toFixed(3)})` }
+  const lives = seg.multAtInstalls.length - 1
+  return { reading: { param: name, value: g, sd: +(OBS_SD.g + 0.5 / Math.sqrt(lives)).toFixed(4), space: 'log', node: seg.bitNode, at: seg.endedAt, stream: `${name}|in progress|${seg.startedAt}`, key: `${name}|in progress|${seg.startedAt}|${seg.endedAt}`, source: `history.jsonl: BN${seg.bitNode} in progress, ln M ${a.mult.toFixed(3)} -> ${b.mult.toFixed(3)} over ${dh.toFixed(2)}h (${lives} lives)` } }
+}
+
 /** The in-run channel: every JSON line of OBS_FILES in dir. */
 export function readingsFromFiles(dir, files = OBS_FILES) {
   const out = []
@@ -149,7 +175,28 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
     base: baseIn(MEASURED_RUNS),
   })
   const files = readingsFromFiles(telemetry)
+  // THE NODE IN PROGRESS (in-run readings from history.jsonl, rates.mjs / inProgressG): its exp and
+  // income levels at the pooled slope of the finished runs (xr<n>, ir<n>: they price its own clear
+  // and its later levels), and its g once it has two finished hacking-route lives
+  const inRun = []
+  const inRunWhy = []
+  if (econ.rates?.liveRun) {
+    const { inRunReadings } = await import('./rates.mjs')
+    const { nodeMults } = await import('../nodechoice/hackexit.mjs')
+    const { sfMultsOf } = await import('./economy.mjs')
+    const lr = econ.rates.liveRun
+    const rr = inRunReadings(lr, econ.rates, nodeMults, sfMultsOf)
+    inRun.push(...rr)
+    for (const ch of ['xr', 'ir']) if (!rr.some((o) => o.param.startsWith(ch))) inRunWhy.push(`${ch}${lr.bn}: fewer than 3 ${ch === 'xr' ? 'exp' : 'income (balance only rising)'} windows past level 50 in BN${lr.bn} so far — no reading`)
+  } else inRunWhy.push('rates: the economy was measured with --rates const (no fitted rates model): no xr/ir reading')
+  const lastSeg = segs[segs.length - 1]
+  const gIn = inProgressG(lastSeg)
+  if (gIn.reading) inRun.push(gIn.reading)
+  else inRunWhy.push(gIn.why)
   const st = loadStore(file)
+  // a stream's superseded readings are derived data (history.jsonl re-derives them): keep the latest only
+  const streams = new Set(inRun.map((o) => o.stream).filter(Boolean))
+  st.observations = st.observations.filter((o) => !(o.stream && streams.has(o.stream) && /^(xr|ir|g)\d+$/.test(o.param) && !inRun.some((x) => x.key === o.key)))
   const before = summarise(posteriorOf(st, econ, gOpt), econ)
   // the base can grow (a run moved into economy.MEASURED_RUNS): re-flag logged readings from history
   const fresh = new Map(fromHistory.map((o) => [o.key, o.inBase]))
@@ -158,7 +205,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
     if (fresh.get(o.key)) o.inBase = true
     else delete o.inBase
   }
-  const m = mergeObs(st, [...fromHistory, ...files.readings])
+  const m = mergeObs(st, [...fromHistory, ...inRun, ...files.readings])
   const post = posteriorOf(st, econ, gOpt)
   const after = summarise(post, econ)
   st.posterior = after
@@ -168,6 +215,8 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   log(`OBSERVE — ${fromHistory.length} readings from history.jsonl (${segs.length} node segments, from ${OBS_SINCE}), ${files.readings.length} from the in-run channel (${OBS_FILES.join(', ')}${files.bad ? `; ${files.bad} unparseable lines` : ''})`)
   log(`  ${m.added} new, ${m.dup} already in the log${m.rejected.length ? `, ${m.rejected.length} rejected: ${m.rejected.join('; ')}` : ''}; ${post.nObs} applied (the rest are inside the hand prior)${dryRun ? ' — DRY RUN, not written' : ` — written to ${path.relative(path.resolve(HERE, '../../..'), file)}`}`)
   for (const o of fromHistory) log(`  ${o.inBase ? 'in base ' : 'applied '} ${o.clear.padEnd(7)} ${o.param.padEnd(5)} ${fmt(o.value).padStart(7)}  sd ${o.sd} (log)  ${o.note ?? ''}`)
+  for (const o of inRun) log(`  in run   ${String(o.param).padEnd(5)} ${fmt(Number(o.value)).padStart(7)}  sd ${o.sd} (log)  ${o.source}`)
+  for (const w of inRunWhy) log(`  in run   ${w}`)
   for (const o of files.readings) log(`  channel  ${String(o.param).padEnd(5)} ${fmt(Number(o.value)).padStart(7)}  sd ${o.sd}  ${o.source ?? ''} ${o.at ?? ''} (${o.from})`)
   log('HOW THE POSTERIOR MOVED (before = the store as it was; g of an unplayed node AMC-normalised):')
   printMove(before, after, log)
@@ -175,7 +224,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   const ys = econ.runs.map((r) => Math.log(r.g) + econ.gamma * Math.log(econ.amc[r.bn]))
   const hf = hierFit(ys, OBS_SD.g)
   log(`  CROSS-CHECK the hand latent (lo/mid/hi = min / gm / max of ${ys.length} runs as p10/p50/p90): ${tri([econ.gScen.lo, econ.gScen.mid, econ.gScen.hi])}; a hierarchical fit of the same runs (flat mu, tau on a grid, sd ${OBS_SD.g}): ${tri([hf.p10, hf.p50, hf.p90].map(Math.exp))}, tau ${hf.tauMean.toFixed(2)} ${post.G ? `(hand: total ${post.G.s.toFixed(2)}, tau ${Math.sqrt(post.G.tau2).toFixed(2)})` : `(the draws use the ${post.gReg.chosen} covariate model, tau ${post.gReg.joint.beta.tauMean.toFixed(2)}: plan.mjs prints its leave-one-out)`}`)
-  return { ...m, before, after, post, readings: fromHistory, channel: files.readings }
+  return { ...m, before, after, post, readings: fromHistory, channel: files.readings, inRun, inRunWhy }
 }
 
 // CLI

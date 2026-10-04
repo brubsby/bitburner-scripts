@@ -70,6 +70,8 @@ export function defaultProfile(meas = {}) {
     // ... and BitNode 8's, where scripted hacking pays nothing and the fleet
     // stays small (ScriptHackMoneyGain 0).
     expPoor: meas.expPoor ?? 3.7e4,
+    // gameplan replaces expRich/expPoor/incomeL1 with FITTED final-window rates
+    // (profile.rates, gameplan/rates.mjs; its --rates const keeps these).
     // NOT CALIBRATED: level-1 hacking income per unit (ScriptHackMoney x
     // ServerMaxMoney). Only the $100b join and the Red Pill donation ride on
     // it, and both are minutes at an exit-level fleet in every node that
@@ -81,6 +83,11 @@ export function defaultProfile(meas = {}) {
     capitalCap: meas.capitalCap ?? 5.76e12,
   }
 }
+
+// THE FINAL WINDOW'S RATES (finalRatesOf) and the per-node profile slice (profileFor) live in
+// gameplan/rates.mjs (pure: stanek.mjs reads them without the game bundle); re-exported here.
+export { finalRatesOf, profileFor } from '../gameplan/rates.mjs'
+import { finalRatesOf } from '../gameplan/rates.mjs'
 
 /**
  * exitplan inputs for a fresh entry into `node` holding Source-Files `sf`.
@@ -100,14 +107,21 @@ export function freshInputs({ node, level = 1, sf, g: growth, profile, trader = 
   // and 0.6 in BN15 only, BitNode.tsx:1045,1088), so no calibration moves.
   // speedMult overrides it (gameplan's phase-1 regression prices it at 1).
   const speed = speedMult ?? m.HackingSpeedMultiplier
+  // THE FITTED RATES (profile.rates, gameplan/rates.mjs): the final window's exp/s and $/s
+  // at the node's exit level from the progress model fitted to the measured lives, held
+  // constant over the final window (income flat: flatIncomePerSec = incomePerSec). Absent:
+  // the old constants (expRich/expPoor from level 1, incomeL1 x (level + 50)/51) — the
+  // regression mode (gameplan plan.mjs --rates const).
+  const fit = profile.rates ? finalRatesOf({ m, s, speed, rates: profile.rates, node }) : null
   return {
     money: node === 8 ? 250e6 : 1262,
     installCash: node === 8 ? 250e6 : 1262, // Prestige.ts:158 in BN8; PlayerObjectGeneralMethods.ts:102 elsewhere
-    incomePerSec: poor ? 0 : profile.incomeL1 * moneyFactor * s.hacking_money * speed,
+    incomePerSec: fit ? fit.incomePerSec : poor ? 0 : profile.incomeL1 * moneyFactor * s.hacking_money * speed,
+    ...(fit && fit.incomePerSec > 0 ? { flatIncomePerSec: fit.incomePerSec } : {}),
     hacking: 1,
     hackingExp: 0,
     hackingMult: s.hacking * m.HackingLevelMultiplier, // Person.ts:59-62 (exitplan.effectiveHackingMultOf)
-    expPerSec: (poor ? profile.expPoor : profile.expRich * m.HackExpGain) * s.hacking_exp * speed,
+    expPerSec: fit ? fit.expPerSec : (poor ? profile.expPoor : profile.expRich * m.HackExpGain) * s.hacking_exp * speed,
     cycleHours: profile.cycleHours,
     multGainPerCycle: Math.exp(growth * profile.cycleHours),
     // exitDiv: a hacking-level multiplier present only at the exit (the IPvGO

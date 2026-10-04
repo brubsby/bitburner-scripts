@@ -293,13 +293,15 @@ export function streamOf(o) {
 export function normaliseObs(o, specs = scalarSpecs()) {
   if (!o || typeof o !== 'object') return [null, 'not an object']
   const param = String(o.param ?? '')
-  const isG = /^g([1-9]|1[0-4])$/.test(param)
+  // g<n>: a node's growth; xr<n> / ir<n>: the node's exp / income level a_n (rates.mjs, exp(a_n)) —
+  // both read by models outside the scalar table (gmodel.mjs, rates.mjs), both log space only
+  const isG = /^(g|xr|ir)([1-9]|1[0-4])$/.test(param)
   if (!isG && !specs[param]) return [null, `unknown param '${param}'`]
   const value = Number(o.value)
   if (!isFinite(value)) return [null, `${param}: value ${o.value} not a number`]
   const space = o.space === 'lin' || o.space === 'log' ? o.space : DEFAULT_SPACE[param] ?? 'log'
-  if (isG && space !== 'log') return [null, `${param}: g readings are log space only`]
-  let sd = Number(o.sd ?? (isG ? OBS_SD.g : OBS_SD[param]))
+  if (isG && space !== 'log') return [null, `${param}: g / xr / ir readings are log space only`]
+  let sd = Number(o.sd ?? (/^g\d+$/.test(param) ? OBS_SD.g : OBS_SD[param]))
   if (space === 'lin' && sd >= 0) sd = Math.max(sd, linSdFloor(specs[param]))
   if (!(sd > 0)) return [null, `${param}: sd ${o.sd} must be > 0`]
   if (space === 'log' && !(value > 0)) return [null, `${param}: value ${value} <= 0 in log space (send space:'lin' with an absolute sd)`]

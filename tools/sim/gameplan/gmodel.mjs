@@ -29,10 +29,12 @@
 // ScriptHackMoneyGain) (hackexit.freshInputs' own moneyFactor; BN8's is 0 —
 // floored at MONEY_FLOOR, BN9's 0.001, "as hacking-poor as the poorest node":
 // its money was the trader's), ln HackingLevelMultiplier, ln
-// WorldDaemonDifficulty. NOT a feature: the route — every g reading is a
+// WorldDaemonDifficulty; and `gang` (1 for BN2, the native gang node: GANG_NODES
+// below) in the *G models (exchG, amcG, fullG) — leave-one-out decides between
+// the models with and without it. NOT a feature: the route — every g reading is a
 // hacking-route clear (routes.mjs chooses the route per clear, given g), so
-// "route" does not vary over the data; BN2's gang and BN8's trader are
-// absorbed in their g (hackexit.mjs header).
+// "route" does not vary over the data; BN8's trader and the mid-node gangs of
+// the other runs are absorbed in their g (hackexit.mjs header).
 //
 // NOT CALIBRATED: SB, TAU_SCALE and the feature set are stated choices. What
 // the data say about them is printed every run: the LOO table (elpd of every
@@ -44,23 +46,42 @@ export const SB = 0.3
 export const TAU_SCALE = 0.5
 export const B0 = { mean: Math.log(0.06), sd: 1 }
 
+/**
+ * THE GANG NODE (gang): BitNode 2 is the one node whose gang exists from the start
+ * (Gang/Gang.ts; BitNode.tsx: BN2 "Rise of the Underworld" — no karma requirement there,
+ * GangSoftcap 1 against <= 0.9 elsewhere) and whose gang faction sells The Red Pill, so
+ * its g is gang-driven (economy.mjs: BN2 g 0.138 against 0.035-0.074 for every other
+ * hacking clear). Every other measured run formed its gang mid-node after the -54k karma
+ * grind (SF2.1; history.jsonl karma: BN4.2, BN10, BN1.3, BN9 all reached -54k; BN8 did
+ * not) — absorbed in their g like the trader in BN8's. It is a NODE property, so it is a
+ * feature: 1 for BN2, 0 elsewhere. Without it the only WorldDaemonDifficulty-5 node played
+ * is BN2, and ln WDD's slope (+0.26) carried BN2's gang onto BN14 (WDD 5, no native gang).
+ */
+export const GANG_NODES = new Set([2])
 export const FEATURES = {
   lnAMC: (m) => Math.log(m.AugmentationMoneyCost),
   lnMoney: (m) => Math.log(Math.max(MONEY_FLOOR, m.ScriptHackMoney * m.ServerMaxMoney * m.ScriptHackMoneyGain)),
   lnHack: (m) => Math.log(m.HackingLevelMultiplier),
   lnWDD: (m) => Math.log(m.WorldDaemonDifficulty),
+  gang: (m, n) => (GANG_NODES.has(n) ? 1 : 0),
 }
 /** The candidate models: their feature lists ('hand' is economy.mjs's latent, not a regression). */
 export const MODELS = {
   exch: [],
   amc: ['lnAMC'],
   full: ['lnAMC', 'lnMoney', 'lnHack', 'lnWDD'],
+  exchG: ['gang'],
+  amcG: ['lnAMC', 'gang'],
+  fullG: ['lnAMC', 'lnMoney', 'lnHack', 'lnWDD', 'gang'],
 }
 export const MODEL_WHAT = {
   hand: "economy.mjs's latent: lo/mid/hi = min/gm/max of the runs' g x AMC^gamma as p10/p90, gamma from the AMC != 1 runs",
   exch: 'hierarchical, exchangeable: ln g_n = b0 + v_n',
   amc: 'hierarchical, ln g_n = b0 + b1 ln AMC_n + v_n',
   full: 'hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon) + v_n',
+  exchG: 'hierarchical, ln g_n = b0 + b gang_n + v_n (gang_n = 1 for BN2, the native gang node)',
+  amcG: 'hierarchical, ln g_n = b0 + b(ln AMC, gang) + v_n',
+  fullG: 'hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon, gang) + v_n',
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +137,7 @@ const quad = (x, A, y) => dot(x, mv(A, y))
 export function featureStats(multsOf, nodes = [...Array(14)].map((_, i) => i + 1)) {
   const st = {}
   for (const [k, f] of Object.entries(FEATURES)) {
-    const v = nodes.map((n) => f(multsOf(n)))
+    const v = nodes.map((n) => f(multsOf(n), n))
     const m = v.reduce((a, b) => a + b, 0) / v.length
     const sd = Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length) || 1
     st[k] = { m, sd }
@@ -124,7 +145,7 @@ export function featureStats(multsOf, nodes = [...Array(14)].map((_, i) => i + 1
   return st
 }
 /** The design row of node n: [1, standardised features...]. */
-export const rowOf = (n, feats, multsOf, st) => [1, ...feats.map((k) => (FEATURES[k](multsOf(n)) - st[k].m) / st[k].sd)]
+export const rowOf = (n, feats, multsOf, st) => [1, ...feats.map((k) => (FEATURES[k](multsOf(n), n) - st[k].m) / st[k].sd)]
 
 // ---------------------------------------------------------------------------
 // the regression, tau on a grid

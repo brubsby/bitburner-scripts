@@ -46,7 +46,10 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
     }
     const h = (tp - cur.t0) / 3.6e6
     const p = r.playtimeSinceLastAug
-    if (prevP !== null && typeof p === 'number' && p < prevP - 60e3) cur.installs.push(h)
+    if (prevP !== null && typeof p === 'number' && p < prevP - 60e3) {
+      cur.installs.push(h)
+      cur.pendingMult = true
+    }
     prevP = p
     const exp = r.exp?.hacking
     cur.intelligence = r.skills?.intelligence ?? cur.intelligence ?? null
@@ -55,6 +58,13 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
     if (cur.combat100H === undefined && Math.min(sk.strength ?? 0, sk.defense ?? 0, sk.dexterity ?? 0, sk.agility ?? 0) >= 100) cur.combat100H = h
     if (cur.bbJoinH === undefined && (r.factions ?? []).includes('Bladeburners')) cur.bbJoinH = h
     cur.rows.push({ h, level: r.skills?.hacking ?? null, exp: typeof exp === 'number' ? exp : null, mult: multOf(r.skills?.hacking, exp), augs: (r.augmentations ?? []).length })
+    // the multiplier each life after an install runs at (the first row of the life that reads one): gameplan/observe.mjs inProgressG
+    const mNow = cur.rows[cur.rows.length - 1].mult
+    // (level >= 100: the level is an integer, so a fresh life's first rows read the multiplier to 1/level)
+    if (cur.pendingMult && mNow && (r.skills?.hacking ?? 0) >= 100) {
+      ;(cur.multAtInstalls ??= []).push({ h, mult: mNow })
+      cur.pendingMult = false
+    }
     cur.atEnd = r.at
   }
   return segs.map((s) => {
@@ -93,6 +103,8 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
       intelligence: s.intelligence ?? null,
       combat100H: s.combat100H ?? null,
       bbJoinH: s.bbJoinH ?? null,
+      installsH: s.installs,
+      multAtInstalls: s.multAtInstalls ?? [],
     }
   })
 }

@@ -45,7 +45,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { hackExitHours, nodeMults } from '../nodechoice/hackexit.mjs'
+import { hackExitHours, nodeMults, profileFor, finalRatesOf } from '../nodechoice/hackexit.mjs'
 import { lattice, lvl, NODES } from './state.mjs'
 import { EFFECTS, LIVE_SFS, sfKeyStr } from './effects.mjs'
 
@@ -84,7 +84,9 @@ const sha = (...parts) => {
   for (const p of parts) h.update(p)
   return h.digest('hex')
 }
-const HACK_CODE = sha(fs.readFileSync(path.join(REPO, 'exitplan.js')), fs.readFileSync(path.join(NC, 'hackexit.mjs')), SURROGATE_VERSION)
+// + rates.mjs's finalRatesOf (the fitted profile's final-window rates hackexit reads): its source, so a
+// change to the formula invalidates the hack grid and nothing else in rates.mjs does
+const HACK_CODE = sha(fs.readFileSync(path.join(REPO, 'exitplan.js')), fs.readFileSync(path.join(NC, 'hackexit.mjs')), SURROGATE_VERSION, finalRatesOf.toString())
 const BB_CODE = sha(fs.readFileSync(path.join(NC, 'bbsim.mjs')), fs.readFileSync(path.join(NC, 'bbjobs.mjs')), String(fs.statSync(path.join(NC, 'game.bundle.mjs')).size))
 
 const readJson = (f) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {})
@@ -135,7 +137,9 @@ export function hackCurvesFor(start) {
   return out
 }
 
-export const hackKeyOf = (curve, g, profile) => sha(HACK_CODE, JSON.stringify({ node: curve.node, level: curve.level, sf: curve.sf, profile, g }))
+// the profile as the node's simulation reads it (hackexit.profileFor): a fitted-rates profile is keyed by
+// the node's own slice, so a new reading of one node (the node in progress) rebuilds that node's curves only
+export const hackKeyOf = (curve, g, profile) => sha(HACK_CODE, JSON.stringify({ node: curve.node, level: curve.level, sf: curve.sf, profile: profileFor(profile, curve.node), g }))
 /** fleet: null = the planner's 5 infiltrators (the old grid's key, byte for byte); else {infiltrate, support, fa}. */
 export const bbSpec = (n, l6, l7, seed, bbPolicy, fleet = null) => ({
   node: n, sf: [...BB_BASE, ...(l6 ? [[6, l6]] : []), ...(l7 ? [[7, l7]] : [])], g: 0, installEveryH: null, intelligence: BB_INT, hacking: 200, seed, maxH: 400,

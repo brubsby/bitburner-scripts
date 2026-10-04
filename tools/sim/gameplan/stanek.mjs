@@ -37,6 +37,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { finalRatesOf } from './rates.mjs'
 import { giftSize, optimiseLayout, hackWeights, bestNodeModel, chargeFactor, threadsOf, homeAt, fragmentById, TYPE, TYPE_NAME } from '../../../stanekplan.js'
 import { SF_PARAMS } from './effects.mjs'
 
@@ -96,9 +97,14 @@ export function layoutText(placed) {
   return `${charged.map((p) => `${TYPE_NAME[fragmentById(p.id).type].replace('Hacking', 'H')}`).join(' ') || '(none)'}${nb ? ` + ${nb} booster${nb > 1 ? 's' : ''}` : ''}`
 }
 
-/** The exit's exp-term scale L0 = 32 ln(exp + 534.6) - 200 at a final life's exp (skill.ts:13), from the profile. */
-export function expTermOf(m, profile, cycleH) {
-  const exp = (profile?.expRich ?? 1.3e9) * m.HackExpGain * m.HackingSpeedMultiplier * cycleH * 3600
+/**
+ * The exit's exp-term scale L0 = 32 ln(exp + 534.6) - 200 at a final life's exp (skill.ts:13), from the
+ * profile: its fitted final-window rate for `node` (profile.rates, rates.mjs — hackexit.finalRatesOf at
+ * SF multipliers 1, as the constant was), else the old constant expRich x HackExpGain x speed.
+ */
+export function expTermOf(m, profile, cycleH, node = null) {
+  const rate = profile?.rates && node !== null ? finalRatesOf({ m, s: { hacking_exp: 1, hacking_money: 1 }, rates: profile.rates, node }).expPerSec : (profile?.expRich ?? 1.3e9) * m.HackExpGain * m.HackingSpeedMultiplier
+  const exp = rate * cycleH * 3600
   return Math.max(100, 32 * Math.log(exp + 534.6) - 200)
 }
 
@@ -115,7 +121,7 @@ export function stanekFactors(node, l13, world, m, { H0, g }) {
   const lay = layoutFor(m, l13)
   const cycleH = world.cycleHours ?? 2
   const p = world.sf
-  const base = { layout: lay.placed, nodePower: m.StaneksGiftPowerMultiplier, repCost: m.AugmentationRepCost, cycleH, p, Hg: H0 * g, L0: expTermOf(m, world.profile, cycleH), ramHours: H0, favorU: FAVOR_U }
+  const base = { layout: lay.placed, nodePower: m.StaneksGiftPowerMultiplier, repCost: m.AugmentationRepCost, cycleH, p, Hg: H0 * g, L0: expTermOf(m, world.profile, cycleH, node), ramHours: H0, favorU: FAVOR_U }
   // the gift run's length: a fixed point (damped) on the linearised exit
   let H1 = H0
   let model = null
