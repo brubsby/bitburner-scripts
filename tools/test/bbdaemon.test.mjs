@@ -315,6 +315,10 @@ export async function run() {
     bb.cities[best].pop = 2.0e9
     bb.cities[best].popEst = 2.0e9
     bb.cities[best].comms = 80
+    // No random events here: they move a population and not its estimate (migrations, new
+    // synthoids), the drift the anchor names as unfollowed — this checks the mechanism.
+    const noEvents = () => (bb.randomEventCounter = 1e9)
+    noEvents()
     await w.runFor(0.1) // a read with r known: the anchor
     bb.cities[best].popEst = 4
     await w.runFor(0.5)
