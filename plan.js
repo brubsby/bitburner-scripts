@@ -33,6 +33,7 @@ import { realisedCapital } from 'nodeecon.js'
 import { RW_PRIOR, rwShape } from 'traderw.js'
 // Pure: the Bladeburner exit model (decideBladeRouteGen).
 import { bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE } from 'bbplan.js'
+import { installVoidOf } from 'installgate.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -1357,9 +1358,15 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
         // synchronous step); point.gainsAt(waitH) where no precomputed one.
         const g = count !== null ? null : P0.committedGains ?? (typeof P0.gainsAt === 'function' ? P0.gainsAt(spec.waitH) : null)
         const specNow = g ? { ...spec, gains: g } : spec
+        // Through the trajectory's GENERATOR: on the blade route the point is
+        // a mean over Q member simulations (bbplan.BLADE_ENSEMBLE), and the
+        // synchronous `f` ran them in one step before this generator's first
+        // yield — live BN14.1 2026-10-04: PLAN BLOCKED THE PAGE, 154.5ms in
+        // 'plan-install' step 1 (77.1ms with one simulation). The same
+        // numbers; the page gets the thread back between them.
         let pointH = null
         try {
-          pointH = tOf(specNow).f(inputs)
+          pointH = yield* tOf(specNow).fg(inputs)
         } catch {
           pointH = null
         }
@@ -2638,6 +2645,8 @@ export function graftCarryCheckOf({ install = null, installInputs = null, grafts
     why: `GRAFTS DROPPED: the install decision (${install.key}) priced ${carried.length} graft(s) where ${source} holds ${expected.length}${missing.length ? ` — missing ${missing.length} (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? ', ...' : ''})` : ''}${extra.length ? ` — ${extra.length} not committed (${extra.slice(0, 3).join(', ')})` : ''}`,
   }
 }
+/** The note a voided install's failed exit check becomes (installgate.installVoidOf). */
+const voidNoteOf = (v) => `VOIDED INSTALL ${v.at} (installgate.BLADE_JUMP_VOID — ${v.why}) — not failed`
 /**
  * THE FORECAST'S CALIBRATION, read for the healthcheck (exitcal.js). The
  * alarm is ANYTIME-VALID: the e-processes on the recalibrated revisions
@@ -2729,7 +2738,11 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   else if (gb?.why) notes.push(`plan graft/batch: ${gb.why}`)
   // EXIT JUMP AT INSTALL (exitJumpOf, carried through the life by the pass).
   const ej = plan.exitJump ?? null
-  if (ej?.ok === false) fail(String(ej.why).startsWith('EXIT JUMP AT INSTALL') ? ej.why : `EXIT JUMP AT INSTALL: ${ej.why}`, "the install's simulation of the next life and the next life's own pricing disagree about one state — an input is estimated one way before the install and another after it (compare the two exits' inputs group by group: tools/sim/exitjump/attribute.mjs)")
+  // A VOIDED INSTALL (installgate.BLADE_JUMP_VOIDS): its jump measured lost
+  // inputs, not the install — a note naming the void, never a failure.
+  const ejVoid = ej?.ok === false ? installVoidOf(ej.install?.at) : null
+  if (ejVoid) notes.push(`${voidNoteOf(ejVoid)}: ${String(ej.why ?? '').replace(/^EXIT JUMP AT INSTALL:? ?/, 'EXIT JUMP AT INSTALL ')}`)
+  else if (ej?.ok === false) fail(String(ej.why).startsWith('EXIT JUMP AT INSTALL') ? ej.why : `EXIT JUMP AT INSTALL: ${ej.why}`, "the install's simulation of the next life and the next life's own pricing disagree about one state — an input is estimated one way before the install and another after it (compare the two exits' inputs group by group: tools/sim/exitjump/attribute.mjs)")
   else if (ej?.why && ej.install) notes.push(`plan exit across the install: ${ej.why}`)
   // EXIT UNSTABLE (exitStabilityOf, against the last pass: recorded by the
   // pass as plan.exitStability) and OPTIONS OFF BASIS (on this record).
@@ -2869,8 +2882,12 @@ export function installRecordCheck(rec, { now = Date.now(), holdH = 12, jump = n
   // EXIT JUMP AT INSTALL, after the fact (/tel/exitjump.txt, the record the
   // next life's passes kept): it outlives plan.txt's copy, which the life
   // after replaces. Reported here only when plan.txt no longer carries it.
+  // A VOIDED INSTALL (installgate.BLADE_JUMP_VOIDS): both comparisons
+  // measured its lost inputs — notes naming the void, never failures.
+  const voided = installVoidOf(rec.at)
   if (jump?.install?.at === rec.at && plan?.exitJump?.install?.at !== rec.at) {
-    if (jump.ok === false) fails.push({ what: String(jump.why).startsWith('EXIT JUMP AT INSTALL') ? jump.why : `EXIT JUMP AT INSTALL: ${jump.why}`, detail: 'the install priced the next life on one model and the life priced itself on another — plan.exitJumpOf, /tel/exitjump.txt' })
+    if (jump.ok === false && voided) notes.push(`${voidNoteOf(voided)}: ${String(jump.why ?? '').replace(/^EXIT JUMP AT INSTALL:? ?/, 'EXIT JUMP AT INSTALL ')}`)
+    else if (jump.ok === false) fails.push({ what: String(jump.why).startsWith('EXIT JUMP AT INSTALL') ? jump.why : `EXIT JUMP AT INSTALL: ${jump.why}`, detail: 'the install priced the next life on one model and the life priced itself on another — plan.exitJumpOf, /tel/exitjump.txt' })
     else if (jump.why) notes.push(`last install's exit across the install: ${jump.why}`)
   }
   const db = differentBatchCheckOf(rec)
@@ -2881,7 +2898,8 @@ export function installRecordCheck(rec, { now = Date.now(), holdH = 12, jump = n
     notes.push(`last install (${ageH.toFixed(1)}h ago) recorded no exit comparison${rec.terminal ? ' (terminal install)' : ''}`)
     return { fails, notes }
   }
-  if (ex.ok === false) fails.push({ what: `TWO EXITS AT INSTALL (${rec.at}): ${String(ex.why ?? '').replace(/^TWO EXITS AT INSTALL: /, '')}`, detail: `the install ran on one exit while the plan had committed another for the same act — act.js /tel/install-last.txt; plan.installExitsOf` })
+  if (ex.ok === false && voided) notes.push(`${voidNoteOf(voided)}: TWO EXITS AT INSTALL (${rec.at}): ${String(ex.why ?? '').replace(/^TWO EXITS AT INSTALL: /, '')}`)
+  else if (ex.ok === false) fails.push({ what: `TWO EXITS AT INSTALL (${rec.at}): ${String(ex.why ?? '').replace(/^TWO EXITS AT INSTALL: /, '')}`, detail: `the install ran on one exit while the plan had committed another for the same act — act.js /tel/install-last.txt; plan.installExitsOf` })
   else notes.push(`last install (${ageH.toFixed(1)}h ago): ${ex.why ?? 'exits not compared'}`)
   return { fails, notes }
 }

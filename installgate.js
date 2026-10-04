@@ -327,7 +327,17 @@ export function bladeInstallBiasOf(ledger, { node = null } = {}) {
  * unjoined division with no fleet (fixed at the source in 5cd1c3b). Kept, it
  * would block every BN14 install for the rest of the node.
  */
-export const BLADE_JUMP_VOID = new Set(['2026-10-04T01:32:10.023Z'])
+export const BLADE_JUMP_VOIDS = {
+  '2026-10-04T01:32:10.023Z': 'BN14.1 +95h: bladeburner.js and sleeve.js were refused their RAM after the install and the refusal record replaced their telemetry, so the new life priced an unjoined division with no fleet — lost inputs, not an install effect (fixed at the source in 5cd1c3b)',
+}
+export const BLADE_JUMP_VOID = new Set(Object.keys(BLADE_JUMP_VOIDS))
+/**
+ * The void of an install (by its `at`), or null: {at, why}. The healthcheck's
+ * exit-across-the-install checks (plan.planCheck, plan.installRecordCheck)
+ * report a voided install as a note naming the void, not a failure — the
+ * comparison measured the lost inputs, and the ledger already drops it.
+ */
+export const installVoidOf = (at) => (typeof at === 'string' && BLADE_JUMP_VOID.has(at) ? { at, why: BLADE_JUMP_VOIDS[at] } : null)
 
 export function bladeInstallJumpsNext(prevLedger, exitJump, { node = null, blade = false } = {}) {
   const led = (Array.isArray(prevLedger) ? prevLedger : []).filter((x) => x && (node === null || x.node === node) && !BLADE_JUMP_VOID.has(x.at))
