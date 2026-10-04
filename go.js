@@ -344,11 +344,18 @@ const SETTINGS = {
   //   turnS: seconds a turn costs until this process has timed 20 moves;
   //   lossScale: the priced streak-reset cost x this (1 = as priced).
   power: { on: false, turnS: 1.2, lossScale: 1 },
-  // mirror: when the AI passes and we are ahead — 'always' pass at once
-  // (release 2), or 'search': the solver decides (PASS ends the game exactly;
-  // a stone only when its line wins >= golib.SAFE_CONTINUE and the power per
-  // second of playing on beats ending now).
-  mirror: 'always',
+  // mirror, PER OPPONENT (default for the rest): when the AI passes and we
+  // are ahead — 'always' pass at once (release 2), or 'search': PLAY ON, the
+  // solver decides (PASS ends the game exactly; a stone only when its line
+  // wins >= golib.SAFE_CONTINUE). 'search' turns the POWER OBJECTIVE on for
+  // that opponent's games (the time cost is what makes playing on pay: it
+  // was measured that way, release 3b), whatever power.on says.
+  // Measured (tools/sim/go-w0.mjs, 30 paired games, harness):
+  //   Tetrads     control 20425/h (black 16.3)  play-on+time 23991/h (black 20.4, 30/30)  ON
+  //               play-on with no time cost 17878/h (black 21.3, 19.3 s/game): the area costs more time than it earns
+  //   Illuminati  control 103626/h (29/30)  play-on+time 102825/h (28/30)  off until loss-scale is measured
+  // An opponent switches on here once its arm beats control with no extra losses.
+  mirror: { default: 'always', Tetrads: 'search' },
   // presend: play the solver's pre-sent answer (/go/ponder.txt) the moment the
   // AI's reply matches its board, with no request.
   presend: false,
@@ -1447,7 +1454,9 @@ export async function main(ns) {
       const eBlack = meanBlack[opponent] ?? 0.68 * points
       const ratePerS = (POWER_PER_HOUR[opponent] ?? 0) / 3600
       const priced = powerObjective({ streak: preStats?.winStreak ?? 0, komi, size, eBlack, rate: ratePerS, turnS, lossScale: SETTINGS.power.lossScale })
-      const objective = useModel && SETTINGS.power.on ? priced : null
+      // Play-on for this opponent (SETTINGS.mirror) brings the objective with it.
+      const mirrorMode = SETTINGS.mirror[opponent] ?? SETTINGS.mirror.default
+      const objective = useModel && (SETTINGS.power.on || mirrorMode === 'search') ? priced : null
       // THE PRICED WAIT for an absent solver (SETTINGS.solverWait), this game.
       let waitedExtra = 0
       const waitBudget = () => (useModel ? solverWaitBudgetMs({ objective: priced, eBlack, ratePerS, localLoss: SETTINGS.solverWait.localLoss[opponent] ?? SETTINGS.solverWait.localLoss.default, capMs: SETTINGS.solverWait.capMs, waitedMs: waitedExtra }) : 0)
@@ -1756,7 +1765,7 @@ export async function main(ns) {
           // asked with opponentPassed: its PASS ends the game exactly, a stone
           // is played only when its line keeps the win (golib SAFE_CONTINUE)
           // and the power per second beats ending now. Needs a live solver.
-          const searchDecides = ahead === true && SETTINGS.mirror === 'search' && useModel && src !== 'loc'
+          const searchDecides = ahead === true && mirrorMode === 'search' && useModel && src !== 'loc'
           if (searchDecides) {
             if (!passAhead) {
               let b0 = null

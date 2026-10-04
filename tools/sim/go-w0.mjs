@@ -137,6 +137,9 @@ let sessRate = null; // work (model-calling iterations) per ms of a fresh full-b
 //                     each pre-sent move) and draws the AI's NEXT reply from
 //                     T + 200k, k calibrated online (golib.seedCalib) from the
 //                     replies seen — as go-solver does live.
+// --local: go.js's in-game fallback (golib.chooseMove, 20ms, top 8) plays every
+// move — what a game costs when the solver is absent (SETTINGS.solverWait).
+const LOCAL = argv.includes("--local");
 const OBJECTIVE = str("objective", null);
 const LOSS_SCALE = num("loss-scale", 1);
 const LEAF_K = num("leafk", 0);
@@ -327,6 +330,8 @@ async function playGame(stats, gameIndex) {
         })()
       : MODEL
       ? await golib.chooseMoveModel(simple, valid, N, komi, budgetFor(ourTurns), { ...opts, history: state.previousBoards.slice() }, MODEL)
+      : LOCAL
+      ? golib.chooseMove(simple, valid, N, komi, 20, 8)
       : golib.chooseMoveUCT(simple, valid, N, komi, budgetFor(ourTurns), opts);
     modelCalls += ranked?.[0]?.modelCalls ?? 0;
     ourMs += performance.now() - t0;
@@ -532,7 +537,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, objective: OBJECTIVE, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {

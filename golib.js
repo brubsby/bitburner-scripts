@@ -1385,7 +1385,7 @@ export function modelSession(N, komi, model, opts = {}) {
     // is played only if its line also wins essentially always — the power
     // objective already prices a loss at the streak it resets, this makes the
     // floor explicit against a search that has not seen the losing reply.
-    if (obj && passNode && passNode.terminal && passNode.tw === 1 && stone && stone.visits && stone.wins / stone.visits < SAFE_CONTINUE) return []
+    if (passNode && passNode.terminal && passNode.tw === 1 && stone && stone.visits && stone.wins / stone.visits < SAFE_CONTINUE) return []
     if (bestIdx === null) return null
     const ch = node.children.get(bestIdx)
     const r3 = (v) => (v === null ? null : Math.round(v * 1000) / 1000)

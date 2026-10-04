@@ -19,6 +19,10 @@
 //   GR5 the pure helpers: presentAnswer, trimGameLog, solverWaitBudgetMs;
 //       golib powerObjective / streakMultiplier against the game's rules;
 //       seedCalib; the never-risk-the-win guard.
+//   GR6 go-solver end to end: release and top 3 in replies, /go/ponder.txt
+//       published while pondering, a notice taken without a reply, the seed
+//       lag calibrated from the replies the next requests reveal.
+//   GR7 play-on after the AI's pass is per opponent (SETTINGS.mirror).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -312,6 +316,176 @@ export async function run() {
     c5.note(`after the AI's pass, winning PASS vs stones: chose ${best && best.length ? `${best[0].x},${best[0].y}` : "PASS"}; top ${JSON.stringify(top)}`);
   }
   checks.push(c5);
+
+  /* ------------------------------------------------------------------ GR6 */
+  // The solver end to end against a stub bridge (never the live daemon): a
+  // model request names release r3 and its top 3; pondering publishes
+  // /go/ponder.txt; a NOTICE (`played`) is taken without a reply and the
+  // solver ponders on; with `T` in the requests the seed lag is calibrated
+  // from the AI replies the next request reveals.
+  const c6 = new Check("GR6", "go-solver end to end: release + top 3 in replies, /go/ponder.txt published, a notice re-roots without a reply, the seed calibrated");
+  {
+    const http = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const files = new Map();
+    const pushed = [];
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", () => {
+        const { method, params } = JSON.parse(body || "{}");
+        if (method === "getFile") res.end(JSON.stringify({ result: files.get(params.filename) ?? null }));
+        else if (method === "pushFile") {
+          files.set(params.filename, params.content);
+          if (params.filename === "/go/move.txt") pushed.push(JSON.parse(params.content));
+          res.end(JSON.stringify({ result: "OK" }));
+        } else res.end(JSON.stringify({ error: "unknown" }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const port = server.address().port;
+    const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "150", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`, "--katago-remote", "none", "--ponder-cap-ms", "1500"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KATAGO_DIR: "/nonexistent-katago" } });
+    let stderr = "";
+    child.stderr.on("data", (d) => (stderr += d));
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const model = await loadModel();
+    const validOf = (b) => model.validMoves(b, []);
+    const put = (x, y, ch, b) => b.map((c, i) => (i === x ? c.slice(0, y) + ch + c.slice(y + 1) : c));
+    const wait = async (pred, ms = 30000) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        const v = pred();
+        if (v) return v;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      return null;
+    };
+    try {
+      const T = 5e9;
+      let board = [".....", ".....", ".....", ".....", "....."];
+      const base = { size: 5, komi: 5.5, backend: "model", opponent: "Tetrads", turnS: 1.2 };
+      files.set("/go/req.txt", JSON.stringify({ seq: 1, ...base, board, valid: validOf(board), history: [], T }));
+      const a = await wait(() => pushed.find((m) => m.seq === 1));
+      c6.examined(3);
+      if (!a) throw new Error(`no reply to seq 1: ${stderr.slice(-300)}`);
+      if (a.release !== "r3") c6.fail(`the reply must name release r3, got ${a.release}`);
+      if (!Array.isArray(a.top) || !a.top.length) c6.fail("the reply must carry the search's top 3", JSON.stringify(a));
+      // The AI replies (as the game would, seeded at T + 200), then a pondered answer must appear.
+      const after = put(a.x, a.y, "X", board);
+      const r = await model.reply(after, { opponent: "Tetrads", history: [board.join("")], passCount: 0, rng: T + 200 });
+      const next = r ? put(r.x, r.y, "O", after) : after;
+      const pon = await wait(() => {
+        try {
+          const p = JSON.parse(files.get("/go/ponder.txt") ?? "null");
+          return p?.answers?.length ? p : null;
+        } catch {
+          return null;
+        }
+      }, 8000);
+      c6.examined(1);
+      if (!pon) c6.fail("while pondering, the solver must publish pre-sent answers to /go/ponder.txt");
+      const hit = pon?.answers?.find((e) => e.b === next.join("") && e.pc === 0);
+      // Play a NOTICE for the AI's actual reply position: either the pre-sent answer or any legal point.
+      const vNext = validOf(next);
+      const mv = hit && !hit.pass ? [hit.x, hit.y] : vNext[0];
+      const movesBefore = pushed.length;
+      files.set("/go/req.txt", JSON.stringify({ seq: 2, ...base, board: next, valid: vNext, history: [after.join(""), board.join("")], T: T + 1400, played: { x: mv[0], y: mv[1] } }));
+      await new Promise((res) => setTimeout(res, 600));
+      c6.examined(1);
+      if (pushed.length !== movesBefore) c6.fail("a notice must NOT be answered (go.js already played)", JSON.stringify(pushed.slice(movesBefore)));
+      // The next real request (after the AI's reply to the noticed move) is answered.
+      const after2 = put(mv[0], mv[1], "X", next);
+      const r2 = await model.reply(after2, { opponent: "Tetrads", history: [next.join(""), after.join(""), board.join("")], passCount: 0, rng: T + 1400 + 200 });
+      const third = r2 ? put(r2.x, r2.y, "O", after2) : after2;
+      files.set("/go/req.txt", JSON.stringify({ seq: 3, ...base, board: third, valid: validOf(third), history: [after2.join(""), next.join(""), after.join(""), board.join("")], T: T + 2800, opponentPassed: !r2 }));
+      const c = await wait(() => pushed.find((m) => m.seq === 3));
+      c6.examined(2);
+      if (!c) c6.fail("the request after a notice must be answered", stderr.slice(-300));
+      else {
+        if (c.mode !== "session") c6.fail("the session search must answer", JSON.stringify(c));
+        const obs = (c.seed?.req?.observed ?? 0) + (c.seed?.pre?.observed ?? 0);
+        if (obs < 2) c6.fail(`with T in the requests the seed lag must be observed for both replies, got ${JSON.stringify(c.seed)}`);
+        c6.note(`hit on the pre-sent answers: ${!!hit}; reply 3 ${JSON.stringify({ x: c.x, y: c.y, pondered: c.pondered, seed: c.seed })}`);
+      }
+    } catch (e) {
+      c6.fail(String(e?.message ?? e).slice(0, 300));
+    } finally {
+      child.kill();
+      server.close();
+    }
+  }
+  checks.push(c6);
+
+  /* ------------------------------------------------------------------ GR7 */
+  // PLAY-ON per opponent (release 3b): after the AI's pass while ahead, an
+  // opponent with SETTINGS.mirror 'search' asks the solver (opponentPassed,
+  // with the power objective) and plays what it says; any other opponent
+  // passes at once, as release 2 did.
+  const c7 = new Check("GR7", "play-on after the AI's pass is per opponent: Tetrads asks the solver (with the power objective), the rest mirror-pass at once");
+  {
+    const runPinned = async (opponent) => {
+      const files = new Map();
+      const reqs = [];
+      const calls = { pass: 0, move: 0 };
+      const B = [".....", ".....", ".....", ".....", "....."];
+      const stats = {};
+      const ns = {
+        flags: () => ({ size: 5, maxms: 5, idle: 1, topk: 8, remotems: 0, games: 1, opponent, pin: true }),
+        disableLog() {},
+        tprint() {},
+        print() {},
+        getResetInfo: () => ({ lastAugReset: 1, currentNode: 1, ownedSF: new Map(), ownedAugs: new Map() }),
+        getHostname: () => "home",
+        scp() {},
+        read: (f) => files.get(f) ?? "",
+        fileExists: () => false,
+        atExit() {},
+        write: (f, data, mode) => {
+          files.set(f, mode === "a" ? (files.get(f) ?? "") + data : data);
+          if (f === "/go/req.txt") {
+            const q = JSON.parse(data);
+            reqs.push(q);
+            files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x: 1, y: 1, backend: "model", mode: "session", release: "r3" }));
+          }
+        },
+        sleep: () => new Promise((r) => setTimeout(r, 0)),
+        exec: () => 0,
+        isRunning: () => false,
+        go: {
+          analysis: { getStats: () => stats, getValidMoves: () => B.map((c) => [...c].map(() => true)) },
+          resetBoardState: () => {},
+          getGameState: () => ({ komi: 5.5, blackScore: 20, whiteScore: 5.5, previousMove: [0, 0] }),
+          getBoardState: () => B,
+          getMoveHistory: () => [],
+          // First move: the AI passes. The next action ends the game.
+          makeMove: () => Promise.resolve(calls.move++ === 0 ? { type: "pass", x: null, y: null } : { type: "gameOver", x: null, y: null }),
+          passTurn: () => {
+            calls.pass++;
+            return Promise.resolve({ type: "gameOver", x: null, y: null });
+          },
+        },
+      };
+      await Promise.race([go.main(ns), new Promise((_, rej) => setTimeout(() => rej(new Error("main() did not finish in 30s")), 30000))]);
+      return { reqs, calls, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
+    };
+    try {
+      const t = await runPinned("Tetrads");
+      const afterPass = t.reqs.filter((q) => q.opponentPassed === true);
+      c7.examined(4);
+      if (afterPass.length !== 1) c7.fail(`Tetrads: after the AI's pass the solver must be asked once with opponentPassed (asked ${afterPass.length}x)`, JSON.stringify(t.reqs.map((q) => [q.seq, q.opponentPassed])));
+      if (!t.reqs.every((q) => q.objective?.kind === "power")) c7.fail("Tetrads: play-on brings the power objective into every request");
+      if (t.calls.move !== 2 || t.calls.pass !== 0) c7.fail(`Tetrads: the solver's stone must be played (moves ${t.calls.move}, passes ${t.calls.pass})`);
+      if (t.tel?.playOn?.games !== 1 || t.tel?.playOn?.stones !== 1) c7.fail("Tetrads: /tel/go.txt playOn must count the game and the stone", JSON.stringify(t.tel?.playOn));
+      const d = await runPinned("Daedalus");
+      c7.examined(3);
+      if (d.reqs.some((q) => q.opponentPassed === true)) c7.fail("Daedalus (mirror 'always'): no solver request after the AI's pass");
+      if (d.calls.pass !== 1) c7.fail(`Daedalus: the AI's pass must be mirrored at once (passTurn ${d.calls.pass}x)`);
+      if (d.reqs.some((q) => q.objective)) c7.fail("Daedalus: the power objective stays off (power.on false, mirror 'always')");
+    } catch (e) {
+      c7.fail(String(e?.stack ?? e).slice(0, 400));
+    }
+  }
+  checks.push(c7);
 
   return checks;
 }
