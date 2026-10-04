@@ -48,6 +48,21 @@ export class LoopCapError extends Error {
   }
 }
 
+const GEN_FN_PROTO = Object.getPrototypeOf(function* () {})
+/** Whether `f` is a generator function (function*). */
+export const isGenFn = (f) => typeof f === 'function' && Object.getPrototypeOf(f) === GEN_FN_PROTO
+/**
+ * ONE INJECTED SEARCH, EITHER FORM. The count, route and gang exits take the
+ * policy search as a parameter (exitplan.bestExitPolicy or its generator
+ * bestExitPolicyGen): called through this, a generator function is delegated
+ * to — its yields pass through, so a pacer slices inside it — and a plain one
+ * runs in one piece. The same numbers either way (bestExitPolicy drains the
+ * generator); only where the page gets the thread back differs.
+ */
+export function* callGen(fn, ...args) {
+  return isGenFn(fn) ? yield* fn(...args) : fn(...args)
+}
+
 /** Run a generator to completion synchronously; its yields are ignored. */
 export function drain(gen, cap = STEP_CAP) {
   for (let steps = 0; ; steps++) {

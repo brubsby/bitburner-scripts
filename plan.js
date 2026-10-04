@@ -25,7 +25,7 @@
 // and scales them by one width multiplier (docs/bayes.md "Calibration").
 
 import { rngOf, hashOf, normalOf, gammaOf, igDraw, nigDraw, PRIORS, traderRwPosterior, rwLedgerOf, driftPosterior, driftCalibration, logRatePosterior, jitterPosterior } from 'bayes.js'
-import { routeExitFixed, countExitFixed } from 'countexit.js'
+import { routeExitFixed, routeExitFixedGen, countExitFixedGen } from 'countexit.js'
 import { drain } from 'coop.js'
 import { exitCalibrationReport } from 'exitcal.js'
 import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
@@ -1230,6 +1230,9 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
   const pointH = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.hours]))
   const committedKey = prev?.key && byKey.has(prev.key) ? prev.key : null
   const sim = (route) => (d) => routeExitFixed(bestExitPolicy, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
+  // The same simulation yielding per policy (up to 7 afford-waits of a whole
+  // count-aware search each, in one step as `sim`).
+  const simGen = (route) => (d) => routeExitFixedGen(bestExitPolicyGen, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
   let keys = []
   if (!redecide && committedKey) keys = [committedKey]
   else {
@@ -1241,7 +1244,7 @@ export function* decideRouteGen({ inputs, count, routes, point, repPoint = null,
     if (committedKey && !keys.includes(committedKey)) keys.push(committedKey)
   }
   if (!keys.length) return { key: null, why: `no priced route (${point?.why ?? 'none'})`, decidedAt: prev?.decidedAt ?? null }
-  const options = keys.map((k) => ({ key: k, sim: sim(byKey.get(k)) }))
+  const options = keys.map((k) => ({ key: k, sim: sim(byKey.get(k)), simGen: simGen(byKey.get(k)) }))
   const ev = yield* evaluateGen(options, draws, { budgetMs, now: budgetClock, alloc: !redecide && committedKey ? null : allocOf(ocba, committedKey) })
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
@@ -1464,29 +1467,12 @@ export function installScreenOf(opts, committedKey = null, { topK = PLAN.install
  *     (drawn, where `d` is given) is done
  * Returns (inputs, d?) => hours | null.
  */
-export function trajectoryOf(spec, { count = null, repPoint = null } = {}) {
-  // A DEGENERATE EXIT IS UNPRICED, not a duration (exitplan.DEGENERATE_H: past
-  // 1e5h no node is played). The wait kind always refused it; the default and
-  // never kinds passed it on, and one draw of a slow cadence (ln(M) 0.006/h)
-  // priced live BN14's hacking arm at 3.4e78h — its mean 1.4e77h, the paired
-  // gain -1.4e77h and the value of waiting 2.3e77h decided the route on
-  // overflow (decisions.bladeRoute 2026-10-03 21:20Z). null is "infeasible in
-  // this draw": summarize fills it at 1.5x the option's worst priced draw.
-  if (!spec) return (x) => hoursOrNull(bestExitPolicy(x))
-  if (spec.kind === 'never') return (x) => hoursOrNull(bestExitPolicy(x, 0, 0))
-  if (spec.kind === 'route') {
-    return (x, d = null) => {
-      const det = d ? detourOf(spec.route, d, repPoint, x?.repSdLn ?? null) : spec.route?.detourH
-      return count ? routeExitFixed(bestExitPolicy, x, count, spec.route, { firstInstallH: det + (spec.extra ?? 0), lifeH: spec.lifeH ?? null, detourH: det }) : null
-    }
-  }
-  const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0
-  const g = spec.gains ?? null
-  if (count) return (x) => countExitFixed(bestExitPolicy, x, count, { firstInstallH: w, n: spec.n ?? 1, lifeH: spec.lifeH ?? null })
-  return (x) => {
-    const r = bestExitPolicy({ ...x, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
-    return r.degenerate ? null : r.best?.hours ?? null
-  }
+export function trajectoryOf(spec, ctx = {}) {
+  // THE SAME FUNCTION as trajectoryGenOf, drained: one definition of every
+  // trajectory, so the synchronous pricing and the sliced one can never
+  // disagree (bestExitPolicy is bestExitPolicyGen drained).
+  const g = trajectoryGenOf(spec, ctx)
+  return (x, d = null) => drain(g(x, d))
 }
 
 /** A policy search's best hours, or null when it is unpriced or degenerate (past DEGENERATE_H). */
@@ -1494,29 +1480,52 @@ export const hoursOrNull = (r) => (!r || r.degenerate || !fin(r.best?.hours) ? n
 
 /**
  * trajectoryOf as a GENERATOR per simulation: (inputs, d?) => a generator
- * returning the same hours, yielding after each policy the no-count wait and
- * never trajectories price (exitplan.bestExitPolicyGen). The count and route
- * trajectories run in one step (countexit prices through the sync policy).
+ * returning the same hours, yielding after each policy every kind prices
+ * (exitplan.bestExitPolicyGen; the count and route kinds through
+ * countexit.countExitFixedGen / routeExitFixedGen over it).
+ *
+ * Every kind slices. The default policy (no committed install — the
+ * hacking arm on the Bladeburner route, hackBasisOf null) and the count
+ * kinds ran in ONE step as the synchronous `f`: live BN14 2026-10-04, PLAN
+ * BLOCKED THE PAGE, 64.8ms block, 39.7ms in 'plan-lifeLength' step 1 of 59
+ * (51.2ms / 28.5ms at 10:30Z) — the life length decision's first option's
+ * point, a whole policy search before its first yield.
+ *
+ * A DEGENERATE EXIT IS UNPRICED, not a duration (exitplan.DEGENERATE_H: past
+ * 1e5h no node is played). The wait kind always refused it; the default and
+ * never kinds passed it on, and one draw of a slow cadence (ln(M) 0.006/h)
+ * priced live BN14's hacking arm at 3.4e78h — its mean 1.4e77h, the paired
+ * gain -1.4e77h and the value of waiting 2.3e77h decided the route on
+ * overflow (decisions.bladeRoute 2026-10-03 21:20Z). null is "infeasible in
+ * this draw": summarize fills it at 1.5x the option's worst priced draw.
  */
-export function trajectoryGenOf(spec, ctx = {}) {
-  const { count = null } = ctx
-  if (spec && !count && (spec.kind === 'never' || spec.kind === 'wait')) {
-    if (spec.kind === 'never') {
-      return function* (x) {
-        return hoursOrNull(yield* bestExitPolicyGen(x, 0, 0))
-      }
-    }
-    const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0
-    const g = spec.gains ?? null
+export function trajectoryGenOf(spec, { count = null, repPoint = null } = {}) {
+  if (!spec) {
     return function* (x) {
-      const r = yield* bestExitPolicyGen({ ...x, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
-      return r.degenerate ? null : r.best?.hours ?? null
+      return hoursOrNull(yield* bestExitPolicyGen(x))
     }
   }
-  const f = trajectoryOf(spec, ctx)
-  // eslint-disable-next-line require-yield
-  return function* (x, d = null) {
-    return f(x, d)
+  if (spec.kind === 'never') {
+    return function* (x) {
+      return hoursOrNull(yield* bestExitPolicyGen(x, 0, 0))
+    }
+  }
+  if (spec.kind === 'route') {
+    return function* (x, d = null) {
+      const det = d ? detourOf(spec.route, d, repPoint, x?.repSdLn ?? null) : spec.route?.detourH
+      return count ? yield* routeExitFixedGen(bestExitPolicyGen, x, count, spec.route, { firstInstallH: det + (spec.extra ?? 0), lifeH: spec.lifeH ?? null, detourH: det }) : null
+    }
+  }
+  const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0
+  const g = spec.gains ?? null
+  if (count) {
+    return function* (x) {
+      return yield* countExitFixedGen(bestExitPolicyGen, x, count, { firstInstallH: w, n: spec.n ?? 1, lifeH: spec.lifeH ?? null })
+    }
+  }
+  return function* (x) {
+    const r = yield* bestExitPolicyGen({ ...x, firstInstallH: w, ...(g ? { installGains: g, nextInstallGain: g.hacking ?? null } : {}) }, 400, 1)
+    return r.degenerate ? null : r.best?.hours ?? null
   }
 }
 
@@ -1891,14 +1900,21 @@ export function* chooseBatchGen({ candidates = [], inputs = null, waitH = 0, ins
     // plan's batch), so the choice's price of the chosen batch is the price
     // the install decision's 'now' and the install actor put on it.
     const x = ownBaseline && inputs && 'persistBaseline' in inputs ? { ...inputs, persistBaseline: c.gains } : inputs
+    return { ...c, spec, pointGen: () => fg(x), pointH: null, noiseKey: noiseKeyOf(spec, x), sim: (d) => f(applyDraw(x, d), d), simGen: (d) => fg(applyDraw(x, d), d) }
+  })
+  // THE POINTS AS GENERATORS, a step each: every candidate's point was a
+  // whole policy search, all of them in ONE step (the map above) before the
+  // first yield. The same numbers.
+  for (const o of opts) {
     let pointH = null
     try {
-      pointH = f(x)
+      pointH = yield* o.pointGen()
     } catch {
       pointH = null
     }
-    return { ...c, spec, pointH: fin(pointH) ? pointH : null, noiseKey: noiseKeyOf(spec, x), sim: (d) => f(applyDraw(x, d), d), simGen: (d) => fg(applyDraw(x, d), d) }
-  })
+    o.pointH = fin(pointH) ? pointH : null
+    yield
+  }
   let stats = {}
   let ev = { n: 0, ms: 0, overBudget: false, samples: {} }
   if (opts.length > 1 && Array.isArray(draws) && draws.length) {
@@ -2952,7 +2968,7 @@ export const seedOf = (lastAugReset, node) => hashOf(`${node ?? ''}:${lastAugRes
  *
  * Returns the decideAmong record plus { hackH, bladeH } (the points).
  */
-export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now() } = {}) {
+export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now() } = {}) {
   // The cadence in steps of e^0.25 (28%) around the point's: the drawn
   // cadences collapse to a handful of simulations (~50-100ms each), however
   // wide the cadence posterior is.
@@ -2973,9 +2989,17 @@ export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, b
     if (!memo.has(key)) memo.set(key, (yield* bladeExitGen(bladeMemberOf(bladeStart ?? bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0), m, Q))).hours)
     return memo.get(key)
   }
+  // THE HACKING ARM SLICED (`trajGen`, trajectoryGenOf on the same basis):
+  // through the synchronous `traj` its point and every draw were a whole
+  // policy search in one step — on the Bladeburner route the default policy
+  // (hackBasisOf null), the same piece that blocked 'plan-lifeLength' live
+  // BN14 2026-10-04. The same numbers.
+  const hackGen = typeof trajGen === 'function' ? trajGen : function* (x, d = null) {
+    return traj(x, d)
+  }
   let pointHack = null
   try {
-    pointHack = traj(base)
+    pointHack = yield* hackGen(base)
   } catch {
     pointHack = null
   }
@@ -2984,7 +3008,7 @@ export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, b
   const pointBlade = ens.hours
   const memberOf = (d) => bladeMemberOfDraw(d, Q) ?? 0
   const options = [
-    { key: 'hack', noiseKey: noiseKeyOf(basis, base), sim: (d) => traj(applyDraw(base, d), d) },
+    { key: 'hack', noiseKey: noiseKeyOf(basis, base), sim: (d) => traj(applyDraw(base, d), d), simGen: (d) => hackGen(applyDraw(base, d), d) },
     { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours, memberOf(d))), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours, memberOf(d)) },
   ]
   const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null

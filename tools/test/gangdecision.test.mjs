@@ -133,7 +133,7 @@ export async function run() {
     if (!/!gangCancelled && !\(inGangFaction && gangPrev\?\.playerSlot === false\)/.test(prog)) g3.fail("progress.js yields the slot to the gang bootstrap only while the decision wants it");
     if (!/else if \(byExit\?\.blade !== true && verdict\?\.worth === true && verdict\?\.gatePaid !== true && verdict\?\.arm && verdict\.arm !== 'none'\) byExit = \{ objective: 'karma', gang: true/.test(prog)) g3.fail("the sleeve objective follows the gang decision (off the committed Bladeburner route)");
     if (!/gang: pc\.decisions\.gang \?\? pc\.prev\?\.decisions\?\.gang \?\? null/.test(prog) || !/await planDecide\(pc, 'gang'/.test(prog)) g3.fail("the gang is a plan decision (decisions.gang on the shared draws)");
-    if (!/exitCmp = gangArms\(bestExitPolicy, base, sched, \{ fleet: arms\.fleet, player: arms\.player \}/.test(prog)) g3.fail("progress.js prices the gang with gangArms on the ramping grinds");
+    if (!/exitCmp = await paced\(gangArmsGen\(bestExitPolicyGen, base, sched, \{ fleet: arms\.fleet, player: arms\.player \}/.test(prog)) g3.fail("progress.js prices the gang with gangArms on the ramping grinds");
     if (!/persons: sleeves\.map\(\(x\) => \(\{ i: x\.index, sync: x\.sync, shock: x\.shock, skills: x\.skills, exp: x\.exp, mults: x\.mults \}\)\)/.test(src("sleeve.js"))) g3.fail("sleeve.js publishes the persons the grind is computed from");
   }
   checks.push(g3);

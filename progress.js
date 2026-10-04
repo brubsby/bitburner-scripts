@@ -142,7 +142,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
 import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
-import { gangVerdict, gangExit, gangExitGen, gangArms, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
+import { gangVerdict, gangExit, gangExitGen, gangArms, gangArmsGen, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
@@ -174,7 +174,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, policyOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
+import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
@@ -1435,7 +1435,8 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
       const sched = gangScheduleNow(ns, info)
       const eB = readJson(ns, GATE)?.eBudget
       const eBudget = typeof eB === 'number' && isFinite(eB) ? eB : null
-      exitCmp = gangArms(bestExitPolicy, base, sched, { fleet: arms.fleet, player: arms.player }, eBudget)
+      // The point arms (three or four policy searches) in the pass's slices.
+      exitCmp = await paced(gangArmsGen(bestExitPolicyGen, base, sched, { fleet: arms.fleet, player: arms.player }, eBudget), 'plan-gang-point')
       const pc = planCtxOf(ns, info)
       if (pc?.post && exitCmp?.best) {
         const { inputs: b0 } = withRepEstimate(base)
@@ -1443,9 +1444,14 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
           const r = gangArms(bestExitPolicy, b, sched, k === 'none' ? {} : { [k]: arms[k] }, eBudget, 400, { lower: false })
           return k === 'none' ? r.withoutH : r.arms?.[k]?.withH ?? null
         }
+        // The same arm yielding per policy (gangArmsGen over bestExitPolicyGen): each draw's arm is two or three whole searches.
+        const armHGen = function* (k, b) {
+          const r = yield* gangArmsGen(bestExitPolicyGen, b, sched, k === 'none' ? {} : { [k]: arms[k] }, eBudget, 400, { lower: false })
+          return k === 'none' ? r.withoutH : r.arms?.[k]?.withH ?? null
+        }
         const keys = ['none', ...Object.keys(exitCmp.arms ?? {}).filter((k) => typeof exitCmp.arms[k]?.withH === 'number')]
         const pointH = { none: exitCmp.withoutH, ...Object.fromEntries(keys.filter((k) => k !== 'none').map((k) => [k, exitCmp.arms[k].withH])) }
-        decision = await planDecide(pc, 'gang', () => decideAmongGen({ options: keys.map((k) => ({ key: k, sim: (dr) => armH(k, applyDraw(b0, dr)) })), prev: pc.prev?.decisions?.gang ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
+        decision = await planDecide(pc, 'gang', () => decideAmongGen({ options: keys.map((k) => ({ key: k, sim: (dr) => armH(k, applyDraw(b0, dr)), simGen: (dr) => armHGen(k, applyDraw(b0, dr)) })), prev: pc.prev?.decisions?.gang ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: (k) => pointH[k] }))
         // The later lives' length its trajectories priced (LIFE LENGTH OFF BASIS: no noise keys here).
         if (decision && typeof decision === 'object') decision.pricedL = lifeLOf(b0)
         // THE PLAN'S COMMITMENT GOVERNS: its key replaces the point argmin.
@@ -2456,7 +2462,8 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
     pc.graftChosen = d.key === 'grafts' ? { from: setSwitch ? setSwitch.from : committedSet ? 'the committed set' : "this pass's search", specs, startMoney } : null
     // The with-run's policy (installs before the final window) on the same
     // basis: the graft step waits for 0 installs left.
-    const withPolicy = withIn ? (countCtx ? bestExitPolicy(withIn) : yield* policyGenOf(basis, withIn)) : null
+    // Sliced either way (the count's search was one synchronous step).
+    const withPolicy = withIn ? (countCtx ? yield* bestExitPolicyGen(withIn) : yield* policyGenOf(basis, withIn)) : null
     yield
     return {
       ...d,
@@ -2689,7 +2696,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         rankCal = { ...rankCal, error: `rank calibration threw: ${String(e).slice(0, 120)}` }
       }
       const rankPost = rankRatePosterior(rankCal.samples)
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {
@@ -2886,8 +2893,8 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
     // by the purchase alone.
     const nk = noiseKeyOf(basis, base)
     const options = [
-      { key: 'none', noiseKey: nk, sim: (d) => traj(applyDraw(base, d), d) },
-      { key: 'now', noiseKey: nk, sim: (d) => traj(applyDraw(withIn, d), d) },
+      { key: 'none', noiseKey: nk, sim: (d) => traj(applyDraw(base, d), d), simGen: (d) => tg(applyDraw(base, d), d) },
+      { key: 'now', noiseKey: nk, sim: (d) => traj(applyDraw(withIn, d), d), simGen: (d) => tg(applyDraw(withIn, d), d) },
     ]
     // The points as generators (one policy per step): synchronously each was
     // a whole policy search — PLAN BLOCKED THE PAGE, 61ms in 'plan-fourS'
@@ -2897,7 +2904,8 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
     yield
     const pointNow = yield* tg(withIn)
     yield
-    const lifeNow = (countCtx ? policyOf(basis, withIn) : yield* policyGenOf(basis, withIn))?.best?.lifeGraftLegs?.find((l) => l.life === 1) ?? null
+    // policyOf and policyGenOf price the same policy (neither reads the count): the generator, always.
+    const lifeNow = (yield* policyGenOf(basis, withIn))?.best?.lifeGraftLegs?.find((l) => l.life === 1) ?? null
     yield
     const was = pc.prev?.decisions?.fourS
     const prev = was?.key === 'none' || was?.key === 'now' ? was : { key: 'none', why: 'not bought (a purchase is committed only when the exit says buy)', decidedAt: null }
@@ -4157,14 +4165,14 @@ async function countExitNowOf(inputs, countCtx, route = null) {
   let best = null
   let viaRoute = false
   for (const w of [0, 0.25, 0.5, 1, 2, 4]) {
-    const r = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: w }), 'count-exit-now')
+    const r = await paced(bestCountExitGen(bestExitPolicyGen, inputs, countCtx, { firstInstallH: w }), 'count-exit-now')
     if (r.best && (best === null || r.best.hours < best)) best = r.best.hours
   }
   // The exit-chosen route, on these inputs (the planned path's comparison does the same).
   if (route && route.detourH >= 0 && isFinite(route.detourH)) {
     const ladderR = [{ ...route, must: true }, ...(countCtx.ladder ?? []).filter((t) => t.name !== route.name)]
     for (const extra of [0, 0.5, 2]) {
-      const r = await paced(bestCountExitGen(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: route.detourH + extra }), 'count-exit-now')
+      const r = await paced(bestCountExitGen(bestExitPolicyGen, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: route.detourH + extra }), 'count-exit-now')
       if (r.best?.firstBatch?.chosen?.includes(route.name) && (best === null || r.best.hours < best)) {
         best = r.best.hours
         viaRoute = true
@@ -6676,7 +6684,7 @@ async function act(ns, canJoin, info, note) {
         donation: (f, rep) => (donatable && canDonateTo(f, 0, 0, gangF) && fwrg > 0 ? donationForRep(rep, player?.mults?.faction_rep ?? 1, fwrg) : null),
         nfgName: NFG,
       })
-      const ranked = await paced(bestCountRouteGen(bestExitPolicy, rec.inputs, cc, routes), 'count-route-scan')
+      const ranked = await paced(bestCountRouteGen(bestExitPolicyGen, rec.inputs, cc, routes), 'count-route-scan')
       const committed = (() => {
         const c = readJson(ns, COUNT_ROUTE_FILE)
         return c && c.lastAugReset === info?.lastAugReset && !allCount.has(c.name) ? c : null
@@ -7732,15 +7740,21 @@ async function act(ns, canJoin, info, note) {
                   if (inp?.repFromEstimate) pc.repFromEstimate = inp.repSource
                   const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
                   const traj = trajectoryOf(basis, {})
+                  const tg = trajectoryGenOf(basis, {})
                   // The point on the inputs themselves, beside the draws: the
                   // exit jump check compares it with the install actor's point.
+                  // Inside the decision's slices (a whole policy search: it ran
+                  // synchronously before the pacer saw it).
                   let pointH = null
-                  try {
-                    pointH = traj(inp)
-                  } catch {
-                    pointH = null
-                  }
-                  const d = await planDecide(pc, 'exit', () => decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: () => pointH }))
+                  const d = await planDecide(pc, 'exit', function* () {
+                    try {
+                      pointH = yield* tg(inp)
+                    } catch {
+                      pointH = null
+                    }
+                    yield
+                    return yield* decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr), simGen: (dr) => tg(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: () => pointH })
+                  })
                   if (d && typeof pointH === 'number' && isFinite(pointH)) d.pointH = +pointH.toFixed(3)
                   if (d?.key && typeof d.q50 === 'number') decided = { exitH: d.q50, source: `plan: median over the posterior (${basis ? `committed install ${basis.kind}` : 'default policy'}, nothing queued), 80% interval ${d.q10}-${d.q90}h${inp?.incomeFromPrior ? ` — ${inp.incomeSource}` : ''}${inp?.repFromEstimate ? ` — ${inp.repSource}` : ''}` }
                 }
@@ -8130,11 +8144,11 @@ async function act(ns, canJoin, info, note) {
         // and, in installgate, the floor as the named fallback.
         const countCtx = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
         if (countCtx) {
-          const nowC = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: 0 }), 'count-exit-scan')
+          const nowC = await paced(bestCountExitGen(bestExitPolicyGen, inputs, countCtx, { firstInstallH: 0 }), 'count-exit-scan')
           if (nowC.best) {
             const waitsC = []
             for (const w of [0.25, 0.5, 1, 2, 4]) {
-              const r = await paced(bestCountExitGen(bestExitPolicy, inputs, countCtx, { firstInstallH: w }), 'count-exit-scan')
+              const r = await paced(bestCountExitGen(bestExitPolicyGen, inputs, countCtx, { firstInstallH: w }), 'count-exit-scan')
               waitsC.push({ waitMs: w * 3600000, H: r.best?.hours ?? null, installs: r.best?.installsFirst ?? null, n: r.best?.n ?? null, lifeH: r.best?.lifeH ?? null })
             }
             // THE EXIT-CHOSEN ROUTE is a wait too, on THESE inputs: install
@@ -8148,7 +8162,7 @@ async function act(ns, canJoin, info, note) {
               const ladderR = [{ ...route, must: true }, ...(countCtx.ladder ?? []).filter((t) => t.name !== route.name)]
               for (const extra of [0, 0.5, 2]) {
                 const w = route.detourH + extra
-                const r = await paced(bestCountExitGen(bestExitPolicy, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: w }), 'count-exit-scan')
+                const r = await paced(bestCountExitGen(bestExitPolicyGen, inputs, { ...countCtx, ladder: ladderR }, { firstInstallH: w }), 'count-exit-scan')
                 const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
                 waitsC.push({ waitMs: Math.round(w * 3600000), H: took ? r.best.hours : null, installs: took ? r.best.installsFirst : null, n: took ? r.best.n : null, lifeH: took ? r.best.lifeH ?? null : null, extra, route: route.name, via: route.via })
               }

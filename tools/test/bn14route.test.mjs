@@ -168,7 +168,7 @@ export async function run() {
       [prog, /go: goNow\.go,\s*goCadenceMult: goNow\.goCadenceMult,/, 'the inputs carry go and goCadenceMult'],
       [prog, /multGainPerCycle: [^\n]*goNow\.goCadenceMult/, 'the point cadence carries the g factor'],
       [planSrc, /const gm = fin\(inputs\.goCadenceMult\)/, 'applyDraw reads goCadenceMult'],
-      [planSrc, /if \(!spec\) return \(x\) => hoursOrNull\(bestExitPolicy\(x\)\)/, 'the default trajectory refuses a degenerate exit'],
+      [planSrc, /if \(!spec\) \{\s*return function\* \(x\) \{\s*return hoursOrNull\(yield\* bestExitPolicyGen\(x\)\)/, 'the default trajectory refuses a degenerate exit (trajectoryGenOf; trajectoryOf drains it)'],
     ]) {
       c7.examined(1)
       if (!re.test(src)) c7.fail(`${what} — not found`)

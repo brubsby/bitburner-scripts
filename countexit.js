@@ -40,7 +40,7 @@
 // NOT CALIBRATED: the per-life budget is the trader's measured return
 // compounded, the same model the exit's money legs use.
 
-import { drain } from 'coop.js'
+import { drain, callGen } from 'coop.js'
 import { capitalOf, isShaped, capitalRateAt, capitalGain, capitalEarnAt } from 'traderw.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
@@ -254,6 +254,14 @@ export function lifeInputs(inputs, L) {
  * or {hours: null, phaseWhy} when the count phase cannot complete.
  */
 export function countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH, nfg) {
+  return drain(countExitAtGen(bestExitPolicy, inp, short, ladder, n, firstInstallH, nfg))
+}
+/**
+ * countExitAt as a generator: `bestExitPolicy` the search or its generator
+ * (exitplan.bestExitPolicyGen, coop.callGen) — given the generator, it
+ * yields after each policy priced. The same result.
+ */
+export function* countExitAtGen(bestExitPolicy, inp, short, ladder, n, firstInstallH, nfg) {
   const ph = countPhase({ short, ladder, n, inputs: inp, firstInstallH, nfg })
   if (ph.installs === null) return { hours: null, phaseWhy: ph.why }
   const gL = pos(inp.multGainPerCycle) ? inp.multGainPerCycle : 1
@@ -261,7 +269,8 @@ export function countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH
   // first through installGains.hacking (exitHours' firstGain), later ones
   // as byInstall lifts over the cadence's per-cycle gain they replace.
   const byInstall = [...ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / gL)), ...(ph.post ?? []).map((b) => Math.max(1, b.gain / gL))]
-  const r = bestExitPolicy(
+  const r = yield* callGen(
+    bestExitPolicy,
     { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall } },
     400,
     ph.installs,
@@ -275,11 +284,15 @@ export function countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH
  * the point estimate chose, it does not re-optimise per draw. With the count
  * met, the ordinary policy search from `firstInstallH`. Returns hours or null.
  */
-export function countExitFixed(bestExitPolicy, inputs, count, { firstInstallH = 0, n = 1, lifeH = null } = {}) {
-  if (!(count?.short > 0)) return bestExitPolicy({ ...inputs, firstInstallH }, 400, 1).best?.hours ?? null
+export function countExitFixed(bestExitPolicy, inputs, count, opts = {}) {
+  return drain(countExitFixedGen(bestExitPolicy, inputs, count, opts))
+}
+/** countExitFixed as a generator (countExitAtGen): the search or its generator. */
+export function* countExitFixedGen(bestExitPolicy, inputs, count, { firstInstallH = 0, n = 1, lifeH = null } = {}) {
+  if (!(count?.short > 0)) return (yield* callGen(bestExitPolicy, { ...inputs, firstInstallH }, 400, 1)).best?.hours ?? null
   const { ladder } = paddedLadder(count)
   if (!ladder.length) return null
-  const at = countExitAt(bestExitPolicy, lifeInputs(inputs, lifeH), count.short, ladder, Math.min(n, count.short), firstInstallH, count.nfg ?? null)
+  const at = yield* countExitAtGen(bestExitPolicy, lifeInputs(inputs, lifeH), count.short, ladder, Math.min(n, count.short), firstInstallH, count.nfg ?? null)
   return num(at.hours) && !at.degenerate ? at.hours : null
 }
 
@@ -289,7 +302,11 @@ export function countExitFixed(bestExitPolicy, inputs, count, { firstInstallH = 
  * detour), without the search. `detourH` may be a drawn value. Returns hours
  * or null (unaffordable in the first batch, or unpriced).
  */
-export function routeExitFixed(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null, affordWaits = ROUTE_AFFORD_WAITS } = {}) {
+export function routeExitFixed(bestExitPolicy, inputs, count, route, opts = {}) {
+  return drain(routeExitFixedGen(bestExitPolicy, inputs, count, route, opts))
+}
+/** routeExitFixed as a generator (countExitAtGen per extra wait): the search or its generator. */
+export function* routeExitFixedGen(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null, affordWaits = ROUTE_AFFORD_WAITS } = {}) {
   if (!(count?.short > 0) || !route) return null
   const d = num(detourH) && detourH >= 0 ? detourH : route.detourH
   const { ladder } = paddedLadder({ ...count, ladder: [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)] })
@@ -299,7 +316,7 @@ export function routeExitFixed(bestExitPolicy, inputs, count, route, { firstInst
   // it), rather than reading as "infeasible": the route's policy is "buy it
   // as soon as both the detour and the money allow".
   for (const extra of affordWaits) {
-    const at = countExitAt(bestExitPolicy, inp, count.short, ladder, 1, Math.max(firstInstallH, d) + extra, count.nfg ?? null)
+    const at = yield* countExitAtGen(bestExitPolicy, inp, count.short, ladder, 1, Math.max(firstInstallH, d) + extra, count.nfg ?? null)
     if (num(at.hours) && !at.degenerate && at.firstBatch?.chosen?.includes(route.name)) return at.hours
   }
   return null
@@ -328,8 +345,9 @@ export function* bestCountExitGen(bestExitPolicy, inputs, count, { firstInstallH
   if (typeof bestExitPolicy !== 'function' || !inputs || !count) return { best: null, why: 'no count model inputs' }
   const short = count.short
   if (!(short > 0)) {
-    const r = bestExitPolicy({ ...inputs, firstInstallH }, 400, 1)
-    return { best: r.best ? { ...r.best, n: 0, countInstalls: 0 } : null, tried: [], never: bestExitPolicy(inputs, 0, 0).best?.hours ?? null, why: r.why ?? null }
+    const r = yield* callGen(bestExitPolicy, { ...inputs, firstInstallH }, 400, 1)
+    const never = yield* callGen(bestExitPolicy, inputs, 0, 0)
+    return { best: r.best ? { ...r.best, n: 0, countInstalls: 0 } : null, tried: [], never: never.best?.hours ?? null, why: r.why ?? null }
   }
   const known = count.ladder ?? []
   if (!known.length) return { best: null, why: 'the count is short and no distinct augmentation can be bought' }
@@ -348,7 +366,7 @@ export function* bestCountExitGen(bestExitPolicy, inputs, count, { firstInstallH
   for (const L of lifeHs) {
     const inp = lifeInputs(inputs, L)
     for (const n of ns) {
-      const at = countExitAt(bestExitPolicy, inp, short, ladder, n, firstInstallH, count.nfg ?? null)
+      const at = yield* countExitAtGen(bestExitPolicy, inp, short, ladder, n, firstInstallH, count.nfg ?? null)
       yield
       if (at.phaseWhy) {
         tried.push({ n, lifeH: L, hours: null, why: at.phaseWhy })

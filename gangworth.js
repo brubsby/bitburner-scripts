@@ -28,6 +28,7 @@
 // number is just a faster way back to one.
 
 import { capitalFV } from 'hacknetplan.js'
+import { drain, callGen } from 'coop.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 
@@ -186,26 +187,37 @@ export function withRepEstimate(base) {
  * reputation and augmentations. `grinds` {fleet, player}: hours or null.
  * Returns {best: 'none'|'fleet'|'player', savedH, withoutH, arms, why}.
  */
-export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget = null, maxInstalls = 400, { lower: wantLower = true } = {}) {
+export function gangArms(bestExitPolicy, base0, schedule, grinds = {}, eBudget = null, maxInstalls = 400, opts = {}) {
+  return drain(gangArmsGen(bestExitPolicy, base0, schedule, grinds, eBudget, maxInstalls, opts))
+}
+/**
+ * gangArms as a generator: `bestExitPolicy` the search or its generator
+ * (exitplan.bestExitPolicyGen, coop.callGen). Given the generator it yields
+ * inside every policy search — the plan's per-draw arms were two or three
+ * whole searches in one 'plan-gang' step. The same result.
+ */
+export function* gangArmsGen(bestExitPolicy, base0, schedule, grinds = {}, eBudget = null, maxInstalls = 400, { lower: wantLower = true } = {}) {
   if (typeof bestExitPolicy !== 'function' || !base0) return { best: null, savedH: null, why: 'no exit policy or inputs' }
   if (!Array.isArray(schedule) || !schedule.length) return { best: null, savedH: null, why: 'no gang income trajectory (measured or simulated)' }
   const { inputs: base, repSource } = withRepEstimate(base0)
-  const without = bestExitPolicy({ ...base }, maxInstalls)
+  const without = yield* callGen(bestExitPolicy, { ...base }, maxInstalls)
   const a = without?.best?.hours
   if (!num(a) || without?.degenerate) return { best: null, savedH: null, repSource, why: `exit unpriceable without the gang (${without?.why ?? 'degenerate'})` }
   const shifted = (H) => schedule.map((x) => ({ atH: x.atH + H, perSec: x.perSec }))
-  const exitWithExtra = (extra) => bestExitPolicy({ ...base, ...extra, eBudget }, maxInstalls)?.best?.hours
+  const exitWithExtra = function* (extra) {
+    return (yield* callGen(bestExitPolicy, { ...base, ...extra, eBudget }, maxInstalls))?.best?.hours
+  }
   const arms = {}
   const gF = grinds.fleet
   if (num(gF) && gF >= 0) {
-    const h = exitWithExtra({ extraIncome: shifted(gF) })
+    const h = yield* exitWithExtra({ extraIncome: shifted(gF) })
     arms.fleet = { grindH: gF, withH: num(h) ? h : null }
   }
   const gP = grinds.player
   if (num(gP) && gP >= 0) {
     // The slot-free bound is for the record; a caller pricing only withH (the plan's per-draw arms) skips it.
-    const lower = wantLower ? exitWithExtra({ extraIncome: shifted(gP), slotBusyH: gP }) : null
-    const fromStart = exitWithExtra({ extraIncome: shifted(0) })
+    const lower = wantLower ? yield* exitWithExtra({ extraIncome: shifted(gP), slotBusyH: gP }) : null
+    const fromStart = yield* exitWithExtra({ extraIncome: shifted(0) })
     arms.player = { grindH: gP, withH: num(fromStart) ? gP + fromStart : null, lowerH: num(lower) ? lower : null }
   }
   let best = 'none'
