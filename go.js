@@ -279,8 +279,8 @@ const SETTINGS = {
   //
   // backend: 'katago' sends the big board to KataGo instead (tools/katago,
   // EXPERIMENTAL, OFF: leave unset). Measured headless on the hidden opponent:
-  // 400 visits won 2 of 3 games (black 134-139 vs uct's 0/6 at ~87), at
-  // 6-8s a move on two CPU threads; 200 visits 2/4; 100 visits 0/3. The
+  // 400 visits won 4 of 5 (black 135-145 vs uct's 0/6 at ~87; 2336 power/h
+  // vs ~961), at ~7s a move on two CPU threads; 200 visits 2/4; 100 visits 0/3. The
   // offline nodes are approximated as white stones (tools/katago/README.md),
   // which is what still loses games. Needs bash tools/katago/install.sh.
   bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true }, backend: null, visits: 400 },

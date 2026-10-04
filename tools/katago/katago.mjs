@@ -53,7 +53,7 @@ export const RULES = {
 };
 
 /** The KataGo query for one position (pure; tested). */
-export function toQuery(board, validList, komi, { id = "q", visits = 200, holes = "white" } = {}) {
+export function toQuery(board, validList, komi, { id = "q", visits = 200, holes = "white", komiAdjust = 0, ownership = false } = {}) {
   const N = board.length;
   const stones = [];
   for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
@@ -109,11 +109,13 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
     return hole;
   };
   let rootList = validList.filter(([x, y]) => !eyeByHole(x, y));
-  if (!rootList.length) rootList = validList;
+  // Nothing else left: PASS, never the eye. (Falling back to the full list
+  // here is how a 128-stone group filled its own last eyes and died,
+  // go-w0.mjs 400 visits game 1, move 321.)
   const moves = rootList.map(([x, y]) => COLS[x] + (y + 1));
   moves.push("pass");
   // KataGo accepts integer or half-integer komi in [-150, 150].
-  const k = Math.max(-150, Math.min(150, Math.round((komi - holeStones) * 2) / 2));
+  const k = Math.max(-150, Math.min(150, Math.round((komi - holeStones + komiAdjust) * 2) / 2));
   return {
     id,
     initialStones: stones,
@@ -125,7 +127,36 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
     boardYSize: N,
     maxVisits: visits,
     allowMoves: [{ player: "B", moves, untilDepth: 1 }],
+    ...(ownership ? { includeOwnership: true } : {}),
   };
+}
+
+/**
+ * KOMI CALIBRATION (opts.calibrate) — MEASURED WORSE, OFF: 0/2 at 400 visits
+ * (black 120 and 76, 5-8 passes a game: told the truth about the score, it
+ * thinks it leads and stops fighting) vs 2/2 uncalibrated on the same build.
+ * Kept for the record and the test. The hole-as-white mapping biases
+ * KataGo's score: hole clusters read as live white walls own the territory
+ * around them, so early on it believes black is ~70 points behind on a board
+ * the game scores as level. A winrate-maximiser that thinks it is far behind
+ * plays desperate, high-variance Go. From KataGo's own ownership map the
+ * IPvGO outcome is estimated directly — non-hole points only, area by owner,
+ * komi as the game's — and the difference to KataGo's scoreLead is the bias;
+ * the next query's komi is shifted by it (exponentially smoothed), so KataGo's
+ * lead tracks the game's. Pure; tested by GM6.
+ *
+ * ownership: KataGo analysis order, row-major from the TOP row (GTP row N),
+ * black-positive (reportAnalysisWinratesAs = BLACK).
+ */
+export function ipvgoLead(board, ownership, komi) {
+  const N = board.length;
+  let lead = -komi;
+  for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
+    if (board[x][y] === "#") continue;
+    const o = ownership[(N - 1 - y) * N + x];
+    if (Number.isFinite(o)) lead += o; // expected (black - white) for this point
+  }
+  return lead;
 }
 
 /** GTP vertex -> {x, y} or {pass: true}. */
@@ -214,11 +245,20 @@ export async function startKataGo({ visits = 200, log = () => {} } = {}) {
     });
   return {
     pid: child.pid,
+    bias: 0,
     async analyze(board, validList, komi, opts = {}) {
       return query(toQuery(board, validList, komi, { id: `q${++seq}`, visits, ...opts }));
     },
     async choose(board, validList, komi, opts = {}) {
-      const r = await this.analyze(board, validList, komi, opts);
+      const cal = opts.calibrate ? { komiAdjust: this.bias, ownership: true } : {};
+      const r = await this.analyze(board, validList, komi, { ...opts, ...cal });
+      if (opts.calibrate && Array.isArray(r.ownership) && Number.isFinite(r.rootInfo?.scoreLead)) {
+        // scoreLead already includes this query's komi shift: undo it to get
+        // the unshifted KataGo lead, then re-estimate the bias.
+        const kataLead = r.rootInfo.scoreLead + this.bias;
+        const real = ipvgoLead(board, r.ownership, komi);
+        this.bias = 0.5 * this.bias + 0.5 * (kataLead - real);
+      }
       const pick = pickMove(r.moveInfos ?? []);
       if (!pick) return { pass: true, info: r.rootInfo };
       return { ...fromVertex(pick.move), winrate: pick.winrate, scoreLead: pick.scoreLead, visits: pick.visits };

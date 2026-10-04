@@ -271,6 +271,17 @@ export async function run() {
     c6.examined(1);
     if (q3.allowMoves[0].moves.includes("B2")) c6.fail("B2 (our eye, bordered by a hole) must not be offered to KataGo — it fills it to 'capture' the hole");
     if (!q3.allowMoves[0].moves.includes("D4")) c6.fail("ordinary moves must stay allowed");
+    const q4 = toQuery(eyeB, [[1, 1]], 7.5);
+    c6.examined(1);
+    if (q4.allowMoves[0].moves.join() !== "pass") c6.fail("when only hole-bordered eyes are legal, the root must be PASS alone (filling the last eye killed a 128-stone group)", JSON.stringify(q4.allowMoves[0].moves));
+    // ipvgoLead: ownership is row-major from the TOP row; holes are skipped.
+    const { ipvgoLead } = await import("../katago/katago.mjs");
+    // 3x3, board[x][y]; hole at x=0,y=2 (top-left in KataGo's order: index 0).
+    const b3 = ["..#", "...", "..."];
+    const own = [5, 1, 1, -1, -1, -1, 1, 1, 1]; // index 0 is the hole: must be ignored
+    c6.examined(1);
+    const lead = ipvgoLead(b3, own, 0.5);
+    if (Math.abs(lead - (1 + 1 - 3 + 3 - 0.5)) > 1e-9) c6.fail(`ipvgoLead must sum non-hole ownership minus komi: want 1.5, got ${lead}`);
     const { pickMove } = await import("../katago/katago.mjs");
     const P = (move, order, scoreLead, visits = 10) => ({ move, order, scoreLead, visits });
     c6.examined(3);

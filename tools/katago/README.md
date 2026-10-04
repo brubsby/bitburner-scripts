@@ -33,9 +33,23 @@ itself runs through nix-ld).
 
 ## Measured (tools/sim/go-w0.mjs vs the game's own getMove, NOT CALIBRATED live)
 
-See the final report for the full table. 19x19 hidden opponent (bitverse
-board, 7 handicap routers, komi 9.5): golib uct 0/6 won, black ~87; KataGo
-b10c128 at 400 visits 2/2 won, black 137-139.
+19x19 hidden opponent (bitverse board, 7 handicap routers, komi 9.5), b10c128,
+2 threads:
+
+| solver | games | won | black | s/move | power/h |
+| --- | --- | --- | --- | --- | --- |
+| golib uct 800ms (previous default) | 6 | 0 | ~87 | 0.8 | ~961 |
+| KataGo 100 visits | 3 | 0 | 115 | 1.5 | 1310 |
+| KataGo 200 visits (pass fix) | 4 | 2 | 105 | 3.5 | 1701 |
+| KataGo 400 visits (pass + eye fixes, current) | 5 | 4 | 140 | 7.1 | 2336 |
+| same + komi calibration (`--kcal`, dropped) | 2 | 0 | 98 | 6.9 | - |
+
+Recommendation: keep it OFF by default. It wins the hidden board where golib
+cannot, and roughly doubles power/h there, but 5x5 Illuminati with the model
+solver earns ~52,000/h, so the planner should only send games to the hidden
+opponent for its own channel (hacking level). To turn it on, set
+`SETTINGS.bigBoard.backend = 'katago'` in go.js after running
+`bash tools/katago/install.sh`.
 
 ## Resources
 

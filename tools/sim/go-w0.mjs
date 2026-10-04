@@ -182,7 +182,8 @@ async function playGame(stats, gameIndex) {
       ? await (async () => {
           const vl = [];
           for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (valid[x][y]) vl.push([x, y]);
-          const r = await KATAGO.choose(simple, vl, komi);
+          if (ourTurns === 0) KATAGO.bias = 0; // a new game
+          const r = await KATAGO.choose(simple, vl, komi, { calibrate: argv.includes("--kcal") });
           return r.pass ? [] : [{ x: r.x, y: r.y, iters: r.visits }];
         })()
       : MODEL
@@ -294,7 +295,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, katago: KATAGO ? Number(str("katago", 200)) : null, maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, katago: KATAGO ? Number(str("katago", 200)) + (argv.includes("--kcal") ? "cal" : "") : null, maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
