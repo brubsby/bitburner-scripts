@@ -144,7 +144,7 @@ export async function run() {
     c2.examined(1);
     const src = read("go.js");
     if (!/drawWinRates\(posterior/.test(src) || !/winRates:\s*draw/.test(src)) c2.fail("go.js must draw from the posterior and price on the draw");
-    if (!/updatePosterior\(posterior, opponent, size, won\)/.test(src)) c2.fail("go.js must fold every finished game into the posterior");
+    if (!/updatePosterior\(posterior, opponent, size, won[,)]/.test(src)) c2.fail("go.js must fold every finished game into the posterior");
     if (!/writeHome\(THOMPSON\.file/.test(src)) c2.fail("go.js must persist the posterior so it survives restarts");
   }
   checks.push(c2);

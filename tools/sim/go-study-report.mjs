@@ -86,7 +86,7 @@ for (const f of FILES) {
     if (o.kind === "start") start = o;
     if (o.kind !== "game" || !start) continue;
     const opts = start.opts && Object.keys(start.opts).length ? JSON.stringify(start.opts) : "";
-    const solver = (start.katago ? `katago${start.katago}v` : start.model ? "model" : "uct") + (start.ponder && !start.katago ? "+ponder" : "") + (start.session ? `+session:${start.session}` : "") + (start.katagoSettings ? ` ${JSON.stringify(start.katagoSettings)}` : "") + (start.katagoOldPass ? " oldpass" : "") + (start.katagoHoles ? ` holes=${start.katagoHoles}` : "") + (start.katagoRemoteNet ? ` net=${start.katagoRemoteNet.slice(0, 13)}` : "") + (start.katagoOverride ? ` ${start.katagoOverride}` : "") + (start.cheat ? "+cheat" : "") + (start.opening ? ` open${start.opening.k}:${start.opening.ms}` : "") + (opts ? " " + opts : "");
+    const solver = (start.katago ? `katago${start.katago}v` : start.model ? "model" : "uct") + (start.ponder && !start.katago ? "+ponder" : "") + (start.session ? `+session:${start.session}` : "") + (start.katagoSettings ? ` ${JSON.stringify(start.katagoSettings)}` : "") + (start.katagoOldPass ? " oldpass" : "") + (start.katagoHoles ? ` holes=${start.katagoHoles}` : "") + (start.katagoRemoteNet ? ` net=${start.katagoRemoteNet.slice(0, 13)}` : "") + (start.katagoOverride ? ` ${start.katagoOverride}` : "") + (start.cheat ? "+cheat" : "") + (start.opening ? ` open${start.opening.k}:${start.opening.ms}` : "") + (opts ? " " + opts : "") + (start.objective ? ` obj=${start.objective}${start.lossScale !== 1 ? `:L${start.lossScale}` : ""}${start.leafK ? `:K${start.leafK}` : ""}` : "") + (start.mirrorMode === "search" ? " mirror=search" : "") + (start.presend ? " presend" : "") + (start.seeded ? (start.clock ? " seeded+clock" : " seeded") : "");
     const key = `${start.opponent}|${o.size}|${start.maxms}|${solver}`;
     if (!arms.has(key)) arms.set(key, { opponent: start.opponent, size: o.size, maxms: start.maxms, solver, rtMs: start.rtMs ?? 550, games: [] });
     arms.get(key).games.push(o);
@@ -104,7 +104,8 @@ for (const arm of arms.values()) {
   const st = replay(boot, diff);
   // Re-timed to the calibrated per-move round trip (go-w0 ROUND_TRIP_MS): a
   // record made at another value (550ms before 2026-10-04) is shifted per turn.
-  const secs = gs.map((g) => g.liveS + (g.ourTurns * (ROUND_TRIP_MS - (arm.rtMs ?? 550))) / 1000 + (g.oppMs ?? 0) / 1000 + 0.1);
+  // Pre-sent moves (release 3) never took the round trip: only the others are re-timed.
+  const secs = gs.map((g) => g.liveS + ((g.ourTurns - (g.preMoves ?? 0)) * (ROUND_TRIP_MS - (arm.rtMs ?? 550))) / 1000 + (g.oppMs ?? 0) / 1000 + 0.1);
   const secPerGame = secs.reduce((a, b) => a + b, 0) / n;
   const wins = pairs.filter((p) => p.won).length;
   const p = wins / n;

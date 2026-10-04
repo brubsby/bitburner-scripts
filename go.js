@@ -144,7 +144,7 @@
 // and the win streak is worth up to 3x — more than the extra territory.
 // ---------------------------------------------------------------------------
 
-import { chooseMove, applyMove, cheatChance, cheatWaitS } from 'golib.js'
+import { chooseMove, applyMove, cheatChance, cheatWaitS, powerObjective } from 'golib.js'
 import { canUseGoCheat, canJoinBladeburner, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
@@ -172,6 +172,14 @@ import {
   w0Obs,
   obsDue,
   weightsFor,
+  solverVersion,
+  armPosterior,
+  armDraw,
+  armPrior,
+  splitArm,
+  rateScale,
+  armVersion,
+  ARM_SIZES,
 } from 'goplan.js'
 // Pure data module (no ns surface): the BitNode table, for GoPower.
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -330,6 +338,43 @@ const SETTINGS = {
   minDwellGames: 5,
   // Game length used for that block until this process has timed 3 games.
   defaultGameH: 1 / 60,
+  // RELEASE 3 — see the RELEASE 3 block below SETTINGS for what each measured.
+  // power: the model search values a game as the node power it banks minus
+  // the time it takes (golib.powerObjective), at this opponent's live streak.
+  //   turnS: seconds a turn costs until this process has timed 20 moves;
+  //   lossScale: the priced streak-reset cost x this (1 = as priced).
+  power: { on: false, turnS: 1.2, lossScale: 1 },
+  // mirror: when the AI passes and we are ahead — 'always' pass at once
+  // (release 2), or 'search': the solver decides (PASS ends the game exactly;
+  // a stone only when its line wins >= golib.SAFE_CONTINUE and the power per
+  // second of playing on beats ending now).
+  mirror: 'always',
+  // presend: play the solver's pre-sent answer (/go/ponder.txt) the moment the
+  // AI's reply matches its board, with no request.
+  presend: false,
+  // clock: send the playtime (the AI's RNG seed, playtimeReader) with each
+  // request, so the solver draws the AI's next reply from its seeds.
+  clock: false,
+  // THE SOLVER-ABSENCE WAIT. A move the solver does not answer is played by
+  // the 20ms local search, which loses games (localLoss: the share of games
+  // lost on the fallback, tools/sim/go-w0.mjs --local) — and a loss resets the
+  // streak. So the wait for a slow or restarting solver is PRICED per game:
+  // up to localLoss x (the loss's cost in node power) / (the power rate) of
+  // waiting, capped at capMs, before the fallback plays.
+  solverWait: { localLoss: { default: 0.5 }, capMs: 180000 },
+  // THE PER-GAME LOG: one JSON line per game, the last `keep` kept.
+  gameLog: { file: '/tel/go-games.txt', keep: 500, slack: 100 },
+  // THOMPSON OVER OPPONENT x BOARD SIZE (release 3a, goplan ARM_PRIOR): each
+  // game boundary draws every arm's power per second from its posterior and
+  // prices the arms as it priced opponents. on: false = the 5x5 board only
+  // (flags.size), as before. historyKeep: the arm picks kept in /tel/go.txt.
+  // katagoVisits: the visits a KataGo arm below 19x19 is played at (what
+  // the study measured: katago200gpup).
+  arms: { on: true, historyKeep: 50, katagoVisits: 200 },
+  // A game in progress is RESUMED (never reset: a reset forfeits it — a loss
+  // and the streak). After this many consecutive errors on one game it is
+  // reset after all (an error that repeats on every resume would hold the farm).
+  resumeMaxErrors: 4,
 }
 
 /**
@@ -584,6 +629,91 @@ export function modelHealth({ modelAsked = 0, modelAnswered = 0, modelFallbackWh
   }
 }
 
+/**
+ * PRE-SENT ANSWER (release 3): the solver's answer to the position the AI's
+ * reply just produced, if it published one. `text` is /go/ponder.txt
+ * ({answers: [{b, pc, x, y | pass}]}); a match needs the SAME board (every
+ * point) and pass state, and the move must be in the game's own valid list
+ * (superko lives there, not in the solver's tree). Pure.
+ * @returns {{answer: {x, y} | {pass: true} | null, had: boolean}} had: answers were on file
+ */
+export function presentAnswer(text, boardStrings, valid, oppPassed) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return { answer: null, had: false }
+  }
+  const answers = Array.isArray(rec?.answers) ? rec.answers : []
+  if (!answers.length) return { answer: null, had: false }
+  const key = boardStrings.join('')
+  const pc = oppPassed ? 1 : 0
+  for (const a of answers) {
+    if (a?.b !== key || a.pc !== pc) continue
+    if (a.pass) return { answer: { pass: true }, had: true }
+    if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) return { answer: { x: a.x, y: a.y }, had: true }
+  }
+  return { answer: null, had: true }
+}
+
+/**
+ * How long a move may wait for the solver beyond the usual timeout, this game
+ * (ms): the expected cost of playing on the 20ms fallback — the share of games
+ * it loses x what a loss costs in node power (golib.powerObjective: the win's
+ * pay over the loss's, plus the streak ramp it resets) — over the power rate,
+ * less what this game already waited, capped. Pure.
+ */
+export function solverWaitBudgetMs({ objective, eBlack, ratePerS, localLoss, capMs, waitedMs = 0 }) {
+  if (!objective || !(ratePerS > 0) || !(localLoss > 0)) return 0
+  const lossCost = eBlack * objective.diff * (objective.winMult - objective.lossMult) + objective.lossFuture
+  const budget = Math.min(capMs, (1000 * localLoss * lossCost) / ratePerS)
+  return Math.max(0, budget - waitedMs)
+}
+
+/** The per-game log, bounded: the last `keep` lines of `text` (one JSON record each). Pure. */
+export function trimGameLog(text, keep) {
+  const lines = String(text || '').split('\n').filter((l) => l.trim())
+  return lines.slice(-keep).join('\n') + (lines.length ? '\n' : '')
+}
+
+/**
+ * THE PLAYTIME, free in RAM: Player.totalPlaytime read from the game's webpack
+ * module cache (the errlog.js / cmd.js eval trick: nothing the RAM checker
+ * prices). go.js sends it with every request — the AI's RNG is seeded with it
+ * (goAI.ts:184) — and it fails LOUD: `why` names the failure and every request
+ * then goes without it (the solver draws free seeds, as in release 2).
+ */
+export function playtimeReader() {
+  let player = null
+  let why = null
+  const resolve = () => {
+    const win = eval('window')
+    const hook = win.webpackChunkbitburner
+    if (!hook || typeof hook.push !== 'function') throw new Error('window.webpackChunkbitburner missing')
+    let req = null
+    hook.push([[`gopt_${Date.now()}`], {}, (r) => (req = r)])
+    const mod = req?.c?.['./src/Player.ts']?.exports
+    if (!mod || typeof mod.Player?.totalPlaytime !== 'number') throw new Error('Player.totalPlaytime not found in ./src/Player.ts')
+    return mod
+  }
+  return {
+    now() {
+      if (why) return null
+      try {
+        if (!player) player = resolve()
+        const t = player.Player.totalPlaytime
+        return typeof t === 'number' && t > 0 ? t : null
+      } catch (e) {
+        why = `playtime unreadable (${String(e?.message ?? e).slice(0, 80)}) — requests go without it; the solver draws free seeds`
+        return null
+      }
+    },
+    get why() {
+      return why
+    },
+  }
+}
+
 export async function main(ns) {
   const flags = ns.flags([
     ['size', SETTINGS.size],
@@ -779,6 +909,39 @@ export async function main(ns) {
       nodeMults: mults,
     }
   }
+  // The solver version an opponent's posterior is read at: the model session
+  // on the small board, KataGo or uct on the hidden opponent's 19x19.
+  const verOf = (name) => (name === W0 ? armVersion(katagoAvail?.ok ? 'katago' : 'uct') : armVersion(N <= SETTINGS.model.maxSize ? 'model' : 'uct'))
+  // THE ARM BEING PLAYED (release 3a): the board size goes with the opponent.
+  let armSize = N
+  let armDrawn = {}
+  let armWhy = null
+  const armHistory = []
+  /** Per-arm posterior summary for /tel/go.txt (see the status fields). Never throws. */
+  const armStatus = () => {
+    try {
+      const now = Date.now()
+      const katagoOk = !!katagoAvail?.ok
+      const out = {}
+      const r = (v, d = 3) => (typeof v === 'number' && isFinite(v) ? Number(v.toFixed(d)) : null)
+      for (const name of Object.keys(OPPONENTS)) {
+        if (name === W0) {
+          if (!w0.eligible) continue
+          const p = posteriorOf(posterior, W0, 19, { ver: verOf(W0), now })
+          out[`${W0}@19`] = { mean: r(p.mean), sd: r(p.sd), games: p.games, n: r(p.n, 2), backend: katagoOk ? 'katago' : 'uct', version: verOf(W0), powerPerHour: Math.round(w0RateOf().pph), drawn: armDrawn[`${W0}@19`] ?? null }
+          continue
+        }
+        for (const size of ARM_SIZES) {
+          const p = armPosterior(posterior, name, size, { now, katagoOk })
+          if (!p) continue
+          out[`${name}@${size}`] = { mean: r(p.mean), sd: r(p.sd), games: p.games, n: r(p.n, 2), backend: p.backend, version: p.version, powerPerHour: p.powerPerHour === null ? null : Math.round(p.powerPerHour), drawn: armDrawn[`${name}@${size}`] ?? null }
+        }
+      }
+      return out
+    } catch (e) {
+      return { error: describe(e) }
+    }
+  }
   const pickOpponent = (current, stats, dwellH) => {
     try {
       // MEASUREMENT FIRST: a capped batch against the hidden opponent while
@@ -786,7 +949,7 @@ export async function main(ns) {
       // the node-order planner than the in-node price says.
       const ex = exploreW0({ eligible: w0.eligible, state: posterior, solverOk: solverHealth({ remoteMoves, localMoves }).health === 'ok' })
       w0Explore = ex.why
-      if (ex.explore) return { opponent: W0, why: ex.why, switched: current !== W0 }
+      if (ex.explore) return { opponent: W0, size: 19, why: ex.why, switched: current !== W0 }
       const gate = JSON.parse(readHome(GATE_FILE) || 'null')
       // THE WEIGHTS ARE THE GO BONUS'S OWN (goweights.js, published by
       // progress.js as objective.goWeights): exit hours per ln of each
@@ -808,7 +971,7 @@ export async function main(ns) {
       // THE PIN holds only while the weights are the early heuristic.
       const pin = pinOf()
       pinned = pin
-      if (pin && wf.source === 'early') return { opponent: pin, why: `pinned to ${pin} (${flags.pin ? '--pin' : PIN_FILE}) until this life's goWeights exist; the early pricing would say: ${wf.why}`, switched: current !== pin }
+      if (pin && wf.source === 'early') return { opponent: pin, size: N, why: `pinned to ${pin} (${flags.pin ? '--pin' : PIN_FILE}) until this life's goWeights exist; the early pricing would say: ${wf.why}`, switched: current !== pin || armSize !== N }
       //
       // goPower comes from the BitNode table, which is the authority — the
       // gate file never carried it, and defaulting to 1 would under-price
@@ -831,10 +994,44 @@ export async function main(ns) {
       }
       const hackW = typeof w0Weight?.weight === 'number' ? { hacking: w0Weight.weight } : {}
       // ONE THOMPSON DRAW PER ARM, per game boundary; priced exactly as before.
-      const draw = drawWinRates(posterior, Object.keys(OPPONENTS), N)
+      // Each opponent's 5x5 win rate at the version that plays it now (the
+      // model session; the hidden opponent's 19x19 KataGo or uct): evidence
+      // from another solver version does not count (goplan THE SOLVER VERSION).
+      const draw = {}
+      for (const name of Object.keys(OPPONENTS)) Object.assign(draw, drawWinRates(posterior, [name], N, Math.random, { ver: verOf(name), now: Date.now() }))
       lastDraw = Object.fromEntries(Object.entries(draw).map(([k, v]) => [k, Number(v.toFixed(3))]))
       const w0r = w0RateOf()
+      // THE ARMS (SETTINGS.arms): one power-per-second draw per opponent x
+      // size from its posterior at the version that would play it now; the
+      // hidden opponent from its measured-or-prior rate at a drawn win rate.
+      let arms = null
+      if (SETTINGS.arms.on) {
+        const now = Date.now()
+        const katagoOk = katagoAvailable(readHome('/go/katago.txt')).ok
+        arms = {}
+        const drawnNow = {}
+        for (const name of Object.keys(OPPONENTS)) {
+          if (name === W0) continue
+          for (const size of ARM_SIZES) {
+            const post = armPosterior(posterior, name, size, { now, katagoOk })
+            if (!post) continue
+            const d = armDraw(post)
+            if (!(d.pps > 0)) continue
+            arms[`${name}@${size}`] = { pph: 3600 * d.pps, p: d.p }
+            drawnNow[`${name}@${size}`] = { winRate: Number(d.p.toFixed(3)), powerPerSecond: Number(d.pps.toFixed(4)), powerPerHour: Math.round(3600 * d.pps), backend: post.backend }
+          }
+        }
+        if (w0.eligible && draw[W0] !== undefined) {
+          const sc = rateScale(draw[W0], w0r.ref)
+          if (sc) {
+            arms[`${W0}@19`] = { pph: w0r.pph * sc, p: draw[W0] }
+            drawnNow[`${W0}@19`] = { winRate: Number(draw[W0].toFixed(3)), powerPerSecond: Number(((w0r.pph * sc) / 3600).toFixed(4)), powerPerHour: Math.round(w0r.pph * sc), backend: 'katago' }
+          }
+        }
+        armDrawn = drawnNow
+      }
       const pick = chooseOpponent({
+        ...(arms ? { arms, incumbentArm: `${current}@${current === W0 ? 19 : armSize}` } : {}),
         weights: { ...wf.weights, ...hackW },
         // The Bladeburner route's weights carry their own life (the committed
         // install, or the black-op exit): goweights.bladeGoWeightsGen.
@@ -853,10 +1050,11 @@ export async function main(ns) {
         redPill: w0.eligible,
       })
       const why = wf.source === 'early' ? `[early-game weights: ${wf.phase}; goWeights: ${wf.gwWhy}] ${pick.why}` : pick.why
-      if (pick.refused || !pick.opponent || pick.opponent === current) return { opponent: current, why, switched: false }
-      return { opponent: pick.opponent, why, switched: true }
+      const size = arms ? pick.size ?? armSize : N
+      if (pick.refused || !pick.opponent || (pick.opponent === current && size === armSize)) return { opponent: current, size: armSize, why, switched: false }
+      return { opponent: pick.opponent, size, why, switched: true }
     } catch (e) {
-      return { opponent: current, why: `opponent pricing failed: ${String(e).slice(0, 80)}`, switched: false }
+      return { opponent: current, size: armSize, why: `opponent pricing failed: ${String(e).slice(0, 80)}`, switched: false }
     }
   }
   // Our key internally (goplan.OPPONENTS); the flag may carry either spelling.
@@ -923,6 +1121,28 @@ export async function main(ns) {
   // How the solver's model search ran ('session': tree reuse + continuous
   // ponder, release 2), from its replies; the study report matches on it.
   let solverMode = null
+  // RELEASE 3. preHits: moves played from a pre-sent answer (no request);
+  // preMisses: AI replies that found answers on file but none for this board.
+  let preHits = 0
+  let preMisses = 0
+  // Games continued (not reset) after a restart or an error, and the
+  // consecutive errors on the game in progress.
+  let resumed = 0
+  let gameErrors = 0
+  // The solver's version (its last reply; goplan.solverVersion) and its seed
+  // calibration ({req, pre}: observed / informative / predicted / weights).
+  let solverVer = null
+  let seedLive = null
+  // Play-on after the AI's pass while ahead (SETTINGS.mirror 'search'):
+  // times, and the points and seconds it bought.
+  const playOn = { games: 0, stones: 0, points: 0, seconds: 0 }
+  // Waits beyond the usual solver timeout (SETTINGS.solverWait), ms.
+  let solverWaitedMs = 0
+  // Our final score per opponent (running mean): the objective's eBlack.
+  const meanBlack = {}
+  const clockRead = playtimeReader()
+  // The per-game log's line count (read once; trimmed when over keep + slack).
+  let logLines = null
   // Times we ended a game by mirroring the opponent's pass while ahead, and
   // times we saw their pass but were behind so had to keep playing. Both are
   // reported: a mirrorPasses that stays 0 across many games means the rule is
@@ -969,7 +1189,7 @@ export async function main(ns) {
       draw: lastDraw,
       arms: Object.fromEntries(
         Object.keys(OPPONENTS).map((k) => {
-          const p = posteriorOf(posterior, k, N)
+          const p = posteriorOf(posterior, k, N, { ver: verOf(k), now: Date.now() })
           return [k, { mean: Number(p.mean.toFixed(3)), sd: Number(p.sd.toFixed(3)), games: p.games }]
         }),
       ),
@@ -999,6 +1219,29 @@ export async function main(ns) {
     modelFallbackWhy,
     katago: { available: katagoAvail, where: katagoWhere, backend: SETTINGS.bigBoard.backend },
     ponderHits,
+    // RELEASE 3: pre-sent answers played / missed, games resumed rather than
+    // reset, the solver version the posterior is keyed on, the seed-lag
+    // calibration the solver reports, whether the playtime is readable, the
+    // play-on after the AI's pass, and the priced waits for an absent solver.
+    // THE ARMS (release 3a; names are a dashboard's contract — keep them):
+    //   arm         the opponent@size being played ('Tetrads@5')
+    //   armWhy      why it was chosen (the pricing's sentence)
+    //   arms        per arm: mean/sd (win-rate posterior), games (raw, all
+    //               versions), n (evidence at the current version), backend,
+    //               version, powerPerHour (posterior-mean estimate), drawn:
+    //               the last draw {winRate, powerPerSecond, powerPerHour} or null
+    //   armHistory  the last SETTINGS.arms.historyKeep picks [{at, arm, switched}]
+    arm: `${opponent}@${opponent === W0 ? 19 : armSize}`,
+    armWhy,
+    arms: armStatus(),
+    armHistory: armHistory.slice(),
+    presend: { hits: preHits, misses: preMisses },
+    resumed,
+    solverVersion: solverVer,
+    seed: seedLive,
+    clock: !SETTINGS.clock ? { ok: false, why: 'off (SETTINGS.clock)' } : clockRead.why ? { ok: false, why: clockRead.why } : { ok: true },
+    playOn,
+    solverWaitedMs,
     // Where a turn's wall clock goes (mean ms per move this process): ask =
     // request written -> answer read (solver pickup + search + our poll),
     // play = makeMove's await (the AI's reply, its timer hops), loop = the
@@ -1070,22 +1313,58 @@ export async function main(ns) {
 
   while (flags.games < 0 || gamesThisProcess < flags.games) {
     try {
+      // RESUME, NEVER FORFEIT (release 3). A game left in progress — by a
+      // restart (every deploy restarts go.js), an outage, or an error thrown
+      // out of the move loop below — is CONTINUED. resetBoardState on a board
+      // with moves on it scores the game as a LOSS and resets the streak
+      // (netscriptGoImplementation.ts:363-366, resetWinstreak): deploys and
+      // an outage cost streaks of 26 and 244 on 2026-10-04 that way. A game
+      // that keeps throwing is reset after SETTINGS.resumeMaxErrors attempts.
+      // getCurrentPlayer / getOpponent / opponentNextTurn are 0GB.
+      const inProgress = (() => {
+        try {
+          const player = ns.go.getCurrentPlayer()
+          if (player !== 'Black' && player !== 'White') return null
+          // No stone yet: a reset forfeits nothing (the check above needs previousBoards).
+          if (!ns.go.getMoveHistory().length) return null
+          const key = keyOfGame(ns.go.getOpponent())
+          return key ? { key, player } : null
+        } catch {
+          return null // an API without these (a test's mock): play as before
+        }
+      })()
+      const resumedGame = !!inProgress && gameErrors < SETTINGS.resumeMaxErrors
+      if (resumedGame) {
+        if (inProgress.key !== opponent) {
+          opponentWhy = `resumed the game in progress against ${inProgress.key} (was ${opponent})`
+          opponent = inProgress.key
+        }
+        resumed++
+        ns.print(`resuming the game in progress vs ${opponent} (${inProgress.player} to move)`)
+      } else {
+        if (inProgress) record(errors, new Error(`the game in progress vs ${inProgress.key} failed ${gameErrors} times in a row — resetting it (a forfeit)`))
+        gameErrors = 0
+      }
       // Re-priced at the game boundary — never mid-game, which would abandon a
       // position — and only once the last switch's committed dwell is served.
       // An install needs no special case: it zeroes every opponent's power,
       // and the marginal pricing reads that straight out of getStats.
-      if (gamesSinceSwitch >= SETTINGS.minDwellGames) {
+      if (!resumedGame && gamesSinceSwitch >= SETTINGS.minDwellGames) {
         const gameH = gamesThisProcess >= 3 ? (Date.now() - processStartedAt) / 3600e3 / gamesThisProcess : SETTINGS.defaultGameH
         const pick = pickOpponent(opponent, ns.go.analysis.getStats(), SETTINGS.minDwellGames * gameH)
-        const was = opponent
+        const was = `${opponent}@${armSize}`
         opponent = pick.opponent
         opponentWhy = pick.why
+        armWhy = pick.why
+        if (Number.isFinite(pick.size)) armSize = pick.size
+        armHistory.push({ at: new Date().toISOString(), arm: `${opponent}@${opponent === W0 ? 19 : armSize}`, switched: !!pick.switched })
+        if (armHistory.length > SETTINGS.arms.historyKeep) armHistory.splice(0, armHistory.length - SETTINGS.arms.historyKeep)
         // Published AFTER the assignment: the status thunk reads `opponent`,
         // and announcing a switch beside the old name reads as no switch.
         if (pick.switched) {
           gamesSinceSwitch = 0
-          publishAt('ok', { ...gameFields, detail: `opponent ${was} -> ${opponent}` })
-          ns.print(`switching opponent ${was} -> ${opponent}`)
+          publishAt('ok', { ...gameFields, detail: `opponent ${was} -> ${opponent}@${armSize}` })
+          ns.print(`switching opponent ${was} -> ${opponent}@${armSize}`)
         }
       }
       // What this opponent had banked before the game, for the per-game
@@ -1093,17 +1372,38 @@ export async function main(ns) {
       // measurement). getStats is keyed by the game's enum value.
       const preStats = ns.go.analysis.getStats()?.[gameName(opponent)] ?? null
       const gameStartedAt = Date.now()
-      // The game's enum value, never our key: "TheBlackHand" throws (Go/Enums.ts).
-      ns.go.resetBoardState(gameName(opponent), N)
-      await ns.sleep(100)
+      // The opponent's last action was a pass: our pass would END the game.
+      let oppPassed = false
+      let done = false
+      let resumeStalled = false
+      if (!resumedGame) {
+        // The game's enum value, never our key: "TheBlackHand" throws (Go/Enums.ts).
+        ns.go.resetBoardState(gameName(opponent), armSize)
+        await ns.sleep(100)
+      } else if (inProgress.player === 'White') {
+        // The AI's reply to our last move is still coming: wait for it.
+        const w = await watched(ns.go.opponentNextTurn(false))
+        if (w.ok) {
+          if (!w.value || w.value.type === 'gameOver') done = true
+          oppPassed = w.value?.type === 'pass'
+        } else resumeStalled = true
+      } else {
+        // Our move. The AI passed last if no stone of its changed the board
+        // (getPreviousMove is null with history present: boardAnalysis.ts:693).
+        try {
+          oppPassed = ns.go.getGameState()?.previousMove === null
+        } catch {
+          oppPassed = false
+        }
+      }
       // The hidden opponent's board is 19x19 whatever was asked; every loop
       // below sizes itself from the board the game actually dealt.
-      gameSize = ns.go.getBoardState().length || N
+      const board0 = ns.go.getBoardState()
+      gameSize = board0.length || N
       const size = gameSize
 
       const komi = ns.go.getGameState()?.komi ?? 5.5
-      let done = false
-      let stalled = false
+      let stalled = resumeStalled
       let guard = 0
       phase = 'playing'
       // This game's cheats: played (all succeed by construction), declined
@@ -1111,15 +1411,13 @@ export async function main(ns) {
       // to exec at all), waitedMs (playtime waited for windows).
       const cheat = { played: 0, declined: 0, skipped: 0, waitedMs: 0, noRam: false }
       let pendingVerify = null
-      // The opponent's last action was a pass: our pass would END the game.
-      let oppPassed = false
       // What the solver is told beyond the position (SETTINGS.bigBoard): on
       // 19x19 a time budget and search options, including the NODE POWER
       // objective at this opponent's streak multipliers (effect.ts:119-130:
       // a win after streak s pays 1+0.25*min(s+1,8), or 1+0.5*min(-s,8) when
       // it breaks a dry streak; a loss pays 0.5). Empty below 13x13.
       const solverReq = (() => {
-        if (size < 13) return {}
+        if (size < 19) return {}
         const st = preStats?.winStreak ?? 0
         const win = st < 0 ? 1 + 0.5 * Math.min(-st, 8) : 1 + 0.25 * Math.min(st + 1, 8)
         return { maxms: SETTINGS.bigBoard.maxms, opts: { ...SETTINGS.bigBoard.opts, objective: { win, loss: 0.5 } } }
@@ -1132,12 +1430,33 @@ export async function main(ns) {
       const useModel = size <= SETTINGS.model.maxSize
       // KataGo on the big board (SETTINGS.bigBoard.backend): the solver answers
       // with uct and says why when it is not installed (tools/katago/install.sh).
-      if (size >= 13) katagoAvail = katagoAvailable(readHome('/go/katago.txt'))
-      const useKatago = size >= 13 && (SETTINGS.bigBoard.backend === 'katago' || (SETTINGS.bigBoard.backend === 'auto' && !!katagoAvail?.ok))
+      if (size > SETTINGS.model.maxSize) katagoAvail = katagoAvailable(readHome('/go/katago.txt'))
+      // 7x7-13x13 (release 3a): the arm's measured backend (goplan armPrior)
+      // — KataGo when it pays there and an engine answers, else uct.
+      const armBackend = size > SETTINGS.model.maxSize && size < 19 ? armPrior(opponent, size, !!katagoAvail?.ok)?.backend ?? 'uct' : null
+      const useKatago = size >= 19 ? SETTINGS.bigBoard.backend === 'katago' || (SETTINGS.bigBoard.backend === 'auto' && !!katagoAvail?.ok) : armBackend === 'katago'
       const wantBackend = useModel ? 'model' : useKatago ? 'katago' : null
       const remoteWait = Math.max(flags.remotems, (solverReq.maxms ?? 0) + 6000, useModel ? SETTINGS.model.maxms + 6000 : 0, useKatago ? 60000 : 0)
-      /** One solver round trip; null if no reply in time. */
-      const askSolver = async (board, validList) => {
+      // THE POWER OBJECTIVE (SETTINGS.power, golib.powerObjective): this
+      // game's node power at this opponent's streak — the win's multiplier,
+      // a loss's 0.5 and the ramp it resets — less the rate x the seconds a
+      // turn costs (measured here once 20 moves are timed).
+      let points = 0
+      for (const col of board0) for (const c of col) if (c !== '#') points++
+      const turnS = timing.moves >= 20 ? timing.loop / timing.moves / 1000 : SETTINGS.power.turnS
+      const eBlack = meanBlack[opponent] ?? 0.68 * points
+      const ratePerS = (POWER_PER_HOUR[opponent] ?? 0) / 3600
+      const priced = powerObjective({ streak: preStats?.winStreak ?? 0, komi, size, eBlack, rate: ratePerS, turnS, lossScale: SETTINGS.power.lossScale })
+      const objective = useModel && SETTINGS.power.on ? priced : null
+      // THE PRICED WAIT for an absent solver (SETTINGS.solverWait), this game.
+      let waitedExtra = 0
+      const waitBudget = () => (useModel ? solverWaitBudgetMs({ objective: priced, eBlack, ratePerS, localLoss: SETTINGS.solverWait.localLoss[opponent] ?? SETTINGS.solverWait.localLoss.default, capMs: SETTINGS.solverWait.capMs, waitedMs: waitedExtra }) : 0)
+      // The solver version of each answer this game (the posterior's key).
+      const verCount = {}
+      // The search's top 3 on the last answer (the per-game log).
+      let lastTop = null
+      /** The request object (seq advanced). `count`: a real question (not a notice). */
+      const solverRequest = (board, validList, count = true) => {
         seq++
         const opts = solverReq.opts ? { ...solverReq.opts, opponentPassed: oppPassed } : undefined
         let modelReq = {}
@@ -1148,8 +1467,10 @@ export async function main(ns) {
           } catch (e) {
             record(errors, new Error(`getMoveHistory: ${describe(e)} — the model search runs without superko history`))
           }
-          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }) }
-          modelAsked++
+          // T: the playtime the AI's RNG is seeded from (playtimeReader).
+          const T = SETTINGS.clock ? clockRead.now() : null
+          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }), ...(T ? { T } : {}), turnS, ...(objective ? { objective } : {}) }
+          if (count) modelAsked++
         } else if (useKatago) {
           // The opponent and recent history let the solver PONDER the AI's
           // likely replies (tools/go-solver.mjs); fallback: uct, said in the reply.
@@ -1159,9 +1480,23 @@ export async function main(ns) {
           } catch (e) {
             record(errors, new Error(`getMoveHistory: ${describe(e)} — KataGo runs without ponder history`))
           }
-          modelReq = { backend: 'katago', visits: SETTINGS.bigBoard.visits, opponent: gameName(opponent), history, fallback: 'uct' }
-          modelAsked++
+          modelReq = { backend: 'katago', visits: size >= 19 ? SETTINGS.bigBoard.visits : SETTINGS.arms.katagoVisits, opponent: gameName(opponent), history, fallback: 'uct' }
+          if (count) modelAsked++
         }
+        return { seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }
+      }
+      /**
+       * The NOTICE (release 3): we played a pre-sent answer with no request;
+       * the solver re-roots there and ponders on. Fire and forget.
+       */
+      const notifySolver = (board, validList, played) => {
+        const q = solverRequest(board, validList, false)
+        ns.write('/go/req.txt', JSON.stringify({ ...q, played }), 'w')
+        if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
+      }
+      /** One solver round trip; null if no reply in time. */
+      const askSolver = async (board, validList) => {
+        const q = solverRequest(board, validList)
         // THE SOLVER TALKS TO HOME. tools/go-solver.mjs reads /go/req.txt and
         // writes /go/move.txt on home over the Remote File API, and ns.read
         // and ns.write are local — so off home (a Go node places this
@@ -1169,13 +1504,24 @@ export async function main(ns) {
         // pushed to home after the write and the reply pulled before every
         // read. Without this an off-home go.js asks a solver that never sees
         // the question and plays every move on the 20ms fallback (C10).
-        ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }), 'w')
+        ns.write('/go/req.txt', JSON.stringify(q), 'w')
         if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
-        for (let waited = 0; waited < remoteWait; waited += SETTINGS.replyPollMs) {
+        // Past the usual timeout, wait on only while the priced budget lasts.
+        const limit = remoteWait + waitBudget()
+        for (let waited = 0; waited < limit; waited += SETTINGS.replyPollMs) {
           await ns.sleep(SETTINGS.replyPollMs)
+          if (waited >= remoteWait) {
+            waitedExtra += SETTINGS.replyPollMs
+            solverWaitedMs += SETTINGS.replyPollMs
+            heartbeat()
+          }
           try {
             const reply = JSON.parse(readHome('/go/move.txt') || '{}')
-            if (reply.seq === seq) {
+            if (reply.seq === q.seq) {
+              solverVer = solverVersion(reply)
+              verCount[solverVer] = (verCount[solverVer] ?? 0) + 1
+              if (reply.seed) seedLive = reply.seed
+              lastTop = Array.isArray(reply.top) ? reply.top : null
               // Which backend actually answered: a model request answered by
               // uct (no bundle, no game source, a throw) is counted and named
               // — degraded, never silent (modelHealth).
@@ -1262,7 +1608,18 @@ export async function main(ns) {
         return { played: true, reply: st.reply }
       }
 
-      while (!done && guard++ < 4000) {
+      // THE PER-GAME LOG (SETTINGS.gameLog): every turn — our move, where it
+      // came from (pre: a pre-sent answer, req: a solver request, loc: the
+      // local fallback, cheat), ask and AI ms, the AI's reply, and the search's
+      // top 3 [x, y, value, visits, winRate] when the solver sent them.
+      const moveLog = []
+      const startBoard = board0.join('')
+      // Play-on after the AI's pass while ahead: black's score and the time
+      // when it first happened this game (SETTINGS.mirror 'search').
+      let passAhead = null
+      let stonesAfterPass = 0
+      let presentGame = 0
+      while (!done && !stalled && guard++ < 4000) {
         const loop0 = Date.now()
         const boardStrings = ns.go.getBoardState()
         const valid = ns.go.analysis.getValidMoves()
@@ -1290,19 +1647,41 @@ export async function main(ns) {
         const validList = []
         for (let x = 0; x < size; x++) for (let y = 0; y < size; y++) if (valid[x]?.[y]) validList.push([x, y])
         const ask0 = Date.now()
-        let ranked = await askSolver(boardStrings, validList)
-        const askMs = Date.now() - ask0
-        if (ranked !== null) remoteMoves++
-        else {
-          ranked = chooseMove(boardStrings, valid, size, komi, flags.maxms, flags.topk)
-          localMoves++
+        // PRE-SENT (SETTINGS.presend): the solver already answered this exact
+        // position while the AI was thinking — play it now, no round trip.
+        let src = 'req'
+        let ranked = null
+        lastTop = null
+        if (SETTINGS.presend && useModel) {
+          const pre = presentAnswer(readHome('/go/ponder.txt'), boardStrings, valid, oppPassed)
+          if (pre.answer) {
+            ranked = pre.answer.pass ? [] : [{ x: pre.answer.x, y: pre.answer.y }]
+            src = 'pre'
+            preHits++
+            presentGame++
+            remoteMoves++
+          } else if (pre.had) preMisses++
         }
+        if (src !== 'pre') {
+          ranked = await askSolver(boardStrings, validList)
+          if (ranked !== null) remoteMoves++
+          else {
+            ranked = chooseMove(boardStrings, valid, size, komi, flags.maxms, flags.topk)
+            localMoves++
+            src = 'loc'
+            verCount.local = (verCount.local ?? 0) + 1
+            // The fallback never plays on after a winning pass: it cannot price it.
+            if (oppPassed && passAhead) ranked = []
+          }
+        }
+        const askMs = Date.now() - ask0
 
         // A cheat replaces this turn's move when the clock allows (CHEAT POLICY).
         if (cheatOn && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
           const c = await tryCheat(boardStrings, validList, ranked[0])
           if (c.played) {
             moves++
+            moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+`, s: 'cheat', a: askMs, r: c.reply ?? 'G' })
             oppPassed = c.reply === 'pass'
             if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)
@@ -1311,16 +1690,26 @@ export async function main(ns) {
         }
 
         const play0 = Date.now()
-        const played = await watched(
-          !ranked || !ranked.length ? ns.go.passTurn() : ns.go.makeMove(ranked[0].x, ranked[0].y),
-        )
+        const stone = !!(ranked && ranked.length)
+        const pending = stone ? ns.go.makeMove(ranked[0].x, ranked[0].y) : ns.go.passTurn()
+        // The solver learns of a pre-sent move here (it re-roots and ponders
+        // on while the AI thinks); written while the move is pending, which
+        // ns.go allows (see awaitMove).
+        if (src === 'pre') notifySolver(boardStrings, validList, stone ? { x: ranked[0].x, y: ranked[0].y } : { pass: true })
+        if (oppPassed && passAhead) {
+          if (stone) stonesAfterPass++
+          else mirrorPasses++
+        }
+        const played = await watched(pending)
         if (!played.ok) {
           stalled = true
           break
         }
         const res = played.value
         const playMs = Date.now() - play0
-        if (ranked && ranked.length) moves++
+        if (stone) moves++
+        moveLog.push({ m: stone ? `${ranked[0].x},${ranked[0].y}` : 'P', s: src, a: askMs, p: playMs, r: !res || res.type === 'gameOver' ? 'G' : res.type === 'pass' ? 'P' : `${res.x},${res.y}`, ...(lastTop ? { t: lastTop } : {}) })
+        gameErrors = 0
 
         if (!res || res.type === 'gameOver') done = true
         oppPassed = res?.type === 'pass'
@@ -1361,7 +1750,24 @@ export async function main(ns) {
             // passing on a bad read would hand away a live game.
             errors.push(`getGameState after opponent pass: ${e}`)
           }
-          if (ahead === true) {
+          // PLAY ON (SETTINGS.mirror 'search', release 3): dead white stones
+          // stay on the board (getScore never removes them) and white's area
+          // may still shrink, so ending at once is not free. The solver is
+          // asked with opponentPassed: its PASS ends the game exactly, a stone
+          // is played only when its line keeps the win (golib SAFE_CONTINUE)
+          // and the power per second beats ending now. Needs a live solver.
+          const searchDecides = ahead === true && SETTINGS.mirror === 'search' && useModel && src !== 'loc'
+          if (searchDecides) {
+            if (!passAhead) {
+              let b0 = null
+              try {
+                b0 = ns.go.getGameState().blackScore
+              } catch {
+                /* scored at the end anyway */
+              }
+              passAhead = { black: b0, at: Date.now() }
+            }
+          } else if (ahead === true) {
             mirrorPasses++
             const ended = await watched(ns.go.passTurn())
             if (!ended.ok) {
@@ -1409,7 +1815,7 @@ export async function main(ns) {
         phase = 'recovering from stall'
         const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), model: modelHealth({ modelAsked, modelAnswered, modelFallbackWhy }), moveStalls, lastStallAt, throttle })
         publishAt(h.health, { ...gameFields, detail: h.detail })
-        ns.go.resetBoardState(gameName(opponent), N)
+        ns.go.resetBoardState(gameName(opponent), armSize)
         continue
       }
 
@@ -1450,9 +1856,12 @@ export async function main(ns) {
       // THE OUTCOME, INTO THE POSTERIOR. Won = the game's own win counter
       // moved (scoring.ts:56-58), not our reading of the score. Its own try:
       // a failed persist must not cost this game's status write.
+      // The solver version most of this game's moves came from: the
+      // posterior's evidence is kept per version (goplan.solverVersion).
+      const gameVer = Object.entries(verCount).sort((a, z) => z[1] - a[1])[0]?.[0]
       try {
         const won = (s.wins ?? 0) > (preStats?.wins ?? 0)
-        posterior = updatePosterior(posterior, opponent, size, won)
+        posterior = updatePosterior(posterior, opponent, size, won, undefined, undefined, gameVer, { black: finalScore?.black, seconds: (Date.now() - gameStartedAt) / 1000 })
         posteriorWhy = null
         writeHome(THOMPSON.file, JSON.stringify(posterior))
         if (opponent === W0) {
@@ -1489,6 +1898,55 @@ export async function main(ns) {
       // goHealth folds in the move watchdog and timer throttling, but the
       // solver's own verdict is still an input and still wins when it is the
       // only thing wrong.
+      // THE PER-GAME RECORD (SETTINGS.gameLog), its own try: a failed write
+      // must not cost the status write below.
+      try {
+        const won = (s.wins ?? 0) > (preStats?.wins ?? 0)
+        if (typeof finalScore?.black === 'number') meanBlack[opponent] = meanBlack[opponent] === undefined ? finalScore.black : 0.9 * meanBlack[opponent] + 0.1 * finalScore.black
+        const bp = OPPONENTS[opponent]?.power
+        const n0 = preStats?.bonusPercent === undefined ? 0 : nodePowerFromBonus(preStats.bonusPercent, bp, goPower, sf14)
+        const n1 = s.bonusPercent === undefined ? null : nodePowerFromBonus(s.bonusPercent, bp, goPower, sf14)
+        const secs = (Date.now() - gameStartedAt) / 1000
+        let after = null
+        if (passAhead) {
+          after = { stones: stonesAfterPass, points: typeof passAhead.black === 'number' && typeof finalScore?.black === 'number' ? finalScore.black - passAhead.black : null, seconds: Math.round((Date.now() - passAhead.at) / 100) / 10 }
+          playOn.games++
+          playOn.stones += stonesAfterPass
+          playOn.points += after.points ?? 0
+          playOn.seconds = Math.round((playOn.seconds + after.seconds) * 10) / 10
+        }
+        const gameRec = {
+          at: new Date().toISOString(),
+          opponent,
+          size,
+          komi,
+          resumed: resumedGame,
+          start: startBoard,
+          moves: moveLog,
+          black: finalScore?.black ?? null,
+          white: finalScore?.white ?? null,
+          won,
+          streakBefore: preStats?.winStreak ?? null,
+          streakAfter: s.winStreak ?? null,
+          power: typeof n0 === 'number' && typeof n1 === 'number' ? Math.round((n1 - n0) * 100) / 100 : null,
+          seconds: Math.round(secs * 10) / 10,
+          presend: presentGame,
+          ver: gameVer ?? null,
+          playOn: after,
+          objective: objective ? { winMult: objective.winMult, lossFuture: Math.round(objective.lossFuture), turnCost: Math.round(objective.turnCost * 100) / 100 } : null,
+        }
+        const file = SETTINGS.gameLog.file
+        if (logLines === null) logLines = String(readHome(file) || '').split('\n').filter((l) => l.trim()).length
+        writeHome(file, JSON.stringify(gameRec) + '\n', 'a')
+        logLines++
+        if (logLines > SETTINGS.gameLog.keep + SETTINGS.gameLog.slack) {
+          writeHome(file, trimGameLog(readHome(file), SETTINGS.gameLog.keep))
+          logLines = SETTINGS.gameLog.keep
+        }
+      } catch (e) {
+        record(errors, new Error(`per-game log: ${describe(e)}`))
+      }
+
       const solver = solverHealth({ remoteMoves, localMoves })
       const h = goHealth({ solver, model: modelHealth({ modelAsked, modelAnswered, modelFallbackWhy }), moveStalls, lastStallAt, throttle })
       phase = 'between games'
@@ -1519,6 +1977,9 @@ export async function main(ns) {
       // completed game: printed one line to a log nobody reads and left
       // /tel/go.txt absent. Nothing in here reads the game, so the report
       // cannot become the failure.
+      // A game still in progress is RESUMED by the next iteration (never reset:
+      // a reset forfeits it) — unless this keeps happening (resumeMaxErrors).
+      gameErrors++
       try {
         const detail = record(errors, err)
         ns.print(`go error: ${detail}`)

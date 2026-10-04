@@ -68,7 +68,7 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel, modelSession } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove } from "../golib.js";
 import { loadModel } from "./goai/model.mjs";
 
 const argv = process.argv.slice(2);
@@ -106,6 +106,25 @@ const PONDER_CAP_MS = flag("ponder-cap-ms", 15000);
 // read: a third of a 5x5 turn. One getFile over the RFA bridge costs ~4ms.
 const FAST_POLL = flag("fast-poll", 25);
 let lastReqAt = 0;
+// RELEASE 3. Named in every reply (`release`): go.js keys its win-rate
+// posterior on backend + mode + release (goplan.solverVersion), so evidence
+// from an older solver stops counting the moment this one answers.
+const RELEASE = "r3";
+// PRE-SENT ANSWERS: while pondering, the session's answers to the AI's likely
+// replies (golib ponderAnswers: a reply's node holding the budget's work) are
+// published to /go/ponder.txt every PUBLISH_MS; go.js plays a matching one
+// the moment the AI moves, with no request, and NOTIFIES us (`played` in
+// /go/req.txt) so the session re-roots and ponders on. --no-presend: off.
+const PRESEND = !argv.includes("--no-presend");
+const PUBLISH_MS = flag("publish-ms", 100);
+// THE AI'S SEED (golib clockSeed): requests carry the playtime `T`; the AI's
+// next reply is drawn from T + 200k with k calibrated online from the replies
+// it actually made (seedCalib), one calibrator per path (a request's T is read
+// before our search; a pre-sent move's T at the move). --no-clock: off.
+const CLOCK = !argv.includes("--no-clock");
+const calib = { req: seedCalib(), pre: seedCalib() };
+// What the AI's last reply was computed from (to calibrate the seed lag).
+let seedCtx = null;
 
 // Lowest scheduling priority: only ever runs on CPU the rest of the machine
 // is not using. This is the entire heat budget enforcement.
@@ -122,6 +141,7 @@ async function rpc(method, params) {
 
 let lastSeq = null;
 let solved = 0;
+let notices = 0;
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(0));
 
 // ---------------------------------------------------------------- KataGo
@@ -230,6 +250,95 @@ let sess = null;
 let sessKey = null;
 let sessRate = null;
 
+/** The AI's reply contained in a new request's board, relative to seedCtx: "x,y", "pass", or null (cannot tell). */
+function replyIn(req, ctx) {
+  if (!Array.isArray(req.board) || req.board.length !== ctx.board.length) return null;
+  let found = null;
+  for (let x = 0; x < req.board.length; x++) {
+    for (let y = 0; y < req.board.length; y++) {
+      if (req.board[x][y] === "O" && ctx.board[x][y] === ".") {
+        if (found) return null; // two new white stones: not one reply (a new game, a cheat)
+        found = `${x},${y}`;
+      }
+    }
+  }
+  if (found) return found;
+  return req.opponentPassed ? "pass" : null;
+}
+
+/** SEED CALIBRATION: which k make the AI's own code (the model) give the reply it actually made from T + 200k. */
+async function calibrateSeed(req) {
+  const c = seedCtx;
+  seedCtx = null;
+  if (!c || !model || c.opponent !== req.opponent || c.size !== req.size) return;
+  const actual = replyIn(req, c);
+  if (!actual) return;
+  const cal = calib[c.path];
+  const matches = [];
+  for (let k = cal.range[0]; k <= cal.range[1]; k++) {
+    const m = await model.reply(c.board, { opponent: c.opponent, history: c.history, passCount: c.passCount, rng: c.T + 200 * k });
+    if ((m ? `${m.x},${m.y}` : "pass") === actual) matches.push(k);
+  }
+  cal.observe(matches, cal.weights()[0]?.[0] ?? null);
+}
+
+/** What the AI's next reply will be computed from, after our move (x, y) or pass on `req`'s board. */
+function rememberSeedCtx(req, path, x, y) {
+  if (!(req.T > 0)) return;
+  const moved = x !== null && x !== undefined;
+  const after = moved ? applyMove(req.board, x, y) : req.board;
+  if (!after) return;
+  const history = Array.isArray(req.history) ? req.history : [];
+  seedCtx = { path, T: req.T, opponent: req.opponent, size: req.size, board: after, history: moved ? [req.board.join(""), ...history] : history, passCount: moved ? 0 : req.opponentPassed ? 2 : 1 };
+}
+
+const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats });
+const clockFor = (req, path) => (CLOCK && req.T > 0 ? { T: req.T, kw: calib[path].weights(), turnTicks: ((Number.isFinite(req.turnS) ? req.turnS : 1.2) * 1000) / 200, jitter: 5, eps: 0.1 } : undefined);
+
+let lastAnswers = null;
+/** Publish the session's pre-sent answers (only when they changed). */
+async function publishAnswers(minWork) {
+  const answers = sess && sess.pondering ? sess.ponderAnswers({ minWork, max: 4 }) : [];
+  const text = JSON.stringify(answers);
+  if (text === lastAnswers) return;
+  lastAnswers = text;
+  try {
+    await rpc("pushFile", { filename: "/go/ponder.txt", server: "home", content: JSON.stringify({ at: new Date().toISOString(), seq: lastSeq, release: RELEASE, answers }) });
+  } catch {
+    /* the bridge is down: go.js falls back to asking */
+  }
+}
+
+/**
+ * THE PONDER: search under our move for the AI's whole reply time, in FAST_POLL
+ * slices, publishing the pre-sent answers every PUBLISH_MS, until the next
+ * request (or notice) arrives or PONDER_CAP_MS passes. Returns true when a new
+ * request is waiting.
+ */
+async function ponderUntilNext(maxms) {
+  const minWork = sessRate ? Math.round(sessRate * maxms) : Infinity;
+  if (PRESEND) await publishAnswers(minWork);
+  if (!PONDER || !sess?.pondering) return false;
+  const until = Date.now() + PONDER_CAP_MS;
+  let lastPub = Date.now();
+  while (Date.now() < until) {
+    await sess.ponder(FAST_POLL);
+    if (PRESEND && Date.now() - lastPub >= PUBLISH_MS) {
+      lastPub = Date.now();
+      await publishAnswers(minWork);
+    }
+    const r2 = await rpc("getFile", { filename: "/go/req.txt", server: "home" });
+    let next = null;
+    try {
+      next = r2.result ? JSON.parse(r2.result).seq : null;
+    } catch {
+      /* half-written: poll again */
+    }
+    if (next !== null && next !== lastSeq) return true;
+  }
+  return false;
+}
+
 await publishKatagoStatus(true);
 let lastStatusTick = Date.now();
 
@@ -248,6 +357,32 @@ while (true) {
         lastSeq = req.seq;
         lastReqAt = Date.now();
         const N = req.size;
+        await calibrateSeed(req);
+
+        // A NOTICE (release 3): go.js already played a pre-sent answer on this
+        // board — re-root the session there (a reuse), commit the move, ponder.
+        if (req.played && typeof req.played === "object" && model && req.opponent && MODEL_PONDER === "session") {
+          try {
+            const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
+            if (!sess || sessKey !== key) {
+              const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, {});
+              sessKey = key;
+            }
+            const history = Array.isArray(req.history) ? req.history : [];
+            sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
+            const pl = req.played;
+            sess.commit(pl.pass ? null : pl.x, pl.pass ? null : pl.y);
+            rememberSeedCtx(req, "pre", pl.pass ? null : pl.x, pl.pass ? null : pl.y);
+            notices++;
+            const maxms = Number.isFinite(req.maxms) ? Math.min(Math.max(req.maxms, 50), 20000) : MAXMS;
+            skipSleep = await ponderUntilNext(maxms);
+          } catch (err) {
+            sess = null;
+            console.error(`go-solver: notice seq=${req.seq} failed: ${String(err).slice(0, 160)}`);
+          }
+          continue;
+        }
 
         // A request may carry its own budget and search options (go.js sends
         // them for the 19x19 hidden-opponent board, SETTINGS.bigBoard); a 5x5
@@ -275,7 +410,7 @@ while (true) {
                 sess = modelSession(N, req.komi ?? 5.5, { reply }, opts);
                 sessKey = key;
               }
-              const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed });
+              const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req") });
               backend = "model";
               extra.mode = "session";
               if (!r) {
@@ -349,8 +484,12 @@ while (true) {
         if (backend === "uct") ranked = chooseMoveUCT(req.board, validGrid(N, req.valid), N, req.komi ?? 5.5, maxms, opts);
         const move = ranked && ranked.length ? { seq: req.seq, x: ranked[0].x, y: ranked[0].y } : { seq: req.seq, pass: true };
         move.backend = backend;
+        move.release = RELEASE;
         if (fallback) move.fallback = fallback;
         Object.assign(move, extra);
+        // The search's top 3 [x, y, value, visits, winRate] for go.js's per-game log.
+        if (ranked?.[0]?.top) move.top = ranked[0].top;
+        if (backend === "model") move.seed = seedStats();
 
         await rpc("pushFile", { filename: "/go/move.txt", server: "home", content: JSON.stringify(move) });
         solved++;
@@ -374,23 +513,8 @@ while (true) {
         // in slices until the next request arrives (or PONDER_CAP_MS).
         if (backend === "model" && extra.mode === "session" && sess) {
           sess.commit(move.pass ? null : move.x, move.pass ? null : move.y);
-          if (PONDER && sess.pondering) {
-            const until = Date.now() + PONDER_CAP_MS;
-            while (Date.now() < until) {
-              await sess.ponder(FAST_POLL);
-              const r2 = await rpc("getFile", { filename: "/go/req.txt", server: "home" });
-              let next = null;
-              try {
-                next = r2.result ? JSON.parse(r2.result).seq : null;
-              } catch {
-                /* half-written: poll again */
-              }
-              if (next !== null && next !== lastSeq) {
-                skipSleep = true;
-                break;
-              }
-            }
-          }
+          rememberSeedCtx(req, "req", move.pass ? null : move.x, move.pass ? null : move.y);
+          skipSleep = await ponderUntilNext(maxms);
         }
         const ponderThis = (backend === "model" && extra.mode !== "session") || (backend === "katago" && N < 13);
         if (PONDER && model && req.opponent && !move.pass && ponderThis) {

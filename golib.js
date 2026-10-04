@@ -870,10 +870,145 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms, opts = {}) {
  * chosen because every line lost and PASS collected the most visits.
  * With no stone at all, PASS is all there is.
  */
-export function modelRootPasses({ passMean, passVisits, stoneMean, stoneVisits }) {
+export function modelRootPasses({ passMean, passVisits, stoneMean, stoneVisits, passWin }) {
   if (stoneMean === null || stoneMean === undefined) return true
-  if (!(passMean > 0.5) || passMean < stoneMean) return false
+  // Under the power objective (release 3) the value is node power, not a win
+  // probability, so "passing wins" is read from the PASS line's own win rate.
+  const wins = passWin === undefined ? passMean > 0.5 : passWin > 0.5
+  if (!wins || passMean < stoneMean) return false
   return passVisits >= stoneVisits || passMean > stoneMean + 0.02
+}
+
+// ---------------------------------------------------------------------------
+// THE POWER OBJECTIVE (release 3). What a finished game is WORTH is the node
+// power it banks (scoring.ts:85-88):
+//
+//   nodePower += black.sum x difficulty(komi, size) x winstreakMultiplier
+//
+// so black's AREA is paid directly and the win only moves the streak:
+// effect.ts:119-130 pays 1 + 0.25 min(s, 8) on a win that extends streak s-1
+// to s, 1 + 0.5 min(-old, 8) on the win that ends a dry streak, 0.5 on any
+// loss — and a loss also RESETS the streak, so the next ~8 games earn the
+// ramp back instead of the plateau. That future cost is priced here
+// (lossFuture, in node power) by replaying the game's bookkeeping over the
+// next `horizon` games assumed won, after a win now vs after a loss now.
+//
+// Time is the other price. The farm's output is power PER HOUR, and a longer
+// game delays every later one: by the renewal-reward argument the right
+// per-game objective is  E[power] - R x E[time],  R = the rate being earned
+// (Dinkelbach). Each of our turns costs a turn of wall clock (our move + the
+// AI's reply, ~1.2s live), so a line is charged turnCost = R x turnS per ply.
+// ---------------------------------------------------------------------------
+
+/** A stone instead of a game-ending winning PASS needs at least this win rate in its own line. */
+export const SAFE_CONTINUE = 0.99
+
+/** effect.ts:119-130 — the multiplier a game is paid at, from the streak after it and before it. */
+export function streakMultiplier(s, old) {
+  if (s < 0) return 0.5
+  if (old < 0 && s > 0) return 1 + 0.5 * Math.min(-old, 8)
+  return 1 + 0.25 * Math.min(s, 8)
+}
+
+/** The game's streak bookkeeping (scoring.ts:56-58, resetWinstreak): streak after a game. */
+export function nextStreak(s, won) {
+  if (won) return s < 0 ? 1 : s + 1
+  return s >= 0 ? -1 : s - 1
+}
+
+/** effect.ts:132-135: (komi + 0.5) x 0.25, except 5x5 Illuminati (komi 7.5) which pays 8. */
+export function difficultyMultiplier(komi, size) {
+  return size === 5 && komi === 7.5 ? 8 : (komi + 0.5) * 0.25
+}
+
+/**
+ * The objective a game at streak `streak` is played for, in node power.
+ *   winMult    the multiplier THIS game pays if won
+ *   lossMult   0.5
+ *   lossFuture sum over the next `horizon` games (assumed won) of the
+ *              multiplier they lose because this one was lost, x eBlack x diff
+ *   turnCost   rate (power/s) x turnS: the price of one more turn
+ * `lossScale` scales lossFuture (1 = priced; the knob the harness tunes).
+ */
+export function powerObjective({ streak = 0, komi, size, eBlack = 16, rate = 0, turnS = 1.2, horizon = 12, lossScale = 1, leafK = 0 } = {}) {
+  const diff = difficultyMultiplier(komi, size)
+  const sw = nextStreak(streak, true)
+  const sl = nextStreak(streak, false)
+  const winMult = streakMultiplier(sw, streak)
+  let a = sw, b = sl, future = 0
+  for (let i = 0; i < horizon; i++) {
+    const a2 = nextStreak(a, true)
+    const b2 = nextStreak(b, true)
+    future += streakMultiplier(a2, a) - streakMultiplier(b2, b)
+    a = a2
+    b = b2
+  }
+  return { kind: 'power', diff, winMult, lossMult: 0.5, lossFuture: lossScale * future * eBlack * diff, turnCost: rate * turnS, leafK }
+}
+
+/**
+ * THE AI'S RNG IS SEEDED BY THE CLOCK (goAI.ts:184): after one waitCycle
+ * following our move, getMove builds new WHRNG(Player.totalPlaytime), and
+ * totalPlaytime only moves in whole engine cycles of 200ms (engine.tsx:84-96).
+ * So the seed of the AI's NEXT reply is one of a handful of values,
+ * T + 200k, where T is the playtime when we moved and k the engine ticks in
+ * between (calibrated online: seedCalib). Further ahead the turn timing blurs
+ * the seed by several ticks: the first draw (isSmart) still moves only 0.017
+ * per second, the second 0.6 per tick, the rest are chaotic — so deeper chance
+ * nodes draw seeds jittered around the expected tick, which keeps isSmart
+ * right and leaves the rest random.
+ *
+ *   clock = { T, kw: [[k, weight]...], turnTicks, jitter, eps }
+ * eps: the share of draws that ignore the clock (a free seed) — robustness
+ * against a lag the calibration has not seen.
+ */
+export function clockSeed(clock, d, rand) {
+  if (!clock || !(clock.T > 0) || d < 0 || rand() < (clock.eps ?? 0.1)) return 1 + Math.floor(rand() * 3e7)
+  let u = rand() * clock.kw.reduce((a, [, w]) => a + w, 0)
+  let k = clock.kw[0][0]
+  for (const [kk, w] of clock.kw) {
+    if (u < w) { k = kk; break }
+    u -= w
+  }
+  if (d > 0) {
+    const J = clock.jitter ?? 5
+    k += Math.round(d * (clock.turnTicks ?? 6)) + Math.round((2 * rand() - 1) * J)
+  }
+  return clock.T + 200 * k
+}
+
+/**
+ * Online calibration of the seed lag. `observe(matches)` takes the set of k
+ * whose seed reproduces the AI's actual reply (all k equally if the reply did
+ * not depend on the seed — uninformative and skipped); `weights()` returns the
+ * normalised [[k, w]...] with a prior so one odd observation cannot zero a k.
+ */
+export function seedCalib(prior = [[0, 0.1], [1, 0.6], [2, 0.25], [3, 0.05]], range = [-1, 6]) {
+  const counts = new Map()
+  for (let k = range[0]; k <= range[1]; k++) counts.set(k, 0)
+  for (const [k, w] of prior) counts.set(k, (counts.get(k) ?? 0) + 2 * w)
+  let informative = 0
+  let predicted = 0
+  let observed = 0
+  return {
+    range,
+    observe(matches, predictedK = null) {
+      observed++
+      const all = range[1] - range[0] + 1
+      if (!matches.length || matches.length >= all) return false
+      informative++
+      if (predictedK !== null && matches.includes(predictedK)) predicted++
+      for (const k of matches) counts.set(k, (counts.get(k) ?? 0) + 1 / matches.length)
+      return true
+    },
+    weights() {
+      const tot = [...counts.values()].reduce((a, b) => a + b, 0)
+      return [...counts.entries()].filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([k, c]) => [k, c / tot])
+    },
+    get stats() {
+      return { observed, informative, predicted, weights: this.weights().slice(0, 4).map(([k, w]) => [k, Number(w.toFixed(3))]) }
+    },
+  }
 }
 
 /**
@@ -979,10 +1114,36 @@ export function modelSession(N, komi, model, opts = {}) {
     for (let x = 0; x < N; x++) out.push(s.slice(x * N, (x + 1) * N))
     return out
   }
-  const valueNow = (b) => {
-    const m = scoreBoard(b, nbrs, N, komi, scratch)
-    return (1 - areaW) * (m > 0 ? 1 : 0) + areaW * (scratch.us / points)
+  // THE OBJECTIVE. Default (release 2): 0.9 won + 0.1 area share. With
+  // opts.objective / setRoot({objective}) = powerObjective(...): the node
+  // power the game banks, minus the time it takes (turnCost per ply from the
+  // game's start — a uniform shift across siblings, so tree reuse stays
+  // consistent), scaled to ~[0, 1] for the UCB constant.
+  let obj = opts.objective && opts.objective.kind === 'power' ? opts.objective : null
+  // `lastWon`: the won/lost flag of the value just computed (pass decisions
+  // under the power objective read the PASS line's win rate, not its value).
+  let lastWon = 0
+  const val = (won, us, ply) => {
+    lastWon = won
+    if (!obj) return (1 - areaW) * won + areaW * (us / points)
+    const P = us * obj.diff * (won ? obj.winMult : obj.lossMult) - (won ? 0 : obj.lossFuture) - obj.turnCost * ply
+    return (P + obj.lossFuture) / (obj.diff * obj.winMult * points + obj.lossFuture)
   }
+  // A playout leaf is charged its tree ply plus leafK turns per empty point
+  // left (the game's remaining length, crudely); terminals are exact.
+  const leafPly = (b, ply) => {
+    if (!obj || !obj.leafK) return ply
+    let e = 0
+    for (let i = 0; i < N * N; i++) if (b[i] === EMPTY) e++
+    return ply + obj.leafK * e
+  }
+  const valueNow = (b, ply = 0) => {
+    const m = scoreBoard(b, nbrs, N, komi, scratch)
+    return val(m > 0 ? 1 : 0, scratch.us, ply)
+  }
+  // THE AI'S SEED (clockSeed): null = free seeds, as release 2.
+  let clock = null
+  const rngFor = (w) => (clock ? clockSeed(clock, w.ply - clock.ply, rand) : 1 + Math.floor(rand() * 3e7))
 
   // Black's candidate actions at a node: stones (not own-eye fills, not
   // self-atari unless capturing — the same gate tryPlay applies) best-first by
@@ -1008,15 +1169,23 @@ export function modelSession(N, komi, model, opts = {}) {
     return out
   }
 
-  const mkB = (b, parent, passCount, valid) => {
-    const node = { kind: 0, b, s: toStr(b), parent, passCount, visits: 0, work: 0, sum: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0 }
-    if (node.terminal) node.tv = valueNow(b)
-    else node.untried = actions(b, valid)
+  // ply: our turns since the game's start (B nodes: before our move; W nodes:
+  // the B parent's). The objective's time charge and the clock's tick
+  // distance both read it.
+  const mkB = (b, parent, passCount, valid, ply) => {
+    const node = { kind: 0, b, s: toStr(b), parent, passCount, ply, visits: 0, work: 0, sum: 0, wins: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0, tw: 0 }
+    if (node.terminal) {
+      node.tv = valueNow(b, ply)
+      node.tw = lastWon
+    } else node.untried = actions(b, valid)
     return node
   }
   const mkW = (b, parent, passCount, moved) => {
-    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, visits: 0, work: 0, sum: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0 }
-    if (node.terminal) node.tv = valueNow(b)
+    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, ply: parent.ply, visits: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
+    if (node.terminal) {
+      node.tv = valueNow(b, node.ply + 1)
+      node.tw = lastWon
+    }
     return node
   }
   // previousBoards for the AI at W node w: the board before every STONE move
@@ -1063,7 +1232,7 @@ export function modelSession(N, komi, model, opts = {}) {
       if (passes >= 2) break
       if (whiteMoves >= LEAF_DEPTH) {
         const won = playout(work, nbrs, N, komi, THEM, scratch, rand)
-        return (1 - areaW) * won + areaW * (scratch.us / points)
+        return val(won, scratch.us, leafPly(work, node.ply + whiteMoves))
       }
       const ws = toStr(work)
       modelCalls++
@@ -1078,7 +1247,7 @@ export function modelSession(N, komi, model, opts = {}) {
         last = -1
       }
     }
-    return valueNow(work)
+    return valueNow(work, node.ply + whiteMoves)
   }
 
   /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
@@ -1091,9 +1260,11 @@ export function modelSession(N, komi, model, opts = {}) {
     // run millions of times while pondering, so visits overstate how much a
     // reused subtree was searched; work does not.
     let worked = false
+    let won = 0
     while (v === null) {
       if (node.terminal) {
         v = node.tv
+        won = node.tw
         break
       }
       if (node.kind === 0) {
@@ -1119,7 +1290,7 @@ export function modelSession(N, komi, model, opts = {}) {
           const u = mean + C * Math.sqrt(logv / (child.visits + 1))
           if (u > bestU) { bestU = u; best = child }
         }
-        if (!best) { v = valueNow(node.b); break }
+        if (!best) { v = valueNow(node.b, node.ply); won = lastWon; break }
         node = best
         path.push(node)
         continue
@@ -1130,24 +1301,28 @@ export function modelSession(N, komi, model, opts = {}) {
         node.draws++
         modelCalls++
         worked = true
-        const r = await model.reply(toSimple(node.s), { history: historyOf(node), passCount: node.passCount, rng: 1 + Math.floor(rand() * 3e7) })
+        const r = await model.reply(toSimple(node.s), { history: historyOf(node), passCount: node.passCount, rng: rngFor(node) })
         const key = r ? r.x * N + r.y : PASS
         let e = node.samples.get(key)
         if (!e) {
           const b = node.b.slice()
           let ok = true
           if (key !== PASS) ok = play(b, nbrs, key, THEM, scratch) >= 0
-          e = { n: 0, child: mkB(ok ? b : node.b.slice(), node, key !== PASS && ok ? 0 : node.passCount + 1, null) }
+          e = { n: 0, child: mkB(ok ? b : node.b.slice(), node, key !== PASS && ok ? 0 : node.passCount + 1, null, node.ply + 1) }
           node.samples.set(key, e)
           e.n++
           node = e.child
           path.push(node)
-          if (node.terminal) v = node.tv
-          else if (LEAF_MODEL) v = await modelPlayout(node, key)
-          else {
+          if (node.terminal) {
+            v = node.tv
+            won = node.tw
+          } else if (LEAF_MODEL) {
+            v = await modelPlayout(node, key)
+            won = lastWon
+          } else {
             work.set(node.b)
-            const won = playout(work, nbrs, N, komi, US, scratch, rand)
-            v = (1 - areaW) * won + areaW * (scratch.us / points)
+            won = playout(work, nbrs, N, komi, US, scratch, rand)
+            v = val(won, scratch.us, leafPly(node.b, node.ply))
           }
           break
         }
@@ -1169,9 +1344,57 @@ export function modelSession(N, komi, model, opts = {}) {
     for (const n of path) {
       n.visits++
       n.sum += v
+      n.wins += won
       if (worked) n.work++
     }
     return true
+  }
+
+  const setClockFn = (clk) => {
+    const anchor = rootNode ?? ponderNode
+    clock = clk && clk.T > 0 && anchor ? { ...clk, ply: anchor.ply } : null
+    if (!clock) return
+    const ws = rootNode ? [...rootNode.children.values()] : [ponderNode]
+    for (const w of ws) {
+      if (!w || w.kind !== 1 || w.terminal) continue
+      w.draws = 0
+      for (const e of w.samples.values()) e.n = 0
+    }
+  }
+
+  /**
+   * The decision at a B node: the most-visited stone, or [] for PASS when
+   * modelRootPasses says so; null when the node has no stone at all. The
+   * first entry carries `top`: up to 3 candidates [x, y, value, visits, winRate]
+   * (PASS as x = y = -1) for the per-game log.
+   */
+  const bestOf = (node, iters) => {
+    let bestIdx = null
+    let bestVisits = -1
+    for (const [idx, child] of node.children) {
+      if (idx === PASS) continue
+      if (child.visits > bestVisits) { bestVisits = child.visits; bestIdx = idx }
+    }
+    const passNode = node.children.get(PASS)
+    const meanOf = (c) => (c && c.visits ? c.sum / c.visits : null)
+    const stone = bestIdx === null ? null : node.children.get(bestIdx)
+    const passWin = obj && passNode && passNode.visits ? passNode.wins / passNode.visits : undefined
+    if (passNode && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits, passWin })) return []
+    // NEVER RISK A WON GAME FOR AREA (release 3, the end-of-game rule): when
+    // PASS ends the game WON (the AI passed; our pass is the second), a stone
+    // is played only if its line also wins essentially always — the power
+    // objective already prices a loss at the streak it resets, this makes the
+    // floor explicit against a search that has not seen the losing reply.
+    if (obj && passNode && passNode.terminal && passNode.tw === 1 && stone && stone.visits && stone.wins / stone.visits < SAFE_CONTINUE) return []
+    if (bestIdx === null) return null
+    const ch = node.children.get(bestIdx)
+    const r3 = (v) => (v === null ? null : Math.round(v * 1000) / 1000)
+    const top = [...node.children.entries()]
+      .filter(([, c]) => c.visits > 0)
+      .sort((a, z) => z[1].visits - a[1].visits)
+      .slice(0, 3)
+      .map(([i, c]) => [i === PASS ? -1 : (i / N) | 0, i === PASS ? -1 : i % N, r3(meanOf(c)), c.visits, r3(c.wins / c.visits)])
+    return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters, rootVisits: node.visits, modelCalls, value: ch.visits ? ch.sum / ch.visits : null, top }]
   }
 
   return {
@@ -1179,12 +1402,13 @@ export function modelSession(N, komi, model, opts = {}) {
      * The position to decide. Reuses the ponder tree when this board is one of
      * the replies drawn there. Returns null when PASS is black's only action.
      */
-    setRoot(boardStrings, valid, { history = [], opponentPassed = false } = {}) {
+    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined } = {}) {
       const b = parseBoard(boardStrings)
       // A fresh root may be a new game (a new offline-node layout): recount.
       const countPoints = () => { points = 0; for (let i = 0; i < N * N; i++) if (b[i] !== DEAD) points++ }
       if (!points) countPoints()
       rootHistory = Array.isArray(history) ? history : []
+      if (objective !== undefined) obj = objective && objective.kind === 'power' ? objective : null
       const s = toStr(b)
       const passCount = opponentPassed ? 1 : 0
       let reused = null
@@ -1203,17 +1427,29 @@ export function modelSession(N, komi, model, opts = {}) {
           reused.visits -= c.visits
           reused.work -= c.work
           reused.sum -= c.sum
+          reused.wins -= c.wins
           reused.children.delete(idx)
         }
         reused.untried = reused.untried.filter((a) => ok(a.idx))
         rootNode = reused
       } else {
         countPoints()
-        rootNode = mkB(b, null, passCount, valid)
+        rootNode = mkB(b, null, passCount, valid, Number.isFinite(ply) ? ply : Math.floor(rootHistory.length / 2))
       }
+      if (clk !== undefined) setClockFn(clk)
       const stones = [...rootNode.children.keys()].filter((k) => k !== PASS).length + rootNode.untried.filter((a) => a.idx !== PASS).length
       if (!stones) return null
       return { reused: !!reused, visits: rootNode.visits, work: rootNode.work }
+    },
+    /**
+     * The AI's seed distribution for its NEXT reply (clockSeed), anchored at
+     * the current root (or, after commit, the ponder node). The chance nodes
+     * that reply comes from were sampled under a vaguer clock (a ply further
+     * off, or none): their draw counts are cleared so new draws, under this
+     * clock, decide the weights — the subtrees found so far are kept.
+     */
+    setClock(clk) {
+      setClockFn(clk)
     },
     /** Grow the root's tree for maxms, stopping early once it holds untilVisits. */
     async search({ maxms, untilVisits = Infinity, untilWork = Infinity } = {}) {
@@ -1227,24 +1463,46 @@ export function modelSession(N, komi, model, opts = {}) {
       return iters
     },
     best() {
-      let bestIdx = null
-      let bestVisits = -1
-      for (const [idx, child] of rootNode.children) {
-        if (idx === PASS) continue
-        if (child.visits > bestVisits) { bestVisits = child.visits; bestIdx = idx }
+      return bestOf(rootNode, lastIters)
+    },
+    /**
+     * PRE-SENT ANSWERS (release 3): while pondering, our answer to each of the
+     * AI's likely replies — the reply's B node, if it already holds `minWork`
+     * model-calling iterations (what a reused root needs to answer at once),
+     * most likely reply first. go.js plays one the moment the AI's reply
+     * matches its board, with no request.
+     *   [{ b: board string, pc: pass count, x, y | pass: true, n: draws, work, v }]
+     */
+    ponderAnswers({ minWork = 0, max = 4 } = {}) {
+      if (!ponderNode) return []
+      const out = []
+      const es = [...ponderNode.samples.values()].sort((a, z) => z.n - a.n || z.child.visits - a.child.visits)
+      for (const e of es) {
+        const c = e.child
+        if (c.terminal || c.work < minWork) continue
+        const r = bestOf(c, 0)
+        if (r === null) continue
+        const top = r[0]
+        out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null })
+        if (out.length >= max) break
       }
-      const passNode = rootNode.children.get(PASS)
-      const meanOf = (c) => (c && c.visits ? c.sum / c.visits : null)
-      const stone = bestIdx === null ? null : rootNode.children.get(bestIdx)
-      if (passNode && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits })) return []
-      if (bestIdx === null) return null
-      const ch = rootNode.children.get(bestIdx)
-      return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters: lastIters, rootVisits: rootNode.visits, modelCalls, value: ch.visits ? ch.sum / ch.visits : null }]
+      return out
     },
     /** We played (x, y) (or passed: x null): keep its W node to ponder and reuse. */
     commit(x, y) {
       const idx = x === null || x === undefined ? PASS : x * N + y
-      const w = rootNode?.children.get(idx) ?? null
+      let w = rootNode?.children.get(idx) ?? null
+      // A move the root never expanded (a pre-sent answer played on a root
+      // the solver only just set): expand it, so the ponder can start.
+      if (!w && rootNode && !rootNode.terminal) {
+        const b = rootNode.b.slice()
+        const moved = idx !== PASS
+        if (!moved || play(b, nbrs, idx, US, scratch) >= 0) {
+          w = mkW(b, rootNode, moved ? 0 : rootNode.passCount + 1, moved)
+          rootNode.children.set(idx, w)
+          rootNode.untried = (rootNode.untried ?? []).filter((a) => a.idx !== idx)
+        }
+      }
       ponderNode = w && !w.terminal ? w : null
       if (ponderNode) {
         // The history at the W node is the root's plus the root board.

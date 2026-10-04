@@ -113,6 +113,97 @@ export const POWER_PER_HOUR = {
   Tetrads: 16032,
 }
 
+// ---------------------------------------------------------------------------
+// THE BOARD SIZE IS AN ARM TOO (release 3a). Thompson sampling runs over
+// opponent x board size: each `name@size` arm (size 5, 7, 9, 13; the hidden
+// opponent only ever 19) carries its own posterior, and the draw is the arm's
+// POWER PER SECOND, not only its win rate (the larger boards' score and game
+// length are as uncertain as their win rate):
+//
+//   p   ~ Beta                      the win rate
+//   bw  ~ Normal (known variance)   mean black.sum of a WON game
+//   bl  ~ Normal                    mean black.sum of a LOST game
+//   s   ~ Normal                    mean seconds a game takes
+//   power/game = difficulty x (bw x (M(p) - 0.5(1-p)) + bl x 0.5(1-p))
+//   power/s    = power/game / s
+// M(p) = steadyStreakMult(p), the mean streak multiplier at win rate p (a lost
+// game pays 0.5, so the won games' share of M is M - 0.5(1-p)). The SELECTION
+// is unchanged: drawn power x the channel's exit weight x dlnE/dn at the
+// opponent's current node power (chooseOpponent), so opponents are compared
+// on value, not raw power.
+//
+// PRIORS: tools/sim/go-study-report.mjs runs (2026-10-03/04, paired layouts,
+// re-timed to the fast pipeline's 85ms a turn), per backend the solver routes
+// the size to — 5x5 the model session; 7x7/9x9/13x13 uct, or KataGo on the
+// GPU host through the solver's service (200 visits, pondered). Pseudo-counts:
+// THOMPSON.priorN on 5x5 (30-game arms, checked live), THOMPSON.armPriorN on
+// the larger boards (3-20 games, never played live): WIDE.
+// [games, winRate, [meanBlackWon, sd], [meanBlackLost, sd] | null, [secondsPerGame, sd]]
+// The 5x5 win rate is WIN_RATE (pooled over every model arm, 90-130 games).
+// An arm with no measurement is not offered. NOT CALIBRATED live but 5x5.
+
+export const ARM_PRIOR = {
+  // (the 5x5 row's 30 is games measured, not an augmentation count)
+  Daedalus: {
+    5: { model: [30, 1, [15.47, 2.45], null, [11.32, 2.67]] }, 7: { katago: [20, 0.85, [26.82, 3.26], [12, 10.82], [22.05, 4.41]], uct: [8, 0.75, [26, 2.68], [20.5, 2.12], [36.51, 9.47]] }, 9: { katago: [20, 0.8, [41.44, 3.42], [15.25, 17.73], [41.71, 8.39]], uct: [6, 1, [41.67, 2.73], null, [61.14, 10.08]] }, 13: { katago: [3, 1, [86.33, 7.09], null, [88.09, 5.72]], uct: [3, 0.667, [79, 1.41], [65, null], [133.69, 16.55]] } },
+  Illuminati: { 5: { model: [30, 0.967, [17.31, 2.71], [7, null], [13.25, 3.23]] }, 7: { katago: [10, 0.1, [27, null], [9.11, 9.13], [25.21, 5.49]], uct: [8, 0.25, [26.5, 0.71], [6.17, 8.08], [43.24, 9.01]] }, 9: { katago: [10, 0.2, [43, 1.41], [19.75, 16.69], [48.93, 19.42]], uct: [6, 0.333, [41.5, 0.71], [15.75, 12.69], [73.23, 13.34]] }, 13: { uct: [3, 0.333, [88, null], [43.5, 0.71], [149.67, 25.63]] } },
+  Netburners: { 5: { model: [30, 1, [15.73, 4.23], null, [6.94, 1.47]] }, 7: { katago: [10, 0.9, [27.78, 4.79], [0, null], [16.67, 3.63]], uct: [8, 1, [27.75, 4.71], null, [27.39, 3.69]] }, 9: { katago: [10, 1, [44.5, 4.55], null, [30.38, 4.33]], uct: [6, 1, [43.67, 6.25], null, [50.54, 4.94]] }, 13: { uct: [3, 1, [82.33, 4.51], null, [108.8, 2.69]] } },
+  SlumSnakes: { 5: { model: [30, 1, [16.77, 4.1], null, [9.47, 2.94]] }, 7: { katago: [20, 0.85, [27.82, 4.97], [12.67, 11.02], [22.2, 5.83]], uct: [8, 1, [27.75, 2.38], null, [27.59, 5.73]] }, 9: { katago: [10, 0.9, [41.44, 6.95], [31, null], [34.71, 6.15]], uct: [6, 1, [40.5, 3.73], null, [58.34, 6.11]] } },
+  Tetrads: { 5: { model: [30, 0.933, [15.89, 2.15], [12, 2.83], [13.15, 3.36]] }, 7: { katago: [20, 0.8, [28.44, 3.05], [15.5, 5.57], [26.91, 4.83]], uct: [8, 1, [26.13, 1.96], null, [34.13, 4.26]] }, 9: { katago: [20, 0.9, [42.83, 4.58], [15.5, 21.92], [45.15, 5.71]], uct: [6, 0.833, [41.6, 4.93], [0, null], [72.46, 20.31]] }, 13: { katago: [3, 1, [85, 3.46], null, [95.81, 8.48]] } },
+  TheBlackHand: { 5: { model: [30, 1, [17.5, 4.21], null, [12.52, 3.44]] }, 7: { katago: [10, 0.8, [26.5, 2.62], [6.5, 9.19], [23.17, 5.09]], uct: [8, 0.875, [26, 3.11], [0, null], [38.14, 17.16]] }, 9: { katago: [10, 1, [43.4, 8], null, [38.49, 7.11]], uct: [6, 0.667, [42.5, 2.38], [14.5, 6.36], [67.83, 5.76]] } },
+}
+
+/** The board sizes an opponent is offered at (the hidden opponent: its fixed 19x19). */
+export const ARM_SIZES = [5, 7, 9, 13]
+
+/** 'name@size' -> [name, size]. */
+export function splitArm(key) {
+  const i = String(key).lastIndexOf('@')
+  return [String(key).slice(0, i), Number(String(key).slice(i + 1))]
+}
+
+/**
+ * An arm's prior as the solver can play it NOW (`katagoOk`: a KataGo engine
+ * answers — go.js katagoAvailable): the best-paying measured backend at the
+ * prior means. { backend, k, p, bw: [m, sd], bl: [m, sd], s: [m, sd], pph }
+ * or null (not measured: not offered).
+ */
+export function armPrior(name, size, katagoOk = true) {
+  const by = ARM_PRIOR[name]?.[size]
+  if (!by) return null
+  const diff = difficultyMultiplier(OPPONENTS[name]?.komi ?? KOMI_OF[name], size)
+  let best = null
+  for (const [backend, [games, p0, bw0, bl0, s0]] of Object.entries(by)) {
+    if (backend === 'katago' && !katagoOk) continue
+    const p = size === MEASURED_BOARD && num(WIN_RATE[name]) ? WIN_RATE[name] : p0
+    const bw = [bw0[0], num(bw0[1]) ? bw0[1] : 0.15 * bw0[0] + 1]
+    const bl = bl0 ? [bl0[0], num(bl0[1]) ? bl0[1] : 0.3 * bw0[0] + 1] : [0.5 * bw0[0], 0.3 * bw0[0] + 1]
+    const s = [s0[0], num(s0[1]) ? s0[1] : 0.25 * s0[0]]
+    const k = size === MEASURED_BOARD ? THOMPSON.priorN : THOMPSON.armPriorN
+    const pph = 3600 * armPowerPerSecond(p, bw[0], bl[0], s[0], diff)
+    if (!best || pph > best.pph) best = { backend, k, games, p, bw, bl, s, diff, pph }
+  }
+  return best
+}
+
+/** Power per second at win rate p, mean black won/lost, seconds per game (the header's formula). */
+export function armPowerPerSecond(p, bw, bl, secs, diff) {
+  if (!num(p) || !num(bw) || !num(bl) || !num(secs) || secs <= 0) return null
+  const m = steadyStreakMult(p)
+  return (diff * (bw * (m - 0.5 * (1 - p)) + bl * 0.5 * (1 - p))) / secs
+}
+
+/** The komi each opponent plays at (Go/Constants.ts opponentDetails), for the difficulty multiplier. */
+export const KOMI_OF = { Netburners: 1.5, SlumSnakes: 3.5, TheBlackHand: 3.5, Tetrads: 5.5, Daedalus: 5.5, Illuminati: 7.5, w0r1d_d43m0n: 9.5 }
+
+/** The version an arm's evidence must carry to count (goplan.solverVersion of the backend that plays it). */
+export function armVersion(backend, release = SOLVER_RELEASE) {
+  return `${backend}${backend === 'model' ? '-session' : ''}-${release}`
+}
+
+/** The solver release go.js expects (the solver names its own in every reply). */
+export const SOLVER_RELEASE = 'r3'
+
 /**
  * effect.ts:16-22 bonusPower, the channel each opponent feeds, and `game`:
  * the GoOpponent ENUM VALUE (Go/Enums.ts:1-10) — what ns.go.resetBoardState
@@ -398,7 +489,13 @@ export const MEASURED_BOARD = 5
  *                              at }. Absent: WIN_RATE, and W0_PRIOR.refP for the hidden one.
  * @param {boolean} [o.redPill] The Red Pill INSTALLED (w0Eligible): the hidden opponent
  *                              exists. Absent/false: it is skipped by name.
- * @returns {{opponent, why, refused, table}}
+ * @param {object} [o.arms]     RELEASE 3a: { 'name@size': { pph, p } } — every opponent x
+ *                              board-size arm on offer with its DRAWN power/hour and win rate
+ *                              (go.js: armDraw). Replaces the table, the board-size check and
+ *                              the win-rate rescaling; the choice is then an ARM, and
+ *                              `size` / `arm` say which.
+ * @param {string} [o.incumbentArm] the arm being played ('name@size'), with o.arms.
+ * @returns {{opponent, size, arm, why, refused, table}}
  */
 export function chooseOpponent(o = {}) {
   const { weights, windowH, incumbent } = o
@@ -409,7 +506,9 @@ export function chooseOpponent(o = {}) {
   const drawn = o.winRates && typeof o.winRates === 'object' ? o.winRates : null
   const dwellH = num(o.dwellH) && o.dwellH > 0 ? o.dwellH : 0
   const boardSize = num(o.boardSize) ? o.boardSize : MEASURED_BOARD
-  const keep = (why) => ({ opponent: incumbent ?? null, why, refused: true, table: null })
+  const arms = o.arms && typeof o.arms === 'object' ? o.arms : null
+  const incArm = arms ? o.incumbentArm ?? null : null
+  const keep = (why) => ({ opponent: incumbent ?? null, ...(arms ? { arm: incArm, size: incArm ? splitArm(incArm)[1] : null } : {}), why, refused: true, table: null })
 
   // EVERY REFUSAL IS NAMED. An unreadable input must never read as a verdict:
   // the incumbent stands and the reason is published.
@@ -422,7 +521,7 @@ export function chooseOpponent(o = {}) {
   if (!o.nodePower || typeof o.nodePower !== 'object') {
     return keep('no current nodePower per opponent — the marginal value of a game depends on what is already banked')
   }
-  if (boardSize !== MEASURED_BOARD) {
+  if (!arms && boardSize !== MEASURED_BOARD) {
     return keep(`the power/hour table is measured at ${MEASURED_BOARD}x${MEASURED_BOARD} and this board is ${boardSize}x${boardSize} — no rate to price with`)
   }
 
@@ -430,7 +529,19 @@ export function chooseOpponent(o = {}) {
   const streaks = o.streaks && typeof o.streaks === 'object' ? o.streaks : null
   const skipped = []
   const scored = []
-  for (const [name, meta] of Object.entries(OPPONENTS)) {
+  // The candidates: one per opponent at this board, or (release 3a) one per
+  // opponent x size arm with its drawn rate.
+  const cands = arms
+    ? Object.entries(arms).map(([key, a]) => {
+        const [name, size] = splitArm(key)
+        return { name, size, key, meta: OPPONENTS[name], arm: a }
+      })
+    : Object.entries(OPPONENTS).map(([name, meta]) => ({ name, size: name === W0 ? 19 : boardSize, key: name, meta, arm: null }))
+  for (const { name, size, key, meta, arm } of cands) {
+    if (!meta) {
+      skipped.push(`${key} (unknown opponent)`)
+      continue
+    }
     if (name === W0 && o.redPill !== true) {
       skipped.push(`${name} (${meta.channel}: not discovered — needs The Red Pill INSTALLED, netscriptGoImplementation.ts:359)`)
       continue
@@ -446,9 +557,9 @@ export function chooseOpponent(o = {}) {
       continue
     }
     if (!num(w) || w < 0) return keep(`weight for ${meta.channel} is unreadable — refusing rather than ranking on a partial basket`)
-    const measured = table[name]
-    if (name === W0 && !(num(measured) && measured > 0)) {
-      skipped.push(`${name} (measured power/hour ${measured}: nothing to price)`)
+    const measured = arm ? arm.pph : table[name]
+    if ((name === W0 || arm) && !(num(measured) && measured > 0)) {
+      skipped.push(`${key} (power/hour ${measured}: nothing to price)`)
       continue
     }
     if (!num(measured) || measured <= 0) return keep(`no measured power/hour for ${name}`)
@@ -457,9 +568,10 @@ export function chooseOpponent(o = {}) {
     // THE WIN RATE: the Thompson draw when one is given, else the point
     // estimate. The measured rate is rescaled from the win rate it was
     // measured at to this one (rateScale) — that is how a draw moves the price.
-    const ref = refs[name]
-    const p = drawn && num(drawn[name]) ? drawn[name] : ref
-    if (!num(p) || p < 0 || p > 1) return keep(`no win rate for ${name}`)
+    // An arm's draw is already power per hour at its drawn win rate (armDraw).
+    const ref = arm ? arm.p : refs[name]
+    const p = arm ? arm.p : drawn && num(drawn[name]) ? drawn[name] : ref
+    if (!num(p) || p < 0 || p > 1) return keep(`no win rate for ${key}`)
     const scale = p === ref ? 1 : rateScale(p, ref)
     if (!num(scale)) return keep(`could not rescale ${name}'s rate to win rate ${p}`)
     const s0 = streaks ? streaks[name] ?? 0 : null
@@ -474,13 +586,13 @@ export function chooseOpponent(o = {}) {
     const marginal = w * (slope / e) * pph
     const eD = effectAt(n + pph * dwellH, meta.power, goPower, sf14)
     const block = w * (Math.log(eD) - Math.log(e))
-    scored.push({ name, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, winRate: p, powerPerHour: pph, marginal, block })
+    scored.push({ name, size, key, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, winRate: p, powerPerHour: pph, marginal, block })
   }
   if (!scored.length) return keep('no priceable opponent')
 
   scored.sort((a, b) => b.marginal - a.marginal)
   const best = scored[0]
-  const fmt = (s) => `${s.name} ${s.marginal.toExponential(2)}/h @n=${Math.round(s.nodePower)}`
+  const fmt = (s) => `${s.key} ${s.marginal.toExponential(2)}/h @n=${Math.round(s.nodePower)}`
   const runners =
     scored.slice(1).map(fmt).join(', ') +
     (skipped.length ? `; not priced: ${skipped.join(', ')}` : '') +
@@ -490,26 +602,28 @@ export function chooseOpponent(o = {}) {
     return keep(`every priceable channel weighs 0 (${scored.map((s) => `${s.channel}=${s.weight}`).join(', ')}) — nothing to choose between, so the incumbent stands`)
   }
   const head =
-    `${best.name} (${best.channel}) marginal ${best.marginal.toExponential(3)}/h = weight ${best.weight.toPrecision(3)} x dlnE/dn ` +
+    `${best.key} (${best.channel}) marginal ${best.marginal.toExponential(3)}/h = weight ${best.weight.toPrecision(3)} x dlnE/dn ` +
     `${(best.marginal / best.weight / best.powerPerHour).toExponential(3)} @n=${Math.round(best.nodePower)} x ${Math.round(best.powerPerHour)}/h` +
-    (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of the measured ${table[best.name]})` : '') +
-    (drawn ? ` [Thompson: win rate drawn ${best.winRate.toFixed(3)}]` : '')
-  const inc = scored.find((s) => s.name === incumbent)
-  if (best.name !== incumbent && inc && dwellH > 0 && !(best.block > inc.block)) {
+    (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of ${arms ? 'the drawn' : 'the measured'} ${Math.round(arms ? arms[best.key].pph : table[best.name])})` : '') +
+    (arms ? ` [Thompson: power/h and win rate ${best.winRate.toFixed(3)} drawn]` : drawn ? ` [Thompson: win rate drawn ${best.winRate.toFixed(3)}]` : '')
+  const incKey = arms ? incArm : incumbent
+  const inc = scored.find((s) => s.key === incKey)
+  const out = (s) => (arms ? { opponent: s.name, size: s.size, arm: s.key } : { opponent: s.name })
+  if (best.key !== incKey && inc && dwellH > 0 && !(best.block > inc.block)) {
     return {
-      opponent: incumbent,
+      ...out(inc),
       why:
-        `${head}, but over the committed ${(dwellH * 60).toFixed(1)}-min dwell ${best.name} gains ${best.block.toExponential(3)} ` +
-        `vs ${incumbent} ${inc.block.toExponential(3)} (concavity) — staying; runners-up ${runners}`,
+        `${head}, but over the committed ${(dwellH * 60).toFixed(1)}-min dwell ${best.key} gains ${best.block.toExponential(3)} ` +
+        `vs ${incKey} ${inc.block.toExponential(3)} (concavity) — staying; runners-up ${runners}`,
       refused: false,
       table: scored,
     }
   }
   const why =
     head +
-    (best.name !== incumbent && inc && dwellH > 0 ? `; dwell block ${best.block.toExponential(3)} > ${incumbent} ${inc.block.toExponential(3)}` : '') +
+    (best.key !== incKey && inc && dwellH > 0 ? `; dwell block ${best.block.toExponential(3)} > ${incKey} ${inc.block.toExponential(3)}` : '') +
     `; runners-up ${runners}`
-  return { opponent: best.name, why, refused: false, table: scored }
+  return { ...out(best), why, refused: false, table: scored }
 }
 
 // ---------------------------------------------------------------------------
@@ -659,7 +773,40 @@ export function weightsFor(gate, lastAugReset, earlyInputs) {
 // so the true sensitivity to p is steeper than this — a floor.
 
 /** Pseudo-count of the prior, the per-game decay, and where the counts live (home). */
-export const THOMPSON = { priorN: 10, decay: 0.98, file: '/tel/go-posterior.txt' }
+export const THOMPSON = { priorN: 10, armPriorN: 3, decay: 0.98, file: '/tel/go-posterior.txt', halfLifeH: 72 }
+
+// THE SOLVER VERSION (release 3). The counts only decayed when their arm was
+// PLAYED, so an arm nobody played kept whatever solver it was measured under:
+// live 2026-10-04, Illuminati@5 held 5.3W/22.4L from 40 games of 2026-10-03
+// under the OLD uct solver (posterior mean ~0.40) while the model solver wins
+// 97-99% there — the chooser under-priced the best opponent. Evidence is now
+// kept PER SOLVER VERSION (arm.byVer[version]; go.js: the backend + mode +
+// release the solver's replies name — goplan.solverVersion — 'local' for the
+// 20ms fallback, 'uct-r3' for a model request answered by uct: a fallback is
+// its own evidence and never overwrites the real arm's). An arm is read at
+// the version that would play it now (armVersion); any other version's
+// evidence — and the pre-release-3 top-level counts — count for nothing, so
+// the arm stands on its prior until it is played again. Evidence also fades
+// with age (THOMPSON.halfLifeH) as well as per game played, so a long-unplayed
+// arm drifts back to its prior rather than freezing.
+
+/** The solver version a reply names: backend[-mode]-release; 'local' when no reply (the in-game fallback). */
+export function solverVersion(reply) {
+  if (!reply || typeof reply !== 'object') return 'local'
+  return `${reply.backend ?? 'uct'}${reply.mode ? '-' + reply.mode : ''}-${reply.release ?? 'r2'}`
+}
+
+const NZ = [0, 0]
+/** The evidence an arm holds for version `ver` (null: the legacy top-level counts) at time `now`, aged. */
+function armCounts(arm, ver, now) {
+  const rec = ver ? arm?.byVer?.[ver] ?? null : arm
+  if (!rec) return { w: 0, l: 0, bw: NZ, bl: NZ, s: NZ }
+  let f = 1
+  const at = Date.parse(rec.at ?? arm?.at ?? '')
+  if (num(now) && Number.isFinite(at) && now > at && THOMPSON.halfLifeH > 0) f = 0.5 ** ((now - at) / 3600e3 / THOMPSON.halfLifeH)
+  const pair = (v) => (Array.isArray(v) && num(v[0]) && num(v[1]) ? [v[0] * f, v[1] * f] : NZ)
+  return { w: (num(rec.w) ? rec.w : 0) * f, l: (num(rec.l) ? rec.l : 0) * f, bw: pair(rec.bw), bl: pair(rec.bl), s: pair(rec.s) }
+}
 
 /**
  * The hidden opponent's prior. Win rate for Thompson: uniform (never measured
@@ -724,12 +871,15 @@ export function parsePosterior(text) {
   }
 }
 
-/** Beta posterior of one arm: prior + decayed counts. n is the decayed evidence. */
-export function posteriorOf(state, name, size) {
+/**
+ * Beta posterior of one arm: prior + decayed counts. n is the decayed evidence.
+ * `ver`: read the evidence of that solver version only (arm.byVer); absent:
+ * the pre-release-3 top-level counts. `now`: age the counts (halfLifeH).
+ */
+export function posteriorOf(state, name, size, { ver = null, now = null } = {}) {
   const pr = priorOf(name)
   const arm = state?.arms?.[armKey(name, size)] ?? null
-  const w = num(arm?.w) ? arm.w : 0
-  const l = num(arm?.l) ? arm.l : 0
+  const { w, l } = armCounts(arm, ver, now)
   const a = pr.a + w
   const b = pr.b + l
   const mean = a / (a + b)
@@ -738,17 +888,71 @@ export function posteriorOf(state, name, size) {
 }
 
 /**
+ * THE ARM'S FULL POSTERIOR (release 3a): win rate, mean black won / lost and
+ * seconds per game, each prior (armPrior, k pseudo-games) + this version's
+ * decayed live evidence. Normal means with the prior's sd as the known
+ * per-game sd: posterior mean (k m0 + sum) / (k + n), sd sd0 / sqrt(k + n).
+ * null when the arm is not offered (no prior). The hidden opponent: see armDraw.
+ */
+export function armPosterior(state, name, size, { ver = null, now = null, katagoOk = true } = {}) {
+  const pr = armPrior(name, size, katagoOk)
+  if (!pr) return null
+  const v = ver ?? armVersion(pr.backend)
+  const arm = state?.arms?.[armKey(name, size)] ?? null
+  const c = armCounts(arm, v, now)
+  const a = Math.max(0.05, pr.k * pr.p) + c.w
+  const b = Math.max(0.05, pr.k * (1 - pr.p)) + c.l
+  const norm = ([m0, sd0], [n, sum]) => ({ m: (pr.k * m0 + sum) / (pr.k + n), sd: sd0 / Math.sqrt(pr.k + n) })
+  const bw = norm(pr.bw, c.bw)
+  const bl = norm(pr.bl, c.bl)
+  const s = norm(pr.s, c.s)
+  const mean = a / (a + b)
+  const sd = Math.sqrt((a * b) / ((a + b) ** 2 * (a + b + 1)))
+  const pps = armPowerPerSecond(mean, bw.m, bl.m, s.m, pr.diff)
+  return { backend: pr.backend, version: v, a, b, mean, sd, n: c.w + c.l, games: num(arm?.games) ? arm.games : 0, bw, bl, s, diff: pr.diff, powerPerHour: num(pps) ? 3600 * pps : null }
+}
+
+/** One Thompson draw of an arm's power per second: { p, bw, bl, s, pps }. */
+export function armDraw(post, rng = Math.random) {
+  const p = betaDraw(post.a, post.b, rng)
+  const d = (x) => Math.max(0, x.m + x.sd * normalDraw(rng))
+  const bw = d(post.bw)
+  const bl = Math.min(d(post.bl), bw)
+  const s = Math.max(0.2 * post.s.m, post.s.m + post.s.sd * normalDraw(rng))
+  return { p, bw, bl, s, pps: armPowerPerSecond(p, bw, bl, s, post.diff) }
+}
+
+/**
  * One finished game on an arm: decay the arm's counts, add the outcome.
  * Pure — returns a new state. `games` is the RAW count (never decayed): it is
- * what the measurement cap counts.
+ * what the measurement cap counts. With `ver` (release 3) the evidence goes to
+ * arm.byVer[ver], with the game's black score and seconds (`obs`) when given;
+ * without it, the pre-release-3 top-level counts as before.
  */
-export function updatePosterior(state, name, size, won, decay = THOMPSON.decay, at = new Date().toISOString()) {
+export function updatePosterior(state, name, size, won, decay = THOMPSON.decay, at = new Date().toISOString(), ver = undefined, obs = {}) {
   const key = armKey(name, size)
   const s = state && state.arms ? state : emptyPosterior()
   const arm = s.arms[key] ?? { w: 0, l: 0, games: 0 }
   const d = num(decay) && decay > 0 && decay <= 1 ? decay : 1
-  const next = { w: arm.w * d + (won ? 1 : 0), l: arm.l * d + (won ? 0 : 1), games: (arm.games ?? 0) + 1, at }
-  return { ...s, arms: { ...s.arms, [key]: next } }
+  if (ver === undefined) {
+    const next = { ...arm, w: (arm.w ?? 0) * d + (won ? 1 : 0), l: (arm.l ?? 0) * d + (won ? 0 : 1), games: (arm.games ?? 0) + 1, at }
+    return { ...s, arms: { ...s.arms, [key]: next } }
+  }
+  const rec = arm.byVer?.[ver] ?? { w: 0, l: 0, bw: [0, 0], bl: [0, 0], s: [0, 0] }
+  const dp = (v) => [(v?.[0] ?? 0) * d, (v?.[1] ?? 0) * d]
+  const add = (v, x) => (num(x) ? [v[0] + 1, v[1] + x] : v)
+  const bw = dp(rec.bw)
+  const bl = dp(rec.bl)
+  const next = {
+    w: (rec.w ?? 0) * d + (won ? 1 : 0),
+    l: (rec.l ?? 0) * d + (won ? 0 : 1),
+    bw: won ? add(bw, obs.black) : bw,
+    bl: won ? bl : add(bl, obs.black),
+    s: add(dp(rec.s), obs.seconds),
+    at,
+  }
+  const armNext = { ...arm, games: (arm.games ?? 0) + 1, at, ver, byVer: { ...(arm.byVer ?? {}), [ver]: next } }
+  return { ...s, ver, arms: { ...s.arms, [key]: armNext } }
 }
 
 function normalDraw(rng) {
@@ -796,10 +1000,10 @@ export function betaDraw(a, b, rng = Math.random) {
 }
 
 /** One Thompson draw per opponent: { opponent: win rate }. */
-export function drawWinRates(state, names, size, rng = Math.random) {
+export function drawWinRates(state, names, size, rng = Math.random, opts = {}) {
   const out = {}
   for (const name of names) {
-    const { a, b } = posteriorOf(state, name, size)
+    const { a, b } = posteriorOf(state, name, size, opts)
     const p = betaDraw(a, b, rng)
     if (num(p)) out[name] = p
   }

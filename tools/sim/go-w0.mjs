@@ -113,6 +113,49 @@ if (argv.includes("--model")) {
 const SESSION = str("session", null);
 let sessRate = null; // work (model-calling iterations) per ms of a fresh full-budget search
 
+// RELEASE 3 (with --session):
+// --objective power   the search values a finished game as the node power it
+//                     banks (golib.powerObjective: black x difficulty x the
+//                     streak multiplier this game would earn, a loss priced at
+//                     0.5 AND the streak ramp it costs the next games) minus
+//                     the time it takes (--rate power/h x --turns s per ply).
+//                     Built per game from the running streak, as go.js does.
+//   --loss-scale K    scales the priced streak-reset cost (1 = priced)
+//   --leafk K         turns charged per empty point at a playout leaf
+// --mirror search     when the AI passes and black is ahead, ASK the search
+//                     (it may play on to take more area) instead of passing.
+// --presend           a move whose position the ponder had already answered
+//                     (golib ponderAnswers: the reply's node holds the budget's
+//                     work) is played with no solver round trip: charged
+//                     PRESEND_MS instead of ROUND_TRIP_MS + the search.
+// --seeded            THE AI'S SEED IS THE CLOCK, as live (goAI.ts:184): the
+//                     harness keeps a playtime that moves in 200ms engine ticks
+//                     on the modelled live wall clock, and the AI's reply is
+//                     seeded with it one waitCycle after our move. Without
+//                     --clock the search still draws free seeds (release 2).
+// --clock             the search is told the playtime of each request (and of
+//                     each pre-sent move) and draws the AI's NEXT reply from
+//                     T + 200k, k calibrated online (golib.seedCalib) from the
+//                     replies seen — as go-solver does live.
+const OBJECTIVE = str("objective", null);
+const LOSS_SCALE = num("loss-scale", 1);
+const LEAF_K = num("leafk", 0);
+const TURN_S = num("turns", 1.2);
+const MIRROR = str("mirror", "always");
+const PRESEND = argv.includes("--presend");
+const PRESEND_MS = 10;
+const SEEDED = argv.includes("--seeded");
+const CLOCK = argv.includes("--clock");
+if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by the clock to predict)");
+// The rate each ply is charged at: the opponent's measured power/h (goplan).
+const RATE_PH = str("rate", null) === null ? null : num("rate", 0);
+const { POWER_PER_HOUR } = await import("../../goplan.js");
+const rateFor = (opp) => RATE_PH ?? POWER_PER_HOUR[{ "The Black Hand": "TheBlackHand", "Slum Snakes": "SlumSnakes" }[opp] ?? opp] ?? 0;
+// One calibrator per path (request: T is read when go.js writes the request;
+// pre-sent: when it plays), shared across the run's games, as the live solver.
+const calib = { req: golib.seedCalib(), pre: golib.seedCalib() };
+const seedStats = { informative: 0, predicted: 0, observed: 0 };
+
 // --katago V: moves from KataGo (tools/katago/service.mjs — the service
 // go-solver runs, V visits a move) instead of golib. Think time is measured.
 //   --katago-remote HOST   the GPU engine on HOST over ssh (tools/katago/gpu),
@@ -218,6 +261,18 @@ async function playGame(stats, gameIndex) {
   const mStats = { hit: 0, miss: 0, none: 0, carryMs: 0 };
   const sess = MODEL && SESSION ? golib.modelSession(N, komi, MODEL, OPTS) : null;
   const sStats = { reused: 0, fresh: 0, early: 0, ponderIters: 0, rootVisits: 0 };
+  // RELEASE 3 per-game state (see the flags above).
+  const objective = OBJECTIVE === "power" ? golib.powerObjective({ streak: stats.winStreak, komi, size: N, eBlack: stats.meanBlack ?? 0.68 * N * N, rate: rateFor(OPP) / 3600, turnS: TURN_S, lossScale: LOSS_SCALE, leafK: LEAF_K }) : undefined;
+  // The modelled live wall clock (ms) and the playtime on it: whole 200ms
+  // engine cycles at a random phase (engine.tsx:84-96).
+  let wall = 0;
+  const T0 = 200 * Math.floor(5e6 + Math.random() * 5e6);
+  const tickPhase = Math.random() * 200;
+  const playtimeAt = (t) => T0 + 200 * Math.floor((t + tickPhase) / 200);
+  let answers = [];
+  let preMoves = 0, rtTotal = 0;
+  const seedG = { informative: 0, predicted: 0, observed: 0 };
+  let pendingSeed = null; // { path, Tref, board, history, passCount }
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
   const note = (who, mv) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board) });
   const solve = async () => {
@@ -256,7 +311,8 @@ async function playGame(stats, gameIndex) {
         })()
       : sess
       ? await (async () => {
-          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed });
+          const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
+          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
           const target = sessRate ? Math.round(sessRate * budget) : Infinity;
@@ -280,7 +336,35 @@ async function playGame(stats, gameIndex) {
   while (state.passCount < 2 && guard++ < N * N * 4) {
     phase = (phase + turnLiveS * RATE) % 1;
     turnLiveS = (budgetFor(ourTurns) + 550) / 1000;
-    const ranked = await solve();
+    // PRE-SENT (--presend): the ponder already answered this exact position
+    // (board + pass state) and the move is legal: played with no request.
+    let pre = null;
+    if (PRESEND && sess && answers.length) {
+      const key = g.simpleBoardFromBoard(state.board).join("");
+      const a = answers.find((e) => e.b === key && e.pc === (oppPassed ? 1 : 0));
+      if (a && (a.pass || validGrid(state, N)[a.x]?.[a.y])) pre = a;
+    }
+    answers = [];
+    const tReq = wall;
+    let ranked;
+    if (pre) {
+      // go.js plays at once and NOTIFIES the solver, which re-roots (a reuse)
+      // at the move's playtime and commits.
+      wall += PRESEND_MS;
+      rtTotal += PRESEND_MS;
+      preMoves++;
+      const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
+      const rr = sess.setRoot(g.simpleBoardFromBoard(state.board), validGrid(state, N), { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock });
+      sStats[rr?.reused ? "reused" : "fresh"]++;
+      ranked = pre.pass ? [] : [{ x: pre.x, y: pre.y }];
+    } else {
+      const ms0 = ourMs;
+      ranked = await solve();
+      wall += ourMs - ms0 + ROUND_TRIP_MS;
+      rtTotal += ROUND_TRIP_MS;
+    }
+    const seedPath = pre ? "pre" : "req";
+    const seedRef = playtimeAt(pre ? wall : tReq);
     ourTurns++;
     const hasMove = ranked && ranked.length;
     let cheatNow = false;
@@ -330,6 +414,8 @@ async function playGame(stats, gameIndex) {
       if (sess) sess.commit(ranked[0].x, ranked[0].y);
     }
     if (state.passCount >= 2) break;
+    // What the AI's reply will be computed from, for the seed calibration.
+    const seedCtx = SEEDED ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
 
     // PONDER while the AI "thinks" (see --ponder above).
     let ponderT0 = null;
@@ -353,11 +439,32 @@ async function playGame(stats, gameIndex) {
     cycles = 0;
     rows = 0;
     const t1 = performance.now();
-    const reply = await g.getMove(state, GoColor.white, OPP, true, rngSeed());
+    // THE SEED (--seeded): the playtime one waitCycle (200ms + timer slop)
+    // after our move, in whole engine cycles.
+    const reply = await g.getMove(state, GoColor.white, OPP, true, SEEDED ? playtimeAt(wall + 200 + 0.5 + Math.random() * 6) : rngSeed());
     oppMs += performance.now() - t1;
     if (sess && (SESSION === "ponder" || SESSION === "deep") && sess.pondering) {
       const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
       sStats.ponderIters += await sess.ponder(liveMs);
+      if (PRESEND) answers = sess.ponderAnswers({ minWork: sessRate ? Math.round(sessRate * budgetFor(ourTurns)) : Infinity, max: 4 });
+    }
+    wall += (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
+    // THE SEED LAG, calibrated online from the reply just seen: which k make
+    // the model (the AI's own code) give exactly this reply from T + 200k.
+    if (seedCtx) {
+      const c = calib[seedPath];
+      const want = reply.type === "move" ? `${reply.x},${reply.y}` : "pass";
+      const matches = [];
+      for (let k = c.range[0]; k <= c.range[1]; k++) {
+        const m = await MODEL.reply(seedCtx.board, { history: seedCtx.history, passCount: seedCtx.passCount, rng: seedRef + 200 * k });
+        if ((m ? `${m.x},${m.y}` : "pass") === want) matches.push(k);
+      }
+      const top = c.weights()[0]?.[0] ?? null;
+      seedG.observed++;
+      if (c.observe(matches, top)) {
+        seedG.informative++;
+        if (matches.includes(top)) seedG.predicted++;
+      }
     }
     if (ponderT0 !== null) {
       const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
@@ -383,7 +490,9 @@ async function playGame(stats, gameIndex) {
       note("W", "pass");
       g.passTurn(state, GoColor.white, false);
       const s = g.getScore(state);
-      if (s[GoColor.black].sum > s[GoColor.white].sum) {
+      // --mirror search: the search decides (PASS ends the game; a stone
+      // plays on for more area); else pass at once, as go.js does.
+      if (MIRROR !== "search" && s[GoColor.black].sum > s[GoColor.white].sum) {
         mirror++;
         g.passTurn(state, GoColor.black, false);
         break;
@@ -409,6 +518,9 @@ async function playGame(stats, gameIndex) {
     ...(sess ? { session: sStats } : {}),
     ...(MODEL && PONDER ? { mPonder: { ...mStats, carryMs: Math.round(mStats.carryMs) } } : {}),
     oppTurns,
+    preMoves,
+    rtTotalMs: rtTotal,
+    ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
     oppCycles,
     oppRows,
@@ -420,7 +532,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, objective: OBJECTIVE, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
@@ -444,6 +556,7 @@ for (let i = START; i < GAMES; i++) {
   // forceEndGoGame never runs the nodePower accrual (scoring.ts:101-108).
   const power = r.ejected ? 0 : r.black * difficulty * streak;
   stats.nodePower += power;
+  stats.meanBlack = stats.meanBlack ? 0.9 * stats.meanBlack + 0.1 * r.black : r.black;
   // Live wall clock: our think + the solver round trip (go.js polls every
   // 250ms, the solver every 150ms: ~0.45s) per move, 200ms per AI waitCycle,
   // 10ms per pattern row, plus go.js's own idle (100ms) per move.
@@ -460,10 +573,10 @@ for (let i = START; i < GAMES; i++) {
   // -> 85ms. NOT YET CHECKED LIVE: go.js now publishes turnTiming, and the
   // report's s/game CHECK re-tests this on every run.
   // go-study-report re-times older records to this constant.
-  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + r.ourTurns * ROUND_TRIP_MS + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
+  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + (r.rtTotalMs ?? r.ourTurns * ROUND_TRIP_MS) + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
   emit({ kind: "game", i, ...r, won, streak, power: +power.toFixed(1), liveS: Math.round(liveS), simS: Math.round((Date.now() - w0) / 1000) });
 }
-emit({ kind: "end", ...stats });
+emit({ kind: "end", ...stats, ...(SEEDED ? { calib: { req: calib.req.stats, pre: calib.pre.stats } } : {}) });
 if (KATAGO) emit({ kind: "katago", ...KATAGO.status() });
 KATAGO?.close();
 process.exit(0); // jsdom keeps the event loop alive
