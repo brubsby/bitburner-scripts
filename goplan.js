@@ -36,21 +36,35 @@
 // priced as a committed dwell rather than a veto on banked power. A flat-
 // weights pass still cannot distinguish the channels, and it still REFUSES.
 //
-// CALIBRATION: the power table below is MEASURED, 60 games per arm at 5x5
-// against the game's own getMove (tools/sim/go-boardsize.mjs, priced by
-// tools/sim/go-opponent.mjs). It is valid only while tools/go-solver.mjs is
-// answering — every arm was played by a real search, and go.js's 20ms local
-// fallback is a regime none of these numbers describe. go.js reports
-// health 'warn' when the solver is silent; treat that as invalidating this.
+// CALIBRATION: the power table below is MEASURED, 30 games per arm at 5x5
+// against the game's own getMove, with the solver's OPPONENT-MODEL backend
+// (tools/go-solver.mjs backend 'model', golib.chooseMoveModel; 2026-10-03,
+// tools/sim/go-study.mjs + go-study-report.mjs: go-w0.mjs games with a fresh
+// paired offline-node layout per game, mirror pass, the AI's waitCycles and
+// pattern rows on the live clock). The report's live CHECK passed on the arm
+// the live game was playing (Tetrads 5x5 uct: win 93.3% vs live 92.7%, turns
+// 9.7 vs 9.0). It is valid only while the solver answers WITH THE MODEL —
+// go.js reports health 'warn' (modelHealth) when model requests fall back to
+// uct, and the uct figures are the old ones below.
+//   arm             model win  power/h   | uct win  power/h (same boards)
+//   Daedalus           100%      9656    |   90%      8767
+//   Illuminati          97%     50086    |   30%     11631
+//   TheBlackHand       100%      7396    |   93%      6420
+//   SlumSnakes          97%      8218    |   97%      8569
+//   Netburners         100%      5395    |  100%      4437
+//   Tetrads            100%      9628    |   93%      8725
+// (The previous table, 60 games/arm with go-boardsize.mjs, was ~2x lower
+// across the board: that harness never mirror-passed and dealt ONE offline-
+// node layout for every game — tools/sim/go-board.mjs.)
 
-/** Measured node power per hour at 5x5, maxms 800, solver answering. */
+/** Measured node power per hour at 5x5, maxms 800, solver answering with the model backend. */
 export const POWER_PER_HOUR = {
-  Daedalus: 4391,
-  Illuminati: 10331,
-  TheBlackHand: 3733,
-  SlumSnakes: 4107,
-  Netburners: 2566,
-  Tetrads: 3295,
+  Daedalus: 9656,
+  Illuminati: 50086,
+  TheBlackHand: 7396,
+  SlumSnakes: 8218,
+  Netburners: 5395,
+  Tetrads: 9628,
 }
 
 /**
@@ -92,18 +106,18 @@ export function keyOfGame(name) {
 }
 
 /**
- * Measured win rate per opponent, same study as POWER_PER_HOUR (60 games per
- * arm, 5x5 @800ms; tools/sim/go-opponent.mjs over the go-boardsize JSONL).
+ * Measured win rate per opponent, same study as POWER_PER_HOUR (30 games per
+ * arm, 5x5 @800ms, model backend; tools/sim/go-study-report.mjs).
  * Used ONLY to price the win-streak state an opponent resumes from — the
  * steady-state effect of the win rate is already inside POWER_PER_HOUR.
  */
 export const WIN_RATE = {
-  Daedalus: 0.85,
-  Illuminati: 0.25,
-  TheBlackHand: 0.933,
-  SlumSnakes: 0.933,
-  Netburners: 0.983,
-  Tetrads: 0.75,
+  Daedalus: 1,
+  Illuminati: 0.967,
+  TheBlackHand: 1,
+  SlumSnakes: 0.967,
+  Netburners: 1,
+  Tetrads: 1,
 }
 
 /**

@@ -388,6 +388,71 @@ export function playout(b, nbrs, N, komi, colour, scratch, rand, amaf) {
 }
 
 /**
+ * ONE move of the light playout policy (the same three tiers as `playout`:
+ * answer an atari next to the last move — capture first, then save — then a
+ * local reply 75% of the time, then any legal non-eye, non-self-atari point),
+ * played on `b`. Returns the point played, or -1 for a pass. For playouts that
+ * interleave this with a different policy for the other side
+ * (chooseMoveModel's model leaves).
+ */
+export function lightMove(b, nbrs, N, colour, last, scratch, rand) {
+  const enemy = colour === US ? THEM : US
+  if (last >= 0) {
+    let save = -1
+    let take = -1
+    const ln = nbrs[last]
+    for (let j = 0; j < ln.length; j++) {
+      const p = ln[j]
+      const v = b[p]
+      if (v !== colour && v !== enemy) continue
+      if (libsAtLeast(b, nbrs, p, 2, scratch.out, scratch.seen, ++scratch.mark)) continue
+      const gr = group(b, nbrs, p, scratch.out, scratch.seen, ++scratch.mark)
+      if (gr.libs !== 1) continue
+      let lib = -1
+      for (let sIdx = 0; sIdx < gr.size && lib < 0; sIdx++) {
+        const sn = nbrs[scratch.out[sIdx]]
+        for (let q = 0; q < sn.length; q++) if (b[sn[q]] === EMPTY) { lib = sn[q]; break }
+      }
+      if (lib < 0) continue
+      if (v === colour) { if (save < 0) save = lib } else if (take < 0) take = lib
+    }
+    for (const urgent of [take, save]) {
+      if (urgent < 0 || b[urgent] !== EMPTY) continue
+      if (tryPlay(b, nbrs, urgent, colour, scratch)) return urgent
+    }
+    if (rand() < 0.75) {
+      const lx = (last / N) | 0
+      const ly = last % N
+      const start = (rand() * 8) | 0
+      for (let k = 0; k < 8; k++) {
+        const d = (start + k) % 8
+        const nx = lx + [1, -1, 0, 0, 1, 1, -1, -1][d]
+        const ny = ly + [0, 0, 1, -1, 1, -1, 1, -1][d]
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue
+        const idx = nx * N + ny
+        if (b[idx] !== EMPTY || isOwnEye(b, nbrs, idx, colour, N)) continue
+        if (tryPlay(b, nbrs, idx, colour, scratch)) return idx
+      }
+    }
+  }
+  const e = scratch.empties
+  let n = 0
+  for (let i = 0; i < N * N; i++) if (b[i] === EMPTY) e[n++] = i
+  for (let i = n - 1; i > 0; i--) {
+    const j = (rand() * (i + 1)) | 0
+    const t = e[i]
+    e[i] = e[j]
+    e[j] = t
+  }
+  for (let k = 0; k < n; k++) {
+    const idx = e[k]
+    if (isOwnEye(b, nbrs, idx, colour, N)) continue
+    if (tryPlay(b, nbrs, idx, colour, scratch)) return idx
+  }
+  return -1
+}
+
+/**
  * Cheap static score, used only to shortlist root moves before sampling.
  *
  * Spreading the playout budget across every legal point is what broke the first
@@ -792,6 +857,300 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms, opts = {}) {
   }
   if (bestIdx === null) return null
   return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters }]
+}
+
+/**
+ * chooseMoveModel's root decision between PASS and its most-visited stone.
+ *
+ * PASS only when the search believes passing WINS (mean > 0.5 — the value is
+ * 0.9 x won + 0.1 x area) and no stone is valued higher; then it must also be
+ * the most-visited or clearly ahead. A pass that is merely "least bad" in a
+ * lost position hands white free moves — observed before this rule: a
+ * mid-game pass at 0 black area (tools/sim/go-w0.mjs --trace, 5x5 Illuminati),
+ * chosen because every line lost and PASS collected the most visits.
+ * With no stone at all, PASS is all there is.
+ */
+export function modelRootPasses({ passMean, passVisits, stoneMean, stoneVisits }) {
+  if (stoneMean === null || stoneMean === undefined) return true
+  if (!(passMean > 0.5) || passMean < stoneMean) return false
+  return passVisits >= stoneVisits || passMean > stoneMean + 0.02
+}
+
+/**
+ * OPPONENT-MODEL SEARCH: expectimax-UCT against the opponent's ACTUAL policy.
+ *
+ * chooseMoveUCT searches as if white were an adversary choosing among all its
+ * moves; the opponent is not that. It is the game's own getMove
+ * (Go/boardAnalysis/goAI.ts) — a fixed rule cascade (capture, defend, eye,
+ * surround, eye-block, corner, pattern, jump, ...) whose only randomness is a
+ * few WHRNG draws (goAI.ts:184-210) and getDefendMove's Math.random. Given that
+ * policy, white's reply is a chance node with a handful of outcomes, and the
+ * game becomes close to single-agent planning: find the black line that wins
+ * against what white WILL play. That is a far smaller and far more accurate
+ * search than minimax against a phantom opponent, and it is where the 5x5
+ * Illuminati losses came from (tools/sim/go-w0.mjs --trace: the minimax
+ * search spends its budget refuting replies white never plays).
+ *
+ * The policy is INJECTED (`model.reply`), never imported: golib stays pure and
+ * free in-game, and the out-of-game solver supplies the game's own code
+ * bundled by tools/goai (verified reply-for-reply against the full game,
+ * tools/goai/check.mjs). In-game there is no model and this is never called.
+ *
+ *   model.reply(simpleBoard, { history, passCount, rng }) -> {x, y} | null (pass)
+ *
+ * Tree: B nodes (black to move) choose by UCB1 over black's actions (stones
+ * ordered by the static heuristic, then PASS); W nodes (white to move) are
+ * chance nodes that draw replies from the model, at most `samples` distinct
+ * draws growing with log2(visits) — the AI is nearly deterministic, so a few
+ * draws cover its distribution. Each iteration costs at most one model call.
+ * Leaves are scored by the light playout from the B node white's reply left.
+ * Two consecutive passes end the game and are scored exactly (the game's
+ * getScore: stones + single-colour-bordered empty regions, komi to white).
+ *
+ * Value is black's: (1 - areaWeight) * won + areaWeight * blackArea/points —
+ * the win decides (the streak multiplier is up to 6x, effect.ts:119-130), the
+ * area term (node power credits black's area, scoring.ts:85-88) breaks ties
+ * between lines that all win or all lose.
+ *
+ * opts: history (previous board strings, most recent first — the game's
+ *       BoardState.previousBoards; feeds the AI's superko filter),
+ *       opponentPassed, areaWeight (0.1), c (UCB, 0.6), samples (6).
+ * Returns [{x, y, idx, visits, iters, modelCalls, value}] or [] for pass, or
+ * null when black has no legal stone and passing is all there is.
+ */
+export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts = {}, model) {
+  const nbrs = makeGeometry(N)
+  const root = parseBoard(boardStrings)
+  const scratch = makeScratch(N)
+  const areaW = Number.isFinite(opts.areaWeight) ? opts.areaWeight : 0.1
+  const C = Number.isFinite(opts.c) ? opts.c : 0.6
+  const SAMPLES = Number.isFinite(opts.samples) ? opts.samples : 6
+  const rootHistory = Array.isArray(opts.history) ? opts.history : []
+  let points = 0
+  for (let i = 0; i < N * N; i++) if (root[i] !== DEAD) points++
+  let seed = (Date.now() ^ 0x5bd1e995) >>> 0
+  const rand = () => {
+    seed ^= seed << 13; seed >>>= 0
+    seed ^= seed >> 17
+    seed ^= seed << 5; seed >>>= 0
+    return seed / 4294967296
+  }
+  const PASS = -1
+  const CH = ['.', 'X', 'O', '#']
+  const toStr = (b) => {
+    let s = ''
+    for (let i = 0; i < N * N; i++) s += CH[b[i]]
+    return s
+  }
+  const toSimple = (s) => {
+    const out = []
+    for (let x = 0; x < N; x++) out.push(s.slice(x * N, (x + 1) * N))
+    return out
+  }
+  const valueNow = (b) => {
+    const m = scoreBoard(b, nbrs, N, komi, scratch)
+    return (1 - areaW) * (m > 0 ? 1 : 0) + areaW * (scratch.us / points)
+  }
+
+  // Black's candidate actions at a node: stones (not own-eye fills, not
+  // self-atari unless capturing — the same gate tryPlay applies) best-first by
+  // the static heuristic, then PASS. The root uses the game's own valid list.
+  const actions = (b, isRoot) => {
+    const out = []
+    for (let i = 0; i < N * N; i++) {
+      if (b[i] !== EMPTY) continue
+      if (isRoot && valid) {
+        const x = (i / N) | 0
+        if (!valid[x] || !valid[x][i % N]) continue
+      }
+      const ns = nbrs[i]
+      let own = ns.length > 0
+      for (let j = 0; j < ns.length; j++) if (b[ns[j]] !== US && b[ns[j]] !== DEAD) { own = false; break }
+      if (own) continue
+      const h = heuristic(b, nbrs, i, scratch, US)
+      if (h <= -1e9) continue
+      out.push({ idx: i, h })
+    }
+    out.sort((a, z) => z.h - a.h)
+    out.push({ idx: PASS, h: -1e6 })
+    return out
+  }
+
+  const mkB = (b, parent, passCount, isRoot) => {
+    const node = { kind: 0, b, s: toStr(b), parent, passCount, visits: 0, sum: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0 }
+    if (node.terminal) node.tv = valueNow(b)
+    else node.untried = actions(b, isRoot)
+    return node
+  }
+  const mkW = (b, parent, passCount, moved) => {
+    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, visits: 0, sum: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0 }
+    if (node.terminal) node.tv = valueNow(b)
+    return node
+  }
+  // previousBoards for the AI at W node w: the board before every STONE move
+  // on the path (passes add none, boardState.ts:146-158), most recent first,
+  // then the game's own history at the root.
+  const historyOf = (w) => {
+    const h = []
+    let n = w
+    while (n.parent) {
+      if (n.moved) h.push(n.parent.s)
+      n = n.parent
+    }
+    return h.concat(rootHistory)
+  }
+
+  const rootNode = mkB(root, null, opts.opponentPassed ? 1 : 0, true)
+  if (rootNode.untried.length === 1) return null // PASS only
+
+  const deadline = Date.now() + maxms
+  let iters = 0
+  let modelCalls = 0
+
+  // opts.leaf === 'model': leaves are scored by playing the game out with
+  // WHITE ON THE MODEL (the opponent as it will actually play) and black on
+  // the light policy (lightMove), up to opts.leafDepth white moves, then the
+  // ordinary light playout to the end. Costs one model call per white move.
+  const LEAF_MODEL = opts.leaf === 'model'
+  const LEAF_DEPTH = Number.isFinite(opts.leafDepth) ? opts.leafDepth : Infinity
+  const modelPlayout = async (node, lastWhite) => {
+    work.set(node.b)
+    const hist = historyOf(node.parent)
+    hist.unshift(node.parent.s) // the board before white's reply
+    if (lastWhite === PASS) hist.shift()
+    let passes = node.passCount
+    let last = lastWhite
+    let whiteMoves = 0
+    for (let turn = 0; turn < N * N * 2 && passes < 2; turn++) {
+      // black
+      const before = toStr(work)
+      const mv = lightMove(work, nbrs, N, US, last, scratch, rand)
+      if (mv < 0) passes++
+      else {
+        passes = 0
+        hist.unshift(before)
+      }
+      if (passes >= 2) break
+      if (whiteMoves >= LEAF_DEPTH) {
+        const won = playout(work, nbrs, N, komi, THEM, scratch, rand)
+        return (1 - areaW) * won + areaW * (scratch.us / points)
+      }
+      // white, by the model
+      const ws = toStr(work)
+      modelCalls++
+      whiteMoves++
+      const r = await model.reply(toSimple(ws), { history: hist, passCount: passes, rng: 1 + Math.floor(rand() * 3e7) })
+      if (r && play(work, nbrs, r.x * N + r.y, THEM, scratch) >= 0) {
+        passes = 0
+        hist.unshift(ws)
+        last = r.x * N + r.y
+      } else {
+        passes++
+        last = -1
+      }
+    }
+    return valueNow(work)
+  }
+  const work = new Uint8Array(N * N)
+  while (Date.now() < deadline || iters < 1) {
+    let node = rootNode
+    const path = [rootNode]
+    let v = null
+    while (v === null) {
+      if (node.terminal) {
+        v = node.tv
+        break
+      }
+      if (node.kind === 0) {
+        if (node.untried.length) {
+          const { idx } = node.untried.shift()
+          const b = node.b.slice()
+          let moved = false
+          if (idx !== PASS) {
+            if (play(b, nbrs, idx, US, scratch) < 0) continue // suicide after all: drop it
+            moved = true
+          }
+          const w = mkW(b, node, moved ? 0 : node.passCount + 1, moved)
+          node.children.set(idx, w)
+          node = w
+          path.push(w)
+          continue
+        }
+        let best = null
+        let bestU = -Infinity
+        const logv = Math.log(node.visits + 1)
+        for (const child of node.children.values()) {
+          const mean = child.visits ? child.sum / child.visits : 0.5
+          const u = mean + C * Math.sqrt(logv / (child.visits + 1))
+          if (u > bestU) { bestU = u; best = child }
+        }
+        if (!best) { v = valueNow(node.b); break }
+        node = best
+        path.push(node)
+        continue
+      }
+      // W node: draw a fresh reply while under the sample cap, else replay one.
+      const cap = Math.min(SAMPLES, 1 + Math.floor(Math.log2(1 + node.visits)))
+      if (node.draws < cap) {
+        node.draws++
+        modelCalls++
+        const r = await model.reply(toSimple(node.s), { history: historyOf(node), passCount: node.passCount, rng: 1 + Math.floor(rand() * 3e7) })
+        const key = r ? r.x * N + r.y : PASS
+        let e = node.samples.get(key)
+        if (!e) {
+          const b = node.b.slice()
+          let ok = true
+          if (key !== PASS) ok = play(b, nbrs, key, THEM, scratch) >= 0
+          e = { n: 0, child: mkB(ok ? b : node.b.slice(), node, key !== PASS && ok ? 0 : node.passCount + 1, false) }
+          node.samples.set(key, e)
+          e.n++
+          node = e.child
+          path.push(node)
+          // Leaf: score it by a playout from black's turn.
+          if (node.terminal) v = node.tv
+          else if (LEAF_MODEL) v = await modelPlayout(node, key)
+          else {
+            work.set(node.b)
+            const won = playout(work, nbrs, N, komi, US, scratch, rand)
+            v = (1 - areaW) * won + areaW * (scratch.us / points)
+          }
+          break
+        }
+        e.n++
+        node = e.child
+        path.push(node)
+        continue
+      }
+      let pick = (rand() * node.draws) | 0
+      let chosen = null
+      for (const e of node.samples.values()) {
+        if (pick < e.n) { chosen = e; break }
+        pick -= e.n
+      }
+      if (!chosen) chosen = node.samples.values().next().value
+      node = chosen.child
+      path.push(node)
+    }
+    for (const n of path) {
+      n.visits++
+      n.sum += v
+    }
+    iters++
+  }
+
+  let bestIdx = null
+  let bestVisits = -1
+  for (const [idx, child] of rootNode.children) {
+    if (idx === PASS) continue
+    if (child.visits > bestVisits) { bestVisits = child.visits; bestIdx = idx }
+  }
+  const passNode = rootNode.children.get(PASS)
+  const meanOf = (c) => (c && c.visits ? c.sum / c.visits : null)
+  const stone = bestIdx === null ? null : rootNode.children.get(bestIdx)
+  if (passNode && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits })) return []
+  if (bestIdx === null) return null
+  const ch = rootNode.children.get(bestIdx)
+  return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters, modelCalls, value: ch.visits ? ch.sum / ch.visits : null }]
 }
 
 /**

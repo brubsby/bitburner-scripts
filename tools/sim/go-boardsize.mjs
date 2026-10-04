@@ -134,6 +134,7 @@ globalThis.setTimeout = function (fn, ms, ...rest) {
 };
 
 const g = await import("./game.bundle.mjs");
+const { randomizeLayout } = await import("./go-board.mjs");
 const { chooseMoveUCT } = await import("../../golib.js");
 const { GoColor, GoOpponent } = g;
 
@@ -195,6 +196,9 @@ const rngSeed = () => Math.floor(Math.random() * 30000 * 1000);
 async function playGame(N, maxms, OPPONENT) {
   // netscriptGoImplementation.ts:368 — resetBoardState uses applyObstacles=true.
   // Daedalus gets no handicap stones (boardState.ts:100-107).
+  // A fresh offline-node layout per game (go-board.mjs: without this the
+  // harness deals ONE layout forever). --fixed-layout restores the old deal.
+  if (!argv.includes("--fixed-layout")) randomizeLayout(g);
   const state = g.getNewBoardState(N, OPPONENT, true);
   g.Go.currentGame = state;
   g.Go.storedCycles = 1e9; // pin waitCycle to its 40ms branch so counts are unambiguous

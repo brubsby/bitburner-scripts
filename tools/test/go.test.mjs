@@ -363,9 +363,13 @@ export async function run() {
     // that difference, not banked power, is what a switch costs.
     c9.examined(1);
     {
-      const cold = gp.streakFactor(gp.WIN_RATE.Daedalus, 0, 5), hot = gp.streakFactor(gp.WIN_RATE.Daedalus, 6, 5);
+      // A fixed sub-1 win rate, not the table's: at p = 1 the steady state IS
+      // the 3x cap, so no streak can price above it and the property is moot
+      // (the 2026-10-03 model table measured Daedalus at 30/30).
+      const P = 0.85;
+      const cold = gp.streakFactor(P, 0, 5), hot = gp.streakFactor(P, 6, 5);
       if (!(cold < 1 && hot > 1)) c9.fail(`a paused cold streak must price below steady state and a hot one above (cold ${cold}, hot ${hot})`);
-      const long = gp.streakFactor(gp.WIN_RATE.Daedalus, 0, 400);
+      const long = gp.streakFactor(P, 0, 400);
       if (!(Math.abs(long - 1) < 0.02)) c9.fail(`over a long dwell the streak factor must return to ~1 (got ${long})`);
       // A near tie on marginals goes to the incumbent's hot streak; with the
       // streaks swapped it goes to the challenger.

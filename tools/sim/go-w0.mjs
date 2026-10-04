@@ -55,6 +55,9 @@ globalThis.setTimeout = function (fn, ms, ...rest) {
 };
 
 const g = await import("./game.bundle.mjs");
+const { randomizeLayout, dealPaired } = await import("./go-board.mjs");
+// --layoutseed S: game i gets the same board in every run with seed S (paired A/B).
+const LAYOUT_SEED = process.argv.includes("--layoutseed") ? Number(process.argv[process.argv.indexOf("--layoutseed") + 1]) : null;
 const golib = await import("../../golib.js");
 const { GoColor, GoOpponent } = g;
 
@@ -66,12 +69,43 @@ const str = (name, dflt) => {
 const num = (name, dflt) => Number(str(name, dflt));
 const GAMES = num("games", 4);
 const MAXMS = num("maxms", 800);
+// --opening K:MS — the first K of our moves search for MS instead of MAXMS
+// (the opening decides most 5x5 losses; it is a few moves of a ~25s game).
+const OPENING = (() => {
+  const v = str("opening", null);
+  if (!v) return null;
+  const [k, ms] = v.split(":").map(Number);
+  return { k, ms };
+})();
+const budgetFor = (turn) => (OPENING && turn < OPENING.k ? OPENING.ms : MAXMS);
 const OUT = str("out", null);
 const OPP = GoOpponent[str("opponent", "w0r1d_d43m0n")];
 const SIZE = num("size", 19);
 const VERBOSE = argv.includes("--verbose");
+// --trace: every game record carries its move list and the board after each
+// ply (simple-board strings), for loss analysis.
+const TRACE = argv.includes("--trace");
 // Solver options passed straight through to chooseMoveUCT (golib.js).
 const OPTS = JSON.parse(str("opts", "{}"));
+// --model: search with golib.chooseMoveModel against the game's own AI policy
+// (tools/goai — the opponent's getMove bundled from game source), as the
+// external solver does when the model is available.
+let MODEL = null;
+if (argv.includes("--model")) {
+  const { loadModel } = await import("../goai/model.mjs");
+  const m = await loadModel({ quiet: false });
+  if (!m) throw new Error("--model: tools/goai could not build or load the opponent model");
+  MODEL = { reply: (b, o) => m.reply(b, { ...o, opponent: OPP }) };
+}
+
+// --katago V: moves from KataGo (tools/katago, analysis engine, V visits/move)
+// instead of golib — the external-engine evaluation. Think time is measured.
+let KATAGO = null;
+if (argv.includes("--katago")) {
+  const { startKataGo } = await import("../katago/katago.mjs");
+  KATAGO = await startKataGo({ visits: Number(str("katago", 200)), log: (m) => process.stderr.write(m + "\n") });
+  if (!KATAGO) throw new Error("--katago: KataGo could not start (tools/katago/install.sh)");
+}
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
@@ -120,33 +154,49 @@ function objectiveFor(stats) {
   return { win, loss: 0.5 };
 }
 
-async function playGame(stats) {
-  const state = g.getNewBoardState(SIZE, OPP, true);
+async function playGame(stats, gameIndex) {
+  // A fresh offline-node layout per game (go-board.mjs: without this the
+  // harness deals ONE layout forever). --fixed-layout restores the old deal.
+  if (!argv.includes("--fixed-layout")) randomizeLayout(g);
+  const state = LAYOUT_SEED !== null ? dealPaired(g, SIZE, OPP, LAYOUT_SEED, gameIndex) : g.getNewBoardState(SIZE, OPP, true);
   g.Go.currentGame = state;
   g.Go.storedCycles = 1e9;
   const N = state.board.length;
   const komi = g.opponentDetails[OPP].komi;
+  let modelCalls = 0;
   let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0;
   let guard = 0;
   let oppPassed = false;
   let cheats = 0, cheatOk = 0, cheatWaitS = 0, ejected = false;
   let phase = Math.random();
   let turnLiveS = 0;
-  const solve = () => {
+  const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
+  const note = (who, mv) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board) });
+  const solve = async () => {
     const simple = g.simpleBoardFromBoard(state.board);
     const valid = validGrid(state, N);
     const t0 = performance.now();
     const opts = { ...OPTS, opponentPassed: oppPassed };
     if (OPTS.objective === "auto") opts.objective = objectiveFor(stats);
-    const ranked = golib.chooseMoveUCT(simple, valid, N, komi, MAXMS, opts);
+    const ranked = KATAGO
+      ? await (async () => {
+          const vl = [];
+          for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (valid[x][y]) vl.push([x, y]);
+          const r = await KATAGO.choose(simple, vl, komi);
+          return r.pass ? [] : [{ x: r.x, y: r.y, iters: r.visits }];
+        })()
+      : MODEL
+      ? await golib.chooseMoveModel(simple, valid, N, komi, budgetFor(ourTurns), { ...opts, history: state.previousBoards.slice() }, MODEL)
+      : golib.chooseMoveUCT(simple, valid, N, komi, budgetFor(ourTurns), opts);
+    modelCalls += ranked?.[0]?.modelCalls ?? 0;
     ourMs += performance.now() - t0;
     iters += ranked?.[0]?.iters ?? 0;
     return ranked;
   };
   while (state.passCount < 2 && guard++ < N * N * 4) {
     phase = (phase + turnLiveS * RATE) % 1;
-    turnLiveS = (MAXMS + 550) / 1000;
-    const ranked = solve();
+    turnLiveS = (budgetFor(ourTurns) + 550) / 1000;
+    const ranked = await solve();
     ourTurns++;
     const hasMove = ranked && ranked.length;
     let cheatNow = false;
@@ -176,7 +226,7 @@ async function playGame(stats) {
         // playTwoMoves -> validateMove x2); the difference is a capture by the
         // first stone freeing the second point, which this ignores.
         state.previousPlayer = GoColor.white;
-        const second = solve();
+        const second = await solve();
         turnLiveS += (MAXMS + 550) / 1000;
         if (second && second.length) g.makeMove(state, second[0].x, second[0].y, GoColor.black);
         state.previousPlayer = GoColor.black;
@@ -189,7 +239,8 @@ async function playGame(stats) {
     } else if (!(hasMove && g.makeMove(state, ranked[0].x, ranked[0].y, GoColor.black))) {
       g.passTurn(state, GoColor.black, false);
       ourPasses++;
-    }
+      note("B", "pass");
+    } else note("B", [ranked[0].x, ranked[0].y]);
     if (state.passCount >= 2) break;
 
     cycles = 0;
@@ -202,8 +253,11 @@ async function playGame(stats) {
     turnLiveS += ((cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10) / 1000;
     oppTurns++;
     oppPassed = reply.type !== "move";
-    if (reply.type === "move") g.makeMove(state, reply.x, reply.y, GoColor.white);
-    else {
+    if (reply.type === "move") {
+      g.makeMove(state, reply.x, reply.y, GoColor.white);
+      note("W", [reply.x, reply.y]);
+    } else {
+      note("W", "pass");
       g.passTurn(state, GoColor.white, false);
       const s = g.getScore(state);
       if (s[GoColor.black].sum > s[GoColor.white].sum) {
@@ -225,7 +279,9 @@ async function playGame(stats) {
     ourTurns,
     ourPasses,
     ourMsPerMove: +(ourMs / ourTurns).toFixed(1),
+    ourMsTotal: Math.round(ourMs),
     itersPerMove: Math.round(iters / ourTurns),
+    ...(MODEL ? { modelCallsPerMove: Math.round(modelCalls / ourTurns) } : {}),
     oppTurns,
     oppMs: Math.round(oppMs),
     oppCycles,
@@ -233,14 +289,15 @@ async function playGame(stats) {
     mirror,
     size: N,
     ...(CHEAT ? { cheats, cheatOk, cheatWaitS: Math.round(cheatWaitS), ejected } : {}),
+    ...(trace ? { trace } : {}),
   };
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, maxms: MAXMS, opts: OPTS, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, katago: KATAGO ? Number(str("katago", 200)) : null, maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 for (let i = 0; i < GAMES; i++) {
   const w0 = Date.now();
-  const r = await playGame(stats);
+  const r = await playGame(stats, i);
   const won = !r.ejected && r.black >= r.white;
   stats.oldWinStreak = stats.winStreak;
   if (r.ejected) {
@@ -262,8 +319,11 @@ for (let i = 0; i < GAMES; i++) {
   // Live wall clock: our think + the solver round trip (go.js polls every
   // 250ms, the solver every 150ms: ~0.45s) per move, 200ms per AI waitCycle,
   // 10ms per pattern row, plus go.js's own idle (100ms) per move.
-  const liveS = (r.ourTurns * (MAXMS + 450 + 100) + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
+  // Our think time as MEASURED (ourMsTotal: budgets vary with --opening, and a
+  // search returns early when only a pass is legal), plus the round trip.
+  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + r.ourTurns * (450 + 100) + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
   emit({ kind: "game", i, ...r, won, streak, power: +power.toFixed(1), liveS: Math.round(liveS), simS: Math.round((Date.now() - w0) / 1000) });
 }
 emit({ kind: "end", ...stats });
+KATAGO?.close();
 process.exit(0); // jsdom keeps the event loop alive

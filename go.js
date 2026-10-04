@@ -111,6 +111,23 @@
 // /tel/go.txt (`cheat`, `cheatLog`) and each helper run in /tel/go-cheat.txt.
 //
 // ---------------------------------------------------------------------------
+// THE OPPONENT MODEL (2026-10-03). The opponent is not an adversary; it is the
+// game's own getMove (Go/boardAnalysis/goAI.ts) — a fixed rule cascade whose
+// only randomness is a few WHRNG draws. tools/goai bundles that exact code
+// (verified reply-for-reply against the game, tools/goai/check.mjs) and the
+// solver's `model` backend (golib.chooseMoveModel) searches against it as a
+// chance node instead of against a minimax phantom. On boards up to
+// SETTINGS.model.maxSize every request asks for it, with the opponent's name
+// and ns.go.getMoveHistory() (the AI's superko filter reads previousBoards).
+// Measured headless (tools/sim/go-w0.mjs, the game's own AI, 800ms, a fresh
+// paired offline-node layout per game — the old 30% figure below was ONE
+// layout, see tools/sim/go-board.mjs):
+//   5x5 Illuminati   uct 28% (n=40)  ->  model 97% (n=30)
+// Full per-opponent table: the MODEL block above SETTINGS. A solver that
+// cannot load the model answers with uct and says so (`backend`/`fallback`
+// in its reply); modelHealth() turns that into health 'warn'.
+//
+// ---------------------------------------------------------------------------
 // CPU budget — this runs forever in the background on someone's laptop.
 //
 // The search is time-boxed rather than playout-boxed: `--maxms` caps the
@@ -244,6 +261,12 @@ const SETTINGS = {
   // measured. Measured headless against the game's own AI on the bitverse
   // board (tools/sim/go-w0.mjs) — see the header's 19x19 block.
   bigBoard: { maxms: 800, opts: { allowPass: true, widen: { k0: 8, k: 2 }, themHeur: true } },
+  // THE OPPONENT-MODEL SEARCH (tools/go-solver.mjs backend 'model'): boards up
+  // to maxSize are searched against the game's own getMove. maxms is the
+  // per-move budget sent with each request; historyCap bounds the superko
+  // history sent (previousBoards, most recent first). See the MODEL block in
+  // the header for the measurements.
+  model: { maxSize: 9, maxms: 800, historyCap: 120 },
   // The solver-absence alarm. See solverHealth() below.
   solverWarnAfter: 10,
   solverMinShare: 0.5,
@@ -445,7 +468,7 @@ export function throttleHealth(sleptMs, askedMs) {
  * reader polling every 30 minutes to see it, short enough that one recovered
  * stall does not fail every health check for the rest of the life.
  */
-export function goHealth({ solver, moveStalls = 0, lastStallAt = null, throttle = null, now = Date.now() } = {}) {
+export function goHealth({ solver, model = null, moveStalls = 0, lastStallAt = null, throttle = null, now = Date.now() } = {}) {
   const recentStall = moveStalls > 0 && typeof lastStallAt === 'number' && now - lastStallAt < 3600e3
   if (recentStall) {
     return {
@@ -457,7 +480,30 @@ export function goHealth({ solver, moveStalls = 0, lastStallAt = null, throttle 
   }
   if (throttle?.throttled) return { health: 'warn', detail: throttle.detail }
   if (solver && solver.health !== 'ok') return { health: solver.health, detail: solver.detail }
+  if (model && model.health !== 'ok') return { health: model.health, detail: model.detail }
   return { health: 'ok', detail: null }
+}
+
+/**
+ * Is the opponent-model backend actually answering the requests that ask for it?
+ *
+ * The model search (tools/go-solver.mjs backend 'model', golib.chooseMoveModel)
+ * is what took 5x5 Illuminati from 28% to ~90% won headless. The solver falls
+ * back to uct when it cannot load the model (no game source to bundle, no
+ * esbuild, a throw) — correct degradation, and exactly the shape that has to
+ * be visible: a farm on the fallback earns a fraction of what the opponent
+ * pricing assumes. Same thresholds as solverHealth.
+ */
+export function modelHealth({ modelAsked = 0, modelAnswered = 0, modelFallbackWhy = null } = {}) {
+  if (modelAsked < SETTINGS.solverWarnAfter) return { health: 'ok', detail: null }
+  if (modelAnswered / modelAsked >= SETTINGS.solverMinShare) return { health: 'ok', detail: null }
+  return {
+    health: 'warn',
+    detail:
+      `the solver answered only ${modelAnswered} of ${modelAsked} opponent-model requests with the model ` +
+      `(the rest fell back to uct: ${modelFallbackWhy ?? 'no reason given'}). Win rates are the uct ones until ` +
+      `tools/go-solver.mjs restarts with a loadable backend (model: node tools/goai/build.mjs; katago: bash tools/katago/install.sh).`,
+  }
 }
 
 export async function main(ns) {
@@ -784,6 +830,11 @@ export async function main(ns) {
   let seq = Date.now() % 1e9
   let remoteMoves = 0
   let localMoves = 0
+  // The opponent-model backend: requests that asked for it, replies that came
+  // from it, and the solver's last stated reason when one did not.
+  let modelAsked = 0
+  let modelAnswered = 0
+  let modelFallbackWhy = null
   // Times we ended a game by mirroring the opponent's pass while ahead, and
   // times we saw their pass but were behind so had to keep playing. Both are
   // reported: a mirrorPasses that stays 0 across many games means the rule is
@@ -855,6 +906,9 @@ export async function main(ns) {
     cheatLog: cheatLog.slice(-10),
     remoteMoves,
     localMoves,
+    modelAsked,
+    modelAnswered,
+    modelFallbackWhy,
     mirrorPasses,
     passedBehind,
     gamesThisProcess,
@@ -890,7 +944,7 @@ export async function main(ns) {
   const heartbeat = () => {
     if (Date.now() - lastPublishAt < HEARTBEAT_MS) return
     try {
-      const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), moveStalls, lastStallAt, throttle })
+      const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), model: modelHealth({ modelAsked, modelAnswered, modelFallbackWhy }), moveStalls, lastStallAt, throttle })
       publishAt(h.health, { ...gameFields, heartbeat: true, ...(h.detail ? { detail: h.detail } : {}) })
     } catch (e) {
       ns.print(`go heartbeat failed: ${describe(e)}`)
@@ -974,11 +1028,35 @@ export async function main(ns) {
         const win = st < 0 ? 1 + 0.5 * Math.min(-st, 8) : 1 + 0.25 * Math.min(st + 1, 8)
         return { maxms: SETTINGS.bigBoard.maxms, opts: { ...SETTINGS.bigBoard.opts, objective: { win, loss: 0.5 } } }
       })()
-      const remoteWait = Math.max(flags.remotems, (solverReq.maxms ?? 0) + 6000)
+      // THE OPPONENT-MODEL BACKEND (SETTINGS.model): up to maxSize, the solver
+      // searches against the game's own getMove (tools/goai) instead of a
+      // minimax phantom, so it needs the opponent and the move history (the
+      // AI's superko filter reads BoardState.previousBoards). getMoveHistory
+      // is 0GB (RamCostGenerator.ts:308).
+      const useModel = size <= SETTINGS.model.maxSize
+      // KataGo on the big board (SETTINGS.bigBoard.backend): the solver answers
+      // with uct and says why when it is not installed (tools/katago/install.sh).
+      const useKatago = size >= 13 && SETTINGS.bigBoard.backend === 'katago'
+      const wantBackend = useModel ? 'model' : useKatago ? 'katago' : null
+      const remoteWait = Math.max(flags.remotems, (solverReq.maxms ?? 0) + 6000, useModel ? SETTINGS.model.maxms + 6000 : 0, useKatago ? 60000 : 0)
       /** One solver round trip; null if no reply in time. */
       const askSolver = async (board, validList) => {
         seq++
         const opts = solverReq.opts ? { ...solverReq.opts, opponentPassed: oppPassed } : undefined
+        let modelReq = {}
+        if (useModel) {
+          let history = []
+          try {
+            history = ns.go.getMoveHistory().slice(0, SETTINGS.model.historyCap).map((b) => b.join(''))
+          } catch (e) {
+            record(errors, new Error(`getMoveHistory: ${describe(e)} — the model search runs without superko history`))
+          }
+          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxms }) }
+          modelAsked++
+        } else if (useKatago) {
+          modelReq = { backend: 'katago', visits: SETTINGS.bigBoard.visits }
+          modelAsked++
+        }
         // THE SOLVER TALKS TO HOME. tools/go-solver.mjs reads /go/req.txt and
         // writes /go/move.txt on home over the Remote File API, and ns.read
         // and ns.write are local — so off home (a Go node places this
@@ -986,13 +1064,22 @@ export async function main(ns) {
         // pushed to home after the write and the reply pulled before every
         // read. Without this an off-home go.js asks a solver that never sees
         // the question and plays every move on the 20ms fallback (C10).
-        ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}) }), 'w')
+        ns.write('/go/req.txt', JSON.stringify({ seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }), 'w')
         if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
         for (let waited = 0; waited < remoteWait; waited += 250) {
           await ns.sleep(250)
           try {
             const reply = JSON.parse(readHome('/go/move.txt') || '{}')
-            if (reply.seq === seq) return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
+            if (reply.seq === seq) {
+              // Which backend actually answered: a model request answered by
+              // uct (no bundle, no game source, a throw) is counted and named
+              // — degraded, never silent (modelHealth).
+              if (wantBackend) {
+                if (reply.backend === wantBackend) modelAnswered++
+                else modelFallbackWhy = reply.fallback ?? `solver answered with backend ${reply.backend ?? 'unknown (a solver older than the model backend?)'}`
+              }
+              return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
+            }
           } catch {
             /* not written yet */
           }
@@ -1203,7 +1290,7 @@ export async function main(ns) {
         ns.print(`!!!!! ${msg}`)
         ns.tprint(`go.js: ${msg}`)
         phase = 'recovering from stall'
-        const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), moveStalls, lastStallAt, throttle })
+        const h = goHealth({ solver: solverHealth({ remoteMoves, localMoves }), model: modelHealth({ modelAsked, modelAnswered, modelFallbackWhy }), moveStalls, lastStallAt, throttle })
         publishAt(h.health, { ...gameFields, detail: h.detail })
         ns.go.resetBoardState(gameName(opponent), N)
         continue
@@ -1286,7 +1373,7 @@ export async function main(ns) {
       // solver's own verdict is still an input and still wins when it is the
       // only thing wrong.
       const solver = solverHealth({ remoteMoves, localMoves })
-      const h = goHealth({ solver, moveStalls, lastStallAt, throttle })
+      const h = goHealth({ solver, model: modelHealth({ modelAsked, modelAnswered, modelFallbackWhy }), moveStalls, lastStallAt, throttle })
       phase = 'between games'
       if (canCheat) {
         cheatLog.push({ at: new Date().toISOString(), opponent, ...cheat, won: (s.wins ?? 0) > (preStats?.wins ?? 0), black: finalScore?.black ?? null, white: finalScore?.white ?? null })

@@ -22,3 +22,10 @@ tools/sim/nodechoice/.cache-next.json
 
 # built by tools/sim/gameplan (surrogate cache: one entry per sim call)
 tools/sim/gameplan/.cache/
+
+# built by tools/goai/build.mjs (the game's IPvGO opponent, bundled for the solver)
+tools/goai/goai.bundle.mjs
+tools/goai/.entry.generated.ts
+
+# KataGo binary + network, fetched by tools/katago/install.sh
+tools/vendor/
