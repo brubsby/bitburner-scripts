@@ -349,8 +349,10 @@ export function decide(s = {}) {
  *     again — the raise is the escape's job, not this);
  *   - at most REISSUE.max per batch, REISSUE.gapMs apart.
  * s: { now, lastAugReset, progress, lastWork {kind, args, at, batchAt},
- *      batchAt (the batch act.js last executed), work (snapshot), workAt,
- *      cash, gymCostMult (gym name -> costMult), reissued {n, at} }
+ *      batchAt (the batch act.js last executed), batchWork (whether that
+ *      batch held a work order: false lets this life's earlier one stand),
+ *      work (snapshot), workAt, cash, city (the player's), gymCostMult
+ *      (gym name -> costMult), gymCityOf (gym name -> city), reissued {n, at} }
  * Returns {kind, args, why} to run, or {skip: why} / null (nothing to say).
  */
 export const REISSUE = { max: 3, gapMs: 90e3, snapMaxAgeMs: 120e3, settleMs: 5e3 }
@@ -362,7 +364,13 @@ export function reissueWorkOf(s) {
   const owner = s.progress?.slot?.owner ?? null
   if (!(num(at) && s.now - at < PROGRESS_FRESH_MS) || s.progress?.health === 'error') return null
   if (!OWNER_KINDS[owner]?.includes(lw.kind)) return null
-  if (lw.batchAt !== s.batchAt) return null
+  // THE OWNER'S LAST ORDER OF THIS LIFE, when the current batch ordered no
+  // work (s.batchWork false): progress.js orders a body leg once and then
+  // reads it as running ('already'); a stop between its read and the next
+  // batch (live BN14.1 2026-10-04 01:52:07Z, the gym fee drove cash below
+  // zero and the game ended the class 7s before the pass) left the claimed
+  // slot empty under a batch with no work order to re-issue.
+  if (lw.batchAt !== s.batchAt && s.batchWork !== false) return null
   const ranAt = Date.parse(lw.at ?? '')
   const snapAt = Date.parse(s.workAt ?? '')
   if (!num(snapAt) || s.now - snapAt > REISSUE.snapMaxAgeMs || !num(ranAt) || snapAt < ranAt + REISSUE.settleMs) return null
@@ -373,6 +381,16 @@ export function reissueWorkOf(s) {
   if (lw.kind === 'gym') {
     const cm = s.gymCostMult?.(lw.args?.[0])
     const fee = CLASS_BASE_FEE.gym * (num(cm) ? cm : 20)
+    // THE GYM'S CITY (live BN14.1 2026-10-04 01:52-01:55Z: the batch's joins
+    // flew the player to Ishima, which has no gym, and gymWorkout at
+    // Powerhouse refuses from there). The flight first when the fare and a
+    // pass of the fee are in cash; else the money crime earns them.
+    const gymCity = s.gymCityOf?.(lw.args?.[0]) ?? null
+    if (gymCity && typeof s.city === 'string' && s.city !== gymCity) {
+      if (num(s.cash) && s.cash >= TRAVEL_COST && feeFundable(s.cash - TRAVEL_COST, fee)) return { kind: 'travel', args: [gymCity], why: `progress.js holds the slot for ${owner} and its gym order (batch ${lw.batchAt}) is at ${lw.args?.[0]} in ${gymCity}; the player is in ${s.city}: the $${TRAVEL_COST} flight first (the gym re-issues next)` }
+      if (s.fundCrime) return { kind: 'crime', args: [s.fundCrime], why: `progress.js holds the slot for ${owner}; its gym (${lw.args?.[0]}) is in ${gymCity} and the player in ${s.city} with $${Math.round(s.cash ?? 0)} — under the $${TRAVEL_COST} flight plus ${FEE_FLOOR_S}s of the $${fee}/s fee: ${s.fundCrime} earns it and trains combat meanwhile` }
+      return { skip: `the gym (${lw.args?.[0]}) is in ${gymCity}, the player in ${s.city}, and the flight plus a pass of the fee are not in cash` }
+    }
     if (!feeFundable(s.cash, fee)) {
       // NOT IDLE (live 2026-10-02 17:42Z: the body slot sat empty on an
       // unpaid gym): the best money crime trains every combat stat and earns

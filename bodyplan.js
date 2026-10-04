@@ -516,39 +516,57 @@ export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec 
   const p0 = clonePerson(person)
   p0.money = num(cash) ? cash : 0
   if (!short(p0).length) return { hours: { gym: 0, crime: 0, mixed: 0 }, best: 'none', now: null, why: 'every stat is at its bar' }
-  const gym = bestGym({ ...person, money: p0.money })
-  const fee = gym ? GYM_BASE_COST * gym.costMult : null
+  // THE GYMS WITHIN REACH, the fare charged (live BN14.1 2026-10-04: the
+  // body step stood in Ishima, which has no gym, with Powerhouse priced as
+  // if the player were in Sector-12 and the flight free; the actor could not
+  // run the gym it was ordered). The gym here if any (no fare), and the best
+  // gym anywhere — reached by a $200k flight (CONSTANTS.TravelCost,
+  // Constants.ts:28) paid before its first session, from cash the money
+  // crime earns when it is short. City unknown: the old answer (bestGym on
+  // the cash now, no fare).
+  const known = typeof person?.city === 'string' && person.city.length > 0
+  const byMult = [...GYMS].sort((a, b) => b.expMult - a.expMult)
+  const hereGym = known ? byMult.find((g) => g.city === person.city) ?? null : null
+  const gyms = known ? [...new Set([hereGym, byMult[0]].filter(Boolean))].map((g) => ({ gym: g, fare: g.city === person.city ? 0 : TRAVEL_COST })) : [bestGym({ ...person, money: p0.money })].filter(Boolean).map((g) => ({ gym: g, fare: 0 }))
   const inc = num(incomePerSec) && incomePerSec > 0 ? incomePerSec : 0
   const tm = num(trainingMult) && trainingMult > 0 ? trainingMult : 1
   const stepS = Math.max(30, holdS)
   const maxS = maxHours * 3600
-  // A trajectory under one policy, in hold-length steps.
-  const trajOf = (policy) => {
+  // A trajectory under one policy, in hold-length steps (gym policies at one gym).
+  const trajOf = (policy, at = null) => {
     const p = clonePerson(p0)
+    const gym = at?.gym ?? null
+    const fee = gym ? GYM_BASE_COST * gym.costMult : null
+    let fare = at?.fare ?? 0
     let sec = 0
     let first = null
     while (sec < maxS) {
       const left = short(p)
       if (!left.length) return { hours: sec / 3600, first }
       const secBefore = sec
-      const canGym = gym && p.money >= fee * stepS
+      const canGym = gym && p.money >= fee * stepS + fare
       let step = null
       if (policy === 'gym' || (policy === 'mixed' && canGym)) {
         if (canGym) {
           const [stat, to] = left[0]
           const r = gymRate(gym, stat, p, tm)
           if (!num(r) || r <= 0) return { hours: Infinity, first }
+          const flies = fare > 0
+          if (flies) {
+            p.money -= fare
+            fare = 0
+          }
           // The leg ends at the bar or the step, whichever is first.
           const needS = Math.max(1, (expForSkill(to, p.mults[stat]) * (1 + 1e-9) - p.exp[stat]) / r)
           const dt = Math.min(stepS, Math.ceil(needS))
           p.exp[stat] += r * dt
           p.money += (inc - fee) * dt
           sec += dt
-          step = { kind: 'gym', gym: gym.name, city: gym.city, stat, to }
+          step = { kind: 'gym', gym: gym.name, city: gym.city, stat, to, ...(flies ? { flight: true, fare: TRAVEL_COST } : {}) }
         } else {
           // gym only and not fundable: wait on the flat income.
-          if (!(inc > 0)) return { hours: Infinity, first }
-          const dt = Math.max(stepS, Math.ceil((fee * stepS - p.money) / inc))
+          if (!gym || !(inc > 0)) return { hours: Infinity, first }
+          const dt = Math.max(stepS, Math.ceil((fee * stepS + fare - p.money) / inc))
           p.money += inc * dt
           sec += dt
           step = { kind: 'wait' }
@@ -571,8 +589,11 @@ export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec 
     }
     return { hours: Infinity, first }
   }
-  const g = trajOf('gym')
-  const m = trajOf('mixed')
+  const fastest = (policy) => gyms.map((at) => ({ at, r: trajOf(policy, at) })).reduce((a, b) => (b.r.hours < a.r.hours ? b : a), { at: gyms[0] ?? null, r: { hours: Infinity, first: null } })
+  const gBest = fastest('gym')
+  const mBest = fastest('mixed')
+  const g = gBest.r
+  const m = mBest.r
   // Crime alone: the best of the crimes that train every short stat.
   let c = { hours: Infinity, first: null }
   for (const name of Object.keys(CRIMES)) {
@@ -584,11 +605,38 @@ export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec 
   const best = [['mixed', m], ['gym', g], ['crime', c]].reduce((a, b) => (b[1].hours < a[1].hours ? b : a))
   const fmt = (h) => (num(h) ? `${h.toFixed(2)}h` : 'never')
   const now = best[1].first?.kind === 'wait' ? null : best[1].first
+  const gAt = (best[0] === 'gym' ? gBest : mBest).at
+  const gym = gAt?.gym ?? null
+  const fee = gym ? GYM_BASE_COST * gym.costMult : null
   return {
     hours,
     best: best[0],
     now,
-    gym: gym ? { name: gym.name, city: gym.city, feePerSec: fee } : null,
-    why: `combat to the bar: ${best[0]} ${fmt(best[1].hours)} (gym only ${fmt(g.hours)}, crime only ${fmt(c.hours)}, gym when cash covers ${stepS}s of $${fee ?? '?'}/s else money crime ${fmt(m.hours)}; cash $${Math.round(p0.money)}, flat income $${Math.round(inc)}/s)`,
+    gym: gym ? { name: gym.name, city: gym.city, feePerSec: fee, fare: gAt.fare } : null,
+    why: `combat to the bar: ${best[0]} ${fmt(best[1].hours)} (gym only ${fmt(g.hours)}, crime only ${fmt(c.hours)}, gym when cash covers ${stepS}s of $${fee ?? '?'}/s${gAt?.fare ? ` and the $${gAt.fare} flight to ${gym.city}` : ''} else money crime ${fmt(m.hours)}; cash $${Math.round(p0.money)}, flat income $${Math.round(inc)}/s${known ? `, in ${person.city}` : ''})`,
+  }
+}
+
+/**
+ * The black-op exit's retrain priced on money and travel (bbplan.bladeStartOf
+ * retrainSecsOf): bodyplan.combatBarPlanOf — the plan the body step acts on —
+ * for every combat stat to `target`, from the model's person at that moment,
+ * on the phase's cash and city. Seconds (the best policy's), or null.
+ */
+export function retrainSecsOfFor({ node, trainingMult = 1, flatPerSec = 0, start = {}, install = {}, holdS = 300 } = {}) {
+  // ~6ms a plan (node, warm): memoised on what it reads, so a pass's specs
+  // and draws that reach the same retrain price it once.
+  const memo = new Map()
+  const r4 = (x) => (typeof x === 'number' ? +x.toPrecision(5) : null)
+  return (p, target, phase) => {
+    const at = phase === 'install' ? install : start
+    const key = JSON.stringify([phase, target, COMBAT.map((k) => [r4(p.exp?.[k]), r4(p.mults?.[k]), r4(p.mults?.[`${k}_exp`])]), r4(p.mults?.crime_success), r4(p.mults?.crime_money), r4(p.skills?.hacking), r4(p.skills?.charisma)])
+    if (memo.has(key)) return memo.get(key)
+    const targets = Object.fromEntries(COMBAT.map((k) => [k, target]))
+    const plan = combatBarPlanOf(targets, { skills: { ...p.skills }, exp: { ...p.exp }, mults: { ...p.mults }, city: at.city ?? null, money: at.cash ?? 0 }, node, { cash: at.cash ?? 0, incomePerSec: flatPerSec, trainingMult, holdS })
+    const h = plan ? plan.hours?.[plan.best] : null
+    const out = typeof h === 'number' && isFinite(h) ? h * 3600 : null
+    if (memo.size < 256) memo.set(key, out)
+    return out
   }
 }

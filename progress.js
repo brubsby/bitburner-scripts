@@ -159,9 +159,9 @@ import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERM
 import { goWeightsGen, bladeGoWeightsGen } from 'goweights.js'
 import { goExitInputsOf } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
-import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf } from 'bodyplan.js'
+import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
 import { leanUntilOf } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -2603,7 +2603,7 @@ function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
  * trajectory of this pass is priced from (one builder).
  */
 const BLADE_TEL = '/tel/bladeburner.txt'
-async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0 } = {}) {
+async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0 } = {}) {
   const mults = bitNodeMults(info?.currentNode)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
   const pc = planCtxOf(ns, info)
@@ -2638,7 +2638,13 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     const rankScale = rankPost0.k > 0 ? rankPost0.k : 1
     // bb-lite acting: its lean policy until the full daemon is expected (bbliteplan.leanUntilOf: placed at the 128GB tier, else a home upgrade).
     const leanUntilH = leanUntilOf(tel, Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0), { spendHome: readJson(ns, '/tel/installgate.txt')?.spendExit?.home ?? null, lastAugReset: info.lastAugReset })
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, leanUntilH })
+    // THE RETRAIN'S MONEY AND TRAVEL (bbplan.bladeExitGen gymTo): the same
+    // combat-bar plan the body step acts on (bodyplan.combatBarPlanOf), on the
+    // cash, city and flat income of the moment — this life's for a retrain at
+    // the start, the balance an install leaves (installCashOf) in Sector-12
+    // (PlayerObjectGeneralMethods.ts:102-104) for one after an install.
+    const retrainSecsOf = retrainSecsOfFor({ node: mults, trainingMult: ns.hacknet.getTrainingMult(), flatPerSec, holdS: BB_POLICY.retrainLegS, start: { cash: wealth, city: player.city }, install: { cash: installCashOf(info?.currentNode, owned), city: 'Sector-12' } })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, leanUntilH, retrainSecsOf })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration
@@ -2787,11 +2793,25 @@ async function bladeInstallCompareOf(ns, info, { inputs, pending = [], futures =
     waits.push({ waitMs: f.waitMs, H, blade })
   }
   const bayes = typeof nowH === 'number' ? await planInstallOf(ns, info, inputs, null, { now: { hours: nowH, blade: nowB }, waits: waits.map((w) => ({ waitH: w.waitMs / 3600000, hours: w.H, blade: w.blade })), never: { hours: neverH } }, { route: 'blade', trajOf }) : null
+  // THE MODEL'S SCATTER (bbplan.bladeScatterGen), only where the plan would
+  // install: 'never' at the daemon's other skill-clock positions (three more
+  // exits, ~125ms of sliced work in node). The install gate's margin
+  // (installgate.bladeLoopGuardOf scatterH).
+  let neverScatter = null
+  if (bayes?.install === true && typeof nowH === 'number' && typeof neverH === 'number') {
+    try {
+      neverScatter = await paced(bladeScatterGen(bc.startFor({ kind: 'never' })), 'plan-blade-install')
+    } catch (e) {
+      neverScatter = { spreadH: null, why: `the scatter threw: ${String(e).slice(0, 100)}` }
+    }
+  }
   return {
     route: 'blade',
     nowH,
     nowInstalls: null,
     neverH,
+    neverScatterH: neverScatter?.spreadH ?? null,
+    neverScatter,
     waits: waits.map(({ blade, ...w }) => w),
     nowBatch: nowB,
     atSearchEdge: false,
@@ -3914,7 +3934,7 @@ function publishPlan(ns, info, extra = {}) {
     let exitJump = pc.prev?.exitJump ?? null
     try {
       const pointH = ex === inst ? inst?.pointH : ex === br ? br?.bladeH ?? null : ex?.pointH ?? null
-      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION })
+      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === br ? 'the Bladeburner route' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION })
       if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, ...exitJump }), 'w')
     } catch (e) {
       exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }
@@ -6982,6 +7002,8 @@ async function act(ns, canJoin, info, note) {
         sing,
         wealth: wealthOf(player.money, stockNow) ?? 0,
         moneyPerSec: econNow?.lifePerSec ?? econNow?.incomePerSec ?? 0,
+        // The retrain's cash stream (the exit inputs' flatIncomePerSec): contracts and the flat income.
+        flatPerSec: (econNow?.flatPerSec ?? 0) + (contractMoneyPerSec > 0 ? contractMoneyPerSec : 0),
       })
     : null
   const bladeOn = bladeRoute?.key === 'blade'
@@ -7000,8 +7022,7 @@ async function act(ns, canJoin, info, note) {
     if (!Object.keys(short).length) return null
     const person = levelledPerson(player, info)
     const legs = gymLegs(short, person, ns.hacknet.getTrainingMult())
-    const leg = legs?.legs?.[0]
-    if (!leg) return null
+    const leg = legs?.legs?.[0] ?? null
     // THE FEE IS PRICED (bodyplan.combatBarPlanOf): gym only, crime only, or
     // the gym while cash pays a pass of its fee and the best money crime
     // otherwise — the fastest to the bar. Live 2026-10-02 17:42Z the gym leg
@@ -7015,6 +7036,16 @@ async function act(ns, canJoin, info, note) {
       }
     })()
     if (plan?.now?.kind === 'crime') return { kind: 'crime', type: plan.now.crime, hours: plan.hours[plan.best], forFaction: 'Bladeburners', fund: true, why: plan.why }
+    // THE PLAN'S GYM, where it named one (bodyplan.combatBarPlanOf: the gym
+    // here or the best one a flight away, the fare charged) — gymLegs'
+    // bestGym reads cash alone and answered nothing in Ishima under $200k.
+    if (plan?.now?.kind === 'gym') {
+      const g = GYMS.find((x) => x.name === plan.now.gym)
+      const r = g ? gymRate(g, plan.now.stat, person, ns.hacknet.getTrainingMult()) : null
+      const h = typeof r === 'number' && r > 0 ? hoursToStat(plan.now.stat, plan.now.to, person, r) : null
+      return { kind: 'gym', gym: plan.now.gym, city: plan.now.city, forFaction: 'Bladeburners', stat: plan.now.stat, to: plan.now.to, hours: typeof h === 'number' && isFinite(h) ? h : leg?.hours ?? 0, plan: plan.why }
+    }
+    if (!legs || !leg) return null
     return { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: 'Bladeburners', stat: leg.stat, to: leg.to, hours: leg.hours, plan: plan?.why ?? null }
   })()
   const covenantStep = (() => {
@@ -7200,7 +7231,12 @@ async function act(ns, canJoin, info, note) {
       // second with no balance check (ClassWork.tsx:57-72), so it starts only
       // while cash covers FEE_FLOOR_S of it.
       const gymFee = CLASS_BASE_FEE.gym * (GYMS.find((g) => g.name === bodyStep.gym)?.costMult ?? Math.max(...GYMS.map((g) => g.costMult)))
-      if (!already && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity, gymFee)) {
+      // THE FARE: a gym in another city is a $200k flight first (act-travel.js
+      // fails on less, and the gym order after it refuses — live BN14.1 the
+      // player stood in Ishima on a Powerhouse order). Charged with the fee
+      // floor; short of both, the money crime earns them.
+      const fare = !already && bodyStep.city && cityAfterOrders !== bodyStep.city ? TRAVEL_FARE : 0
+      if (!already && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity - fare, gymFee)) {
         // NOT IDLE: the slot is claimed, so an unpaid gym left the player
         // doing nothing (live 2026-10-02 17:42Z). The priced fallback
         // (bodyplan.combatBarPlanOf): the best money crime, which trains
@@ -7218,7 +7254,7 @@ async function act(ns, canJoin, info, note) {
         else if (!crime) todo.push(`gym at ${bodyStep.gym} costs $${gymFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it (our spending must not take cash below zero); no priced fallback: ${fb?.why ?? 'the combat plan could not be read'}`)
       } else if (!already) {
         try {
-          if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`)
+          if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`, TRAVEL_FARE)
           // The session's fees as the order's cash cost (withCashRaise raises
           // them from the book): the leg's hours plus the floor, so cash does
           // not run below zero mid-leg once the trader reinvests.
@@ -8266,7 +8302,7 @@ async function act(ns, canJoin, info, note) {
         if (exitCompare?.route !== 'blade') return {}
         try {
           const b = bladeInstallBiasOf(bladeLedgerOf(planCtx, info), { node: info?.currentNode ?? null })
-          return { bladeInstallBiasH: b.biasH, bladeInstallBiasWhy: b.why }
+          return { bladeInstallBiasH: b.biasH, bladeInstallSpreadH: b.spreadH, bladeInstallBiasWhy: b.why }
         } catch (e) {
           return { bladeInstallBiasH: null, bladeInstallBiasWhy: `the install bias threw: ${String(e).slice(0, 100)}` }
         }

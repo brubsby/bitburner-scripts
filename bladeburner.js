@@ -56,19 +56,27 @@ import { liteAliveOf } from 'bbliteplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf } from 'bbplan.js'
+import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
 /** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
 const LITE = '/tel/bb-lite.txt'
 /** Full static price, measured by the game's calculator ([R5]); no ns.singularity, so no `* mult` term. */
 const RAISE_CEILING = (mult) => 92.75 + 0 * mult
+/** How long a refused raise keeps asking before exiting to the watchdog (ramgrow.raiseRam tries x gapMs: 10 min). */
+export const RAISE_WAIT = { tries: 40, gapMs: 15e3 }
 
 export async function main(ns) {
   ns.ramOverride(3.25)
 
   const rerrors = []
-  const note = reporter(ns, STATUS, () => ({ errors: rerrors.slice(-5) }))
+  // THE DIVISION RIDES ON EVERY RECORD (bbplan.divisionCarryOf): the last full
+  // read of this node's division, so a record that does not read it (waiting
+  // on the slot, a refused raise, stopped) never erases what the plan prices
+  // and what the next start carries (calibration, joinedAt). Seeded below
+  // from the record on disk; operate() refreshes it on every full publish.
+  const carry = { rec: {} }
+  const note = reporter(ns, STATUS, () => ({ ...carry.rec, errors: rerrors.slice(-5) }))
   // The daemon mirrors /tel/* from HOME only, and boot.js places this script
   // 'anywhere': push every write to home or it is never seen ([bitburner-offhome-reads]).
   const host = ns.getHostname()
@@ -90,6 +98,12 @@ export async function main(ns) {
   })
 
   const info = ns.getResetInfo()
+  try {
+    if (host !== 'home') ns.scp(STATUS, host, 'home')
+    carry.rec = divisionCarryOf(JSON.parse(ns.read(STATUS) || 'null'), info.currentNode)
+  } catch {
+    carry.rec = {}
+  }
   if (!canJoinBladeburner(info)) {
     say('waiting', {
       result: 'capability-absent',
@@ -107,13 +121,17 @@ export async function main(ns) {
     return
   }
 
-  if (!(await raiseRam(ns, RAISE_CEILING(1), STATUS, 'bladeburner.js needs its full allocation before the first ns.bladeburner call'))) {
+  // A refused raise is usually boot's crowd on a fresh life's home: keep asking
+  // at the 3.25GB floor for RAISE_WAIT.tries x gapMs (the watchdog relaunches
+  // only every few minutes — live BN14.1 the division went unread 01:32-01:40Z),
+  // and carry the record through the refusal (ramgrow carry).
+  if (!(await raiseRam(ns, RAISE_CEILING(1), STATUS, 'bladeburner.js needs its full allocation before the first ns.bladeburner call', RAISE_WAIT.tries, RAISE_WAIT.gapMs, { carry: true }))) {
     mirror()
     return
   }
 
   try {
-    await operate(ns, say, info, mults)
+    await operate(ns, say, info, mults, carry)
   } catch (err) {
     ns.print(record(rerrors, err))
     say('error', { result: 'error', bitNode: info.currentNode, lastAugReset: info.lastAugReset, detail: describe(err) })
@@ -135,7 +153,7 @@ export function slotClaim(ns, host, info) {
   return slotClaimHere(ns, host, info)
 }
 
-async function operate(ns, say, info, mults) {
+async function operate(ns, say, info, mults, carry = { rec: {} }) {
   const bb = ns.bladeburner
   const host = ns.getHostname()
   const flags = ns.flags([
@@ -480,7 +498,7 @@ async function operate(ns, say, info, mults) {
     }
     const sCal = sCalMemo
     const bo = v.blackOp
-    say(exitReady ? 'ok' : slot.ours ? 'ok' : 'waiting', {
+    const full = say(exitReady ? 'ok' : slot.ours ? 'ok' : 'waiting', {
       ...base,
       result: exitReady ? 'exit-ready' : slot.ours ? (started === null ? 'acting' : 'started') : 'slot-not-ours',
       joined: true,
@@ -521,6 +539,8 @@ async function operate(ns, say, info, mults) {
       samples: samples.slice(-61).map((s) => ({ at: new Date(s.t).toISOString(), rank: s.rank, stamina: s.stamina })),
       detail: exitReady ? 'exit ready — waiting on endgame.js' : slot.ours ? pick.why : `not acting: ${slot.why}`,
     })
+    // Every later record (waiting, refused, stopped) carries this read (bbplan.divisionCarryOf).
+    carry.rec = divisionCarryOf(full, info.currentNode)
 
     // ---- 6. sleep to the end of the attempt (or a short poll) -------------
     let wait = 10e3

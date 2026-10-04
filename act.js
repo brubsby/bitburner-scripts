@@ -444,6 +444,8 @@ export async function main(ns) {
   const log = []
   // The last work order of the batch executed (reissueWorkOf), and its re-issues.
   let lastWork = null
+  // Whether the batch last executed held a work order (actplan.reissueWorkOf batchWork).
+  let batchWork = null
   let reissued = { n: 0, at: 0, batchAt: null }
   let reissue = null
 
@@ -467,6 +469,7 @@ export async function main(ns) {
       const batchFresh = batch && batch.lastAugReset === info.lastAugReset && Date.now() - Date.parse(batch.at) < ORDERS_FRESH_MS
       if (batchFresh && batch.at !== lastOrdersAt && Array.isArray(batch.orders)) {
         lastOrdersAt = batch.at
+        batchWork = batch.orders.some((o) => ['gym', 'crime', 'work', 'company'].includes(o?.kind))
         const results = []
         let chainFailed = false
         let bought = 0
@@ -634,10 +637,13 @@ export async function main(ns) {
           progress: readJson(ns, '/tel/progress.txt'),
           lastWork,
           batchAt: lastOrdersAt,
+          batchWork,
           work: repSnap.data ? repSnap.data.work ?? null : { unread: true },
           workAt: repSnap.at ?? null,
           cash: ns.getServerMoneyAvailable('home'),
+          city: player.city ?? null,
           gymCostMult: (name) => GYMS.find((g) => g.name === name)?.costMult ?? null,
+          gymCityOf: (name) => GYMS.find((g) => g.name === name)?.city ?? null,
           reissued,
           // An unpaid gym falls back to the best money crime (it trains every combat stat and earns the fee).
           fundCrime: (() => {

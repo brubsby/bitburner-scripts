@@ -188,10 +188,14 @@ export async function main(ns) {
   }
 
   const want = RAISE_CEILING(1)
-  if (!(await raiseRam(ns, want, RAMOVERRIDE_STATUS, 'sleeve.js needs its full allocation before the first gated call'))) return
+  // A refused raise keeps asking at the floor (boot's crowd on a fresh life's
+  // home clears in minutes; the watchdog relaunched it 20 min after the
+  // BN14.1 install) and carries the record through the refusal: the plan
+  // reads its bitNode and dates its fleet (bbplan.bladeFleetOf staleSince).
+  if (!(await raiseRam(ns, want, RAMOVERRIDE_STATUS, 'sleeve.js needs its full allocation before the first gated call', 40, 15e3, { carry: true }))) return
 
   try {
-    say('ok', { result: 'running', allocation: want, detail: 'allocation raised; running the original body' })
+    say('ok', { result: 'running', bitNode: info.currentNode, allocation: want, detail: 'allocation raised; running the original body' })
     await act(ns, say)
     say('ok', { result: 'finished', detail: 'sleeve.js returned normally' })
   } catch (err) {

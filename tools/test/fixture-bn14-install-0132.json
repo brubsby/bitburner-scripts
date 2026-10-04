@@ -1,0 +1,1945 @@
+{
+"why": "BN14.1 2026-10-04 01:32:10Z install on the Bladeburner route: the install actor priced the next life at 81.97h, the new life priced itself at 176.95h (01:37Z) and 126.85h (01:52Z). The pre-install person (history.jsonl 01:29:54Z), the post-install person (01:52:07Z), the save's multipliers (after the 3 NFG), the division (bladeburner.txt ~01:54Z), the timeline of city/work/money after the install, and the plan/gate/exit-jump records.",
+"tel": {
+"at": "2026-10-04T01:59:44.977Z",
+"bitNode": 14,
+"joined": true,
+"joinedAt": "2026-10-04T01:40:13.105Z",
+"rank": 130.57,
+"skillPoints": 5,
+"levels": {
+"Blade's Intuition": 1,
+"Cloak": 2,
+"Short-Circuit": 1,
+"Digital Observer": 1,
+"Tracer": 1,
+"Overclock": 0,
+"Reaper": 1,
+"Evasive System": 1,
+"Datamancer": 0,
+"Cyber's Edge": 1,
+"Hands of Midas": 0,
+"Hyperdrive": 0
+},
+"stamina": 11.27,
+"maxStamina": 11.27,
+"city": "Volhaven",
+"blackOps": {
+"done": 0,
+"next": "Operation Typhoon",
+"reqdRank": 2500,
+"chance": [
+0.014,
+0.0144
+],
+"formulaChance": 0.0144
+},
+"counts": {
+"Tracking": 309.6,
+"Bounty Hunter": 269.6,
+"Retirement": 125.7,
+"Investigation": 298.3,
+"Undercover Operation": 224.6,
+"Sting Operation": 270.6,
+"Raid": 287.5,
+"Stealth Retirement Operation": 260.4,
+"Assassination": 287.3
+},
+"maxLevels": {
+"Tracking": 4,
+"Bounty Hunter": 1,
+"Retirement": 15,
+"Investigation": 1,
+"Undercover Operation": 1,
+"Sting Operation": 1,
+"Raid": 1,
+"Stealth Retirement Operation": 1,
+"Assassination": 1
+},
+"cities": [
+{
+"name": "Aevum",
+"popEst": 646833869,
+"pop": 935177035,
+"r": 1.44578,
+"chaos": 1.28,
+"comms": 103
+},
+{
+"name": "Chongqing",
+"popEst": 1821611664,
+"pop": 1243090420,
+"r": 0.68241,
+"chaos": 1.77,
+"comms": 81
+},
+{
+"name": "Sector-12",
+"popEst": 853988259,
+"pop": 1038801966,
+"r": 1.21641,
+"chaos": 4.41,
+"comms": 101
+},
+{
+"name": "New Tokyo",
+"popEst": 1544050276,
+"pop": 1568258629,
+"r": 1.01568,
+"chaos": 0.13,
+"comms": 28
+},
+{
+"name": "Ishima",
+"popEst": 1418093267,
+"pop": 1014015691,
+"r": 0.71506,
+"chaos": 0,
+"comms": 56
+},
+{
+"name": "Volhaven",
+"popEst": 2047231206,
+"pop": 1977775997,
+"r": 0.96607,
+"chaos": 2.16,
+"comms": 137
+}
+],
+"staminaBonus": 0,
+"daemon": "bladeburner.js",
+"skillsAt": "2026-10-04T01:40:13.104Z",
+"lastAugReset": 1791077530463
+},
+"person0129": {
+"skills": {
+"hacking": 118,
+"strength": 215,
+"defense": 183,
+"dexterity": 180,
+"agility": 179,
+"charisma": 122,
+"intelligence": 135
+},
+"exp": {
+"hacking": 429795.33352649014,
+"strength": 35171.802280868294,
+"defense": 18284.403880863312,
+"dexterity": 17321.04735305174,
+"agility": 16969.917753051643,
+"charisma": 5225.793328879425,
+"intelligence": 35257.63230318871
+},
+"money": 5310.529345669645,
+"city": "Ishima"
+},
+"person0152": {
+"skills": {
+"hacking": 28,
+"strength": 86,
+"defense": 1,
+"dexterity": 18,
+"agility": 18,
+"charisma": 1,
+"intelligence": 135
+},
+"exp": {
+"hacking": 1966.402749433466,
+"strength": 6703.704748122802,
+"defense": 6.64997323464263,
+"dexterity": 374.5464531056809,
+"agility": 374.5464531056809,
+"charisma": 0,
+"intelligence": 35320.63623318871
+},
+"money": -45996.112924373476,
+"city": "Chongqing"
+},
+"mults": {
+"hacking_chance": 1.4242991864925993,
+"hacking_speed": 1.4242991864925993,
+"hacking_money": 1.772086379141783,
+"hacking_grow": 1.5952150888717114,
+"hacking": 1.4242991864925993,
+"hacking_exp": 1.4242991864925993,
+"strength": 2.1468654136277427,
+"strength_exp": 1.4242991864925993,
+"defense": 2.1468654136277427,
+"defense_exp": 1.4242991864925993,
+"dexterity": 2.1468654136277427,
+"dexterity_exp": 1.4242991864925993,
+"agility": 2.1468654136277427,
+"agility_exp": 1.4242991864925993,
+"charisma": 1.6353064733803917,
+"charisma_exp": 1.318795543048703,
+"hacknet_node_money": 1.4770510082145476,
+"hacknet_node_purchase_cost": 0.6672755338296601,
+"hacknet_node_ram_cost": 0.6672755338296601,
+"hacknet_node_core_cost": 0.6672755338296601,
+"hacknet_node_level_cost": 0.6672755338296601,
+"company_rep": 1.318795543048703,
+"faction_rep": 1.318795543048703,
+"work_money": 1.318795543048703,
+"crime_success": 1.6353064733803917,
+"crime_money": 1.6353064733803917,
+"dnet_money": 1.0303090180067993,
+"bladeburner_max_stamina": 1,
+"bladeburner_stamina_gain": 1,
+"bladeburner_analysis": 1,
+"bladeburner_success_chance": 1
+},
+"nfg3": {
+"hacking_chance": 1.030309,
+"hacking_speed": 1.030309,
+"hacking_money": 1.030309,
+"hacking_grow": 1.030309,
+"hacking": 1.030309,
+"hacking_exp": 1.030309,
+"strength": 1.030309,
+"strength_exp": 1.030309,
+"defense": 1.030309,
+"defense_exp": 1.030309,
+"dexterity": 1.030309,
+"dexterity_exp": 1.030309,
+"agility": 1.030309,
+"agility_exp": 1.030309,
+"charisma": 1.030309,
+"charisma_exp": 1.030309,
+"hacknet_node_money": 1.030309,
+"company_rep": 1.030309,
+"faction_rep": 1.030309,
+"work_money": 1.030309,
+"crime_success": 1.030309,
+"crime_money": 1.030309,
+"dnet_money": 1.030309,
+"bladeburner_max_stamina": 1.030309,
+"bladeburner_stamina_gain": 1.030309,
+"bladeburner_analysis": 1.030309,
+"bladeburner_success_chance": 1.030309
+},
+"rankScale": 0.7133,
+"timeline": [
+{
+"at": "2026-10-04T01:34:52.846Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 222028,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:37:22.759Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 316384,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:37:55.507Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 430197,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:38:28.000Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 448595,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:39:00.723Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 448595,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:39:33.601Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 595772,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:40:06.369Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 687758,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:40:39.096Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 779744,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:41:11.538Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 390127,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:41:44.279Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 518908,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:42:16.880Z",
+"city": "Sector-12",
+"location": "The Slums",
+"money": 4131535,
+"work": "CrimeWork",
+"str": 1,
+"def": 1
+},
+{
+"at": "2026-10-04T01:42:49.492Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 4157927,
+"work": "ClassWork",
+"str": 9,
+"def": 1
+},
+{
+"at": "2026-10-04T01:43:22.185Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 14296,
+"work": "ClassWork",
+"str": 24,
+"def": 1
+},
+{
+"at": "2026-10-04T01:43:55.667Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 1121204,
+"work": null,
+"str": 31,
+"def": 1
+},
+{
+"at": "2026-10-04T01:44:28.418Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 1121204,
+"work": null,
+"str": 32,
+"def": 1
+},
+{
+"at": "2026-10-04T01:45:00.934Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 1121204,
+"work": null,
+"str": 32,
+"def": 1
+},
+{
+"at": "2026-10-04T01:45:33.743Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 1079444,
+"work": "ClassWork",
+"str": 37,
+"def": 1
+},
+{
+"at": "2026-10-04T01:46:06.567Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 1000724,
+"work": "ClassWork",
+"str": 45,
+"def": 1
+},
+{
+"at": "2026-10-04T01:46:39.454Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 922004,
+"work": "ClassWork",
+"str": 51,
+"def": 1
+},
+{
+"at": "2026-10-04T01:47:12.564Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 842804,
+"work": "ClassWork",
+"str": 56,
+"def": 1
+},
+{
+"at": "2026-10-04T01:47:46.449Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 560724,
+"work": "ClassWork",
+"str": 61,
+"def": 1
+},
+{
+"at": "2026-10-04T01:48:19.035Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 482484,
+"work": "ClassWork",
+"str": 65,
+"def": 1
+},
+{
+"at": "2026-10-04T01:48:51.477Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 404724,
+"work": "ClassWork",
+"str": 68,
+"def": 1
+},
+{
+"at": "2026-10-04T01:49:24.351Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 325524,
+"work": "ClassWork",
+"str": 72,
+"def": 1
+},
+{
+"at": "2026-10-04T01:49:57.042Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 247284,
+"work": "ClassWork",
+"str": 75,
+"def": 1
+},
+{
+"at": "2026-10-04T01:50:29.400Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 169524,
+"work": "ClassWork",
+"str": 78,
+"def": 1
+},
+{
+"at": "2026-10-04T01:51:01.956Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 91284,
+"work": "ClassWork",
+"str": 81,
+"def": 1
+},
+{
+"at": "2026-10-04T01:51:34.602Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": 13524,
+"work": "ClassWork",
+"str": 84,
+"def": 1
+},
+{
+"at": "2026-10-04T01:52:07.028Z",
+"city": "Chongqing",
+"location": "Powerhouse Gym",
+"money": -45996,
+"work": null,
+"str": 86,
+"def": 1
+},
+{
+"at": "2026-10-04T01:52:39.575Z",
+"city": "New Tokyo",
+"location": "Powerhouse Gym",
+"money": 7439623,
+"work": null,
+"str": 86,
+"def": 1
+},
+{
+"at": "2026-10-04T01:52:42.114Z",
+"city": "New Tokyo",
+"location": "Powerhouse Gym",
+"money": 7439623,
+"work": null,
+"str": 86,
+"def": 1
+},
+{
+"at": "2026-10-04T01:55:44.903Z",
+"city": "Sector-12",
+"location": "Powerhouse Gym",
+"money": 1377577,
+"work": "ClassWork",
+"str": 87,
+"def": 8
+}
+],
+"installLast": {
+"at": "2026-10-04T01:32:10.023Z",
+"lastAugReset": 1791053265841,
+"batchAt": "2026-10-04T01:31:59.590Z",
+"why": "install: 3 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 82.0h, never installing 84.1h (plan now: stays on now: the best alternative never is expected -1.55h later net of a 0.05h switch cost, against the 0.99h that waiting one re-decide interval is worth (rho 0.91, spread x8.007, sd 9.73h); better in 13% of 24 paired draws [the P >= 80% rule would hold])",
+"terminal": false,
+"planInstall": "now",
+"batch": [
+"NeuroFlux Governor",
+"NeuroFlux Governor",
+"NeuroFlux Governor"
+],
+"pricedBatch": [
+"NeuroFlux Governor",
+"NeuroFlux Governor",
+"NeuroFlux Governor"
+],
+"batchCheck": {
+"ok": true,
+"same": true,
+"install": true,
+"action": "install",
+"pricedN": 3,
+"boughtN": 3,
+"missing": [],
+"extra": [],
+"pricedH": 81.967,
+"repricedH": 81.967,
+"altKey": null,
+"altH": null,
+"tolH": null,
+"why": "the batch ordered is the batch priced (3)"
+},
+"batchChoice": {
+"key": "fresh",
+"by": null,
+"near": false,
+"committed": null,
+"gainH": 0,
+"rows": [],
+"unbuyable": [],
+"n": null,
+"why": "one candidate batch (fresh, incumbent are one batch or not buyable)"
+},
+"exits": {
+"ok": false,
+"why": "TWO EXITS AT INSTALL: the plan's 'now' 80.526h vs its commitment w0.083 85.351h priced 5 min ago differ by -4.742h (tolerance 4.263h); the install actor's 81.97h vs the commitment w0.083's point 86.879h priced 5 min ago differ by -4.829h (tolerance 4.34h)",
+"actorH": 81.967,
+"planKey": "now",
+"planH": 80.526,
+"planPointH": 81.967,
+"commitment": {
+"key": "w0.083",
+"meanH": 85.351,
+"pointH": 86.879,
+"q10": 77.784,
+"q90": 93.847,
+"at": "2026-10-04T01:26:59.507Z",
+"installAt": 1791077516569,
+"noiseKey": "bladeburner|at:29851292",
+"n": 24,
+"ver": "192rpw4.47"
+},
+"checks": [
+{
+"what": "plan now vs the plan's commitment",
+"a": 80.526,
+"b": 85.268,
+"aName": "the plan's 'now' 80.526h",
+"bName": "its commitment w0.083 85.351h priced 5 min ago",
+"diffH": -4.742,
+"tolH": 4.263,
+"ok": false
+},
+{
+"what": "install actor vs the plan's commitment",
+"a": 81.96739322179639,
+"b": 86.796,
+"aName": "the install actor's 81.97h",
+"bName": "the commitment w0.083's point 86.879h priced 5 min ago",
+"diffH": -4.829,
+"tolH": 4.34,
+"ok": false
+},
+{
+"what": "install actor vs the plan's now",
+"a": 81.96739322179639,
+"b": 81.967,
+"aName": "the install actor's 81.97h",
+"bName": "the plan's 'now' 81.967h",
+"diffH": 0,
+"tolH": 4.098,
+"ok": true
+}
+]
+},
+"carry": {
+"at": "2026-10-04T01:31:59.586Z",
+"exp": {
+"perSec": 44.63340264819063,
+"sdLn": 0.11658894321174268,
+"level": 119,
+"mult": 1.3824,
+"at": "2026-10-04T01:31:59.586Z"
+},
+"gang": null,
+"rep": {
+"mean": -0.0055684778373489485,
+"sd": 0.9945099694202771,
+"at": "2026-10-04T01:31:59.586Z"
+}
+},
+"bought": 3,
+"results": [
+{
+"kind": "liquidate",
+"ok": true,
+"skipped": null
+},
+{
+"kind": "buyaug",
+"ok": true,
+"skipped": null
+},
+{
+"kind": "buyaug",
+"ok": true,
+"skipped": null
+},
+{
+"kind": "buyaug",
+"ok": true,
+"skipped": null
+}
+]
+},
+"exitJump": {
+"at": "2026-10-04T01:57:16.228Z",
+"lastAugReset": 1791077530463,
+"ok": false,
+"install": {
+"at": "2026-10-04T01:32:10.023Z",
+"actorH": 81.967,
+"planH": 80.526,
+"q10": 77.784,
+"q90": 93.847
+},
+"first": {
+"at": "2026-10-04T01:37:15.344Z",
+"elapsedH": 0.085,
+"meanH": 175.13,
+"pointH": 176.95,
+"source": "count route",
+"ok": false,
+"checks": [
+{
+"what": "point",
+"a": 176.95,
+"b": 81.882,
+"aName": "the new life's point 176.95h",
+"bName": "the install actor's 81.97h less 0.08h",
+"diffH": 95.068,
+"tolH": 26.542,
+"ok": false
+},
+{
+"what": "mean",
+"a": 175.13,
+"b": 80.441,
+"aName": "the new life's mean 175.13h",
+"bName": "the plan's 'now' mean 80.53h less 0.08h",
+"diffH": 94.689,
+"tolH": 26.269,
+"ok": false
+}
+]
+},
+"worst": {
+"at": "2026-10-04T01:37:15.344Z",
+"elapsedH": 0.085,
+"meanH": 175.13,
+"pointH": 176.95,
+"source": "count route",
+"ok": false,
+"checks": [
+{
+"what": "point",
+"a": 176.95,
+"b": 81.882,
+"aName": "the new life's point 176.95h",
+"bName": "the install actor's 81.97h less 0.08h",
+"diffH": 95.068,
+"tolH": 26.542,
+"ok": false
+},
+{
+"what": "mean",
+"a": 175.13,
+"b": 80.441,
+"aName": "the new life's mean 175.13h",
+"bName": "the plan's 'now' mean 80.53h less 0.08h",
+"diffH": 94.689,
+"tolH": 26.269,
+"ok": false
+}
+]
+},
+"ver": "192rpw4.47",
+"n": 5,
+"why": "EXIT JUMP AT INSTALL (2026-10-04T01:32:10.023Z): the new life's point 176.95h vs the install actor's 81.97h less 0.08h: +95.068h (tolerance 26.542h); the new life's mean 175.13h vs the plan's 'now' mean 80.53h less 0.08h: +94.689h (tolerance 26.269h) at 0.085h into the life \u2014 the install priced the next life on one model and the life prices itself on another"
+},
+"sleeveBlade0154": {
+"on": true,
+"tasks": [
+{
+"kind": "bladeburner",
+"action": "Infiltrate Synthoids"
+},
+{
+"kind": "bladeburner",
+"action": "Support main sleeve"
+},
+{
+"kind": "bladeburner",
+"action": "Support main sleeve"
+},
+{
+"kind": "bladeburner",
+"action": "Support main sleeve"
+},
+{
+"kind": "bladeburner",
+"action": "Support main sleeve"
+}
+],
+"config": {
+"infiltrate": 1,
+"support": 4,
+"fa": 0
+},
+"hours": 115.05,
+"byConfig": [
+{
+"infiltrate": 1,
+"support": 0,
+"fa": 4,
+"hours": 114.9
+},
+{
+"infiltrate": 1,
+"support": 4,
+"fa": 0,
+"hours": 115.05
+},
+{
+"infiltrate": 3,
+"support": 0,
+"fa": 2,
+"hours": 115.33
+},
+{
+"infiltrate": 4,
+"support": 1,
+"fa": 0,
+"hours": 117.05
+},
+{
+"infiltrate": 3,
+"support": 2,
+"fa": 0,
+"hours": 118.11
+},
+{
+"infiltrate": 2,
+"support": 3,
+"fa": 0,
+"hours": 118.13
+}
+],
+"why": "1 infiltrate / 4 support / 0 field analysis: exit 115.1h (model) \u2014 the incumbent, within 3.45h of the best (1/0/4 114.90h) vs 124.9h for the worst of 12",
+"route": "blade",
+"joined": true,
+"decidedAt": "2026-10-04T01:52:45.242Z",
+"cpuMs": 1401.8,
+"maxBlockMs": 20.1,
+"install": null,
+"installBasis": "none"
+},
+"lifetimes": [
+{
+"at": "2026-10-04T01:31:59.586Z",
+"lifeH": 6.74,
+"hackMult": 1.3824,
+"bitNode": 14,
+"lnM": 0.14308280628790893,
+"exitFavor": 0,
+"augs": 0,
+"installWhy": "install: 3 aug(s) on the Bladeburner route \u2014 the black-op exit installing now 82.0h, never installing 84.1h (plan now: stays on now: the best alternative never is expected -1.55h later net of a 0.05h switch cost, against the 0.99h that waiting one re-decide interval is worth (rho 0.91, spread x8.007",
+"cadenceModel": {
+"lnPerHour": 0.011508928914484058,
+"cycleHours": 24
+},
+"terminal": false,
+"installBatch": [
+"NeuroFlux Governor",
+"NeuroFlux Governor",
+"NeuroFlux Governor"
+],
+"capStart": 5442326.060716657,
+"capEnd": 202560805,
+"predicted": {
+"nextMult": 1.4294016,
+"nextLifeH": 1.72
+}
+}
+],
+"lifeStartMs": 1791077530463,
+"flatPerSec": 33072.81738865961,
+"installCash": 1262,
+"bladeInstallJumps": [
+{
+"at": "2026-10-04T01:32:10.023Z",
+"node": 14,
+"diffH": 95.068,
+"what": "point",
+"elapsedH": 0.085
+}
+],
+"gate0207": {
+"nowH": 102.58347591210445,
+"neverH": 107.57630843897353,
+"ageMs": 2106572,
+"planKey": "now",
+"liveGuard": {
+"ok": false,
+"gainH": -90.075,
+"biasH": 95.068,
+"young": true,
+"needH": 0.5
+}
+},
+"ordersHistory": [
+{
+"at": "2026-10-04T01:37:24.985Z",
+"batch": "2026-10-04T01:37:15.347Z",
+"lastAugReset": 1791077530463,
+"results": []
+},
+{
+"at": "2026-10-04T01:42:36.976Z",
+"batch": "2026-10-04T01:42:14.295Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+3282619
+],
+"why": "hold $3282619 cash for this batch ($3218253 of orders; $7376449 in hand now, but the trader re-invests cash between this pass and act.js \u2014 the raise sells only what it moved)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 128,
+"result": {
+"at": "2026-10-04T01:42:36.541Z",
+"actor": "liquidate",
+"args": [
+"raise",
+3282619
+],
+"ok": true,
+"sold": [],
+"proceeds": 0,
+"error": null,
+"target": 3282619,
+"cash": 4186726.963431466
+},
+"ok": true
+},
+{
+"id": 1,
+"kind": "gym",
+"args": [
+"Powerhouse Gym",
+"str"
+],
+"why": "strength to 100 for Bladeburners",
+"ran": true,
+"host": "rothman-uni",
+"pid": 129,
+"result": {
+"at": "2026-10-04T01:42:36.815Z",
+"actor": "gym",
+"args": [
+"Powerhouse Gym",
+"str"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T01:47:18.075Z",
+"batch": "2026-10-04T01:47:14.994Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+204000
+],
+"why": "hold $204000 cash for this batch ($200000 of orders; $834644 in hand now, but the trader re-invests cash between this pass and act.js \u2014 the raise sells only what it moved)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 159,
+"result": {
+"at": "2026-10-04T01:47:17.647Z",
+"actor": "liquidate",
+"args": [
+"raise",
+204000
+],
+"ok": true,
+"sold": [],
+"proceeds": 0,
+"error": null,
+"target": 204000,
+"cash": 827923.8870756265
+},
+"ok": true
+},
+{
+"id": 1,
+"kind": "travel",
+"args": [
+"Chongqing"
+],
+"why": "Tetrads's only unmet requirement is location",
+"ran": true,
+"host": "rothman-uni",
+"pid": 160,
+"result": {
+"at": "2026-10-04T01:47:17.875Z",
+"actor": "travel",
+"args": [
+"Chongqing"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T01:52:52.359Z",
+"batch": "2026-10-04T01:52:14.618Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+71808000
+],
+"why": "raise $71808000 cash from the stock book for this batch ($70400000 of orders, $19954004 in hand)",
+"ran": true,
+"host": "aevum-police",
+"pid": 194,
+"result": {
+"at": "2026-10-04T01:52:29.950Z",
+"actor": "liquidate",
+"args": [
+"raise",
+71808000
+],
+"ok": false,
+"sold": [],
+"proceeds": 0,
+"error": "refused: the book reaches ~$7639623 of $71808000 after the sale haircut \u2014 nothing sold",
+"target": 71808000,
+"cash": 7639623.2144349255,
+"reach": 7639623
+},
+"ok": false
+},
+{
+"id": 1,
+"kind": "join",
+"args": [
+"Chongqing"
+],
+"why": "chosen city set [Chongqing, New Tokyo, Ishima]; invitation follows presence",
+"ran": true,
+"host": "aevum-police",
+"pid": 195,
+"result": {
+"at": "2026-10-04T01:52:30.163Z",
+"actor": "join",
+"args": [
+"Chongqing"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 2,
+"kind": "travel",
+"args": [
+"New Tokyo"
+],
+"why": "New Tokyo invites only in New Tokyo",
+"ran": true,
+"host": "aevum-police",
+"pid": 196,
+"result": {
+"at": "2026-10-04T01:52:30.373Z",
+"actor": "travel",
+"args": [
+"New Tokyo"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 3,
+"kind": "join",
+"args": [
+"New Tokyo"
+],
+"why": "chosen city set [Chongqing, New Tokyo, Ishima]; invitation follows presence",
+"ran": true,
+"host": "aevum-police",
+"pid": 197,
+"result": {
+"at": "2026-10-04T01:52:41.491Z",
+"actor": "join",
+"args": [
+"New Tokyo"
+],
+"ok": false,
+"error": null
+},
+"ok": false
+},
+{
+"id": 4,
+"kind": "travel",
+"args": [
+"Ishima"
+],
+"why": "Ishima invites only in Ishima",
+"ran": true,
+"host": "aevum-police",
+"pid": 198,
+"result": {
+"at": "2026-10-04T01:52:41.503Z",
+"actor": "travel",
+"args": [
+"Ishima"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 5,
+"kind": "join",
+"args": [
+"Ishima"
+],
+"why": "chosen city set [Chongqing, New Tokyo, Ishima]; invitation follows presence",
+"ran": true,
+"host": "lexo-corp",
+"pid": 200,
+"result": {
+"at": "2026-10-04T01:52:52.350Z",
+"actor": "join",
+"args": [
+"Ishima"
+],
+"ok": false,
+"error": null
+},
+"ok": false
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T01:57:33.308Z",
+"batch": "2026-10-04T01:57:16.237Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+1156297
+],
+"why": "hold $1156297 cash for this batch ($1140102 of orders; $1156297 in hand now, but the trader re-invests cash between this pass and act.js \u2014 the raise sells only what it moved)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 261,
+"result": {
+"at": "2026-10-04T01:57:32.493Z",
+"actor": "liquidate",
+"args": [
+"raise",
+1156297
+],
+"ok": true,
+"sold": [
+{
+"sym": "FLCM",
+"long": 9,
+"price": 27894.360957471734
+}
+],
+"proceeds": 0,
+"error": null,
+"target": 1156297,
+"cash": 1267986.4434468707
+},
+"ok": true
+},
+{
+"id": 1,
+"kind": "travel",
+"args": [
+"Chongqing"
+],
+"why": "Tetrads's only unmet requirement is location",
+"ran": true,
+"host": "rothman-uni",
+"pid": 262,
+"result": {
+"at": "2026-10-04T01:57:32.694Z",
+"actor": "travel",
+"args": [
+"Chongqing"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 2,
+"kind": "travel",
+"args": [
+"Sector-12"
+],
+"why": "Powerhouse Gym is in Sector-12",
+"ran": true,
+"host": "rothman-uni",
+"pid": 263,
+"result": {
+"at": "2026-10-04T01:57:32.900Z",
+"actor": "travel",
+"args": [
+"Sector-12"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 3,
+"kind": "gym",
+"args": [
+"Powerhouse Gym",
+"str"
+],
+"why": "strength to 100 for Bladeburners",
+"ran": true,
+"host": "rothman-uni",
+"pid": 264,
+"result": {
+"at": "2026-10-04T01:57:33.144Z",
+"actor": "gym",
+"args": [
+"Powerhouse Gym",
+"str"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T02:02:55.689Z",
+"batch": "2026-10-04T02:02:16.751Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 1,
+"kind": "join",
+"args": [
+"CyberSec"
+],
+"why": "non-exclusive invitation",
+"ran": true,
+"host": "rothman-uni",
+"pid": 482,
+"result": {
+"at": "2026-10-04T02:02:44.616Z",
+"actor": "join",
+"args": [
+"CyberSec"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+53230770
+],
+"why": "raise $53230770 cash from the stock book for this batch ($52187029 of orders, $574472 in hand)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 483,
+"result": {
+"at": "2026-10-04T02:02:44.817Z",
+"actor": "liquidate",
+"args": [
+"raise",
+53230770
+],
+"ok": false,
+"sold": [],
+"proceeds": 0,
+"error": "refused: the book reaches ~$36429962 of $53230770 after the sale haircut \u2014 nothing sold",
+"target": 53230770,
+"cash": 23841332.35859797,
+"reach": 36429962
+},
+"ok": false
+},
+{
+"id": 2,
+"kind": "travel",
+"args": [
+"New Tokyo"
+],
+"why": "New Tokyo invites only in New Tokyo",
+"ran": true,
+"host": "rothman-uni",
+"pid": 484,
+"result": {
+"at": "2026-10-04T02:02:45.018Z",
+"actor": "travel",
+"args": [
+"New Tokyo"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 3,
+"kind": "join",
+"args": [
+"New Tokyo"
+],
+"why": "chosen city set [Chongqing, New Tokyo, Ishima]; invitation follows presence",
+"ran": true,
+"host": "rothman-uni",
+"pid": 490,
+"result": {
+"at": "2026-10-04T02:02:49.720Z",
+"actor": "join",
+"args": [
+"New Tokyo"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 4,
+"kind": "travel",
+"args": [
+"Ishima"
+],
+"why": "Ishima invites only in Ishima",
+"ran": true,
+"host": "rothman-uni",
+"pid": 491,
+"result": {
+"at": "2026-10-04T02:02:49.921Z",
+"actor": "travel",
+"args": [
+"Ishima"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 5,
+"kind": "join",
+"args": [
+"Ishima"
+],
+"why": "chosen city set [Chongqing, New Tokyo, Ishima]; invitation follows presence",
+"ran": true,
+"host": "rothman-uni",
+"pid": 498,
+"result": {
+"at": "2026-10-04T02:02:54.862Z",
+"actor": "join",
+"args": [
+"Ishima"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 6,
+"kind": "travel",
+"args": [
+"Chongqing"
+],
+"why": "Tetrads's only unmet requirement is location",
+"ran": true,
+"host": "rothman-uni",
+"pid": 499,
+"result": {
+"at": "2026-10-04T02:02:55.087Z",
+"actor": "travel",
+"args": [
+"Chongqing"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 7,
+"kind": "travel",
+"args": [
+"Sector-12"
+],
+"why": "Powerhouse Gym is in Sector-12",
+"ran": true,
+"host": "rothman-uni",
+"pid": 500,
+"result": {
+"at": "2026-10-04T02:02:55.288Z",
+"actor": "travel",
+"args": [
+"Sector-12"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 8,
+"kind": "gym",
+"args": [
+"Powerhouse Gym",
+"def"
+],
+"why": "defense to 100 for Bladeburners",
+"ran": true,
+"host": "rothman-uni",
+"pid": 501,
+"result": {
+"at": "2026-10-04T02:02:55.533Z",
+"actor": "gym",
+"args": [
+"Powerhouse Gym",
+"def"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T02:07:36.637Z",
+"batch": "2026-10-04T02:07:17.805Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 1,
+"kind": "join",
+"args": [
+"Tian Di Hui"
+],
+"why": "non-exclusive invitation",
+"ran": true,
+"host": "rothman-uni",
+"pid": 777,
+"result": {
+"at": "2026-10-04T02:07:36.036Z",
+"actor": "join",
+"args": [
+"Tian Di Hui"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+204000
+],
+"why": "hold $204000 cash for this batch ($200000 of orders; $3247491 in hand now, but the trader re-invests cash between this pass and act.js \u2014 the raise sells only what it moved)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 778,
+"result": {
+"at": "2026-10-04T02:07:36.236Z",
+"actor": "liquidate",
+"args": [
+"raise",
+204000
+],
+"ok": true,
+"sold": [],
+"proceeds": 0,
+"error": null,
+"target": 204000,
+"cash": 3202851.4171711267
+},
+"ok": true
+},
+{
+"id": 2,
+"kind": "travel",
+"args": [
+"Chongqing"
+],
+"why": "Tetrads's only unmet requirement is location",
+"ran": true,
+"host": "rothman-uni",
+"pid": 779,
+"result": {
+"at": "2026-10-04T02:07:36.437Z",
+"actor": "travel",
+"args": [
+"Chongqing"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T02:12:49.209Z",
+"batch": "2026-10-04T02:12:17.517Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+1639967
+],
+"why": "hold $1639967 cash for this batch ($1607810 of orders; $2333459 in hand now, but the trader re-invests cash between this pass and act.js \u2014 the raise sells only what it moved)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1111,
+"result": {
+"at": "2026-10-04T02:12:48.607Z",
+"actor": "liquidate",
+"args": [
+"raise",
+1639967
+],
+"ok": true,
+"sold": [],
+"proceeds": 0,
+"error": null,
+"target": 1639967,
+"cash": 25595532.290118974
+},
+"ok": true
+},
+{
+"id": 1,
+"kind": "travel",
+"args": [
+"Sector-12"
+],
+"why": "Powerhouse Gym is in Sector-12",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1112,
+"result": {
+"at": "2026-10-04T02:12:48.808Z",
+"actor": "travel",
+"args": [
+"Sector-12"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 2,
+"kind": "gym",
+"args": [
+"Powerhouse Gym",
+"dex"
+],
+"why": "dexterity to 100 for Bladeburners",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1113,
+"result": {
+"at": "2026-10-04T02:12:49.009Z",
+"actor": "gym",
+"args": [
+"Powerhouse Gym",
+"dex"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T02:17:29.712Z",
+"batch": "2026-10-04T02:17:17.460Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+204000
+],
+"why": "hold $204000 cash for this batch ($200000 of orders; $2036015 in hand now, but the trader re-invests cash between this pass and act.js \u2014 the raise sells only what it moved)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1301,
+"result": {
+"at": "2026-10-04T02:17:29.311Z",
+"actor": "liquidate",
+"args": [
+"raise",
+204000
+],
+"ok": true,
+"sold": [],
+"proceeds": 0,
+"error": null,
+"target": 204000,
+"cash": 2007215.0474715997
+},
+"ok": true
+},
+{
+"id": 1,
+"kind": "travel",
+"args": [
+"Chongqing"
+],
+"why": "Tetrads's only unmet requirement is location",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1304,
+"result": {
+"at": "2026-10-04T02:17:29.512Z",
+"actor": "travel",
+"args": [
+"Chongqing"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+},
+{
+"at": "2026-10-04T02:22:41.561Z",
+"batch": "2026-10-04T02:22:18.495Z",
+"lastAugReset": 1791077530463,
+"results": [
+{
+"id": 0,
+"kind": "liquidate",
+"args": [
+"raise",
+1494962
+],
+"why": "raise $1494962 cash from the stock book for this batch ($1465649 of orders, $585298 in hand)",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1745,
+"result": {
+"at": "2026-10-04T02:22:40.960Z",
+"actor": "liquidate",
+"args": [
+"raise",
+1494962
+],
+"ok": true,
+"sold": [],
+"proceeds": 0,
+"error": null,
+"target": 1494962,
+"cash": 2123767.5590828136
+},
+"ok": true
+},
+{
+"id": 1,
+"kind": "travel",
+"args": [
+"Sector-12"
+],
+"why": "Powerhouse Gym is in Sector-12",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1746,
+"result": {
+"at": "2026-10-04T02:22:41.161Z",
+"actor": "travel",
+"args": [
+"Sector-12"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"id": 2,
+"kind": "gym",
+"args": [
+"Powerhouse Gym",
+"agi"
+],
+"why": "agility to 100 for Bladeburners",
+"ran": true,
+"host": "rothman-uni",
+"pid": 1747,
+"result": {
+"at": "2026-10-04T02:22:41.399Z",
+"actor": "gym",
+"args": [
+"Powerhouse Gym",
+"agi"
+],
+"ok": true,
+"error": null
+},
+"ok": true
+},
+{
+"kind": "release-hold",
+"ok": true
+}
+]
+}
+],
+"watchdog": {
+"bladeburner.js": {
+"lastLaunch": "2026-10-04T01:40:13.101Z"
+},
+"sleeve.js": {
+"lastLaunch": "2026-10-04T01:52:43.641Z"
+},
+"bootAt": "2026-10-04T01:32:13.126Z",
+"bootStarted": [
+"bladeburner.js on home",
+"sleeve.js on home"
+]
+},
+"planBladeRoute0157": {
+"key": "blade",
+"pFeasible": 1,
+"meanH": 112.766,
+"q10": 96.276,
+"q50": 113.993,
+"q90": 126.793,
+"pBest": 0.625,
+"held": false,
+"switched": false,
+"stays": true,
+"gainH": -654.951,
+"pWin": 0.375,
+"vowH": 980.798,
+"margins": [
+{
+"alt": "hack",
+"meanH": 654.951,
+"sdH": 1314.559,
+"n": 24
+}
+],
+"commit": {
+"rule": "expected-loss",
+"switch": false,
+"agree": true,
+"old": {
+"switch": false,
+"key": "blade",
+"gainH": -654.951,
+"pWin": 0.375
+},
+"new": {
+"switch": false,
+"key": "hack",
+"gainH": -654.951,
+"vowH": 980.798,
+"netH": -1635.749,
+"sdH": 10798.219,
+"pWin": 0.375
+},
+"widthMult": 8.391,
+"rho": 0.905
+},
+"why": "stays on blade: the best alternative hack is expected -654.95h later net of a 0.05h switch cost, against the 980.80h that waiting one re-decide interval is worth (rho 0.905, spread x8.391, sd 10798.22h); better in 38% of 24 paired draws [the P >= 80% rule would hold]",
+"decidedAt": "2026-10-04T01:57:14.578Z",
+"pricedAt": "2026-10-04T01:57:14.578Z",
+"n": 24,
+"ms": 1.6,
+"overBudget": false,
+"alloc": {
+"mode": "ocba",
+"n0": 8,
+"sims": 48,
+"full": 48,
+"saved": 0,
+"savedFrac": 0,
+"pcs": 1,
+"settled": true,
+"perOption": {
+"hack": 24,
+"blade": 24
+},
+"leaders": [
+"blade",
+"hack"
+],
+"why": "48 of 48 simulations (0 saved): blade & hack on 24 draws, the rest none; P(correct selection) >= 1.000 (Bonferroni)"
+},
+"hackH": 377.637,
+"bladeH": 113.964,
+"bladeSims": 1,
+"joined": true,
+"rank": 130.57,
+"blackOps": 0,
+"sleeves": {
+"infiltrate": 1,
+"support": 4,
+"fa": 0
+},
+"fleet": {
+"source": "committed",
+"why": "sleeve.js's committed fleet (1 infiltrate / 4 support / 0 field analysis: exit 115.1h (model) \u2014 the incumbent, within 3.45h of the best (1/0/4 114.90h) vs 124.9h for the worst of 12)"
+},
+"calibration": {
+"success": {
+"k": 1,
+"lnK": 0,
+"sdLn": 0.15,
+"n": 0,
+"s": 0,
+"expected": 0,
+"why": "no measured attempts: the formula (k = 1, x/\u00f7 1.21 at 80%, stated)",
+"applied": 1
+},
+"rank": {
+"k": 0.7133,
+"lnK": -0.3379,
+"sdLn": 0.2072,
+"n": 1,
+"hours": 1.1,
+"measuredWeight": 0.523,
+"why": "rank realised / the model's path: 1 window(s) over 1.10h, mean ratio 0.524 (weight 52%) -> k 0.713 x/\u00f7 1.30 at 80% [prior: the model as written (k = 1, x/\u00f7 1.47 at 80%, stated)]",
+"applied": 0.7133,
+"pending": null,
+"samples": [
+{
+"at": "2026-10-03T23:30:48.550Z",
+"to": "2026-10-04T00:36:37.570Z",
+"h": 1.097,
+"pred": 43.857,
+"real": 22.99,
+"lnK": -0.6459,
+"successScale": 1.0087,
+"v": 2
+}
+],
+"closed": null
+}
+},
+"state": {
+"fleet": "i1s4f0",
+"blackOps": 0,
+"best": {
+"name": "Volhaven",
+"pop": 1977775997,
+"comms": 137
+},
+"kRank": {
+"lnK": -0.3379,
+"sdLn": 0.2072
+},
+"kSuccess": {
+"lnK": 0,
+"sdLn": 0.15
+}
+},
+"installBasis": {
+"kind": "none",
+"why": "no install priced on this route yet: none"
+},
+"start": {
+"gymExpPerSec": 14.242991864925994,
+"gym": "Powerhouse Gym",
+"trainingMult": 1
+},
+"simulacrum": {
+"cost": 225000000000,
+"repReq": 1250,
+"withoutH": 113.96,
+"moneyH": 17555.21,
+"repH": null,
+"reachH": null,
+"boundH": 99.64,
+"boundGainH": 14.32,
+"buy": false,
+"withH": null,
+"gainH": null,
+"why": "unreachable before the exit: money in 17555.2h ($225.0b against $0.008b at $12.8m/h), reputation in never (0 of 1250 at 0.0/h) \u2014 the exit is 114.0h away; installed now at no cost it would be worth 14.32h",
+"rankPerH": "unmeasured (no rank rate in /tel/bladeburner.txt)"
+},
+"model": "bbplan.bladeExit \u2014 NOT CALIBRATED live; vs the game's classes -2..+15% (tools/sim/bb6.mjs)"
+},
+"live": {
+"0137": {
+"bladeH": 176.95,
+"meanH": 175.13,
+"source": "exitjump.txt first sample"
+},
+"0142": {
+"bladeH": 148.802,
+"source": "plan.txt exitStability.lastFail"
+},
+"0152": {
+"bladeH": 126.85,
+"fleet": "none (no /tel/sleeve.txt from this node)",
+"success": "no measured attempts (k 1)",
+"rankK": 0.7133,
+"source": "plan.txt decisions.bladeRoute at 01:52:14Z"
+},
+"actor": {
+"nowH": 81.967,
+"neverH": 84.1,
+"planMeanH": 80.526,
+"lifeH": 6.74
+}
+}
+}

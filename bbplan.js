@@ -955,6 +955,31 @@ export function joinedAtOf(prev, node, joined, nowIso = new Date().toISOString()
   if (prev && prev.bitNode === node && typeof prev.joinedAt === 'string' && Number.isFinite(Date.parse(prev.joinedAt))) return prev.joinedAt
   return joined ? nowIso : null
 }
+/**
+ * WHAT EVERY /tel/bladeburner.txt RECORD CARRIES from the last full read of
+ * this node's division (bladeburner.js's reporter base): the division
+ * persists through an install (Prestige.ts keeps Player.bladeburner), so a
+ * record that does not read it — waiting on the slot, a RAM raise denied,
+ * stopped — must not erase it. Live BN14.1 2026-10-04 01:32Z: after the
+ * install bladeburner.js and sleeve.js were refused their RAM on the 256GB
+ * home at boot; the refusal record (no bitNode, no division) replaced the
+ * division read, the plan priced the next life as a division never joined
+ * (176.95h at 01:37Z against the install actor's 81.97h — EXIT JUMP +95h),
+ * and the relaunched daemon (01:40Z, the watchdog) found no calibration or
+ * joinedAt to carry: the measured success calibration and the division's
+ * age were lost, the exit still +45h at 01:52Z.
+ * rec: the record to carry from (any daemon's); node: this BitNode.
+ * Returns {} or the carried fields, citiesAt dating the city reads.
+ */
+export const DIVISION_CARRY = ['joined', 'joinedAt', 'rank', 'skillPoints', 'levels', 'stamina', 'maxStamina', 'city', 'team', 'blackOps', 'counts', 'maxLevels', 'cities', 'citiesAt', 'staminaBonus', 'successes', 'calibration', 'skillsAt']
+export function divisionCarryOf(rec, node) {
+  if (!rec || typeof rec !== 'object' || rec.bitNode !== node || rec.joined !== true) return {}
+  const out = {}
+  for (const k of DIVISION_CARRY) if (rec[k] !== undefined && rec[k] !== null) out[k] = rec[k]
+  // The cities as read then: dated, so the model advances them in expectation (bladeStartOf citiesAgeH).
+  if (Array.isArray(rec.cities) && rec.cities.length && typeof out.citiesAt !== 'string') out.citiesAt = rec.daemon === 'bladeburner.js' && !rec.staleSince ? rec.at ?? null : rec.staleSince ?? rec.at ?? null
+  return out
+}
 export function drawCityEvent(cities, rng) {
   const ri = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1))
   const baseGrowth = (c) => {
@@ -1073,11 +1098,32 @@ export function* bladeExitGen(s0, pol = POLICY) {
   const startExpMult = person.mults.strength_exp ?? 1
   // THE RETRAIN AS THE POLICY RUNS IT (retrainOf): Infinity with no gym rate
   // (the caller refuses: a retrain it cannot price is not free).
-  const gymTo = (target) => {
+  // THE RETRAIN'S MONEY AND TRAVEL (s0.retrainSecsOf(person, target, phase),
+  // the caller's bodyplan.combatBarPlanOf on the cash, city and income of
+  // that moment — 'start' this life's, 'install' the $1262 and Sector-12 an
+  // install leaves): the fee floor, the crime for cash and the flight to the
+  // gym's city, as the body step runs them. The retrain takes the longer of
+  // that and the policy's legs (retrainOf). Live BN4.3 the body step crimed
+  // between legs for want of the fee (0.55h to the bar against the model's
+  // 0.33h); live BN14.1 the player stood in Ishima on a Powerhouse order.
+  // Absent or unpriced: the legs alone (named in retrainWhy).
+  let retrainWhy = null
+  const gymTo = (target, phase) => {
     const r = retrainOf(person, gymRate, startExpMult, target, pol)
+    let secs = r.secs
+    if (isFinite(secs) && secs > 0 && typeof s0.retrainSecsOf === 'function') {
+      let m = null
+      try {
+        m = s0.retrainSecsOf(person, target, phase)
+      } catch (e) {
+        retrainWhy = `the retrain's money threw: ${String(e).slice(0, 80)}`
+      }
+      if (Number.isFinite(m) && m > secs) secs = m
+      else if (!Number.isFinite(m) && !retrainWhy) retrainWhy = `the retrain's money unpriced at ${phase}: the gym legs alone`
+    }
     person.exp = r.exp
     relevel()
-    return r.secs
+    return secs
   }
   const noGym = (when) => ({ hours: null, joinH: null, installs: 0, why: `${when}: the retrain has no gym rate (gymExpPerSec ${s0.gymExpPerSec ?? 'absent'}) — unpriced, not free` })
   relevel()
@@ -1092,7 +1138,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
   }
   let retrainIdleS = 0 // a retrain at the start: the division's world goes on meanwhile (applied below, once its helpers exist)
   if (!s0.joined) {
-    const h = gymTo(JOIN_COMBAT)
+    const h = gymTo(JOIN_COMBAT, 'start')
     if (!isFinite(h)) return { hours: null, why: 'not in the division and no gym rate to reach combat 100' }
     t += h
     joinH = h / 3600
@@ -1102,7 +1148,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     // gym rate this used to skip the retrain AND keep the stats it had set
     // to the bar — free stats (sleeve.js's start, whose person had no city:
     // live 2026-10-02 its fleet search priced a life at the bar for nothing).
-    const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo))
+    const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo), 'start')
     if (!isFinite(h)) return noGym('below the retrain bar')
     if (h > 0) {
       t += h
@@ -1322,7 +1368,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       }
       lastSkill = t
       if (simOn) continue // the retrain runs beside the actions (gymParallel)
-      const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo))
+      const h = gymTo(Math.max(JOIN_COMBAT, pol.gymTo), 'install')
       if (!isFinite(h)) return { ...noGym(`the install at ${(t / 3600).toFixed(2)}h`), installs }
       // The world goes on while the slot is at the gym (counts grow, sleeves infiltrate or analyse).
       idle(h)
@@ -1425,9 +1471,32 @@ export function* bladeExitGen(s0, pol = POLICY) {
     path: pathEvery ? path : undefined,
     staminaOffsetH: +(staminaOffsetS / 3600).toFixed(3),
     scales: { success: successScale, rank: rankScale },
+    ...(retrainWhy ? { retrainWhy } : {}),
     ...(snapOut ? { snap: snapOut } : {}),
     why: done ? null : `not finished in ${s0.maxH ?? 400}h (rank ${Math.round(st.rank)}, ${st.bo}/21 black ops)`,
   }
+}
+
+/**
+ * THE MODEL'S OWN SCATTER (installgate.bladeLoopGuardOf's margin): one
+ * trajectory priced at the daemon's skill-clock positions (s0.skillSinceS +
+ * each offset, mod the hour) — the same state, nothing changed but when the
+ * policy's hourly spend falls. The model's policy is discrete (an action
+ * crosses its chance bar, a skill purchase lands an hour later), so the exit
+ * moves in steps: live BN14.1 at 01:52Z 'never' read 109.9-115.4h over the
+ * clock, while installs were bought on priced savings of 2.1h (01:32Z) and
+ * 5.0h (02:07Z). A saving inside this spread is the clock, not the batch.
+ * s0: a bladeStartOf start; offsets in seconds. Returns {spreadH, hours}.
+ */
+export const SCATTER_OFFSETS_S = [900, 1800, 2700]
+export function* bladeScatterGen(s0, offsets = SCATTER_OFFSETS_S, pol = POLICY) {
+  const hours = []
+  const base = Number.isFinite(s0.skillSinceS) ? s0.skillSinceS : 0
+  for (const off of [null, ...offsets]) {
+    const r = yield* bladeExitGen(off === null ? s0 : { ...s0, skillSinceS: (base + off) % (s0.skillEveryS ?? pol.skillEveryS ?? 3600) }, pol)
+    if (typeof r?.hours === 'number' && isFinite(r.hours)) hours.push(+r.hours.toFixed(3))
+  }
+  return { spreadH: hours.length > 1 ? +(Math.max(...hours) - Math.min(...hours)).toFixed(3) : null, hours }
 }
 
 /** The sleeve fleet's Bladeburner configurations worth comparing, for n sleeves. */
@@ -1488,8 +1557,10 @@ export function bladeFleetOf(fleet, { lifeStart = null } = {}) {
   // Live BN4 2026-10-03 03:08-09:20Z sleeve.js had no host: the route priced
   // its last life's committed fleet (1 infiltrate, 4 support) for six hours
   // while all five sleeves idled.
-  const at = Date.parse(fleet.at ?? '')
-  if (Number.isFinite(lifeStart) && (!Number.isFinite(at) || at < lifeStart)) return { sleeves: zero, source: 'stale', why: `/tel/sleeve.txt is from before this life's install (${fleet.at ?? 'undated'}): the install stopped every sleeve, and sleeve.js has not assigned them since — none on Bladeburner` }
+  // staleSince: a record republished over an old body (status.js note.exit,
+  // ramgrow.raiseRam carry) — its fleet is as of then, not of its `at`.
+  const at = Date.parse(fleet.staleSince ?? fleet.at ?? '')
+  if (Number.isFinite(lifeStart) && (!Number.isFinite(at) || at < lifeStart)) return { sleeves: zero, source: 'stale', why: `/tel/sleeve.txt is from before this life's install (${fleet.staleSince ?? fleet.at ?? 'undated'}): the install stopped every sleeve, and sleeve.js has not assigned them since — none on Bladeburner` }
   const c = fleet.blade?.config
   if (c && typeof c === 'object') return { sleeves: { infiltrate: c.infiltrate ?? 0, support: c.support ?? 0, fa: c.fa ?? 0 }, source: 'committed', why: `sleeve.js's committed fleet (${fleet.blade?.why ?? 'blade.config'})` }
   const out = { ...zero }
@@ -1663,7 +1734,7 @@ export function sleeveTasksOf(config, n) {
  *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
  *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, leanUntilH = null, now = Date.now() }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, leanUntilH = null, retrainSecsOf = null, now = Date.now() }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
   // The daemon's skill clock (bladeburner.js skillsAt: its last spend; null: none since it started).
@@ -1702,6 +1773,8 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     skillCostMult,
     sleeves,
     gymExpPerSec,
+    // The retrain's money and travel (bladeExitGen gymTo): the caller's priced combat-bar plan, or none.
+    ...(typeof retrainSecsOf === 'function' ? { retrainSecsOf } : {}),
     install,
     simulacrum: simulacrum === true,
     maxH,

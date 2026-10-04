@@ -69,11 +69,14 @@ export async function run() {
   const g1438 = IG.bladeLoopGuardOf({ nowH: F.live['1438'].nowH, neverH: F.live['1438'].neverH, biasH: null, lifeH: F.live['1438'].lifeH })
   const g1518 = IG.bladeLoopGuardOf({ nowH: F.live['1518'].nowH, neverH: F.live['1518'].neverH, biasH: F.live['1438'].jumpDiffH, biasWhy: 'the 14:38Z install', lifeH: F.live['1518'].lifeH })
   const g1518nb = IG.bladeLoopGuardOf({ nowH: F.live['1518'].nowH, neverH: F.live['1518'].neverH, biasH: null, lifeH: F.live['1518'].lifeH })
-  const gOld = IG.bladeLoopGuardOf({ nowH: 2.0, neverH: 3.0, biasH: 0.9, lifeH: 5 })
+  // An old life's saving must clear the bias AND the margin (BLADE_LOOP.minGainH, BN14.1 2026-10-04):
+  // 1h saved against a 0.9h bias is 0.1h net — inside the margin, held; 2h saved installs.
+  const gOldThin = IG.bladeLoopGuardOf({ nowH: 2.0, neverH: 3.0, biasH: 0.9, lifeH: 5 })
+  const gOld = IG.bladeLoopGuardOf({ nowH: 2.0, neverH: 4.0, biasH: 0.9, lifeH: 5 })
   const gYoungBig = IG.bladeLoopGuardOf({ nowH: 2.0, neverH: 3.0, biasH: 0.2, lifeH: 0.3 })
   const gNoNever = IG.bladeLoopGuardOf({ nowH: 2.0, neverH: null, lifeH: 5 })
-  c2.examined(6)
-  for (const [n, g, want] of [['14:38Z', g1438, false], ['15:18Z', g1518, false], ['15:18Z, no bias', g1518nb, false], ['old life, 1h saving, 0.9h bias', gOld, true], ['young life, 1h saving, 0.2h bias', gYoungBig, true], ['never unpriced', gNoNever, null]]) {
+  c2.examined(7)
+  for (const [n, g, want] of [['14:38Z', g1438, false], ['15:18Z', g1518, false], ['15:18Z, no bias', g1518nb, false], ['old life, 1h saving, 0.9h bias (0.1h net, inside the margin)', gOldThin, false], ['old life, 2h saving, 0.9h bias', gOld, true], ['young life, 1h saving, 0.2h bias', gYoungBig, true], ['never unpriced', gNoNever, null]]) {
     c2.note(`${n}: ok ${g.ok} — ${g.why}`)
     if (g.ok !== want) c2.fail(`${n}: ok ${g.ok}, want ${want}`, g.why)
   }

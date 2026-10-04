@@ -253,8 +253,21 @@ export function multiplierNeeded(target, exp) {
  * stats are the retrain's is exactly where the model under-prices the next
  * retrain). Returns {ok, gainH, biasH, why}; ok null when unpriceable.
  */
-export const BLADE_LOOP = { youngLifeH: 1, youngGainH: 0.5, keep: 6 }
-export function bladeLoopGuardOf({ nowH, neverH, biasH = null, biasWhy = null, lifeH = null } = {}) {
+/*
+ * THE MARGIN (live BN14.1 2026-10-04): the 01:32Z install was bought on a
+ * priced saving of 2.1h (now 81.97h, never 84.1h) in a life 6.7h old — past
+ * the young-life bar, so nothing but the fresh comparison stood between the
+ * plan and the install, and the new life priced itself +95h. A saving the
+ * size of the model's own scatter is no saving: every install must beat
+ * never by a margin — BLADE_LOOP.minGainH always, the realised jumps' spread
+ * in this node (spreadH, bladeInstallBiasOf: their sd; one jump: half its
+ * size — the bias is then as uncertain as it is large), and youngGainH in a
+ * young life. The 'now' arm itself charges the retrain's money and the
+ * flight to the gym (bbplan.bladeExitGen retrainSecsOf), so the margin does
+ * not stand in for them.
+ */
+export const BLADE_LOOP = { youngLifeH: 1, youngGainH: 0.5, minGainH: 0.5, keep: 6 }
+export function bladeLoopGuardOf({ nowH, neverH, biasH = null, biasWhy = null, spreadH = null, scatterH = null, lifeH = null } = {}) {
   const fin = (x) => typeof x === 'number' && isFinite(x)
   const bias = fin(biasH) ? Math.max(0, biasH) : 0
   const biasText = fin(biasH) ? `the measured install bias +${bias.toFixed(2)}h (${biasWhy ?? 'realised exit jumps'})` : 'no measured install bias yet'
@@ -263,20 +276,30 @@ export function bladeLoopGuardOf({ nowH, neverH, biasH = null, biasWhy = null, l
   if (!fin(neverH)) return { ok: null, gainH: null, biasH: bias, why: 'never-installing is unpriced: the plan decides alone' }
   const gainH = +(neverH - (nowH + bias)).toFixed(3)
   const young = fin(lifeH) && lifeH < BLADE_LOOP.youngLifeH
-  const need = young ? BLADE_LOOP.youngGainH : 0
+  const spread = fin(spreadH) && spreadH > 0 ? spreadH : 0
+  const parts = [
+    [BLADE_LOOP.minGainH, 'the minimum margin'],
+    [spread, "the realised jumps' spread"],
+    // The model's own scatter (bbplan.bladeScatterGen: never over the daemon's skill clock).
+    [fin(scatterH) && scatterH > 0 ? scatterH : 0, "the model's scatter over the skill clock"],
+    [young ? BLADE_LOOP.youngGainH : 0, 'young'],
+  ]
+  const [need, needWhy] = parts.reduce((a, b) => (b[0] > a[0] ? b : a))
   const ok = gainH > need
   const head = `install now ${nowH.toFixed(2)}h + ${biasText} against never ${neverH.toFixed(2)}h: ${gainH >= 0 ? 'saves' : 'costs'} ${Math.abs(gainH).toFixed(2)}h`
   return {
     ok,
     gainH,
     biasH: +bias.toFixed(3),
+    spreadH: +spread.toFixed(3),
+    scatterH: fin(scatterH) ? +scatterH.toFixed(3) : null,
     young,
-    needH: need,
+    needH: +need.toFixed(3),
     why: ok
-      ? `${head}${young ? ` (life ${lifeH.toFixed(2)}h old: needs > ${need}h, has it)` : ''}`
-      : young
+      ? `${head} > the ${need.toFixed(2)}h margin (${needWhy === 'young' ? `a life ${lifeH.toFixed(2)}h old` : needWhy})`
+      : needWhy === 'young'
         ? `${head} — a life ${lifeH.toFixed(2)}h old needs > ${need}h (its stats are the last retrain's; the next retrain is what the model under-prices)`
-        : `${head} — the fresh comparison does not carry the install`,
+        : `${head} — needs > ${need.toFixed(2)}h (${needWhy}): the fresh comparison does not carry the install`,
   }
 }
 /**
@@ -287,9 +310,12 @@ export function bladeLoopGuardOf({ nowH, neverH, biasH = null, biasWhy = null, l
  */
 export function bladeInstallBiasOf(ledger, { node = null } = {}) {
   const xs = (Array.isArray(ledger) ? ledger : []).filter((x) => x && typeof x.diffH === 'number' && isFinite(x.diffH) && (node === null || x.node === node))
-  if (!xs.length) return { biasH: null, n: 0, why: 'no realised install on this route in this node' }
+  if (!xs.length) return { biasH: null, spreadH: null, n: 0, why: 'no realised install on this route in this node' }
   const m = xs.reduce((a, x) => a + x.diffH, 0) / xs.length
-  return { biasH: +m.toFixed(3), n: xs.length, why: `${xs.length} realised install(s) in BitNode ${node ?? '?'}: ${xs.map((x) => `${x.at.slice(11, 16)}Z ${x.diffH > 0 ? '+' : ''}${x.diffH.toFixed(2)}h`).join(', ')}` }
+  // THE SPREAD (bladeLoopGuardOf's margin): the jumps' sd; one jump has none
+  // measured, so half its size stands in (as uncertain as it is large).
+  const sd = xs.length > 1 ? Math.sqrt(xs.reduce((a, x) => a + (x.diffH - m) ** 2, 0) / (xs.length - 1)) : Math.abs(m) / 2
+  return { biasH: +m.toFixed(3), spreadH: +sd.toFixed(3), n: xs.length, why: `${xs.length} realised install(s) in BitNode ${node ?? '?'}: ${xs.map((x) => `${x.at.slice(11, 16)}Z ${x.diffH > 0 ? '+' : ''}${x.diffH.toFixed(2)}h`).join(', ')}${xs.length > 1 ? `; sd ${sd.toFixed(2)}h` : `; spread unmeasured: half the jump, ${sd.toFixed(2)}h`}` }
 }
 /** The ledger after this pass: the exit jump's first sample of the install that began this life, once, newest BLADE_LOOP.keep. */
 export function bladeInstallJumpsNext(prevLedger, exitJump, { node = null, blade = false } = {}) {
@@ -782,7 +808,7 @@ export function shouldInstall(o) {
   // decision held from 14:28Z while the fresh pricing read now 3.4h vs never
   // 3.1h, and the 15:18Z install priced +0.27h while each new life priced
   // itself +0.89-1.04h (EXIT JUMP AT INSTALL).
-  const bladeGuard = blade && !terminal && exitDecides && !!bayes && bayes.install === true ? bladeLoopGuardOf({ nowH: ex.nowH, neverH: ex.neverH, biasH: o.bladeInstallBiasH, biasWhy: o.bladeInstallBiasWhy, lifeH: num(ageMs) ? ageMs / 3.6e6 : null }) : null
+  const bladeGuard = blade && !terminal && exitDecides && !!bayes && bayes.install === true ? bladeLoopGuardOf({ nowH: ex.nowH, neverH: ex.neverH, biasH: o.bladeInstallBiasH, biasWhy: o.bladeInstallBiasWhy, spreadH: o.bladeInstallSpreadH, scatterH: ex.neverScatterH, lifeH: num(ageMs) ? ageMs / 3.6e6 : null }) : null
   const install = blade
     ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true && bladeGuard?.ok !== false))
     : !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))

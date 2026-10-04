@@ -68,7 +68,7 @@ import { publish } from 'status.js'
  * visible to the daemon's telemetry mirror and not only to whoever was watching
  * the terminal. Passing null skips that and only prints.
  */
-export async function raiseRam(ns, want, file, context, tries = 4, gapMs = 1500) {
+export async function raiseRam(ns, want, file, context, tries = 4, gapMs = 1500, { carry = false } = {}) {
   // RETRY, because "the host could not spare it" is usually a statement about
   // this INSTANT, not about the host.
   //
@@ -105,7 +105,25 @@ export async function raiseRam(ns, want, file, context, tries = 4, gapMs = 1500)
   // never inferred from a later symptom. The terminal is the one a human sees.
   ns.tprint(`!!!!! ${ns.getScriptName()}: RAM raise DENIED — ${detail}`)
   if (file) {
+    // CARRY (opt-in): republish the record this file held under the refusal,
+    // the way status.js note.exit does — `staleSince` dates what is beneath.
+    // A daemon whose record is state other readers price (bladeburner.js:
+    // the division, which an install does not reset; sleeve.js: the fleet)
+    // must not have it erased by a refusal: live BN14.1 2026-10-04 01:32Z
+    // both were refused on the 256GB home at boot, the refusal replaced the
+    // division read with a record of no BitNode, and the plan priced the
+    // next life as a division never joined (EXIT JUMP AT INSTALL +95h).
+    let prev = null
+    if (carry) {
+      try {
+        prev = JSON.parse(ns.read(file) || 'null')
+      } catch {
+        prev = null
+      }
+      if (!prev || typeof prev !== 'object' || Array.isArray(prev)) prev = null
+    }
     publish(ns, file, {
+      ...(prev ?? {}),
       at: new Date().toISOString(),
       health: 'error',
       result: 'ram-raise-denied',
@@ -113,6 +131,7 @@ export async function raiseRam(ns, want, file, context, tries = 4, gapMs = 1500)
       granted: got,
       context: context ?? null,
       detail,
+      ...(prev ? { staleSince: prev.staleSince ?? prev.at ?? null } : {}),
     })
   }
   return false
