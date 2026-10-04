@@ -174,7 +174,7 @@ export function startOf(x, extra = {}) {
   const gym = BP.bestGym(x.person)
   const tel = { ...x.tel }
   if (tel.stamina !== undefined && tel.maxStamina === null) tel.maxStamina = BB.maxStaminaOf(x.person, BB.skillMultsOf(tel.levels), tel.staminaBonus ?? 0)
-  return BB.bladeStartOf({ tel, person: x.person, sleeves: x.sleeves, gymExpPerSec: BP.gymRate(gym, 'strength', x.person, 1), bnRank: 1, skillCostMult: 1, install: BB.bladeInstallOfSpec(x.install), simulacrum: false, rankScale: x.rankScale, successScale: x.successScale, now: x.at, ...extra })
+  return BB.bladeStartOf({ tel, person: x.person, sleeves: x.sleeves, gymExpPerSec: BP.gymRate(gym, 'strength', x.person, 1), bnRank: 1, skillCostMult: 1, install: BB.bladeInstallOfSpec(x.install), simulacrum: false, rankScale: x.rankScale, successScale: x.successScale, policy: BB.POLICY_V1 ?? null, now: x.at, ...extra }) // BN6 ran POLICY_V1
 }
 export const hoursOf = (x, extra = {}) => BB.bladeExit({ ...startOf(x, extra), ...extra }).hours
 

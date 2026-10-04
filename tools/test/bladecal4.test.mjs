@@ -216,7 +216,7 @@ export async function run() {
     const instH = (ms(L5.installAt) - T0) / 3.6e6
     const person = { skills: G.player.skills, exp: G.player.exp, mults: m4, city: 'Sector-12', money: 1e9 }
     const gym = C.gymRateOf(person)
-    const s = BB.bladeStartOf({ tel: { ...G.bladeburner, joinedAt: C.JOINED_AT }, person, sleeves: { infiltrate: 2, support: 3, fa: 0 }, gymExpPerSec: gym, install: { firstH: instH, gains }, rankScale: 1, successScale: 1, now: T0 })
+    const s = BB.bladeStartOf({ tel: { ...G.bladeburner, joinedAt: C.JOINED_AT }, person, sleeves: { infiltrate: 2, support: 3, fa: 0 }, gymExpPerSec: gym, install: { firstH: instH, gains }, rankScale: 1, successScale: 1, policy: BB.POLICY_V1, now: T0 }) // BN4.3 ran POLICY_V1
     const SL = (i, sup) => ({ infiltrate: i, support: sup, fa: 0 })
     const asRun = { ...s, lean: { untilH: instH + C.LIFE5_LEAN_H, city: null }, steps: [{ atH: instH, sleeves: SL(0, 0) }, { atH: (ms(C.SLEEVES_BACK_AT) - T0) / 3.6e6, sleeves: SL(3, 2) }] }
     const r0 = BB.bladeExit(asRun)

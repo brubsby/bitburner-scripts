@@ -533,31 +533,43 @@ export const POLICY = {
   // 10:33Z), 0.38h with the cash bootstrap, against 0.05h for exp-to-the-bar
   // at the gym rate (the model as it was: every install 0.33h too cheap).
   retrainLegS: 300,
-  // NOT a faster skill cadence while the next black op is blocked on its
-  // chance: tried 2026-10-02 (every 300s while blocked, daemon and model
-  // alike) — on the 11:07Z 2026-10-01 state the exit came out 5.9h WORSE
-  // (30.5h vs 24.7h: every point went to the black op's cheapest chance
-  // increments instead of the rank skills that compound), better on the
-  // 10:33Z 2026-10-02 state by 1.5h. Path-dependent both ways: not adopted.
-  // What a skill point is scored on (skillScore): 'sum' = every action's best
-  // rank/s, 'max' = the incumbent's. On the game's classes (BN6, 9 seeds,
-  // three sleeve fleets) the two finish within 1.2h of each other; the exit
-  // model tracks the game to -8..+2% under 'sum' and -12..+16% under 'max',
-  // so 'sum' is what the plan can price (tools/sim/bb6.mjs).
-  skillObjective: 'sum',
+  // THE SKILL POLICY, re-tuned 2026-10-04 on the live BN14.1 state
+  // (tools/sim/bb14/arms.mjs: the game's classes from rank 1134, 100
+  // CRN-paired seeds; tools/test/fixture-bn14-bbaudit.json). Shipped before:
+  // 'sum' / every 3600s / chunks 8 / the black-op objective whenever the next
+  // black op was rank-eligible and short -> 28.1h to the 21st black op.
+  //  - skillBlackFrom 'daedalus': the objective switches to the next black
+  //    op's chance only once rank covers EVERY remaining black op (Operation
+  //    Daedalus's 400k). Before that a point spent on a short black op's
+  //    chance is a point not compounding rank, and rank (and the skills it
+  //    buys) raises that chance anyway: -4.5h at the old cadence, and it is
+  //    what made a faster cadence look harmful (2026-10-02: every point went
+  //    to the black op's cheapest chance increments — 600s was +9.3h under
+  //    the old switch, -6.2h without it).
+  //  - every 600s, chunks 1 (each round buys the best whole-budget purchase),
+  //    objective 'max' (the incumbent action's rank/s at its stamina duty):
+  //    17.6h, -1.66h +/- 0.17 against 'sum'/chunks 2 at the same cadence;
+  //    3600s is +1.6h. 'sum' was chosen in BN6 for the model's fit
+  //    (-8..+2% vs -12..+16%); re-measured on BN14 by tools/sim/bb14/fit.mjs.
+  skillBlackFrom: 'daedalus',
+  skillObjective: 'max',
   // THE CADENCE SKILL POINTS ARE SPENT AT, and the chunk the greedy buys in:
   // one number for the daemon (bladeburner.js), the exit model (bladeExitGen)
-  // and the game-physics sim (bbsim pol.shared). The model's exit depends on
-  // it (13:22Z state: 26.2h planning every 5 min, 23.4h every 15, 24.5h
-  // hourly — the greedy's path, not noise), so the daemon must spend as the
-  // model simulates: live it spent every minute while the model priced
-  // hourly batches — the exit priced a policy that was not run.
-  skillEveryS: 3600,
-  skillChunks: 8,
+  // and the game-physics sim (bbsim pol.shared), so the model prices the
+  // policy the daemon runs (the greedy's path depends on it).
+  skillEveryS: 600,
+  skillChunks: 1,
   // Skills the planner may buy. Hands of Midas (money), Datamancer (estimate
   // accuracy only) and Hyperdrive (exp) do not enter the rank objective.
   skills: ["Blade's Intuition", 'Digital Observer', 'Short-Circuit', 'Cloak', 'Reaper', 'Evasive System', 'Overclock', 'Tracer', "Cyber's Edge"],
 }
+
+/**
+ * THE SKILL POLICY EVERY LIVE RUN PLAYED BEFORE 2026-10-04 (BN4.3, BN6.1,
+ * BN14.1 to ~14:30Z): the replays and calibrations of those runs price it
+ * (bladeStartOf policy), since the exit model must price the policy that ran.
+ */
+export const POLICY_V1 = { skillBlackFrom: 'eligible', skillObjective: 'sum', skillEveryS: 3600, skillChunks: 8 }
 
 /**
  * The view every policy call reads. Built by bladeburner.js from the API, by
@@ -711,10 +723,16 @@ export function bestCity(cities) {
   return best
 }
 
-/** The objective a skill purchase is scored on: the next black op's chance while it is rank-eligible and short, else steady rank/s with the stamina duty. */
+/**
+ * The objective a skill purchase is scored on: steady rank/s with the stamina
+ * duty, or the next black op's chance while it is short and rank-eligible —
+ * under skillBlackFrom 'daedalus' only once rank covers the last black op
+ * (POLICY note), under 'eligible' (the BN6-era rule) as soon as the next one is.
+ */
+export const blackFromRankOf = (pol = POLICY) => (pol.skillBlackFrom === 'daedalus' ? BLACK_OPS[BLACK_OPS.length - 1].reqdRank : 0)
 export function skillScore(v, pol = POLICY) {
   const bo = v.blackOp
-  if (bo && v.rank >= bo.d.reqdRank) {
+  if (bo && v.rank >= bo.d.reqdRank && v.rank >= blackFromRankOf(pol)) {
     const p = pFrom(bo.K, bo.d, 1, v.person, v.sm)
     if (p < pol.blackThr) return { kind: 'blackop', v: p }
   }
@@ -1044,6 +1062,8 @@ export function bladeExit(s0, pol = POLICY) {
 
 /** The exit model as a generator that yields every 10 steps and after each skill plan (a few ms of work), for the plan's pacer and sleeve.js. */
 export function* bladeExitGen(s0, pol = POLICY) {
+  // s0.policy: the policy as the daemon RAN it (bladeStartOf policy) — a replay of an older run prices its own policy.
+  if (s0.policy) pol = { ...pol, ...s0.policy }
   const dt = s0.dt ?? 300
   const maxS = (s0.maxH ?? 400) * 3600
   const person = { skills: { ...s0.person.skills }, exp: { ...s0.person.exp }, mults: { ...s0.person.mults } }
@@ -1355,7 +1375,10 @@ export function* bladeExitGen(s0, pol = POLICY) {
   // with no reset (the Go farm's combat channel), the fleet changing (a
   // replay of the sleeves as they ran). homeplan.js prices the next home
   // upgrade with these. Absent: none (every other caller).
-  const steps = (Array.isArray(s0.steps) ? s0.steps : []).filter((x) => Number.isFinite(x?.atH)).map((x) => ({ ...x, atS: Math.max(0, x.atH) * 3600 })).sort((a, b) => a.atS - b.atS)
+  // A step is dated in WALL hours from now: a banked-stamina credit starts
+  // the model's clock at -credit (the rank path above), so a step at 0h is
+  // the first step, not one that waits for the credit to be spent.
+  const steps = (Array.isArray(s0.steps) ? s0.steps : []).filter((x) => Number.isFinite(x?.atH)).map((x) => ({ ...x, atS: Math.max(0, x.atH) * 3600 - credit })).sort((a, b) => a.atS - b.atS)
   let stepAt = 0
   const applySteps = () => {
     while (stepAt < steps.length && steps[stepAt].atS <= t) {
@@ -1608,7 +1631,7 @@ export function bladeMemberDesign(m, Q = BLADE_ENSEMBLE.Q) {
 export function bladeMemberOf(s0, m, Q = BLADE_ENSEMBLE.Q) {
   if (!(Q > 1)) return s0
   const { u, zRank, zSuccess } = bladeMemberDesign(m, Q)
-  const every = s0.skillEveryS ?? POLICY.skillEveryS ?? 3600
+  const every = s0.skillEveryS ?? s0.policy?.skillEveryS ?? POLICY.skillEveryS ?? 3600
   const sd = (x) => (Number.isFinite(x) && x > 0 ? x : 0)
   const out = { ...s0 }
   if (Number.isFinite(s0.skillSinceS) && s0.skillSinceS >= 0) out.skillSinceS = (s0.skillSinceS + u * every) % every
@@ -1650,7 +1673,7 @@ export function* bladeScatterGen(s0, offsets = SCATTER_OFFSETS_S, pol = POLICY) 
   const hours = []
   const base = Number.isFinite(s0.skillSinceS) ? s0.skillSinceS : 0
   for (const off of [null, ...offsets]) {
-    const r = yield* bladeExitGen(off === null ? s0 : { ...s0, skillSinceS: (base + off) % (s0.skillEveryS ?? pol.skillEveryS ?? 3600) }, pol)
+    const r = yield* bladeExitGen(off === null ? s0 : { ...s0, skillSinceS: (base + off) % (s0.skillEveryS ?? s0.policy?.skillEveryS ?? pol.skillEveryS ?? 3600) }, pol)
     if (typeof r?.hours === 'number' && isFinite(r.hours)) hours.push(+r.hours.toFixed(3))
   }
   return { spreadH: hours.length > 1 ? +(Math.max(...hours) - Math.min(...hours)).toFixed(3) : null, hours }
@@ -1919,7 +1942,7 @@ export function sleeveTasksOf(config, n) {
  *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
  *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, goCombat = null, now = Date.now() }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, goCombat = null, policy = null, now = Date.now() }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
   // The daemon's skill clock (bladeburner.js skillsAt: its last spend; null: none since it started).
@@ -1966,6 +1989,8 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     // The Go farm's combat channel (bladeGoCombatOf): reset at an install, regrown at its rate.
     ...(goCombat && Number.isFinite(goCombat.effect) && goCombat.effect >= 1 ? { goCombat: { effect: goCombat.effect, nodes: goCombat.nodes ?? 0, perHour: goCombat.perHour ?? 0, power: goCombat.power ?? OPPONENTS.Tetrads.power, goPower: goCombat.goPower ?? 1, sf14: goCombat.sf14 ?? 0 } } : {}),
     install,
+    // The policy the daemon played, where it is not POLICY (a replay of a run before 2026-10-04: POLICY_V1).
+    ...(policy ? { policy } : {}),
     simulacrum: simulacrum === true,
     maxH,
     dt,

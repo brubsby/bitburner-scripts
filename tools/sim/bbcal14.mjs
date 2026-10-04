@@ -89,7 +89,7 @@ export function inputsOf(p) {
 export function startOf(I, { spec = 'never', now = Date.parse(I.at), extra = {} } = {}) {
   const retrainSecsOf = BP.retrainSecsOfFor({ node: NM, trainingMult: 1, flatPerSec: I.flatPerSec, holdS: BB.POLICY.retrainLegS, start: { cash: I.wealth, city: I.city }, install: { cash: 1262, city: 'Sector-12' } })
   const install = spec === 'never' ? null : spec
-  return { ...BB.bladeStartOf({ tel: I.tel, person: I.person, sleeves: I.sleeves, gymExpPerSec: I.gymExpPerSec, bnRank: NM.BladeburnerRank, skillCostMult: NM.BladeburnerSkillCost, install, rankScale: I.rankScale, successScale: I.successScale, rankSdLn: I.rankSdLn, successSdLn: I.successSdLn, retrainSecsOf, now }), ...extra }
+  return { ...BB.bladeStartOf({ tel: I.tel, person: I.person, sleeves: I.sleeves, gymExpPerSec: I.gymExpPerSec, bnRank: NM.BladeburnerRank, skillCostMult: NM.BladeburnerSkillCost, install, rankScale: I.rankScale, successScale: I.successScale, rankSdLn: I.rankSdLn, successSdLn: I.successSdLn, retrainSecsOf, policy: BB.POLICY_V1 ?? null, now }), ...extra } // the captures ran POLICY_V1
 }
 export const hoursOf = (s0) => BB.bladeExit(s0).hours
 export const meanOf = (s0, Q = BB.BLADE_ENSEMBLE?.Q ?? 6) => {

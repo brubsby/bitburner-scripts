@@ -273,7 +273,10 @@ export function runBladeburner(o) {
     // Before joining: the gym to 100 in every combat stat (joinBladeburnerDivision's gate).
     let t = 0
     const STEP = 3 // seconds: Sleeve.process uses at most 15 cycles per call (Sleeve.ts:269)
-    while (COMBAT.some((s) => P.skills[s] < 100) && t < 48 * 3600) {
+    // o.setup (a run from a LIVE state, tools/sim/bb14.mjs): the caller sets the
+    // player's exp and multipliers, joins, and writes the division's state and the
+    // fleet onto the game's objects; no join gym, no default fleet.
+    while (!o.setup && COMBAT.some((s) => P.skills[s] < 100) && t < 48 * 3600) {
       gymStep(P, 60)
       t += 60
     }
@@ -282,6 +285,7 @@ export function runBladeburner(o) {
     const bb = P.bladeburner
     for (const k of Object.keys(bb.logging)) bb.logging[k] = false // the console log is an unbounded array
     for (const a of [...Object.values(bb.contracts), ...Object.values(bb.operations)]) a.autoLevel = false
+    if (o.setup) o.setup({ g, P, bb, faction })
 
     // The fleet as it arrives: Sleeve.prestige() — shock 100, exp 0, sync = memory (100).
     const nInf = pol.sleeves?.infiltrate ?? 0
@@ -309,7 +313,8 @@ export function runBladeburner(o) {
               : new g.SleeveClassWork({ classType: g.GymType[COMBAT[i % 4]], location: GYM }),
       ),
     )
-    if (sleevesFromS <= 0) {
+    if (o.setup) fleetStarted = true
+    else if (sleevesFromS <= 0) {
       startFleet()
       fleetStarted = true
     }
@@ -321,7 +326,7 @@ export function runBladeburner(o) {
     const diplomacy = gen(g.BladeburnerGeneralActionName.Diplomacy)
     let resting = false
     let lastSkillT = -Infinity
-    let gymming = false
+    let gymming = !!o.gymFirst // o.gymFirst: a retrain to pol.gymTo before acting (a live-start arm)
     let leg = null // the retrain's current gym class {stat, until}
     let installs = 0
     let nextInstall = every ? every * 3600 : Infinity
@@ -355,14 +360,19 @@ export function runBladeburner(o) {
     }
     const sharedDecide = () => {
       // Operations and black ops take the whole team (the daemon's setTeamSize).
-      for (const a of [...Object.values(bb.operations), ...bb.blackOperationArray]) a.teamCount = bb.teamSize
+      // pol.teamOps false: the team on black ops only (operations at 0, no casualties there).
+      for (const a of Object.values(bb.operations)) a.teamCount = pol.teamOps === false ? 0 : bb.teamSize
+      for (const a of bb.blackOperationArray) a.teamCount = bb.teamSize
       if (t - lastSkillT >= (pol.skillEveryS ?? sharedPol.skillEveryS ?? 600)) {
-        for (const b of bp.planSkills(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost, sharedPol.skillChunks ?? 20)) bb.upgradeSkill(b.name, b.count)
+        const plan = (pol.planSkills ?? bp.planSkills)(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost, sharedPol.skillChunks ?? 20, { t, bb, P })
+        for (const b of plan) bb.upgradeSkill(b.name, b.count)
         lastSkillT = t
       }
       if (bb.stamina <= sharedPol.restLow * bb.maxStamina) resting = true
       if (resting && bb.stamina >= sharedPol.restHigh * bb.maxStamina) resting = false
-      const pick = bp.chooseAction(viewOf(), sharedPol)
+      // pol.choose (a policy variant under test, tools/sim/bb14.mjs): wraps the shared chooser with the game's objects at hand.
+      const pick = pol.choose ? pol.choose(viewOf(), sharedPol, { t, bb, P, g, resting }) : bp.chooseAction(viewOf(), sharedPol)
+      if (pick.restAs) resting = pick.restAs === 'rest'
       if (pick.city) bb.city = pick.city
       const id = { type: pick.type, name: pick.name }
       if (pick.level) bb.getActionObject(id).level = pick.level
@@ -460,6 +470,7 @@ export function runBladeburner(o) {
           decide()
         }
       }
+      if (o.perTick) o.perTick({ t, P, bb, g })
       tick(bb, STEP)
       if (!fleetStarted && t >= sleevesFromS) {
         startFleet()
@@ -469,6 +480,7 @@ export function runBladeburner(o) {
       t += STEP
       if (bb.rank >= C.RankNeededForFaction && !faction.isMember) bb.joinFaction()
       if (!gymming && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()
+      if (o.onStep) o.onStep({ t, P, bb })
       if (t % 36000 < STEP) trace.push({ h: +(t / 3600).toFixed(1), rank: Math.round(bb.rank), bo: bb.numBlackOpsComplete, str: P.skills.strength, agi: P.skills.agility, augMult: +augMult.toFixed(2), bbAugs: owned.size })
     }
     const done = bb.numBlackOpsComplete >= bb.blackOperationArray.length

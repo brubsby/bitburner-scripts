@@ -102,7 +102,7 @@ export function startAt(M, cap, { definition, extra = {} }) {
   const old = definition === 'old'
   const sleeves = old ? cap.plan.sleeves : fleetOfSleeves(cap.sleeves)
   const tel = old ? cap.tel : { ...cap.tel, joinedAt: L5.joinedAt }
-  return M.bladeStartOf({ tel, person, sleeves, gymExpPerSec: BP.gymRate(gym, 'strength', person, 1), bnRank: 1, skillCostMult: 1, install: null, rankScale: old ? cap.plan.calibration.rank.applied ?? 1 : 1, successScale: cap.plan.calibration.success.applied ?? 1, now: ms(cap.tel.at), ...extra })
+  return M.bladeStartOf({ tel, person, sleeves, gymExpPerSec: BP.gymRate(gym, 'strength', person, 1), bnRank: 1, skillCostMult: 1, install: null, rankScale: old ? cap.plan.calibration.rank.applied ?? 1 : 1, successScale: cap.plan.calibration.success.applied ?? 1, policy: M.POLICY_V1 ?? null, now: ms(cap.tel.at), ...extra }) // BN4.3 ran POLICY_V1
 }
 export function life5(M, { definition }) {
   const caps = L5.captures
@@ -147,7 +147,7 @@ export function asRun(M) {
   const instH = (ms(L5.installAt) - T0) / 3.6e6
   const person = { skills: G0241.player.skills, exp: G0241.player.exp, mults: m4, city: 'Sector-12', money: 1e9 }
   const SL = (i, sup) => ({ infiltrate: i, support: sup, fa: 0 })
-  const s = M.bladeStartOf({ tel: { ...G0241.bladeburner, joinedAt: JOINED_AT }, person, sleeves: SL(2, 3), gymExpPerSec: gymRateOf(person), install: { firstH: instH, gains }, rankScale: 1, successScale: 1, now: T0 })
+  const s = M.bladeStartOf({ tel: { ...G0241.bladeburner, joinedAt: JOINED_AT }, person, sleeves: SL(2, 3), gymExpPerSec: gymRateOf(person), install: { firstH: instH, gains }, rankScale: 1, successScale: 1, policy: M.POLICY_V1 ?? null, now: T0 }) // BN4.3 ran POLICY_V1
   const r0 = M.bladeExit({ ...s, lean: { untilH: instH + LIFE5_LEAN_H, city: null }, steps: [{ atH: instH, sleeves: SL(0, 0) }, { atH: (ms(SLEEVES_BACK_AT) - T0) / 3.6e6, sleeves: SL(3, 2) }] })
   const finish0 = T0 + r0.hours * 3.6e6
   const r1 = M.bladeExit(startAt(M, cap, { definition: 'new', extra: { successScale: 1 } }))

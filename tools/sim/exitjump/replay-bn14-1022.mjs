@@ -50,7 +50,7 @@ export const preLifeH = (Date.parse(preNow) - fx.lifeStartPreMs) / 3.6e6
 export const ratePre = nPre / preLifeH // the farm's measured rate in the life that installed
 export const money = (city, cash) => BP.retrainSecsOfFor({ node: nm, flatPerSec: fx.flatPerSec, holdS: 300, start: { cash, city }, install: { cash: fx.installCash, city: 'Sector-12' } })
 export const goOf = (effect, perHour) => ({ effect, nodes: effect > 1 ? GP.nodePowerFromBonus((effect - 1) * 100, T.power, 4, 0) : 0, perHour, power: T.power, goPower: 4, sf14: 0 })
-export const startOf = (o) => BB.bladeStartOf({ tel: o.tel ?? fx.tel, person: o.person, sleeves: o.sleeves ?? fx.sleevesPost, gymExpPerSec: o.gym, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: o.install ?? null, rankScale: fx.cal.rank.k, successScale: fx.cal.success.k, rankSdLn: fx.cal.rank.sdLn, successSdLn: fx.cal.success.sdLn, retrainSecsOf: o.retrain ?? null, goCombat: o.goCombat ?? null, now: Date.parse(o.now) })
+export const startOf = (o) => BB.bladeStartOf({ tel: o.tel ?? fx.tel, person: o.person, sleeves: o.sleeves ?? fx.sleevesPost, gymExpPerSec: o.gym, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: o.install ?? null, rankScale: fx.cal.rank.k, successScale: fx.cal.success.k, rankSdLn: fx.cal.rank.sdLn, successSdLn: fx.cal.success.sdLn, retrainSecsOf: o.retrain ?? null, goCombat: o.goCombat ?? null, policy: BB.POLICY_V1 ?? null, now: Date.parse(o.now) }) // the live run played POLICY_V1
 export const meanOf = (o) => drain(BB.bladeExitMeanGen(startOf(o)))
 export const nowSpec = { firstH: 0, gains, simulacrum: false }
 // The actor's inputs (10:22:25Z): the pre-install person, the division as carried (its skill clock the old daemon's), its gym and money.

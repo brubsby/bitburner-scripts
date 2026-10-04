@@ -28,7 +28,7 @@ const gym = (p) => 10 * p.mults.strength_exp
 const S = { i0s0f0: { infiltrate: 0, support: 0, fa: 0 }, i1s4f0: { infiltrate: 1, support: 4, fa: 0 } }
 const money = (city, cash) => BP.retrainSecsOfFor({ node: nm, flatPerSec: fx.flatPerSec ?? 0, holdS: 300, start: { cash, city }, install: { cash: 1262, city: 'Sector-12' } })
 const run = (label, o) => {
-  const s0 = BB.bladeStartOf({ tel: o.tel ?? fx.tel, person: o.person, sleeves: o.sleeves, gymExpPerSec: o.gym ?? gym(o.person), bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: o.install ?? null, rankScale: o.rankScale ?? fx.rankScale, successScale: o.successScale ?? 1, retrainSecsOf: o.retrain ?? null, now: Date.parse(o.now ?? fx.tel.at) })
+  const s0 = BB.bladeStartOf({ tel: o.tel ?? fx.tel, person: o.person, sleeves: o.sleeves, gymExpPerSec: o.gym ?? gym(o.person), bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: o.install ?? null, rankScale: o.rankScale ?? fx.rankScale, successScale: o.successScale ?? 1, retrainSecsOf: o.retrain ?? null, policy: BB.POLICY_V1 ?? null, now: Date.parse(o.now ?? fx.tel.at) }) // the live run played POLICY_V1
   if (Number.isFinite(o.sks)) s0.skillSinceS = o.sks
   const r = BB.bladeExit(s0)
   console.log(label.padEnd(78), 'hours', r.hours?.toFixed(2), 'joinH', r.joinH?.toFixed?.(2), r.retrainWhy ?? '')

@@ -53,7 +53,7 @@ const personPost = { skills: F.person0152.skills, exp: F.person0152.exp, mults: 
 const FLEET = { infiltrate: 1, support: 4, fa: 0 }
 const NONE = { infiltrate: 0, support: 0, fa: 0 }
 const exitOf = ({ tel = F.tel, person, sleeves, install = null, successScale = 1, retrainSecsOf = null, sks = null }) => {
-  const s0 = BB.bladeStartOf({ tel, person, sleeves, gymExpPerSec: 10 * person.mults.strength_exp, bnRank: NM.BladeburnerRank, skillCostMult: NM.BladeburnerSkillCost, install, rankScale: F.rankScale, successScale, retrainSecsOf, now: Date.parse(F.tel.at) })
+  const s0 = BB.bladeStartOf({ tel, person, sleeves, gymExpPerSec: 10 * person.mults.strength_exp, bnRank: NM.BladeburnerRank, skillCostMult: NM.BladeburnerSkillCost, install, rankScale: F.rankScale, successScale, retrainSecsOf, policy: BB.POLICY_V1, now: Date.parse(F.tel.at) }) // the live run played POLICY_V1
   if (Number.isFinite(sks)) s0.skillSinceS = sks
   return BB.bladeExit(s0)
 }
@@ -178,7 +178,7 @@ export async function run() {
   checks.push(c5)
   const b14 = IG.bladeInstallBiasOf(F.bladeInstallJumps, { node: 14 })
   const sc = BB.bladeExit && (() => {
-    const s0 = BB.bladeStartOf({ tel: F.tel, person: personPost, sleeves: FLEET, gymExpPerSec: 10 * personPost.mults.strength_exp, bnRank: NM.BladeburnerRank, skillCostMult: NM.BladeburnerSkillCost, rankScale: F.rankScale, now: Date.parse(F.tel.at) })
+    const s0 = BB.bladeStartOf({ tel: F.tel, person: personPost, sleeves: FLEET, gymExpPerSec: 10 * personPost.mults.strength_exp, bnRank: NM.BladeburnerRank, skillCostMult: NM.BladeburnerSkillCost, rankScale: F.rankScale, policy: BB.POLICY_V1, now: Date.parse(F.tel.at) }) // the live run played POLICY_V1
     s0.skillSinceS = 0
     const it = BB.bladeScatterGen(s0)
     let r = it.next()
