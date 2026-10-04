@@ -318,9 +318,20 @@ export function bladeInstallBiasOf(ledger, { node = null } = {}) {
   return { biasH: +m.toFixed(3), spreadH: +sd.toFixed(3), n: xs.length, why: `${xs.length} realised install(s) in BitNode ${node ?? '?'}: ${xs.map((x) => `${x.at.slice(11, 16)}Z ${x.diffH > 0 ? '+' : ''}${x.diffH.toFixed(2)}h`).join(', ')}${xs.length > 1 ? `; sd ${sd.toFixed(2)}h` : `; spread unmeasured: half the jump, ${sd.toFixed(2)}h`}` }
 }
 /** The ledger after this pass: the exit jump's first sample of the install that began this life, once, newest BLADE_LOOP.keep. */
+/**
+ * Installs whose measured exit jump is not a measurement of the install: the
+ * next life's inputs were lost, not mispriced. 2026-10-04T01:32:10Z (BN14.1,
+ * +95h): bladeburner.js and sleeve.js were refused their RAM after the install
+ * and the refusal record replaced their telemetry, so the new life priced an
+ * unjoined division with no fleet (fixed at the source in 5cd1c3b). Kept, it
+ * would block every BN14 install for the rest of the node.
+ */
+export const BLADE_JUMP_VOID = new Set(['2026-10-04T01:32:10.023Z'])
+
 export function bladeInstallJumpsNext(prevLedger, exitJump, { node = null, blade = false } = {}) {
-  const led = (Array.isArray(prevLedger) ? prevLedger : []).filter((x) => x && (node === null || x.node === node))
+  const led = (Array.isArray(prevLedger) ? prevLedger : []).filter((x) => x && (node === null || x.node === node) && !BLADE_JUMP_VOID.has(x.at))
   const at = exitJump?.install?.at
+  if (at && BLADE_JUMP_VOID.has(at)) return led
   const pt = (exitJump?.first?.checks ?? []).find((k) => k.what === 'point') ?? (exitJump?.first?.checks ?? [])[0]
   if (!blade || !at || !pt || typeof pt.diffH !== 'number' || led.some((x) => x.at === at)) return led
   return [...led, { at, node, diffH: pt.diffH, what: pt.what, elapsedH: exitJump.first.elapsedH ?? null }].slice(-BLADE_LOOP.keep)
