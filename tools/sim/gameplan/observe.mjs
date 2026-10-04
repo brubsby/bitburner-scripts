@@ -73,8 +73,13 @@ export function readingsFromSegments(segs, { gOf, bbLeg, gymDiff, earlyOf, base 
     if (route === 'blade' && s.combat100H !== null && s.combat100H !== undefined) {
       const early = earlyOf(lv, s.bitNode)
       openAdj = s.combat100H + (s.combat100H > 0.5 ? early : 0)
-      const val = openAdj - gymDiff(s.bitNode, lv)
-      if (val > 0)
+      const gd = gymDiff(s.bitNode, lv)
+      const val = openAdj - gd
+      // A reading that is mostly the gym model is not a measurement of the
+      // opening: BN14.1 (combat level x0.5) read 3.09h less a simulated 2.70h
+      // = 0.39h and pulled the shared opening 3.13h -> 1.28h (2026-10-04).
+      // Skip when the subtracted model share exceeds half the measured time.
+      if (val > 0 && !(gd > 0.5 * openAdj))
         out.push({ ...common, param: 'open', value: val, sd: OBS_SD.open, at: s.startedAt, source: 'history.jsonl: entry -> combat 100, first life, less the gym scale', key: `open|${clear}|start ${s.startedAt}`, inBase: inBase('open'), note: `combat 100 at ${s.combat100H.toFixed(2)}h${completed ? '' : ' (node in progress)'}` })
     }
     if (!completed) return
