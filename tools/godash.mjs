@@ -101,7 +101,10 @@ function looksLikeArm(v) {
  */
 export function normalizeArms(go) {
   const t = go?.thompson ?? {};
-  const raw = t.arms ?? go?.arms ?? null;
+  // Release 3a publishes the size-aware arms at go.arms ("Tetrads@7": {...}); the
+  // legacy opponent-only thompson.arms stays alongside. Prefer the size arms.
+  const sizeArms = go?.arms && typeof go.arms === "object" && Object.keys(go.arms).some((k) => k.includes("@")) ? go.arms : null;
+  const raw = sizeArms ?? t.arms ?? go?.arms ?? null;
   const out = [];
   const push = (opponent, size, v, key) => {
     if (!looksLikeArm(v)) return;
@@ -110,7 +113,7 @@ export function normalizeArms(go) {
     const k = armKey(opp, sz);
     const ab = betaParams(v);
     const drawMap = t.draw ?? t.draws ?? {};
-    const draw = [v.draw, v.drawn, v.lastDraw, v.last, drawMap[key], drawMap[k], sz ? undefined : drawMap[opp]].find(num);
+    const draw = [v.draw, v.drawn?.winRate, v.drawn, v.lastDraw, v.last, drawMap[key], drawMap[k], sz ? undefined : drawMap[opp]].find(num);
     out.push({
       key: k,
       opponent: opp,
@@ -122,6 +125,8 @@ export function normalizeArms(go) {
       b: ab?.b ?? null,
       draw: draw ?? null,
       powerPerHour: [v.powerPerHour, v.pph, v.pphEstimate, v.rate].find(num) ?? null,
+      drawnPowerPerHour: [v.drawn?.powerPerHour].find(num) ?? null,
+      backend: v.backend ?? v.drawn?.backend ?? null,
       eligible: v.eligible ?? null,
       chosen: false,
     });
