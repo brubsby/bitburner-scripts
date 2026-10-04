@@ -122,7 +122,8 @@ export async function run() {
     const cpu = r.stats.cpuMs ?? null
     c3.note(`${name}: ${r.d.bladeSims} blade simulation(s), longest step ${step?.toFixed?.(1)}ms, ${cpu?.toFixed?.(0)}ms of work`)
     if (!(step < P.PLAN.sliceMs / 2)) c3.fail(`${name}: a step held the page ${step}ms (>= ${P.PLAN.sliceMs / 2})`)
-    if (!(r.d.bladeSims >= 1 && r.d.bladeSims <= 8)) c3.fail(`${name}: ${r.d.bladeSims} blade simulations (the cadence memo is not holding)`)
+    // One simulation per cadence step and member (bbplan.BLADE_ENSEMBLE: Q members, the point their mean).
+    if (!(r.d.bladeSims >= 1 && r.d.bladeSims <= 8 * BB.BLADE_ENSEMBLE.Q)) c3.fail(`${name}: ${r.d.bladeSims} blade simulations (the cadence memo is not holding)`)
     if (!(cpu <= P.PLAN.budgetMs)) c3.fail(`${name}: ${cpu}ms of work for one decision (plan budget ${P.PLAN.budgetMs}ms)`)
   }
 
@@ -134,7 +135,7 @@ export async function run() {
     const cyc = wide.map((x) => P.applyDraw(INPUTS, x).cycleHours)
     c3.examined(1)
     c3.note(`wide cadence posterior (${Math.min(...cyc).toFixed(2)}-${Math.max(...cyc).toFixed(2)}h): ${d.bladeSims} blade simulation(s), ${pacer.stats.cpuMs.toFixed(0)}ms of work, longest step ${pacer.stats.sections.wide.maxStepMs.toFixed(1)}ms`)
-    if (!(d.bladeSims <= 8)) c3.fail(`wide cadence posterior: ${d.bladeSims} blade simulations (the cadence steps are not collapsing)`)
+    if (!(d.bladeSims <= 8 * BB.BLADE_ENSEMBLE.Q)) c3.fail(`wide cadence posterior: ${d.bladeSims} blade simulations (the cadence steps are not collapsing: more than 8 steps x ${BB.BLADE_ENSEMBLE.Q} members)`)
     if (!(pacer.stats.sections.wide.maxStepMs < P.PLAN.sliceMs / 2)) c3.fail(`wide: a step held the page ${pacer.stats.sections.wide.maxStepMs}ms`)
   }
 

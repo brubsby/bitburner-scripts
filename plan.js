@@ -32,7 +32,7 @@ import { bestExitPolicy, bestExitPolicyGen } from 'exitplan.js'
 import { realisedCapital } from 'nodeecon.js'
 import { RW_PRIOR, rwShape } from 'traderw.js'
 // Pure: the Bladeburner exit model (decideBladeRouteGen).
-import { bladeExitGen } from 'bbplan.js'
+import { bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE } from 'bbplan.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -1300,8 +1300,8 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
       while (opts.some((o) => o.key === `${key0}#${k}`)) k++
       key = `${key0}#${k}`
     }
-    const { f, fg, noiseKey } = tOf(spec)
-    opts.push({ key, spec, pointH, noiseKey, sim: (d) => f(applyDraw(inputs, d), d), simGen: (d) => fg(applyDraw(inputs, d), d), ...extra })
+    const { f, fg, noiseKey, se } = tOf(spec)
+    opts.push({ key, spec, pointH, noiseKey, ...(typeof se === 'function' ? { seOf: se } : {}), sim: (d) => f(applyDraw(inputs, d), d), simGen: (d) => fg(applyDraw(inputs, d), d), ...extra })
   }
   const P0 = point ?? {}
   // A point option's Bladeburner content (bladeInstallCompareOf): rides the spec, so the record keeps it (basisOf).
@@ -1392,8 +1392,19 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     // A record from before commitments were published: its own exit, undated.
     const pc = prev?.commitment ?? (prev && prev.key !== 'now' && fin(prev.meanH) ? { key: prev.key, meanH: prev.meanH, pointH: null, at: null, installAt: prev.installAt ?? null, noiseKey: prev.noiseKey ?? null, n: prev.n ?? null } : null)
     const carried = key === 'now' && elapsed && pc && fin(pc.meanH) && (!pc.at || now - Date.parse(pc.at) <= 60 * 60e3)
-    const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
-    return { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
+    // THE POINT'S OWN MONTE CARLO ERROR (a trajectory that is a mean over
+    // members, progress.js bladeInstallCompareOf: their sd over sqrt(Q)) —
+    // what a re-pricing of the same trajectory moves by with no news; the
+    // exit checks and the calibration read it (installExitsOf, exitcal).
+    let pointSeH = null
+    try {
+      pointSeH = typeof o.seOf === 'function' ? o.seOf() : null
+    } catch {
+      pointSeH = null
+    }
+    pointSeH = fin(pointSeH) ? r3(pointSeH) : null
+    const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), ...(pointSeH !== null ? { pointSeH } : {}), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
+    return { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), ...(pointSeH !== null ? { pointSeH } : {}), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   }
   if (!redecide && committedKey) return record(committedKey, { ...heldFields(prev, rows, pricedAt), ...heldSanity(prev) })
   // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
@@ -2083,9 +2094,12 @@ export function installExitsOf(install, { actorH = null, now = Date.now(), si = 
   if (!install?.key || !fin(install.meanH)) return { ok: null, why: 'no install decision this pass' }
   if (install.key !== 'now') return { ok: null, why: `the plan installs at ${install.key}, not now: no install exit to compare` }
   const N = Math.max(1, install.n ?? 1)
-  const tolOf = (h) => Math.max(INSTALL_EXIT_TOL.rel * h, (4 * Math.SQRT2 * si * h) / Math.sqrt(N))
-  const checks = []
   const c = install.commitment ?? null
+  // Two prices of a trajectory that is a mean over members each carry its
+  // Monte Carlo error (pointSeH): 4 of their joint sd, as the draws' term.
+  const seJoint = Math.hypot(fin(install.pointSeH) ? install.pointSeH : 0, fin(c?.pointSeH) ? c.pointSeH : fin(install.pointSeH) ? install.pointSeH : 0)
+  const tolOf = (h) => Math.max(INSTALL_EXIT_TOL.rel * h, (4 * Math.SQRT2 * si * h) / Math.sqrt(N), 4 * seJoint)
+  const checks = []
   const agedH = c?.at && fin(Date.parse(c.at)) ? Math.max(0, (now - Date.parse(c.at)) / 3.6e6) : 0
   // A commitment priced on another exit model is not this model's promise:
   // a deploy between the two re-prices, it is not two exits. [TX6]
@@ -2449,8 +2463,12 @@ function exitStabilityNow(prev, rec) {
     const hi = fin(x.rawQ90) ? x.rawQ90 : x.q90
     return fin(lo) && fin(hi) ? (hi - lo) / 2.563 / Math.sqrt(Math.max(1, d?.n ?? 24)) : null
   }
-  const se1 = seOf(px, prev.decisions?.install)
-  const se2 = seOf(ex, rec.decisions?.install)
+  // A point that is a mean over members carries its own Monte Carlo error
+  // (pointSeH): the draws' standard error does not see it (each member
+  // repeats over the draws), so the larger of the two.
+  const withPoint = (se, d) => (fin(d?.pointSeH) ? Math.max(fin(se) ? se : 0, d.pointSeH) : se)
+  const se1 = withPoint(seOf(px, prev.decisions?.install), prev.decisions?.install)
+  const se2 = withPoint(seOf(ex, rec.decisions?.install), rec.decisions?.install)
   const se = fin(se1) && fin(se2) ? Math.sqrt(se1 * se1 + se2 * se2) : fin(se1) ? se1 * Math.SQRT2 : fin(se2) ? se2 * Math.SQRT2 : null
   const tolH = Math.max(EXIT_STABLE.minTolH, fin(se) ? EXIT_STABLE.k * se : 0.1 * px.meanH)
   const expectedH = px.meanH - dtH
@@ -2924,12 +2942,18 @@ export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, b
   // bladeRouteOf): ONE start, no cadence — the installs on this route are
   // the install decision's (priced on this same trajectory), not the hacking
   // route's cadence; the arm is then one simulation.
+  // THE MEMBERS (bbplan.bladeMemberOf, BLADE_ENSEMBLE): draw i prices member
+  // i mod Q (the skill clock's phase and the calibrations' posterior
+  // quantiles), and the point is the members' mean — the model is rough in
+  // those inputs, so a single member's exit moved hours with every pass.
+  const Q = BLADE_ENSEMBLE.Q
   const memo = new Map()
   const c0 = fin(base?.cycleHours) && base.cycleHours > 0 ? base.cycleHours : null
-  function* bladeH(cyc) {
+  function* bladeH(cyc, m) {
     const k = bladeStart ? 0 : c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
-    if (!memo.has(k)) memo.set(k, (yield* bladeExitGen(bladeStart ?? bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0))).hours)
-    return memo.get(k)
+    const key = `${k}|${m}`
+    if (!memo.has(key)) memo.set(key, (yield* bladeExitGen(bladeMemberOf(bladeStart ?? bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0), m, Q))).hours)
+    return memo.get(key)
   }
   let pointHack = null
   try {
@@ -2938,14 +2962,16 @@ export function* decideBladeRouteGen({ base, traj, basis = null, bladeStartAt, b
     pointHack = null
   }
   yield
-  const pointBlade = yield* bladeH(base?.cycleHours)
+  const ens = yield* bladeExitMeanGen(null, { Q, hoursOfMember: (m) => bladeH(base?.cycleHours, m) })
+  const pointBlade = ens.hours
+  const memberOf = (d) => bladeMemberOfDraw(d, Q) ?? 0
   const options = [
     { key: 'hack', noiseKey: noiseKeyOf(basis, base), sim: (d) => traj(applyDraw(base, d), d) },
-    { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours)), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours) },
+    { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours, memberOf(d))), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours, memberOf(d)) },
   ]
   const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null
   const d = post
     ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade) })
     : { key: fin(pointBlade) && (!fin(pointHack) || pointBlade < pointHack) ? 'blade' : fin(pointHack) ? 'hack' : null, why: 'no posterior: the point comparison' }
-  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeSims: memo.size }
+  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size }
 }

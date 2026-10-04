@@ -278,8 +278,15 @@ export async function run() {
     if (resumed.recal.n !== all.recal.n || Math.abs(resumed.recal.m - all.recal.m) > 1e-9) c7.fail("two passes must equal one pass over the same revisions");
     if (again.processed !== 0 || again.recal.n !== all.recal.n) c7.fail("a revision must never be counted twice");
     if (resumed.eprocess.narrow.n !== all.eprocess.narrow.n) c7.fail("the e-processes resume too");
-    const fresh = E.exitCalibrationReport(S, { state: { v: 999 } });
-    if (!fresh.stateFresh || fresh.recal.n !== all.recal.n) c7.fail("another layout's state starts fresh (and says so)");
+    // Another layout is another predictive: it starts fresh AT THE WINDOW'S
+    // LAST REVISION (stateVersion 2, 2026-10-04) — the old forecast's errors
+    // are not replayed into the new multiplier and e-processes — and resumes
+    // from there; no state at all replays the window as before (`all`).
+    const fresh = E.exitCalibrationReport(S.slice(0, 60), { state: { v: 999 } });
+    const after = E.exitCalibrationReport(S, { state: fresh.state });
+    if (!fresh.stateFresh || !fresh.stateRestarted || fresh.recal.n !== 0 || fresh.processed !== 0) c7.fail("another layout's state starts fresh at the last revision (and says so)", `stateFresh ${fresh.stateFresh}, restarted ${fresh.stateRestarted}, n ${fresh.recal.n}, processed ${fresh.processed}`);
+    const expectNew = E.revisionsOf(S).filter((r) => r.inRun && Date.parse(r.at) > Date.parse(fresh.state.lastAt)).length;
+    if (after.recal.n !== expectNew) c7.fail("the restarted state counts only the revisions after its restart", `n ${after.recal.n} vs ${expectNew}`);
     const ex = E.recalIntervalOf({ q10: 27.664, q50: 29.014, q90: 30.401 }, 2);
     c7.note(`recalIntervalOf x2: ${JSON.stringify(ex)}`);
     if (!(Math.abs(ex.q10 - (29.014 - 2 * 1.35)) < 1e-3 && Math.abs(ex.q90 - (29.014 + 2 * 1.387)) < 1e-3 && ex.rawQ10 === 27.664 && ex.rawQ90 === 30.401)) c7.fail("q10/q90 must move 2x from the median, the raw kept");

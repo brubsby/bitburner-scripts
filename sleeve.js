@@ -103,7 +103,7 @@ import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen } from 'sleeveplan.js'
-import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION } from 'bbplan.js'
+import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION, BLADE_ENSEMBLE } from 'bbplan.js'
 import { makePacer, LoopCapError } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES, GYMS, gymRate, bestGym, retrainGymOf } from 'bodyplan.js'
@@ -311,7 +311,8 @@ const BLADE_REPRICE_MS = 30 * 60e3
 /** The fleet's exits are simulated this far at most (12 configurations, each bladeExitGen in 40ms slices). */
 const BLADE_FLEET_MAXH = 200
 /** The fleet search's hard cap: generator steps and work milliseconds (pacer cpu), and its slice. */
-const BLADE_FLEET_CAP = { steps: 200000, ms: 4000 }
+// The members (BLADE_ENSEMBLE.Q, ~6 x the single search's ~400ms) are inside it, every 30 minutes.
+const BLADE_FLEET_CAP = { steps: 600000, ms: 12000 }
 const BLADE_SLICE_MS = 20
 /** A generator under a step and work-time cap (coop LoopCapError past either). cpuMs: the pacer's work clock. */
 export function* cappedFleetGen(gen, { steps = 200000, ms = 4000 } = {}, cpuMs = () => 0) {
@@ -371,7 +372,14 @@ async function bladeFleetNow(ns, n, node) {
   // (firstH) falls every minute, and keyed on it the whole fleet search re-ran
   // every few minutes (live 2026-10-02 00:02-00:17Z, the page frozen twice).
   // Keyed on the committed install's own time; re-priced every 30 minutes.
-  const key = `${n}|${route}|${joined}|${basis?.kind ?? 'none'}|${Number.isFinite(basis?.installAt) ? Math.round(basis.installAt / 900e3) : '-'}`
+  // NOT on its installAt either: an install committed 'now' and held (the
+  // gate's guard refusing it) is re-committed with a new installAt every
+  // pass, so the key changed every pass and the search re-ran every 5
+  // minutes — live BN14.1 09:12-09:32Z five passes, five fleets (i0s0f5,
+  // i4s1f0, i1s4f0, i4s0f1, i0s5f0), each a fleet event the plan re-decided
+  // on. The install's time to go in whole hours (0 for 'now' and anything
+  // already due), so a wait still re-prices as it comes due.
+  const key = `${n}|${route}|${joined}|${basis?.kind ?? 'none'}|${install ? Math.round(install.firstH ?? 0) : '-'}`
   if (bladeMemo && bladeMemo.key === key && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
   // A search that ran past its cap waits out the reprice interval on the last answer.
   if (bladeMemo && bladeMemo.capped && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
@@ -398,6 +406,7 @@ async function bladeFleetNow(ns, n, node) {
     install,
     // The plan's calibration, as its own exits apply it (one model).
     rankScale: cal?.rank?.applied ?? 1, successScale: cal?.success?.applied ?? 1,
+    rankSdLn: cal?.rank?.sdLn ?? 0, successSdLn: cal?.success?.sdLn ?? 0,
     // Bounded: a fleet that does not reach the 21st black op in BLADE_FLEET_MAXH is not chosen.
     maxH: BLADE_FLEET_MAXH,
   })
@@ -409,7 +418,7 @@ async function bladeFleetNow(ns, n, node) {
   let fleet = null
   try {
     // The committed fleet (the last answer's) stands on a near tie (sleeveplan.FLEET_KEEP).
-    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, bladeMemo?.result?.config ?? null), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
+    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, bladeMemo?.result?.config ?? null, { Q: BLADE_ENSEMBLE.Q }), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
   } catch (e) {
     if (!(e instanceof LoopCapError)) throw e
     const last = bladeMemo?.result ?? null

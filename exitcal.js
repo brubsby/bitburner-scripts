@@ -83,7 +83,11 @@ export const EXITCAL = {
   rho: { intervalH: 0.5, def: 0.9, lo: 0.5, hi: 0.995, minN: 4 },
   ledgerMax: 30,
   commitLogMax: 40,
-  stateVersion: 1,
+  // 2 (2026-10-04): the predictive carries the endpoints' own estimation
+  // error (seOf) — a new hypothesis, so its tests and its multiplier start at
+  // its first revision; a state of another layout is not replayed over the
+  // window's older revisions (exitCalibrationReport).
+  stateVersion: 2,
 }
 
 // ---------------------------------------------------------------------------
@@ -164,15 +168,28 @@ export function revisionsOf(samples, { minGapH = EXITCAL.minGapH, maxGapH = PAIR
     const u = b.exitH - (a.exitH - dh)
     const la = levelOf(a)
     const lb = levelOf(b)
-    out.push({ at: b.at, aAt: a.at, dh, a: a.exitH, b: b.exitH, u, r: u / a.exitH, sdA: la?.sd ?? null, sdB: lb?.sd ?? null, life: b.life, lifeA: a.life, cross, brk, inRun: !cross && !brk })
+    out.push({ at: b.at, aAt: a.at, dh, a: a.exitH, b: b.exitH, u, r: u / a.exitH, sdA: la?.sd ?? null, sdB: lb?.sd ?? null, seA: seOf(a), seB: seOf(b), life: b.life, lifeA: a.life, cross, brk, inRun: !cross && !brk })
   }
   return out
 }
 
-/** The martingale predictive's sd for a revision over dh hours from a forecast E_a with level sd sdA (null without an interval). */
+/**
+ * A sample's own Monte Carlo error (seH: the published point is a mean over
+ * members, bbplan.BLADE_ENSEMBLE — sd over sqrt(Q)); 0 where none is
+ * published (every sample before 2026-10-04, the hacking route's).
+ */
+export const seOf = (s) => (fin(s?.seH) && s.seH > 0 ? s.seH : 0)
+/**
+ * The martingale predictive's sd for a revision over dh hours from a
+ * forecast E_a with level sd sdA (null without an interval): sdA^2 dh/E_a
+ * of news, plus each end's own Monte Carlo error (seA, seB — a forecast
+ * that is an estimate of the expectation moves by its estimation error too:
+ * u = news + e_b - e_a). With no published error, the martingale alone.
+ */
 export function martingaleSdOf(rev) {
   if (!fin(rev?.sdA) || !(rev.sdA > 0) || !fin(rev.a) || !(rev.a > 0)) return null
-  return rev.sdA * Math.sqrt(Math.min(1, rev.dh / rev.a))
+  const news = rev.sdA * rev.sdA * Math.min(1, rev.dh / rev.a)
+  return Math.sqrt(news + (rev.seA ?? 0) ** 2 + (rev.seB ?? 0) ** 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +319,7 @@ export function horizonsOf(samples, legacyScale, legacyDf, m = 1) {
       }
       const lv = levelOf(a)
       if (lv) {
-        const sd = m * lv.sd * Math.sqrt(Math.min(1, hours / a.exitH))
+        const sd = m * Math.sqrt(lv.sd * lv.sd * Math.min(1, hours / a.exitH) + seOf(a) ** 2 + seOf(S[i + k]) ** 2)
         c.mN++
         if (Math.abs(u / sd) < EXITCAL.z80) c.mHit++
       }
@@ -407,8 +424,11 @@ export function martingaleTestOf(revs, martCover = null) {
     const M = us.reduce((s, u) => s + u * u, 0)
     const first = r.revs.find((x) => fin(x.sdA))
     const last = [...r.revs].reverse().find((x) => fin(x.sdB))
-    const R = first && last ? first.sdA ** 2 - last.sdB ** 2 : null
-    return { life: r.life, from: r.revs[0].aAt, to: r.revs[n - 1].at, n, hours: r3(sumDh), meanU: r3(mean), excessPerH: r3(us.reduce((s, u) => s + u, 0) / sumDh), t: fin(sd) && sd > 0 ? r3(mean / (sd / Math.sqrt(nEffOf(n, rho)))) : null, rho1: r3(rho), movement: r3(M), resolved: r3(R), X: fin(R) && R > 0 ? r3(M / R) : null, _M: M, _R: R, _us: us }
+    // What the run's revisions should carry: the level variance resolved,
+    // plus each revision's two endpoint errors (seA, seB; 0 where none).
+    const E = r.revs.reduce((s, x) => s + (x.seA ?? 0) ** 2 + (x.seB ?? 0) ** 2, 0)
+    const R = first && last ? first.sdA ** 2 - last.sdB ** 2 + E : null
+    return { life: r.life, from: r.revs[0].aAt, to: r.revs[n - 1].at, n, hours: r3(sumDh), meanU: r3(mean), excessPerH: r3(us.reduce((s, u) => s + u, 0) / sumDh), t: fin(sd) && sd > 0 ? r3(mean / (sd / Math.sqrt(nEffOf(n, rho)))) : null, rho1: r3(rho), movement: r3(M), resolved: r3(R), ...(E > 0 ? { estimationError: r3(E) } : {}), X: fin(R) && R > 0 ? r3(M / R) : null, _M: M, _R: R, _us: us, _revs: r.revs }
   })
   // Pooled: lag pairs only within a life.
   const all = lives.flatMap((l) => l._us)
@@ -422,6 +442,18 @@ export function martingaleTestOf(revs, martCover = null) {
     if (i) num += (l._us[i] - mean) * (l._us[i - 1] - mean)
   }
   const rho1 = n >= 3 && den > 0 ? num / den : null
+  // THE LAG-1 CORRELATION THE ESTIMATION ERROR IMPLIES: consecutive revisions
+  // share an endpoint's error (u_t = news + e_t - e_{t-1}), so cov(u_t,
+  // u_{t-1}) = -se_{t-1}^2. Expected rho1 = -sum se_shared^2 / sum var(u)
+  // (0 with no published error: the old test exactly).
+  let shared = 0
+  let varSum = 0
+  for (const l of lives) for (let i = 0; i < l._revs.length; i++) {
+    const v = martingaleSdOf(l._revs[i])
+    if (fin(v)) varSum += v * v
+    if (i) shared += (l._revs[i].seA ?? 0) ** 2
+  }
+  const rho1Expected = varSum > 0 ? -shared / varSum : 0
   const sd = n > 1 ? Math.sqrt(den / (n - 1)) : null
   const nEff = nEffOf(n, rho1)
   const t = fin(sd) && sd > 0 ? mean / (sd / Math.sqrt(nEff)) : null
@@ -433,7 +465,7 @@ export function martingaleTestOf(revs, martCover = null) {
   const reasons = []
   const enough = n >= EXITCAL.minN
   const biased = enough && fin(t) && Math.abs(t) >= 2
-  const corr = enough && fin(rho1) && Math.abs(rho1) > 2 / Math.sqrt(n)
+  const corr = enough && fin(rho1) && Math.abs(rho1 - rho1Expected) > 2 / Math.sqrt(n)
   const jumpy = jz.some((z) => Math.abs(z) > 3)
   const excess = enough && fin(X) && X > 2
   // Overstated is read on the forecast's OWN interval (the martingale
@@ -443,7 +475,7 @@ export function martingaleTestOf(revs, martCover = null) {
   const small = enough && ((fin(X) && X < 0.5) || (fin(martCover) && martCover > 0.9))
   const excessPerH = hours > 0 ? all.reduce((s, u) => s + u, 0) / hours : null
   if (biased) reasons.push(`biased revisions: the exit moved ${(excessPerH - 1).toFixed(2)}h per hour against -1 predicted (t ${t.toFixed(1)} on n_eff ${nEff.toFixed(1)})`)
-  if (corr) reasons.push(`autocorrelated revisions: lag-1 ${rho1.toFixed(2)} (|.| > ${(2 / Math.sqrt(n)).toFixed(2)})`)
+  if (corr) reasons.push(`autocorrelated revisions: lag-1 ${rho1.toFixed(2)}${rho1Expected ? ` against ${rho1Expected.toFixed(2)} from the points' own errors` : ''} (|.| > ${(2 / Math.sqrt(n)).toFixed(2)})`)
   if (jumpy) reasons.push(`jumps at installs: ${jz.map((z) => z.toFixed(1)).join(', ')} level sd`)
   if (excess) reasons.push(`excess movement: X = ${X.toFixed(2)} — the revisions carry ${X.toFixed(1)}x the variance the level interval resolves (the level interval is too narrow for how the forecast moves)`)
   const structural = biased || corr || jumpy || excess
@@ -459,10 +491,11 @@ export function martingaleTestOf(revs, martCover = null) {
     realisedPerH: fin(excessPerH) ? r3(excessPerH - 1) : null,
     t: r3(t),
     rho1: r3(rho1),
+    ...(rho1Expected ? { rho1Expected: r3(rho1Expected) } : {}),
     nEff: r3(nEff),
     X: r3(X),
     jumps,
-    lives: lives.map(({ _M, _R, _us, ...l }) => l),
+    lives: lives.map(({ _M, _R, _us, _revs, ...l }) => l),
     verdict,
     structural,
     overstated,
@@ -737,7 +770,13 @@ export function exitCalibrationReport(samples, { state = null, points = null, pr
   const legacy = legacyPredictiveOf(revs, prior, nu)
   const mart = martingalePredictiveOf(revs, 1)
   const fresh = !state || state.v !== EXITCAL.stateVersion
-  const up = calStateUpdate(state, revs)
+  // A state of ANOTHER layout (another predictive): the new one is tested
+  // from here on, not on the window's revisions it never predicted (they
+  // would drive the fresh multiplier and e-processes on the old forecast's
+  // errors). No state at all: the window is replayed, as ever.
+  const restart = !!state && state.v !== EXITCAL.stateVersion
+  const state1 = restart ? { ...calStateNew(), lastAt: revs.length ? revs[revs.length - 1].at : null, restartedFrom: state.v ?? null } : state
+  const up = calStateUpdate(state1, revs)
   const st = up.state
   st.switches = switchLedgerOf(st.switches, prevPlan, samples)
   st.commitLog = commitLogOf(st.commitLog, prevPlan)
@@ -776,6 +815,7 @@ export function exitCalibrationReport(samples, { state = null, points = null, pr
     values: { diff, switches },
     processed: up.processed,
     stateFresh: fresh,
+    ...(restart ? { stateRestarted: `the calibration state was layout v${state.v ?? '?'}, now v${EXITCAL.stateVersion}: the multiplier and the e-processes restart at ${state1.lastAt ?? 'the first revision'}` } : {}),
     state: st,
   }
 }

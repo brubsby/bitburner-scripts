@@ -977,7 +977,13 @@ export function divisionCarryOf(rec, node) {
   const out = {}
   for (const k of DIVISION_CARRY) if (rec[k] !== undefined && rec[k] !== null) out[k] = rec[k]
   // The cities as read then: dated, so the model advances them in expectation (bladeStartOf citiesAgeH).
-  if (Array.isArray(rec.cities) && rec.cities.length && typeof out.citiesAt !== 'string') out.citiesAt = rec.daemon === 'bladeburner.js' && !rec.staleSince ? rec.at ?? null : rec.staleSince ?? rec.at ?? null
+  // A full bladeburner.js record READ them at rec.at, whatever date it carried:
+  // live BN14.1 every record from 02:49Z on carried citiesAt 02:49:33Z (the
+  // carry fed itself), so each pass advanced freshly read cities by hours of
+  // expected random events (6.4h at 09:14Z, growing with the wall clock) —
+  // the exit 39.7h at age 0 vs 54.0h at 3h on one state.
+  const fresh = rec.daemon === 'bladeburner.js' && !rec.staleSince && typeof rec.at === 'string'
+  if (Array.isArray(rec.cities) && rec.cities.length && (fresh || typeof out.citiesAt !== 'string')) out.citiesAt = fresh ? rec.at : rec.staleSince ?? rec.at ?? null
   return out
 }
 export function drawCityEvent(cities, rng) {
@@ -1488,6 +1494,116 @@ export function* bladeExitGen(s0, pol = POLICY) {
  * 5.0h (02:07Z). A saving inside this spread is the clock, not the batch.
  * s0: a bladeStartOf start; offsets in seconds. Returns {spreadH, hours}.
  */
+/**
+ * THE EXIT AS AN EXPECTATION OVER WHAT THE START DOES NOT PIN (live BN14.1
+ * 2026-10-04, tools/sim/bbcal14.mjs). The model is deterministic but ROUGH:
+ * its policy is discrete (an hourly skill spend, an action crossing its
+ * chance bar, a black op gated at blackThr, a level-up), and the late,
+ * rank-compounding phase amplifies a 1-3% rank lead at 15h into 5h at the
+ * exit. From one 09:14Z state the single exit read 36.3-48.1h over the
+ * daemon's skill clock, 35.7-47.3h over success k 1.00-1.15 (non-monotone),
+ * 39.7-54.0h over the cities' age 0-3h — so every pass's small drift (5 min
+ * of clock, one attempt's update of k, a few stamina points) moved the
+ * published point by hours with no event: exitcal X 16.7, EXIT UNSTABLE
+ * 38.2 -> 47.2h in 5 min, TWO EXITS AT INSTALL 36.99 vs 43.76h.
+ *
+ * The exit is priced as the mean over Q MEMBERS, a fixed stratified design
+ * (a Latin hypercube, the same in every pass, so it adds no pass-to-pass
+ * noise of its own) over the three inputs the start carries only as an
+ * estimate:
+ *   - the skill clock's phase: (m + 0.5)/Q of the hour after the daemon's
+ *     (its spends fall at an hour the model cannot know to the minute once
+ *     an install or restart moves them);
+ *   - the rank calibration k: exp(lnK + sdLn z), z the member's normal
+ *     quantile — its posterior, not its point (s0.rankSdLn);
+ *   - the success calibration k likewise (s0.successSdLn).
+ * The plan prices the POINT as the members' mean and DRAW i on member
+ * i mod Q (plan.decideBladeRouteGen, progress.js bladeInstallCompareOf), so
+ * the members' spread is in the published interval, and an update of k
+ * inside its own posterior moves the exit inside that interval.
+ * Q: 6 measured against 4 and 8 on the BN14.1 captures (bbcal14.mjs: the
+ * pass-to-pass sd of the mean 0.5-0.7h at Q 8, against 1.9-2.1h single);
+ * ~32ms a member in node and in-game (sleeve.txt cpuMs).
+ */
+export const BLADE_ENSEMBLE = { Q: 6 }
+/** Acklam's rational approximation to the standard normal quantile (|err| < 1.2e-9). */
+export function normQuantile(p) {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239]
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572]
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783]
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416]
+  const lo = 0.02425
+  if (p <= 0) return -Infinity
+  if (p >= 1) return Infinity
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p))
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+  }
+  if (p > 1 - lo) return -normQuantile(1 - p)
+  const q = p - 0.5
+  const r = q * q
+  return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+}
+/** Member m's strata {u, zRank, zSuccess}: a fixed permutation of the Q strata per input (a seeded shuffle, the same in every pass), so each margin is stratified and the inputs are not aligned. */
+export function bladeMemberDesign(m, Q = BLADE_ENSEMBLE.Q) {
+  const n = Math.max(1, Q | 0)
+  const i = ((m % n) + n) % n
+  const at = (salt) => {
+    // The stratum member i takes on this input: its rank among n fixed hashes.
+    const h = (j) => Math.imul((j + 1) ^ Math.imul(salt, 0x9e3779b1), 0x85ebca6b) >>> 0
+    const hi = h(i)
+    let r = 0
+    for (let j = 0; j < n; j++) if (h(j) < hi || (h(j) === hi && j < i)) r++
+    return (r + 0.5) / n
+  }
+  return { u: (i + 0.5) / n, zRank: n > 1 ? normQuantile(at(0x5b1)) : 0, zSuccess: n > 1 ? normQuantile(at(0x7c3)) : 0 }
+}
+/**
+ * Member m of the start s0 (bladeStartOf): the skill clock moved by the
+ * member's phase, the calibrations at the member's quantile of their
+ * posteriors. A fresh daemon (no skillSinceS: it spends at once) keeps its
+ * clock. Q 1: s0 itself.
+ */
+export function bladeMemberOf(s0, m, Q = BLADE_ENSEMBLE.Q) {
+  if (!(Q > 1)) return s0
+  const { u, zRank, zSuccess } = bladeMemberDesign(m, Q)
+  const every = s0.skillEveryS ?? POLICY.skillEveryS ?? 3600
+  const sd = (x) => (Number.isFinite(x) && x > 0 ? x : 0)
+  const out = { ...s0 }
+  if (Number.isFinite(s0.skillSinceS) && s0.skillSinceS >= 0) out.skillSinceS = (s0.skillSinceS + u * every) % every
+  if (sd(s0.rankSdLn) > 0) out.rankScale = (s0.rankScale ?? 1) * Math.exp(s0.rankSdLn * zRank)
+  if (sd(s0.successSdLn) > 0) out.successScale = (s0.successScale ?? 1) * Math.exp(s0.successSdLn * zSuccess)
+  return out
+}
+/** The member a plan draw prices (draw i on member i mod Q: paired across every option and pass of the life). */
+export const bladeMemberOfDraw = (d, Q = BLADE_ENSEMBLE.Q) => (Number.isFinite(d?.i) ? ((d.i % Q) + Q) % Q : null)
+/**
+ * The exit over the Q members: {hours: their mean (null if fewer than half
+ * finish), members: [hours|null], sdH, spreadH, unfinished}. hoursOfMember(m)
+ * may be supplied by a caller that memoises members (a generator returning
+ * hours); default: bladeExitGen on bladeMemberOf(s0, m).
+ */
+export function* bladeExitMeanGen(s0, { Q = BLADE_ENSEMBLE.Q, pol = POLICY, hoursOfMember = null } = {}) {
+  // Nothing to spread (no skill clock, no posterior sd): every member is s0 — one simulation.
+  if (!hoursOfMember && s0 && !(Number.isFinite(s0.skillSinceS) && s0.skillSinceS >= 0) && !(s0.rankSdLn > 0) && !(s0.successSdLn > 0)) {
+    const h = (yield* bladeExitGen(s0, pol))?.hours
+    return bladeMeanOf(Array(Math.max(1, Q)).fill(typeof h === 'number' && isFinite(h) ? h : null))
+  }
+  const members = []
+  for (let m = 0; m < Q; m++) {
+    const h = hoursOfMember ? yield* hoursOfMember(m) : (yield* bladeExitGen(bladeMemberOf(s0, m, Q), pol))?.hours
+    members.push(typeof h === 'number' && isFinite(h) ? h : null)
+  }
+  return bladeMeanOf(members)
+}
+export function bladeMeanOf(members) {
+  const f = members.filter((h) => h !== null)
+  if (!f.length || f.length * 2 < members.length) return { hours: null, members, sdH: null, spreadH: null, unfinished: members.length - f.length }
+  const mean = f.reduce((a, b) => a + b, 0) / f.length
+  const sdH = f.length > 1 ? Math.sqrt(f.reduce((a, b) => a + (b - mean) ** 2, 0) / (f.length - 1)) : 0
+  return { hours: mean, members, sdH, spreadH: Math.max(...f) - Math.min(...f), unfinished: members.length - f.length }
+}
+
 export const SCATTER_OFFSETS_S = [900, 1800, 2700]
 export function* bladeScatterGen(s0, offsets = SCATTER_OFFSETS_S, pol = POLICY) {
   const hours = []
@@ -1522,12 +1638,29 @@ export function sleeveConfigs(n) {
  * (CLAUDE.md "Decisions compare simulated trajectories"). Returns
  * { config, hours, byConfig: [{config, hours}] }.
  */
-export function chooseSleeveConfig(s0, n, pol = POLICY) {
-  return drain(chooseSleeveConfigGen(s0, n, pol))
+export function chooseSleeveConfig(s0, n, pol = POLICY, opts = {}) {
+  return drain(chooseSleeveConfigGen(s0, n, pol, opts))
 }
-export function* chooseSleeveConfigGen(s0, n, pol = POLICY) {
+/**
+ * Q (BLADE_ENSEMBLE): each configuration's exit is its members' mean, with
+ * seH (their sd over sqrt(Q)) — the configurations sit within the model's
+ * roughness of each other (live BN14.1 09:12Z: 32.3, 34.1, 34.2, 35.3h), and
+ * a single exit each picked whichever the pass's clock favoured. Q 1: one
+ * exit each (the tests' cheap path).
+ */
+export function* chooseSleeveConfigGen(s0, n, pol = POLICY, { Q = 1 } = {}) {
   const byConfig = []
   for (const config of sleeveConfigs(n)) {
+    if (Q > 1) {
+      let why = null
+      const e = yield* bladeExitMeanGen({ ...s0, sleeves: config }, { Q, pol, hoursOfMember: function* (m) {
+        const r = yield* bladeExitGen(bladeMemberOf({ ...s0, sleeves: config }, m, Q), pol)
+        if (r.hours == null && r.why) why = r.why
+        return r.hours
+      } })
+      byConfig.push({ config, hours: e.hours ?? null, seH: Number.isFinite(e.sdH) ? e.sdH / Math.sqrt(Q) : null, ...(e.hours == null && why ? { why } : {}) })
+      continue
+    }
     const r = yield* bladeExitGen({ ...s0, sleeves: config }, pol)
     byConfig.push({ config, hours: r.hours ?? null, ...(r.hours == null && r.why ? { why: r.why } : {}) })
   }
@@ -1592,7 +1725,7 @@ export function bladeFleetOf(fleet, { lifeStart = null } = {}) {
 // v: the window definition (rankWindowOkOf). Samples of another version are
 // dropped by rankRatePosterior: v1's (any daemon, any inputs) measured the
 // lean daemon and the unread inputs, not the model.
-export const RANK_CAL = { windowH: 1, maxWindowH: 2.5, keep: 48, pathH: 3, pathEveryS: 900, v: 2 }
+export const RANK_CAL = { windowH: 1, maxWindowH: 2.5, keep: 48, pathH: 3, pathEveryS: 900, v: 2, obsNu0: 4 }
 /**
  * WHAT A WINDOW MAY MEASURE (rankCalStep `full`). k is the model's error on
  * the trajectory it simulates — bladeburner.js's policy from complete
@@ -1658,12 +1791,23 @@ export function rankRatePosterior(samples, { priorSdLn = PRIORS.repEstimateSdLn,
   const prior = `the model as written (k = 1, x/÷ ${Math.exp(1.2816 * priorSdLn).toFixed(2)} at 80%, stated)`
   if (!S.length) return { k: 1, lnK: 0, sdLn: priorSdLn, n: 0, hours: 0, measuredWeight: 0, why: `no closed window yet: ${prior}` }
   const m = S.reduce((a, x) => a + x.lnK * x.h, 0) / hours
-  const sm = obsSdLn * Math.sqrt(1 / hours)
+  // THE WINDOWS' OWN SCATTER (RANK_CAL.obsNu0): a window's ln(real/pred) is
+  // noisier than the stated PRIORS.rateSdLn per sqrt(hour) — live BN14.1 the
+  // seven 1h windows read -0.65 +0.64 -0.42 +0.02 +0.27 -0.10 +0.23 (sd
+  // 0.44), so one window moved k 1 -> 0.71 and the next back to ~1 (the
+  // exit -24h at 03:52Z with no other change). The observation sd is the
+  // pooled estimate (the stated sd as obsNu0 pseudo-windows, then the
+  // windows' weighted scatter about their mean), never below the stated one:
+  // a posterior, so k moves with the evidence's real weight.
+  const nu0 = RANK_CAL.obsNu0
+  const ss = S.reduce((a, x) => a + x.h * (x.lnK - m) ** 2, 0)
+  const obsSd = Math.max(obsSdLn, Math.sqrt((nu0 * obsSdLn * obsSdLn + ss) / (nu0 + Math.max(0, S.length - 1))))
+  const sm = obsSd * Math.sqrt(1 / hours)
   const wp = 1 / (priorSdLn * priorSdLn)
   const wm = 1 / (sm * sm)
   const mean = (m * wm) / (wp + wm)
   const sd = Math.sqrt(1 / (wp + wm))
-  return { k: +Math.exp(mean).toFixed(4), lnK: +mean.toFixed(4), sdLn: +sd.toFixed(4), n: S.length, hours: +hours.toFixed(2), measuredWeight: +(wm / (wp + wm)).toFixed(3), why: `rank realised / the model's path: ${S.length} window(s) over ${hours.toFixed(2)}h, mean ratio ${Math.exp(m).toFixed(3)} (weight ${((100 * wm) / (wp + wm)).toFixed(0)}%) -> k ${Math.exp(mean).toFixed(3)} x/÷ ${Math.exp(1.2816 * sd).toFixed(2)} at 80% [prior: ${prior}]` }
+  return { k: +Math.exp(mean).toFixed(4), lnK: +mean.toFixed(4), sdLn: +sd.toFixed(4), n: S.length, hours: +hours.toFixed(2), obsSdLn: +obsSd.toFixed(4), measuredWeight: +(wm / (wp + wm)).toFixed(3), why: `rank realised / the model's path: ${S.length} window(s) over ${hours.toFixed(2)}h, mean ratio ${Math.exp(m).toFixed(3)}, window sd ${obsSd.toFixed(2)}/sqrt(h) (weight ${((100 * wm) / (wp + wm)).toFixed(0)}%) -> k ${Math.exp(mean).toFixed(3)} x/÷ ${Math.exp(1.2816 * sd).toFixed(2)} at 80% [prior: ${prior}]` }
 }
 
 /**
@@ -1734,7 +1878,7 @@ export function sleeveTasksOf(config, n) {
  *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
  *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, leanUntilH = null, retrainSecsOf = null, now = Date.now() }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, now = Date.now() }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
   // The daemon's skill clock (bladeburner.js skillsAt: its last spend; null: none since it started).
@@ -1769,6 +1913,9 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     lean: joined && tel.daemon === 'bb-lite' && (num(leanUntilH) || leanUntilH === Infinity) && leanUntilH > 0 ? { untilH: leanUntilH, city: typeof tel.city === 'string' ? tel.city : null } : undefined,
     rankScale: num(rankScale) && rankScale > 0 ? rankScale : 1,
     successScale: num(successScale) && successScale > 0 ? successScale : 1,
+    // The calibrations' posterior sds (ln k): what bladeMemberOf spreads the members over.
+    rankSdLn: num(rankSdLn) && rankSdLn > 0 ? rankSdLn : 0,
+    successSdLn: num(successSdLn) && successSdLn > 0 ? successSdLn : 0,
     bnRank,
     skillCostMult,
     sleeves,
@@ -1878,13 +2025,15 @@ export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, 
   const moneyH = !Number.isFinite(cost) ? Infinity : wealth >= cost ? 0 : moneyPerH > 0 ? (cost - wealth) / moneyPerH : Infinity
   const repH = !Number.isFinite(repReq) ? Infinity : rep >= repReq ? 0 : repPerRank > 0 && rankPerH > 0 ? (repReq - rep) / (repPerRank * rankPerH) : Infinity
   const reachH = Math.max(moneyH, repH)
-  const bound = yield* bladeExitGen({ ...s0, install: { firstH: 0, gains: null, simulacrum: true } })
+  // On the members, as withoutH (the route's point, their mean): one exit
+  // each side would compare a mean with a single member's roughness.
+  const bound = yield* bladeExitMeanGen({ ...s0, install: { firstH: 0, gains: null, simulacrum: true } })
   const boundH = bound.hours
   const out = { ...base, moneyH: r2(moneyH), repH: r2(repH), reachH: r2(reachH), boundH: r2(boundH), boundGainH: Number.isFinite(boundH) ? r2(withoutH - boundH) : null }
   const money = !Number.isFinite(cost) ? 'money: the price is unread (snap-augprice)' : Number.isFinite(moneyH) ? `money in ${moneyH.toFixed(1)}h ($${(cost / 1e9).toFixed(1)}b against $${(wealth / 1e9).toFixed(3)}b at $${(moneyPerH / 1e6).toFixed(1)}m/h)` : `money never ($${(cost / 1e9).toFixed(1)}b, no income)`
   const repTxt = !Number.isFinite(repReq) ? 'reputation: the requirement is unread' : `reputation in ${Number.isFinite(repH) ? repH.toFixed(1) + 'h' : 'never'} (${Math.round(rep)} of ${Math.round(repReq)} at ${(repPerRank * rankPerH).toFixed(1)}/h)`
   if (!(reachH < withoutH)) return { ...out, buy: false, withH: null, gainH: null, why: `unreachable before the exit: ${money}, ${repTxt} — the exit is ${withoutH.toFixed(1)}h away; installed now at no cost it would be worth ${out.boundGainH ?? '?'}h` }
-  const w = yield* bladeExitGen({ ...s0, install: { firstH: reachH, gains: null, simulacrum: true } })
+  const w = yield* bladeExitMeanGen({ ...s0, install: { firstH: reachH, gains: null, simulacrum: true } })
   const withH = Number.isFinite(w.hours) ? w.hours : null
   const gainH = withH === null ? null : withoutH - withH
   const buy = gainH !== null && gainH > 0

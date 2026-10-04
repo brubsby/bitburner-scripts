@@ -613,7 +613,30 @@ the exit's drift over the following hour against a followed plan's −1h/h
 STATE: `calibration.state` {recal, eproc, crps, switches, commitLog, lastAt}
 rides on plan.txt and is read back next pass from the last plan WHATEVER node
 wrote it (the width error is the model's); only pairs newer than `lastAt` are
-fed, so nothing is counted twice [EC7].
+fed, so nothing is counted twice [EC7]. A state of another layout (another
+predictive: `EXITCAL.stateVersion`) restarts at the window's last revision —
+the new predictive is tested from its first prediction, never on the old
+forecast's errors.
+
+ESTIMATION ERROR (2026-10-04, live BN14.1; tools/sim/bbcal14.mjs,
+[B14-1..8]): a published point that is itself an ESTIMATE of the expectation
+moves by its estimation error as well as by news: u = news + e_b − e_a. The
+Bladeburner exit (bbplan.bladeExit) is deterministic but rough — its policy
+is discrete and its rank-compounding end amplifies a 1–3% lead into hours —
+so a single exit moved 3–11h pass to pass with no event (the skill clock,
+the stamina, the person, a 0.2% move of k each moved it hours, none alone):
+X 16.7, e-process 1e17, the multiplier at its bound. It is now priced as the
+mean over Q = 6 fixed MEMBERS (bbplan.BLADE_ENSEMBLE: a Latin hypercube over
+the skill clock's phase and the rank and success calibrations at their
+posterior quantiles), draw i on member i mod Q, so the members' spread is in
+the level interval and the point moves a third as much; the point's own error
+se = sd(members)/√Q rides on the record (`pointSeH`) and on the exit sample
+(`seH`), and the martingale predictive becomes u ~ N(0, σ_a²·Δh/E_a + se_a² +
+se_b²): X's denominator adds Σ(se_a² + se_b²), and the lag-1 correlation the
+test expects is −Σse_shared²/Σvar(u) rather than 0 (consecutive revisions
+share an endpoint's error). A sample with no `seH` (every earlier one, the
+hacking route's) is scored exactly as before. Replayed on the recorder's
+passes (fleet held): mean z² 1620 → 0.53.
 
 LIVE, BN4 2026-10-02 (the 100% that raised this; fixture
 fixture-bn4-exitcal-0147.json, [EC9]): the legacy one-step interval was too

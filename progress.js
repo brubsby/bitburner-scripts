@@ -161,7 +161,7 @@ import { goExitInputsOf } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
 import { leanUntilOf } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -2644,7 +2644,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // the start, the balance an install leaves (installCashOf) in Sector-12
     // (PlayerObjectGeneralMethods.ts:102-104) for one after an install.
     const retrainSecsOf = retrainSecsOfFor({ node: mults, trainingMult: ns.hacknet.getTrainingMult(), flatPerSec, holdS: BB_POLICY.retrainLegS, start: { cash: wealth, city: player.city }, install: { cash: installCashOf(info?.currentNode, owned), city: 'Sector-12' } })
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, leanUntilH, retrainSecsOf })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration
@@ -2770,17 +2770,38 @@ async function bladeInstallCompareOf(ns, info, { inputs, pending = [], futures =
     const c = bladeContentOf(names, statsOf)
     return { gains: c.gains, simulacrum: c.simulacrum, n: c.n, ...(c.unpriced.length ? { unpriced: c.unpriced } : {}) }
   }
+  // THE MEMBERS (bbplan.bladeMemberOf, BLADE_ENSEMBLE — as the route's
+  // blade arm, plan.decideBladeRouteGen): every option's point is the mean
+  // over the Q members, and draw i prices member i mod Q, so the options
+  // compare paired on the same members and the members' spread is in every
+  // option's interval. One member's exit moved hours with each pass's drift
+  // (the skill clock, an attempt's update of k): live BN14.1 the install
+  // deferrals' promised exits swung -7 to -33h.
+  const Q = BLADE_ENSEMBLE.Q
   const memo = new Map()
+  const means = new Map()
   const keyOf = (spec) => (spec?.kind === 'wait' ? `w${(+(spec.waitH ?? 0)).toFixed(4)}|${JSON.stringify(spec.blade?.gains ?? null)}|${spec.blade?.simulacrum === true}` : 'never')
-  function* hoursOf(spec) {
-    const k = keyOf(spec)
+  function* memberH(spec, m) {
+    const k = `${keyOf(spec)}|${m}`
     if (!memo.has(k)) {
-      const r = yield* bladeExitGen(bc.startFor(spec))
+      const r = yield* bladeExitGen(bladeMemberOf(bc.startFor(spec), m, Q))
       memo.set(k, typeof r?.hours === 'number' && isFinite(r.hours) ? r.hours : null)
     }
     return memo.get(k)
   }
-  const trajOf = (spec) => ({ f: () => drain(hoursOf(spec)), fg: function* () { return yield* hoursOf(spec) }, noiseKey: bladeNoiseKeyOf(spec) })
+  // m null: the point (the members' mean); else member m.
+  function* hoursOf(spec, m = null) {
+    if (m !== null) return yield* memberH(spec, m)
+    const k = keyOf(spec)
+    if (!means.has(k)) means.set(k, yield* bladeExitMeanGen(null, { Q, hoursOfMember: (j) => memberH(spec, j) }))
+    return means.get(k).hours
+  }
+  const memberOfDraw = (d) => bladeMemberOfDraw(d, Q)
+  const seOf = (spec) => {
+    const e = means.get(keyOf(spec))
+    return e && Number.isFinite(e.sdH) ? +(e.sdH / Math.sqrt(Q)).toFixed(3) : null
+  }
+  const trajOf = (spec) => ({ f: (inp, d) => drain(hoursOf(spec, memberOfDraw(d))), fg: function* (inp, d) { return yield* hoursOf(spec, memberOfDraw(d)) }, noiseKey: bladeNoiseKeyOf(spec), se: () => seOf(spec) })
   const nowNames = [...(plan?.buy ?? []).map((b) => b?.name).filter(Boolean), ...pending]
   const nowB = content(nowNames)
   const nowH = await paced(hoursOf({ kind: 'wait', waitH: 0, blade: nowB }), 'plan-blade-install')
@@ -2797,12 +2818,23 @@ async function bladeInstallCompareOf(ns, info, { inputs, pending = [], futures =
   // install: 'never' at the daemon's other skill-clock positions (three more
   // exits, ~125ms of sliced work in node). The install gate's margin
   // (installgate.bladeLoopGuardOf scatterH).
+  // With members (Q > 1) both points are already means over the skill
+  // clock's phase, and what is left of the scatter is their own Monte Carlo
+  // error: the saving's, one-sided 95% (z 1.645 x hypot(se_now, se_never)).
+  // The full spread of single exits (10.6h live at 09:12Z) priced a noise the
+  // means no longer carry.
   let neverScatter = null
   if (bayes?.install === true && typeof nowH === 'number' && typeof neverH === 'number') {
-    try {
-      neverScatter = await paced(bladeScatterGen(bc.startFor({ kind: 'never' })), 'plan-blade-install')
-    } catch (e) {
-      neverScatter = { spreadH: null, why: `the scatter threw: ${String(e).slice(0, 100)}` }
+    const seNow = seOf({ kind: 'wait', waitH: 0, blade: nowB })
+    const seNever = seOf({ kind: 'never' })
+    if (Q > 1 && Number.isFinite(seNow) && Number.isFinite(seNever)) {
+      neverScatter = { spreadH: +(1.645 * Math.hypot(seNow, seNever)).toFixed(3), hours: means.get('never')?.members ?? null, why: `the members' standard error of the saving: 1.645 x hypot(${seNow}, ${seNever})h (Q ${Q})` }
+    } else {
+      try {
+        neverScatter = await paced(bladeScatterGen(bc.startFor({ kind: 'never' })), 'plan-blade-install')
+      } catch (e) {
+        neverScatter = { spreadH: null, why: `the scatter threw: ${String(e).slice(0, 100)}` }
+      }
     }
   }
   return {
@@ -2810,6 +2842,8 @@ async function bladeInstallCompareOf(ns, info, { inputs, pending = [], futures =
     nowH,
     nowInstalls: null,
     neverH,
+    // The members behind each point (BLADE_ENSEMBLE): their sd over sqrt(Q) is the point's own Monte Carlo error.
+    members: { Q, nowSeH: seOf({ kind: 'wait', waitH: 0, blade: nowB }), neverSeH: seOf({ kind: 'never' }), never: means.get('never')?.members?.map((h) => (Number.isFinite(h) ? +h.toFixed(3) : null)) ?? null },
     neverScatterH: neverScatter?.spreadH ?? null,
     neverScatter,
     waits: waits.map(({ blade, ...w }) => w),
@@ -4092,10 +4126,11 @@ function exitCalibrationOf(ns, info) {
   const d = exitDrift(samples)
   return { node: info?.currentNode ?? null, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
 }
-function withExitSample(cal, info, exitH, source) {
+// seH: the published point's own Monte Carlo error (a mean over members, bbplan.BLADE_ENSEMBLE) — exitcal adds it to the revision's predictive.
+function withExitSample(cal, info, exitH, source, seH = null) {
   const last = cal.samples[cal.samples.length - 1]
   const due = typeof exitH === 'number' && isFinite(exitH) && (!last || Date.now() - Date.parse(last.at) >= EXIT_CAL_GAP_MS || last.life !== info?.lastAugReset)
-  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT }].slice(-EXIT_CAL_MAX) : cal.samples
+  const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), ...(typeof seH === 'number' && isFinite(seH) && seH > 0 ? { seH: +seH.toFixed(3) } : {}), life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT }].slice(-EXIT_CAL_MAX) : cal.samples
   const d = exitDrift(samples)
   return { node: cal.node, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
 }
@@ -7669,7 +7704,7 @@ async function act(ns, canJoin, info, note) {
               // route's median over the posterior draws.
               const pr = planCtx?.decisions?.countRoute
               const brU = planCtx?.decisions?.bladeRoute
-              if (brU?.key === 'blade' && typeof brU.q50 === 'number') decided = { exitH: brU.q50, source: `plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval ${brU.q10}-${brU.q90}h` }
+              if (brU?.key === 'blade' && typeof brU.q50 === 'number') decided = { exitH: brU.q50, ...(Number.isFinite(brU.bladeMembers?.sdH) && brU.bladeMembers.Q > 1 ? { seH: +(brU.bladeMembers.sdH / Math.sqrt(brU.bladeMembers.Q)).toFixed(3) } : {}), source: `plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval ${brU.q10}-${brU.q90}h` }
               else if (pr?.key && typeof pr.q50 === 'number') decided = { exitH: pr.q50, source: `plan: median over the posterior via the committed route (${pr.name}), 80% interval ${pr.q10}-${pr.q90}h` }
               else if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = await countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
               if (countRouteNow?.chosen && decided?.source?.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +decided.exitH.toFixed(2)
@@ -7708,7 +7743,7 @@ async function act(ns, canJoin, info, note) {
             const cal0 = exitCalibrationOf(ns, info)
             const exitH = decided?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null
             const source = decided?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null)
-            return { objective: unifyObjectiveExit(weightsMeta, decided), exitH, exitSource: source, exitCalibration: withExitSample(cal0, info, exitH, source), countRoute: countRouteNow }
+            return { objective: unifyObjectiveExit(weightsMeta, decided), exitH, exitSource: source, exitCalibration: withExitSample(cal0, info, exitH, source, decided?.exitH != null ? decided?.seH : null), countRoute: countRouteNow }
           })()),
           incomeSample: makeIncomeSample(econPass.levelPerSec, player, schedule, info),
           incomeCalibration: scoreIncome(prevIncome0, econPass.levelPerSec),
@@ -8481,7 +8516,7 @@ async function act(ns, canJoin, info, note) {
       // THE PLAN'S EXIT (plan.decideInstall): the committed option's median
       // over the posterior draws, its 80% interval beside it.
       const b = exitCompare?.bayes
-      if (b && typeof b.q50 === 'number') return { exitH: b.q50, source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h${planCtx?.incomeFromPrior ? ` — ${planCtx.incomeFromPrior}` : ''}${planCtx?.repFromEstimate ? ` — ${planCtx.repFromEstimate}` : ''}` }
+      if (b && typeof b.q50 === 'number') return { exitH: b.q50, ...(typeof b.pointSeH === 'number' && isFinite(b.pointSeH) ? { seH: b.pointSeH } : {}), source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h${planCtx?.incomeFromPrior ? ` — ${planCtx.incomeFromPrior}` : ''}${planCtx?.repFromEstimate ? ` — ${planCtx.repFromEstimate}` : ''}` }
       if (!exitCompare?.countAware && countTickets) {
         try {
           const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
@@ -8640,7 +8675,7 @@ async function act(ns, canJoin, info, note) {
           objective: unifyObjectiveExit(weightsMeta, decidedExit),
           exitH: decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH ?? null,
           exitSource: decidedExit?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null),
-          exitCalibration: withExitSample(exitCal0, info, decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH, decidedExit?.source ?? 'sensitivity base'),
+          exitCalibration: withExitSample(exitCal0, info, decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH, decidedExit?.source ?? 'sensitivity base', decidedExit?.exitH != null ? decidedExit?.seH : null),
           countRoute: countRouteNow,
           // WHAT THE BUDGET MUST ACTUALLY HOLD: the plan's cost NET of what
           // income will deliver before the install happens anyway. Money is

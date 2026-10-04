@@ -1347,10 +1347,11 @@ export function afterCombatInstall(player, batch) {
 // s0 is bbplan.bladeStartOf's (one builder). Returns
 // { tasks (per sleeve index, sleeve.js order), config, hours, byConfig, why }.
 /** A committed fleet is kept unless another is faster by more than this (hours, or this share of the exit). */
-export const FLEET_KEEP = { h: 0.1, rel: 0.03 }
-export function* bladeFleetGen(s0, n, incumbent = null) {
+/** z: with members (Q > 1) the incumbent also stands while the challenger's lead is inside z standard errors of the pair (each point's seH). */
+export const FLEET_KEEP = { h: 0.1, rel: 0.03, z: 1.645 }
+export function* bladeFleetGen(s0, n, incumbent = null, { Q = 1 } = {}) {
   if (!(n > 0)) return { tasks: [], config: null, hours: null, byConfig: [], why: 'no sleeves' }
-  const pick = yield* chooseSleeveConfigGen(s0, n)
+  const pick = yield* chooseSleeveConfigGen(s0, n, undefined, { Q })
   // THE INCUMBENT STANDS on a near tie: configurations a few minutes apart in
   // the model flipped the committed fleet between passes (re-tasking five
   // sleeves, and a fleet change is an exit event): live-state replay
@@ -1358,7 +1359,10 @@ export function* bladeFleetGen(s0, n, incumbent = null) {
   const same = (a, b) => !!a && !!b && a.infiltrate === b.infiltrate && a.support === b.support && a.fa === b.fa
   const inc = incumbent && pick.config ? pick.byConfig.find((x) => same(x.config, incumbent) && Number.isFinite(x.hours)) : null
   let kept = false
-  if (inc && !same(inc.config, pick.config) && inc.hours - pick.hours <= Math.max(FLEET_KEEP.h, FLEET_KEEP.rel * pick.hours)) {
+  const best = inc ? pick.byConfig.find((x) => same(x.config, pick.config)) : null
+  const seTol = inc && best && Number.isFinite(inc.seH) && Number.isFinite(best.seH) ? FLEET_KEEP.z * Math.hypot(inc.seH, best.seH) : 0
+  const keepTol = Math.max(FLEET_KEEP.h, FLEET_KEEP.rel * (pick.hours ?? 0), seTol)
+  if (inc && !same(inc.config, pick.config) && inc.hours - pick.hours <= keepTol) {
     pick.config = inc.config
     pick.hours = inc.hours
     kept = true
@@ -1371,8 +1375,9 @@ export function* bladeFleetGen(s0, n, incumbent = null) {
     tasks: sleeveTasksOf(pick.config, n),
     config: pick.config,
     hours: +pick.hours.toFixed(2),
-    byConfig: ranked.slice(0, 6).map((x) => ({ ...x.config, hours: +x.hours.toFixed(2) })),
-    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model)${kept ? ` — the incumbent, within ${Math.max(FLEET_KEEP.h, FLEET_KEEP.rel * ranked[0].hours).toFixed(2)}h of the best (${ranked[0].config.infiltrate}/${ranked[0].config.support}/${ranked[0].config.fa} ${ranked[0].hours.toFixed(2)}h)` : ''} vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
+    byConfig: ranked.slice(0, 6).map((x) => ({ ...x.config, hours: +x.hours.toFixed(2), ...(Number.isFinite(x.seH) ? { seH: +x.seH.toFixed(2) } : {}) })),
+    ...(Q > 1 ? { members: Q } : {}),
+    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model${Q > 1 ? `, mean of ${Q} members` : ''})${kept ? ` — the incumbent, within ${keepTol.toFixed(2)}h of the best (${ranked[0].config.infiltrate}/${ranked[0].config.support}/${ranked[0].config.fa} ${ranked[0].hours.toFixed(2)}h)` : ''} vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
   }
 }
 

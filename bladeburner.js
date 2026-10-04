@@ -530,6 +530,8 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       maxLevels: Object.fromEntries(v.actions.map((a) => [a.d.name, a.maxLevel])),
       // pop: the TRUE population read off the black-op range (r = pop/popEst), null where it could not be read.
       cities: cities.map((c) => ({ name: c.name, popEst: Math.round(c.popEst), pop: c.pop === null ? null : Math.round(c.pop), r: c.r === null ? null : +c.r.toFixed(5), chaos: +c.chaos.toFixed(2), comms: c.comms })),
+      // Read this pass: dated now, never the carried date of an older read (bbplan.divisionCarryOf).
+      citiesAt: new Date(now).toISOString(),
       staminaBonus: +staminaBonusOf(person, v.sm, maxStamina).toFixed(4),
       outcomes: { n: rn, observed, expected, last: recent.slice(-5), method: 'attempts from the count against its growth twin, successes from the rank (bbplan.attemptsOf)', unmeasured },
       calibration: { ...calib, success: { ...sCal, groups: calGroups } },

@@ -706,7 +706,7 @@ export async function run() {
     if (vMod === v0 || vDeep === v0) c13.fail("an edit to any module in the graph, however deep, must change the version");
     if (vOut !== v0) c13.fail("a module outside the graph must not change the version");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/exitH: \+exitH\.toFixed\(2\), life: info\?\.lastAugReset \?\? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT \}/.test(prog)) c13.fail("every exit sample must carry the model version and the page (source guard)");
+    if (!/exitH: \+exitH\.toFixed\(2\), (\.\.\.\(typeof seH === 'number'[^\n]*?\), )?life: info\?\.lastAugReset \?\? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT \}/.test(prog)) c13.fail("every exit sample must carry the model version and the page (source guard)");
     if (!/MODEL_VERSION = modelVersionOf\(ns\)/.test(prog) || !/PAGE_BOOT = pageBoot\(\)/.test(prog)) c13.fail("the version and the page must be taken at planner start (source guard)");
     // REPLAY on the live history (untagged; the commits of planner modules
     // are the known deploys — a lower bound).

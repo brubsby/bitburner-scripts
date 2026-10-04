@@ -280,8 +280,9 @@ export function bladeLoopGuardOf({ nowH, neverH, biasH = null, biasWhy = null, s
   const parts = [
     [BLADE_LOOP.minGainH, 'the minimum margin'],
     [spread, "the realised jumps' spread"],
-    // The model's own scatter (bbplan.bladeScatterGen: never over the daemon's skill clock).
-    [fin(scatterH) && scatterH > 0 ? scatterH : 0, "the model's scatter over the skill clock"],
+    // The model's own scatter (progress.js bladeInstallCompareOf: with members, the saving's
+    // standard error x 1.645; else bbplan.bladeScatterGen, never over the daemon's skill clock).
+    [fin(scatterH) && scatterH > 0 ? scatterH : 0, "the model's scatter (the points' own error)"],
     [young ? BLADE_LOOP.youngGainH : 0, 'young'],
   ]
   const [need, needWhy] = parts.reduce((a, b) => (b[0] > a[0] ? b : a))
