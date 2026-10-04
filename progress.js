@@ -161,7 +161,7 @@ import { goExitInputsOf } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
 import { leanUntilOf } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -2644,7 +2644,15 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // the start, the balance an install leaves (installCashOf) in Sector-12
     // (PlayerObjectGeneralMethods.ts:102-104) for one after an install.
     const retrainSecsOf = retrainSecsOfFor({ node: mults, trainingMult: ns.hacknet.getTrainingMult(), flatPerSec, holdS: BB_POLICY.retrainLegS, start: { cash: wealth, city: player.city }, install: { cash: installCashOf(info?.currentNode, owned), city: 'Sector-12' } })
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf })
+    // THE GO FARM'S COMBAT CHANNEL (bbplan.bladeGoCombatOf): the Tetrads
+    // effect player.mults holds now, regrown at the farm's measured rate and
+    // zeroed at an install (Go/Go.ts:34-47). Without it the install actor
+    // carried x2.61 through the 10:22Z 2026-10-04 install and the new life
+    // froze its x1.0: EXIT JUMP AT INSTALL +46.8h. The rate a fresh life has
+    // not measured yet is the previous life's (the plan record carries it).
+    const prevGo = pc.prevAny?.decisions?.bladeRoute?.start?.goCombat ?? null
+    const goCombat = bladeGoCombatOf(readJson(ns, '/tel/go.txt'), { node: info.currentNode, lastAugReset: info.lastAugReset, now: Date.now(), carried: prevGo && prevGo.perHour > 0 && typeof prevGo.rateSource === 'string' && !prevGo.rateSource.startsWith('prior') ? { perHour: prevGo.perHour, source: `${prevGo.rateSource} (the plan record of ${pc.prevAny?.at ?? '?'})` } : null })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration
@@ -2725,7 +2733,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         // The basis WITH its batch's content (blade): sleeve.js prices its fleet on this same install (bbplan.bladeInstallOfBasis).
         installBasis: bladeBasis ? { kind: bladeBasis.kind, waitH: bladeBasis.waitH ?? null, installAt: bladeBasis.installAt ?? null, from: prevInst?.key ?? null, blade: bladeBasis.blade ?? null } : { kind: 'none', why: bladeCommitted ? `the committed install is ${prevInst?.key}` : 'no install priced on this route yet: none' },
         // The start's inputs a reader re-prices with (sleeve.js's fleet search): one state model.
-        start: { gymExpPerSec, gym: gym?.name ?? null, trainingMult: ns.hacknet.getTrainingMult(), ...(gymWhy ? { gymWhy } : {}) },
+        start: { gymExpPerSec, gym: gym?.name ?? null, trainingMult: ns.hacknet.getTrainingMult(), ...(gymWhy ? { gymWhy } : {}), goCombat: goCombat.effect === null ? { effect: null, why: goCombat.why } : { effect: +goCombat.effect.toFixed(5), nodes: Math.round(goCombat.nodes), perHour: Math.round(goCombat.perHour), rateSource: goCombat.rateSource, goPower: goCombat.goPower, sf14: goCombat.sf14, why: goCombat.why } },
         simulacrum,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }

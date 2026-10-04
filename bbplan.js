@@ -46,6 +46,7 @@
 
 import { drain } from 'coop.js'
 import { PRIORS } from 'bayes.js'
+import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame, nodePowerFromBonus } from 'goplan.js'
 
 // --- constants: Bladeburner/data/Constants.ts -------------------------------
 export const BBC = {
@@ -857,6 +858,16 @@ export function* planSkillsGen(v, sp, pol = POLICY, skillCostMult = 1, chunks = 
 //                                     four combat level multipliers. everyH absent: that one install only.
 //                                     Max stamina follows agility (calculateMaxStamina scales the current
 //                                     stamina with it), which the retrain restores.
+//   goCombat {effect, nodes, perHour, power, goPower, sf14}
+//                                     THE GO FARM'S COMBAT CHANNEL (bladeGoCombatOf; Tetrads,
+//                                     Go/effects/effect.ts:16-22 x the four combat LEVEL mults): `effect`
+//                                     is the part of person.mults the farm holds now, growing as
+//                                     effect(nodes + perHour x t), and ZEROED at an install
+//                                     (Go/Go.ts:34-47 nodePower = 0): the install divides it out and the
+//                                     farm regrows from 0. Absent: the multipliers as they are, for ever
+//                                     (live BN14.1 2026-10-04 10:22Z: the actor carried the farm's x2.61
+//                                     through its install, the new life froze its x1.0 for 80h — EXIT
+//                                     JUMP AT INSTALL +46.8h, tools/sim/exitjump/replay-bn14-1022.mjs).
 //   simulacrum                        The Blade's Simulacrum installed (Bladeburner.ts:179, :1355): the
 //                                     player's work runs beside the action, so the gym trains combat
 //                                     IN PARALLEL (the lowest stat, gymExpPerSec) instead of blocking
@@ -1102,6 +1113,27 @@ export function* bladeExitGen(s0, pol = POLICY) {
   let installs = 0
   const gymRate = s0.gymExpPerSec ?? 0
   const startExpMult = person.mults.strength_exp ?? 1
+  // THE GO FARM'S COMBAT CHANNEL (s0.goCombat, bladeGoCombatOf): goE is the
+  // effect person.mults holds now; the farm grows it as effect(goN0 +
+  // perHour x (t - goT0)); an install divides it out and restarts the farm at
+  // 0 nodes (Go/Go.ts:34-47). Synced at each step's start, so every t jump
+  // (a retrain, a black op, rest) is caught up on the next step.
+  // NOT SIMULATED, named: the regrowth DURING a retrain (its legs are priced
+  // on the multipliers at its start — pessimistic, alike in every arm), and
+  // the farm switching opponent (it keeps the one it farms now).
+  const goC = s0.goCombat && Number.isFinite(s0.goCombat.effect) && s0.goCombat.effect >= 1 ? s0.goCombat : null
+  let goE = goC ? goC.effect : 1
+  let goN0 = goC && Number.isFinite(goC.nodes) && goC.nodes >= 0 ? goC.nodes : 0
+  let goT0 = 0
+  const goRate = goC && Number.isFinite(goC.perHour) && goC.perHour > 0 ? goC.perHour : 0
+  const goSync = () => {
+    if (!(goRate > 0)) return
+    const e = effectAt(goN0 + (goRate * Math.max(0, t - goT0)) / 3600, goC.power ?? OPPONENTS.Tetrads.power, goC.goPower ?? 1, goC.sf14 ?? 0)
+    if (!(e > 0) || Math.abs(e / goE - 1) < 1e-4) return
+    for (const c of ['strength', 'defense', 'dexterity', 'agility']) person.mults[c] = (person.mults[c] ?? 1) * (e / goE)
+    goE = e
+    relevel()
+  }
   // THE RETRAIN AS THE POLICY RUNS IT (retrainOf): Infinity with no gym rate
   // (the caller refuses: a retrain it cannot price is not free).
   // THE RETRAIN'S MONEY AND TRAVEL (s0.retrainSecsOf(person, target, phase),
@@ -1348,6 +1380,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
   }
   while (t < maxS && st.bo < BLACK_OPS.length) {
     if (steps.length) applySteps()
+    goSync()
     if (++sinceYield >= 2) {
       sinceYield = 0
       yield
@@ -1357,6 +1390,13 @@ export function* bladeExitGen(s0, pol = POLICY) {
       const g = inst.combatGain ?? 1
       for (const c of ['strength', 'defense', 'dexterity', 'agility']) person.mults[c] = lvMult(c) * g
       for (const [k, x] of Object.entries(inst.gains ?? {})) if (Number.isFinite(x) && x > 0) person.mults[k] = (person.mults[k] ?? 1) * x
+      // The install zeroes every Go opponent's nodePower (Go/Go.ts:34-47): the farm's combat effect leaves the multipliers and regrows from 0.
+      if (goC) {
+        for (const c of ['strength', 'defense', 'dexterity', 'agility']) person.mults[c] = lvMult(c) / goE
+        goE = 1
+        goN0 = 0
+        goT0 = t
+      }
       env.augMult = augSuccess()
       if (inst.simulacrum === true) simOn = true
       for (const c of ['strength', 'defense', 'dexterity', 'agility', 'charisma']) person.exp[c] = 0
@@ -1477,6 +1517,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     path: pathEvery ? path : undefined,
     staminaOffsetH: +(staminaOffsetS / 3600).toFixed(3),
     scales: { success: successScale, rank: rankScale },
+    ...(goC ? { goEffect: +goE.toFixed(4) } : {}),
     ...(retrainWhy ? { retrainWhy } : {}),
     ...(snapOut ? { snap: snapOut } : {}),
     why: done ? null : `not finished in ${s0.maxH ?? 400}h (rank ${Math.round(st.rank)}, ${st.bo}/21 black ops)`,
@@ -1878,7 +1919,7 @@ export function sleeveTasksOf(config, n) {
  *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
  *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, now = Date.now() }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, goCombat = null, now = Date.now() }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
   // The daemon's skill clock (bladeburner.js skillsAt: its last spend; null: none since it started).
@@ -1922,11 +1963,75 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     gymExpPerSec,
     // The retrain's money and travel (bladeExitGen gymTo): the caller's priced combat-bar plan, or none.
     ...(typeof retrainSecsOf === 'function' ? { retrainSecsOf } : {}),
+    // The Go farm's combat channel (bladeGoCombatOf): reset at an install, regrown at its rate.
+    ...(goCombat && Number.isFinite(goCombat.effect) && goCombat.effect >= 1 ? { goCombat: { effect: goCombat.effect, nodes: goCombat.nodes ?? 0, perHour: goCombat.perHour ?? 0, power: goCombat.power ?? OPPONENTS.Tetrads.power, goPower: goCombat.goPower ?? 1, sf14: goCombat.sf14 ?? 0 } } : {}),
     install,
     simulacrum: simulacrum === true,
     maxH,
     dt,
   }
+}
+
+/**
+ * THE GO FARM'S COMBAT CHANNEL for bladeStartOf (s0.goCombat), from go.js's
+ * record (/tel/go.txt: bonuses, opponent, goPower, sf14, at, lastAugReset).
+ *
+ * In BitNode 14 (GoPower 4) the Tetrads farm is the largest combat
+ * multiplier there is: x2.61 on every combat level at 10:19Z 2026-10-04
+ * (nodePower ~54k after 8.8h), against x1.10 from the 13-aug batch. It is
+ * held in player.mults, so the exit model priced it as permanent: the
+ * install actor carried it through the install (Go/Go.ts:34-47 zeroes every
+ * nodePower) and the new life froze its own x1.0 for the whole trajectory —
+ * 33.5h against 80.2h, EXIT JUMP AT INSTALL +46.8h
+ * (tools/sim/exitjump/replay-bn14-1022.mjs).
+ *
+ *   effect   1 + bonuses.Tetrads/100 (getStats bonusPercent = CalculateEffect - 1)
+ *   nodes    the nodePower behind it (goplan.nodePowerFromBonus)
+ *   perHour  the farm's nodePower per hour while it farms Tetrads: MEASURED as
+ *            this life's nodes over its age (from GO_COMBAT.minAgeH; the
+ *            average over the life, which is what the next life repeats),
+ *            else `carried` (the previous life's measured rate, the plan's
+ *            record), else the prior goplan.POWER_PER_HOUR.Tetrads (a farm
+ *            on Tetrads alone; live BN14.1 measured 4.9-6.2k/h against its
+ *            10.4k — the farm shares its hours). 0 while go.js farms
+ *            another opponent or its record is stale (the effect still
+ *            resets at an install).
+ * Returns {effect, nodes, perHour, rateSource, power, goPower, sf14, why}
+ * or {effect: null, why} when the record cannot be read (named: the
+ * multipliers then price as they are, for ever, through any install).
+ */
+export const GO_COMBAT = { minAgeH: 0.5, staleMs: 15 * 60e3 }
+export function bladeGoCombatOf(rec, { node = null, lastAugReset = null, now = Date.now(), carried = null } = {}) {
+  const num = (x) => typeof x === 'number' && isFinite(x)
+  const T = OPPONENTS.Tetrads
+  const none = (why) => ({ effect: null, why: `${why}: the Go farm's combat effect is unread — the multipliers price as they are, for ever, through any install` })
+  if (!rec || typeof rec !== 'object') return none('no /tel/go.txt')
+  if (node !== null && rec.bitNode !== node) return none(`/tel/go.txt is from BitNode ${rec.bitNode}`)
+  if (num(lastAugReset) && rec.lastAugReset !== lastAugReset) return none('/tel/go.txt is from another life')
+  const pct = rec.bonuses?.[T.game]
+  if (!num(pct) || pct < 0) return none(`no ${T.game} bonus in /tel/go.txt`)
+  const goPower = num(rec.goPower) && rec.goPower > 0 ? rec.goPower : 1
+  const sf14 = num(rec.sf14) ? rec.sf14 : 0
+  const effect = 1 + pct / 100
+  const nodes = pct > 0 ? nodePowerFromBonus(pct, T.power, goPower, sf14) ?? 0 : 0
+  const out = { effect, nodes, power: T.power, goPower, sf14 }
+  const ageMs = num(now) && typeof rec.at === 'string' ? now - Date.parse(rec.at) : NaN
+  if (keyOfGame(rec.opponent) !== 'Tetrads') return { ...out, perHour: 0, rateSource: 'not farming', why: `x${effect.toFixed(3)} now (n ${Math.round(nodes)}), go.js farms ${rec.opponent ?? 'nothing'}: no regrowth priced; the effect resets at an install` }
+  if (!(ageMs < GO_COMBAT.staleMs)) return { ...out, perHour: 0, rateSource: 'stale', why: `x${effect.toFixed(3)} now (n ${Math.round(nodes)}), /tel/go.txt ${num(ageMs) ? `${(ageMs / 60e3).toFixed(0)} min old` : 'undated'}: no regrowth priced; the effect resets at an install` }
+  const lifeH = num(lastAugReset) && num(now) ? (now - lastAugReset) / 3.6e6 : NaN
+  let perHour = null
+  let rateSource = null
+  if (lifeH >= GO_COMBAT.minAgeH && nodes > 0) {
+    perHour = nodes / lifeH
+    rateSource = `measured: n ${Math.round(nodes)} over this life's ${lifeH.toFixed(2)}h`
+  } else if (num(carried?.perHour) && carried.perHour > 0) {
+    perHour = carried.perHour
+    rateSource = `carried: ${carried.source ?? 'the previous life'}`
+  } else {
+    perHour = POWER_PER_HOUR.Tetrads
+    rateSource = 'prior: goplan.POWER_PER_HOUR.Tetrads (a farm on Tetrads alone)'
+  }
+  return { ...out, perHour, rateSource, why: `Tetrads x${effect.toFixed(3)} now (n ${Math.round(nodes)}), regrowing ${Math.round(perHour)}/h (${rateSource}); zeroed at an install (Go/Go.ts:34-47)` }
 }
 
 // --- installs and The Blade's Simulacrum, on this route's exit ------------------

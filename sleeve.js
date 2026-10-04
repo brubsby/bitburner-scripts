@@ -407,6 +407,8 @@ async function bladeFleetNow(ns, n, node) {
     // The plan's calibration, as its own exits apply it (one model).
     rankScale: cal?.rank?.applied ?? 1, successScale: cal?.success?.applied ?? 1,
     rankSdLn: cal?.rank?.sdLn ?? 0, successSdLn: cal?.success?.sdLn ?? 0,
+    // The Go farm's combat channel, as the plan's start prices it (bbplan.bladeGoCombatOf): one state model.
+    goCombat: plan?.decisions?.bladeRoute?.start?.goCombat ?? null,
     // Bounded: a fleet that does not reach the 21st black op in BLADE_FLEET_MAXH is not chosen.
     maxH: BLADE_FLEET_MAXH,
   })

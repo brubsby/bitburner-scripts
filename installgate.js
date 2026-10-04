@@ -329,6 +329,14 @@ export function bladeInstallBiasOf(ledger, { node = null } = {}) {
  */
 export const BLADE_JUMP_VOIDS = {
   '2026-10-04T01:32:10.023Z': 'BN14.1 +95h: bladeburner.js and sleeve.js were refused their RAM after the install and the refusal record replaced their telemetry, so the new life priced an unjoined division with no fleet — lost inputs, not an install effect (fixed at the source in 5cd1c3b)',
+  // A MODEL ARTEFACT: both lives held the Go farm's combat effect fixed —
+  // the actor carried the farm's x2.61 through an install that zeroes it
+  // (Go/Go.ts:34-47), the new life froze its own x1.0 for 80h. On the fixed
+  // model (bbplan s0.goCombat: zeroed at the install, regrown at the farm's
+  // measured 6.1k nodePower/h) the same inputs replay at 33.56h (actor) vs
+  // 32.87h (new life), -0.7h (tools/sim/exitjump/replay-bn14-1022.mjs,
+  // tools/test/bn14go.test.mjs [BG1-BG2]).
+  '2026-10-04T10:22:41.953Z': "BN14.1 +46.8h: the exit model held the Go farm's combat effect fixed (the actor carried x2.61 through the install that zeroes it, the new life froze x1.0) — on the fixed model (bbplan s0.goCombat) the jump replays at -0.7h: a model artefact, not an install effect",
 }
 export const BLADE_JUMP_VOID = new Set(Object.keys(BLADE_JUMP_VOIDS))
 /**

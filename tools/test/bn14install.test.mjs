@@ -214,7 +214,7 @@ export async function run() {
   if (!/raiseRam\([^\n]*\{ carry: true \}\)/.test(bbj)) c6.fail('bladeburner.js must carry its record through a refused raise')
   if (!/reporter\(ns, STATUS, \(\) => \(\{ \.\.\.carry\.rec/.test(bbj) || !/carry\.rec = divisionCarryOf\(full, info\.currentNode\)/.test(bbj)) c6.fail('every bladeburner.js record must carry the last division read')
   if (!/raiseRam\([^\n]*\{ carry: true \}\)/.test(slj)) c6.fail('sleeve.js must carry its record through a refused raise')
-  if (!/retrainSecsOf \}\)/.test(pj) || !/retrainSecsOfFor\(\{ node: mults/.test(pj)) c6.fail("progress.js must price the retrain's money in every Bladeburner start")
+  if (!/retrainSecsOf(, goCombat)? \}\)/.test(pj) || !/retrainSecsOfFor\(\{ node: mults/.test(pj)) c6.fail("progress.js must price the retrain's money in every Bladeburner start")
   if (!/neverScatterH: neverScatter\?\.spreadH/.test(pj) || !/scatterH: ex\.neverScatterH/.test(SRC('installgate.js'))) c6.fail("the model's scatter must reach the guard")
   if (!/bladeInstallSpreadH: b\.spreadH/.test(pj)) c6.fail("the realised jumps' spread must reach the guard")
   if (!/`\$\{bodyStep\.gym\} is in \$\{bodyStep\.city\}`, TRAVEL_FARE\)/.test(pj)) c6.fail("the body step's flight must carry its fare")
