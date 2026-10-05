@@ -87,6 +87,7 @@ export const incomeOffset = (m, s, speed = m.HackingSpeedMultiplier) => (moneyFa
  * The windows of every node run in history.jsonl: per run { bn, start, end, hours, sfOnEntry,
  * windows: [{ h, age, lpk, level, exp: rate|null, income: rate|null }] }.
  */
+const sfLv = (data, n) => (Array.isArray(data) ? data.find((x) => x[0] === n)?.[1] ?? 0 : 0)
 export function readRuns(file) {
   const runs = []
   let cur = null
@@ -99,7 +100,8 @@ export function readRuns(file) {
       continue
     }
     if (typeof r.bitNode !== 'number' || typeof r.totalPlaytime !== 'number') continue
-    if (!cur || cur.bn !== r.bitNode) {
+    // a new clear of the same node (its own SF level rises: BN14.1 -> BN14.2) is a new run (measure.mjs isNewClear)
+    if (!cur || cur.bn !== r.bitNode || sfLv(r.sourceFiles?.data, r.bitNode) > sfLv(cur.sfOnEntry, r.bitNode)) {
       cur = { bn: r.bitNode, start: r.at, sfOnEntry: r.sourceFiles?.data ?? [], rows: [] }
       runs.push(cur)
     }

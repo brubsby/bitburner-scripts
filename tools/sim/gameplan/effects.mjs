@@ -58,12 +58,12 @@ export const DEF93 = [0.3, 1.0, 3.0]
 export const SF_PARAMS = {
   phi11: { lo: 0.3, mid: 0.6, hi: 1.0, min: 0, what: 'SF11: g x (ln1.9/ln(1.9 r))^phi, r = .96/.94/.93' },
   // --- the IPvGO farm (go.mjs; read by routes.mjs for every node, scaled by GoPower x the SF14 doubling)
-  eps14: { lo: 0.0, mid: 0.12, hi: 0.3, min: 0, what: 'Go: elasticity of g to the Go rate bonus, g x ((1+s abar)/(1+abar))^eps (ASSUMED; mid = nextnode d14 2% at SF14.1)' },
-  goP: { lo: 0.7, mid: 1.0, hi: 1.16, min: 0.1, what: 'Go: Daedalus node power / the measured 4391/h (MEASURED mid; hi = BN9 streak x1.16; lo ASSUMED: games lost to other opponents)' },
+  eps14: { lo: 0.0, mid: 0.12, hi: 0.3, min: 0, what: 'Go: elasticity of g to the Go rate bonus, g x ((1+s abar)/(1+aref))^eps, abar the farm now, aref the measured runs\' 4391/h (ASSUMED; mid = nextnode d14 2% at SF14.1)' },
+  goP: { lo: 0.5, mid: 0.9, hi: 1.05, min: 0.1, what: 'Go: the live farm / the release-3c harness rate (Daedalus 27608/h, Tetrads 23991/h); mid MEASURED (live Tetrads@5 21950/h vs harness 23991, 9cf8c90); lo ASSUMED: the farm down or unplaced part of a node (BN14.2: ~2h unplaced, 45f22c8), games on other opponents; hi: the harness itself' },
   rep14: { lo: 72, mid: 97, hi: 150, min: 10, what: 'Go: Daedalus work rep/h per hacking level, favor 0, FWRG 1 (MEASURED p10/p50/p90 over telemetry segments)' },
   lvl14: { lo: 3500, mid: 4700, hi: 5900, min: 2500, what: 'Go: the hacking level a favor life is ground at (MEASURED range, BN1/4/5/8/9/10)' },
   // DERIVED, not hand: go.mjs w0PriorMC (endGoGame's payout x W0_PRIOR_INPUTS: win rate, black's scores, games/h); GP8 re-derives it
-  w0: { lo: 1020, mid: 1570, hi: 2380, min: 0, what: 'Go: w0r1d_d43m0n node power/h (DERIVED p10/p50/p90: the payout rules x win rate ~0.04, loss score ~87/267, ~8.8 games/h; was ASSUMED 0/200/1000)' },
+  w0: { lo: 2100, mid: 3130, hi: 4390, min: 0, what: 'Go: w0r1d_d43m0n node power/h (DERIVED p10/p50/p90: the payout rules x KataGo GPU win rate ~0.29 (3/13 harness, half weight), loss score ~105/267, ~8.8 games/h; was 1020/1570/2380 on the uct search, 0/200/1000 ASSUMED before that)' },
   // DERIVED, not hand: sleeves.mjs (the extra sleeve's money crime trajectory lifting every measured life through exitplan's eBudget lift; was ASSUMED 0/0.01/0.03 node-free)
   d10: { lo: D10.lo, mid: D10.mid, hi: D10.hi, min: 0, what: 'SF10.2/10.3 (+1 sleeve each; +1 more inside BN10): hacking route g x (1 + d x CrimeMoney) per sleeve past 5 (DERIVED, sleeves.mjs: the live fall-through to a money crime x the measured lives; eBudget and income ASSUMED)' },
   d8: { lo: 0.0, mid: 0.005, hi: 0.02, min: 0, what: 'SF8.2: shorts -> g x (1+d)' },
@@ -176,7 +176,7 @@ export const EFFECTS = {
     status: 'MODELLED (go.mjs)',
     source: 'Go/effects/effect.ts:18-21 every Go bonus x2 at SF14>=1; effect.ts:30-43 favor cap 100k->200/300/400k rep; cheats netscriptGoImplementation.ts:486-497,564',
     go: true, // read by routes.mjs through go.mjs, for every node (the scale is GoPower x the doubling, so it is not a node-free gFactor)
-    note: 'x2 on the g channel (eps14), on the favor life (Daedalus rep bonus and the favor cap) and on w0r1d_d43m0n; 14.2/14.3 cheats NOT PRICED',
+    note: 'x2 on the g channel (eps14), on the favor life (Daedalus rep bonus and the favor cap), on w0r1d_d43m0n and on the Bladeburner leg (the Tetrads farm in bbsim); 14.2/14.3 cheats PRICED AT 0 on 5x5 (MEASURED release 3: Illuminati -13%, Daedalus -5%, Slum Snakes -15%, Tetrads +-0, 7cd9ffe), NOT PRICED on the 19x19 hidden board',
   },
 }
 

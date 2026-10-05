@@ -1,7 +1,7 @@
 {
  "schema": "gameplan-posterior",
  "version": 1,
- "updatedAt": "2026-10-05T09:01:27.723Z",
+ "updatedAt": "2026-10-05T12:32:03.800Z",
  "model": {
   "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
   "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
@@ -104,6 +104,19 @@
    "node": 14
   },
   {
+   "key": "k|BN14.1|2026-10-05T08:27:24.667Z",
+   "param": "k",
+   "value": 0.8738583649617447,
+   "sd": 0.1,
+   "space": "log",
+   "at": "2026-10-05T08:27:24.667Z",
+   "source": "history.jsonl: Bladeburner clear, (hours - voided - opening) / bbsim leg (its own Go farm)",
+   "node": 14,
+   "clear": "BN14.1",
+   "inBase": false,
+   "note": "37.66h - 1.63h (voided install(s) 6.78h: 0.95h, 15.62h: 0.68h), opening 3.79h, leg 36.89h (Go farm 8000/h x4)"
+  },
+  {
    "key": "k|BN4.3|2026-10-03T18:45:23.337Z",
    "param": "k",
    "value": 0.9001943044507863,
@@ -113,7 +126,8 @@
    "source": "history.jsonl: Bladeburner clear, (hours - opening) / bbsim leg",
    "node": 4,
    "clear": "BN4.3",
-   "note": "28.07h, opening 3.36h, leg 27.45h"
+   "note": "28.07h, opening 3.36h, leg 27.45h",
+   "inBase": true
   },
   {
    "key": "k|BN6.1|2026-10-02T14:36:19.989Z",
@@ -127,6 +141,19 @@
    "clear": "BN6.1",
    "inBase": true,
    "note": "35.79h, opening 2.38h, leg 27.32h"
+  },
+  {
+   "key": "open|BN14.1|start 2026-10-03T18:47:58.191Z",
+   "param": "open",
+   "value": 3.5233333333333334,
+   "sd": 0.25,
+   "space": "log",
+   "at": "2026-10-03T18:47:58.191Z",
+   "source": "history.jsonl: entry -> combat 100, first life, less the gym scale",
+   "node": 14,
+   "clear": "BN14.1",
+   "inBase": false,
+   "note": "combat 100 at 3.09h"
   },
   {
    "key": "open|BN4.3|start 2026-10-02T14:41:19.074Z",
@@ -168,14 +195,14 @@
  "posterior": {
   "k": {
    "prior": [
-    1.068,
-    1.223,
-    1.535
-   ],
-   "post": [
-    0.9326,
+    0.933,
     1.034,
     1.139
+   ],
+   "post": [
+    0.891,
+    0.9695,
+    1.05
    ],
    "n": 1
   },
@@ -186,11 +213,11 @@
     4
    ],
    "post": [
-    2.358,
-    3.135,
-    4.035
+    2.671,
+    3.304,
+    4.015
    ],
-   "n": 1
+   "n": 2
   },
   "phi11": {
    "prior": [
@@ -220,14 +247,14 @@
   },
   "goP": {
    "prior": [
-    0.7,
-    1,
-    1.16
+    0.5,
+    0.9,
+    1.05
    ],
    "post": [
-    0.7,
-    1,
-    1.16
+    0.5,
+    0.9,
+    1.05
    ],
    "n": 0
   },
@@ -259,14 +286,14 @@
   },
   "w0": {
    "prior": [
-    1020,
-    1570,
-    2380
+    2100,
+    3130,
+    4390
    ],
    "post": [
-    1020,
-    1570,
-    2380
+    2100,
+    3130,
+    4390
    ],
    "n": 0
   },
@@ -390,41 +417,41 @@
   "g3": {
    "prior": [
     0.02624,
-    0.04392,
-    0.08924
+    0.04377,
+    0.08861
    ],
    "post": [
-    0.0224,
-    0.03975,
-    0.07055
+    0.02228,
+    0.03958,
+    0.07029
    ],
    "n": 0,
    "what": "g /h of unplayed BN3: hand latent (prior) vs the full model (post)"
   },
   "g5": {
    "prior": [
-    0.03104,
-    0.05195,
-    0.1055
+    0.031,
+    0.05171,
+    0.1047
    ],
    "post": [
-    0.03267,
-    0.0534,
-    0.08727
+    0.03249,
+    0.05314,
+    0.0869
    ],
    "n": 0,
    "what": "g /h of unplayed BN5: hand latent (prior) vs the full model (post)"
   },
   "g6": {
    "prior": [
-    0.04135,
-    0.0692,
-    0.1406
+    0.04123,
+    0.06878,
+    0.1393
    ],
    "post": [
-    0.03838,
-    0.07095,
-    0.1312
+    0.03819,
+    0.07066,
+    0.1307
    ],
    "n": 0,
    "what": "g /h of unplayed BN6: hand latent (prior) vs the full model (post)"
@@ -432,55 +459,55 @@
   "g7": {
    "prior": [
     0.02624,
-    0.04392,
-    0.08924
+    0.04377,
+    0.08861
    ],
    "post": [
-    0.02604,
-    0.04255,
-    0.06953
+    0.02595,
+    0.04244,
+    0.06939
    ],
    "n": 0,
    "what": "g /h of unplayed BN7: hand latent (prior) vs the full model (post)"
   },
   "g11": {
    "prior": [
-    0.03104,
-    0.05195,
-    0.1055
+    0.031,
+    0.05171,
+    0.1047
    ],
    "post": [
-    0.02596,
-    0.04084,
-    0.06427
+    0.02586,
+    0.04072,
+    0.06412
    ],
    "n": 0,
    "what": "g /h of unplayed BN11: hand latent (prior) vs the full model (post)"
   },
   "g13": {
    "prior": [
-    0.04135,
-    0.0692,
-    0.1406
+    0.04123,
+    0.06878,
+    0.1393
    ],
    "post": [
-    0.0375,
-    0.07638,
-    0.1555
+    0.0373,
+    0.07602,
+    0.1549
    ],
    "n": 0,
    "what": "g /h of unplayed BN13: hand latent (prior) vs the full model (post)"
   },
   "g14": {
    "prior": [
-    0.03496,
-    0.05851,
-    0.1189
+    0.03489,
+    0.05821,
+    0.1179
    ],
    "post": [
-    0.05382,
-    0.09285,
-    0.1602
+    0.05337,
+    0.09214,
+    0.1591
    ],
    "n": 0,
    "what": "g /h of unplayed BN14: hand latent (prior) vs the full model (post)"
@@ -489,26 +516,26 @@
    "chosen": "full",
    "what": "hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon) + v_n",
    "elpd": {
-    "hand": -9.788,
-    "exch": -5.941,
-    "amc": -6.127,
-    "full": -3.673,
-    "exchG": -4.285,
-    "amcG": -4.34,
-    "fullG": -4.416
+    "hand": -9.836,
+    "exch": -5.912,
+    "amc": -6.102,
+    "full": -3.687,
+    "exchG": -4.25,
+    "amcG": -4.301,
+    "fullG": -4.414
    },
    "beta": [
-    -2.819,
-    -0.2308,
-    0.1568,
-    0.06766,
-    0.2231
+    -2.824,
+    -0.2301,
+    0.1564,
+    0.06633,
+    0.221
    ],
    "betaSd": [
-    0.143,
-    0.1553,
-    0.1094,
-    0.178,
+    0.1431,
+    0.1555,
+    0.1095,
+    0.1782,
     0.1083
    ],
    "feats": [
@@ -518,7 +545,7 @@
     "lnWDD"
    ],
    "tau": [
-    0.2313,
+    0.2319,
     0.1823
    ]
   }

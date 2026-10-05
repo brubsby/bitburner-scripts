@@ -13,6 +13,7 @@
 //          --g-model auto|hand|exch|amc|full (gmodel.mjs; auto = best by leave-one-out)
 //          --no-disc (no model-discrepancy term) | --no-adapt (skip KG / bound / CVaR / multi-fidelity)
 //          --no-stanek (Stanek's Gift never accepted: the pre-Stanek plan, draw for draw)
+//          --no-blade-go (the Bladeburner leg without the Go farm's Tetrads combat channel: the leg before 2026-10-05)
 //          --five-sleeves (5 sleeves everywhere: SF10.2/10.3 and BN10's own extra sleeve worth nothing — the pre-fleet plan)
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //          --w0-window H (the w0r1d_d43m0n window fixed at H hours: 1 = the old model)
@@ -79,9 +80,9 @@ const { BB_PARAMS, RHO, SIGMA_PLAYED, rng, normal, drawZ, worldOf, paramIds } = 
 const { ROUTES, clearTime, hackParts, favorHours, favorRef, stanekParts } = await import('./routes.mjs')
 const { gridOf, layoutFor, layoutText, giftAvailable } = await import('./stanek.mjs')
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
-const { GO_MEASURED, goScale, goMaxRep, w0PriorMC } = await import('./go.mjs')
+const { GO_MEASURED, GO_REF, goScale, goMaxRep, w0PriorMC, bladeGoOf } = await import('./go.mjs')
 const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability, appliedObs } = await import('./posterior.mjs')
-const { runObserve, printMove } = await import('./observe.mjs')
+const { runObserve, printMove, clearLegSpecs } = await import('./observe.mjs')
 const { looCompare, MODEL_WHAT } = await import('./gmodel.mjs')
 const { fitDiscrepancy, lnHoursMoments, PRIOR_SD } = await import('./discrepancy.mjs')
 const { cvar, infoRelaxation, foldsOf, openLoop, kgOfMove, mfmc, seMean } = await import('./adaptive.mjs')
@@ -132,14 +133,18 @@ const start = inProg ? plus(entry, inProg) : entry
 // 2. The surrogate (built incrementally over the ENTRY lattice, a superset)
 // ---------------------------------------------------------------------------
 t0 = performance.now()
-const bstats = await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, log: (s) => process.stderr.write(s + '\n') })
+// the legs every logged Bladeburner clear is read against (observe.mjs CLEAR_LEGS: its own Go farm)
+const EXTRA_BB = clearLegSpecs(await (await import('../nodechoice/measure.mjs')).nodeSegments())
+// --no-blade-go: the Bladeburner grid without the Go farm's Tetrads channel (the leg before 2026-10-05; the farm's own value)
+const BLADE_GO = !has('--no-blade-go')
+const bstats = await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, extraBb: EXTRA_BB, bladeGo: BLADE_GO, log: (s) => process.stderr.write(s + '\n') })
 tick('surrogate build', t0)
 if (has('--build-only')) {
   console.log(JSON.stringify(bstats))
   process.exit(0)
 }
 t0 = performance.now()
-let S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct') })
+let S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct'), bladeGo: BLADE_GO })
 tick('surrogate load', t0)
 
 // ---------------------------------------------------------------------------
@@ -159,8 +164,8 @@ if (has('--observe')) {
     const e2 = await measureEconomy({ rates: RATES, posteriorFile: POST_FILE })
     if (JSON.stringify(e2.profile) !== JSON.stringify(econ.profile)) {
       for (const x of [econ, econRaw]) Object.assign(x, { profile: e2.profile, rates: e2.rates })
-      await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, log: (s) => process.stderr.write(s + '\n') })
-      S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct') })
+      await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, extraBb: EXTRA_BB, bladeGo: BLADE_GO, log: (s) => process.stderr.write(s + '\n') })
+      S = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct'), bladeGo: BLADE_GO })
       console.log('  rates re-fitted on the new in-run reading(s); the surrogate rebuilt for the changed nodes\n')
     }
     tick('observe: rates re-fit', t0)
@@ -302,7 +307,11 @@ for (const x of fm1) {
 const lvWith = (s, n, l) => (m) => (m === n ? l : lvl(s, m))
 {
   const w = mid
-  console.log(`\nTHE IPvGO MODEL (go.mjs), mid world — MEASURED: Daedalus ${GO_MEASURED.powerPerH}/h x goP ${w.sf.goP}, win ${GO_MEASURED.pWin}, ${GO_MEASURED.gamesPerH} games/h, rep ${w.sf.rep14}/h per level at level ${w.sf.lvl14}; abar (the measured runs' mean Daedalus bonus over a ${econ.profile.cycleHours.toFixed(2)}h window) ${w.go.abar.toFixed(3)}; ASSUMED eps14 ${w.sf.eps14}; DERIVED w0 ${w.sf.w0.toFixed(0)}/h`)
+  console.log(`\nTHE IPvGO MODEL (go.mjs), mid world — MEASURED (release 3c): Daedalus ${GO_MEASURED.powerPerH}/h x goP ${w.sf.goP}, win ${GO_MEASURED.pWin}, ${GO_MEASURED.gamesPerH} games/h, rep ${w.sf.rep14}/h per level at level ${w.sf.lvl14}; abar (the farm now, mean Daedalus bonus over a ${econ.profile.cycleHours.toFixed(2)}h window, wiped at each install) ${w.go.abar.toFixed(3)} vs aref ${w.go.aref.toFixed(3)} (the measured runs' farm, ${GO_REF.powerPerH}/h); ASSUMED eps14 ${w.sf.eps14}; DERIVED w0 ${w.sf.w0.toFixed(0)}/h; cheats 0 on 5x5 (MEASURED, release 3), NOT PRICED on 19x19`)
+  {
+    const bg = bladeGoOf(1, lvl(start, 14))
+    console.log(`  the Bladeburner leg's farm (bbsim o.go): Tetrads ${bg.perHour}/h from the node's start, combat level multipliers x effect at GoPower x ${bg.sf14 ? 2 : 1} (BN14 x${4 * (bg.sf14 ? 2 : 1)}), no install so no wipe; after 10/20/30h: ${[10, 20, 30].map((h) => `x${(1 + Math.log(bg.perHour * h + 1) * Math.pow(bg.perHour * h + 1, 0.3) * 0.002 * bg.power * (bg.sf14 ? 2 : 1)).toFixed(2)}`).join(' / ')} (BN14 ${[10, 20, 30].map((h) => `x${(1 + Math.log(bg.perHour * h + 1) * Math.pow(bg.perHour * h + 1, 0.3) * 0.002 * bg.power * 4 * (bg.sf14 ? 2 : 1)).toFixed(2)}`).join(' / ')})`)
+  }
   console.log('  BN14 from the plan start, by the SF14 level it is entered with (the go route = the hacking route at GoPower 4):')
   console.log('  entry   scale  Hsim     g      x goG   W(exit)  favor life (ref)   early   go route   blade   [hack w/o Go: phase-1 pricing]')
   const p1 = worldOf(econ, {}, { ...wOpts, phase1: true })

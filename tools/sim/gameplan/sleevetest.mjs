@@ -88,7 +88,7 @@ if (MODE === 'surrogate') {
     skip(`inputs unavailable: ${err?.message ?? err}`)
   }
   // SL2 (a): bbLeg at 5 sleeves (and the default) IS the old grid: the 5-infiltrator median, recomputed
-  // from the cache with the old key scheme (bbSpec without a fleet), cell by cell
+  // from the cache with the old key scheme (bbSpec without a fleet; the grid's Go farm, S.bbGo), cell by cell
   const fs = await import('node:fs')
   const path = await import('node:path')
   const bb = JSON.parse(fs.readFileSync(path.join(sur.CACHE_DIR, 'bb.json'), 'utf8'))
@@ -102,7 +102,7 @@ if (MODE === 'surrogate') {
   for (const n of sur.bbNodes())
     for (const l6 of sur.L6)
       for (const l7 of sur.L7) {
-        const ls = Array.from({ length: 5 }, (_, i) => bb[sur.bbKeyOf(sur.bbSpec(n, l6, l7, i + 1, bp.POLICY))]).map((r) => (r?.hours ? r.hours - (r.joinH ?? 0) : null)).filter((x) => x !== null)
+        const ls = Array.from({ length: 5 }, (_, i) => bb[sur.bbKeyOf(sur.bbSpec(n, l6, l7, i + 1, bp.POLICY, null, S.bbGo(n)))]).map((r) => (r?.hours ? r.hours - (r.joinH ?? 0) : null)).filter((x) => x !== null)
         const old = ls.length > 2.5 ? med(ls) : null
         const a = S.bbLeg(n, l6, l7)?.median ?? null
         const b = S.bbLeg(n, l6, l7, 5)?.median ?? null

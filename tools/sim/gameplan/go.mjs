@@ -25,16 +25,37 @@
 //               0.4, HackingSpeedMultiplier 0.3, AugmentationMoneyCost 1.5,
 //               WorldDaemonDifficulty 5, combat levels 0.5, CrimeSuccessRate 0.4
 //                                                       BitNode/BitNode.tsx:1040-1083
-//   MEASURED  Daedalus node power 4391/h and win rate 0.85 at 5x5 with the
-//             solver answering (goplan.js POWER_PER_HOUR / WIN_RATE, 60 games);
-//             160 games/h (.telemetry/go.txt, BN9's last go.js process,
-//             2026-10-02: 337 games 12:34Z -> 14:40Z; the user's figure ~167);
+//   MEASURED  THE FARM NOW (release 3c/3d, 2026-10-04/05: goplan.POWER_PER_HOUR,
+//             ARM_PRIOR, WIN_RATE — tools/sim/go-w0.mjs harness, 30 paired
+//             layouts per arm, model session search + ponder + pre-send +
+//             play-on, re-timed to the fast pipeline): 5x5 node power per hour
+//             Illuminati 125180, Daedalus 27608, Tetrads 23991, Slum Snakes
+//             22813, The Black Hand 15083, Netburners 12230; win rates
+//             0.96-1.0; Daedalus ~11.2 s a game (ARM_PRIOR) -> ~320 games/h.
+//             Live check (9cf8c90, go-games.txt Tetrads@5): 21950/h against
+//             the harness's 23991 (x0.915) — goP's mid.
+//             THE FARM THE MEASURED RUNS HAD (GO_REF): Daedalus 4391/h, win
+//             0.85, 160 games/h (goplan.js 5e1c2c0, 60 games; BN9's last
+//             go.js, .telemetry/go.txt 2026-10-02: 337 games 12:34Z -> 14:40Z).
+//             Every played node's g and the favor-life rep below were measured
+//             with at most this farm, so it is the reference the g factor and
+//             the favor life's 'already inside g' are normalised by — the
+//             current farm's bonus over it is NEW, and is what goG credits.
+//             (Before 2026-10-03 the gameplan read goplan's live table for
+//             both, so every solver release since d8335ad cancelled out of
+//             goG: the ~6x faster farm was worth nothing.)
 //             Daedalus faction-work rep per hacking level (telemetry
 //             history.jsonl, every Daedalus-work segment below 150 favor in
 //             BN1/4/5/8/9/10, FactionWorkRepGain and favor divided out:
 //             p10 72, median 97, p90 150 rep/h per level); the hacking level
 //             a favor life is ground at (same segments: 3,500-5,900 in nodes
 //             of HackingLevelMultiplier 0.35-1 — no trend with it).
+//             CHEATS (go.cheat, SF14.2+ / BN14.2+): release 3 already wins ~all
+//             5x5 games and fills the board, so measured (7cd9ffe, 30 paired
+//             layouts per arm, go-w0 --cheat) they LOSE on every 5x5 opponent:
+//             Illuminati -13%, Daedalus -5%, Slum Snakes -15%, Tetrads +0.7%
+//             (noise); go.js keeps them off. PRICED AT 0 on 5x5 (measured);
+//             on bigger boards (the 19x19 hidden opponent) NOT PRICED (unmeasured).
 //   ASSUMED   (lo/mid/hi in effects.SF_PARAMS, drawn by params.mjs)
 //             eps14  the elasticity of the hacking route's growth g to the Go
 //                    rate bonus (mid 0.12 reproduces nextnode's d14 = 2% at
@@ -60,25 +81,37 @@
 //                    and goweights' channels are ~0 there (no install left for
 //                    money or rep to reach, no pre-install exp), so
 //                    chooseOpponent does not share the slot.
-//   NOT PRICED  the go.cheat API (BN14.2 itself, or SF14 >= 2 elsewhere,
-//             netscriptGoImplementation.ts:486-497; +25% success at 14.3,
-//             :564): it raises win rate and so node power and the favor
-//             stream modestly — flagged, priced at zero. The Tetrads combat
-//             bonus on the Bladeburner route's gym. The hacknet bonus.
+//   PRICED ON THE BLADEBURNER ROUTE (bladeGoOf, surrogate bb grid -> bbsim o.go):
+//             the farm on Tetrads (its combat channel: str/def/dex/agi level
+//             multipliers) from the node's start, at POWER_PER_HOUR.Tetrads x
+//             goP mid, scale GoPower x (SF14 >= 1 ? 2 : 1) — x2 everywhere at
+//             SF14.1, x8 in BN14. The leg has no install (the route never
+//             installs), so the wipe never lands there; bbsim zeroes it at an
+//             install when a spec asks for installs (Go/Go.ts:34-47).
+//   NOT PRICED  the go.cheat API on boards bigger than 5x5 (BN14.2 itself, or
+//             SF14 >= 2 elsewhere, netscriptGoImplementation.ts:486-497; +25%
+//             success at 14.3, :564): unmeasured on 19x19. goP's spread is not
+//             drawn on the Bladeburner leg (mid only). The hacknet bonus.
 
 import { favorToRep, repToFavor, goFavorStreamOf } from '../../../favor.js'
-import { POWER_PER_HOUR, WIN_RATE, effectAt, meanEffect } from '../../../goplan.js'
+import { POWER_PER_HOUR, WIN_RATE, ARM_PRIOR, OPPONENTS, effectAt, meanEffect } from '../../../goplan.js'
 
 /** Go/Constants.ts bonusPower: Daedalus 1.1 (faction_rep, company_rep), w0r1d_d43m0n 2 (hacking level). */
 export const BONUS_POWER = { Daedalus: 1.1, w0r1d_d43m0n: 2 }
 
+/** Daedalus 5x5 seconds a game, the model arm at go.js's budget (goplan ARM_PRIOR [games, p, bw, bl, [s, sd]]). */
+const DAEDALUS_S = ARM_PRIOR.Daedalus[5].model[4][0]
+/** THE FARM NOW (release 3c, see the header): what every clear from here plays with. */
 export const GO_MEASURED = {
-  gamesPerH: 160,
+  gamesPerH: Math.round(3600 / DAEDALUS_S),
   pWin: WIN_RATE.Daedalus,
   powerPerH: POWER_PER_HOUR.Daedalus,
+  tetradsPerH: POWER_PER_HOUR.Tetrads,
   repPerLevelH: { lo: 72, mid: 97, hi: 150 },
   grindLevel: { lo: 3500, mid: 4700, hi: 5900 },
 }
+/** THE FARM THE MEASURED RUNS HAD (the reference g and the favor-life rep were measured against). */
+export const GO_REF = { powerPerH: 4391, pWin: 0.85, gamesPerH: 160, what: 'goplan 5e1c2c0 Daedalus 4391/h, win 0.85 (60 games); 160 games/h (BN9 go.txt 2026-10-02)' }
 /** The Daedalus hacking requirement (Faction/FactionInfo.tsx:141-145): a favor life is ground at no lower a level. */
 export const DAEDALUS_LEVEL = 2500
 /** Intelligence's term in the rep formula at the live intelligence (~134): + int/3. */
@@ -93,16 +126,36 @@ export const goMaxRep = (sf14) => (sf14 >= 3 ? 400e3 : sf14 === 2 ? 300e3 : sf14
 /** Every Go bonus scales with GoPower x (SF14 >= 1 ? 2 : 1) (effect.ts:18-21): the scale relative to the measured nodes (GoPower 1, no SF14). */
 export const goScale = (goPower, sf14) => goPower * (sf14 >= 1 ? 2 : 1)
 
-/** The measured runs' time-averaged Daedalus bonus over one install window (effect - 1, GoPower 1, no SF14). */
+/**
+ * The farm NOW: its time-averaged Daedalus bonus over one install window (effect - 1,
+ * GoPower 1, no SF14) at goP x the harness rate. The install wipe (Go/Go.ts:34-47) is
+ * what the time average prices: the bonus restarts from 0 every window.
+ */
 export function baseBonus(cycleHours, powerScale = 1) {
   return meanEffect(GO_MEASURED.powerPerH * powerScale, BONUS_POWER.Daedalus, cycleHours, 1, 0) - 1
 }
+/** The reference farm's (GO_REF) bonus over the same window: what the measured runs' g already holds. */
+export function refBonus(cycleHours) {
+  return meanEffect(GO_REF.powerPerH, BONUS_POWER.Daedalus, cycleHours, 1, 0) - 1
+}
 
 /**
- * The hacking route's growth factor from Go at scale s: ((1 + s abar)/(1 + abar))^eps,
- * abar the measured-run mean bonus. s = 1 (every measured node) gives exactly 1.
+ * The hacking route's growth factor from Go at scale s: ((1 + s abar)/(1 + aref))^eps,
+ * abar the farm now (baseBonus), aref the measured runs' (refBonus; default abar: the
+ * old one-farm form, goplan.goExitInputsOf's). s = 1 with abar = aref gives exactly 1.
  */
-export const goGFactor = (s, abar, eps) => Math.pow((1 + s * abar) / (1 + abar), eps)
+export const goGFactor = (s, abar, eps, aref = abar) => Math.pow((1 + s * abar) / (1 + aref), eps)
+
+/**
+ * THE BLADEBURNER ROUTE'S GO FARM (bbsim o.go): Tetrads from the node's start at the
+ * farm's rate x goP (mid), at GoPower x the SF14 doubling. sf14: the level the grid is
+ * priced at (the plan's entry state; every state the lattice reaches from SF14.1 on
+ * has the doubling). perHour rounded (it is part of the cache key).
+ */
+export const BLADE_GO_P = 0.9
+export function bladeGoOf(goPower, sf14, perHour = GO_MEASURED.tetradsPerH * BLADE_GO_P) {
+  return { perHour: Math.round(perHour), power: OPPONENTS.Tetrads.power, goPower, sf14: sf14 >= 1 ? 1 : 0 }
+}
 
 /** The w0r1d_d43m0n hacking-level multiplier at the exit: effect(w0 x hours) at scale s. 1 when w0 = 0. */
 export const w0rldDiv = (s, w0, hours = W0RLD_HOURS) => (w0 > 0 ? effectAt(w0 * hours, BONUS_POWER.w0r1d_d43m0n, s, 0) : 1)
@@ -122,14 +175,15 @@ export const exitShift = (h, g, W) => (W > 1 ? Math.max(Math.min(h, 0.5), h - Ma
  *            applied to the faction's favor at once (scoring.ts:74-77)
  *   ground   repPerLevelH/(1+abar) x level x fwrg x (1 + favor/100) x effect(P(t0+t)) at scale s
  * Done when Go rep + ground rep >= need (the install converts it, Faction.ts:79).
- * o: { ftd, fwrg, sf14, scale, level, repPerLevelH, abar, powerScale, gamesPerH, pWin, headH, dt, maxH }
+ * o: { ftd, fwrg, sf14, scale, level, repPerLevelH, abar, powerScale, powerPerH, gamesPerH, pWin, headH, dt, maxH }
+ * (abar: the bonus the rep measurement was taken under — the reference farm's, refBonus)
  * Returns { hours, need, goRep, groundRep } (hours Infinity past maxH).
  */
 export function favorLife(o) {
   const need = favorToRep(Math.floor(150 * o.ftd))
   if (!(need > 0)) return { hours: 0, need: 0, goRep: 0, groundRep: 0 }
   const st = goFavorStreamOf({ gamesPerHour: o.gamesPerH ?? GO_MEASURED.gamesPerH, pWin: o.pWin ?? GO_MEASURED.pWin, sf14: o.sf14, banked: 0 })
-  const P = GO_MEASURED.powerPerH * (o.powerScale ?? 1)
+  const P = (o.powerPerH ?? GO_MEASURED.powerPerH) * (o.powerScale ?? 1)
   const head = o.headH ?? FAVOR_HEAD_H
   const base = (o.repPerLevelH / (1 + o.abar)) * o.level * o.fwrg
   const dt = o.dt ?? 0.01
@@ -156,8 +210,15 @@ export function favorLife(o) {
   return { hours: t, need, goRep: goAt(t), groundRep: ground }
 }
 
-/** The favor-life parameters of node `m` (its multipliers) at SF14 level `sf14`, in world p (effects.SF_PARAMS values). */
-export function favorLifeOf(m, sf14, p, abar) {
+/**
+ * The favor-life parameters of node `m` (its multipliers) at SF14 level `sf14`, in world p
+ * (effects.SF_PARAMS values). aref: the reference farm's bonus (refBonus), which the rep
+ * measurement is divided by. era 'now' (default): the farm every clear from here plays
+ * with (GO_MEASURED x goP); 'ref': the farm the measured runs had (GO_REF) — the favor life
+ * already inside a played node's g (routes.mjs favorRef).
+ */
+export function favorLifeOf(m, sf14, p, aref, era = 'now') {
+  const ref = era === 'ref'
   return favorLife({
     ftd: m.FavorToDonateToFaction,
     fwrg: m.FactionWorkRepGain,
@@ -165,8 +226,8 @@ export function favorLifeOf(m, sf14, p, abar) {
     scale: goScale(m.GoPower, sf14),
     level: Math.max(DAEDALUS_LEVEL, p.lvl14) + INT_TERM,
     repPerLevelH: p.rep14,
-    abar,
-    powerScale: p.goP,
+    abar: aref,
+    ...(ref ? { powerPerH: GO_REF.powerPerH, powerScale: 1, gamesPerH: GO_REF.gamesPerH, pWin: GO_REF.pWin } : { powerScale: p.goP }),
   })
 }
 
@@ -247,54 +308,56 @@ export function w0PerGame(p, sW, sL, difficulty = W0_DIFFICULTY) {
  * them through the payout above. Drawn independently (stated: a stronger bot
  * raises p and both scores together — not modelled).
  *
- *   pWin       Beta. INFORMED by the measured Illuminati 5x5 win rate ~0.19-0.21
- *              live (.telemetry/go-posterior.txt, 40 games: decayed 5.3 W /
- *              22.4 L) and 0.25 in the 60-game harness — the hidden opponent
- *              plays the SAME move set (isSmart + the Illuminati priority list,
- *              goAI.ts:225-259): Beta(1.4, 5.6), mean 0.2, ~7 pseudo-games —
- *              WIDE, since 19x19 is a different game for a 1.5s-a-move search
- *              against 7 handicap routers and komi 9.5 — then the harnesses on
- *              the bitverse board itself (W0_HARNESS: 0 wins in 41) at half
- *              weight: Beta(1.4, 26.1), mean 0.05, p90 ~0.11.
+ * RE-DERIVED 2026-10-05 for the solver go.js plays the hidden board with NOW:
+ * SETTINGS.bigBoard.backend 'auto' = KataGo b18 on the bubtop GPU at 800
+ * visits, holes sent white, no ponder on 19x19 (tools/katago/README.md), with
+ * the CPU b10 at 400 visits only while the GPU is down. The uct node-power
+ * search the old prior was built on (0 wins in 41, ~961/h) is no longer what
+ * plays — it is the fallback's fallback.
+ *
+ *   pWin       Beta(2.5, 6), mean 0.29: the KataGo GPU harness games on the
+ *              bitverse board (go-w0.mjs vs the game's own getMove, paired
+ *              layouts --layoutseed 2): 1 win in 7 (800 visits: 0/4 pondered,
+ *              1/3 not) and 2 in 6 (the holes-colour study's 'white' arm, the
+ *              shipped mapping) = 3 in 13, at HALF weight on a uniform prior
+ *              (harness, never live: the 5x5 harness read Illuminati 0.25-0.38
+ *              where live read ~0.2 under the old solver). p10/p90 ~0.11/0.50.
  *   fWin       black's score on a win / 267. A win needs B >= W + 9.5, so
- *              B > ~135 of the ~260 decided points: 0.5 + 0.5 Beta.
- *   fLoss      black's score on a loss / 267: 0.5 Beta(8, 4.5) — mean 0.32
- *              (85 points), p10/p90 ~63/107: the 19x19 node-power search go.js
- *              plays scores 84-87 a loss in the harness (the 5x5 search at
- *              1500ms: 29-97, mean 68), widened for harness vs live. THE
- *              FLOOR'S DRIVER: at a win rate near 0 nearly every game pays
- *              0.5 x 2.5 x this score.
- *   gamesPerH  split log-normal p10/p50/p90 7.5/8.8/10.5, from the clocks a
- *              19x19 game runs on (W0_HARNESS): ~150 moves a side with the
- *              node-power search; each AI reply waits 4.4 waitCycles x 200ms
- *              (40ms only while offline bonus time lasts, goAI.ts:877-883) +
- *              one sleep(10) per board row in the pattern match
- *              (patternMatching.ts:104, 19 rows) + 0.3-0.5s of its own
- *              compute ~ 1.4s; our move is the 800ms search go.js requests on
- *              19x19 + ~0.45s solver round trip + 0.1s idle ~ 1.35s. 150 x
- *              2.7s ~ 405s: ~8.9 games/h (go-w0.mjs's own clock: ~400s). The
- *              5x5 search at 1500ms ran 164 moves at ~3.3s: 6.6/h, the low
- *              tail. The same clocks give the 5x5 live pace: 8.9 moves a game
- *              (.telemetry/go.txt, 3915 moves / 438 games, 175/h) x ~2.3s.
+ *              B > ~135 of the ~260 decided points: 0.5 + 0.5 Beta(2, 5.5).
+ *   fLoss      black's score on a loss / 267: 0.5 Beta(11, 3) — mean 0.39
+ *              (105 points), p10/p90 ~86/122: KataGo's games score 87-132 a
+ *              game (README: 132 over 4 pondered losses, 98 over 1 won + 2
+ *              lost, 102 over 2 won + 4 lost, 87 at 1600 visits), against uct's
+ *              84-87. THE FLOOR'S DRIVER: at a win rate near 0 nearly every
+ *              game pays 0.5 x 2.5 x this score.
+ *   gamesPerH  split log-normal p10/p50/p90 6.5/8.8/10.5: ~150 moves a side,
+ *              each AI reply ~1.4s (4.4 waitCycles x 200ms, goAI.ts:877-883 +
+ *              one sleep(10) per board row, patternMatching.ts:104 + its own
+ *              0.3-0.5s), our move KataGo GPU ~0.8s + the fast pipeline's
+ *              ~0.1s: ~2.3-2.7s a move pair, ~8.8 games/h (the old uct 800ms
+ *              clock, go-w0.mjs: ~400s a game). The low tail is the GPU down:
+ *              the CPU b10 at ~5.5s a move runs ~3.5 games/h.
+ * Composed: p10/p50/p90 ~2.2k/3.2k/4.4k per hour (GP8 re-derives it), against
+ * the harness's 1.6-4.1k/h (1653 pondered 0/4, 3554 1/3, 4112 2/6) and uct's 961.
  */
 export const W0_PRIOR_INPUTS = {
-  pWin: { beta: [1.4, 26.1], what: 'win rate vs ???????????? on the bitverse board: Beta(1.4, 5.6) from Illuminati 5x5 (mean 0.2, 7 pseudo-games) + the harnesses 0/41 at half weight' },
-  fWin: { lo: 0.5, span: 0.5, beta: [2, 5.5], what: "black's score on a win / 267: 0.5 + 0.5 Beta(2, 5.5) (no win seen in the harness)" },
-  fLoss: { lo: 0, span: 0.5, beta: [8, 4.5], what: "black's score on a loss / 267: 0.5 Beta(8, 4.5) (the 19x19 node-power search: 84-87 a game in the harness)" },
-  gamesPerH: { lo: 7.5, mid: 8.8, hi: 10.5, what: 'finished 19x19 games per hour (timers + the solver at 800ms, see above)' },
+  pWin: { beta: [2.5, 6], what: 'win rate vs ???????????? on the bitverse board: KataGo GPU 800 visits, 3 wins in 13 harness games (1/7 + 2/6) at half weight on Beta(1, 1)' },
+  fWin: { lo: 0.5, span: 0.5, beta: [2, 5.5], what: "black's score on a win / 267: 0.5 + 0.5 Beta(2, 5.5)" },
+  fLoss: { lo: 0, span: 0.5, beta: [11, 3], what: "black's score on a loss / 267: 0.5 Beta(11, 3), mean 105 (KataGo 87-132 a game in the harness)" },
+  gamesPerH: { lo: 6.5, mid: 8.8, hi: 10.5, what: 'finished 19x19 games per hour (the AI\'s timers + KataGo GPU ~0.8s a move; the low tail the CPU fallback)' },
 }
 
 /**
- * THE HARNESSES ON THE BITVERSE BOARD (2026-10-03), our solver against the
- * game's own getMove for the hidden opponent — harness, not live:
- *   go-boardsize.mjs 19x1500@w0r1d_d43m0n (the 5x5 search at 1500ms): 8 games,
- *     0 won, black 29-97 on a loss (mean 68), 145-191 moves a side;
- *   go-w0.mjs (e241fd5, /tmp/w0runs A-F): 33 games over the solver variants,
- *     0 won; the 19x19 node-power search go.js now sends (800ms, area x streak
- *     objective, widening, pass): black 84.3 / 86.7 a loss (runs B, C), ~150
- *     moves a side, ~400s a game on its live-clock model -> 948-961 power/h.
- * 41 games, none won. The 5x5 Illuminati harness read 0.25-0.38 where live
- * reads ~0.2, so the harness is not taken as the live rate: half weight in pWin.
+ * THE HARNESSES ON THE BITVERSE BOARD, our solver against the game's own
+ * getMove for the hidden opponent — harness, not live:
+ *   2026-10-03, uct (the old prior's evidence, superseded as the solver):
+ *     go-boardsize.mjs 19x1500 8 games 0 won (black 29-97 a loss, mean 68);
+ *     go-w0.mjs (e241fd5) 33 games 0 won, the node-power search 84.3/86.7 a
+ *     loss, ~400s a game -> 948-961 power/h.
+ *   2026-10-04, KataGo GPU b18 800 visits (tools/katago/README.md, --layoutseed 2):
+ *     pondered 4 games 0 won black 132 -> 1653/h; not pondered 3 games 1 won
+ *     black 98 -> 3554/h; holes 'white' 6 games 2 won black 102 -> 4112/h
+ *     ('owner' 0/6 black 118 -> 1736/h, not shipped); 1600 visits 0/3 black 87.
  */
 export const W0_HARNESS = {
   games: 41,
@@ -305,6 +368,7 @@ export const W0_HARNESS = {
   aiComputeSPerReply: [0.27, 0.47],
   liveSPerGame: { boardsize1500: 540, nodePowerSearch: 403 },
   powerPerH: { nodePowerSearch: 961, oldSearch: 697 },
+  katago: { games: 13, wins: 3, runs: [{ what: 'gpu800 pondered', games: 4, wins: 0, black: 132, powerPerH: 1653 }, { what: 'gpu800', games: 3, wins: 1, black: 98, powerPerH: 3554 }, { what: 'gpu800 holes white', games: 6, wins: 2, black: 102, powerPerH: 4112 }] },
 }
 
 // a small seeded generator (params.mjs's mulberry32; go.mjs cannot import params: params imports go)

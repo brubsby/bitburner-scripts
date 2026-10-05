@@ -74,11 +74,12 @@ C(node, state) is `min` over the routes that apply:
 | | |
 | --- | --- |
 | SOURCE | `effect = 1 + ln(n+1)(n+1)^0.3 x 0.002 x bonusPower x GoPower x (SF14?2:1)`; favor `getMaxRep()/200` per even-streak win to `getMaxRep()` = 100/200/300/400k at SF14 0-3; donations at favor 150 x FavorToDonate; faction rep `x FactionWorkRepGain x (1 + favor/100)`; node power zeroed per install; w0r1d_d43m0n (bonusPower 2, hacking level) after The Red Pill; BN14's multipliers. GP4 runs each against the game. |
-| MEASURED | Daedalus 4391 power/h, win 0.85 (goplan.js, 60 games at 5x5); 160 games/h (go.txt, BN9); Daedalus work rep/h per level 72/97/150 and the favor-life level 3500/4700/5900 (history.jsonl, BN1/4/5/8/9/10) |
-| DERIVED | `w0` (w0r1d_d43m0n node power/h): **1020 / 1570 / 2380** (p10/p50/p90; was an ASSUMED 0/200/1000). The game's payout (endGoGame: black's score x 2.5 for komi 9.5 x the streak multiplier — 0.5 on a loss, 1 + 0.5 min(dry, 8) on a win that breaks a dry streak, 1 + 0.25 min(streak, 8) otherwise; the streak resets each life) in the streak chain's stationary state, composed by Monte Carlo (go.mjs `w0PriorMC`, 20k draws) with four uncertain inputs (go.mjs `W0_PRIOR_INPUTS`, each with its reason): **win rate** Beta(1.4, 26.1), mean 0.05 — Illuminati 5x5 (same AI move set; ~0.2 live, 0.25 harness) as a wide Beta(1.4, 5.6), then the harnesses on the bitverse board itself (go-boardsize 19x1500 and go-w0.mjs: **0 wins in 41**) at half weight; **black's score on a loss** 0.5 x Beta(8, 4.5) of 267, mean 85 — the 19x19 node-power search go.js plays scores 84-87 in the harness (the 5x5 search: 29-97, mean 68) — at a win rate near 0 this is the floor; **on a win** 0.5 + 0.5 Beta(2, 5.5) of 267 (a win needs ~135+); **games/h** 7.5 / 8.8 / 10.5 (~150 moves a side; an AI reply waits 4.4 x 200ms + 19 x 10ms + ~0.4s compute, our move is the 800ms search + ~0.55s round trip and idle — the same clocks give 5x5's live 175/h). At win rate 0 the composition gives 8.8 x 0.5 x 2.5 x 86.7 = 954/h against go-w0.mjs's measured 961/h; the median is higher because a rare win breaks a long dry streak at x5. Rank correlation with w0: win rate 0.81, games/h 0.38, loss score 0.35, win score 0.14. GP4 plays the payout through the game's endGoGame; GP8 re-derives the constants and checks goplan.js's `W0_PRIOR` (1570/h at refP 0.051) agrees. go.js's measured rate still updates it (the obs channel below). NOT CALIBRATED live: no game against the hidden opponent has been played. |
+| MEASURED | **The farm now** (release 3c/3d, 2026-10-04/05; goplan.js `POWER_PER_HOUR`, harness 30 paired layouts/arm): 5x5 Illuminati 125180/h, Daedalus 27608, Tetrads 23991, Slum Snakes 22813, Black Hand 15083, Netburners 12230; win 0.96-1.0; Daedalus ~11.2s a game (~322/h). `goP` = live / harness, mid 0.9 (live Tetrads@5 21950/h vs 23991). **The farm the measured runs had** (`GO_REF`): Daedalus 4391/h, win 0.85, 160 games/h — the reference goG and the favor-life's 'already inside g' are normalised by (before 2026-10-05 both sides read goplan's live table, so every solver release cancelled out of goG). Daedalus work rep/h per level 72/97/150 and the favor-life level 3500/4700/5900 (history.jsonl, BN1/4/5/8/9/10). **Cheats** (go.cheat, SF14.2+/BN14.2+): measured with release 3 (7cd9ffe) they LOSE on every 5x5 opponent (Illuminati -13%, Daedalus -5%, Slum Snakes -15%, Tetrads +-0): priced at 0 on 5x5. |
+| DERIVED | `w0` (w0r1d_d43m0n node power/h): **2100 / 3130 / 4390** (p10/p50/p90, re-derived 2026-10-05 for the solver that now plays the hidden board — KataGo b18 on the bubtop GPU at 800 visits, holes white; was 1020/1570/2380 on the uct search, 0/200/1000 ASSUMED before that). The game's payout (endGoGame: black's score x 2.5 for komi 9.5 x the streak multiplier) in the streak chain's stationary state, composed by Monte Carlo (go.mjs `w0PriorMC`) with: **win rate** Beta(2.5, 6), mean 0.29 — the KataGo GPU harness games, 1 win in 7 (800 visits, 0/4 pondered + 1/3) and 2 in 6 (the shipped holes-white mapping), 3/13 at half weight on a uniform prior; **black's score on a loss** 0.5 Beta(11, 3) of 267, mean 105 (KataGo 87-132 a game); **on a win** 0.5 + 0.5 Beta(2, 5.5); **games/h** 6.5 / 8.8 / 10.5 (KataGo GPU ~0.8s a move + the AI's ~1.4s; the low tail the CPU fallback). Against the harness's 1653-4112/h. GP8 re-derives it; goplan.js's live `W0_PRIOR` still says 1570/h at refP 0.051 — a GP8 WARNING until the next live deploy copies 3130 / 0.294 in. NOT CALIBRATED live. |
 | WINDOW | w0r1d_d43m0n is played from **The Red Pill install to the exit hack** (node power and streak zeroed at that install, Go.ts:34-47), alone: on the hacking route after the terminal install goplan.hackLevelWeight prices the climb while goweights' channels are ~0 (no install left for money/rep, no pre-install exp), so chooseOpponent never shares the slot. Its length is the **post-TRP climb** of the hacking route's own simulation (`climb to exit level`, the surrogate's climb table `.cache/climb.json`, averaged over one install-sawtooth tooth in ln g: 0.3-1.3h by node) **shortened by the bonus it banks**: the exit is `M x W(t) x u(exp t) >= E` and node power lands per finished game, so the window is the exact first passage with W a step per game (go.mjs `goWindow`; its continuous limit is the fixed point `L = T(u0 / W(w0 L))` — GP8: bisection = the damped map, and the per-game scan converges to it as the game length -> 0). `W = effect(w0 x games)` at the node's scale (GoPower 4 in BN14, else 1; x2 with SF14) divides the exit level through the exit shift (ln W / g, installs re-planned). **The result: about one game** (~0.11-0.19h) — u is logarithmic in exp, so the first game's ~10% (BN14: ~40%; with SF14.1 ~80%) clears what is left of the climb — W ~1.10 at GoPower 1 nearly whatever w0 is. `--w0-window 1` restores the old fixed 1h; `--w0-prior 0,200,1000` the old prior (GP4 (d): w0 = 0, or a fixed 1h, reproduces the old numbers). NOT PRICED, flagged: today's exitplan does not know the hidden opponent, so live the bonus only shortens the climb (L0 - L*, ~0.2-1h; `--w0-live` prices that instead of the exit shift); an exitplan that anticipated it would install The Red Pill earlier and farm a longer climb (the Go term w0 d ln W/dL beats g at the climb's end) — worth roughly 6-13h a hacking clear at GoPower 1 and ~40h+ in BN14 on the same model (tools/sim/gameplan: go.mjs WHAT IT SAYS). |
 | ASSUMED | `eps14` (g's elasticity to the Go rate bonus, 0/0.12/0.3 — mid = nextnode's d14), 1h of Go before the favor grind |
-| NOT PRICED | go.cheat (BN14.2, SF14.2+), the Tetrads bonus on the gym, hacknet |
+| BLADEBURNER | the farm on **Tetrads** (combat level multipliers) from the node's start at 23991 x 0.9 = 21592/h, scale GoPower x the SF14 doubling (x2 everywhere at SF14.1, x8 in BN14): bbsim `o.go` re-applies `effect(n)` every 60s, an install zeroes it and it regrows (Go.ts:34-47; the grid's leg never installs). go.mjs `bladeGoOf`, surrogate `gridGoOf`. goP's spread is not drawn on the leg (mid only). |
+| NOT PRICED | go.cheat on boards bigger than 5x5 (unmeasured on 19x19), hacknet |
 
 The favor life's reference is the one inside the g it was measured with: a
 played node's own (at SF14 0), else the measured runs' mean (BN2 excluded: the
@@ -300,6 +301,62 @@ Results: BN14.1 offline (entry state): go route 36.5h (g 0.098, Hsim 39.4h), Bla
 against 802.2h before. BN14.2/14.3 stay 25th/26th (stanek, 20.7h/20.6h; robust order the same).
 Hindsight from the entry state: BN14.1 first E[T] 838.2h vs BN11.1 first 833.7h (+4.5 +- 0.5h,
 P(best) 1%) on the model's own 36.5h BN14.1; priced at the live ~77h it is ~+45h.
+
+### 2026-10-05: today's Go and Bladeburner, BN14.1 observed, BN14.2 in progress
+
+What changed in the model (each in its file's header):
+
+- **The Go farm now** (go.mjs `GO_MEASURED`, release 3c: Daedalus 27608/h, Tetrads 23991/h, ...) is
+  separated from **the farm the measured runs had** (`GO_REF`, Daedalus 4391/h). Before, both sides of
+  goG and the favor life's reference read goplan's live table, so every solver release cancelled out.
+  `goP` is now live / harness (0.5 / 0.9 / 1.05). The install wipe stays priced as the window mean.
+- **The Bladeburner leg plays the Go farm** (bbsim `o.go`): Tetrads from the node's start at 21592/h,
+  combat level multipliers x effect at GoPower x the SF14 doubling (x2.4 / x2.8 / x3.1 after 10/20/30h
+  at SF14.1; BN14 x6.5 / x8.1 / x9.3). An install zeroes it (the grid's leg never installs).
+  `--no-blade-go` prices the leg without it.
+- **bbsim plays bbplan's code of the day**: bbplan.js is in the bb cache key (it was not, so a policy
+  code change left the grid stale). Today's policy (0149710 skills, 7744427 black ops) without the
+  farm: BN6 leg 27.3h -> 21.4h.
+- **Cheats**: priced at 0 on 5x5 (measured release 3, 7cd9ffe: all lose), NOT PRICED on 19x19.
+- **w0** re-derived for KataGo GPU (3/13 harness wins at half weight, loss score ~105):
+  2100 / 3130 / 4390 per hour (was 1020 / 1570 / 2380). goplan.js's live `W0_PRIOR` still says 1570
+  (GP8 WARN until a live deploy).
+- **A repeat clear is a new segment** (measure.mjs `isNewClear`, rates.mjs): BN14.1 -> BN14.2 had read
+  as ONE node in progress, so observe never ingested BN14.1 and the plan planned BN14.1 as still in
+  progress.
+- **k**: the prior is the posterior over BN6.1 (1.223) and BN4.3 (0.900), 0.933 / 1.034 / 1.139. Those
+  readings are kept as logged, because each is live / the leg of the policy it played. Today's leg
+  would read them 1.56 / 1.14, which is the policy's own move. BN14.1 reads **0.874**: 37.66h, less
+  1.63h for the retrains after its two voided installs (6.78h and 15.62h, the model error 1c484da fixed),
+  less an opening of 3.79h, over a leg of 36.89h. The leg uses today's policy and its own farm (8000/h
+  effective, GoPower 4, no SF14; observe.mjs `CLEAR_LEGS`). Posterior k 0.891 / 0.970 / 1.05.
+  BN14.1's open reads 3.52h, measured against its own gym (the grid's would be the farm's x8).
+- **Fleet axis consistency** (BB_SLEEVES = 5 infiltrators vs the live pick at 5): within 1% on
+  BN1-6/11 and 3-4% on BN7/10/14. It is 7% on BN9 and 14% on BN13 (inf5 47.3h vs pick i4s1 40.6h).
+  k is defined on inf5, so BN13's Bladeburner leg is priced pessimistically. That route does not win
+  there (stanek does).
+
+Results (BN14.2 4.0h in, 100 draws, seed 1): next after BN14.2 is **BN7.1** (E[T] 448.7h,
+P(best) 93%; BN6.2 is +1.2 +- 0.1h, BN9.2 +1.7h, BN11.1 +2.6h). Mid-world optimum 457.4h, robust
+order 450.4h, perfect information 448.6h (gap 1.8h). BN14.2's own hours (mid) are 22.4h: the
+Bladeburner route 22.5h vs the go route 26.6h. The live run is on the Bladeburner route.
+
+BN14.3 right after BN14.2 costs +6.3h ("BN14 x1 first"). It goes 19th (mid) or 25th (robust).
+
+The order (mid): BN7.1, BN9.2, BN9.3, BN6.2, BN6.3, BN10.2, BN10.3, BN7.2, BN7.3, BN3.1-3, BN5.2-3,
+BN11.1-3, all Bladeburner (11-27h each). Then the stanek hacking clears: BN13.1, BN14.3, BN8.2-3,
+BN13.2-3, BN2.2-3, BN12.
+
+Against the last run, E[T] 801.3h from after BN14.1 compares to ~471h now (448.7 + BN14.2's 22.4).
+**What changed most is the Go farm on the Bladeburner leg.** `--no-blade-go` prices the same state at
+671.3h (mid), against 457.4h: 214h, because every Bladeburner clear roughly halves (BN6 23.3h -> 14.9h,
+BN7 56.8h -> 26.9h, BN14 90h -> 22.5h). The rest of the ~330h is mostly today's Bladeburner policy;
+the goG / favor / w0 terms are small.
+
+That 214h stands on three things, and **none of them is calibrated live at SF14.1**. The farm must play
+Tetrads from each node's start; BN14.2 is pinned to TheBlackHand until its goWeights exist. Tetrads' node
+power must enter the combat level multipliers as modelled. And k must carry over: only BN14.1's reading
+has a farm in its leg.
 
 ### A Bayes-adaptive outer loop: not built, sketched
 

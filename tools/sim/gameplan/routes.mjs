@@ -9,7 +9,8 @@
 //          g = g(node) x prod gFactor(SF) x goG, the node played at its level
 //          (BN12: SF12 + 1):
 //            Hx = max(min(Hsim, .5), Hsim - ln(W)/g) + favor(node, SF14) - favor_ref(node)
-//          goG    the Go rate bonus on g at scale GoPower x (SF14 ? 2 : 1)
+//          goG    the Go rate bonus on g at scale GoPower x (SF14 ? 2 : 1), the farm now
+//                 (release 3c x goP) over the farm the measured g's had (4391/h: go.mjs GO_REF)
 //          W      the w0r1d_d43m0n hacking-level bonus at the exit (divides the exit level):
 //                 effect(w0 x L*) at the node's scale, L* the window — the post-TRP
 //                 climb at this g (surrogate, phase-averaged) shortened by the bonus
@@ -22,6 +23,9 @@
 //                 with (the node's own if played, else the measured runs' mean)
 //          BN14's is the 'go' route below (the same formula at GoPower 4; hack does not apply there)
 //   blade  B = open - min(early, max(0, open - 0.5)) + leg(node, SF6, SF7, sleeves) x k
+//          the leg with the Go farm on Tetrads from the node's start (go.mjs bladeGoOf: the
+//          combat level multipliers x effect(nodes) at GoPower x the SF14 doubling, no install
+//          so no wipe) — bbsim plays bbplan's current POLICY and code (the surrogate's key hashes both)
 //          sleeves = min(3, SF10 + (BN10 ? 1 : 0)) + 4 (sleeves.mjs); the leg at 6/7 = the
 //          5-infiltrator leg x the live fleet pick's leg ratio (surrogate BB_FLEET_N)
 //          available where the node has Bladeburner (BladeburnerRank > 0) and
@@ -50,21 +54,25 @@ import { giftAvailable, stanekFactors } from './stanek.mjs'
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
 export const PHASE1_D14 = 0.02
 
-/** The favor life's hours for node n at SF14 level l in this world (memoised on the world). */
-export function favorHours(n, l, world, S) {
-  const k = `${n}|${l}`
+/**
+ * The favor life's hours for node n at SF14 level l in this world (memoised on the world).
+ * era 'now': with the farm every clear from here plays (release 3c x goP); 'ref': with the
+ * farm the measured runs had (go.mjs GO_REF) — what is already inside a measured g.
+ */
+export function favorHours(n, l, world, S, era = 'now') {
+  const k = `${n}|${l}|${era}`
   let v = world.go.memo.get(k)
   if (v === undefined) {
-    v = favorLifeOf(S.mults(n), l, world.sf, world.go.abar).hours
+    v = favorLifeOf(S.mults(n), l, world.sf, world.go.aref ?? world.go.abar, era).hours
     world.go.memo.set(k, v)
   }
   return v
 }
-/** The favor life already inside node n's g: its own (played, SF14 0) or the measured runs' mean. */
+/** The favor life already inside node n's g: its own (played, SF14 0) or the measured runs' mean — at the reference farm. */
 export function favorRef(n, world, S) {
-  if (world.go.played(n)) return favorHours(n, 0, world, S)
+  if (world.go.played(n)) return favorHours(n, 0, world, S, 'ref')
   const ns = world.go.refNodes
-  return ns.reduce((a, m) => a + favorHours(m, 0, world, S), 0) / ns.length
+  return ns.reduce((a, m) => a + favorHours(m, 0, world, S, 'ref'), 0) / ns.length
 }
 
 /**
@@ -85,7 +93,7 @@ export function hackParts({ node, lv, world, S, st = null }) {
     if (l14 >= 1) g *= 1 + PHASE1_D14
   } else {
     const s = goScale(S.mults(node).GoPower, l14)
-    goG = goGFactor(s, world.go.abar, world.sf.eps14)
+    goG = goGFactor(s, world.go.abar, world.sf.eps14, world.go.aref ?? world.go.abar)
     g *= goG
     // THE WINDOW (go.mjs goWindow): w0r1d_d43m0n is played from The Red Pill install to
     // the exit — the post-TRP climb at this g, shortened by the bonus it banks.
@@ -172,7 +180,7 @@ export const ROUTES = [
   },
   {
     id: 'blade',
-    status: "SIMULATED (bbsim, the game's Bladeburner; opening scaled by the simulated gym); k CALIBRATED on BN6 only",
+    status: "SIMULATED (bbsim, the game's Bladeburner, bbplan's POLICY, the Go farm's Tetrads combat channel; opening scaled by the simulated gym); k CALIBRATED on BN6.1/BN4.3/BN14.1 (posterior)",
     applies: (node, lv, world, S) => !world.bbOff && S.bbRank(node) > 0 && (node === 6 || node === 7 || lv(6) > 0 || lv(7) > 0),
     hours({ node, lv, world, S }) {
       const l6 = Math.max(1, Math.min(3, lv(6)))
@@ -189,7 +197,7 @@ export const ROUTES = [
   {
     id: 'go',
     node: 14,
-    status: 'MODELLED (go.mjs): the hacking route at GoPower 4 — Go favor + Daedalus bonus on the favor life at FWRG 0.2, g x goG, w0r1d_d43m0n over the post-TRP climb; HackingSpeed 0.3 in the sim. eps14 ASSUMED, w0 DERIVED, cheats NOT PRICED',
+    status: 'MODELLED (go.mjs): the hacking route at GoPower 4 — Go favor + Daedalus bonus on the favor life at FWRG 0.2, g x goG, w0r1d_d43m0n over the post-TRP climb; HackingSpeed 0.3 in the sim. eps14 ASSUMED, w0 DERIVED (KataGo), cheats 0 on 5x5 (MEASURED), NOT PRICED on 19x19',
     applies: (node, lv, world) => node === 14 && !world.phase1,
     hours: hackOnCtx,
   },

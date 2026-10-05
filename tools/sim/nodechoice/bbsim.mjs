@@ -63,6 +63,7 @@ import '../../test/gameresolve.mjs'
 import g, { setBitNode } from './game.mjs'
 // bbplan.js imports by the game's bare spelling ('coop.js'): load it after gameresolve's hook is registered.
 const bp = await import('bbplan.js')
+const gp = await import('goplan.js')
 
 const T = g.BladeburnerActionType
 const SK = g.BladeburnerSkillName
@@ -235,7 +236,13 @@ function gymStep(P, seconds, stat = null) {
  *      the caller when access comes from it), g: ln-growth/h of the combat
  *      multiplier (hackexit's economy latent), installEveryH, buyBladeAugs,
  *      policy: {thr, blackThr, restLow, restHigh, rest: 'hrc'|'fa', gymTo,
- *      sleeves: {infiltrate, gym}, useEst}, intelligence, hacking, seed, maxH }
+ *      sleeves: {infiltrate, gym}, useEst}, intelligence, hacking, seed, maxH,
+ *      go: { perHour, power, goPower, sf14 } | null — THE GO FARM'S COMBAT CHANNEL:
+ *        the farm on Tetrads from the node's start, its node power growing at perHour,
+ *        every combat level multiplier x effect(nodes) (Go/effects/effect.ts:16-22 via
+ *        goplan.effectAt, applied as updateGoMults does, effect.ts:59-63), re-read every
+ *        60s of sim time; an install zeroes it (Go/Go.ts:34-47 prestigeAugmentation) and
+ *        it regrows from 0 — the wipe bbplan's live exit prices (1c484da) }
  * returns { hours, rank, blackOps, done, installs, why, trace }
  */
 export function runBladeburner(o) {
@@ -257,10 +264,15 @@ export function runBladeburner(o) {
     faction.prestigeSourceFile() // module state: a fresh node
     let augMult = 1 // the combat multiplier bought so far (general augmentations)
     const owned = new Set()
+    // the Go farm's combat channel (o.go): effect now, and the node power's clock (zeroed by an install)
+    const goC = o.go && o.go.perHour > 0 ? o.go : null
+    let goEff = 1
+    let goT0 = 0
+    let goNext = 0
     const applyMults = () => {
       P.resetMultipliers()
       P.reapplyAllSourceFiles()
-      for (const s of COMBAT) P.mults[s] *= augMult
+      for (const s of COMBAT) P.mults[s] *= augMult * goEff
       for (const a of bladeburnerAugs()) if (owned.has(a.name)) for (const [k, v] of Object.entries(a.mults ?? {})) if (typeof P.mults[k] === 'number') P.mults[k] *= v
       P.updateSkillLevels()
     }
@@ -269,6 +281,15 @@ export function runBladeburner(o) {
     P.exp.hacking = hacking > 1 ? g.calculateExp(hacking, P.mults.hacking * mults.HackingLevelMultiplier) : 0
     P.updateSkillLevels()
     P.money = 1e30 // money not binding (see header)
+    const goStep = (t) => {
+      if (!goC || t < goNext) return
+      goNext = t + 60
+      const e = gp.effectAt((goC.perHour * (t - goT0)) / 3600, goC.power ?? gp.OPPONENTS.Tetrads.power, goC.goPower ?? 1, goC.sf14 ?? 0)
+      if (!(e > 0) || e === goEff) return
+      for (const s of COMBAT) P.mults[s] *= e / goEff
+      goEff = e
+      P.updateSkillLevels()
+    }
 
     // Before joining: the gym to 100 in every combat stat (joinBladeburnerDivision's gate).
     let t = 0
@@ -277,6 +298,7 @@ export function runBladeburner(o) {
     // player's exp and multipliers, joins, and writes the division's state and the
     // fleet onto the game's objects; no join gym, no default fleet.
     while (!o.setup && COMBAT.some((s) => P.skills[s] < 100) && t < 48 * 3600) {
+      goStep(t)
       gymStep(P, 60)
       t += 60
     }
@@ -433,6 +455,12 @@ export function runBladeburner(o) {
       // too, which the contracts and Investigation/Undercover weigh 0.1-0.25. Hacking
       // stays the fixed input (the hacking scripts rebuild it within the life).
       for (const s of [...COMBAT, "charisma"]) P.exp[s] = 0
+      // the install zeroes every opponent's node power (Go/Go.ts:34-47): the farm's effect leaves and regrows
+      if (goC) {
+        goEff = 1
+        goT0 = t
+        goNext = t
+      }
       applyMults()
       P.hp.current = P.hp.max
       bb.prestigeAugmentation() // resetAction + joinFaction (Bladeburner.ts:260)
@@ -471,6 +499,7 @@ export function runBladeburner(o) {
         }
       }
       if (o.perTick) o.perTick({ t, P, bb, g })
+      goStep(t)
       tick(bb, STEP)
       if (!fleetStarted && t >= sleevesFromS) {
         startFleet()
@@ -498,6 +527,7 @@ export function runBladeburner(o) {
       installs,
       bbAugs: owned.size,
       augMult,
+      goEffect: goC ? +goEff.toFixed(4) : null,
       skills: { ...bb.skills },
       stats: { ...P.skills },
       done,

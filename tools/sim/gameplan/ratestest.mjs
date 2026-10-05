@@ -123,7 +123,9 @@ try {
   const reading = { param: `xr${bn}`, value: Math.exp(y), sd: 0.5, key: `xr${bn}|${ef.rates.liveRun.start}|test` }
   const e2 = await E.measureEconomy({ rates: 'fit', inRun: [reading] })
   const post = e2.rates.channels.exp.nodes[bn]
-  const want = (base.prior.mean / base.prior.sd ** 2 + y / 0.5 ** 2) / (1 / base.prior.sd ** 2 + 1 / 0.5 ** 2)
+  // precision-weighted against the node's level as it stands (its prior, and since BN14.1 finished its own
+  // run's windows too: a repeat clear of a node is read on top of what the node already measured)
+  const want = (base.mean / base.sd ** 2 + y / 0.5 ** 2) / (1 / base.sd ** 2 + 1 / 0.5 ** 2)
   c.examined++
   if (!(Math.abs(post.mean - want) < 1e-9)) c.fails.push(`BN${bn} exp level with a reading: ${post.mean} vs the precision-weighted ${want}`)
   let others = 0
@@ -143,6 +145,6 @@ try {
   const e3 = await E.measureEconomy({ rates: 'fit', inRun: [stale] })
   c.examined++
   if (e3.rates.channels.exp.nodes[bn].readings.some((r) => r.inRun)) c.fails.push(`a reading keyed to another run of BN${bn} was applied to the run in progress`)
-  c.notes.push(`BN${bn} in progress: a reading ln ${y.toFixed(2)} (sd 0.5) moves its exp level ${base.prior.mean.toFixed(2)} +- ${base.prior.sd.toFixed(2)} -> ${post.mean.toFixed(2)} +- ${post.sd.toFixed(2)} (precision-weighted), the final-window exp/s x${(b / a).toFixed(2)}; no other node's slice moves; another run's reading is not applied`)
+  c.notes.push(`BN${bn} in progress: a reading ln ${y.toFixed(2)} (sd 0.5) moves its exp level ${base.mean.toFixed(2)} +- ${base.sd.toFixed(2)} (prior ${base.prior.mean.toFixed(2)}) -> ${post.mean.toFixed(2)} +- ${post.sd.toFixed(2)} (precision-weighted), the final-window exp/s x${(b / a).toFixed(2)}; no other node's slice moves; another run's reading is not applied`)
 }
 done()

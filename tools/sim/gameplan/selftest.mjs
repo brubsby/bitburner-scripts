@@ -41,8 +41,9 @@ try {
 const S0 = makeState([[1, 3], [2, 1], [4, 2], [5, 1], [6, 1], [8, 1], [9, 1], [10, 1]], 133)
 let Si, Sd
 try {
-  Si = await loadSurrogate({ start: S0, profile: econ.profile, bbSeeds: 5 })
-  Sd = await loadSurrogate({ start: S0, profile: econ.profile, bbSeeds: 5, direct: true })
+  // bladeGo false: nextnode priced no Go farm on the Bladeburner leg (the phase-1 regression's grid)
+  Si = await loadSurrogate({ start: S0, profile: econ.profile, bbSeeds: 5, bladeGo: false })
+  Sd = await loadSurrogate({ start: S0, profile: econ.profile, bbSeeds: 5, direct: true, bladeGo: false })
 } catch (err) {
   out.gp2 = out.gp3 = out.gp4 = { skip: String(err?.message ?? err).slice(0, 300) }
   done()
@@ -129,8 +130,10 @@ try {
       if (d > 0.051) bbDiff.push(`BN${n}[${i}] ${m?.toFixed(2)} vs ${row[i]}`)
     })
   }
-  c.notes.push(`(b) Bladeburner leg medians, 10 nodes x 4 (SF6,SF7) cells: worst |this - nextnode| ${worstB.toFixed(2)}h${bbDiff.length ? ` — ${bbDiff.length} differ: ${bbDiff.slice(0, 6).join('; ')}` : ''}`)
-  if (bbDiff.length) c.fails.push(`${bbDiff.length} Bladeburner leg medians differ from nextnode's by > 0.05h (the sims are seeded: same code, same numbers)`)
+  // RETIRED as a failure 2026-10-05: nextnode's print (919b8ca) is of bbplan's policy THEN; bbsim plays
+  // bbplan's code of the day (0149710 skill policy, 7744427 black-op pricing: BN6 27.3h -> 21.4h), so these
+  // legs move with every policy change by design. Printed, not failed; (c)'s DP <= local search still is.
+  c.notes.push(`(b) Bladeburner leg medians, 10 nodes x 4 (SF6,SF7) cells, today's policy vs nextnode's print of the policy at 919b8ca (NOT a failure: the policy moved): worst |this - nextnode| ${worstB.toFixed(2)}h${bbDiff.length ? ` — ${bbDiff.length} differ: ${bbDiff.slice(0, 6).join('; ')}` : ''}`)
   // (c) the whole-game totals per first move, nextnode's local search on this planner's table (direct sims)
   const L = lattice(S0)
   for (const bb of ['cal', 'off']) {
@@ -151,7 +154,9 @@ try {
       const want = RANKED[bb][x.n]
       c.examined++
       worst = Math.max(worst, Math.abs(ls.T - want))
-      if (Math.abs(ls.T - want) > TOL) c.fails.push(`${bb}/mid/mid first BN${x.n}: local search on this table ${ls.T.toFixed(2)}h vs nextnode ${want}h`)
+      // the totals hold the Bladeburner legs, so they move with the policy too (see (b)): the bb-free
+      // 'off' cell is still a regression; 'cal' is printed
+      if (bb === 'off' && Math.abs(ls.T - want) > TOL) c.fails.push(`${bb}/mid/mid first BN${x.n}: local search on this table ${ls.T.toFixed(2)}h vs nextnode ${want}h`)
       if (x.T > ls.T + 1e-6) below++
       rows.push(`BN${x.n} ${ls.T.toFixed(1)}/${want}/${x.T.toFixed(1)}`)
     }

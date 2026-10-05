@@ -10,8 +10,10 @@
 //                  runs (economy.mjs): calibrated on played nodes, NOT
 //                  CALIBRATED on unplayed ones;
 //   Bladeburner    nodechoice/bbsim.mjs (the game's Bladeburner classes,
-//                  bbplan's policy) — CALIBRATED on the live BN6 run, k = 1.223
-//                  (live leg / this leg, params.BB_PARAMS); one node, so the per-node shape is not.
+//                  bbplan's policy — its CODE and POLICY of the day, both in the key —
+//                  and the Go farm's Tetrads combat channel, go.mjs bladeGoOf) —
+//                  k = live leg / this leg (params.BB_PARAMS: BN6.1, BN4.3; observe.mjs
+//                  adds each clear, read against its own Go farm); the per-node shape is not calibrated.
 //
 // THE GRID
 //   hack: one curve per (node, node level, the hacking sim's SF key) over
@@ -23,7 +25,10 @@
 //   bb:   one entry per (node, SF6 1..3, SF7 0..3) and seed: the leg after the
 //         join (hours), median over seeds. No interpolation: the levels are the
 //         grid. Every other Source-File is held at BB_BASE and intelligence at
-//         BB_INT (nextnode.mjs's spec, byte for byte, so its cache is reusable).
+//         BB_INT; the Go farm on Tetrads (gridGoOf: the node's GoPower x the SF14
+//         doubling of the entry state, POWER_PER_HOUR.Tetrads x goP mid) runs from
+//         the node's start. extraBb: the legs a logged clear is read against (its
+//         own farm, or none — observe.mjs CLEAR_LEGS).
 //   fleet: the sleeve-count axis (BB_FLEET_N = 5, 6, 7; sleeves.mjs): per (node, n) the
 //         live chooser's pick (the fastest of bbplan.sleeveConfigs(n) on BB_SEL_SEEDS at
 //         SF6.1/SF7.0), then that pick on every (SF6, SF7) cell x the evaluation seeds;
@@ -33,8 +38,9 @@
 //
 // THE CACHE: tools/sim/gameplan/.cache/{hack,bb}.json, one entry per sim call,
 // keyed by sha1(code hash + the call's full spec). The hack code hash covers
-// exitplan.js, hackexit.mjs and SURROGATE_VERSION; the bb hash is nextnode's
-// (bbsim.mjs + bbjobs.mjs + the bundle's size). An edit to a model invalidates
+// exitplan.js, hackexit.mjs and SURROGATE_VERSION; the bb hash is bbsim.mjs +
+// bbjobs.mjs + the bundle's size + bbplan.js (the policy bbsim plays: before
+// 2026-10-05 a bbplan code change left the grid stale). An edit to a model invalidates
 // exactly its own entries; a build computes only what is missing (incremental),
 // and the bb runner saves as it goes, so a killed build resumes.
 
@@ -48,6 +54,7 @@ import { fileURLToPath } from 'node:url'
 import { hackExitHours, nodeMults, profileFor, finalRatesOf } from '../nodechoice/hackexit.mjs'
 import { lattice, lvl, NODES } from './state.mjs'
 import { EFFECTS, LIVE_SFS, sfKeyStr } from './effects.mjs'
+import { bladeGoOf } from './go.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NC = path.join(HERE, '../nodechoice')
@@ -87,7 +94,9 @@ const sha = (...parts) => {
 // + rates.mjs's finalRatesOf (the fitted profile's final-window rates hackexit reads): its source, so a
 // change to the formula invalidates the hack grid and nothing else in rates.mjs does
 const HACK_CODE = sha(fs.readFileSync(path.join(REPO, 'exitplan.js')), fs.readFileSync(path.join(NC, 'hackexit.mjs')), SURROGATE_VERSION, finalRatesOf.toString())
-const BB_CODE = sha(fs.readFileSync(path.join(NC, 'bbsim.mjs')), fs.readFileSync(path.join(NC, 'bbjobs.mjs')), String(fs.statSync(path.join(NC, 'game.bundle.mjs')).size))
+// + bbplan.js: bbsim plays its chooseAction / planSkills / black-op pricing (pol.shared), so a change to the
+// live policy's CODE (not only its POLICY constants, which are in the spec) re-simulates the grid
+const BB_CODE = sha(fs.readFileSync(path.join(NC, 'bbsim.mjs')), fs.readFileSync(path.join(NC, 'bbjobs.mjs')), String(fs.statSync(path.join(NC, 'game.bundle.mjs')).size), fs.readFileSync(path.join(REPO, 'bbplan.js')))
 
 const readJson = (f) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {})
 const writeJson = (f, o) => {
@@ -140,23 +149,34 @@ export function hackCurvesFor(start) {
 // the profile as the node's simulation reads it (hackexit.profileFor): a fitted-rates profile is keyed by
 // the node's own slice, so a new reading of one node (the node in progress) rebuilds that node's curves only
 export const hackKeyOf = (curve, g, profile) => sha(HACK_CODE, JSON.stringify({ node: curve.node, level: curve.level, sf: curve.sf, profile: profileFor(profile, curve.node), g }))
-/** fleet: null = the planner's 5 infiltrators (the old grid's key, byte for byte); else {infiltrate, support, fa}. */
-export const bbSpec = (n, l6, l7, seed, bbPolicy, fleet = null) => ({
+/**
+ * fleet: null = the planner's 5 infiltrators; else {infiltrate, support, fa}.
+ * go: the Go farm's combat channel (bbsim o.go; go.mjs bladeGoOf) or null (no farm: a past
+ * clear whose farm is not known — observe.mjs).
+ */
+export const bbSpec = (n, l6, l7, seed, bbPolicy, fleet = null, go = null) => ({
   node: n, sf: [...BB_BASE, ...(l6 ? [[6, l6]] : []), ...(l7 ? [[7, l7]] : [])], g: 0, installEveryH: null, intelligence: BB_INT, hacking: 200, seed, maxH: 400,
   policy: { shared: true, sharedPolicy: bbPolicy, sleeves: fleet ? { infiltrate: fleet.infiltrate, support: fleet.support, fa: fleet.fa } : { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
+  ...(go ? { go } : {}),
 })
+/**
+ * THE GRID'S GO FARM for node n from `start` (go.mjs bladeGoOf): the Tetrads farm at the node's
+ * GoPower and the SF14 doubling of the plan's entry state (SF14 only rises along the lattice, and
+ * the doubling is the same at 1, 2 and 3).
+ */
+export const gridGoOf = (n, start, bladeGo = true) => (bladeGo ? bladeGoOf(nodeMults(n).GoPower, lvl(start, 14)) : null)
 const legOf = (r) => (r?.hours ? r.hours - (r.joinH ?? 0) : null)
 /**
  * The live chooser's pick for n sleeves in node `node`, from the selection runs in `bb`:
  * the configuration with the shortest median leg over BB_SEL_SEEDS (ties: sleeveConfigs
  * order). null while any selection run is missing. Returns {config, median, byConfig}.
  */
-export function pickFleet(bb, bp, node, n) {
+export function pickFleet(bb, bp, node, n, go = null) {
   const rows = []
   for (const c of fleetConfigs(bp, n)) {
     const ls = []
     for (const s of BB_SEL_SEEDS) {
-      const r = bb[bbKeyOf(bbSpec(node, ...BB_SEL_CELL, s, bp.POLICY, c))]
+      const r = bb[bbKeyOf(bbSpec(node, ...BB_SEL_CELL, s, bp.POLICY, c, go))]
       if (r === undefined) return null
       ls.push(legOf(r) ?? Infinity)
     }
@@ -172,7 +192,9 @@ export const bbNodes = () => NODES.filter((n) => nodeMults(n).BladeburnerRank > 
  * Build (incrementally) everything the plan from `start` needs. Returns stats:
  * { hack: {needed, computed, ms}, bb: {needed, computed, ms, seededFromNextnode} }.
  */
-export async function buildSurrogate({ start, profile, bbSeeds = 5, jobs = 1, log = () => {} }) {
+// bladeGo false: the grid without the Go farm (the pre-2026-10-05 Bladeburner leg: selftest's phase-1
+// regression, and plan.mjs --no-blade-go, the farm's own value)
+export async function buildSurrogate({ start, profile, bbSeeds = 5, jobs = 1, log = () => {}, extraBb = [], bladeGo = true }) {
   const stats = { hack: { needed: 0, computed: 0, ms: 0 }, bb: { needed: 0, computed: 0, ms: 0, seeded: 0 } }
   // --- hacking curves
   const hf = path.join(CACHE_DIR, 'hack.json')
@@ -203,7 +225,10 @@ export async function buildSurrogate({ start, profile, bbSeeds = 5, jobs = 1, lo
   const bb = readJson(bf)
   const bp = await import('bbplan.js')
   const specs = []
-  for (const n of bbNodes()) for (const l6 of L6) for (const l7 of L7) for (let s = 1; s <= bbSeeds; s++) specs.push(bbSpec(n, l6, l7, s, bp.POLICY))
+  const goOf = (n) => gridGoOf(n, start, bladeGo)
+  for (const n of bbNodes()) for (const l6 of L6) for (const l7 of L7) for (let s = 1; s <= bbSeeds; s++) specs.push(bbSpec(n, l6, l7, s, bp.POLICY, null, goOf(n)))
+  // the legs a logged Bladeburner clear is read against (observe.mjs CLEAR_LEGS: its own fleet and Go farm)
+  for (const x of extraBb) for (let s = 1; s <= bbSeeds; s++) specs.push(bbSpec(x.node, x.l6, x.l7, s, bp.POLICY, null, x.go ?? null))
   stats.bb.needed = specs.length
   let todo = specs.map((spec) => ({ key: bbKeyOf(spec), spec })).filter((j) => !(j.key in bb))
   // seed from nextnode's cache (same key scheme): no sim is ever run twice
@@ -255,15 +280,15 @@ export async function buildSurrogate({ start, profile, bbSeeds = 5, jobs = 1, lo
     writeJson(bf, bb)
   }
   const sel = []
-  for (const n of bbNodes()) for (const k of BB_FLEET_N) for (const c of fleetConfigs(bp, k)) for (const s of BB_SEL_SEEDS) sel.push(bbSpec(n, ...BB_SEL_CELL, s, bp.POLICY, c))
+  for (const n of bbNodes()) for (const k of BB_FLEET_N) for (const c of fleetConfigs(bp, k)) for (const s of BB_SEL_SEEDS) sel.push(bbSpec(n, ...BB_SEL_CELL, s, bp.POLICY, c, goOf(n)))
   stats.fleet.needed += sel.length
   await runTodo(sel.map((spec) => ({ key: bbKeyOf(spec), spec })), 'selection')
   const ev = []
   for (const n of bbNodes())
     for (const k of BB_FLEET_N) {
-      const pick = pickFleet(bb, bp, n, k)
+      const pick = pickFleet(bb, bp, n, k, goOf(n))
       if (!pick) throw new Error(`surrogate: the fleet selection for BN${n} x ${k} sleeves is incomplete after its build`)
-      for (const l6 of L6) for (const l7 of L7) for (let s = 1; s <= bbSeeds; s++) ev.push(bbSpec(n, l6, l7, s, bp.POLICY, pick.config))
+      for (const l6 of L6) for (const l7 of L7) for (let s = 1; s <= bbSeeds; s++) ev.push(bbSpec(n, l6, l7, s, bp.POLICY, pick.config, goOf(n)))
     }
   stats.fleet.needed += ev.length
   await runTodo(ev.map((spec) => ({ key: bbKeyOf(spec), spec })), 'evaluation')
@@ -308,7 +333,7 @@ const median = (xs) => {
  * `direct: true` answers hackHours by calling the simulation (memoised) instead
  * of interpolating — the reference the interpolation is tested against.
  */
-export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = false }) {
+export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = false, bladeGo = true }) {
   const hack = readJson(path.join(CACHE_DIR, 'hack.json'))
   const bb = readJson(path.join(CACHE_DIR, 'bb.json'))
   const bp = await import('bbplan.js')
@@ -372,7 +397,7 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
   for (const n of bbNodes())
     for (const l6 of L6)
       for (const l7 of L7) {
-        const rs = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY))])
+        const rs = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY, null, gridGoOf(n, start, bladeGo)))])
         bbMissing += rs.filter((r) => !r).length
         const ls = rs.map((r) => (r?.hours ? r.hours - (r.joinH ?? 0) : null)).filter((x) => x !== null).sort((a, b) => a - b)
         legs.set(`${n}|${l6}|${l7}`, ls.length > bbSeeds / 2 ? { median: median(ls), q1: ls[Math.floor(ls.length / 4)], q3: ls[Math.floor((3 * ls.length) / 4)], legs: ls } : null)
@@ -389,7 +414,7 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
   let fleetMissing = 0
   for (const n of bbNodes()) {
     for (const k of BB_FLEET_N) {
-      const p = pickFleet(bb, bp, n, k)
+      const p = pickFleet(bb, bp, n, k, gridGoOf(n, start, bladeGo))
       if (!p) fleetMissing++
       fleets.set(`${n}|${k}`, p)
     }
@@ -398,7 +423,7 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
         const med = (k) => {
           const p = fleets.get(`${n}|${k}`)
           if (!p) return null
-          const rs = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY, p.config))])
+          const rs = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY, p.config, gridGoOf(n, start, bladeGo)))])
           fleetMissing += rs.filter((r) => !r).length
           const ls = rs.map(legOf).filter((x) => x !== null)
           return ls.length > bbSeeds / 2 ? median(ls) : null
@@ -467,6 +492,27 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
     hackDirect,
     // sleeves: the fleet size (sleeves.mjs sleeveCount); 5 (the default) is the old grid exactly
     bbLeg: (n, l6, l7, sleeves = BB_SLEEVES) => legAt(n, l6, l7, sleeves),
+    /**
+     * A LOGGED CLEAR's leg (observe.mjs): the 5-infiltrator leg in node n at (SF6, SF7) with that clear's
+     * own Go farm (go: bladeGoOf-shaped, or null = none priced), x the grid's fleet ratio at `sleeves`.
+     * null when its sims are not in the cache (buildSurrogate extraBb).
+     */
+    bbLegAt: (n, l6, l7, sleeves = BB_SLEEVES, go = null) => {
+      const rs = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY, null, go))])
+      if (rs.some((r) => r === undefined)) return null
+      const ls = rs.map(legOf).filter((x) => x !== null)
+      if (!(ls.length > bbSeeds / 2)) return null
+      const kk = Math.min(BB_FLEET_N[BB_FLEET_N.length - 1], Math.max(BB_FLEET_N[0], sleeves))
+      const r = kk === BB_SLEEVES ? 1 : ratios.get(`${n}|${l6}|${l7}|${kk}`)?.ratio ?? 1
+      return { median: median(ls) * r, legs: ls, ratio: r }
+    },
+    /** A logged clear's gym hours to combat 100 before the join (bbsim joinH, median) under its own Go farm; null when not built. */
+    bbJoinAt: (n, l6, l7, go = null) => {
+      const js = Array.from({ length: bbSeeds }, (_, i) => bb[bbKeyOf(bbSpec(n, l6, l7, i + 1, bp.POLICY, null, go))]?.joinH).filter((x) => typeof x === 'number' && isFinite(x))
+      return js.length ? median(js) : null
+    },
+    /** The grid's Go farm for node n (gridGoOf at this plan's entry state). */
+    bbGo: (n) => gridGoOf(n, start, bladeGo),
     /** The live chooser's pick for k sleeves in node n ({config, median, byConfig}) and the fleet ratio of a cell. */
     bbFleet: (n, k) => fleets.get(`${n}|${k}`) ?? null,
     bbFleetRatio: (n, l6, l7, k) => ratios.get(`${n}|${l6}|${l7}|${k}`) ?? null,

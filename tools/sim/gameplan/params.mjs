@@ -19,7 +19,7 @@
 // move (common random numbers), so regret is a paired difference.
 
 import { SF_PARAMS, splitQ } from './effects.mjs'
-import { baseBonus } from './go.mjs'
+import { baseBonus, refBonus } from './go.mjs'
 
 /**
  * Bladeburner route: clear = open + leg x k - early savings (nextnode.mjs §3).
@@ -42,7 +42,13 @@ import { baseBonus } from './go.mjs'
  * the measured mid.
  */
 export const BB_PARAMS = {
-  k: { lo: 1.068, mid: 1.223, hi: 1.535, what: 'live leg / the planner\'s own (clean) leg; mid MEASURED on BN6.1 (observe.mjs reading, 1.223); lo/hi = the opt/pess spread around it' },
+  // REFRESHED 2026-10-05 from the posterior (posterior.json after BN4.3: the hand prior 1.068/1.223/1.535
+  // around BN6.1's 1.223, updated by BN4.3's 0.900): both readings are now inside it (observe.mjs baseIn),
+  // and the next clear (BN14.1) updates it. Both were read against the leg of the policy they played
+  // and no Go farm; the grid now prices the current policy WITH the farm (go.mjs bladeGoOf), so k
+  // carries the operations gap only if that gap is policy-independent — BN14.1 (the current policy for
+  // its second half, its own farm in its leg) is the first reading that tests it.
+  k: { lo: 0.933, mid: 1.034, hi: 1.139, what: "live leg / the planner's own (clean) leg; the posterior over BN6.1 (1.223) and BN4.3 (0.900) — observe.mjs readings, refreshed as the prior 2026-10-05" },
   open: { lo: 1.5, mid: 2.5, hi: 4.0, what: 'hours entry -> combat 100 (MEASURED BN6 2.5h); lo/hi = nextnode opt/pess' },
 }
 /** Economy: share of an unplayed node's ln g deviation that is common to all unplayed nodes. ASSUMED. */
@@ -158,7 +164,10 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     // the discrepancy factor on node n's hacking-route hours (1 without one; discrepancy.mjs)
     disc: (n) => (econ.disc && !phase1 && econ.disc.applies(n) ? Math.exp(econ.disc.sd * (z[`delta${n}`] ?? 0)) : 1),
     go: {
+      // the farm now (release 3c x goP) over one install window, and the farm the measured runs had (GO_REF):
+      // goG credits the difference; the favor-life rep is divided by the reference's
       abar: baseBonus(cyc, sf.goP),
+      aref: refBonus(cyc),
       // a node whose own g was measured (BN12 borrows BN1's) carries its own favor life in it
       played: (n) => econ.ownG.has(n),
       // the runs the unplayed latent is the mean of; BN2's Red Pill came from the gang, not Daedalus favor
