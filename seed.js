@@ -337,7 +337,13 @@ export async function pass(ns, flags) {
   // the trader is not running anywhere, place it on the smallest rooted
   // host that holds it — evicting that host's workers — when the priced
   // trajectory to the next home tier says it wins.
-  const traderHost = await placeTrader(ns, all, hosts)
+  // bb-lite.js's reservation (bbliteplan.liteReserveOf, the one batch.js
+  // honours): its actor headroom stays free of OUR workers and the trader too.
+  // Live BN14.2 (2026-10-05) seed.js was the only worker placer at a 32GB home
+  // and did not read it, so any host big enough for the reservation was
+  // filled; at 23:02Z the trader then took the reserved go-host (3.4GB left).
+  const liteHold = liteHoldOf(ns, all)
+  const traderHost = await placeTrader(ns, all, hosts, liteHold)
   // The raise-sized daemons' reservations (raiseplace.js) live on home
   // ([bitburner-offhome-reads]); one copy each, so a missing file costs only itself.
   const fullHeld = (() => {
@@ -356,11 +362,6 @@ export async function pass(ns, flags) {
       return null
     }
   })()
-  // bb-lite.js's reservation (bbliteplan.liteReserveOf, the one batch.js
-  // honours): its actor headroom stays free of OUR workers too. Live BN14.2
-  // (2026-10-05) seed.js was the only worker placer at a 32GB home and did
-  // not read it, so any host big enough for the reservation was filled.
-  const liteHold = liteHoldOf(ns, all)
   for (let i = 0; i < hosts.length; i++) {
     const h = hosts[i]
     if (h === traderHost) continue
@@ -775,7 +776,7 @@ function importClosure(ns, root) {
 }
 
 /** Place stock.js on its own block when the trader verdict says so; returns the host (skip it for workers) or null. */
-async function placeTrader(ns, all, hosts) {
+async function placeTrader(ns, all, hosts, liteHold = null) {
   const reset = ns.getResetInfo()
   // TIX from minute one where BitNode 8's feature is accessible (Prestige.ts:161-164).
   const tix = canAccessFeature(reset, 8)
@@ -813,7 +814,7 @@ async function placeTrader(ns, all, hosts) {
   lastTrader = { ...v, traderGB, fleetGB, incomePerSec: income, wealth: Math.round(wealth), target: Math.round(target) }
   if (!v.place) return null
   // The smallest rooted host that holds it (least farming displaced).
-  const fits = hosts.filter((h) => ns.getServerMaxRam(h) >= traderGB).sort((a, b) => ns.getServerMaxRam(a) - ns.getServerMaxRam(b))
+  const fits = hosts.filter((h) => ns.getServerMaxRam(h) - (liteHold?.host === h ? liteHold.gb : 0) >= traderGB).sort((a, b) => ns.getServerMaxRam(a) - ns.getServerMaxRam(b))
   const host = fits[0] ?? null
   if (!host) {
     lastTrader = { ...lastTrader, place: false, why: `${v.why} — but no rooted host has ${traderGB}GB` }
