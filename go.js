@@ -314,7 +314,8 @@ const SETTINGS = {
   // stepped over. fromTurn: not on the first move (no shape to extend).
   // maxSize: cheats only on boards up to this size — measured positive on 5x5
   // and negative per hour on the hidden opponent's 19x19 (header).
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9 },
+  cheat: { maxPerGame: 0, // 0 until the release-3 cheat path is verified (lead 2026-10-05; was 12)
+    fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9 },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
