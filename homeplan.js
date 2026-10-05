@@ -55,6 +55,7 @@
 import { bladeExitGen } from 'bbplan.js'
 import { LITE_OVER_FULL } from 'bbliteplan.js'
 import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame, chooseOpponent } from 'goplan.js'
+import { ramUpgradeCost } from 'homecost.js'
 
 /** batchAt may return a generator (progress.js re-plans through augplan.planPurchasesGen): run it in this generator's steps. */
 function* callOut(x) {
@@ -124,6 +125,54 @@ export function homeBuyAtOf({ cost, moneyAt, installAtH = Infinity, post = null,
     return h < maxH ? { atH: h, life: 'next', why: `not before the install at ${installAtH.toFixed(2)}h; in the next life at ${h.toFixed(2)}h` } : { atH: null, why: 'not affordable inside the horizon' }
   }
   return { atH: null, why: `not affordable before ${edge.toFixed(1)}h on this stream` }
+}
+
+/**
+ * THE BLADEBURNER ROUTE'S OWN HOME PURCHASE: when the full daemon takes over
+ * from bb-lite, as the route's start prices it (bbplan s0.lean.untilH), where
+ * no purchase is approved yet (bbliteplan.leanUntilOf -> Infinity).
+ *
+ * WHY. Under FULL_TIER the full daemon arrives only with the home upgrade,
+ * and that upgrade is approved only by the blade route's own home verdict
+ * (progress.js bladeHomeVerdictOf), which runs only once the route is
+ * 'blade'. Priced as "bb-lite forever", the blade arm of the ROUTE decision
+ * assumed the route never buys the tier its exit depends on — and the lean
+ * policy alone (no Raid, team 0, one city) does not reach the first black
+ * op's 2500 rank inside the horizon. Live BN14.2 2026-10-05 23:11Z (home
+ * 64GB, rank 23, combat ~250): every blade draw unpriced (pFeasible 0), the
+ * route took 'hack' at a 999h mean, while the same start with the full
+ * daemon priced ~56h and the $31.9m 128GB block was ~0.7h of income away.
+ * A deadlock: no blade route without the purchase, no purchase verdict
+ * without the blade route.
+ *
+ * So the route's arm carries the purchase the route makes: every RAM block
+ * from homeRam up to `tier` (homecost.ramUpgradeCost on the node's
+ * multiplier), bought at the earliest hour the money stream (wealth +
+ * perSec x h, linear: its growth is not simulated, pessimistic) reaches the
+ * sum (homeBuyAtOf), plus the placement (placeH). The route's home verdict
+ * then prices that same purchase trajectory against trajectory.
+ * NOT SIMULATED, named: an install before the purchase (the money resets;
+ * the purchase is then the next life's), cores bought first by homeup.js
+ * (nextHomeUpgrade's cheapest-first: cores cost >= $1b, so only where RAM
+ * blocks cost more).
+ *
+ * Returns {untilH, buyAtH, cost, why}; untilH Infinity when the stream never
+ * affords it inside maxH (the lean phase then never ends, as before).
+ */
+export function routeFullAtOf({ homeRam, tier, nodeRamCost, wealth, perSec, placeH, maxH = 400 } = {}) {
+  if (!fin(homeRam) || !(homeRam > 0) || !fin(tier)) return { untilH: Infinity, buyAtH: null, cost: null, why: 'home RAM or the full tier unread: bb-lite throughout' }
+  if (homeRam >= tier) return { untilH: placeH, buyAtH: 0, cost: 0, why: `home ${homeRam}GB already admits the full daemon: its placement` }
+  let cost = 0
+  const blocks = []
+  for (let r = homeRam; r < tier; r *= 2) {
+    cost += ramUpgradeCost(r, nodeRamCost)
+    blocks.push(r * 2)
+  }
+  const m0 = fin(wealth) && wealth > 0 ? wealth : 0
+  const rate = fin(perSec) && perSec > 0 ? perSec : 0
+  const buy = homeBuyAtOf({ cost, moneyAt: (h) => m0 + rate * 3600 * h, maxH })
+  if (!fin(buy.atH)) return { untilH: Infinity, buyAtH: null, cost, why: `the route's ${tier}GB home ($${(cost / 1e6).toFixed(2)}m) is not affordable on $${(m0 / 1e6).toFixed(2)}m + $${((rate * 3600) / 1e6).toFixed(2)}m/h inside ${maxH}h: bb-lite throughout` }
+  return { untilH: buy.atH + placeH, buyAtH: buy.atH, cost, why: `the route buys home ${homeRam}GB -> ${blocks.join(' -> ')}GB ($${(cost / 1e6).toFixed(2)}m) at ${buy.atH.toFixed(2)}h on $${(m0 / 1e6).toFixed(2)}m + $${((rate * 3600) / 1e6).toFixed(2)}m/h; the full daemon from ${(buy.atH + placeH).toFixed(2)}h` }
 }
 
 /**
@@ -253,11 +302,20 @@ export function* bladeHomeExitGen(o) {
     const r = yield* bladeExitGen(steps.length ? { ...s0, steps } : s0)
     return fin(r?.hours) ? r.hours : null
   }
-  const withoutH = yield* exitOf(baseSpec, [])
-  if (!fin(withoutH)) return { deltaH: null, why: 'the black-op exit without the purchase is unpriced' }
+  // THE WITHOUT-ARM PAST THE HORIZON (censored): bb-lite forever may not
+  // reach the black ops inside the start's horizon at all (live BN14.2
+  // 23:11Z: rank 1634 of Typhoon's 2500 in 400h). Its exit is then AT LEAST
+  // the horizon, so withH - horizon bounds the gain from the conservative
+  // side — unpriced, the verdict never bought the tier the route's own exit
+  // is priced on (routeFullAtOf).
+  const withoutRaw = yield* exitOf(baseSpec, [])
+  const horizonH = fin(startFor(baseSpec)?.maxH) ? startFor(baseSpec).maxH : 400
   const allSteps = [...(rankStep ? [rankStep] : []), ...goSteps]
   const withH = yield* exitOf(withSpec, allSteps)
+  if (!fin(withoutRaw) && !fin(withH)) return { deltaH: null, why: `the black-op exit is unpriced with and without the purchase (neither finishes inside ${horizonH}h)` }
   if (!fin(withH)) return { deltaH: null, why: 'the black-op exit with the purchase is unpriced' }
+  const censored = fin(withoutRaw) ? null : { horizonH, why: `without the purchase the exit does not finish inside the ${horizonH}h horizon: priced at the horizon, a lower bound (the gain is at least ${(horizonH - withH).toFixed(1)}h)` }
+  const withoutH = fin(withoutRaw) ? withoutRaw : horizonH
   // The breakdown: each effect alone.
   const alone = [
     ['full daemon (bladeburner.js)', rankStep ? [baseSpec, [rankStep]] : null],
@@ -275,7 +333,7 @@ export function* bladeHomeExitGen(o) {
     const h = yield* exitOf(withSpec, [{ ...rankStep, rankScaleMult: 1 / LITE_OVER_FULL.hi }, ...goSteps])
     conservative = fin(h) ? { liteOverFull: LITE_OVER_FULL.hi, withH: +h.toFixed(3), deltaH: +(h - withoutH).toFixed(3) } : null
   }
-  return { deltaH: withH - withoutH, withH, withoutH, buyAtH, buyLife: buy.life, effects, credited, notCredited, displaced, conservative, goPick }
+  return { deltaH: withH - withoutH, withH, withoutH, buyAtH, buyLife: buy.life, effects, credited, notCredited, displaced, conservative, goPick, ...(censored ? { censored } : {}) }
 }
 
 /**

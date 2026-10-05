@@ -162,8 +162,8 @@ import { goExitInputsOf } from 'goplan.js'
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
 import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
-import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen } from 'homeplan.js'
-import { leanUntilOf } from 'bbliteplan.js'
+import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf } from 'homeplan.js'
+import { leanUntilOf, FULL_TIER, LEAN_PLACE_H } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -2644,7 +2644,15 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     const successScale = sCal.k > 0 ? sCal.k : 1
     const rankScale = rankPost0.k > 0 ? rankPost0.k : 1
     // bb-lite acting: its lean policy until the full daemon is expected (bbliteplan.leanUntilOf: placed at the 128GB tier, else a home upgrade).
-    const leanUntilH = leanUntilOf(tel, Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0), { spendHome: readJson(ns, '/tel/installgate.txt')?.spendExit?.home ?? null, lastAugReset: info.lastAugReset })
+    const homeRamNow = Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0)
+    let leanUntilH = leanUntilOf(tel, homeRamNow, { spendHome: readJson(ns, '/tel/installgate.txt')?.spendExit?.home ?? null, lastAugReset: info.lastAugReset })
+    // No purchase approved under the tier: the route's own purchase
+    // (homeplan.routeFullAtOf), never bb-lite forever — that priced every
+    // blade draw unpriced while the block was ~0.7h of income away (live
+    // BN14.2 2026-10-05 23:11Z), and the purchase is approved only on the
+    // blade route.
+    const leanRoute = leanUntilH === Infinity ? routeFullAtOf({ homeRam: homeRamNow, tier: FULL_TIER, nodeRamCost: mults.HomeComputerRamCost, wealth, perSec: moneyPerSec, placeH: LEAN_PLACE_H }) : null
+    if (leanRoute) leanUntilH = leanRoute.untilH
     // THE RETRAIN'S MONEY AND TRAVEL (bbplan.bladeExitGen gymTo): the same
     // combat-bar plan the body step acts on (bodyplan.combatBarPlanOf), on the
     // cash, city and flat income of the moment — this life's for a retrain at
@@ -2735,6 +2743,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         blackOps: tel?.blackOps?.done ?? null,
         sleeves,
         fleet: { source: fl.source, why: fl.why },
+        // Who acts for the division on this arm: bb-lite until untilH (null: the full daemon throughout); routeBuy: the route's own home purchase (homeplan.routeFullAtOf).
+        lean: { untilH: leanUntilH === Infinity ? 'never' : Number.isFinite(leanUntilH) ? +leanUntilH.toFixed(3) : null, ...(leanRoute ? { routeBuy: { buyAtH: Number.isFinite(leanRoute.buyAtH) ? +leanRoute.buyAtH.toFixed(3) : null, cost: Number.isFinite(leanRoute.cost) ? Math.round(leanRoute.cost) : null, why: leanRoute.why } } : {}) },
         calibration: {
           success: { k: sCal.k, lnK: sCal.lnK, sdLn: sCal.sdLn, n: sCal.n, s: sCal.s, expected: sCal.expected, why: sCal.why, applied: successScale },
           // applied: what this pass's exits used (the posterior at the pass's start); the ledger's newest window is in the next pass's.
@@ -3225,6 +3235,7 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
       displaced: r.displaced,
       conservative: r.conservative,
       goPick: r.goPick ?? null,
+      ...(r.censored ? { censored: r.censored } : {}),
       why: `the black-op exit ${r.withH.toFixed(2)}h with the ${unlocks?.homeRam ?? '?'}GB tier bought at ${r.buyAtH.toFixed(2)}h vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h${top ? `; most: ${top.name} ${top.deltaH}h` : ''})${pd ? ` — plan: ${pd.why}` : ''}`,
     }
   } catch (e) {

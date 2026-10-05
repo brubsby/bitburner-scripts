@@ -1,0 +1,614 @@
+{
+ "captured": "2026-10-05T23:33:07.187Z",
+ "what": "live BN14.2 2026-10-05 ~23:11-23:15Z: decisions.bladeRoute priced blade at pFeasible 0 (bb-lite forever under the 128GB tier) and took hack (meanH 999h)",
+ "bladeburner": {
+  "at": "2026-10-05T23:33:07.187Z",
+  "health": "waiting",
+  "bitNode": 14,
+  "lastAugReset": 1791188967492,
+  "host": "hong-fang-tea",
+  "daemon": "bb-lite",
+  "result": "slot-not-ours",
+  "joined": true,
+  "factionJoined": false,
+  "rank": 22.97,
+  "rankPerHour": 0,
+  "skillPoints": 3,
+  "levels": {
+   "Blade's Intuition": 0,
+   "Cloak": 0,
+   "Short-Circuit": 1,
+   "Digital Observer": 0,
+   "Tracer": 0,
+   "Overclock": 0,
+   "Reaper": 0,
+   "Evasive System": 0,
+   "Datamancer": 0,
+   "Cyber's Edge": 0,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 84.18,
+  "maxStamina": 84.18,
+  "resting": false,
+  "city": null,
+  "slot": {
+   "owner": null,
+   "ours": false,
+   "at": "2026-10-05T23:31:19.601Z",
+   "by": "progress.js",
+   "why": "progress.js holds the slot for nobody"
+  },
+  "action": {
+   "type": "Contracts",
+   "name": "Bounty Hunter",
+   "level": 6,
+   "p": 0.7714988239671743,
+   "ev": 0.025057498351452417,
+   "why": "Bounty Hunter L6 in this city at 77%: 0.0251 rank/s acting, 0.0129 at its stamina duty"
+  },
+  "running": null,
+  "blackOps": {
+   "done": 0,
+   "next": "Operation Typhoon",
+   "reqdRank": 2500,
+   "chance": [
+    0.0407,
+    0.0407
+   ]
+  },
+  "exitReady": false,
+  "counts": {
+   "Tracking": 383.3,
+   "Bounty Hunter": 341.6,
+   "Retirement": 372.5,
+   "Investigation": 260.4,
+   "Undercover Operation": 205.2,
+   "Sting Operation": 289.8,
+   "Stealth Retirement Operation": 198.4,
+   "Assassination": 107.4
+  },
+  "maxLevels": {
+   "Tracking": 1,
+   "Bounty Hunter": 6,
+   "Retirement": 1,
+   "Investigation": 1,
+   "Undercover Operation": 1,
+   "Sting Operation": 1,
+   "Stealth Retirement Operation": 1,
+   "Assassination": 1
+  },
+  "skillsAt": "2026-10-05T23:24:36.440Z",
+  "detail": "not acting: progress.js holds the slot for nobody",
+  "cities": [
+   {
+    "name": "Aevum",
+    "popEst": 0,
+    "pop": 1353160726,
+    "r": null,
+    "popFrom": "median",
+    "anchor": null,
+    "chaos": 0.66,
+    "comms": 0
+   },
+   {
+    "name": "Chongqing",
+    "popEst": 504239010,
+    "pop": 1314759851,
+    "r": null,
+    "popFrom": "anchor",
+    "anchor": {
+     "pop": 1314759851,
+     "comms": 0
+    },
+    "chaos": 5.59,
+    "comms": 1
+   },
+   {
+    "name": "Sector-12",
+    "popEst": 1574195895,
+    "pop": 1334362606,
+    "r": 0.84765,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 1334362606,
+     "comms": 23
+    },
+    "chaos": 53.76,
+    "comms": 23
+   },
+   {
+    "name": "New Tokyo",
+    "popEst": 1296043134,
+    "pop": 1371958845,
+    "r": 1.05857,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 1371958845,
+     "comms": 0
+    },
+    "chaos": 1.24,
+    "comms": 0
+   },
+   {
+    "name": "Ishima",
+    "popEst": 1415197966,
+    "pop": 1602333717,
+    "r": 1.13223,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 1602333717,
+     "comms": 0
+    },
+    "chaos": 2.89,
+    "comms": 0
+   },
+   {
+    "name": "Volhaven",
+    "popEst": 1721616212,
+    "pop": 418376953,
+    "r": 0.24301,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 418376953,
+     "comms": 85
+    },
+    "chaos": 60.08,
+    "comms": 85
+   }
+  ],
+  "citiesAt": "2026-10-05T08:29:23.930Z",
+  "calibration": {
+   "success": {
+    "k": 1.0644,
+    "lnK": 0.0624,
+    "sdLn": 0.0488,
+    "n": 400,
+    "s": 194,
+    "expected": 180.75,
+    "why": "194 of 400 attempts succeeded against 180.7 predicted: k = 1.064 x/\u00f7 1.06 at 80% (prior k = 1 x/\u00f7 1.21, the game's formula; exact binomial likelihood)"
+   }
+  },
+  "joinedAt": "2026-10-04T01:40:13.105Z"
+ },
+ "player": {
+  "skills": {
+   "hacking": 82,
+   "strength": 255,
+   "defense": 253,
+   "dexterity": 252,
+   "agility": 254,
+   "charisma": 95,
+   "intelligence": 136
+  },
+  "exp": {
+   "hacking": 53629.046701566855,
+   "strength": 56154.080521209384,
+   "defense": 54174.2107871193,
+   "dexterity": 53882.88435762997,
+   "agility": 55827.01161242662,
+   "charisma": 2873.242776897577,
+   "intelligence": 36362.35182161607
+  },
+  "money": 1980894.549984035,
+  "city": "Chongqing",
+  "augmentations": []
+ },
+ "bladeRoute": {
+  "key": "hack",
+  "options": [
+   {
+    "key": "hack",
+    "pointH": 239.964,
+    "pFeasible": 1,
+    "meanH": 660.494,
+    "q10": 60.172,
+    "q50": 283.897,
+    "q90": 1553.577,
+    "pBest": 1,
+    "noiseKey": "default|L24|g6",
+    "pricedAt": "2026-10-05T23:31:17.183Z"
+   }
+  ],
+  "bladeMembers": {
+   "Q": 6,
+   "hours": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "sdH": null
+  },
+  "start": {
+   "gymExpPerSec": 13.824000000000002,
+   "gym": "Powerhouse Gym",
+   "trainingMult": 1,
+   "goCombat": {
+    "effect": 2.45738,
+    "nodes": 7555,
+    "perHour": 0,
+    "rateSource": "not farming",
+    "goPower": 4,
+    "sf14": 1,
+    "why": "x2.457 now (n 7555), go.js farms Netburners: no regrowth priced; the effect resets at an install"
+   }
+  },
+  "sleeves": {
+   "infiltrate": 0,
+   "support": 0,
+   "fa": 0
+  },
+  "decidedAt": "2026-10-05T23:11:17.494Z",
+  "calibration": {
+   "success": {
+    "k": 1.0644,
+    "sdLn": 0.0488
+   },
+   "rank": {
+    "k": 0.8609,
+    "sdLn": 0.1037
+   }
+  },
+  "published2311": {
+   "decidedAt": "2026-10-05T23:11:17.494Z",
+   "key": "hack",
+   "options": [
+    {
+     "key": "hack",
+     "pointH": 357.439,
+     "pFeasible": 1,
+     "meanH": 999.062,
+     "q10": 71.998,
+     "q50": 446.661,
+     "q90": 2353.177,
+     "pBest": 1,
+     "noiseKey": "default|L24|g0"
+    },
+    {
+     "key": "blade",
+     "pointH": null,
+     "pFeasible": 0,
+     "meanH": null,
+     "q10": null,
+     "q50": null,
+     "q90": null,
+     "pBest": 0,
+     "nDraws": 8,
+     "noiseKey": "bladeburner"
+    }
+   ]
+  }
+ },
+ "spendExitHome": {
+  "buy": false,
+  "cost": 31861958.97004852,
+  "why": "unpriced: the spend is not affordable by the install",
+  "kind": "RAM"
+ },
+ "spendExitLastAugReset": 1791188967492,
+ "homeup": {
+  "at": "2026-10-05T23:11:33.838Z",
+  "homeRam": 64,
+  "cores": 1,
+  "money": 2776895,
+  "next": {
+   "kind": "RAM",
+   "cost": 31861958.97004852
+  },
+  "nextCost": 31861959
+ },
+ "boot": {
+  "at": "2026-10-05T23:11:16.340Z",
+  "homeRam": 64,
+  "admit": [
+   {
+    "script": "seed.js"
+   },
+   {
+    "script": "homeup.js"
+   },
+   {
+    "script": "rfalink.js"
+   },
+   {
+    "script": "errlog.js"
+   },
+   {
+    "script": "torbuy.js"
+   },
+   {
+    "script": "cmd.js"
+   },
+   {
+    "script": "autobuy.js"
+   },
+   {
+    "script": "backdoor.js"
+   },
+   {
+    "script": "settings.js"
+   },
+   {
+    "script": "tel.js"
+   },
+   {
+    "script": "watchdog.js"
+   },
+   {
+    "script": "buyserv.js"
+   },
+   {
+    "script": "hacknet.js"
+   },
+   {
+    "script": "gang.js"
+   },
+   {
+    "script": "act.js"
+   },
+   {
+    "script": "sleeve.js"
+   },
+   {
+    "script": "stock.js"
+   },
+   {
+    "script": "hashspend.js"
+   },
+   {
+    "script": "bb-lite.js"
+   },
+   {
+    "script": "early.js"
+   }
+  ],
+  "nextTier": {
+   "fromHomeRam": 64,
+   "homeRam": 128,
+   "tier": 128,
+   "defer": [
+    "seed.js",
+    "homeup.js",
+    "ctauto.js",
+    "sleeveaug.js"
+   ],
+   "admit": [
+    {
+     "script": "rfalink.js",
+     "where": "anywhere",
+     "cost": 2.25,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "errlog.js",
+     "where": "anywhere",
+     "cost": 2.25,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "torbuy.js",
+     "where": "home",
+     "cost": 2.45,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "cmd.js",
+     "where": "home",
+     "cost": 8.15,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "autobuy.js",
+     "where": "home",
+     "cost": 4.15,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "backdoor.js",
+     "where": "home",
+     "cost": 4.6,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "settings.js",
+     "where": "home",
+     "cost": 2.3,
+     "raisesTo": null,
+     "kind": "oneshot"
+    },
+    {
+     "script": "tel.js",
+     "where": "anywhere",
+     "cost": 6,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "watchdog.js",
+     "where": "home",
+     "cost": 8.95,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "buyserv.js",
+     "where": "anywhere",
+     "cost": 9.6,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "upkeep.js",
+     "where": "home",
+     "cost": 2.2,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "hacknet.js",
+     "where": "anywhere",
+     "cost": 11.4,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "batch.js",
+     "where": "home",
+     "cost": 9.8,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "fast.js",
+     "where": "home",
+     "cost": 2.6,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "progress.js",
+     "where": "home",
+     "cost": 2.6,
+     "raisesTo": null,
+     "kind": "job"
+    },
+    {
+     "script": "share.js",
+     "where": "anywhere",
+     "cost": 4,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "go.js",
+     "where": "home",
+     "cost": 20.75,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "bootnag.js",
+     "where": "home",
+     "cost": 4.35,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "nfg.js",
+     "where": "home",
+     "cost": 3.4,
+     "raisesTo": null,
+     "kind": "job"
+    },
+    {
+     "script": "homeup.js",
+     "where": "home",
+     "cost": 7.6,
+     "raisesTo": null,
+     "kind": "job"
+    },
+    {
+     "script": "faction.js",
+     "where": "home",
+     "cost": 2.6,
+     "raisesTo": null,
+     "kind": "job"
+    },
+    {
+     "script": "endgame.js",
+     "where": "home",
+     "cost": 3.2,
+     "raisesTo": null,
+     "kind": "job"
+    },
+    {
+     "script": "gang.js",
+     "where": "anywhere",
+     "cost": 31.9,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "act.js",
+     "where": "anywhere",
+     "cost": 7.8,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "sleeve.js",
+     "where": "anywhere",
+     "cost": 3.25,
+     "raisesTo": 49.75,
+     "kind": null
+    },
+    {
+     "script": "stock.js",
+     "where": "anywhere",
+     "cost": 28.6,
+     "raisesTo": null,
+     "kind": null
+    },
+    {
+     "script": "hashspend.js",
+     "where": "anywhere",
+     "cost": 3.25,
+     "raisesTo": 7.25,
+     "kind": null
+    },
+    {
+     "script": "bladeburner.js",
+     "where": "anywhere",
+     "cost": 3.25,
+     "raisesTo": 92.75,
+     "kind": null
+    },
+    {
+     "script": "bb-lite.js",
+     "where": "anywhere",
+     "cost": 5.6,
+     "raisesTo": null,
+     "kind": null
+    }
+   ]
+  }
+ },
+ "income": {
+  "incomePerSec": 4145.996232628946,
+  "lifePerSec": 6899.1684869888,
+  "flatPerSec": 0,
+  "equity": 10865194.015293054
+ },
+ "wealth": 12846088.565277088,
+ "hosts": [
+  {
+   "host": "millenium-fitness",
+   "maxRam": 256
+  },
+  {
+   "host": "rothman-uni",
+   "maxRam": 128
+  },
+  {
+   "host": "avmnite-02h",
+   "maxRam": 128
+  },
+  {
+   "host": "silver-helix",
+   "maxRam": 64
+  },
+  {
+   "host": "home",
+   "maxRam": 64
+  }
+ ]
+}
