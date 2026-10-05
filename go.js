@@ -314,8 +314,11 @@ const SETTINGS = {
   // stepped over. fromTurn: not on the first move (no shape to extend).
   // maxSize: cheats only on boards up to this size — measured positive on 5x5
   // and negative per hour on the hidden opponent's 19x19 (header).
-  cheat: { maxPerGame: 0, // 0 until the release-3 cheat path is verified (lead 2026-10-05; was 12)
-    fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9 },
+  // on: PER OPPONENT (goplan keys; default for the rest), like mirror —
+  // cheats are played only against an opponent whose release-3 arm measured
+  // more power per hour with them than without (RELEASE 3 CHEATS below).
+  // Never after the AI's pass (play-on prices a single stone there).
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, on: { default: false } },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -433,6 +436,8 @@ const SETTINGS = {
   // reset after all (an error that repeats on every resume would hold the farm).
   resumeMaxErrors: 4,
 }
+// Exported for the checks (tools/test: per-opponent switches are toggled there).
+export { SETTINGS }
 
 /**
  * Is the external solver actually answering?
@@ -711,6 +716,12 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
     if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) return { answer: { x: a.x, y: a.y }, had: true }
   }
   return { answer: null, had: true }
+}
+
+/** Whether cheats are played against this opponent (SETTINGS.cheat.on). Pure. */
+export function cheatFor(opponent) {
+  const on = SETTINGS.cheat.on ?? {}
+  return !!(on[opponent] ?? on.default)
 }
 
 /**
@@ -1124,6 +1135,17 @@ export async function main(ns) {
   // is the one thing that makes a cheat costly. Said in /tel/go.txt.
   let cheatOn = canCheat
   let cheatOffWhy = canCheat ? null : 'the go.cheat API is closed (needs SF14 >= 2, or SF14 == 1 inside BitNode 14)'
+  // A go-cheat.js left by a killed go.js may still be waiting for its window:
+  // let it finish (<= maxWaitMs) before this process touches the board, or it
+  // would play two stones into the middle of our next turn. isRunning by name
+  // costs nothing more (isRunning is already referenced).
+  if (canCheat) {
+    try {
+      for (let t = 0; ns.isRunning('go-cheat.js', 'home') && t < SETTINGS.cheat.maxWaitMs + 5000; t += 100) await ns.sleep(100)
+    } catch {
+      /* a mock without isRunning-by-name: nothing to wait for */
+    }
+  }
   // Playtime calibration from go-cheat.js's last run: {T, at, crime}.
   let cheatCalib = null
   let cheatsPlayed = 0
@@ -1267,6 +1289,7 @@ export async function main(ns) {
     cheatsPlayed,
     cheatOn,
     cheatOffWhy,
+    cheatThisOpponent: cheatFor(opponent),
     cheatUnverified,
     cheatLog: cheatLog.slice(-10),
     remoteMoves,
@@ -1741,7 +1764,10 @@ export async function main(ns) {
         const askMs = Date.now() - ask0
 
         // A cheat replaces this turn's move when the clock allows (CHEAT POLICY).
-        if (cheatOn && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
+        // Not after the AI's pass: the play-on decision (mirror 'search') is
+        // priced for ONE stone, and the second-stone request would carry a
+        // pass our first stone already wiped.
+        if (cheatOn && cheatFor(opponent) && !oppPassed && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
           const c = await tryCheat(boardStrings, validList, ranked[0])
           if (c.played) {
             moves++

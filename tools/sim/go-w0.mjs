@@ -229,6 +229,9 @@ const CHEAT_MAX = num("cheatmax", 99);
 const CHEAT_FROM = num("cheatfrom", 2); // first of our turns a cheat may be used on
 const CHEAT_WAIT = num("cheatwait", 10);
 const CRIME = num("crime", 1);
+// go.js execs go-cheat.js, polls isRunning every 50ms and reads its result
+// (/tel/go-cheat.txt): ~150ms a played cheat beyond the window wait. Assumed.
+const CHEAT_EXEC_MS = 150;
 const SF143 = argv.includes("--sf143");
 const RATE = 171 / 30269 + 172 / 30307 + 170 / 30323;
 const pCheat = (k) => Math.max(0, Math.min(1, 0.6 * (0.7 - 0.02 * k) ** k * CRIME + (SF143 ? 0.25 : 0)));
@@ -404,7 +407,8 @@ async function playGame(stats, gameIndex) {
     const hasMove = ranked && ranked.length;
     let cheatNow = false;
     let cheatSucceeds = false;
-    if (CHEAT && hasMove && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM) {
+    // Not after the AI's pass (go.js: play-on decides a single stone there).
+    if (CHEAT && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM) {
       const p = pCheat(cheats);
       if (CHEAT === "blind") {
         cheatNow = true;
@@ -429,9 +433,19 @@ async function playGame(stats, gameIndex) {
         // playTwoMoves -> validateMove x2); the difference is a capture by the
         // first stone freeing the second point, which this ignores.
         state.previousPlayer = GoColor.white;
+        const ms0 = ourMs;
         const second = await solve();
-        turnLiveS += (MAXMS + 550) / 1000;
-        if (second && second.length) g.makeMove(state, second[0].x, second[0].y, GoColor.black);
+        // The second stone's request (its search is in ourMs) and the
+        // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
+        wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
+        turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS) / 1000;
+        if (second && second.length) {
+          g.makeMove(state, second[0].x, second[0].y, GoColor.black);
+          note("B", [second[0].x, second[0].y]);
+          // Live, the solver commits its answer to the second-stone request
+          // and ponders under it — the actual post-cheat position.
+          if (sess) sess.commit(second[0].x, second[0].y);
+        }
         state.previousPlayer = GoColor.black;
       } else if (cheats > 1 && Math.random() < 0.1) {
         ejected = true;
@@ -619,7 +633,8 @@ for (let i = START; i < GAMES; i++) {
   // -> 85ms. NOT YET CHECKED LIVE: go.js now publishes turnTiming, and the
   // report's s/game CHECK re-tests this on every run.
   // go-study-report re-times older records to this constant.
-  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + (r.rtTotalMs ?? r.ourTurns * ROUND_TRIP_MS) + (r.cheatOk ?? 0) * (MAXMS + 550) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
+  // A cheat's second search is already in ourMsTotal; add its round trip and exec.
+  const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + (r.rtTotalMs ?? r.ourTurns * ROUND_TRIP_MS) + (r.cheatOk ?? 0) * (ROUND_TRIP_MS + CHEAT_EXEC_MS) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
   emit({ kind: "game", i, ...r, won, streak, power: +power.toFixed(1), liveS: Math.round(liveS), simS: Math.round((Date.now() - w0) / 1000) });
 }
 emit({ kind: "end", ...stats, ...(SEEDED ? { calib: { req: calib.req.stats, pre: calib.pre.stats } } : {}) });

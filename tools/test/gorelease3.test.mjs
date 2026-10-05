@@ -490,5 +490,127 @@ export async function run() {
   }
   checks.push(c7);
 
+  /* ------------------------------------------------------------------ GR8 */
+  // CHEATS WITH RELEASE 3 (BN14.2 opens ns.go.cheat): the two-move cheat
+  // asks the solver for the second stone on the board after the first (the
+  // session re-roots fresh there and ponders under the actual post-cheat
+  // position); a pre-sent first stone played as a cheat sends no notice (the
+  // second-stone request re-roots the solver instead); never after the AI's
+  // pass (play-on prices one stone); per opponent (SETTINGS.cheat.on); and a
+  // go-cheat.js left running by a killed go.js is waited out before the board
+  // is touched.
+  const c8 = new Check("GR8", "cheats with release 3: second-stone request on the board after the first, no notice for a cheated pre-sent move, none after the AI's pass, per opponent, a stray go-cheat.js waited out");
+  {
+    const place = (b, x, y, c) => b.map((col, i) => (i === x ? col.slice(0, y) + c + col.slice(y + 1) : col));
+    const runCheat = async ({ on = true, pre = false, busy = 0 } = {}) => {
+      const files = new Map();
+      const reqs = [];
+      const execs = [];
+      const order = [];
+      let B = [".....", ".....", ".....", ".....", "....."];
+      let turn = 0;
+      let left = busy;
+      const saved = go.SETTINGS.cheat.on;
+      go.SETTINGS.cheat.on = { default: false, Daedalus: on };
+      const ns = {
+        flags: () => ({ size: 5, maxms: 5, idle: 1, topk: 8, remotems: 0, games: 1, opponent: "Daedalus", pin: true }),
+        disableLog() {},
+        tprint() {},
+        print() {},
+        getResetInfo: () => ({ lastAugReset: 1, currentNode: 14, ownedSF: new Map([[14, 1]]), ownedAugs: new Map() }),
+        getHostname: () => "home",
+        scp() {},
+        read: (f) => files.get(f) ?? "",
+        fileExists: (f) => f === "go-cheat.js",
+        atExit() {},
+        write: (f, data, mode) => {
+          files.set(f, mode === "a" ? (files.get(f) ?? "") + data : data);
+          if (f === "/go/req.txt") {
+            const q = JSON.parse(data);
+            reqs.push({ ...q, turn });
+            if (q.played) return;
+            const [x, y] = q.valid?.[0] ?? [0, 0];
+            files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x, y, backend: "model", mode: "session", release: "r3" }));
+          }
+        },
+        sleep: () => new Promise((r) => setTimeout(r, 0)),
+        exec: (script, host, t, x1, y1, x2, y2) => {
+          execs.push({ script, turn, first: [x1, y1], second: [x2, y2], board: B.slice() });
+          B = place(place(B, x1, y1, "X"), x2, y2, "X");
+          files.set("/tel/go-cheat.txt", JSON.stringify({ at: new Date().toISOString(), cheated: true, reply: "pass", waitedMs: 0, calib: { T: 0, at: Date.now(), p: 0.6 } }));
+          return 7;
+        },
+        isRunning: (a) => {
+          if (a === "go-cheat.js") {
+            order.push("wait");
+            return left-- > 0;
+          }
+          return false;
+        },
+        go: {
+          analysis: { getStats: () => ({}), getValidMoves: () => B.map((c) => [...c].map((ch) => ch === ".")) },
+          resetBoardState: () => order.push("reset"),
+          getGameState: () => ({ komi: 5.5, blackScore: 20, whiteScore: 5.5, previousMove: [0, 0] }),
+          getBoardState: () => B,
+          getMoveHistory: () => [],
+          makeMove: (x, y) => {
+            turn++;
+            B = place(B, x, y, "X");
+            if (turn === 1) {
+              B = place(B, 4, 4, "O");
+              // The ponder's answer for the position the AI's reply makes.
+              if (pre) files.set("/go/ponder.txt", JSON.stringify({ answers: [{ b: B.join(""), pc: 0, x: 2, y: 2 }] }));
+              return Promise.resolve({ type: "move", x: 4, y: 4 });
+            }
+            return Promise.resolve({ type: "gameOver", x: null, y: null });
+          },
+          passTurn: () => Promise.resolve({ type: "gameOver", x: null, y: null }),
+        },
+      };
+      try {
+        await Promise.race([go.main(ns), new Promise((_, rej) => setTimeout(() => rej(new Error("main() did not finish in 30s")), 30000))]);
+      } finally {
+        go.SETTINGS.cheat.on = saved;
+      }
+      return { reqs, execs, order, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
+    };
+    try {
+      const r = await runCheat();
+      c8.examined(5);
+      if (r.execs.length !== 1) c8.fail(`one cheat expected (turn 2; none on turn 1, none after the AI's pass), ${r.execs.length} exec'd`, JSON.stringify(r.execs));
+      else {
+        const e = r.execs[0];
+        // Turn 2's asks (the third, after the cheat, is the after-pass move).
+        const asks = r.reqs.filter((q) => q.turn === 1 && !q.played && !q.opponentPassed);
+        // The first request is the position; the second is that position plus the first stone, black to move.
+        const want2 = place(e.board, e.first[0], e.first[1], "X").join("");
+        if (asks.length !== 2 || asks[0].board.join("") !== e.board.join("") || asks[1].board.join("") !== want2) c8.fail("the second stone must be asked on the board after the first", JSON.stringify(asks.map((q) => q.board)));
+        if (asks[1] && asks[1].valid.some(([x, y]) => x === e.first[0] && y === e.first[1])) c8.fail("the second-stone request offered the first stone's point");
+        if (e.first.join() === e.second.join()) c8.fail("the cheat's two stones are the same point");
+      }
+      // After the cheat the AI passed: the next move is the solver's single stone.
+      const afterPass = r.reqs.filter((q) => q.opponentPassed === true);
+      if (afterPass.length !== 1) c8.fail(`after the AI's pass the solver is asked once with opponentPassed (asked ${afterPass.length}x)`);
+      if (r.tel?.cheatsPlayed !== 1 || r.tel?.cheatThisOpponent !== true) c8.fail("/tel/go.txt: cheatsPlayed 1, cheatThisOpponent true", JSON.stringify({ played: r.tel?.cheatsPlayed, on: r.tel?.cheatThisOpponent, why: r.tel?.cheatOffWhy }));
+
+      const p = await runCheat({ pre: true });
+      c8.examined(2);
+      if (p.execs.length !== 1 || p.execs[0].first.join() !== "2,2") c8.fail("a pre-sent first stone is the cheat's first stone", JSON.stringify(p.execs));
+      if (p.reqs.some((q) => q.played)) c8.fail("a pre-sent move played as a cheat must send no notice (the second-stone request re-roots the solver)", JSON.stringify(p.reqs.filter((q) => q.played)));
+
+      const off = await runCheat({ on: false });
+      c8.examined(1);
+      if (off.execs.length) c8.fail("SETTINGS.cheat.on false for this opponent: no cheat");
+
+      const busy = await runCheat({ busy: 3 });
+      c8.examined(1);
+      const firstReset = busy.order.indexOf("reset");
+      if (busy.order.slice(0, 4).join() !== "wait,wait,wait,wait" || firstReset < 4) c8.fail("a running go-cheat.js must be waited out before the board is reset", busy.order.slice(0, 8).join());
+    } catch (e) {
+      c8.fail(String(e?.stack ?? e).slice(0, 400));
+    }
+  }
+  checks.push(c8);
+
   return checks;
 }
