@@ -297,5 +297,25 @@ export async function run() {
     if (name === 'the incident') c7.note(`incident: ${r?.why ?? r?.skip}`)
   }
   if (!/reissueWorkOf\(/.test(SRC('act.js'))) c7.fail('act.js must run actplan.reissueWorkOf')
+  // ---- BI8 ------------------------------------------------------------------
+  // Live BN14.1 2026-10-05 02:04Z: 'stays on never: no alternative' while installing now priced
+  // 8.92h against never's 7.64h — screened out of the draws by its point, read as "no install arm".
+  const c8 = new Check('BI8', "'no alternative' never hides a priced install: the screened options are named with their points")
+  checks.push(c8)
+  {
+    const trajOf = (spec) => {
+      const h = spec?.kind === 'wait' ? 8.92 : 7.64
+      return { f: () => h, fg: function* () { return h }, noiseKey: P.bladeNoiseKeyOf(spec) }
+    }
+    const prev = { key: 'never', route: 'blade', installAt: null, meanH: 7.65, commitment: { key: 'never', meanH: 7.65, at: new Date(NOW - 15 * 60e3).toISOString() } }
+    const d = drain(P.decideInstallGen({ inputs: INPUTS, count: null, point: { now: { hours: 8.92, blade: { gains: { strength: 1.1 } } }, waits: [], never: { hours: 7.64 } }, prev, draws: DRAWS, redecide: true, budgetMs: 1e9, now: NOW, sameLife: true, route: 'blade', trajOf, reachSd: 0.01 }))
+    c8.examined(1)
+    c8.note(`decision ${d.key}: ${d.why}`)
+    if (d.key !== 'never') c8.fail(`never must stay (got ${d.key})`)
+    if (/no alternative$/.test(d.why ?? '') || !/screened out by point: now 8\.92h/.test(d.why ?? '')) c8.fail('the why must name the screened install-now option and its point', d.why)
+    const bare = P.screenedWhyOf({ why: 'stays on never: no alternative' }, { screened: [] })
+    if (bare.why !== 'stays on never: no alternative') c8.fail('nothing screened: the why is unchanged', bare.why)
+  }
+
   return checks
 }

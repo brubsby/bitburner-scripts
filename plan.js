@@ -1421,8 +1421,27 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const prevH = committedKey ? (fin(prev?.commitment?.meanH) ? prev.commitment.meanH : fin(prev?.meanH) ? prev.meanH : null) : null
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: prevH })
   const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
+  screenedWhyOf(d, screen)
   if (d.choice === null) return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc, ...screened }
   return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+}
+
+/**
+ * "NO ALTERNATIVE" MUST NOT HIDE A PRICED ONE: an option screened out of the
+ * draws by its point (installScreenOf) was priced and lost — the decision's
+ * why names it and its point. Live BN14.1 2026-10-05 02:04Z the install
+ * decision read 'stays on never: no alternative' while installing now priced
+ * 8.92h against never's 7.64h, and was read as "the install arm is not
+ * generated at all". Mutates d.why.
+ */
+export function screenedWhyOf(d, screen) {
+  if (!d || typeof d.why !== 'string' || !d.why.endsWith('no alternative') || !screen?.screened?.length) return d
+  const sc = [...screen.screened].sort((a, b) => (fin(a.pointH) ? a.pointH : Infinity) - (fin(b.pointH) ? b.pointH : Infinity))
+  d.why = `${d.why} within the screen — priced and screened out by point: ${sc
+    .slice(0, 4)
+    .map((x) => `${x.key} ${fin(x.pointH) ? `${x.pointH.toFixed(2)}h` : 'unpriced'}`)
+    .join(', ')}${sc.length > 4 ? ` (+${sc.length - 4} more)` : ''}`
+  return d
 }
 
 /**
@@ -1678,6 +1697,7 @@ export function* decideLifeLengthGen({ options: optsIn = [], basis = null, ctx =
   const switchCost = Object.fromEntries(use.filter((o) => o.key !== committedKey).map((o) => [o.key, switchCostH]))
   const d = decide({ samples: ev.samples, committed: committedKey, switchCost, theta, committedPrevH: prevH })
   const screened = screen?.screened?.length ? { screened: screen.screened, screen: screen.why } : {}
+  screenedWhyOf(d, screen)
   if (d.choice === null) return { key: null, lifeH: null, why: d.why, basis: basisOut, table, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened, ...cpu }
   // The incumbent gone (its length no longer buys anything): the choice is a switch.
   const gone = prev?.key && committedKey === null
