@@ -1,7 +1,7 @@
 {
  "schema": "gameplan-posterior",
  "version": 1,
- "updatedAt": "2026-10-04T00:43:41.884Z",
+ "updatedAt": "2026-10-05T09:01:27.723Z",
  "model": {
   "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
   "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
@@ -93,6 +93,17 @@
    "note": "56.17h"
   },
   {
+   "key": "ir14|2026-10-03T18:47:58.191Z|2026-10-05T08:57:35.014Z",
+   "param": "ir14",
+   "value": 2197395189.757357,
+   "sd": 0.7987,
+   "space": "log",
+   "at": "2026-10-05T08:57:35.014Z",
+   "source": "history.jsonl: BN14 in progress since 2026-10-03T18:47:58.191Z, 35 windows to level 309 (income a_n at the pooled slope 3.57)",
+   "stream": "ir14|history.jsonl|2026-10-03T18:47:58.191Z",
+   "node": 14
+  },
+  {
    "key": "k|BN4.3|2026-10-03T18:45:23.337Z",
    "param": "k",
    "value": 0.9001943044507863,
@@ -143,13 +154,13 @@
    "note": "combat 100 at 2.38h"
   },
   {
-   "key": "xr14|2026-10-03T18:47:58.191Z|2026-10-04T00:39:53.768Z",
+   "key": "xr14|2026-10-03T18:47:58.191Z|2026-10-05T08:57:35.014Z",
    "param": "xr14",
-   "value": 83464.88214182535,
-   "sd": 0.9511,
+   "value": 1078467.4263360947,
+   "sd": 0.4878,
    "space": "log",
-   "at": "2026-10-04T00:39:53.768Z",
-   "source": "history.jsonl: BN14 in progress since 2026-10-03T18:47:58.191Z, 15 windows to level 111 (exp a_n at the pooled slope 3.34)",
+   "at": "2026-10-05T08:57:35.014Z",
+   "source": "history.jsonl: BN14 in progress since 2026-10-03T18:47:58.191Z, 151 windows to level 309 (exp a_n at the pooled slope 3.34)",
    "stream": "xr14|history.jsonl|2026-10-03T18:47:58.191Z",
    "node": 14
   }
