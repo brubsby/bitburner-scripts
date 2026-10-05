@@ -825,7 +825,7 @@ function armCounts(arm, ver, now) {
  * mean, 1.4/27.5). Replaced by the measured rate once W0_MEASURED_MIN games
  * exist (go.js). tools/test/gameplan.test.mjs [GP8] fails if the two drift.
  */
-export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 1570, refP: 0.051 }
+export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 3130, refP: 0.294 } // KataGo GPU on 19x19 (d711521 gameplan derivation)
 
 /** Games against the hidden opponent before its measured rate replaces the prior. */
 export const W0_MEASURED_MIN = 10
