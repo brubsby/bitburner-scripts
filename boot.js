@@ -84,6 +84,9 @@ import { isHacknetServerHost } from 'hacknetplan.js'
 // status.js references only ns.write (0GB) and this file registers ns.atExit
 // (0GB), so invariant C1 costs the launcher nothing.
 import { reporter, describe } from 'status.js'
+// Pure (no ns surface): act.js's action slot sized to the node, and the
+// residents go.js outranks in a Go-first node.
+import { actionSlotOf, stockHeldOf, GO_OUTRANKS } from 'raiseplace.js'
 
 // ---------------------------------------------------------------------------
 // THE MANIFEST. Plain data — no functions, no ns, nothing that has to be
@@ -681,15 +684,30 @@ export async function main(ns) {
       return 0
     }
   }
-  // The largest one-shot actor act.js might have to place. Read off the
-  // deployed files rather than a constant, so a new act-*.js cannot silently
-  // outgrow the slot reserved for it.
-  const actionRam = (() => {
-    if (!STACK.some((e) => e.script === 'act.js')) return 0
-    let max = 0
-    for (const f of ns.ls('home', 'act-')) if (f.endsWith('.js')) max = Math.max(max, costOf(f))
-    return max
+  // THE LARGEST ONE-SHOT act.js WILL PLACE IN THIS NODE (raiseplace.actionSlotOf):
+  // every routine actor and snapshot reader, priced on home (the SF4 level is
+  // in the price); act-liquidate.js only while the trader holds a book;
+  // act-graft.js only from the planner's tier and where grafting exists. It
+  // was the largest act-*.js on disk — act-liquidate.js, 19.4GB at every SF4
+  // level — which at SF4.3 is more than twice any actor act.js launches at a
+  // node's opening, and on a 32GB home kept go.js (20.75GB) off it in BN14.2.
+  // Deployed act-/snap-*.js files outside raiseplace's lists still count, so
+  // a new actor cannot silently outgrow the slot. Both reads are ns.read
+  // (0GB): /tel/stock.txt (no getResetInfo here, so fresh = this life), and
+  // the watchdog's /tel/sf.txt for grafting (unknown, or stale -> counted).
+  const slot = (() => {
+    if (!STACK.some((e) => e.script === 'act.js')) return { gb: 0, largest: null, sizes: {}, excluded: {} }
+    let grafting = null
+    try {
+      const r = JSON.parse(ns.read('/tel/sf.txt') || 'null')
+      if (typeof r?.grafting === 'boolean' && Date.now() - Date.parse(r.at) < 3 * 60e3) grafting = r.grafting
+    } catch {
+      grafting = null
+    }
+    const files = [...ns.ls('home', 'act-'), ...ns.ls('home', 'snap-')]
+    return actionSlotOf({ ramOf: costOf, homeMax: homeRam, grafting, stockHeld: stockHeldOf(ns.read('/tel/stock.txt')), files })
   })()
+  const actionRam = slot.gb
   const plan = planStack(STACK, { homeRam, costOf, bootRam: costOf('boot.js'), minOps: MIN_OPS, actionRam })
   // THE NEXT TIER'S PLAN, for the home upgrade's price (progress.js prices
   // the next RAM block by what it ADMITS — homeplan.tierUnlocksOf; a tier is
@@ -714,6 +732,9 @@ export async function main(ns) {
     worker: plan.worker,
     reservedForWorkers: plan.reserve,
     actionSlot: plan.action,
+    // Per-actor sizes behind the slot (GB at this SF4 level), the one that
+    // sets it, and the actors left out with why.
+    actionActors: { largest: slot.largest, sizes: slot.sizes, excluded: slot.excluded },
     homePlanned: plan.homeUsed,
     dry,
     rooted,
@@ -805,7 +826,16 @@ export async function main(ns) {
       // sleeve driver at all. Nothing noticed, because the only record of the
       // exit was written to foodnstuff.
       const need = Math.max(entry.cost, entry.raisesTo ?? 0) * threads
-      const host = entry.where === 'home' ? (spare(ns, 'home') >= need ? 'home' : null) : placeOff(ns, hosts, need)
+      // A home resident keeps act.js's action slot free beside it, MEASURED:
+      // the plan fits it beside the slot only against what the plan put on
+      // home, and go.js (placed first in a Go-first node by seed.js) is not
+      // in the plan. One-shots are transient and exempt, as in planStack.
+      const homeRoom = spare(ns, 'home') - (entry.kind === 'oneshot' ? 0 : plan.action)
+      const host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need)
+      if (!host && entry.where === 'home' && GO_OUTRANKS.includes(entry.script) && ns.ps('home').some((p) => p.filename === 'go.js')) {
+        stopped.push(`${entry.script} not started: go.js holds home beside act.js's ${plan.action}GB slot (it outranks ${entry.script} in a Go-first node)`)
+        continue
+      }
       if (!host) {
         failed.push(`${entry.script}: planned ${need}GB but no host had it free`)
         continue

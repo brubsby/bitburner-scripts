@@ -115,6 +115,17 @@ const ASSUMPTIONS = [
       "HARDCODED, and the scaling it does apply is to a multiplier that no longer exists. pserv.js:98 does `settings.gbRamCost *= getBitNodeMultipliers().PurchasedServerCost` — the v1 name; the game renamed it CloudServerCost (BitNodeMultipliers.ts:131), and bitNodeMultipliers.js still merges over a v1-named defaults table, so the factor read is a constant 1 whatever the node says. Every affordability test in pserv.js (:124,:136,:138,:163,:164,:181,:183) is therefore off by CloudServerCost: too high and it buys servers it cannot pay for, too low and it never buys. pserv.js is superseded by buyserv.js and not in the boot stack, which is the only reason this is not impact 3.",
   },
   {
+    id: "cloud-cost-gohost",
+    tol: 0.05, dangerous: "both", impact: 1,
+    // impact 1: the multiplier IS applied (raiseplace.goHostBuyOf reads
+    // CloudServerCost and CloudServerSoftcap from bitNodeMults); 55000 is the
+    // game's own ServerConstants.BaseCostFor1GBOfRamServer, which it scales.
+    mult: "CloudServerCost",
+    expect: 1,
+    where: "raiseplace.js CLOUD_GB_COST = 55000 (goHostBuyOf: when seed.js execs gohost.js for go.js's server)",
+    breaks: "Only the moment seed.js launches gohost.js: the estimate multiplies 55000 by the node's CloudServerCost (and softcap), so a wrong node table entry makes it launch early (gohost.js re-checks with ns.cloud.getServerCost and refuses, saying so) or late. The purchase itself is always priced by the game.",
+  },
+  {
     id: "cloud-limit",
     tol: 0.05, dangerous: "both", impact: 1,
     mult: "CloudServerLimit",

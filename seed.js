@@ -43,7 +43,7 @@
 import { reporter, describe } from 'status.js'
 // Pure: the trader's placement priced as trajectories (nodeecon), the home tier's price (homecost).
 import { traderPlacement } from 'nodeecon.js'
-import { canAccessFeature, sfLevel, singularityRamMultiplier } from 'sfgate.js'
+import { canAccessFeature, sfLevel, singularityRamMultiplier, canUseGrafting } from 'sfgate.js'
 import { ramUpgradeCost } from 'homecost.js'
 // Pure: the exp-mode gate and the exp-per-thread rule, and the node table.
 import { expMode, expPerThread } from 'expfarm.js'
@@ -51,7 +51,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): the full Bladeburner daemon's reserved block, kept free of workers.
-import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, JOB_RUNNER_TIER, goFirstOf, goPlacementOf, goHomeKeepOf, goHomeRepairOf, reserveRecordOf } from 'raiseplace.js'
+import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, GO_OUTRANKS, JOB_RUNNER_TIER, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf, goHostBuyOf, GO_HOST, goHomeRepairOf, reserveRecordOf } from 'raiseplace.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
@@ -415,6 +415,7 @@ const TRADER = 'stock.js'
 // pass is the placer from the 8GB opening to 128GB, where seed.js retires.
 let lastGo = null
 const GO = 'go.js'
+const GOHOST = 'gohost.js'
 
 /**
  * Place go.js in a Go-first node. Home only with act.js's whole action slot
@@ -437,9 +438,22 @@ export async function placeGo(ns, all) {
   }
   const rooted = all.filter((h) => ns.hasRootAccess(h))
   const homeMax = ns.getServerMaxRam('home')
-  const homeKeep = goHomeKeepOf((a) => ns.getScriptRam(a, 'home'))
-  const gbOn = (h, names) => ns.ps(h).filter((p) => names.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0)
-  const homeProcs = () => ns.ps('home').map((p) => ({ script: p.filename, gb: ns.getScriptRam(p.filename, 'home') * p.threads, args: p.args }))
+  // act.js's action slot SIZED TO THIS NODE (raiseplace.actionSlotOf): the
+  // largest actor it will launch at this home size, SF4 level and book.
+  if (here !== 'home') {
+    try {
+      ns.scp('/tel/stock.txt', here, 'home')
+    } catch {
+      /* no record: no book */
+    }
+  }
+  const slot = actionSlotOf({ ramOf: (a) => ns.getScriptRam(a, 'home'), homeMax, grafting: canUseGrafting(reset), stockHeld: stockHeldOf(ns.read('/tel/stock.txt'), reset.lastAugReset) })
+  const homeKeep = slot.gb
+  // A raise-sized daemon (hashspend.js) holds its RAISED block, not the floor
+  // ns.getScriptRam reads (raiseplace.js header): count what it frees.
+  const ramOf = (s, h) => Math.max(ns.getScriptRam(s, h), s !== GO ? RAISED[s]?.gb ?? 0 : 0)
+  const gbOn = (h, names) => ns.ps(h).filter((p) => names.includes(p.filename)).reduce((a, p) => a + ramOf(p.filename, h) * p.threads, 0)
+  const homeProcs = () => ns.ps('home').map((p) => ({ script: p.filename, gb: ramOf(p.filename, 'home') * p.threads, args: p.args }))
   let prev = null
   try {
     if (here !== 'home') ns.scp(file, here, 'home')
@@ -470,6 +484,7 @@ export async function placeGo(ns, all) {
           workerGb: gbOn(h, ['h.js', 'g.js', 'w.js']),
           evictGb: gbOn(h, EVICTABLE),
           relocGb: h === 'home' ? gbOn(h, RELOCATABLE) : 0,
+          yieldGb: h === 'home' ? gbOn(h, GO_OUTRANKS) : 0,
           hacknet: isHacknetServerHost(h),
         })),
     })
@@ -489,7 +504,7 @@ export async function placeGo(ns, all) {
     if (r.ok) {
       const repaired = r.stop.length ? await moveOffHome(ns, rooted, r.stop, procs.filter((p) => r.stop.includes(p.script))) : []
       writeRec({ action: 'running', why: `${GO} is running on home with the action slot kept` })
-      lastGo = { goFirst: true, action: 'running', host: 'home', homeKeep, repaired, why: go.why }
+      lastGo = { goFirst: true, action: 'running', host: 'home', homeKeep, slotActor: slot.largest, repaired, why: go.why }
       return 'home'
     }
     const goArgs = ns.ps('home').find((p) => p.filename === GO)?.args ?? []
@@ -518,10 +533,22 @@ export async function placeGo(ns, all) {
 
   let d = decide(false)
   let moved = []
-  if (d.action === 'reserve' && (d.evict || d.relocate)) {
+  let yielded = []
+  if (d.action === 'reserve' && (d.evict || d.relocate || d.yieldGb > 0)) {
     const procs = d.relocate ? homeProcs() : []
     for (const w of EVICTABLE) ns.scriptKill(w, d.host)
     if (d.relocate) for (const r of RELOCATABLE) ns.scriptKill(r, 'home')
+    // GO_OUTRANKS on home, largest first, only until go.js's block is free.
+    if (d.yieldGb > 0) {
+      let freed = 0
+      for (const p of homeProcs().filter((q) => GO_OUTRANKS.includes(q.script)).sort((a, b) => b.gb - a.gb)) {
+        if (freed >= d.yieldGb - 1e-9) break
+        ns.scriptKill(p.script, 'home')
+        yielded.push(p.script)
+        freed += p.gb
+      }
+      if (yielded.length) ns.tprint(`seed: stopped ${yielded.join(', ')} on home: ${GO} outranks them in a Go-first node`)
+    }
     await ns.sleep(0)
     const again = decide(false)
     if (again.action === 'place' || again.action === 'reserve') d = { ...again, why: `${again.why} (after clearing ${d.host})` }
@@ -533,10 +560,32 @@ export async function placeGo(ns, all) {
     pid = ns.exec(GO, d.host, 1)
     if (pid) ns.tprint(`seed: placed ${GO} on ${d.host} (Go-first node)`)
   }
+  // NO HOST CAN EVER HOLD IT: buy one the moment cash covers it (gohost.js,
+  // a one-shot, so seed.js is not billed for ns.cloud). The next pass places
+  // go.js there.
+  let buy = null
+  if (d.action === 'blocked') {
+    buy = goHostBuyOf({ d, cash: ns.getServerMoneyAvailable('home'), need: ns.getScriptRam(GO, 'home'), mults: bitNodeMults(reset.currentNode), exists: all.includes(GO_HOST) })
+    if (buy.buy) {
+      const price = ns.getScriptRam(GOHOST, 'home')
+      const roomOn = (h) => ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= price
+      let spot = [here, ...rooted.filter((h) => h !== here && !isHacknetServerHost(h))].find(roomOn)
+      if (!spot && here !== 'home') {
+        // The fleet is full of this script's own workers: make room here (refilled next pass).
+        for (const w of EVICTABLE) ns.scriptKill(w, here)
+        await ns.sleep(0)
+        if (roomOn(here)) spot = here
+      }
+      if (spot && spot !== 'home' && spot !== here) ns.scp(GOHOST, spot, 'home')
+      buy.pid = spot ? ns.exec(GOHOST, spot, 1, buy.ram) : 0
+      buy.host = spot ?? null
+      if (!buy.pid) buy.why = `${buy.why} — but ${GOHOST} (${price}GB) could not start${spot ? ` on ${spot}` : ': no rooted host has the room'}`
+    }
+  }
   writeRec(pid ? { action: 'running', why: `${GO} placed on ${d.host}` } : d)
   // The daemons moved off home start again on a fleet host, after go.js has its block.
   const relocated = moved.length ? await moveOffHome(ns, rooted, [], moved) : []
-  lastGo = { goFirst: true, action: pid ? 'placed' : d.action, host: d.host ?? null, pid, homeKeep, relocated, why: d.why }
+  lastGo = { goFirst: true, action: pid ? 'placed' : d.action, host: d.host ?? null, pid, homeKeep, slotActor: slot.largest, relocated, yielded, ...(buy ? { buy } : {}), why: d.why }
   return pid ? d.host : null
 }
 

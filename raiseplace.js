@@ -101,7 +101,10 @@ export function raisedPlacementOf({ script = null, homeMax, plan = null, node = 
   const capNoReloc = (h) => free(h) + (num(h.workerGb) ? h.workerGb : 0) + (num(h.evictGb) ? h.evictGb : 0)
   // relocGb: daemons that can be moved OFF this host (only seed.js's go
   // placement passes it, for home: RELOCATABLE below). 0 when absent.
-  const cap = (h) => capNoReloc(h) + (num(h.relocGb) ? h.relocGb : 0)
+  const capNoYield = (h) => capNoReloc(h) + (num(h.relocGb) ? h.relocGb : 0)
+  // yieldGb: home residents go.js outranks (GO_OUTRANKS; seed.js's go
+  // placement only), stopped last — after the worker and the relocations.
+  const cap = (h) => capNoYield(h) + (num(h.yieldGb) ? h.yieldGb : 0)
   const f = (x) => x.toFixed(2)
   const home = ok.find((h) => h.host === 'home')
   if (home && free(home) >= need) return { action: 'place', admitted: true, host: 'home', gb: need, why: `home has ${f(free(home))}GB free beyond progress.js's block (${rw.why})` }
@@ -112,11 +115,15 @@ export function raisedPlacementOf({ script = null, homeMax, plan = null, node = 
     const best = [...ok].sort((a, b) => cap(b) - cap(a))[0]
     return { action: 'blocked', admitted: true, why: `no rooted host can hold ${name}'s ${need}GB even with the batch and seed workers gone — largest ${best ? `${best.host} ${f(cap(best))}GB of ${best.max}GB` : 'none'}: root a bigger server or grow home` }
   }
-  const pick = cands.find((h) => h.host === prev?.host) ?? cands.find((h) => h.host === 'home') ?? cands.sort((a, b) => cap(a) - cap(b) || (a.host < b.host ? -1 : 1))[0]
+  // A host that needs nothing outranked stopped beats one that does.
+  const pool = cands.some((h) => capNoYield(h) >= need) ? cands.filter((h) => capNoYield(h) >= need) : cands
+  const pick = pool.find((h) => h.host === prev?.host) ?? pool.find((h) => h.host === 'home') ?? pool.sort((a, b) => cap(a) - cap(b) || (a.host < b.host ? -1 : 1))[0]
   const evict = num(pick.evictGb) && pick.evictGb > 0
   // Moved off only when the block needs them: workers and evictions first.
   const relocate = num(pick.relocGb) && pick.relocGb > 0 && capNoReloc(pick) < need
-  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, relocate, why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''}${relocate ? ` (and ${f(pick.relocGb)}GB of daemons moved off it)` : ''} — batch.js and seed.js leave ${need}GB there and the watchdog places ${name} as soon as it is free` }
+  // How much of the outranked residents must stop (largest first is the caller's).
+  const yieldNeed = num(pick.yieldGb) && pick.yieldGb > 0 && capNoYield(pick) < need ? need - capNoYield(pick) : 0
+  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, relocate, ...(yieldNeed > 0 ? { yieldGb: yieldNeed } : {}), why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''}${relocate ? ` (and ${f(pick.relocGb)}GB of daemons moved off it)` : ''}${yieldNeed > 0 ? ` (and ${f(yieldNeed)}GB of ${GO_OUTRANKS.join('/')} stopped: go.js outranks them)` : ''} — batch.js and seed.js leave ${need}GB there and the watchdog places ${name} as soon as it is free` }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,15 +150,18 @@ export function raisedPlacementOf({ script = null, homeMax, plan = null, node = 
 //   - seed.js (tier 8 until 128), every pass, and watchdog.js (64 up), every
 //     cycle, through goPlacementOf -> raisedPlacementOf, script 'go.js';
 //   - home only with act.js's WHOLE action slot kept beside it
-//     (goHomeKeepOf: the largest act-*.js, 19.4GB in BN14) and progress.js's
-//     block where the watchdog runs it. It outranks the home worker
-//     (early.js/hgw.js are EVICTABLE) and, from seed.js, the RELOCATABLE
-//     daemons, never the slot: at 32GB and 64GB home cannot hold it, so the
-//     fleet is the main path (a rooted 32GB host, or a purchased server such
-//     as the 'go-host' bought live at 20:50Z);
+//     (goHomeKeepOf -> actionSlotOf: the largest actor act.js will launch in
+//     this node, 9.25GB at SF4.3 below the watchdog tier — it was a flat
+//     19.4GB, act-liquidate.js, which kept go.js off a 32GB home in BN14.2)
+//     and progress.js's block where the watchdog runs it. It outranks the
+//     home worker (early.js/hgw.js are EVICTABLE) and, from seed.js, the
+//     RELOCATABLE daemons and the GO_OUTRANKS residents, never the slot: at
+//     SF4.3 a 32GB home holds go.js (20.75 + 9.25 = 30GB);
 //   - else the tightest fleet host with the room, else a host RESERVED and its
 //     seed workers evicted (seed.js and batch.js honour the reservation),
-//     else blocked by name (an 8GB opening with no 32GB host rooted).
+//     else blocked by name (an 8GB opening with no 32GB host rooted) — and
+//     then seed.js buys a server for it the moment cash covers one
+//     (goHostBuyOf; live BN14.1 the lead bought 'go-host' by hand at 20:50Z).
 // go.js talks to the solver through home's /go files from wherever it runs.
 
 /** Effective Go power at or above which go.js is placed first (BitNode 14). */
@@ -171,25 +181,157 @@ export function goFirstOf({ goPower, sf14 = 0 } = {}) {
 
 /**
  * act.js's actors (act-*.js). go.js on home keeps the WHOLE action slot free
- * beside it: the largest actor, the same figure boot.js reserves (stack.js's
- * action slot). An earlier version kept only the largest routine actor
- * (8.25GB in BN14) and ran go.js on a 32GB home; live BN14.1 from 18:59Z to
- * 20:49Z act.js then placed nothing (no gym, no home-RAM purchase) and
- * BOOTSTRAP STALLED fired. go.js outranks the home WORKER (early.js), never
- * act.js's slot, so at the 32GB and 64GB tiers it goes off home. [GF] fails
- * when a new act-*.js is in neither list.
+ * beside it: the same figure boot.js reserves (stack.js's action slot),
+ * actionSlotOf below. Live BN14.1 from 18:59Z to 20:49Z go.js ran on a 32GB
+ * home and act.js placed nothing (no gym, no home-RAM purchase; BOOTSTRAP
+ * STALLED) — not because the routine actors were the wrong size but because
+ * the slot itself was eaten after go.js landed (hashspend.js, and boot.js's
+ * spawned early.js: 4GB left). goHomeRepairOf and boot.js's measured spawn
+ * keep it now. go.js outranks the home WORKER (early.js), never act.js's
+ * slot. [GF] fails when a new act-*.js is in neither list.
  */
 export const ROUTINE_ACTORS = ['act-backdoor.js', 'act-buyaug.js', 'act-buyprogram.js', 'act-company.js', 'act-course.js', 'act-crime.js', 'act-donate.js', 'act-focus.js', 'act-gym.js', 'act-homeram.js', 'act-install.js', 'act-join.js', 'act-softreset.js', 'act-stop.js', 'act-travel.js', 'act-work.js']
 export const RARE_ACTORS = ['act-liquidate.js', 'act-graft.js']
 
-/** The action slot go.js keeps on home: the largest act-*.js, priced by `ramOf` (ns.getScriptRam). */
-export function goHomeKeepOf(ramOf) {
+/**
+ * act.js's OTHER one-shots: the snapshot readers (snapshot.js SNAPSHOTS), run
+ * by act.js's refreshSnapshots every loop (the static families once per node)
+ * through the same "any rooted host with room" path as an actor. snap-static.js
+ * is 9.25GB at SF4.3 — larger than every routine act-*.js there (8.25GB) — so
+ * the slot that leaves them out is too small. [GF10] holds this to SNAPSHOTS.
+ */
+export const SNAP_ACTORS = ['snap-owned.js', 'snap-catalog.js', 'snap-augprice.js', 'snap-rep.js', 'snap-invites.js', 'snap-augstats.js', 'snap-prereq.js', 'snap-static.js']
+
+// ---------------------------------------------------------------------------
+// THE ACTION SLOT, SIZED TO WHAT act.js WILL ACTUALLY LAUNCH.
+//
+// It was the largest act-*.js on disk: act-liquidate.js, 19.4GB at every SF4
+// level (a stock call, not a Singularity one). At SF4.3 every Singularity
+// actor is <= 8.25GB, so on a 32GB home the 19.4GB slot kept go.js (20.75GB)
+// off home with nowhere else to go. Live BN14.2 (2026-10-05) Go at x8 idled
+// ~2h at node start; the lead ran go.js on home by hand, 11.3GB stayed free,
+// and act.js placed its actors (crime: Mug) without a refusal.
+//
+// The two RARE actors launch only in a known shape, and both shapes are cheap
+// to read:
+//   - act-liquidate.js: before an install it always runs, but there act.js
+//     goes ahead without it unless /tel/stock.txt reports equity
+//     (act.js: `liq.ok !== true && equity > 0` is the only refusal); the
+//     raises it serves sell the book, so without a book there is nothing to
+//     raise. Counted while this life's trader record holds equity > 0.
+//   - act-graft.js: the graft order comes only from progress.js (actplan's
+//     bootstrap never grafts: paid up front), which runs from the watchdog
+//     tier (JOB_RUNNER_TIER) — and only where grafting exists at all
+//     (sfgate.canUseGrafting: BitNode 10 or SF10). Unknown access counts it.
+// The routine actors and the snapshot readers always count. Every price is
+// ns.getScriptRam on home, which already carries the SF4 multiplier.
+// A deployed act-*.js / snap-*.js in neither list (`files`) counts too: a new
+// actor never silently outgrows the slot (boot.js passes ns.ls).
+
+/** Same constant as nodeecon.STOCK_FRESH_MS ([GF10] holds them equal; this module imports nothing). */
+export const STOCK_HELD_FRESH_MS = 10 * 60e3
+
+/**
+ * Does the trader hold a book act-liquidate.js would have to sell? From the
+ * raw /tel/stock.txt text (ns.read: 0GB): fresh, of this life when
+ * `lastAugReset` is given (boot.js has no getResetInfo and passes null), and
+ * equity > 0.
+ */
+export function stockHeldOf(text, lastAugReset = null, now = Date.now()) {
+  let r = null
+  try {
+    r = JSON.parse(text || 'null')
+  } catch {
+    r = null
+  }
+  if (!r || typeof r !== 'object') return false
+  const age = now - Date.parse(r.at ?? '')
+  if (!(age >= 0 && age < STOCK_HELD_FRESH_MS)) return false
+  if (lastAugReset != null && r.lastAugReset !== lastAugReset) return false
+  return num(r.equity) && r.equity > 0
+}
+
+/**
+ * The action slot: {gb, largest, sizes: {actor: GB}, excluded: {actor: why}}.
+ *   ramOf      (script) -> GB, ns.getScriptRam(script, 'home')
+ *   homeMax    home's max RAM (act-graft.js only from JOB_RUNNER_TIER)
+ *   grafting   sfgate.canUseGrafting(reset); null = unknown (counted)
+ *   stockHeld  stockHeldOf(...): the trader holds equity
+ *   files      deployed file names (optional): unknown act-/snap-*.js count
+ */
+export function actionSlotOf({ ramOf, homeMax = null, grafting = null, stockHeld = false, files = null } = {}) {
+  const sizes = {}
+  const excluded = {}
+  const known = new Set([...ROUTINE_ACTORS, ...RARE_ACTORS, ...SNAP_ACTORS])
+  const extra = (files ?? []).map((f) => String(f).replace(/^\//, '')).filter((f) => /^(act|snap)-.*\.js$/.test(f) && !known.has(f))
+  const price = (a) => {
+    const r = Number(ramOf(a))
+    return num(r) && r > 0 ? r : 0
+  }
+  for (const a of [...ROUTINE_ACTORS, ...SNAP_ACTORS, ...extra]) sizes[a] = price(a)
+  const liq = price('act-liquidate.js')
+  if (stockHeld) sizes['act-liquidate.js'] = liq
+  else excluded['act-liquidate.js'] = `${liq}GB: no stock equity this life — the pre-install sale is skipped harmlessly without a book, and there is nothing to raise from`
+  const graft = price('act-graft.js')
+  if (grafting === false) excluded['act-graft.js'] = `${graft}GB: no grafting in this node (BitNode 10 / SF10)`
+  else if (!(num(homeMax) && homeMax >= JOB_RUNNER_TIER)) excluded['act-graft.js'] = `${graft}GB: only progress.js orders a graft, and it runs from the ${JOB_RUNNER_TIER}GB tier (home ${homeMax}GB)`
+  else sizes['act-graft.js'] = graft
+  let gb = 0
+  let largest = null
+  for (const [a, r] of Object.entries(sizes)) if (r > gb) [gb, largest] = [r, a]
+  return { gb, largest, sizes, excluded }
+}
+
+/**
+ * The action slot go.js keeps on home (actionSlotOf's gb). Without `ctx` the
+ * full worst case — every actor, both rare ones — which is what it was before
+ * the slot was sized to the node.
+ */
+export function goHomeKeepOf(ramOf, ctx = null) {
+  if (ctx) return actionSlotOf({ ramOf, ...ctx }).gb
   let max = 0
-  for (const a of [...ROUTINE_ACTORS, ...RARE_ACTORS]) {
+  for (const a of [...ROUTINE_ACTORS, ...RARE_ACTORS, ...SNAP_ACTORS]) {
     const r = Number(ramOf(a))
     if (num(r) && r > max) max = r
   }
   return max
+}
+
+/**
+ * Home residents go.js OUTRANKS in a Go-first node (the GO FIRST rule above,
+ * by rank): boot.js admits these at 32GB once the slot is sized to the node,
+ * and with them resident a 32GB home cannot hold go.js beside the slot. Both
+ * are one-time buyers (TOR, the port programs: progress.js orders the same
+ * from 64GB) that wait on money which, at a node's opening, is hours away; Go
+ * at x8 is the node. seed.js stops them on home only when go.js needs the
+ * room (after the worker and the relocatable daemons), and boot.js does not
+ * restart them into act.js's slot.
+ */
+export const GO_OUTRANKS = ['autobuy.js', 'torbuy.js']
+
+/**
+ * A server bought for go.js when no rooted host can ever hold it (placement
+ * 'blocked'): the smallest power of two >= its price, at the game's formula
+ * (Server/ServerPurchases.ts getCloudServerCost: ram x 55000 x CloudServerCost
+ * x CloudServerSoftcap^max(0, log2(ram) - 6)). Live BN14.1 the lead bought the
+ * 32GB 'go-host' by hand at 20:50Z, two hours into the node.
+ *   d       goPlacementOf's verdict      cash   home money
+ *   need    go.js's GB                   mults  bitNodeMults(node) (CloudServerCost/Softcap/Limit)
+ *   exists  a server named GO_HOST already exists
+ * Returns {buy, ram, cost, why}.
+ */
+export const GO_HOST = 'go-host'
+export const CLOUD_GB_COST = 55000 // ServerConstants.BaseCostFor1GBOfRamServer
+export function goHostBuyOf({ d, cash, need, mults = null, exists = false }) {
+  const ram = 2 ** Math.ceil(Math.log2(Math.max(8, num(need) ? need : 32)))
+  const soft = num(mults?.CloudServerSoftcap) ? mults.CloudServerSoftcap : 1
+  const cost = ram * CLOUD_GB_COST * (num(mults?.CloudServerCost) ? mults.CloudServerCost : 1) * soft ** Math.max(0, Math.log2(ram) - 6)
+  const no = (why) => ({ buy: false, ram, cost, why })
+  if (d?.action !== 'blocked' || !d?.admitted) return no(`go.js placement is '${d?.action}': nothing to buy`)
+  if (exists) return no(`${GO_HOST} already exists`)
+  if (num(mults?.CloudServerLimit) && mults.CloudServerLimit <= 0) return no('no cloud servers in this node (CloudServerLimit 0)')
+  if (!(num(cash) && cash >= cost)) return no(`a ${ram}GB server for go.js costs $${Math.round(cost)}; $${Math.round(num(cash) ? cash : 0)} in hand`)
+  return { buy: true, ram, cost, why: `no rooted host can hold go.js (${d.why}); a ${ram}GB server costs $${Math.round(cost)} and $${Math.round(cash)} is in hand` }
 }
 
 /**
@@ -223,8 +365,8 @@ export function goPlacementOf({ go, ...rest }) {
  * order waited.
  *
  * Which processes on home to stop, cheapest first: the EVICTABLE worker
- * threads, then RELOCATABLE daemons (largest first, to move the fewest), only
- * until `keep` GB is free. procs: [{script, gb}] on home (gb = RAM x threads).
+ * threads, then RELOCATABLE daemons (largest first, to move the fewest), then
+ * the GO_OUTRANKS residents, only until `keep` GB is free. procs: [{script, gb}] on home (gb = RAM x threads).
  * Returns {stop: [script], freeAfter, ok}. ok false: even all of them would
  * not free `keep`, and nothing is stopped.
  */
@@ -234,8 +376,10 @@ export function goHomeRepairOf({ max, used, keep, procs = [] }) {
   if (free >= keep) return { stop: [], freeAfter: free, ok: true }
   const ev = procs.filter((p) => EVICTABLE.includes(p.script))
   const rl = procs.filter((p) => RELOCATABLE.includes(p.script)).sort((a, b) => b.gb - a.gb)
+  // Last, the residents go.js outranks (GO_OUTRANKS): stopped, not moved.
+  const yl = procs.filter((p) => GO_OUTRANKS.includes(p.script)).sort((a, b) => b.gb - a.gb)
   const stop = []
-  for (const p of [...ev, ...rl]) {
+  for (const p of [...ev, ...rl, ...yl]) {
     if (free >= keep) break
     stop.push(p.script)
     free += p.gb

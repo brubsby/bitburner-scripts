@@ -635,6 +635,9 @@ function runB711() {
     // The Singularity half of autobuy.js, invoked BY autobuy.js rather than
     // scheduled independently.
     "autobuy-sing.js",
+    // The one-shot that buys go.js a server, exec'd BY seed.js (placeGo) when
+    // no rooted host can hold go.js in a Go-first node ([GF12]).
+    "gohost.js",
     // SOURCE-FILE GATED, and unmanaged here for that reason rather than by
     // oversight. Each needs a Source-File this save does not hold, so a
     // standing job would be a guaranteed no-op: bladeburner.js SF6/7,

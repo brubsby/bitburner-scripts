@@ -106,12 +106,12 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, hasHacknetServers, sfLevel, SF_FILE } from 'sfgate.js'
+import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, canUseGrafting, hasHacknetServers, sfLevel, SF_FILE } from 'sfgate.js'
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
-import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goFirstOf, goPlacementOf, goHomeKeepOf } from 'raiseplace.js'
+import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf } from 'raiseplace.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -1057,7 +1057,11 @@ function goPlace(ns, hosts, rec) {
   const go = goFirstOf(goNodeOf(ns))
   if (go.goFirst) {
     rec.goFirst = go.why
-    return raisedPlace(ns, hosts, rec, 'go.js', { go, need: ns.getScriptRam('go.js', 'home'), homeKeep: goHomeKeepOf((a) => ns.getScriptRam(a, 'home')) })
+    // act.js's action slot sized to this node (raiseplace.actionSlotOf).
+    const info = ns.getResetInfo()
+    const slot = actionSlotOf({ ramOf: (a) => ns.getScriptRam(a, 'home'), homeMax: ns.getServerMaxRam('home'), grafting: canUseGrafting(info), stockHeld: stockHeldOf(ns.read('/tel/stock.txt'), info.lastAugReset) })
+    rec.actionSlot = { gb: slot.gb, largest: slot.largest }
+    return raisedPlace(ns, hosts, rec, 'go.js', { go, need: ns.getScriptRam('go.js', 'home'), homeKeep: slot.gb })
   }
   delete rec.goFirst
   const block = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
@@ -1207,7 +1211,8 @@ export async function main(ns) {
     try {
       cycles++
       // For the 0GB readers of sfgate.singularityKnown (backdoor.js, torbuy.js).
-      ns.write(SF_FILE, JSON.stringify({ at: new Date().toISOString(), singularity: canAccessFeature(ns.getResetInfo(), 4) }), 'w')
+      // `grafting` for boot.js's action slot (raiseplace.actionSlotOf), which has no getResetInfo.
+      ns.write(SF_FILE, JSON.stringify({ at: new Date().toISOString(), singularity: canAccessFeature(ns.getResetInfo(), 4), grafting: canUseGrafting(ns.getResetInfo()) }), 'w')
       // One network walk per cycle instead of one per entry. Topology only
       // changes when buyserv buys a server, and a 30s delay in noticing that is
       // invisible; thirteen redundant BFS walks every tick were not free.
