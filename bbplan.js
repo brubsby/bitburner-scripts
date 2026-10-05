@@ -552,7 +552,18 @@ export const POLICY = {
   // 33.0-35.8h in every cell, inside the seed noise — the thresholds barely
   // matter; the city choice, the skill objective and the sleeves do.
   minP: 0.4,
-  // A black operation is attempted at this LOW-end chance or above.
+  // THE BLACK-OP ATTEMPT IS PRICED, not thresholded (blackOpWorth, 2026-10-05):
+  // attempt when the op's reward pays for its expected failures' time at the
+  // best action's rank rate while rank still gates the ladder, and when the
+  // remaining ladder's attempt time outruns the chance rank work buys once it
+  // does not. On the game's classes from the live BN14.1 state (00:26Z,
+  // rank 48k, 1/21; tools/sim/bb14/arms.mjs, 40 CRN-paired seeds): 7.82h ->
+  // 7.43h (-0.40h +/- 0.04, 39/40) against the fixed 0.8 — which was no
+  // optimum: 0.9 and 1.0 beat it (-0.19h, -0.13h), 0.4 lost +0.41h.
+  // blackRule 'threshold' restores the fixed bar (blackThr).
+  blackRule: 'priced',
+  // The fixed bar ('threshold'), and still the switch of the skill objective
+  // to the next black op's chance (skillScore; 0.8 vs 1.0 measured flat).
   blackThr: 0.8,
   // Stamina hysteresis (fractions of max): rest at or below restLow until restHigh.
   restLow: 0.55,
@@ -561,8 +572,12 @@ export const POLICY = {
   maxWidth: 0.1,
   // Raid multiplies chaos by 1.01-1.05 per completion (Bladeburner.ts:845);
   // stop raiding a city past this. Below the ChaosThreshold (50) chaos costs
-  // nothing, so the guard sits just under it.
-  raidChaos: 45,
+  // nothing (Action.ts:36-45: the factor is 1), so a raid there is free of
+  // chaos and the one that crosses is the last: the guard IS the threshold.
+  // Measured (bb14/arms.mjs, 00:26Z state, priced black ops, 40 seeds):
+  // 45 -> 50 -0.16h +/- 0.03; 48.5 -0.09h, 49 -0.13h, 51 +0.02h, 52 +0.86h,
+  // 55 +1.6h — past the threshold every action in the city pays sqrt(1+c-50).
+  raidChaos: 50,
   // Combat level below which (after an install reset) the player retrains before acting.
   gymTo: JOIN_COMBAT,
   // THE RETRAIN AS IT RUNS (progress.js bladeGymStep): one gym class per
@@ -610,7 +625,13 @@ export const POLICY = {
  * BN14.1 to ~14:30Z): the replays and calibrations of those runs price it
  * (bladeStartOf policy), since the exit model must price the policy that ran.
  */
-export const POLICY_V1 = { skillBlackFrom: 'eligible', skillObjective: 'sum', skillEveryS: 3600, skillChunks: 8 }
+export const POLICY_V1 = { skillBlackFrom: 'eligible', skillObjective: 'sum', skillEveryS: 3600, skillChunks: 8, blackRule: 'threshold', raidChaos: 45 }
+/**
+ * THE POLICY THE DAEMON PLAYED 2026-10-04 ~14:30Z to 2026-10-05 ~01:00Z (BN14.1):
+ * the re-tuned skill policy (POLICY) with the fixed black-op bar (blackThr
+ * 0.8) and Raid guarded at chaos 45. A replay of a capture from that window prices it.
+ */
+export const POLICY_V2 = { blackRule: 'threshold', raidChaos: 45 }
 
 /**
  * The view every policy call reads. Built by bladeburner.js from the API, by
@@ -723,14 +744,115 @@ function bestOver(v, pol, weight = null) {
   return best
 }
 
+/**
+ * THE BLACK-OP ATTEMPT, PRICED (pol.blackRule 'priced'; replaces the fixed
+ * blackThr). From the game's mechanics (Bladeburner.ts:1013-1090,
+ * BlackOperation.ts): an attempt takes the op's action time (x1.5) and its
+ * stamina whatever the roll; success pays rankGain x BladeburnerRank and
+ * unlocks the next op; failure costs rankLoss (rank only: skill points follow
+ * maxRank, Bladeburner.ts:1281-1290), HP (hospital money only) and team
+ * members, and the op's chance does not change — a failed attempt is time.
+ * So the choice is between two uses of the same seconds, priced in the
+ * same unit (the best rank action's rate R at its stamina duty):
+ *
+ *  - RANK-GATED (some remaining op still needs more rank than we hold):
+ *    the op is done either now or in the burst once rank stops gating, at a
+ *    cost of ~its action time then. Now: p(G + R tau) - (1-p) L rank-seconds
+ *    against R tau for the action it displaces. Attempt iff
+ *        p G - (1-p) L  >=  (1-p) R tau            (tau at the op's duty)
+ *    i.e. the reward must pay for the failures' time: a chance threshold
+ *    p* = (R tau + L) / (G + R tau + L) that FALLS as the op's reward grows
+ *    against the time it takes and RISES with the rank rate. (Black-op
+ *    rewards grow ~170x from Zero to Vindictus while their time grows ~30x.)
+ *  - CHANCE-GATED (rank covers every remaining op): rank work now buys only
+ *    chance (skill points, rank/3 each). Doing the whole remaining ladder at
+ *    competence c costs sum_j tau_j / p_j(c) seconds; one more second of
+ *    rank work raises ln c by g (the best skill's d ln c per point x R/3) and
+ *    cuts that cost by g x sum_{p_j<1} tau_j / p_j. Attempt iff
+ *        g x A <= 1,   A = sum over the remaining ops with p < 1 of tau_j/p_j
+ *    (the next op's failures also pay to regrow rank they drop below its
+ *    requirement), or the rank-gated test says so.
+ * NOT PRICED, named: the Go farm's chance growth (it runs during attempts
+ * too: either use of the seconds gets it), combat exp (a black op's
+ * attempt carries ~10x a contract's exp per second, half on failure), team
+ * casualties (team bonus is (n+1)^0.05).
+ */
+export function blackOpWorth(v, pol, R, p) {
+  const bo = v.blackOp
+  const d = bo.d
+  const gainS = v.staminaGain ?? Infinity
+  const maxS = v.maxStamina ?? 1
+  const sf = memoOf(v).statFac
+  const tauOf = (x) => {
+    const t = actionTime(x, 1, v.person, v.sm, sf)
+    return t / Math.max(1e-6, dutyOf(staminaCostOf(x, 1), t, gainS, maxS))
+  }
+  const fa = fieldAnalysisRank(v.bnRank ?? 1) / 30
+  const r = Math.max(R ?? 0, fa)
+  const G = rankGainOf(d, 1, v.bnRank ?? 1)
+  const L = rankLossOf(d, 1)
+  const tau = tauOf(d)
+  if (p >= 1) return { attempt: true, why: 'certain', tau }
+  if (!(p > 0)) return { attempt: false, why: 'no chance', tau }
+  const lhs = p * G - (1 - p) * L
+  const rhs = (1 - p) * r * tau
+  const pStar = (r * tau + L) / (G + r * tau + L)
+  if (lhs >= rhs) return { attempt: true, why: `reward pays its failures: p >= ${(pStar * 100).toFixed(1)}% (G ${G.toFixed(0)}, ${tau.toFixed(0)}s at ${r.toPrecision(3)} rank/s)`, pStar, tau }
+  const last = BLACK_OPS[BLACK_OPS.length - 1]
+  if (v.rank < last.reqdRank || pol.blackEndgame === false) return { attempt: false, why: `p < ${(pStar * 100).toFixed(1)}% (reward ${G.toFixed(0)} vs ${tau.toFixed(0)}s at ${r.toPrecision(3)} rank/s)`, pStar, tau }
+  // Chance-gated: the ladder's attempt time against the chance rank work buys.
+  const K = bo.K
+  let A = 0
+  for (let j = d.n; j < BLACK_OPS.length; j++) {
+    const x = BLACK_OPS[j]
+    const pj = pFrom(K, x, 1, v.person, v.sm)
+    if (pj >= 1) continue
+    if (!(pj > 0)) return { attempt: false, why: `op ${j + 1} has no chance yet`, pStar, tau }
+    let t = tauOf(x) / pj
+    if (j === d.n) t += (1 / pj - 1) * (Math.max(0, x.rankLoss - (v.rank - x.reqdRank)) / r)
+    A += t
+  }
+  // g: the best skill's d ln(competence) per point on the hardest op, x the points rank work earns per second.
+  const cm = v.skillCostMult ?? 1
+  const cOf = (sm) => coreOf(last, v.person, sm) * chanceMultOf(last, sm)
+  const c0 = cOf(v.sm)
+  let best = 0
+  for (const name of pol.skills ?? []) {
+    const lvl = v.levels?.[name] ?? 0
+    if (lvl >= SKILLS[name].maxLvl) continue
+    const cost = skillCost(name, lvl, 1, cm)
+    const c1 = cOf(skillMultsOf({ ...(v.levels ?? {}), [name]: lvl + 1 }))
+    const x = Math.log(c1 / c0) / cost
+    if (x > best) best = x
+  }
+  const g = (best * r) / BBC.RanksPerSkillPoint
+  if (g * A <= 1) return { attempt: true, why: `the ladder's ${(A / 3600).toFixed(2)}h of attempts outruns the chance rank work buys (${(g * 3600 * 100).toFixed(1)}%/h): g A ${(g * A).toFixed(2)} <= 1`, pStar, tau, g, A }
+  return { attempt: false, why: `rank work buys ${(g * 3600 * 100).toFixed(1)}%/h of chance against ${(A / 3600).toFixed(2)}h of attempts: g A ${(g * A).toFixed(2)} > 1`, pStar, tau, g, A }
+}
+
 /** Which action next. Returns { type, name, level?, city?, why, ev, p, blackOp? }. */
 export function chooseAction(v, pol = POLICY) {
+  const held = {}
+  const pick = chooseActionOf(v, pol, held)
+  // A rank-eligible black op the priced rule holds: its verdict rides on the pick (bladeburner.js publishes it).
+  if (held.w && !pick.blackOp) pick.blackHeld = held.w
+  return pick
+}
+function chooseActionOf(v, pol, held) {
   const gen = (name, why, city = v.city ?? null) => ({ type: TYPE.general, name, why, city })
   if (v.resting) return gen(GENERAL.regen, `stamina ${fmt(v.stamina)}/${fmt(v.maxStamina)}: resting to ${pol.restHigh * 100}%`)
   const bo = v.blackOp
+  // THE BEST RANK ACTION, at its stamina duty (below): also the black op's opportunity cost.
+  const duty = (b) => dutyOf(staminaCostOf(b.a.d, b.L), b.t, v.staminaGain ?? Infinity, v.maxStamina ?? 1)
+  let best
   if (bo && v.rank >= bo.d.reqdRank) {
     const p = pFrom(bo.K, bo.d, 1, v.person, v.sm)
-    if (p >= pol.blackThr) return { type: TYPE.blackOp, name: bo.d.name, city: v.city ?? null, why: `black op ${bo.d.n + 1}/21 at ${(p * 100).toFixed(1)}% (>= ${pol.blackThr * 100}%)`, p, blackOp: true }
+    if (pol.blackRule === 'priced') {
+      best = bestOver(v, pol, duty)
+      const w = blackOpWorth(v, pol, best ? best.score : 0, p)
+      if (w.attempt) return { type: TYPE.blackOp, name: bo.d.name, city: v.city ?? null, why: `black op ${bo.d.n + 1}/21 at ${(p * 100).toFixed(1)}%: ${w.why}`, p, blackOp: true, worth: w }
+      held.w = { ...w, p }
+    } else if (p >= pol.blackThr) return { type: TYPE.blackOp, name: bo.d.name, city: v.city ?? null, why: `black op ${bo.d.n + 1}/21 at ${(p * 100).toFixed(1)}% (>= ${pol.blackThr * 100}%)`, p, blackOp: true }
   }
   // RANK PER WALL SECOND, not per acting second: stamina binds (live BN6: the
   // player acts ~42% of the time and rests the rest), so an action is worth
@@ -740,7 +862,7 @@ export function chooseAction(v, pol = POLICY) {
   // 0.040 rank/s acting, duty 0.33 (it drains 0.092 stamina/s) -> 0.0133;
   // Retirement L10 0.0285, duty 0.42 -> 0.0121: a 40% lead acting is a 10%
   // lead per wall second, and an action that drains less can overtake.
-  const best = bestOver(v, pol, (b) => dutyOf(staminaCostOf(b.a.d, b.L), b.t, v.staminaGain ?? Infinity, v.maxStamina ?? 1))
+  if (best === undefined) best = bestOver(v, pol, duty)
   if (best && (best.city.chaos ?? 0) > BBC.ChaosThreshold) return gen(GENERAL.diplomacy, `chaos ${fmt(best.city.chaos)} > ${BBC.ChaosThreshold} in ${best.city.name ?? 'the best city'}`, best.city.name ?? null)
   if (best && (best.city.name ?? null) === (v.city ?? null) && (best.a.width ?? 0) > pol.maxWidth) return gen(GENERAL.fieldAnalysis, `${best.a.d.name}'s shown range is ${((best.a.width ?? 0) * 100).toFixed(0)}% wide: sharpen the estimate`)
   if (best) return { type: typeOf(best.a.d), name: best.a.d.name, level: best.L, city: best.city.name ?? null, p: best.p, ev: best.ev, why: `${best.a.d.name} L${best.L} in ${best.city.name ?? 'this city'} at ${(best.p * 100).toFixed(0)}%: ${best.ev.toPrecision(3)} rank/s acting, ${best.score.toPrecision(3)} at its stamina duty` }
@@ -777,7 +899,7 @@ export function skillScore(v, pol = POLICY) {
     const p = pFrom(bo.K, bo.d, 1, v.person, v.sm)
     // skillBlackNear: a short black op within this much of the bar takes the objective whatever the rank.
     const near = Number.isFinite(pol.skillBlackNear) && p >= pol.blackThr - pol.skillBlackNear
-    if (p < pol.blackThr && (v.rank >= blackFromRankOf(pol) || near)) return { kind: 'blackop', v: p }
+    if (p < (pol.skillBlackThr ?? pol.blackThr) && (v.rank >= blackFromRankOf(pol) || near)) return { kind: 'blackop', v: p }
   }
   const duty = (b) => dutyOf(staminaCostOf(b.a.d, b.L), b.t, v.staminaGain ?? Infinity, v.maxStamina ?? 1)
   if (pol.skillObjective === 'sum') {
@@ -1310,7 +1432,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     const actions = LEVELED.map((d) => ({ d, count: st.counts[d.name], maxLevel: st.maxL[d.name], K: envOf(d, e), width: 0 }))
     const bd = BLACK_OPS[st.bo]
     return {
-      person, sm, levels: st.levels, bnRank, rank: st.rank, stamina, maxStamina,
+      person, sm, levels: st.levels, bnRank, skillCostMult: costMult, rank: st.rank, stamina, maxStamina,
       staminaGain: staminaGainOf(person, sm, maxStamina), maxStaminaBase: true, staminaBonus: st.bonus,
       ref: { pop: BBC.PopulationThreshold, chaos: 0 }, cities, city: null, resting: false, actions,
       // A BLACK OP'S CHANCE IS THE FORMULA'S, never x successScale: it has no

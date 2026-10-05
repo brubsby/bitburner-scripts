@@ -161,3 +161,24 @@ export const ARMS = {
   'fleet-i1s0f4': { fleet: { infiltrate: 1, support: 0, fa: 4 } },
   'fleet-i5': { fleet: { infiltrate: 5, support: 0, fa: 0 } },
 }
+ARMS['bt0.95'] = { sharedPolicy: { blackThr: 0.95 } }
+ARMS['bt0.99'] = { sharedPolicy: { blackThr: 0.99 } }
+ARMS['bt1'] = { sharedPolicy: { blackThr: 1 } }
+ARMS.priced = { sharedPolicy: { blackRule: 'priced' } }
+ARMS['priced-noEnd'] = { sharedPolicy: { blackRule: 'priced', blackEndgame: false } }
+{
+  const P = (sp = {}, extra = {}) => ({ ...extra, sharedPolicy: { blackRule: 'priced', ...sp } })
+  Object.assign(ARMS, {
+    'P-minP0.3': P({ minP: 0.3 }), 'P-minP0.2': P({ minP: 0.2 }), 'P-minP0.5': P({ minP: 0.5 }), 'P-minP0.6': P({ minP: 0.6 }),
+    'P-rest0.5-0.6': P({ restLow: 0.5, restHigh: 0.6 }), 'P-rest0.75-0.95': P({ restLow: 0.75, restHigh: 0.95 }), 'P-rest0.5-0.8': P({ restLow: 0.5, restHigh: 0.8 }), 'P-rest0.3-0.95': P({ restLow: 0.3, restHigh: 0.95 }),
+    'P-raid25': P({ raidChaos: 25 }), 'P-raid50': P({ raidChaos: 50 }), 'P-raid35': P({ raidChaos: 35 }),
+    'P-sbt1': P({ skillBlackThr: 1 }),
+    'P-raid55': P({ raidChaos: 55 }), 'P-raid60': P({ raidChaos: 60 }), 'P-raid70': P({ raidChaos: 70 }), 'P-raid100': P({ raidChaos: 100 }),
+    'P-raid50-sbt1': P({ raidChaos: 50, skillBlackThr: 1 }),
+    'P-raid47.6': P({ raidChaos: 50 / 1.05 }), 'P-raid48.5': P({ raidChaos: 50 / 1.03 }), 'P-raid49': P({ raidChaos: 49 }), 'P-raid51': P({ raidChaos: 51 }), 'P-raid52': P({ raidChaos: 52 }),
+  })
+}
+// The policy shipped before 2026-10-05: the fixed black-op bar, Raid guarded at chaos 45.
+ARMS.prev = { sharedPolicy: { blackRule: 'threshold', raidChaos: 45 } }
+ARMS['prev-raid50'] = { sharedPolicy: { blackRule: 'threshold', raidChaos: 50 } }
+ARMS['priced-raid45'] = { sharedPolicy: { blackRule: 'priced', raidChaos: 45 } }

@@ -345,7 +345,7 @@ export function runBladeburner(o) {
       const env = (a) => ({ int: P.skills.intelligence, stamina: bb.stamina, maxStamina: bb.maxStamina, pop: C.PopulationThreshold, chaos: 0, teamCount: a.teamCount ?? 0, augMult: P.mults.bladeburner_success_chance })
       const next = bb.blackOperationArray[bb.numBlackOpsComplete]
       return {
-        person: P, sm: bb.skillMultipliers, levels: { ...bb.skills }, bnRank: g.currentNodeMults.BladeburnerRank,
+        person: P, sm: bb.skillMultipliers, levels: { ...bb.skills }, bnRank: g.currentNodeMults.BladeburnerRank, skillCostMult: g.currentNodeMults.BladeburnerSkillCost,
         rank: bb.rank, stamina: bb.stamina, maxStamina: bb.maxStamina, staminaGain: bb.calculateStaminaGainPerSecond(),
         maxStaminaBase: true, staminaBonus: bb.staminaBonus, resting,
         ref: { pop: C.PopulationThreshold, chaos: 0 },

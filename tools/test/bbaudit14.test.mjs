@@ -14,6 +14,9 @@
 //       the live hour after 14:13Z ran +884 against both (+599 model, ~+608 game) — inputs that moved
 //       (the fleet, the cities, the skills), which v2 read as k. On the 20:01Z state (Aevum anchored,
 //       06cf3dc) the members' exit at k 1 is the game's within 5%; at the v2 k 1.196 it is >1h short.
+//   BA7 THE BLACK-OP ATTEMPT IS PRICED (bbplan.blackOpWorth): p* = (R tau + L)/(G + R tau + L) while rank
+//       gates the ladder, g x A <= 1 once it does not; from 00:26Z 2026-10-05 the game's classes exit
+//       faster than POLICY_V2's fixed 0.8 bar, and the model prices the same rule.
 import './gameresolve.mjs'
 import { Check } from './harness.mjs'
 
@@ -126,5 +129,55 @@ export async function run() {
   c6.note(`20:01Z exit: game ${f2(g20)}h (16 seeds); members at k 1 ${f2(e1)}h (${(100 * (e1 / g20 - 1)).toFixed(1)}%); at the v2 k ${fx20.bladeRoute.calibration.rank.k} ${f2(eV2)}h (${(100 * (eV2 / g20 - 1)).toFixed(1)}%)`)
   if (!(Math.abs(e1 / g20 - 1) < 0.05)) c6.fail(`at k 1 the members' exit must be the game's within 5% (${f2(e1)} vs ${f2(g20)}h)`)
   if (!(g20 - eV2 > 1)) c6.fail(`the v2 k must price the state > 1h short (the double count): ${f2(eV2)} vs ${f2(g20)}h`)
+
+  // ---- BA7 THE BLACK-OP ATTEMPT IS PRICED (bbplan.blackOpWorth), 00:26Z 2026-10-05 ----
+  const c7 = new Check('BA7', 'THE BLACK-OP ATTEMPT IS PRICED: the rule is its inequality; from 00:26Z it attempts below the old 0.8 bar; faster than POLICY_V2 in the game\'s classes; the model prices the same rule')
+  checks.push(c7)
+  // The rule, on a constructed view: rank-gated, p* = (R tau + L) / (G + R tau + L).
+  const vR = { ...view(3000), blackOp: { d: BB.BLACK_OPS[1], K: 1, width: 0 } }
+  const w0 = BB.blackOpWorth(vR, BB.POLICY, 0.5, 0.5)
+  const tau = w0.tau
+  const G = BB.rankGainOf(BB.BLACK_OPS[1], 1, 1)
+  const L = BB.rankLossOf(BB.BLACK_OPS[1], 1)
+  const pStar = (0.5 * tau + L) / (G + 0.5 * tau + L)
+  c7.examined(4)
+  if (!(Math.abs(w0.pStar - pStar) < 1e-12)) c7.fail(`p* must be (R tau + L)/(G + R tau + L) = ${pStar} (got ${w0.pStar})`)
+  if (!BB.blackOpWorth(vR, BB.POLICY, 0.5, Math.min(0.999, pStar + 1e-6)).attempt || BB.blackOpWorth(vR, BB.POLICY, 0.5, pStar - 1e-6).attempt) c7.fail(`the rank-gated rule must flip at p* ${pStar}`)
+  if (!(BB.blackOpWorth(vR, BB.POLICY, 5, 0.5).pStar > pStar)) c7.fail('p* must rise with the rank rate R')
+  // Chance-gated (rank covers Daedalus): g x A against 1 — a slow chance growth attempts, a fast one waits.
+  const vE = { ...view(BB.BLACK_OPS[20].reqdRank + 1e5), blackOp: { d: BB.BLACK_OPS[18], K: 30, width: 0 } }
+  const slow = BB.blackOpWorth(vE, BB.POLICY, 1e-3, 0.3)
+  const fast = BB.blackOpWorth(vE, BB.POLICY, 1e6, 0.3)
+  c7.note(`rank-gated p* ${f2(pStar * 100)}% (G ${G}, tau ${tau}s, R 0.5); endgame slow: ${slow.why}; fast: ${fast.why}`)
+  if (!(slow.attempt && !fast.attempt && Number.isFinite(fast.A) && fast.g * fast.A > 1)) c7.fail('the chance-gated rule must attempt when rank work buys chance slowly and hold (g A > 1) when it buys it fast')
+  // The model from the live 00:26Z state plays the rule: black ops attempted below 0.8 (where the
+  // ladder's attempt time outruns the chance rank work buys), none under POLICY_V2's fixed bar.
+  const fx26 = A.loadFx(A.FX_PATH.replace('fixture-bn14-bbaudit.json', 'fixture-bn14-bbaudit-0026.json'))
+  const s26 = A.modelStartOf(fx26)
+  const tr = []
+  BB.bladeExit({ ...s26, actTrace: tr })
+  const trV2 = []
+  BB.bladeExit({ ...s26, actTrace: trV2, policy: BB.POLICY_V2 })
+  const low = tr.filter((x) => /^Operation/.test(x.name) && x.p < 0.8)
+  c7.examined(2)
+  c7.note(`model from 00:26Z: ${low.length} black-op picks below 80% (${low.slice(0, 3).map((x) => `${x.name} ${(x.p * 100).toFixed(0)}% at ${x.h}h: ${String(x.why).slice(0, 90)}`).join(' | ')})`)
+  if (!low.length) c7.fail('the priced rule must attempt some black op below the old 0.8 bar from 00:26Z')
+  if (trV2.some((x) => /^Operation/.test(x.name) && x.p < 0.8)) c7.fail('POLICY_V2 (the fixed bar) must attempt none below 0.8')
+  // The game's classes, CRN-paired: shipped against POLICY_V2 (audit: 7.27h vs 7.82h, -0.55h +/- 0.02 on 100 seeds).
+  const N7 = 12
+  const g7 = []
+  const gV2 = []
+  for (let seed = 1; seed <= N7; seed++) {
+    g7.push(A.runFrom(fx26, {}, { seed, maxH: 30 }).hours ?? 45)
+    gV2.push(A.runFrom(fx26, { sharedPolicy: BB.POLICY_V2 }, { seed, maxH: 30 }).hours ?? 45)
+  }
+  const d7 = g7.map((h, i) => h - gV2[i])
+  const m7 = BB.bladeExit(s26).hours
+  const mV2 = BB.bladeExit({ ...s26, policy: BB.POLICY_V2 }).hours
+  c7.examined(N7 + 2)
+  c7.note(`game: shipped ${f2(mean(g7))}h, POLICY_V2 ${f2(mean(gV2))}h, paired ${f2(mean(d7))}h (faster on ${d7.filter((x) => x < 0).length}/${N7}); model: shipped ${f2(m7)}h (${f2((m7 / mean(g7) - 1) * 100)}%), POLICY_V2 ${f2(mV2)}h`)
+  if (!(mean(d7) < -0.3)) c7.fail(`the priced rule must beat the fixed bar by > 0.3h from 00:26Z (got ${f2(mean(d7))}h)`)
+  if (!(Math.abs(m7 / mean(g7) - 1) < 0.1)) c7.fail(`the model must price the shipped policy within 10% of the game (${f2(m7)} vs ${f2(mean(g7))}h)`)
+  if (!(m7 < mV2)) c7.fail(`the model must see the priced rule faster too (${f2(m7)} vs ${f2(mV2)}h): one policy, three callers`)
   return checks
 }

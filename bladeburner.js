@@ -387,7 +387,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         blackOp = { d, K: envFromChance(p, d, 1, person, sm), width: 0, lo, hi }
       }
       return {
-        person, sm, levels, bnRank, rank, stamina, maxStamina,
+        person, sm, levels, bnRank, skillCostMult: costMult, rank, stamina, maxStamina,
         // maxStaminaBase: the skill planner re-derives max stamina and its
         // regeneration under a candidate purchase (Cyber's Edge) from the
         // formula plus Training's bonus read back out of the game. False, a
@@ -558,6 +558,10 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         reqdRank: bo ? bo.d.reqdRank : null,
         chance: bo ? [+bo.lo.toFixed(4), +bo.hi.toFixed(4)] : null,
         formulaChance: bo ? +pFrom(bo.K, bo.d, 1, person, v.sm).toFixed(4) : null,
+        // The attempt rule (bbplan.blackOpWorth under POLICY.blackRule 'priced'): its verdict this pass, attempted or held.
+        rule: POLICY.blackRule ?? 'threshold',
+        verdict: pick.blackOp ? pick.why : pick.blackHeld ? `held: ${pick.blackHeld.why}` : bo && rank < bo.d.reqdRank ? `rank ${Math.round(rank)} < ${bo.d.reqdRank}` : null,
+        pStar: pick.blackOp ? (pick.worth?.pStar ?? null) : (pick.blackHeld?.pStar ?? null),
       },
       exitReady,
       exitNote: exitReady ? `all 21 black ops complete (${DAEDALUS} done): destroyW0r1dD43m0n now accepts with no hacking level (Singularity.ts:1154-1158). endgame.js does it under its --next and /endgame-hold.txt; this script never will.` : null,

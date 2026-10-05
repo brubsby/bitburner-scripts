@@ -54,7 +54,7 @@ const person = { skills: p.skills, exp: p.exp, mults: p.mults, city: p.city, mon
 const gymExpPerSec = BP.gymRate(BP.bestGym(person), 'strength', person, 1)
 const SLEEVES = { infiltrate: F.sleeves, support: 0, fa: 0 }
 // THE ONE BUILDER (progress.js bladeRouteOf startFor).
-const startFor = (spec, extra = {}) => BB.bladeStartOf({ tel: F.bladeburner, person, sleeves: SLEEVES, gymExpPerSec, bnRank: 1, skillCostMult: 1, install: BB.bladeInstallOfSpec(spec), simulacrum: false, ...extra })
+const startFor = (spec, extra = {}) => BB.bladeStartOf({ tel: F.bladeburner, person, sleeves: SLEEVES, gymExpPerSec, bnRank: 1, skillCostMult: 1, install: BB.bladeInstallOfSpec(spec), simulacrum: false, policy: BB.POLICY_V1, ...extra }) // the 11:07Z BN6 run played POLICY_V1 (its fixed black-op bar)
 const statsOf = (n) => F.augstats[n] ?? null
 const content = (names) => {
   const c = BB.bladeContentOf(names, statsOf)
@@ -210,7 +210,7 @@ export async function run() {
   if (!(nowSim.hours < nowPlain.hours)) c4.fail(`the Simulacrum's parallel gym must beat the blocking retrain (${nowSim.hours} vs ${nowPlain.hours})`)
   // A life that begins below the bar (just after an install): the start retrains first — the same exit as 'install now'.
   const reset = { ...person, skills: { ...person.skills, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1 }, exp: { ...person.exp, strength: 0, defense: 0, dexterity: 0, agility: 0, charisma: 0 } }
-  const after = BB.bladeExit(BB.bladeStartOf({ tel: F.bladeburner, person: reset, sleeves: SLEEVES, gymExpPerSec, bnRank: 1, skillCostMult: 1 }))
+  const after = BB.bladeExit(BB.bladeStartOf({ tel: F.bladeburner, person: reset, sleeves: SLEEVES, gymExpPerSec, bnRank: 1, skillCostMult: 1, policy: BB.POLICY_V1 }))
   c4.note(`the next life's own start (stats reset, joined): ${after.hours.toFixed(2)}h (retrain ${after.joinH.toFixed(2)}h) vs the install's 'now' ${nowPlain.hours.toFixed(2)}h`)
   if (!(Math.abs(after.hours - nowPlain.hours) < 0.05 * nowPlain.hours)) c4.fail(`EXIT JUMP on this route: the life after the install prices ${after.hours}h, the install priced ${nowPlain.hours}h`)
 

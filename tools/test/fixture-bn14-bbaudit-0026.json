@@ -1,0 +1,2329 @@
+{
+ "at": "2026-10-05T00:26:03.678Z",
+ "tel": {
+  "at": "2026-10-05T00:26:03.678Z",
+  "joined": true,
+  "joinedAt": "2026-10-04T01:40:13.105Z",
+  "rank": 48123.77,
+  "rankPerHour": 7863.41,
+  "skillPoints": 53,
+  "levels": {
+   "Blade's Intuition": 32,
+   "Cloak": 8,
+   "Short-Circuit": 39,
+   "Digital Observer": 35,
+   "Tracer": 1,
+   "Overclock": 48,
+   "Reaper": 28,
+   "Evasive System": 32,
+   "Datamancer": 0,
+   "Cyber's Edge": 11,
+   "Hands of Midas": 0,
+   "Hyperdrive": 0
+  },
+  "stamina": 507.72,
+  "maxStamina": 512.73,
+  "city": "Volhaven",
+  "team": 5,
+  "blackOps": {
+   "done": 1,
+   "next": "Operation Zero",
+   "reqdRank": 5000,
+   "chance": [
+    0.2696,
+    0.7987
+   ],
+   "formulaChance": 0.7987
+  },
+  "counts": {
+   "Tracking": 1379.8,
+   "Bounty Hunter": 1342.8,
+   "Retirement": 1017.5,
+   "Investigation": 1118.2,
+   "Undercover Operation": 664.2,
+   "Sting Operation": 1031.6,
+   "Raid": 609.3,
+   "Stealth Retirement Operation": 801.5,
+   "Assassination": 862.1
+  },
+  "maxLevels": {
+   "Tracking": 4,
+   "Bounty Hunter": 1,
+   "Retirement": 20,
+   "Investigation": 1,
+   "Undercover Operation": 17,
+   "Sting Operation": 1,
+   "Raid": 26,
+   "Stealth Retirement Operation": 5,
+   "Assassination": 1
+  },
+  "cities": [
+   {
+    "name": "Aevum",
+    "popEst": 0,
+    "pop": 838222300,
+    "r": null,
+    "popFrom": "median",
+    "anchor": null,
+    "chaos": 1.08,
+    "comms": 0
+   },
+   {
+    "name": "Chongqing",
+    "popEst": 504239056,
+    "pop": 1591800197,
+    "r": 3.15684,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 1591800197,
+     "comms": 0
+    },
+    "chaos": 8.89,
+    "comms": 0
+   },
+   {
+    "name": "Sector-12",
+    "popEst": 1609036118,
+    "pop": 627800663,
+    "r": 0.39017,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 627800663,
+     "comms": 25
+    },
+    "chaos": 45.83,
+    "comms": 25
+   },
+   {
+    "name": "New Tokyo",
+    "popEst": 1315395115,
+    "pop": 838222300,
+    "r": 0.63724,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 838222300,
+     "comms": 0
+    },
+    "chaos": 0,
+    "comms": 0
+   },
+   {
+    "name": "Ishima",
+    "popEst": 1415198522,
+    "pop": 1270027990,
+    "r": 0.89742,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 1270027990,
+     "comms": 0
+    },
+    "chaos": 10.73,
+    "comms": 0
+   },
+   {
+    "name": "Volhaven",
+    "popEst": 1893170464,
+    "pop": 639170095,
+    "r": 0.33762,
+    "popFrom": "range",
+    "anchor": {
+     "pop": 639170095,
+     "comms": 123
+    },
+    "chaos": 15.89,
+    "comms": 123
+   }
+  ],
+  "citiesAt": "2026-10-05T00:26:03.677Z",
+  "staminaBonus": 0,
+  "skillsAt": "2026-10-05T00:25:00.365Z",
+  "calibration": {
+   "timeFormulaS": 31,
+   "timeGameS": 31,
+   "maxStaminaFormula": 512.732,
+   "maxStaminaGame": 512.732,
+   "success": {
+    "k": 1.0644,
+    "lnK": 0.0624,
+    "sdLn": 0.0488,
+    "n": 400,
+    "s": 194,
+    "expected": 180.75,
+    "why": "194 of 400 attempts succeeded against 180.7 predicted: k = 1.064 x/\u00f7 1.06 at 80% (prior k = 1 x/\u00f7 1.21, the game's formula; exact binomial likelihood)",
+    "groups": [
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.414,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.576,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 17,
+      "p": 0.563,
+      "n": 3,
+      "s": 3
+     },
+     {
+      "name": "Retirement",
+      "level": 17,
+      "p": 0.564,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.549,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.55,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.577,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.58,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.583,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.584,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.585,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 18,
+      "p": 0.587,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.437,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.438,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.416,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.417,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.429,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.41,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.411,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.412,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.415,
+      "n": 3,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.404,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.405,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.406,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.407,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.408,
+      "n": 3,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.428,
+      "n": 3,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.432,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.442,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.443,
+      "n": 4,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.419,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.42,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.402,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.403,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.4,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.405,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.406,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 1,
+      "p": 0.407,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.413,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.414,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.415,
+      "n": 5,
+      "s": 3
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.416,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.417,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 3,
+      "p": 0.434,
+      "n": 4,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 3,
+      "p": 0.435,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.434,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.418,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.44,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.441,
+      "n": 9,
+      "s": 3
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.442,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.42,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.421,
+      "n": 4,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.422,
+      "n": 4,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.423,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.424,
+      "n": 5,
+      "s": 3
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.426,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.535,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.452,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.44,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.441,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.442,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.457,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.458,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.441,
+      "n": 5,
+      "s": 4
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.442,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.443,
+      "n": 6,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.444,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.445,
+      "n": 7,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 5,
+      "p": 0.445,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.437,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.446,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.447,
+      "n": 3,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.464,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.465,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.466,
+      "n": 3,
+      "s": 3
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.467,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.444,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.438,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.497,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.498,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.499,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.5,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.49,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.491,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.492,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.493,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.494,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.496,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.447,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.448,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.45,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.451,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.503,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.505,
+      "n": 3,
+      "s": 3
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.506,
+      "n": 4,
+      "s": 4
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.488,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.489,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.49,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.507,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.508,
+      "n": 3,
+      "s": 3
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.509,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.491,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.492,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.493,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.504,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.505,
+      "n": 4,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.506,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.471,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.462,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.49,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.491,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.492,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.487,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.488,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.489,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.47,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.472,
+      "n": 3,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.473,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.474,
+      "n": 2,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.477,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.478,
+      "n": 7,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.479,
+      "n": 4,
+      "s": 1
+     },
+     {
+      "name": "Retirement",
+      "level": 20,
+      "p": 0.64,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Retirement",
+      "level": 20,
+      "p": 0.642,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Retirement",
+      "level": 20,
+      "p": 0.646,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.412,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.418,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.426,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.429,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.433,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.435,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.439,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.446,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 2,
+      "p": 0.448,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 3,
+      "p": 0.438,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 3,
+      "p": 0.441,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.427,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.431,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.436,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.437,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 4,
+      "p": 0.44,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.436,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.437,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 6,
+      "p": 0.434,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.446,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.448,
+      "n": 4,
+      "s": 2
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.45,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.435,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.436,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.439,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.441,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.444,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.449,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.434,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 7,
+      "p": 0.447,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.433,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.446,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.447,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.448,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 8,
+      "p": 0.45,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.433,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.435,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.437,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.439,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.441,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 9,
+      "p": 0.442,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.445,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.446,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 10,
+      "p": 0.449,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.434,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.435,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.436,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.437,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.438,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.44,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.442,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.443,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.445,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.446,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 11,
+      "p": 0.447,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.439,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.441,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.442,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.444,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.446,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.447,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 12,
+      "p": 0.449,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.433,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.434,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.435,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.437,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.423,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.425,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.426,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.427,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.416,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.417,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 16,
+      "p": 0.419,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 13,
+      "p": 0.449,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 14,
+      "p": 0.433,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 14,
+      "p": 0.434,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.42,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.421,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.422,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.423,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.425,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.426,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.427,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.455,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.458,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.459,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.46,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.461,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.463,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Undercover Operation",
+      "level": 15,
+      "p": 0.464,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.401,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.402,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.403,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.404,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.405,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.406,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.407,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.409,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.41,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.411,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.412,
+      "n": 3,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.413,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.414,
+      "n": 2,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.415,
+      "n": 4,
+      "s": 3
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.416,
+      "n": 2,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.417,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.418,
+      "n": 1,
+      "s": 1
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.45,
+      "n": 1,
+      "s": 0
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.451,
+      "n": 3,
+      "s": 2
+     },
+     {
+      "name": "Stealth Retirement Operation",
+      "level": 1,
+      "p": 0.452,
+      "n": 1,
+      "s": 1
+     }
+    ]
+   }
+  },
+  "action": {
+   "type": "Operations",
+   "name": "Raid",
+   "level": 4,
+   "city": "Volhaven",
+   "p": 0.41579936893283337,
+   "ev": 0.526426712314866,
+   "why": "Raid L4 in Volhaven at 42%: 0.526 rank/s acting, 0.509 at its stamina duty"
+  },
+  "daemon": "bladeburner.js"
+ },
+ "person": {
+  "skills": {
+   "hacking": 287,
+   "strength": 534,
+   "defense": 533,
+   "dexterity": 616,
+   "agility": 534,
+   "charisma": 176,
+   "intelligence": 136
+  },
+  "exp": {
+   "hacking": 3670465929.152672,
+   "strength": 146784.5236712493,
+   "defense": 145596.31631790873,
+   "dexterity": 145395.05898574094,
+   "agility": 144747.38261909081,
+   "charisma": 10102.938334494906,
+   "intelligence": 35815.04816711757
+  },
+  "money": 100001342616.13708,
+  "city": "Aevum",
+  "augmentations": [
+   "NeuroFlux Governor",
+   "Hacknet Node Kernel Direct-Neural Interface",
+   "INFRARET Enhancement",
+   "Combat Rib I",
+   "Nuoptimal Nootropic Injector Implant",
+   "Augmented Targeting I",
+   "Speech Enhancement",
+   "Hacknet Node CPU Architecture Neural-Upload",
+   "Hacknet Node Cache Architecture Neural-Upload",
+   "LuminCloaking-V1 Skin Implant",
+   "Hacknet Node NIC Architecture Neural-Upload",
+   "Neurotrainer I",
+   "Wired Reflexes",
+   "NutriGen Implant"
+  ],
+  "sourceFiles": [
+   [
+    1,
+    3
+   ],
+   [
+    4,
+    3
+   ],
+   [
+    5,
+    1
+   ],
+   [
+    2,
+    1
+   ],
+   [
+    10,
+    1
+   ],
+   [
+    8,
+    1
+   ],
+   [
+    9,
+    1
+   ],
+   [
+    6,
+    1
+   ]
+  ],
+  "expMults": {
+   "hacking_exp": 1.5667291051418595,
+   "strength_exp": 1.8800749261702314,
+   "defense_exp": 1.8800749261702314,
+   "dexterity_exp": 1.8800749261702314,
+   "agility_exp": 1.8800749261702314,
+   "charisma_exp": 1.4506750973535736,
+   "bladeburner_max_stamina": 1,
+   "bladeburner_stamina_gain": 1,
+   "bladeburner_analysis": 1,
+   "bladeburner_success_chance": 1
+  },
+  "expMultsFrom": "2026-10-04T10:56:51.517Z"
+ },
+ "go": {
+  "at": "2026-10-05T00:26:07.915Z",
+  "bonuses": {
+   "Daedalus": 96.283,
+   "The Black Hand": 35.77,
+   "Tetrads": 277.824,
+   "Netburners": 87.071
+  },
+  "opponent": "Tetrads",
+  "goPower": 4,
+  "sf14": 0,
+  "lastAugReset": 1791109362591
+ },
+ "sleeves": [
+  {
+   "i": 0,
+   "shock": 99.51952220237104,
+   "sync": 100,
+   "skills": {
+    "hacking": 22,
+    "strength": 1,
+    "defense": 1,
+    "dexterity": 4,
+    "agility": 4,
+    "charisma": 56,
+    "intelligence": 87
+   },
+   "exp": {
+    "hacking": 2524.0061887419565,
+    "strength": 0,
+    "defense": 0,
+    "dexterity": 132.5162899604408,
+    "agility": 132.5162899604408,
+    "charisma": 2524.0061887419565,
+    "intelligence": 7532.054998546585
+   }
+  },
+  {
+   "i": 4,
+   "shock": 99.94902379633112,
+   "sync": 100,
+   "skills": {
+    "hacking": 26,
+    "strength": 1,
+    "defense": 1,
+    "dexterity": 3,
+    "agility": 3,
+    "charisma": 66,
+    "intelligence": 82
+   },
+   "exp": {
+    "hacking": 3653.4219848616663,
+    "strength": 0,
+    "defense": 0,
+    "dexterity": 128.7418292131235,
+    "agility": 128.7418292131235,
+    "charisma": 3653.4219848616663,
+    "intelligence": 6306.002323333604
+   }
+  },
+  {
+   "i": 2,
+   "shock": 99.96518189769854,
+   "sync": 100,
+   "skills": {
+    "hacking": 24,
+    "strength": 1,
+    "defense": 1,
+    "dexterity": 4,
+    "agility": 4,
+    "charisma": 62,
+    "intelligence": 82
+   },
+   "exp": {
+    "hacking": 3081.2302079897377,
+    "strength": 0,
+    "defense": 0,
+    "dexterity": 130.815404642899,
+    "agility": 130.815404642899,
+    "charisma": 3081.2302079897377,
+    "intelligence": 6312.861166700896
+   }
+  },
+  {
+   "i": 1,
+   "shock": 99.98144424488126,
+   "sync": 100,
+   "skills": {
+    "hacking": 25,
+    "strength": 1,
+    "defense": 1,
+    "dexterity": 4,
+    "agility": 4,
+    "charisma": 63,
+    "intelligence": 82
+   },
+   "exp": {
+    "hacking": 3235.35622057429,
+    "strength": 0,
+    "defense": 0,
+    "dexterity": 131.15803820311763,
+    "agility": 131.15803820311763,
+    "charisma": 3235.35622057429,
+    "intelligence": 6315.2860081523495
+   }
+  },
+  {
+   "i": 3,
+   "shock": 99.99760234624871,
+   "sync": 100,
+   "skills": {
+    "hacking": 25,
+    "strength": 1,
+    "defense": 1,
+    "dexterity": 4,
+    "agility": 4,
+    "charisma": 63,
+    "intelligence": 82
+   },
+   "exp": {
+    "hacking": 3264.477704141718,
+    "strength": 0,
+    "defense": 0,
+    "dexterity": 131.9204882443204,
+    "agility": 131.9204882443204,
+    "charisma": 3264.477704141718,
+    "intelligence": 6315.144508311149
+   }
+  }
+ ],
+ "bladeRoute": {
+  "bladeH": 8.312,
+  "q10": 7.251,
+  "q50": 8.24,
+  "q90": 9.665,
+  "bladeMembers": {
+   "Q": 6,
+   "hours": [
+    8.08,
+    9.58,
+    7.741,
+    8.816,
+    7.231,
+    8.427
+   ],
+   "sdH": 0.827
+  },
+  "sleeves": {
+   "infiltrate": 0,
+   "support": 5,
+   "fa": 0
+  },
+  "calibration": {
+   "success": {
+    "k": 1.0644,
+    "lnK": 0.0624,
+    "sdLn": 0.0488,
+    "n": 400,
+    "s": 194,
+    "expected": 180.75,
+    "why": "194 of 400 attempts succeeded against 180.7 predicted: k = 1.064 x/\u00f7 1.06 at 80% (prior k = 1 x/\u00f7 1.21, the game's formula; exact binomial likelihood)",
+    "applied": 1.0644
+   },
+   "rank": {
+    "k": 0.9327,
+    "lnK": -0.0697,
+    "sdLn": 0.1708,
+    "n": 2,
+    "hours": 2.09,
+    "obsSdLn": 0.3,
+    "measuredWeight": 0.676,
+    "why": "rank realised / the model's path: 2 window(s) over 2.09h, mean ratio 0.902, window sd 0.30/sqrt(h) (weight 68%) -> k 0.933 x/\u00f7 1.24 at 80% [prior: the model as written (k = 1, x/\u00f7 1.47 at 80%, stated)]",
+    "applied": 0.9327,
+    "pending": {
+     "at": "2026-10-04T23:39:34.637Z",
+     "lastAugReset": 1791109362591,
+     "h": 0.7488122222222223,
+     "pred": 10764.408351753838,
+     "real": 5014.049999999996,
+     "segs": 9,
+     "successScale": 1.0644,
+     "v": 3,
+     "last": {
+      "at": "2026-10-05T00:24:30.361Z",
+      "rank": 47997.56,
+      "blackOps": 1,
+      "path": [
+       {
+        "h": 0,
+        "rank": 47997.56
+       },
+       {
+        "h": 0.0833,
+        "rank": 49305.653
+       },
+       {
+        "h": 0.1667,
+        "rank": 50717.016
+       },
+       {
+        "h": 0.5545,
+        "rank": 52599.542,
+        "bo": 327.981
+       },
+       {
+        "h": 0.6378,
+        "rank": 54154.086,
+        "bo": 327.981
+       },
+       {
+        "h": 0.7211,
+        "rank": 55941.813,
+        "bo": 327.981
+       },
+       {
+        "h": 0.8045,
+        "rank": 57729.539,
+        "bo": 327.981
+       },
+       {
+        "h": 0.8878,
+        "rank": 59821.924,
+        "bo": 327.981
+       },
+       {
+        "h": 0.9711,
+        "rank": 62030.376,
+        "bo": 327.981
+       },
+       {
+        "h": 1.0545,
+        "rank": 62285.86,
+        "bo": 327.981
+       }
+      ]
+     }
+    },
+    "samples": [
+     {
+      "at": "2026-10-03T23:30:48.550Z",
+      "to": "2026-10-04T00:36:37.570Z",
+      "h": 1.097,
+      "pred": 43.857,
+      "real": 22.99,
+      "lnK": -0.6459,
+      "successScale": 1.0087,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T02:37:16.192Z",
+      "to": "2026-10-04T03:37:17.698Z",
+      "h": 1,
+      "pred": 26.85,
+      "real": 50.75,
+      "lnK": 0.6367,
+      "successScale": 0.8992,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T03:37:17.698Z",
+      "to": "2026-10-04T04:37:18.067Z",
+      "h": 1,
+      "pred": 67.985,
+      "real": 44.74,
+      "lnK": -0.4184,
+      "successScale": 0.9053,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T04:37:18.067Z",
+      "to": "2026-10-04T05:37:18.547Z",
+      "h": 1,
+      "pred": 43.137,
+      "real": 43.88,
+      "lnK": 0.0171,
+      "successScale": 0.9553,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T05:37:18.547Z",
+      "to": "2026-10-04T06:37:19.242Z",
+      "h": 1,
+      "pred": 55.84,
+      "real": 73.35,
+      "lnK": 0.2727,
+      "successScale": 1.0288,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T06:37:19.242Z",
+      "to": "2026-10-04T07:37:20.335Z",
+      "h": 1,
+      "pred": 66.329,
+      "real": 60.12,
+      "lnK": -0.0983,
+      "successScale": 1.0326,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T07:37:20.335Z",
+      "to": "2026-10-04T08:37:20.904Z",
+      "h": 1,
+      "pred": 99.994,
+      "real": 126.46,
+      "lnK": 0.2348,
+      "successScale": 1.031,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T08:37:20.904Z",
+      "to": "2026-10-04T09:37:22.891Z",
+      "h": 1.001,
+      "pred": 142.206,
+      "real": 165.11,
+      "lnK": 0.1493,
+      "successScale": 1.06,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T11:07:46.143Z",
+      "to": "2026-10-04T12:07:48.207Z",
+      "h": 1.001,
+      "pred": 8.436,
+      "real": 70.49,
+      "lnK": 2.123,
+      "successScale": 1.0596,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T12:07:48.207Z",
+      "to": "2026-10-04T13:07:50.164Z",
+      "h": 1.001,
+      "pred": 109.709,
+      "real": 110.18,
+      "lnK": 0.0043,
+      "successScale": 1.0561,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T13:07:50.164Z",
+      "to": "2026-10-04T14:07:54.951Z",
+      "h": 1.001,
+      "pred": 168.182,
+      "real": 168.39,
+      "lnK": 0.0012,
+      "successScale": 1.0574,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T14:07:54.951Z",
+      "to": "2026-10-04T15:11:18.636Z",
+      "h": 1.057,
+      "pred": 418.711,
+      "real": 846.58,
+      "lnK": 0.704,
+      "successScale": 1.0596,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T20:19:26.093Z",
+      "to": "2026-10-04T21:19:32.656Z",
+      "h": 1.002,
+      "pred": 7480.415,
+      "real": 6598.28,
+      "lnK": -0.1255,
+      "successScale": 1.0644,
+      "v": 2
+     },
+     {
+      "at": "2026-10-04T21:34:22.972Z",
+      "to": "2026-10-04T22:39:33.287Z",
+      "h": 1.086,
+      "segs": 13,
+      "pred": 9165.976,
+      "real": 8893.39,
+      "lnK": -0.0302,
+      "successScale": 1.0644,
+      "v": 3
+     },
+     {
+      "at": "2026-10-04T22:39:33.287Z",
+      "to": "2026-10-04T23:39:34.637Z",
+      "h": 1,
+      "segs": 12,
+      "pred": 11712.224,
+      "real": 9760.6,
+      "lnK": -0.1823,
+      "successScale": 1.0644,
+      "v": 3
+     }
+    ],
+    "closed": null
+   }
+  },
+  "start": {
+   "gymExpPerSec": 18.800749261702315,
+   "gym": "Powerhouse Gym",
+   "trainingMult": 1,
+   "goCombat": {
+    "effect": 3.77539,
+    "nodes": 223286,
+    "perHour": 15912,
+    "rateSource": "measured: n 223286 over this life's 14.03h",
+    "goPower": 4,
+    "sf14": 0,
+    "why": "Tetrads x3.775 now (n 223286), regrowing 15912/h (measured: n 223286 over this life's 14.03h); zeroed at an install (Go/Go.ts:34-47)"
+   }
+  },
+  "simulacrum": {
+   "cost": 225000000000,
+   "repReq": 1250,
+   "withoutH": 8.31,
+   "moneyH": 0,
+   "repH": 0,
+   "reachH": 0,
+   "boundH": 11.23,
+   "boundGainH": -2.92,
+   "buy": false,
+   "withH": 11.23,
+   "gainH": -2.92,
+   "why": "not worth it: bought at 0.0h and installed, the exit is 11.2h against 8.3h (the install's reset costs more than the parallel gym returns)",
+   "rankPerH": 7884.11
+  },
+  "installBasis": {
+   "kind": "never",
+   "waitH": null,
+   "installAt": null,
+   "from": "never",
+   "blade": null
+  }
+ }
+}
