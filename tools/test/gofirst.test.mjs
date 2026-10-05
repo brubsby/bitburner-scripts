@@ -797,6 +797,7 @@ export async function run() {
       const bookFiles = { '/tel/stock.txt': JSON.stringify({ at: new Date().toISOString(), lastAugReset: BN14_INFO.lastAugReset, equity: 2e6 }) }
       // A book makes the slot 19.4GB: a 32GB home cannot hold go.js, and the fleet is 16GB.
       const home = () => ({ max: 32, procs: [pp('early.js', 5)] })
+      let ex0Args = null
       for (const [cash, want] of [[1.5e6, false], [1.8e6, true]]) {
         const g = pricedMock({ home: home(), ...opening16() }, { files: bookFiles, cash })
         const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
@@ -804,7 +805,8 @@ export async function run() {
         c.examined(1)
         if (host !== null) c.fail(`GF12 with no host for go.js placeGo returns null, got ${host}`)
         if (!!ex !== want) c.fail(`GF12 $${cash}: gohost.js ${ex ? 'launched' : 'not launched'}, want ${want ? 'launched' : 'not'}`, JSON.stringify({ execs: g.world.execs, rec: g.world.files.get(RP.RAISED['go.js'].file) }))
-        if (ex && JSON.stringify(ex.args) !== '[32]') c.fail('GF12 gohost.js is asked for 32GB (the smallest power of two >= 20.75)', JSON.stringify(ex.args))
+        if (ex && ex.args[0] !== 32) c.fail('GF12 gohost.js is asked for 32GB (the smallest power of two >= 20.75)', JSON.stringify(ex.args))
+        if (ex) ex0Args = ex.args
         if (want && ex) c.note(`$${cash}: ${ex.s} ${JSON.stringify(ex.args)} (seed's early.js evicted for it: ${g.world.kills.join(', ') || 'none'})`)
       }
       // goHostBuyOf: the game's price, the node's limit, an existing go-host.
@@ -854,8 +856,18 @@ export async function run() {
       if (r2.rec?.ok || r2.bought || !/already exists/.test(r2.rec?.why ?? '')) c.fail('GF12 gohost.js never buys a second go-host', JSON.stringify(r2))
       if (r3.rec?.ok || r3.bought || !/in hand/.test(r3.rec?.why ?? '')) c.fail('GF12 gohost.js refuses short of cash, saying so', JSON.stringify(r3))
       if (r4.rec?.ok || !/purchaseServer returned/.test(r4.rec?.why ?? '')) c.fail('GF12 a refused purchase is recorded as one, not as a success', JSON.stringify(r4))
-      const nameIn = SRC('gohost.js').match(/const NAME = '([^']+)'/)?.[1]
-      if (nameIn !== RP.GO_HOST) c.fail(`GF12 gohost.js NAME '${nameIn}' differs from raiseplace.GO_HOST '${RP.GO_HOST}'`)
+      // gohost.js's own list of names (it cannot import raiseplace: a one-shot keeps its graph to itself) = CLOUD_HOSTS, default go-host.
+      const hostsIn = SRC('gohost.js').match(/const HOSTS = (\{[^\n]*\})/)?.[1]
+      let namesIn = null
+      try {
+        namesIn = Object.keys(new Function(`return ${hostsIn}`)()).sort()
+      } catch {
+        namesIn = null
+      }
+      const namesRp = Object.keys(RP.CLOUD_HOSTS).sort()
+      if (JSON.stringify(namesIn) !== JSON.stringify(namesRp)) c.fail(`GF12 gohost.js HOSTS ${JSON.stringify(namesIn)} differs from raiseplace.CLOUD_HOSTS ${JSON.stringify(namesRp)}`)
+      if (!namesRp.includes(RP.GO_HOST) || !/String\(ns\.args\[1\] \?\? 'go-host'\)/.test(SRC('gohost.js'))) c.fail(`GF12 gohost.js must default to '${RP.GO_HOST}'`)
+      if (ex0Args && JSON.stringify(ex0Args) !== JSON.stringify([32, RP.GO_HOST])) c.fail('GF12 seed.js names the server it asks for', JSON.stringify(ex0Args))
       // ... and the next pass places go.js on the bought host.
       const g = pricedMock({ home: home(), ...opening16(), 'go-host': { max: 32, procs: [] } }, { files: bookFiles, cash: 0 })
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))

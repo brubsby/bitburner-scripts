@@ -33,7 +33,7 @@
 //     shown range, as bladeburner.js did before 2026-10-01.
 // The full daemon takes over the moment a host holds it (the handover below).
 
-import { RAISED, FREEABLE, EVICTABLE, RESERVE_FRESH_MS, routeWantsOf, raisedPlacementOf, reserveRecordOf, reserveOf } from 'raiseplace.js'
+import { RAISED, FREEABLE, EVICTABLE, RESERVE_FRESH_MS, routeWantsOf, raisedPlacementOf, reserveRecordOf, reserveOf, BB_HOST, cloudHostBuyOf } from 'raiseplace.js'
 import { POLICY, TYPE, LEVELED, BLACK_OPS, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, staminaGainOf, staminaBonusOf, actionTime, JOIN_COMBAT, BBC } from 'bbplan.js'
 
 export const LITE_FILE = '/tel/bb-lite.txt'
@@ -290,15 +290,20 @@ export const LITE_ACTOR_GB = 14.6
 
 /**
  * The host bb-lite reserves its actor headroom on: its own host when that can
- * hold coordinator + actor, else the largest rooted host that is neither home
- * (the planner's block lives there) nor a hacknet server — `prev` first while
- * it still qualifies, so the reservation does not wander.
+ * hold coordinator + actor, else the server bought for its actors
+ * (raiseplace.BB_HOST, liteHostBuyOf) — ahead of `prev`, which in a Go-first
+ * node can be the 32GB go-host with go.js's 20.75GB on it — else the largest
+ * rooted host that is neither home (the planner's block lives there) nor a
+ * hacknet server — `prev` first while it still qualifies, so the reservation
+ * does not wander.
  * hosts: [{host, max, hacknet?}]
  */
 export function reserveHostOf(self, hosts, prev = null) {
   const ok = (x) => !!x && x.host !== 'home' && !x.hacknet && x.max >= LITE_COORD_GB + LITE_ACTOR_GB
   const me = hosts.find((x) => x.host === self)
   if (ok(me)) return self
+  const bought = hosts.find((x) => x.host === BB_HOST)
+  if (ok(bought)) return BB_HOST
   const p = hosts.find((x) => x.host === prev)
   if (ok(p)) return prev
   const best = hosts.filter(ok).sort((a, b) => b.max - a.max || (a.host < b.host ? -1 : 1))[0]
@@ -319,6 +324,51 @@ export function liteReserveOf({ lite = null, full = null, info, canJoin = false,
   if (alive && lite?.reserve?.host && hosts.some((x) => x.host === lite.reserve.host)) return { host: lite.reserve.host, gb: num(lite.reserve.gb) ? lite.reserve.gb : LITE_ACTOR_GB, why: 'bb-lite.js is running: its actor headroom' }
   const host = reserveHostOf(null, hosts)
   return host ? { host, gb: LITE_COORD_GB + LITE_ACTOR_GB, why: 'bb-lite.js is not running: room to place it and its actors' } : null
+}
+
+/** An actor failure that means no host had the room (runActor's two placement refusals). */
+export const STARVED_RE = /no rooted host has|refused on every candidate/
+/** Placement failures within this window that make bb-lite starved (tools/bbhealth.mjs BB-LITE STARVED: 3 in 10 min). */
+export const STARVED_N = 3
+export const STARVED_WINDOW_MS = 10 * 60e3
+
+/**
+ * BUY A SERVER FOR bb-lite's ACTORS? Live BN14.2 (2026-10-05): ~9h of
+ * "no rooted host has 13.6GB free for bb-lite-read.js" with go.js on the
+ * 32GB home and a 16GB fleet full of seed workers. Nothing bought a host —
+ * seed.js's buy fired only for go.js, which fit on home — while $3.8m sat in
+ * hand; the lead's 32GB server ($1.76m) at ~22:30Z took the reservation at
+ * once and rank moved again.
+ *
+ * Buy (raiseplace.cloudHostBuyOf: BB_HOST, 32GB = the smallest power of two
+ * >= coordinator + actor, which is what reserveHostOf needs to protect it)
+ * when ALL of:
+ *   - bb-lite is alive this life (liteAliveOf): the full daemon has not taken over;
+ *   - the work slot is Bladeburner's (`claim` = bbslot.slotClaim: progress.js,
+ *     or act.js's bootstrap) — a committed route, not a speculative one;
+ *   - it is STARVED: its record says actor-unplaced and STARVED_N placement
+ *     refusals (STARVED_RE) inside STARVED_WINDOW_MS — the game's answer, not
+ *     a prediction;
+ *   - no rooted host can be made to hold the actor: every non-home,
+ *     non-hacknet host either cannot carry the reservation (max under
+ *     coordinator + actor) or keeps under LITE_ACTOR_GB once the seed workers
+ *     (`evictGb`, which seed.js and batch.js clear for the reservation) are
+ *     gone — go.js on a 32GB go-host leaves 11.25GB.
+ * hosts: [{host, max, used, evictGb?, hacknet?}] rooted.
+ * Returns {buy, name, ram, cost, why}.
+ */
+export function liteHostBuyOf({ lite = null, info, claim = null, hosts = [], cash, mults = null, exists = false, home = null, now = Date.now() }) {
+  const ram = 2 ** Math.ceil(Math.log2(LITE_COORD_GB + LITE_ACTOR_GB))
+  const no = (why) => ({ buy: false, name: BB_HOST, ram, cost: null, why })
+  const alive = liteAliveOf(lite, info, now)
+  if (!alive.alive) return no(`bb-lite.js is not the actor: ${alive.why}`)
+  if (claim?.owner !== 'bladeburner') return no(`the work slot is not Bladeburner's (${claim?.owner ?? 'no claim'}): no committed route to unblock`)
+  const recent = (Array.isArray(lite.actorErrors) ? lite.actorErrors : []).filter((e) => STARVED_RE.test(String(e?.why ?? '')) && now - Date.parse(e?.at ?? '') <= STARVED_WINDOW_MS)
+  if (lite.result !== 'actor-unplaced' || recent.length < STARVED_N) return no(`bb-lite is not starved (${lite.result}; ${recent.length} placement refusals in ${STARVED_WINDOW_MS / 60e3} min)`)
+  const roomy = hosts.find((x) => x && x.host !== 'home' && !x.hacknet && num(x.max) && x.max >= LITE_COORD_GB + LITE_ACTOR_GB && x.max - ((num(x.used) ? x.used : 0) - (num(x.evictGb) ? x.evictGb : 0)) >= LITE_ACTOR_GB)
+  if (roomy) return no(`${roomy.host} can hold the actor once its seed workers make way (the reservation): nothing to buy`)
+  const b = cloudHostBuyOf({ name: BB_HOST, need: LITE_COORD_GB + LITE_ACTOR_GB, cash, mults, exists, home })
+  return b.buy ? { ...b, why: `bb-lite starved (${recent.length} refusals in ${STARVED_WINDOW_MS / 60e3} min: ${String(recent[recent.length - 1].why).slice(0, 100)}) on the Bladeburner slot; ${b.why}` } : b
 }
 
 // ---------------------------------------------------------------------------

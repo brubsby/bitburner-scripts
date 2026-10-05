@@ -776,6 +776,10 @@ function bestOver(v, pol, weight = null) {
  * too: either use of the seconds gets it), combat exp (a black op's
  * attempt carries ~10x a contract's exp per second, half on failure), team
  * casualties (team bonus is (n+1)^0.05).
+ * Returns {take, why, pStar?, tau, g?, A?}. The key is NOT `attempt`: the RAM
+ * calculator bills any identifier named like an ns function, and `attempt`
+ * is codingcontract.attempt (10GB) — it priced bb-lite-act.js at 24.6GB
+ * against its 14.6GB reservation (since 7744427; [BL4], [BL8] failed).
  */
 export function blackOpWorth(v, pol, R, p) {
   const bo = v.blackOp
@@ -792,14 +796,14 @@ export function blackOpWorth(v, pol, R, p) {
   const G = rankGainOf(d, 1, v.bnRank ?? 1)
   const L = rankLossOf(d, 1)
   const tau = tauOf(d)
-  if (p >= 1) return { attempt: true, why: 'certain', tau }
-  if (!(p > 0)) return { attempt: false, why: 'no chance', tau }
+  if (p >= 1) return { take: true, why: 'certain', tau }
+  if (!(p > 0)) return { take: false, why: 'no chance', tau }
   const lhs = p * G - (1 - p) * L
   const rhs = (1 - p) * r * tau
   const pStar = (r * tau + L) / (G + r * tau + L)
-  if (lhs >= rhs) return { attempt: true, why: `reward pays its failures: p >= ${(pStar * 100).toFixed(1)}% (G ${G.toFixed(0)}, ${tau.toFixed(0)}s at ${r.toPrecision(3)} rank/s)`, pStar, tau }
+  if (lhs >= rhs) return { take: true, why: `reward pays its failures: p >= ${(pStar * 100).toFixed(1)}% (G ${G.toFixed(0)}, ${tau.toFixed(0)}s at ${r.toPrecision(3)} rank/s)`, pStar, tau }
   const last = BLACK_OPS[BLACK_OPS.length - 1]
-  if (v.rank < last.reqdRank || pol.blackEndgame === false) return { attempt: false, why: `p < ${(pStar * 100).toFixed(1)}% (reward ${G.toFixed(0)} vs ${tau.toFixed(0)}s at ${r.toPrecision(3)} rank/s)`, pStar, tau }
+  if (v.rank < last.reqdRank || pol.blackEndgame === false) return { take: false, why: `p < ${(pStar * 100).toFixed(1)}% (reward ${G.toFixed(0)} vs ${tau.toFixed(0)}s at ${r.toPrecision(3)} rank/s)`, pStar, tau }
   // Chance-gated: the ladder's attempt time against the chance rank work buys.
   const K = bo.K
   let A = 0
@@ -807,7 +811,7 @@ export function blackOpWorth(v, pol, R, p) {
     const x = BLACK_OPS[j]
     const pj = pFrom(K, x, 1, v.person, v.sm)
     if (pj >= 1) continue
-    if (!(pj > 0)) return { attempt: false, why: `op ${j + 1} has no chance yet`, pStar, tau }
+    if (!(pj > 0)) return { take: false, why: `op ${j + 1} has no chance yet`, pStar, tau }
     let t = tauOf(x) / pj
     if (j === d.n) t += (1 / pj - 1) * (Math.max(0, x.rankLoss - (v.rank - x.reqdRank)) / r)
     A += t
@@ -826,8 +830,8 @@ export function blackOpWorth(v, pol, R, p) {
     if (x > best) best = x
   }
   const g = (best * r) / BBC.RanksPerSkillPoint
-  if (g * A <= 1) return { attempt: true, why: `the ladder's ${(A / 3600).toFixed(2)}h of attempts outruns the chance rank work buys (${(g * 3600 * 100).toFixed(1)}%/h): g A ${(g * A).toFixed(2)} <= 1`, pStar, tau, g, A }
-  return { attempt: false, why: `rank work buys ${(g * 3600 * 100).toFixed(1)}%/h of chance against ${(A / 3600).toFixed(2)}h of attempts: g A ${(g * A).toFixed(2)} > 1`, pStar, tau, g, A }
+  if (g * A <= 1) return { take: true, why: `the ladder's ${(A / 3600).toFixed(2)}h of attempts outruns the chance rank work buys (${(g * 3600 * 100).toFixed(1)}%/h): g A ${(g * A).toFixed(2)} <= 1`, pStar, tau, g, A }
+  return { take: false, why: `rank work buys ${(g * 3600 * 100).toFixed(1)}%/h of chance against ${(A / 3600).toFixed(2)}h of attempts: g A ${(g * A).toFixed(2)} > 1`, pStar, tau, g, A }
 }
 
 /** Which action next. Returns { type, name, level?, city?, why, ev, p, blackOp? }. */
@@ -850,7 +854,7 @@ function chooseActionOf(v, pol, held) {
     if (pol.blackRule === 'priced') {
       best = bestOver(v, pol, duty)
       const w = blackOpWorth(v, pol, best ? best.score : 0, p)
-      if (w.attempt) return { type: TYPE.blackOp, name: bo.d.name, city: v.city ?? null, why: `black op ${bo.d.n + 1}/21 at ${(p * 100).toFixed(1)}%: ${w.why}`, p, blackOp: true, worth: w }
+      if (w.take) return { type: TYPE.blackOp, name: bo.d.name, city: v.city ?? null, why: `black op ${bo.d.n + 1}/21 at ${(p * 100).toFixed(1)}%: ${w.why}`, p, blackOp: true, worth: w }
       held.w = { ...w, p }
     } else if (p >= pol.blackThr) return { type: TYPE.blackOp, name: bo.d.name, city: v.city ?? null, why: `black op ${bo.d.n + 1}/21 at ${(p * 100).toFixed(1)}% (>= ${pol.blackThr * 100}%)`, p, blackOp: true }
   }

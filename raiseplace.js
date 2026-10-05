@@ -310,28 +310,81 @@ export function goHomeKeepOf(ramOf, ctx = null) {
 export const GO_OUTRANKS = ['autobuy.js', 'torbuy.js']
 
 /**
- * A server bought for go.js when no rooted host can ever hold it (placement
- * 'blocked'): the smallest power of two >= its price, at the game's formula
- * (Server/ServerPurchases.ts getCloudServerCost: ram x 55000 x CloudServerCost
- * x CloudServerSoftcap^max(0, log2(ram) - 6)). Live BN14.1 the lead bought the
- * 32GB 'go-host' by hand at 20:50Z, two hours into the node.
- *   d       goPlacementOf's verdict      cash   home money
- *   need    go.js's GB                   mults  bitNodeMults(node) (CloudServerCost/Softcap/Limit)
- *   exists  a server named GO_HOST already exists
- * Returns {buy, ram, cost, why}.
+ * CLOUD SERVERS FOR A COMMITTED CLAIMANT NO ROOTED HOST CAN HOLD. Each is
+ * bought once, by name, by the one-shot gohost.js (seed.js execs it, so the
+ * daemon is not billed for ns.cloud), the smallest power of two >= the
+ * claimant's block, at the game's formula (Server/ServerPurchases.ts
+ * getCloudServerCost: ram x 55000 x CloudServerCost x
+ * CloudServerSoftcap^max(0, log2(ram) - 6)).
+ *   'go-host'  go.js when its placement is 'blocked' (goHostBuyOf). Live
+ *              BN14.1 the lead bought it by hand at 20:50Z, two hours in.
+ *   'bb-host'  bb-lite.js's actors when the Bladeburner route holds the work
+ *              slot and they starve (bbliteplan.liteHostBuyOf). Live BN14.2
+ *              2026-10-05: ~9h of "no rooted host has 13.6GB free" with go.js
+ *              on the 32GB home and a 16GB fleet, $3.8m in hand; one 32GB
+ *              server ($1.76m) bought by hand at ~22:30Z and rank moved again.
+ * gohost.js accepts only these names ([GF12] holds its list equal).
  */
 export const GO_HOST = 'go-host'
+export const BB_HOST = 'bb-host'
+export const CLOUD_HOSTS = { [GO_HOST]: 'go.js', [BB_HOST]: "bb-lite.js's actors" }
 export const CLOUD_GB_COST = 55000 // ServerConstants.BaseCostFor1GBOfRamServer
-export function goHostBuyOf({ d, cash, need, mults = null, exists = false }) {
-  const ram = 2 ** Math.ceil(Math.log2(Math.max(8, num(need) ? need : 32)))
+
+/** The game's price of a `ram`GB cloud server under `mults` (getCloudServerCost). */
+export function cloudCostOf(ram, mults = null) {
   const soft = num(mults?.CloudServerSoftcap) ? mults.CloudServerSoftcap : 1
-  const cost = ram * CLOUD_GB_COST * (num(mults?.CloudServerCost) ? mults.CloudServerCost : 1) * soft ** Math.max(0, Math.log2(ram) - 6)
-  const no = (why) => ({ buy: false, ram, cost, why })
-  if (d?.action !== 'blocked' || !d?.admitted) return no(`go.js placement is '${d?.action}': nothing to buy`)
-  if (exists) return no(`${GO_HOST} already exists`)
+  return ram * CLOUD_GB_COST * (num(mults?.CloudServerCost) ? mults.CloudServerCost : 1) * soft ** Math.max(0, Math.log2(ram) - 6)
+}
+
+/**
+ * Buy `name` (a CLOUD_HOSTS key) for a block of `need` GB? The caller has
+ * already established that the claimant is committed and no rooted host can
+ * hold it; this is the money side.
+ *
+ * NOT PRICED AS A TRAJECTORY, and that is stated rather than folded in: the
+ * claimant's route was already chosen by the exit comparison (go.js: the
+ * Go-first rule; Bladeburner: progress.js's slot claim), and with no host it
+ * runs at rate zero, so the server is what makes the chosen trajectory
+ * executable at all. Its cost ($1.76m for 32GB in BN14) is not weighed
+ * against the exit; it is held only behind the home claim below.
+ *
+ * NOT AGAINST HOME RAM. `home` = {cost, live}: the next home RAM upgrade's
+ * price and whether homeup.js is publishing this life (it buys the moment
+ * cash covers it, --reserve 0 below 128GB). When cash covers that upgrade
+ * but not both, the server waits a pass: home survives an install and the
+ * server does not (budget.js PRIORITY: home before servers), and the two
+ * buyers must not race each other to the same dollars. Cash covering both,
+ * or homeup.js not running (nothing would take the money): buy.
+ * Returns {buy, name, ram, cost, why}.
+ */
+export function cloudHostBuyOf({ name, need, cash, mults = null, exists = false, home = null }) {
+  const ram = 2 ** Math.ceil(Math.log2(Math.max(8, num(need) ? need : 32)))
+  const cost = cloudCostOf(ram, mults)
+  const what = CLOUD_HOSTS[name]
+  const no = (why) => ({ buy: false, name, ram, cost, why })
+  if (!what) return no(`'${name}' is not a cloud host anything buys (CLOUD_HOSTS)`)
+  if (exists) return no(`${name} already exists`)
   if (num(mults?.CloudServerLimit) && mults.CloudServerLimit <= 0) return no('no cloud servers in this node (CloudServerLimit 0)')
-  if (!(num(cash) && cash >= cost)) return no(`a ${ram}GB server for go.js costs $${Math.round(cost)}; $${Math.round(num(cash) ? cash : 0)} in hand`)
-  return { buy: true, ram, cost, why: `no rooted host can hold go.js (${d.why}); a ${ram}GB server costs $${Math.round(cost)} and $${Math.round(cash)} is in hand` }
+  if (!(num(cash) && cash >= cost)) return no(`a ${ram}GB server for ${what} costs $${Math.round(cost)}; $${Math.round(num(cash) ? cash : 0)} in hand`)
+  if (home?.live === true && num(home.cost) && cash >= home.cost && cash < home.cost + cost) return no(`home RAM first: homeup.js is buying the $${Math.round(home.cost)} upgrade with this cash ($${Math.round(cash)} covers one, not both); the ${ram}GB ${name} waits for the next pass`)
+  return { buy: true, name, ram, cost, why: `a ${ram}GB server for ${what} costs $${Math.round(cost)} and $${Math.round(cash)} is in hand` }
+}
+
+/**
+ * go.js's server: when goPlacementOf's verdict is 'blocked' (no rooted host
+ * can ever hold it).
+ *   d       goPlacementOf's verdict      cash   home money
+ *   need    go.js's GB                   mults  bitNodeMults(node) (CloudServerCost/Softcap/Limit)
+ *   exists  a server named GO_HOST already exists      home  {cost, live} (cloudHostBuyOf)
+ * Returns {buy, name, ram, cost, why}.
+ */
+export function goHostBuyOf({ d, cash, need, mults = null, exists = false, home = null }) {
+  if (d?.action !== 'blocked' || !d?.admitted) {
+    const ram = 2 ** Math.ceil(Math.log2(Math.max(8, num(need) ? need : 32)))
+    return { buy: false, name: GO_HOST, ram, cost: cloudCostOf(ram, mults), why: `go.js placement is '${d?.action}': nothing to buy` }
+  }
+  const b = cloudHostBuyOf({ name: GO_HOST, need, cash, mults, exists, home })
+  return b.buy ? { ...b, why: `no rooted host can hold go.js (${d.why}); ${b.why}` } : b
 }
 
 /**

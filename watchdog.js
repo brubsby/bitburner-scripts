@@ -112,6 +112,8 @@ import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseS
 import { isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
 import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf } from 'raiseplace.js'
+// Pure (0GB): bb-lite.js's actor headroom, held like the RAISED reservations.
+import { LITE_FILE, BB_FILE, liteReserveOf } from 'bbliteplan.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -1078,21 +1080,46 @@ function raisedRunning(ns, rec, script) {
   ns.write(RAISED[script].file, JSON.stringify(reserveRecordOf({ action: 'running', why: `${script} is running: nothing reserved` }, ns.getResetInfo(), Date.now(), script)), 'w')
 }
 
-/** Every raise-sized daemon's live reservation — what the watchdog's other placements must not take either. */
-function fullHeld(ns) {
+/**
+ * Every raise-sized daemon's live reservation — what the watchdog's other
+ * placements must not take either — and bb-lite.js's actor headroom
+ * (bbliteplan.liteReserveOf, as batch.js and seed.js keep it), except when
+ * placing bb-lite.js itself (`forScript`): that headroom is room for it.
+ * Live BN14.2 (2026-10-05 22:48Z) only batch.js read bb-lite's reservation,
+ * and seed.js refilled the reserved go-host to 31.2 of 32GB.
+ */
+export function fullHeld(ns, forScript = null) {
+  let out = []
   try {
-    return reservesOf((f) => ns.read(f), ns.getResetInfo(), scanAll(ns))
+    out = reservesOf((f) => ns.read(f), ns.getResetInfo(), scanAll(ns))
   } catch {
-    return []
+    out = []
   }
+  if (forScript === 'bb-lite.js') return out
+  try {
+    const info = ns.getResetInfo()
+    const rd = (f) => {
+      try {
+        return JSON.parse(ns.read(f) || 'null')
+      } catch {
+        return null
+      }
+    }
+    const hosts = scanAll(ns).filter((h) => ns.hasRootAccess(h)).map((h) => ({ host: h, max: ns.getServerMaxRam(h), hacknet: isHacknetServerHost(h) }))
+    const lite = liteReserveOf({ lite: rd(LITE_FILE), full: rd(BB_FILE), info, canJoin: canJoinBladeburner(info), hosts })
+    if (lite) out.push({ script: 'bb-lite.js', host: lite.host, gb: lite.gb })
+  } catch {
+    /* unreadable: the RAISED reservations stand alone */
+  }
+  return out
 }
 const heldFor = (held, h) => heldOn(held, h)
 
 /** Tightest-fitting rooted host with room, so big hosts stay whole for the batcher. */
 function placeFor(ns, hosts, script, threads) {
   const need = ns.getScriptRam(script, 'home') * threads
-  // bladeburner.js's reserved block is not free room (fullPlace).
-  const held = fullHeld(ns)
+  // bladeburner.js's reserved block is not free room (fullPlace); nor is bb-lite's, except for bb-lite.js.
+  const held = fullHeld(ns, script)
   let best = null
   for (const h of hosts) {
     if (!ns.hasRootAccess(h) || h === 'home' || isHacknetServerHost(h)) continue

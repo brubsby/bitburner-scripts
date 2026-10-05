@@ -43,7 +43,7 @@
 import { reporter, describe } from 'status.js'
 // Pure: the trader's placement priced as trajectories (nodeecon), the home tier's price (homecost).
 import { traderPlacement } from 'nodeecon.js'
-import { canAccessFeature, sfLevel, singularityRamMultiplier, canUseGrafting } from 'sfgate.js'
+import { canAccessFeature, sfLevel, singularityRamMultiplier, canUseGrafting, canJoinBladeburner } from 'sfgate.js'
 import { ramUpgradeCost } from 'homecost.js'
 // Pure: the exp-mode gate and the exp-per-thread rule, and the node table.
 import { expMode, expPerThread } from 'expfarm.js'
@@ -51,7 +51,11 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): the full Bladeburner daemon's reserved block, kept free of workers.
-import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, GO_OUTRANKS, JOB_RUNNER_TIER, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf, goHostBuyOf, GO_HOST, goHomeRepairOf, reserveRecordOf } from 'raiseplace.js'
+import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, GO_OUTRANKS, JOB_RUNNER_TIER, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf, goHostBuyOf, GO_HOST, BB_HOST, goHomeRepairOf, reserveRecordOf } from 'raiseplace.js'
+// Pure (0GB): bb-lite.js's reservation (seed's workers leave it free, as batch.js's do) and its server.
+import { LITE_FILE, BB_FILE, liteReserveOf, liteHostBuyOf } from 'bbliteplan.js'
+// ns.read only (0GB): the work-slot claim, the Bladeburner route's commitment.
+import { slotClaim, SLOT_FILES } from 'bbslot.js'
 
 const EARLY = 'early.js'
 const CHEAP = 'hgw.js'
@@ -111,6 +115,7 @@ export async function main(ns) {
       note(last.refused?.length ? 'degraded' : 'ok', {
         result: last.why ? 'retired-for-batch' : 'ok',
         go: lastGo,
+        bbHost: lastLiteHost,
         detail:
           (last.why ? `${last.why}; ` : '') +
           `${last.placed.length} placed, ${last.newlyRooted.length} newly rooted` +
@@ -163,7 +168,7 @@ function root(ns, host) {
   }
 }
 
-async function pass(ns, flags) {
+export async function pass(ns, flags) {
 
   // BFS the network; ns.scan only sees neighbours.
   const seen = new Set(['home'])
@@ -193,6 +198,13 @@ async function pass(ns, flags) {
     await placeGo(ns, all)
   } catch (err) {
     lastGo = { ...(lastGo ?? {}), error: describe(err) }
+  }
+  // A SERVER FOR bb-lite.js's ACTORS when they starve on the Bladeburner slot
+  // (bbliteplan.liteHostBuyOf). Its own try, like placeGo's.
+  try {
+    await placeLiteHost(ns, all)
+  } catch (err) {
+    lastLiteHost = { ...(lastLiteHost ?? {}), error: describe(err) }
   }
 
   // RETIRED WHILE THE BATCHER RUNS. batch.js places its own h/g/w on every
@@ -344,6 +356,11 @@ async function pass(ns, flags) {
       return null
     }
   })()
+  // bb-lite.js's reservation (bbliteplan.liteReserveOf, the one batch.js
+  // honours): its actor headroom stays free of OUR workers too. Live BN14.2
+  // (2026-10-05) seed.js was the only worker placer at a 32GB home and did
+  // not read it, so any host big enough for the reservation was filled.
+  const liteHold = liteHoldOf(ns, all)
   for (let i = 0; i < hosts.length; i++) {
     const h = hosts[i]
     if (h === traderHost) continue
@@ -362,13 +379,16 @@ async function pass(ns, flags) {
       if (cur) ns.kill(cur.pid)
       continue
     }
-    if (cur && cur.args[0] === target && Number(cur.args[1]) === floor) continue
+    // The headroom kept here for bb-lite: its reservation, less what its own
+    // scripts already hold of it (a running actor or the coordinator).
+    const keep = liteHold?.host === h ? Math.max(0, liteHold.gb - ns.ps(h).filter((q) => /^bb-lite/.test(q.filename)).reduce((a, q) => a + ns.getScriptRam(q.filename, h) * q.threads, 0)) : 0
+    if (cur && cur.args[0] === target && Number(cur.args[1]) === floor && (keep === 0 || ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= keep - 1e-9)) continue
     if (cur) {
       ns.kill(cur.pid)
       await ns.sleep(0) // let the kill settle before reading free RAM
     }
 
-    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h)
+    const free = ns.getServerMaxRam(h) - ns.getServerUsedRam(h) - keep
     // The tuned worker where a whole batch of it fits; the 2.00GB one where it
     // does not. On an 8GB home that is the difference between three ops and
     // four, and on a 4GB n00dles it is the difference between one and zero.
@@ -565,28 +585,132 @@ export async function placeGo(ns, all) {
   // go.js there.
   let buy = null
   if (d.action === 'blocked') {
-    buy = goHostBuyOf({ d, cash: ns.getServerMoneyAvailable('home'), need: ns.getScriptRam(GO, 'home'), mults: bitNodeMults(reset.currentNode), exists: all.includes(GO_HOST) })
-    if (buy.buy) {
-      const price = ns.getScriptRam(GOHOST, 'home')
-      const roomOn = (h) => ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= price
-      let spot = [here, ...rooted.filter((h) => h !== here && !isHacknetServerHost(h))].find(roomOn)
-      if (!spot && here !== 'home') {
-        // The fleet is full of this script's own workers: make room here (refilled next pass).
-        for (const w of EVICTABLE) ns.scriptKill(w, here)
-        await ns.sleep(0)
-        if (roomOn(here)) spot = here
-      }
-      if (spot && spot !== 'home' && spot !== here) ns.scp(GOHOST, spot, 'home')
-      buy.pid = spot ? ns.exec(GOHOST, spot, 1, buy.ram) : 0
-      buy.host = spot ?? null
-      if (!buy.pid) buy.why = `${buy.why} — but ${GOHOST} (${price}GB) could not start${spot ? ` on ${spot}` : ': no rooted host has the room'}`
-    }
+    buy = goHostBuyOf({ d, cash: ns.getServerMoneyAvailable('home'), need: ns.getScriptRam(GO, 'home'), mults: bitNodeMults(reset.currentNode), exists: all.includes(GO_HOST), home: homeClaimOf(ns) })
+    if (buy.buy) await launchHostBuy(ns, rooted, buy)
   }
   writeRec(pid ? { action: 'running', why: `${GO} placed on ${d.host}` } : d)
   // The daemons moved off home start again on a fleet host, after go.js has its block.
   const relocated = moved.length ? await moveOffHome(ns, rooted, [], moved) : []
   lastGo = { goFirst: true, action: pid ? 'placed' : d.action, host: d.host ?? null, pid, homeKeep, slotActor: slot.largest, relocated, yielded, ...(buy ? { buy } : {}), why: d.why }
   return pid ? d.host : null
+}
+
+/**
+ * gohost.js for `buy` (a cloudHostBuyOf verdict with buy: true): on this host
+ * or any rooted non-hacknet host with its few GB, else on this host after
+ * evicting our own workers here (refilled next pass). Sets buy.pid/host, and
+ * buy.why says when it could not start.
+ */
+async function launchHostBuy(ns, rooted, buy) {
+  const here = ns.getHostname()
+  const price = ns.getScriptRam(GOHOST, 'home')
+  const roomOn = (h) => ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= price
+  let spot = [here, ...rooted.filter((h) => h !== here && !isHacknetServerHost(h))].find(roomOn)
+  if (!spot && here !== 'home') {
+    // The fleet is full of this script's own workers: make room here (refilled next pass).
+    for (const w of EVICTABLE) ns.scriptKill(w, here)
+    await ns.sleep(0)
+    if (roomOn(here)) spot = here
+  }
+  if (spot && spot !== 'home' && spot !== here) ns.scp(GOHOST, spot, 'home')
+  buy.pid = spot ? ns.exec(GOHOST, spot, 1, buy.ram, buy.name) : 0
+  buy.host = spot ?? null
+  if (!buy.pid) buy.why = `${buy.why} — but ${GOHOST} (${price}GB) could not start${spot ? ` on ${spot}` : ': no rooted host has the room'}`
+  return buy
+}
+
+/** A file from home's copy (ns.read is local; [bitburner-offhome-reads]), parsed; null when absent or unreadable. */
+function homeJson(ns, f) {
+  const here = ns.getHostname()
+  try {
+    if (here !== 'home') ns.scp(f, here, 'home')
+  } catch {
+    /* none on home: the old copy, if any, is judged by its stamp */
+  }
+  try {
+    return JSON.parse(ns.read(f) || 'null')
+  } catch {
+    return null
+  }
+}
+
+/** /tel/homeup.txt younger than this: homeup.js is alive (--watch publishes every pass). */
+export const HOMEUP_FRESH_MS = 3 * 60e3
+/**
+ * The home claim a cloud purchase must not race (raiseplace.cloudHostBuyOf
+ * `home`): what homeup.js spends next ({cost: the next upgrade + its
+ * --reserve}) and whether it is alive to spend it (/tel/homeup.txt fresh,
+ * not stopped). null when it has published nothing usable: nothing is held,
+ * because nothing would take the money.
+ */
+function homeClaimOf(ns, now = Date.now()) {
+  const h = homeJson(ns, '/tel/homeup.txt')
+  const at = Date.parse(h?.at ?? '')
+  const cost = Number(h?.next?.cost)
+  if (!h || !Number.isFinite(cost)) return null
+  return { cost: cost + (Number(h.reserve) > 0 ? Number(h.reserve) : 0), live: Number.isFinite(at) && now - at <= HOMEUP_FRESH_MS && h.health !== 'stopped' && h.exited !== true }
+}
+
+/** bb-lite.js's reservation this pass (bbliteplan.liteReserveOf, as batch.js reads it), or null. */
+function liteHoldOf(ns, all) {
+  try {
+    const info = ns.getResetInfo()
+    return liteReserveOf({
+      lite: homeJson(ns, LITE_FILE),
+      full: homeJson(ns, BB_FILE),
+      info,
+      canJoin: canJoinBladeburner(info),
+      hosts: all.filter((h) => ns.hasRootAccess(h)).map((h) => ({ host: h, max: ns.getServerMaxRam(h), hacknet: isHacknetServerHost(h) })),
+    })
+  } catch {
+    return null
+  }
+}
+
+let lastLiteHost = null
+/**
+ * BUY THE bb-host when bb-lite.js's actors starve on the Bladeburner slot and
+ * no rooted host can be made to hold them (bbliteplan.liteHostBuyOf) — the
+ * same one-shot gohost.js as go.js's server. Live BN14.2 (2026-10-05):
+ * Bladeburner idle ~9h, "no rooted host has 13.6GB free", go.js on the 32GB
+ * home, $3.8m in hand; the lead's 32GB server at ~22:30Z ended it.
+ * Returns the name bought (gohost.js launched) or null; the verdict is on
+ * /tel/seed.txt `bbHost`.
+ */
+export async function placeLiteHost(ns, all) {
+  const info = ns.getResetInfo()
+  if (!canJoinBladeburner(info)) {
+    lastLiteHost = { buy: false, why: 'no Bladeburner in this node' }
+    return null
+  }
+  const lite = homeJson(ns, LITE_FILE)
+  const here = ns.getHostname()
+  if (here !== 'home') {
+    try {
+      ns.scp(SLOT_FILES, here, 'home')
+    } catch {
+      /* slotClaim judges what is here by its stamps */
+    }
+  }
+  const claim = slotClaim(ns, here, info)
+  const rooted = all.filter((h) => ns.hasRootAccess(h))
+  const evictOn = (h) => ns.ps(h).filter((p) => EVICTABLE.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0)
+  const v = liteHostBuyOf({
+    lite,
+    info,
+    claim,
+    hosts: rooted.map((h) => ({ host: h, max: ns.getServerMaxRam(h), used: ns.getServerUsedRam(h), evictGb: evictOn(h), hacknet: isHacknetServerHost(h) })),
+    cash: ns.getServerMoneyAvailable('home'),
+    mults: bitNodeMults(info.currentNode),
+    exists: all.includes(BB_HOST),
+    home: homeClaimOf(ns),
+  })
+  if (v.buy) {
+    await launchHostBuy(ns, rooted, v)
+    if (v.pid) ns.tprint(`seed: buying ${v.name} (${v.ram}GB): ${v.why}`)
+  }
+  lastLiteHost = v
+  return v.buy && v.pid ? v.name : null
 }
 
 /**

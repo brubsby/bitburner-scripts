@@ -102,7 +102,7 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   // room; three failures in ten minutes is a fleet with no room for them.
   if (bb.daemon === 'bb-lite' && lite && lite.bitNode === node) {
     const recent = (lite.actorErrors ?? []).filter((e) => { const a = ageMinOf(e.at, nowMs); return a !== null && a <= 10 })
-    if (recent.length >= 3) fail(`BB-LITE STARVED: ${recent.length} actor failures in 10 min — ${String(recent[recent.length - 1].why).slice(0, 160)}`, 'its actors need 9.6-14.6GB free on one rooted host (home\'s action slot is sized for act.js\'s); free RAM or a server is the fix')
+    if (recent.length >= 3) fail(`BB-LITE STARVED: ${recent.length} actor failures in 10 min — ${String(recent[recent.length - 1].why).slice(0, 160)}`, 'its actors need 9.6-14.6GB free on one rooted host (home\'s action slot is sized for act.js\'s); seed.js buys a 32GB bb-host for them on the Bladeburner slot once cash covers it (its verdict: /tel/seed.txt bbHost; the purchase: /tel/gohost.txt), and seed/batch/watchdog keep bb-lite\'s reservation free')
     else notes.push(`bladeburner: bb-lite.js is the actor (${bb.result}; ${String(bb.detail ?? '').slice(0, 100)})`)
   }
   if (bb.capability === false || bb.result === 'capability-absent' || bb.result === 'disabled-in-node') {

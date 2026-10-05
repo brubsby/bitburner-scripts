@@ -142,14 +142,14 @@ export async function run() {
   const pStar = (0.5 * tau + L) / (G + 0.5 * tau + L)
   c7.examined(4)
   if (!(Math.abs(w0.pStar - pStar) < 1e-12)) c7.fail(`p* must be (R tau + L)/(G + R tau + L) = ${pStar} (got ${w0.pStar})`)
-  if (!BB.blackOpWorth(vR, BB.POLICY, 0.5, Math.min(0.999, pStar + 1e-6)).attempt || BB.blackOpWorth(vR, BB.POLICY, 0.5, pStar - 1e-6).attempt) c7.fail(`the rank-gated rule must flip at p* ${pStar}`)
+  if (!BB.blackOpWorth(vR, BB.POLICY, 0.5, Math.min(0.999, pStar + 1e-6)).take || BB.blackOpWorth(vR, BB.POLICY, 0.5, pStar - 1e-6).take) c7.fail(`the rank-gated rule must flip at p* ${pStar}`)
   if (!(BB.blackOpWorth(vR, BB.POLICY, 5, 0.5).pStar > pStar)) c7.fail('p* must rise with the rank rate R')
   // Chance-gated (rank covers Daedalus): g x A against 1 — a slow chance growth attempts, a fast one waits.
   const vE = { ...view(BB.BLACK_OPS[20].reqdRank + 1e5), blackOp: { d: BB.BLACK_OPS[18], K: 30, width: 0 } }
   const slow = BB.blackOpWorth(vE, BB.POLICY, 1e-3, 0.3)
   const fast = BB.blackOpWorth(vE, BB.POLICY, 1e6, 0.3)
   c7.note(`rank-gated p* ${f2(pStar * 100)}% (G ${G}, tau ${tau}s, R 0.5); endgame slow: ${slow.why}; fast: ${fast.why}`)
-  if (!(slow.attempt && !fast.attempt && Number.isFinite(fast.A) && fast.g * fast.A > 1)) c7.fail('the chance-gated rule must attempt when rank work buys chance slowly and hold (g A > 1) when it buys it fast')
+  if (!(slow.take && !fast.take && Number.isFinite(fast.A) && fast.g * fast.A > 1)) c7.fail('the chance-gated rule must attempt when rank work buys chance slowly and hold (g A > 1) when it buys it fast')
   // The model from the live 00:26Z state plays the rule: black ops attempted below 0.8 (where the
   // ladder's attempt time outruns the chance rank work buys), none under POLICY_V2's fixed bar.
   const fx26 = A.loadFx(A.FX_PATH.replace('fixture-bn14-bbaudit.json', 'fixture-bn14-bbaudit-0026.json'))
