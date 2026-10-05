@@ -248,6 +248,18 @@ export async function run() {
     })
     c5.note(`unread cities ${cities.filter((x) => x.r === null).map((x) => `${x.name} (${x.popFrom ?? 'estimate'}${x.pop ? ` ${(x.pop / 1e9).toFixed(3)} vs true ${(bb.cities[x.name].pop / 1e9).toFixed(3)}` : ''})`).join(', ') || 'none'}; the probe's chance ${probeP?.toFixed(4)}`)
     if (cities.length !== 6) c5.fail('six cities')
+    // A family with no unclamped read (a strong player): ENV is the formula's at the reference's
+    // estimate, never the low end (live 2026-10-05 00:26Z: operations K 0.185 vs the formula's 1.785,
+    // Raid L4 'at 42%' where the game rolled L26 at 100%).
+    const ref = cities.find((x) => x.name === bb.city) ?? null
+    for (const fam of ['contracts', 'operations']) {
+      if (s?.env?.exact?.[fam] !== false || !ref || !(ref.popEst > 0) || ref.r === null) continue
+      const d = fam === 'contracts' ? bp.CONTRACTS.Tracking : bp.OPERATIONS.Investigation
+      const f = bp.envOf(d, { int: w.P.skills.intelligence ?? 0, stamina: bb.stamina, maxStamina: bb.maxStamina, teamCount: bb.teamSize, augMult: w.P.mults.bladeburner_success_chance ?? 1, pop: ref.popEst, chaos: ref.chaos })
+      c5.examined(1)
+      c5.note(`${fam}: every estimate clamped; daemon ENV ${s.env[fam].toFixed(3)} vs the formula's ${f.toFixed(3)} at ${ref.name}'s estimate`)
+      if (!(s.env[fam] >= 0.95 * f)) c5.fail(`${fam}: all clamped, the daemon's ENV ${s.env[fam]} is below the formula's ${f} (the low-end fallback is back)`)
+    }
     if (bad.length) c5.fail(`unread where the range could say r: ${bad.map((x) => x.name).join(', ')}`)
     if (!(worst < 0.002)) c5.fail(`the population read off the range is off by ${(worst * 100).toFixed(2)}%`)
     const groups = s?.calibration?.success?.groups ?? []

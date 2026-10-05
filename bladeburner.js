@@ -56,7 +56,7 @@ import { liteAliveOf } from 'bbliteplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, unreadPopOf, anchorAfter, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf } from 'bbplan.js'
+import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, envOf, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, unreadPopOf, anchorAfter, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
 /** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
@@ -345,6 +345,8 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       let Ko = 0
       let KcLo = 0
       let KoLo = 0
+      let KcClamp = 0
+      let KoClamp = 0
       const actions = []
       for (const d of LEVELED) {
         const type = typeOf(d)
@@ -363,6 +365,11 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
             const K = envFromChance(est, d, maxLevel, person, sm)
             if (d.kind === 'contract') Kc = Math.max(Kc, K)
             else Ko = Math.max(Ko, K)
+          } else {
+            // Clamped at the max level: the chance there is >= 0.999, a lower bound on ENV.
+            const K = envFromChance(0.999, d, maxLevel, person, sm)
+            if (d.kind === 'contract') KcClamp = Math.max(KcClamp, K)
+            else KoClamp = Math.max(KoClamp, K)
           }
           const K0 = envFromChance(lo, d, maxLevel, person, sm)
           if (d.kind === 'contract') KcLo = Math.max(KcLo, K0)
@@ -371,10 +378,22 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         actions.push({ d, count, maxLevel, width: rCur === null ? hi - lo : 0 })
       }
       if (readable) bb.switchCity(city)
-      // Every estimate clamped (a strong player): the low end, a lower bound — not exact.
+      // EVERY ESTIMATE CLAMPED (a strong player): no read pins ENV. It was the
+      // low end — in a city whose estimate is 3x its population (r 0.32) that
+      // is ~1/10 of ENV: live 2026-10-05 00:26Z the daemon ran Raid L4 'at
+      // 42%' (operations K 0.185, contracts 0.028) where the game rolls Raid
+      // L26 at 100% (the formula's K 1.785 / 1.632 in Volhaven at its
+      // estimate) — ~1/3 of the rank rate the model and the game's classes
+      // play (live 5.7k/h vs ~15k/h simulated from that state). Now the
+      // formula's ENV at the reference's estimate: every factor of the chance
+      // is read here (stats, skills, int, stamina, team, augs) but the
+      // population, which is the estimate the range is built on — never below
+      // what the clamp proves (>= 0.999 at the max level) or the low end.
+      // NOT applied: the success calibration k (measured on exact reads only).
+      const envRef = { int: person.skills.intelligence ?? 0, stamina, maxStamina, teamCount: team, augMult: person.mults.bladeburner_success_chance ?? 1, pop: ref.popEst, chaos: ref.chaos }
       const exact = { contracts: Kc > 0, operations: Ko > 0 }
-      if (!(Kc > 0)) Kc = KcLo
-      if (!(Ko > 0)) Ko = KoLo
+      if (!(Kc > 0)) Kc = Math.max(KcLo, KcClamp, envOf(CONTRACTS.Tracking, envRef))
+      if (!(Ko > 0)) Ko = Math.max(KoLo, KoClamp, envOf(OPERATIONS.Investigation, envRef))
       for (const a of actions) a.K = a.d.kind === 'contract' ? Kc : Ko
       const next = bb.getNextBlackOp()
       let blackOp = null
@@ -440,7 +459,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
         // would push k up on nothing (bbdaemon [BD5]).
         // ...and only where the chance was the REAL one (the population read: obs.exact); on the
         // low end of an unread range it is a lower bound and would push k up on nothing.
-        if (obs.p < SUCCESS_CAL.maxP && obs.exact) addGroup(obs.name, obs.level, obs.p, a.n, a.s)
+        if (+obs.p.toFixed(3) < SUCCESS_CAL.maxP && obs.exact) addGroup(obs.name, obs.level, obs.p, a.n, a.s)
       } else if (a.n === null) unmeasured = { name: obs.name, why: a.why }
       obs = null
     }
@@ -565,7 +584,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       },
       exitReady,
       exitNote: exitReady ? `all 21 black ops complete (${DAEDALUS} done): destroyW0r1dD43m0n now accepts with no hacking level (Singularity.ts:1154-1158). endgame.js does it under its --next and /endgame-hold.txt; this script never will.` : null,
-      env: { contracts: v.K.contracts, operations: v.K.operations },
+      env: { contracts: v.K.contracts, operations: v.K.operations, exact: v.Kexact },
       counts: Object.fromEntries(v.actions.map((a) => [a.d.name, +a.count.toFixed(1)])),
       maxLevels: Object.fromEntries(v.actions.map((a) => [a.d.name, a.maxLevel])),
       // pop: the TRUE population read off the black-op range (r = pop/popEst; popFrom range), else carried from its anchor or a typical city (popFrom anchor | median, bbplan.unreadPopOf), null with nothing to go on.

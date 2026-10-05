@@ -182,3 +182,10 @@ ARMS['priced-noEnd'] = { sharedPolicy: { blackRule: 'priced', blackEndgame: fals
 ARMS.prev = { sharedPolicy: { blackRule: 'threshold', raidChaos: 45 } }
 ARMS['prev-raid50'] = { sharedPolicy: { blackRule: 'threshold', raidChaos: 50 } }
 ARMS['priced-raid45'] = { sharedPolicy: { blackRule: 'priced', raidChaos: 45 } }
+// The daemon's all-clamped low-end ENV as it ran live at 00:26Z (operations K 0.185 vs the formula's
+// 1.785, contracts 0.028 vs 1.632): every chance it decides on scaled down by that ratio.
+{
+  const lowK = (v) => ({ ...v, __memo: null, actions: v.actions.map((a) => ({ ...a, K: a.K * (a.d.kind === 'contract' ? 0.028 / 1.632 : 0.185 / 1.785) })) })
+  ARMS.lowK = { choose: (v, pol) => bp.chooseAction(lowK(v), pol), planSkills: (v, sp, pol, cm, ch) => bp.planSkills(lowK(v), sp, pol, cm, ch) }
+  ARMS['lowK-V2'] = { ...ARMS.lowK, sharedPolicy: bp.POLICY_V2 }
+}
