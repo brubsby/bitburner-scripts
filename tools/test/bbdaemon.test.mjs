@@ -39,7 +39,7 @@ export async function run() {
   }
 
   /** One world: a BN6 player, the game's API, a fake ns whose sleep advances the game. */
-  function world({ combat = 120, mult = 1, owner = 'bladeburner', joined = false, setup = null, seed = 1 } = {}) {
+  function world({ combat = 120, mult = 1, owner = 'bladeburner', joined = false, setup = null, seed = 1, onTick = null } = {}) {
     setBitNode(6, 1)
     g.initSourceFiles()
     const P = new g.PlayerObject()
@@ -74,11 +74,18 @@ export async function run() {
     const logs = []
     const ws = { log: (fn, msg) => logs.push(`${fn}: ${msg()}`), scriptRef: { dependencies: new Map(), filename: 'bladeburner.js' }, name: 'bladeburner.js', hostname: 'home', pid: 1 }
     const calls = new Map()
+    const restarts = []
     const bladeburner = new Proxy({}, {
       get(_, name) {
         if (!(name in internal)) throw new Error(`ns.bladeburner.${String(name)} does not exist in the game's API`)
         return (...args) => {
           calls.set(name, (calls.get(name) ?? 0) + 1)
+          // A restart: startAction while a contract/operation is partway done (its progress is lost).
+          if (name === 'startAction') {
+            const b = P.bladeburner
+            const a = b?.action
+            if (a && (a.type === 'Contracts' || a.type === 'Operations') && b.actionTimeCurrent >= 2 && b.actionTimeCurrent < b.actionTimeToComplete) restarts.push({ t, from: a.name, done: b.actionTimeCurrent, of: b.actionTimeToComplete, to: args[1] })
+          }
           // APIWrapper.ts:84: field(ctx, ...args) — the context first, not curried.
           return internal[name]({ workerScript: ws, function: name, functionPath: `bladeburner.${String(name)}` }, ...args)
         }
@@ -100,6 +107,7 @@ export async function run() {
         bb.randomEventCounter += 240 + Math.floor(Math.random() * 361)
       }
       bb.processAction(1)
+      if (onTick) onTick(bb, t)
     }
     let maxT = Infinity
     const ns = {
@@ -129,6 +137,7 @@ export async function run() {
     // The last record the daemon published on its own: the test's stop (a throw
     // out of ns.sleep) makes main() publish one more, 'error', naming it.
     let lastReal = null
+    let truthAt = null
     const status = () => lastReal
     const history = []
     const origWrite = ns.write
@@ -139,6 +148,8 @@ export async function run() {
           const x = JSON.parse(d)
           if (String(x.detail ?? '').includes('__test_stop__') || (x.errors ?? []).some((e) => String(e).includes('__test_stop__'))) return
           lastReal = x
+          // The truth AT the publish: an operation or random event after it moves the cities before the test reads them.
+          if (P.bladeburner) truthAt = Object.fromEntries(Object.entries(P.bladeburner.cities).map(([n, c]) => [n, c.pop]))
           history.push({ t, health: x.health, result: x.result, rank: x.rank, bo: x.blackOps?.done, running: x.running?.name ?? null })
           if (history.length > 2000) history.shift()
         } catch {
@@ -147,7 +158,7 @@ export async function run() {
       }
     }
     return {
-      P, ns, status, history, calls, logs,
+      P, ns, status, history, calls, logs, restarts, truth: () => truthAt,
       async runFor(hours) {
         maxT = t + hours * 3600
         const savedNow = Date.now
@@ -206,6 +217,31 @@ export async function run() {
     if (!w.history.some((h) => h.running)) c.fail('with the claim, no Bladeburner action ever ran', JSON.stringify(w.status()).slice(0, 300))
   }
 
+  // ---- BD7 ----
+  {
+    const c = new Check('BD7', "A FLIPPING PICK RESTARTS NOTHING (live 2026-10-05 00:54-01:09Z: two cities' prices crossed every pass, startAction restarted each action ~35s in, rank froze 15+ min): what the daemon starts runs to its completion unless restarting pays")
+    checks.push(c)
+    // Operations only (every contract's count held at 0: an operation runs 30-60s here, the daemon
+    // wakes at most 30s apart), and every 20 game seconds chaos in every city crosses the threshold
+    // and back: the pick flips between an operation and Diplomacy under the daemon, mid-action.
+    const flip = (bb, t) => {
+      for (const c of Object.values(bb.contracts)) c.count = 0
+      if (t % 20) return
+      for (const c of Object.values(bb.cities)) c.chaos = t % 40 ? 0 : 60
+    }
+    const w = world({ combat: 1000, joined: true, owner: 'bladeburner', seed: 11, onTick: flip })
+    const r0 = w.P.bladeburner.rank
+    await w.runFor(2)
+    const bb = w.P.bladeburner
+    const done = [...Object.values(bb.contracts), ...Object.values(bb.operations)].reduce((a, x) => a + x.successes + x.failures, 0)
+    c.examined(w.restarts.length + 1)
+    c.note(`2 game hours under the flip: rank ${r0.toFixed(0)} -> ${bb.rank.toFixed(0)}, ${done} contract/operation completions, ${w.calls.get('startAction') ?? 0} startAction calls, ${w.restarts.length} restarts partway${w.restarts.length ? ` (first: ${JSON.stringify(w.restarts[0])})` : ''}; last: ${String(w.status()?.action?.why).slice(0, 160)}`)
+    // A restart is allowed only where it pays (the new pick's rank rate over the time left beats the
+    // running attempt's): rare. The freeze is restarts outnumbering completions (unheld: 177 vs 3).
+    if (!(w.restarts.length * 10 <= done)) c.fail(`${w.restarts.length} contract/operation(s) restarted partway against ${done} completions — progress thrown away`)
+    if (!(bb.rank > r0 + 10)) c.fail(`rank did not move under the flip (${r0} -> ${bb.rank})`)
+  }
+
   // ---- BD3 ----
   {
     const c = new Check('BD3', 'acting for game hours: rank rises, skills bought, black ops fall, never health error, formula time = game time, success near expectation')
@@ -232,7 +268,7 @@ export async function run() {
     const cities = s?.cities ?? []
     let worst = 0
     for (const x of cities) {
-      const truth = bb.cities[x.name].pop
+      const truth = w.truth()?.[x.name] ?? bb.cities[x.name].pop
       if (x.pop === null || x.r === null) continue // assumed (popFrom anchor/median): BD6
       worst = Math.max(worst, Math.abs(x.pop / truth - 1))
     }

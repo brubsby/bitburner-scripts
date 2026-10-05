@@ -170,6 +170,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
   const samples = [] // {t, rank, stamina, maxStamina} once a minute, the last hour
   const outcomes = [] // {name, level, p, n, s} per read: the attempts since the last read (bbplan.attemptsOf)
   let obs = null // what the last pass left running: {name, level, p, count, twin, rank}
+  let ran = null // the contract/operation this process runs, as decided: {type, name, level, city, p, ev, timeS}
   let unmeasured = null // the last interval attemptsOf could not attribute, and why
   let teamSet = -1
   const purchases = []
@@ -464,7 +465,38 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       obs = null
     }
     let pick = chooseAction(v, POLICY)
-    if (pick.city && pick.city !== city) {
+    // HOLD A CONTRACT/OPERATION PARTWAY DONE UNLESS RESTARTING PAYS.
+    // startAction restarts an action from zero, so a pick that flips between
+    // passes completes nothing: live 2026-10-05 00:54-01:09Z rank sat at
+    // 48,896.28 for 15+ minutes while Stealth Retirement (38s, Volhaven) and
+    // Assassination (51s, Chongqing) replaced each other every ~35s — each
+    // pass's probes moved the two cities' prices past each other. Priced: the
+    // running action (ours, `done` of `time` seconds in) pays its attempt,
+    // ev x time rank, in the `left` seconds it still needs; the new pick earns
+    // its ev x left there. Keep it unless the new pick's rate beats that (a
+    // general action — Diplomacy, rest, Field Analysis — has no rank rate:
+    // it waits for the completion). A black op becoming attemptable takes the
+    // slot at once. Switching city is free and restarts nothing, so the
+    // ping-pong at a completion costs nothing.
+    let held = null
+    if (ran && !pick.blackOp) {
+      const cur = bb.getCurrentAction()
+      if (cur && cur.type === ran.type && cur.name === ran.name) {
+        const doneS = bb.getActionCurrentTime() / 1000
+        const leftS = ran.timeS - doneS
+        const keep = (ran.ev ?? 0) * ran.timeS
+        const swap = (pick.ev ?? 0) * leftS
+        if (doneS >= 1 && leftS > 0 && !(swap > keep)) {
+          held = { would: `${pick.name}${pick.level ? ` L${pick.level}` : ''}${pick.city ? ` in ${pick.city}` : ''}` }
+          if (city !== ran.city) {
+            city = ran.city
+            bb.switchCity(city)
+          }
+          pick = { type: ran.type, name: ran.name, level: ran.level, city: ran.city, p: ran.p, ev: ran.ev, why: `holding ${ran.name} L${ran.level} in ${ran.city} to its completion (${doneS.toFixed(0)}/${ran.timeS}s: its attempt ${keep.toPrecision(3)} rank vs ${swap.toPrecision(3)} for ${held.would} in the ${leftS.toFixed(0)}s left)` }
+        }
+      }
+    }
+    if (!held && pick.city && pick.city !== city) {
       // Another city prices better: move (free and instant) and decide again on its own probes.
       city = pick.city
       bb.switchCity(city)
@@ -505,6 +537,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       }
       if (!same) {
         started = bb.startAction(pick.type, pick.name)
+        ran = null
         current = bb.getCurrentAction()
         if (!current || current.name !== pick.name) {
           say('error', { ...base, result: 'start-refused', joined: true, rank, action: pick, slot, detail: `startAction("${pick.type}", "${pick.name}") returned ${started} and the game is running ${current?.name ?? 'nothing'} — the reason is in this script's log (Bladeburner.ts:183-186).` })
@@ -514,6 +547,8 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       }
       if (d) {
         calib.timeGameS = bb.getActionTime(pick.type, pick.name) / 1000 // ms (NetscriptFunctions/Bladeburner.ts:125-130)
+        // What runs now, as decided (the hold above prices a restart against it).
+        ran = d.kind === 'blackop' ? null : { type: pick.type, name: pick.name, level, city, p: pick.p ?? null, ev: pick.ev ?? null, timeS: calib.timeGameS }
         // What runs until the next read: its counters now (bbplan.attemptsOf reads the change).
         const twin = COUNT_TWIN[pick.name]
         const cnt = (n) => v.actions.find((a) => a.d.name === n)?.count
