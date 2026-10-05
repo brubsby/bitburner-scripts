@@ -625,15 +625,34 @@ function spare(ns, host) {
 }
 
 /**
+ * bb-lite.js's published actor headroom (/tel/bb-lite.txt reserve), which
+ * seed.js, watchdog.js and batch.js keep free (bbliteplan.liteReserveOf).
+ * Read from the record itself, fresh within 10 min, because liteReserveOf
+ * wants getResetInfo (1GB of launcher). Live BN14.2 2026-10-05 23:10Z: a
+ * `run boot.js` put stock.js (28.5GB) on the reserved go-host, 3.4GB left.
+ */
+function liteHeld(ns) {
+  try {
+    const r = JSON.parse(ns.read('/tel/bb-lite.txt') || 'null')
+    const gb = Number(r?.reserve?.gb)
+    if (!r?.reserve?.host || !(gb > 0) || !(Date.now() - Date.parse(r.at) < 10 * 60e3)) return null
+    return { host: r.reserve.host, gb }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Tightest-fitting rooted host other than home, so a big host is left whole for
  * the batcher. Falls back to home only if nothing else has room — an
  * 'anywhere' entry that lands on home is a budget miss, and it is reported.
  */
-function placeOff(ns, hosts, need) {
+function placeOff(ns, hosts, need, script = null) {
+  const lite = script === 'bb-lite.js' ? null : liteHeld(ns)
   let best = null
   for (const host of hosts) {
     if (host === 'home' || isHacknetServerHost(host) || !ns.hasRootAccess(host)) continue
-    const room = spare(ns, host)
+    const room = spare(ns, host) - (lite?.host === host ? lite.gb : 0)
     if (room >= need && (!best || room < best.room)) best = { host, room }
   }
   if (best) return best.host
@@ -831,7 +850,7 @@ export async function main(ns) {
       // home, and go.js (placed first in a Go-first node by seed.js) is not
       // in the plan. One-shots are transient and exempt, as in planStack.
       const homeRoom = spare(ns, 'home') - (entry.kind === 'oneshot' ? 0 : plan.action)
-      const host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need)
+      const host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need, entry.script)
       if (!host && entry.where === 'home' && GO_OUTRANKS.includes(entry.script) && ns.ps('home').some((p) => p.filename === 'go.js')) {
         stopped.push(`${entry.script} not started: go.js holds home beside act.js's ${plan.action}GB slot (it outranks ${entry.script} in a Go-first node)`)
         continue
