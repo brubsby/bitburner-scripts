@@ -100,9 +100,11 @@
 //                   predicted  n=4   win 0%   black 89.8   876/h  (9 cheats/game,
 //                   58s of waiting and a second solver round trip each: the
 //                   game is lost either way, so +3 area does not pay the time)
-// Priced positive on the small boards only: SETTINGS.cheat.maxSize.
-// So with cheats open, 5x5 Illuminati (x8 difficulty) out-earns everything by
-// ~3.5x; the Thompson posterior learns that from the live outcomes.
+// Priced positive on the small boards only: SETTINGS.cheat.maxSize. RELEASE 3
+// (2026-10-05) wins these without cheats and they no longer pay on any 5x5
+// opponent measured: SETTINGS.cheat.on is off per opponent (see there).
+// (Release 2 read: with cheats open, 5x5 Illuminati (x8 difficulty) out-earns everything by
+// ~3.5x; the Thompson posterior learns that from the live outcomes.)
 //
 // RAM: the calls live in go-cheat.js (11.1GB, exec'd only when the gate is
 // open), because Netscript bills every ns function in the import graph
@@ -316,8 +318,21 @@ const SETTINGS = {
   // and negative per hour on the hidden opponent's 19x19 (header).
   // on: PER OPPONENT (goplan keys; default for the rest), like mirror —
   // cheats are played only against an opponent whose release-3 arm measured
-  // more power per hour with them than without (RELEASE 3 CHEATS below).
-  // Never after the AI's pass (play-on prices a single stone there).
+  // more power per hour with them than without. Never after the AI's pass
+  // (play-on prices a single stone there).
+  // RELEASE 3 CHEATS, MEASURED 2026-10-05 (tools/sim/go-w0.mjs --cheat
+  // predicted, 30 paired 5x5 layouts per arm, seed 2, model session + ponder
+  // + pre-send + power objective + play-on as live, crime_success 1; a cheat
+  // charged its second search, a round trip and 150ms of exec):
+  //   Illuminati (loss-scale 2)  off 112700/h 30/30 black 19.2 13.6s | on  98293/h 30/30 19.2 15.7s  (-13%)
+  //   Tetrads (adaptive)         off  19787/h 29/30 black 17.7 13.5s | on  19926/h 30/30 18.2 13.8s  (+0.7%, noise)
+  //   Daedalus                   off  24199/h 30/30 black 17.0 10.5s | on  23068/h 30/30 18.3 12.0s  (-5%)
+  //   Slum Snakes                off  17204/h 30/30 black 17.3  9.9s | on  14636/h 30/30 17.3 11.8s  (-15%)
+  // ~2 cheats a game, ~2.5s of window wait. Release 3 already wins ~all of
+  // these and fills the 5x5 board, so the extra stone buys ~1 point of area at
+  // most and the waits cost more than it: OFF everywhere (Tetrads' +0.7% is
+  // inside the noise and rests on the assumed exec cost). The release-2
+  // numbers in the header (Illuminati 30% -> 90%) were against a weaker solver.
   cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, on: { default: false } },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
