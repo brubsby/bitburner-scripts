@@ -68,7 +68,7 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove, oracleCandidates } from "../golib.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -310,7 +310,77 @@ const clockFor = (req, path) => (CLOCK && req.T > 0 ? { T: req.T, kw: calib[path
 const BOOK_ON = !argv.includes("--no-book");
 const BOOK_DIR = str("book-dir", path.join(path.dirname(fileURLToPath(import.meta.url)), "goai"));
 const books = new Map(); // opponent -> { book, mtime, checked }
-const bookStats = { hits: 0, published: 0 };
+const bookStats = { hits: 0, published: 0, oracle: 0, oracleMiss: 0, withheld: 0 };
+
+// THE PASS-FORCING BOOK (tools/sim/go-oracle.mjs + go-oracle-book.mjs): the
+// book file's `oracle` / `oraclePass` tables hold CANDIDATES per position —
+// moves of winning lines found against the AI at one game clock, each with the
+// reply its line expects. A candidate is played only when the AI's reply
+// predicted from THIS request's clock (T + 200k, k over the calibrated lag
+// weights) is the expected one with weight >= ORACLE_MIN; the best-valued such
+// candidate is answered at once. Positions holding candidates are never
+// pre-sent (the check needs the request's T), so they always come back as a
+// request. MEASURED (tools/sim/go-w0.mjs --oracle-book, see the commit).
+// --no-oracle: off.
+const ORACLE_ON = !argv.includes("--no-oracle");
+const ORACLE_MIN = flag("oracle-min", 0.6);
+// The candidates live in their own file, tools/goai/oracle-<Opponent>.json
+// (go-oracle-book.mjs), so the opening-book builds (go-book --merge) never
+// clobber them; re-read when it changes, like the book.
+const oracles = new Map();
+function oracleFor(opponent) {
+  if (!ORACLE_ON || !opponent) return null;
+  const file = path.join(BOOK_DIR, `oracle-${String(opponent).replace(/\s+/g, "")}.json`);
+  let b = oracles.get(opponent);
+  const now = Date.now();
+  if (b && now - b.checked < 60e3) return b.book;
+  try {
+    const mtime = fs.statSync(file).mtimeMs;
+    if (!b || b.mtime !== mtime) {
+      b = { book: JSON.parse(fs.readFileSync(file, "utf8")), mtime, checked: now };
+      console.log(`go-solver: pass-forcing candidates for ${opponent}: ${Object.keys(b.book.oracle ?? {}).length} positions + ${Object.keys(b.book.oraclePass ?? {}).length} after-pass (${file})`);
+    } else b.checked = now;
+  } catch {
+    b = { book: null, mtime: null, checked: now };
+  }
+  oracles.set(opponent, b);
+  return b.book;
+}
+async function oraclePick(req, history, opponentPassed) {
+  if (!ORACLE_ON || !model || !(CLOCK && req.T > 0)) return null;
+  const book = oracleFor(req.opponent);
+  const cands = oracleCandidates(book, req.board, { passed: opponentPassed });
+  if (!cands.length) return null;
+  const valid = new Set((req.valid || []).map(([x, y]) => `${x},${y}`));
+  // The lag: an instant answer is played ~one poll after the request's T, so
+  // the pre-sent path's lag (calibrated at the play, the retime) applies from
+  // T or one tick later — both weighed. (The request path's own calibration is
+  // dominated by searched answers, a few ticks later.)
+  const kw = calib.pre.weights().flatMap(([k, w]) => [[k, w / 2], [k + 1, w / 2]]);
+  const hist = [req.board.join(""), ...history];
+  for (const c of cands) {
+    if (!valid.has(`${c.x},${c.y}`)) continue;
+    const after = applyMove(req.board, c.x, c.y);
+    if (!after) continue;
+    const want = c.reply ? `${c.reply.x},${c.reply.y}` : "P";
+    let mass = 0, tot = 0;
+    for (const [k, w] of kw) {
+      tot += w;
+      const r = await model.reply(after, { opponent: req.opponent, history: hist, passCount: 0, rng: req.T + 200 * k });
+      if ((r ? `${r.x},${r.y}` : "P") === want) mass += w;
+    }
+    if (tot > 0 && mass / tot >= ORACLE_MIN) return { x: c.x, y: c.y, v: c.v, mass: +(mass / tot).toFixed(3) };
+  }
+  bookStats.oracleMiss++;
+  return null;
+}
+/** A position the pass-forcing book holds candidates for (never pre-sent). */
+function hasOracle(opponent, b, N, pc) {
+  if (!ORACLE_ON) return false;
+  const book = oracleFor(opponent);
+  if (!book || !(book.oracle || book.oraclePass)) return false;
+  return oracleCandidates(book, Array.from({ length: N }, (_, x) => b.slice(x * N, (x + 1) * N)), { passed: pc === 1 }).length > 0;
+}
 function bookFor(opponent) {
   if (!BOOK_ON || !opponent) return null;
   const file = path.join(BOOK_DIR, `book-${String(opponent).replace(/\s+/g, "")}.json`);
@@ -380,6 +450,13 @@ async function publishAnswers(minWork) {
       const seen = new Set(bookAnswers.map((a) => a.b));
       answers = [...bookAnswers, ...answers.filter((a) => !(seen.has(a.b) && a.pc === 0))];
     }
+  }
+  // Positions with pass-forcing candidates come back as requests (oraclePick).
+  if (sess && sess.pondering && bookOpp) {
+    const N = sessKey ? Number(sessKey.split("|")[1]) : 5;
+    const before = answers.length;
+    answers = answers.filter((a) => !hasOracle(bookOpp, a.b, N, a.pc));
+    bookStats.withheld += before - answers.length;
   }
   const text = JSON.stringify(answers);
   if (text === lastAnswers) return;
@@ -539,6 +616,16 @@ while (true) {
                 return null;
               }
               bookOpp = req.opponent;
+              // THE PASS-FORCING BOOK first: a candidate whose expected reply
+              // this request's clock predicts is answered at once.
+              const op = await oraclePick(req, history, opponentPassed);
+              if (op) {
+                ranked = [{ x: op.x, y: op.y }];
+                extra.book = true;
+                extra.oracle = op.mass;
+                bookStats.oracle++;
+                return null;
+              }
               // THE OPENING BOOK: a book position is answered at once.
               const bm = !opponentPassed ? bookMove(bookFor(req.opponent), req.board) : null;
               if (bm && (req.valid || []).some(([x, y]) => x === bm.x && y === bm.y)) {
@@ -650,7 +737,8 @@ while (true) {
             `#${solved} seq=${req.seq} -> ${move.pass ? "pass" : move.x + "," + move.y} ` +
               `(${backend}${extra.where ? "@" + extra.where : ""}${extra.pondered ? " " + extra.pondered : ""}, ${Date.now() - t0}ms, ${ranked?.[0]?.iters ?? 0} iters${backend === "model" ? `, ${ranked?.[0]?.modelCalls ?? 0} model calls` : ""})` +
               (kgService ? ` katago ${JSON.stringify(kgService.status().stats)}` : "") +
-              ` model ponder ${ponderStats.modelHit}/${ponderStats.modelHit + ponderStats.modelMiss}`,
+              ` model ponder ${ponderStats.modelHit}/${ponderStats.modelHit + ponderStats.modelMiss}` +
+              ` book ${JSON.stringify(bookStats)}`,
           );
         }
 

@@ -1125,6 +1125,7 @@ export function modelSession(N, komi, model, opts = {}) {
   const areaW = Number.isFinite(opts.areaWeight) ? opts.areaWeight : 0.1
   const C = Number.isFinite(opts.c) ? opts.c : 0.6
   const SAMPLES = Number.isFinite(opts.samples) ? opts.samples : 6
+  const PASS_FIRST = !!opts.passFirst
   let rootHistory = []
   let points = 0
   // opts.seed: a fixed search stream (the regression corpus replays decisions deterministically).
@@ -1196,7 +1197,7 @@ export function modelSession(N, komi, model, opts = {}) {
     for (let j = 0; j < ns.length; j++) if (b[ns[j]] !== US && b[ns[j]] !== DEAD) return false
     return true
   }
-  const actions = (b, valid) => {
+  const actions = (b, valid, passCount = 0) => {
     const out = []
     const fills = []
     for (let i = 0; i < N * N; i++) {
@@ -1223,7 +1224,13 @@ export function modelSession(N, komi, model, opts = {}) {
       }
     }
     out.sort((a, z) => z.h - a.h)
-    out.push({ idx: PASS, h: -1e6 })
+    // opts.passFirst: after the AI's pass our PASS ends the game — an exact
+    // terminal; expand it first so the tree sees every early end it can reach
+    // (last, it waits behind every stone: deep nodes rarely get there).
+    // MEASURED NEUTRAL 2026-10-06 (go-w0, Tetrads 5x5 live config, 60 paired
+    // games: power/h -0.7% [-6.4, +6.2], points per AI turn +0.1%): off.
+    if (PASS_FIRST && passCount >= 1) out.unshift({ idx: PASS, h: -1e6 })
+    else out.push({ idx: PASS, h: -1e6 })
     return out
   }
 
@@ -1235,7 +1242,7 @@ export function modelSession(N, komi, model, opts = {}) {
     if (node.terminal) {
       node.tv = valueNow(b, ply)
       node.tw = lastWon
-    } else node.untried = actions(b, valid)
+    } else node.untried = actions(b, valid, passCount)
     return node
   }
   const mkW = (b, parent, passCount, moved) => {
@@ -1604,6 +1611,40 @@ export function modelSession(N, komi, model, opts = {}) {
       return !!ponderNode
     },
     /** Search under the AI's reply for up to ms (a time slice; call again to continue). */
+    /**
+     * SEED STEERING (experimental, MEASURED WORSE — go-w0 --steer): the value, to us, of each of the AI's
+     * candidate replies at the ponder node — each searched `ms` more from its
+     * own B node (created if the ponder has not drawn it). replies: [{x, y} |
+     * null (pass)]. Returns [{ key, mean, visits, wins }] in the same order, or
+     * null with no ponder node. `scale` is the objective's normaliser (node
+     * power per unit of value) — 0 without the power objective.
+     */
+    async steer(replies, ms) {
+      if (!ponderNode) return null
+      const out = []
+      for (const r of replies) {
+        const key = r ? r.x * N + r.y : PASS
+        let e = ponderNode.samples.get(key)
+        if (!e) {
+          const b = ponderNode.b.slice()
+          let ok = true
+          if (key !== PASS) ok = play(b, nbrs, key, THEM, scratch) >= 0
+          e = { n: 0, child: mkB(ok ? b : ponderNode.b.slice(), ponderNode, key !== PASS && ok ? 0 : ponderNode.passCount + 1, null, ponderNode.ply + 1) }
+          ponderNode.samples.set(key, e)
+        }
+        const c = e.child
+        if (!c.terminal) {
+          const deadline = Date.now() + ms
+          let it = 0
+          while (Date.now() < deadline || it < 1) { await iterate(c); it++ }
+        }
+        out.push({ key, mean: c.terminal ? c.tv : c.visits ? c.sum / c.visits : null, visits: c.visits, wins: c.terminal ? c.tw : c.visits ? c.wins / c.visits : null })
+      }
+      return out
+    },
+    get scale() {
+      return obj ? obj.diff * obj.winMult * points + obj.lossFuture : 0
+    },
     async ponder(ms) {
       if (!ponderNode) return 0
       const deadline = Date.now() + ms
@@ -1699,14 +1740,45 @@ export function toKeyFrame(N, t, x, y) {
  * The book's move for this board, or null: book = { entries: { key: [x, y, wr, ...] } }.
  * Returned in the board's own frame; the caller still checks it against the game's valid list.
  */
-export function bookMove(book, board) {
-  if (!book || !book.entries) return null
+export function bookMove(book, board, { passed = false } = {}) {
+  // passed: the AI's last reply was a pass — those positions live in
+  // book.passEntries (the pass-forcing book's play-on stones, go-oracle-book).
+  const table = passed ? book?.passEntries : book?.entries
+  if (!table) return null
   const N = Array.isArray(board) ? board.length : Math.round(Math.sqrt(board.length))
   const { key, t } = canonicalBoard(board, N)
-  const e = book.entries[key]
+  const e = table[key]
   if (!e) return null
-  const [x, y] = boardSymmetries(N)[t](e[0], e[1])
-  return { x, y, wr: e[2] ?? null }
+  const f = boardSymmetries(N)[t]
+  const [x, y] = f(e[0], e[1])
+  // e[5]: the AI reply the entry's line expects ([x, y] key frame, or -1 for a
+  // pass) — the pass-forcing book's, for seed steering (go-w0 --steer-book).
+  const r = e[5] === undefined ? undefined : e[5] === -1 ? null : f(e[5][0], e[5][1])
+  return { x, y, wr: e[2] ?? null, ...(r !== undefined ? { reply: r ? { x: r[0], y: r[1] } : null } : {}) }
+}
+
+/**
+ * THE PASS-FORCING BOOK's candidates for this board (tools/sim/go-oracle-book.mjs):
+ * [{ x, y, reply: {x, y} | null (the AI passes), v }] in the board's frame,
+ * best value first, or []. Each was the move of a winning line found against
+ * the AI at one game clock; it is playable only where the AI's reply predicted
+ * from THIS game's clock is `reply` — the caller checks that.
+ */
+export function oracleCandidates(book, board, { passed = false } = {}) {
+  const table = passed ? book?.oraclePass : book?.oracle
+  if (!table) return []
+  const N = Array.isArray(board) ? board.length : Math.round(Math.sqrt(board.length))
+  const { key, t } = canonicalBoard(board, N)
+  const list = table[key]
+  if (!list) return []
+  const f = boardSymmetries(N)[t]
+  return list
+    .map(([x, y, rx, ry, v]) => {
+      const [bx, by] = f(x, y)
+      const r = rx < 0 ? null : f(rx, ry)
+      return { x: bx, y: by, reply: r ? { x: r[0], y: r[1] } : null, v }
+    })
+    .sort((a, z) => z.v - a.v)
 }
 
 export function applyMove(boardStrings, x, y) {

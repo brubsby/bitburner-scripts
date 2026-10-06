@@ -126,6 +126,10 @@ let sessRate = null; // work (model-calling iterations) per ms of a fresh full-b
 //                     Built per game from the running streak, as go.js does.
 //   --loss-scale K    scales the priced streak-reset cost (1 = priced)
 //   --leafk K         turns charged per empty point at a playout leaf
+//                     (MEASURED WORSE 2026-10-06, Tetrads 5x5, 42 paired:
+//                     K=0.5 -16.9% power/h; with --rate x2 -15.5%; --rate x2
+//                     alone -7.9%: time pressure shortens games by giving up
+//                     area, not by making the AI pass — see go-oracle.mjs)
 // --mirror search     when the AI passes and black is ahead, ASK the search
 //                     (it may play on to take more area) instead of passing.
 // --presend           a move whose position the ponder had already answered
@@ -151,7 +155,17 @@ const LOCAL = argv.includes("--local");
 // --adaptive-steps: extend one budget at a time, stopping once the chosen line wins >= THR.
 const ADAPTIVE_STEPS = argv.includes("--adaptive-steps");
 // --book FILE: the opening book (tools/sim/go-book.mjs --merge) played where it has the position.
+// --book-pass: also play the book's after-the-AI's-pass entries (passEntries).
+const BOOK_PASS = argv.includes("--book-pass");
 const BOOK = str("book", null) ? JSON.parse(fs.readFileSync(str("book", null), "utf8")) : null;
+// --oracle-file F: the pass-forcing candidates (go-oracle-book.mjs output,
+// tools/goai/oracle-<Opponent>.json) beside the book.
+if (str("oracle-file", null)) {
+  const o = JSON.parse(fs.readFileSync(str("oracle-file", null), "utf8"));
+  if (!BOOK) throw new Error("--oracle-file needs --book");
+  BOOK.oracle = o.oracle;
+  BOOK.oraclePass = o.oraclePass;
+}
 const EXTEND = (() => {
   const v = str("extend", null);
   if (!v) return null;
@@ -191,6 +205,20 @@ if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by t
 // is then drawn from the exact play-time seed instead of the request's T plus
 // the search's uncertain length.
 const RETIME = argv.includes("--retime");
+const ORACLE_MISSES = str("oracle-misses", null);
+const ORACLE = argv.includes("--oracle-book") ? { noise: (() => { const v = Number(argv[argv.indexOf("--oracle-book") + 1]); return Number.isFinite(v) ? v : 0; })() } : null;
+const STEER_BOOK = (() => {
+  const v = str("steer-book", null);
+  if (!v) return null;
+  const [k, noise] = v.split(":").map(Number);
+  return { k, noise: Number.isFinite(noise) ? noise : 0 };
+})();
+const STEER = (() => {
+  const v = str("steer", null);
+  if (!v) return null;
+  const [k, ms] = v.split(":").map(Number);
+  return { k, ms: Number.isFinite(ms) ? ms : 40 };
+})();
 if (RETIME && !CLOCK) throw new Error("--retime needs --clock");
 // The rate each ply is charged at: the opponent's measured power/h (goplan).
 const RATE_PH = str("rate", null) === null ? null : num("rate", 0);
@@ -294,6 +322,8 @@ async function playGame(stats, gameIndex) {
   const N = state.board.length;
   const komi = g.opponentDetails[OPP].komi;
   let modelCalls = 0;
+  const steerStats = { evals: 0, steered: 0, delayTicks: 0, book: 0, miss: 0 };
+  let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false;
   let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0;
   let guard = 0;
   let oppPassed = false;
@@ -438,20 +468,62 @@ async function playGame(stats, gameIndex) {
     // pondered yet), answered at once by the request (a round trip).
     // (Ahead of the ponder's own answer, as go-solver publishes it first.)
     let bookHit = false;
-    if (BOOK && sess && !oppPassed) {
-      const bm = golib.bookMove(BOOK, g.simpleBoardFromBoard(state.board));
+    seedJit = 0.5 + Math.random() * 6;
+    seedSkew = 0;
+    oracleHit = false;
+    // --oracle-book [NOISE]: the pass-forcing book's candidates for this
+    // position (golib.oracleCandidates), best first; the first whose expected
+    // AI reply is the one this game's clock predicts (the seed at a pre-sent
+    // play) is played like a book move. NOISE: the share of such plays whose
+    // real seed lag is a tick off the prediction (live calibration misses).
+    if (ORACLE && BOOK && sess && MODEL) {
+      const board = g.simpleBoardFromBoard(state.board);
+      const cands = golib.oracleCandidates(BOOK, board, { passed: oppPassed });
+      const vg = cands.length ? validGrid(state, N) : null;
+      for (const c of cands) {
+        if (!vg[c.x]?.[c.y]) continue;
+        const after = golib.applyMove(board, c.x, c.y);
+        if (!after) continue;
+        const r = await MODEL.reply(after, { history: [board.join(""), ...state.previousBoards], passCount: 0, rng: playtimeAt(wall + ROUND_TRIP_MS + 200 + seedJit) });
+        const want = c.reply ? `${c.reply.x},${c.reply.y}` : "P";
+        if ((r ? `${r.x},${r.y}` : "P") !== want) continue;
+        pre = { x: c.x, y: c.y, book: true };
+        bookHit = oracleHit = true;
+        oracleMoves++;
+        if (Math.random() < ORACLE.noise) seedSkew = Math.random() < 0.5 ? -200 : 200;
+        break;
+      }
+      // Live, a position with candidates is never pre-sent (the check needs the
+      // request's T), so a miss is a request too: searched, round trip charged.
+      if (cands.length && !oracleHit) { oracleMiss++; pre = null; }
+      // --oracle-misses FILE: the first position of a game that has LEFT the
+      // book's lines (an oracle move was played, none fits here), with its
+      // clock — go-oracle.mjs --roots plans from it (the book grows where
+      // games actually go).
+      if (ORACLE_MISSES && !oracleHit && oracleMoves > 0 && !oracleLeft) {
+        oracleLeft = true;
+        const rec = { kind: "orcmiss", board: board.join(""), history: state.previousBoards.slice(), passed: oppPassed, T: playtimeAt(wall + ROUND_TRIP_MS + 200 + seedJit) - 200, ourTurns };
+        fs.appendFileSync(ORACLE_MISSES, JSON.stringify(rec) + "\n");
+      }
+    }
+    if (!oracleHit && BOOK && sess && (!oppPassed || BOOK_PASS)) {
+      const bm = golib.bookMove(BOOK, g.simpleBoardFromBoard(state.board), { passed: oppPassed });
       if (bm && validGrid(state, N)[bm.x]?.[bm.y]) {
         pre = { x: bm.x, y: bm.y, book: true };
+        if (bm.reply !== undefined) steerTarget = bm.reply;
         bookHit = true;
         bookMoves++;
       }
     }
     const tReq = wall;
     let ranked;
+    if (!bookHit) steerTarget = undefined;
     if (pre) {
       // go.js plays at once and NOTIFIES the solver, which re-roots (a reuse)
       // at the move's playtime and commits.
-      const lag = bookHit && ourTurns === 0 ? ROUND_TRIP_MS : PRESEND_MS;
+      // An oracle move goes through a request (go-solver checks its expected reply
+      // against the clock at the request's T), never a pre-sent answer.
+      const lag = bookHit && (ourTurns === 0 || oracleHit) ? ROUND_TRIP_MS : PRESEND_MS;
       wall += lag;
       rtTotal += lag;
       if (!bookHit) preMoves++;
@@ -468,7 +540,7 @@ async function playGame(stats, gameIndex) {
     // --retime: a requested move is re-anchored at its play (the pre path's calibrator).
     const retime = RETIME && !pre && !!sess;
     const seedPath = pre || retime ? "pre" : "req";
-    const seedRef = playtimeAt(pre || retime ? wall : tReq);
+    let seedRef = playtimeAt(pre || retime ? wall : tReq);
     ourTurns++;
     if (SCAN) return { scan: true, v0 };
     const hasMove = ranked && ranked.length;
@@ -529,6 +601,77 @@ async function playGame(stats, gameIndex) {
       note("B", [ranked[0].x, ranked[0].y], SEEDED ? { T: playtimeAt(wall) } : undefined);
       if (sess) sess.commit(ranked[0].x, ranked[0].y);
     }
+    // --steer K[:MS] (with --seeded and a session; EXPERIMENTAL, the oracle
+    // form): SEED STEERING. The AI's seed is the playtime one waitCycle after
+    // our play, so delaying the play by k engine ticks (200ms each) chooses
+    // among the replies seeds T+200k give. Each distinct reply over k = 0..K
+    // is searched MS ms from its own node (golib session.steer); the delay
+    // whose reply is worth most net of its 0.2k s (at the rate) is waited.
+    // The seeds are EXACT here (live predicts them ~99% after the retime).
+    // MEASURED WORSE 2026-10-06 (Tetrads 5x5, 31 paired, live config): K=4
+    // -6.0% [-11.1, -0.4] power/h, K=8 -5.8%: the reply changes only every
+    // ~10-20 ticks (go-seedseq.mjs), so a short wait rarely offers another
+    // reply and the evaluations cost more than they find.
+    if (!oracleHit) seedSkew = 0;
+    // --steer-book K[:NOISE]: the pass-forcing book names the AI reply its line
+    // expects; wait the fewest ticks k <= K whose seed gives it (none: play at
+    // once and leave the line). NOISE: the share of plays whose real seed lag
+    // is a tick off the predicted one (live: the clock calibration's miss).
+    if (STEER_BOOK && steerTarget !== undefined && hasMove && state.passCount < 2) {
+      const after = g.simpleBoardFromBoard(state.board);
+      const hist = state.previousBoards.slice();
+      const want = steerTarget ? `${steerTarget.x},${steerTarget.y}` : "P";
+      let pick = -1;
+      for (let k = 0; k <= STEER_BOOK.k && pick < 0; k++) {
+        const r = await MODEL.reply(after, { history: hist, passCount: state.passCount, rng: playtimeAt(wall + 200 * k + 200 + seedJit) });
+        if ((r ? `${r.x},${r.y}` : "P") === want) pick = k;
+      }
+      steerStats.book++;
+      if (pick < 0) steerStats.miss++;
+      else if (pick > 0) {
+        wall += 200 * pick;
+        turnLiveS += 0.2 * pick;
+        rtTotal += 200 * pick;
+        seedRef += 200 * pick;
+        steerStats.delayTicks += pick;
+        steerStats.steered++;
+      }
+      if (Math.random() < STEER_BOOK.noise) seedSkew = Math.random() < 0.5 ? -200 : 200;
+    }
+    if (STEER && sess && SEEDED && hasMove && state.passCount < 2) {
+      const after = g.simpleBoardFromBoard(state.board);
+      const hist = state.previousBoards.slice();
+      const reps = [];
+      for (let k = 0; k <= STEER.k; k++) reps.push(await MODEL.reply(after, { history: hist, passCount: state.passCount, rng: playtimeAt(wall + 200 * k + 200 + seedJit) }));
+      const keyOf = (r) => (r ? `${r.x},${r.y}` : "P");
+      const distinct = [...new Map(reps.map((r) => [keyOf(r), r])).values()];
+      let best = 0;
+      if (distinct.length > 1) {
+        const t0 = performance.now();
+        const vals = await sess.steer(distinct, STEER.ms * CPU_SCALE);
+        const evalMs = (performance.now() - t0) / CPU_SCALE;
+        ourMs += evalMs;
+        wall += evalMs;
+        const vOf = new Map(distinct.map((r, i) => [keyOf(r), vals?.[i]?.mean]));
+        const tick = sess.scale > 0 ? ((rateFor(OPP) / 3600) * 0.2) / sess.scale : 0;
+        let bs = -Infinity;
+        for (let k = 0; k <= STEER.k; k++) {
+          const v = vOf.get(keyOf(reps[k]));
+          if (typeof v !== "number") continue;
+          const sc = v - k * tick;
+          if (sc > bs + 1e-9) { bs = sc; best = k; }
+        }
+        steerStats.evals++;
+      }
+      if (best > 0) {
+        wall += 200 * best;
+        turnLiveS += 0.2 * best;
+        steerStats.delayTicks += best;
+        steerStats.steered++;
+        seedRef += 200 * best;
+        rtTotal += 200 * best; // charged on the live clock with the round trips
+      }
+    }
     if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 });
     if (state.passCount >= 2) break;
     // What the AI's reply will be computed from, for the seed calibration.
@@ -558,7 +701,7 @@ async function playGame(stats, gameIndex) {
     const t1 = performance.now();
     // THE SEED (--seeded): the playtime one waitCycle (200ms + timer slop)
     // after our move, in whole engine cycles.
-    const aiSeed = SEEDED ? playtimeAt(wall + 200 + 0.5 + Math.random() * 6) : rngSeed();
+    const aiSeed = SEEDED ? playtimeAt(wall + 200 + seedJit) + seedSkew : rngSeed();
     const reply = await g.getMove(state, GoColor.white, OPP, true, aiSeed);
     oppMs += performance.now() - t1;
     if (sess && (SESSION === "ponder" || SESSION === "deep") && sess.pondering) {
@@ -647,6 +790,8 @@ async function playGame(stats, gameIndex) {
     adaptiveMoves,
     extendMoves,
     bookMoves,
+    ...(STEER || STEER_BOOK ? { steer: steerStats } : {}),
+    ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss } } : {}),
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
@@ -660,7 +805,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
