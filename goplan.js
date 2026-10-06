@@ -527,6 +527,40 @@ export const MEASURED_BOARD = 5
  *                              up to the cap left. Absent: favor not priced (said in `why`).
  * @returns {{opponent, size, arm, why, refused, table}}
  */
+// ---------------------------------------------------------------------------
+// THE CHEAT CHANNEL. With go.cheat on (go.js SETTINGS.cheat.on), crime_success
+// is not an unpriced channel: it multiplies the cheat success chance
+// (netscriptGoImplementation.ts:557-566, min(1, 0.6 (0.7-0.02k)^k x
+// crime_success [+0.25 at SF14.3])), so it raises the FARM's own power/h.
+// Slum Snakes feeds crime_success (effect.ts: bonusPower 1.2), so a few of its
+// games buy the farm a faster rate for the rest of the life.
+//
+// CHEAT_GAIN: the farm's live power/h with cheats, as a multiple of its rate
+// without, by crime_success — MEASURED (tools/sim/go-w0.mjs --cheat predicted
+// --cheatwait 0.5, Tetrads 5x5, today's live config, paired against the same
+// no-cheat arm; see the commit). Interpolated linearly in ln(crime_success);
+// flat beyond the ends. It is used ONLY as a slope — d ln(gain)/d ln(crime).
+export const CHEAT_GAIN = [
+  [1, 1],
+  [1.5872, 1.102],
+  [2.5, 1.181],
+  [4, 1.129],
+]
+
+/** d ln(CHEAT_GAIN)/d ln(crime) at `crime` (0 outside the table or on a falling segment). */
+export function cheatElasticity(crime, table = CHEAT_GAIN) {
+  if (!num(crime) || crime <= 0 || !Array.isArray(table) || table.length < 2) return 0
+  for (let i = 0; i + 1 < table.length; i++) {
+    const [c0, g0] = table[i]
+    const [c1, g1] = table[i + 1]
+    if (crime >= c0 && crime < c1) {
+      const e = (Math.log(g1) - Math.log(g0)) / (Math.log(c1) - Math.log(c0))
+      return e > 0 ? e : 0
+    }
+  }
+  return 0
+}
+
 export function chooseOpponent(o = {}) {
   const { weights, windowH, incumbent } = o
   const goPower = num(o.goPower) && o.goPower > 0 ? o.goPower : 1
@@ -556,6 +590,10 @@ export function chooseOpponent(o = {}) {
   }
 
   const dwellGames = num(o.dwellGames) && o.dwellGames >= 1 ? o.dwellGames : null
+  // o.cheat: { on: [opponents with cheats on], crime: current crime_success,
+  // lifeLeftH: hours to the next install, table?: CHEAT_GAIN override }.
+  const cheatIn = o.cheat && typeof o.cheat === 'object' && Array.isArray(o.cheat.on) && num(o.cheat.crime) && o.cheat.crime > 0 && num(o.cheat.lifeLeftH) && o.cheat.lifeLeftH > 0 ? o.cheat : null
+  const cheatCands = []
   const streaks = o.streaks && typeof o.streaks === 'object' ? o.streaks : null
   const fav = o.favor && typeof o.favor === 'object' && num(o.favor.hoursPerRep) && o.favor.hoursPerRep > 0 && num(o.favor.capLeft) && o.favor.capLeft > 0 && num(o.favor.maxRep) && o.favor.maxRep > 0 ? o.favor : null
   const skipped = []
@@ -578,6 +616,23 @@ export function chooseOpponent(o = {}) {
       continue
     }
     const optional = OPTIONAL.includes(meta.channel) || name === W0
+    // crime_success is priced only through the cheat channel (o.cheat), below.
+    const cheatChannel = meta.channel === 'crime_success' && cheatIn !== null
+    if (cheatChannel) {
+      const measured = arm ? arm.pph : table[name]
+      if (!num(measured) || measured <= 0) {
+        skipped.push(`${key} (power/hour ${measured}: nothing to price)`)
+        continue
+      }
+      const n = o.nodePower[name] ?? 0
+      const e = effectAt(n, meta.power, goPower, sf14)
+      const slope = effectSlope(n, meta.power, goPower, sf14)
+      const p = arm ? arm.p : drawn && num(drawn[name]) ? drawn[name] : refs[name]
+      const pph = measured * (arm || p === refs[name] ? 1 : rateScale(p, refs[name]) ?? 1)
+      const eD = effectAt(n + pph * dwellH, meta.power, goPower, sf14)
+      cheatCands.push({ name, size, key, channel: meta.channel, weight: 0, nodePower: n, effect: e, slope, eD, streak: null, streakFactor: 1, winRate: p, powerPerHour: pph, favorPerH: 0, favorMarginal: 0 })
+      continue
+    }
     if (!PRICEABLE.includes(meta.channel) && !optional) {
       skipped.push(`${name} (${meta.channel}: no exit weight)`)
       continue
@@ -626,6 +681,26 @@ export function chooseOpponent(o = {}) {
     const block = w * (Math.log(eD) - Math.log(e)) + (favorPerH > 0 ? fav.hoursPerRep * Math.min(fav.capLeft, favorPerH * dwellH) : 0)
     scored.push({ name, size, key, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, winRate: p, powerPerHour: pph, favorPerH, favorMarginal, marginal, block })
   }
+  // THE CHEAT CHANNEL'S PRICE (o.cheat). A unit of Slum Snakes node power
+  // raises ln(crime_success) by E'/E; the farm f (the best arm with cheats on)
+  // then earns d ln(rate) = elasticity x that, for the rest of the life, and
+  // each unit of its power is worth f's own marginal/pph_f — so
+  //   marginal_SS = marginal_f x elasticity(crime) x lifeLeftH x (E'_SS/E_SS) x pph_SS
+  // (marginal_f x lifeLeftH x d ln rate: the extra farm power over the life,
+  // priced at f's current marginal — an upper bound as f's own E is concave).
+  if (cheatIn && cheatCands.length) {
+    const farm = scored.filter((s) => cheatIn.on.includes(s.name)).sort((a, b) => b.marginal - a.marginal)[0] ?? null
+    const eps = cheatElasticity(cheatIn.crime, cheatIn.table ?? CHEAT_GAIN)
+    for (const c of cheatCands) {
+      const dlnPerPower = c.slope !== null && c.effect ? c.slope / c.effect : 0
+      const perH = farm && farm.marginal > 0 ? farm.marginal * eps * cheatIn.lifeLeftH : 0
+      const marginal = perH * dlnPerPower * c.powerPerHour
+      const dlnBlock = c.eD && c.effect ? Math.log(c.eD) - Math.log(c.effect) : 0
+      // The dwell block: the crime gained over the block, paying for the life left after it.
+      const block = farm && farm.marginal > 0 ? farm.marginal * eps * Math.max(0, cheatIn.lifeLeftH - dwellH) * dlnBlock : 0
+      scored.push({ ...c, marginal, block, cheat: { farm: farm?.key ?? null, elasticity: eps, crime: cheatIn.crime, lifeLeftH: cheatIn.lifeLeftH } })
+    }
+  } else if (cheatCands.length) skipped.push(...cheatCands.map((c) => `${c.key} (crime_success: priced only through cheats — none on)`))
   if (!scored.length) return keep('no priceable opponent')
 
   scored.sort((a, b) => b.marginal - a.marginal)
@@ -645,7 +720,8 @@ export function chooseOpponent(o = {}) {
     `${(best.weight > 0 ? (best.marginal - best.favorMarginal) / best.weight / best.powerPerHour : 0).toExponential(3)} @n=${Math.round(best.nodePower)} x ${Math.round(best.powerPerHour)}/h` +
     (best.favorMarginal > 0 ? ` + favor ${best.favorMarginal.toExponential(3)}/h (${Math.round(best.favorPerH)} rep-eq/h of ${fav.opponent}'s Go favor x ${fav.hoursPerRep.toExponential(3)} h/rep, ${Math.round(fav.capLeft)} left)` : '') +
     (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of ${arms ? 'the drawn' : 'the measured'} ${Math.round(arms ? arms[best.key].pph : table[best.name])})` : '') +
-    (arms ? ` [Thompson: power/h and win rate ${best.winRate.toFixed(3)} drawn]` : drawn ? ` [Thompson: win rate drawn ${best.winRate.toFixed(3)}]` : '')
+    (arms ? ` [Thompson: power/h and win rate ${best.winRate.toFixed(3)} drawn]` : drawn ? ` [Thompson: win rate drawn ${best.winRate.toFixed(3)}]` : '') +
+    (best.cheat ? ` [cheat channel: crime_success ${best.cheat.crime.toFixed(3)} lifts ${best.cheat.farm}'s cheat rate, elasticity ${best.cheat.elasticity.toFixed(3)} over ${best.cheat.lifeLeftH.toFixed(2)}h left]` : '')
   const incKey = arms ? incArm : incumbent
   const inc = scored.find((s) => s.key === incKey)
   const out = (s) => (arms ? { opponent: s.name, size: s.size, arm: s.key } : { opponent: s.name })

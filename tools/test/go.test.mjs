@@ -688,7 +688,7 @@ export async function run() {
     const t = tickBlock(cheatSrc);
     if (!t.ok) c11.fail(`go-cheat.js: ${t.error}`, "the outcome is only known if nothing yields between reading Player.totalPlaytime and the call");
     // Seen to fail: the same check against an awaited read.
-    const mutated = cheatSrc.replace("const T = ns.getPlayer().totalPlaytime", "await ns.sleep(0)\n      const T = ns.getPlayer().totalPlaytime\n      await ns.sleep(0)");
+    const mutated = cheatSrc.replace("const pl = ns.getPlayer()", "await ns.sleep(0)\n      const pl = ns.getPlayer()\n      await ns.sleep(0)");
     c11.examined(1);
     if (mutated === cheatSrc || tickBlock(mutated).ok) c11.fail("the one-tick check does not catch an await inserted between the read and the call");
     // go.js must never reference the cheat API itself (8GB each, in every node).

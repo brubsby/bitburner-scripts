@@ -49,10 +49,13 @@ export async function main(ns) {
       // ONE synchronous block from the read to the call: nothing between them
       // yields, so Player.totalPlaytime cannot move (engine.tsx:94 advances it
       // only in the game loop, which cannot run inside this block).
-      const T = ns.getPlayer().totalPlaytime
+      const pl = ns.getPlayer()
+      const T = pl.totalPlaytime
       const p = ns.go.cheat.getCheatSuccessChance()
       const r = cheatRoll(T)
-      result.calib = { T, at: Date.now(), p }
+      // crime_success itself (go.js prices Slum Snakes' cheat channel on it):
+      // the chance alone cannot give it once the chance caps at 1.
+      result.calib = { T, at: Date.now(), p, crime: pl.mults?.crime_success ?? null }
       if (r <= p - 1e-12) {
         result.roll = r
         result.cheated = true
@@ -60,6 +63,8 @@ export async function main(ns) {
         const play = ns.go.cheat.playTwoMoves(x1, y1, x2, y2)
         const reply = await play
         result.reply = reply?.type ?? null
+        // Where the AI answered (the per-game log replays cheat turns from it).
+        if (reply?.type === 'move') result.replyAt = `${reply.x},${reply.y}`
         break
       }
       const w = cheatWaitS(T, p) * 1000

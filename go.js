@@ -350,10 +350,18 @@ const SETTINGS = {
   // The gain is tempo: the AI's replies a game fall ~10.9 -> ~8.2. (Release 3's
   // "off" was at crime_success 1 against a slower config.) SF14.3's +0.25:
   // seed 52, +20.1% [+9.3, +32.1] — no better than without (more cheats, each
-  // worth less once the board is taken). ON for Tetrads; the rest unmeasured.
+  // worth less once the board is taken). ON for Tetrads.
+  //   Illuminati (live config: 800ms, play-on, loss-scale 2, book, clock),
+  //   seeds 56+57, 200 paired: power/h 133944 -> 154049 (+15.0% [+8.9, +21.5]),
+  //   pts per AI reply 1.75 -> 2.25, won 200/200 vs 199/200. ON.
+  //   The rest unmeasured: off.
   // A turn the solver answered from the pass-forcing book (reply.oracle) is
   // never cheated: its line assumes one stone.
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, on: { default: false, Tetrads: true } },
+  // secondMs: the second stone's search budget. Each cheat's second stone was a
+  // full 400ms request (~0.4s of our time against the ~0.8s of AI time a cheat
+  // saves); at 100ms (go-w0 --cheat-second-ms 100, Tetrads, seed 58, crime
+  // 1.5872, paired vs the 400ms arm): see the commit.
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true } },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -1188,6 +1196,10 @@ export async function main(ns) {
         // The Bladeburner route's weights carry their own life (the committed
         // install, or the black-op exit): goweights.bladeGoWeightsGen.
         windowH: wf.windowH,
+        // THE CHEAT CHANNEL (goplan CHEAT_GAIN): Slum Snakes' crime_success
+        // lifts the cheat-on farm's rate for the rest of the life. Only with
+        // crime_success READ by go-cheat.js (never inferred from a capped chance).
+        ...(cheatCalib?.crimeRead && reset?.lastAugReset ? { cheat: { on: Object.keys(SETTINGS.cheat.on).filter((k) => k !== 'default' && SETTINGS.cheat.on[k]), crime: cheatCalib.crime, lifeLeftH: Math.max(0.25, wf.windowH - (Date.now() - reset.lastAugReset) / 3.6e6) } } : {}),
         incumbent: current,
         nodePower: nodePowerOf(stats),
         dwellH,
@@ -1234,6 +1246,7 @@ export async function main(ns) {
   let cheatCalib = null
   let cheatsPlayed = 0
   let cheatUnverified = 0
+  let cheatCaptured = 0
   const cheatLog = []
 
   // PER-PROCESS counters: they restart at 0 whenever go.js restarts (every
@@ -1375,6 +1388,7 @@ export async function main(ns) {
     cheatOffWhy,
     cheatThisOpponent: cheatFor(opponent),
     cheatUnverified,
+    cheatCaptured,
     cheatLog: cheatLog.slice(-10),
     remoteMoves,
     localMoves,
@@ -1683,8 +1697,8 @@ export async function main(ns) {
         if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
       }
       /** One solver round trip; null if no reply in time. */
-      const askSolver = async (board, validList) => {
-        const q = solverRequest(board, validList)
+      const askSolver = async (board, validList, extra = null) => {
+        const q = { ...solverRequest(board, validList), ...(extra ?? {}) }
         // THE SOLVER TALKS TO HOME. tools/go-solver.mjs reads /go/req.txt and
         // writes /go/move.txt on home over the Remote File API, and ns.read
         // and ns.write are local — so off home (a Go node places this
@@ -1752,7 +1766,8 @@ export async function main(ns) {
         // playTwoMoves validates BOTH points on the board before either stone.
         const valid2 = validList.filter(([x, y]) => !(x === first.x && y === first.y) && board2[x][y] === '.')
         if (!valid2.length) return { played: false }
-        const second = await askSolver(board2, valid2)
+        // The second stone searches SETTINGS.cheat.secondMs, not the move budget.
+        const second = await askSolver(board2, valid2, Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : null)
         if (!second || !second.length) return { played: false }
         const execAt = Date.now()
         const pid = ns.exec('go-cheat.js', 'home', 1, first.x, first.y, second[0].x, second[0].y, SETTINGS.cheat.maxWaitMs)
@@ -1780,7 +1795,8 @@ export async function main(ns) {
         if (st.calib && Number.isFinite(st.calib.T)) {
           const base = 0.6 * (0.7 - 0.02 * k) ** k
           const crime = (st.calib.p - (sf14 === 3 ? 0.25 : 0)) / base
-          cheatCalib = { T: st.calib.T, at: st.calib.at, crime: Number.isFinite(crime) && crime > 0 ? crime : 1 }
+          const read = Number.isFinite(st.calib.crime) && st.calib.crime > 0 ? st.calib.crime : null
+          cheatCalib = { T: st.calib.T, at: st.calib.at, crime: read ?? (Number.isFinite(crime) && crime > 0 ? crime : 1), crimeRead: read !== null }
         }
         if (st.error) {
           record(errors, new Error(`go-cheat.js: ${st.error}`))
@@ -1794,7 +1810,7 @@ export async function main(ns) {
         cheatsPlayed++
         cheat.waitedMs += st.waitedMs ?? 0
         pendingVerify = [[first.x, first.y], [second[0].x, second[0].y]]
-        return { played: true, reply: st.reply, second: `${second[0].x},${second[0].y}`, T: st.calib?.T ?? null }
+        return { played: true, reply: st.reply, replyAt: st.replyAt ?? null, second: `${second[0].x},${second[0].y}`, T: st.calib?.T ?? null }
       }
 
       // THE PER-GAME LOG (SETTINGS.gameLog): every turn — our move, where it
@@ -1813,15 +1829,23 @@ export async function main(ns) {
         const boardStrings = ns.go.getBoardState()
         const valid = ns.go.analysis.getValidMoves()
         // A played cheat's two stones must be on the board the AI handed back.
+        // A FAILED cheat places NEITHER stone (determineCheatSuccess skips the
+        // callback); the AI's reply can capture ONE of them legitimately — a
+        // one-stone miss is a capture, not a failed prediction. Live 22:09/22:11Z
+        // (2026-10-06) two such captures read as failures switched cheats off
+        // for the process after 6 minutes, and the measured live hour played
+        // 0.24 cheats a game instead of ~2.2.
         if (pendingVerify) {
-          const ok = pendingVerify.every(([x, y]) => boardStrings[x]?.[y] === 'X')
+          const present = pendingVerify.filter(([x, y]) => boardStrings[x]?.[y] === 'X').length
+          const ok = present > 0
+          if (present === 1) cheatCaptured++
           pendingVerify = null
           if (!ok) {
             cheatUnverified++
-            record(errors, new Error(`a predicted cheat's stones are missing from the next board (${cheatUnverified} so far) — captured by the reply, or the prediction is wrong`))
+            record(errors, new Error(`BOTH stones of a predicted cheat are missing from the next board (${cheatUnverified} so far) — the cheat failed: the roll prediction is wrong`))
             if (cheatUnverified >= 2) {
               cheatOn = false
-              cheatOffWhy = 'two predicted cheats were not on the board afterwards — the roll prediction no longer matches the game; cheats OFF for this process'
+              cheatOffWhy = 'two predicted cheats placed neither stone — the roll prediction no longer matches the game; cheats OFF for this process'
             }
           }
         }
@@ -1873,7 +1897,7 @@ export async function main(ns) {
           const c = await tryCheat(boardStrings, validList, ranked[0])
           if (c.played) {
             moves++
-            moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.reply ?? 'G', ...(c.T ? { T: c.T } : {}) })
+            moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}) })
             oppPassed = c.reply === 'pass'
             if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)

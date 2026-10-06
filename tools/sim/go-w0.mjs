@@ -80,7 +80,11 @@ const OPENING = (() => {
   const [k, ms] = v.split(":").map(Number);
   return { k, ms };
 })();
-const budgetFor = (turn) => (OPENING && turn < OPENING.k ? OPENING.ms : MAXMS);
+// --cheat-second-ms MS: the second stone of a cheat is searched MS instead of
+// the move budget (go.js passes it as the request's maxms).
+const CHEAT_SECOND_MS = Number(process.argv.includes("--cheat-second-ms") ? process.argv[process.argv.indexOf("--cheat-second-ms") + 1] : NaN);
+let secondStone = false;
+const budgetFor = (turn) => (secondStone && Number.isFinite(CHEAT_SECOND_MS) ? CHEAT_SECOND_MS : OPENING && turn < OPENING.k ? OPENING.ms : MAXMS);
 const OUT = str("out", null);
 const OPP = GoOpponent[str("opponent", "w0r1d_d43m0n")];
 const SIZE = num("size", 19);
@@ -649,7 +653,9 @@ async function playGame(stats, gameIndex) {
         // first stone freeing the second point, which this ignores.
         state.previousPlayer = GoColor.white;
         const ms0 = ourMs;
+        secondStone = true;
         const second = pre?.second ? [pre.second] : await solve();
+        secondStone = false;
         // The second stone's request (its search is in ourMs) and the
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
         wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
