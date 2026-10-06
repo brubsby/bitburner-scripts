@@ -76,6 +76,7 @@
 
 import { drain } from 'coop.js'
 import { bladeExitGen } from 'bbplan.js'
+import { addRepToFavor } from 'favor.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -233,8 +234,10 @@ export function* goWeightsGen(record, o = {}) {
   if (n === 0) return refuse('no draw could price the exit with and without the bonus')
   const weights = Object.fromEntries(GO_CHANNELS.map((c) => [c, Math.max(0, mean(acc[c]))]))
   const horizon = record.finalWindow === true ? 'the final window (until the terminal install)' : `the next install, in ${record.W.toFixed(2)}h`
+  const favor = yield* favorWeightGen(record, { T, at, draws: draws.slice(0, n), member: o.exitMember, exitFaction: o.exitFaction ?? 'Daedalus' })
   return {
     weights,
+    favor,
     unit: 'exit hours per unit ln of the multiplier',
     n,
     horizon,
@@ -247,6 +250,70 @@ export function* goWeightsGen(record, o = {}) {
 
 function mean(a) {
   return a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0
+}
+
+// ---------------------------------------------------------------------------
+// THE EXIT FACTION'S FAVOR FROM ITS GO WINS (goWeightsGen's `favor`).
+//
+// Not a multiplier channel: a win against a faction's AI that leaves the
+// streak even sets that faction's favor to addRepToFavor(favor,
+// getMaxRep()/200) on the spot, for a MEMBER, until the node's total reaches
+// getMaxRep() (Go/boardAnalysis/scoring.ts:66-78; effect.ts:30-43: 100k, or
+// 200k/300k/400k at SF14 1/2/3 — activeSourceFileLvl, so the level held
+// ENTERING the node, not the node being played). The total (Go stats `rep`)
+// survives every install and is cleared only at the node's end (Go/Go.ts:
+// 25-47 prestigeAugmentation vs prestigeSourceFile), and favor itself
+// survives installs (Faction.ts:77-79) — so unlike node power this is a
+// STOCK, banked once per node per opponent, and it counts toward the
+// donation threshold exactly as install-banked favor does (donation.ts:16-18
+// reads faction.favor).
+//
+// THE PRICE, exit hours per rep-equivalent of the cap left, simulated both
+// ways on the same draws (the exit inputs carry the stream: the measured one
+// while go.js plays the exit faction, else the plan's — goplan.goExitInputsOf):
+//   final window   the stream as planned vs no stream at all: this window is
+//                  the cap's last chance.
+//   earlier life   the whole cap banked NOW (exitFavor + cap, no stream) vs
+//                  the plan as it stands (the farm in the final window): what
+//                  playing it now rather than later is worth.
+// divided by the cap left — the secant over the whole cap, because the
+// threshold at 150 makes the per-rep value lumpy.
+// Zero, named, when the player is not a member (a win banks nothing) or the
+// cap is spent; null (refused, named) when membership is unread.
+// NOT PRICED (named): favor with factions other than the exit's (their
+// augmentations' reputation) — the Bladeburner route's Tetrads/Netburners/
+// Slum Snakes favor among them.
+
+function* favorWeightGen(record, { T, at, draws, member, exitFaction }) {
+  const inp = record.inputs
+  const st = inp.favorStream && inp.favorStream.repPerH > 0 ? inp.favorStream : inp.go?.favorStream && inp.go.favorStream.repPerH > 0 ? inp.go.favorStream : null
+  const base = { faction: exitFaction, hoursPerRep: 0, capRep: st ? st.capRep ?? null : 0 }
+  if (member !== true && member !== false) return { ...base, hoursPerRep: null, why: `membership of ${exitFaction} unread: a win banks favor only for a member (scoring.ts:70)` }
+  if (!member) return { ...base, why: `not a member of ${exitFaction}: a win banks it no favor (scoring.ts:70)` }
+  if (!st) return { ...base, why: 'no favor stream in the exit inputs (go.js unmeasured and no planned farm)' }
+  if (!(num(st.capRep) && st.capRep > 0)) return { ...base, capRep: 0, why: `the node's Go favor for ${exitFaction} is spent (getMaxRep reached)` }
+  const strip = (x) => ({ ...x, favorStream: null, ...(x.go ? { go: { ...x.go, favorStream: null } } : {}) })
+  const fin = record.finalWindow === true
+  const diffs = []
+  for (const d of draws) {
+    const b = at(inp, d)
+    const Tw = fin ? T(b) : T(strip({ ...b, exitFavor: addRepToFavor(num(b.exitFavor) && b.exitFavor > 0 ? b.exitFavor : 0, st.capRep) }))
+    yield
+    const Tn = fin ? T(strip(b)) : T(b)
+    yield
+    if (num(Tw) && num(Tn)) diffs.push(Tn - Tw)
+  }
+  if (!diffs.length) return { ...base, hoursPerRep: null, why: 'no draw priced the exit with and without the favor' }
+  const saved = mean(diffs)
+  return {
+    ...base,
+    hoursPerRep: Math.max(0, saved) / st.capRep,
+    savedH: +saved.toFixed(4),
+    n: diffs.length,
+    why: fin
+      ? `final window: the ${Math.round(st.capRep)} rep-eq left of ${exitFaction}'s Go favor, streamed vs never, saves ${saved.toFixed(3)}h`
+      : `earlier life: ${Math.round(st.capRep)} rep-eq of ${exitFaction}'s Go favor banked now vs streamed in the final window saves ${saved.toFixed(3)}h`,
+  }
 }
 
 // ---------------------------------------------------------------------------

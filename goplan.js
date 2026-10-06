@@ -200,6 +200,20 @@ export function armPowerPerSecond(p, bw, bl, secs, diff) {
   return (diff * (bw * (m - 0.5 * (1 - p)) + bl * 0.5 * (1 - p))) / secs
 }
 
+/**
+ * Finished games an hour on an arm at its prior (ARM_PRIOR's best-paying backend: seconds a
+ * game), for the favor an arm banks when no drawn rate is given. null when not measured.
+ */
+export function gamesPerHourOf(name, size) {
+  const pr = armPrior(name, size)
+  return pr && num(pr.s?.[0]) && pr.s[0] > 0 ? 3600 / pr.s[0] : null
+}
+
+/** getMaxRep() (Go/effects/effect.ts:30-43): the node's Go favor cap per opponent, rep-equivalent, by the SF14 level held. */
+export function goMaxRepOf(sf14) {
+  return sf14 >= 3 ? 400e3 : sf14 === 2 ? 300e3 : sf14 === 1 ? 200e3 : 100e3
+}
+
 /** The komi each opponent plays at (Go/Constants.ts opponentDetails), for the difficulty multiplier. */
 export const KOMI_OF = { Netburners: 1.5, SlumSnakes: 3.5, TheBlackHand: 3.5, Tetrads: 5.5, Daedalus: 5.5, Illuminati: 7.5, w0r1d_d43m0n: 9.5 }
 
@@ -502,6 +516,15 @@ export const MEASURED_BOARD = 5
  *                              the win-rate rescaling; the choice is then an ARM, and
  *                              `size` / `arm` say which.
  * @param {string} [o.incumbentArm] the arm being played ('name@size'), with o.arms.
+ * @param {object} [o.favor]    THE EXIT FACTION'S GO FAVOR (goweights favorWeightGen, in the
+ *                              same exit hours as the weights): { opponent, hoursPerRep,
+ *                              capLeft, maxRep }. An arm against that opponent also banks
+ *                              favor — every even win of a streak, getMaxRep()/200
+ *                              rep-equivalent, until the node's cap (scoring.ts:66-78) — at
+ *                              games/h x p^2/(1+p) x maxRep/200 (favor.goFavorStreamOf;
+ *                              games/h: the arm's drawn seconds a game, `gph`, else its
+ *                              prior's). Added to that arm's marginal, and to its dwell block
+ *                              up to the cap left. Absent: favor not priced (said in `why`).
  * @returns {{opponent, size, arm, why, refused, table}}
  */
 export function chooseOpponent(o = {}) {
@@ -534,6 +557,7 @@ export function chooseOpponent(o = {}) {
 
   const dwellGames = num(o.dwellGames) && o.dwellGames >= 1 ? o.dwellGames : null
   const streaks = o.streaks && typeof o.streaks === 'object' ? o.streaks : null
+  const fav = o.favor && typeof o.favor === 'object' && num(o.favor.hoursPerRep) && o.favor.hoursPerRep > 0 && num(o.favor.capLeft) && o.favor.capLeft > 0 && num(o.favor.maxRep) && o.favor.maxRep > 0 ? o.favor : null
   const skipped = []
   const scored = []
   // The candidates: one per opponent at this board, or (release 3a) one per
@@ -590,10 +614,17 @@ export function chooseOpponent(o = {}) {
     const e = effectAt(n, meta.power, goPower, sf14)
     const slope = effectSlope(n, meta.power, goPower, sf14)
     if (e === null || slope === null) return keep(`could not price ${name}`)
-    const marginal = w * (slope / e) * pph
     const eD = effectAt(n + pph * dwellH, meta.power, goPower, sf14)
-    const block = w * (Math.log(eD) - Math.log(e))
-    scored.push({ name, size, key, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, winRate: p, powerPerHour: pph, marginal, block })
+    // The favor this arm banks, when it is the exit faction's (o.favor).
+    let favorPerH = 0
+    if (fav && fav.opponent === name) {
+      const gph = arm && num(arm.gph) && arm.gph > 0 ? arm.gph : gamesPerHourOf(name, size)
+      if (num(gph)) favorPerH = gph * ((p * p) / (1 + p)) * (fav.maxRep / 200)
+    }
+    const favorMarginal = favorPerH > 0 ? fav.hoursPerRep * favorPerH : 0
+    const marginal = w * (slope / e) * pph + favorMarginal
+    const block = w * (Math.log(eD) - Math.log(e)) + (favorPerH > 0 ? fav.hoursPerRep * Math.min(fav.capLeft, favorPerH * dwellH) : 0)
+    scored.push({ name, size, key, channel: meta.channel, weight: w, nodePower: n, effect: e, streak: s0, streakFactor: phi, winRate: p, powerPerHour: pph, favorPerH, favorMarginal, marginal, block })
   }
   if (!scored.length) return keep('no priceable opponent')
 
@@ -603,14 +634,16 @@ export function chooseOpponent(o = {}) {
   const runners =
     scored.slice(1).map(fmt).join(', ') +
     (skipped.length ? `; not priced: ${skipped.join(', ')}` : '') +
-    (streaks && dwellGames ? '' : '; streak cost NOT priced (no streaks/dwellGames)')
+    (streaks && dwellGames ? '' : '; streak cost NOT priced (no streaks/dwellGames)') +
+    (fav ? '' : `; exit-faction Go favor ${o.favor ? `not priced (${o.favor.why ?? `hoursPerRep ${o.favor.hoursPerRep}, cap left ${o.favor.capLeft}`})` : 'NOT PRICED (no favor weight)'}`)
   // Every weight zero means the basket says nothing; do not churn the board on it.
   if (!(best.marginal > 0)) {
     return keep(`every priceable channel weighs 0 (${scored.map((s) => `${s.channel}=${s.weight}`).join(', ')}) — nothing to choose between, so the incumbent stands`)
   }
   const head =
     `${best.key} (${best.channel}) marginal ${best.marginal.toExponential(3)}/h = weight ${best.weight.toPrecision(3)} x dlnE/dn ` +
-    `${(best.marginal / best.weight / best.powerPerHour).toExponential(3)} @n=${Math.round(best.nodePower)} x ${Math.round(best.powerPerHour)}/h` +
+    `${(best.weight > 0 ? (best.marginal - best.favorMarginal) / best.weight / best.powerPerHour : 0).toExponential(3)} @n=${Math.round(best.nodePower)} x ${Math.round(best.powerPerHour)}/h` +
+    (best.favorMarginal > 0 ? ` + favor ${best.favorMarginal.toExponential(3)}/h (${Math.round(best.favorPerH)} rep-eq/h of ${fav.opponent}'s Go favor x ${fav.hoursPerRep.toExponential(3)} h/rep, ${Math.round(fav.capLeft)} left)` : '') +
     (best.streakFactor !== 1 ? ` (streak ${best.streak}: x${best.streakFactor.toFixed(3)} of ${arms ? 'the drawn' : 'the measured'} ${Math.round(arms ? arms[best.key].pph : table[best.name])})` : '') +
     (arms ? ` [Thompson: power/h and win rate ${best.winRate.toFixed(3)} drawn]` : drawn ? ` [Thompson: win rate drawn ${best.winRate.toFixed(3)}]` : '')
   const incKey = arms ? incArm : incumbent
@@ -746,7 +779,7 @@ export function earlyGoWeights(o = {}) {
 export function weightsFor(gate, lastAugReset, earlyInputs) {
   const sameLife = !!gate && gate.lastAugReset === lastAugReset
   const gw = sameLife ? gate?.objective?.goWeights ?? null : null
-  if (gw?.weights) return { source: 'goWeights', weights: gw.weights, windowH: gw.windowH ?? gate?.objective?.windowH ?? null, why: gw.why ?? null }
+  if (gw?.weights) return { source: 'goWeights', weights: gw.weights, favor: gw.favor ?? null, windowH: gw.windowH ?? gate?.objective?.windowH ?? null, why: gw.why ?? null }
   const gwWhy = !gate ? 'no gate' : !sameLife ? 'gate is from another life' : gw?.why ?? 'not published this pass'
   const e = earlyGoWeights(typeof earlyInputs === 'function' ? earlyInputs() : earlyInputs ?? {})
   return { source: 'early', weights: e.weights, windowH: e.windowH, phase: e.phase, why: `${e.why} (goWeights: ${gwWhy})`, gwWhy }

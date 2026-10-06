@@ -924,6 +924,19 @@ Three consequences, all easy to get backwards:
   Ordering is not priority: ordinary augmentations are still *selected* first
   against the whole budget; NFG takes the remainder.
 
+**IPvGO wins are favor too, without an install.** Every second win of a
+streak against a faction's AI, while a member, sets that faction's favor to
+`addRepToFavor(favor, getMaxRep()/200)` on the spot (`scoring.ts:66-78`), until
+the opponent's node total reaches `getMaxRep()` = 100k, or 200k/300k/400k at
+the SF14 level *held* (`effect.ts:30-43`; BN14.3 is played at 300k). That
+total survives installs and is cleared only at the node's end (`Go/Go.ts:25-47`),
+so the cap is once per node per opponent; the measured farm fills it in
+~1.3h. Alone it reaches favor 81/111/130/143 — never 150 — but it adds in rep
+space, so on top of 123.3/101.7/63.3 banked favor (SF14 1/2/3) it crosses the
+donation bar mid-window (`exitplan` repRoute `'cross'`, `favor.crossGoFavorH`).
+`goweights` prices the exit faction's cap left (exit hours per rep-eq) and
+`goplan.chooseOpponent` adds it to that arm (`tools/test/gofavor.test.mjs`).
+
 `tools/sim/daedalus-plan.mjs` models this end to end. It reads every input from
 the live save and `.telemetry/` at run time and prints a CHECK block first,
 reproducing the game's own rep/sec readout to within 1% before it says anything

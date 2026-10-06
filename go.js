@@ -174,6 +174,7 @@ import {
   w0Obs,
   obsDue,
   weightsFor,
+  goMaxRepOf,
   solverVersion,
   armPosterior,
   armDraw,
@@ -1144,7 +1145,7 @@ export async function main(ns) {
             if (!post) continue
             const d = armDraw(post)
             if (!(d.pps > 0)) continue
-            arms[`${name}@${size}`] = { pph: 3600 * d.pps, p: d.p }
+            arms[`${name}@${size}`] = { pph: 3600 * d.pps, p: d.p, gph: d.s > 0 ? 3600 / d.s : null }
             drawnNow[`${name}@${size}`] = { winRate: Number(d.p.toFixed(3)), powerPerSecond: Number(d.pps.toFixed(4)), powerPerHour: Math.round(3600 * d.pps), backend: post.backend }
           }
         }
@@ -1157,8 +1158,17 @@ export async function main(ns) {
         }
         armDrawn = drawnNow
       }
+      // THE EXIT FACTION'S GO FAVOR (goweights favorWeightGen, published with
+      // the weights): its exit hours per rep-equivalent, and the cap left of
+      // it this node from getStats `rep` (kept through installs, cleared at
+      // the node's end — Go/Go.ts:25-47). Only with progress.js's weights: the
+      // early weights are a ranking, not exit hours, and cannot be added to it.
+      const favW = wf.source === 'goWeights' && wf.favor && typeof wf.favor.hoursPerRep === 'number' ? wf.favor : null
+      const favKey = favW ? Object.keys(OPPONENTS).find((k) => OPPONENTS[k].game === favW.faction) ?? null : null
+      const favor = favW && favKey ? { opponent: favKey, hoursPerRep: favW.hoursPerRep, maxRep: goMaxRepOf(sf14), capLeft: Math.max(0, goMaxRepOf(sf14) - (stats?.[favW.faction]?.rep ?? 0)), why: favW.why ?? null } : null
       const pick = chooseOpponent({
         ...(arms ? { arms, incumbentArm: `${current}@${current === W0 ? 19 : armSize}` } : {}),
+        ...(favor ? { favor } : {}),
         weights: { ...wf.weights, ...hackW },
         // The Bladeburner route's weights carry their own life (the committed
         // install, or the black-op exit): goweights.bladeGoWeightsGen.

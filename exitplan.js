@@ -73,7 +73,7 @@ import { serveOrFarm } from 'expfarm.js'
 import { cadencePosterior } from 'bayes.js'
 import { capitalFV } from 'hacknetplan.js'
 import { contractsForHashes } from 'contractplan.js'
-import { favorToRep, repToFavor, addRepToFavor } from 'favor.js'
+import { favorToRep, repToFavor, addRepToFavor, crossGoFavorH } from 'favor.js'
 import { effectAt } from 'goplan.js'
 import { drain } from 'coop.js'
 import { capitalOf, isShaped, capitalEarnAt, capitalRateAt, capitalGain, capitalStepFn, rateTab } from 'traderw.js'
@@ -1884,6 +1884,34 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       slotFreeAt: Math.max(0, Math.max(busyH, graftDone - finalStart) - (h - finalStart)),
     })
     if (wwd && r.how === 'ground' && fleetOn) r = hoursToRep(terminalRep, { rep0: exitRep, repPerSec: (P0 + sRep(h)) * fm0 })
+    // THE GO FAVOR CROSSES THE DONATION THRESHOLD INSIDE THE LEG (o.repRoute
+    // 'cross'). The stream's favor is the faction's favor the moment it is
+    // given (scoring.ts:74-77 setFavor, no install), and donating reads only
+    // faction.favor >= 150 x FavorToDonate (donation.ts:16-18,
+    // FactionRoot.tsx:104) — Go favor counts exactly as install-banked favor
+    // does, and adds in rep space (addRepToFavor). So a window that opens
+    // below the threshold with favorToRep(fav0) + the stream's cap left >=
+    // favorToRep(threshold) can stop grinding and DONATE the remainder once
+    // the stream has crossed it, crossGoFavorH hours after the join (each
+    // getMaxRep()/200 award at the stream's rate). Priced before 2026-10-06
+    // as a grind to the end: the favor only scaled the work (fmAt). Two
+    // trajectories, the sooner kept: the grind (repRoute 'ground'), and
+    // the money leg to the whole donation landing no sooner than the
+    // crossing. NOT PRICED (a floor on the cross): the reputation the slot
+    // grinds before the crossing, which would shrink the donation.
+    const ftdN = num(favorToDonate) && favorToDonate >= 0 ? favorToDonate : null
+    const crossH = fStream && ftdN !== null && fav0 < ftdN && pos(donation) && typeof r.how === 'string' && !r.how.startsWith('donated') ? crossGoFavorH(fav0, ftdN, fStream.repPerH, fCap) : null
+    if (num(crossH) && o.repRoute !== 'ground' && o.repRoute !== 'donate') {
+      if (o.repRoute === 'cross') {
+        const hm = moneyLeg(donation)
+        if (!num(hm)) return { hours: null, why: 'could not price the donation after the IPvGO favor crossing' }
+        r = { hours: Math.max(crossH, hm), how: `donated $${Math.round(donation)} once IPvGO favor crossed ${ftdN} (+${crossH.toFixed(2)}h after the join)` }
+      } else {
+        const a = exitHours({ ...o, repRoute: 'cross' }, installsFirst, quiet)
+        const b = exitHours({ ...o, repRoute: 'ground' }, installsFirst, quiet)
+        return num(a.hours) && (!num(b.hours) || a.hours < b.hours) ? a : b
+      }
+    }
     // GROUND REPUTATION AS A TRAJECTORY. Faction-work rep is linear in the
     // player's hacking level (reputation.ts:16), and after an install the
     // level restarts from 1 and climbs as exp accrues — so the rep leg runs
@@ -2020,7 +2048,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // does not — so each is simulated to the exit and the sooner returned.
     // Only where a favor is banked or streamed, so a favor-0 threshold
     // (BitNode 8) prices as before.
-    else if (typeof r.how === 'string' && r.how.startsWith('donated') && (fav0 > 0 || fStream) && o.repRoute !== 'donate') {
+    else if (typeof r.how === 'string' && r.how.startsWith('donated') && (fav0 > 0 || fStream) && o.repRoute !== 'donate' && o.repRoute !== 'cross') {
       if (o.repRoute === 'ground') r = trajectory ? groundLeg() : hoursToRep(terminalRep, { rep0: exitRep, repPerSec: pos(repRate) ? repRate * fm0 : repRate })
       else {
         const a = exitHours({ ...o, repRoute: 'donate' }, installsFirst, quiet)

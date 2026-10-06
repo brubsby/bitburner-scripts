@@ -6248,6 +6248,10 @@ async function act(ns, canJoin, info, note) {
               hackShare,
               scriptExpPerSec: fresh(st) && typeof st.expPerSec === 'number' ? st.expPerSec : null,
               ageH: typeof info?.lastAugReset === 'number' ? Math.max(0, (Date.now() - info.lastAugReset) / 3.6e6) : null,
+              // THE EXIT FACTION'S GO FAVOR (goweights favorWeightGen): a win
+              // banks favor only for a member (scoring.ts:70).
+              exitMember: Array.isArray(player?.factions) ? player.factions.includes(EXIT_FACTION) : null,
+              exitFaction: EXIT_FACTION,
               budgetMs: 150,
               clock: passPacer ? passPacer.cpuNow : undefined,
             }),
@@ -6255,7 +6259,7 @@ async function act(ns, canJoin, info, note) {
           )
           const r4 = (v) => (typeof v === 'number' && isFinite(v) ? +v.toPrecision(4) : v)
           goPub = gw?.weights
-            ? { weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])), unit: gw.unit, horizon: gw.horizon, n: gw.n, ms: gw.ms, streams: gw.streams, detail: gw.detail, why: null }
+            ? { weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])), favor: gw.favor ? { ...gw.favor, hoursPerRep: r4(gw.favor.hoursPerRep) } : null, unit: gw.unit, horizon: gw.horizon, n: gw.n, ms: gw.ms, streams: gw.streams, detail: gw.detail, why: null }
             : { weights: null, why: gw?.why ?? 'goweights returned nothing' }
         } catch (e) {
           goPub = { weights: null, why: `goweights threw: ${String(e).slice(0, 160)}` }

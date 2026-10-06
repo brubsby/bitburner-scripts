@@ -360,7 +360,27 @@ export function repToCross(favor, o = {}) {
  * `gamesPerHour` and `pWin` are measured (go.js: this process's games, this
  * life's wins); `banked` is the node's rep-equivalent already given to that
  * opponent. Returns {repPerH, capRep, why} or {repPerH: null, why}.
+ *
+ * crossGoFavorH (above): hours of that stream until a faction at favor0
+ * reaches `threshold` favor (the donation bar, 150 x FavorToDonate), or null
+ * when the cap left cannot carry it there. In rep space, as the game adds it
+ * (addRepToFavor): favorToRep(threshold) - favorToRep(favor0) of stream.
+ * The cap is per opponent PER NODE: Go stats `rep` survives every install
+ * (Go/Go.ts:25-47 prestigeAugmentation clears all but it) and is cleared only
+ * at the node's end (prestigeSourceFile). Alone the stream reaches at most
+ * repToFavor(getMaxRep()) = 81.3 / 111.0 / 129.5 / 143.1 favor at SF14
+ * 0/1/2/3 — never 150 — so it crosses only on top of a favor already banked
+ * by installs: >= 138.4 / 123.3 / 101.7 / 63.3 before it.
  */
+export function crossGoFavorH(favor0, threshold, repPerH, capRep = Infinity) {
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  if (!fin(favor0) || favor0 < 0 || !fin(threshold) || threshold < 0 || !fin(repPerH) || repPerH <= 0) return null
+  if (favor0 >= threshold) return 0
+  const gap = favorToRep(threshold) - favorToRep(favor0)
+  const cap = fin(capRep) && capRep >= 0 ? capRep : Infinity
+  return gap <= cap ? gap / repPerH : null
+}
+
 export function goFavorStreamOf({ gamesPerHour, pWin, sf14 = 0, banked } = {}) {
   const fin = (x) => typeof x === 'number' && isFinite(x)
   if (!fin(gamesPerHour) || gamesPerHour <= 0) return { repPerH: null, why: 'no measured Go game rate' }
