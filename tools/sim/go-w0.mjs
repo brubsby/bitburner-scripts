@@ -206,6 +206,9 @@ if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by t
 // the search's uncertain length.
 const RETIME = argv.includes("--retime");
 const ORACLE_MISSES = str("oracle-misses", null);
+const ORACLE_FULL = argv.includes("--oracle-full");
+// --oracle-override-book (with --oracle-full): a candidate whose whole line holds may replace the book's move.
+const ORACLE_OVERRIDE = argv.includes("--oracle-override-book");
 const ORACLE_GUARD = str("oracle-guard", null) ? (([v, w]) => ({ v, w }))(str("oracle-guard", null).split(":").map(Number)) : null;
 const ORACLE = argv.includes("--oracle-book") ? { noise: (() => { const v = Number(argv[argv.indexOf("--oracle-book") + 1]); return Number.isFinite(v) ? v : 0; })() } : null;
 const STEER_BOOK = (() => {
@@ -284,6 +287,9 @@ const CHEAT = str("cheat", null);
 const CHEAT_MAX = num("cheatmax", 99);
 const CHEAT_FROM = num("cheatfrom", 2); // first of our turns a cheat may be used on
 const CHEAT_WAIT = num("cheatwait", 10);
+// --cheat-keep-lines: no greedy cheat on a turn the pass-forcing book is
+// steering (its line assumes one stone there).
+const CHEAT_KEEP_LINES = argv.includes("--cheat-keep-lines");
 const CRIME = num("crime", 1);
 // go.js execs go-cheat.js, polls isRunning every 50ms and reads its result
 // (/tel/go-cheat.txt): ~150ms a played cheat beyond the window wait. Assumed.
@@ -324,7 +330,7 @@ async function playGame(stats, gameIndex) {
   const komi = g.opponentDetails[OPP].komi;
   let modelCalls = 0;
   const steerStats = { evals: 0, steered: 0, delayTicks: 0, book: 0, miss: 0 };
-  let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false, oracleGuarded = 0;
+  let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false, oracleGuarded = 0, oracleCheats = 0, oracleLineFail = 0;
   let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0;
   let guard = 0;
   let oppPassed = false;
@@ -479,10 +485,19 @@ async function playGame(stats, gameIndex) {
     // real seed lag is a tick off the prediction (live calibration misses).
     if (ORACLE && BOOK && sess && MODEL) {
       const board = g.simpleBoardFromBoard(state.board);
-      const cands = golib.oracleCandidates(BOOK, board, { passed: oppPassed });
+      // --oracle-full: never where the opening book holds the position (the
+      // book's deep, all-replies search outranks a one-clock plan there).
+      const cands = ORACLE_FULL && !ORACLE_OVERRIDE && !oppPassed && golib.bookMove(BOOK, board) ? [] : golib.oracleCandidates(BOOK, board, { passed: oppPassed });
       const vg = cands.length ? validGrid(state, N) : null;
       for (const c of cands) {
         if (!vg[c.x]?.[c.y]) continue;
+        // A cheat step (a second stone): only with --cheat, only where this
+        // game's roll is inside the window for the cheats so far — certain
+        // success, as go-cheat.js plays it — and never after the AI's pass.
+        if (c.second) {
+          if (!CHEAT || CHEAT === "blind" || oppPassed || cheats >= CHEAT_MAX) continue;
+          if (golib.cheatRoll(playtimeAt(wall + ROUND_TRIP_MS)) > pCheat(cheats)) continue;
+        }
         // THE GUARD (--oracle-guard V:D): a candidate the pondered tree has
         // searched (>= V visits) and found winning in D (share of lines) less
         // than its best stone is not played — the line is a plan against ONE
@@ -491,13 +506,28 @@ async function playGame(stats, gameIndex) {
           const st = sess.childStats(c.x, c.y, board, oppPassed, ORACLE_GUARD.v);
           if (st && st.visits >= ORACLE_GUARD.v && st.bestWins !== null && st.wins < st.bestWins - ORACLE_GUARD.w) { oracleGuarded++; continue; }
         }
-        const after = golib.applyMove(board, c.x, c.y);
+        let after = golib.applyMove(board, c.x, c.y);
+        if (after && c.second) after = after[c.second.x][c.second.y] === "." ? golib.applyMove(after, c.second.x, c.second.y) : null;
         if (!after) continue;
-        const r = await MODEL.reply(after, { history: [board.join(""), ...state.previousBoards], passCount: 0, rng: playtimeAt(wall + ROUND_TRIP_MS + 200 + seedJit) });
-        const want = c.reply ? `${c.reply.x},${c.reply.y}` : "P";
-        if ((r ? `${r.x},${r.y}` : "P") !== want) continue;
-        pre = { x: c.x, y: c.y, book: true };
+        // A cheat's reply comes after go-cheat.js's exec and a second round trip.
+        const lagMs = ROUND_TRIP_MS + (c.second ? ROUND_TRIP_MS + CHEAT_EXEC_MS : 0);
+        if (ORACLE_FULL) {
+          // THE FULL-LINE CHECK (golib.oracleLineHolds): the whole line must be
+          // this game's, from the exact seed of this reply onward.
+          const T1 = playtimeAt(wall + lagMs + 200 + seedJit);
+          const cheatOk = (j, k) => !!CHEAT && CHEAT !== "blind" && k < CHEAT_MAX && golib.cheatRoll(T1 - 200 + 200 * Math.round(j * 5)) <= pCheat(k) - 0.01;
+          // Lags spread over 3 ticks around the exact seed, as live's calibrated
+          // weights spread (go-solver: the pre-path lags at k and k + 1).
+          const hold = await golib.oracleLineHolds(c, board, state.previousBoards.slice(), T1, [[-1, 0.2], [0, 0.6], [1, 0.2]], (b, o) => MODEL.reply(b, o), { tt: 5, cheat: cheatOk, cheats0: cheats });
+          if (!hold.ok || hold.mass < 0.6) { if (hold.mass >= 0.6) oracleLineFail++; continue; }
+        } else {
+          const r = await MODEL.reply(after, { history: [board.join(""), ...state.previousBoards], passCount: 0, rng: playtimeAt(wall + lagMs + 200 + seedJit) });
+          const want = c.reply ? `${c.reply.x},${c.reply.y}` : "P";
+          if ((r ? `${r.x},${r.y}` : "P") !== want) continue;
+        }
+        pre = { x: c.x, y: c.y, book: true, ...(c.second ? { second: c.second } : {}) };
         bookHit = oracleHit = true;
+        if (c.second) oracleCheats++;
         oracleMoves++;
         if (Math.random() < ORACLE.noise) seedSkew = Math.random() < 0.5 ? -200 : 200;
         break;
@@ -556,8 +586,14 @@ async function playGame(stats, gameIndex) {
     let cheatNow = false;
     let cheatSucceeds = false;
     // Not after the AI's pass (go.js: play-on decides a single stone there).
-    if (CHEAT && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM) {
+    if (pre?.second) {
+      // The oracle's cheat step: its roll was checked above (certain success).
+      cheatNow = cheatSucceeds = true;
+    } else if (CHEAT && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM && !(oracleHit && CHEAT_KEEP_LINES)) {
       const p = pCheat(cheats);
+      // --seeded: the roll IS the clock (golib.cheatRoll of the playtime), not
+      // an independent phase — the AI's seed and the cheat roll share it.
+      if (SEEDED) phase = golib.cheatRoll(playtimeAt(wall));
       if (CHEAT === "blind") {
         cheatNow = true;
         cheatSucceeds = Math.random() <= p;
@@ -567,6 +603,7 @@ async function playGame(stats, gameIndex) {
           cheatNow = cheatSucceeds = true;
           cheatWaitS += wait;
           turnLiveS += wait;
+          if (SEEDED) wall += wait * 1000;
           if (wait > 0) phase = 0; // waited to the window's start
         }
       }
@@ -582,7 +619,7 @@ async function playGame(stats, gameIndex) {
         // first stone freeing the second point, which this ignores.
         state.previousPlayer = GoColor.white;
         const ms0 = ourMs;
-        const second = await solve();
+        const second = pre?.second ? [pre.second] : await solve();
         // The second stone's request (its search is in ourMs) and the
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
         wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
@@ -800,7 +837,7 @@ async function playGame(stats, gameIndex) {
     extendMoves,
     bookMoves,
     ...(STEER || STEER_BOOK ? { steer: steerStats } : {}),
-    ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss, guarded: oracleGuarded } } : {}),
+    ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss, guarded: oracleGuarded, cheats: oracleCheats, lineFail: oracleLineFail } } : {}),
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
@@ -814,7 +851,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {

@@ -9,8 +9,11 @@
 //       in their own table; best value first; unknown position -> [].
 //   GO2 go-solver end to end (stub RPC, --book-dir): a request whose clock
 //       predicts candidate A's expected reply is answered with A (book: true,
-//       no search) even though a higher-valued candidate B is listed — B's
-//       expected reply is not the predicted one, so B is never played.
+//       no search) even though higher-valued candidates are listed: B, whose
+//       expected reply is not the predicted one, and C, whose FIRST reply is
+//       predicted but whose line's SECOND reply this clock does not give (the
+//       live 2026-10-06 21:07Z wipe: a candidate stitched from another
+//       clock's plan). Neither B nor C may be played (golib.oracleLineHolds).
 
 import fs from "node:fs";
 import os from "node:os";
@@ -73,7 +76,7 @@ export async function run() {
     const prior = [[0, 0.1], [1, 0.6], [2, 0.25], [3, 0.05]];
     const kw = prior.flatMap(([k, w]) => [[k, w / 2], [k + 1, w / 2]]);
     const valid = model.validMoves(board, []);
-    let A = null, B = null;
+    let A = null, B = null, C = null;
     for (const [x, y] of valid) {
       const after = golib.applyMove(board, x, y);
       const mass = new Map();
@@ -84,23 +87,41 @@ export async function run() {
       }
       const [top, w] = [...mass.entries()].sort((a, z) => z[1] - a[1])[0];
       if (!A && w >= 0.8 && top !== "P") A = { x, y, reply: top.split(",").map(Number) };
-      else if (!B && w >= 0.8 && top !== "P") {
+      else if (!C && B && w >= 0.8 && top !== "P") {
+        // C: its first reply is the predicted one; its line's next step (our
+        // stone m2) expects a reply the clock does NOT give there.
+        const rp = top.split(",").map(Number);
+        const b1 = after; // our stone placed
+        const b2 = b1.map((col, i) => (i === rp[0] ? col.slice(0, rp[1]) + "O" + col.slice(rp[1] + 1) : col));
+        const empt = [];
+        for (let u = 0; u < 5; u++) for (let v = 0; v < 5; v++) if (b2[u][v] === ".") empt.push([u, v]);
+        const m2 = empt[0];
+        const after2 = golib.applyMove(b2, m2[0], m2[1]);
+        const seen = new Set();
+        for (const [k] of kw) for (const d of [-2, 0, 2]) {
+          const r2 = await model.reply(after2, { opponent: "Tetrads", history: [b2.join(""), after.join(""), board.join("")], passCount: 0, rng: T + 200 * (k + 5 + d) });
+          seen.add(r2 ? `${r2.x},${r2.y}` : "P");
+        }
+        const wrong2 = empt.slice(1).find(([u, v]) => !seen.has(`${u},${v}`) && !(u === m2[0] && v === m2[1]));
+        if (wrong2) C = { x, y, reply: rp, m2, wrong2 };
+      } else if (!B && w >= 0.8 && top !== "P") {
         // B expects a reply the clock does NOT predict: any other empty point.
         const wrong = valid.find(([u, v]) => `${u},${v}` !== top && !(u === x && v === y));
         B = { x, y, reply: wrong };
       }
-      if (A && B) break;
+      if (A && B && C) break;
     }
-    if (!A || !B) {
+    if (!A || !B || !C) {
       c2.fail("could not construct the two candidates (no move with a confidently predicted reply)");
       return [c1, c2];
     }
     const { key, t } = golib.canonicalBoard(board);
     const kf = (p) => golib.toKeyFrame(N, t, p[0], p[1]);
     const ka = kf([A.x, A.y]), kra = kf(A.reply), kb = kf([B.x, B.y]), krb = kf(B.reply);
+    const kc = kf([C.x, C.y]), krc = kf(C.reply), km2 = kf(C.m2), kw2 = kf(C.wrong2);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gooracle-"));
     fs.writeFileSync(path.join(dir, "book-Tetrads.json"), JSON.stringify({ opponent: "Tetrads", entries: {} }));
-    fs.writeFileSync(path.join(dir, "oracle-Tetrads.json"), JSON.stringify({ opponent: "Tetrads", oracle: { [key]: [[kb[0], kb[1], krb[0], krb[1], 20], [ka[0], ka[1], kra[0], kra[1], 10]] }, oraclePass: {} }));
+    fs.writeFileSync(path.join(dir, "oracle-Tetrads.json"), JSON.stringify({ opponent: "Tetrads", oracle: { [key]: [[kb[0], kb[1], krb[0], krb[1], 20, null, -1, -1, []], [kc[0], kc[1], krc[0], krc[1], 15, null, -1, -1, [[km2[0], km2[1], -1, -1, kw2[0], kw2[1]]]], [ka[0], ka[1], kra[0], kra[1], 10, null, -1, -1, []]] }, oraclePass: {} }));
     const files = new Map();
     const pushed = [];
     const server = http.createServer((req, res) => {
@@ -136,9 +157,10 @@ export async function run() {
       c2.examined(3);
       if (!a) throw new Error(`no reply: ${stderr.slice(-300)}`);
       if (a.x === B.x && a.y === B.y) c2.fail("the higher-valued candidate whose expected reply the clock does not predict must not be played", JSON.stringify(a));
+      if (a.x === C.x && a.y === C.y) c2.fail("a candidate whose line's SECOND reply this clock does not give must not be played (the full-line check)", JSON.stringify(a));
       if (!(a.x === A.x && a.y === A.y && a.book === true)) c2.fail(`the candidate the clock confirms (${A.x},${A.y}) must be answered at once, book: true`, JSON.stringify(a));
       if (a.rootWork) c2.fail("a candidate answer must not search", JSON.stringify(a));
-      c2.note(`A (${A.x},${A.y}) expects ${A.reply}; B (${B.x},${B.y}) expects ${B.reply} (not predicted); answered ${a.x},${a.y}`);
+      c2.note(`A (${A.x},${A.y}) expects ${A.reply}; B (${B.x},${B.y}) expects ${B.reply} (not predicted); C (${C.x},${C.y}) then ${C.m2} expects ${C.wrong2} (not predicted); answered ${a.x},${a.y}`);
     } catch (e) {
       c2.fail(String(e?.message ?? e).slice(0, 300));
     } finally {

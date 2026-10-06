@@ -68,7 +68,7 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove, oracleCandidates } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove, oracleCandidates, oracleLineHolds } from "../golib.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -324,6 +324,7 @@ const bookStats = { hits: 0, published: 0, oracle: 0, oracleMiss: 0, withheld: 0
 // --no-oracle: off.
 const ORACLE_ON = !argv.includes("--no-oracle");
 const ORACLE_MIN = flag("oracle-min", 0.6);
+const ORACLE_BOOK_FIRST = argv.includes("--oracle-book-first");
 // THE GUARD: a candidate the (reused, pondered) tree has searched >= GUARD_V
 // times and found winning in GUARD_D (share of lines) less than its best stone
 // is skipped — a line is a plan against one predicted reply sequence; the
@@ -355,6 +356,12 @@ function oracleFor(opponent) {
 async function oraclePick(req, history, opponentPassed) {
   if (!ORACLE_ON || !model || !(CLOCK && req.T > 0)) return null;
   const book = oracleFor(req.opponent);
+  // --oracle-book-first: never where the opening book holds the position.
+  // Off by default: the measured arm (go-w0 --oracle-full --oracle-override-book)
+  // lets a candidate replace the book's move ONLY when its whole line holds
+  // (below) — with the book first no candidate is ever reached, since the
+  // plans start from the empty layout (go-w0 2026-10-06: 0 oracle moves/game).
+  if (ORACLE_BOOK_FIRST && !opponentPassed && bookMove(bookFor(req.opponent), req.board)) return null;
   const cands = oracleCandidates(book, req.board, { passed: opponentPassed });
   if (!cands.length) return null;
   const valid = new Set((req.valid || []).map(([x, y]) => `${x},${y}`));
@@ -371,16 +378,14 @@ async function oraclePick(req, history, opponentPassed) {
       bookStats.oracleGuarded = (bookStats.oracleGuarded ?? 0) + 1;
       continue;
     }
-    const after = applyMove(req.board, c.x, c.y);
-    if (!after) continue;
-    const want = c.reply ? `${c.reply.x},${c.reply.y}` : "P";
-    let mass = 0, tot = 0;
-    for (const [k, w] of kw) {
-      tot += w;
-      const r = await model.reply(after, { opponent: req.opponent, history: hist, passCount: 0, rng: req.T + 200 * k });
-      if ((r ? `${r.x},${r.y}` : "P") === want) mass += w;
-    }
-    if (tot > 0 && mass / tot >= ORACLE_MIN) return { x: c.x, y: c.y, v: c.v, mass: +(mass / tot).toFixed(3) };
+    if (c.second) continue; // cheat steps: go.js plays cheats itself (SETTINGS.cheat), not from here
+    // THE FULL-LINE CHECK (golib.oracleLineHolds): the WHOLE line to the AI's
+    // pass must be the one this game's clock produces — not only the next
+    // reply (live 21:07Z: a candidate from another clock's plan was played,
+    // its next step did not come, and the game was wiped 0-28.5).
+    const hold = await oracleLineHolds(c, req.board, history, req.T, kw, (b, o) => model.reply(b, { ...o, opponent: req.opponent }), { tt: 5 });
+    if (!hold.ok) { if (hold.mass >= ORACLE_MIN) bookStats.oracleLineFail = (bookStats.oracleLineFail ?? 0) + 1; continue; }
+    if (hold.mass >= ORACLE_MIN) return { x: c.x, y: c.y, v: c.v, mass: +hold.mass.toFixed(3) };
   }
   bookStats.oracleMiss++;
   return null;

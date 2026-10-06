@@ -58,21 +58,36 @@ function addClockLine(rec, best) {
   const lam = rec.lambda ?? 2.5;
   let s = rec.layout, passed = !!rec.rootPassed;
   const steps = best.line.filter((m) => m !== "P");
+  const parse = (st) => {
+    const [mv, rp] = st.split(">");
+    const [a, b2] = mv.split("+");
+    return { m: a.split(",").map(Number), s2: b2 ? b2.split(",").map(Number) : null, r: rp === "P" ? null : rp.split(",").map(Number) };
+  };
   for (let i = 0; i < steps.length; i++) {
     const [mv, rp] = steps[i].split(">");
-    const [x, y] = mv.split(",").map(Number);
+    const [st1, st2] = mv.split("+");
+    const [x, y] = st1.split(",").map(Number);
+    const sec = st2 ? st2.split(",").map(Number) : null;
     const { key, t } = golib.canonicalBoard(s);
     const [kx, ky] = golib.toKeyFrame(N, t, x, y);
+    const k2 = sec ? golib.toKeyFrame(N, t, sec[0], sec[1]) : null;
     const r = rp === "P" ? null : rp.split(",").map(Number);
     const [rx, ry] = r ? golib.toKeyFrame(N, t, r[0], r[1]) : [-1, -1];
-    const v = +(best.black - lam * (steps.length - i)).toFixed(2);
+    const v = +(best.black - lam * (steps.length - i + (best.cost ?? 0))).toFixed(2);
     const tbl = passed ? oraclePass : oracle;
     const list = (tbl[key] ??= []);
-    const same = list.find((c) => c[0] === kx && c[1] === ky && c[2] === rx && c[3] === ry);
+    // [8]: THE REST OF THE LINE after this step, in this position's key frame
+    // (one symmetry maps the whole board): [mx, my, sx, sy, rx, ry] per step
+    // (sx = -1: one stone; rx = -1: the AI passes). The solver plays a
+    // candidate only if this whole line is predicted from the game's clock.
+    const kf = (p) => (p ? golib.toKeyFrame(N, t, p[0], p[1]) : [-1, -1]);
+    const rest = steps.slice(i + 1).map(parse).map((q) => [...kf(q.m), ...kf(q.s2), ...kf(q.r)]);
+    const same = list.find((c) => c[0] === kx && c[1] === ky && c[2] === rx && c[3] === ry && (c[6] ?? -1) === (k2 ? k2[0] : -1) && (c[7] ?? -1) === (k2 ? k2[1] : -1) && JSON.stringify(c[8] ?? []) === JSON.stringify(rest));
     if (same) same[4] = Math.max(same[4], v);
-    else { list.push([kx, ky, rx, ry, v]); cands++; }
+    else { list.push([kx, ky, rx, ry, v, null, k2 ? k2[0] : -1, k2 ? k2[1] : -1, rest]); cands++; }
     const b = golib.parseBoard(toSimple(s));
     if (golib.play(b, nbrs, x * N + y, golib.US, scratch) < 0) throw new Error(`clock line does not replay at ${steps[i]}`);
+    if (sec && golib.play(b, nbrs, sec[0] * N + sec[1], golib.US, scratch) < 0) throw new Error(`clock line does not replay at ${steps[i]}`);
     if (r) golib.play(b, nbrs, r[0] * N + r[1], golib.THEM, scratch);
     s = toStr(b);
     passed = !r;

@@ -70,6 +70,19 @@ const LAG = num("lag", 1);
 // 2026-10-06: 3 losses in 193 games on non-robust candidates). Lines found
 // this way hold whatever the clock does, up to the window.
 const ROBUST = num("robust", 0);
+// --cheat CRIME [--sf143]: plans may use playTwoMoves where the clock says the
+// cheat roll succeeds (see the step loop). CHEAT_COST: the cheat's extra live
+// time (go-cheat.js exec + a round trip, ~0.24s) in AI replies (~1s each),
+// charged in the value at LAMBDA; CHEAT_TICKS: the AI's seed after a cheat is
+// that much later.
+const CHEAT = argv.includes("--cheat");
+const CHEAT_CRIME = num("cheat", 1);
+const CHEAT_SF = argv.includes("--sf143") ? 3 : 0;
+const CHEAT_MAX = num("cheat-max", 6);
+const CHEAT_COST = num("cheat-cost", 0.25);
+const CHEAT_TICKS = num("cheat-ticks", 1);
+const CHEAT_MARGIN = num("cheat-margin", 0.01);
+const PAIRS = num("pairs", 8), PAIRS2 = num("pairs2", 6);
 const komi = model.komiOf(OPP);
 const nbrs = golib.makeGeometry(N);
 const scratch = golib.makeScratch(N);
@@ -168,44 +181,69 @@ async function plan({ L, T0, hist: rootHist = [], passed: rootPassed = false, ro
           ends++;
           const r = scratch.us / Math.max(1, st.t);
           if (!best || r > best.ratio) best = { ratio: r, black: scratch.us, t: st.t, line: [...st.line, "P"] };
-          const v = scratch.us - LAMBDA * st.t;
-          if (!bestV || v > bestV.v) bestV = { v, ratio: r, black: scratch.us, t: st.t, line: [...st.line, "P"] };
+          const v = scratch.us - LAMBDA * (st.t + (st.cost ?? 0));
+          if (!bestV || v > bestV.v) bestV = { v, ratio: r, black: scratch.us, t: st.t, cheats: st.c ?? 0, cost: st.cost ?? 0, line: [...st.line, "P"] };
         }
       }
-      for (const [x, y] of model.validMoves(simple, st.hist)) {
+      // One child: our stone(s), the AI's reply at this step's clock (a cheat
+      // is played ~one engine tick later: its exec), robust if asked.
+      const child = async (stones) => {
         const b2 = b.slice();
-        if (golib.play(b2, nbrs, x * N + y, golib.US, scratch) < 0) continue;
+        for (const i of stones) if (golib.play(b2, nbrs, i, golib.US, scratch) < 0) return;
         const s2 = toStr(b2);
         const hist2 = [st.s, ...st.hist];
+        const cheat = stones.length > 1;
+        const seed0 = rngAt(st.t, s2) + (cheat && T0 !== null ? 200 * CHEAT_TICKS : 0);
         calls++;
-        const r = await model.reply(toSimple(s2), { opponent: OPP, history: hist2, passCount: 0, rng: rngAt(st.t, s2) });
+        const r = await model.reply(toSimple(s2), { opponent: OPP, history: hist2, passCount: 0, rng: seed0 });
         if (ROBUST && T0 !== null) {
           const w = ROBUST + st.t;
-          let same = true;
           for (const d of [-w, -Math.ceil(w / 2), Math.ceil(w / 2), w]) {
             calls++;
-            const q = await model.reply(toSimple(s2), { opponent: OPP, history: hist2, passCount: 0, rng: rngAt(st.t, s2) + 200 * d });
-            if ((q ? `${q.x},${q.y}` : "P") !== (r ? `${r.x},${r.y}` : "P")) { same = false; break; }
+            const q = await model.reply(toSimple(s2), { opponent: OPP, history: hist2, passCount: 0, rng: seed0 + 200 * d });
+            if ((q ? `${q.x},${q.y}` : "P") !== (r ? `${r.x},${r.y}` : "P")) return;
           }
-          if (!same) continue;
         }
         let s3 = s2, hist3 = hist2;
         if (r) {
           const b3 = b2.slice();
           if (golib.play(b3, nbrs, r.x * N + r.y, golib.THEM, scratch) >= 0) { s3 = toStr(b3); hist3 = [s2, ...hist2]; }
         }
-        const key = s3 + (r ? "m" : "p");
-        if (next.has(key)) continue;
+        const c = (st.c ?? 0) + (cheat ? 1 : 0);
+        const key = s3 + (r ? "m" : "p") + c;
+        if (next.has(key)) return;
         const b3 = golib.parseBoard(toSimple(s3));
         golib.scoreBoard(b3, nbrs, N, komi, scratch);
         // Rank: black area minus white's, + a bonus for a position the AI has passed in.
-        const h = scratch.us - scratch.them + (r ? 0 : 2) + (EYEB ? EYEB * safeEmpty(b3, points) : 0);
-        next.set(key, { s: s3, hist: hist3, t: st.t + 1, passed: !r, line: [...st.line, `${x},${y}>${r ? `${r.x},${r.y}` : "P"}`], h });
+        const h = scratch.us - scratch.them + (r ? 0 : 2) + (EYEB ? EYEB * safeEmpty(b3, points) : 0) - (cheat ? LAMBDA * CHEAT_COST : 0);
+        const mv = stones.map((i) => `${(i / N) | 0},${i % N}`).join("+");
+        next.set(key, { s: s3, hist: hist3, t: st.t + 1, c, cost: (st.cost ?? 0) + (cheat ? CHEAT_COST : 0), passed: !r, line: [...st.line, `${mv}>${r ? `${r.x},${r.y}` : "P"}`], h });
+      };
+      const singles = model.validMoves(simple, st.hist).map(([x, y]) => x * N + y);
+      for (const i of singles) await child([i]);
+      // CHEATS (--cheat CRIME): playTwoMoves on a step whose cheat roll — the
+      // WHRNG of the playtime at our play, golib.cheatRoll — is inside this
+      // game's window for the cheat count so far (golib.cheatChance), so it
+      // cannot fail. Pairs among the --pairs best first stones (golib
+      // heuristic) x the --pairs2 best second stones after each.
+      if (CHEAT && T0 !== null && !st.passed) {
+        const c0 = st.c ?? 0;
+        const Tplay = rngAt(st.t, "") - 200 * LAG;
+        if (c0 < CHEAT_MAX && golib.cheatRoll(Tplay) <= golib.cheatChance(c0, CHEAT_CRIME, CHEAT_SF) - CHEAT_MARGIN) {
+          const rank = (bb, list) => list.map((i) => ({ i, h: golib.heuristic(bb, nbrs, i, scratch, golib.US) })).filter((e) => e.h > -1e9).sort((a, z) => z.h - a.h).map((e) => e.i);
+          const firsts = rank(b, singles).slice(0, PAIRS);
+          for (const i1 of firsts) {
+            const b1 = b.slice();
+            if (golib.play(b1, nbrs, i1, golib.US, scratch) < 0) continue;
+            const seconds = rank(b1, singles.filter((j) => j !== i1 && b1[j] === golib.EMPTY)).slice(0, PAIRS2);
+            for (const i2 of seconds) await child([i1, i2]);
+          }
+        }
       }
     }
     beam = [...next.values()].sort((a, z) => z.h - a.h).slice(0, BEAM);
   }
-  const rec = { layout: L.key, p: L.p, ...(ROOTS || root ? { root: true, rootPassed } : {}), T0, tt: TT, lag: LAG, ...(ROBUST ? { robust: ROBUST } : {}), points, ends, best, bestV, lambda: LAMBDA, s: Math.round((Date.now() - t0) / 1000), calls };
+  const rec = { layout: L.key, p: L.p, ...(ROOTS || root ? { root: true, rootPassed } : {}), T0, tt: TT, lag: LAG, ...(ROBUST ? { robust: ROBUST } : {}), ...(CHEAT ? { cheat: { crime: CHEAT_CRIME, sf: CHEAT_SF, roll0: golib.cheatRoll(T0 + 200 * LAG - 200 * LAG) } } : {}), points, ends, best, bestV, lambda: LAMBDA, s: Math.round((Date.now() - t0) / 1000), calls };
   out.push(rec);
   console.log(JSON.stringify(rec));
   return rec;

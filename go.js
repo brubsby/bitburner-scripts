@@ -338,7 +338,22 @@ const SETTINGS = {
   // most and the waits cost more than it: OFF everywhere (Tetrads' +0.7% is
   // inside the noise and rests on the assumed exec cost). The release-2
   // numbers in the header (Illuminati 30% -> 90%) were against a weaker solver.
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, on: { default: false } },
+  // RE-MEASURED 2026-10-06 at the LIVE crime_success 1.5872 (chance by cheat
+  // count 0.95, 0.65, 0.42, 0.25, 0.14, 0.07), Tetrads 5x5, today's live config
+  // (book, clock + retime, adaptive), tools/sim/go-w0.mjs --cheat predicted
+  // --crime 1.5872, paired, losses traced (cheats played only inside the
+  // window, so they never fail; ~2 a game, waits ~0 at a 0.5s cap):
+  //   seed 52 (74 paired):  power/h +24.4% [+15.8, +34.9], 74/74 won both
+  //   seed 53 (100 paired): power/h +20.9% [+9.7, +34.0], 100/100 vs 99/100
+  //   with the full-line pass-forcing book too (seeds 54+55, 182 paired):
+  //     power/h +32.6% [+26.9, +39.5], pts per AI reply 1.74 -> 2.41, 182/182 won both
+  // The gain is tempo: the AI's replies a game fall ~10.9 -> ~8.2. (Release 3's
+  // "off" was at crime_success 1 against a slower config.) SF14.3's +0.25:
+  // seed 52, +20.1% [+9.3, +32.1] — no better than without (more cheats, each
+  // worth less once the board is taken). ON for Tetrads; the rest unmeasured.
+  // A turn the solver answered from the pass-forcing book (reply.oracle) is
+  // never cheated: its line assumes one stone.
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, on: { default: false, Tetrads: true } },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -1611,6 +1626,9 @@ export async function main(ns) {
       const verCount = {}
       // The search's top 3 on the last answer (the per-game log).
       let lastTop = null
+      // The solver answered from the pass-forcing book (reply.oracle: the
+      // clock agreement): its line assumes ONE stone this turn, so no cheat.
+      let lastOracle = false
       /** The request object (seq advanced). `count`: a real question (not a notice). */
       const solverRequest = (board, validList, count = true) => {
         seq++
@@ -1692,6 +1710,7 @@ export async function main(ns) {
               verCount[solverVer] = (verCount[solverVer] ?? 0) + 1
               if (reply.seed) seedLive = reply.seed
               lastTop = Array.isArray(reply.top) ? reply.top : null
+              lastOracle = reply.oracle !== undefined
               // Which backend actually answered: a model request answered by
               // uct (no bundle, no game source, a throw) is counted and named
               // — degraded, never silent (modelHealth).
@@ -1850,7 +1869,7 @@ export async function main(ns) {
         // Not after the AI's pass: the play-on decision (mirror 'search') is
         // priced for ONE stone, and the second-stone request would carry a
         // pass our first stone already wiped.
-        if (cheatOn && cheatFor(opponent) && !oppPassed && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
+        if (cheatOn && cheatFor(opponent) && !oppPassed && !(src !== 'pre' && lastOracle) && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
           const c = await tryCheat(boardStrings, validList, ranked[0])
           if (c.played) {
             moves++

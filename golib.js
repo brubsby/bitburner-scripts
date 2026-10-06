@@ -1799,12 +1799,72 @@ export function oracleCandidates(book, board, { passed = false } = {}) {
   if (!list) return []
   const f = boardSymmetries(N)[t]
   return list
-    .map(([x, y, rx, ry, v]) => {
+    .map(([x, y, rx, ry, v, , x2, y2, rest]) => {
       const [bx, by] = f(x, y)
       const r = rx < 0 ? null : f(rx, ry)
-      return { x: bx, y: by, reply: r ? { x: r[0], y: r[1] } : null, v }
+      // [5]: the safety filter's win share (unused here); [6, 7]: a SECOND
+      // stone — the line plays this step as a playTwoMoves cheat; [8]: the
+      // rest of the line (oracleLineHolds).
+      const s2 = Number.isInteger(x2) && x2 >= 0 ? f(x2, y2) : null
+      const pt = (a, b) => (a < 0 ? null : (([u, w]) => ({ x: u, y: w }))(f(a, b)))
+      const steps = Array.isArray(rest) ? rest.map(([mx, my, sx, sy, qx, qy]) => ({ ...pt(mx, my), second: pt(sx, sy), reply: pt(qx, qy) })) : null
+      return { x: bx, y: by, reply: r ? { x: r[0], y: r[1] } : null, v, ...(s2 ? { second: { x: s2[0], y: s2[1] } } : {}), rest: steps }
     })
     .sort((a, z) => z.v - a.v)
+}
+
+/**
+ * THE FULL-LINE CHECK for a pass-forcing candidate (live 2026-10-06 21:07Z: a
+ * candidate whose NEXT step this game's clock does not give was played — the
+ * candidates come from plans at other clocks — and the game left the line in
+ * a position only good against the reply the line expected; a 0-28.5 wipe).
+ * A candidate is playable only if its WHOLE line, to the AI's pass, is the one
+ * this game's clock produces: the reply to our step j is predicted at seeds
+ * T + 200 x (k + round(j x tt) + d) for every lag k in `lags` (weight >= 0.05)
+ * and every d in -w..+w step w (w = 0 for j = 0, else 1 + j: the timing drift
+ * a few turns out), and must be the line's reply every time. A cheat step
+ * after the first needs `cheat(j, count)` to say its roll will succeed.
+ *   reply(board, { history, passCount: 0, rng }) -> {x, y} | null
+ * Returns { ok, mass (the j = 0 agreement over the lag weights), failAt }.
+ */
+export async function oracleLineHolds(cand, board, history, T, lags, reply, { tt = 5, cheat = null, cheats0 = 0 } = {}) {
+  const N = board.length
+  const steps = [{ x: cand.x, y: cand.y, second: cand.second ?? null, reply: cand.reply }, ...(cand.rest ?? [])]
+  if (!Array.isArray(cand.rest)) return { ok: false, mass: 0, failAt: 'no line' }
+  let b = board, hist = history, mass = 0, cheats = cheats0
+  for (let j = 0; j < steps.length; j++) {
+    const st = steps[j]
+    if (j > 0 && st.second && !(cheat && cheat(j, cheats))) return { ok: false, mass, failAt: j }
+    let after = applyMove(b, st.x, st.y)
+    if (after && st.second) after = after[st.second.x][st.second.y] === '.' ? applyMove(after, st.second.x, st.second.y) : null
+    if (!after) return { ok: false, mass, failAt: j }
+    if (st.second) cheats++
+    const want = st.reply ? `${st.reply.x},${st.reply.y}` : 'P'
+    const h2 = [b.join(''), ...hist]
+    const base = Math.round(j * tt)
+    const w = j === 0 ? 0 : 1 + j
+    let tot = 0, good = 0
+    for (const [k, wt] of lags) {
+      if (wt < 0.05) continue
+      tot += wt
+      let all = true
+      for (const d of w ? [-w, 0, w] : [0]) {
+        const r = await reply(after, { history: h2, passCount: 0, rng: T + 200 * (k + base + d) })
+        if ((r ? `${r.x},${r.y}` : 'P') !== want) { all = false; break }
+      }
+      if (all) good += wt
+    }
+    const agree = tot > 0 ? good / tot : 0
+    if (j === 0) mass = agree
+    if (agree < (j === 0 ? 0 : 0.999)) return { ok: false, mass, failAt: j }
+    if (!st.reply) return { ok: true, mass, failAt: null } // the AI passes: the line is home
+    const nb = parseBoard(after)
+    const ns = makeGeometry(N)
+    play(nb, ns, st.reply.x * N + st.reply.y, THEM, makeScratch(N))
+    hist = [after.join(''), ...h2]
+    b = Array.from({ length: N }, (_, x) => Array.from({ length: N }, (_, y) => '.XO#'[nb[x * N + y]]).join(''))
+  }
+  return { ok: true, mass, failAt: null }
 }
 
 export function applyMove(boardStrings, x, y) {
