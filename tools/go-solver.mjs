@@ -331,6 +331,11 @@ function bookFor(opponent) {
 }
 let bookOpp = null;
 
+// Model-session throws seen (each logged with its stack; see tryModel), and
+// --fault-session K: the first K session requests throw (tests the retry).
+let sessThrows = 0;
+const FAULT = argv.includes("--fault-session") ? { left: Number(argv[argv.indexOf("--fault-session") + 1]) } : null;
+
 let lastAnswers = null;
 let lastAdaptive = null;
 /** Publish the session's pre-sent answers (only when they changed). */
@@ -485,6 +490,7 @@ while (true) {
                 sess = modelSession(N, req.komi ?? 5.5, { reply }, opts);
                 sessKey = key;
               }
+              if (FAULT && FAULT.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-session]");
               const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req") });
               backend = "model";
               extra.mode = "session";
@@ -525,6 +531,19 @@ while (true) {
               return null;
             } catch (err) {
               sess = null;
+              sessThrows++;
+              // DIAGNOSABLE: the stack and the request that threw, on stderr and
+              // in a file (the last 5 kept) — the daemon log alone held only the
+              // message, 7 times, with no way to find the cause.
+              const stack = String(err?.stack ?? err).split("\n").slice(0, 10).join("\n");
+              console.error(`go-solver: seq=${req.seq} model session threw (#${sessThrows}):\n${stack}`);
+              try {
+                const dump = path.join(os.tmpdir(), `go-solver-throw-${sessThrows % 5}.json`);
+                fs.writeFileSync(dump, JSON.stringify({ at: new Date().toISOString(), stack, req, sessKey }, null, 1));
+                console.error(`go-solver: the request is in ${dump}`);
+              } catch {
+                /* the dump is a convenience */
+              }
               return `model session threw: ${String(err).slice(0, 160)}`;
             }
           }
@@ -551,6 +570,17 @@ while (true) {
         };
         if (req.backend === "model") {
           fallback = await tryModel();
+          // THE RETRY: a session that threw is discarded (sess = null) and the
+          // request searched once more on a FRESH session before uct plays it
+          // — the one state a fresh session does not carry is the tree and
+          // calibration kept across moves and games, which the harness (a
+          // session per game) never exercises.
+          if (fallback && fallback.startsWith("model session threw")) {
+            const first = fallback;
+            fallback = await tryModel();
+            extra.retried = first.slice(0, 160);
+            if (!fallback) console.error(`go-solver: seq=${req.seq} the retry on a fresh session answered`);
+          }
           if (fallback) console.error(`go-solver: seq=${req.seq} model -> uct: ${fallback}`);
         } else if (req.backend === "katago") {
           const svc = await katagoService();
