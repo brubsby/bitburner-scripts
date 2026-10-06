@@ -22,7 +22,8 @@
 //   GR6 go-solver end to end: release and top 3 in replies, /go/ponder.txt
 //       published while pondering, a notice taken without a reply, the seed
 //       lag calibrated from the replies the next requests reveal.
-//   GR7 play-on after the AI's pass is per opponent (SETTINGS.mirror).
+//   GR7 play-on after the AI's pass is per opponent (SETTINGS.mirror); so is
+//       the AI's seed clock (SETTINGS.clock: requests carry the playtime T).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -407,6 +408,29 @@ export async function run() {
         const obs = (c.seed?.req?.observed ?? 0) + (c.seed?.pre?.observed ?? 0);
         if (obs < 2) c6.fail(`with T in the requests the seed lag must be observed for both replies, got ${JSON.stringify(c.seed)}`);
         c6.note(`hit on the pre-sent answers: ${!!hit}; reply 3 ${JSON.stringify({ x: c.x, y: c.y, pondered: c.pondered, seed: c.seed })}`);
+        // A RETIME (go.js, the clock on): reply 3 was played at T + 3000; the
+        // solver re-anchors its ponder there, answers nothing, and the next
+        // request's reply is calibrated on the pre path from that T.
+        if (!c.pass) {
+          const preObs = c.seed?.pre?.observed ?? 0;
+          const before4 = pushed.length;
+          files.set("/go/req.txt", JSON.stringify({ seq: 4, retime: true, T: T + 3000, turnS: 1.2, opponent: "Tetrads", size: 5 }));
+          await new Promise((res) => setTimeout(res, 400));
+          c6.examined(1);
+          if (pushed.length !== before4) c6.fail("a retime must NOT be answered", JSON.stringify(pushed.slice(before4)));
+          const after3 = put(c.x, c.y, "X", third);
+          const hist3 = [third.join(""), after2.join(""), next.join(""), after.join(""), board.join("")];
+          const r3 = await model.reply(after3, { opponent: "Tetrads", history: hist3, passCount: 0, rng: T + 3000 + 200 });
+          const fourth = r3 ? put(r3.x, r3.y, "O", after3) : after3;
+          files.set("/go/req.txt", JSON.stringify({ seq: 5, ...base, board: fourth, valid: model.validMoves(fourth, [after3.join(""), ...hist3]), history: [after3.join(""), ...hist3], T: T + 4400, opponentPassed: !r3 }));
+          const e = await wait(() => pushed.find((m) => m.seq === 5));
+          c6.examined(2);
+          if (!e) c6.fail("the request after a retime must be answered", stderr.slice(-300));
+          else {
+            if (e.seed?.retimes !== 1) c6.fail(`the retime must be taken (seed.retimes 1), got ${JSON.stringify(e.seed)}`);
+            if ((e.seed?.pre?.observed ?? 0) !== preObs + 1) c6.fail(`after a retime the AI's reply is calibrated on the PRE path (observed ${preObs} -> ${e.seed?.pre?.observed})`);
+          }
+        }
       }
     } catch (e) {
       c6.fail(String(e?.message ?? e).slice(0, 300));
@@ -424,9 +448,10 @@ export async function run() {
   // passes at once, as release 2 did.
   const c7 = new Check("GR7", "play-on after the AI's pass is per opponent: Tetrads asks the solver (with the power objective), the rest mirror-pass at once");
   {
-    const runPinned = async (opponent) => {
+    const runPinned = async (opponent, { oldSolver = false } = {}) => {
       const files = new Map();
       const reqs = [];
+      const retimes = [];
       const calls = { pass: 0, move: 0 };
       const B = [".....", ".....", ".....", ".....", "....."];
       const stats = {};
@@ -445,8 +470,12 @@ export async function run() {
           files.set(f, mode === "a" ? (files.get(f) ?? "") + data : data);
           if (f === "/go/req.txt") {
             const q = JSON.parse(data);
-            reqs.push(q);
-            files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x: 1, y: 1, backend: "model", mode: "session", release: "r3" }));
+            // A retime is fire-and-forget (the solver answers nothing).
+            if (q.retime) retimes.push({ ...q, afterMoves: calls.move + calls.pass });
+            else {
+              reqs.push(q);
+              files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x: 1, y: 1, backend: "model", mode: "session", release: "r3", ...(oldSolver ? {} : { seed: { retimes: 0 } }) }));
+            }
           }
         },
         sleep: () => new Promise((r) => setTimeout(r, 0)),
@@ -467,10 +496,27 @@ export async function run() {
         },
       };
       await Promise.race([go.main(ns), new Promise((_, rej) => setTimeout(() => rej(new Error("main() did not finish in 30s")), 30000))]);
-      return { reqs, calls, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
+      return { reqs, retimes, calls, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
     };
+    // The playtime, as go.js reads it in game (playtimeReader: the webpack
+    // module cache's ./src/Player.ts). Restored after: other tests may own window.
+    // (Another module may have installed a getter-only window, e.g. jsdom's:
+    // then the hook goes on that window object and comes off after.)
+    const PLAYTIME = 123456000;
+    const hook = { push: ([, , cb]) => cb({ c: { "./src/Player.ts": { exports: { Player: { totalPlaytime: PLAYTIME } } } } }) };
+    const ownWindow = typeof globalThis.window !== "object" || globalThis.window === null;
+    const oldHook = ownWindow ? undefined : globalThis.window.webpackChunkbitburner;
+    if (ownWindow) globalThis.window = { webpackChunkbitburner: hook };
+    else globalThis.window.webpackChunkbitburner = hook;
     try {
       const t = await runPinned("Tetrads");
+      // SETTINGS.clock per opponent: Tetrads requests carry the AI's seed clock.
+      c7.examined(2);
+      if (!t.reqs.length || !t.reqs.every((q) => q.T === PLAYTIME)) c7.fail("Tetrads (SETTINGS.clock on): every request carries the playtime T", JSON.stringify(t.reqs.map((q) => q.T)));
+      if (t.tel?.clock?.ok !== true) c7.fail("Tetrads: /tel/go.txt clock must read ok", JSON.stringify(t.tel?.clock));
+      // ...and every REQUESTED move played is followed by a retime (the play's T).
+      c7.examined(1);
+      if (t.retimes.length !== t.calls.move || !t.retimes.every((q) => q.T === PLAYTIME && q.opponent === "Tetrads" && q.size === 5 && Number.isFinite(q.turnS))) c7.fail(`Tetrads: each requested move played must send a retime with T (moves ${t.calls.move}, retimes ${t.retimes.length})`, JSON.stringify(t.retimes));
       const afterPass = t.reqs.filter((q) => q.opponentPassed === true);
       c7.examined(4);
       if (afterPass.length !== 1) c7.fail(`Tetrads: after the AI's pass the solver must be asked once with opponentPassed (asked ${afterPass.length}x)`, JSON.stringify(t.reqs.map((q) => [q.seq, q.opponentPassed])));
@@ -479,13 +525,28 @@ export async function run() {
       if (!t.reqs.every((q) => q.adaptive?.thr === 0.3 && q.adaptive?.mult === 1)) c7.fail("Tetrads: requests carry the adaptive budget scaled by the streak (streak 0 -> mult 1)", JSON.stringify(t.reqs.map((q) => q.adaptive)));
       if (t.calls.move !== 2 || t.calls.pass !== 0) c7.fail(`Tetrads: the solver's stone must be played (moves ${t.calls.move}, passes ${t.calls.pass})`);
       if (t.tel?.playOn?.games !== 1 || t.tel?.playOn?.stones !== 1) c7.fail("Tetrads: /tel/go.txt playOn must count the game and the stone", JSON.stringify(t.tel?.playOn));
+      // An older solver (no seed.retimes in its replies) gets no retimes: it
+      // would read one as a request it cannot parse and stop pondering.
+      const o = await runPinned("Tetrads", { oldSolver: true });
+      c7.examined(2);
+      if (o.retimes.length) c7.fail("Tetrads against a solver that does not count retimes: no retime may be sent", JSON.stringify(o.retimes));
+      if (!o.reqs.length || !o.reqs.every((q) => q.T === PLAYTIME)) c7.fail("Tetrads against an older solver: requests still carry T");
       const d = await runPinned("TheBlackHand");
       c7.examined(3);
       if (d.reqs.some((q) => q.opponentPassed === true)) c7.fail("The Black Hand (mirror 'always'): no solver request after the AI's pass");
       if (d.calls.pass !== 1) c7.fail(`The Black Hand: the AI's pass must be mirrored at once (passTurn ${d.calls.pass}x)`);
       if (d.reqs.some((q) => q.objective)) c7.fail("The Black Hand: the power objective stays off (power.on false, mirror 'always')");
+      c7.examined(2);
+      const bhClock = go.clockFor("TheBlackHand");
+      if (!bhClock && d.retimes.length) c7.fail("The Black Hand (clock off): no retimes", JSON.stringify(d.retimes));
+      if (!d.reqs.every((q) => (q.T === PLAYTIME) === bhClock)) c7.fail(`The Black Hand: requests carry T exactly when SETTINGS.clock is on for it (${bhClock})`, JSON.stringify(d.reqs.map((q) => q.T)));
+      if ((d.tel?.clock?.ok === true) !== bhClock) c7.fail("The Black Hand: /tel/go.txt clock follows SETTINGS.clock for the opponent being played", JSON.stringify(d.tel?.clock));
     } catch (e) {
       c7.fail(String(e?.stack ?? e).slice(0, 400));
+    } finally {
+      if (ownWindow) delete globalThis.window;
+      else if (oldHook === undefined) delete globalThis.window.webpackChunkbitburner;
+      else globalThis.window.webpackChunkbitburner = oldHook;
     }
   }
   checks.push(c7);

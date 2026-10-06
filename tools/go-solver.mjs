@@ -142,6 +142,10 @@ async function rpc(method, params) {
 let lastSeq = null;
 let solved = 0;
 let notices = 0;
+// Retimes taken (a played request's ponder re-anchored at the play's T), and
+// the budget the last ponder ran under (a retime resumes it).
+let retimes = 0;
+let lastPonderMs = MAXMS;
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(0));
 
 // ---------------------------------------------------------------- KataGo
@@ -292,7 +296,7 @@ function rememberSeedCtx(req, path, x, y) {
   seedCtx = { path, T: req.T, opponent: req.opponent, size: req.size, board: after, history: moved ? [req.board.join(""), ...history] : history, passCount: moved ? 0 : req.opponentPassed ? 2 : 1 };
 }
 
-const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats });
+const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats, retimes });
 const clockFor = (req, path) => (CLOCK && req.T > 0 ? { T: req.T, kw: calib[path].weights(), turnTicks: ((Number.isFinite(req.turnS) ? req.turnS : 1.2) * 1000) / 200, jitter: 5, eps: 0.1 } : undefined);
 
 let lastAnswers = null;
@@ -320,6 +324,7 @@ async function publishAnswers(minWork) {
  * request is waiting.
  */
 async function ponderUntilNext(maxms) {
+  lastPonderMs = maxms;
   const minWork = sessRate ? Math.round(sessRate * maxms) : Infinity;
   if (PRESEND) await publishAnswers(minWork);
   if (!PONDER || !sess?.pondering) return false;
@@ -357,6 +362,22 @@ while (true) {
     const r = await rpc("getFile", { filename: "/go/req.txt", server: "home" });
     if (r.result) {
       const req = JSON.parse(r.result);
+      // A RETIME (go.js, SETTINGS.clock): the requested move we answered was
+      // just played, and `T` is the playtime read in that tick. The ponder's
+      // seed for the AI's reply is re-anchored there (the pre path's lag,
+      // exact) instead of at the request's T plus our search's length; the
+      // seed calibration follows. Then pondering resumes. Measured
+      // (tools/sim/go-w0.mjs --retime): see go.js SETTINGS.clock.
+      if (req.seq !== lastSeq && req.retime) {
+        lastSeq = req.seq;
+        if (CLOCK && req.T > 0 && sess?.pondering && seedCtx?.path === "req" && seedCtx.opponent === req.opponent) {
+          sess.setClock(clockFor(req, "pre"));
+          seedCtx = { ...seedCtx, path: "pre", T: req.T };
+          retimes++;
+        }
+        skipSleep = await ponderUntilNext(lastPonderMs);
+        continue;
+      }
       if (req.seq !== lastSeq && Array.isArray(req.board)) {
         lastSeq = req.seq;
         lastReqAt = Date.now();

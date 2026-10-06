@@ -165,6 +165,13 @@ const PRESEND_MS = 10;
 const SEEDED = argv.includes("--seeded");
 const CLOCK = argv.includes("--clock");
 if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by the clock to predict)");
+// --retime (with --clock): after a REQUESTED move is played, go.js sends the
+// playtime read at the play (as a pre-sent move's notice does) and the solver
+// re-anchors the ponder's clock there (session.setClock): the AI's next reply
+// is then drawn from the exact play-time seed instead of the request's T plus
+// the search's uncertain length.
+const RETIME = argv.includes("--retime");
+if (RETIME && !CLOCK) throw new Error("--retime needs --clock");
 // The rate each ply is charged at: the opponent's measured power/h (goplan).
 const RATE_PH = str("rate", null) === null ? null : num("rate", 0);
 const { POWER_PER_HOUR } = await import("../../goplan.js");
@@ -400,8 +407,10 @@ async function playGame(stats, gameIndex) {
       wall += ourMs - ms0 + ROUND_TRIP_MS;
       rtTotal += ROUND_TRIP_MS;
     }
-    const seedPath = pre ? "pre" : "req";
-    const seedRef = playtimeAt(pre ? wall : tReq);
+    // --retime: a requested move is re-anchored at its play (the pre path's calibrator).
+    const retime = RETIME && !pre && !!sess;
+    const seedPath = pre || retime ? "pre" : "req";
+    const seedRef = playtimeAt(pre || retime ? wall : tReq);
     ourTurns++;
     if (SCAN) return { scan: true, v0 };
     const hasMove = ranked && ranked.length;
@@ -462,6 +471,7 @@ async function playGame(stats, gameIndex) {
       note("B", [ranked[0].x, ranked[0].y]);
       if (sess) sess.commit(ranked[0].x, ranked[0].y);
     }
+    if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 });
     if (state.passCount >= 2) break;
     // What the AI's reply will be computed from, for the seed calibration.
     const seedCtx = SEEDED ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
@@ -587,7 +597,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {

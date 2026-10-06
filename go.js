@@ -283,7 +283,11 @@ import { reporter, describe, record } from 'status.js'
 //   CLOCK-SEEDED AI prediction: predicts the reply exactly when T is read at
 //   the move (pre path: ~100% of informative replies), but no consistent gain
 //   in wins or area across 7 paired arms (Tetrads -1.3..+0.3 black,
-//   Illuminati -0.4..+0.5): off (SETTINGS.clock). Steering isSmart by timing
+//   Illuminati -0.4..+0.5): off (SETTINGS.clock). RE-MEASURED 2026-10-06 on
+//   POWER PER SECOND (4 x 60 paired Tetrads layouts): area unchanged, but the
+//   pre-sent share rises 0.78 -> 0.85 and our search time falls ~30%, so
+//   +5.4%/h — ON per opponent (SETTINGS.clock has the table), with the
+//   RETIME (a requested move re-anchored at its play). Steering isSmart by timing
 //   our move is not worth it for Slum Snakes / The Black Hand: their draw
 //   moves 0.017/s on a 59s sawtooth, so reaching the non-smart window costs
 //   up to ~18s / ~47s of waiting on a ~1.2s turn, against opponents we
@@ -413,9 +417,37 @@ const SETTINGS = {
   // control re-run -0.70, paired), ~72% of moves pre-sent on Tetrads; live it
   // saves the ~40-50ms a pondered answer's round trip takes (release 3c).
   presend: true,
-  // clock: send the playtime (the AI's RNG seed, playtimeReader) with each
-  // request, so the solver draws the AI's next reply from its seeds.
-  clock: false,
+  // clock, PER OPPONENT (goplan keys; default for the rest), like mirror:
+  // send the playtime (the AI's RNG seed, playtimeReader) with each request
+  // and pre-sent notice, so the solver draws the AI's next reply from T + 200k
+  // (golib.clockSeed, k calibrated online by seedCalib) instead of free seeds.
+  // MEASURED 2026-10-06 (tools/sim/go-w0.mjs --seeded [--clock], each
+  // opponent's live config (budget, play-on/objective, pre-send, adaptive),
+  // paired layouts, same-day controls; power/s from black, seconds and the
+  // streak at its plateau, a loss charged its ramp):
+  //   Tetrads      4 x 60 (seeds 11-14)  control 22502/h 237/240 black 20.12 14.01 s
+  //                                      clock   23714/h 239/240 black 20.45 13.83 s   +5.4%  ON
+  //                (paired bootstrap +5.5% [-1.2%, +12.6%]; go-study-report /h)
+  //   Netburners   60   power/s 3.69 -> 4.29 (+16.5%, P(<=0) 0.002) 60/60 both    ON
+  //   The Black Hand 60 power/s 4.38 -> 4.67 (+6.7%, P 0.05)        60/60 both    ON
+  //   Daedalus     60   power/s 7.28 -> 7.50 (+3.0%, P 0.2)          60/60 both    ON
+  //   Illuminati   60   power/s 33.4 -> 31.5 (-5.8%)  60/60 -> 58/60 (one 0-point wipe)  OFF
+  //   Slum Snakes  not measured: off
+  // The mechanism is the same everywhere it pays and consistent across seeds:
+  // the ponder predicts the AI's actual reply (harness: ~85% of the replies
+  // that depend on the seed; Netburners, mostly random, 65% of its replies
+  // depend on it), so the pre-sent share rises (Tetrads 0.78 -> 0.85,
+  // Netburners 0.36 -> 0.63, Black Hand 0.61 -> 0.72) and our search time a
+  // game falls 10-40%; area is unchanged. Illuminati's replies barely depend
+  // on the seed (10%), so there is nothing to gain and the sharper tree cost
+  // two games. (Release 3d had it off on black alone: no consistent gain in
+  // area — it did not price the pre-sent seconds.)
+  // THE RETIME rides with it: after a REQUESTED move go.js sends the playtime
+  // read at the play, and the solver re-anchors the ponder's seed there (the
+  // request's T is ~400ms of search older): replies predicted Tetrads 92% ->
+  // 99%, Netburners 90% -> 98% (go-w0 --retime, 60 paired each, vs clock):
+  // power/s +2.4% / +2.6%, inside the noise but never below it.
+  clock: { default: false, Tetrads: true, Netburners: true, TheBlackHand: true, Daedalus: true, Illuminati: false },
   // THE SOLVER-ABSENCE WAIT. A move the solver does not answer is played by
   // the 20ms local search, which loses games (localLoss: the share of games
   // lost on the fallback, tools/sim/go-w0.mjs --local) — and a loss resets the
@@ -731,6 +763,12 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
     if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) return { answer: { x: a.x, y: a.y }, had: true }
   }
   return { answer: null, had: true }
+}
+
+/** Whether requests against this opponent carry the playtime (SETTINGS.clock). Pure. */
+export function clockFor(opponent) {
+  const on = SETTINGS.clock ?? {}
+  return !!(on[opponent] ?? on.default)
 }
 
 /** Whether cheats are played against this opponent (SETTINGS.cheat.on). Pure. */
@@ -1334,7 +1372,7 @@ export async function main(ns) {
     resumed,
     solverVersion: solverVer,
     seed: seedLive,
-    clock: !SETTINGS.clock ? { ok: false, why: 'off (SETTINGS.clock)' } : clockRead.why ? { ok: false, why: clockRead.why } : { ok: true },
+    clock: !clockFor(opponent) ? { ok: false, why: `off for ${opponent} (SETTINGS.clock)` } : clockRead.why ? { ok: false, why: clockRead.why } : { ok: true },
     playOn,
     solverWaitedMs,
     // Where a turn's wall clock goes (mean ms per move this process): ask =
@@ -1570,7 +1608,7 @@ export async function main(ns) {
             record(errors, new Error(`getMoveHistory: ${describe(e)} — the model search runs without superko history`))
           }
           // T: the playtime the AI's RNG is seeded from (playtimeReader).
-          const T = SETTINGS.clock ? clockRead.now() : null
+          const T = clockFor(opponent) ? clockRead.now() : null
           modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }), ...(T ? { T } : {}), turnS, ...(objective ? { objective } : {}), ...(adaptive ? { adaptive } : {}) }
           if (count) modelAsked++
         } else if (useKatago) {
@@ -1586,6 +1624,20 @@ export async function main(ns) {
           if (count) modelAsked++
         }
         return { seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }
+      }
+      /**
+       * THE RETIME (SETTINGS.clock): a requested move was just played — send
+       * the playtime read NOW, in the tick the AI's getMove starts, so the
+       * solver re-anchors the ponder's seed there (exact, as a pre-sent
+       * move's notice is) instead of at the request's T plus a search of
+       * uncertain length. Fire and forget; the solver keeps pondering.
+       */
+      const retimeSolver = () => {
+        const T = clockRead.now()
+        if (!T) return
+        seq++
+        ns.write('/go/req.txt', JSON.stringify({ seq, retime: true, T, turnS, opponent: gameName(opponent), size }), 'w')
+        if (here !== 'home') ns.scp('/go/req.txt', 'home', here)
       }
       /**
        * The NOTICE (release 3): we played a pre-sent answer with no request;
@@ -1801,6 +1853,10 @@ export async function main(ns) {
         // on while the AI thinks); written while the move is pending, which
         // ns.go allows (see awaitMove).
         if (src === 'pre') notifySolver(boardStrings, validList, stone ? { x: ranked[0].x, y: ranked[0].y } : { pass: true })
+        // Only to a solver that takes retimes (it counts them in `seed`): an
+        // older one would read the retime's seq as a new request it cannot
+        // parse, and stop pondering for the turn.
+        else if (src === 'req' && useModel && clockFor(opponent) && Number.isFinite(seedLive?.retimes)) retimeSolver()
         if (oppPassed && passAhead) {
           if (stone) stonesAfterPass++
           else mirrorPasses++
