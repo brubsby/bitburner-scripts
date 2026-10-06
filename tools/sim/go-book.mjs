@@ -9,7 +9,7 @@
 //   node tools/sim/go-book.mjs --opponent Tetrads --from 0 --to 100 [--shard i/n]
 //        [--work 12000] [--depth 6] [--pmin 0.15] [--pathmin 0.03] [--samples 48]
 //        --out runs/book-Tetrads-<i>.jsonl                               (resumable: done positions skipped)
-//   node tools/sim/go-book.mjs --merge runs/book-Tetrads-*.jsonl --opponent Tetrads  -> tools/goai/book-Tetrads.json
+//   node tools/sim/go-book.mjs --merge runs/book-Tetrads-*.jsonl --opponent Tetrads [--agree-only] [--book-out f]  -> tools/goai/book-Tetrads.json
 //
 // LAYOUTS (--layouts-list): the offline-node layout is dealt from
 // WHRNG(totalPlaytime) (offlineNodes.ts:13) and live playtime is effectively
@@ -59,6 +59,8 @@ if (argv.includes("--layouts-list")) {
 if (argv.includes("--merge")) {
   const opp = str("opponent", null);
   const files = argv.filter((a) => a.endsWith(".jsonl"));
+  const AGREE_ONLY = argv.includes("--agree-only");
+  let ties = 0;
   const entries = {};
   let n = 0, layouts = new Set();
   for (const f of files)
@@ -66,13 +68,22 @@ if (argv.includes("--merge")) {
       if (!l.trim()) continue;
       const e = JSON.parse(l);
       if (e.kind !== "entry" || e.opponent !== opp) continue;
+      // --agree-only: book a position only where the two independent searches
+      // AGREED. A disagreement was decided by one more search, and that
+      // tie-break is the weak link: the 14:44Z live Illuminati loss opened on
+      // a 'tie' entry (searches 1,1 at 0.63 and 2,0 at 0.58; the tie-break
+      // chose 1,3 at 0.27, and the game never recovered).
+      if (AGREE_ONLY && e.conf !== "agree") {
+        ties++;
+        continue;
+      }
       entries[e.key] = [e.x, e.y, e.wr, e.conf === "agree" ? 1 : 0];
       layouts.add(e.layout);
       n++;
     }
-  const out = path.join(REPO, "tools", "goai", `book-${opp}.json`);
-  fs.writeFileSync(out, JSON.stringify({ opponent: opp, size: 5, built: new Date().toISOString(), layouts: layouts.size, entries }) + "\n");
-  console.log(`${Object.keys(entries).length} positions (${n} lines) over ${layouts.size} layouts -> ${out}`);
+  const out = str("book-out", path.join(REPO, "tools", "goai", `book-${opp}.json`));
+  fs.writeFileSync(out, JSON.stringify({ opponent: opp, size: 5, built: new Date().toISOString(), layouts: layouts.size, agreeOnly: AGREE_ONLY, entries }) + "\n");
+  console.log(`${Object.keys(entries).length} positions (${n} lines${AGREE_ONLY ? `, ${ties} tie-broken left out` : ""}) over ${layouts.size} layouts -> ${out}`);
   process.exit(0);
 }
 

@@ -334,7 +334,28 @@ let bookOpp = null;
 // Model-session throws seen (each logged with its stack; see tryModel), and
 // --fault-session K: the first K session requests throw (tests the retry).
 let sessThrows = 0;
+/**
+ * DIAGNOSABLE: the stack and the request that threw, on stderr and in a file
+ * ($TMPDIR/go-solver-throw-<n>.json, the last 5 kept) — the daemon log held
+ * only the message ("Cannot read properties of undefined (reading 'length')",
+ * on the request path 7 times and then on the NOTICE path), with no way to
+ * find the cause. golib annotates a throw inside the AI model with the board
+ * and the history it was given (modelSession callModel).
+ */
+function reportThrow(where, err, req) {
+  sessThrows++;
+  const stack = String(err?.stack ?? err).split("\n").slice(0, 12).join("\n");
+  console.error(`go-solver: ${where} seq=${req?.seq} model session threw (#${sessThrows}):\n${stack}`);
+  try {
+    const dump = path.join(os.tmpdir(), `go-solver-throw-${sessThrows % 5}.json`);
+    fs.writeFileSync(dump, JSON.stringify({ at: new Date().toISOString(), where, stack, req, sessKey }, null, 1));
+    console.error(`go-solver: the request is in ${dump}`);
+  } catch {
+    /* the dump is a convenience */
+  }
+}
 const FAULT = argv.includes("--fault-session") ? { left: Number(argv[argv.indexOf("--fault-session") + 1]) } : null;
+const FAULT_NOTICE = argv.includes("--fault-notice") ? { left: Number(argv[argv.indexOf("--fault-notice") + 1]) } : null;
 
 let lastAnswers = null;
 let lastAdaptive = null;
@@ -449,6 +470,7 @@ while (true) {
               sessKey = key;
             }
             const history = Array.isArray(req.history) ? req.history : [];
+            if (FAULT_NOTICE && FAULT_NOTICE.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-notice]");
             sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
             const pl = req.played;
             bookOpp = req.opponent;
@@ -459,7 +481,25 @@ while (true) {
             skipSleep = await ponderUntilNext(maxms);
           } catch (err) {
             sess = null;
-            console.error(`go-solver: notice seq=${req.seq} failed: ${String(err).slice(0, 160)}`);
+            reportThrow("notice", err, req);
+            // THE RETRY, as on the request path: re-root on a FRESH session
+            // and commit the played move, so the ponder (and the pre-sent
+            // answers) carry on; a second throw leaves the next request to
+            // search fresh.
+            try {
+              const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, {});
+              sessKey = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
+              const history = Array.isArray(req.history) ? req.history : [];
+              sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
+              const pl = req.played;
+              sess.commit(pl.pass ? null : pl.x, pl.pass ? null : pl.y);
+              console.error(`go-solver: notice seq=${req.seq} re-rooted on a fresh session`);
+              skipSleep = await ponderUntilNext(Number.isFinite(req.maxms) ? Math.min(Math.max(req.maxms, 50), 20000) : MAXMS);
+            } catch (err2) {
+              sess = null;
+              reportThrow("notice-retry", err2, req);
+            }
           }
           continue;
         }
@@ -531,19 +571,7 @@ while (true) {
               return null;
             } catch (err) {
               sess = null;
-              sessThrows++;
-              // DIAGNOSABLE: the stack and the request that threw, on stderr and
-              // in a file (the last 5 kept) — the daemon log alone held only the
-              // message, 7 times, with no way to find the cause.
-              const stack = String(err?.stack ?? err).split("\n").slice(0, 10).join("\n");
-              console.error(`go-solver: seq=${req.seq} model session threw (#${sessThrows}):\n${stack}`);
-              try {
-                const dump = path.join(os.tmpdir(), `go-solver-throw-${sessThrows % 5}.json`);
-                fs.writeFileSync(dump, JSON.stringify({ at: new Date().toISOString(), stack, req, sessKey }, null, 1));
-                console.error(`go-solver: the request is in ${dump}`);
-              } catch {
-                /* the dump is a convenience */
-              }
+              reportThrow("request", err, req);
               return `model session threw: ${String(err).slice(0, 160)}`;
             }
           }

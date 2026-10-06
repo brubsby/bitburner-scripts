@@ -1314,6 +1314,19 @@ export function modelSession(N, komi, model, opts = {}) {
     return valueNow(work, node.ply + whiteMoves)
   }
 
+  // The AI model, with its inputs named on a throw (go-solver logs and dumps
+  // it): a live TypeError "reading 'length'" inside the session could not be
+  // reproduced offline, and the board and history decide which it is.
+  const callModel = async (s, history, passCount, rng) => {
+    try {
+      return await model.reply(toSimple(s), { history, passCount, rng })
+    } catch (err) {
+      const bad = history.map((h, i) => (typeof h === 'string' && h.length === N * N ? null : `${i}:${h === undefined ? 'undefined' : typeof h === 'string' ? `len ${h.length}` : typeof h}`)).filter(Boolean)
+      err.message = `${err.message} [model.reply board=${s} passCount=${passCount} rng=${rng} history ${history.length}${bad.length ? ` BAD ${bad.slice(0, 5).join(' ')}` : ' all ok'}]`
+      throw err
+    }
+  }
+
   /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
   const iterate = async (start) => {
     let node = start
@@ -1371,7 +1384,7 @@ export function modelSession(N, komi, model, opts = {}) {
         node.draws++
         modelCalls++
         worked = true
-        const r = await model.reply(toSimple(node.s), { history: historyOf(node), passCount: node.passCount, rng: rngFor(node) })
+        const r = await callModel(node.s, historyOf(node), node.passCount, rngFor(node))
         const key = r ? r.x * N + r.y : PASS
         let e = node.samples.get(key)
         if (!e) {
