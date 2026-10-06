@@ -1671,10 +1671,21 @@ export function modelSession(N, komi, model, opts = {}) {
     get scale() {
       return obj ? obj.diff * obj.winMult * points + obj.lossFuture : 0
     },
-    async ponder(ms) {
+    async ponder(ms, { work = null } = {}) {
       if (!ponderNode) return 0
-      const deadline = Date.now() + ms
       let iters = 0
+      // work: grow by that many model-calling iterations instead of for ms
+      // (the harness's machine-independent clock, go-w0 --work-rate).
+      if (work !== null) {
+        const node = ponderNode
+        const w0 = node.work
+        while (node.work < w0 + work && iters < 50 * work + 100) {
+          await iterate(node)
+          iters++
+        }
+        return iters
+      }
+      const deadline = Date.now() + ms
       while (Date.now() < deadline) {
         await iterate(ponderNode)
         iters++
