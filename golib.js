@@ -1095,7 +1095,8 @@ export function modelSession(N, komi, model, opts = {}) {
   const SAMPLES = Number.isFinite(opts.samples) ? opts.samples : 6
   let rootHistory = []
   let points = 0
-  let seed = (Date.now() ^ 0x5bd1e995) >>> 0
+  // opts.seed: a fixed search stream (the regression corpus replays decisions deterministically).
+  let seed = (Number.isFinite(opts.seed) ? opts.seed || 1 : Date.now() ^ 0x5bd1e995) >>> 0
   const rand = () => {
     seed ^= seed << 13; seed >>>= 0
     seed ^= seed >> 17
@@ -1148,21 +1149,46 @@ export function modelSession(N, komi, model, opts = {}) {
   // Black's candidate actions at a node: stones (not own-eye fills, not
   // self-atari unless capturing — the same gate tryPlay applies) best-first by
   // the static heuristic, then PASS. The root uses the game's own valid list.
+  //
+  // OWN-EYE FILLS ARE THE LAST RESORT, NOT NOTHING. When every other point is
+  // an own eye (or suicide), the fills are offered: one is a free move that
+  // keeps the game going — a KO THREAT. Live 2026-10-06 02:45 Tetrads: white
+  // had just taken a ko (black's recapture barred by superko) and black's only
+  // non-fill points were suicides, so the search saw PASS alone, passed, the
+  // AI passed back and a won game ended 9-14.5 — one eye fill, then the
+  // recapture, would have put white's whole group in atari. (`fill` marks
+  // them: a fill is never played into a line that cannot win, bestOf.)
+  const isFill = (b, i) => {
+    const ns = nbrs[i]
+    if (!ns.length) return false
+    for (let j = 0; j < ns.length; j++) if (b[ns[j]] !== US && b[ns[j]] !== DEAD) return false
+    return true
+  }
   const actions = (b, valid) => {
     const out = []
+    const fills = []
     for (let i = 0; i < N * N; i++) {
       if (b[i] !== EMPTY) continue
       if (valid) {
         const x = (i / N) | 0
         if (!valid[x] || !valid[x][i % N]) continue
       }
-      const ns = nbrs[i]
-      let own = ns.length > 0
-      for (let j = 0; j < ns.length; j++) if (b[ns[j]] !== US && b[ns[j]] !== DEAD) { own = false; break }
-      if (own) continue
+      if (isFill(b, i)) {
+        fills.push(i)
+        continue
+      }
       const h = heuristic(b, nbrs, i, scratch, US)
       if (h <= -1e9) continue
       out.push({ idx: i, h })
+    }
+    // Only while black is BEHIND on the board as it stands: ahead, a pass is
+    // already right (it wins if the AI passes back) and costs no search — a
+    // won game's last turns are all fills, and they stay instant.
+    if (!out.length && fills.length && scoreBoard(b, nbrs, N, komi, scratch) <= 0) {
+      for (const i of fills) {
+        const h = heuristic(b, nbrs, i, scratch, US)
+        if (h > -1e9) out.push({ idx: i, h })
+      }
     }
     out.sort((a, z) => z.h - a.h)
     out.push({ idx: PASS, h: -1e6 })
@@ -1199,6 +1225,12 @@ export function modelSession(N, komi, model, opts = {}) {
       n = n.parent
     }
     return h.concat(rootHistory)
+  }
+
+  // Has board string `s` occurred on the path to `node` or before the root?
+  const repeats = (s, node) => {
+    for (let n = node; n; n = n.parent) if (n.s === s) return true
+    return rootHistory.includes(s)
   }
 
   let rootNode = null
@@ -1273,7 +1305,13 @@ export function modelSession(N, komi, model, opts = {}) {
           const b = node.b.slice()
           let moved = false
           if (idx !== PASS) {
-            if (play(b, nbrs, idx, US, scratch) < 0) continue // suicide after all: drop it
+            const cap = play(b, nbrs, idx, US, scratch)
+            if (cap < 0) continue // suicide after all: drop it
+            // SUPERKO IN THE TREE (the game's rule, evaluateIfMoveIsValid:
+            // no board may repeat): a one-stone capture can be a ko
+            // recapture. Unchecked, the tree believed black could retake a
+            // ko at once and called the 02:45 loss won a move before it.
+            if (cap === 1 && node.parent && repeats(toStr(b), node)) continue
             moved = true
           }
           const w = mkW(b, node, moved ? 0 : node.passCount + 1, moved)
@@ -1386,6 +1424,13 @@ export function modelSession(N, komi, model, opts = {}) {
     // objective already prices a loss at the streak it resets, this makes the
     // floor explicit against a search that has not seen the losing reply.
     if (passNode && passNode.terminal && passNode.tw === 1 && stone && stone.visits && stone.wins / stone.visits < SAFE_CONTINUE) return []
+    // An own-eye fill (offered only when nothing else is, see actions) is
+    // played only into a line that wins more often than passing: as a ko
+    // threat, never to bleed a lost game's eyes away.
+    if (stone && isFill(node.b, bestIdx) && passNode && passNode.visits) {
+      const fillWin = stone.visits ? stone.wins / stone.visits : 0
+      if (!(fillWin > passNode.wins / passNode.visits)) return []
+    }
     if (bestIdx === null) return null
     const ch = node.children.get(bestIdx)
     const r3 = (v) => (v === null ? null : Math.round(v * 1000) / 1000)
