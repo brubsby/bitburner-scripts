@@ -1601,6 +1601,11 @@ export function modelSession(N, komi, model, opts = {}) {
       }
       return iters
     },
+    /** The AI's replies drawn so far under our committed move: [{ b: board string, pc, n }] (the opening book publishes its answers for them). */
+    ponderChildren() {
+      if (!ponderNode) return []
+      return [...ponderNode.samples.values()].filter((e) => !e.child.terminal).map((e) => ({ b: e.child.s, pc: e.child.passCount, n: e.n }))
+    },
     get pondering() {
       return !!ponderNode
     },
@@ -1627,6 +1632,70 @@ export function modelSession(N, komi, model, opts = {}) {
  * Go.ts playTwoMoves), so the caller also keeps the second inside the original
  * valid set.
  */
+// ---------------------------------------------------------------------------
+// THE OPENING BOOK (tools/sim/go-book.mjs builds it, go-solver.mjs serves it).
+// Positions are keyed up to the board's 8 symmetries: T_t(s)[x][y] =
+// s[f_t(x, y)], and the key is the least T_t(s) as one string (column-major,
+// as the game's simple board). An entry stores the move in the KEY's frame;
+// on a board s with T_t(s) = key the move is f_t(x, y).
+// ---------------------------------------------------------------------------
+
+/** The 8 symmetries of an N x N board as maps (x, y) -> [a, b]. */
+export function boardSymmetries(N) {
+  const out = []
+  for (let t = 0; t < 8; t++) {
+    out.push((x, y) => {
+      let a = x, b = y
+      if (t & 1) { const z = a; a = b; b = z }
+      if (t & 2) a = N - 1 - a
+      if (t & 4) b = N - 1 - b
+      return [a, b]
+    })
+  }
+  return out
+}
+
+/** { key, t }: the canonical string of a board (strings, or one joined string) and the symmetry taking it there. */
+export function canonicalBoard(board, N = Array.isArray(board) ? board.length : Math.round(Math.sqrt(board.length))) {
+  const s = Array.isArray(board) ? board.join('') : board
+  const syms = boardSymmetries(N)
+  let key = null, best = 0
+  for (let t = 0; t < 8; t++) {
+    const f = syms[t]
+    let r = ''
+    for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
+      const [a, b] = f(x, y)
+      r += s[a * N + b]
+    }
+    if (key === null || r < key) { key = r; best = t }
+  }
+  return { key, t: best }
+}
+
+/** The key-frame coordinates of the board-frame move (x, y) under symmetry t (the inverse of f_t). */
+export function toKeyFrame(N, t, x, y) {
+  const f = boardSymmetries(N)[t]
+  for (let a = 0; a < N; a++) for (let b = 0; b < N; b++) {
+    const [u, v] = f(a, b)
+    if (u === x && v === y) return [a, b]
+  }
+  return null
+}
+
+/**
+ * The book's move for this board, or null: book = { entries: { key: [x, y, wr, ...] } }.
+ * Returned in the board's own frame; the caller still checks it against the game's valid list.
+ */
+export function bookMove(book, board) {
+  if (!book || !book.entries) return null
+  const N = Array.isArray(board) ? board.length : Math.round(Math.sqrt(board.length))
+  const { key, t } = canonicalBoard(board, N)
+  const e = book.entries[key]
+  if (!e) return null
+  const [x, y] = boardSymmetries(N)[t](e[0], e[1])
+  return { x, y, wr: e[2] ?? null }
+}
+
 export function applyMove(boardStrings, x, y) {
   const N = boardStrings.length
   const b = parseBoard(boardStrings)

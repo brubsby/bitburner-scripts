@@ -68,7 +68,10 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove } from "../golib.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadModel } from "./goai/model.mjs";
 
 const argv = process.argv.slice(2);
@@ -299,6 +302,35 @@ function rememberSeedCtx(req, path, x, y) {
 const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats, retimes });
 const clockFor = (req, path) => (CLOCK && req.T > 0 ? { T: req.T, kw: calib[path].weights(), turnTicks: ((Number.isFinite(req.turnS) ? req.turnS : 1.2) * 1000) / 200, jitter: 5, eps: 0.1 } : undefined);
 
+// THE OPENING BOOK (tools/sim/go-book.mjs; --no-book: off): tools/goai/book-<Opponent>.json,
+// deep offline searches of the first moves, keyed by position up to symmetry
+// (golib.bookMove). A request on a book position is answered at once, and the
+// book's answers to the AI's sampled replies are published with the ponder's
+// pre-sent answers — no live search time. Re-read when the file changes.
+const BOOK_ON = !argv.includes("--no-book");
+const BOOK_DIR = str("book-dir", path.join(path.dirname(fileURLToPath(import.meta.url)), "goai"));
+const books = new Map(); // opponent -> { book, mtime, checked }
+const bookStats = { hits: 0, published: 0 };
+function bookFor(opponent) {
+  if (!BOOK_ON || !opponent) return null;
+  const file = path.join(BOOK_DIR, `book-${String(opponent).replace(/\s+/g, "")}.json`);
+  let b = books.get(opponent);
+  const now = Date.now();
+  if (b && now - b.checked < 60e3) return b.book;
+  try {
+    const mtime = fs.statSync(file).mtimeMs;
+    if (!b || b.mtime !== mtime) {
+      b = { book: JSON.parse(fs.readFileSync(file, "utf8")), mtime, checked: now };
+      console.log(`go-solver: opening book for ${opponent}: ${Object.keys(b.book.entries ?? {}).length} positions (${file})`);
+    } else b.checked = now;
+  } catch {
+    b = { book: null, mtime: null, checked: now };
+  }
+  books.set(opponent, b);
+  return b.book;
+}
+let bookOpp = null;
+
 let lastAnswers = null;
 let lastAdaptive = null;
 /** Publish the session's pre-sent answers (only when they changed). */
@@ -307,6 +339,22 @@ async function publishAnswers(minWork) {
   // A position going badly is never pre-sent: it comes back as a request,
   // where the adaptive budget extends the search.
   if (lastAdaptive) answers = answers.filter((a) => !(typeof a.wr === "number" && a.wr < lastAdaptive.thr));
+  // The book's answers first (go.js plays the first match): every AI reply
+  // drawn so far whose position the book holds.
+  const book = sess && sess.pondering ? bookFor(bookOpp) : null;
+  if (book) {
+    const N = sessKey ? Number(sessKey.split("|")[1]) : 5;
+    const bookAnswers = [];
+    for (const c of sess.ponderChildren()) {
+      if (c.pc !== 0) continue;
+      const bm = bookMove(book, Array.from({ length: N }, (_, x) => c.b.slice(x * N, (x + 1) * N)));
+      if (bm) bookAnswers.push({ b: c.b, pc: 0, x: bm.x, y: bm.y, n: c.n, work: null, v: null, wr: bm.wr, book: true });
+    }
+    if (bookAnswers.length) {
+      const seen = new Set(bookAnswers.map((a) => a.b));
+      answers = [...bookAnswers, ...answers.filter((a) => !(seen.has(a.b) && a.pc === 0))];
+    }
+  }
   const text = JSON.stringify(answers);
   if (text === lastAnswers) return;
   lastAnswers = text;
@@ -398,6 +446,7 @@ while (true) {
             const history = Array.isArray(req.history) ? req.history : [];
             sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
             const pl = req.played;
+            bookOpp = req.opponent;
             sess.commit(pl.pass ? null : pl.x, pl.pass ? null : pl.y);
             rememberSeedCtx(req, "pre", pl.pass ? null : pl.x, pl.pass ? null : pl.y);
             notices++;
@@ -441,6 +490,15 @@ while (true) {
               extra.mode = "session";
               if (!r) {
                 ranked = null; // PASS is all there is
+                return null;
+              }
+              bookOpp = req.opponent;
+              // THE OPENING BOOK: a book position is answered at once.
+              const bm = !opponentPassed ? bookMove(bookFor(req.opponent), req.board) : null;
+              if (bm && (req.valid || []).some(([x, y]) => x === bm.x && y === bm.y)) {
+                ranked = [{ x: bm.x, y: bm.y }];
+                extra.book = true;
+                bookStats.hits++;
                 return null;
               }
               const target = sessRate ? Math.round(sessRate * maxms) : Infinity;

@@ -150,6 +150,8 @@ const LOCAL = argv.includes("--local");
 //                     streak costs ~8 games of multiplier ramp).
 // --adaptive-steps: extend one budget at a time, stopping once the chosen line wins >= THR.
 const ADAPTIVE_STEPS = argv.includes("--adaptive-steps");
+// --book FILE: the opening book (tools/sim/go-book.mjs --merge) played where it has the position.
+const BOOK = str("book", null) ? JSON.parse(fs.readFileSync(str("book", null), "utf8")) : null;
 const EXTEND = (() => {
   const v = str("extend", null);
   if (!v) return null;
@@ -321,7 +323,7 @@ async function playGame(stats, gameIndex) {
   let pendingSeed = null; // { path, Tref, board, history, passCount }
   // The first move's chosen win rate, the lowest seen, and the moves the
   // adaptive budget extended.
-  let v0 = null, minWr = 1, adaptiveMoves = 0, extendMoves = 0;
+  let v0 = null, minWr = 1, adaptiveMoves = 0, extendMoves = 0, bookMoves = 0;
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
   const note = (who, mv, extra) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board), ...(extra ?? {}) });
   const solve = async () => {
@@ -430,14 +432,29 @@ async function playGame(stats, gameIndex) {
       if (a && (a.pass || validGrid(state, N)[a.x]?.[a.y])) pre = a;
     }
     answers = [];
+    // --book: an opening-book position (golib.bookMove) is played like a
+    // pre-sent answer — go-solver publishes the book's answers for the AI's
+    // sampled replies with the ponder's — or, on our first move (nothing
+    // pondered yet), answered at once by the request (a round trip).
+    // (Ahead of the ponder's own answer, as go-solver publishes it first.)
+    let bookHit = false;
+    if (BOOK && sess && !oppPassed) {
+      const bm = golib.bookMove(BOOK, g.simpleBoardFromBoard(state.board));
+      if (bm && validGrid(state, N)[bm.x]?.[bm.y]) {
+        pre = { x: bm.x, y: bm.y, book: true };
+        bookHit = true;
+        bookMoves++;
+      }
+    }
     const tReq = wall;
     let ranked;
     if (pre) {
       // go.js plays at once and NOTIFIES the solver, which re-roots (a reuse)
       // at the move's playtime and commits.
-      wall += PRESEND_MS;
-      rtTotal += PRESEND_MS;
-      preMoves++;
+      const lag = bookHit && ourTurns === 0 ? ROUND_TRIP_MS : PRESEND_MS;
+      wall += lag;
+      rtTotal += lag;
+      if (!bookHit) preMoves++;
       const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
       const rr = sess.setRoot(g.simpleBoardFromBoard(state.board), validGrid(state, N), { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock });
       sStats[rr?.reused ? "reused" : "fresh"]++;
@@ -629,6 +646,7 @@ async function playGame(stats, gameIndex) {
     minWr: +minWr.toFixed(3),
     adaptiveMoves,
     extendMoves,
+    bookMoves,
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
@@ -642,7 +660,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
