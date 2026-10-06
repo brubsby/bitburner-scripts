@@ -684,7 +684,15 @@ export async function main(ns) {
         // and ask for a raise (kind 'liquidate') when only the book covers it.
         equity: stockRec.ok ? stockRec.equity : 0,
         node: node ? { CrimeSuccessRate: node.CrimeSuccessRate, CrimeMoney: node.CrimeMoney, CrimeExpGain: node.CrimeExpGain, GangSoftcap: node.GangSoftcap, GangUniqueAugs: node.GangUniqueAugs } : null,
-        progress: readJson(ns, '/tel/progress.txt'),
+        // A planner record from before this life (an install, a BitNode entry)
+        // is not a claim on this life's work slot. progress.txt carries no
+        // lastAugReset, so its stamp decides. Live BN14.3 entry 2026-10-06
+        // 14:43Z: the BN14.2 record (14:40:57, owner 'bladeburner') idled the
+        // player at $1262 and combat 1 until PROGRESS_FRESH_MS ran out.
+        progress: (() => {
+          const p = readJson(ns, '/tel/progress.txt')
+          return p && Date.parse(p.at) >= info.lastAugReset ? p : null
+        })(),
         // A schedule from another life (or another BitNode) is not a schedule.
         schedule: (() => {
           const s = readJson(ns, '/tel/factionplan.txt')
