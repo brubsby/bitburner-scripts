@@ -52,7 +52,7 @@ export const SOURCES = [
 
 const ENTRY = `
 export { getMove } from "${GAME}/src/Go/boardAnalysis/goAI";
-export { getNewBoardStateFromSimpleBoard, makeMove, passTurn, updateChains } from "${GAME}/src/Go/boardState/boardState";
+export { getNewBoardStateFromSimpleBoard, makeMove, passTurn, updateChains, applyHandicap, getHandicap } from "${GAME}/src/Go/boardState/boardState";
 export { getAllValidMoves, simpleBoardFromBoard, evaluateIfMoveIsValid } from "${GAME}/src/Go/boardAnalysis/boardAnalysis";
 export { opponentDetails } from "${GAME}/src/Go/Constants";
 export { GoColor, GoOpponent, GoValidity, GoPlayType } from "${GAME}/src/Go/Enums";
@@ -244,6 +244,8 @@ export async function build({ quiet = false } = {}) {
 export function stale() {
   if (!fs.existsSync(OUT)) return true;
   const t = fs.statSync(OUT).mtimeMs;
+  // This file's ENTRY (what the bundle exports) is a source too.
+  if (fs.statSync(fileURLToPath(import.meta.url)).mtimeMs > t) return true;
   return SOURCES.some((s) => {
     const p = path.join(GAME, s);
     return fs.existsSync(p) && fs.statSync(p).mtimeMs > t;

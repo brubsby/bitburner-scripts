@@ -90,6 +90,7 @@ const DEPTH = num("depth", 6);
 const PMIN = num("pmin", 0.15);
 const PATHMIN = num("pathmin", 0.03);
 const SAMPLES = num("samples", 48);
+const HANDICAP_SAMPLES = num("handicap-samples", 400);
 const OUT = str("out", null);
 if (!OUT) throw new Error("--out required");
 const [SI, SN] = str("shard", "0/1").split("/").map(Number);
@@ -179,7 +180,25 @@ for (const L of layouts) {
   if (li++ % SN !== SI) continue;
   if (done.has("L:" + L.key)) continue;
   const t0 = Date.now();
-  await expand(toSimple(L.key), [], 0, 1, L.key);
+  // HANDICAP STONES: the game deals Illuminati (and the hidden opponent) white
+  // routers after the obstacles (boardState.ts getHandicap / applyHandicap:
+  // 5x5 one stone, on the centre 20% of the time, else a random expansion
+  // point, by Math.random). Each placement is a start position of its own,
+  // weighted by its frequency over HANDICAP_SAMPLES deals.
+  const starts = new Map();
+  const h = m.getHandicap(N, opp);
+  if (h) {
+    for (let i = 0; i < HANDICAP_SAMPLES; i++) {
+      const st = m.getNewBoardStateFromSimpleBoard(toSimple(L.key), undefined, opp, m.GoColor.white);
+      m.applyHandicap(st.board, h);
+      const k = m.simpleBoardFromBoard(st.board).join("");
+      starts.set(k, (starts.get(k) ?? 0) + 1 / HANDICAP_SAMPLES);
+    }
+  } else starts.set(L.key, 1);
+  for (const [s0, p0] of [...starts.entries()].sort((a, b) => b[1] - a[1])) {
+    if (p0 < PATHMIN) continue;
+    await expand(toSimple(s0), [], 0, p0, L.key);
+  }
   emit({ kind: "layout-done", opponent: OPP, layout: L.key, p: L.p, s: Math.round((Date.now() - t0) / 1000) });
   console.log(`${new Date().toISOString()} layout ${L.key} (p ${L.p}) ${Math.round((Date.now() - t0) / 1000)}s`);
 }
