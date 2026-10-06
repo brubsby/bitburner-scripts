@@ -496,7 +496,7 @@ export async function run() {
         },
       };
       await Promise.race([go.main(ns), new Promise((_, rej) => setTimeout(() => rej(new Error("main() did not finish in 30s")), 30000))]);
-      return { reqs, retimes, calls, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
+      return { reqs, retimes, calls, tel: JSON.parse(files.get("/tel/go.txt") ?? "null"), games: (files.get("/tel/go-games.txt") ?? "").split("\n").filter(Boolean).map((l) => JSON.parse(l)) };
     };
     // The playtime, as go.js reads it in game (playtimeReader: the webpack
     // module cache's ./src/Player.ts). Restored after: other tests may own window.
@@ -531,7 +531,15 @@ export async function run() {
       c7.examined(2);
       if (o.retimes.length) c7.fail("Tetrads against a solver that does not count retimes: no retime may be sent", JSON.stringify(o.retimes));
       if (!o.reqs.length || !o.reqs.every((q) => q.T === PLAYTIME)) c7.fail("Tetrads against an older solver: requests still carry T");
+      // THE REPLAY SEED in the per-game log: every move played carries the
+      // playtime T of its tick (the AI's reply is seeded T + 200k), whatever
+      // SETTINGS.clock says — the lost-game corpus (go-fixture.mjs) needs it.
+      c7.examined(1);
+      const logged = t.games.flatMap((g) => g.moves);
+      if (!logged.length || !logged.every((m) => m.T === PLAYTIME)) c7.fail("Tetrads: every move in /tel/go-games.txt must carry the playtime T it was played at", JSON.stringify(logged.map((m) => [m.m, m.T])));
       const d = await runPinned("TheBlackHand");
+      c7.examined(1);
+      if (!d.games.flatMap((g) => g.moves).every((m) => m.T === PLAYTIME)) c7.fail("The Black Hand (clock off for requests or not): logged moves still carry T", JSON.stringify(d.games.flatMap((g) => g.moves)));
       c7.examined(3);
       if (d.reqs.some((q) => q.opponentPassed === true)) c7.fail("The Black Hand (mirror 'always'): no solver request after the AI's pass");
       if (d.calls.pass !== 1) c7.fail(`The Black Hand: the AI's pass must be mirrored at once (passTurn ${d.calls.pass}x)`);

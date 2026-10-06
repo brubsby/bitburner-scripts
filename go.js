@@ -1759,7 +1759,7 @@ export async function main(ns) {
         cheatsPlayed++
         cheat.waitedMs += st.waitedMs ?? 0
         pendingVerify = [[first.x, first.y], [second[0].x, second[0].y]]
-        return { played: true, reply: st.reply }
+        return { played: true, reply: st.reply, second: `${second[0].x},${second[0].y}`, T: st.calib?.T ?? null }
       }
 
       // THE PER-GAME LOG (SETTINGS.gameLog): every turn — our move, where it
@@ -1838,7 +1838,7 @@ export async function main(ns) {
           const c = await tryCheat(boardStrings, validList, ranked[0])
           if (c.played) {
             moves++
-            moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+`, s: 'cheat', a: askMs, r: c.reply ?? 'G' })
+            moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.reply ?? 'G', ...(c.T ? { T: c.T } : {}) })
             oppPassed = c.reply === 'pass'
             if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)
@@ -1848,6 +1848,11 @@ export async function main(ns) {
 
         const play0 = Date.now()
         const stone = !!(ranked && ranked.length)
+        // THE AI'S SEED, for the per-game log: the playtime in the tick the
+        // move is played. The AI's reply is seeded with T + 200k, k a few
+        // engine ticks (golib.clockSeed) — what makes the game replayable
+        // against the AI's own code (tools/sim/go-fixture.mjs). Free in RAM.
+        const Tplay = clockRead.now()
         const pending = stone ? ns.go.makeMove(ranked[0].x, ranked[0].y) : ns.go.passTurn()
         // The solver learns of a pre-sent move here (it re-roots and ponders
         // on while the AI thinks); written while the move is pending, which
@@ -1869,7 +1874,7 @@ export async function main(ns) {
         const res = played.value
         const playMs = Date.now() - play0
         if (stone) moves++
-        moveLog.push({ m: stone ? `${ranked[0].x},${ranked[0].y}` : 'P', s: src, a: askMs, p: playMs, r: !res || res.type === 'gameOver' ? 'G' : res.type === 'pass' ? 'P' : `${res.x},${res.y}`, ...(lastTop ? { t: lastTop } : {}) })
+        moveLog.push({ m: stone ? `${ranked[0].x},${ranked[0].y}` : 'P', s: src, a: askMs, p: playMs, r: !res || res.type === 'gameOver' ? 'G' : res.type === 'pass' ? 'P' : `${res.x},${res.y}`, ...(Tplay ? { T: Tplay } : {}), ...(lastTop ? { t: lastTop } : {}) })
         gameErrors = 0
 
         if (!res || res.type === 'gameOver') done = true

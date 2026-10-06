@@ -87,7 +87,11 @@ const SIZE = num("size", 19);
 const VERBOSE = argv.includes("--verbose");
 // --trace: every game record carries its move list and the board after each
 // ply (simple-board strings), for loss analysis.
-const TRACE = argv.includes("--trace");
+const TRACE = argv.includes("--trace") || argv.includes("--trace-losses");
+// --trace-losses: the trace is kept only on LOST games (thousands-of-games runs;
+// tools/sim/go-fixture.mjs --harness turns each into a corpus case). Trace
+// entries carry T (the modelled playtime at our play) and the AI's exact seed.
+const TRACE_LOSSES = argv.includes("--trace-losses");
 // Solver options passed straight through to chooseMoveUCT (golib.js).
 const OPTS = JSON.parse(str("opts", "{}"));
 // --model: search with golib.chooseMoveModel against the game's own AI policy
@@ -144,6 +148,8 @@ const LOCAL = argv.includes("--local");
 //                     (the search's top[0] winRate) is below THR, search on for
 //                     (MULT-1) x the budget more (the hard layouts: a broken
 //                     streak costs ~8 games of multiplier ramp).
+// --adaptive-steps: extend one budget at a time, stopping once the chosen line wins >= THR.
+const ADAPTIVE_STEPS = argv.includes("--adaptive-steps");
 const ADAPTIVE = (() => {
   const v = str("adaptive", null);
   if (!v) return null;
@@ -163,6 +169,12 @@ const MIRROR = str("mirror", "always");
 const PRESEND = argv.includes("--presend");
 const PRESEND_MS = 10;
 const SEEDED = argv.includes("--seeded");
+// --cpu-scale F: every session search and ponder runs F x its live duration,
+// and the live clock is charged the time / F — a faster host (bubtop's
+// 12700K does ~1.8x the model-calling iterations per ms of this laptop's
+// 8565U, the live solver's machine) plays at the live search STRENGTH.
+// Calibrate F = (work/ms here, live box) / (work/ms on the host under its load).
+const CPU_SCALE = num("cpu-scale", 1);
 const CLOCK = argv.includes("--clock");
 if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by the clock to predict)");
 // --retime (with --clock): after a REQUESTED move is played, go.js sends the
@@ -305,7 +317,7 @@ async function playGame(stats, gameIndex) {
   // adaptive budget extended.
   let v0 = null, minWr = 1, adaptiveMoves = 0;
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
-  const note = (who, mv) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board) });
+  const note = (who, mv, extra) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board), ...(extra ?? {}) });
   const solve = async () => {
     const simple = g.simpleBoardFromBoard(state.board);
     const valid = validGrid(state, N);
@@ -351,7 +363,7 @@ async function playGame(stats, gameIndex) {
           sStats.rootVisits += r.visits;
           sStats.rootWork = (sStats.rootWork ?? 0) + r.work;
           // The early stop counts WORK (model calls), not visits: see golib iterate.
-          const its = await sess.search({ maxms: budget, untilWork: r.reused && SESSION !== "deep" ? target : Infinity });
+          const its = await sess.search({ maxms: budget * CPU_SCALE, untilWork: r.reused && SESSION !== "deep" ? target : Infinity });
           if (!r.reused) sessRate = sessRate ? 0.8 * sessRate + 0.2 * (sess.rootWork / budget) : sess.rootWork / budget;
           else if (its <= 1) sStats.early++;
           let b = sess.best();
@@ -361,8 +373,19 @@ async function playGame(stats, gameIndex) {
             minWr = Math.min(minWr, wr);
           }
           if (ADAPTIVE && b && b.length && typeof wr === "number" && wr < ADAPTIVE.thr) {
-            await sess.search({ maxms: (ADAPTIVE.mult - 1) * budget });
-            b = sess.best();
+            if (ADAPTIVE_STEPS) {
+              // PROGRESSIVE: one budget at a time while the chosen line still
+              // wins under thr, up to mult budgets in all.
+              let w2 = wr;
+              for (let k = 1; k < ADAPTIVE.mult && b && b.length && w2 < ADAPTIVE.thr; k++) {
+                await sess.search({ maxms: budget * CPU_SCALE });
+                b = sess.best();
+                w2 = b?.[0]?.top?.[0]?.[4] ?? 1;
+              }
+            } else {
+              await sess.search({ maxms: (ADAPTIVE.mult - 1) * budget * CPU_SCALE });
+              b = sess.best();
+            }
             adaptiveMoves++;
           }
           return b;
@@ -373,7 +396,7 @@ async function playGame(stats, gameIndex) {
       ? golib.chooseMove(simple, valid, N, komi, 20, 8)
       : golib.chooseMoveUCT(simple, valid, N, komi, budgetFor(ourTurns), opts);
     modelCalls += ranked?.[0]?.modelCalls ?? 0;
-    ourMs += performance.now() - t0;
+    ourMs += (performance.now() - t0) / CPU_SCALE;
     iters += ranked?.[0]?.iters ?? 0;
     return ranked;
   };
@@ -465,10 +488,10 @@ async function playGame(stats, gameIndex) {
     } else if (!(hasMove && g.makeMove(state, ranked[0].x, ranked[0].y, GoColor.black))) {
       g.passTurn(state, GoColor.black, false);
       ourPasses++;
-      note("B", "pass");
+      note("B", "pass", SEEDED ? { T: playtimeAt(wall) } : undefined);
       if (sess) sess.commit(null);
     } else {
-      note("B", [ranked[0].x, ranked[0].y]);
+      note("B", [ranked[0].x, ranked[0].y], SEEDED ? { T: playtimeAt(wall) } : undefined);
       if (sess) sess.commit(ranked[0].x, ranked[0].y);
     }
     if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 });
@@ -500,11 +523,12 @@ async function playGame(stats, gameIndex) {
     const t1 = performance.now();
     // THE SEED (--seeded): the playtime one waitCycle (200ms + timer slop)
     // after our move, in whole engine cycles.
-    const reply = await g.getMove(state, GoColor.white, OPP, true, SEEDED ? playtimeAt(wall + 200 + 0.5 + Math.random() * 6) : rngSeed());
+    const aiSeed = SEEDED ? playtimeAt(wall + 200 + 0.5 + Math.random() * 6) : rngSeed();
+    const reply = await g.getMove(state, GoColor.white, OPP, true, aiSeed);
     oppMs += performance.now() - t1;
     if (sess && (SESSION === "ponder" || SESSION === "deep") && sess.pondering) {
       const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
-      sStats.ponderIters += await sess.ponder(liveMs);
+      sStats.ponderIters += await sess.ponder(liveMs * CPU_SCALE);
       if (PRESEND) answers = sess.ponderAnswers({ minWork: sessRate ? Math.round(sessRate * budgetFor(ourTurns)) : Infinity, max: 4 });
       // ADAPTIVE: a position the search thinks is going badly is never
       // pre-sent — it goes through a request, where the budget is extended.
@@ -547,9 +571,9 @@ async function playGame(stats, gameIndex) {
     oppPassed = reply.type !== "move";
     if (reply.type === "move") {
       g.makeMove(state, reply.x, reply.y, GoColor.white);
-      note("W", [reply.x, reply.y]);
+      note("W", [reply.x, reply.y], { seed: aiSeed });
     } else {
-      note("W", "pass");
+      note("W", "pass", { seed: aiSeed });
       g.passTurn(state, GoColor.white, false);
       const s = g.getScore(state);
       // --mirror search: the search decides (PASS ends the game; a stone
@@ -597,7 +621,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
@@ -645,6 +669,7 @@ for (let i = START; i < GAMES; i++) {
   // go-study-report re-times older records to this constant.
   // A cheat's second search is already in ourMsTotal; add its round trip and exec.
   const liveS = ((r.ourMsTotal ?? r.ourTurns * MAXMS) + (r.rtTotalMs ?? r.ourTurns * ROUND_TRIP_MS) + (r.cheatOk ?? 0) * (ROUND_TRIP_MS + CHEAT_EXEC_MS) + r.oppCycles * 200 + r.oppRows * 10) / 1000 + (r.cheatWaitS ?? 0);
+  if (TRACE_LOSSES && won) delete r.trace;
   emit({ kind: "game", i, ...r, won, streak, power: +power.toFixed(1), liveS: Math.round(liveS), simS: Math.round((Date.now() - w0) / 1000) });
 }
 emit({ kind: "end", ...stats, ...(SEEDED ? { calib: { req: calib.req.stats, pre: calib.pre.stats } } : {}) });
