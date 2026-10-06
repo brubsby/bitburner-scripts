@@ -37,7 +37,8 @@ const argv = process.argv.slice(2);
 const str = (n, d) => (argv.includes(`--${n}`) ? argv[argv.indexOf(`--${n}`) + 1] : d);
 const num = (n, d) => Number(str(n, d));
 const golib = await import(pathToFileURL(path.join(REPO, "golib.js")).href);
-const LAYOUTS_FILE = path.join(REPO, "tools", "goai", "layouts-5.json");
+// --layouts-file: another order of the same list (tools/sim/go-layoutrisk.mjs --order).
+const LAYOUTS_FILE = str("layouts-file", path.join(REPO, "tools", "goai", "layouts-5.json"));
 
 if (argv.includes("--layouts-list")) {
   await import("./env.mjs");
