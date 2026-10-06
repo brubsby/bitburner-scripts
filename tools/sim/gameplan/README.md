@@ -331,6 +331,16 @@ What changed in the model (each in its file's header):
   less an opening of 3.79h, over a leg of 36.89h. The leg uses today's policy and its own farm (8000/h
   effective, GoPower 4, no SF14; observe.mjs `CLEAR_LEGS`). Posterior k 0.891 / 0.970 / 1.05.
   BN14.1's open reads 3.52h, measured against its own gym (the grid's would be the farm's x8).
+- **BN14.2's k** (2026-10-06): first logged as **0.282** — leg 86.78h for a 30.14h node, because
+  `CLEAR_LEGS` had no BN14.2 entry, so the leg priced NO Go farm (the clear ran Tetrads at x8:
+  345k node power, +655% combat at the end) and the 8.90h bb-lite starvation (combat flat at 100,
+  zero exp, 13:35Z-22:29Z; 73a4644) plus 0.68h of crime/faction work while the planner priced the
+  blade route infeasible (4c6e6e7) counted as the route's own slowness. Now: measure.mjs measures
+  `stalls` (idle / offroute), `CLEAR_LEGS['BN14.2']` voids both and prices the farm (16800/h over the
+  20.56h counted, ASSUMED; 11.4k-22.3k/h reads 0.64-0.70), and the reading is **0.690** (rev 1: it
+  REPLACES the 0.282). Un-voided with the farm it would read 1.13. observe.mjs WITHHOLDS a leg longer
+  than its whole node, a post-farm clear with no `CLEAR_LEGS` entry, and a listed void the history
+  does not show (GP9). Posterior k 0.809 / 0.872 / 0.938 (with the 0.282: 0.562 / 0.614 / 0.668).
 - **Fleet axis consistency** (BB_SLEEVES = 5 infiltrators vs the live pick at 5): within 1% on
   BN1-6/11 and 3-4% on BN7/10/14. It is 7% on BN9 and 14% on BN13 (inf5 47.3h vs pick i4s1 40.6h).
   k is defined on inf5, so BN13's Bladeburner leg is priced pessimistically. That route does not win

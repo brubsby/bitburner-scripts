@@ -27,6 +27,19 @@ export const sfLevelIn = (data, n) => (Array.isArray(data) ? data.find((x) => x[
  */
 export const isNewClear = (seg, bn, data) => !seg || seg.bitNode !== bn || sfLevelIn(data, bn) > sfLevelIn(seg.sfOnEntry, bn)
 
+/**
+ * THE ROUTE'S STALLS (gameplan/observe.mjs voids a clear's by CLEAR_LEGS), after the first combat 100:
+ *   idle      no combat level and no combat exp moved between rows (nothing trained, nothing acted —
+ *             BN14.2 5.04h -> 13.95h: bb-lite starved of RAM, 73a4644)
+ *   offroute  the work slot on crime / faction / company work (BN14.2 14.71h -> 15.38h: the planner
+ *             priced the Bladeburner route infeasible and the slot went to the hacking route, 4c6e6e7)
+ * each { kind, at, h }: at = its first hour (idle: the row whose state it holds), h = to the first row
+ * out of it; MIN_STALL_H or longer. Measured on every node; only CLEAR_LEGS decides which count.
+ */
+export const MIN_STALL_H = 0.25
+export const OFFROUTE_WORK = new Set(['CrimeWork', 'FactionWork', 'CompanyWork'])
+const COMBAT = ['strength', 'defense', 'dexterity', 'agility']
+
 const multOf = (level, exp) => {
   if (!(level > 1) || !(exp >= 0)) return null
   const d = 32 * Math.log(exp + 534.6) - 200
@@ -50,7 +63,7 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
     const tp = r.totalPlaytime
     if (typeof bn !== 'number' || typeof tp !== 'number') continue
     if (isNewClear(cur, bn, r.sourceFiles?.data)) {
-      cur = { bitNode: bn, t0: tp, at0: r.at, sfOnEntry: r.sourceFiles?.data ?? [], rows: [], installs: [], retrain: [] }
+      cur = { bitNode: bn, t0: tp, at0: r.at, sfOnEntry: r.sourceFiles?.data ?? [], rows: [], installs: [], retrain: [], stalls: [], openStall: {} }
       segs.push(cur)
       prevP = null
     }
@@ -72,6 +85,20 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
     // the Bladeburner opening (entry -> every combat stat 100, first life) and the Bladeburner faction join (gameplan/observe.mjs)
     if (cur.combat100H === undefined && combatMin >= 100) cur.combat100H = h
     if (cur.bbJoinH === undefined && (r.factions ?? []).includes('Bladeburners')) cur.bbJoinH = h
+    const sig = JSON.stringify(COMBAT.map((c) => [sk[c] ?? null, r.exp?.[c] ?? null]))
+    if (cur.combat100H !== undefined) {
+      const on = { idle: sig === cur.prevSig, offroute: OFFROUTE_WORK.has(r.currentWork?.type) }
+      for (const kind of ['idle', 'offroute']) {
+        const open = cur.openStall[kind]
+        if (on[kind] && !open) cur.openStall[kind] = { kind, at: kind === 'idle' ? cur.prevH : h }
+        else if (!on[kind] && open) {
+          if (h - open.at >= MIN_STALL_H) cur.stalls.push({ kind, at: open.at, h: h - open.at })
+          delete cur.openStall[kind]
+        }
+      }
+    }
+    cur.prevSig = sig
+    cur.prevH = h
     cur.rows.push({ h, level: r.skills?.hacking ?? null, exp: typeof exp === 'number' ? exp : null, mult: multOf(r.skills?.hacking, exp), augs: (r.augmentations ?? []).length })
     // the multiplier each life after an install runs at (the first row of the life that reads one): gameplan/observe.mjs inProgressG
     const mNow = cur.rows[cur.rows.length - 1].mult
@@ -121,6 +148,8 @@ export async function nodeSegments(file = path.join(TELEMETRY, 'history.jsonl'))
       installsH: s.installs,
       // per install: { at, h } — h the hours back to combat 100 (null: never reached again)
       retrainH: s.retrain,
+      // { kind, at, h } (MIN_STALL_H): see OFFROUTE_WORK; one still open at the segment's end runs to its last row
+      stalls: [...s.stalls, ...Object.values(s.openStall).map((o) => ({ kind: o.kind, at: o.at, h: T - o.at, open: true })).filter((o) => o.h >= MIN_STALL_H)].sort((a, b) => a.at - b.at),
       multAtInstalls: s.multAtInstalls ?? [],
     }
   })

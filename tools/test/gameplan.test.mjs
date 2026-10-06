@@ -56,7 +56,9 @@ import { obsRecord } from '../../gameplan-obs.js'
 import { w0Obs, rateEstimate, W0_PRIOR } from '../../goplan.js'
 import { goGameStep, w0PerGame, w0PriorMC, goWindow, goWindowIterate, W0_DIFFICULTY, W0_PRIOR_INPUTS, W0_GAME_H } from '../sim/gameplan/go.mjs'
 import { SF_PARAMS } from '../sim/gameplan/effects.mjs'
-import { readingsFromSegments } from '../sim/gameplan/observe.mjs'
+import os from 'node:os'
+import { readingsFromSegments, CLEAR_LEGS, GO_COMBAT_SINCE, baseIn, OBS_SINCE, HACK_LEVEL } from '../sim/gameplan/observe.mjs'
+import { nodeSegments, TELEMETRY } from '../sim/nodechoice/measure.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const GP = path.join(HERE, '../sim/gameplan')
@@ -253,7 +255,7 @@ function gp5() {
       { bitNode: 7, startedAt: '2026-10-07T00:00:10Z', endedAt: '2026-10-08T12:00:00Z', hours: 30, sfOnEntry: [[6, 1]], maxLevel: 300, bbJoinH: 4, combat100H: 3 },
       { bitNode: 3, startedAt: '2026-10-08T12:00:30Z', endedAt: '2026-10-08T15:00:00Z', hours: 3, sfOnEntry: [[6, 1]], maxLevel: 200, bbJoinH: 2.5, combat100H: 2.2 },
     ]
-    const fns = { gOf: (bn, sf, T) => 2 / T, bbLeg: () => 25, gymDiff: (bn) => (bn === 7 ? 0.5 : 0), earlyOf: () => 0, base: [{ param: 'g', bn: 1, start: '2026-09-27T20:50' }] }
+    const fns = { gOf: (bn, sf, T) => 2 / T, bbLeg: () => 25, gymDiff: (bn) => (bn === 7 ? 0.5 : 0), earlyOf: () => 0, base: [{ param: 'g', bn: 1, start: '2026-09-27T20:50' }], clearLegs: { 'BN7.1': { go: null } } }
     const R = readingsFromSegments(segs, fns)
     const ids = R.map((o) => `${o.param}:${o.clear}${o.inBase ? '(base)' : ''}`).join(' ')
     const want = 'g1:BN1.3(base) g11:BN11.1 open:BN7.1 k:BN7.1 open:BN3.1'
@@ -432,6 +434,138 @@ function gp8() {
   return c
 }
 
+/**
+ * GP9 A k READING IS A MEASUREMENT OF k, NOT OF A MISSING CONDITION (observe.mjs, measure.mjs stalls).
+ * BN14.2's first reading (2026-10-06 14:44Z) logged k 0.282 from a 86.78h leg against a 30.14h node:
+ * the leg priced no Go farm (the clear had x8 Tetrads) and the 8.9h bb-lite starvation and the 0.7h
+ * planner-infeasibility stretch counted as the route's own slowness.
+ *   (1) a leg longer than its whole node is WITHHELD, never logged;
+ *   (2) a clear entered after GO_COMBAT_SINCE with no CLEAR_LEGS entry is withheld;
+ *   (3) measure.mjs finds an idle stretch (no combat level or exp moves) and an off-route one (crime /
+ *       faction work) in a synthetic history, and a CLEAR_LEGS voidStalls entry takes exactly their
+ *       hours off; a listed void the history does not show withholds the reading;
+ *   (4) the committed posterior.json: no k reading's leg exceeds its whole node, and none
+ *       is BN14.2's un-voided first reading;
+ *   (5) live history (WARN when absent): every Bladeburner clear outside the hand prior with an idle
+ *       stall >= 1h has it voided in CLEAR_LEGS (BN14.2's 8.90h stall, un-voided, FAILS here).
+ */
+async function gp9() {
+  const c = new Check('GP9', 'a k reading is k: a leg longer than its node is withheld, a clear with no stated Go farm is withheld, the infrastructure stalls CLEAR_LEGS names are measured and voided')
+  const close = (a, b, tol, what) => {
+    c.examined(1)
+    if (!(Math.abs(a - b) <= tol)) c.fail(`${what}: ${a} vs ${b} (tol ${tol})`)
+  }
+  const fns = (leg, clearLegs) => ({ gOf: () => 0, bbLeg: () => leg, gymDiff: () => 0, earlyOf: () => 0, clearLegs })
+  const seg = { bitNode: 14, startedAt: '2026-10-05T08:32:35Z', endedAt: '2026-10-06T14:41:01Z', hours: 30.14, sfOnEntry: [[14, 1], [6, 1]], maxLevel: 206, bbJoinH: 15.38, combat100H: 4.96, retrainH: [], stalls: [{ kind: 'idle', at: 5.04, h: 8.9 }, { kind: 'offroute', at: 14.71, h: 0.68 }] }
+  const segs = [seg, { bitNode: 14, startedAt: '2026-10-06T14:43:45Z', endedAt: '2026-10-06T15:00:00Z', hours: 0.3, sfOnEntry: [[14, 2]], maxLevel: 7, bbJoinH: null, combat100H: null }]
+  // (1) the first BN14.2 reading's shape: no farm, nothing voided, leg 86.78h > 30.14h
+  {
+    const R = readingsFromSegments(segs, fns(86.78, { 'BN14.2': { go: null } }))
+    c.examined(1)
+    if (R.some((o) => o.param === 'k')) c.fail(`a 86.78h leg against a 30.14h node was logged as k ${R.find((o) => o.param === 'k').value.toFixed(3)}`)
+    if (!R.withheld?.some((w) => /BN14\.2 k: the leg 86\.78h is longer than the whole 30\.14h node/.test(w))) c.fail('the 86.78h leg was not withheld with its reason', JSON.stringify(R.withheld))
+  }
+  // (2) no CLEAR_LEGS entry after the farm's combat channel existed
+  {
+    const R = readingsFromSegments(segs, fns(20, {}))
+    c.examined(1)
+    if (R.some((o) => o.param === 'k') || !R.withheld?.some((w) => /CLEAR_LEGS does not state its farm/.test(w))) c.fail('a post-GO_COMBAT_SINCE clear with no CLEAR_LEGS entry was read (its leg priced with no farm)', JSON.stringify(R.withheld))
+  }
+  // (3a) the voids: the real BN14.2 entry takes both stalls off; without them the reading is the un-voided one
+  {
+    const leg = 15
+    const R = readingsFromSegments(segs, fns(leg, CLEAR_LEGS))
+    const k = R.find((o) => o.param === 'k')
+    const R0 = readingsFromSegments(segs, fns(leg, { 'BN14.2': { ...CLEAR_LEGS['BN14.2'], voidStalls: [] } }))
+    const k0 = R0.find((o) => o.param === 'k')
+    c.examined(1)
+    if (!k) c.fail('CLEAR_LEGS BN14.2 gave no k reading on the BN14.2-shaped segment', JSON.stringify(R.withheld))
+    else {
+      close(k.value, (30.14 - 8.9 - 0.68 - 4.96) / leg, 1e-9, 'BN14.2 k = (hours - idle - offroute - opening) / leg')
+      if (!/voided stall\(s\) idle 5\.04h: 8\.90h, offroute 14\.71h: 0\.68h/.test(k.note)) c.fail(`the voided stalls are not in the note: ${k.note}`)
+      if (!/\|rev 1$/.test(k.key)) c.fail(`the corrected BN14.2 reading must carry its CLEAR_LEGS rev in its key (it replaces the first one): ${k.key}`)
+      if (!(k0 && k0.value > k.value + 0.5)) c.fail(`the un-voided stall must read as a slower route (k ${k0?.value?.toFixed(3)} vs voided ${k.value.toFixed(3)})`)
+    }
+    const Rm = readingsFromSegments([{ ...seg, stalls: [] }, segs[1]], fns(leg, CLEAR_LEGS))
+    c.examined(1)
+    if (Rm.some((o) => o.param === 'k') || !Rm.withheld?.some((w) => /history does not show/.test(w))) c.fail('a CLEAR_LEGS void that matches no measured stall must withhold the reading, not void nothing')
+  }
+  // (3b) measure.mjs finds the stalls in a history
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gp9-'))
+    const f = path.join(dir, 'history.jsonl')
+    const lines = []
+    const t0 = 1e9
+    let ex = 0
+    for (let i = 0; i <= 120; i++) {
+      const h = i * 0.1
+      // gym to 100 by 1h; idle 1.0h -> 4.0h; Bladeburner (exp moving) 4.0 -> 6.0; crime 6.0 -> 7.0; Bladeburner after
+      const lvl = h < 1 ? Math.round(1 + 99 * h) : h < 4 ? 100 : 100 + Math.round((h - 4) * 20)
+      if (!(h >= 1 && h < 4)) ex += 100
+      const work = h < 1 ? { type: 'ClassWork' } : h >= 6 && h < 7 ? { type: 'CrimeWork' } : null
+      const sk = { hacking: 10, strength: lvl, defense: lvl, dexterity: lvl, agility: lvl }
+      lines.push(JSON.stringify({ at: new Date(Date.parse('2026-10-05T00:00:00Z') + h * 3.6e6).toISOString(), bitNode: 14, totalPlaytime: t0 + h * 3.6e6, playtimeSinceLastAug: h * 3.6e6, sourceFiles: { data: [[14, 1]] }, skills: sk, exp: { hacking: 10, strength: ex, defense: ex, dexterity: ex, agility: ex }, currentWork: work, factions: h >= 4.5 ? ['Bladeburners'] : [], augmentations: [] }))
+    }
+    fs.writeFileSync(f, lines.join('\n') + '\n')
+    const [s] = await nodeSegments(f)
+    fs.rmSync(dir, { recursive: true, force: true })
+    const idle = s.stalls.find((x) => x.kind === 'idle')
+    const off = s.stalls.find((x) => x.kind === 'offroute')
+    c.examined(1)
+    if (!idle || Math.abs(idle.at - 1.0) > 0.11 || Math.abs(idle.h - 3.0) > 0.11) c.fail(`measure.mjs idle stall: expected ~1.0h for 3.0h, got ${JSON.stringify(idle)}`)
+    if (!off || Math.abs(off.at - 6.0) > 0.11 || Math.abs(off.h - 1.0) > 0.11) c.fail(`measure.mjs offroute stall: expected ~6.0h for 1.0h, got ${JSON.stringify(off)}`)
+    if (s.stalls.length !== 2) c.fail(`measure.mjs found ${s.stalls.length} stalls, expected 2: ${JSON.stringify(s.stalls)}`)
+    c.note(`synthetic history: ${s.stalls.map((x) => `${x.kind} ${x.at.toFixed(2)}h +${x.h.toFixed(2)}h`).join(', ')}`)
+  }
+  // (4) the committed store
+  {
+    const st = loadStore(POSTERIOR_FILE)
+    const ks = st.observations.filter((o) => o.param === 'k' && !o.inBase && typeof o.note === 'string')
+    const rows = []
+    for (const o of ks) {
+      const hm = /^([\d.]+)h(?: - ([\d.]+)h)?/.exec(o.note)
+      const lm = /leg ([\d.]+)h/.exec(o.note)
+      c.examined(1)
+      if (!hm || !lm) {
+        c.fail(`${o.key}: note not parseable for hours and leg: ${o.note}`)
+        continue
+      }
+      const counted = +hm[1] - (hm[2] ? +hm[2] : 0)
+      rows.push(`${o.clear} k ${o.value.toFixed(3)} (leg ${lm[1]}h / counted ${counted.toFixed(2)}h)`)
+      if (+lm[1] > +hm[1]) c.fail(`${o.key}: leg ${lm[1]}h longer than the whole ${hm[1]}h node — a missing condition logged as k ${o.value.toFixed(3)}`)
+      if (o.clear === 'BN14.2' && !/voided stall/.test(o.note)) c.fail(`${o.key}: BN14.2's reading does not void its stalls (${o.note})`)
+    }
+    c.note(`posterior.json k readings outside the hand prior: ${rows.join('; ') || 'none'}`)
+  }
+  // (5) live history: every un-voided idle stall >= 1h in a Bladeburner clear outside the hand prior
+  {
+    const file = path.join(TELEMETRY, 'history.jsonl')
+    if (!fs.existsSync(file)) c.warn(`no live history at ${file}: the un-voided-stall check could not run`)
+    else {
+      const { MEASURED_RUNS } = await import('../sim/gameplan/economy.mjs')
+      const base = baseIn(MEASURED_RUNS)
+      const all = await nodeSegments(file)
+      const found = []
+      all.forEach((s, i) => {
+        if (i === all.length - 1 || !s.startedAt || s.startedAt < OBS_SINCE || s.maxLevel >= HACK_LEVEL || s.bbJoinH === null) return
+        const lv = new Map(s.sfOnEntry ?? [])
+        const clear = `BN${s.bitNode}.${(lv.get(s.bitNode) ?? 0) + 1}`
+        if (base.some((b) => b.param === 'k' && b.bn === s.bitNode && s.startedAt.startsWith(b.start))) return
+        const voids = CLEAR_LEGS[clear]?.voidStalls ?? []
+        for (const x of s.stalls ?? []) {
+          if (x.kind !== 'idle' || x.h < 1) continue
+          c.examined(1)
+          const ok = voids.some((at) => Math.abs(at - x.at) < 0.1)
+          found.push(`${clear} idle ${x.at.toFixed(2)}h +${x.h.toFixed(2)}h ${ok ? 'voided' : 'NOT VOIDED'}`)
+          if (!ok) c.fail(`${clear}: an idle stall of ${x.h.toFixed(2)}h at ${x.at.toFixed(2)}h (no combat level or exp moved) counts against k — void it in CLEAR_LEGS with the evidence, or show it was the route's own`)
+        }
+      })
+      c.note(`live history, Bladeburner clears outside the hand prior, idle stalls >= 1h: ${found.join('; ') || 'none'}`)
+    }
+  }
+  return c
+}
+
 export async function run() {
-  return [gp1(), gp5(), gp8(), ...child()]
+  return [gp1(), gp5(), gp8(), await gp9(), ...child()]
 }

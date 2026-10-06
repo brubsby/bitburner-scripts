@@ -14,7 +14,17 @@
 //        the bbsim leg the planner prices it with (surrogate, the node's SF6/SF7,
 //        the fleet, and THAT CLEAR's Go farm — CLEAR_LEGS): exactly the k that makes
 //        routes.mjs's blade formula reproduce the clear; key k|BNn.l|completion
-//        time. A k reading is NOT re-derived once logged: it is live / the leg of
+//        time (+ |rev n when CLEAR_LEGS revises the clear's conditions: that reading
+//        REPLACES the one logged under the old conditions — a correction, not a
+//        second reading). WITHHELD, printed with the reason, never logged: a leg
+//        longer than the whole node (the model is missing a
+//        condition the clear ran under — BN14.2's first reading, leg 86.78h for a
+//        30.14h node with no Go farm priced), a clear entered after the farm's
+//        combat channel existed (GO_COMBAT_SINCE) whose CLEAR_LEGS does not state
+//        its farm, and a CLEAR_LEGS void the history does not show.
+//        Voided: CLEAR_LEGS voidInstalls (a bad install's retrain) and voidStalls
+//        (nodechoice/measure.mjs stalls: idle / offroute stretches the model does
+//        not carry). A k reading is NOT re-derived once logged: it is live / the leg of
 //        the policy that clear PLAYED (bbsim plays bbplan's code of the day), so a
 //        new policy prices the future and leaves the past readings alone; observe
 //        prints what today's leg would read beside the logged value (the policy's
@@ -66,10 +76,34 @@ export const BN6_START = '2026-10-01T02:48'
  *          the model's error that 1c484da fixed (the farm's combat effect not regrown after an
  *          install read as a +46.8h exit): VOIDED — their retrain hours (0.95h, 0.68h) come off;
  *          the Go regrowth they also cost is not (it stays in k).
+ *   BN14.2 (2026-10-05 08:32Z -> 2026-10-06 14:41Z, 30.14h, no install). STALLS VOIDED (measure.mjs
+ *          stalls, matched by start hour) — neither is the Bladeburner route being slow, both are
+ *          infrastructure the model does not carry:
+ *          idle 5.04h -> 13.95h (8.90h): every combat stat sat at exactly 100 with zero combat exp
+ *            (history.jsonl 13:35Z -> 22:29Z, currentWork null, no Bladeburners faction): bb-lite's
+ *            actors found no host with 13.6GB (home 32GB held go.js; 73a4644 "Bladeburner idle ~9h, no
+ *            rooted host has 13.6GB free"). The farm was not on Tetrads either: a Tetrads effect moves
+ *            every combat level, and it first moved at 22:29Z (100 -> 130 with no exp).
+ *          offroute 14.71h -> 15.38h (0.68h): the work slot on crime / faction work (history.jsonl
+ *            23:15Z -> 23:50Z; act-history 23:36Z Homicide "crime: exit 207.24h vs 228.46h") because the
+ *            planner priced the blade route at pFeasible 0 (4c6e6e7, fixed ~23:51Z); Bladeburners
+ *            joined 23:55Z.
+ *          GO FARM: Tetrads node power 345473 at the clear (go-dash-history.json 14:42Z; effectAt at
+ *            GoPower 4 x the SF14.1 doubling gives x7.552 = the dash's +655.2% exactly), banked from
+ *            ~13.9h at 22.3k/h (08:55Z -> 14:42Z). perHour = that total over the counted hours
+ *            (30.14 - 9.58 = 20.56h) = 16800/h from the leg's t 0 — ASSUMED (bbsim cannot delay a
+ *            farm). The opening had no farm (openGo null: its gym scale is read against none).
+ *          rev 1: the first reading (k 0.282, logged 2026-10-06 14:44Z) priced no farm and voided
+ *            nothing — leg 86.78h for a 30.14h node; this one replaces it.
  */
 export const CLEAR_LEGS = {
   'BN14.1': { go: { perHour: 8000, power: 0.7, goPower: 4, sf14: 0 }, voidInstalls: [6.78, 15.62], why: 'Tetrads 4.9-6.2k/h early, ~20k/h from release 3: 8000/h effective, ASSUMED; both installs voided (1c484da)' },
+  'BN14.2': { rev: 1, go: { perHour: 16800, power: 0.7, goPower: 4, sf14: 1 }, openGo: null, voidStalls: [5.04, 14.71], why: 'Tetrads 345k at the clear over its 20.56h counted, ASSUMED from t 0; stalls voided: bb-lite starved 8.90h (73a4644), blade priced infeasible 0.68h (4c6e6e7)' },
 }
+/** The Go farm's combat channel was first priced at de23605 (2026-10-03 02:14Z): a clear entered after it states its farm in CLEAR_LEGS. */
+export const GO_COMBAT_SINCE = '2026-10-03T02:14'
+/** The farm a clear's opening (its gym to combat 100) ran under: CLEAR_LEGS openGo when stated, else its go. */
+export const openGoOf = (cl) => (cl && 'openGo' in cl ? cl.openGo : cl?.go ?? null)
 /** The legs every logged Bladeburner clear needs built (surrogate buildSurrogate extraBb): [{ node, l6, l7, go }]. */
 export function clearLegSpecs(segs) {
   const out = []
@@ -78,23 +112,43 @@ export function clearLegSpecs(segs) {
     const sf = new Map(s.sfOnEntry ?? [])
     const lv = (n) => sf.get(n) ?? 0
     const clear = `BN${s.bitNode}.${lv(s.bitNode) + 1}`
-    out.push({ node: s.bitNode, l6: Math.max(1, Math.min(3, lv(6))), l7: Math.min(3, lv(7)), go: CLEAR_LEGS[clear]?.go ?? null })
+    const l6 = Math.max(1, Math.min(3, lv(6)))
+    const l7 = Math.min(3, lv(7))
+    const go = CLEAR_LEGS[clear]?.go ?? null
+    out.push({ node: s.bitNode, l6, l7, go })
+    // the opening's gym scale (gymDiff) under the farm the opening ran with, when that differs
+    const og = openGoOf(CLEAR_LEGS[clear])
+    if (JSON.stringify(og) !== JSON.stringify(go)) out.push({ node: s.bitNode, l6, l7, go: og })
   }
   return out
 }
-/** Hours a clear's voided installs cost (their retrain to combat 100), and the note. */
-export function voidedOf(seg, clear) {
-  const v = CLEAR_LEGS[clear]?.voidInstalls ?? []
+/**
+ * Hours a clear's voided installs (their retrain to combat 100) and voided stalls (measure.mjs stalls,
+ * matched by start hour) cost, and the note. missing: a listed void the history does not show (the
+ * reading is withheld: a void that matches nothing would silently void nothing).
+ */
+export function voidedOf(seg, clear, clearLegs = CLEAR_LEGS) {
+  const cl = clearLegs[clear] ?? {}
   let h = 0
   const used = []
-  for (const at of v) {
+  const stalls = []
+  const missing = []
+  for (const at of cl.voidInstalls ?? []) {
     const r = (seg.retrainH ?? []).find((x) => Math.abs(x.at - at) < 0.05)
     if (r && r.h > 0) {
       h += r.h
       used.push(`${at.toFixed(2)}h: ${r.h.toFixed(2)}h`)
-    }
+    } else missing.push(`install at ${at}h`)
   }
-  return { h, note: used.length ? `voided install(s) ${used.join(', ')}` : '' }
+  for (const at of cl.voidStalls ?? []) {
+    const r = (seg.stalls ?? []).find((x) => Math.abs(x.at - at) < 0.1)
+    if (r && r.h > 0) {
+      h += r.h
+      stalls.push(`${r.kind} ${r.at.toFixed(2)}h: ${r.h.toFixed(2)}h`)
+    } else missing.push(`stall at ${at}h`)
+  }
+  const note = [used.length ? `voided install(s) ${used.join(', ')}` : '', stalls.length ? `voided stall(s) ${stalls.join(', ')}` : ''].filter(Boolean).join('; ')
+  return { h, note, missing }
 }
 
 /** BN4.3's start: its k (0.900) is inside params.BB_PARAMS.k since the 2026-10-05 refresh. */
@@ -111,8 +165,10 @@ export function baseIn(measuredRuns) {
  *   earlyOf(lv, bn)            -> the SFs' first-life saving (mid world)
  * lv(n) is the SF level on entry.
  */
-export function readingsFromSegments(segs, { gOf, bbLeg, gymDiff, earlyOf, base = [] }) {
+export function readingsFromSegments(segs, { gOf, bbLeg, gymDiff, earlyOf, base = [], clearLegs = CLEAR_LEGS }) {
   const out = []
+  // k readings refused: the reason, printed by runObserve; nothing logged
+  out.withheld = []
   segs.forEach((s, i) => {
     if (!s.startedAt || s.startedAt < OBS_SINCE) return
     const completed = i < segs.length - 1
@@ -141,12 +197,28 @@ export function readingsFromSegments(segs, { gOf, bbLeg, gymDiff, earlyOf, base 
       const g = gOf(s.bitNode, s.sfOnEntry, s.hours)
       if (g > 0) out.push({ ...common, param: `g${s.bitNode}`, value: g, sd: OBS_SD.g, at: s.endedAt, source: 'history.jsonl: hacking-route clear, g backed out of its hours', key: `g|${clear}|${s.endedAt}`, inBase: inBase('g'), note: `${s.hours.toFixed(2)}h` })
     } else if (route === 'blade') {
+      const cl = clearLegs[clear]
+      if (!cl && s.startedAt >= GO_COMBAT_SINCE && !inBase('k')) {
+        out.withheld.push(`${clear} k: entered ${s.startedAt.slice(0, 16)}Z, after the Go farm's combat channel (${GO_COMBAT_SINCE}Z), and CLEAR_LEGS does not state its farm — a leg priced with none reads the farm as k`)
+        return
+      }
       const leg = bbLeg(s.bitNode, lv, clear)
       if (leg > 0 && openAdj !== null) {
-        const vo = voidedOf(s, clear)
-        const k = (s.hours - vo.h - openAdj) / leg
-        const cl = CLEAR_LEGS[clear]
-        out.push({ ...common, param: 'k', value: k, sd: OBS_SD.k, at: s.endedAt, source: 'history.jsonl: Bladeburner clear, (hours - voided - opening) / bbsim leg (its own Go farm)', key: `k|${clear}|${s.endedAt}`, inBase: inBase('k'), rederive: true, note: `${s.hours.toFixed(2)}h${vo.h ? ` - ${vo.h.toFixed(2)}h (${vo.note})` : ''}, opening ${openAdj.toFixed(2)}h, leg ${leg.toFixed(2)}h${cl?.go ? ` (Go farm ${cl.go.perHour}/h x${cl.go.goPower * (cl.go.sf14 ? 2 : 1)})` : ' (no Go farm priced)'}` })
+        const vo = voidedOf(s, clear, clearLegs)
+        const counted = s.hours - vo.h
+        const why = vo.missing.length
+          ? `CLEAR_LEGS voids ${vo.missing.join(', ')}, which the history does not show`
+          : // the whole node, not the counted hours: a model leg may run past (hours - voided) by up to the
+            // opening's share (BN14.1: leg 36.89h, 36.02h counted, k 0.874); past the whole node it is no k
+            leg > s.hours
+            ? `the leg ${leg.toFixed(2)}h is longer than the whole ${s.hours.toFixed(2)}h node: the model misses a condition the clear ran under (a Go farm, a stall) — state it in CLEAR_LEGS`
+            : null
+        if (why) {
+          out.withheld.push(`${clear} k: ${why}`)
+          return
+        }
+        const k = (counted - openAdj) / leg
+        out.push({ ...common, param: 'k', value: k, sd: OBS_SD.k, at: s.endedAt, source: 'history.jsonl: Bladeburner clear, (hours - voided - opening) / bbsim leg (its own Go farm)', key: `k|${clear}|${s.endedAt}${cl?.rev ? `|rev ${cl.rev}` : ''}`, inBase: inBase('k'), rederive: true, note: `${s.hours.toFixed(2)}h${vo.h ? ` - ${vo.h.toFixed(2)}h (${vo.note})` : ''}, opening ${openAdj.toFixed(2)}h, leg ${leg.toFixed(2)}h${cl?.go ? ` (Go farm ${cl.go.perHour}/h x${cl.go.goPower * (cl.go.sf14 ? 2 : 1)})` : ' (no Go farm priced)'}` })
       }
     }
   })
@@ -233,7 +305,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
     bbLeg: (bn, lv, clear) => S.bbLegAt(bn, ...l67(lv), sleevesOf(lv, bn), CLEAR_LEGS[clear]?.go ?? null)?.median ?? null,
     // the clear's own gym scale: its node under its own Go farm against BN6 with none (the opening's
     // reference, BN6.1, had none) — not the grid's, whose farm at the SF14 doubling makes every gym short
-    gymDiff: (bn, lv, clear) => (S.bbJoinAt(bn, ...l67(lv), CLEAR_LEGS[clear]?.go ?? null) ?? 0) - (S.bbJoinAt(6, ...l67(lv), null) ?? 0),
+    gymDiff: (bn, lv, clear) => (S.bbJoinAt(bn, ...l67(lv), openGoOf(CLEAR_LEGS[clear])) ?? 0) - (S.bbJoinAt(6, ...l67(lv), null) ?? 0),
     earlyOf: (lv, bn) => earlyOf(lv, bn, sfMid),
     base: baseIn(MEASURED_RUNS),
   })
@@ -275,6 +347,17 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
     const old = st.observations.find((x) => x.key === o.key)
     if (old && Math.abs(old.value / o.value - 1) > 1e-6) policyMoves.push(`${o.clear} k logged ${fmt(old.value)} (${old.note ?? ''}); today's policy's leg would read ${fmt(o.value)} (${o.note})`)
   }
+  // a k read under REVISED conditions (CLEAR_LEGS rev) replaces the clear's reading logged under the old ones
+  const replaced = []
+  for (const o of fromHistory) {
+    if (o.param !== 'k' || !CLEAR_LEGS[o.clear]?.rev) continue
+    const stem = `k|${o.clear}|${o.at}`
+    st.observations = st.observations.filter((x) => {
+      const old = x.param === 'k' && (x.key === stem || x.key.startsWith(`${stem}|rev `)) && x.key !== o.key
+      if (old) replaced.push(`${o.clear} k ${fmt(x.value)} (${x.note ?? ''}) -> ${fmt(o.value)} (${o.key})`)
+      return !old
+    })
+  }
   const m = mergeObs(st, [...fromHistory.map(({ rederive, ...o }) => o), ...inRun, ...files.readings])
   const post = posteriorOf(st, econ, gOpt)
   const after = summarise(post, econ)
@@ -290,6 +373,8 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
     log(`  ${o.inBase ? 'in base ' : 'applied '} ${o0.clear.padEnd(7)} ${o.param.padEnd(5)} ${fmt(o.value).padStart(7)}  sd ${o.sd} (log)  ${o.note ?? ''}`)
   }
   for (const r of policyMoves) log(`  KEPT     ${r}`)
+  for (const r of replaced) log(`  REPLACED ${r}`)
+  for (const r of fromHistory.withheld) log(`  WITHHELD ${r}`)
   for (const o of inRun) log(`  in run   ${String(o.param).padEnd(5)} ${fmt(Number(o.value)).padStart(7)}  sd ${o.sd} (log)  ${o.source}`)
   for (const w of inRunWhy) log(`  in run   ${w}`)
   for (const o of files.readings) log(`  channel  ${String(o.param).padEnd(5)} ${fmt(Number(o.value)).padStart(7)}  sd ${o.sd}  ${o.source ?? ''} ${o.at ?? ''} (${o.from})`)
@@ -299,7 +384,7 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   const ys = econ.runs.map((r) => Math.log(r.g) + econ.gamma * Math.log(econ.amc[r.bn]))
   const hf = hierFit(ys, OBS_SD.g)
   log(`  CROSS-CHECK the hand latent (lo/mid/hi = min / gm / max of ${ys.length} runs as p10/p50/p90): ${tri([econ.gScen.lo, econ.gScen.mid, econ.gScen.hi])}; a hierarchical fit of the same runs (flat mu, tau on a grid, sd ${OBS_SD.g}): ${tri([hf.p10, hf.p50, hf.p90].map(Math.exp))}, tau ${hf.tauMean.toFixed(2)} ${post.G ? `(hand: total ${post.G.s.toFixed(2)}, tau ${Math.sqrt(post.G.tau2).toFixed(2)})` : `(the draws use the ${post.gReg.chosen} covariate model, tau ${post.gReg.joint.beta.tauMean.toFixed(2)}: plan.mjs prints its leave-one-out)`}`)
-  return { ...m, before, after, post, readings: fromHistory, channel: files.readings, inRun, inRunWhy, policyMoves }
+  return { ...m, before, after, post, readings: fromHistory, withheld: fromHistory.withheld, replaced, channel: files.readings, inRun, inRunWhy, policyMoves }
 }
 
 // CLI
