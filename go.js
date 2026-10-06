@@ -447,7 +447,13 @@ const SETTINGS = {
   // request's T is ~400ms of search older): replies predicted Tetrads 92% ->
   // 99%, Netburners 90% -> 98% (go-w0 --retime, 60 paired each, vs clock):
   // power/s +2.4% / +2.6%, inside the noise but never below it.
-  clock: { default: false, Tetrads: true, Netburners: true, TheBlackHand: true, Daedalus: true, Illuminati: false },
+  // ILLUMINATI ON since the EM seed calibration (golib seedCalib, 553aba1):
+  // re-measured 2026-10-06 (bubtop at live search strength, 800ms, play-on +
+  // loss-scale 2, pre-send, paired seeds 701-703), clock+retime vs off:
+  //   1094 paired  7.674 -> 8.203 power/s (+6.9% [+0.9%, +13.1%])
+  //   lost 32 -> 25 (2.9% -> 2.3%), 13.62 -> 13.08 s/game
+  // (the 60-game "-5.8%, 58/60" above was the split-count calibration).
+  clock: { default: false, Tetrads: true, Netburners: true, TheBlackHand: true, Daedalus: true, Illuminati: true },
   // THE SOLVER-ABSENCE WAIT. A move the solver does not answer is played by
   // the 20ms local search, which loses games (localLoss: the share of games
   // lost on the fallback, tools/sim/go-w0.mjs --local) — and a loss resets the

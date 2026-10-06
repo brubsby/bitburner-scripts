@@ -19,8 +19,10 @@ const str = (n, d) => (argv.includes(`--${n}`) ? argv[argv.indexOf(`--${n}`) + 1
 const FIX = str("fixture", path.join(HERE, "..", "test", "fixture-go-losses.json"));
 const WORKS = str("work", "1600,8000").split(",").map(Number);
 const SEEDS = str("seeds", "1").split(",").map(Number);
-const want = argv.find((a) => !a.startsWith("--") && !/^[\d,]+$/.test(a)) ?? "";
-const cases = JSON.parse(fs.readFileSync(FIX, "utf8")).cases.filter((c) => c.id.includes(want));
+const want = argv.find((a, i) => !a.startsWith("--") && !(i > 0 && argv[i - 1].startsWith("--"))) ?? "";
+// --shard i/n: this process takes every n-th matching case from i (parallel runs).
+const [SI, SN] = str("shard", "0/1").split("/").map(Number);
+const cases = JSON.parse(fs.readFileSync(FIX, "utf8")).cases.filter((c) => c.id.includes(want)).filter((_, j) => j % SN === SI);
 for (const fx of cases) {
   console.log(`${fx.id} (${fx.moves.length} plies, live ${fx.live?.black}-${fx.live?.white})`);
   for (let from = 0; from < fx.moves.length; from++) {
