@@ -20,6 +20,8 @@ def games():
         return
 
 
+STALL_S = 300
+stalled = False
 if since is None:
     since = max((g.get('at', '') for g in games()), default='')
 while True:
@@ -33,5 +35,15 @@ while True:
             moves = ' '.join(f"{m.get('m')}/{m.get('r')}" for m in g.get('moves', []))
             print(f"GO LOSS {at} {g.get('opponent')}@{g.get('size')} black {g.get('black')} white {g.get('white')} "
                   f"ver {g.get('ver')} streak {g.get('streakBefore')} resumed {g.get('resumed')} moves: {moves}", flush=True)
+    if newest > since:
+        stalled = False
     since = newest
+    # Silence must mean "no losses", not "no games": say so once when games stop.
+    try:
+        age = time.time() - time.mktime(time.strptime(since[:19], '%Y-%m-%dT%H:%M:%S')) + time.timezone
+    except Exception:
+        age = 0
+    if age > STALL_S and not stalled:
+        print(f"GO STALLED: no game finished since {since}", flush=True)
+        stalled = True
     time.sleep(5)
