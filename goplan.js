@@ -536,15 +536,21 @@ export const MEASURED_BOARD = 5
 // games buy the farm a faster rate for the rest of the life.
 //
 // CHEAT_GAIN: the farm's live power/h with cheats, as a multiple of its rate
-// without, by crime_success — MEASURED (tools/sim/go-w0.mjs --cheat predicted
-// --cheatwait 0.5, Tetrads 5x5, today's live config, paired against the same
-// no-cheat arm; see the commit). Interpolated linearly in ln(crime_success);
-// flat beyond the ends. It is used ONLY as a slope — d ln(gain)/d ln(crime).
+// without, by crime_success. MEASURED 2026-10-06 (tools/sim/go-w0.mjs --cheat
+// predicted --cheatwait 0.5, Tetrads 5x5, the live config, seed 58, 100 games
+// per arm paired against one no-cheat arm, 0 losses in any arm):
+//   second stone 400ms: 1.5872 +8.0%  2.5 +12.6%  4 +10.8%  6.4 +15.5%  10 +16.8%
+//   second stone 100ms (go.js SETTINGS.cheat.secondMs, live): 1.5872 +14.6%  2.5 +17.4%
+// The table is the 100ms curve to 2.5 and the 400ms arms' shape beyond
+// (x1.037 from 2.5 to 10: one fitted segment, the 4.0 dip is inside the noise).
+// [1, 1] is NOT measured at today's config (release 3: ~+1% at crime 1).
+// Interpolated linearly in ln(crime_success), flat beyond the ends; used ONLY
+// as a slope — d ln(gain)/d ln(crime).
 export const CHEAT_GAIN = [
   [1, 1],
-  [1.5872, 1.102],
-  [2.5, 1.181],
-  [4, 1.129],
+  [1.5872, 1.146],
+  [2.5, 1.174],
+  [10, 1.217],
 ]
 
 /** d ln(CHEAT_GAIN)/d ln(crime) at `crime` (0 outside the table or on a falling segment). */
@@ -618,6 +624,15 @@ export function chooseOpponent(o = {}) {
     const optional = OPTIONAL.includes(meta.channel) || name === W0
     // crime_success is priced only through the cheat channel (o.cheat), below.
     const cheatChannel = meta.channel === 'crime_success' && cheatIn !== null
+    // ONLY THE MEASURED BOARD. The cheat channel is a MEASURED 5x5 effect
+    // (CHEAT_GAIN), and the crime_success it pays for is bought fastest and
+    // safest on 5x5 Slum Snakes. Live 2026-10-06 23:34Z it credited every
+    // size and a thin Thompson draw picked SlumSnakes@9 on KataGo: four
+    // straight losses (0-74.5 ...). Other sizes stay unpriced, as before.
+    if (cheatChannel && size !== MEASURED_BOARD) {
+      skipped.push(`${key} (crime_success: the cheat channel is priced on ${MEASURED_BOARD}x${MEASURED_BOARD} only)`)
+      continue
+    }
     if (cheatChannel) {
       const measured = arm ? arm.pph : table[name]
       if (!num(measured) || measured <= 0) {
@@ -689,7 +704,8 @@ export function chooseOpponent(o = {}) {
   // (marginal_f x lifeLeftH x d ln rate: the extra farm power over the life,
   // priced at f's current marginal — an upper bound as f's own E is concave).
   if (cheatIn && cheatCands.length) {
-    const farm = scored.filter((s) => cheatIn.on.includes(s.name)).sort((a, b) => b.marginal - a.marginal)[0] ?? null
+    // The farm: the best cheat-on arm on the board CHEAT_GAIN was measured on.
+    const farm = scored.filter((s) => cheatIn.on.includes(s.name) && s.size === MEASURED_BOARD).sort((a, b) => b.marginal - a.marginal)[0] ?? null
     const eps = cheatElasticity(cheatIn.crime, cheatIn.table ?? CHEAT_GAIN)
     for (const c of cheatCands) {
       const dlnPerPower = c.slope !== null && c.effect ? c.slope / c.effect : 0

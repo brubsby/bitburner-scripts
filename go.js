@@ -365,7 +365,7 @@ const SETTINGS = {
   // 2026-10-06 23:40Z: it credited every Slum Snakes size, Thompson drew the
   // KataGo 9x9 arm and lost four straight (0-74.5 ...) — off until the
   // channel prices only the 5x5 arm / KataGo 7-9 carry their measured rate.
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: false },
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -1023,7 +1023,21 @@ export async function main(ns) {
   /** The pinned opponent's key, or null: --pin with --opponent, else /go/pin.txt on home. */
   const pinOf = () => {
     if (flags.pin) return keyOfGame(flags.opponent)
-    return keyOfGame(String(readHome(PIN_FILE) || '').trim())
+    return keyOfGame(String(readHome(PIN_FILE) || '').trim().replace(/@\d+!?$|!$/, ''))
+  }
+  /**
+   * THE HARD PIN: /go/pin.txt holding `Name@size!` (or `Name!`, size 5) holds
+   * that arm whatever the weights say — the operator's stop-gap. A plain name
+   * is the soft pin above (early weights only). Live 2026-10-06 23:35Z: a soft
+   * pin to Tetrads did not hold against the planner's weights while a bad
+   * arm (SlumSnakes@9) kept losing. Returns { opponent, size } or null.
+   */
+  const hardPinOf = () => {
+    const m = /^([^@!]+?)(?:@(\d+))?!$/.exec(String(readHome(PIN_FILE) || '').trim())
+    if (!m) return null
+    const key = keyOfGame(m[1].trim())
+    const size = m[2] ? Number(m[2]) : 5
+    return key && [5, 7, 9, 13, 19].includes(size) ? { opponent: key, size } : null
   }
   const earlyInputs = () => {
     const rec = (file) => {
@@ -1123,6 +1137,11 @@ export async function main(ns) {
       const wf = weightsFor(gate, reset?.lastAugReset, earlyInputs)
       earlyWhy = wf.source === 'early' ? wf.why : null
       weightsSource = wf.source
+      const hard = hardPinOf()
+      if (hard) {
+        pinned = `${hard.opponent}@${hard.size}!`
+        return { opponent: hard.opponent, size: hard.size, why: `HARD-pinned to ${hard.opponent}@${hard.size} (${PIN_FILE} ends in '!'): no pricing while it stands`, switched: current !== hard.opponent || armSize !== hard.size }
+      }
       // THE PIN holds only while the weights are the early heuristic.
       const pin = pinOf()
       pinned = pin
