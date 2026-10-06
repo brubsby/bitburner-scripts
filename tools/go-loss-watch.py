@@ -2,7 +2,7 @@
 """Emit one line per lost Go game in .telemetry/go-games.txt (polls; the log is
 rewritten when trimmed, so tail -f would miss or repeat lines). Starts after the
 newest game present at launch, or after --since ISO time."""
-import json, sys, time, os
+import calendar, json, sys, time, os
 
 LOG = os.path.join(os.path.dirname(__file__), '..', '.telemetry', 'go-games.txt')
 since = sys.argv[sys.argv.index('--since') + 1] if '--since' in sys.argv else None
@@ -40,7 +40,7 @@ while True:
     since = newest
     # Silence must mean "no losses", not "no games": say so once when games stop.
     try:
-        age = time.time() - time.mktime(time.strptime(since[:19], '%Y-%m-%dT%H:%M:%S')) + time.timezone
+        age = time.time() - calendar.timegm(time.strptime(since[:19], '%Y-%m-%dT%H:%M:%S'))
     except Exception:
         age = 0
     if age > STALL_S and not stalled:
