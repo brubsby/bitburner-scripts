@@ -41,6 +41,9 @@ import { enter, leave } from 'trace.js'
 // Pure (already in this file's closure through actplan.js): wealth, the
 // raise requests act.js serves, and the negative-cash escape.
 import { bootstrapHomeStep, stockRecordFromText, raiseToServe, raiseFileOf, RAISE_REQUESTERS, RAISE_HOLD_MS, RAISE_COOLDOWN_MS, softlockStep, SOFTLOCK_FILE, SOFTLOCK_HOLD_FILE } from 'nodeecon.js'
+// Pure: can the Bladeburner claim be exercised (actplan's lend), and the server that unblocks it.
+import { bladeSlotStallOf, LITE_FILE, BB_FILE, LITE_COORD_GB, LITE_ACTOR_GB } from 'bbliteplan.js'
+import { BB_HOST, cloudCostOf } from 'raiseplace.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -330,6 +333,11 @@ async function homeUpgradeIfBlocked(ns) {
 // a bootstrap decision): when, and when their hold is released. In memory: a
 // restart forgets them, which only makes the next raise possible sooner.
 const raiseState = { servedAt: 0, holdUntil: 0, negAt: 0, softSamples: [] }
+// When this process last started work (ms). The negative-cash escape's work
+// read (the rep snapshot, up to a minute old) must postdate it to stop
+// anything (nodeecon.softlockStep workAt/startedAt).
+const workState = { startedAt: 0 }
+const STARTS_WORK = new Set(['gym', 'crime', 'work', 'company', 'course', 'focus', 'graft'])
 
 /**
  * RAISE REQUESTS (nodeecon.raiseRequestFor): a priced spend outside the
@@ -374,6 +382,8 @@ async function softlockGuard(ns, info, node, cash, stock) {
     cash,
     stock,
     work: rep.data ? rep.data.work ?? null : null,
+    workAt: rep.at ? Date.parse(rep.at) : null,
+    startedAt: workState.startedAt || null,
     queued,
     hackPays: node?.ScriptHackMoneyGain ?? null,
     hold: cash < 0 ? readHomeFile(ns, SOFTLOCK_HOLD_FILE) : '',
@@ -581,6 +591,7 @@ export async function main(ns) {
           // possible waits for the game's invitation check.
           if (o.kind === 'join' && results.some((x) => (x.kind === 'liquidate' || x.kind === 'travel') && x.ok === true)) await ns.sleep(INVITE_WAIT_MS)
           const r = await runActor(ns, o.kind, o.args)
+          if (r.ok === true && STARTS_WORK.has(o.kind)) workState.startedAt = Date.now()
           results.push({ id: o.id, kind: o.kind, args: o.args, why: o.why, ...r })
           if (CHAIN.has(o.kind) && r.ok !== true) chainFailed = `${o.kind}${o.kind === 'liquidate' ? ' ' + (o.args ?? []).join(' ') : ''}: ${String(r.result?.error ?? r.result?.refused ?? r.why ?? 'not ok').slice(0, 160)}`
           if (o.kind === 'buyaug' && r.ok === true) bought++
@@ -656,6 +667,7 @@ export async function main(ns) {
         })
         if (ri?.kind) {
           const r = await runActor(ns, ri.kind, ri.args)
+          if (r.ok === true && STARTS_WORK.has(ri.kind)) workState.startedAt = Date.now()
           reissued = { n: reissued.n + 1, at: Date.now(), batchAt: lastOrdersAt }
           reissue = { at: new Date().toISOString(), kind: ri.kind, args: ri.args, why: ri.why, ok: r.ok === true, n: reissued.n }
         } else if (ri?.skip) reissue = { at: new Date().toISOString(), skipped: ri.skip, n: reissued.n }
@@ -706,6 +718,9 @@ export async function main(ns) {
         // has decided; joined from this node's division record (a BitNode
         // entry deletes the division, an install does not).
         blade: bladeStateFor(ns, info, node, player),
+        // CAN THE BLADEBURNER CLAIM BE EXERCISED (bbliteplan.bladeSlotStallOf)?
+        // A stalled one lends the slot to the money crime (actplan.bladeLend).
+        bladeStall: bladeStallFor(ns, info, node),
       }
       let d = decide(state)
       // A bootstrap raise shares the cooldown and the hold release of every
@@ -716,6 +731,7 @@ export async function main(ns) {
         if (d.kind === 'liquidate') raiseState.servedAt = Date.now()
         const r = await runActor(ns, d.kind, d.args)
         if (d.kind === 'liquidate') raiseState.holdUntil = Date.now() + RAISE_HOLD_MS
+        if (r.ok === true && STARTS_WORK.has(d.kind)) workState.startedAt = Date.now()
         outcome = r
         if (d.kind === 'join') tried[d.args[0]] = Date.now()
         if (r.ok === true) {
@@ -724,13 +740,18 @@ export async function main(ns) {
           else if (d.kind === 'gym') work = { kind: 'gym', stat: d.stat, since: r.result.at }
           else if (d.kind === 'join') work = null
         }
+        // The class past the bar (actplan 0b): stopped, or already gone (stopAction false: nothing ran).
+        if (d.kind === 'stop' && r.ran) work = null
         last = { at: new Date().toISOString(), decision: d, outcome }
         log.push(last)
         while (log.length > 20) log.shift()
       }
       // THE BOOTSTRAP'S SLOT CLAIM (actplan 0b): read by bbslot.slotClaim only while no planner pass is fresh.
       const slot = d.slot ? { owner: d.slot, at: new Date().toISOString(), lastAugReset: info.lastAugReset, why: d.why } : null
-      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', slot, decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, reissue, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
+      // THE LEND, explicit every pass (null when the slot is not lent): read by
+      // bbslot.slotClaim, progress.js and the health checks.
+      const lent = d.lent ? { ...d.lent, at: new Date().toISOString(), lastAugReset: info.lastAugReset } : null
+      publish({ health: softlock.level >= 1 ? 'warn' : 'ok', slot, lent, bladeStall: state.bladeStall, decision: d, work, last, orders: ordersReport, snapshots: snaps, homeUpgrade: homeUp, bootstrapHome: bootHome, backdoor, raise, reissue, softlock, cash, equity: stockRec.ok ? stockRec.equity : null, log: log.slice(-8), tried })
       await nap(d.kind === 'idle' ? 30000 : 5000)
     } catch (err) {
       ns.print(`act error: ${err}`)
@@ -745,6 +766,21 @@ function levelledOf(player, node) {
   if (!player?.mults) return player
   const f = (k, key) => (typeof node?.[key] === 'number' && isFinite(node[key]) && node[key] > 0 ? (player.mults[k] ?? 1) * node[key] : player.mults[k])
   return { ...player, mults: { ...player.mults, strength: f('strength', 'StrengthLevelMultiplier'), defense: f('defense', 'DefenseLevelMultiplier'), dexterity: f('dexterity', 'DexterityLevelMultiplier'), agility: f('agility', 'AgilityLevelMultiplier'), charisma: f('charisma', 'CharismaLevelMultiplier') } }
+}
+
+/**
+ * bbliteplan.bladeSlotStallOf's input, read here: the two daemons' records
+ * (pulled from home, [bitburner-offhome-reads]) and whether bb-host exists
+ * (ns.scan, already billed by rootedHosts — a purchased server hangs off
+ * home). hostCost: the 32GB server liteHostBuyOf buys (raiseplace.cloudCostOf).
+ * null where the division cannot exist.
+ */
+function bladeStallFor(ns, info, node) {
+  if (!canJoinBladeburner(info) || !((node?.BladeburnerRank ?? 0) > 0)) return null
+  fetchFromHome(ns, LITE_FILE)
+  fetchFromHome(ns, BB_FILE)
+  const v = bladeSlotStallOf({ lite: readJson(ns, LITE_FILE), full: readJson(ns, BB_FILE), info, bbHostExists: ns.scan('home').includes(BB_HOST) })
+  return { ...v, hostCost: cloudCostOf(2 ** Math.ceil(Math.log2(LITE_COORD_GB + LITE_ACTOR_GB)), node) }
 }
 
 /**

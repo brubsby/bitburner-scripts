@@ -50,8 +50,24 @@ const parse = (ns, f) => {
  * flush orders without rewriting /tel/progress.txt (the Covenant batch path)
  * leave the older claim standing beside them — so the claim does not hold
  * until a newer progress.txt says it does.
+ *
+ * A LENT CLAIM IS STILL A CLAIM, and says so. When the Bladeburner actor
+ * cannot act (bbliteplan.bladeSlotStallOf) act.js lends the slot to the money
+ * crime (/tel/act.txt `lent`, actplan.bladeLend) without taking the claim:
+ * seed.js buys bb-host only on it and bb-lite must act on it the moment it
+ * can — its startAction ends the crime. The claim carries `lent` and its why
+ * names the lend, so no reader takes the crime for a lost slot.
  */
 export function slotClaim(ns, host, info, now = Date.now()) {
+  const c = claimOf(ns, info, now)
+  if (c.owner !== 'bladeburner') return c
+  const l = parse(ns, ACT)?.lent ?? null
+  const lAt = Date.parse(l?.at ?? '')
+  if (!l || l.owner !== 'bladeburner' || l.lastAugReset !== info.lastAugReset || !Number.isFinite(lAt) || now - lAt > SLOT_FRESH_MS) return { ...c, lent: null }
+  return { ...c, lent: { to: l.to ?? null, at: l.at, why: l.why ?? null }, why: `${c.why}; lent to ${l.to ?? 'nothing'} by act.js while the Bladeburner actor cannot act (${String(l.why ?? '').slice(0, 120)})` }
+}
+
+function claimOf(ns, info, now) {
   const pr = parse(ns, PROGRESS)
   const at = Date.parse(pr?.at ?? '')
   const prWhy = !Number.isFinite(at)

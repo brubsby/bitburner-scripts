@@ -163,7 +163,7 @@ import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRat
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
 import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf } from 'homeplan.js'
-import { leanUntilOf, FULL_TIER, LEAN_PLACE_H } from 'bbliteplan.js'
+import { leanUntilOf, FULL_TIER, LEAN_PLACE_H, bladeSlotStallOf, LITE_FILE, BB_FILE } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -6801,6 +6801,8 @@ async function act(ns, canJoin, info, note) {
   // would read as "no claim" to act.js, which is the permissive direction and
   // must therefore be deliberate rather than accidental.
   let slotOwner = null
+  // The Bladeburner claim's honesty (set where slotOwner becomes 'bladeburner'): {stalled, why, lent}.
+  let bladeSlot = null
   // Not where the gang is structurally worthless: its factions are then ordinary
   // join candidates, not a bootstrap target (gangChannelsDead).
   if (canJoin && canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !gangCancelled && !inGangFaction) {
@@ -7260,7 +7262,21 @@ async function act(ns, canJoin, info, note) {
     workedFaction = null
     slotOwner = 'bladeburner'
     if (joinTargetDue) joinTargetStep()
-    did.push(`work slot: Bladeburner (committed route: ${bladeRoute.bladeH?.toFixed?.(1) ?? '?'}h by the black ops vs ${bladeRoute.hackH?.toFixed?.(1) ?? '?'}h by the World Daemon) — bladeburner.js acts`)
+    // A CLAIM ITS CLAIMANT CANNOT EXERCISE IS NOT A CLAIM: say whether it can
+    // (bbliteplan.bladeSlotStallOf on the daemons' records; bb-host's
+    // existence is act.js's to read), and what act.js lent the slot to.
+    bladeSlot = (() => {
+      try {
+        const st = bladeSlotStallOf({ lite: readJson(ns, LITE_FILE), full: readJson(ns, BB_FILE), info })
+        const a = readJson(ns, '/tel/act.txt')
+        const lAt = Date.parse(a?.lent?.at ?? '')
+        const lent = a?.lent && a.lent.lastAugReset === info.lastAugReset && Number.isFinite(lAt) && Date.now() - lAt <= 15 * 60e3 ? { to: a.lent.to ?? null, at: a.lent.at, why: a.lent.why ?? null } : null
+        return { stalled: st.stalled, why: st.why, lent }
+      } catch (e) {
+        return { stalled: null, why: `the Bladeburner actor's records could not be read: ${String(e).slice(0, 80)}`, lent: null }
+      }
+    })()
+    did.push(`work slot: Bladeburner (committed route: ${bladeRoute.bladeH?.toFixed?.(1) ?? '?'}h by the black ops vs ${bladeRoute.hackH?.toFixed?.(1) ?? '?'}h by the World Daemon) — ${bladeSlot.stalled === false ? 'the Bladeburner actor acts' : `STALLED: ${bladeSlot.why}${bladeSlot.lent ? `; act.js lent it to ${bladeSlot.lent.to ?? 'nothing'} until bb-host exists or bb-lite acts` : '; nothing lent it yet'}`}`.slice(0, 500))
   } else if (graftStep && (graftStep.running || !bladeOn) && canWork && !flags.dry) {
     workedFaction = null
     slotOwner = 'graft'
@@ -9131,7 +9147,7 @@ async function act(ns, canJoin, info, note) {
 
   publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 

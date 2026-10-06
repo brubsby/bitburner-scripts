@@ -557,7 +557,12 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   if (owner === "bladeburner" && ageMin !== null && ageMin < 15) {
     const bb = tel["bladeburner.txt"] ?? readTel("bladeburner.txt");
     const fresh = bb?.at && (Date.now() - Date.parse(bb.at)) / 60000 < 5;
-    if (fresh && !bb?.running?.name) fail("ORDER NOT HELD: progress.js gives the work slot to Bladeburner, but no Bladeburner action is running", `bladeburner.js: ${String(bb?.result ?? "?")} — ${String(bb?.detail ?? "").slice(0, 160)}`);
+    // A slot act.js LENT to the money crime while the actor cannot act is
+    // tools/bbhealth.mjs's BLADEBURNER SLOT STALLED, not an order not held.
+    const act = tel["act.txt"] ?? readTel("act.txt");
+    const lent = act?.lent?.owner === "bladeburner" && act.lent.at && (Date.now() - Date.parse(act.lent.at)) / 60000 < 15;
+    if (lent) note(`work slot: 'bladeburner' claimed, lent by act.js to ${act.lent.to ?? "nothing"} (the actor cannot act — see BLADEBURNER SLOT STALLED)`);
+    else if (fresh && !bb?.running?.name) fail("ORDER NOT HELD: progress.js gives the work slot to Bladeburner, but no Bladeburner action is running", `bladeburner.js: ${String(bb?.result ?? "?")} — ${String(bb?.detail ?? "").slice(0, 160)}`);
   }
   if (want && ageMin !== null && ageMin < 15) {
     if (!want.includes(actual)) {
@@ -574,7 +579,7 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
 // exit taken once the 21st black op is done. Silent outside BN6/7 and SF6/7
 // nodes with no record. The rank comparison uses this run's previous snapshot.
 {
-  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), lite: readTel("bb-lite.txt"), pl: readTel("plan.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), sl: readTel("sleeve.txt"), wd: tel["watchdog.txt"] ?? readTel("watchdog.txt"), state, prev: prev?.bladeburner ?? null });
+  const r = bladeburnerHealth({ bb: readTel("bladeburner.txt"), lite: readTel("bb-lite.txt"), pl: readTel("plan.txt"), pr: tel["progress.txt"], eg: readTel("endgame.txt"), sl: readTel("sleeve.txt"), wd: tel["watchdog.txt"] ?? readTel("watchdog.txt"), act: tel["act.txt"] ?? readTel("act.txt"), state, prev: prev?.bladeburner ?? null });
   for (const f of r.fails) fail(f.what, f.detail);
   for (const n of r.notes) note(n);
   now.bladeburner = r.snap;

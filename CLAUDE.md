@@ -296,6 +296,16 @@ donate/buyaug stops the rest of that chain; install runs only with something
 queued and after the homeup spend-down. Each batch executes once, keyed by its
 stamp, same life only. Outcomes: `/tel/act.txt` `orders.results`.
 
+**A claim its claimant cannot exercise is not a claim.** When the work slot is
+Bladeburner's (progress.js `slot.owner`, or act.js's bootstrap claim) but no
+Bladeburner actor can act (`bbliteplan.bladeSlotStallOf`: bb-lite starved, no
+bb-host yet), act.js lends the slot to the best money crime
+(`actplan.bladeLend`) until bb-host exists or bb-lite acts — the claim stays
+Bladeburner's, so seed.js still buys bb-host and bb-lite's startAction ends the
+crime. Published as `/tel/act.txt` `lent`, carried by `bbslot.slotClaim`,
+`progress.txt` `slot.bladeStall`; the health check is BLADEBURNER SLOT STALLED.
+BN14.2 lost ~9h idle on such a claim.
+
 **Cash is not wealth.** Wherever stock.js holds the book, cash reads ~$0 on a
 run worth billions. Affordability and pricing use cash + equity
 (`nodeecon.wealthOf`); the purchase itself is preceded by a sized raise — an

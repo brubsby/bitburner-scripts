@@ -923,17 +923,25 @@ export const SOFTLOCK_HOLD_FILE = '/softlock-hold.txt'
  *   null = unknown); hackPays (ScriptHackMoneyGain); hold (the text of
  *   /softlock-hold.txt, '' when absent); samples ([{at, cash, wealth}] carried
  *   from earlier passes); lastRaiseAt; now.
+ *   workAt (ms: when `work` was read) and startedAt (ms: when act.js last
+ *   started work): a read OLDER than the last start describes the work that
+ *   start replaced, so it stops nothing — the snapshot is up to a minute old,
+ *   and a CLASS it still showed stopped the free crime act.js had just put in
+ *   the class's place (the stalled-Bladeburner lend, actplan.bladeLend).
  * Returns {level, actions: [{kind: 'stop'|'raise'|'install'|'softreset', why,
  *   target?}], samples (carry to the next pass), why}.
  */
-export function softlockStep({ cash, stock, work = null, queued = null, hackPays = null, hold = '', samples = [], lastRaiseAt = 0, now = Date.now() }) {
+export function softlockStep({ cash, stock, work = null, workAt = null, startedAt = null, queued = null, hackPays = null, hold = '', samples = [], lastRaiseAt = 0, now = Date.now() }) {
   if (!fin(cash)) return { level: null, actions: [], samples: [], why: 'cash unreadable — nothing decided' }
   if (cash >= 0) return { level: 0, actions: [], samples: [], why: null }
   const equity = stock?.ok && fin(stock.equity) ? stock.equity : 0
   const wealth = cash + equity
   const actions = []
   const why = [`cash $${Math.round(cash)} < 0`]
-  if (work && String(work.type ?? '').toUpperCase() === 'CLASS') actions.push({ kind: 'stop', why: `cash $${Math.round(cash)} < 0 and the player is in a paid class (${work.classType ?? '?'}): its fee is charged with no balance check` })
+  if (work && String(work.type ?? '').toUpperCase() === 'CLASS') {
+    if (fin(workAt) && fin(startedAt) && workAt < startedAt) why.push(`the paid class (${work.classType ?? '?'}) was read before act.js last started work (${new Date(startedAt).toISOString()}) — not stopping what replaced it`)
+    else actions.push({ kind: 'stop', why: `cash $${Math.round(cash)} < 0 and the player is in a paid class (${work.classType ?? '?'}): its fee is charged with no balance check` })
+  }
   if (equity > 0) {
     if (now - lastRaiseAt >= NEG_RAISE_COOLDOWN_MS) actions.push({ kind: 'raise', target: NEG_CASH_TARGET, why: `cash $${Math.round(cash)} < 0 with $${Math.round(equity)} of equity: raise to $${NEG_CASH_TARGET}` })
     else why.push(`a negative-cash raise was served ${Math.round((now - lastRaiseAt) / 1000)}s ago (cooldown ${NEG_RAISE_COOLDOWN_MS / 1000}s)`)

@@ -22,13 +22,19 @@
 // ---------------------------------------------------------------------------
 // THE RULES, in priority order
 //
-//   0. progress.js acted recently          -> idle (it owns the work slot)
+//   0. progress.js acted recently          -> idle (it owns the work slot) —
+//      unless the claim is Bladeburner's and its actor cannot act
+//      (bladeStall): then the slot earns the server that unblocks it
+//      (the best money crime) until bb-host exists or bb-lite acts
 //   0b. the Bladeburner division can exist  -> the route is presumed until the
 //       and the plan has not said 'hack'       plan prices it: combat to 100
 //                                              (bodyplan.combatBarPlanOf: gym
 //                                              when its fee is paid, else the
 //                                              best money crime), then the
-//                                              slot is Bladeburner's (bb-lite)
+//                                              slot is Bladeburner's (bb-lite);
+//                                              stalled -> lent to the money
+//                                              crime as in 0; a gym class still
+//                                              running past the bar is stopped
 //   1. gang-capable node, no gang faction  -> the Slum Snakes bootstrap:
 //        requirements met                  -> join
 //        karma or money short              -> the crime loop (bodyplan picks
@@ -44,7 +50,7 @@
 //
 // Every action carries `why`, and the idle cases say why too.
 
-import { COMBAT, crimeLeg, bestCrimeFor, combatBarPlanOf } from 'bodyplan.js'
+import { COMBAT, GYMS, crimeLeg, bestCrimeFor, combatBarPlanOf } from 'bodyplan.js'
 import { GANG_FACTIONS, KARMA_FOR_GANG } from 'gangplan.js'
 // Pure: a gang whose every channel is zero by the node's multipliers.
 import { gangChannelsDead } from 'gangworth.js'
@@ -93,6 +99,8 @@ export const PROGRESS_FRESH_MS = 15 * 60 * 1000
  *   work: {kind, faction?, type?} | null,    what act.js last started this life
  *   tried: {faction: lastAttemptMs},
  *   equity: number,                          the stock trader's equity (0 without one)
+ *   bladeStall: {stalled, why, hostCost?} | null   bbliteplan.bladeSlotStallOf: can the
+ *                                            Bladeburner claim be exercised (act.js reads it)
  * }
  * @returns {kind, args, why} with kind in idle|join|work|crime|gym|travel|liquidate
  */
@@ -136,6 +144,8 @@ export function decide(s = {}) {
   const at = Date.parse(s.progress?.at ?? '')
   const owner = s.progress?.slot?.owner ?? null
   if (num(at) && s.now - at < PROGRESS_FRESH_MS && s.progress?.health !== 'error' && owner) {
+    // A CLAIM ITS CLAIMANT CANNOT EXERCISE IS NOT A CLAIM (bladeLend).
+    if (owner === 'bladeburner' && s.bladeStall?.stalled === true) return bladeLend(s, p, cash, 'progress.js', null)
     return { kind: 'idle', why: `progress.js holds the work slot for ${owner} work (${Math.round((s.now - at) / 60000)} min ago)` }
   }
 
@@ -178,13 +188,44 @@ export function decide(s = {}) {
           if (num(cash) && cash >= TRAVEL_COST) return { kind: 'travel', args: [now.city], why: `combat to ${bar} for ${tag}: ${now.gym} is in ${now.city}` }
         } else {
           if (s.work?.kind === 'gym' && s.work.stat === now.stat) return { kind: 'idle', why: `training ${now.stat} at ${now.gym} for ${tag}: ${p.skills[now.stat]}/${bar}` }
-          if (cash >= 0) return { kind: 'gym', args: [now.gym, GYM_CLASS[now.stat]], stat: now.stat, why: `combat ${now.stat} ${p.skills?.[now.stat]}/${bar} for ${tag}: ${plan.why}` }
+          // THE FEE FLOOR IN CASH (nodeecon.feeFundable): the plan priced the
+          // gym on wealth; the fee is charged from cash every second with no
+          // balance check (ClassWork.tsx:57-72), so it starts only while cash
+          // covers FEE_FLOOR_S of it — raised from the book when only equity
+          // does, else the money crime trains and earns it. This read
+          // `cash >= 0`, which starts a $2,400/s class on $1.
+          const cm = GYMS.find((g) => g.name === now.gym)?.costMult
+          const fee = CLASS_BASE_FEE.gym * (num(cm) ? cm : 20)
+          if (feeFundable(cash, fee)) return { kind: 'gym', args: [now.gym, GYM_CLASS[now.stat]], stat: now.stat, why: `combat ${now.stat} ${p.skills?.[now.stat]}/${bar} for ${tag}: ${plan.why}` }
+          const rg = raiseFor(fee * FEE_FLOOR_S, `${FEE_FLOOR_S}s of the ${now.gym} fee (charged with no balance check)`)
+          if (rg) return rg
+          const money = (() => {
+            try {
+              return bestCrimeFor('money', bl.person ?? p, s.node, { focus: 1 })
+            } catch {
+              return null
+            }
+          })()
+          if (money) {
+            if (s.work?.kind === 'crime' && s.work.type === money.crime) return { kind: 'idle', why: `${money.crime} running for ${tag}: the ${now.gym} fee ($${fee}/s) is not covered for ${FEE_FLOOR_S}s by cash $${Math.round(cash ?? NaN)}` }
+            return { kind: 'crime', args: [money.crime], why: `combat to ${bar} for ${tag}: the ${now.gym} fee ($${fee}/s) is not covered for ${FEE_FLOOR_S}s by cash $${Math.round(cash ?? NaN)} — ${money.crime} trains combat and earns it` }
+          }
         }
       }
       // Unpriceable (unreadable person/node) or nothing affordable: the old bootstrap below.
-    } else if (bl.joined === true) {
-      return { kind: 'idle', slot: 'bladeburner', why: `the work slot is Bladeburner's: ${tag}, in the division, combat at ${bar} — bb-lite.js / bladeburner.js act on this claim (no planner pass yet)` }
     } else {
+      // A CLAIM ITS CLAIMANT CANNOT EXERCISE IS NOT A CLAIM (bladeLend): the
+      // slot stays Bladeburner's (so seed.js buys the host and bb-lite acts
+      // the moment it can) and earns meanwhile.
+      if (s.bladeStall?.stalled === true) return bladeLend(s, p, cash, "act.js's bootstrap", 'bladeburner')
+      // NO FEE PAST THE BAR: a gym class this bootstrap started is charged
+      // every second until something replaces it, and an idle claim replaces
+      // nothing — live BN14.3 the agility class started 15:10:55Z at 94/100
+      // ran on under the idle claim, and cash read -$13k at 15:18Z. stopAction
+      // is Player.finishWork only (Singularity.ts:563-568): a Bladeburner
+      // action, if one started meanwhile, is untouched.
+      if (s.work?.kind === 'gym') return { kind: 'stop', args: [], slot: 'bladeburner', why: `combat at ${bar} for ${tag}: stopping the ${s.work.stat ?? ''} gym class this bootstrap started — its fee runs on past the bar until something replaces it` }
+      if (bl.joined === true) return { kind: 'idle', slot: 'bladeburner', why: `the work slot is Bladeburner's: ${tag}, in the division, combat at ${bar} — bb-lite.js / bladeburner.js act on this claim (no planner pass yet)` }
       return { kind: 'idle', slot: 'bladeburner', why: `combat at ${bar} for ${tag}: waiting for bb-lite.js to join the division (the slot is held for it)` }
     }
   }
@@ -326,6 +367,41 @@ export function decide(s = {}) {
   const due = HACK_LINE.find((f) => s.now - (s.tried?.[f] ?? 0) >= RETRY_MS)
   if (due) return { kind: 'join', args: [due], why: `no faction joined; trying ${due} (an uninvited join just returns false)` }
   return { kind: 'idle', why: 'no faction joined; every hack-line join was tried in the last 10 min' }
+}
+
+/**
+ * THE STALLED BLADEBURNER CLAIM, LENT TO THE MONEY CRIME. The claim stays
+ * Bladeburner's — seed.js buys bb-host only on it (bbliteplan.liteHostBuyOf)
+ * and bb-lite acts on it the moment its actors place, its startAction ending
+ * the crime (Bladeburner.ts:179) — but the slot does not idle under it.
+ *
+ * PRICED SIMPLY, and said so: a committed route that cannot act is worth the
+ * server that unblocks it (bb-host, s.bladeStall.hostCost), and the best money
+ * crime is the fastest early cash at combat ~100 (no planner pass: nothing
+ * else here earns). The ETA is (cost - cash) / the crime's money rate. Not a
+ * trajectory comparison: the alternative is an idle slot, which earns 0 and
+ * buys nothing.
+ * Returns the decision with `lent` {owner, by, to, why} for act.txt.
+ */
+function bladeLend(s, p, cash, by, slot) {
+  const st = s.bladeStall
+  const money = (() => {
+    try {
+      return bestCrimeFor('money', s.blade?.person ?? p, s.node, { focus: 1 })
+    } catch {
+      return null
+    }
+  })()
+  const lent = { owner: 'bladeburner', by, to: money?.crime ?? null, why: st.why }
+  const tagSlot = slot ? { slot } : {}
+  if (!money) return { kind: 'idle', ...tagSlot, lent, why: `the Bladeburner claim (${by}) cannot be exercised — ${st.why} — and no money crime prices at these stats: the slot idles` }
+  const rate = num(money.rates?.money) ? money.rates.money : null
+  const cost = num(st.hostCost) ? st.hostCost : null
+  const eta = cost !== null && rate && num(cash) ? Math.max(0, cost - cash) / rate : null
+  const price = cost !== null ? `the 32GB bb-host ($${Math.round(cost)}; cash $${Math.round(cash ?? NaN)}${eta !== null ? `, ~${(eta / 60).toFixed(0)} min of ${money.crime}` : ''})` : 'the server that unblocks it (bb-host)'
+  const why = `the Bladeburner claim (${by}) cannot be exercised: ${st.why}. The stalled route is worth ${price}; ${money.crime} is the best money crime here (${rate ? `$${Math.round(rate)}/s` : 'rate unpriced'}) — the slot earns until bb-host exists or bb-lite acts`
+  if (s.work?.kind === 'crime' && s.work.type === money.crime) return { kind: 'idle', ...tagSlot, lent, why: `${money.crime} running: ${why}` }
+  return { kind: 'crime', args: [money.crime], ...tagSlot, lent, why }
 }
 
 /**

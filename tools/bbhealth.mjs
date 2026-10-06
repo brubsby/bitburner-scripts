@@ -47,7 +47,7 @@ const sfOf = (state) => {
 export const FULL_TIER_GB = 128
 export const FULL_ABSENT_MIN = 15
 
-export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null, eg = null, sl = null, wd = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
+export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null, eg = null, sl = null, wd = null, act = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
   const fails = []
   const notes = []
   const fail = (what, detail = null) => fails.push({ what, detail })
@@ -126,7 +126,16 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   const running = bb.running ?? null
   snap.owned = claimed && bb.slot?.ours === true
   snap.acting = snap.owned && !!running && age !== null && age < 5
-  if (claimed) {
+  // THE LENT SLOT (actplan.bladeLend, /tel/act.txt lent): the Bladeburner
+  // actor cannot act, so act.js runs the money crime under the claim until
+  // bb-host exists or bb-lite acts. Its own name, not ORDER NOT HELD: the
+  // crime is the plan for a stalled route, the stall is the problem.
+  const lAge = ageMinOf(act?.lent?.at, nowMs)
+  const lent = act?.lent?.owner === 'bladeburner' && lAge !== null && lAge < 15 && (lifeStart === null || Date.parse(act.lent.at) >= lifeStart) ? act.lent : null
+  if (lent) {
+    const held = /crime/i.test(String(workType ?? ''))
+    fail(`BLADEBURNER SLOT STALLED: the Bladeburner actor cannot act — act.js lent the slot to ${lent.to ?? 'nothing'}${held ? '' : `, but the game is running ${workType ?? 'nothing'}`}`, `${String(lent.why ?? '').slice(0, 200)} — seed.js buys bb-host once cash covers it (/tel/seed.txt bbHost)`)
+  } else if (claimed) {
     if (workType) fail(`ORDER NOT HELD: progress.js claims the work slot for 'bladeburner', but the game is running ${workType}`, 'faction/crime/class work cancels a Bladeburner action every tick (Bladeburner.ts:1353-1366) — find who started it (act.js decision.why, orders.txt)')
     else if (age !== null && age < 5 && !running && !bb.exitReady) fail("ORDER NOT HELD: progress.js claims the work slot for 'bladeburner' and nothing is running", `bladeburner.js: ${bb.result} — ${String(bb.detail ?? '').slice(0, 160)}`)
   }

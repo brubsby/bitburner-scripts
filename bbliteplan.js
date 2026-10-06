@@ -331,6 +331,11 @@ export const STARVED_RE = /no rooted host has|refused on every candidate/
 /** Placement failures within this window that make bb-lite starved (tools/bbhealth.mjs BB-LITE STARVED: 3 in 10 min). */
 export const STARVED_N = 3
 export const STARVED_WINDOW_MS = 10 * 60e3
+/** Starved: the record says actor-unplaced with STARVED_N placement refusals (STARVED_RE) inside STARVED_WINDOW_MS. {starved, recent} */
+export function liteStarvedOf(lite, now = Date.now()) {
+  const recent = (Array.isArray(lite?.actorErrors) ? lite.actorErrors : []).filter((e) => STARVED_RE.test(String(e?.why ?? '')) && now - Date.parse(e?.at ?? '') <= STARVED_WINDOW_MS)
+  return { starved: lite?.result === 'actor-unplaced' && recent.length >= STARVED_N, recent }
+}
 
 /**
  * BUY A SERVER FOR bb-lite's ACTORS? Live BN14.2 (2026-10-05): ~9h of
@@ -363,12 +368,53 @@ export function liteHostBuyOf({ lite = null, info, claim = null, hosts = [], cas
   const alive = liteAliveOf(lite, info, now)
   if (!alive.alive) return no(`bb-lite.js is not the actor: ${alive.why}`)
   if (claim?.owner !== 'bladeburner') return no(`the work slot is not Bladeburner's (${claim?.owner ?? 'no claim'}): no committed route to unblock`)
-  const recent = (Array.isArray(lite.actorErrors) ? lite.actorErrors : []).filter((e) => STARVED_RE.test(String(e?.why ?? '')) && now - Date.parse(e?.at ?? '') <= STARVED_WINDOW_MS)
-  if (lite.result !== 'actor-unplaced' || recent.length < STARVED_N) return no(`bb-lite is not starved (${lite.result}; ${recent.length} placement refusals in ${STARVED_WINDOW_MS / 60e3} min)`)
+  const { starved, recent } = liteStarvedOf(lite, now)
+  if (!starved) return no(`bb-lite is not starved (${lite.result}; ${recent.length} placement refusals in ${STARVED_WINDOW_MS / 60e3} min)`)
   const roomy = hosts.find((x) => x && x.host !== 'home' && !x.hacknet && num(x.max) && x.max >= LITE_COORD_GB + LITE_ACTOR_GB && x.max - ((num(x.used) ? x.used : 0) - (num(x.evictGb) ? x.evictGb : 0)) >= LITE_ACTOR_GB)
   if (roomy) return no(`${roomy.host} can hold the actor once its seed workers make way (the reservation): nothing to buy`)
   const b = cloudHostBuyOf({ name: BB_HOST, need: LITE_COORD_GB + LITE_ACTOR_GB, cash, mults, exists, home })
   return b.buy ? { ...b, why: `bb-lite starved (${recent.length} refusals in ${STARVED_WINDOW_MS / 60e3} min: ${String(recent[recent.length - 1].why).slice(0, 100)}) on the Bladeburner slot; ${b.why}` } : b
+}
+
+/**
+ * CAN THE BLADEBURNER CLAIM BE EXERCISED? A claim its claimant cannot act on
+ * is not a claim: the slot it holds sits idle. Live BN14.2 (2026-10-05) ~9h
+ * and again at the BN14.3 entry (2026-10-06 15:18Z): the slot was
+ * Bladeburner's, bb-lite.js starved ("no rooted host has 13.6GB free for
+ * bb-lite-read.js": 32GB home with go.js, a 16GB fleet), so act.js idled on
+ * the claim — and the server that ends the starvation (liteHostBuyOf, $1.76m)
+ * never came, because nothing earned: cash -$13k, the player idle, until the
+ * lead ran Homicide by hand.
+ *
+ * Stalled (the slot earns instead; actplan.decide lends it to the money
+ * crime, the claim stays Bladeburner's so seed.js buys BB_HOST and bb-lite
+ * acts the moment it can — its startAction ends the crime, Bladeburner.ts:179):
+ *   - bb-lite is alive this life and STARVED: result 'actor-unplaced' with
+ *     STARVED_N placement refusals inside STARVED_WINDOW_MS (liteHostBuyOf's
+ *     own test — the game's answer, not a prediction); or
+ *   - no Bladeburner actor at all this life (bb-lite not alive, bladeburner.js
+ *     not in its loop) and the life is older than STARVED_WINDOW_MS.
+ * Not stalled: the full daemon is in its loop; BB_HOST exists (the purchase
+ * the money was for is made: bb-lite's reservation lands there); bb-lite
+ * alive and placing its actors.
+ *
+ *   lite  /tel/bb-lite.txt   full  /tel/bladeburner.txt
+ *   bbHostExists  true / false, or null when the caller cannot tell (judged on the records alone)
+ * Returns {stalled, why}.
+ */
+export function bladeSlotStallOf({ lite = null, full = null, info, bbHostExists = null, now = Date.now() }) {
+  const f = fullTakingOverOf(full, info, now)
+  if (f.over) return { stalled: false, why: f.why }
+  if (bbHostExists === true) return { stalled: false, why: `${BB_HOST} exists: bb-lite's actors have their host (the reservation lands there)` }
+  const alive = liteAliveOf(lite, info, now)
+  if (alive.alive) {
+    const { starved, recent } = liteStarvedOf(lite, now)
+    if (starved) return { stalled: true, why: `bb-lite cannot act: ${recent.length} placement refusals in ${STARVED_WINDOW_MS / 60e3} min (${String(recent[recent.length - 1].why).slice(0, 100)}) and no ${BB_HOST} yet` }
+    return { stalled: false, why: `bb-lite acts (${lite.result ?? '?'})` }
+  }
+  const lifeMs = num(info?.lastAugReset) ? now - info.lastAugReset : null
+  if (num(lifeMs) && lifeMs > STARVED_WINDOW_MS) return { stalled: true, why: `no Bladeburner actor this life ${(lifeMs / 60e3).toFixed(0)} min in: ${alive.why}, bladeburner.js not in its loop` }
+  return { stalled: false, why: `no Bladeburner actor yet (${alive.why}) — the life is under ${STARVED_WINDOW_MS / 60e3} min old` }
 }
 
 // ---------------------------------------------------------------------------
