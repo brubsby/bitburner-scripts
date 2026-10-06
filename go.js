@@ -361,7 +361,11 @@ const SETTINGS = {
   // full 400ms request (~0.4s of our time against the ~0.8s of AI time a cheat
   // saves); at 100ms (go-w0 --cheat-second-ms 100, Tetrads, seed 58, crime
   // 1.5872, paired vs the 400ms arm): see the commit.
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true } },
+  // channel: price Slum Snakes as the cheat channel (goplan o.cheat). OFF
+  // 2026-10-06 23:40Z: it credited every Slum Snakes size, Thompson drew the
+  // KataGo 9x9 arm and lost four straight (0-74.5 ...) — off until the
+  // channel prices only the 5x5 arm / KataGo 7-9 carry their measured rate.
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: false },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -1199,7 +1203,7 @@ export async function main(ns) {
         // THE CHEAT CHANNEL (goplan CHEAT_GAIN): Slum Snakes' crime_success
         // lifts the cheat-on farm's rate for the rest of the life. Only with
         // crime_success READ by go-cheat.js (never inferred from a capped chance).
-        ...(cheatCalib?.crimeRead && reset?.lastAugReset ? { cheat: { on: Object.keys(SETTINGS.cheat.on).filter((k) => k !== 'default' && SETTINGS.cheat.on[k]), crime: cheatCalib.crime, lifeLeftH: Math.max(0.25, wf.windowH - (Date.now() - reset.lastAugReset) / 3.6e6) } } : {}),
+        ...(SETTINGS.cheat.channel !== false && cheatCalib?.crimeRead && reset?.lastAugReset ? { cheat: { on: Object.keys(SETTINGS.cheat.on).filter((k) => k !== 'default' && SETTINGS.cheat.on[k]), crime: cheatCalib.crime, lifeLeftH: Math.max(0.25, wf.windowH - (Date.now() - reset.lastAugReset) / 3.6e6) } } : {}),
         incumbent: current,
         nodePower: nodePowerOf(stats),
         dwellH,
