@@ -982,14 +982,31 @@ export function clockSeed(clock, d, rand) {
  * whose seed reproduces the AI's actual reply (all k equally if the reply did
  * not depend on the seed — uninformative and skipped); `weights()` returns the
  * normalised [[k, w]...] with a prior so one odd observation cannot zero a k.
+ *
+ * MAXIMUM LIKELIHOOD, not a split count (opts.mode 'em', the default). The
+ * split count gave every k in a match set an equal share, so a lag that is
+ * right almost every time still read as a third of the mass: live 2026-10-06
+ * k=1 reproduced 76 of 77 Tetrads replies (go-games.txt T), yet the solver's
+ * weights were [[1, 0.32], [3, 0.13], [-1, 0.12], [6, 0.12]] — the search drew
+ * the AI's reply from a wrong lag two times in three. EM over the last `keep`
+ * match sets (P(k) maximising prod_obs sum_{k in M} P(k), the prior as
+ * pseudo-counts) puts the mass where the evidence is. mode 'split': the old
+ * estimator (A/B).
  */
-export function seedCalib(prior = [[0, 0.1], [1, 0.6], [2, 0.25], [3, 0.05]], range = [-1, 6]) {
+export function seedCalib(prior = [[0, 0.1], [1, 0.6], [2, 0.25], [3, 0.05]], range = [-1, 6], { mode = 'em', keep = 400, iters = 30 } = {}) {
   const counts = new Map()
   for (let k = range[0]; k <= range[1]; k++) counts.set(k, 0)
   for (const [k, w] of prior) counts.set(k, (counts.get(k) ?? 0) + 2 * w)
+  const pseudo = new Map(counts)
+  const obs = []
+  let cached = null
   let informative = 0
   let predicted = 0
   let observed = 0
+  const norm = (m) => {
+    const tot = [...m.values()].reduce((a, b) => a + b, 0)
+    return [...m.entries()].filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([k, c]) => [k, c / tot])
+  }
   return {
     range,
     observe(matches, predictedK = null) {
@@ -999,11 +1016,26 @@ export function seedCalib(prior = [[0, 0.1], [1, 0.6], [2, 0.25], [3, 0.05]], ra
       informative++
       if (predictedK !== null && matches.includes(predictedK)) predicted++
       for (const k of matches) counts.set(k, (counts.get(k) ?? 0) + 1 / matches.length)
+      obs.push(matches.slice())
+      if (obs.length > keep) obs.shift()
+      cached = null
       return true
     },
     weights() {
-      const tot = [...counts.values()].reduce((a, b) => a + b, 0)
-      return [...counts.entries()].filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([k, c]) => [k, c / tot])
+      if (mode !== 'em' || !obs.length) return norm(counts)
+      if (cached) return cached
+      let w = new Map(counts)
+      for (let it = 0; it < iters; it++) {
+        const next = new Map(pseudo)
+        for (const M of obs) {
+          let z = 0
+          for (const k of M) z += w.get(k) ?? 0
+          for (const k of M) next.set(k, (next.get(k) ?? 0) + (z > 0 ? (w.get(k) ?? 0) / z : 1 / M.length))
+        }
+        w = next
+      }
+      cached = norm(w)
+      return cached
     },
     get stats() {
       return { observed, informative, predicted, weights: this.weights().slice(0, 4).map(([k, w]) => [k, Number(w.toFixed(3))]) }
