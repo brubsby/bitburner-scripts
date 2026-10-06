@@ -1642,6 +1642,32 @@ export function modelSession(N, komi, model, opts = {}) {
       }
       return out
     },
+    /**
+     * THE ORACLE GUARD's view of the search: what the tree knows about our stone
+     * (x, y) at a position — the root (setRoot done), or, before setRoot, the
+     * ponder child the AI's reply produced (board strings + whether the AI
+     * passed). { visits, wins, bestWins } (wins = the share of its lines won;
+     * bestWins = the best such share over the node's stones searched at least
+     * minVisits times), or null when the tree has no such node.
+     */
+    childStats(x, y, board = null, passed = false, minVisits = 20) {
+      let node = rootNode
+      if (board) {
+        node = null
+        const s = Array.isArray(board) ? board.join('') : board
+        if (ponderNode) for (const e of ponderNode.samples.values()) if (e.child.s === s && e.child.passCount === (passed ? 1 : 0)) { node = e.child; break }
+      }
+      const c = node?.children?.get(x * N + y)
+      if (!c) return null
+      let bestWins = null
+      for (const [idx, k] of node.children) if (idx !== PASS && k.visits >= minVisits && (bestWins === null || k.wins / k.visits > bestWins)) bestWins = k.wins / k.visits
+      return { visits: c.visits, wins: c.visits ? c.wins / c.visits : null, bestWins }
+    },
+    /** Every searched child of the root: [{ x, y (-1 for PASS), visits, wins (share of lines won), mean }]. */
+    rootStats() {
+      if (!rootNode) return []
+      return [...rootNode.children.entries()].map(([idx, c]) => ({ x: idx === PASS ? -1 : (idx / N) | 0, y: idx === PASS ? -1 : idx % N, visits: c.visits, wins: c.visits ? c.wins / c.visits : null, mean: c.visits ? c.sum / c.visits : null }))
+    },
     get scale() {
       return obj ? obj.diff * obj.winMult * points + obj.lossFuture : 0
     },

@@ -206,6 +206,7 @@ if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by t
 // the search's uncertain length.
 const RETIME = argv.includes("--retime");
 const ORACLE_MISSES = str("oracle-misses", null);
+const ORACLE_GUARD = str("oracle-guard", null) ? (([v, w]) => ({ v, w }))(str("oracle-guard", null).split(":").map(Number)) : null;
 const ORACLE = argv.includes("--oracle-book") ? { noise: (() => { const v = Number(argv[argv.indexOf("--oracle-book") + 1]); return Number.isFinite(v) ? v : 0; })() } : null;
 const STEER_BOOK = (() => {
   const v = str("steer-book", null);
@@ -323,7 +324,7 @@ async function playGame(stats, gameIndex) {
   const komi = g.opponentDetails[OPP].komi;
   let modelCalls = 0;
   const steerStats = { evals: 0, steered: 0, delayTicks: 0, book: 0, miss: 0 };
-  let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false;
+  let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false, oracleGuarded = 0;
   let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0;
   let guard = 0;
   let oppPassed = false;
@@ -482,6 +483,14 @@ async function playGame(stats, gameIndex) {
       const vg = cands.length ? validGrid(state, N) : null;
       for (const c of cands) {
         if (!vg[c.x]?.[c.y]) continue;
+        // THE GUARD (--oracle-guard V:D): a candidate the pondered tree has
+        // searched (>= V visits) and found winning in D (share of lines) less
+        // than its best stone is not played — the line is a plan against ONE
+        // predicted reply sequence; the tree prices the AI's other replies.
+        if (ORACLE_GUARD) {
+          const st = sess.childStats(c.x, c.y, board, oppPassed, ORACLE_GUARD.v);
+          if (st && st.visits >= ORACLE_GUARD.v && st.bestWins !== null && st.wins < st.bestWins - ORACLE_GUARD.w) { oracleGuarded++; continue; }
+        }
         const after = golib.applyMove(board, c.x, c.y);
         if (!after) continue;
         const r = await MODEL.reply(after, { history: [board.join(""), ...state.previousBoards], passCount: 0, rng: playtimeAt(wall + ROUND_TRIP_MS + 200 + seedJit) });
@@ -791,7 +800,7 @@ async function playGame(stats, gameIndex) {
     extendMoves,
     bookMoves,
     ...(STEER || STEER_BOOK ? { steer: steerStats } : {}),
-    ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss } } : {}),
+    ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss, guarded: oracleGuarded } } : {}),
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
@@ -805,7 +814,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {

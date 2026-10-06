@@ -1,19 +1,34 @@
-// NOT CALIBRATED: an offline bound, not a policy. The opponent is the game's
-// own getMove (tools/goai), made DETERMINISTIC (a fixed seed per position and a
-// seeded Math.random) — Tetrads' reply barely depends on its seed (go-w0
-// --steer: over 5-9 consecutive live seeds the reply differed on ~1.7 of ~12
-// moves a game), so this is close to the opponent as it plays.
+// NOT CALIBRATED as a bound; its PLANS are measured as a policy through
+// go-oracle-book.mjs -> go-w0.mjs --oracle-file/--oracle-book (paired).
 //
-// THE POINTS-PER-AI-TURN ORACLE: a beam search over OUR move sequences against
-// that deterministic AI, recording every way the game can end (the AI passes,
-// we pass back — our pass costs no AI reply) with black winning, and the best
-// black points per AI reply among them. It answers: how far above the
-// policy's ~1.75 points per AI turn can ANY policy get on these layouts,
-// given how this AI actually replies? (The structural ceiling, go-passmin.mjs,
-// assumes the AI never places a stone; this one plays the AI.)
+// THE POINTS-PER-AI-TURN ORACLE. Node power per hour is black points per
+// AI-second, and an AI reply costs ~0.8-1.1s whatever it is, so the lever is
+// points per AI reply. The game ends cheapest when the AI PASSES (no move
+// option left) and we pass back — our pass costs no reply. This is a beam
+// search over OUR move sequences against the game's own getMove (tools/goai),
+// recording every winning way the game can end like that, and the best
+// black points per AI reply (and black - LAMBDA x replies) among them.
 //
-//   node tools/sim/go-oracle.mjs [--opponent Tetrads] [--size 5] [--layouts 0-9] [--beam 3000] [--depth 16]
-//   (5x5 layouts from tools/goai/layouts-5.json, most common first; other sizes: the empty board)
+// THE AI AS THE GAME CLOCK MAKES IT (--phases, --roots, --tree): its seed is
+// the playtime one waitCycle after our play (goAI.ts:184) and its reply is
+// piecewise constant over runs of ~10-20 engine ticks (go-seedseq.mjs), so in
+// one game it is close to a deterministic function of the clock. Each plan
+// fixes a start time T0 and seeds the reply to our i-th stone
+// T0 + 200 x (LAG + round(i x TT)). A plan is then a line the AI really plays
+// at that clock — live, go-solver plays a step only when the request's clock
+// predicts the reply the line expects. Without a clock (--phases 0) the seed
+// is a hash of the board: an idealised deterministic AI (a bound, not a plan).
+//
+// MEASURED 2026-10-06, Tetrads 5x5 (live search: 1.74 points per AI reply):
+// clock plans over layouts 0-39 average 2.85 (21.3 points in 7.5 replies);
+// hash-seeded ~3.0; 7x7 empty board (hash, beam 300) 2.04.
+//
+//   node tools/sim/go-oracle.mjs [--opponent Tetrads] [--size 5] [--layouts 0-9] [--beam 500] [--depth 14]
+//        [--phases P | --roots misses.jsonl | --tree [--max-plans 40 --expand-depth 4 --samples 24 --pmin 0.1]]
+//        [--lambda 2.5] [--seed S] [--eyebonus W]
+//   (5x5 layouts from tools/goai/layouts-5.json, most common first, with
+//   Illuminati's handicap stone placements as starts of their own; other
+//   sizes: the empty board.) One JSON line per plan on stdout.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,6 +62,14 @@ const LAMBDA = num("lambda", 2.5);
 const PHASES = num("phases", 0);
 const TT = num("tt", 5.5);
 const LAG = num("lag", 1);
+// --robust R: SEED-ROBUST LINES. A step is kept only if the AI gives the same
+// reply at every seed within +-(R + i) ticks of the one assumed for our i-th
+// stone (checked at 5 points across the window) — the timing of a live game
+// drifts from the plan by a tick or two a turn, and a line that needs one
+// particular seed leaves the game where the plan assumed a capture (go-w0
+// 2026-10-06: 3 losses in 193 games on non-robust candidates). Lines found
+// this way hold whatever the clock does, up to the window.
+const ROBUST = num("robust", 0);
 const komi = model.komiOf(OPP);
 const nbrs = golib.makeGeometry(N);
 const scratch = golib.makeScratch(N);
@@ -156,6 +179,16 @@ async function plan({ L, T0, hist: rootHist = [], passed: rootPassed = false, ro
         const hist2 = [st.s, ...st.hist];
         calls++;
         const r = await model.reply(toSimple(s2), { opponent: OPP, history: hist2, passCount: 0, rng: rngAt(st.t, s2) });
+        if (ROBUST && T0 !== null) {
+          const w = ROBUST + st.t;
+          let same = true;
+          for (const d of [-w, -Math.ceil(w / 2), Math.ceil(w / 2), w]) {
+            calls++;
+            const q = await model.reply(toSimple(s2), { opponent: OPP, history: hist2, passCount: 0, rng: rngAt(st.t, s2) + 200 * d });
+            if ((q ? `${q.x},${q.y}` : "P") !== (r ? `${r.x},${r.y}` : "P")) { same = false; break; }
+          }
+          if (!same) continue;
+        }
         let s3 = s2, hist3 = hist2;
         if (r) {
           const b3 = b2.slice();
@@ -172,7 +205,7 @@ async function plan({ L, T0, hist: rootHist = [], passed: rootPassed = false, ro
     }
     beam = [...next.values()].sort((a, z) => z.h - a.h).slice(0, BEAM);
   }
-  const rec = { layout: L.key, p: L.p, ...(ROOTS || root ? { root: true, rootPassed } : {}), T0, tt: TT, lag: LAG, points, ends, best, bestV, lambda: LAMBDA, s: Math.round((Date.now() - t0) / 1000), calls };
+  const rec = { layout: L.key, p: L.p, ...(ROOTS || root ? { root: true, rootPassed } : {}), T0, tt: TT, lag: LAG, ...(ROBUST ? { robust: ROBUST } : {}), points, ends, best, bestV, lambda: LAMBDA, s: Math.round((Date.now() - t0) / 1000), calls };
   out.push(rec);
   console.log(JSON.stringify(rec));
   return rec;

@@ -324,6 +324,12 @@ const bookStats = { hits: 0, published: 0, oracle: 0, oracleMiss: 0, withheld: 0
 // --no-oracle: off.
 const ORACLE_ON = !argv.includes("--no-oracle");
 const ORACLE_MIN = flag("oracle-min", 0.6);
+// THE GUARD: a candidate the (reused, pondered) tree has searched >= GUARD_V
+// times and found winning in GUARD_D (share of lines) less than its best stone
+// is skipped — a line is a plan against one predicted reply sequence; the
+// tree prices the others.
+const GUARD_V = flag("oracle-guard-visits", 20);
+const GUARD_D = flag("oracle-guard-drop", 0.15);
 // The candidates live in their own file, tools/goai/oracle-<Opponent>.json
 // (go-oracle-book.mjs), so the opening-book builds (go-book --merge) never
 // clobber them; re-read when it changes, like the book.
@@ -360,6 +366,11 @@ async function oraclePick(req, history, opponentPassed) {
   const hist = [req.board.join(""), ...history];
   for (const c of cands) {
     if (!valid.has(`${c.x},${c.y}`)) continue;
+    const st = sess ? sess.childStats(c.x, c.y, null, false, GUARD_V) : null;
+    if (st && st.visits >= GUARD_V && st.bestWins !== null && st.wins < st.bestWins - GUARD_D) {
+      bookStats.oracleGuarded = (bookStats.oracleGuarded ?? 0) + 1;
+      continue;
+    }
     const after = applyMove(req.board, c.x, c.y);
     if (!after) continue;
     const want = c.reply ? `${c.reply.x},${c.reply.y}` : "P";
