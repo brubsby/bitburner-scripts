@@ -150,6 +150,12 @@ const LOCAL = argv.includes("--local");
 //                     streak costs ~8 games of multiplier ramp).
 // --adaptive-steps: extend one budget at a time, stopping once the chosen line wins >= THR.
 const ADAPTIVE_STEPS = argv.includes("--adaptive-steps");
+const EXTEND = (() => {
+  const v = str("extend", null);
+  if (!v) return null;
+  const [from, to, gap, mult] = v.split(":").map(Number);
+  return { from, to, gap, mult };
+})();
 const ADAPTIVE = (() => {
   const v = str("adaptive", null);
   if (!v) return null;
@@ -315,7 +321,7 @@ async function playGame(stats, gameIndex) {
   let pendingSeed = null; // { path, Tref, board, history, passCount }
   // The first move's chosen win rate, the lowest seen, and the moves the
   // adaptive budget extended.
-  let v0 = null, minWr = 1, adaptiveMoves = 0;
+  let v0 = null, minWr = 1, adaptiveMoves = 0, extendMoves = 0;
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
   const note = (who, mv, extra) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board), ...(extra ?? {}) });
   const solve = async () => {
@@ -387,6 +393,18 @@ async function playGame(stats, gameIndex) {
               b = sess.best();
             }
             adaptiveMoves++;
+          }
+          // --extend FROM:TO:GAP:MULT  TARGETED DEPTH: on our turns FROM..TO
+          // (0-based), when the two most-visited candidates' win rates are
+          // within GAP, search on for (MULT-1) budgets (the fragile early
+          // middlegame where the harness losses were decided).
+          if (EXTEND && ourTurns >= EXTEND.from && ourTurns <= EXTEND.to && b && b.length) {
+            const t = b[0].top ?? [];
+            if (t.length > 1 && Math.abs(t[0][4] - t[1][4]) < EXTEND.gap) {
+              await sess.search({ maxms: (EXTEND.mult - 1) * budget * CPU_SCALE });
+              b = sess.best();
+              extendMoves++;
+            }
           }
           return b;
         })()
@@ -533,6 +551,8 @@ async function playGame(stats, gameIndex) {
       // ADAPTIVE: a position the search thinks is going badly is never
       // pre-sent — it goes through a request, where the budget is extended.
       if (ADAPTIVE) answers = answers.filter((a) => !(typeof a.wr === "number" && a.wr < ADAPTIVE.thr));
+      // EXTEND: a close call in the targeted turns goes through a request (where it is extended).
+      if (EXTEND && ourTurns >= EXTEND.from && ourTurns <= EXTEND.to) answers = answers.filter((a) => !(typeof a.gap === "number" && Math.abs(a.gap) < EXTEND.gap));
     }
     wall += (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
     // THE SEED LAG, calibrated online from the reply just seen: which k make
@@ -608,6 +628,7 @@ async function playGame(stats, gameIndex) {
     v0,
     minWr: +minWr.toFixed(3),
     adaptiveMoves,
+    extendMoves,
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
     oppMs: Math.round(oppMs),
@@ -621,7 +642,7 @@ async function playGame(stats, gameIndex) {
 }
 
 const stats = { wins: 0, losses: 0, winStreak: 0, oldWinStreak: 0, nodePower: 0 };
-emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) {
