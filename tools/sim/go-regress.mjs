@@ -140,9 +140,13 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         return true;
       }
       // A two-move cheat ("x,y+x2,y2"): both stones (Go.ts playTwoMoves).
+      // makeMove refuses a second move of one colour in a row (notYourTurn),
+      // which silently dropped a cheat's second stone: hand the turn back.
       let ok = true;
+      const other = colour === m.GoColor.black ? m.GoColor.white : m.GoColor.black;
       for (const p of mv.split("+").filter(Boolean)) {
         const [x, y] = p.split(",").map(Number);
+        if (mv.includes("+")) st.previousPlayer = other;
         ok = m.makeMove(st, x, y, colour) && ok;
       }
       return ok;
@@ -195,7 +199,11 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         mv = "P";
       }
       if (mv === "P") sess.commit(null);
-      else sess.commit(...mv.split(",").map(Number));
+      else if (mv.includes("+")) {
+        // A logged cheat: both stones, committed as the pair.
+        const [[x1, y1], [x2, y2]] = mv.split("+").map((p) => p.split(",").map(Number));
+        sess.commit(x1, y1, { x: x2, y: y2 });
+      } else sess.commit(...mv.split(",").map(Number));
       if (st.passCount >= 2) {
         line.push({ ply, m: mv, r: "G", onLine });
         break;
@@ -247,8 +255,12 @@ export async function caseFromRecord(rec, { id, source = "live", note = "" } = {
       mv.note = "a two-move cheat";
       for (const p of t.m.split("+").filter(Boolean)) {
         const [x, y] = p.split(",").map(Number);
-        m.makeMove(st, x, y, m.GoColor.black);
+        // Both stones are black's (playTwoMoves): makeMove refuses a second
+        // black move in a row, which silently dropped the second stone.
+        st.previousPlayer = m.GoColor.white;
+        if (!m.makeMove(st, x, y, m.GoColor.black)) throw new Error(`record ${rec.at}: our logged cheat stone ${p} is illegal on the reconstructed board`);
       }
+      st.previousPlayer = m.GoColor.black;
     } else {
       const [x, y] = t.m.split(",").map(Number);
       if (!m.makeMove(st, x, y, m.GoColor.black)) throw new Error(`record ${rec.at}: our logged move ${t.m} is illegal on the reconstructed board`);

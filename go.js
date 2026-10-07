@@ -808,7 +808,10 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
     if (a?.b !== key || a.pc !== pc) continue
     if (a.pass) return { answer: { pass: true }, had: true }
     if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) {
-      const s2 = a.second && Number.isInteger(a.second.x) && Number.isInteger(a.second.y) && !(a.second.x === a.x && a.second.y === a.y) && boardStrings[a.second.x]?.[a.second.y] === '.' ? { x: a.second.x, y: a.second.y } : null
+      const s2 = a.second && Number.isInteger(a.second.x) && Number.isInteger(a.second.y) && !(a.second.x === a.x && a.second.y === a.y) && valid?.[a.second.x]?.[a.second.y] === true ? { x: a.second.x, y: a.second.y } : null
+      // A pair whose second stone is not playable here is no answer at all:
+      // its first stone was chosen for the pair and is never played alone.
+      if (a.second && !s2) return { answer: null, had: true }
       return { answer: { x: a.x, y: a.y, ...(s2 ? { second: s2 } : {}) }, had: true }
     }
   }
@@ -1967,6 +1970,24 @@ export async function main(ns) {
             continue
           }
         }
+        // A PAIR'S FIRST STONE IS NEVER PLAYED ALONE. The search chose it
+        // knowing a second stone follows; alone it can be a self-atari (the
+        // 2026-10-07 05:25:39Z wipe: 1,4 of the pair 1,4+0,1, then 8 stones
+        // captured). The cheat did not happen, so ask for a SINGLE move: the
+        // same request without `cheat` (the solver then searches no pairs).
+        if (jointPair) {
+          cheat.jointDeclined = (cheat.jointDeclined ?? 0) + 1
+          const single = await askSolver(boardStrings, validList, { cheat: undefined })
+          if (single !== null) {
+            ranked = single
+            src = 'req'
+            remoteMoves++
+          } else {
+            ranked = chooseMove(boardStrings, valid, size, komi, flags.maxms, flags.topk)
+            localMoves++
+            src = 'loc'
+          }
+        }
 
         const play0 = Date.now()
         const stone = !!(ranked && ranked.length)
@@ -1980,11 +2001,10 @@ export async function main(ns) {
         // on while the AI thinks); written while the move is pending, which
         // ns.go allows (see awaitMove).
         if (src === 'pre') notifySolver(boardStrings, validList, stone ? { x: ranked[0].x, y: ranked[0].y } : { pass: true })
-        if (jointPair) cheat.jointDeclined = (cheat.jointDeclined ?? 0) + 1
         // Only to a solver that takes retimes (it counts them in `seed`): an
         // older one would read the retime's seq as a new request it cannot
         // parse, and stop pondering for the turn.
-        else if (src === 'req' && useModel && clockFor(opponent) && Number.isFinite(seedLive?.retimes)) retimeSolver()
+        if (src === 'req' && useModel && clockFor(opponent) && Number.isFinite(seedLive?.retimes)) retimeSolver()
         if (oppPassed && passAhead) {
           if (stone) stonesAfterPass++
           else mirrorPasses++

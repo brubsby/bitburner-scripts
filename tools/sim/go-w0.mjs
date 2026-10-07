@@ -84,6 +84,8 @@ const OPENING = (() => {
 // the move budget (go.js passes it as the request's maxms).
 const CHEAT_SECOND_MS = Number(process.argv.includes("--cheat-second-ms") ? process.argv[process.argv.indexOf("--cheat-second-ms") + 1] : NaN);
 let secondStone = false;
+// --cheat-joint: a re-ask for a SINGLE move (the pair was declined): no pairs searched.
+let noPairs = false;
 const budgetFor = (turn) => (secondStone && Number.isFinite(CHEAT_SECOND_MS) ? CHEAT_SECOND_MS : OPENING && turn < OPENING.k ? OPENING.ms : MAXMS);
 const OUT = str("out", null);
 const OPP = GoOpponent[str("opponent", "w0r1d_d43m0n")];
@@ -473,7 +475,7 @@ async function playGame(stats, gameIndex) {
       : sess
       ? await (async () => {
           const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
-          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : {}) });
+          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : {}) });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
           const target = WORK_RATE ? Math.round(WORK_RATE * budget) : sessRate ? Math.round(sessRate * budget) : Infinity;
@@ -579,6 +581,8 @@ async function playGame(stats, gameIndex) {
         // success, as go-cheat.js plays it — and never after the AI's pass.
         if (c.second) {
           if (!CHEAT || CHEAT === "blind" || oppPassed || cheats >= CHEAT_MAX) continue;
+          // Both points legal on the board before either stone (playTwoMoves).
+          if (!vg[c.second.x]?.[c.second.y] || (c.second.x === c.x && c.second.y === c.y)) continue;
           if (golib.cheatRoll(playtimeAt(wall + ROUND_TRIP_MS)) > pCheat(cheats)) continue;
         }
         // THE GUARD (--oracle-guard V:D): a candidate the pondered tree has
@@ -665,15 +669,35 @@ async function playGame(stats, gameIndex) {
     let seedRef = playtimeAt(pre || retime ? wall : tReq);
     ourTurns++;
     if (SCAN) return { scan: true, v0 };
-    const hasMove = ranked && ranked.length;
+    let hasMove = ranked && ranked.length;
     let cheatNow = false;
     let cheatSucceeds = false;
     // --cheat-joint: the search chose a pair; played as a cheat only if the
     // roll at the actual play allows it (else its first stone alone).
     let jointSecond = null;
-    if (CHEAT_JOINT && hasMove && !oppPassed && ranked[0].second) {
-      if (cheats < CHEAT_MAX && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) jointSecond = ranked[0].second;
+    if (CHEAT_JOINT && hasMove && ranked[0].second) {
+      // THE GAME'S PAIR RULE (Go.ts playTwoMoves -> validateMove x2): both
+      // points legal on the board BEFORE either stone; go.js drops any other.
+      const vg = validGrid(state, N);
+      const legal = !!vg[ranked[0].x]?.[ranked[0].y] && !!vg[ranked[0].second.x]?.[ranked[0].second.y];
+      if (!legal) jointStats.illegal = (jointStats.illegal ?? 0) + 1;
+      else if (!oppPassed && cheats < CHEAT_MAX && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) jointSecond = ranked[0].second;
       else jointStats.rollMiss++;
+      // A declined pair's first stone is never played alone (go.js): a
+      // request for a single, searched and round trip charged.
+      if (!jointSecond) {
+        noPairs = true;
+        const ms0 = ourMs;
+        ranked = await solve();
+        noPairs = false;
+        hasMove = ranked && ranked.length;
+        wall += ourMs - ms0 + ROUND_TRIP_MS;
+        rtTotal += ROUND_TRIP_MS;
+        turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS) / 1000;
+        jointStats.reasked = (jointStats.reasked ?? 0) + 1;
+        // go.js retimes a requested move at its play.
+        seedRef = playtimeAt(wall);
+      }
     }
     if (CHEAT_JOINT && hasMove) jointStats[jointSecond ? "pairs" : "singles"]++;
     // Not after the AI's pass (go.js: play-on decides a single stone there).

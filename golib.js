@@ -1166,15 +1166,24 @@ export function modelSession(N, komi, model, opts = {}) {
     const f = cheatFns[node.ply - cheatAnchor]
     return typeof f === 'function' && !!f(node.cheats ?? 0)
   }
+  // THE GAME'S PAIR RULE (NetscriptFunctions/Go.ts playTwoMoves): BOTH points
+  // are validated (no suicide) on the board BEFORE either stone. A second
+  // stone legal only because the first one captures is NOT a legal pair —
+  // go.js drops it, and its first stone alone was the 2026-10-07 05:25Z wipe.
+  const legalAlone = (b, i) => {
+    if (b[i] !== EMPTY) return false
+    const t = b.slice()
+    return play(t, nbrs, i, US, scratch) >= 0
+  }
   const pairActions = (b, singles) => {
     const out = []
-    const firsts = singles.filter((a) => a.idx !== PASS).slice(0, PAIRS[0])
+    const firsts = singles.filter((a) => a.idx !== PASS && legalAlone(b, a.idx)).slice(0, PAIRS[0])
     for (const { idx: i1, h: h1 } of firsts) {
       const b1 = b.slice()
       if (play(b1, nbrs, i1, US, scratch) < 0) continue
       const sec = []
       for (let i = 0; i < NSQ; i++) {
-        if (b1[i] !== EMPTY || i === i1 || isFill(b1, i)) continue
+        if (b1[i] !== EMPTY || i === i1 || isFill(b1, i) || !legalAlone(b, i)) continue
         const h = heuristic(b1, nbrs, i, scratch, US)
         if (h > -1e9) sec.push({ i, h })
       }
@@ -1523,6 +1532,7 @@ export function modelSession(N, komi, model, opts = {}) {
           let moved = false
           if (isPair(idx)) {
             const [i1, i2] = pairOf(idx)
+            if (!legalAlone(node.b, i2)) continue
             if (b[i1] !== EMPTY || play(b, nbrs, i1, US, scratch) < 0) continue
             if (b[i2] !== EMPTY || play(b, nbrs, i2, US, scratch) < 0) continue
             if (repeats(toStr(b), node)) continue
@@ -1714,7 +1724,7 @@ export function modelSession(N, komi, model, opts = {}) {
         reused.parent = null
         // Re-filter to the game's valid list (superko against the real history).
         const okOne = (idx) => valid && valid[(idx / N) | 0] && valid[(idx / N) | 0][idx % N]
-        const ok = (idx) => idx === PASS || (isPair(idx) ? okOne(pairOf(idx)[0]) : okOne(idx))
+        const ok = (idx) => idx === PASS || (isPair(idx) ? okOne(pairOf(idx)[0]) && okOne(pairOf(idx)[1]) : okOne(idx))
         for (const idx of [...reused.children.keys()]) if (!ok(idx)) {
           const c = reused.children.get(idx)
           reused.visits -= c.visits

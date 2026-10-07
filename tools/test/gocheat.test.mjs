@@ -99,7 +99,7 @@ export async function run() {
       });
       await new Promise((r) => server.listen(0, "127.0.0.1", r));
       const port = server.address().port;
-      const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "300", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`, "--katago-remote", "none", "--ponder-cap-ms", "800", "--book-dir", dir, "--no-presend"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KATAGO_DIR: "/nonexistent-katago" } });
+      const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "600", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`, "--katago-remote", "none", "--ponder-cap-ms", "800", "--book-dir", dir, "--no-presend"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KATAGO_DIR: "/nonexistent-katago" } });
       let stderr = "";
       child.stderr.on("data", (d) => (stderr += d));
       const wait = async (pred, ms = 20000) => {
@@ -136,5 +136,40 @@ export async function run() {
       }
     }
   }
-  return [c1, c2, c3, c4, c5];
+  const c6 = new Check("GC6", "joint pairs are legal for playTwoMoves: both stones legal on the board BEFORE either (the 2026-10-07 05:25Z wipe position)");
+  {
+    const path = await import("node:path");
+    const { REPO } = await import("./ram.mjs");
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    const model = await loadModel();
+    if (!model) c6.warn("the opponent model could not load — GC6 did NOT run");
+    else {
+      // Live, before our 8th move: the pair 1,4+0,1 was chosen — 0,1 is a
+      // suicide until 1,4 captures, so the game refuses it, go.js dropped it
+      // and played 1,4 alone (self-atari, 8 stones lost).
+      const board = ["#.OOO", "#OOX.", "#XOXX", "#XXXO", "#.#O."];
+      const validList = model.validMoves(board, []);
+      const valid = board.map((col, x) => [...col].map((_, y) => validList.some(([vx, vy]) => vx === x && vy === y)));
+      const reply = (b, o) => model.reply(b, { ...o, opponent: "Tetrads" });
+      let bad = 0;
+      let pairs = 0;
+      for (let rep = 0; rep < 3; rep++) {
+        const sess = golib.modelSession(5, 5.5, { reply }, { pairs: [6, 5], pairsOnly: true, seed: 11 + rep });
+        sess.setRoot(board, valid, { cheat: { fns: [() => true], cheats: 1 } });
+        await sess.search({ maxms: 600 });
+        const r = sess.best();
+        c6.examined(1);
+        for (const t of r?.[0]?.top ?? []) {
+          if (t.length < 6) continue;
+          pairs++;
+          const sx = (t[5] / 5) | 0, sy = t[5] % 5;
+          if (!valid[sx][sy] || !valid[t[0]][t[1]]) { bad++; c6.fail(`pair ${t[0]},${t[1]}+${sx},${sy}: a stone not legal on the board before the first`); }
+        }
+      }
+      if (!pairs) c6.fail("no pairs searched where a cheat is available — the check examined nothing");
+      c6.note(`${pairs} top pairs over 3 searches, ${bad} illegal`);
+    }
+  }
+  return [c1, c2, c3, c4, c5, c6];
 }

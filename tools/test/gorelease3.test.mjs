@@ -574,7 +574,7 @@ export async function run() {
   const c8 = new Check("GR8", "cheats with release 3: second-stone request on the board after the first, no notice for a cheated pre-sent move, none after the AI's pass, per opponent, a stray go-cheat.js waited out");
   {
     const place = (b, x, y, c) => b.map((col, i) => (i === x ? col.slice(0, y) + c + col.slice(y + 1) : col));
-    const runCheat = async ({ on = true, pre = false, busy = 0, joint = false } = {}) => {
+    const runCheat = async ({ on = true, pre = false, busy = 0, joint = false, badSecond = false } = {}) => {
       const files = new Map();
       const reqs = [];
       const execs = [];
@@ -582,6 +582,7 @@ export async function run() {
       let B = [".....", ".....", ".....", ".....", "....."];
       let turn = 0;
       let left = busy;
+      let asks1 = 0;
       const saved = go.SETTINGS.cheat.on;
       const savedJoint = go.SETTINGS.cheat.joint;
       go.SETTINGS.cheat.on = { default: false, Daedalus: on };
@@ -605,7 +606,10 @@ export async function run() {
             if (q.played) return;
             const [x, y] = q.valid?.[0] ?? [0, 0];
             // joint: the solver answers a PAIR (as go-solver does when the roll is in the window)
-            const s2 = joint && turn === 1 && !q.opponentPassed ? q.valid?.[1] : null;
+            // badSecond: the pair's second point is not legal on the board before
+            // the first stone (playTwoMoves validates both there): go.js must
+            // neither cheat nor play the first stone alone — it re-asks.
+            const s2 = joint && turn === 1 && !q.opponentPassed && asks1++ === 0 ? (badSecond ? [4, 4] : q.valid?.[1]) : null;
             files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x, y, ...(s2 ? { second: { x: s2[0], y: s2[1] } } : {}), backend: "model", mode: "session", release: "r3" }));
           }
         },
@@ -635,7 +639,7 @@ export async function run() {
             if (turn === 1) {
               B = place(B, 4, 4, "O");
               // The ponder's answer for the position the AI's reply makes.
-              if (pre) files.set("/go/ponder.txt", JSON.stringify({ answers: [{ b: B.join(""), pc: 0, x: 2, y: 2, ...(joint ? { second: { x: 2, y: 3 } } : {}) }] }));
+              if (pre) files.set("/go/ponder.txt", JSON.stringify({ answers: [{ b: B.join(""), pc: 0, x: 2, y: 2, ...(joint ? { second: badSecond ? { x: 4, y: 4 } : { x: 2, y: 3 } } : {}) }] }));
               return Promise.resolve({ type: "move", x: 4, y: 4 });
             }
             return Promise.resolve({ type: "gameOver", x: null, y: null });
@@ -692,6 +696,21 @@ export async function run() {
       const note = jp.reqs.find((q) => q.played);
       if (jp.execs.length !== 1 || jp.execs[0].first.join() !== "2,2" || jp.execs[0].second.join() !== "2,3") c8.fail("joint: a pre-sent pair is the cheat", JSON.stringify(jp.execs));
       if (!note || !note.played.second || note.played.second.x !== 2 || note.played.second.y !== 3) c8.fail("joint: a pre-sent pair is announced to the solver with its second stone", JSON.stringify(jp.reqs.filter((q) => q.played)));
+
+      // THE 2026-10-07 05:25Z WIPE: a pair whose second stone the game refuses
+      // (not legal on the board before the first) was dropped and its first
+      // stone played ALONE (a self-atari: 8 stones captured). Now: no cheat,
+      // and the move is a fresh single request, never the pair's first stone.
+      const jb = await runCheat({ joint: true, badSecond: true });
+      c8.examined(2);
+      const jbAsks = jb.reqs.filter((q) => q.turn === 1 && !q.played && !q.opponentPassed);
+      if (jb.execs.length) c8.fail("joint: an illegal pair must not be exec'd", JSON.stringify(jb.execs));
+      if (jbAsks.length !== 2) c8.fail(`joint: a declined pair must be re-asked as a single (asked ${jbAsks.length}x on turn 2)`, JSON.stringify(jbAsks.map((q) => q.seq)));
+      const jbp = await runCheat({ joint: true, pre: true, badSecond: true });
+      c8.examined(2);
+      if (jbp.execs.length) c8.fail("joint: an illegal pre-sent pair must not be exec'd", JSON.stringify(jbp.execs));
+      if (jbp.reqs.some((q) => q.played && q.played.x === 2 && q.played.y === 2)) c8.fail("joint: an illegal pre-sent pair's first stone must never be played as a pre-sent move", JSON.stringify(jbp.reqs.filter((q) => q.played)));
+      if (!jbp.reqs.some((q) => q.turn === 1 && !q.played && !q.opponentPassed)) c8.fail("joint: an illegal pre-sent pair is a miss — the position must be requested");
 
       const busy = await runCheat({ busy: 3 });
       c8.examined(1);
