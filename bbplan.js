@@ -2257,9 +2257,21 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
  *            else `carried` (the previous life's measured rate, the plan's
  *            record), else the prior goplan.POWER_PER_HOUR.Tetrads (a farm
  *            on Tetrads alone; live BN14.1 measured 4.9-6.2k/h against its
- *            10.4k — the farm shares its hours). 0 while go.js farms
- *            another opponent or its record is stale (the effect still
- *            resets at an install).
+ *            10.4k — the farm shares its hours). The measured and the
+ *            carried rate are TIME AVERAGES over a life whose hours go.js
+ *            already shares among opponents (its Thompson arm), so they hold
+ *            whichever opponent the record names at this instant. They were
+ *            zeroed while go.js farmed another opponent: live BN9 2026-10-07
+ *            the arm flipped Tetrads <-> Daedalus every few minutes and the
+ *            committed install's exit with it — 15.1h (21:45Z, Tetrads) ->
+ *            25.1h (21:50Z, Daedalus), 29.3h at 21:40Z (Daedalus), the rate
+ *            28.5k/h -> 0 with no event: EXIT UNSTABLE, and the install
+ *            choice inverted with it (rate 0: never 17.5h beats the
+ *            install's 25.1h; the farm's rate: the install 14.6h beats
+ *            never's 15.6h). 0 only where nothing is measured or carried
+ *            and go.js is not on Tetrads (the prior is a farm on Tetrads
+ *            alone), or the record is stale (go.js not running; the effect
+ *            still resets at an install).
  * Returns {effect, nodes, perHour, rateSource, power, goPower, sf14, why}
  * or {effect: null, why} when the record cannot be read (named: the
  * multipliers then price as they are, for ever, through any install).
@@ -2280,8 +2292,10 @@ export function bladeGoCombatOf(rec, { node = null, lastAugReset = null, now = D
   const nodes = pct > 0 ? nodePowerFromBonus(pct, T.power, goPower, sf14) ?? 0 : 0
   const out = { effect, nodes, power: T.power, goPower, sf14 }
   const ageMs = num(now) && typeof rec.at === 'string' ? now - Date.parse(rec.at) : NaN
-  if (keyOfGame(rec.opponent) !== 'Tetrads') return { ...out, perHour: 0, rateSource: 'not farming', why: `x${effect.toFixed(3)} now (n ${Math.round(nodes)}), go.js farms ${rec.opponent ?? 'nothing'}: no regrowth priced; the effect resets at an install` }
   if (!(ageMs < GO_COMBAT.staleMs)) return { ...out, perHour: 0, rateSource: 'stale', why: `x${effect.toFixed(3)} now (n ${Math.round(nodes)}), /tel/go.txt ${num(ageMs) ? `${(ageMs / 60e3).toFixed(0)} min old` : 'undated'}: no regrowth priced; the effect resets at an install` }
+  // The arm of this minute is not a rate: the averages below already carry the hours go.js gives other opponents.
+  const onTetrads = keyOfGame(rec.opponent) === 'Tetrads'
+  const armNote = onTetrads ? '' : `; go.js is on ${rec.opponent ?? 'nothing'} this minute — a time average over its arms, not zeroed by the arm of the moment`
   const lifeH = num(lastAugReset) && num(now) ? (now - lastAugReset) / 3.6e6 : NaN
   let perHour = null
   let rateSource = null
@@ -2291,11 +2305,13 @@ export function bladeGoCombatOf(rec, { node = null, lastAugReset = null, now = D
   } else if (num(carried?.perHour) && carried.perHour > 0) {
     perHour = carried.perHour
     rateSource = `carried: ${carried.source ?? 'the previous life'}`
+  } else if (!onTetrads) {
+    return { ...out, perHour: 0, rateSource: 'not farming', why: `x${effect.toFixed(3)} now (n ${Math.round(nodes)}), go.js farms ${rec.opponent ?? 'nothing'} and no Tetrads rate is measured or carried: no regrowth priced; the effect resets at an install` }
   } else {
     perHour = POWER_PER_HOUR.Tetrads
     rateSource = 'prior: goplan.POWER_PER_HOUR.Tetrads (a farm on Tetrads alone)'
   }
-  return { ...out, perHour, rateSource, why: `Tetrads x${effect.toFixed(3)} now (n ${Math.round(nodes)}), regrowing ${Math.round(perHour)}/h (${rateSource}); zeroed at an install (Go/Go.ts:34-47)` }
+  return { ...out, perHour, rateSource, why: `Tetrads x${effect.toFixed(3)} now (n ${Math.round(nodes)}), regrowing ${Math.round(perHour)}/h (${rateSource}${armNote}); zeroed at an install (Go/Go.ts:34-47)` }
 }
 
 // --- installs and The Blade's Simulacrum, on this route's exit ------------------

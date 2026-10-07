@@ -22,8 +22,8 @@
 //       the actor's next life and the new life's own price agree inside the exit-jump tolerance
 //   BG3 THE MODEL: no goCombat is the old model exactly; an install divides the effect out; the
 //       regrowth only helps; a farm that does not grow changes nothing without an install
-//   BG4 bladeGoCombatOf: the record read, measured / carried / prior rate, stale and other
-//       opponents named, another life or node refused
+//   BG4 bladeGoCombatOf: the record read, measured / carried / prior rate (held whichever
+//       opponent go.js is on this minute), stale and never-farmed named, another life or node refused
 //   BG5 THE LEDGER: the 10:22Z jump is voided as a model artefact
 //   BG6 WIRING: the plan's start carries goCombat into every Bladeburner exit and sleeve.js
 
@@ -113,9 +113,11 @@ export async function run() {
   const prior = BB.bladeGoCombatOf({ ...rec, bonuses: { Tetrads: 0 }, lastAugReset: fx.lifeStartPostMs }, { node: 14, lastAugReset: fx.lifeStartPostMs, now: fx.lifeStartPostMs + 0.1 * 3.6e6 })
   const other = BB.bladeGoCombatOf({ ...rec, opponent: 'The Black Hand' }, { node: 14, lastAugReset: life, now })
   const stale = BB.bladeGoCombatOf(rec, { node: 14, lastAugReset: life, now: now + 3.6e6 })
+  // Nothing measured or carried and go.js not on Tetrads: no regrowth (the prior is a farm on Tetrads alone).
+  const notFarming = BB.bladeGoCombatOf({ ...rec, opponent: 'The Black Hand', bonuses: { Tetrads: 0 }, lastAugReset: fx.lifeStartPostMs }, { node: 14, lastAugReset: fx.lifeStartPostMs, now: fx.lifeStartPostMs + 0.1 * 3.6e6 })
   const otherLife = BB.bladeGoCombatOf(rec, { node: 14, lastAugReset: life + 1, now })
   const otherNode = BB.bladeGoCombatOf(rec, { node: 4, lastAugReset: life, now })
-  c4.examined(7)
+  c4.examined(8)
   c4.note(`measured: ${m.why}`)
   c4.note(`early (0.2h, carried): ${early.why}`)
   c4.note(`prior: ${prior.why}`)
@@ -125,7 +127,10 @@ export async function run() {
   if (!(Math.abs(m.perHour - 6127) < 150)) c4.fail(`the 10:22Z life's farm rate should read ~6.1k/h: ${m.perHour}`)
   if (!(early.perHour === m.perHour && early.rateSource.startsWith('carried'))) c4.fail('a life younger than GO_COMBAT.minAgeH must carry the last measured rate', JSON.stringify(early))
   if (!(prior.perHour === GP.POWER_PER_HOUR.Tetrads && prior.rateSource.startsWith('prior') && prior.effect === 1)) c4.fail('with nothing measured or carried: the prior, named', JSON.stringify(prior))
-  if (!(other.perHour === 0 && other.effect > 1 && stale.perHour === 0 && stale.effect > 1)) c4.fail('another opponent or a stale record: the effect (it still resets) and no regrowth', JSON.stringify({ other, stale }))
+  // THE ARM OF THE MOMENT IS NOT A RATE (live BN9 2026-10-07 21:40-21:50Z, tools/test/bn9goarm.test.mjs): the measured rate is a time average over go.js's arms.
+  if (!(other.perHour === m.perHour && other.effect === m.effect && other.rateSource === m.rateSource)) c4.fail("another opponent this minute: the life's measured rate still holds (a time average over the arms)", JSON.stringify({ other, m }))
+  if (!(notFarming.perHour === 0 && notFarming.rateSource === 'not farming')) c4.fail('nothing measured or carried and go.js on another opponent: no regrowth, named', JSON.stringify(notFarming))
+  if (!(stale.perHour === 0 && stale.effect > 1)) c4.fail('a stale record: the effect (it still resets) and no regrowth', JSON.stringify({ stale }))
   if (!(otherLife.effect === null && otherNode.effect === null && BB.bladeGoCombatOf(null).effect === null)) c4.fail('another life, another node or no record: unread, named')
 
   // ---- BG5 --------------------------------------------------------------------
