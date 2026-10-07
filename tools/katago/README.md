@@ -191,6 +191,13 @@ laptop's). power/h = node power per hour of the AI's own time at streak x3
 | 13x13 | Tetrads | 6/6, 98.5, 1.00, 16,197/h | **6/6, 108.7, 1.10, 17,790/h** | 4/6, 76.0, 0.84, 13,600/h |
 | 13x13 | Slum Snakes | 6/6, 104.0, 1.46, 15,769/h | **6/6, 123.7, 1.74, 18,817/h** | 6/6, 85.5, 1.46, 15,720/h |
 
+**The hidden opponent (19x19 w0r1d_d43m0n, 7 handicap routers, komi 9.5)**,
+GPU 800 visits, paired `--layoutseed 2`, 5 games each: stock 1/5, black
+121.8, 3,239 power/h (go-w0-report, live-modelled, our ~1s/move included)
+-> **walls 5/5, black 168.4, 8,486 power/h**. The offline holes were the open
+problem there; W0_PRIOR (3,130/h, goplan.js) predates this and is still the
+prior until 10 live games are measured.
+
 Walls never measured worse than stock beyond noise and fixes the two
 failures the live record shows (Tetrads 7x7 65% -> 100%, Slum Snakes 9x9
 80% -> 98%, +3 to +20 black a game on 9x9/13x13). It is not flawless: 2 of
@@ -200,7 +207,13 @@ black ten moves before the group died; 3200 visits read the same position
 at -60. The net misjudges a big group's life near holes at low visits (out
 of distribution, or ordinary low-visit blindness); a forced self-atari at the
 end is our no-unsettled-pass rule (only the group's own two liberties were
-legal, pass was withheld), but the game was already lost. **No bigger board beats
+legal, pass was withheld), but the game was already lost. 800 visits does not
+cure it: 30/30 Slum Snakes 9x9 (seed 22) but 15/16 Tetrads 9x9 (seed 21), the
+loss the same shape (+62 read at move 80 on a group whose only eye space was a
+straight three; the AI took the vital point). So 200 visits stays. What would:
+an exact check of the AI's actual reply (tools/goai, as the model solver
+does) before a KataGo move, or a net fine-tuned on boards with holes —
+neither built (no big board pays more than 5x5, below). **No bigger board beats
 5x5**: live 5x5 Tetrads ~26k/h on the wall clock (go-ceiling LIVE, 2026-10-06
 23.6k AI-time, 26.9k stall-free), Slum Snakes 5x5 live 23.6k AI-time; the best
 big board is 7x7 Tetrads at ~21.6-22.6k AI-time only (before our own
