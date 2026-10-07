@@ -341,18 +341,27 @@ export class KataGoService {
  *   history: previous boards, most recent first (the AI's superko filter)
  *   play:    (board, x, y) -> board after a WHITE stone there (default applyStone)
  */
-export async function ponderPositions({ model, board, history = [], opponent, komi, visits, size, samples = 12, play = (b, x, y) => applyStone(b, x, y, "O"), maxPositions = SERVICE_DEFAULTS.maxPonder }) {
+// rngs: [[seed, weight], ...] — the AI's seed PREDICTED from the playtime
+// (the clock, as the model search's clockSeed): each candidate seed is asked
+// once and weighted, instead of `samples` random seeds. The AI's reply on a big
+// board turns on its seed: 4 random samples hit 0 of ~300 19x19 replies
+// (go-w0 --ponder, 2026-10-07).
+export async function ponderPositions({ model, board, history = [], opponent, komi, visits, size, samples = 12, rngs = null, play = (b, x, y) => applyStone(b, x, y, "O"), maxPositions = SERVICE_DEFAULTS.maxPonder }) {
   const counts = new Map();
-  for (let i = 0; i < samples; i++) {
+  const draws = Array.isArray(rngs) && rngs.length ? rngs : Array.from({ length: samples }, () => [1 + Math.floor(Math.random() * 3e7), 1]);
+  let total = 0;
+  for (const [rng, w] of draws) {
     let mv;
     try {
-      mv = await model.reply(board, { opponent, history, rng: 1 + Math.floor(Math.random() * 3e7) });
+      mv = await model.reply(board, { opponent, history, rng });
     } catch {
       return [];
     }
     const k = mv ? `${mv.x},${mv.y}` : "pass";
-    counts.set(k, (counts.get(k) ?? 0) + 1);
+    counts.set(k, (counts.get(k) ?? 0) + w);
+    total += w;
   }
+  samples = total;
   const out = [];
   for (const [k, n] of [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxPositions)) {
     let after = board;
