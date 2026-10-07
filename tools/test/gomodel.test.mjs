@@ -152,7 +152,7 @@ export async function run() {
       [go, /backend: 'model', opponent: gameName\(opponent\), history/, "go.js must send backend 'model' with the game's opponent name and the move history"],
       [go, /ns\.go\.getMoveHistory\(\)/, "go.js must read the history from ns.go.getMoveHistory (0GB)"],
       [go, /reply\.backend === wantBackend\) modelAnswered\+\+/, "go.js must count which backend answered"],
-      [go, /modelReq = \{ backend: 'katago', visits: size >= 19 \? SETTINGS\.bigBoard\.visits : SETTINGS\.arms\.katagoVisits, opponent: gameName\(opponent\), history, fallback: 'uct' \}/, "go.js must ask for katago on the big board and the KataGo arms (with the opponent and history the solver ponders with, and uct as the named fallback)"],
+      [go, /modelReq = \{ backend: 'katago', visits: size >= 19 \? SETTINGS\.bigBoard\.visits : SETTINGS\.arms\.katagoVisits, opponent: gameName\(opponent\), history, fallback: 'uct', \.\.\.\(T \? \{ T \} : \{\}\) \}/, "go.js must ask for katago on the big board and the KataGo arms (with the opponent, history and playtime T the solver ponders with, and uct as the named fallback)"],
       [go, /useKatago = size >= 19 \? SETTINGS\.bigBoard\.backend === 'katago' \|\| \(SETTINGS\.bigBoard\.backend === 'auto' && !!katagoAvail\?\.ok\) : armBackend === 'katago'/, "go.js must use KataGo on the big board whenever the solver reports an engine (backend 'auto'), and on a 7-13 arm whose measured backend is KataGo"],
       [go, /bigBoard: \{[^\n]*backend: 'auto'/, "SETTINGS.bigBoard.backend must default to 'auto' (the hidden opponent's explore batch plays KataGo once The Red Pill is installed)"],
       [solver, /req\.backend === "katago"/, "go-solver.mjs must serve backend 'katago'"],
@@ -588,6 +588,31 @@ export async function run() {
     c9.note(`${its} iterations at parallel 8 in 150ms, ${evals} net evaluations (${asked.size} distinct boards), best (${best?.[0]?.x},${best?.[0]?.y}) ${best?.[0]?.visits} visits`);
   }
   checks.push(c9);
+
+  /* ------------------------------------------------------------------ GM10 */
+  // SEEDED PONDER (service.ponderSeeds / ponderPositions rngs): the AI's seed
+  // is the playtime one engine tick after our play; the candidate seeds are
+  // whole ticks around T + lag, weighted, and ponderPositions asks the model
+  // once per candidate seed and weights the replies by it.
+  const c10 = new Check("GM10", "seeded ponder: candidate seeds in whole ticks around T + lag, replies weighted by them");
+  {
+    const { ponderSeeds, ponderPositions, SEED_OFFSETS } = await import("../katago/service.mjs");
+    const s = ponderSeeds(1000000, 860);
+    c10.examined(3);
+    if (!s || s.length !== SEED_OFFSETS.length || s.some(([t]) => (t - 1000000) % 200 !== 0)) c10.fail("seeds must be T + 200k", JSON.stringify(s));
+    if (s.find(([, w]) => w === Math.max(...SEED_OFFSETS.map(([, x]) => x)))[0] !== 1000000 + 200 * 4) c10.fail("the most likely seed must be the tick nearest T + lag (860ms -> 4 ticks)", JSON.stringify(s));
+    if (ponderSeeds(0, 860) !== null || ponderSeeds(5, NaN) !== null) c10.fail("no T or no lag: no seeds (random sampling)");
+    // A model whose reply is the seed's parity: two positions, weighted 0.55/0.45 by the offsets.
+    const seen = [];
+    const model = { reply: async (b, o) => (seen.push(o.rng), (o.rng / 200) % 2 ? { x: 0, y: 0 } : { x: 1, y: 1 }), validMoves: () => [[2, 2]] };
+    const pos = await ponderPositions({ model, board: [".....", ".....", ".....", ".....", "....."], opponent: "Tetrads", komi: 5.5, visits: 10, size: 5, rngs: s, maxPositions: 3 });
+    c10.examined(3);
+    if (seen.length !== s.length || seen.some((r, i) => r !== s[i][0])) c10.fail("the model must be asked once per candidate seed, at that seed", JSON.stringify(seen));
+    if (pos.length !== 2) c10.fail("two distinct replies -> two positions", JSON.stringify(pos.map((p) => p.reply)));
+    const tot = pos.reduce((a, p) => a + p.p, 0);
+    if (Math.abs(tot - 1) > 1e-9 || !(pos[0].p >= pos[1].p)) c10.fail("reply probabilities are the seed weights, most likely first", JSON.stringify(pos.map((p) => [p.reply, p.p])));
+  }
+  checks.push(c10);
 
   return checks;
 }

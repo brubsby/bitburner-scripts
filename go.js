@@ -494,7 +494,12 @@ const SETTINGS = {
   //   1094 paired  7.674 -> 8.203 power/s (+6.9% [+0.9%, +13.1%])
   //   lost 32 -> 25 (2.9% -> 2.3%), 13.62 -> 13.08 s/game
   // (the 60-game "-5.8%, 58/60" above was the split-count calibration).
-  clock: { default: false, Tetrads: true, Netburners: true, TheBlackHand: true, Daedalus: true, Illuminati: true },
+  // w0r1d_d43m0n (2026-10-07): the KataGo requests carry T so the solver
+  // ponders the hidden AI's replies at their predicted seeds (go-solver
+  // ponderSeeds) — 4 random seeds hit 0 of ~300 19x19 replies; the predicted
+  // seeds 99% in the harness (go-w0 --ponder --seeded): think ~0.6s -> ~5ms a
+  // move, ~19k -> ~30k power/h. The model path does not play w0 (5x5 only).
+  clock: { default: false, Tetrads: true, Netburners: true, TheBlackHand: true, Daedalus: true, Illuminati: true, w0r1d_d43m0n: true },
   // THE SOLVER-ABSENCE WAIT. A move the solver does not answer is played by
   // the 20ms local search, which loses games (localLoss: the share of games
   // lost on the fallback, tools/sim/go-w0.mjs --local) — and a loss resets the
@@ -1729,7 +1734,10 @@ export async function main(ns) {
           } catch (e) {
             record(errors, new Error(`getMoveHistory: ${describe(e)} — KataGo runs without ponder history`))
           }
-          modelReq = { backend: 'katago', visits: size >= 19 ? SETTINGS.bigBoard.visits : SETTINGS.arms.katagoVisits, opponent: gameName(opponent), history, fallback: 'uct' }
+          // T: the playtime at the request — the solver ponders the AI's
+          // replies at the seeds it predicts from it (SETTINGS.clock).
+          const T = clockFor(opponent) ? clockRead.now() : null
+          modelReq = { backend: 'katago', visits: size >= 19 ? SETTINGS.bigBoard.visits : SETTINGS.arms.katagoVisits, opponent: gameName(opponent), history, fallback: 'uct', ...(T ? { T } : {}) }
           if (count) modelAsked++
         }
         return { seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }

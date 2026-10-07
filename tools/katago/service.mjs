@@ -341,6 +341,21 @@ export class KataGoService {
  *   history: previous boards, most recent first (the AI's superko filter)
  *   play:    (board, x, y) -> board after a WHITE stone there (default applyStone)
  */
+/**
+ * The AI's likely seeds after our play (for ponderPositions rngs): getMove
+ * seeds its WHRNG from the playtime one waitCycle after we play (goAI.ts:183-
+ * 184), so seed = the playtime at T + lagMs, in whole 200ms engine ticks. The
+ * lag is known only roughly live (request pickup, our search, go.js's read),
+ * so the tick it lands on is spread: OFFSETS by weight. ASSUMED spread, to be
+ * checked against the live hit rate (go-solver logs ponderHit/Miss).
+ */
+export const SEED_OFFSETS = [[-1, 0.15], [0, 0.4], [1, 0.3], [2, 0.15]];
+export function ponderSeeds(T, lagMs, offsets = SEED_OFFSETS) {
+  if (!(T > 0) || !Number.isFinite(lagMs)) return null;
+  const k0 = Math.round(lagMs / 200);
+  return offsets.map(([d, w]) => [T + 200 * (k0 + d), w]);
+}
+
 // rngs: [[seed, weight], ...] — the AI's seed PREDICTED from the playtime
 // (the clock, as the model search's clockSeed): each candidate seed is asked
 // once and weighted, instead of `samples` random seeds. The AI's reply on a big

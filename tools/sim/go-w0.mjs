@@ -276,7 +276,9 @@ const PONDER = argv.includes("--ponder");
 // reply (sampled from the model) is searched at the full budget while the AI
 // "thinks"; a hit is answered at once, charged only the ponder's overrun past
 // the AI's live reply time. As go-solver does live.
-const { ponderPositions } = await import("../katago/service.mjs");
+const { ponderPositions, ponderSeeds, SEED_OFFSETS } = await import("../katago/service.mjs");
+const PONDER_SPREAD = argv.includes("--ponder-spread");
+let spreadTicks = 0;
 if (argv.includes("--katago")) {
   if (argv.includes("--kcal")) throw new Error("--kcal was measured worse and is not wired to the service (katago.mjs startKataGo still has it)");
   const svc = await import("../katago/service.mjs");
@@ -928,10 +930,17 @@ async function playGame(stats, gameIndex) {
       // --seeded: the AI's seed is the playtime one engine tick after our play
       // (aiSeed below: wall + 200 + a 0.5-6.5ms jitter) — the two ticks it can
       // land on, weighted by the jitter's chance of crossing the boundary.
-      const rngs = SEEDED ? (() => {
+      // --ponder-spread: as go-solver live — the seeds spread over the ticks
+      // service.ponderSeeds names, and the AI's real seed drawn from that same
+      // spread (the live lag is known only to a tick or two).
+      const rngs = SEEDED ? (PONDER_SPREAD ? ponderSeeds(playtimeAt(wall), 200) : (() => {
         const a = playtimeAt(wall + 200.5), b = playtimeAt(wall + 206.5);
         return a === b ? [[a, 1]] : [[a, 0.5], [b, 0.5]];
-      })() : null;
+      })()) : null;
+      if (PONDER_SPREAD) {
+        let u = Math.random();
+        spreadTicks = SEED_OFFSETS.find(([, w]) => (u -= w) < 0)?.[0] ?? 0;
+      }
       const positions = await ponderPositions({ model: KMODEL, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: KVISITS, size: N, samples: N >= 13 ? 4 : 8, rngs, maxPositions: N >= 13 ? 2 : 3 }); // as go-solver.mjs
       ponderT0 = performance.now();
       await KATAGO.ponder(positions);
@@ -941,7 +950,8 @@ async function playGame(stats, gameIndex) {
     const t1 = performance.now();
     // THE SEED (--seeded): the playtime one waitCycle (200ms + timer slop)
     // after our move, in whole engine cycles.
-    const aiSeed = SEEDED ? playtimeAt(wall + 200 + seedJit) + seedSkew : rngSeed();
+    const aiSeed = SEEDED ? playtimeAt(wall + 200 + seedJit) + seedSkew + 200 * spreadTicks : rngSeed();
+    spreadTicks = 0;
     const reply = await g.getMove(state, GoColor.white, OPP, true, aiSeed);
     oppMs += performance.now() - t1;
     if (sess && (SESSION === "ponder" || SESSION === "deep") && sess.pondering) {

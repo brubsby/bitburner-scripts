@@ -835,14 +835,20 @@ while (true) {
           rememberSeedCtx(req, "req", move.pass ? null : move.x, move.pass ? null : move.y);
           skipSleep = await ponderUntilNext(maxms);
         }
-        const ponderThis = (backend === "model" && extra.mode !== "session") || (backend === "katago" && N < 13);
+        // KataGo on 13x13/19x19 ponders only with the playtime (req.T, go.js
+        // SETTINGS.clock): the AI's reply there turns on its seed, and 4 random
+        // seeds hit nothing; the predicted seeds hit 99% of replies in the
+        // harness (go-w0 --ponder --seeded, 2026-10-07). The lag to our play is
+        // this answer's time + go.js's pickup and read + one waitCycle.
+        const kgSeeds = backend === "katago" && Number.isFinite(req.T) && req.T > 0 ? (kgMod ?? (await import("./katago/service.mjs"))).ponderSeeds(req.T, Date.now() - t0 + 60 + 200) : null;
+        const ponderThis = (backend === "model" && extra.mode !== "session") || (backend === "katago" && (N < 13 || kgSeeds));
         if (PONDER && model && req.opponent && !move.pass && ponderThis) {
           try {
             kgMod = kgMod ?? (await import("./katago/service.mjs"));
             const after = kgMod.applyStone(req.board, move.x, move.y, "X");
             if (after) {
               const big = N >= 13;
-              const positions = await kgMod.ponderPositions({ model, board: after, history: [req.board.join(""), ...history], opponent: req.opponent, komi: req.komi ?? 5.5, visits: Number.isFinite(req.visits) ? req.visits : 200, size: N, samples: big ? 4 : 8, maxPositions: backend === "model" ? 1 : big ? 2 : 3 });
+              const positions = await kgMod.ponderPositions({ model, board: after, history: [req.board.join(""), ...history], opponent: req.opponent, komi: req.komi ?? 5.5, visits: Number.isFinite(req.visits) ? req.visits : 200, size: N, samples: big ? 4 : 8, ...(kgSeeds ? { rngs: kgSeeds } : {}), maxPositions: backend === "model" ? 1 : big && !kgSeeds ? 2 : 3 });
               if (backend === "katago") {
                 const settings = req.settings && typeof req.settings === "object" ? req.settings : undefined;
                 await kgService.ponder(positions.map((p) => ({ ...p, settings })));
