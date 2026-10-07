@@ -382,6 +382,10 @@ export async function startKataGo({ visits = 200, size = null, remote = null, re
     bias: 0,
     alive: () => !exited,
     why: () => exited,
+    /** A prepared query, as is (tools/katago/evaluator.mjs). */
+    raw(q) {
+      return query(q);
+    },
     async analyze(board, validList, komi, opts = {}) {
       const holes = holesFor(walls, opts.holes);
       return query(toQuery(board, validList, komi, { id: opts.id ?? `q${++seq}`, visits, ...opts, holes }));

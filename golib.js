@@ -1126,6 +1126,18 @@ export function modelSession(N, komi, model, opts = {}) {
   const C = Number.isFinite(opts.c) ? opts.c : 0.6
   const SAMPLES = Number.isFinite(opts.samples) ? opts.samples : 6
   const PASS_FIRST = !!opts.passFirst
+  // THE NET (opts.nn, tools/katago/evaluator.mjs): an injected async
+  // evaluator — eval(simpleBoard, komi) -> { policy (by idx), pass, winB,
+  // areaB } for black to move. With it every new B node is scored by the
+  // net (mixed with the playout by nn.mix: 1 = net only) and its stones are
+  // chosen by PUCT on the net's policy instead of expand-all-then-UCB1;
+  // nn.parallel iterations run at once (virtual loss), so the evaluator's
+  // queries batch. Without opts.nn nothing below changes.
+  const NN = opts.nn && typeof opts.nn.eval === 'function' ? opts.nn : null
+  const NN_MIX = NN && Number.isFinite(NN.mix) ? NN.mix : 1
+  const CPUCT = NN && Number.isFinite(NN.cpuct) ? NN.cpuct : 1.5
+  const NN_PAR = NN && Number.isFinite(NN.parallel) ? Math.max(1, NN.parallel | 0) : 1
+  const FPU = NN && Number.isFinite(NN.fpu) ? NN.fpu : 0.1
   let rootHistory = []
   let points = 0
   // opts.seed: a fixed search stream (the regression corpus replays decisions deterministically).
@@ -1170,6 +1182,39 @@ export function modelSession(N, komi, model, opts = {}) {
     let e = 0
     for (let i = 0; i < N * N; i++) if (b[i] === EMPTY) e++
     return ply + obj.leafK * e
+  }
+  // The net's value of a B node, on the objective's scale: the expected
+  // value over its win probability (won is fractional; lastWon carries it).
+  const nnVal = (e, b, ply) => {
+    const W = Math.min(1, Math.max(0, e.winB))
+    const us = e.areaB
+    lastWon = W
+    if (!obj) return (1 - areaW) * W + areaW * (us / points)
+    const lp = leafPly(b, ply)
+    const P = W * (us * obj.diff * obj.winMult) + (1 - W) * (us * obj.diff * obj.lossMult - obj.lossFuture) - obj.turnCost * lp
+    return (P + obj.lossFuture) / (obj.diff * obj.winMult * points + obj.lossFuture)
+  }
+  // Evaluate a B node with the net once (concurrent askers share the promise):
+  // its prior over its actions (normalised over them) and its value.
+  const nnEvalNode = (node) => {
+    if (!node.nnP) {
+      node.nnP = NN.eval(toSimple(node.s), komi).then((e) => {
+        if (node.untried) {
+          let tot = 0
+          for (const a of node.untried) {
+            a.p = a.idx === PASS ? e.pass : e.policy[a.idx] || 0
+            tot += a.p
+          }
+          const n = node.untried.length
+          for (const a of node.untried) a.p = tot > 0 ? a.p / tot : 1 / n
+          node.untried.sort((a, z) => z.p - a.p || z.h - a.h)
+          node.prior = new Map(node.untried.map((a) => [a.idx, a.p]))
+        }
+        node.nn = e
+        return e
+      })
+    }
+    return node.nnP
   }
   const valueNow = (b, ply = 0) => {
     const m = scoreBoard(b, nbrs, N, komi, scratch)
@@ -1238,7 +1283,7 @@ export function modelSession(N, komi, model, opts = {}) {
   // the B parent's). The objective's time charge and the clock's tick
   // distance both read it.
   const mkB = (b, parent, passCount, valid, ply) => {
-    const node = { kind: 0, b, s: toStr(b), parent, passCount, ply, visits: 0, work: 0, sum: 0, wins: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0, tw: 0 }
+    const node = { kind: 0, b, s: toStr(b), parent, passCount, ply, visits: 0, vl: 0, work: 0, sum: 0, wins: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0, tw: 0, prior: null, nn: null, nnP: null }
     if (node.terminal) {
       node.tv = valueNow(b, ply)
       node.tw = lastWon
@@ -1246,7 +1291,7 @@ export function modelSession(N, komi, model, opts = {}) {
     return node
   }
   const mkW = (b, parent, passCount, moved) => {
-    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, ply: parent.ply, visits: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
+    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, ply: parent.ply, visits: 0, vl: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
     if (node.terminal) {
       node.tv = valueNow(b, node.ply + 1)
       node.tw = lastWon
@@ -1337,7 +1382,14 @@ export function modelSession(N, komi, model, opts = {}) {
   /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
   const iterate = async (start) => {
     let node = start
-    const path = [start]
+    const path = []
+    // Virtual loss: every node on the path counts as in flight until the
+    // backup (only read by the net's PUCT; vl is 0 between iterations).
+    const push = (n) => {
+      n.vl++
+      path.push(n)
+    }
+    push(start)
     let v = null
     // WORK: an iteration that called the model. Iterations that only walk to
     // an already-scored terminal (a pass-pass line) are nearly free and can
@@ -1352,6 +1404,35 @@ export function modelSession(N, komi, model, opts = {}) {
         break
       }
       if (node.kind === 0) {
+        if (NN && !node.prior && !node.terminal) await nnEvalNode(node)
+        // PUCT on the net's prior: an untried stone competes with the
+        // searched ones at the first-play urgency (the node's mean - FPU);
+        // virtual loss (vl: iterations in flight below a child) spreads the
+        // parallel iterations.
+        let pick = -1
+        if (node.prior) {
+          const sq = Math.sqrt(node.visits + node.vl + 1)
+          const fpu = (node.visits ? node.sum / node.visits : 0.5) - FPU
+          let bestU = -Infinity
+          let bestChild = null
+          for (const [idx, child] of node.children) {
+            const n = child.visits + child.vl
+            const q = n ? child.sum / n : fpu
+            const u = q + CPUCT * (node.prior.get(idx) ?? 0) * sq / (1 + n)
+            if (u > bestU) { bestU = u; bestChild = child; pick = -1 }
+          }
+          if (node.untried.length) {
+            const a = node.untried[0]
+            const u = fpu + CPUCT * a.p * sq
+            if (u > bestU) { bestU = u; pick = 0 }
+          }
+          if (pick < 0) {
+            if (!bestChild) { v = valueNow(node.b, node.ply); won = lastWon; break }
+            node = bestChild
+            push(node)
+            continue
+          }
+        }
         if (node.untried.length) {
           const { idx } = node.untried.shift()
           const b = node.b.slice()
@@ -1369,7 +1450,7 @@ export function modelSession(N, komi, model, opts = {}) {
           const w = mkW(b, node, moved ? 0 : node.passCount + 1, moved)
           node.children.set(idx, w)
           node = w
-          path.push(w)
+          push(w)
           continue
         }
         let best = null
@@ -1382,12 +1463,13 @@ export function modelSession(N, komi, model, opts = {}) {
         }
         if (!best) { v = valueNow(node.b, node.ply); won = lastWon; break }
         node = best
-        path.push(node)
+        push(node)
         continue
       }
       // W node: draw a fresh reply while under the sample cap, else replay one.
       const cap = Math.min(SAMPLES, 1 + Math.floor(Math.log2(1 + node.visits)))
-      if (node.draws < cap) {
+      // (A parallel search can find every draw still in flight: draw again.)
+      if (node.draws < cap || !node.samples.size) {
         node.draws++
         modelCalls++
         worked = true
@@ -1402,10 +1484,20 @@ export function modelSession(N, komi, model, opts = {}) {
           node.samples.set(key, e)
           e.n++
           node = e.child
-          path.push(node)
+          push(node)
           if (node.terminal) {
             v = node.tv
             won = node.tw
+          } else if (NN) {
+            const e = await nnEvalNode(node)
+            v = nnVal(e, node.b, node.ply)
+            won = lastWon
+            if (NN_MIX < 1) {
+              work.set(node.b)
+              const w2 = playout(work, nbrs, N, komi, US, scratch, rand)
+              v = NN_MIX * v + (1 - NN_MIX) * val(w2, scratch.us, leafPly(node.b, node.ply))
+              won = NN_MIX * won + (1 - NN_MIX) * w2
+            }
           } else if (LEAF_MODEL) {
             v = await modelPlayout(node, key)
             won = lastWon
@@ -1418,10 +1510,12 @@ export function modelSession(N, komi, model, opts = {}) {
         }
         e.n++
         node = e.child
-        path.push(node)
+        push(node)
         continue
       }
-      let pick = (rand() * node.draws) | 0
+      let tot = 0
+      for (const e of node.samples.values()) tot += e.n
+      let pick = (rand() * tot) | 0
       let chosen = null
       for (const e of node.samples.values()) {
         if (pick < e.n) { chosen = e; break }
@@ -1429,9 +1523,10 @@ export function modelSession(N, komi, model, opts = {}) {
       }
       if (!chosen) chosen = node.samples.values().next().value
       node = chosen.child
-      path.push(node)
+      push(node)
     }
     for (const n of path) {
+      n.vl--
       n.visits++
       n.sum += v
       n.wins += won
@@ -1552,10 +1647,23 @@ export function modelSession(N, komi, model, opts = {}) {
     async search({ maxms, untilVisits = Infinity, untilWork = Infinity } = {}) {
       const deadline = Date.now() + maxms
       let iters = 0
-      while ((Date.now() < deadline && rootNode.visits < untilVisits && rootNode.work < untilWork) || iters < 1) {
-        await iterate(rootNode)
-        iters++
-      }
+      const go = () => (Date.now() < deadline && rootNode.visits < untilVisits && rootNode.work < untilWork) || iters < 1
+      if (NN_PAR > 1) {
+        // nn.parallel workers: their net queries are in flight together and
+        // batch in the evaluator. The root is fixed for the whole search.
+        const root = rootNode
+        const worker = async () => {
+          while (go()) {
+            iters++
+            await iterate(root)
+          }
+        }
+        await Promise.all(Array.from({ length: NN_PAR }, worker))
+      } else
+        while (go()) {
+          await iterate(rootNode)
+          iters++
+        }
       lastIters = iters
       return iters
     },
@@ -1671,25 +1779,23 @@ export function modelSession(N, komi, model, opts = {}) {
     get scale() {
       return obj ? obj.diff * obj.winMult * points + obj.lossFuture : 0
     },
-    async ponder(ms, { work = null } = {}) {
+    async ponder(ms, { work = null, until = null } = {}) {
       if (!ponderNode) return 0
       let iters = 0
       // work: grow by that many model-calling iterations instead of for ms
       // (the harness's machine-independent clock, go-w0 --work-rate).
-      if (work !== null) {
-        const node = ponderNode
-        const w0 = node.work
-        while (node.work < w0 + work && iters < 50 * work + 100) {
-          await iterate(node)
-          iters++
-        }
-        return iters
-      }
+      // until(workDone): an extra stop for the caller (the harness's NN-time budget).
+      const node = ponderNode
+      const w0 = node.work
       const deadline = Date.now() + ms
-      while (Date.now() < deadline) {
-        await iterate(ponderNode)
-        iters++
+      const go = work !== null ? () => node.work < w0 + work && iters < 50 * work + 100 && !(until && until(node.work - w0)) : () => Date.now() < deadline && !(until && until(node.work - w0))
+      const worker = async () => {
+        while (go()) {
+          iters++
+          await iterate(node)
+        }
       }
+      await Promise.all(Array.from({ length: NN_PAR }, worker))
       return iters
     },
     /** The AI's replies drawn so far under our committed move: [{ b: board string, pc, n }] (the opening book publishes its answers for them). */

@@ -524,5 +524,70 @@ export async function run() {
   }
   checks.push(c8);
 
+  /* ------------------------------------------------------------------ GM9 */
+  // THE NET IN THE MODEL SEARCH (golib.modelSession opts.nn, tools/katago/
+  // evaluator.mjs): KataGo's arrays map to board[x][y] (row-major from the TOP
+  // row, holes are walls and score nobody); with a stub net the session asks
+  // it once per B node, follows its prior (PUCT), runs iterations in parallel
+  // without corrupting the tree (visits = iterations, virtual loss back to 0),
+  // and the net's value decides between two stones the playouts cannot tell.
+  const c9 = new Check("GM9", "the net in the model search: evaluator mapping, PUCT on the prior, parallel iterations, net values");
+  {
+    const { evalQuery, parseEval, startEvaluator } = await import("../katago/evaluator.mjs");
+    // 3x3, board[x][y]: hole at (0,2) = A3 (top-left in KataGo's order: index 0), black at (2,0) = C1.
+    const b3 = ["..#", "...", "X.."];
+    const q = evalQuery(b3, 5.5, "t");
+    c9.examined(3);
+    if ((q.walls ?? []).join() !== "A3" || q.initialStones.map((s) => s.join(":")).join() !== "B:C1") c9.fail("evalQuery: holes as walls, stones as the game's", JSON.stringify(q));
+    if (q.maxVisits !== 1 || !q.includePolicy || !q.includeOwnership || q.allowMoves) c9.fail("evalQuery: one NN eval, policy + ownership, every legal move", JSON.stringify(q));
+    const pol = [0, 0.1, 0.2, 0.3, 0, 0, 0, 0, 0.4, 0.05]; // top row A3 B3 C3, middle, bottom A1 B1 C1, pass
+    const own = [1, 1, 1, 0, 0, 0, -1, -1, 1];
+    const e = parseEval(b3, { policy: pol, ownership: own, rootInfo: { winrate: 0.7, scoreLead: 2 } });
+    // idx x*3+y: B3 = (1,2) -> 5: 0.1; C1 = (2,0) -> 6: 0.4; A1 = (0,0) -> 0: own index 6 = -1.
+    c9.examined(4);
+    if (Math.abs(e.policy[5] - 0.1) > 1e-12 || Math.abs(e.policy[6] - 0.4) > 1e-12) c9.fail("parseEval: policy index (N-1-y)*N + x -> idx x*N + y", JSON.stringify([...e.policy]));
+    if (Math.abs(e.pass - 0.05) > 1e-12 || e.winB !== 0.7) c9.fail("parseEval: pass and win rate", JSON.stringify(e));
+    // area: the hole A3 (own 1) is excluded: (1+1)/2*2 + 0.5*3 + 0 + 0 + 1 = 4.5
+    if (Math.abs(e.areaB - 4.5) > 1e-12) c9.fail(`parseEval: black's area by ownership, holes excluded: want 4.5, got ${e.areaB}`);
+    // The evaluator over a stub engine: caches, counts busy time.
+    let calls = 0;
+    const ev = await startEvaluator({ engine: { query: async (qq) => (calls++, await new Promise((r) => setTimeout(r, 5)), { policy: pol, ownership: own, rootInfo: { winrate: 0.6 } }) } });
+    await Promise.all([ev.eval(b3, 5.5), ev.eval(b3, 5.5)]);
+    await ev.eval(b3, 5.5);
+    c9.examined(1);
+    if (!(ev.busyMs > 0) || ev.stats.queries + ev.stats.cacheHits !== 3) c9.fail("evaluator: every call counted, busy time measured", JSON.stringify(ev.stats));
+    // The session with a stub net on 5x5: the net prefers (2,2) and values it.
+    const N = 5;
+    const ai = { reply: async (board) => { for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (board[x][y] === ".") return { x, y }; return null } };
+    const asked = new Map();
+    const nn = {
+      parallel: 8,
+      eval: async (board) => {
+        const k = board.join("");
+        asked.set(k, (asked.get(k) ?? 0) + 1);
+        await new Promise((r) => setTimeout(r, 1));
+        const policy = new Float64Array(N * N).fill(0.01);
+        policy[2 * N + 2] = 0.9;
+        return { policy, pass: 0.001, winB: board[2][2] === "X" ? 0.95 : 0.3, areaB: 12 };
+      },
+    };
+    const root = [".....", ".....", ".....", ".....", "....."];
+    const s = golib.modelSession(N, 5.5, ai, { nn });
+    s.setRoot(root, root.map((c) => [...c].map(() => true)), { history: [] });
+    const its = await s.search({ maxms: 150 });
+    const best = s.best();
+    c9.examined(4);
+    if (!best?.[0] || best[0].x !== 2 || best[0].y !== 2) c9.fail("PUCT on the net's prior and value must choose (2,2)", JSON.stringify(best?.[0]));
+    if (s.rootVisits !== its) c9.fail(`parallel iterations must each back up once: ${its} iterations, root visits ${s.rootVisits}`);
+    // At most one net evaluation per B node: one per iteration (its new leaf) plus the root —
+    // concurrent iterations reaching a node still being evaluated share its promise.
+    const evals = [...asked.values()].reduce((a, n) => a + n, 0);
+    if (evals > its + 1) c9.fail(`the net must be asked at most once per B node: ${evals} evaluations for ${its} iterations`);
+    const st = s.rootStats();
+    if (st.some((c) => !(c.visits >= 0))) c9.fail("root children must hold sane visit counts", JSON.stringify(st));
+    c9.note(`${its} iterations at parallel 8 in 150ms, ${evals} net evaluations (${asked.size} distinct boards), best (${best?.[0]?.x},${best?.[0]?.y}) ${best?.[0]?.visits} visits`);
+  }
+  checks.push(c9);
+
   return checks;
 }

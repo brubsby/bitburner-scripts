@@ -289,6 +289,27 @@ if (argv.includes("--katago")) {
   }
 }
 
+// --nn [HOST]: THE NET IN THE MODEL SEARCH (with --model --session): the
+// walls-KataGo net (tools/katago/evaluator.mjs on HOST, default "self" — the
+// harness on the GPU host) scores the session's new B nodes and gives its
+// stones a PUCT prior (golib.modelSession opts.nn). --nn-mix W (net share of a
+// leaf's value, 1), --nn-cpuct C (1.5), --nn-par K (iterations in flight, 16),
+// --nn-fpu F (0.1), --nn-conc Q (the engine's batch, 64).
+// CHARGING: our time is work / WORK_RATE (the CPU side, --work-rate) PLUS the
+// wall time the evaluator had a query in flight (the GPU side, as live waits
+// for it on the same card) — summed, not overlapped: pessimistic for the net.
+// A ponder stops when work / WORK_RATE + the net's busy time reaches the AI's
+// live reply time.
+let NNEV = null;
+if (argv.includes("--nn")) {
+  const { startEvaluator } = await import("../katago/evaluator.mjs");
+  const host = str("nn", "self");
+  NNEV = await startEvaluator({ remote: host && !host.startsWith("--") ? host : "self", concurrency: num("nn-conc", 64), log: (m) => process.stderr.write(m + "\n") });
+  if (!NNEV) throw new Error("--nn: the walls evaluator could not start (tools/katago/walls)");
+  if (!WORK_RATE) throw new Error("--nn needs --work-rate (the CPU side is charged as work)");
+}
+const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: num("nn-par", 16), fpu: num("nn-fpu", 0.1) } : null;
+
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
 //
@@ -369,7 +390,8 @@ async function playGame(stats, gameIndex) {
   let mPonder = null;
   let ponderCarry = 0;
   const mStats = { hit: 0, miss: 0, none: 0, carryMs: 0 };
-  const sess = MODEL && SESSION ? golib.modelSession(N, komi, MODEL, OPTS) : null;
+  const sess = MODEL && SESSION ? golib.modelSession(N, komi, MODEL, NN_OPTS ? { ...OPTS, nn: NN_OPTS } : OPTS) : null;
+  let nnMs = 0;
   const sStats = { reused: 0, fresh: 0, early: 0, ponderIters: 0, rootVisits: 0 };
   // RELEASE 3 per-game state (see the flags above).
   const objective = OBJECTIVE === "power" ? golib.powerObjective({ streak: stats.winStreak, komi, size: N, eBlack: stats.meanBlack ?? 0.68 * N * N, rate: rateFor(OPP) / 3600, turnS: TURN_S, lossScale: LOSS_SCALE, leafK: LEAF_K }) : undefined;
@@ -410,6 +432,7 @@ async function playGame(stats, gameIndex) {
     mStats.carryMs += ponderCarry;
     ponderCarry = 0;
     const t0 = performance.now();
+    const nnBusy0 = NNEV ? NNEV.busyMs : 0;
     let solveWork = null;
     // An extension of `ms` more search: wall time, or (--work-rate) work.
     const moreSearch = (ms) =>
@@ -489,6 +512,11 @@ async function playGame(stats, gameIndex) {
       : golib.chooseMoveUCT(simple, valid, N, komi, budgetFor(ourTurns), opts);
     modelCalls += ranked?.[0]?.modelCalls ?? 0;
     ourMs += WORK_RATE && solveWork !== null ? solveWork / WORK_RATE : (performance.now() - t0) / CPU_SCALE;
+    if (NNEV) {
+      const d = NNEV.busyMs - nnBusy0;
+      ourMs += d;
+      nnMs += d;
+    }
     iters += ranked?.[0]?.iters ?? 0;
     return ranked;
   };
@@ -789,7 +817,11 @@ async function playGame(stats, gameIndex) {
     oppMs += performance.now() - t1;
     if (sess && (SESSION === "ponder" || SESSION === "deep") && sess.pondering) {
       const liveMs = (cycles + (reply.type === "move" ? 1 : 0)) * 200 + rows * 10;
-      sStats.ponderIters += WORK_RATE ? await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs) }) : await sess.ponder(liveMs * CPU_SCALE);
+      if (NNEV) {
+        // The net's time counts against the AI's reply too (see --nn).
+        const b0 = NNEV.busyMs;
+        sStats.ponderIters += await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs), until: (wd) => wd / WORK_RATE + (NNEV.busyMs - b0) >= liveMs });
+      } else sStats.ponderIters += WORK_RATE ? await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs) }) : await sess.ponder(liveMs * CPU_SCALE);
       if (PRESEND) answers = sess.ponderAnswers({ minWork: sessRate ? Math.round(sessRate * budgetFor(ourTurns)) : Infinity, max: 4 });
       // ADAPTIVE: a position the search thinks is going badly is never
       // pre-sent — it goes through a request, where the budget is extended.
@@ -864,6 +896,7 @@ async function playGame(stats, gameIndex) {
     itersPerMove: Math.round(iters / ourTurns),
     ...(MODEL ? { modelCallsPerMove: Math.round(modelCalls / ourTurns) } : {}),
     ...(KATAGO ? { kWhere, ...(PONDER ? { kPonder } : {}) } : {}),
+    ...(NNEV ? { nnMs: Math.round(nnMs), nnQueries: NNEV.stats.queries, nnHits: NNEV.stats.cacheHits } : {}),
     ...(sess ? { session: sStats } : {}),
     ...(MODEL && PONDER ? { mPonder: { ...mStats, carryMs: Math.round(mStats.carryMs) } } : {}),
     oppTurns,
@@ -911,7 +944,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {
@@ -972,4 +1005,6 @@ if (arms) {
 emit({ kind: "end", ...stats, ...(SEEDED ? { calib: { req: calib.req.stats, pre: calib.pre.stats } } : {}) });
 if (KATAGO) emit({ kind: "katago", ...KATAGO.status() });
 KATAGO?.close();
+if (NNEV) emit({ kind: "nn", ...NNEV.stats, busyMs: Math.round(NNEV.busyMs) });
+NNEV?.close();
 process.exit(0); // jsdom keeps the event loop alive
