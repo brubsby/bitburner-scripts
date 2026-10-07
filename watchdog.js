@@ -585,7 +585,7 @@ const WATCHED = [
   {
     script: 'endgame.js',
     host: 'home',
-    args: ['--next', 14],
+    args: ['--next', 9],
     // Hourly while it can only report the gap; every 2 minutes once The Red
     // Pill is installed — the exit is then minutes away and waiting an hour
     // for the next run cost BN8 up to 60 min (2026-09-27). The Bladeburner
