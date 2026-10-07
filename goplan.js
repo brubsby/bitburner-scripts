@@ -951,10 +951,32 @@ export function earlyGoWeights(o = {}) {
  *
  * @returns {{source: 'goWeights'|'early', weights, windowH, why, phase?}}
  */
+/**
+ * HOURS OF THIS LIFE LEFT — the cheat channel's horizon (chooseOpponent
+ * o.cheat.lifeLeftH). Two quantities that were once both called windowH:
+ *   remainingH  hours left FROM the pass that published it (goweights: the next
+ *               install or the black-op exit, measured from now) -> minus the
+ *               time since that pass (asOf).
+ *   windowH     a FULL window length (the gate's measured window; the early
+ *               weights' EARLY.windowH placeholder) -> minus this life's age.
+ * Live 2026-10-07: go.js subtracted the life's age from the blade route's
+ * remaining 11.82h (10.3h elapsed) and priced the warm-up on 1.5h.
+ * Returns { h, source } — h floored at 0.25.
+ */
+export function lifeLeftHOf(wf, { now = Date.now(), lastAugReset = null } = {}) {
+  const age = num(lastAugReset) && now > lastAugReset ? (now - lastAugReset) / 3.6e6 : 0
+  if (wf && num(wf.remainingH)) {
+    const since = num(wf.asOf) && now > wf.asOf ? (now - wf.asOf) / 3.6e6 : 0
+    return { h: Math.max(0.25, wf.remainingH - since), source: `forecast: ${wf.remainingH.toFixed(2)}h left at the pass${since > 0 ? `, ${since.toFixed(2)}h ago` : ''}` }
+  }
+  if (wf && num(wf.windowH) && wf.windowH > 0) return { h: Math.max(0.25, wf.windowH - age), source: `${wf.source === 'early' ? 'ASSUMED early' : 'measured'} window ${wf.windowH.toFixed(2)}h minus the life's age ${age.toFixed(2)}h` }
+  return { h: null, source: 'no horizon' }
+}
+
 export function weightsFor(gate, lastAugReset, earlyInputs) {
   const sameLife = !!gate && gate.lastAugReset === lastAugReset
   const gw = sameLife ? gate?.objective?.goWeights ?? null : null
-  if (gw?.weights) return { source: 'goWeights', weights: gw.weights, favor: gw.favor ?? null, windowH: gw.windowH ?? gate?.objective?.windowH ?? null, why: gw.why ?? null }
+  if (gw?.weights) return { source: 'goWeights', weights: gw.weights, favor: gw.favor ?? null, windowH: gw.windowH ?? gate?.objective?.windowH ?? null, remainingH: num(gw.remainingH) ? gw.remainingH : null, asOf: num(gw.asOf) ? gw.asOf : null, why: gw.why ?? null }
   const gwWhy = !gate ? 'no gate' : !sameLife ? 'gate is from another life' : gw?.why ?? 'not published this pass'
   const e = earlyGoWeights(typeof earlyInputs === 'function' ? earlyInputs() : earlyInputs ?? {})
   return { source: 'early', weights: e.weights, windowH: e.windowH, phase: e.phase, why: `${e.why} (goWeights: ${gwWhy})`, gwWhy }

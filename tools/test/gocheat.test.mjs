@@ -51,5 +51,21 @@ export async function run() {
     if (r.arm !== "SlumSnakes@5") c3.fail(`the cheat channel must pick SlumSnakes@5, got ${r.arm}`, r.why.slice(0, 300));
     if (!/SlumSnakes@9 \(crime_success: the cheat channel is priced on 5x5 only\)/.test(r.why)) c3.fail("SlumSnakes@9 must be skipped by name", r.why.slice(-400));
   }
-  return [c1, c2, c3];
+  const c4 = new Check("GC4", "the cheat horizon: a forecast's REMAINING hours are not reduced by the life's age (live shape: life started 14:43Z, exit 11.82h away, no install)");
+  {
+    const lastAugReset = Date.parse("2026-10-06T14:43:00Z");
+    const now = Date.parse("2026-10-07T01:01:00Z"); // 10.3h into the life
+    const blade = g.weightsFor({ lastAugReset, objective: { goWeights: { weights: { combat: 1 }, windowH: 11.82, remainingH: 11.82, asOf: now } } }, lastAugReset, {});
+    const l1 = g.lifeLeftHOf(blade, { now, lastAugReset });
+    const later = g.lifeLeftHOf(blade, { now: now + 1.5 * 3.6e6, lastAugReset });
+    const full = g.lifeLeftHOf({ source: "goWeights", windowH: 14, remainingH: null }, { now, lastAugReset });
+    const early = g.lifeLeftHOf({ source: "early", windowH: 8 }, { now, lastAugReset });
+    c4.examined(4);
+    if (!(Math.abs(l1.h - 11.82) < 1e-6)) c4.fail(`a fresh blade forecast of 11.82h left must read 11.82h, got ${l1.h} (${l1.source})`);
+    if (!(Math.abs(later.h - 10.32) < 1e-6)) c4.fail(`1.5h after the pass it must read 10.32h, got ${later.h}`);
+    if (!(Math.abs(full.h - 3.7) < 1e-6)) c4.fail(`a FULL 14h window 10.3h into the life leaves 3.7h, got ${full.h}`);
+    if (!(early.h === 0.25 && /ASSUMED/.test(early.source))) c4.fail(`the early placeholder window must be named ASSUMED and floored: ${JSON.stringify(early)}`);
+    c4.note(`${l1.h.toFixed(2)}h (${l1.source}); full window: ${full.h.toFixed(2)}h; early: ${early.h}h (${early.source})`);
+  }
+  return [c1, c2, c3, c4];
 }

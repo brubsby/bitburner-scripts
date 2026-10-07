@@ -238,6 +238,8 @@ export function* goWeightsGen(record, o = {}) {
   return {
     weights,
     favor,
+    // remainingH: hours to the next install FROM THE PASS (record.W is measured from now).
+    remainingH: pos(record.W) ? +record.W.toFixed(4) : null,
     unit: 'exit hours per unit ln of the multiplier',
     n,
     horizon,
@@ -495,6 +497,10 @@ export function* bladeGoWeightsGen(o = {}) {
     weights: w,
     route: 'blade',
     windowH: +Math.min(installs ? W : T0, T0).toFixed(4),
+    // remainingH: hours of THIS life left FROM THE PASS that priced it (the
+    // committed install or the black-op exit, both measured from now). Not a
+    // window length: go.js's cheat horizon reads this, never windowH.
+    remainingH: +Math.min(installs ? W : T0, T0).toFixed(4),
     unit: 'black-op exit hours per unit ln of the multiplier',
     horizon: installs ? `the committed install, in ${W.toFixed(2)}h` : `the black-op exit, in ${T0.toFixed(2)}h (no install before it)`,
     detail,

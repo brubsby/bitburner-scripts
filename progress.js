@@ -3296,7 +3296,7 @@ async function bladeGoWeightsOf(ns, info, { liveMoney, moneyBy, replanAt = null,
       'goweights-blade',
     )
     const r4 = (v) => (typeof v === 'number' && isFinite(v) ? +v.toPrecision(4) : v)
-    return gw?.weights ? { ...gw, weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])) } : { weights: null, route: 'blade', why: gw?.why ?? 'bladeGoWeightsGen returned nothing' }
+    return gw?.weights ? { ...gw, asOf: Date.now(), weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])) } : { weights: null, route: 'blade', why: gw?.why ?? 'bladeGoWeightsGen returned nothing' }
   } catch (e) {
     return { weights: null, route: 'blade', why: `bladeGoWeightsGen threw: ${String(e).slice(0, 160)}` }
   }
@@ -6259,7 +6259,7 @@ async function act(ns, canJoin, info, note) {
           )
           const r4 = (v) => (typeof v === 'number' && isFinite(v) ? +v.toPrecision(4) : v)
           goPub = gw?.weights
-            ? { weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])), favor: gw.favor ? { ...gw.favor, hoursPerRep: r4(gw.favor.hoursPerRep) } : null, unit: gw.unit, horizon: gw.horizon, n: gw.n, ms: gw.ms, streams: gw.streams, detail: gw.detail, why: null }
+            ? { weights: Object.fromEntries(Object.entries(gw.weights).map(([k, v]) => [k, r4(v)])), favor: gw.favor ? { ...gw.favor, hoursPerRep: r4(gw.favor.hoursPerRep) } : null, unit: gw.unit, horizon: gw.horizon, remainingH: gw.remainingH ?? null, asOf: Date.now(), n: gw.n, ms: gw.ms, streams: gw.streams, detail: gw.detail, why: null }
             : { weights: null, why: gw?.why ?? 'goweights returned nothing' }
         } catch (e) {
           goPub = { weights: null, why: `goweights threw: ${String(e).slice(0, 160)}` }

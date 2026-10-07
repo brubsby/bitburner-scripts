@@ -174,6 +174,7 @@ import {
   w0Obs,
   obsDue,
   weightsFor,
+  lifeLeftHOf,
   goMaxRepOf,
   solverVersion,
   armPosterior,
@@ -1221,6 +1222,9 @@ export async function main(ns) {
       const favW = wf.source === 'goWeights' && wf.favor && typeof wf.favor.hoursPerRep === 'number' ? wf.favor : null
       const favKey = favW ? Object.keys(OPPONENTS).find((k) => OPPONENTS[k].game === favW.faction) ?? null : null
       const favor = favW && favKey ? { opponent: favKey, hoursPerRep: favW.hoursPerRep, maxRep: goMaxRepOf(sf14), capLeft: Math.max(0, goMaxRepOf(sf14) - (stats?.[favW.faction]?.rep ?? 0)), why: favW.why ?? null } : null
+      // THE HORIZON (goplan.lifeLeftHOf): remaining hours from the planner's
+      // forecast when it publishes one, else a window length minus this life's age.
+      const lifeLeft = lifeLeftHOf(wf, { now: Date.now(), lastAugReset: reset?.lastAugReset })
       const pick = chooseOpponent({
         ...(arms ? { arms, incumbentArm: `${current}@${current === W0 ? 19 : armSize}` } : {}),
         ...(favor ? { favor } : {}),
@@ -1231,7 +1235,7 @@ export async function main(ns) {
         // THE CHEAT CHANNEL (goplan CHEAT_GAIN): Slum Snakes' crime_success
         // lifts the cheat-on farm's rate for the rest of the life. Only with
         // crime_success READ by go-cheat.js (never inferred from a capped chance).
-        ...(SETTINGS.cheat.channel !== false && cheatCalib?.crimeRead && reset?.lastAugReset ? { cheat: { on: Object.keys(SETTINGS.cheat.on).filter((k) => k !== 'default' && SETTINGS.cheat.on[k]), crime: cheatCalib.crime, lifeLeftH: Math.max(0.25, wf.windowH - (Date.now() - reset.lastAugReset) / 3.6e6) } } : {}),
+        ...(SETTINGS.cheat.channel !== false && cheatCalib?.crimeRead && reset?.lastAugReset && lifeLeft.h !== null ? { cheat: { on: Object.keys(SETTINGS.cheat.on).filter((k) => k !== 'default' && SETTINGS.cheat.on[k]), crime: cheatCalib.crime, lifeLeftH: lifeLeft.h, lifeLeftWhy: lifeLeft.source } } : {}),
         incumbent: current,
         nodePower: nodePowerOf(stats),
         dwellH,
