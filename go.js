@@ -365,7 +365,16 @@ const SETTINGS = {
   // 2026-10-06 23:40Z: it credited every Slum Snakes size, Thompson drew the
   // KataGo 9x9 arm and lost four straight (0-74.5 ...) — off until the
   // channel prices only the 5x5 arm / KataGo 7-9 carry their measured rate.
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 10000, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  // maxWaitMs: the longest wait for a cheat's success window. MEASURED
+  // 2026-10-06 (go-w0 --cheat predicted --crime 1.5872, Tetrads 5x5 live
+  // config, seed 52, 100 paired, the wait CHARGED to the clock): a 10s cap
+  // waited 2.2s a game and earned -0.0% [-8.3, +9.5] power/h over no cheats;
+  // a 0.5s cap +19.6% [+12.2, +27.3] (0.5s vs 10s paired: +19.6% [+8.8,
+  // +29.6]). The roll is a 59s sawtooth rising 0.017/s, so a closed window
+  // is almost always seconds away while a cheat is worth ~1s: play the cheat
+  // when its window is open NOW, never wait for one. (The 10000 was release
+  // 3's, and the earlier harness tables here did not charge the wait.)
+  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -1779,7 +1788,9 @@ export async function main(ns) {
           // throttled tab only makes this optimistic, and go-cheat.js decides
           // on the exact value anyway.
           const w = cheatWaitS(cheatCalib.T + (Date.now() - cheatCalib.at), p) * 1000
-          if (w > SETTINGS.cheat.maxWaitMs + 1500) {
+          // No exec for a window go-cheat.js would only decline (its own wait
+          // cap is maxWaitMs): the exec + read costs ~150ms for nothing.
+          if (w > SETTINGS.cheat.maxWaitMs + 200) {
             cheat.skipped++
             return { played: false }
           }
