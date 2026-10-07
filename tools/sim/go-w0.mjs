@@ -310,7 +310,21 @@ if (argv.includes("--nn")) {
   if (!NNEV) throw new Error("--nn: the walls evaluator could not start (tools/katago/walls)");
   if (!WORK_RATE) throw new Error("--nn needs --work-rate (the CPU side is charged as work)");
 }
-const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: num("nn-par", 16), fpu: num("nn-fpu", 0.1) } : null;
+// --nn-free: the net's time is NOT charged (and does not cap a ponder) — the
+// search as if its evaluator were instant: the ceiling a fast net (a small
+// distilled one in the solver's own process) could reach.
+const NN_FREE = argv.includes("--nn-free");
+// --smallnet FILE: the DISTILLED net in this process (tools/katago/smallnet.mjs)
+// as the search's net — its CPU time is measured and charged like the GPU's
+// busy time (no batching: nn.parallel 1).
+if (str("smallnet", null)) {
+  const { loadSmallNet } = await import("../katago/smallnet.mjs");
+  const sn = loadSmallNet(str("smallnet", null));
+  let ms = 0;
+  NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k) => { const t = performance.now(); const e = sn.eval(b, k); ms += performance.now() - t; NNEV.stats.queries++; return e; } };
+  if (!WORK_RATE) throw new Error("--smallnet needs --work-rate");
+}
+const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1) } : null;
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
@@ -549,7 +563,7 @@ async function playGame(stats, gameIndex) {
     ourMs += WORK_RATE && solveWork !== null ? solveWork / WORK_RATE : (performance.now() - t0) / CPU_SCALE;
     if (NNEV) {
       const d = NNEV.busyMs - nnBusy0;
-      ourMs += d;
+      if (!NN_FREE) ourMs += d;
       nnMs += d;
     }
     iters += ranked?.[0]?.iters ?? 0;
@@ -894,7 +908,7 @@ async function playGame(stats, gameIndex) {
     if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 });
     if (state.passCount >= 2) break;
     // What the AI's reply will be computed from, for the seed calibration.
-    const seedCtx = SEEDED ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
+    const seedCtx = SEEDED && MODEL ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
 
     // PONDER while the AI "thinks" (see --ponder above).
     let ponderT0 = null;
@@ -911,7 +925,14 @@ async function playGame(stats, gameIndex) {
     }
     if (PONDER && KATAGO) {
       const after = g.simpleBoardFromBoard(state.board);
-      const positions = await ponderPositions({ model: KMODEL, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: KVISITS, size: N, samples: N >= 13 ? 4 : 8, maxPositions: N >= 13 ? 2 : 3 }); // as go-solver.mjs
+      // --seeded: the AI's seed is the playtime one engine tick after our play
+      // (aiSeed below: wall + 200 + a 0.5-6.5ms jitter) — the two ticks it can
+      // land on, weighted by the jitter's chance of crossing the boundary.
+      const rngs = SEEDED ? (() => {
+        const a = playtimeAt(wall + 200.5), b = playtimeAt(wall + 206.5);
+        return a === b ? [[a, 1]] : [[a, 0.5], [b, 0.5]];
+      })() : null;
+      const positions = await ponderPositions({ model: KMODEL, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: KVISITS, size: N, samples: N >= 13 ? 4 : 8, rngs, maxPositions: N >= 13 ? 2 : 3 }); // as go-solver.mjs
       ponderT0 = performance.now();
       await KATAGO.ponder(positions);
     }
@@ -928,7 +949,7 @@ async function playGame(stats, gameIndex) {
       if (NNEV) {
         // The net's time counts against the AI's reply too (see --nn).
         const b0 = NNEV.busyMs;
-        sStats.ponderIters += await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs), until: (wd) => wd / WORK_RATE + (NNEV.busyMs - b0) >= liveMs });
+        sStats.ponderIters += await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs), until: (wd) => wd / WORK_RATE + (NN_FREE ? 0 : NNEV.busyMs - b0) >= liveMs });
       } else sStats.ponderIters += WORK_RATE ? await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs) }) : await sess.ponder(liveMs * CPU_SCALE);
       if (PRESEND) answers = sess.ponderAnswers({ minWork: sessRate ? Math.round(sessRate * budgetFor(ourTurns)) : Infinity, max: 4 });
       // ADAPTIVE: a position the search thinks is going badly is never
@@ -1053,7 +1074,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {
