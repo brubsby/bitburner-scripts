@@ -292,10 +292,11 @@ export async function run() {
     const model = await loadModel();
     if (!model) c9.warn("the opponent model could not load — GC9 did NOT run");
     else {
-      // A live position (audit, 2026-10-07 07:18:05Z ply 5) where the single
-      // search plays a stone. --fault-joint-pass 5: the first 5 searches with
-      // pairs answer PASS (injected) — the guard must turn each into a stone.
-      const board = ["....#", ".X...", "#.XX.", "OOOX.", "O#O.#"];
+      // An open board, where the single search never passes (a marginal
+      // position made the check flaky: the single search itself passed).
+      // --fault-joint-pass 5: the first 5 searches with pairs answer PASS
+      // (injected) — the guard must turn each into a stone.
+      const board = [".....", ".X...", ".....", "...O.", "....."];
       const valid = model.validMoves(board, []);
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gocheat9-"));
       const files = new Map();
