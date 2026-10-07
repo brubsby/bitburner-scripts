@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 // point ours needs at least S_min of our stones, hence >= S_min AI replies
 // (each of our stones is answered), each >= the reply floor.
 //
+// SUPERSEDED for the ceiling (2026-10-06): this greedy sits 25-40% above the
+// true minimum on 7x7-13x13 (empty boards 5/16/26/57 here vs 4/12/21/48 from
+// go-cheatceil.mjs --anneal, which also handles dealt layouts and cheats).
+//
 //   node go-passmin.mjs SIZE [OPPONENT] [SEEDS]
 import path from "node:path";
 const SIM = process.env.GO_SIM ?? path.dirname(fileURLToPath(import.meta.url));

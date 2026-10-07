@@ -15,3 +15,74 @@ LIVE Tetrads no-stall    522  522   19.8   21.9  0.91    11.4(4)   1.74     11.9
 13 uct3000                 8    8   84.3  156.1  0.54    68.8(60)   1.23     77.3(69.2)     1124    1.090     17663 [17196-18186]    15722   52692   36576
 13 kg400 score             6    5   88.5  157.3  0.56    85.5(65)   1.04     97.2(75.3)     1137    0.911     14751 [11231-17303]    14042   49015   33831
 13 kg400 win               6    5   83.2  157.3  0.53    85.8(74)   0.97     96.2(82.7)     1121    0.864     14000 [8889-17880]    13326   43054   30812
+
+=============================================================================
+CHEAT-AWARE (2026-10-06, tools/sim/go-cheatceil.mjs). The table above is NOT cheat-aware: its ceilings assume one
+black stone per AI reply. With ns.go.cheat.playTwoMoves a turn can place two stones for one reply.
+
+THE PASS CONDITION, FROM SOURCE. With no white stone on the board, getMove passes iff every move generator is empty:
+no available point (white's valid moves minus every empty region of <= min(0.4 x nodes, 11) points touching only
+black: controlledTerritory.ts:24-82, boardAnalysis.ts:282-314) is an expansion point (4 empty neighbours) or a
+surround/atari/capture liberty (goAI.ts:628-711), and every 3x3 corner box with >= 7 live nodes holds a stone
+(goAI.ts:443-481). Patterns need a white stone; growth/defend/eyeMove need white chains; eyeBlock is not modelled
+and is caught by the getMove verification. S_min per DEALT layout (offline nodes; Illuminati's handicap router
+captured) = the fewest stones meeting it, found by simulated annealing on that model, every set VERIFIED against
+the game's own getMove on 64 seeds (+ full black score). Checks of the optimiser: on 5x5 the annealer hits the
+EXHAUSTIVE minimum on every layout tried, and 5x5 S_min is exhaustive (47 of 48 layouts exact, one 4-5); a 6x longer anneal
+moves 9x9 (4 layouts) and 7x7 (6) by 0 stones, 13x13 (3) by -0.7 (-1.5%). The getMove-checked greedy behind the old
+table (go-passmin.mjs) was 25-40% above these on 7x7-13x13 (empty boards: 5/16/26/57 -> 4/12/21/48).
+
+CHEAT SCHEDULE. chance(k) = min(1, 0.6 (0.7-0.02k)^k crime + 0.25[SF14.3]); go-cheat.js plays only inside the
+clock window roll <= chance(k) (the roll is ONE 59.06s sawtooth rising 0.0169/s, so availability is a function
+of the game's start phase, integrated over 2000 phases, not an independent draw per turn; waits <= 0.5s), greedy
+(optimal: chance falls with k, the roll rises), maxPerGame 12. R = AI replies incl. its final pass; ours = 0.
+power/h = 3600 x 3 (streak) x difficulty x area / AI-seconds, AI-seconds = (R-1) x reply + pass, reply = the
+game's 200c+10r timer model (go-turntime.mjs, 0.7% vs live) on prefixes of the final structure.
+Other cheats, not searched (argued): each costs a whole reply AND a cheat count (lowering playTwoMoves' odds).
+destroyNode makes a wall that scores nothing (an offline node does avoid the surround constraint a stone carries,
+but playTwoMoves at the same count places two scoring walls); repairOfflineNode buys 1 point for a reply where
+every board here earns 4-11; removeRouter has no target (no white stone) except Illuminati's handicap router,
+which the structure captures with stones that also score.
+
+CEILING, Tetrads (difficulty 1.5), dealt layouts, area = playable points (all ours):
+size lay  area S_min | no cheat     | crime 1.5872 (live) | +SF14.3      | crime 2.5    | crime 10     | crime 10+SF14.3 | S_min to tie 5x5
+                     | R  pts/R k/h | R  pts/R  k/h  chts | R  pts/R k/h | R  pts/R k/h | R  pts/R k/h | R  pts/R  k/h   | (live..10+SF)
+ 5   48  21.9  3.7   | 3.69 5.9  82 | 2.27 9.6  136 1.4   | 2.08 10.5 149| 2.02 10.8 154| 2.02 10.8 154| 2.02 10.8 154   |  -
+ 7   32  44.1  9.2   | 9.19 4.8  65 | 6.71 6.6   90 2.5   | 5.87 7.5 103 | 6.00 7.4 100 | 4.89 9.0 124 | 4.84 9.1 125    |  6..6
+ 9   24  74.1 17.3   | 17.3 4.3  56 | 14.1 5.3   69 3.2   | 12.3 6.0  78 | 13.3 5.6  73 | 11.4 6.5  85 | 10.5 7.1  92    |  9..12
+13   12 160.3 43.3   | 43.3 3.7  45 | 38.1 4.2   52 5.2   | 33.1 4.9  60 | 37.5 4.3  53 | 35.7 4.5  55 | 32.6 4.9  61    | 17..20
+(k/h = thousand power/h, AI time only; empty-board rows and the @0.8s-floor and +wait columns are in the full
+report: node tools/sim/go-cheatceil.mjs report <runs>.) Other opponents, crime 1.5872 / crime 10+SF14.3, k/h:
+ Daedalus 1.5   5x5 180/204   7x7 121/167   9x9  99/134   13x13 75/86
+ SlumSnakes 1   5x5 126/144   7x7  78/109   9x9  62/84    13x13 47/54
+ Illuminati 5x5 (x8, handicap captured: S_min 5.3, area 21.7)  no cheat 390, live 605, crime 10 753 k/h.
+5x5 bottoms out at R = 2 (every layout needs >= 3 stones; exhaustive), so it saturates at crime >= 2.5 while bigger
+boards keep gaining with cheat count — and still never reach it: 7x7's best (crime 10+SF14.3) is 125k vs 154k
+(81%); to tie, 7x7 would need S_min <= 6 against the measured 9.2, 9x9 <= 12 vs 17.3, 13x13 <= 20 vs 43.3.
+
+ACHIEVED (harness, the game's own AI, Tetrads; AI = AI timer + compute, live = + our search (--work-rate 1.7 where
+marked wr, else bubtop wall budget) + 85ms round trip/move + per cheat 85ms + 150ms exec + the second stone's search)
+arm                                   n   won  black AIreplies pts/R  AI k/h  live k/h  cheats
+5x5 live config, no cheat (wr)       178  178  19.3   11.0    1.76    26.5    25.9      -
+5x5 live config, crime 1.5872 (wr)   200  200  19.4    9.2    2.11    32.1    28.7     2.5
+5x5 + oracle book, crime 1.5872      200  200  19.8    8.1    2.42    37.6    31.4     1.9   (wall-clock search)
+5x5 live config, crime 10+SF14.3 (wr)100  100  19.2    7.1    2.70    42.2    32.8     4.9
+7x7 uct3000, no cheat                 20   17  25.3   19.4    1.30    18.2     5.0      -
+7x7 uct3000, crime 1.5872             20   20  29.3   14.2    2.07    27.2     7.2     3.9
+7x7 uct3000, crime 10+SF14.3          20   20  32.8   13.3    2.46    31.9     7.9     7.8
+7x7 uct400,  crime 10+SF14.3          20   20  31.4   13.9    2.26    30.6    19.7     7.4
+9x9 uct3000, crime 10+SF14.3          10   10  48.0   27.8    1.73    21.9     5.8    11.1
+13x13 uct3000, crime 10+SF14.3         5    5  93.2   68.4    1.36    16.2     4.6    20.2
+(harness cheat cap 99, live 12: only 9x9/13x13 exceed 12. 9x9/13x13 no-cheat: the table above, 1.15/1.23 pts/turn,
+17.5k/17.7k AI-only. Raw runs: bubtop ~/gosim-cheat/runs (A*, ceil*, conv*), 5x5 wr arms ~/gosim-pm/runs WR-*, F2-*.)
+
+VERDICT. No larger board beats 5x5 with cheats, at any crime_success measured (1.5872 live, 2.5, 10) with or
+without SF14.3, against Tetrads, Daedalus or Slum Snakes — neither the structural ceiling (5x5 154k vs 7x7 125k,
+9x9 92k, 13x13 61k at the most cheat-friendly setting) nor achieved (5x5 32.8k live / 42.2k AI-only vs 7x7's
+best 19.7k live / 31.9k AI-only). The back-of-envelope (5x5 8.3 pts/reply, 7x7 3.8-4.9, 9x9 3.5-4.0, 13x13
+3.1-3.3) had the order right and the bigger boards too low: measured 5x5 9.6-10.8, 7x7 6.6-9.1, 9x9 5.3-7.1,
+13x13 4.2-4.9 pts/reply (live crime .. crime 10+SF14.3). ASSUMPTIONS: AI time only in the ceiling (our search,
+round trips and exec charged only in the achieved live column); no white stone is ever played in the ceiling
+(the AI's replies while we build are ignored — achieved games take 2-4x the ceiling's replies); S_min is the
+annealer's verified best (an upper bound on the true minimum; the gaps to break-even are 3 stones at 7x7, 5 at 9x9,
+23 at 13x13 against a measured optimiser slack of 0-1); Illuminati's x8 applies on 5x5 only.
