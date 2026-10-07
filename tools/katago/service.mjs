@@ -68,7 +68,12 @@ export function positionKey(board, komi, visits) {
 }
 
 export class KataGoService {
-  constructor({ remote = null, local = true, idleMs = SERVICE_DEFAULTS.idleMs, remoteRetryMs = SERVICE_DEFAULTS.remoteRetryMs, remoteOverride = "", remoteNet = null, localOverride = "", settings = null, queryOpts = {}, log = () => {}, start = startKataGo } = {}) {
+  // walls: the remote engine is the PATCHED one (offline nodes as walls,
+  // katago.mjs header) — if it will not start (not installed on the host) the
+  // stock engine is tried before the GPU is marked down. Every answer says
+  // which it came from (`walls`), so go-solver can version the evidence.
+  constructor({ remote = null, local = true, idleMs = SERVICE_DEFAULTS.idleMs, remoteRetryMs = SERVICE_DEFAULTS.remoteRetryMs, remoteOverride = "", remoteNet = null, localOverride = "", settings = null, queryOpts = {}, walls = true, log = () => {}, start = startKataGo } = {}) {
+    this.walls = walls;
     this.settings = settings; // KataGo overrideSettings for every query (search utility)
     this.queryOpts = queryOpts; // extra toQuery options (experiments: allowUnsettledPass)
     this.remote = remote;
@@ -117,11 +122,19 @@ export class KataGoService {
     if (!this.remoteStarting) {
       this.remoteStarting = (async () => {
         let why = null;
-        const e = await this.start({ remote: this.remote, remoteNet: this.remoteNet, override: this.remoteOverride, startTimeoutMs: 60000, log: (m) => (why = m) });
+        let e = null;
+        if (this.walls) {
+          e = await this.start({ remote: this.remote, remoteNet: this.remoteNet, override: this.remoteOverride, walls: true, startTimeoutMs: 60000, log: (m) => (why = m) });
+          if (!e) {
+            this.wallsWhy = `${new Date().toISOString()} walls engine did not start: ${String(why ?? "").slice(0, 160)} — stock engine (holes as white stones)`;
+            this.log(`katago: ${this.wallsWhy}`);
+          }
+        }
+        if (!e) e = await this.start({ remote: this.remote, remoteNet: this.remoteNet, override: this.remoteOverride, startTimeoutMs: 60000, log: (m) => (why = m) });
         if (!e) this.markRemoteDown(why ?? "did not start");
         else {
           this.stats.cold++;
-          this.log(`katago: GPU engine up on ${this.remote} in ${e.startMs}ms`);
+          this.log(`katago: GPU engine up on ${this.remote} in ${e.startMs}ms${e.walls ? " (walls)" : ""}`);
         }
         this.remoteEngine = e;
         this.remoteStarting = null;
@@ -194,6 +207,7 @@ export class KataGoService {
     let pondered = false;
     let pick = null;
     let where = null;
+    let walls = false;
     const legal = (m) => !m || m.move.toLowerCase() === "pass" || (() => {
       const v = fromVertex(m.move);
       return (q.valid ?? []).some(([x, y]) => x === v.x && y === v.y);
@@ -205,6 +219,7 @@ export class KataGoService {
       try {
         pick = await hit.promise;
         where = hit.engine.where;
+        walls = !!hit.engine.walls;
         // A pondered answer is checked against the game's own valid list
         // (superko) before it is trusted.
         if (pick && !legal(pick)) {
@@ -224,6 +239,7 @@ export class KataGoService {
         try {
           pick = await (await this.run(engine, q)).promise;
           where = engine.where;
+          walls = !!engine.walls;
         } catch (err) {
           if (engine.alive()) {
             // KataGo refused THIS query (an "error" line) — the engine is fine;
@@ -247,8 +263,8 @@ export class KataGoService {
     }
     this.stats[where.startsWith("gpu") ? "gpu" : "cpu"]++;
     const ms = performance.now() - t0;
-    if (!pick) return { pass: true, where, ms, pondered };
-    return { ...fromVertex(pick.move), winrate: pick.winrate, scoreLead: pick.scoreLead, visits: pick.visits, where, ms, pondered };
+    if (!pick) return { pass: true, where, ms, pondered, walls };
+    return { ...fromVertex(pick.move), winrate: pick.winrate, scoreLead: pick.scoreLead, visits: pick.visits, where, ms, pondered, walls };
   }
 
   /** Terminate every running ponder except `keep`. */
@@ -298,6 +314,7 @@ export class KataGoService {
     return {
       remote: this.remote ? { host: this.remote, up: !!this.remoteEngine?.alive(), downFor: Math.max(0, Math.round((this.remoteDownUntil - Date.now()) / 1000)), why: this.remoteWhy } : null,
       local: { sizes: [...this.localEngines.keys()], why: this.localWhy },
+      walls: { want: this.walls, remote: !!this.remoteEngine?.walls, why: this.wallsWhy ?? null },
       queryWhy: this.queryWhy ?? null,
       stats: { ...this.stats },
     };

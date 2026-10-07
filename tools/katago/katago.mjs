@@ -12,14 +12,24 @@
 //   - Rules: area scoring, positional superko, no suicide, no friendly pass
 //     (dead stones must be captured — IPvGO never removes dead stones,
 //     scoring.ts getScore counts what is on the board), komi as the game's.
-//   - Offline nodes ('#') do not exist in Go. They are sent as WHITE stones:
-//     for OUR groups that is exact (a hole is not a liberty, and neither is a
-//     white stone). For WHITE's groups it is not: a white group touching a
-//     hole cluster merges with it in KataGo's eyes and borrows its liberties,
-//     so white looks stronger than it is (pessimistic for us, never
-//     optimistic). Hole groups with no liberty at all are dropped (KataGo
-//     would treat them as captured). Komi is reduced by the hole stones sent,
-//     so KataGo's area count is not inflated by them.
+//   - Offline nodes ('#') are, in the game, points that do not exist: the
+//     board holds null there (boardState.ts, offlineNodes.ts), so a hole is no
+//     liberty, no stone, no territory, and an empty region bordered by one
+//     colour and holes is that colour's (scoring.ts findNeighbors skips them)
+//     — EXACTLY a board edge. Stock KataGo has no such point, so:
+//       holes "wall" (THE DEFAULT on an engine that supports it, 2026-10-06):
+//         the query carries `walls`, read by OUR PATCHED KataGo
+//         (tools/katago/walls: the board's own C_WALL padding value placed
+//         inside the rectangle, and the net's on-board mask cleared there).
+//         Rules, liberties, territory and the net's input are then the game's.
+//       holes "white" (stock engines: the local CPU build): every hole
+//         cluster a WHITE stone. Exact for our groups' liberties, wrong for
+//         white's (a white group touching a hole cluster borrows its
+//         liberties), and KataGo reads the clusters as dead white stones to
+//         capture and as white walls owning the territory around them. Hole
+//         groups with no liberty are dropped; komi is reduced by the hole
+//         stones sent. This is what lost the live SlumSnakes@9 games
+//         (2026-10-06) and the 7x7/9x9 ceiling arms.
 //   - Superko history is not sent; the root is restricted to the game's own
 //     valid list (allowMoves), which enforces it where it matters.
 //   - Coordinates: board[x][y] (column-major strings) -> GTP column letter
@@ -92,6 +102,9 @@ export function ourTerritory(board) {
 export function toQuery(board, validList, komi, { id = "q", visits = 200, holes = "white", komiAdjust = 0, ownership = false, allowUnsettledPass = false, settings = null } = {}) {
   const N = board.length;
   const stones = [];
+  // holes "wall": every offline node is a wall (patched engine, see the header).
+  const walls = [];
+  if (holes === "wall") for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (board[x][y] === "#") walls.push(COLS[x] + (y + 1));
   for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
     const c = board[x][y];
     if (c === "X") stones.push(["B", COLS[x] + (y + 1)]);
@@ -152,7 +165,8 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
     }
     return hole;
   };
-  let rootList = validList.filter(([x, y]) => !eyeByHole(x, y));
+  // With walls KataGo knows a hole is no stone and plays its eyes correctly.
+  let rootList = holes === "wall" ? validList.slice() : validList.filter(([x, y]) => !eyeByHole(x, y));
   const ours = ourTerritory(board);
   // Nothing else left: PASS, never the eye. (Falling back to the full list
   // here is how a 128-stone group filled its own last eyes and died,
@@ -176,6 +190,7 @@ export function toQuery(board, validList, komi, { id = "q", visits = 200, holes 
   return {
     id,
     initialStones: stones,
+    ...(walls.length ? { walls } : {}),
     moves: [],
     initialPlayer: "B",
     rules: RULES,
@@ -217,6 +232,16 @@ export function ipvgoLead(board, ownership, komi) {
   return lead;
 }
 
+/**
+ * The hole mapping a query gets on an engine: walls on the patched engine
+ * unless the caller names another; NEVER walls on a stock engine — it does not
+ * read the field and would play the holes as empty points.
+ */
+export function holesFor(engineWalls, requested) {
+  if (requested === "wall" && !engineWalls) return "white";
+  return requested ?? (engineWalls ? "wall" : "white");
+}
+
 /** GTP vertex -> {x, y} or {pass: true}. */
 export function fromVertex(v) {
   if (!v || v.toLowerCase() === "pass") return { pass: true };
@@ -255,9 +280,13 @@ export function pickMove(moveInfos) {
  * board (requireMaxBoardSize) makes the eval scale with the points. One engine
  * then serves ONE board size; the caller starts one per size.
  */
-export function sizeOverride(size, extra = "") {
+// WALLS NEED THE MASK: with requireMaxBoardSize the CUDA backend drops the
+// on-board mask (cudaandrocmbackend.inc: "Don't do any masking if we know the
+// board is exactly the desired size"), so a walls engine pins the buffer but
+// never requires it (`exact` false).
+export function sizeOverride(size, extra = "", exact = true) {
   const kv = [];
-  if (Number.isInteger(size) && size >= 2 && size < 19) kv.push(`maxBoardXSizeForNNBuffer=${size}`, `maxBoardYSizeForNNBuffer=${size}`, "requireMaxBoardSize=true");
+  if (Number.isInteger(size) && size >= 2 && size < 19) kv.push(`maxBoardXSizeForNNBuffer=${size}`, `maxBoardYSizeForNNBuffer=${size}`, ...(exact ? ["requireMaxBoardSize=true"] : []));
   if (extra) kv.push(...String(extra).split(",").filter((s) => /^[A-Za-z0-9]+=[A-Za-z0-9.]+$/.test(s)));
   return kv.length ? ["-override-config", kv.join(",")] : [];
 }
@@ -276,15 +305,28 @@ export function installed() {
  */
 export const SSH_OPTS = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"];
 export const REMOTE_CMD = "katago/run-analysis.sh";
+// The patched engine (tools/katago/walls): offline nodes as walls. Installed
+// next to the stock one by tools/katago/walls/build-walls.sh.
+export const REMOTE_CMD_WALLS = "katago/run-analysis-walls.sh";
 
-/** Start the engine; null (never a throw) when it is not installed or will not start. */
-export async function startKataGo({ visits = 200, size = null, remote = null, remoteNet = null, override = "", log = () => {}, startTimeoutMs = 120000 } = {}) {
+/**
+ * Start the engine; null (never a throw) when it is not installed or will not start.
+ * `walls`: start the patched engine (REMOTE_CMD_WALLS; remote only — the local
+ * CPU build is stock) and send offline nodes as walls. `remote: "self"` runs
+ * the remote command on THIS host without ssh (the harness on the GPU host).
+ */
+export async function startKataGo({ visits = 200, size = null, remote = null, remoteNet = null, override = "", walls = false, log = () => {}, startTimeoutMs = 120000 } = {}) {
   if (!remote && !installed()) {
     log(`katago not installed (${BIN} / ${NET}) — run tools/katago/install.sh`);
     return null;
   }
-  const child = remote
-    ? spawn("ssh", [...SSH_OPTS, remote, ...(remoteNet && /^[A-Za-z0-9._-]+$/.test(remoteNet) ? [`KATAGO_NET=$HOME/katago/${remoteNet}`] : []), REMOTE_CMD, ...sizeOverride(size, override)], { stdio: ["pipe", "pipe", "pipe"] })
+  walls = !!(walls && remote);
+  const netEnv = remoteNet && /^[A-Za-z0-9._-]+$/.test(remoteNet) ? [`KATAGO_NET=$HOME/katago/${remoteNet}`] : [];
+  const remoteArgs = [...netEnv, walls ? REMOTE_CMD_WALLS : REMOTE_CMD, ...sizeOverride(size, override, !walls)];
+  const child = remote === "self"
+    ? spawn("bash", ["-c", `cd "$HOME" && exec env ${remoteArgs.join(" ")}`], { stdio: ["pipe", "pipe", "pipe"] })
+    : remote
+    ? spawn("ssh", [...SSH_OPTS, remote, ...remoteArgs], { stdio: ["pipe", "pipe", "pipe"] })
     : spawn("nice", ["-n", "19", BIN, "analysis", "-config", path.join(HERE, "analysis.cfg"), "-model", NET, ...sizeOverride(size, override)], {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, LD_LIBRARY_PATH: [path.join(APPDIR, "usr/lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") },
@@ -334,13 +376,15 @@ export async function startKataGo({ visits = 200, size = null, remote = null, re
   return {
     pid: child.pid,
     where: remote ? `gpu@${remote}` : "cpu",
+    walls,
     size,
     startMs: Date.now() - t0,
     bias: 0,
     alive: () => !exited,
     why: () => exited,
     async analyze(board, validList, komi, opts = {}) {
-      return query(toQuery(board, validList, komi, { id: opts.id ?? `q${++seq}`, visits, ...opts }));
+      const holes = holesFor(walls, opts.holes);
+      return query(toQuery(board, validList, komi, { id: opts.id ?? `q${++seq}`, visits, ...opts, holes }));
     },
     /** Stop a running query early; its promise resolves with what it has (KataGo "terminate"). */
     terminate(id) {

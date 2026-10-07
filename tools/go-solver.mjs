@@ -725,7 +725,10 @@ while (true) {
           if (k) {
             ranked = k.pass ? [] : [{ x: k.x, y: k.y, iters: k.visits }];
             backend = "katago";
-            extra = { where: k.where, ms: Math.round(k.ms), ...(k.pondered ? { pondered: k.pondered } : {}) };
+            // mode 'walls': the patched engine (offline nodes as walls) answered
+            // — its evidence is its own solver version ('katago-walls-r3',
+            // goplan.armVersion); a stock-engine answer stays 'katago-r3'.
+            extra = { where: k.where, ms: Math.round(k.ms), ...(k.walls ? { mode: "walls" } : {}), ...(k.pondered ? { pondered: k.pondered } : {}) };
           } else {
             fallback = katagoWhyNot();
             if (req.fallback === "model") {

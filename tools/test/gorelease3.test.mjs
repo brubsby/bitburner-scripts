@@ -63,10 +63,13 @@ export async function run() {
     c1.examined(1);
     if (Math.abs(aged.n - 0.5) > 0.02) c1.fail(`evidence one half-life old must count half, got n=${aged.n.toFixed(3)}`);
     // The version string the solver's reply names.
-    c1.examined(3);
+    c1.examined(4);
     if (gp.solverVersion({ backend: "model", mode: "session", release: "r3" }) !== cur) c1.fail(`solverVersion(model session r3) must equal armVersion('model') = ${cur}`);
     if (gp.solverVersion(null) !== "local") c1.fail("no reply (the local fallback) must be version 'local'");
-    if (gp.solverVersion({ backend: "katago" , release: "r3" }) !== gp.armVersion("katago")) c1.fail("a KataGo reply must match armVersion('katago')");
+    // KataGo: the walls engine's reply (go-solver mode 'walls') is the arm's
+    // version; a stock engine's (holes as white stones) is its own, never the arm's.
+    if (gp.solverVersion({ backend: "katago", mode: "walls", release: "r3" }) !== gp.armVersion("katago")) c1.fail("a walls-engine KataGo reply must match armVersion('katago')", gp.armVersion("katago"));
+    if (gp.solverVersion({ backend: "katago", release: "r3" }) === gp.armVersion("katago")) c1.fail("a stock-engine KataGo reply (holes as white stones) must NOT count as the KataGo arm's evidence");
     // Without a version the old behaviour is exact (GT1 relies on it).
     const old = gp.updatePosterior(gp.emptyPosterior(), "Tetrads", 5, true);
     c1.examined(1);

@@ -279,7 +279,7 @@ if (argv.includes("--katago")) {
   if (argv.includes("--kcal")) throw new Error("--kcal was measured worse and is not wired to the service (katago.mjs startKataGo still has it)");
   const svc = await import("../katago/service.mjs");
   KVISITS = Number(str("katago", 200));
-  KATAGO = new svc.KataGoService({ remote: str("katago-remote", null), local: !argv.includes("--katago-no-local"), remoteOverride: str("katago-override", ""), remoteNet: str("katago-remote-net", null), settings: JSON.parse(str("katago-settings", "null")), queryOpts: { ...(argv.includes("--katago-old-pass") ? { allowUnsettledPass: true } : {}), ...(str("katago-holes", null) ? { holes: str("katago-holes", null) } : {}) }, log: (m) => process.stderr.write(m + "\n") });
+  KATAGO = new svc.KataGoService({ remote: str("katago-remote", null), local: !argv.includes("--katago-no-local"), remoteOverride: str("katago-override", ""), remoteNet: str("katago-remote-net", null), walls: !argv.includes("--katago-stock"), settings: JSON.parse(str("katago-settings", "null")), queryOpts: { ...(argv.includes("--katago-old-pass") ? { allowUnsettledPass: true } : {}), ...(str("katago-holes", null) ? { holes: str("katago-holes", null) } : {}) }, log: (m) => process.stderr.write(m + "\n") });
   // Warm before game 0: live, the engine is kept warm across games.
   if (!(await KATAGO.engineFor(SIZE))) throw new Error("--katago: no KataGo engine could start (tools/katago/install.sh, tools/katago/gpu)");
   if (PONDER) {
@@ -362,7 +362,7 @@ async function playGame(stats, gameIndex) {
   let cheats = 0, cheatOk = 0, cheatWaitS = 0, ejected = false;
   let phase = Math.random();
   let turnLiveS = 0;
-  const kWhere = { gpu: 0, cpu: 0 };
+  const kWhere = { gpu: 0, cpu: 0, walls: 0 };
   const kPonder = { none: 0, hit: 0, partial: 0 };
   // The model's ponder (--model --ponder): the searched answer for the
   // predicted reply, and the ponder time not hidden behind the AI's reply.
@@ -423,6 +423,7 @@ async function playGame(stats, gameIndex) {
           const r = await KATAGO.choose({ size: N, board: simple, valid: vl, komi, visits: KVISITS });
           if (!r) throw new Error("katago: no engine answered");
           kWhere[r.where.startsWith("gpu") ? "gpu" : "cpu"]++;
+          if (r.walls) kWhere.walls++;
           kPonder[r.pondered || "none"]++;
           return r.pass ? [] : [{ x: r.x, y: r.y, iters: r.visits }];
         })()
@@ -910,7 +911,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {

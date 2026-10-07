@@ -54,7 +54,9 @@ const argv = process.argv.slice(2);
 const all = (n) => argv.flatMap((a, i) => (a === `--${n}` ? [argv[i + 1]] : []));
 const str = (n, d) => (argv.includes(`--${n}`) ? argv[argv.indexOf(`--${n}`) + 1] : d);
 const JSON_OUT = argv.includes("--json");
-const DIFF = { Tetrads: 1.5, Daedalus: 1.5, Netburners: 0.5, Illuminati: 2, TheBlackHand: 1, SlumSnakes: 1 };
+// Keyed by goplan's identifiers AND the game's enum values (go-w0's start
+// record names "Slum Snakes" / "The Black Hand" — they read NaN before).
+const DIFF = { Tetrads: 1.5, Daedalus: 1.5, Netburners: 0.5, Illuminati: 2, TheBlackHand: 1, SlumSnakes: 1, "The Black Hand": 1, "Slum Snakes": 1 };
 const STREAK = 3;
 // The floor of one AI reply, in waitCycles x 200ms, by opponent (goAI.ts):
 // Tetrads always opens with capture() and defendCapture()/a second capture()

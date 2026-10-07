@@ -23,10 +23,17 @@ itself runs through nix-ld).
 
 - Rules: area scoring, positional superko, no suicide, no friendly pass
   (IPvGO never removes dead stones), the game's komi.
-- **Offline nodes** do not exist in Go. They are sent as WHITE stones: exact
+- **Offline nodes are WALLS** (2026-10-06, Release 3 below) on the GPU
+  engine: the query's `walls` list, read by our patched KataGo, which puts
+  the board's own off-board value (C_WALL) there — in the game an offline
+  node is a null point (boardState.ts), exactly an edge. Stock engines (the
+  laptop's CPU fallback, or the GPU when the patched binary will not start)
+  still get the old mapping:
+- **Offline nodes as WHITE stones** (stock engines only): exact
   for our groups (a hole is no liberty, neither is a white stone); for white's
   groups it overstates them (a white group touching a hole cluster borrows its
-  liberties). Pessimistic for us, never optimistic. Komi is lowered by the
+  liberties), and KataGo reads every hole cluster as a dead white group to
+  capture and a white wall owning the territory round it. Komi is lowered by the
   number of hole stones sent; hole groups with no liberty are dropped.
 - The root is restricted (`allowMoves`) to the game's own valid list, which
   carries the superko check; history is not sent.
@@ -117,6 +124,87 @@ go-solver 25ms poll; go-study-report at 85ms a turn). Best per board, power/h:
 Cutting the per-turn overhead helps every board, and 5x5 most (it has the
 most turns per point of area): the AI's own reply (~1s a turn live, its timer
 hops) is the floor, and no bigger board beats 5x5 for any opponent.
+
+## Release 3 (2026-10-06): offline nodes as WALLS — a patched KataGo
+
+**The bug.** Every hole was sent as a WHITE stone (`toQuery` holes "white").
+KataGo then believes each hole cluster is a dead white group it can capture,
+a white wall owning the territory around it, and a liberty donor to any
+white group it touches. On an empty 9x9 with 10 holes the stock engine
+scores black at -69.7 (the walls engine: +1.5). It plays to "capture" holes,
+misjudges which of its groups live, and loses whole groups: the live game of
+2026-10-06 23:34Z (SlumSnakes@9, 10 holes) lost a ~25-stone group between
+moves 35 and 41 and ended 0-74.5. The komi offset, the eye filter and the
+no-unsettled-pass rule above were patches over this one cause.
+
+**The fix: holes are walls.** In the game an offline node is a null point
+(boardState.ts / offlineNodes.ts): no liberty, no stone, no territory, and an
+empty region bordered by one colour and holes is that colour's (scoring.ts
+findNeighbors skips nulls) — exactly a board EDGE. KataGo's board already
+has a value for "off the board": the padding around the rectangle is
+`C_WALL`, and liberties, captures, legality, area scoring and pass-alive
+territory all treat it as an edge. `tools/katago/walls/patch.py` (v1.18.1,
+74 lines) lets a query place `C_WALL` inside the rectangle:
+
+- `analysis.cpp`: a `walls` field (GTP vertices), placed before the stones
+  (`Board::setWall`; a stone on a wall is refused);
+- `board.cpp`: the wall enters the position hash (the NN cache and superko
+  must not confuse two layouts), `checkConsistency`/`regenChainsFromColors`
+  accept it, area scoring gives it to nobody;
+- `boardhistory.cpp`: the all-pass-alive game end skips walls;
+- `nninputs.cpp`: input feature 0 ("on board") is 0 on a wall — that is the
+  net's MASK, applied after every layer and in global pooling, exactly as for
+  a smaller board in a bigger buffer; `getSymBoard` (rootInfo symmetry hash,
+  every query) copies walls before stones.
+- The CUDA backend DROPS the mask when `requireMaxBoardSize` is set
+  ("don't do any masking if we know the board is exactly the desired size"),
+  so a walls engine never pins it (`sizeOverride(..., exact = false)`); the
+  GPU engine never pinned a size anyway.
+
+The net never saw an interior hole in training (rectangles only), so its
+reading next to one is out of distribution; the search's rules are exact.
+Sanity (`startKataGo` on bubtop, 200 visits): a white stone whose last
+liberty is D3 once three holes are walls — walls engine D3 (206/206 visits,
+lead +7.2), stock engine anywhere else (lead -29.6).
+
+Built and installed by `tools/katago/walls/build-walls.sh` on bubtop:
+`~/katago/walls/katago` + `~/katago/run-analysis-walls.sh` (same config, net
+and cuDNN as the stock engine; CUDA 12.4, sm_89). The service starts the
+walls engine first and falls back to the stock one (saying so in
+`status().walls.why`) if it will not start; every answer says which
+(`walls`), go-solver replies `mode: "walls"`, so the evidence is
+`katago-walls-r3` (goplan.armVersion) and the stock engine's live record
+(`katago-r3`, the SlumSnakes@9 losses) no longer counts for the KataGo arms.
+
+**Measured** (go-w0.mjs, paired deals `--layoutseed 21`, + 30 games at seed 22
+on 9x9; GPU b18, 200 visits, pondered below 13x13 as live; uct 1500ms is the
+live solver's budget but on bubtop at load ~30, so its strength is NOT the
+laptop's). power/h = node power per hour of the AI's own time at streak x3
+(go-ceiling.mjs, ours = 0 — KataGo answers pondered moves in ~10-40ms):
+
+| board | opponent | stock (white holes) | WALLS | uct 1500 |
+| --- | --- | --- | --- | --- |
+| 7x7 | Tetrads | 13/20, black 21.8, 0.86 pts/AIs, 13,965/h | **20/20, 28.1, 1.33, 21,614/h** | 20/20, 26.5, 1.40, 22,594/h |
+| 7x7 | Slum Snakes | 20/20, 29.9, 1.79, 19,301/h | 20/20, 28.9, 1.74, 18,772/h | 20/20, 28.6, 1.85, 19,967/h |
+| 9x9 | Tetrads | 43/46, 41.5, 1.01, 16,428/h | **45/46, 44.9, 1.09, 17,664/h** | 14/16, 39.3, 1.12, 18,175/h |
+| 9x9 | Slum Snakes | 37/46, 40.0, 1.22, 13,152/h | **45/46, 47.9, 1.63, 17,549/h** | 16/16, 42.3, 1.56, 16,790/h |
+| 13x13 | Tetrads | 6/6, 98.5, 1.00, 16,197/h | **6/6, 108.7, 1.10, 17,790/h** | 4/6, 76.0, 0.84, 13,600/h |
+| 13x13 | Slum Snakes | 6/6, 104.0, 1.46, 15,769/h | **6/6, 123.7, 1.74, 18,817/h** | 6/6, 85.5, 1.46, 15,720/h |
+
+Walls never measured worse than stock beyond noise and fixes the two
+failures the live record shows (Tetrads 7x7 65% -> 100%, Slum Snakes 9x9
+80% -> 98%, +3 to +20 black a game on 9x9/13x13). It is not flawless: 2 of
+92 walls games on 9x9 were lost, each a whole group (0-77.5, 0-72.5; stock
+lost 12 of the same 92). Traced (S9 seed 22 game 4): at 200-400 visits the net read +50 for
+black ten moves before the group died; 3200 visits read the same position
+at -60. The net misjudges a big group's life near holes at low visits (out
+of distribution, or ordinary low-visit blindness); a forced self-atari at the
+end is our no-unsettled-pass rule (only the group's own two liberties were
+legal, pass was withheld), but the game was already lost. **No bigger board beats
+5x5**: live 5x5 Tetrads ~26k/h on the wall clock (go-ceiling LIVE, 2026-10-06
+23.6k AI-time, 26.9k stall-free), Slum Snakes 5x5 live 23.6k AI-time; the best
+big board is 7x7 Tetrads at ~21.6-22.6k AI-time only (before our own
+latency), every 9x9/13x13 arm ~17-19k.
 
 ## The service (tools/katago/service.mjs) and the GPU (tools/katago/gpu)
 

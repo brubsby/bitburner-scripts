@@ -217,9 +217,15 @@ export function goMaxRepOf(sf14) {
 /** The komi each opponent plays at (Go/Constants.ts opponentDetails), for the difficulty multiplier. */
 export const KOMI_OF = { Netburners: 1.5, SlumSnakes: 3.5, TheBlackHand: 3.5, Tetrads: 5.5, Daedalus: 5.5, Illuminati: 7.5, w0r1d_d43m0n: 9.5 }
 
-/** The version an arm's evidence must carry to count (goplan.solverVersion of the backend that plays it). */
+/**
+ * The version an arm's evidence must carry to count (goplan.solverVersion of the backend that plays it).
+ * KataGo is 'katago-walls-r3' (2026-10-06): the patched engine that plays offline
+ * nodes as walls (tools/katago/walls). The stock engine's games ('katago-r3',
+ * holes sent as white stones — the four live SlumSnakes@9 losses) no longer
+ * count, and a stock-engine fallback answer keeps that version as its own.
+ */
 export function armVersion(backend, release = SOLVER_RELEASE) {
-  return `${backend}${backend === 'model' ? '-session' : ''}-${release}`
+  return `${backend}${backend === 'model' ? '-session' : backend === 'katago' ? '-walls' : ''}-${release}`
 }
 
 /** The solver release go.js expects (the solver names its own in every reply). */

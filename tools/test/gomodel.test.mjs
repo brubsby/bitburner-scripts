@@ -318,6 +318,25 @@ export async function run() {
     if (pickMove([P("C3", 0, 1), P("pass", 1, 9)]).move !== "C3") c6.fail("KataGo's own stone choice stands");
     const j = fromVertex("J1");
     if (j.x !== 8) c6.fail(`GTP skips 'I': J is column 8, got ${j.x}`);
+    // HOLES AS WALLS (the patched engine, tools/katago/walls): every offline
+    // node is listed in `walls` — a hole is an edge in the game (board null,
+    // boardState.ts) — none is sent as a stone, komi is the game's, and the
+    // hole-bordered eye is no longer withheld (KataGo reads it as an eye).
+    const qw = toQuery(board, valid, 7.5, { holes: "wall" });
+    c6.examined(5);
+    if (qw.initialStones.map(([, vx]) => vx).sort().join() !== "A1,B4,C2") c6.fail("with walls only the real stones are sent", JSON.stringify(qw.initialStones));
+    if ((qw.walls ?? []).slice().sort().join() !== "A3,B2,B3,C1,E1,E2,E3,E4") c6.fail("every hole must be a wall, the liberty-less ones included", JSON.stringify(qw.walls));
+    if (qw.komi !== 7.5) c6.fail(`walls must not move komi: got ${qw.komi}`);
+    const q3w = toQuery(eyeB, [[1, 1], [3, 3]], 7.5, { holes: "wall" });
+    if (!q3w.allowMoves[0].moves.includes("B2")) c6.fail("with walls the hole-bordered point is offered: KataGo knows it is an eye");
+    if (toQuery([".....", ".....", ".....", ".....", "....."], [], 5.5, { holes: "wall" }).walls) c6.fail("a board without holes must not carry a walls field");
+    // A stock engine never gets walls (it ignores the field and would play the holes as empty points).
+    const { holesFor } = await import("../katago/katago.mjs");
+    c6.examined(4);
+    if (holesFor(true, undefined) !== "wall") c6.fail("the walls engine must default to walls");
+    if (holesFor(false, undefined) !== "white") c6.fail("a stock engine must default to white stones");
+    if (holesFor(false, "wall") !== "white") c6.fail("walls requested of a stock engine must fall back to white stones");
+    if (holesFor(true, "owner") !== "owner") c6.fail("an explicit mapping on the walls engine must stand");
   }
   checks.push(c6);
 
@@ -404,6 +423,24 @@ export async function run() {
     svc.close();
     c7.examined(1);
     if (visitsOn({ where: "cpu" }, 7) !== 7) c7.fail("a plain visit count applies to every engine");
+    // WALLS: the GPU engine is started as the patched one first; its answers
+    // say walls (go-solver versions them 'katago-walls-r3'). When the patched
+    // engine will not start, the stock one answers, says so, and the reason is kept.
+    for (const wallsInstalled of [true, false]) {
+      const asked = [];
+      const wstart = async ({ remote, walls }) => {
+        asked.push(!!walls);
+        if (!remote || (walls && !wallsInstalled)) return remote ? null : stub("cpu");
+        return Object.assign(stub("gpu@stub"), { walls: !!walls });
+      };
+      const ws = new KataGoService({ remote: "stub", start: wstart });
+      const rw = await ws.choose({ size: 5, board: b, valid: v, komi: 5.5, visits: 50 });
+      c7.examined(2);
+      if (asked[0] !== true) c7.fail("the GPU engine must be asked for walls first", JSON.stringify(asked));
+      if (rw?.walls !== wallsInstalled || rw?.where !== "gpu@stub") c7.fail(`answer must come from the GPU with walls=${wallsInstalled}`, JSON.stringify(rw));
+      if (!wallsInstalled && !ws.status().walls?.why) c7.fail("a walls engine that did not start must say why in status()");
+      ws.close();
+    }
     // go.js: which /go/katago.txt makes the big board play KataGo.
     const { katagoAvailable } = await import(path.join(REPO, "go.js")).catch(() => ({}));
     if (typeof katagoAvailable !== "function") c7.fail("go.js must export katagoAvailable");
