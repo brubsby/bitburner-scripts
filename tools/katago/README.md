@@ -195,8 +195,20 @@ laptop's). power/h = node power per hour of the AI's own time at streak x3
 GPU 800 visits, paired `--layoutseed 2`, 5 games each: stock 1/5, black
 121.8, 3,239 power/h (go-w0-report, live-modelled, our ~1s/move included)
 -> **walls 5/5, black 168.4, 8,486 power/h**. The offline holes were the open
-problem there; W0_PRIOR (3,130/h, goplan.js) predates this and is still the
-prior until 10 live games are measured.
+problem there.
+
+**w0 firmed up (2026-10-07)**: 32 more paired games (`--layoutseed 3`), the
+shipped config (GPU 800 visits, no ponder): **37/37 won** with the 5 above
+(Wilson 95% lower bound 0.91), black 178.0 +- 24.1, white 92.9, 140 of our
+moves a game at 964ms each (the shared card under harness load; the live
+estimate is ~0.8s). Live-modelled seconds a game: the AI's timers + our think
++ the 85ms round trip 294s, + the AI's compute (node-measured) 20s -> 11.44
+games/h. At the stationary win streak (x3): **15,275 node power/h** (bootstrap
+95% 14,778-15,761 over scores and times; the win rate is held at 37/37 there),
+17,717/h at 0.8s a move without the AI's compute. The gameplan prior is
+re-derived from these (tools/sim/gameplan/go.mjs W0_PRIOR_INPUTS: p10/p50/p90
+8,910 / 12,550 / 16,590 — below the measurement because the win-rate prior is
+not certain) and goplan.js W0_PRIOR = 12,550/h at refP 0.951 (GP8).
 
 Walls never measured worse than stock beyond noise and fixes the two
 failures the live record shows (Tetrads 7x7 65% -> 100%, Slum Snakes 9x9

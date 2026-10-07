@@ -374,14 +374,13 @@ function gp8() {
   const mc2 = w0PriorMC({ seed: 99 })
   c.examined(1)
   if (Math.abs(mc2.q50 / mc.q50 - 1) > 0.03) c.fail(`the derivation is seed-dependent: median ${mc.q50.toFixed(0)} vs ${mc2.q50.toFixed(0)}`)
-  // goplan.js (the live Go bot) starts the hidden opponent from the same number. Since 2026-10-05 the
-  // gameplan's prior is re-derived for KataGo (go.mjs W0_PRIOR_INPUTS) while goplan.js — LIVE code, not
-  // changed by an offline re-plan — still carries the uct-era 1570/h: a WARNING until the next live deploy
-  // copies P.mid and the win-rate mean into goplan.W0_PRIOR (then this is a failure again).
+  // goplan.js (the live Go bot) starts the hidden opponent from the same number: P.mid and the
+  // win-rate mean are copied into goplan.W0_PRIOR whenever the derivation changes (2026-10-07: the
+  // KataGo walls engine, 12550/h at refP 0.951). A drift is a failure.
   const [a, b] = W0_PRIOR_INPUTS.pWin.beta
   c.examined(1)
   if (W0_PRIOR.powerPerHour !== P.mid || Math.abs(W0_PRIOR.refP - a / (a + b)) > 0.005)
-    c.warn(`goplan.W0_PRIOR ${W0_PRIOR.powerPerHour}/h at refP ${W0_PRIOR.refP} lags the gameplan's re-derived w0 median ${P.mid}/h at refP ${(a / (a + b)).toFixed(3)}`, 'the live Go bot starts the hidden opponent from the old prior until goplan.js is redeployed with these two numbers')
+    c.fail(`goplan.W0_PRIOR ${W0_PRIOR.powerPerHour}/h at refP ${W0_PRIOR.refP} differs from the gameplan's derived w0 median ${P.mid}/h at refP ${(a / (a + b)).toFixed(3)} — copy both into goplan.W0_PRIOR`)
   c.note(`w0 DERIVED: p10/p50/p90 ${mc.q10.toFixed(0)}/${mc.q50.toFixed(0)}/${mc.q90.toFixed(0)}/h (seed 99: ${mc2.q10.toFixed(0)}/${mc2.q50.toFixed(0)}/${mc2.q90.toFixed(0)}) = SF_PARAMS.w0 ${P.lo}/${P.mid}/${P.hi} = goplan W0_PRIOR ${W0_PRIOR.powerPerHour}/h at refP ${W0_PRIOR.refP}; rank corr ${Object.entries(mc.rank).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')}`)
   // (d) a measured w0 still moves it (the gameplan-obs channel, lin space)
   {

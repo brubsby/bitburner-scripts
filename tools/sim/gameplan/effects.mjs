@@ -63,7 +63,7 @@ export const SF_PARAMS = {
   rep14: { lo: 72, mid: 97, hi: 150, min: 10, what: 'Go: Daedalus work rep/h per hacking level, favor 0, FWRG 1 (MEASURED p10/p50/p90 over telemetry segments)' },
   lvl14: { lo: 3500, mid: 4700, hi: 5900, min: 2500, what: 'Go: the hacking level a favor life is ground at (MEASURED range, BN1/4/5/8/9/10)' },
   // DERIVED, not hand: go.mjs w0PriorMC (endGoGame's payout x W0_PRIOR_INPUTS: win rate, black's scores, games/h); GP8 re-derives it
-  w0: { lo: 2100, mid: 3130, hi: 4390, min: 0, what: 'Go: w0r1d_d43m0n node power/h (DERIVED p10/p50/p90: the payout rules x KataGo GPU win rate ~0.29 (3/13 harness, half weight), loss score ~105/267, ~8.8 games/h; was 1020/1570/2380 on the uct search, 0/200/1000 ASSUMED before that)' },
+  w0: { lo: 8910, mid: 12550, hi: 16590, min: 0, what: 'Go: w0r1d_d43m0n node power/h (DERIVED p10/p50/p90: the payout rules x the KataGo WALLS engine (offline nodes as walls, 2026-10-07): win rate ~0.95 (37/37 harness, half weight), win score ~178/267, ~11.4 games/h; was 2100/3130/4390 with holes sent as white stones (3/13), 1020/1570/2380 on the uct search, 0/200/1000 ASSUMED before that)' },
   // DERIVED, not hand: sleeves.mjs (the extra sleeve's money crime trajectory lifting every measured life through exitplan's eBudget lift; was ASSUMED 0/0.01/0.03 node-free)
   d10: { lo: D10.lo, mid: D10.mid, hi: D10.hi, min: 0, what: 'SF10.2/10.3 (+1 sleeve each; +1 more inside BN10): hacking route g x (1 + d x CrimeMoney) per sleeve past 5 (DERIVED, sleeves.mjs: the live fall-through to a money crime x the measured lives; eBudget and income ASSUMED)' },
   d8: { lo: 0.0, mid: 0.005, hi: 0.02, min: 0, what: 'SF8.2: shorts -> g x (1+d)' },

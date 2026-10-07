@@ -308,47 +308,45 @@ export function w0PerGame(p, sW, sL, difficulty = W0_DIFFICULTY) {
  * them through the payout above. Drawn independently (stated: a stronger bot
  * raises p and both scores together — not modelled).
  *
- * RE-DERIVED 2026-10-05 for the solver go.js plays the hidden board with NOW:
- * SETTINGS.bigBoard.backend 'auto' = KataGo b18 on the bubtop GPU at 800
- * visits, holes sent white, no ponder on 19x19 (tools/katago/README.md), with
- * the CPU b10 at 400 visits only while the GPU is down. The uct node-power
- * search the old prior was built on (0 wins in 41, ~961/h) is no longer what
- * plays — it is the fallback's fallback.
+ * RE-DERIVED 2026-10-07 for the WALLS engine (tools/katago/README.md,
+ * Release 3): KataGo b18 on the bubtop GPU at 800 visits, offline nodes sent
+ * as walls (no longer white stones), no ponder on 19x19 — what go.js plays the
+ * hidden board with since go-solver's 01:35Z restart. Measured by go-w0.mjs
+ * against the game's own getMove on the bitverse board, paired deals
+ * (--layoutseed 3, 32 games, + seed 2, 5 games): 37 won of 37, black 178.0
+ * (sd 24.1), white 92.9, 140 of our moves a game, KataGo 964ms a move on the
+ * shared 4090, the AI's timers + our think + the 85ms round trip 294s a game
+ * plus the AI's compute 20s (node-measured): 11.44 games/h. The stock engine
+ * on the same deals won 1 of 5 (black 121.8) — the 2026-10-05 inputs below
+ * this line (3 in 13, black 87-132 on a loss) measured the hole bug.
  *
- *   pWin       Beta(2.5, 6), mean 0.29: the KataGo GPU harness games on the
- *              bitverse board (go-w0.mjs vs the game's own getMove, paired
- *              layouts --layoutseed 2): 1 win in 7 (800 visits: 0/4 pondered,
- *              1/3 not) and 2 in 6 (the holes-colour study's 'white' arm, the
- *              shipped mapping) = 3 in 13, at HALF weight on a uniform prior
- *              (harness, never live: the 5x5 harness read Illuminati 0.25-0.38
- *              where live read ~0.2 under the old solver). p10/p90 ~0.11/0.50.
- *   fWin       black's score on a win / 267. A win needs B >= W + 9.5, so
- *              B > ~135 of the ~260 decided points: 0.5 + 0.5 Beta(2, 5.5).
- *   fLoss      black's score on a loss / 267: 0.5 Beta(11, 3) — mean 0.39
- *              (105 points), p10/p90 ~86/122: KataGo's games score 87-132 a
- *              game (README: 132 over 4 pondered losses, 98 over 1 won + 2
- *              lost, 102 over 2 won + 4 lost, 87 at 1600 visits), against uct's
- *              84-87. THE FLOOR'S DRIVER: at a win rate near 0 nearly every
- *              game pays 0.5 x 2.5 x this score.
- *   gamesPerH  split log-normal p10/p50/p90 6.5/8.8/10.5: ~150 moves a side,
- *              each AI reply ~1.4s (4.4 waitCycles x 200ms, goAI.ts:877-883 +
- *              one sleep(10) per board row, patternMatching.ts:104 + its own
- *              0.3-0.5s), our move KataGo GPU ~0.8s + the fast pipeline's
- *              ~0.1s: ~2.3-2.7s a move pair, ~8.8 games/h (the old uct 800ms
- *              clock, go-w0.mjs: ~400s a game). The low tail is the GPU down:
- *              the CPU b10 at ~5.5s a move runs ~3.5 games/h.
- * Composed: p10/p50/p90 ~2.2k/3.2k/4.4k per hour (GP8 re-derives it), against
- * the harness's 1.6-4.1k/h (1653 pondered 0/4, 3554 1/3, 4112 2/6) and uct's 961.
+ *   pWin       Beta(19.5, 1), mean 0.95: 37 of 37 at HALF weight on a uniform
+ *              prior (harness, never live). p10 ~0.89. The walls engine still
+ *              loses ~2% of 9x9 games by misreading a big group's life near
+ *              holes (README), so a loss is not ruled out here either.
+ *   fWin       black's score on a win / 267: 0.5 + 0.5 Beta(2, 4), mean 0.667
+ *              (178), sd ~0.09 — the 37 games' 178.0 +- 24.1.
+ *   fLoss      black's score on a loss / 267: 0.5 Beta(3, 5), mean 0.19 (50
+ *              points). ASSUMED: no 19x19 walls loss seen; the 9x9 walls losses
+ *              were whole-group deaths (black 0). Matters little at p ~0.95.
+ *   gamesPerH  split log-normal p10/p50/p90 8.5/11.4/12.6: 11.44 measured
+ *              (think 0.96s a move on the harness-loaded card); 12.3 at the
+ *              README's 0.8s live latency; the low tail the GPU down (the CPU
+ *              fallback is the STOCK engine — holes as white stones, ~5.5s a
+ *              move) or a throttled tab.
+ * Composed: GP8 re-derives p10/p50/p90 (the README states them), against the
+ * harness's 15,275/h (37 games, stationary streak, AI compute charged;
+ * bootstrap 95% 14,778-15,761 over the scores and times, win rate held at 37/37).
  */
 export const W0_PRIOR_INPUTS = {
-  pWin: { beta: [2.5, 6], what: 'win rate vs ???????????? on the bitverse board: KataGo GPU 800 visits, 3 wins in 13 harness games (1/7 + 2/6) at half weight on Beta(1, 1)' },
-  fWin: { lo: 0.5, span: 0.5, beta: [2, 5.5], what: "black's score on a win / 267: 0.5 + 0.5 Beta(2, 5.5)" },
-  fLoss: { lo: 0, span: 0.5, beta: [11, 3], what: "black's score on a loss / 267: 0.5 Beta(11, 3), mean 105 (KataGo 87-132 a game in the harness)" },
-  gamesPerH: { lo: 6.5, mid: 8.8, hi: 10.5, what: 'finished 19x19 games per hour (the AI\'s timers + KataGo GPU ~0.8s a move; the low tail the CPU fallback)' },
+  pWin: { beta: [19.5, 1], what: 'win rate vs ???????????? on the bitverse board: KataGo walls engine GPU 800 visits, 37 wins in 37 harness games (seeds 3 + 2) at half weight on Beta(1, 1)' },
+  fWin: { lo: 0.5, span: 0.5, beta: [2, 4], what: "black's score on a win / 267: 0.5 + 0.5 Beta(2, 4), mean 178 (the 37 walls games: 178.0 +- 24.1)" },
+  fLoss: { lo: 0, span: 0.5, beta: [3, 5], what: "black's score on a loss / 267: 0.5 Beta(3, 5), mean 50 — ASSUMED (no 19x19 walls loss seen; 9x9 walls losses were whole-group deaths)" },
+  gamesPerH: { lo: 8.5, mid: 11.4, hi: 12.6, what: 'finished 19x19 games per hour (measured 11.44: the AI\'s timers + compute, KataGo walls ~0.96s a move on the shared card; the low tail the GPU down or a throttled tab)' },
 }
 
 /**
- * THE HARNESSES ON THE BITVERSE BOARD, our solver against the game's own
+ * THE HARNESSES ON THE BITVERSE BOARD (the walls engine: katagoWalls below), our solver against the game's own
  * getMove for the hidden opponent — harness, not live:
  *   2026-10-03, uct (the old prior's evidence, superseded as the solver):
  *     go-boardsize.mjs 19x1500 8 games 0 won (black 29-97 a loss, mean 68);
@@ -369,6 +367,10 @@ export const W0_HARNESS = {
   liveSPerGame: { boardsize1500: 540, nodePowerSearch: 403 },
   powerPerH: { nodePowerSearch: 961, oldSearch: 697 },
   katago: { games: 13, wins: 3, runs: [{ what: 'gpu800 pondered', games: 4, wins: 0, black: 132, powerPerH: 1653 }, { what: 'gpu800', games: 3, wins: 1, black: 98, powerPerH: 3554 }, { what: 'gpu800 holes white', games: 6, wins: 2, black: 102, powerPerH: 4112 }] },
+  // 2026-10-07, the WALLS engine (offline nodes as walls), GPU b18 800 visits, no ponder:
+  // seed 3 (32 games) + seed 2 (5). powerPerH: stationary streak, the AI's timers +
+  // compute + our ~0.96s a move + the round trip (w0rate, tools/katago/README.md).
+  katagoWalls: { games: 37, wins: 37, black: 178.0, blackSd: 24.1, white: 92.9, movesPerSide: 140, msPerMove: 964, liveSPerGame: 294, aiComputeSPerGame: 20, gamesPerH: 11.44, powerPerH: 15275, ci95: [14778, 15761], stockSameDeals: { games: 5, wins: 1, black: 121.8 } },
 }
 
 // a small seeded generator (params.mjs's mulberry32; go.mjs cannot import params: params imports go)

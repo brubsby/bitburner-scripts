@@ -1046,16 +1046,19 @@ function armCounts(arm, ver, now) {
 }
 
 /**
- * The hidden opponent's prior. Win rate for Thompson: uniform (never measured
- * live — the exploration batch's prior, kept wide). Power per hour: 1570 — the
- * median of tools/sim/gameplan's DERIVED w0 prior (go.mjs w0PriorMC: the
- * endGoGame payout x win rate, black's scores and games/h; p10/p50/p90
- * 1020/1570/2380, was an ASSUMED 0/200/1000), so the two planners start from
- * one number; refP is the win rate that figure stands at (the derivation's
- * mean, 1.4/27.5). Replaced by the measured rate once W0_MEASURED_MIN games
- * exist (go.js). tools/test/gameplan.test.mjs [GP8] fails if the two drift.
+ * The hidden opponent's prior. Power per hour: 12550 — the median of
+ * tools/sim/gameplan's DERIVED w0 prior (go.mjs w0PriorMC: the endGoGame
+ * payout x win rate, black's scores and games/h; p10/p50/p90 8910/12550/16590
+ * for the KataGo walls engine, 2026-10-07 — was 2100/3130/4390 with holes sent
+ * as white stones, 1020/1570/2380 on uct), so the two planners start from one
+ * number; refP is the win rate that figure stands at (the derivation's mean,
+ * 19.5/20.5). Replaced by the measured rate once W0_MEASURED_MIN games exist
+ * (go.js). tools/test/gameplan.test.mjs [GP8] fails if the two drift.
  */
-export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 3130, refP: 0.294 } // KataGo GPU on 19x19 (d711521 gameplan derivation)
+// a/b: the Thompson prior on the win rate stays Beta(1, 1) — never measured
+// live, the exploration batch's prior kept wide (GT1); refP is the
+// derivation's own mean (GP8).
+export const W0_PRIOR = { a: 1, b: 1, powerPerHour: 12550, refP: 0.951 } // KataGo WALLS engine on 19x19 (gameplan go.mjs W0_PRIOR_INPUTS, 2026-10-07)
 
 /** Games against the hidden opponent before its measured rate replaces the prior. */
 export const W0_MEASURED_MIN = 10
@@ -1470,10 +1473,10 @@ export function obsDue(gamesOnW0) {
 
 /**
  * Finished 19x19 games an hour against the hidden opponent: the median of
- * tools/sim/gameplan/go.mjs W0_PRIOR_INPUTS.gamesPerH (7.5/8.8/10.5, the AI's
- * own timers plus the 800ms search). Node power lands once per game.
+ * tools/sim/gameplan/go.mjs W0_PRIOR_INPUTS.gamesPerH (8.5/11.4/12.6, the AI's
+ * own timers + compute plus KataGo walls ~0.96s a move). Node power lands once per game.
  */
-export const W0_GAMES_PER_H = 8.8
+export const W0_GAMES_PER_H = 11.4
 
 /**
  * The elasticity of the hacking route's growth (ln M per hour) to the Go
