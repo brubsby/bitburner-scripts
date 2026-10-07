@@ -1,5 +1,5 @@
 // [GC] The Go cheat channel: crime_success (Slum Snakes' bonus) priced by the
-// cheat-on farm's measured rate gain (goplan CHEAT_GAIN, chooseOpponent o.cheat).
+// cheat-on farm's rate gain (goplan cheatGain, mechanistic; chooseOpponent o.cheat).
 //
 //   GC1 cheatElasticity: positive on a rising segment of the table, 0 on a
 //       falling one and outside it.
@@ -11,29 +11,32 @@ import { Check } from "./harness.mjs";
 
 export async function run() {
   const g = await import("../../goplan.js");
-  const c1 = new Check("GC1", "cheatElasticity follows the measured CHEAT_GAIN table");
+  const c1 = new Check("GC1", "the mechanistic cheat gain: availability rises with crime and with SF14.3; gain and elasticity are smooth and positive, small past the knee");
   {
-    const t = [[1, 1], [2, 1.2], [4, 1.1]];
-    c1.examined(4);
-    const e = g.cheatElasticity(1.5, t);
-    const want = Math.log(1.2) / Math.log(2);
-    if (!(Math.abs(e - want) < 1e-9)) c1.fail(`rising segment: ${e}, want ${want}`);
-    if (g.cheatElasticity(3, t) !== 0) c1.fail("a falling segment must price 0");
-    if (g.cheatElasticity(5, t) !== 0) c1.fail("beyond the table must price 0");
-    if (g.cheatElasticity(0.5, t) !== 0) c1.fail("below the table must price 0");
-    c1.note(`table elasticity at the live 1.5872: ${g.cheatElasticity(1.5872).toFixed(3)}`);
+    const a1 = g.cheatAvailability(1.5872), a2 = g.cheatAvailability(4), a3 = g.cheatAvailability(1.5872, { sf14: 3 });
+    const e = (a) => a.reduce((x, y) => x + y, 0);
+    c1.examined(6);
+    if (!(e(a2) > e(a1))) c1.fail(`more crime must mean more cheats: ${e(a1).toFixed(2)} -> ${e(a2).toFixed(2)}`);
+    if (!(e(a3) > e(a1))) c1.fail("SF14.3's +0.25 must mean more cheats");
+    const gs = [1.2, 1.5872, 2.5, 4, 10, 25].map((c) => g.cheatGain(c));
+    for (let i = 1; i < gs.length; i++) if (!(gs[i] >= gs[i - 1] - 1e-9)) c1.fail(`gain must not fall with crime: ${gs.map((x) => x.toFixed(3))}`);
+    const el = [1.5872, 2.5, 10, 40].map((c) => g.cheatElasticity(c));
+    if (!(el[0] > 0 && el[1] > 0 && el[2] > 0)) c1.fail(`elasticity must stay positive past the old table's end: ${el.map((x) => x.toFixed(4))}`);
+    if (!(el[0] > el[2])) c1.fail("elasticity must fall as cheats saturate");
+    if (g.cheatElasticity(0) !== 0) c1.fail("no crime: elasticity 0");
+    c1.note(`gain at 1.2/1.59/2.5/4/10/25: ${gs.map((x) => x.toFixed(3)).join(" ")}; elasticity at 1.59/2.5/10/40: ${el.map((x) => x.toFixed(4)).join(" ")}`);
   }
   const c2 = new Check("GC2", "chooseOpponent prices Slum Snakes through the cheat channel, and only then");
   {
     const base = { weights: { combat: 1, faction_rep: 0.2, hacking_speed: 0.1, hacking_money: 0.1 }, windowH: 10, incumbent: "Tetrads", goPower: 4, sf14: 2 };
     const np = { Tetrads: 20000, SlumSnakes: 0, Daedalus: 20000, Illuminati: 20000, TheBlackHand: 20000, Netburners: 20000 };
-    const knee = g.CHEAT_GAIN.reduce((best, [c, m]) => (m > best[1] ? [c, m] : best), [1, 0])[0];
     const low = g.chooseOpponent({ ...base, nodePower: np, cheat: { on: ["Tetrads"], crime: 1.5872, lifeLeftH: 8 } });
-    const atKnee = g.chooseOpponent({ ...base, nodePower: np, cheat: { on: ["Tetrads"], crime: knee, lifeLeftH: 8 } });
+    // A very short life left: the warm-up cannot pay back.
+    const atKnee = g.chooseOpponent({ ...base, nodePower: np, cheat: { on: ["Tetrads"], crime: 1.5872, lifeLeftH: 0.001 } });
     const none = g.chooseOpponent({ ...base, nodePower: np });
     c2.examined(3);
     if (low.opponent !== "SlumSnakes") c2.fail(`below the knee with cheats on, Slum Snakes must be chosen at 0 node power: ${low.opponent} (${low.why.slice(0, 200)})`);
-    if (atKnee.opponent === "SlumSnakes") c2.fail(`at the knee (${knee}) Slum Snakes buys no cheat rate and must not be chosen`);
+    if (atKnee.opponent === "SlumSnakes") c2.fail("with ~no life left Slum Snakes cannot pay back and must not be chosen (horizon-aware)");
     if (!/SlumSnakes \(crime_success/.test(none.why)) c2.fail("with no cheat input Slum Snakes must be skipped by name", none.why.slice(-300));
     c2.note(`low: ${low.why.slice(0, 160)}`);
   }

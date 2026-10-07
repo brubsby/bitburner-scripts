@@ -535,36 +535,113 @@ export const MEASURED_BOARD = 5
 // Slum Snakes feeds crime_success (effect.ts: bonusPower 1.2), so a few of its
 // games buy the farm a faster rate for the rest of the life.
 //
-// CHEAT_GAIN: the farm's live power/h with cheats, as a multiple of its rate
-// without, by crime_success. MEASURED 2026-10-06 (tools/sim/go-w0.mjs --cheat
-// predicted --cheatwait 0.5, Tetrads 5x5, the live config, seed 58, 100 games
-// per arm paired against one no-cheat arm, 0 losses in any arm):
-//   second stone 400ms: 1.5872 +8.0%  2.5 +12.6%  4 +10.8%  6.4 +15.5%  10 +16.8%
-//   second stone 100ms (go.js SETTINGS.cheat.secondMs, live): 1.5872 +14.6%  2.5 +17.4%
-// The table is the 100ms curve to 2.5 and the 400ms arms' shape beyond
-// (x1.037 from 2.5 to 10: one fitted segment, the 4.0 dip is inside the noise).
-// [1, 1] is NOT measured at today's config (release 3: ~+1% at crime 1).
-// Interpolated linearly in ln(crime_success), flat beyond the ends; used ONLY
-// as a slope — d ln(gain)/d ln(crime).
-export const CHEAT_GAIN = [
-  [1, 1],
-  [1.5872, 1.146],
-  [2.5, 1.174],
-  [10, 1.217],
-]
+// THE CHEAT GAIN, MECHANISTIC (fitted and CHECKED by tools/sim/go-cheat-model.mjs).
+// It replaced a 5-point table (a noisy sweep with kinks, an unmeasured anchor
+// and zero slope past its last point).
+//
+// AVAILABILITY. go.js cheats on an eligible turn (our 2nd move on, never after
+// the AI's pass) when the roll — WHRNG of the playtime, a sawtooth rising
+// CHEAT_RATE_PER_S (golib.cheatRoll) — is inside chance(k) =
+// min(1, 0.6 (0.7-0.02k)^k crime [+0.25 SF14.3]) for the k cheats so far, or
+// opens within maxWaitMs. A game's roll drifts only RATE x turnS a turn, so its
+// cheats follow from its starting phase r0 (uniform) and the stones it needs
+// before the AI passes (W, live games; a cheat lays two). cheatAvailability
+// integrates over r0 and W: P(N >= k | crime), smooth in crime (kinked only
+// where a chance reaches 1, which is the game's own min).
+//
+// VALUE. Each k-th cheat's effect on the game (AI seconds, black) is MEASURED
+// from paired harness games — the clock phase, not the position, sets how many
+// cheats a game gets — and its cost is the second stone's search + a round
+// trip + go-cheat.js's exec. gain(crime) = (E black / E seconds) with cheats
+// over the same without.
+export const CHEAT_RATE_PER_S = 171 / 30269 + 172 / 30307 + 170 / 30323
+export const CHEAT_MODEL = {
+  // Per-cheat effects (cheats 1, 2, 3, and EACH past the third), fitted
+  // 2026-10-06 by go-cheat-model.mjs on 900 paired games (9 arms, crime
+  // 1.59-10, Tetrads 5x5 live config): AI seconds -1.04 [-1.39, -0.16],
+  // -1.01 [-1.89, -0.63], -0.55 [-1.22, -0.10], -0.57 [-0.75, -0.27] each;
+  // black +0.43, -0.44, -0.04, -0.22 (none distinguishable from 0).
+  // CHECK (same run): mean cheats a game within -8.6..+10.1% of the harness
+  // per arm; gain within -3.9..+4.3% of each arm's measured ratio.
+  dAI: [-1.035, -1.013, -0.545, -0.568],
+  dB: [0.427, -0.438, -0.037, -0.218],
+  black0: 19.61,
+  ai0: 10.85,
+  ourS0: 0,
+  costMs: 235, // round trip 85 + go-cheat.js exec and result read ~150 (go-w0 ROUND_TRIP_MS, CHEAT_EXEC_MS)
+  secondMs: 100, // go.js SETTINGS.cheat.secondMs
+  // W: stones a game lays before the AI's first pass (live Tetrads 5x5, no
+  // cheats; histogram {stones: games}).
+  W: { 4: 5, 5: 37, 6: 56, 7: 53, 8: 56, 9: 62, 10: 69, 11: 66, 12: 52, 13: 47, 14: 13, 15: 4, 17: 1, 21: 1 },
+  turnS: 1.06,
+  fromTurn: 2,
+  maxPerGame: 12,
+  maxWaitS: 0.5,
+}
 
-/** d ln(CHEAT_GAIN)/d ln(crime) at `crime` (0 outside the table or on a falling segment). */
-export function cheatElasticity(crime, table = CHEAT_GAIN) {
-  if (!num(crime) || crime <= 0 || !Array.isArray(table) || table.length < 2) return 0
-  for (let i = 0; i + 1 < table.length; i++) {
-    const [c0, g0] = table[i]
-    const [c1, g1] = table[i + 1]
-    if (crime >= c0 && crime < c1) {
-      const e = (Math.log(g1) - Math.log(g0)) / (Math.log(c1) - Math.log(c0))
-      return e > 0 ? e : 0
+function cheatChanceOf(k, crime, sf14) {
+  return Math.max(0, Math.min(1, 0.6 * Math.pow(0.7 - 0.02 * k, k) * crime + (sf14 === 3 ? 0.25 : 0)))
+}
+
+/** P(N >= k) for k = 1..maxPerGame at crime_success `crime` (see above). */
+export function cheatAvailability(crime, o = {}) {
+  const m = { ...CHEAT_MODEL, ...o }
+  const hist = Array.isArray(m.W) ? m.W.reduce((h, w) => ((h[w] = (h[w] ?? 0) + 1), h), {}) : m.W
+  const ws = Object.entries(hist).map(([w, n]) => [Number(w), n])
+  const tot = ws.reduce((a, [, n]) => a + n, 0)
+  const PH = 240
+  const ge = new Array(m.maxPerGame).fill(0)
+  if (!num(crime) || crime < 0 || !tot) return ge
+  for (let i = 0; i < PH; i++) {
+    const r0 = (i + 0.5) / PH
+    for (const [w, n] of ws) {
+      let cheats = 0, stones = 0, turn = 1, t = 0
+      while (stones < w) {
+        if (turn >= m.fromTurn && cheats < m.maxPerGame) {
+          const r = (r0 + CHEAT_RATE_PER_S * t) % 1
+          const p = cheatChanceOf(cheats, crime, m.sf14 ?? 0)
+          const wait = r <= p ? 0 : (1 - r) / CHEAT_RATE_PER_S
+          if (p > 0 && wait <= m.maxWaitS) {
+            t += wait
+            cheats++
+            stones += 2
+            t += m.turnS
+            turn++
+            continue
+          }
+        }
+        stones++
+        t += m.turnS
+        turn++
+      }
+      for (let k = 0; k < cheats; k++) ge[k] += n / (tot * PH)
     }
   }
-  return 0
+  return ge
+}
+
+/** The farm's power/h with cheats over without, at crime_success `crime`. */
+export function cheatGain(crime, o = {}) {
+  const m = { ...CHEAT_MODEL, ...o }
+  const av = cheatAvailability(crime, m)
+  const K = m.dAI.length
+  // E of the regression's features: [N>=1], [N>=2], [N>=3], E max(0, N-3).
+  const ef = Array.from({ length: K }, (_, j) => (j < K - 1 ? av[j] ?? 0 : av.slice(K - 1).reduce((a, b) => a + b, 0)))
+  const eN = av.reduce((a, b) => a + b, 0)
+  const t0 = m.ai0 + m.ourS0
+  const t = t0 + ef.reduce((a, f, j) => a + f * m.dAI[j], 0) + (eN * (m.secondMs + m.costMs)) / 1000
+  const b = m.black0 + ef.reduce((a, f, j) => a + f * m.dB[j], 0)
+  return b / t / (m.black0 / t0)
+}
+
+/** d ln gain / d ln crime — central difference on the smooth model. */
+export function cheatElasticity(crime, o = {}) {
+  if (!num(crime) || crime <= 0) return 0
+  const h = 0.02
+  const up = cheatGain(crime * Math.exp(h), o)
+  const dn = cheatGain(crime * Math.exp(-h), o)
+  const e = (Math.log(up) - Math.log(dn)) / (2 * h)
+  return e > 0 ? e : 0
 }
 
 export function chooseOpponent(o = {}) {
@@ -706,7 +783,7 @@ export function chooseOpponent(o = {}) {
   if (cheatIn && cheatCands.length) {
     // The farm: the best cheat-on arm on the board CHEAT_GAIN was measured on.
     const farm = scored.filter((s) => cheatIn.on.includes(s.name) && s.size === MEASURED_BOARD).sort((a, b) => b.marginal - a.marginal)[0] ?? null
-    const eps = cheatElasticity(cheatIn.crime, cheatIn.table ?? CHEAT_GAIN)
+    const eps = cheatElasticity(cheatIn.crime, { ...(cheatIn.model ?? {}), sf14 })
     for (const c of cheatCands) {
       const dlnPerPower = c.slope !== null && c.effect ? c.slope / c.effect : 0
       const perH = farm && farm.marginal > 0 ? farm.marginal * eps * cheatIn.lifeLeftH : 0
