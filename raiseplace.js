@@ -455,14 +455,19 @@ export function goHomeRepairOf({ max, used, keep, procs = [] }) {
  *
  * need: the resident's GB; free: home's free GB now; action: the slot kept
  * beside a resident; procs: [{script, gb}] on home (gb = RAM x threads);
- * transient: scripts that exit by themselves (waited for, never killed).
- * EVICTABLE workers are stopped whole (retire.js kills by name), largest
- * first, only as many as the shortfall after the transients needs.
+ * transient: scripts that exit by themselves (waited for, never killed);
+ * movable: 'anywhere' daemons that landed on home (placeOff's fallback) —
+ * stopped only after every EVICTABLE worker, and only for a resident whose
+ * absence stops the stack (boot.js passes them for watchdog.js alone, which
+ * revives them). Live 2026-10-07 13:57Z: buyserv.js 9.6GB and homeup.js
+ * 7.6GB on a 64GB home left watchdog.js -0.65GB beside the slot.
+ * Stopped whole (retire.js kills by name), largest first, only as many as the
+ * shortfall after the transients needs.
  * Returns {fits, ok, wait: [script], stop: [script], room, after, why}:
  * fits = room enough now; ok = enough once `wait` exit and `stop` are killed;
  * neither = not even all of them would make room, and nothing is to be done.
  */
-export function homeResidentRoomOf({ need, free, action = 0, procs = [], transient = [] }) {
+export function homeResidentRoomOf({ need, free, action = 0, procs = [], transient = [], movable = [] }) {
   const room = free - action
   if (!num(need) || !num(room)) return { fits: false, ok: false, wait: [], stop: [], room: null, after: null, why: 'unpriced (need or free RAM unknown)' }
   if (room >= need) return { fits: true, ok: true, wait: [], stop: [], room, after: room, why: 'fits' }
@@ -474,14 +479,14 @@ export function homeResidentRoomOf({ need, free, action = 0, procs = [], transie
   const tr = by(transient)
   let after = room + tr.reduce((a, p) => a + p.gb, 0)
   const stop = []
-  for (const p of by(EVICTABLE).sort((a, b) => b.gb - a.gb)) {
+  for (const p of [...by(EVICTABLE).sort((a, b) => b.gb - a.gb), ...by(movable.filter((s) => !EVICTABLE.includes(s))).sort((a, b) => b.gb - a.gb)]) {
     if (after >= need) break
     stop.push(p.script)
     after += p.gb
   }
   const r = (x) => Math.round(x * 100) / 100
   if (after < need) {
-    return { fits: false, ok: false, wait: [], stop: [], room, after, why: `${r(room)}GB beside the ${r(action)}GB action slot; even with every one-shot finished and every evictable worker stopped it is ${r(after)}GB, short of ${r(need)}GB` }
+    return { fits: false, ok: false, wait: [], stop: [], room, after, why: `${r(room)}GB beside the ${r(action)}GB action slot; even with every one-shot finished and every evictable worker${movable.length ? ' and movable daemon' : ''} stopped it is ${r(after)}GB, short of ${r(need)}GB` }
   }
   return {
     fits: false,

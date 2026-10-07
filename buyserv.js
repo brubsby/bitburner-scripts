@@ -370,11 +370,16 @@ export async function main(ns) {
       // getServerCost, a price for servers that cannot be bought, and
       // progress.js's spend verdict (installgate spendExit.servers) priced a
       // fleet spend on it. Refuse by name instead, with no price to read.
+      //
+      // AND EXIT. Waiting here held 9.6GB for the whole node — live BN9.2
+      // 2026-10-07 13:57Z it sat on home and kept watchdog.js out. The limit
+      // is the node's, fixed for its life; watchdog.js's invariant
+      // (CloudServerLimit > 0) keeps this from being relaunched.
       if (limit <= 0 && owned.length === 0) {
-        note('waiting', { result: 'no-cloud-servers', limit, fleetDollarPerGB: null, owned: 0, detail: `ns.cloud.getServerLimit() is ${limit} in this BitNode (CloudServerLimit): there is nothing to buy. RAM here is home, rooted servers, and — with hacknet servers — whatever hacknet.js's ramPolicy lends.` })
+        note('stopped', { result: 'no-cloud-servers', limit, fleetDollarPerGB: null, owned: 0, detail: `ns.cloud.getServerLimit() is ${limit} in this BitNode (CloudServerLimit): there is nothing to buy, so buyserv.js exits (watchdog.js does not relaunch it here). RAM here is home, rooted servers, and — with hacknet servers — whatever hacknet.js's ramPolicy lends.` })
         mirror()
-        await ns.sleep(10 * 60e3)
-        continue
+        ns.atExit(() => {})
+        return
       }
       reserve = flags.reserve >= 0 ? flags.reserve : reserveNow(ns)
 

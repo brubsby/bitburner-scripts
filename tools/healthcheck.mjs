@@ -220,6 +220,9 @@ for (const [name, budget] of Object.entries(FRESH)) {
       note(`/tel/${name} is ${age.toFixed(0)} min old and from a PREVIOUS life — not yet republished this one`);
     }
     else if (name === "batch.txt" && batchRetiredByTier(d)) note(`/tel/batch.txt is ${age.toFixed(0)} min old: batch.js is retired below its home tier (boot.txt defers it) — early.js/seed.js earn instead`);
+    // GANG.JS PARKED: no gang and none creatable yet, so it published why and
+    // exited; watchdog.js's invariant (gangplan.gangDaemonOf) relaunches it.
+    else if (name === "gang.txt" && d.parked === true) note(`/tel/gang.txt is ${age.toFixed(0)} min old: gang.js is parked — ${String(d.why ?? "").slice(0, 120)}`);
     else fail(`/tel/${name} is ${age.toFixed(0)} min stale (budget ${budget})`, `health '${d.health}' — a stale file reporting 'ok' is the shape every silent failure here has taken`);
   }
   if (d.health === "error") fail(`${name} reports health 'error'`, String(d.detail ?? "").slice(0, 200));

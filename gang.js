@@ -31,7 +31,7 @@
 // it reads is copied from home each pass; what it writes is copied back.
 
 import { reporter } from 'status.js'
-import { gangAllowed, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, restoredPolicyOf, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, gangRepAt, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
+import { gangAllowed, gangDaemonOf, assign, shouldAscend, bestEquipment, discount, respectForMembers, policySearch, restoredPolicyOf, trainRatio, warfareSquad, wantedPenalty, MIN_PENALTY, simulateGang, scoreTrajectory, gangRepAt, RESPECT_TO_REP, GANG_FACTIONS, MAX_MEMBERS, CYCLE_SEC } from 'gangplan.js'
 import { spendable, reserveFor, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -248,6 +248,25 @@ export async function main(ns) {
       const allowed = gangAllowed({ bitNode: info.currentNode, sf2: sfLevel(info, 2), karma: player.karma, disabled: info.bitNodeOptions?.disableGang === true })
       const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, bitNode: info.currentNode, allowed }
       if (!allowed.ok) {
+        // PARK: no gang and none can be created yet. Publish the refusal once
+        // and exit; watchdog.js relaunches gang.js when gangDaemonOf turns
+        // true (karma reached, or a gang exists). The note() keeps the record
+        // as the exit's body, so /tel/gang.txt still says why.
+        let inGang = false
+        try {
+          inGang = ns.gang.inGang()
+        } catch {
+          inGang = false
+        }
+        const d = gangDaemonOf({ bitNode: info.currentNode, sf2: sfLevel(info, 2), karma: player.karma, disabled: info.bitNodeOptions?.disableGang === true, inGang })
+        if (!d.active) {
+          // note() for its health/exit shape, then gang.js's own publish so
+          // the record reaches home when this runs off home; the atExit
+          // 'status' hook is replaced so the exit does not overwrite it.
+          publish(ns, note('stopped', { ...base, phase: 'refused', parked: true, why: allowed.why, detail: `gang.js parked: ${allowed.why} — watchdog.js relaunches it when a gang can be created` }))
+          ns.atExit(() => {}, 'status')
+          return
+        }
         publish(ns, { ...base, phase: 'refused', why: allowed.why })
         await nap(60000)
         continue

@@ -186,6 +186,19 @@ export function gangAllowed({ bitNode, sf2, karma, disabled = false } = {}) {
   return { ok: true }
 }
 
+/**
+ * Whether gang.js has any business holding its ~32GB: a gang exists, or the
+ * game allows creating one now. Otherwise gang.js PARKS (publishes the refusal
+ * and exits) and watchdog.js's invariant keeps it down until this turns true.
+ * Live BN9.2 2026-10-07: gang.js sat at "karma -13 must reach -54000" holding
+ * 31.9GB — hours of RAM for a refusal it could publish once.
+ */
+export function gangDaemonOf({ bitNode, sf2, karma, disabled = false, inGang = false } = {}) {
+  if (inGang) return { active: true, why: 'in a gang' }
+  const a = gangAllowed({ bitNode, sf2, karma, disabled })
+  return a.ok ? { active: true, why: 'a gang can be created' } : { active: false, why: a.why }
+}
+
 export const ascMult = (points) => Math.max(Math.sqrt((num(points) ? points : 0) / 2000), 1)
 export const skillOf = (exp, mult) => Math.max(Math.floor(mult * (32 * Math.log(exp + 534.5) - 200)), 1)
 export const wantedPenalty = (g) => g.respect / (g.respect + g.wantedLevel)

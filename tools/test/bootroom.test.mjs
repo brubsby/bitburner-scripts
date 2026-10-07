@@ -18,13 +18,32 @@
 //       (surviving the exit record), health 'error' before the exit, a CRITICAL terminal line
 //   BR5 --dry: nothing evicted, nothing started, the would-be eviction reported
 //   BR6 retire.js --host limits the kill to that host
+//
+// Live 13:57Z, after ba730a8 made it loud: home held torbuy/cmd/autobuy/backdoor/settings.js plus buyserv.js
+// (9.6GB) and homeup.js (7.6GB) — both 'anywhere', dropped on home by placeOff's fallback — and watchdog.js
+// was CRITICAL at -0.65GB beside the slot. buyserv.js could never buy anything there (BN9: CloudServerLimit 0)
+// and gang.js held 31.9GB at "karma -13 must reach -54000".
+//
+//   BR7 the 13:57Z home: watchdog.js evicts the 'anywhere' daemon on home (buyserv.js, the largest; not
+//       homeup.js, which is not needed) and starts; nothing else is killed
+//   BR8 an 'anywhere' entry ranked before watchdog.js (homeup.js) does not take home RAM watchdog.js needs:
+//       placeOff's fallback keeps act.js's slot and the pending home residents
+//   BR9 dead weight per node: watchdog.js does not launch buyserv.js where CloudServerLimit is 0, nor gang.js
+//       where no gang exists or can be created yet (gangplan.gangDaemonOf); it does where they can work;
+//       buyserv.js and gang.js exit (not wait) in those nodes; the healthcheck accepts a parked gang.txt
 
 import './gameresolve.mjs'
 import { Check } from './harness.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from './gameresolve.mjs'
+import { mockGame as wdGame, drive as wdDrive, INFO } from './bbfull.test.mjs'
 
 const RP = await import('raiseplace.js')
 const BOOT = await import('boot.js')
 const RETIRE = await import('retire.js')
+const GP = await import('gangplan.js')
+const SRC = (f) => fs.readFileSync(path.join(REPO_ROOT, f), 'utf8')
 
 // Prices as /tel/boot.txt published them live (BN9.2, SF4 level in the price).
 const RAM = {
@@ -45,9 +64,10 @@ const fleetGb = FLEET.reduce((a, p) => a + p.ram, 0)
  * A mock game for boot.main: `oneshotLife` = sleeps a one-shot lives (Infinity = hangs);
  * retire.js does its kill at the next sleep and exits. A fake clock moves 200ms a sleep.
  */
-function mockGame({ home, fleet = [], oneshotLife = 1, args = [] }) {
+function mockGame({ home, fleet = [], oneshotLife = 1, args = [], notRunning = [] }) {
+  const base = FLEET.filter((p) => !notRunning.includes(p.filename))
   const world = {
-    hosts: { home: { max: 64, procs: home }, 'omega-net': { max: Math.ceil(fleetGb + fleet.reduce((a, p) => a + p.ram * p.threads, 0)), procs: [...FLEET, ...fleet] } },
+    hosts: { home: { max: 64, procs: home }, 'omega-net': { max: Math.ceil(base.reduce((a, p) => a + p.ram, 0) + fleet.reduce((a, p) => a + p.ram * p.threads, 0)), procs: [...base, ...fleet] } },
     files: { '/tel/stock.txt': JSON.stringify({ at: new Date().toISOString(), equity: 1e9 }) },
     log: [], execs: [], kills: [], spawned: null, exit: null, sleeps: 0, clock: 0,
   }
@@ -222,6 +242,87 @@ export async function run() {
     }
     await RETIRE.main(ns)
     if (kills.join() !== 'early.js on home') c.fail('BR6 retire.js --host home', JSON.stringify(kills))
+    checks.push(c)
+  }
+
+  // ---- BR7 -------------------------------------------------------------------
+  {
+    const c = new Check('BR7', "the 13:57Z home: watchdog.js evicts buyserv.js (an 'anywhere' daemon on home) and starts; homeup.js stays")
+    c.examined(1)
+    const home = ['boot.js', 'torbuy.js', 'cmd.js', 'autobuy.js', 'backdoor.js', 'settings.js', 'buyserv.js', 'homeup.js'].map((s) => proc(s))
+    const first = RP.homeResidentRoomOf({ need: 8.95, free: 64 - home.reduce((a, p) => a + p.ram, 0), action: 19.4, procs: home.map((p) => ({ script: p.filename, gb: p.ram })), transient: ['settings.js'] })
+    const w = await drive(mockGame({ home, oneshotLife: Infinity, notRunning: ['homeup.js'] }))
+    const r = w.final
+    if (!(Math.abs(first.room - -0.65) < 1e-9) || first.ok) c.fail('BR7 not the live shape: without movable daemons it must be the live refusal at -0.65GB', JSON.stringify(first))
+    if (!on(w, 'home', 'watchdog.js')) c.fail('BR7 watchdog.js is not running on home', JSON.stringify({ failed: r?.failed, critical: r?.critical }))
+    if (w.kills.join() !== 'buyserv.js on home') c.fail('BR7 the eviction must be buyserv.js on home alone', JSON.stringify(w.kills))
+    if (!on(w, 'home', 'homeup.js')) c.fail('BR7 homeup.js was stopped although buyserv.js alone made the room')
+    if ((r?.critical ?? []).length) c.fail('BR7 still critical', JSON.stringify(r.critical))
+    c.note(`was: ${first.why}; now: ${(r?.started ?? []).find((x) => /^watchdog/.test(x))}; evicted ${JSON.stringify(r?.evicted)}`)
+    checks.push(c)
+  }
+
+  // ---- BR8 -------------------------------------------------------------------
+  {
+    const c = new Check('BR8', "homeup.js ('anywhere', ranked before watchdog.js) does not take the home RAM watchdog.js needs")
+    c.examined(1)
+    // Fleet full, homeup.js not yet running, early.js x2 on home: the old fallback put homeup.js (7.6GB) on
+    // home first, and watchdog.js then needed an eviction (or, with no worker there, failed).
+    const w = await drive(mockGame({ home: [proc('boot.js'), proc('early.js', 2)], notRunning: ['homeup.js'], oneshotLife: 1 }))
+    const r = w.final
+    if (!on(w, 'home', 'watchdog.js')) c.fail('BR8 watchdog.js is not running on home', JSON.stringify({ failed: r?.failed, started: r?.started, evicted: r?.evicted }))
+    if (w.kills.length) c.fail('BR8 something had to be evicted — the fallback took room it should have kept', JSON.stringify(w.kills))
+    if (on(w, 'home', 'homeup.js')) c.fail("BR8 homeup.js was dropped on home ahead of watchdog.js's room")
+    if (!/function placeOff\(ns, hosts, need, script = null, homeKeep = 0\)[\s\S]{0,900}if \(spare\(ns, 'home'\) - homeKeep >= need\) return 'home'/.test(SRC('boot.js'))) c.fail("BR8 placeOff's home fallback must keep homeKeep")
+    c.note(`started: ${(r?.started ?? []).join(' | ')}; failed: ${(r?.failed ?? []).map((x) => x.split(':')[0]).join(', ')}`)
+    checks.push(c)
+  }
+
+  // ---- BR9 -------------------------------------------------------------------
+  {
+    const c = new Check('BR9', 'dead weight per node: no buyserv.js without cloud servers, no gang.js without a creatable gang')
+    const BN9 = { ...INFO, currentNode: 9, ownedSF: new Map([[2, 1], [4, 3], [9, 1]]) }
+    const BN1 = { ...INFO, currentNode: 1, ownedSF: new Map([[2, 1], [4, 3]]) }
+    const launched = async (info, karma, inGang = false) => {
+      const g = wdGame({ cycles: 1, info, hosts: { home: { max: 1024, procs: [proc('watchdog.js', 8.95)] } } })
+      g.ns.heart = { break: () => karma }
+      g.ns.gang = { inGang: () => inGang }
+      const w = await wdDrive(g)
+      return new Set(w.execs.map((e) => e.script))
+    }
+    const cases = [
+      ['BN9.2, karma -13', BN9, -13, false, { 'buyserv.js': false, 'gang.js': false }],
+      ['BN9.2, karma -60000', BN9, -60000, false, { 'buyserv.js': false, 'gang.js': true }],
+      ['BN1 with SF2, karma -13', BN1, -13, false, { 'buyserv.js': true, 'gang.js': false }],
+      ['BN1 with SF2, in a gang', BN1, -13, true, { 'buyserv.js': true, 'gang.js': true }],
+      ['BN2', { ...INFO, currentNode: 2, ownedSF: new Map([[4, 3]]) }, 0, false, { 'buyserv.js': true, 'gang.js': true }],
+    ]
+    for (const [label, info, karma, inGang, want] of cases) {
+      c.examined(1)
+      let got
+      try {
+        got = await launched(info, karma, inGang)
+      } catch (e) {
+        c.fail(`BR9 ${label}: the watchdog threw`, String(e?.stack ?? e).slice(0, 300))
+        continue
+      }
+      for (const [s, w] of Object.entries(want)) if (got.has(s) !== w) c.fail(`BR9 ${label}: watchdog ${w ? 'did not launch' : 'launched'} ${s}`)
+      c.note(`${label}: ${Object.keys(want).map((s) => `${s} ${got.has(s) ? 'launched' : 'held'}`).join(', ')}`)
+    }
+    // The pure gate.
+    c.examined(3)
+    if (GP.gangDaemonOf({ bitNode: 9, sf2: 1, karma: -13 }).active) c.fail('BR9 gangDaemonOf: BN9 at karma -13 must park')
+    if (!GP.gangDaemonOf({ bitNode: 9, sf2: 1, karma: -13, inGang: true }).active) c.fail('BR9 gangDaemonOf: a gang that exists runs')
+    if (GP.gangDaemonOf({ bitNode: 2, sf2: 0, karma: 0, disabled: true }).active) c.fail('BR9 gangDaemonOf: disabled by BitNode options must park')
+    // The scripts exit rather than wait, and the healthcheck accepts the parked record.
+    c.examined(3)
+    const bs = SRC('buyserv.js')
+    const at = bs.indexOf('if (limit <= 0 && owned.length === 0) {')
+    const ncs = bs.slice(at, at + 700)
+    if (at < 0 || !/\n\s*return\s*\n\s*\}/.test(ncs) || /await ns\.sleep/.test(ncs)) c.fail('BR9 buyserv.js must exit (not wait) where no cloud server can be bought')
+    const gs = SRC('gang.js')
+    if (!/if \(!d\.active\) \{[\s\S]{0,700}parked: true[\s\S]{0,400}return/.test(gs)) c.fail('BR9 gang.js must park (publish parked and return) where no gang can be created')
+    if (!/name === "gang\.txt" && d\.parked === true\) note\(/.test(SRC('tools/healthcheck.mjs'))) c.fail('BR9 the healthcheck must accept a parked gang.txt as not stale')
     checks.push(c)
   }
   return checks

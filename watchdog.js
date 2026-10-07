@@ -106,10 +106,12 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, canUseGrafting, hasHacknetServers, sfLevel, SF_FILE } from 'sfgate.js'
+import { canUseGang, singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, canUseGrafting, hasHacknetServers, sfLevel, SF_FILE } from 'sfgate.js'
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
+// Pure: whether gang.js has any business running (a gang, or one creatable now).
+import { gangDaemonOf } from 'gangplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
 import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goPlacementOf, actionSlotOf, stockHeldOf } from 'raiseplace.js'
 // Pure (0GB): go.js's priced placement verdict (goplace.js).
@@ -202,10 +204,28 @@ const WATCHED = [
   // no work and it self-guards the export claim on factions being joined, so
   // the trivially-true DAEMON default is exactly right.
   { script: 'upkeep.js', host: 'home', args: [] },
-  // A no-op that says so where a gang is not allowed; the whole economy of
-  // BitNode 2 where it is. Revived like the batcher: an install kills it and
-  // the gang (which survives installs) would sit unmanaged.
-  { script: 'gang.js', host: 'home', args: [] },
+  // The whole economy of BitNode 2; revived like the batcher, since an install
+  // kills it and the gang (which survives installs) would sit unmanaged.
+  // Where no gang exists and none can be created yet (no SF2, disabled, or
+  // karma short of -54000) it PARKS — publishes why and exits — and this
+  // invariant keeps it down until that changes (gangplan.gangDaemonOf). It
+  // was a no-op holding ~32GB: live BN9.2 2026-10-07, "karma -13 must reach
+  // -54000". ns.heart.break and ns.gang.inGang are 0GB.
+  {
+    script: 'gang.js',
+    host: 'home',
+    args: [],
+    invariant: (ns) => {
+      const i = ns.getResetInfo()
+      let inGang = false
+      try {
+        inGang = canUseGang(i) && ns.gang.inGang()
+      } catch {
+        inGang = false
+      }
+      return gangDaemonOf({ bitNode: i.currentNode, sf2: sfLevel(i, 2), karma: ns.heart.break(), disabled: i.bitNodeOptions?.disableGang === true, inGang }).active
+    },
+  },
   // The early-game dispatcher; a no-op once progress.js acts, and the only
   // thing that joins, works or commits crimes before then.
   { script: 'act.js', host: 'home', args: [] },
@@ -377,7 +397,13 @@ const WATCHED = [
   // augmentation money, and a later one held back everything in a life that
   // owned nothing. Purchased servers are destroyed by an install, so naming one
   // as a host guarantees a dead entry on the next life.
-  { script: 'buyserv.js', host: 'home', args: [] },
+  //
+  // Not where the node allows no cloud servers (CloudServerLimit 0: BitNode
+  // 9). buyserv.js exits there by itself; without this invariant it was
+  // relaunched every cycle, and while it waited it held 9.6GB of home —
+  // live BN9.2 2026-10-07 13:57Z, keeping watchdog.js itself out at boot.
+  // An unknown node's table (null) is not a reason to stop buying.
+  { script: 'buyserv.js', host: 'home', args: [], invariant: (ns) => !(bitNodeMults(ns.getResetInfo().currentNode)?.CloudServerLimit <= 0) },
   { script: 'autobuy.js', host: 'home', args: [] },
   // The dashboard's fast lane. 2.6GB, writes /tel/fast.txt every 2s; tools/dash.mjs
   // is its only consumer and polls that file far more often than it pulls a save.

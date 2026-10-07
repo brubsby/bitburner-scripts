@@ -647,7 +647,7 @@ function liteHeld(ns) {
  * the batcher. Falls back to home only if nothing else has room — an
  * 'anywhere' entry that lands on home is a budget miss, and it is reported.
  */
-function placeOff(ns, hosts, need, script = null) {
+function placeOff(ns, hosts, need, script = null, homeKeep = 0) {
   const lite = script === 'bb-lite.js' ? null : liteHeld(ns)
   let best = null
   for (const host of hosts) {
@@ -656,7 +656,11 @@ function placeOff(ns, hosts, need, script = null) {
     if (room >= need && (!best || room < best.room)) best = { host, room }
   }
   if (best) return best.host
-  if (spare(ns, 'home') >= need) return 'home'
+  // HOME ONLY OUT OF WHAT ITS PLANNED RESIDENTS AND act.js's SLOT LEAVE
+  // (homeKeep). Live 2026-10-07 13:57Z: buyserv.js (9.6GB) and homeup.js
+  // (7.6GB), both 'anywhere', fell back onto a 64GB home and left the
+  // home-pinned watchdog.js -0.65GB beside the slot.
+  if (spare(ns, 'home') - homeKeep >= need) return 'home'
   // LAST RESORT: a hacknet server. Every GB a script holds there costs that
   // share of the server's hashes (hashRate's 1 - ramUsed/maxRam,
   // Hacknet/formulas/HacknetServers.ts:14), so it is used only when nothing
@@ -682,12 +686,12 @@ const CRITICAL = ['watchdog.js']
  * wait (`hung`, shared across residents) is not waited for again.
  * Returns {ok, fits, why}.
  */
-async function makeHomeRoom(ns, { need, action, transient, costOf, dry, evicted, hung }) {
+async function makeHomeRoom(ns, { need, action, transient, movable = [], costOf, dry, evicted, hung }) {
   let d = null
   const did = []
   for (let pass = 0; pass < 3; pass++) {
     const procs = ns.ps('home').map((p) => ({ script: p.filename, gb: costOf(p.filename) * p.threads }))
-    d = homeResidentRoomOf({ need, free: spare(ns, 'home'), action, procs, transient: pass ? [] : transient.filter((s) => !hung.has(s)) })
+    d = homeResidentRoomOf({ need, free: spare(ns, 'home'), action, procs, transient: pass ? [] : transient.filter((s) => !hung.has(s)), movable })
     if (d.fits) return { ok: true, fits: pass === 0, why: did.length ? did.join('; ') : 'fits' }
     if (!d.ok) return { ok: false, fits: false, why: [...did, d.why].join('; ') }
     if (dry) return { ok: true, fits: false, why: `DRY RUN — would ${d.why}` }
@@ -695,7 +699,7 @@ async function makeHomeRoom(ns, { need, action, transient, costOf, dry, evicted,
     if (d.stop.length) {
       const pid = ns.exec('retire.js', 'home', 1, '--host', 'home', ...d.stop)
       if (!pid) return { ok: false, fits: false, why: `${d.why}; but retire.js (${costOf('retire.js')}GB) could not start on home` }
-      evicted.push(...d.stop.map((s) => `${s} on home`))
+      evicted.push(...d.stop.map((s) => `${s} on home${movable.includes(s) ? ' (an anywhere daemon; watchdog.js revives it)' : ''}`))
     }
     const gone = [...d.wait, 'retire.js']
     const until = Date.now() + 15e3
@@ -855,6 +859,20 @@ export async function main(ns) {
   // What exits by itself on home: the plan's one-shots and retire.js.
   const transient = [...plan.admit.filter((e) => e.kind === 'oneshot').map((e) => e.script), 'retire.js']
   const hung = new Set()
+  // The planned home residents not yet running, and their need: an
+  // 'anywhere' entry falls back onto home only out of what these and
+  // act.js's slot leave (placeOff's homeKeep). Dropped as each is processed.
+  const goOnHome = ns.ps('home').some((p) => p.filename === 'go.js')
+  const homePending = new Map(
+    plan.admit
+      .filter((e) => e.where === 'home' && e.kind !== 'job' && e.kind !== 'oneshot' && e.role !== 'worker' && !(goOnHome && GO_OUTRANKS.includes(e.script)))
+      .filter((e) => !hosts.some((h) => ns.hasRootAccess(h) && ns.ps(h).some((p) => p.filename === e.script)))
+      .map((e) => [e.script, Math.max(e.cost, e.raisesTo ?? 0) * (e.threads || 1)]),
+  )
+  const actionHeld = wanted.has('act.js') ? plan.action : 0
+  const homeKeepFor = (script) => actionHeld + [...homePending].reduce((a, [s, gb]) => a + (s === script ? 0 : gb), 0)
+  // 'anywhere' daemons that may be stopped on home to seat a CRITICAL resident.
+  const movable = plan.admit.filter((e) => e.where === 'anywhere' && e.role !== 'worker').map((e) => e.script)
 
   // Lazily filled on the first off-home placement and reused for the rest, so a
   // plan that places nothing off home never pays the ns.ls call at all. See the
@@ -901,7 +919,8 @@ export async function main(ns) {
       // home, and go.js (placed first in a Go-first node by seed.js) is not
       // in the plan. One-shots are transient and exempt, as in planStack.
       const homeRoom = spare(ns, 'home') - (entry.kind === 'oneshot' ? 0 : plan.action)
-      let host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need, entry.script)
+      let host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need, entry.script, homeKeepFor(entry.script))
+      if (entry.where === 'home') homePending.delete(entry.script)
       if (!host && entry.where === 'home' && GO_OUTRANKS.includes(entry.script) && ns.ps('home').some((p) => p.filename === 'go.js')) {
         stopped.push(`${entry.script} not started: go.js holds home beside act.js's ${plan.action}GB slot (it outranks ${entry.script} in a Go-first node)`)
         continue
@@ -916,7 +935,7 @@ export async function main(ns) {
       // worked at once (raiseplace.homeResidentRoomOf).
       let made = null
       if (!host && entry.where === 'home' && entry.kind !== 'oneshot') {
-        made = await makeHomeRoom(ns, { need, action: plan.action, transient, costOf, dry, evicted, hung })
+        made = await makeHomeRoom(ns, { need, action: plan.action, transient, movable: CRITICAL.includes(entry.script) ? movable : [], costOf, dry, evicted, hung })
         if (made.ok) host = 'home'
       }
       if (!host) {
