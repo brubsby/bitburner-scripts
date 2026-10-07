@@ -574,7 +574,7 @@ export async function run() {
   const c8 = new Check("GR8", "cheats with release 3: second-stone request on the board after the first, no notice for a cheated pre-sent move, none after the AI's pass, per opponent, a stray go-cheat.js waited out");
   {
     const place = (b, x, y, c) => b.map((col, i) => (i === x ? col.slice(0, y) + c + col.slice(y + 1) : col));
-    const runCheat = async ({ on = true, pre = false, busy = 0 } = {}) => {
+    const runCheat = async ({ on = true, pre = false, busy = 0, joint = false } = {}) => {
       const files = new Map();
       const reqs = [];
       const execs = [];
@@ -583,7 +583,9 @@ export async function run() {
       let turn = 0;
       let left = busy;
       const saved = go.SETTINGS.cheat.on;
+      const savedJoint = go.SETTINGS.cheat.joint;
       go.SETTINGS.cheat.on = { default: false, Daedalus: on };
+      go.SETTINGS.cheat.joint = joint;
       const ns = {
         flags: () => ({ size: 5, maxms: 5, idle: 1, topk: 8, remotems: 0, games: 1, opponent: "Daedalus", pin: true }),
         disableLog() {},
@@ -602,7 +604,9 @@ export async function run() {
             reqs.push({ ...q, turn });
             if (q.played) return;
             const [x, y] = q.valid?.[0] ?? [0, 0];
-            files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x, y, backend: "model", mode: "session", release: "r3" }));
+            // joint: the solver answers a PAIR (as go-solver does when the roll is in the window)
+            const s2 = joint && turn === 1 && !q.opponentPassed ? q.valid?.[1] : null;
+            files.set("/go/move.txt", JSON.stringify({ seq: q.seq, x, y, ...(s2 ? { second: { x: s2[0], y: s2[1] } } : {}), backend: "model", mode: "session", release: "r3" }));
           }
         },
         sleep: () => new Promise((r) => setTimeout(r, 0)),
@@ -631,7 +635,7 @@ export async function run() {
             if (turn === 1) {
               B = place(B, 4, 4, "O");
               // The ponder's answer for the position the AI's reply makes.
-              if (pre) files.set("/go/ponder.txt", JSON.stringify({ answers: [{ b: B.join(""), pc: 0, x: 2, y: 2 }] }));
+              if (pre) files.set("/go/ponder.txt", JSON.stringify({ answers: [{ b: B.join(""), pc: 0, x: 2, y: 2, ...(joint ? { second: { x: 2, y: 3 } } : {}) }] }));
               return Promise.resolve({ type: "move", x: 4, y: 4 });
             }
             return Promise.resolve({ type: "gameOver", x: null, y: null });
@@ -643,6 +647,7 @@ export async function run() {
         await Promise.race([go.main(ns), new Promise((_, rej) => setTimeout(() => rej(new Error("main() did not finish in 30s")), 30000))]);
       } finally {
         go.SETTINGS.cheat.on = saved;
+        go.SETTINGS.cheat.joint = savedJoint;
       }
       return { reqs, execs, order, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
     };
@@ -673,6 +678,20 @@ export async function run() {
       const off = await runCheat({ on: false });
       c8.examined(1);
       if (off.execs.length) c8.fail("SETTINGS.cheat.on false for this opponent: no cheat");
+
+      // THE JOINT CHEAT (SETTINGS.cheat.joint): the solver's answer is a pair;
+      // go.js plays it as one cheat with NO second-stone request, and a
+      // pre-sent pair is announced (notice with `second`) before go-cheat.js.
+      const j = await runCheat({ joint: true });
+      c8.examined(2);
+      const jAsks = j.reqs.filter((q) => q.turn === 1 && !q.played && !q.opponentPassed);
+      if (j.execs.length !== 1) c8.fail(`joint: one cheat expected, ${j.execs.length} exec'd`, JSON.stringify(j.execs));
+      else if (jAsks.length !== 1 || j.execs[0].second.join() !== jAsks[0].valid[1].join()) c8.fail("joint: the solver's pair is played with no second-stone request", JSON.stringify({ asks: jAsks.length, exec: j.execs[0] }));
+      const jp = await runCheat({ joint: true, pre: true });
+      c8.examined(2);
+      const note = jp.reqs.find((q) => q.played);
+      if (jp.execs.length !== 1 || jp.execs[0].first.join() !== "2,2" || jp.execs[0].second.join() !== "2,3") c8.fail("joint: a pre-sent pair is the cheat", JSON.stringify(jp.execs));
+      if (!note || !note.played.second || note.played.second.x !== 2 || note.played.second.y !== 3) c8.fail("joint: a pre-sent pair is announced to the solver with its second stone", JSON.stringify(jp.reqs.filter((q) => q.played)));
 
       const busy = await runCheat({ busy: 3 });
       c8.examined(1);

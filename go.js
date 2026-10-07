@@ -375,7 +375,10 @@ const SETTINGS = {
   // is almost always seconds away while a cheat is worth ~1s: play the cheat
   // when its window is open NOW, never wait for one. (The 10000 was release
   // 3's, and the earlier harness tables here did not charge the wait.)
-  cheat: { maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  // joint: the cheat as a JOINT two-stone action searched by the solver (see
+  // tools/go-solver.mjs THE JOINT CHEAT and golib modelSession opts.pairs);
+  // false: the greedy cheat (the solver's single, then a second-stone request).
+  cheat: { joint: true, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -804,7 +807,10 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
   for (const a of answers) {
     if (a?.b !== key || a.pc !== pc) continue
     if (a.pass) return { answer: { pass: true }, had: true }
-    if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) return { answer: { x: a.x, y: a.y }, had: true }
+    if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) {
+      const s2 = a.second && Number.isInteger(a.second.x) && Number.isInteger(a.second.y) && !(a.second.x === a.x && a.second.y === a.y) && boardStrings[a.second.x]?.[a.second.y] === '.' ? { x: a.second.x, y: a.second.y } : null
+      return { answer: { x: a.x, y: a.y, ...(s2 ? { second: s2 } : {}) }, had: true }
+    }
   }
   return { answer: null, had: true }
 }
@@ -870,6 +876,17 @@ export function playtimeReader() {
         return typeof t === 'number' && t > 0 ? t : null
       } catch (e) {
         why = `playtime unreadable (${String(e?.message ?? e).slice(0, 80)}) — requests go without it; the solver draws free seeds`
+        return null
+      }
+    },
+    /** Player.mults.crime_success (the cheat chance's multiplier), or null. */
+    crime() {
+      if (why) return null
+      try {
+        if (!player) player = resolve()
+        const c = player.Player.mults?.crime_success
+        return typeof c === 'number' && c > 0 ? c : null
+      } catch {
         return null
       }
     },
@@ -1693,7 +1710,12 @@ export async function main(ns) {
           }
           // T: the playtime the AI's RNG is seeded from (playtimeReader).
           const T = clockFor(opponent) ? clockRead.now() : null
-          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }), ...(T ? { T } : {}), turnS, ...(objective ? { objective } : {}), ...(adaptive ? { adaptive } : {}) }
+          // THE JOINT CHEAT (SETTINGS.cheat.joint): the solver searches PAIRS of
+          // stones where the roll's clock says a cheat is available, and pre-sends
+          // them whole. It needs the roll's inputs: playtime, crime_success, SF14,
+          // the cheats so far and the turn.
+          const crime = T && cheatOn && cheatFor(opponent) && SETTINGS.cheat.joint && size <= SETTINGS.cheat.maxSize && !cheat.noRam ? clockRead.crime() : null
+          modelReq = { backend: 'model', opponent: gameName(opponent), history, opponentPassed: oppPassed, ...(solverReq.maxms ? {} : { maxms: SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms }), ...(T ? { T } : {}), turnS, ...(objective ? { objective } : {}), ...(adaptive ? { adaptive } : {}), ...(crime ? { cheat: { crime, sf14, cheats: cheat.played, max: SETTINGS.cheat.maxPerGame, turn: guard, fromTurn: SETTINGS.cheat.fromTurn, minChance: SETTINGS.cheat.minChance } } : {}) }
           if (count) modelAsked++
         } else if (useKatago) {
           // The opponent and recent history let the solver PONDER the AI's
@@ -1771,7 +1793,7 @@ export async function main(ns) {
               if (reply.backend === 'katago') katagoWhere[String(reply.where ?? '').startsWith('gpu') ? 'gpu' : 'cpu']++
               if (reply.pondered === 'hit') ponderHits++
               if (reply.mode) solverMode = reply.mode
-              return reply.pass ? [] : [{ x: reply.x, y: reply.y }]
+              return reply.pass ? [] : [{ x: reply.x, y: reply.y, ...(reply.second && Number.isInteger(reply.second.x) ? { second: { x: reply.second.x, y: reply.second.y } } : {}) }]
             }
           } catch {
             /* not written yet */
@@ -1783,7 +1805,7 @@ export async function main(ns) {
        * One two-move cheat, if the window allows; see CHEAT POLICY. Returns
        * {played, reply}. Never plays a cheat it cannot see succeed.
        */
-      const tryCheat = async (board, validList, first) => {
+      const tryCheat = async (board, validList, first, knownSecond = null) => {
         const k = cheat.played
         const p = cheatChance(k, cheatCalib?.crime ?? 1, sf14)
         if (p < SETTINGS.cheat.minChance) return { played: false }
@@ -1805,7 +1827,7 @@ export async function main(ns) {
         const valid2 = validList.filter(([x, y]) => !(x === first.x && y === first.y) && board2[x][y] === '.')
         if (!valid2.length) return { played: false }
         // The second stone searches SETTINGS.cheat.secondMs, not the move budget.
-        const second = await askSolver(board2, valid2, Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : null)
+        const second = knownSecond && valid2.some(([x, y]) => x === knownSecond.x && y === knownSecond.y) ? [knownSecond] : knownSecond ? null : await askSolver(board2, valid2, Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : null)
         if (!second || !second.length) return { played: false }
         const execAt = Date.now()
         const pid = ns.exec('go-cheat.js', 'home', 1, first.x, first.y, second[0].x, second[0].y, SETTINGS.cheat.maxWaitMs)
@@ -1906,7 +1928,7 @@ export async function main(ns) {
         if (SETTINGS.presend && useModel) {
           const pre = presentAnswer(readHome('/go/ponder.txt'), boardStrings, valid, oppPassed)
           if (pre.answer) {
-            ranked = pre.answer.pass ? [] : [{ x: pre.answer.x, y: pre.answer.y }]
+            ranked = pre.answer.pass ? [] : [{ x: pre.answer.x, y: pre.answer.y, ...(pre.answer.second ? { second: pre.answer.second } : {}) }]
             src = 'pre'
             preHits++
             presentGame++
@@ -1931,8 +1953,11 @@ export async function main(ns) {
         // Not after the AI's pass: the play-on decision (mirror 'search') is
         // priced for ONE stone, and the second-stone request would carry a
         // pass our first stone already wiped.
-        if (cheatOn && cheatFor(opponent) && !oppPassed && !(src !== 'pre' && lastOracle) && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame) {
-          const c = await tryCheat(boardStrings, validList, ranked[0])
+        const jointPair = SETTINGS.cheat.joint ? ranked?.[0]?.second ?? null : null
+        if (cheatOn && cheatFor(opponent) && !oppPassed && !(src !== 'pre' && lastOracle) && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame && (!SETTINGS.cheat.joint || jointPair)) {
+          // A pre-sent pair: the solver learns of it before the AI replies.
+          if (jointPair && src === 'pre') notifySolver(boardStrings, validList, { x: ranked[0].x, y: ranked[0].y, second: jointPair })
+          const c = await tryCheat(boardStrings, validList, ranked[0], jointPair)
           if (c.played) {
             moves++
             moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}) })
@@ -1955,6 +1980,7 @@ export async function main(ns) {
         // on while the AI thinks); written while the move is pending, which
         // ns.go allows (see awaitMove).
         if (src === 'pre') notifySolver(boardStrings, validList, stone ? { x: ranked[0].x, y: ranked[0].y } : { pass: true })
+        if (jointPair) cheat.jointDeclined = (cheat.jointDeclined ?? 0) + 1
         // Only to a solver that takes retimes (it counts them in `seed`): an
         // older one would read the retime's seq as a new request it cannot
         // parse, and stop pondering for the turn.

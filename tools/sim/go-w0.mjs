@@ -334,6 +334,23 @@ const CHEAT_WAIT = num("cheatwait", 10);
 // --cheat-keep-lines: no greedy cheat on a turn the pass-forcing book is
 // steering (its line assumes one stone there).
 const CHEAT_KEEP_LINES = argv.includes("--cheat-keep-lines");
+// --cheat-joint K1:K2 (with --cheat predicted and a session): THE CHEAT AS A
+// JOINT ACTION. The session searches pairs of stones (golib modelSession
+// opts.pairs) wherever the roll's clock says a cheat will be available — at
+// the root (the play's playtime) and, while pondering, after the AI's reply
+// (its expected playtime, a wider margin) — so stone 1 is chosen knowing stone
+// 2 follows, and a pondered pair is pre-sent whole (no second-stone request).
+// The greedy cheat (best single, then a fresh second-stone search) is off.
+const CHEAT_JOINT = (() => {
+  const v = str("cheat-joint", null);
+  if (!v) return null;
+  const [a, b, only] = v.split(":");
+  return [Number(a), Number(b), only === "only"];
+})();
+if (CHEAT_JOINT) {
+  OPTS.pairs = CHEAT_JOINT.slice(0, 2);
+  if (CHEAT_JOINT[2]) OPTS.pairsOnly = true;
+}
 const CRIME = num("crime", 1);
 // go.js execs go-cheat.js, polls isRunning every 50ms and reads its result
 // (/tel/go-cheat.txt): ~150ms a played cheat beyond the window wait. Assumed.
@@ -376,6 +393,9 @@ async function playGame(stats, gameIndex) {
   const komi = g.opponentDetails[OPP].komi;
   let modelCalls = 0;
   const steerStats = { evals: 0, steered: 0, delayTicks: 0, book: 0, miss: 0 };
+  const jointStats = { pairs: 0, singles: 0, rollMiss: 0 };
+  // Will cheat k be available if we play `lagMs` from now? (margin: the roll's own uncertainty)
+  const cheatAvailIn = (lagMs, margin) => (k) => k < CHEAT_MAX && !oppPassed && ourTurns + 1 >= CHEAT_FROM && pCheat(k) >= MIN_P && golib.cheatRoll(playtimeAt(wall + lagMs)) <= pCheat(k) - margin;
   let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false, oracleGuarded = 0, oracleCheats = 0, oracleLineFail = 0;
   let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0;
   let guard = 0;
@@ -453,7 +473,7 @@ async function playGame(stats, gameIndex) {
       : sess
       ? await (async () => {
           const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
-          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock });
+          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : {}) });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
           const target = WORK_RATE ? Math.round(WORK_RATE * budget) : sessRate ? Math.round(sessRate * budget) : Infinity;
@@ -630,9 +650,9 @@ async function playGame(stats, gameIndex) {
       rtTotal += lag;
       if (!bookHit) preMoves++;
       const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
-      const rr = sess.setRoot(g.simpleBoardFromBoard(state.board), validGrid(state, N), { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock });
+      const rr = sess.setRoot(g.simpleBoardFromBoard(state.board), validGrid(state, N), { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: [cheatAvailIn(0, 0.003)], cheats } } : {}) });
       sStats[rr?.reused ? "reused" : "fresh"]++;
-      ranked = pre.pass ? [] : [{ x: pre.x, y: pre.y }];
+      ranked = pre.pass ? [] : [{ x: pre.x, y: pre.y, ...(pre.second && !pre.book ? { second: pre.second } : {}) }];
     } else {
       const ms0 = ourMs;
       ranked = await solve();
@@ -648,8 +668,20 @@ async function playGame(stats, gameIndex) {
     const hasMove = ranked && ranked.length;
     let cheatNow = false;
     let cheatSucceeds = false;
+    // --cheat-joint: the search chose a pair; played as a cheat only if the
+    // roll at the actual play allows it (else its first stone alone).
+    let jointSecond = null;
+    if (CHEAT_JOINT && hasMove && !oppPassed && ranked[0].second) {
+      if (cheats < CHEAT_MAX && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) jointSecond = ranked[0].second;
+      else jointStats.rollMiss++;
+    }
+    if (CHEAT_JOINT && hasMove) jointStats[jointSecond ? "pairs" : "singles"]++;
     // Not after the AI's pass (go.js: play-on decides a single stone there).
-    if (pre?.second) {
+    if (jointSecond) {
+      cheatNow = cheatSucceeds = true;
+    } else if (CHEAT_JOINT) {
+      // no greedy cheat
+    } else if (pre?.second) {
       // The oracle's cheat step: its roll was checked above (certain success).
       cheatNow = cheatSucceeds = true;
     } else if (CHEAT && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM && !(oracleHit && CHEAT_KEEP_LINES)) {
@@ -683,7 +715,7 @@ async function playGame(stats, gameIndex) {
         state.previousPlayer = GoColor.white;
         const ms0 = ourMs;
         secondStone = true;
-        const second = pre?.second ? [pre.second] : await solve();
+        const second = jointSecond ? [jointSecond] : pre?.second ? [pre.second] : await solve();
         secondStone = false;
         // The second stone's request (its search is in ourMs) and the
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
@@ -694,7 +726,10 @@ async function playGame(stats, gameIndex) {
           note("B", [second[0].x, second[0].y]);
           // Live, the solver commits its answer to the second-stone request
           // and ponders under it — the actual post-cheat position.
-          if (sess) sess.commit(second[0].x, second[0].y);
+          if (sess) {
+            if (jointSecond) sess.commit(ranked[0].x, ranked[0].y, jointSecond);
+            else sess.commit(second[0].x, second[0].y);
+          }
         }
         state.previousPlayer = GoColor.black;
       } else if (cheats > 1 && Math.random() < 0.1) {
@@ -712,6 +747,9 @@ async function playGame(stats, gameIndex) {
       note("B", [ranked[0].x, ranked[0].y], SEEDED ? { T: playtimeAt(wall) } : undefined);
       if (sess) sess.commit(ranked[0].x, ranked[0].y);
     }
+    // --cheat-joint: where a cheat will be available on our next play (the AI's
+    // reply ~1.1s away), the ponder searches pairs there too.
+    if (CHEAT_JOINT && sess) sess.setCheat({ fns: [null, cheatAvailIn(1100, 0.02)], cheats });
     // --steer K[:MS] (with --seeded and a session; EXPERIMENTAL, the oracle
     // form): SEED STEERING. The AI's seed is the playtime one waitCycle after
     // our play, so delaying the play by k engine ticks (200ms each) chooses
@@ -907,6 +945,7 @@ async function playGame(stats, gameIndex) {
     extendMoves,
     bookMoves,
     ...(STEER || STEER_BOOK ? { steer: steerStats } : {}),
+    ...(CHEAT_JOINT ? { joint: jointStats } : {}),
     ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss, guarded: oracleGuarded, cheats: oracleCheats, lineFail: oracleLineFail } } : {}),
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),

@@ -68,7 +68,7 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove, oracleCandidates, oracleLineHolds } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove, oracleCandidates, oracleLineHolds, cheatRoll, cheatChance } from "../golib.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -324,6 +324,25 @@ const bookStats = { hits: 0, published: 0, oracle: 0, oracleMiss: 0, withheld: 0
 // --no-oracle: off.
 const ORACLE_ON = !argv.includes("--no-oracle");
 const ORACLE_MIN = flag("oracle-min", 0.6);
+// THE JOINT CHEAT (go.js SETTINGS.cheat.joint; --no-joint: off). A request
+// carrying `cheat` {crime, sf14, cheats, max, turn, fromTurn, minChance} (and
+// T) lets the session search PAIRS of stones wherever the roll's clock says a
+// playTwoMoves cheat is available — at the request (its T plus the search and
+// a round trip) and, while pondering, after the AI's reply (one turn later, a
+// wider margin) — and ONLY pairs there (the search picks the best pair rather
+// than weighing pairs against singles on thin subtrees). Answers and pre-sent
+// answers then carry `second`; go.js plays the pair as one cheat with no
+// second-stone request. MEASURED: tools/sim/go-w0.mjs --cheat-joint 6:5:only
+// (see the commit).
+const JOINT = !argv.includes("--no-joint");
+const JOINT_OPTS = JOINT ? { pairs: [6, 5], pairsOnly: true } : {};
+/** fn(cheatsSoFar) -> available, for a play `lagMs` after req.T, `depth` of our turns ahead. */
+function cheatFnOf(req, lagMs, depth, margin) {
+  const c = req?.cheat;
+  if (!JOINT || !c || !(req.T > 0) || !(c.crime > 0)) return null;
+  return (k) => c.turn + depth >= c.fromTurn && k < c.max && cheatChance(k, c.crime, c.sf14 ?? 0) >= (c.minChance ?? 0.0034) && cheatRoll(req.T + lagMs) <= cheatChance(k, c.crime, c.sf14 ?? 0) - margin;
+}
+const jointStats = { pairs: 0, requests: 0 };
 const ORACLE_BOOK_FIRST = argv.includes("--oracle-book-first");
 // THE GUARD: a candidate the (reused, pondered) tree has searched >= GUARD_V
 // times and found winning in GUARD_D (share of lines) less than its best stone
@@ -559,7 +578,7 @@ while (true) {
             const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
             if (!sess || sessKey !== key) {
               const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-              sess = modelSession(N, req.komi ?? 5.5, { reply }, {});
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, JOINT_OPTS);
               sessKey = key;
             }
             const history = Array.isArray(req.history) ? req.history : [];
@@ -567,7 +586,9 @@ while (true) {
             sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
             const pl = req.played;
             bookOpp = req.opponent;
-            sess.commit(pl.pass ? null : pl.x, pl.pass ? null : pl.y);
+            sess.commit(pl.pass ? null : pl.x, pl.pass ? null : pl.y, pl.second ?? null);
+            const turnMs = (Number.isFinite(req.turnS) ? req.turnS : 1.06) * 1000;
+            sess.setCheat({ fns: [null, cheatFnOf(req, turnMs, 1, 0.02)], cheats: (req.cheat?.cheats ?? 0) + (pl.second ? 1 : 0) });
             rememberSeedCtx(req, "pre", pl.pass ? null : pl.x, pl.pass ? null : pl.y);
             notices++;
             const maxms = Number.isFinite(req.maxms) ? Math.min(Math.max(req.maxms, 50), 20000) : MAXMS;
@@ -581,7 +602,7 @@ while (true) {
             // search fresh.
             try {
               const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-              sess = modelSession(N, req.komi ?? 5.5, { reply }, {});
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, JOINT_OPTS);
               sessKey = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
               const history = Array.isArray(req.history) ? req.history : [];
               sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
@@ -620,11 +641,13 @@ while (true) {
               const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
               if (!sess || sessKey !== key) {
                 const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-                sess = modelSession(N, req.komi ?? 5.5, { reply }, opts);
+                sess = modelSession(N, req.komi ?? 5.5, { reply }, { ...opts, ...JOINT_OPTS });
                 sessKey = key;
               }
               if (FAULT && FAULT.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-session]");
-              const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req") });
+              const fn0 = cheatFnOf(req, maxms + 100, 0, 0.003);
+              const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: fn0 ? [fn0] : null, cheats: req.cheat?.cheats ?? 0 } });
+              if (fn0) jointStats.requests++;
               backend = "model";
               extra.mode = "session";
               if (!r) {
@@ -740,7 +763,8 @@ while (true) {
           }
         }
         if (backend === "uct") ranked = chooseMoveUCT(req.board, validGrid(N, req.valid), N, req.komi ?? 5.5, maxms, opts);
-        const move = ranked && ranked.length ? { seq: req.seq, x: ranked[0].x, y: ranked[0].y } : { seq: req.seq, pass: true };
+        const move = ranked && ranked.length ? { seq: req.seq, x: ranked[0].x, y: ranked[0].y, ...(ranked[0].second ? { second: ranked[0].second } : {}) } : { seq: req.seq, pass: true };
+        if (move.second) jointStats.pairs++;
         move.backend = backend;
         move.release = RELEASE;
         if (fallback) move.fallback = fallback;
@@ -757,7 +781,7 @@ while (true) {
               `(${backend}${extra.where ? "@" + extra.where : ""}${extra.pondered ? " " + extra.pondered : ""}, ${Date.now() - t0}ms, ${ranked?.[0]?.iters ?? 0} iters${backend === "model" ? `, ${ranked?.[0]?.modelCalls ?? 0} model calls` : ""})` +
               (kgService ? ` katago ${JSON.stringify(kgService.status().stats)}` : "") +
               ` model ponder ${ponderStats.modelHit}/${ponderStats.modelHit + ponderStats.modelMiss}` +
-              ` book ${JSON.stringify(bookStats)}`,
+              ` book ${JSON.stringify(bookStats)} joint ${JSON.stringify(jointStats)}`,
           );
         }
 
@@ -771,7 +795,8 @@ while (true) {
         // The session ponders itself: commit our move, then search under it
         // in slices until the next request arrives (or PONDER_CAP_MS).
         if (backend === "model" && extra.mode === "session" && sess) {
-          sess.commit(move.pass ? null : move.x, move.pass ? null : move.y);
+          sess.commit(move.pass ? null : move.x, move.pass ? null : move.y, move.second ?? null);
+          sess.setCheat({ fns: [null, cheatFnOf(req, maxms + 100 + (Number.isFinite(req.turnS) ? req.turnS : 1.06) * 1000, 1, 0.02)], cheats: (req.cheat?.cheats ?? 0) + (move.second ? 1 : 0) });
           rememberSeedCtx(req, "req", move.pass ? null : move.x, move.pass ? null : move.y);
           skipSleep = await ponderUntilNext(maxms);
         }

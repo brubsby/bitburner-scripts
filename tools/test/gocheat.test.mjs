@@ -67,5 +67,74 @@ export async function run() {
     if (!(early.h === 0.25 && /ASSUMED/.test(early.source))) c4.fail(`the early placeholder window must be named ASSUMED and floored: ${JSON.stringify(early)}`);
     c4.note(`${l1.h.toFixed(2)}h (${l1.source}); full window: ${full.h.toFixed(2)}h; early: ${early.h}h (${early.source})`);
   }
-  return [c1, c2, c3, c4];
+  const c5 = new Check("GC5", "the joint cheat end to end: go-solver answers a pair (second stone) when the request's roll says a cheat is available, and a single when it is not");
+  {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const http = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const { REPO } = await import("./ram.mjs");
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const model = await loadModel();
+    if (!model) c5.warn("the opponent model could not load — GC5 did NOT run");
+    else {
+      const board = [".....", ".....", ".....", ".....", "....."];
+      const valid = model.validMoves(board, []);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gocheat-"));
+      const files = new Map();
+      const pushed = [];
+      const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", (d) => (body += d));
+        req.on("end", () => {
+          const { method, params } = JSON.parse(body || "{}");
+          if (method === "getFile") res.end(JSON.stringify({ result: files.get(params.filename) ?? null }));
+          else if (method === "pushFile") {
+            files.set(params.filename, params.content);
+            if (params.filename === "/go/move.txt") pushed.push(JSON.parse(params.content));
+            res.end(JSON.stringify({ result: "OK" }));
+          } else res.end(JSON.stringify({ error: "unknown" }));
+        });
+      });
+      await new Promise((r) => server.listen(0, "127.0.0.1", r));
+      const port = server.address().port;
+      const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "300", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`, "--katago-remote", "none", "--ponder-cap-ms", "800", "--book-dir", dir, "--no-presend"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KATAGO_DIR: "/nonexistent-katago" } });
+      let stderr = "";
+      child.stderr.on("data", (d) => (stderr += d));
+      const wait = async (pred, ms = 20000) => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) {
+          const v = pred();
+          if (v) return v;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        return null;
+      };
+      try {
+        // crime 20: chance(0) = 1, so the window is open whatever the roll.
+        const T = 200 * 5123457;
+        files.set("/go/req.txt", JSON.stringify({ seq: 1, size: 5, komi: 5.5, backend: "model", opponent: "Tetrads", board, valid, history: [], turnS: 1.06, T, cheat: { crime: 20, sf14: 0, cheats: 0, max: 12, turn: 3, fromTurn: 2, minChance: 0.0034 } }));
+        const a = await wait(() => pushed.find((m) => m.seq === 1));
+        c5.examined(2);
+        if (!a) throw new Error(`no reply: ${stderr.slice(-300)}`);
+        if (!a.second) c5.fail("a request whose roll is in the window must be answered with a PAIR (second stone)", JSON.stringify(a));
+        else if ((a.second.x === a.x && a.second.y === a.y) || board[a.second.x][a.second.y] !== ".") c5.fail("the second stone must be a different empty point", JSON.stringify(a));
+        // crime 0.001: no cheat can be available.
+        files.set("/go/req.txt", JSON.stringify({ seq: 2, size: 5, komi: 5.5, backend: "model", opponent: "Tetrads", board: ["X....", ".....", ".....", ".....", "...O."], valid: model.validMoves(["X....", ".....", ".....", ".....", "...O."], []), history: [], turnS: 1.06, T: T + 7000, cheat: { crime: 0.001, sf14: 0, cheats: 0, max: 12, turn: 3, fromTurn: 2, minChance: 0.0034 } }));
+        const b2 = await wait(() => pushed.find((m) => m.seq === 2));
+        c5.examined(1);
+        if (!b2) throw new Error(`no second reply: ${stderr.slice(-300)}`);
+        if (b2.second) c5.fail("with no cheat available the answer must be a single stone", JSON.stringify(b2));
+        c5.note(`pair answer ${a.x},${a.y} + ${a.second?.x},${a.second?.y}; no-cheat answer ${b2.x},${b2.y}`);
+      } catch (e) {
+        c5.fail(String(e?.message ?? e).slice(0, 300));
+      } finally {
+        child.kill();
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  return [c1, c2, c3, c4, c5];
 }

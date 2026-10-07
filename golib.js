@@ -1138,6 +1138,87 @@ export function modelSession(N, komi, model, opts = {}) {
   const CPUCT = NN && Number.isFinite(NN.cpuct) ? NN.cpuct : 1.5
   const NN_PAR = NN && Number.isFinite(NN.parallel) ? Math.max(1, NN.parallel | 0) : 1
   const FPU = NN && Number.isFinite(NN.fpu) ? NN.fpu : 0.1
+  // THE CHEAT AS A JOINT ACTION (opts.pairs, setCheat): where a playTwoMoves
+  // cheat will be available (the caller knows from the roll's clock), a B node
+  // also offers PAIRS of stones — the first among the top `pairs[0]` singles
+  // by the heuristic, the second among the top `pairs[1]` after it — searched
+  // like any action, so the first stone is chosen knowing a second follows.
+  // A pair is charged `cheatCostPly` turns of time (go-cheat.js's exec and a
+  // round trip, in turns). Pair action ids are >= N*N.
+  const PAIRS = Array.isArray(opts.pairs) ? opts.pairs : null
+  // opts.pairsOnly: where a cheat is available, offer ONLY pairs (and PASS) —
+  // the search picks the best pair instead of weighing pairs against singles
+  // on thin subtrees (a cheat is worth playing whenever its window is open).
+  const PAIRS_ONLY = !!opts.pairsOnly
+  const mergePairs = (untried, pairs) => (PAIRS_ONLY ? [...pairs, ...untried.filter((a) => a.idx === PASS)] : [...untried.slice(0, 3), ...pairs, ...untried.slice(3)])
+  const CHEAT_COST_PLY = Number.isFinite(opts.cheatCostPly) ? opts.cheatCostPly : 0.22
+  const NSQ = N * N
+  const isPair = (idx) => idx >= NSQ
+  const pairOf = (idx) => [((idx - NSQ) / NSQ) | 0, (idx - NSQ) % NSQ]
+  const pairId = (i1, i2) => NSQ + i1 * NSQ + i2
+  // cheatAt: [fn(cheatsSoFar) -> bool] indexed by B-node depth below the anchor ply.
+  let cheatFns = null
+  let cheatAnchor = 0
+  let rootValid = null
+  let rootCheats = 0
+  const cheatOk = (node) => {
+    if (!PAIRS || !cheatFns || node.passCount !== 0) return false
+    const f = cheatFns[node.ply - cheatAnchor]
+    return typeof f === 'function' && !!f(node.cheats ?? 0)
+  }
+  const pairActions = (b, singles) => {
+    const out = []
+    const firsts = singles.filter((a) => a.idx !== PASS).slice(0, PAIRS[0])
+    for (const { idx: i1, h: h1 } of firsts) {
+      const b1 = b.slice()
+      if (play(b1, nbrs, i1, US, scratch) < 0) continue
+      const sec = []
+      for (let i = 0; i < NSQ; i++) {
+        if (b1[i] !== EMPTY || i === i1 || isFill(b1, i)) continue
+        const h = heuristic(b1, nbrs, i, scratch, US)
+        if (h > -1e9) sec.push({ i, h })
+      }
+      sec.sort((a, z) => z.h - a.h)
+      for (const { i: i2, h: h2 } of sec.slice(0, PAIRS[1])) out.push({ idx: pairId(i1, i2), h: h1 + h2 })
+    }
+    return out.sort((a, z) => z.h - a.h)
+  }
+  // Give a B node its pairs (or take them away) to match cheatOk now.
+  const syncPairs = (node) => {
+    if (!PAIRS || !node || node.kind !== 0 || node.terminal) return
+    const want = cheatOk(node)
+    const has = (node.untried ?? []).some((a) => isPair(a.idx)) || [...node.children.keys()].some(isPair)
+    if (want && !has) {
+      const singles = (node.untried ?? []).filter((a) => !isPair(a.idx) && a.idx !== PASS)
+      const known = [...node.children.keys()].filter((k) => !isPair(k) && k !== PASS).map((k) => ({ idx: k, h: heuristic(node.b, nbrs, k, scratch, US) }))
+      const pool = [...singles, ...known].sort((a, z) => z.h - a.h)
+      const pairs = pairActions(node.b, pool)
+      node.untried = mergePairs(node.untried ?? [], pairs)
+      if (PAIRS_ONLY) for (const k of [...node.children.keys()]) if (k !== PASS && !isPair(k)) {
+        const c = node.children.get(k)
+        node.visits -= c.visits
+        node.work -= c.work
+        node.sum -= c.sum
+        node.wins -= c.wins
+        node.children.delete(k)
+      }
+    } else if (!want && has) {
+      node.untried = (node.untried ?? []).filter((a) => !isPair(a.idx))
+      // pairsOnly took the singles away: give them back (not already expanded).
+      if (PAIRS_ONLY && !node.untried.some((a) => a.idx !== PASS) && ![...node.children.keys()].some((k) => k !== PASS && !isPair(k))) {
+        const done = new Set(node.children.keys())
+        node.untried = actions(node.b, node === rootNode ? rootValid : null, node.passCount).filter((a) => !done.has(a.idx))
+      }
+      for (const k of [...node.children.keys()]) if (isPair(k)) {
+        const c = node.children.get(k)
+        node.visits -= c.visits
+        node.work -= c.work
+        node.sum -= c.sum
+        node.wins -= c.wins
+        node.children.delete(k)
+      }
+    }
+  }
   let rootHistory = []
   let points = 0
   // opts.seed: a fixed search stream (the regression corpus replays decisions deterministically).
@@ -1283,17 +1364,20 @@ export function modelSession(N, komi, model, opts = {}) {
   // the B parent's). The objective's time charge and the clock's tick
   // distance both read it.
   const mkB = (b, parent, passCount, valid, ply) => {
-    const node = { kind: 0, b, s: toStr(b), parent, passCount, ply, visits: 0, vl: 0, work: 0, sum: 0, wins: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0, tw: 0, prior: null, nn: null, nnP: null }
+    const node = { kind: 0, b, s: toStr(b), parent, passCount, ply, cost: parent?.cost ?? 0, cheats: parent?.cheats ?? rootCheats, visits: 0, vl: 0, work: 0, sum: 0, wins: 0, children: new Map(), untried: null, terminal: passCount >= 2, tv: 0, tw: 0, prior: null, nn: null, nnP: null }
     if (node.terminal) {
-      node.tv = valueNow(b, ply)
+      node.tv = valueNow(b, ply + node.cost)
       node.tw = lastWon
-    } else node.untried = actions(b, valid, passCount)
+    } else {
+      node.untried = actions(b, valid, passCount)
+      if (cheatOk(node)) node.untried = mergePairs(node.untried, pairActions(b, node.untried))
+    }
     return node
   }
-  const mkW = (b, parent, passCount, moved) => {
-    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, ply: parent.ply, visits: 0, vl: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
+  const mkW = (b, parent, passCount, moved, pair = false) => {
+    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, ply: parent.ply, cost: (parent.cost ?? 0) + (pair ? CHEAT_COST_PLY : 0), cheats: (parent.cheats ?? 0) + (pair ? 1 : 0), visits: 0, vl: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
     if (node.terminal) {
-      node.tv = valueNow(b, node.ply + 1)
+      node.tv = valueNow(b, node.ply + 1 + node.cost)
       node.tw = lastWon
     }
     return node
@@ -1348,7 +1432,7 @@ export function modelSession(N, komi, model, opts = {}) {
       if (passes >= 2) break
       if (whiteMoves >= LEAF_DEPTH) {
         const won = playout(work, nbrs, N, komi, THEM, scratch, rand)
-        return val(won, scratch.us, leafPly(work, node.ply + whiteMoves))
+        return val(won, scratch.us, leafPly(work, node.ply + node.cost + whiteMoves))
       }
       const ws = toStr(work)
       modelCalls++
@@ -1363,7 +1447,7 @@ export function modelSession(N, komi, model, opts = {}) {
         last = -1
       }
     }
-    return valueNow(work, node.ply + whiteMoves)
+    return valueNow(work, node.ply + node.cost + whiteMoves)
   }
 
   // The AI model, with its inputs named on a throw (go-solver logs and dumps
@@ -1437,6 +1521,17 @@ export function modelSession(N, komi, model, opts = {}) {
           const { idx } = node.untried.shift()
           const b = node.b.slice()
           let moved = false
+          if (isPair(idx)) {
+            const [i1, i2] = pairOf(idx)
+            if (b[i1] !== EMPTY || play(b, nbrs, i1, US, scratch) < 0) continue
+            if (b[i2] !== EMPTY || play(b, nbrs, i2, US, scratch) < 0) continue
+            if (repeats(toStr(b), node)) continue
+            const w = mkW(b, node, 0, true, true)
+            node.children.set(idx, w)
+            node = w
+            push(w)
+            continue
+          }
           if (idx !== PASS) {
             const cap = play(b, nbrs, idx, US, scratch)
             if (cap < 0) continue // suicide after all: drop it
@@ -1461,7 +1556,7 @@ export function modelSession(N, komi, model, opts = {}) {
           const u = mean + C * Math.sqrt(logv / (child.visits + 1))
           if (u > bestU) { bestU = u; best = child }
         }
-        if (!best) { v = valueNow(node.b, node.ply); won = lastWon; break }
+        if (!best) { v = valueNow(node.b, node.ply + node.cost); won = lastWon; break }
         node = best
         push(node)
         continue
@@ -1504,7 +1599,7 @@ export function modelSession(N, komi, model, opts = {}) {
           } else {
             work.set(node.b)
             won = playout(work, nbrs, N, komi, US, scratch, rand)
-            v = val(won, scratch.us, leafPly(node.b, node.ply))
+            v = val(won, scratch.us, leafPly(node.b, node.ply + node.cost))
           }
           break
         }
@@ -1574,7 +1669,7 @@ export function modelSession(N, komi, model, opts = {}) {
     // An own-eye fill (offered only when nothing else is, see actions) is
     // played only into a line that wins more often than passing: as a ko
     // threat, never to bleed a lost game's eyes away.
-    if (stone && isFill(node.b, bestIdx) && passNode && passNode.visits) {
+    if (stone && !isPair(bestIdx) && isFill(node.b, bestIdx) && passNode && passNode.visits) {
       const fillWin = stone.visits ? stone.wins / stone.visits : 0
       if (!(fillWin > passNode.wins / passNode.visits)) return []
     }
@@ -1585,7 +1680,11 @@ export function modelSession(N, komi, model, opts = {}) {
       .filter(([, c]) => c.visits > 0)
       .sort((a, z) => z[1].visits - a[1].visits)
       .slice(0, 3)
-      .map(([i, c]) => [i === PASS ? -1 : (i / N) | 0, i === PASS ? -1 : i % N, r3(meanOf(c)), c.visits, r3(c.wins / c.visits)])
+      .map(([i, c]) => { const j = isPair(i) ? pairOf(i)[0] : i; return [j === PASS ? -1 : (j / N) | 0, j === PASS ? -1 : j % N, r3(meanOf(c)), c.visits, r3(c.wins / c.visits), ...(isPair(i) ? [pairOf(i)[1]] : [])] })
+    if (isPair(bestIdx)) {
+      const [i1, i2] = pairOf(bestIdx)
+      return [{ x: (i1 / N) | 0, y: i1 % N, second: { x: (i2 / N) | 0, y: i2 % N }, idx: bestIdx, visits: bestVisits, iters, rootVisits: node.visits, modelCalls, value: ch.visits ? ch.sum / ch.visits : null, top }]
+    }
     return [{ x: (bestIdx / N) | 0, y: bestIdx % N, idx: bestIdx, visits: bestVisits, iters, rootVisits: node.visits, modelCalls, value: ch.visits ? ch.sum / ch.visits : null, top }]
   }
 
@@ -1594,8 +1693,9 @@ export function modelSession(N, komi, model, opts = {}) {
      * The position to decide. Reuses the ponder tree when this board is one of
      * the replies drawn there. Returns null when PASS is black's only action.
      */
-    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined } = {}) {
+    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined, cheat = undefined } = {}) {
       const b = parseBoard(boardStrings)
+      rootValid = valid ?? null
       // A fresh root may be a new game (a new offline-node layout): recount.
       const countPoints = () => { points = 0; for (let i = 0; i < N * N; i++) if (b[i] !== DEAD) points++ }
       if (!points) countPoints()
@@ -1613,7 +1713,8 @@ export function modelSession(N, komi, model, opts = {}) {
       if (reused) {
         reused.parent = null
         // Re-filter to the game's valid list (superko against the real history).
-        const ok = (idx) => idx === PASS || (valid && valid[(idx / N) | 0] && valid[(idx / N) | 0][idx % N])
+        const okOne = (idx) => valid && valid[(idx / N) | 0] && valid[(idx / N) | 0][idx % N]
+        const ok = (idx) => idx === PASS || (isPair(idx) ? okOne(pairOf(idx)[0]) : okOne(idx))
         for (const idx of [...reused.children.keys()]) if (!ok(idx)) {
           const c = reused.children.get(idx)
           reused.visits -= c.visits
@@ -1629,6 +1730,14 @@ export function modelSession(N, komi, model, opts = {}) {
         rootNode = mkB(b, null, passCount, valid, Number.isFinite(ply) ? ply : Math.floor(rootHistory.length / 2))
       }
       if (clk !== undefined) setClockFn(clk)
+      // cheat: { fns: [fn(k) -> bool, ...] by depth below this root, cheats: so far this game }
+      if (cheat !== undefined) {
+        cheatFns = cheat?.fns ?? null
+        cheatAnchor = rootNode.ply
+        rootCheats = cheat?.cheats ?? 0
+        rootNode.cheats = rootCheats
+        syncPairs(rootNode)
+      }
       const stones = [...rootNode.children.keys()].filter((k) => k !== PASS).length + rootNode.untried.filter((a) => a.idx !== PASS).length
       if (!stones) return null
       return { reused: !!reused, visits: rootNode.visits, work: rootNode.work }
@@ -1642,6 +1751,19 @@ export function modelSession(N, komi, model, opts = {}) {
      */
     setClock(clk) {
       setClockFn(clk)
+    },
+    /**
+     * Where cheats will be available while pondering: fns by depth below the
+     * ponder node's ply (fns[1] = the B nodes after the AI's reply). Existing
+     * reply nodes are given (or lose) their pairs to match.
+     */
+    setCheat({ fns = null, cheats = 0 } = {}) {
+      const anchor = ponderNode ?? rootNode
+      if (!anchor) return
+      cheatFns = fns
+      cheatAnchor = anchor.ply
+      rootCheats = cheats
+      if (ponderNode) for (const e of ponderNode.samples.values()) syncPairs(e.child)
     },
     /** Grow the root's tree for maxms, stopping early once it holds untilVisits. */
     async search({ maxms, untilVisits = Infinity, untilWork = Infinity } = {}) {
@@ -1688,22 +1810,23 @@ export function modelSession(N, komi, model, opts = {}) {
         const r = bestOf(c, 0)
         if (r === null) continue
         const top = r[0]
-        out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null, wr: top?.top?.[0]?.[4] ?? null, gap: top?.top?.[1] ? top.top[0][4] - top.top[1][4] : null })
+        out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y, ...(top.second ? { second: top.second } : {}) } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null, wr: top?.top?.[0]?.[4] ?? null, gap: top?.top?.[1] ? top.top[0][4] - top.top[1][4] : null })
         if (out.length >= max) break
       }
       return out
     },
     /** We played (x, y) (or passed: x null): keep its W node to ponder and reuse. */
-    commit(x, y) {
-      const idx = x === null || x === undefined ? PASS : x * N + y
+    commit(x, y, second = null) {
+      const idx = x === null || x === undefined ? PASS : second ? pairId(x * N + y, second.x * N + second.y) : x * N + y
       let w = rootNode?.children.get(idx) ?? null
       // A move the root never expanded (a pre-sent answer played on a root
       // the solver only just set): expand it, so the ponder can start.
       if (!w && rootNode && !rootNode.terminal) {
         const b = rootNode.b.slice()
         const moved = idx !== PASS
-        if (!moved || play(b, nbrs, idx, US, scratch) >= 0) {
-          w = mkW(b, rootNode, moved ? 0 : rootNode.passCount + 1, moved)
+        const placed = !moved || (isPair(idx) ? play(b, nbrs, pairOf(idx)[0], US, scratch) >= 0 && play(b, nbrs, pairOf(idx)[1], US, scratch) >= 0 : play(b, nbrs, idx, US, scratch) >= 0)
+        if (placed) {
+          w = mkW(b, rootNode, moved ? 0 : rootNode.passCount + 1, moved, isPair(idx))
           rootNode.children.set(idx, w)
           rootNode.untried = (rootNode.untried ?? []).filter((a) => a.idx !== idx)
         }
