@@ -54,8 +54,8 @@ export const RAISED = {
   'bladeburner.js': { gb: 92.75, tier: 128, file: '/tel/bb-full-reserve.txt', route: 'blade' },
   'sleeve.js': { gb: 49.75, tier: 64, file: '/tel/reserve-sleeve.txt', route: null },
   'hashspend.js': { gb: 7.25, tier: 32, file: '/tel/reserve-hashspend.txt', route: null },
-  // NOT raise-sized: go.js's static price, placed by goPlacementOf only in a
-  // Go-first node (see GO FIRST below), at any home size. In RAISED so that
+  // NOT raise-sized: go.js's static price, placed by goPlacementOf only where
+  // the priced verdict says so (see GO FIRST below), at any home size. In RAISED so that
   // its reservation is honoured exactly like the others (batch.js and seed.js
   // read reservesOf). Callers size it by ns.getScriptRam; [GF] holds this
   // figure to the priced script.
@@ -123,30 +123,40 @@ export function raisedPlacementOf({ script = null, homeMax, plan = null, node = 
   const relocate = num(pick.relocGb) && pick.relocGb > 0 && capNoReloc(pick) < need
   // How much of the outranked residents must stop (largest first is the caller's).
   const yieldNeed = num(pick.yieldGb) && pick.yieldGb > 0 && capNoYield(pick) < need ? need - capNoYield(pick) : 0
-  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, relocate, ...(yieldNeed > 0 ? { yieldGb: yieldNeed } : {}), why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''}${relocate ? ` (and ${f(pick.relocGb)}GB of daemons moved off it)` : ''}${yieldNeed > 0 ? ` (and ${f(yieldNeed)}GB of ${GO_OUTRANKS.join('/')} stopped: go.js outranks them)` : ''} — batch.js and seed.js leave ${need}GB there and the watchdog places ${name} as soon as it is free` }
+  // The hacking workers the block takes (what goplace's verdict charges): the
+  // shortfall, at most the workers there — the rest is relocated/outranked
+  // daemons. On HOME every evicted worker is lost, not just the shortfall:
+  // seed.js never refills home (boot.js owns its worker), while a fleet
+  // host's leftover is refilled next pass.
+  const wk = (num(pick.workerGb) ? pick.workerGb : 0) + (num(pick.evictGb) ? pick.evictGb : 0)
+  const short = Math.max(0, need - free(pick))
+  const workersGb = Math.min(wk, pick.host === 'home' && evict ? Math.max(short, pick.evictGb) : short)
+  return { action: 'reserve', admitted: true, host: pick.host, gb: need, evict, relocate, workersGb, ...(yieldNeed > 0 ? { yieldGb: yieldNeed } : {}), why: `no host has ${need}GB free; ${pick.host} has ${f(free(pick))}GB free and ${f(cap(pick))}GB once its workers go${evict ? ` (seed.js's ${f(pick.evictGb)}GB evicted now)` : ''}${relocate ? ` (and ${f(pick.relocGb)}GB of daemons moved off it)` : ''}${yieldNeed > 0 ? ` (and ${f(yieldNeed)}GB of ${GO_OUTRANKS.join('/')} stopped: go.js outranks them)` : ''} — batch.js and seed.js leave ${need}GB there and the watchdog places ${name} as soon as it is free` }
 }
 
 // ---------------------------------------------------------------------------
-// GO FIRST: go.js in a node where Go is strong.
+// GO FIRST: go.js wherever its farm is worth the RAM it takes.
 //
-// boot.js admits go.js on home at the 128GB tier (rank 20): elsewhere 20.75GB
-// is eight worker threads for a bonus measured in percent. In BitNode 14 the
-// node's GoPower is 4 (BitNode.tsx:1042), so the same games are worth four
-// times as much, and the node is entered for Go. Live BN14.1 (2026-10-03,
-// entered ~18:45Z) home was 32GB and go.js was not running at all until the
-// lead killed early.js on home at 19:02Z and ran it by hand.
+// boot.js admits go.js on home at the 128GB tier (rank 20). Below it (and
+// beyond home from it), whether go.js is placed is a PRICED decision —
+// goplace.js goPlaceValueOf: the money to the 128GB home tier simulated WITH
+// go.js placed now (its farm on the best money arm at the measured rate, the
+// hacking workers it displaces gone, a bought server paid up front) and
+// WITHOUT it (waiting for the tier), on one set of inputs. It replaced a fixed
+// threshold here on 2026-10-07 (GO_FIRST_EFFECT: effective Go power >= 4, i.e.
+// BitNode 14 only): live BN9.2, entered FOR the Go farm, read "effective Go
+// power 2 < 4: go.js at its 128GB home tier" with $115k/s of hacknet
+// production waiting on Netburners and four early.js threads (~$0.3/s) the
+// only thing a 32GB home would have displaced. BitNode 14 (GoPower 4 x2) is a
+// case of the priced rule: there the same comparison places go.js on the
+// 32GB opening (live BN14.1 2026-10-03, entered ~18:45Z: go.js idle until the
+// lead ran it by hand at 19:02Z).
 //
-// The rule: effective Go power = GoPower x (Source-File 14 >= 1 ? 2 : 1)
-// (effect.ts:16-22, the sourceFileBonus). Go-first when that is >= 4, which is
-// BitNode 14 with or without SF14 (4 / 8). SF14 alone (x2 in every node) is
-// not: there Go is half what made BitNode 14 worth the home, and the tier-128
-// placement stands. SF14 enters the PRICING everywhere (goplan effectAt).
-//
-// Placement in a Go-first node, by RANK and not by squeezing the plan:
-// boot.js's manifest and its tier checks are unchanged (no Go-node branch in
-// the planner: boot.js would need getResetInfo, 1GB of launcher, which at the
-// 64GB tier is the watchdog's slot). Instead the two placers that already pay
-// for the reads do it, from any home size:
+// Placement once the verdict says place, by RANK and not by squeezing the
+// plan: boot.js's manifest and its tier checks are unchanged (boot.js would
+// need getResetInfo, 1GB of launcher, which at the 64GB tier is the watchdog's
+// slot). Instead the two placers that already pay for the reads do it, from
+// any home size:
 //   - seed.js (tier 8 until 128), every pass, and watchdog.js (64 up), every
 //     cycle, through goPlacementOf -> raisedPlacementOf, script 'go.js';
 //   - home only with act.js's WHOLE action slot kept beside it
@@ -161,23 +171,11 @@ export function raisedPlacementOf({ script = null, homeMax, plan = null, node = 
 //     seed workers evicted (seed.js and batch.js honour the reservation),
 //     else blocked by name (an 8GB opening with no 32GB host rooted) — and
 //     then seed.js buys a server for it the moment cash covers one
-//     (goHostBuyOf; live BN14.1 the lead bought 'go-host' by hand at 20:50Z).
+//     (goHostBuyOf; live BN14.1 the lead bought 'go-host' by hand at 20:50Z),
+//     its price paid up front in the priced comparison.
+// The comparison is charged what the placement takes: raisedPlacementOf's
+// `workersGb` on a reserve (the hacking workers evicted for the block).
 // go.js talks to the solver through home's /go files from wherever it runs.
-
-/** Effective Go power at or above which go.js is placed first (BitNode 14). */
-export const GO_FIRST_EFFECT = 4
-
-/** Is this a Go-first node? goPower = the node's GoPower multiplier, sf14 = the Source-File 14 level. */
-export function goFirstOf({ goPower, sf14 = 0 } = {}) {
-  if (!num(goPower) || goPower <= 0) return { goFirst: false, effective: null, why: 'GoPower unknown (no BitNode table entry): not Go-first' }
-  const effective = goPower * (num(sf14) && sf14 >= 1 ? 2 : 1)
-  const goFirst = effective >= GO_FIRST_EFFECT
-  return {
-    goFirst,
-    effective,
-    why: `effective Go power ${effective} (GoPower ${goPower}${num(sf14) && sf14 >= 1 ? ' x2 for SF14' : ''}) ${goFirst ? '>=' : '<'} ${GO_FIRST_EFFECT}: ${goFirst ? 'go.js placed first, at any home size' : 'go.js at its 128GB home tier'}`,
-  }
-}
 
 /**
  * act.js's actors (act-*.js). go.js on home keeps the WHOLE action slot free
@@ -298,12 +296,12 @@ export function goHomeKeepOf(ramOf, ctx = null) {
 }
 
 /**
- * Home residents go.js OUTRANKS in a Go-first node (the GO FIRST rule above,
- * by rank): boot.js admits these at 32GB once the slot is sized to the node,
- * and with them resident a 32GB home cannot hold go.js beside the slot. Both
- * are one-time buyers (TOR, the port programs: progress.js orders the same
- * from 64GB) that wait on money which, at a node's opening, is hours away; Go
- * at x8 is the node. seed.js stops them on home only when go.js needs the
+ * Home residents go.js OUTRANKS once its priced verdict places it (the GO
+ * FIRST rule above, by rank): boot.js admits these at 32GB once the slot is
+ * sized to the node, and with them resident a 32GB home cannot hold go.js
+ * beside the slot. Both are one-time buyers (TOR, the port programs:
+ * progress.js orders the same from 64GB) that wait on money which, at a
+ * node's opening, is hours away (goplace names them NOT SIMULATED). seed.js stops them on home only when go.js needs the
  * room (after the worker and the relocatable daemons), and boot.js does not
  * restart them into act.js's slot.
  */
@@ -341,12 +339,12 @@ export function cloudCostOf(ram, mults = null) {
  * already established that the claimant is committed and no rooted host can
  * hold it; this is the money side.
  *
- * NOT PRICED AS A TRAJECTORY, and that is stated rather than folded in: the
- * claimant's route was already chosen by the exit comparison (go.js: the
- * Go-first rule; Bladeburner: progress.js's slot claim), and with no host it
- * runs at rate zero, so the server is what makes the chosen trajectory
- * executable at all. Its cost ($1.76m for 32GB in BN14) is not weighed
- * against the exit; it is held only behind the home claim below.
+ * NOT PRICED HERE: the claimant's trajectory already carries it. go.js:
+ * goplace.goPlaceValueOf pays the server's price up front in the "with" run
+ * (seed.js asks it before buying). Bladeburner: progress.js's slot claim, and
+ * with no host the claimant runs at rate zero, so the server is what makes
+ * the chosen trajectory executable at all; its cost ($1.76m for 32GB in BN14)
+ * is held only behind the home claim below.
  *
  * NOT AGAINST HOME RAM. `home` = {cost, live}: the next home RAM upgrade's
  * price and whether homeup.js is publishing this life (it buys the moment
@@ -398,13 +396,14 @@ export const RELOCATABLE = ['hashspend.js', 'tel.js', 'errlog.js', 'rfalink.js',
 export const JOB_RUNNER_TIER = 64
 
 /**
- * Where go.js goes this pass in a Go-first node; {action: 'wait'} elsewhere.
- * Same inputs as raisedPlacementOf, plus `go` (goFirstOf's verdict) and
- * `homeKeep` (goHomeKeepOf). A host's `relocGb` (home only, from seed.js) is
- * the RELOCATABLE daemons on it.
+ * Where go.js goes this pass when the priced verdict places it; {action:
+ * 'wait'} otherwise. Same inputs as raisedPlacementOf, plus `go`
+ * (goplace.goPlaceValueOf's verdict — or {goFirst: true} to read the placement
+ * that verdict is asked to price) and `homeKeep` (goHomeKeepOf). A host's
+ * `relocGb` (home only, from seed.js) is the RELOCATABLE daemons on it.
  */
 export function goPlacementOf({ go, ...rest }) {
-  if (!go?.goFirst) return { action: 'wait', admitted: false, why: go?.why ?? 'not a Go-first node' }
+  if (!go?.goFirst) return { action: 'wait', admitted: false, why: go?.why ?? 'no priced verdict places go.js' }
   const d = raisedPlacementOf({ script: 'go.js', tier: RAISED['go.js'].tier, route: null, ...rest })
   return { ...d, why: `${d.why} [${go.why}]` }
 }

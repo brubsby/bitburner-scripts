@@ -1,0 +1,734 @@
+{
+ "captured": "2026-10-07T13:37:03.718Z",
+ "source": "live BN9.2 (entered 2026-10-07 13:13Z), .telemetry. open32: status.txt/hacknet.txt as read at 13:19:02Z/13:19:22Z (home 32GB, no trader yet). home64: copied at 2026-10-07T13:37:03.718Z (home 64GB, stock.js on iron-gym). seed.txt at both: goFirst false, 'effective Go power 2 (GoPower 1 x2 for SF14) < 4: go.js at its 128GB home tier'",
+ "reset": {
+  "currentNode": 9,
+  "lastAugReset": 1791378767221,
+  "sf14": 3
+ },
+ "posterior": {
+  "v": 1,
+  "arms": {
+   "Daedalus@5": {
+    "w": 49.37278749619909,
+    "l": 0.6271907329761389,
+    "games": 765,
+    "at": "2026-10-04T21:08:20.960Z",
+    "ver": "model-session-r3",
+    "byVer": {
+     "model-session-r3": {
+      "w": 27.714979802452437,
+      "l": 0,
+      "bw": [
+       27.714979802452437,
+       555.6098849183219
+      ],
+      "bl": [
+       0,
+       0
+      ],
+      "s": [
+       27.714979802452437,
+       355.38258459624734
+      ],
+      "at": "2026-10-04T21:08:20.960Z"
+     }
+    }
+   },
+   "Netburners@5": {
+    "w": 49.998114502697405,
+    "l": 0.0018303562058476855,
+    "games": 1727,
+    "at": "2026-10-06T16:21:02.051Z",
+    "ver": "model-session-r3",
+    "byVer": {
+     "model-session-r3": {
+      "w": 49.9999831695237,
+      "l": 1.6798568424038247e-05,
+      "bw": [
+       49.9999831695237,
+       852.1869710901027
+      ],
+      "bl": [
+       1.6798568424038247e-05,
+       8.343261930465209e-05
+      ],
+      "s": [
+       49.999999968092126,
+       272.3790544326929
+      ],
+      "at": "2026-10-06T16:21:02.051Z"
+     }
+    }
+   },
+   "Tetrads@5": {
+    "w": 49.39482468346238,
+    "l": 0.6051753165375727,
+    "games": 19935,
+    "at": "2026-10-07T13:12:42.939Z",
+    "ver": "model-session-r3",
+    "byVer": {
+     "model-session-r3": {
+      "w": 49.99216104509313,
+      "l": 0.007838954906837833,
+      "bw": [
+       49.99216104509313,
+       1024.9479393983247
+      ],
+      "bl": [
+       0.007838954906837833,
+       1.1593400697158397e-17
+      ],
+      "s": [
+       49.99999999999978,
+       470.3394861345414
+      ],
+      "at": "2026-10-07T13:12:42.939Z"
+     },
+     "local": {
+      "w": 2.9404,
+      "l": 0,
+      "bw": [
+       2.9404,
+       43.1656
+      ],
+      "bl": [
+       0,
+       0
+      ],
+      "s": [
+       2.9404,
+       533.3340724
+      ],
+      "at": "2026-10-05T00:52:29.238Z"
+     }
+    }
+   },
+   "Illuminati@5": {
+    "w": 5.285965356904192,
+    "l": 22.429014445548255,
+    "games": 59,
+    "at": "2026-10-06T14:44:44.398Z",
+    "ver": "model-session-r3",
+    "byVer": {
+     "model-session-r3": {
+      "w": 14.95836878800538,
+      "l": 0.98,
+      "bw": [
+       14.95836878800538,
+       275.32369563122194
+      ],
+      "bl": [
+       0.98,
+       9.8
+      ],
+      "s": [
+       15.93836878800538,
+       210.92247718201128
+      ],
+      "at": "2026-10-06T14:44:44.398Z"
+     }
+    }
+   },
+   "TheBlackHand@5": {
+    "w": 45.76147846380977,
+    "l": 4.197732011174159,
+    "games": 4228,
+    "at": "2026-10-05T22:27:22.108Z",
+    "ver": "model-session-r3",
+    "byVer": {
+     "model-session-r3": {
+      "w": 49.99714514696866,
+      "l": 0.0028548530312808556,
+      "bw": [
+       49.99714514696866,
+       824.5699210708635
+      ],
+      "bl": [
+       0.0028548530312808556,
+       1.146645123421956e-06
+      ],
+      "s": [
+       49.99999999999978,
+       531.2409756077117
+      ],
+      "at": "2026-10-05T22:27:22.108Z"
+     }
+    }
+   },
+   "Tetrads@13": {
+    "w": 0,
+    "l": 0,
+    "games": 5,
+    "at": "2026-10-04T19:23:53.529Z",
+    "ver": "katago-r3",
+    "byVer": {
+     "katago-r3": {
+      "w": 4.80396016,
+      "l": 0,
+      "bw": [
+       4.80396016,
+       442.86318287999995
+      ],
+      "bl": [
+       0,
+       0
+      ],
+      "s": [
+       4.80396016,
+       604.9144861091199
+      ],
+      "at": "2026-10-04T19:23:53.529Z"
+     }
+    }
+   },
+   "Tetrads@9": {
+    "w": 0,
+    "l": 0,
+    "games": 5,
+    "at": "2026-10-04T19:38:55.936Z",
+    "ver": "katago-r3",
+    "byVer": {
+     "katago-r3": {
+      "w": 3.881592,
+      "l": 0.9223681599999999,
+      "bw": [
+       3.881592,
+       176.474424
+      ],
+      "bl": [
+       0.9223681599999999,
+       36.8947264
+      ],
+      "s": [
+       4.80396016,
+       232.76469160191996
+      ],
+      "at": "2026-10-04T19:38:55.936Z"
+     }
+    }
+   },
+   "Daedalus@7": {
+    "w": 0,
+    "l": 0,
+    "games": 16,
+    "at": "2026-10-04T21:14:56.549Z",
+    "ver": "katago-r3",
+    "byVer": {
+     "katago-r3": {
+      "w": 11.239399222012759,
+      "l": 2.5707147483624486,
+      "bw": [
+       11.239399222012759,
+       316.4326140340265
+      ],
+      "bl": [
+       2.5707147483624486,
+       0
+      ],
+      "s": [
+       13.810113970375207,
+       337.5344825645419
+      ],
+      "at": "2026-10-04T21:14:56.549Z"
+     }
+    }
+   },
+   "Netburners@7": {
+    "w": 0,
+    "l": 0,
+    "games": 5,
+    "at": "2026-10-05T23:26:56.869Z",
+    "ver": "katago-r3",
+    "byVer": {
+     "katago-r3": {
+      "w": 3.881592,
+      "l": 0.9223681599999999,
+      "bw": [
+       3.881592,
+       130.188968
+      ],
+      "bl": [
+       0.9223681599999999,
+       19.36973136
+      ],
+      "s": [
+       4.80396016,
+       81.23195728064
+      ],
+      "at": "2026-10-05T23:26:56.869Z"
+     }
+    }
+   },
+   "SlumSnakes@5": {
+    "w": 0,
+    "l": 0,
+    "games": 27,
+    "at": "2026-10-07T01:52:30.971Z",
+    "ver": "model-session-r3",
+    "byVer": {
+     "model-session-r3": {
+      "w": 21.021623676017366,
+      "l": 0,
+      "bw": [
+       21.021623676017366,
+       360.86353102893776
+      ],
+      "bl": [
+       0,
+       0
+      ],
+      "s": [
+       21.021623676017366,
+       208.54667114492162
+      ],
+      "at": "2026-10-07T01:52:30.971Z"
+     }
+    }
+   },
+   "SlumSnakes@9": {
+    "w": 0,
+    "l": 0,
+    "games": 5,
+    "at": "2026-10-06T23:37:58.807Z",
+    "ver": "katago-r3",
+    "byVer": {
+     "katago-r3": {
+      "w": 0.9411919999999999,
+      "l": 3.8627681599999995,
+      "bw": [
+       0.9411919999999999,
+       45.177215999999994
+      ],
+      "bl": [
+       3.8627681599999995,
+       93.2296
+      ],
+      "s": [
+       4.80396016,
+       263.30715181968
+      ],
+      "at": "2026-10-06T23:37:58.807Z"
+     }
+    }
+   }
+  },
+  "ver": "model-session-r3"
+ },
+ "open32": {
+  "at": "2026-10-07T13:19:22.910Z",
+  "status": {
+   "at": "2026-10-07T13:19:02.453Z",
+   "incomePerSec": 1.44,
+   "wealth": 39059026,
+   "cash": 39059026
+  },
+  "hacknet": {
+   "at": "2026-10-07T13:19:22.910Z",
+   "lastAugReset": 1791378767221,
+   "moneyPerSec": 115303.33696000003
+  },
+  "stock": null,
+  "homeMax": 32,
+  "hosts": {
+   "home": [
+    [
+     "early.js",
+     4
+    ]
+   ],
+   "n00dles": [
+    [
+     "rfalink.js",
+     1
+    ]
+   ],
+   "foodnstuff": [
+    [
+     "seed.js",
+     1
+    ],
+    [
+     "homeup.js",
+     1
+    ]
+   ],
+   "sigma-cosmetics": [
+    [
+     "errlog.js",
+     1
+    ],
+    [
+     "tel.js",
+     1
+    ],
+    [
+     "hashspend.js",
+     1
+    ]
+   ],
+   "joesguns": [
+    [
+     "hacknet.js",
+     1
+    ],
+    [
+     "hgw.js",
+     2
+    ]
+   ],
+   "hong-fang-tea": [
+    [
+     "act.js",
+     1
+    ],
+    [
+     "bb-lite.js",
+     1
+    ],
+    [
+     "hgw.js",
+     1
+    ]
+   ],
+   "harakiri-sushi": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "nectar-net": [
+    [
+     "early.js",
+     6
+    ]
+   ]
+  },
+  "maxRam": {
+   "home": 32,
+   "n00dles": 4,
+   "foodnstuff": 16,
+   "sigma-cosmetics": 16,
+   "joesguns": 16,
+   "hong-fang-tea": 16,
+   "harakiri-sushi": 16,
+   "nectar-net": 16
+  }
+ },
+ "home64": {
+  "at": "2026-10-07T13:37:05.022Z",
+  "status": {
+   "at": "2026-10-07T13:37:03.718Z",
+   "incomePerSec": -134.71,
+   "wealth": 9926733,
+   "cash": 786908
+  },
+  "hacknet": {
+   "at": "2026-10-07T13:37:03.358Z",
+   "lastAugReset": 1791378767221,
+   "moneyPerSec": 180263.85828720647
+  },
+  "stock": {
+   "at": "2026-10-07T13:37:05.022Z",
+   "lastAugReset": 1791378767221,
+   "equity": 9228045.331337998,
+   "scriptIncome": {
+    "perSec": -293.49311704989367,
+    "made": -267714.7361000504
+   },
+   "incomePerSec": -3240.103268383224
+  },
+  "homeMax": 64,
+  "hosts": {
+   "home": [
+    [
+     "early.js",
+     4
+    ],
+    [
+     "cmd.js",
+     1
+    ],
+    [
+     "autobuy.js",
+     1
+    ],
+    [
+     "backdoor.js",
+     1
+    ],
+    [
+     "buyserv.js",
+     1
+    ],
+    [
+     "watchdog.js",
+     1
+    ]
+   ],
+   "n00dles": [
+    [
+     "rfalink.js",
+     1
+    ]
+   ],
+   "foodnstuff": [
+    [
+     "seed.js",
+     1
+    ],
+    [
+     "hgw.js",
+     4
+    ]
+   ],
+   "sigma-cosmetics": [
+    [
+     "errlog.js",
+     1
+    ],
+    [
+     "tel.js",
+     1
+    ],
+    [
+     "hashspend.js",
+     1
+    ]
+   ],
+   "joesguns": [
+    [
+     "hacknet.js",
+     1
+    ],
+    [
+     "hgw.js",
+     2
+    ]
+   ],
+   "hong-fang-tea": [
+    [
+     "act.js",
+     1
+    ],
+    [
+     "bb-lite.js",
+     1
+    ],
+    [
+     "hgw.js",
+     1
+    ]
+   ],
+   "harakiri-sushi": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "iron-gym": [
+    [
+     "stock.js",
+     1
+    ]
+   ],
+   "CSEC": [
+    [
+     "hgw.js",
+     4
+    ]
+   ],
+   "zer0": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "nectar-net": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "max-hardware": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "neo-net": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "phantasy": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "silver-helix": [
+    [
+     "early.js",
+     20
+    ]
+   ],
+   "omega-net": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "netlink": [
+    [
+     "early.js",
+     26
+    ]
+   ],
+   "avmnite-02h": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "the-hub": [
+    [
+     "hgw.js",
+     4
+    ]
+   ],
+   "catalyst": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "rothman-uni": [
+    [
+     "early.js",
+     53
+    ]
+   ],
+   "summit-uni": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "I.I.I.I": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "millenium-fitness": [
+    [
+     "sleeve.js",
+     1
+    ],
+    [
+     "early.js",
+     5
+    ]
+   ],
+   "lexo-corp": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "aevum-police": [
+    [
+     "early.js",
+     26
+    ]
+   ],
+   "rho-construction": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "alpha-ent": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "global-pharm": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "unitalife": [
+    [
+     "early.js",
+     13
+    ]
+   ],
+   "univ-energy": [
+    [
+     "early.js",
+     6
+    ]
+   ],
+   "run4theh111z": [
+    [
+     "early.js",
+     53
+    ]
+   ],
+   ".": [
+    [
+     "early.js",
+     6
+    ]
+   ]
+  },
+  "maxRam": {
+   "global-pharm": 32,
+   "nova-med": 0,
+   "univ-energy": 16,
+   "unitalife": 32,
+   "zb-def": 0,
+   "applied-energetics": 0,
+   "lexo-corp": 32,
+   "alpha-ent": 32,
+   "rho-construction": 16,
+   "syscore": 0,
+   "snap-fitness": 0,
+   "catalyst": 16,
+   "summit-uni": 16,
+   "netlink": 64,
+   "millenium-fitness": 64,
+   "computek": 0,
+   "aevum-police": 64,
+   "rothman-uni": 128,
+   "the-hub": 8,
+   "johnson-ortho": 0,
+   "omega-net": 32,
+   "crush-fitness": 0,
+   "silver-helix": 64,
+   "phantasy": 32,
+   "iron-gym": 32,
+   "max-hardware": 32,
+   "zer0": 32,
+   "neo-net": 32,
+   "harakiri-sushi": 16,
+   "hong-fang-tea": 16,
+   "nectar-net": 16,
+   "joesguns": 16,
+   "sigma-cosmetics": 16,
+   "foodnstuff": 16,
+   "n00dles": 4,
+   "home": 64,
+   "CSEC": 8,
+   "avmnite-02h": 32,
+   "I.I.I.I": 16,
+   "run4theh111z": 128,
+   ".": 16
+  }
+ }
+}

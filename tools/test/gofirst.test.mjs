@@ -9,8 +9,9 @@
 // home was BitNode 4's. Fixture: tools/test/fixture-bn14-gofirst.json, the
 // live telemetry at 19:09Z, trimmed to the fields this code reads.
 //
-//   GF1  goFirstOf: effective Go power = GoPower x (SF14 ? 2 : 1); Go-first at >= 4 (BitNode 14 with or
-//        without SF14), not SF14 alone, never on an unknown node
+//   GF1  the Go scale (goplace.goScaleOf): GoPower x (SF14 ? 2 : 1), unknown -> null. Whether go.js is placed
+//        is PRICED since 2026-10-07 (goplace.test.mjs [GP]); the mocks below carry the BN14.1 streams
+//        (telBN14) so the priced verdict places, and a node with no telemetry is unpriced and untouched
 //   GF2  weightsFor: a gate from THIS life with goWeights is used as published (same pick as before); another
 //        life's gate, no gate, or a refusing pass -> the early-game weights, never "the incumbent stands"
 //   GF3  FRESH NODE (no Bladeburner division, the hacking worker's income only): picks a money opponent
@@ -54,6 +55,7 @@ import { REPO_ROOT } from './gameresolve.mjs'
 
 const GP = await import('goplan.js')
 const RP = await import('raiseplace.js')
+const GPL = await import('goplace.js')
 const BN = await import('bitNodeMultipliers.js')
 const SRC = (f) => fs.readFileSync(path.join(REPO_ROOT, f), 'utf8')
 const F = JSON.parse(SRC('tools/test/fixture-bn14-gofirst.json'))
@@ -104,6 +106,19 @@ function liveFiles(now = Date.now(), drop = []) {
   ])
   for (const d of drop) files.delete(d)
   return new Map([...files].map(([k, v]) => [k, JSON.stringify(v)]))
+}
+
+/**
+ * The BN14.1 streams as /tel records stamped now — the priced verdict's
+ * inputs (goplace.goPlaceStreamsOf): script $8.59/s and hacknet $588.65/s at
+ * 19:26Z, cash $3.77m (act.txt's gym decision).
+ */
+function telBN14({ wealth = 3771337, info = BN14_INFO } = {}) {
+  const at = new Date().toISOString()
+  return {
+    '/tel/status.txt': JSON.stringify({ at, incomePerSec: F.status.incomePerSec, wealth }),
+    '/tel/hacknet.txt': JSON.stringify({ at, lastAugReset: info.lastAugReset, moneyPerSec: F.hacknet.moneyPerSec }),
+  }
 }
 
 /** go.js main() on a mock game for `games` games; returns the published /tel/go.txt and the boards played. */
@@ -174,27 +189,23 @@ export async function run() {
 
   // ---- GF1 -------------------------------------------------------------------
   {
-    const c = new Check('GF1', 'Go-first: effective Go power >= 4 (BitNode 14, with or without SF14); not SF14 alone; never on an unknown node')
+    // The verdict itself is priced (goplace.test.mjs [GP]); this is the scale it prices with.
+    const c = new Check('GF1', 'the Go scale the priced verdict uses: effective = GoPower x (SF14 ? 2 : 1); BN14 GoPower 4; unknown node -> null, never 0')
     const cases = [
-      [{ goPower: 4, sf14: 0 }, true, 'BN14.1'],
-      [{ goPower: 4, sf14: 1 }, true, 'BN14 with SF14'],
-      [{ goPower: 1, sf14: 1 }, false, 'another node with SF14'],
-      [{ goPower: 1, sf14: 3 }, false, 'another node with SF14.3'],
-      [{ goPower: 1, sf14: 0 }, false, 'BN1'],
-      [{ goPower: undefined, sf14: 0 }, false, 'unknown node'],
+      [{ goPower: 4, sf14: 0 }, 4, 'BN14.1'],
+      [{ goPower: 4, sf14: 1 }, 8, 'BN14 with SF14'],
+      [{ goPower: 1, sf14: 1 }, 2, 'another node with SF14'],
+      [{ goPower: 1, sf14: 3 }, 2, 'another node with SF14.3'],
+      [{ goPower: 1, sf14: 0 }, 1, 'BN1'],
+      [{ goPower: undefined, sf14: 0 }, null, 'unknown node'],
     ]
     for (const [inp, want, tag] of cases) {
       c.examined(1)
-      const v = RP.goFirstOf(inp)
-      if (v.goFirst !== want) c.fail(`GF1 ${tag}: goFirst ${v.goFirst}, want ${want}`, v.why)
+      const v = GPL.goScaleOf(inp)
+      if (v.effective !== want) c.fail(`GF1 ${tag}: effective ${v.effective}, want ${want}`, v.why)
     }
-    if (RP.goFirstOf({ goPower: undefined }).effective !== null) c.fail('GF1 an unknown node must say unknown (effective null), not 0')
     if (n14?.GoPower !== 4) c.fail(`GF1 the BitNode table says GoPower ${n14?.GoPower} for BN14 (game: 4, BitNode.tsx:1042)`)
-    for (const n of [1, 2, 4, 5, 6, 8, 9, 10]) {
-      c.examined(1)
-      if (RP.goFirstOf({ goPower: BN.bitNodeMults(n)?.GoPower, sf14: 0 }).goFirst) c.fail(`GF1 BitNode ${n} reads as Go-first`)
-    }
-    c.note(RP.goFirstOf({ goPower: 4, sf14: 0 }).why)
+    c.note(GPL.goScaleOf({ goPower: 4, sf14: 0 }).why)
     checks.push(c)
   }
 
@@ -313,7 +324,8 @@ export async function run() {
   // ---- GF5 -------------------------------------------------------------------
   {
     const c = new Check('GF5', "placement keeps act.js's WHOLE action slot: at SF4.3 (9.25GB) the 32GB opening takes home by evicting early.js; with a stock book (19.4GB) it cannot; go-host taken; the live 19:08Z home is repaired by moving hashspend.js; 64GB -> a fleet host; BN4 -> wait")
-    const go14 = RP.goFirstOf({ goPower: 4, sf14: 0 })
+    // A placing verdict (goplace.goPlaceValueOf's shape); [GP] prices it.
+    const go14 = { goFirst: true, priced: true, effective: 4, why: 'test: the priced verdict places go.js' }
     const KEEP = 9.25 // snap-static.js at SF4.3: the action slot below the watchdog tier with no stock book
     const KEEP_BOOK = 19.4 // act-liquidate.js: the slot while the trader holds equity
     const NEED = 20.75
@@ -371,11 +383,11 @@ export async function run() {
       if (d.action !== 'reserve' || d.host !== 'neo-net' || !d.evict) c.fail("GF5e a 64GB home must send go.js to a 32GB fleet host", JSON.stringify(d))
       c.note(`64GB: ${d.why}`)
     }
-    // (f) not a Go-first node: nothing.
+    // (f) the priced verdict waits: nothing.
     {
       c.examined(1)
-      const d = RP.goPlacementOf({ go: RP.goFirstOf({ goPower: 1, sf14: 0 }), homeMax: 32, need: NEED, homeKeep: KEEP, hosts: [{ host: 'home', max: 32, used: 0 }] })
-      if (d.action !== 'wait' || d.admitted) c.fail('GF5f outside a Go-first node go.js is not placed here', JSON.stringify(d))
+      const d = RP.goPlacementOf({ go: { goFirst: false, priced: true, effective: 1, why: 'test: the priced verdict waits' }, homeMax: 32, need: NEED, homeKeep: KEEP, hosts: [{ host: 'home', max: 32, used: 0 }] })
+      if (d.action !== 'wait' || d.admitted) c.fail('GF5f a verdict that waits places nothing here', JSON.stringify(d))
     }
     checks.push(c)
   }
@@ -429,7 +441,7 @@ export async function run() {
         foodnstuff: { max: 16, procs: [p('seed.js', 7.8), p('early.js', 2.4, 3)] },
         'sigma-cosmetics': { max: 16, procs: [p('early.js', 2.4, 6)] },
         'go-host': { max: 32, procs: [] },
-      })
+      }, BN14_INFO, telBN14())
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
       c.examined(2)
       if (host !== 'go-host') c.fail('GF6a go.js must be placed on go-host', JSON.stringify({ host, execs: g.world.execs, kills: g.world.kills }))
@@ -442,7 +454,7 @@ export async function run() {
         home: { max: 32, procs: [p('go.js', 20.75), p('hashspend.js', 7.25)] },
         foodnstuff: { max: 16, procs: [p('seed.js', 7.8), p('early.js', 2.4, 3)] },
         'go-host': { max: 32, procs: [] },
-      })
+      }, BN14_INFO, telBN14())
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
       c.examined(2)
       if (host !== 'home' || g.world.kills.includes('go.js@home')) c.fail('GF6b0 go.js stays on home beside the 8.25GB slot', JSON.stringify({ host, kills: g.world.kills }))
@@ -456,7 +468,7 @@ export async function run() {
         home: { max: 32, procs: [p('go.js', 20.75, 1, pin), p('hashspend.js', 7.25)] },
         foodnstuff: { max: 16, procs: [p('seed.js', 7.8), p('early.js', 2.4, 3)] },
         'go-host': { max: 32, procs: [] },
-      }, BN14_INFO, book())
+      }, BN14_INFO, { ...book(), ...telBN14() })
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
       c.examined(3)
       const ex = g.world.execs.find((e) => e.s === 'go.js@go-host')
@@ -467,7 +479,7 @@ export async function run() {
     }
     // (b2) the same with no fleet host able to hold it: go.js stays (playing beats nothing), said in lastGo.
     {
-      const g = mock({ home: { max: 32, procs: [p('go.js', 20.75)] }, foodnstuff: { max: 16, procs: [p('early.js', 2.4, 6)] } })
+      const g = mock({ home: { max: 32, procs: [p('go.js', 20.75)] }, foodnstuff: { max: 16, procs: [p('early.js', 2.4, 6)] } }, BN14_INFO, telBN14())
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
       c.examined(1)
       if (host !== 'home' || g.world.kills.includes('go.js@home')) c.fail('GF6b2 with nowhere to go, go.js is not killed', JSON.stringify(g.world))
@@ -504,7 +516,7 @@ export async function run() {
       return g
     }
     {
-      const g = patch(mockGame({ cycles: 3, info: BN14_INFO, files: { '/tel/plan.txt': 'null' }, hosts: { home: { max: 64, procs: [proc('watchdog.js', 9), proc('stack.js', 28.3), ...early(4)] }, 'neo-net': { max: 32, procs: early(13) }, foodnstuff: { max: 16, procs: early(6) } } }))
+      const g = patch(mockGame({ cycles: 3, info: BN14_INFO, files: { '/tel/plan.txt': 'null', ...telBN14() }, hosts: { home: { max: 64, procs: [proc('watchdog.js', 9), proc('stack.js', 28.3), ...early(4)] }, 'neo-net': { max: 32, procs: early(13) }, foodnstuff: { max: 16, procs: early(6) } } }))
       const w = await drive(g)
       c.examined(2)
       const on = runningOn(w, 'go.js')
@@ -543,8 +555,9 @@ export async function run() {
     const c = new Check('GF9', 'GO NOT PLAYING IN A GO NODE after 10 min absent or idle; not in BitNode 4, not in a young life, not across a restart')
     const { goNodeHealth, sfOfState } = await import('../gohealth.mjs')
     const now = Date.parse('2026-10-03T19:30:00Z')
-    const v14 = RP.goFirstOf({ goPower: 4, sf14: 0 })
-    const v4 = RP.goFirstOf({ goPower: 1, sf14: 0 })
+    // The placers' published verdicts (goVerdictOf's shape): one placing, one waiting.
+    const v14 = { goFirst: true, priced: true, effective: 4, why: 'seed.txt go: PLACE' }
+    const v4 = { goFirst: false, priced: true, effective: 1, why: 'seed.txt go: wait' }
     const st = (lifeMin) => ({ bitNode: 14, sourceFiles: F.state.sourceFiles, playtimeSinceLastAug: lifeMin * 60e3 })
     const goRec = (minAgo, extra = {}) => ({ at: new Date(now - minAgo * 60e3).toISOString(), health: 'ok', remoteMoves: 50, localMoves: 0, processStartedAt: '2026-10-03T19:03:25Z', opponent: 'TheBlackHand', host: 'home', ...extra })
     const cases = [
@@ -612,7 +625,7 @@ export async function run() {
     if (keep !== slot32.gb) c.fail(`GF10 goHomeKeepOf ${keep}GB is not actionSlotOf ${slot32.gb}GB`)
     if (!/actionSlotOf\(\{ ramOf: costOf, homeMax: homeRam, grafting, stockHeld: stockHeldOf\(ns\.read\('\/tel\/stock\.txt'\)\), files \}\)/.test(SRC("boot.js")) || !/const actionRam = slot\.gb/.test(SRC("boot.js"))) c.fail("GF10 boot.js's action slot must be raiseplace.actionSlotOf (with the deployed act-/snap- files)")
     if (!/actionSlotOf\(\{ ramOf: \(a\) => ns\.getScriptRam\(a, 'home'\), homeMax, grafting: canUseGrafting\(reset\), stockHeld: stockHeldOf\(ns\.read\('\/tel\/stock\.txt'\), reset\.lastAugReset\) \}\)/.test(SRC('seed.js'))) c.fail("GF10 seed.js's homeKeep must be actionSlotOf for this node")
-    if (!/actionSlotOf\(\{ ramOf: \(a\) => ns\.getScriptRam\(a, 'home'\), homeMax: ns\.getServerMaxRam\('home'\), grafting: canUseGrafting\(info\), stockHeld: stockHeldOf\(ns\.read\('\/tel\/stock\.txt'\), info\.lastAugReset\) \}\)/.test(SRC('watchdog.js'))) c.fail("GF10 watchdog.js's go.js homeKeep must be actionSlotOf for this node")
+    if (!/actionSlotOf\(\{ ramOf: \(a\) => ns\.getScriptRam\(a, 'home'\), homeMax(?:: ns\.getServerMaxRam\('home'\))?, grafting: canUseGrafting\(info\), stockHeld: stockHeldOf\(ns\.read\('\/tel\/stock\.txt'\), info\.lastAugReset\) \}\)/.test(SRC('watchdog.js'))) c.fail("GF10 watchdog.js's go.js homeKeep must be actionSlotOf for this node")
     if (!/actionActors: \{ largest: slot\.largest, sizes: slot\.sizes, excluded: slot\.excluded \}/.test(SRC("boot.js"))) c.fail('GF10 boot.txt must publish the per-actor sizes (actionActors)')
     c.note(`BN14 SF4.3 at 32GB: go.js ${goRam}GB + the ${keep}GB action slot (${slot32.largest}) = ${(goRam + keep).toFixed(2)}GB: ${goRam + keep > 32 ? 'not on a 32GB home' : 'fits a 32GB home'}; excluded: ${Object.entries(slot32.excluded).map(([a, w]) => `${a} ${w.split(':')[0]}`).join(', ')}`)
     for (const s of ['seed.js', 'watchdog.js', 'go.js', 'boot.js']) c.note(`${s} ${R.ramOf(s)?.cost}GB in BN14`)
@@ -755,7 +768,7 @@ export async function run() {
       const worker = plan.admit.find((e) => e.role === 'worker')
       c.note(`boot.js at 32GB: home ${residents.map((e) => `${e.script} ${e.cost}`).join(', ')}, ${worker?.script} x${worker?.threads}; slot ${plan.action}GB`)
       const homeProcs = [...residents.map((e) => pp(e.script)), ...(worker ? [pp(worker.script, worker.threads)] : [])]
-      const g = pricedMock({ home: { max: 32, procs: homeProcs }, ...opening16() })
+      const g = pricedMock({ home: { max: 32, procs: homeProcs }, ...opening16() }, { files: telBN14() })
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
       c.examined(3)
       if (host !== 'home' || !g.world.execs.some((e) => e.s === 'go.js@home')) c.fail('GF11 go.js must be placed on home at the opening', JSON.stringify({ host, execs: g.world.execs, kills: g.world.kills, rec: g.world.files.get(RP.RAISED['go.js'].file) }))
@@ -779,7 +792,7 @@ export async function run() {
       const old = RP.goHomeKeepOf(priced)
       const homeHost = { host: 'home', max: 32, used: homeProcs.reduce((a, p) => a + p.ram * p.threads, 0), workerGb: 0, evictGb: homeProcs.filter((p) => RP.EVICTABLE.includes(p.filename)).reduce((a, p) => a + p.ram * p.threads, 0), relocGb: 0, yieldGb: homeProcs.filter((p) => RP.GO_OUTRANKS.includes(p.filename)).reduce((a, p) => a + p.ram * p.threads, 0) }
       const fleet = Object.entries(opening16()).map(([h, v]) => ({ host: h, max: v.max, used: v.procs.reduce((a, p) => a + p.ram * p.threads, 0), workerGb: 0, evictGb: v.procs.filter((p) => RP.EVICTABLE.includes(p.filename)).reduce((a, p) => a + p.ram * p.threads, 0) }))
-      const dOld = RP.goPlacementOf({ go: RP.goFirstOf({ goPower: n14.GoPower, sf14: 0 }), homeMax: 32, need: priced('go.js'), homeKeep: old, hosts: [homeHost, ...fleet] })
+      const dOld = RP.goPlacementOf({ go: { goFirst: true, why: 'test: placing' }, homeMax: 32, need: priced('go.js'), homeKeep: old, hosts: [homeHost, ...fleet] })
       c.examined(1)
       if (old !== 19.4 || dOld.action !== 'blocked') c.fail(`GF11 the old ${old}GB slot should have blocked go.js on this opening (the live failure), got ${dOld.action}`, dOld.why)
       else c.note(`the old ${old}GB slot on the same opening: ${dOld.action} — ${dOld.why.slice(0, 160)}`)
@@ -799,7 +812,7 @@ export async function run() {
       const home = () => ({ max: 32, procs: [pp('early.js', 5)] })
       let ex0Args = null
       for (const [cash, want] of [[1.5e6, false], [1.8e6, true]]) {
-        const g = pricedMock({ home: home(), ...opening16() }, { files: bookFiles, cash })
+        const g = pricedMock({ home: home(), ...opening16() }, { files: { ...bookFiles, ...telBN14({ wealth: cash + 2e6 }) }, cash })
         const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
         const ex = g.world.execs.find((e) => e.s.startsWith('gohost.js@'))
         c.examined(1)
@@ -869,7 +882,7 @@ export async function run() {
       if (!namesRp.includes(RP.GO_HOST) || !/String\(ns\.args\[1\] \?\? 'go-host'\)/.test(SRC('gohost.js'))) c.fail(`GF12 gohost.js must default to '${RP.GO_HOST}'`)
       if (ex0Args && JSON.stringify(ex0Args) !== JSON.stringify([32, RP.GO_HOST])) c.fail('GF12 seed.js names the server it asks for', JSON.stringify(ex0Args))
       // ... and the next pass places go.js on the bought host.
-      const g = pricedMock({ home: home(), ...opening16(), 'go-host': { max: 32, procs: [] } }, { files: bookFiles, cash: 0 })
+      const g = pricedMock({ home: home(), ...opening16(), 'go-host': { max: 32, procs: [] } }, { files: { ...bookFiles, ...telBN14({ wealth: 2e6 }) }, cash: 0 })
       const host = await SEED.placeGo(g.ns, Object.keys(g.world.hosts))
       c.examined(1)
       if (host !== 'go-host') c.fail('GF12 the next pass places go.js on go-host', JSON.stringify({ host, execs: g.world.execs }))

@@ -111,7 +111,9 @@ import { singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseS
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
-import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf } from 'raiseplace.js'
+import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goPlacementOf, actionSlotOf, stockHeldOf } from 'raiseplace.js'
+// Pure (0GB): go.js's priced placement verdict (goplace.js).
+import { goPlaceStreamsOf, goPlaceValueOf, goMilestoneOf } from 'goplace.js'
 // Pure (0GB): bb-lite.js's actor headroom, held like the RAISED reservations.
 import { LITE_FILE, BB_FILE, liteReserveOf } from 'bbliteplan.js'
 
@@ -267,10 +269,10 @@ const WATCHED = [
   // Not with Singularity: autobuy.js and the planner buy TOR with no screen,
   // and this is the DOM route (City -> Alpha Enterprises).
   { script: 'torbuy.js', host: 'home', args: [], invariant: (ns) => !ns.hasTorRouter() && !canAccessFeature(ns.getResetInfo(), 4) },
-  // THE GO FARM. In a Go-first node (raiseplace.goFirstOf: BitNode 14) it is
+  // THE GO FARM. Where its priced verdict places it (goplace.js, goPlace) it is
   // placed first, anywhere, at any tier (goPlace: home with act.js's actor
   // headroom kept, else the tightest fleet host, else a host reserved and its
-  // seed workers evicted). Elsewhere it is home's, as before: relaunched there
+  // seed workers evicted). Otherwise it is home's, as before: relaunched there
   // when progress.js's block survives it. go.js talks to the solver through
   // home's /go files from any host.
   {
@@ -279,7 +281,8 @@ const WATCHED = [
     args: [],
     place: (ns, hosts, rec) => goPlace(ns, hosts, rec),
     onRunning: (ns, rec) => {
-      if (goFirstOf(goNodeOf(ns)).goFirst) raisedRunning(ns, rec, 'go.js')
+      // Running (placed by anyone): the reservation is released, the absence clock stops.
+      raisedRunning(ns, rec, 'go.js')
     },
   },
   // The stock trader, wherever it fits. DAEMON with the game as its guard: no
@@ -1006,8 +1009,16 @@ function raisedPlace(ns, hosts, rec, script, opt = {}) {
   const gbOf = (h, names) => ns.ps(h).filter((p) => names.includes(p.filename)).reduce((a, p) => a + ns.getScriptRam(p.filename, h) * p.threads, 0)
   // Another daemon's live reservation is not room for this one.
   const others = reservesOf((f) => ns.read(f), info, rooted).filter((r) => r.script !== script)
-  const place = opt.go ? (o) => goPlacementOf({ go: opt.go, ...o }) : raisedPlacementOf
-  const decide = () =>
+  const hostRecs = () =>
+    rooted.map((h) => ({
+      host: h,
+      max: ns.getServerMaxRam(h),
+      used: ns.getServerUsedRam(h) + heldOn(others, h),
+      workerGb: gbOf(h, FREEABLE),
+      evictGb: gbOf(h, EVICTABLE),
+      hacknet: isHacknetServerHost(h),
+    }))
+  const decideAs = (place) =>
     place({
       script,
       ...(opt.need ? { need: opt.need } : {}),
@@ -1015,18 +1026,20 @@ function raisedPlace(ns, hosts, rec, script, opt = {}) {
       homeMax: ns.getServerMaxRam('home'),
       plan: readRec('/tel/plan.txt'),
       node: info.currentNode,
-      hosts: rooted.map((h) => ({
-        host: h,
-        max: ns.getServerMaxRam(h),
-        used: ns.getServerUsedRam(h) + heldOn(others, h),
-        workerGb: gbOf(h, FREEABLE),
-        evictGb: gbOf(h, EVICTABLE),
-        hacknet: isHacknetServerHost(h),
-      })),
+      hosts: hostRecs(),
       homeBlock: 13 + 6.25 * singularityRamMultiplier(info),
       progressRunning: running(ns, ['home'], 'progress.js'),
       prev: readRec(file),
     })
+  // go.js: the PRICED verdict (opt.price, goplace.goPlaceValueOf) on the
+  // placement it would take; not placed -> nothing is evicted or reserved.
+  let go = null
+  if (opt.price) {
+    go = opt.price(decideAs((o) => goPlacementOf({ go: { goFirst: true, why: 'the placement the verdict prices' }, ...o })), hostRecs())
+    if (!go.goFirst) return { host: null, unplaced: true, verdict: go, state: `priced: ${go.why}` }
+  }
+  const place = go ? (o) => goPlacementOf({ go, ...o }) : raisedPlacementOf
+  const decide = () => decideAs(place)
   let d = decide()
   // seed.js's workers never exit: kill them on the host reserved, then decide
   // again — where they were all that held the block, it is placed this cycle.
@@ -1040,32 +1053,55 @@ function raisedPlace(ns, hosts, rec, script, opt = {}) {
   rec.placement = { action: d.action, host: d.host ?? null, why: d.why }
   if (d.admitted) rec.absentSince = rec.absentSince ?? new Date().toISOString()
   else delete rec.absentSince
-  return d.action === 'place' ? { host: d.host } : { host: null, state: `${d.action}: ${d.why}` }
-}
-
-/** {goPower, sf14} for raiseplace.goFirstOf, from the BitNode table and getResetInfo (both already paid for). */
-function goNodeOf(ns) {
-  const info = ns.getResetInfo()
-  return { goPower: bitNodeMults(info.currentNode)?.GoPower, sf14: sfLevel(info, 14) }
+  return d.action === 'place' ? { host: d.host, verdict: go } : { host: null, state: `${d.action}: ${d.why}`, verdict: go }
 }
 
 /**
- * go.js's placement. Go-first node: raiseplace.goPlacementOf through
- * raisedPlace (its block is its static price; act.js's actor headroom kept on
- * home). Elsewhere: home, when progress.js's block survives it (the rule every
- * home daemon without its own placement gets, below).
+ * go.js's placement. Its PRICED verdict (goplace.goPlaceValueOf: the money to
+ * the next home tier with go.js placed now vs waiting, on one set of inputs,
+ * charged the hacking workers the placement displaces) decides whether it
+ * takes a block anywhere — raiseplace.goPlacementOf through raisedPlace (its
+ * block is its static price; act.js's actor headroom kept on home).
+ * Otherwise: home, when progress.js's block survives it (the rule every home
+ * daemon without its own placement gets, below). The verdict is published
+ * as rec.go (watchdog.txt daemons['go.js'].go) for the health check.
  */
 function goPlace(ns, hosts, rec) {
-  const go = goFirstOf(goNodeOf(ns))
-  if (go.goFirst) {
-    rec.goFirst = go.why
-    // act.js's action slot sized to this node (raiseplace.actionSlotOf).
-    const info = ns.getResetInfo()
-    const slot = actionSlotOf({ ramOf: (a) => ns.getScriptRam(a, 'home'), homeMax: ns.getServerMaxRam('home'), grafting: canUseGrafting(info), stockHeld: stockHeldOf(ns.read('/tel/stock.txt'), info.lastAugReset) })
-    rec.actionSlot = { gb: slot.gb, largest: slot.largest }
-    return raisedPlace(ns, hosts, rec, 'go.js', { go, need: ns.getScriptRam('go.js', 'home'), homeKeep: slot.gb })
+  const info = ns.getResetInfo()
+  const mults = bitNodeMults(info.currentNode)
+  const goPower = mults?.GoPower
+  const sf14 = sfLevel(info, 14)
+  const homeMax = ns.getServerMaxRam('home')
+  const readJson = (f) => {
+    try {
+      return JSON.parse(ns.read(f) || 'null')
+    } catch {
+      return null
+    }
   }
-  delete rec.goFirst
+  const streams = goPlaceStreamsOf({ status: readJson('/tel/status.txt'), hacknet: readJson('/tel/hacknet.txt'), stock: readJson('/tel/stock.txt'), goTel: readJson('/tel/go.txt'), posterior: readJson('/tel/go-posterior.txt'), lastAugReset: info.lastAugReset, goPower, sf14 })
+  const milestone = goMilestoneOf({ homeMax, ramCostMult: mults?.HomeComputerRamCost })
+  // The watchdog buys no server: a placement no host can hold has no "with" run here.
+  const price = (d, recs) =>
+    goPlaceValueOf({
+      streams,
+      goPower,
+      sf14,
+      target: milestone.target,
+      displacedGb: d.action === 'reserve' ? d.workersGb ?? 0 : 0,
+      workerGb: recs.filter((h) => !h.hacknet).reduce((a, h) => a + h.workerGb + h.evictGb, 0),
+      executable: d.action !== 'blocked',
+    })
+  // act.js's action slot sized to this node (raiseplace.actionSlotOf).
+  const slot = actionSlotOf({ ramOf: (a) => ns.getScriptRam(a, 'home'), homeMax, grafting: canUseGrafting(info), stockHeld: stockHeldOf(ns.read('/tel/stock.txt'), info.lastAugReset) })
+  const r = raisedPlace(ns, hosts, rec, 'go.js', { price, need: ns.getScriptRam('go.js', 'home'), homeKeep: slot.gb })
+  const v = r.verdict
+  rec.go = { at: new Date().toISOString(), lastAugReset: info.lastAugReset, goFirst: v.goFirst, priced: v.priced, effective: v.effective, withH: v.withH, withoutH: v.withoutH, gainH: v.gainH, arm: v.arm, why: v.why }
+  if (!r.unplaced) {
+    rec.actionSlot = { gb: slot.gb, largest: slot.largest }
+    return r
+  }
+  delete rec.actionSlot
   const block = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
   const after = ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - ns.getScriptRam('go.js', 'home')
   if (after < 0) return { host: null, state: 'blocked: no room on home' }

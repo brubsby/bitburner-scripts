@@ -51,7 +51,9 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure (0GB): the full Bladeburner daemon's reserved block, kept free of workers.
-import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, GO_OUTRANKS, JOB_RUNNER_TIER, goFirstOf, goPlacementOf, actionSlotOf, stockHeldOf, goHostBuyOf, GO_HOST, BB_HOST, goHomeRepairOf, reserveRecordOf } from 'raiseplace.js'
+import { reservesOf, RAISED, EVICTABLE, RELOCATABLE, GO_OUTRANKS, JOB_RUNNER_TIER, goPlacementOf, actionSlotOf, stockHeldOf, goHostBuyOf, GO_HOST, BB_HOST, goHomeRepairOf, reserveRecordOf, cloudCostOf } from 'raiseplace.js'
+// Pure (0GB): go.js's priced placement verdict (with vs without, to the 128GB home tier).
+import { goPlaceStreamsOf, goPlaceValueOf, goMilestoneOf } from 'goplace.js'
 // Pure (0GB): bb-lite.js's reservation (seed's workers leave it free, as batch.js's do) and its server.
 import { LITE_FILE, BB_FILE, liteReserveOf, liteHostBuyOf } from 'bbliteplan.js'
 // ns.read only (0GB): the work-slot claim, the Bladeburner route's commitment.
@@ -191,8 +193,9 @@ export async function pass(ns, flags) {
   // Root anything that has become reachable since the last pass.
   const newlyRooted = all.filter((h) => h !== 'home' && root(ns, h))
 
-  // GO FIRST (raiseplace.js): in a node where Go is strong, go.js is placed
-  // before any worker is, at any home size. Its own try: a placement fault
+  // GO FIRST (raiseplace.js, priced by goplace.js): where the farm beats the
+  // RAM it displaces, go.js is placed before any worker is, at any home size.
+  // Its own try: a placement fault
   // must not cost the pass that keeps the fleet working.
   try {
     await placeGo(ns, all)
@@ -439,18 +442,20 @@ const GO = 'go.js'
 const GOHOST = 'gohost.js'
 
 /**
- * Place go.js in a Go-first node. Home only with act.js's whole action slot
- * kept beside it; otherwise (the usual case below 128GB) a fleet host. A
- * go.js already on home that is eating the slot (live BN14.1 18:59-20:49Z) is
- * moved to a fleet host once one can hold it, with its args (a pin) kept.
+ * Place go.js where its PRICED verdict says (goplace.goPlaceValueOf: the money
+ * to the 128GB home tier with go.js placed now vs waiting for that tier, the
+ * placement's displaced workers charged). Home only with act.js's whole
+ * action slot kept beside it; otherwise (the usual case below 128GB) a fleet
+ * host. A go.js already on home that is eating the slot (live BN14.1
+ * 18:59-20:49Z) is moved to a fleet host once one can hold it, with its args
+ * (a pin) kept. A go.js the verdict does not place is left running (boot.js
+ * keepIfRunning), never killed.
  */
 export async function placeGo(ns, all) {
   const reset = ns.getResetInfo()
-  const go = goFirstOf({ goPower: bitNodeMults(reset.currentNode)?.GoPower, sf14: sfLevel(reset, 14) })
-  if (!go.goFirst) {
-    lastGo = { goFirst: false, why: go.why }
-    return null
-  }
+  const mults = bitNodeMults(reset.currentNode)
+  const goPower = mults?.GoPower
+  const sf14 = sfLevel(reset, 14)
   const here = ns.getHostname()
   const file = RAISED[GO].file
   const writeRec = (d) => {
@@ -486,34 +491,79 @@ export async function placeGo(ns, all) {
   const others = reservesOf((f) => ns.read(f), reset, rooted).filter((r) => r.script !== GO)
   const held = (h) => others.reduce((a, r) => a + (r.host === h ? r.gb : 0), 0)
   const progressRunning = ns.ps('home').some((p) => p.filename === 'progress.js')
-  const decide = (offHome = false) =>
+  const need = ns.getScriptRam(GO, 'home')
+  const hostsOf = (offHome = false) =>
+    rooted
+      .filter((h) => !(offHome && h === 'home'))
+      .map((h) => ({
+        host: h,
+        max: ns.getServerMaxRam(h),
+        used: ns.getServerUsedRam(h) + held(h),
+        workerGb: gbOn(h, ['h.js', 'g.js', 'w.js']),
+        evictGb: gbOn(h, EVICTABLE),
+        relocGb: h === 'home' ? gbOn(h, RELOCATABLE) : 0,
+        yieldGb: h === 'home' ? gbOn(h, GO_OUTRANKS) : 0,
+        hacknet: isHacknetServerHost(h),
+      }))
+  const decideAs = (go, offHome = false) =>
     goPlacementOf({
       go,
       homeMax,
-      need: ns.getScriptRam(GO, 'home'),
+      need,
       homeKeep,
       // progress.js's block only where something runs it (the watchdog tier).
       homeBlock: homeMax >= JOB_RUNNER_TIER ? 13 + 6.25 * singularityRamMultiplier(reset) : 0,
       progressRunning,
       prev,
-      hosts: rooted
-        .filter((h) => !(offHome && h === 'home'))
-        .map((h) => ({
-          host: h,
-          max: ns.getServerMaxRam(h),
-          used: ns.getServerUsedRam(h) + held(h),
-          workerGb: gbOn(h, ['h.js', 'g.js', 'w.js']),
-          evictGb: gbOn(h, EVICTABLE),
-          relocGb: h === 'home' ? gbOn(h, RELOCATABLE) : 0,
-          yieldGb: h === 'home' ? gbOn(h, GO_OUTRANKS) : 0,
-          hacknet: isHacknetServerHost(h),
-        })),
+      hosts: hostsOf(offHome),
     })
 
+  // THE PRICED VERDICT (goplace.js). Shared inputs: the streams from home's
+  // telemetry (ns.read is local: [bitburner-offhome-reads]), the endpoint, and
+  // what the placement it would take costs — its displaced hacking workers
+  // over every worker in the fleet, or a server's price up front.
+  const streams = goPlaceStreamsOf({
+    status: homeJson(ns, '/tel/status.txt'),
+    hacknet: homeJson(ns, '/tel/hacknet.txt'),
+    stock: homeJson(ns, '/tel/stock.txt'),
+    goTel: homeJson(ns, '/tel/go.txt'),
+    posterior: homeJson(ns, '/tel/go-posterior.txt'),
+    lastAugReset: reset.lastAugReset,
+    goPower,
+    sf14,
+  })
+  const milestone = goMilestoneOf({ homeMax, ramCostMult: mults?.HomeComputerRamCost })
+  const workerGb = hostsOf(false)
+    .filter((h) => !h.hacknet)
+    .reduce((a, h) => a + h.workerGb + h.evictGb, 0)
+  const hostRam = 2 ** Math.ceil(Math.log2(Math.max(8, need)))
+  const priceOf = (d, keep = false) =>
+    goPlaceValueOf({
+      streams,
+      goPower,
+      sf14,
+      target: milestone.target,
+      // Keeping a running go.js holds its block from the workers; a reserve takes raisedPlacementOf's workersGb.
+      displacedGb: keep ? Math.min(need, workerGb) : d.action === 'reserve' ? d.workersGb ?? 0 : 0,
+      workerGb,
+      upfront: d.action === 'blocked' ? cloudCostOf(hostRam, mults) : 0,
+      executable: d.action !== 'blocked' || !(mults && Number.isFinite(mults.CloudServerLimit) && mults.CloudServerLimit <= 0),
+    })
+  const verdictOf = (v, extra = {}) => ({ goFirst: v.goFirst, priced: v.priced, effective: v.effective, withH: v.withH, withoutH: v.withoutH, gainH: v.gainH, arm: v.arm, displacedGb: v.displacedGb ?? null, workerGb: v.workerGb ?? null, target: milestone.target, toRam: milestone.toRam, lastAugReset: reset.lastAugReset, streams: streams.src, ...(v.notSimulated ? { notSimulated: v.notSimulated } : {}), ...extra, why: v.why })
+
   const running = rooted.find((h) => ns.ps(h).some((p) => p.filename === GO)) ?? null
+  // Not running: the verdict prices the placement the rule would take now.
+  const go = running ? priceOf({ action: 'running' }, true) : priceOf(decideAs({ goFirst: true, why: 'the placement the verdict prices' }))
+  const decide = (offHome = false) => decideAs(go, offHome)
+  if (!go.goFirst) {
+    // Released at once rather than left to age out (RESERVE_FRESH_MS).
+    if (!running) writeRec({ action: 'wait', why: go.why })
+    lastGo = verdictOf(go, { action: running ? 'running' : 'wait', host: running })
+    return running
+  }
   if (running && running !== 'home') {
     writeRec({ action: 'running', why: `${GO} is running on ${running}: nothing reserved` })
-    lastGo = { goFirst: true, action: 'running', host: running, why: go.why }
+    lastGo = verdictOf(go, { action: 'running', host: running })
     return running
   }
   if (running === 'home') {
@@ -525,7 +575,7 @@ export async function placeGo(ns, all) {
     if (r.ok) {
       const repaired = r.stop.length ? await moveOffHome(ns, rooted, r.stop, procs.filter((p) => r.stop.includes(p.script))) : []
       writeRec({ action: 'running', why: `${GO} is running on home with the action slot kept` })
-      lastGo = { goFirst: true, action: 'running', host: 'home', homeKeep, slotActor: slot.largest, repaired, why: go.why }
+      lastGo = verdictOf(go, { action: 'running', host: 'home', homeKeep, slotActor: slot.largest, repaired })
       return 'home'
     }
     const goArgs = ns.ps('home').find((p) => p.filename === GO)?.args ?? []
@@ -544,11 +594,11 @@ export async function placeGo(ns, all) {
         ns.tprint(`seed: moved ${GO} off home to ${off.host}: home could not keep the ${homeKeep}GB action slot beside it`)
       }
       writeRec(pid ? { action: 'running', why: `${GO} moved off home to ${off.host}` } : off)
-      lastGo = { goFirst: true, action: pid ? 'moved-off-home' : 'blocked', host: off.host, pid, homeKeep, why: off.why }
+      lastGo = verdictOf(go, { action: pid ? 'moved-off-home' : 'blocked', host: off.host, pid, homeKeep, placement: off.why })
       return pid ? off.host : 'home'
     }
     writeRec(off.action === 'reserve' ? off : { action: 'running', why: `${GO} on home, no fleet host for it yet: ${off.why}` })
-    lastGo = { goFirst: true, action: 'running', host: 'home', homeKeep, slotEaten: true, pending: off.action, why: off.why }
+    lastGo = verdictOf(go, { action: 'running', host: 'home', homeKeep, slotEaten: true, pending: off.action, placement: off.why })
     return 'home'
   }
 
@@ -568,7 +618,7 @@ export async function placeGo(ns, all) {
         yielded.push(p.script)
         freed += p.gb
       }
-      if (yielded.length) ns.tprint(`seed: stopped ${yielded.join(', ')} on home: ${GO} outranks them in a Go-first node`)
+      if (yielded.length) ns.tprint(`seed: stopped ${yielded.join(', ')} on home: ${GO} outranks them (its priced verdict places it)`)
     }
     await ns.sleep(0)
     const again = decide(false)
@@ -579,7 +629,7 @@ export async function placeGo(ns, all) {
   if (d.action === 'place') {
     if (d.host !== 'home') ns.scp(importClosure(ns, GO), d.host, 'home')
     pid = ns.exec(GO, d.host, 1)
-    if (pid) ns.tprint(`seed: placed ${GO} on ${d.host} (Go-first node)`)
+    if (pid) ns.tprint(`seed: placed ${GO} on ${d.host} (priced: ${go.why.slice(0, 160)})`)
   }
   // NO HOST CAN EVER HOLD IT: buy one the moment cash covers it (gohost.js,
   // a one-shot, so seed.js is not billed for ns.cloud). The next pass places
@@ -592,7 +642,7 @@ export async function placeGo(ns, all) {
   writeRec(pid ? { action: 'running', why: `${GO} placed on ${d.host}` } : d)
   // The daemons moved off home start again on a fleet host, after go.js has its block.
   const relocated = moved.length ? await moveOffHome(ns, rooted, [], moved) : []
-  lastGo = { goFirst: true, action: pid ? 'placed' : d.action, host: d.host ?? null, pid, homeKeep, slotActor: slot.largest, relocated, yielded, ...(buy ? { buy } : {}), why: d.why }
+  lastGo = verdictOf(go, { action: pid ? 'placed' : d.action, host: d.host ?? null, pid, homeKeep, slotActor: slot.largest, relocated, yielded, ...(buy ? { buy } : {}), placement: d.why })
   return pid ? d.host : null
 }
 

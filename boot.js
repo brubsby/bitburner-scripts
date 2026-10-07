@@ -574,9 +574,9 @@ const STACK = [
     where: 'home',
     tier: 128,
     rank: 20,
-    // NOT STOPPED below its tier. In a Go-first node (raiseplace.goFirstOf:
-    // BitNode 14) seed.js and watchdog.js place it from the opening, on a
-    // fleet host, and this launcher cannot tell that node from any other
+    // NOT STOPPED below its tier. Where its priced verdict places it (goplace.js:
+    // the farm beats the RAM it displaces) seed.js and watchdog.js place it from the opening, on a
+    // fleet host or home, and this launcher cannot price that
     // without getResetInfo (1GB of launcher). Live BN14.1 20:50Z: home was
     // bought to 64GB, boot.js re-ran and stopped the running go.js as
     // "below its tier of 128GB". The tier still decides where boot.js STARTS
