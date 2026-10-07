@@ -171,5 +171,185 @@ export async function run() {
       c6.note(`${pairs} top pairs over 3 searches, ${bad} illegal`);
     }
   }
-  return [c1, c2, c3, c4, c5, c6];
+  const c7 = new Check("GC7", "pairsOnly with NO legal pair keeps the singles (the 2026-10-07 07:39Z loss: PASS-only root, a 50ms pass on a won board)");
+  {
+    const path = await import("node:path");
+    const { REPO } = await import("./ram.mjs");
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    const model = await loadModel();
+    if (!model) c7.warn("the opponent model could not load — GC7 did NOT run");
+    else {
+      // After our cheat 1,4+3,4 and the AI's 0,1: the only stone that is not an
+      // own-eye fill is 3,2 (white in atari with no escape) — no pair exists.
+      const board = ["#OO#.", "#OXXX", "#OOX.", "#O.XX", "#.O#."];
+      const validList = model.validMoves(board, []);
+      const valid = board.map((col, x) => [...col].map((_, y) => validList.some(([vx, vy]) => vx === x && vy === y)));
+      const reply = (b, o) => model.reply(b, { ...o, opponent: "Tetrads" });
+      const sess = golib.modelSession(5, 5.5, { reply }, { pairs: [6, 5], pairsOnly: true, seed: 7 });
+      const r0 = sess.setRoot(board, valid, { cheat: { fns: [() => true, () => true], cheats: 1 } });
+      c7.examined(1);
+      if (!r0) c7.fail("setRoot returned null (PASS only) where 3,2 is legal and winning");
+      else {
+        await sess.search({ maxms: 400 });
+        const b = sess.best();
+        c7.examined(1);
+        if (!b?.length || b[0].x !== 3 || b[0].y !== 2 || b[0].second) c7.fail("the single 3,2 must be chosen", JSON.stringify(b?.[0] ?? null));
+        else c7.note(`3,2 chosen, win rate ${b[0].top?.[0]?.[4]}`);
+        if (sess.jointGuard.hits) c7.fail(`the pass-only guard fired ${sess.jointGuard.hits}x: a pair filter emptied a node (the guard hides it, the fix must not need it)`, JSON.stringify(sess.jointGuard.last));
+      }
+    }
+  }
+  const c8 = new Check("GC8", "joint pair search, PROPERTY over random positions (cheat window open and closed): every pair legal under playTwoMoves, never a PASS-only root where the plain search has stones, the pass-only guard never needed");
+  {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { REPO } = await import("./ram.mjs");
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    const model = await loadModel();
+    if (!model) c8.warn("the opponent model could not load — GC8 did NOT run");
+    else {
+      const layouts = JSON.parse(fs.readFileSync(path.join(REPO, "tools/goai/layouts-5.json"), "utf8")).layouts.slice(0, 40);
+      // A fixed stream: the same positions on every run.
+      let seed = 12345;
+      const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32);
+      const reply = (b, o) => model.reply(b, { ...o, opponent: "Tetrads" });
+      const grid = (board, list) => board.map((col, x) => [...col].map((_, y) => list.some(([a, b]) => a === x && b === y)));
+      let positions = 0, pairsSeen = 0, passPairs = 0, guards = 0;
+      const POS = 60;
+      for (let n = 0; n < POS; n++) {
+        const lay = layouts[(rnd() * layouts.length) | 0].key;
+        let board = [0, 1, 2, 3, 4].map((x) => lay.slice(x * 5, x * 5 + 5));
+        const history = [];
+        const plies = 2 + ((rnd() * 9) | 0);
+        let ok = true;
+        for (let k = 0; k < plies && ok; k++) {
+          const v = model.validMoves(board, history);
+          if (!v.length) { ok = false; break; }
+          const [x, y] = v[(rnd() * v.length) | 0];
+          const nb = golib.applyMove(board, x, y);
+          if (!nb) { ok = false; break; }
+          history.unshift(board.join(""));
+          board = nb;
+          const r = await reply(board, { history, passCount: 0, rng: (rnd() * 3e7) | 0 });
+          if (!r) { ok = false; break; }
+          // White's stone with its captures: golib.applyMove on the colour-swapped board.
+          const swap = (bd) => bd.map((col) => col.replace(/[XO]/g, (c) => (c === "X" ? "O" : "X")));
+          const wb = golib.applyMove(swap(board), r.x, r.y);
+          if (!wb) { ok = false; break; }
+          history.unshift(board.join(""));
+          board = swap(wb);
+        }
+        if (!ok) continue;
+        const list = model.validMoves(board, history);
+        const valid = grid(board, list);
+        for (const open of [true, false]) {
+          positions++;
+          const sp = golib.modelSession(5, 5.5, { reply }, { pairs: [6, 5], pairsOnly: true, seed: 100 + n });
+          const ss = golib.modelSession(5, 5.5, { reply }, { seed: 100 + n });
+          const rp = sp.setRoot(board, valid, { history, cheat: { fns: open ? [() => true, () => true] : null, cheats: 1 } });
+          const rs = ss.setRoot(board, valid, { history });
+          c8.examined(1);
+          if (!rp && rs) { c8.fail(`a PASS-only root with pairs (open ${open}) where the plain search has stones`, board.join("/")); continue; }
+          if (!rp) continue;
+          await sp.search({ maxms: 5000, untilWork: 120, untilVisits: 6100 });
+          const b = sp.best();
+          guards += sp.jointGuard.hits;
+          if (sp.jointGuard.hits) c8.fail(`the pass-only guard fired (open ${open})`, JSON.stringify(sp.jointGuard.last));
+          const t = b?.[0];
+          // Every searched pair in the top 3, not only the chosen one.
+          for (const e of t?.top ?? []) {
+            if (e.length < 6) continue;
+            const sx = (e[5] / 5) | 0, sy = e[5] % 5;
+            if (!valid[e[0]]?.[e[1]] || !valid[sx]?.[sy]) c8.fail(`an illegal pair searched: ${e[0]},${e[1]}+${sx},${sy}`, board.join("/"));
+          }
+          if (t?.second) {
+            pairsSeen++;
+            if (!open) c8.fail("a pair where the cheat window is closed", board.join("/"));
+            if (!valid[t.x]?.[t.y] || !valid[t.second.x]?.[t.second.y] || (t.x === t.second.x && t.y === t.second.y)) c8.fail(`an illegal pair ${t.x},${t.y}+${t.second.x},${t.second.y} (both must be in the game's valid list before either stone)`, board.join("/"));
+          } else if (!t && rs) {
+            // a pass where stones exist: must also be the plain search's answer
+            await ss.search({ maxms: 5000, untilWork: 120, untilVisits: 6100 });
+            const sb = ss.best();
+            if (sb && sb.length) { passPairs++; c8.fail(`PASS with pairs on (open ${open}) where the plain search plays ${sb[0].x},${sb[0].y}`, board.join("/")); }
+          }
+        }
+      }
+      if (positions < 60) c8.fail(`only ${positions} positions examined (the generator failed) — the property was not tested`);
+      c8.note(`${positions} position/window cases, ${pairsSeen} pair answers, ${passPairs} bad passes, guard hits ${guards}`);
+    }
+  }
+  const c9 = new Check("GC9", "go-solver's pass guard: with the cheat window open, a PASS chosen among pairs is re-searched without pairs — never answered where the single search plays a stone");
+  {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const http = await import("node:http");
+    const { spawn } = await import("node:child_process");
+    const { REPO } = await import("./ram.mjs");
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const model = await loadModel();
+    if (!model) c9.warn("the opponent model could not load — GC9 did NOT run");
+    else {
+      // A live position (audit, 2026-10-07 07:18:05Z ply 5) where the single
+      // search plays a stone. --fault-joint-pass 5: the first 5 searches with
+      // pairs answer PASS (injected) — the guard must turn each into a stone.
+      const board = ["....#", ".X...", "#.XX.", "OOOX.", "O#O.#"];
+      const valid = model.validMoves(board, []);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gocheat9-"));
+      const files = new Map();
+      const pushed = [];
+      const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", (d) => (body += d));
+        req.on("end", () => {
+          const { method, params } = JSON.parse(body || "{}");
+          if (method === "getFile") res.end(JSON.stringify({ result: files.get(params.filename) ?? null }));
+          else if (method === "pushFile") {
+            files.set(params.filename, params.content);
+            if (params.filename === "/go/move.txt") pushed.push(JSON.parse(params.content));
+            res.end(JSON.stringify({ result: "OK" }));
+          } else res.end(JSON.stringify({ error: "unknown" }));
+        });
+      });
+      await new Promise((r) => server.listen(0, "127.0.0.1", r));
+      const port = server.address().port;
+      const child = spawn(process.execPath, [path.join(REPO, "tools/go-solver.mjs"), "--maxms", "300", "--poll", "40", "--rpc", `http://127.0.0.1:${port}/rpc`, "--katago-remote", "none", "--ponder-cap-ms", "0", "--book-dir", dir, "--no-presend", "--fault-joint-pass", "5"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, KATAGO_DIR: "/nonexistent-katago" } });
+      let stderr = "";
+      child.stderr.on("data", (d) => (stderr += d));
+      const wait = async (pred, ms = 20000) => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) {
+          const v = pred();
+          if (v) return v;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        return null;
+      };
+      try {
+        let passes = 0, guarded = 0;
+        const T = 200 * 5123457;
+        for (let seq = 1; seq <= 10; seq++) {
+          // A different (fresh) position key each time defeats reuse: alternate komi.
+          files.set("/go/req.txt", JSON.stringify({ seq, size: 5, komi: seq % 2 ? 5.5 : 6.5, backend: "model", opponent: "Tetrads", board, valid, history: [], turnS: 1.06, T: T + seq * 7000, cheat: { crime: 20, sf14: 0, cheats: 2, max: 12, turn: 6, fromTurn: 2, minChance: 0.0034 } }));
+          const a = await wait(() => pushed.find((m) => m.seq === seq));
+          c9.examined(1);
+          if (!a) throw new Error(`no reply to seq ${seq}: ${stderr.slice(-300)}`);
+          if (a.pass) passes++;
+          if (a.jointGuard) guarded++;
+        }
+        if (passes) c9.fail(`${passes}/10 answers were PASS where the single search plays a stone`);
+        if (guarded < 5) c9.fail(`the guard fired ${guarded}x for 5 injected passes among pairs`);
+        c9.note(`10 requests, ${passes} passes, the guard turned ${guarded} pass(es) among pairs into stones`);
+      } catch (e) {
+        c9.fail(String(e?.message ?? e).slice(0, 300));
+      } finally {
+        child.kill();
+        server.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9];
 }

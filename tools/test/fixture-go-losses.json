@@ -4404,6 +4404,166 @@
     }
    ],
    "status": "fixed"
+  },
+  {
+   "id": "live-2026-10-07T07:39:04.876Z-Tetrads",
+   "source": "live",
+   "at": "2026-10-07T07:39:04.876Z",
+   "opponent": "Tetrads",
+   "size": 5,
+   "komi": 5.5,
+   "start": "#..#.#....#....#....#..#.",
+   "streakBefore": 811,
+   "live": {
+    "black": 9,
+    "white": 13.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "4,1",
+     "r": "3,1",
+     "T": 2208168600,
+     "s": "req",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "4,2",
+     "T": 2208169400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "1,1",
+     "T": 2208170200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,3",
+     "r": "0,2",
+     "T": 2208171600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,2",
+     "r": "2,2",
+     "T": 2208172400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,3",
+     "r": "2,1",
+     "T": 2208173800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,4+3,4",
+     "r": "0,1",
+     "T": 2208175400,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2208176400,
+     "s": "req"
+    }
+   ],
+   "note": "joint cheat: after the pair 1,4+3,4 no legal pair existed (3,2 the only non-eye stone); pairsOnly left PASS alone, setRoot returned null and the solver passed in 50ms on a won board. Fixed: mergePairs keeps singles with no pair + pass-only guards (golib, go-solver); GC7/GC8",
+   "checks": [
+    {
+     "from": 7,
+     "work": 1600,
+     "why": "critical ply: the last on the logged line where the solver found a line winning >= 50% (live played P; replay picks 3,2 at win rate 1)"
+    }
+   ],
+   "status": "fixed"
   }
  ]
 }

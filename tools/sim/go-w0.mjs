@@ -660,6 +660,17 @@ async function playGame(stats, gameIndex) {
     } else {
       const ms0 = ourMs;
       ranked = await solve();
+      // go-solver's PASS GUARD: a pass chosen among pairs is checked against
+      // the single search (same request, searched again without pairs).
+      if (CHEAT_JOINT && sess && !oppPassed && !(ranked && ranked.length)) {
+        noPairs = true;
+        const single = await solve();
+        noPairs = false;
+        if (single && single.length) {
+          ranked = single;
+          jointStats.passGuard = (jointStats.passGuard ?? 0) + 1;
+        }
+      }
       wall += ourMs - ms0 + ROUND_TRIP_MS;
       rtTotal += ROUND_TRIP_MS;
     }

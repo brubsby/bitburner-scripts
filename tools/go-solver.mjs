@@ -460,6 +460,9 @@ function reportThrow(where, err, req) {
   }
 }
 const FAULT = argv.includes("--fault-session") ? { left: Number(argv[argv.indexOf("--fault-session") + 1]) } : null;
+// --fault-joint-pass N: the first N searches with pairs on answer PASS (a pass
+// among pairs, injected) — the pass guard's test (gocheat GC9).
+const FAULT_JOINT_PASS = argv.includes("--fault-joint-pass") ? { left: Number(argv[argv.indexOf("--fault-joint-pass") + 1]) } : null;
 const FAULT_NOTICE = argv.includes("--fault-notice") ? { left: Number(argv[argv.indexOf("--fault-notice") + 1]) } : null;
 
 let lastAnswers = null;
@@ -646,10 +649,21 @@ while (true) {
               }
               if (FAULT && FAULT.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-session]");
               const fn0 = cheatFnOf(req, maxms + 100, 0, 0.003);
-              const r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: fn0 ? [fn0] : null, cheats: req.cheat?.cheats ?? 0 } });
+              let r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: fn0 ? [fn0] : null, cheats: req.cheat?.cheats ?? 0 } });
               if (fn0) jointStats.requests++;
               backend = "model";
               extra.mode = "session";
+              // THE PASS-ONLY GUARD, solver side: with pairs on, a root that
+              // reads 'PASS only' is re-set with NO pairs; if the plain search
+              // has stones there, the pair path was wrong — counted and logged.
+              if (!r && fn0) {
+                r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: null, cheats: req.cheat?.cheats ?? 0 } });
+                if (r) {
+                  jointStats.passGuard = (jointStats.passGuard ?? 0) + 1;
+                  extra.jointGuard = "pass-only root with pairs on: searched singles";
+                  console.error(`go-solver: seq=${req.seq} JOINT GUARD: the pair root was PASS-only but singles exist — searched without pairs`);
+                }
+              }
               if (!r) {
                 ranked = null; // PASS is all there is
                 return null;
@@ -679,6 +693,27 @@ while (true) {
               const its = await sess.search({ maxms, untilWork: r.reused ? target : Infinity });
               if (!r.reused) sessRate = sessRate ? 0.8 * sessRate + 0.2 * (sess.rootWork / maxms) : sess.rootWork / maxms;
               ranked = sess.best();
+              if (fn0 && FAULT_JOINT_PASS && FAULT_JOINT_PASS.left-- > 0) ranked = [];
+              // A PASS chosen among pairs (before the AI has passed) is checked
+              // against the single search: pairs are an extra option, never a
+              // reason to pass where a stone is better.
+              if (fn0 && !opponentPassed && !(ranked && ranked.length)) {
+                const r2 = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: null, cheats: req.cheat?.cheats ?? 0 } });
+                if (r2) {
+                  await sess.search({ maxms });
+                  const single = sess.best();
+                  if (single && single.length) {
+                    ranked = single;
+                    jointStats.passGuard = (jointStats.passGuard ?? 0) + 1;
+                    extra.jointGuard = "pass among pairs: the single search plays a stone";
+                    console.error(`go-solver: seq=${req.seq} JOINT GUARD: a pass among pairs — the single search plays ${single[0].x},${single[0].y}`);
+                  }
+                }
+              }
+              if (sess.jointGuard?.hits && sess.jointGuard.hits !== jointStats.libGuard) {
+                jointStats.libGuard = sess.jointGuard.hits;
+                console.error(`go-solver: JOINT GUARD (golib): a pair filter emptied a node of stones ${sess.jointGuard.hits}x; last ${JSON.stringify(sess.jointGuard.last)}`);
+              }
               // ADAPTIVE BUDGET (req.adaptive {thr, mult}, go.js SETTINGS.adaptive):
               // the chosen move's own line wins under thr -> search on for
               // (mult - 1) x the budget (a hard layout; the streak is at stake).

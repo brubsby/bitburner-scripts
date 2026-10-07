@@ -1150,7 +1150,10 @@ export function modelSession(N, komi, model, opts = {}) {
   // the search picks the best pair instead of weighing pairs against singles
   // on thin subtrees (a cheat is worth playing whenever its window is open).
   const PAIRS_ONLY = !!opts.pairsOnly
-  const mergePairs = (untried, pairs) => (PAIRS_ONLY ? [...pairs, ...untried.filter((a) => a.idx === PASS)] : [...untried.slice(0, 3), ...pairs, ...untried.slice(3)])
+  // No legal pair (e.g. one stone left that is not an eye fill): the singles
+  // STAY — pairsOnly with no pairs left PASS alone, and setRoot's 'PASS only'
+  // answered a pass in 50ms on a won board (the 2026-10-07 07:39Z loss).
+  const mergePairs = (untried, pairs) => (!pairs.length ? untried : PAIRS_ONLY ? [...pairs, ...untried.filter((a) => a.idx === PASS)] : [...untried.slice(0, 3), ...pairs, ...untried.slice(3)])
   const CHEAT_COST_PLY = Number.isFinite(opts.cheatCostPly) ? opts.cheatCostPly : 0.22
   const NSQ = N * N
   const isPair = (idx) => idx >= NSQ
@@ -1175,15 +1178,18 @@ export function modelSession(N, komi, model, opts = {}) {
     const t = b.slice()
     return play(t, nbrs, i, US, scratch) >= 0
   }
-  const pairActions = (b, singles) => {
+  // valid: the game's own valid list where we have it (the root: superko
+  // against the real history lives there) — BOTH stones must be in it.
+  const inValid = (valid, i) => !valid || !!(valid[(i / N) | 0] && valid[(i / N) | 0][i % N])
+  const pairActions = (b, singles, valid = null) => {
     const out = []
-    const firsts = singles.filter((a) => a.idx !== PASS && legalAlone(b, a.idx)).slice(0, PAIRS[0])
+    const firsts = singles.filter((a) => a.idx !== PASS && legalAlone(b, a.idx) && inValid(valid, a.idx)).slice(0, PAIRS[0])
     for (const { idx: i1, h: h1 } of firsts) {
       const b1 = b.slice()
       if (play(b1, nbrs, i1, US, scratch) < 0) continue
       const sec = []
       for (let i = 0; i < NSQ; i++) {
-        if (b1[i] !== EMPTY || i === i1 || isFill(b1, i) || !legalAlone(b, i)) continue
+        if (b1[i] !== EMPTY || i === i1 || isFill(b1, i) || !legalAlone(b, i) || !inValid(valid, i)) continue
         const h = heuristic(b1, nbrs, i, scratch, US)
         if (h > -1e9) sec.push({ i, h })
       }
@@ -1201,9 +1207,9 @@ export function modelSession(N, komi, model, opts = {}) {
       const singles = (node.untried ?? []).filter((a) => !isPair(a.idx) && a.idx !== PASS)
       const known = [...node.children.keys()].filter((k) => !isPair(k) && k !== PASS).map((k) => ({ idx: k, h: heuristic(node.b, nbrs, k, scratch, US) }))
       const pool = [...singles, ...known].sort((a, z) => z.h - a.h)
-      const pairs = pairActions(node.b, pool)
+      const pairs = pairActions(node.b, pool, node === rootNode ? rootValid : null)
       node.untried = mergePairs(node.untried ?? [], pairs)
-      if (PAIRS_ONLY) for (const k of [...node.children.keys()]) if (k !== PASS && !isPair(k)) {
+      if (PAIRS_ONLY && pairs.length) for (const k of [...node.children.keys()]) if (k !== PASS && !isPair(k)) {
         const c = node.children.get(k)
         node.visits -= c.visits
         node.work -= c.work
@@ -1227,6 +1233,25 @@ export function modelSession(N, komi, model, opts = {}) {
         node.children.delete(k)
       }
     }
+    guardSingles(node, 'syncPairs')
+  }
+  // THE PASS-ONLY GUARD (an invariant, not a heuristic): a pair filter must
+  // never leave a B node with PASS as its only action while the plain search
+  // has stones there. Any path that empties a node of stones (pairsOnly with
+  // no legal pair, the reused root's valid filter dropping every pair) gets
+  // the singles back here, and it is COUNTED (jointGuard) — a nonzero count
+  // is a bug to find, published by go-solver, never a silent repair.
+  const jointGuard = { hits: 0, last: null }
+  const guardSingles = (node, why) => {
+    if (!PAIRS || !node || node.kind !== 0 || node.terminal) return
+    const has = (node.untried ?? []).some((a) => a.idx !== PASS) || [...node.children.keys()].some((k) => k !== PASS)
+    if (has) return
+    const done = new Set(node.children.keys())
+    const singles = actions(node.b, node === rootNode ? rootValid : null, node.passCount).filter((a) => a.idx !== PASS && !done.has(a.idx))
+    if (!singles.length) return
+    node.untried = [...singles, ...(node.untried ?? []).filter((a) => !singles.some((x) => x.idx === a.idx))]
+    jointGuard.hits++
+    jointGuard.last = { why, s: node.s, root: node === rootNode }
   }
   let rootHistory = []
   let points = 0
@@ -1379,7 +1404,10 @@ export function modelSession(N, komi, model, opts = {}) {
       node.tw = lastWon
     } else {
       node.untried = actions(b, valid, passCount)
-      if (cheatOk(node)) node.untried = mergePairs(node.untried, pairActions(b, node.untried))
+      if (cheatOk(node)) {
+        node.untried = mergePairs(node.untried, pairActions(b, node.untried, valid))
+        guardSingles(node, 'mkB')
+      }
     }
     return node
   }
@@ -1532,7 +1560,7 @@ export function modelSession(N, komi, model, opts = {}) {
           let moved = false
           if (isPair(idx)) {
             const [i1, i2] = pairOf(idx)
-            if (!legalAlone(node.b, i2)) continue
+            if (!legalAlone(node.b, i2) || (node === rootNode && !inValid(rootValid, i2))) continue
             if (b[i1] !== EMPTY || play(b, nbrs, i1, US, scratch) < 0) continue
             if (b[i2] !== EMPTY || play(b, nbrs, i2, US, scratch) < 0) continue
             if (repeats(toStr(b), node)) continue
@@ -1748,6 +1776,7 @@ export function modelSession(N, komi, model, opts = {}) {
         rootNode.cheats = rootCheats
         syncPairs(rootNode)
       }
+      guardSingles(rootNode, 'setRoot')
       const stones = [...rootNode.children.keys()].filter((k) => k !== PASS).length + rootNode.untried.filter((a) => a.idx !== PASS).length
       if (!stones) return null
       return { reused: !!reused, visits: rootNode.visits, work: rootNode.work }
@@ -1820,6 +1849,9 @@ export function modelSession(N, komi, model, opts = {}) {
         const r = bestOf(c, 0)
         if (r === null) continue
         const top = r[0]
+        // A PASS chosen among pairs is never pre-sent: the request decides it
+        // (go-solver's pass guard checks it against the single search).
+        if (!top && [...c.children.keys()].some(isPair)) continue
         out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y, ...(top.second ? { second: top.second } : {}) } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null, wr: top?.top?.[0]?.[4] ?? null, gap: top?.top?.[1] ? top.top[0][4] - top.top[1][4] : null })
         if (out.length >= max) break
       }
@@ -1941,6 +1973,10 @@ export function modelSession(N, komi, model, opts = {}) {
     },
     get rootVisits() {
       return rootNode ? rootNode.visits : 0
+    },
+    /** THE PASS-ONLY GUARD's count and last hit (0 = the pair filters never emptied a node). */
+    get jointGuard() {
+      return { ...jointGuard }
     },
     get rootWork() {
       return rootNode ? rootNode.work : 0
