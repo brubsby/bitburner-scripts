@@ -4883,13 +4883,15 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
   const cyc = cadence?.stats ?? null
   // THE GO FARM ON THE HACKING ROUTE (goplan.goExitInputsOf): w0r1d_d43m0n on
   // the post-Red-Pill climb, the exit faction's bonus and favor in the final
-  // window, the GoPower on g — the offline plan's Go terms (tools/sim/gameplan
-  // go.mjs) in the live exit. go.txt only when it is this life's.
+  // window, and the farm itself (go.farm), which exitplan prices in every
+  // later life's batch (goLifeLnOf) — go.js's RAM as its share of the
+  // batcher's (batch.txt ram.total). go.txt only when it is this life's.
+  // goCadenceMult is 1 (the ASSUMED eps power on ln g it replaced is gone).
   const goNow = (() => {
     try {
       const g = readJson(ns, '/tel/go.txt')
       const tel = g && g.lastAugReset === info?.lastAugReset && g.bitNode === info?.currentNode ? g : null
-      return goExitInputsOf({ goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1, sf14: sfLevel(info, 14), goTel: tel, cycleHours: cyc?.cycleHours, ownWeight: cadence?.weight ?? 0, exitFaction: EXIT_FACTION, favorStreamOf: goFavorStreamOf })
+      return goExitInputsOf({ goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1, sf14: sfLevel(info, 14), goTel: tel, ownWeight: cadence?.weight ?? 0, exitFaction: EXIT_FACTION, favorStreamOf: goFavorStreamOf, fleetGB: readJson(ns, '/tel/batch.txt')?.ram?.total ?? null })
     } catch (e) {
       return { go: null, goCadenceMult: 1, goWhy: `goExitInputsOf threw: ${String(e).slice(0, 120)}` }
     }

@@ -986,6 +986,140 @@ export function purchaseGainOf(cadence, L, from = null) {
   return { mL, gL: Math.exp(base), lnGainAt, lnGainRatio: (K) => lnGainAt(mL * K) - base }
 }
 
+// ---------------------------------------------------------------------------
+// THE GO FARM IN A LIFE (o.go.farm, goplan.goExitInputsOf) — what each later
+// life's batch gains from the farm that life plays, simulated over the life.
+//
+// Node power restarts at 0 at every install (Go.prestigeAugmentation,
+// Go/Go.ts:34-47) and accrues at the arm's rate while go.js plays it (and
+// keeps its effect after go.js moves on, until the install); the bonus is
+// CalculateEffect (Go/effects/effect.ts:16-22, goplan.effectAt) at the node's
+// GoPower and SF14, and it multiplies (effect.ts calculateMults):
+//   Netburners    hacknet_node_money — the rebuilt fleet's flow (freshHacknet)
+//   TheBlackHand  hacking_money — the hack side of the scripts' money
+//                 (hackShare, goweights' elasticity)
+//   Illuminati    hacking_speed — every H/G/W time /speed (Hacking.ts:75), so
+//                 the scripts' money AND exp: the level, so faction work
+//                 (linear in the level, reputation.ts:16)
+//   Daedalus      faction_rep
+// go.js's RAM takes `ramShare` of the scripts' stream (money and exp) while
+// it runs. Over one life of L hours from its install, at multiplier `mult`,
+// in GO_LIFE_STEPS midpoint steps, with the farm against without go.js:
+//   Km = sum(fleet eN + flat + scripts(level) eI (1 + hs (eB - 1)) (1 - ram)) / sum(fleet + flat + scripts(level0))
+//   Kr = sum(level eD) / sum(level0)       (the scripts' exp x eI x (1 - ram))
+// and the life's batch grows by ln = lnInc(Km) + liftShare x eRep x ln Kr —
+// the planner's own responses (the purchase model's money -> gain, eRep), the
+// ones the later lives' other lifts use (exitHours lifeLift). Plans: each arm
+// the whole life, and every ordered pair half and half (a coarse mix grid);
+// the best is kept, and no farm (ln 0) when every plan costs more than it
+// earns. Not simulated: the fleet's faster rebuild on its own larger
+// production (flow x eN: a floor), Illuminati's level in the hacknet or
+// contract streams.
+// ---------------------------------------------------------------------------
+
+const GO_LIFE_STEPS = 24
+const goLifeMemo = new Map()
+
+/**
+ * Every per-life farm plan's money and reputation multiples (Km, Kr) at the
+ * farm `f` ({goPower, sf14, arms, hackShare, ramShare}) with its rates scaled
+ * by `rateScale`. ctx: {L, mult, expF, expS, expK (the exp rate F + S + K (level + 50):
+ * F the sleeves' flat part, S and K the scripts' constant and per-level
+ * parts — those the bonus and the RAM scale), fleet (sorted [{atH, perSec}] from the install), flatPerSec,
+ * incomeAtLevel1}. Memoised on those numbers. Returns [{plan, Km, Kr}].
+ */
+export function goLifePlansOf(f, ctx, rateScale = 1) {
+  const L = ctx?.L
+  if (!f || !f.arms || !pos(L) || !pos(ctx.mult)) return []
+  const key = JSON.stringify([f.goPower, f.sf14, f.arms, f.hackShare, f.ramShare, L, ctx.mult, ctx.expF, ctx.expS, ctx.expK, ctx.fleet, ctx.flatPerSec, ctx.incomeAtLevel1, rateScale])
+  const hit = goLifeMemo.get(key)
+  if (hit) return hit
+  const arms = Object.keys(f.arms).filter((k) => pos(f.arms[k]?.powerPerH) && pos(f.arms[k]?.bonusPower))
+  const ram = num(f.ramShare) ? Math.min(1, Math.max(0, f.ramShare)) : 0
+  const hs = num(f.hackShare) ? Math.min(1, Math.max(0, f.hackShare)) : 0
+  const N = GO_LIFE_STEPS
+  const dt = L / N
+  const fleet = Array.isArray(ctx.fleet) ? ctx.fleet : []
+  const fleetAt = (age) => {
+    let v = 0
+    for (const x of fleet) {
+      if (x.atH <= age) v = x.perSec
+      else break
+    }
+    return v
+  }
+  const expF = pos(ctx.expF) ? ctx.expF : 0
+  const expK = pos(ctx.expK) ? ctx.expK : 0
+  const expS = pos(ctx.expS) ? ctx.expS : 0
+  const flat = pos(ctx.flatPerSec) ? ctx.flatPerSec : 0
+  const inc1 = pos(ctx.incomeAtLevel1) ? ctx.incomeAtLevel1 : 0
+  // One path: exp from 0 at the affine rate, the scripts' part (k) x the
+  // Illuminati bonus x what go.js leaves of their RAM; the level at each
+  // step's middle.
+  const pathOf = (scaleAt) => {
+    const lv = []
+    let e = 0
+    for (let j = 0; j < N; j++) {
+      const sc = scaleAt(j)
+      const r = expF + expS + expK > 0 ? affineRate(expF + expS * sc, expK * sc) : null
+      const em = r ? expAfterHours(e, dt / 2, ctx.mult, r) : e
+      lv.push(Math.max(1, contLevel(em, ctx.mult)))
+      if (r) e = expAfterHours(e, dt, ctx.mult, r)
+    }
+    return lv
+  }
+  const lvl0 = pathOf(() => 1)
+  const fl = Array.from({ length: N }, (_, j) => fleetAt((j + 0.5) * dt))
+  let m0 = 0
+  let l0 = 0
+  for (let j = 0; j < N; j++) {
+    m0 += fl[j] + flat + (inc1 * (lvl0[j] + 50)) / 51
+    l0 += lvl0[j]
+  }
+  const plans = [...arms.map((k) => [[k, L]])]
+  for (const a of arms) for (const b of arms) if (a !== b) plans.push([[a, L / 2], [b, L]])
+  const out = plans.map((plan) => {
+    // Each arm's power at step j's middle: banked while it is played, kept after.
+    const E = Array.from({ length: N }, (_, j) => {
+      const t = (j + 0.5) * dt
+      const e = {}
+      let from = 0
+      for (const [k, until] of plan) {
+        const n = f.arms[k].powerPerH * rateScale * Math.max(0, Math.min(t, until) - from)
+        e[k] = n > 0 ? effectAt(n, f.arms[k].bonusPower, f.goPower ?? 1, f.sf14 ?? 0) : 1
+        from = until
+      }
+      return (k) => e[k] ?? 1
+    })
+    const lv = pathOf((j) => E[j]('Illuminati') * (1 - ram))
+    let m = 0
+    let l = 0
+    for (let j = 0; j < N; j++) {
+      const x = E[j]
+      m += fl[j] * x('Netburners') + flat + ((inc1 * (lv[j] + 50)) / 51) * x('Illuminati') * (1 + hs * (x('TheBlackHand') - 1)) * (1 - ram)
+      l += lv[j] * x('Daedalus')
+    }
+    return { plan: plan.map(([k, u]) => (u < L ? `${k} to ${u.toFixed(2)}h` : k)).join(' then '), Km: m0 > 0 ? m / m0 : 1, Kr: l0 > 0 ? l / l0 : 1 }
+  })
+  if (goLifeMemo.size > 256) goLifeMemo.clear()
+  goLifeMemo.set(key, out)
+  return out
+}
+
+/**
+ * The best plan's ln lift of a life's batch: ln = lnInc(Km) + liftShare x
+ * eRep x ln Kr over goLifePlansOf, and no farm (ln 0) when none gains.
+ * Returns {ln, plan, Km, Kr}.
+ */
+export function goLifeLnOf(f, ctx, rateScale = 1, { lnInc = () => 0, eRep = 0, liftShare = 1 } = {}) {
+  let best = { ln: 0, plan: 'none', Km: 1, Kr: 1 }
+  for (const p of goLifePlansOf(f, ctx, rateScale)) {
+    const ln = lnInc(p.Km) + (pos(eRep) ? liftShare * eRep * Math.log(p.Kr) : 0)
+    if (num(ln) && ln > best.ln) best = { ...p, ln }
+  }
+  return best
+}
+
 export function exitHours(o = {}, installsAt = null, quiet = false) {
   // installsAt: the policy's install count, when the caller passes it beside
   // the inputs rather than in them (the policy search: a copy of the inputs
@@ -1123,6 +1257,17 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   const exitFavor = lostAtInstall && num(exitRepNow) && exitRepNow > 0 ? addRepToFavor(exitFavor0, exitRepNow) : exitFavor0
   const joinMoney = lostAtInstall ? Math.max(num(joinMoneyNow) ? joinMoneyNow : 0, num(rejoinMoney) ? rejoinMoney : 0) : joinMoneyNow
   const joinLevel = lostAtInstall ? Math.max(num(joinLevelNow) ? joinLevelNow : 0, num(rejoinLevel) ? rejoinLevel : 0) : joinLevelNow
+  // THE FINAL WINDOW'S TWO GO SCHEDULES (o.goFinal, priced at the window's
+  // start below): offered where an install opens the window with a fleet to
+  // rebuild and a join to hoard for; both simulated, the sooner kept.
+  const farmF = o.go?.farm ?? null
+  const netb = farmF?.arms?.Netburners
+  const canHacknet = !!(farmF && netb && pos(netb.powerPerH) && pos(netb.bonusPower) && installsFirst > 0 && Array.isArray(o.freshHacknet) && o.freshHacknet.some((x) => num(x?.atH) && pos(x?.perSec)) && pos(joinMoney) && joinMoney > (num(installCash) && installCash >= 0 ? installCash : 1262))
+  if (canHacknet && o.goFinal !== 'rep' && o.goFinal !== 'hacknet') {
+    const a = exitHours({ ...o, goFinal: 'rep' }, installsFirst, quiet)
+    const b = exitHours({ ...o, goFinal: 'hacknet' }, installsFirst, quiet)
+    return num(b.hours) && (!num(a.hours) || b.hours < a.hours) ? b : a
+  }
   // INCOME THAT THE NEXT INSTALL DESTROYS (lifeIncome, $/s): hacknet
   // production — hashes sold, or a node's money — from servers/nodes that
   // prestigeAugmentation deletes (PlayerObjectGeneralMethods.ts:130). It is
@@ -1318,6 +1463,8 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // The exit faction's favor at the final window: today's, or what a favor life banked (o.favorLife).
   let favorBanked = num(exitFavor) && exitFavor > 0 ? exitFavor : 0
   let favorLifeOut = null
+  let goLifeOut = null
+  let goFinalOut = null
   let lifeLegsOut = []
   let perLifeOut = null
   if (installsFirst > 0) {
@@ -1407,6 +1554,33 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     const lifeLift = (t, gRep, gMoney) => Math.exp(liftShare * (lnRepPart(gRep) + Math.log(repLiftAt(t))) + lnIncPart(ratioInc * gMoney * incomeKAt(t)))
     // Cycle by cycle, so a later-arriving income can lift the cycles after it.
     mult = hackingMult * firstGain * (Array.isArray(perCycleExtra?.byInstall) ? cycleExtraAt(0) : 1)
+    // THE GO FARM IN EVERY LATER LIFE (o.go.farm, goLifeLnOf): each life
+    // installed from here on farms from 0 — the best arm (or pair) of the
+    // node's farm lifts its batch by goNow.ln, through the same responses as
+    // every other lift. DE-BIASED: the measured cadence's own lives (share
+    // `embedded.ownShare`, the cadence posterior's own weight) already carried
+    // the farm they played (goplan.GO_EMBEDDED: GoPower 1, no SF14, the
+    // release-1 rates), so that farm's lift is taken out of g on their share
+    // — g x e^(now - ownShare x then). The current life's batch (the first
+    // install) is its own measured plan: untouched.
+    let goGain = 1
+    if (o.go?.farm && installsFirst > 1) {
+      const f = o.go.farm
+      const shapedL = expScalesWithLevel === true && pos(hacking)
+      const R = (pos(expPerSec) ? expPerSec : 0) * (pos(installGains?.exp) && installGains.exp >= 1 ? installGains.exp : 1)
+      const F = shapedL ? Math.min(R, pos(expFlatPerSec) ? expFlatPerSec : 0) : 0
+      const fleetL = Array.isArray(o.freshHacknet) ? o.freshHacknet.filter((x) => num(x?.atH) && num(x?.perSec) && x.perSec >= 0).sort((a, b) => a.atH - b.atH) : []
+      const ctx = { L: cycleHours, mult, expF: F, expS: shapedL ? 0 : R, expK: shapedL ? (R - F) / (hacking + 50) : 0, fleet: fleetL, flatPerSec: flatInc, incomeAtLevel1 }
+      const resp = { lnInc: (K) => lnIncPart(ratioInc * K) - lnIncPart(ratioInc), eRep: num(eRep) && eRep > 0 ? eRep : 0, liftShare }
+      const now = goLifeLnOf(f, ctx, 1, resp)
+      const emb = f.embedded ?? null
+      const ownShare = num(emb?.ownShare) ? Math.min(1, Math.max(0, emb.ownShare)) : 0
+      const then = emb && ownShare > 0 ? goLifeLnOf({ ...f, goPower: emb.goPower ?? 1, sf14: emb.sf14 ?? 0 }, ctx, num(emb.rateScale) && emb.rateScale >= 0 ? emb.rateScale : 1, resp) : { ln: 0, plan: 'none', Km: 1, Kr: 1 }
+      const ln = now.ln - ownShare * then.ln
+      goGain = Math.exp(ln)
+      goLifeOut = { ln, now, then, ownShare, lives: installsFirst - 1 }
+    }
+    const gCyc = multGainPerCycle * goGain
     // A GRAFT PERSISTS THROUGH EVERY LATER INSTALL (it is pushed onto
     // Player.augmentations, AugmentationHelpers.ts:65, which Prestige.ts:122
     // re-applies; its entropy stack too, Prestige.ts:128). So a graft in life
@@ -1440,7 +1614,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // k = 1..400 and the loop made it quadratic (live BN9 2026-09-29, 0.5h
     // cycles, the optimum at ~325 installs). Lives that graft are walked one
     // by one up to the last of them, and the power covers the rest.
-    const cycleAt = (i, t) => multGainPerCycle * lifeLift(t, graftRepK, graftMoneyK) * cycleExtraAt(i)
+    const cycleAt = (i, t) => gCyc * lifeLift(t, graftRepK, graftMoneyK) * cycleExtraAt(i)
     // ...and past the last hour at which anything varies (the last income
     // step, where it moves the growth; the rep lift's start; a per-cycle
     // extra's first install) every later cycle is the same: one power again.
@@ -1492,7 +1666,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         if (pos(leg.g.hacking)) graftHackLater *= leg.g.hacking
         lifeLegs.push({ life, ...leg })
       }
-      mult *= multGainPerCycle * liftBefore * cycleExtraAt(i)
+      mult *= gCyc * liftBefore * cycleExtraAt(i)
       t += len
     }
     if (i < installsFirst) mult *= Math.pow(cycleAt(i, t), installsFirst - i)
@@ -1545,7 +1719,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       const ks = lifeStreamMultiples(steps, incomePerSec, firstH, cycleHours, lives)
       const kAll = ks.mean
       const lnBought = (k) => buyer.lnGainAt(buyer.mL * k * ratioInc * graftMoneyK)
-      const boughtFixed = buyer ? Math.log(multGainPerCycle / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) : null
+      const boughtFixed = buyer ? Math.log(gCyc / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) : null
       const boughtMoney = buyer ? ks.runs.reduce((a, r) => a + r.n * lnBought(r.k), 0) / lives : null
       perLifeOut = { lives, cycleHours, pricedLn: Math.log(mult / multAfterFirst / graftHackLater) / lives, boughtLn: buyer ? boughtMoney + boughtFixed : null, moneyL: buyer ? buyer.mL : null, kAll, kFirst: ks.first, kLast: ks.last, kPeak: ks.peak }
     }
@@ -1557,7 +1731,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // BitNode 8 — which REPLACES the balance, positions included (the market
     // re-initialises, Prestige.ts:166-170).
     cash = num(installCash) && installCash >= 0 ? installCash : 1262
-    legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: D(() => `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}`) })
+    legs.push({ leg: 'install cycles', hours: firstH + (installsFirst - 1) * cycleHours, detail: D(() => `first after ${firstH.toFixed(2)}h, then ${installsFirst - 1} x ${cycleHours.toFixed(2)}h, mult ${hackingMult.toFixed(2)} -> ${mult.toFixed(2)}${goLifeOut ? `; the Go farm each later life: ${goLifeOut.now.plan} (money x${goLifeOut.now.Km.toFixed(3)}, rep x${goLifeOut.now.Kr.toFixed(3)}: ln ${goLifeOut.now.ln.toFixed(4)}) less the cadence lives' own ${goLifeOut.then.plan} (ln ${goLifeOut.then.ln.toFixed(4)} x ${goLifeOut.ownShare.toFixed(2)}): g x${Math.exp(goLifeOut.ln).toFixed(4)}` : ''}`) })
     if (favorLifeOut) legs.push({ leg: 'favor life', hours: favorLifeOut.extraH, detail: D(() => `life ${favorLifeOut.life} joins the exit faction and banks ${Math.round(favorLifeOut.rep)} rep in ${favorLifeOut.legsH.toFixed(2)}h (life ${favorLifeOut.lifeH.toFixed(2)}h, +${favorLifeOut.extraH.toFixed(2)}h): favor ${favorLifeOut.favor.toFixed(1)} in the final window`) })
   }
 
@@ -1620,16 +1794,32 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     }
     return at < 0 ? 0 : fleet[at].perSec
   }
+  let eNet = null
   const moneyLeg = (target, targetAt = null) => {
     const t0 = h
     const age0 = h - finalStart
-    const ex = steps.length && fleet.length ? (rel) => extraAt(t0 + rel) + fleetAt(age0 + rel) : steps.length ? (rel) => extraAt(t0 + rel) : fleet.length ? (rel) => fleetAt(age0 + rel) : null
+    const fl = eNet ? (age) => fleetAt(age) * eNet(age) : fleetAt
+    const ex = steps.length && fleet.length ? (rel) => extraAt(t0 + rel) + fl(age0 + rel) : steps.length ? (rel) => extraAt(t0 + rel) : fleet.length ? (rel) => fl(age0 + rel) : null
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
     return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: ex, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
+  // THE FINAL WINDOW'S FARM BEFORE THE RED PILL (o.goFinal 'rep' | 'hacknet';
+  // absent: both simulated, the sooner kept). 'rep': Daedalus from the
+  // window's install (o.go.rep, the ground reputation leg's faction_rep).
+  // 'hacknet': Netburners (o.go.farm.arms) on the fleet the window rebuilds
+  // (freshHacknet x CalculateEffect from the install, its effect kept after
+  // the switch, Go.ts:34-47 zeroes it only at an install) until the join, then
+  // Daedalus from 0 at the join. Offered where the window has a fleet and a
+  // join to hoard for. Not simulated: Illuminati before the Red Pill (the join
+  // level and the level-scaled grind), go.js's RAM in the window's scripts.
+  // (The two schedules branch at the top of this function, before anything is simulated twice.)
+  const goHacknet = canHacknet && o.goFinal === 'hacknet'
+  let goJoinAge = null
+  eNet = goHacknet ? (age) => effectAt(netb.powerPerH * Math.max(0, goJoinAge === null ? age : Math.min(age, goJoinAge)), netb.bonusPower, farmF.goPower ?? 1, farmF.sf14 ?? 0) : null
+  if (farmF) goFinalOut = { final: goHacknet ? 'Netburners to the join, then Daedalus' : 'Daedalus from the install' }
   // THE SLEEVES' EXP TRANSFER ACROSS THE WINDOW (sleeveExp): it reaches the
   // player from the window's start, not only on the climb — every money leg,
   // the join level and the level-scaled rep leg bank it, and at a fresh
@@ -1809,7 +1999,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     if (!num(hm)) return { hours: null, why: 'could not price the join-money leg' }
     h += hm
     cash = joinMoney
-    legs.push({ leg: 'hoard join money', hours: hm, detail: D(() => `$${Math.round(joinMoney)} in hand`) })
+    legs.push({ leg: 'hoard join money', hours: hm, detail: D(() => `$${Math.round(joinMoney)} in hand${goHacknet ? `; the rebuilt fleet x${eNet(h - finalStart).toFixed(3)} by Netburners at the join` : ''}`) })
     // The hoard leg also banks exp, which the climb below inherits.
     exp = expAdv(exp, hm)
   }
@@ -1827,6 +2017,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   }
 
   if (terminalRep > 0) {
+    if (goHacknet) goJoinAge = h - finalStart
     const fleetOn = !!sleeveRep && (pos(sleeveRep.perSec) || (Array.isArray(sleeveRep.steps) && sleeveRep.steps.some((x) => pos(x?.perSec))))
     const sRep = sleeveRateFn(fleetOn ? sleeveRep : null)
     // THE CONTRACTS' REPUTATION (contractRep): banked from the join (this
@@ -1867,7 +2058,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // window's install (Go.prestigeAugmentation zeroes it, Go/Go.ts:34-47) at
     // the farm's rate — tj hours after the join, h - finalStart into the window.
     const gRep = o.go?.rep && pos(o.go.rep.powerPerH) && pos(o.go.rep.bonusPower) ? o.go.rep : null
-    const goRepAt = gRep ? ((t0) => (tj) => effectAt(gRep.powerPerH * (t0 + Math.max(0, tj)), gRep.bonusPower, gRep.goPower ?? 1, gRep.sf14 ?? 0))(Math.max(0, h - finalStart)) : null
+    const goRepAt = gRep ? ((t0) => (tj) => effectAt(gRep.powerPerH * (t0 + Math.max(0, tj)), gRep.bonusPower, gRep.goPower ?? 1, gRep.sf14 ?? 0))(goHacknet ? 0 : Math.max(0, h - finalStart)) : null
     const fmBase = fStream ? (tj) => 1 + repToFavor(favorToRep(fav0) + Math.min(fCap, fStream.repPerH * Math.max(0, tj))) / 100 : () => 1 + fav0 / 100
     const fmAt = goRepAt ? (tj) => fmBase(tj) * goRepAt(tj) : fmBase
     const fm0 = fmAt(0)
@@ -2090,6 +2281,14 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     h = graftDone
   }
   const expOn = !!sleeveExp && (pos(sleeveExp.perSec) || (Array.isArray(sleeveExp.steps) && sleeveExp.steps.some((x) => pos(x?.perSec))))
+  // GO.JS'S RAM ON THE CLIMB (o.go.farm.ramShare): the farm plays through it
+  // (w0r1d_d43m0n or Illuminati), so the scripts' part of the exp rate runs
+  // on what it leaves; the flat part (the sleeves') is untouched.
+  const ramC = farmF && num(farmF.ramShare) ? Math.min(1, Math.max(0, farmF.ramShare)) : 0
+  if (ramC > 0 && pos(expRate)) {
+    const fl0 = shaped ? Math.min(expRate, expFlat) : 0
+    expRate = (expRate - fl0) * (1 - ramC) + fl0
+  }
   // Hours from exp 0 to hacking `lvl` at `mult` in the fresh life after the terminal install.
   const climbFor = (lvl) => {
     let climb
@@ -2186,12 +2385,56 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       climb = t
     }
   }
+  // ILLUMINATI ON THE CLIMB INSTEAD (o.go.farm.arms.Illuminati): hacking_speed
+  // x CalculateEffect from the Red Pill's install speeds the scripts' exp
+  // (every H/G/W time /speed, Hacking.ts:75); the flat part (the sleeves')
+  // is not theirs. Stepped (5% of the elapsed climb, >= 3 min), the rate
+  // affine inside each step at its midpoint bonus, landing exactly in the
+  // step that reaches the level. The sooner of the two arms is the climb.
+  // Not simulated: a split between them, and Illuminati with a sleeve's
+  // piecewise exp (expOn) — w0r1d_d43m0n alone there.
+  const ill = farmF?.arms?.Illuminati
+  if (ill && pos(ill.powerPerH) && pos(ill.bonusPower) && !expOn && pos(expRate) && pos(mult)) {
+    const base = expAt()
+    const aff = base.affine ?? { F: expRate, k: 0 }
+    const F0 = shaped ? Math.min(aff.F, expFlat) : 0
+    const S0 = aff.F - F0
+    const eI = (t) => effectAt(ill.powerPerH * t, ill.bonusPower, farmF.goPower ?? 1, farmF.sf14 ?? 0)
+    const need = expForLevel(exitLevel, mult)
+    let e = 0
+    let t = 0
+    let tI = Infinity
+    // SCREENED FIRST: the bonus only rises, so a climb at the bonus it would
+    // reach by the other arm's finish, from the start, bounds it below — when
+    // that is no sooner, Illuminati cannot win and the steps are skipped.
+    const horizon = num(climb) ? Math.min(climb, DEGENERATE_H) : DEGENERATE_H
+    const xMax = eI(horizon)
+    const lb = hoursToLevelShaped(exitLevel, mult, 0, affineRate(F0 + S0 * xMax, aff.k * xMax))
+    if (num(lb) && lb >= horizon) t = DEGENERATE_H
+    for (let it = 0; it < 2000 && t < DEGENERATE_H; it++) {
+      const dt = Math.max(0.05, 0.05 * t)
+      const x = eI(t + dt / 2)
+      const r = affineRate(F0 + S0 * x, aff.k * x)
+      const land = need <= e ? 0 : hoursToLevelShaped(exitLevel, mult, e, r)
+      if (num(land) && land <= dt) {
+        tI = t + land
+        break
+      }
+      e = expAfterHours(e, dt, mult, r)
+      t += dt
+    }
+    if (num(tI) && (!num(climb) || tI < climb)) {
+      w0Out = { arm: 'Illuminati', E: eI(tI), withoutH: num(w0Out?.withoutH) ? w0Out.withoutH : climb, w0H: climb }
+      climb = tI
+    }
+  }
+  if (farmF || w0) goFinalOut = { ...(goFinalOut ?? {}), climb: w0Out?.arm === 'Illuminati' ? 'Illuminati' : w0Out ? 'w0r1d_d43m0n' : 'none (the climb is not shortened)' }
   if (!num(climb)) return { hours: null, why: 'could not price the final climb' }
   // The climb starts in a FRESH life: exp reset, fleet re-rooted, low targets
   // first — its measured lag behind a constant rate is charged once.
   const lagH = climb > 0 && num(freshExpLagH) && freshExpLagH > 0 ? freshExpLagH : 0
   h += climb + lagH
-  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: D(() => `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})${w0Out ? `; w0r1d_d43m0n farmed from The Red Pill: x${w0Out.W.toFixed(3)} after ${w0Out.games} game(s), ${w0Out.withoutH.toFixed(2)}h without it` : ''}`) })
+  legs.push({ leg: 'climb to exit level', hours: climb + lagH, detail: D(() => `hacking ${exitLevel} at mult ${mult.toFixed(2)} from a fresh life (exp reset by the terminal install${lagH ? `, +${lagH.toFixed(2)}h measured fresh-life ramp` : ''})${w0Out?.arm === 'Illuminati' ? `; Illuminati farmed from The Red Pill: hacking speed x${w0Out.E.toFixed(3)} at the level, ${w0Out.w0H.toFixed(2)}h on w0r1d_d43m0n, ${w0Out.withoutH.toFixed(2)}h without a farm` : w0Out ? `; w0r1d_d43m0n farmed from The Red Pill: x${w0Out.W.toFixed(3)} after ${w0Out.games} game(s), ${w0Out.withoutH.toFixed(2)}h without it` : ''}`) })
   // Rooting w0r1d_d43m0n: the openers bought again from the reset balance,
   // concurrent with the climb — only the excess binds.
   if (pos(finalRootCost)) {
@@ -2221,7 +2464,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
 
   // The earlier lives' grafting legs, for the executor: life 1's length is
   // how long the current life is held open for its grafts.
-  return { hours: h, legs, mult, finalStartH: finalStart, ...(favorLifeOut ? { favorLife: favorLifeOut } : {}), ...(perLifeOut ? { perLife: perLifeOut } : {}), ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
+  return { hours: h, legs, mult, finalStartH: finalStart, ...(goLifeOut || goFinalOut ? { go: { ...(goLifeOut ? { life: goLifeOut } : {}), ...goFinalOut } } : {}), ...(favorLifeOut ? { favorLife: favorLifeOut } : {}), ...(perLifeOut ? { perLife: perLifeOut } : {}), ...(lifeLegsOut.length ? { lifeGraftLegs: lifeLegsOut.map((l) => ({ life: l.life, n: l.n, cost: l.cost, moneyH: l.moneyH, slotH: l.slotH, lifeH: l.lifeH, extraH: l.extraH })) } : {}) }
 }
 
 /**

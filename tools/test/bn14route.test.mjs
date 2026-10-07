@@ -11,8 +11,10 @@
 //        BN14's hack-route prior from BN9/BN6's hacking lives, not BN4's black-op lives
 //   GR3  the w0r1d_d43m0n climb in exitplan is tools/sim/gameplan/go.mjs goWindow's first
 //        passage (per game, W stepping) on a constant-rate climb, to 1e-6h
-//   GR4  goplan.goExitInputsOf's g factor is go.mjs goGFactor(s, baseBonus(L), eps14 mid)
-//   GR5  every Go term can only shorten the exit (w0 climb, Daedalus rep bonus, favor stream, g)
+//   GR4  goplan.goExitInputsOf's g factor is 1 (the ASSUMED eps14 power, retired 2026-10-07):
+//        the farm itself carries GoPower x SF14, priced per life in exitplan (gofarm.test GF*)
+//   GR5  every Go term can only shorten the exit (w0 climb, Daedalus rep bonus, favor stream,
+//        each later life's farm)
 //   GR6  the decision replayed: corrected hack arm vs the published blade draws — finite
 //        stats, the rule's own record, the key it takes (noted with the medians)
 //   GR7  wiring: progress.js puts the Go terms and goCadenceMult in the exit inputs;
@@ -102,19 +104,24 @@ export async function run() {
     }
   }
 
-  const c4 = new Check('GR4', "goExitInputsOf's g factor = go.mjs goGFactor(GoPower x SF14, baseBonus(L), eps14 mid)")
+  const c4 = new Check('GR4', "goExitInputsOf's g factor is 1 (eps14 retired); the farm carries GoPower and SF14 to exitplan's per-life channel")
   checks.push(c4)
-  for (const [gp, s14, L] of [[4, 0, 2.36], [4, 1, 2.63], [1, 0, 3], [1, 1, 1.5]]) {
-    const got = G.goExitInputsOf({ goPower: gp, sf14: s14, cycleHours: L, ownWeight: 0 }).goCadenceMult
-    const want = GO.goGFactor(GO.goScale(gp, s14), GO.baseBonus(L), G.GO_EPS14)
+  for (const [gp, s14, w] of [[4, 0, 0], [4, 1, 0.5], [1, 0, 1], [1, 1, 0]]) {
+    const r = G.goExitInputsOf({ goPower: gp, sf14: s14, ownWeight: w })
     c4.examined(1)
-    if (!(Math.abs(got - want) < 1e-9)) c4.fail(`GoPower ${gp} SF14 ${s14} L ${L}: ${got} vs go.mjs ${want}`)
+    if (r.goCadenceMult !== 1) c4.fail(`GoPower ${gp} SF14 ${s14}: goCadenceMult ${r.goCadenceMult} (the eps power is retired)`)
+    if (!(r.go?.farm?.goPower === gp && r.go.farm.sf14 === s14 && r.go.farm.embedded?.ownShare === w)) c4.fail(`GoPower ${gp} SF14 ${s14}: the farm must carry them and the own share ${w}`, JSON.stringify(r.go?.farm))
   }
   {
-    const w = G.goExitInputsOf({ goPower: 4, sf14: 0, cycleHours: 2.36, ownWeight: 1 }).goCadenceMult
+    const k = X.bestExitPolicy({ ...base, cycleHours: cNew.stats.cycleHours, multGainPerCycle: cNew.stats.multGainPerCycle, go: gx.go }).best.installsFirst
+    const r = X.exitHours({ ...base, cycleHours: cNew.stats.cycleHours, multGainPerCycle: cNew.stats.multGainPerCycle, go: gx.go }, k)
     c4.examined(1)
-    if (w !== 1) c4.fail(`own lives carry the whole cadence: the factor must be 1, got ${w}`)
-    c4.note(`BN14.1 (GoPower 4, SF14 0): g x${gx.goCadenceMult.toFixed(4)}`)
+    c4.note(`BN14.1 (GoPower 4, SF14 0), ${k} installs: ${r.go?.life ? `each later life ${r.go.life.now.plan} ln ${r.go.life.now.ln.toFixed(4)} less ${r.go.life.ownShare.toFixed(2)} x ${r.go.life.then.ln.toFixed(4)}: g x${Math.exp(r.go.life.ln).toFixed(4)}` : 'no later life'}`)
+    // This pass measured no batch response (eRep 0, eBudget 0): no lift, the floor every other later-life lift takes.
+    if (!(r.go?.life?.ln === 0)) c4.fail('with no measured batch response the farm lifts nothing (a floor, never a guess)', JSON.stringify(r.go))
+    const r2 = X.exitHours({ ...base, cycleHours: cNew.stats.cycleHours, multGainPerCycle: cNew.stats.multGainPerCycle, go: gx.go, eRep: 0.0368 }, k)
+    c4.note(`at BN9.2's measured eRep 0.0368: each later life ${r2.go?.life?.now?.plan} ln ${r2.go?.life?.now?.ln?.toFixed(4)}: g x${Math.exp(r2.go?.life?.ln ?? 0).toFixed(4)}`)
+    if (k > 1 && !(r2.go?.life?.ln > 0)) c4.fail('at GoPower 4 with a measured eRep the farm must lift each later life', JSON.stringify(r2.go))
   }
 
   const c5 = new Check('GR5', 'every Go term only shortens the exit (BN14 point, corrected cadence)')
@@ -125,8 +132,8 @@ export async function run() {
   const steps = [
     ['w0', { go: { w0: gx.go.w0 } }],
     ['+ Daedalus rep bonus', { go: { w0: gx.go.w0, rep: gx.go.rep } }],
-    ['+ favor stream', { go: gx.go }],
-    ['+ g', { go: gx.go, goCadenceMult: gx.goCadenceMult, multGainPerCycle: Math.exp(Math.log(cad.multGainPerCycle) * gx.goCadenceMult) }],
+    ['+ favor stream', { go: { w0: gx.go.w0, rep: gx.go.rep, favorStream: gx.go.favorStream } }],
+    ["+ each later life's farm", { go: gx.go }],
   ]
   let prev = h0
   const row = [`none ${h0.toFixed(2)}h`]

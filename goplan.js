@@ -1479,56 +1479,97 @@ export function obsDue(gamesOnW0) {
 export const W0_GAMES_PER_H = 11.4
 
 /**
- * The elasticity of the hacking route's growth (ln M per hour) to the Go
- * rate bonus — ASSUMED, the mid of tools/sim/gameplan/effects.mjs eps14
- * (0 / 0.12 / 0.3): the one number of the Go model the source does not give.
+ * The elasticity the hacking exit's g USED to carry for the Go farm (ASSUMED,
+ * the mid of tools/sim/gameplan/effects.mjs eps14) — RETIRED from the live
+ * exit 2026-10-07: goExitInputsOf now passes the farm itself (go.farm) and
+ * exitplan prices each life's channel explicitly. Kept for the offline
+ * gameplan's eps14 parameter, which still uses it.
  */
 export const GO_EPS14 = 0.12
+
+/**
+ * THE HIDDEN OPPONENT'S RATE IN THE HARNESS (e64e111, 2026-10-07): 19x19 vs
+ * the hidden AI, the walls KataGo engine at 800 visits pondering the AI's
+ * replies at its predicted seeds (the live spread) — 8/8 won, 30,174 node
+ * power an hour, AI compute charged. Above W0_PRIOR (12,550/h, the
+ * derivation over the pre-ponder inputs, GP8) because the ponder cut the
+ * think time 0.6s -> 13ms a move. The hacking exit prices the post-Red-Pill
+ * farm at this until go.js measures its own (>= W0_MEASURED_MIN games).
+ * NOT CALIBRATED live: The Red Pill has not been installed with the ponder on.
+ */
+export const W0_HARNESS = { powerPerHour: 30174, games: 8, source: 'harness 30174/h (e64e111: walls KataGo + seeded ponder, 8/8 won; not yet measured live)' }
+
+/** go.js's static RAM (tools/precheck.mjs, e64e111: 20.75GB), the farm's cost to the scripts' stream wherever it sits. */
+export const GO_RAM_GB = 20.75
+
+/**
+ * THE FARM THE MEASURED CADENCE ALREADY CARRIES (exitplan de-biases g by it):
+ * the lives the hacking cadence was measured on (BN9.1, 2026-09-30/10-01, and
+ * the cross-node lives before them) played at GoPower x1 with no Source-File
+ * 14 (SF14.1 came 2026-10-05) and the release-1 solver, whose rates were ~2x
+ * below the release-2 table POWER_PER_HOUR descends from (this file's header:
+ * "the previous table ... was ~2x lower across the board"). rateScale 0.5 of
+ * POWER_PER_HOUR, the best arm for those lives (an upper bound on what they
+ * had: it removes the most).
+ */
+export const GO_EMBEDDED = { goPower: 1, sf14: 0, rateScale: 0.5, why: 'the cadence lives\' farm (GoPower 1, no SF14, the release-1 solver at ~0.5x POWER_PER_HOUR, its best arm: an upper bound)' }
+
+/** The opponents whose bonus reaches a hacking-route life's batch (exitplan goLifeLnOf). */
+export const GO_LIFE_ARMS = ['Daedalus', 'Netburners', 'TheBlackHand', 'Illuminati']
 
 /** Finished 5x5 games an hour with the solver answering (BN9's last go.js, 2026-10-02; go.mjs GO_MEASURED.gamesPerH). */
 export const GAMES_PER_H_5X5 = 160
 
 /**
- * THE GO FARM IN THE LIVE HACKING EXIT (exitplan o.go and goCadenceMult) —
- * the offline whole-game plan's Go terms (tools/sim/gameplan/go.mjs,
- * routes.mjs hackParts) on the live simulator, one formula each:
+ * THE GO FARM IN THE LIVE HACKING EXIT (exitplan o.go) — the farm itself, so
+ * the exit simulation prices every channel where it acts:
  *
+ *   farm    each LIFE's farm (exitplan goLifeLnOf): node power from 0 at the
+ *           life's install (Go.prestigeAugmentation, Go/Go.ts:34-47) at each
+ *           arm's measured rate (POWER_PER_HOUR: the go-w0 / go-study-report
+ *           harnesses), the effect by CalculateEffect at this node's GoPower
+ *           and SF14 (effectAt) on the stream it multiplies — Netburners the
+ *           rebuilt hacknet fleet, The Black Hand the hack side of the
+ *           scripts' money, Illuminati the scripts' speed (their money and
+ *           exp: the level, so the level-scaled faction work), Daedalus
+ *           faction_rep — through the planner's measured responses of a
+ *           life's batch (the purchase model's money -> gain, eRep), with
+ *           go.js's RAM (GO_RAM_GB of `fleetGB`) off the scripts' stream. The
+ *           best arm or half-and-half pair per life is simulated and kept. g
+ *           is DE-BIASED by GO_EMBEDDED on the own lives' share (`ownWeight`):
+ *           the measured lives already carried their weaker farm.
  *   w0      The Red Pill installed, the farm plays w0r1d_d43m0n through the
  *           climb (hacking skill x effect, bonusPower 2): exitplan prices the
  *           first passage per game (go.mjs goWindow). Rate: go.js's measured
- *           one (>= W0_MEASURED_MIN games, /tel/go.txt w0.rate) else W0_PRIOR.
+ *           one (>= W0_MEASURED_MIN games, /tel/go.txt w0.rate) else
+ *           W0_HARNESS. exitplan prices Illuminati on the climb instead too,
+ *           and keeps the sooner.
  *   rep     The final window's farm on the exit faction (Daedalus, bonusPower
  *           1.1, faction_rep): its power from the window's install at the
- *           measured 5x5 rate (POWER_PER_HOUR.Daedalus) — the faction_rep
- *           factor on the ground reputation leg.
+ *           measured 5x5 rate — the faction_rep factor on the ground
+ *           reputation leg. exitplan prices Netburners on the rebuilt fleet
+ *           until the join and Daedalus from it too, and keeps the sooner.
  *   favorStream  the same games' favor (favor.goFavorStreamOf: games/h x
  *           p^2/(1+p) x getMaxRep/200, to getMaxRep), from the join — passed
- *           so exitplan uses it where no MEASURED stream exists (go.js not on
- *           the exit faction today).
- *   cadenceMult  the Go rate bonus on g: ((1 + s abar)/(1 + abar))^eps14
- *           (go.mjs goGFactor), s = GoPower x (SF14 ? 2 : 1), abar the
- *           measured runs' mean Daedalus bonus over a life (meanEffect at
- *           GoPower 1) — the nodes the cadence was measured in played at
- *           s = 1. Applied to ln(M) only for the share of the cadence that is
- *           NOT this node's own lives ((1 - ownWeight)): its own lives
- *           already carry the node's GoPower.
+ *           so exitplan uses it where no MEASURED stream exists.
  *
- * o: { goPower, sf14, goTel (/tel/go.txt, this life's), cycleHours, ownWeight,
- *      exitFaction, favorStreamOf (favor.goFavorStreamOf) }.
- * Returns { go: {w0, rep, favorStream|null, why}, goCadenceMult }.
- * NOT PRICED, named: the hacking_money / hacking_speed channels on the money
- * legs (goweights prices them for the opponent choice; here they reach the
- * exit only through cadenceMult), go.cheat (BN14.2 / SF14.2+), combat on the
- * gym (the Bladeburner arm's).
+ * goCadenceMult is 1: the ASSUMED eps14 power on ln g it replaced (GO_EPS14)
+ * is gone from the live exit — the channel is the farm above.
+ *
+ * o: { goPower, sf14, goTel (/tel/go.txt, this life's), ownWeight,
+ *      exitFaction, favorStreamOf (favor.goFavorStreamOf), fleetGB (the
+ *      batcher's RAM, batch.txt ram.total) }.
+ * Returns { go: {w0, rep, favorStream|null, farm, why}, goCadenceMult: 1 }.
+ * NOT PRICED, named: go.cheat (BN14.2 / SF14.2+; the 5x5 rates are the
+ * no-cheat arms), combat on the gym (the Bladeburner arm's).
  */
 export function goExitInputsOf(o = {}) {
   const goPower = num(o.goPower) && o.goPower > 0 ? o.goPower : 1
   const sf14 = num(o.sf14) ? o.sf14 : 0
-  const s = goPower * (sf14 >= 1 ? 2 : 1)
   const tel = o.goTel && typeof o.goTel === 'object' ? o.goTel : null
   const r = tel?.w0?.rate
   const measured = r && typeof r.source === 'string' && r.source.startsWith('measured') && num(r.pph) && r.pph > 0
-  const w0 = { powerPerH: measured ? r.pph : W0_PRIOR.powerPerHour, gamesPerH: W0_GAMES_PER_H, bonusPower: OPPONENTS.w0r1d_d43m0n.power, goPower, sf14, source: measured ? r.source : `prior ${W0_PRIOR.powerPerHour}/h (goplan.W0_PRIOR, unmeasured)` }
+  const w0 = { powerPerH: measured ? r.pph : W0_HARNESS.powerPerHour, gamesPerH: W0_GAMES_PER_H, bonusPower: OPPONENTS.w0r1d_d43m0n.power, goPower, sf14, source: measured ? r.source : W0_HARNESS.source }
   const rep = { powerPerH: POWER_PER_HOUR.Daedalus, bonusPower: OPPONENTS.Daedalus.power, goPower, sf14 }
   let favorStream = null
   let favorWhy = 'no favor-stream builder passed'
@@ -1540,11 +1581,17 @@ export function goExitInputsOf(o = {}) {
     favorStream = num(st?.repPerH) && st.repPerH > 0 ? { repPerH: st.repPerH, capRep: st.capRep } : null
     favorWhy = st?.why ?? 'unpriced'
   }
-  const cyc = num(o.cycleHours) && o.cycleHours > 0 ? o.cycleHours : null
-  const abar = cyc ? meanEffect(POWER_PER_HOUR.Daedalus, OPPONENTS.Daedalus.power, cyc, 1, 0) - 1 : null
   const w = num(o.ownWeight) ? Math.min(1, Math.max(0, o.ownWeight)) : 0
-  const gG = num(abar) ? Math.pow((1 + s * abar) / (1 + abar), GO_EPS14) : 1
-  const goCadenceMult = Math.pow(gG, 1 - w)
-  const why = `the farm on the hacking route at GoPower ${goPower}${sf14 >= 1 ? ' x2 (SF14)' : ''}: w0r1d_d43m0n on the climb at ${Math.round(w0.powerPerH)}/h (${w0.source}), ${W0_GAMES_PER_H} games/h; ${'Daedalus'} in the final window at ${POWER_PER_HOUR.Daedalus}/h (faction_rep), favor ${favorStream ? `${Math.round(favorStream.repPerH)} rep-eq/h (${favorWhy})` : `none (${favorWhy})`}; g x${goCadenceMult.toFixed(3)} (eps ${GO_EPS14} ASSUMED, abar ${num(abar) ? abar.toFixed(3) : '-'}, own lives' share ${w.toFixed(2)} excluded)`
-  return { go: { w0, rep, favorStream, why }, goCadenceMult }
+  const fleetGB = num(o.fleetGB) && o.fleetGB > 0 ? o.fleetGB : null
+  const farm = {
+    goPower,
+    sf14,
+    arms: Object.fromEntries(GO_LIFE_ARMS.map((k) => [k, { powerPerH: POWER_PER_HOUR[k], bonusPower: OPPONENTS[k].power, channel: OPPONENTS[k].channel }])),
+    hackShare: EARLY.hackSide,
+    // go.js's share of the scripts' RAM; an unmeasured fleet prices it at 0 (named in `why`).
+    ramShare: fleetGB ? Math.min(1, GO_RAM_GB / fleetGB) : 0,
+    embedded: { goPower: GO_EMBEDDED.goPower, sf14: GO_EMBEDDED.sf14, rateScale: GO_EMBEDDED.rateScale, ownShare: w },
+  }
+  const why = `the farm on the hacking route at GoPower ${goPower}${sf14 >= 1 ? ' x2 (SF14)' : ''}: each life's best arm of ${GO_LIFE_ARMS.map((k) => `${k} ${POWER_PER_HOUR[k]}/h`).join(', ')} from its install (go.js ${GO_RAM_GB}GB ${fleetGB ? `of ${Math.round(fleetGB)}GB` : 'of an unmeasured fleet: RAM cost 0'}); g de-biased by ${GO_EMBEDDED.why} on the own lives' share ${w.toFixed(2)}; w0r1d_d43m0n on the climb at ${Math.round(w0.powerPerH)}/h (${w0.source}), ${W0_GAMES_PER_H} games/h; Daedalus in the final window at ${POWER_PER_HOUR.Daedalus}/h (faction_rep), favor ${favorStream ? `${Math.round(favorStream.repPerH)} rep-eq/h (${favorWhy})` : `none (${favorWhy})`}`
+  return { go: { w0, rep, favorStream, farm, why }, goCadenceMult: 1 }
 }
