@@ -310,21 +310,7 @@ if (argv.includes("--nn")) {
   if (!NNEV) throw new Error("--nn: the walls evaluator could not start (tools/katago/walls)");
   if (!WORK_RATE) throw new Error("--nn needs --work-rate (the CPU side is charged as work)");
 }
-// --nn-free: the net's time is NOT charged (and does not cap a ponder) — the
-// search as if its evaluator were instant: the ceiling a fast net (a small
-// distilled one in the solver's own process) could reach.
-const NN_FREE = argv.includes("--nn-free");
-// --smallnet FILE: the DISTILLED net in this process (tools/katago/smallnet.mjs)
-// as the search's net — its CPU time is measured and charged like the GPU's
-// busy time (no batching: nn.parallel 1).
-if (str("smallnet", null)) {
-  const { loadSmallNet } = await import("../katago/smallnet.mjs");
-  const sn = loadSmallNet(str("smallnet", null));
-  let ms = 0;
-  NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k) => { const t = performance.now(); const e = sn.eval(b, k); ms += performance.now() - t; NNEV.stats.queries++; return e; } };
-  if (!WORK_RATE) throw new Error("--smallnet needs --work-rate");
-}
-const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1) } : null;
+const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: num("nn-par", 16), fpu: num("nn-fpu", 0.1) } : null;
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
@@ -367,6 +353,19 @@ if (CHEAT_JOINT) {
   OPTS.pairs = CHEAT_JOINT.slice(0, 2);
   if (CHEAT_JOINT[2]) OPTS.pairsOnly = true;
 }
+// --cheat-hybrid THR: the GREEDY cheat, except on a HARD move — the chosen
+// single's own win rate under THR with a cheat window open: there the pair is
+// searched jointly (pairsOnly, a full budget and a round trip charged) and
+// played whole; if the pair search finds no pair, the greedy cheat as before.
+const CHEAT_HYBRID = num("cheat-hybrid", 0);
+if (CHEAT_HYBRID && !CHEAT_JOINT) {
+  OPTS.pairs = [6, 5];
+  OPTS.pairsOnly = true;
+}
+let pairsNow = false;
+// --cheat-skip-below THR: no greedy cheat on a move whose chosen single wins
+// under THR (its own win rate): the single stone instead.
+const CHEAT_SKIP = num("cheat-skip-below", 0);
 const CRIME = num("crime", 1);
 // go.js execs go-cheat.js, polls isRunning every 50ms and reads its result
 // (/tel/go-cheat.txt): ~150ms a played cheat beyond the window wait. Assumed.
@@ -489,7 +488,7 @@ async function playGame(stats, gameIndex) {
       : sess
       ? await (async () => {
           const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
-          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : {}) });
+          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : CHEAT_HYBRID ? { cheat: { fns: pairsNow ? [() => true] : null, cheats } } : {}) });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
           const target = WORK_RATE ? Math.round(WORK_RATE * budget) : sessRate ? Math.round(sessRate * budget) : Infinity;
@@ -550,7 +549,7 @@ async function playGame(stats, gameIndex) {
     ourMs += WORK_RATE && solveWork !== null ? solveWork / WORK_RATE : (performance.now() - t0) / CPU_SCALE;
     if (NNEV) {
       const d = NNEV.busyMs - nnBusy0;
-      if (!NN_FREE) ourMs += d;
+      ourMs += d;
       nnMs += d;
     }
     iters += ranked?.[0]?.iters ?? 0;
@@ -693,7 +692,7 @@ async function playGame(stats, gameIndex) {
     const seedPath = pre || retime ? "pre" : "req";
     let seedRef = playtimeAt(pre || retime ? wall : tReq);
     ourTurns++;
-    if (SCAN) return { scan: true, v0 };
+    if (SCAN) return { scan: true, v0, start: g.simpleBoardFromBoard(state.board).join("") };
     let hasMove = ranked && ranked.length;
     let cheatNow = false;
     let cheatSucceeds = false;
@@ -724,6 +723,27 @@ async function playGame(stats, gameIndex) {
         seedRef = playtimeAt(wall);
       }
     }
+    // --cheat-hybrid: a hard move with the window open -> the joint pair.
+    if (CHEAT_HYBRID && sess && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM && !(oracleHit && CHEAT_KEEP_LINES) && pCheat(cheats) >= MIN_P) {
+      const wr = pre ? pre.wr : ranked[0].top?.[0]?.[4];
+      if (typeof wr === "number" && wr < CHEAT_HYBRID) {
+        const ms0 = ourMs;
+        pairsNow = true;
+        const pr = await solve();
+        pairsNow = false;
+        wall += ourMs - ms0 + ROUND_TRIP_MS;
+        rtTotal += ROUND_TRIP_MS;
+        turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS) / 1000;
+        jointStats.hard = (jointStats.hard ?? 0) + 1;
+        const vg = validGrid(state, N);
+        if (pr?.[0]?.second && vg[pr[0].x]?.[pr[0].y] && vg[pr[0].second.x]?.[pr[0].second.y] && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) {
+          ranked = pr;
+          jointSecond = pr[0].second;
+          jointStats.pairs++;
+        }
+        // else: the greedy cheat below, on the original single
+      }
+    }
     if (CHEAT_JOINT && hasMove) jointStats[jointSecond ? "pairs" : "singles"]++;
     // Not after the AI's pass (go.js: play-on decides a single stone there).
     if (jointSecond) {
@@ -733,7 +753,7 @@ async function playGame(stats, gameIndex) {
     } else if (pre?.second) {
       // The oracle's cheat step: its roll was checked above (certain success).
       cheatNow = cheatSucceeds = true;
-    } else if (CHEAT && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM && !(oracleHit && CHEAT_KEEP_LINES)) {
+    } else if (CHEAT && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM && !(oracleHit && CHEAT_KEEP_LINES) && !(CHEAT_SKIP && (pre ? pre.wr : ranked[0].top?.[0]?.[4]) < CHEAT_SKIP)) {
       const p = pCheat(cheats);
       // --seeded: the roll IS the clock (golib.cheatRoll of the playtime), not
       // an independent phase — the AI's seed and the cheat roll share it.
@@ -799,6 +819,7 @@ async function playGame(stats, gameIndex) {
     // --cheat-joint: where a cheat will be available on our next play (the AI's
     // reply ~1.1s away), the ponder searches pairs there too.
     if (CHEAT_JOINT && sess) sess.setCheat({ fns: [null, cheatAvailIn(1100, 0.02)], cheats });
+    else if (CHEAT_HYBRID && sess) sess.setCheat({ fns: null, cheats });
     // --steer K[:MS] (with --seeded and a session; EXPERIMENTAL, the oracle
     // form): SEED STEERING. The AI's seed is the playtime one waitCycle after
     // our play, so delaying the play by k engine ticks (200ms each) chooses
@@ -873,7 +894,7 @@ async function playGame(stats, gameIndex) {
     if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 });
     if (state.passCount >= 2) break;
     // What the AI's reply will be computed from, for the seed calibration.
-    const seedCtx = SEEDED && MODEL ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
+    const seedCtx = SEEDED ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
 
     // PONDER while the AI "thinks" (see --ponder above).
     let ponderT0 = null;
@@ -890,14 +911,7 @@ async function playGame(stats, gameIndex) {
     }
     if (PONDER && KATAGO) {
       const after = g.simpleBoardFromBoard(state.board);
-      // --seeded: the AI's seed is the playtime one engine tick after our play
-      // (aiSeed below: wall + 200 + a 0.5-6.5ms jitter) — the two ticks it can
-      // land on, weighted by the jitter's chance of crossing the boundary.
-      const rngs = SEEDED ? (() => {
-        const a = playtimeAt(wall + 200.5), b = playtimeAt(wall + 206.5);
-        return a === b ? [[a, 1]] : [[a, 0.5], [b, 0.5]];
-      })() : null;
-      const positions = await ponderPositions({ model: KMODEL, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: KVISITS, size: N, samples: N >= 13 ? 4 : 8, rngs, maxPositions: N >= 13 ? 2 : 3 }); // as go-solver.mjs
+      const positions = await ponderPositions({ model: KMODEL, board: after, history: state.previousBoards.slice(), opponent: OPP, komi, visits: KVISITS, size: N, samples: N >= 13 ? 4 : 8, maxPositions: N >= 13 ? 2 : 3 }); // as go-solver.mjs
       ponderT0 = performance.now();
       await KATAGO.ponder(positions);
     }
@@ -914,7 +928,7 @@ async function playGame(stats, gameIndex) {
       if (NNEV) {
         // The net's time counts against the AI's reply too (see --nn).
         const b0 = NNEV.busyMs;
-        sStats.ponderIters += await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs), until: (wd) => wd / WORK_RATE + (NN_FREE ? 0 : NNEV.busyMs - b0) >= liveMs });
+        sStats.ponderIters += await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs), until: (wd) => wd / WORK_RATE + (NNEV.busyMs - b0) >= liveMs });
       } else sStats.ponderIters += WORK_RATE ? await sess.ponder(0, { work: Math.round(WORK_RATE * liveMs) }) : await sess.ponder(liveMs * CPU_SCALE);
       if (PRESEND) answers = sess.ponderAnswers({ minWork: sessRate ? Math.round(sessRate * budgetFor(ourTurns)) : Infinity, max: 4 });
       // ADAPTIVE: a position the search thinks is going badly is never
@@ -1001,7 +1015,7 @@ async function playGame(stats, gameIndex) {
     extendMoves,
     bookMoves,
     ...(STEER || STEER_BOOK ? { steer: steerStats } : {}),
-    ...(CHEAT_JOINT ? { joint: jointStats } : {}),
+    ...(CHEAT_JOINT || CHEAT_HYBRID ? { joint: jointStats } : {}),
     ...(ORACLE ? { oracle: { moves: oracleMoves, miss: oracleMiss, guarded: oracleGuarded, cheats: oracleCheats, lineFail: oracleLineFail } } : {}),
     rtTotalMs: rtTotal,
     ...(SEEDED ? { seed: seedG } : {}),
@@ -1039,7 +1053,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {
@@ -1049,7 +1063,7 @@ for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm+
   const r = await playGame(stats, i);
   saveArm(arm);
   if (r.scan) {
-    emit({ kind: "scan", i, v0: r.v0 });
+    emit({ kind: "scan", i, v0: r.v0, start: r.start });
     continue;
   }
   const won = !r.ejected && r.black >= r.white;

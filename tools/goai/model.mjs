@@ -56,13 +56,7 @@ function wrap(m) {
     /** The AI's reply as white to `board`. */
     async reply(board, { opponent, history = [], passCount = 0, rng }) {
       const ai = opponentOf(opponent);
-      // THE HIDDEN OPPONENT: getNewBoardState REPLACES the board with the empty
-      // bitverse shape (+ handicap) for w0r1d_d43m0n (boardState.ts:26-30), so a
-      // copied position would vanish — the AI then answered an empty board and
-      // every 19x19 ponder missed (go-w0 --ponder: 0 hits in ~300). Build it as
-      // no opponent's board, then name the AI (goAI.ts reads state.ai for komi).
-      const state = m.getNewBoardStateFromSimpleBoard(board, undefined, ai === GoOpponent.w0r1d_d43m0n ? GoOpponent.none : ai, GoColor.black);
-      state.ai = ai;
+      const state = m.getNewBoardStateFromSimpleBoard(board, undefined, ai, GoColor.black);
       state.previousBoards = history.slice();
       state.passCount = passCount;
       const play = await m.getMove(state, GoColor.white, ai, false, rng);

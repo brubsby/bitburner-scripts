@@ -95,26 +95,10 @@ export const BN6_START = '2026-10-01T02:48'
  *            farm). The opening had no farm (openGo null: its gym scale is read against none).
  *          rev 1: the first reading (k 0.282, logged 2026-10-06 14:44Z) priced no farm and voided
  *            nothing — leg 86.78h for a 30.14h node; this one replaces it.
- *   BN14.3 (2026-10-06 14:43Z -> 2026-10-07 13:12Z, 22.48h, no install, all 21 black ops).
- *          GO FARM: Tetrads node power 657442 at the clear (go-dash-history.json 13:12:34Z; effectAt at
- *            GoPower 4 x the SF14 doubling gives +834.75% = the dash's +834.746%), farmed from the
- *            entry (Tetrads 1350 at 14:48Z), ~33.9k/h over the last 6h (454230 at 07:12Z), with the
- *            cheats from ~22:06Z (kill-switch bug to 23:30Z, 0.5s cap 00:22Z, pass-forcing oracle
- *            00:28Z, joint cheats 03:42-05:36Z and 06:46-07:50Z): all of it inside the total.
- *            perHour = 657442 / 22.48h = 29200/h from t 0 — ASSUMED (the same total-over-the-clear
- *            convention as BN14.1/BN14.2); the opening ran under it (openGo = go).
- *          NOTHING VOIDED, on the evidence: measure.mjs finds no idle or offroute stall >= 0.25h after
- *            combat 100 (0.51h, 15:14Z), and no run of rows with zero combat exp reaches 0.3h. The
- *            entry stall (cash $1262 to ~14:48Z, -$13k at 15:18Z, 0e88c57) is before combat 100: it is
- *            the opening's, which k subtracts as measured. bb-lite's starvation ended when bb-host was
- *            bought between 15:20:16Z and 15:25:36Z (history.jsonl purchasedServers), <= 0.19h after
- *            combat 100, with combat exp moving through it (the hand-run Homicide): not voidable as a
- *            stall, < 1% of k. The SlumSnakes@9 detour (23:34-23:39Z) was Go only, not the work slot.
  */
 export const CLEAR_LEGS = {
   'BN14.1': { go: { perHour: 8000, power: 0.7, goPower: 4, sf14: 0 }, voidInstalls: [6.78, 15.62], why: 'Tetrads 4.9-6.2k/h early, ~20k/h from release 3: 8000/h effective, ASSUMED; both installs voided (1c484da)' },
   'BN14.2': { rev: 1, go: { perHour: 16800, power: 0.7, goPower: 4, sf14: 1 }, openGo: null, voidStalls: [5.04, 14.71], why: 'Tetrads 345k at the clear over its 20.56h counted, ASSUMED from t 0; stalls voided: bb-lite starved 8.90h (73a4644), blade priced infeasible 0.68h (4c6e6e7)' },
-  'BN14.3': { go: { perHour: 29200, power: 0.7, goPower: 4, sf14: 1 }, why: 'Tetrads 657k at the clear over its 22.48h, ASSUMED from t 0 (cheats inside the total); nothing voided: no stall after combat 100 (bb-host by 15:25Z)' },
 }
 /** The Go farm's combat channel was first priced at de23605 (2026-10-03 02:14Z): a clear entered after it states its farm in CLEAR_LEGS. */
 export const GO_COMBAT_SINCE = '2026-10-03T02:14'
