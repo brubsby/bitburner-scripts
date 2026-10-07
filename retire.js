@@ -19,6 +19,12 @@
 // refilling every host with self-threaded workers leaves the batcher with no
 // contiguous block to place a batch into — the failure watchdog.js records
 // about auto.js, and the one invariant B5 describes.
+//
+//   run retire.js --host home early.js hgw.js
+//
+// --host limits it to one host. boot.js evicts seed.js's workers from HOME
+// this way when a planned home resident (watchdog.js) does not fit beside
+// them (raiseplace.homeResidentRoomOf); the fleet's workers keep earning.
 
 import { reporter, describe } from 'status.js'
 
@@ -28,8 +34,11 @@ export async function main(ns) {
   ns.disableLog('ALL')
 
   const killed = []
-  const wanted = ns.args.map(String).filter((s) => s.endsWith('.js'))
-  const note = reporter(ns, TELEMETRY, () => ({ wanted, killed }))
+  const args = ns.args.map(String)
+  const at = args.indexOf('--host')
+  const only = at >= 0 ? args[at + 1] ?? null : null
+  const wanted = args.filter((s, i) => s.endsWith('.js') && !(at >= 0 && i === at + 1))
+  const note = reporter(ns, TELEMETRY, () => ({ wanted, only, killed }))
   ns.atExit(() => note.exit('stopped', { detail: 'retire.js exited' }))
 
   if (!wanted.length) {
@@ -52,6 +61,7 @@ export async function main(ns) {
     }
 
     for (const host of seen) {
+      if (only !== null && host !== only) continue
       if (!ns.hasRootAccess(host)) continue
       for (const script of wanted) {
         // scriptKill is a no-op when nothing matches, so there is nothing to

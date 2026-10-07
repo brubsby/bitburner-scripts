@@ -86,7 +86,7 @@ import { isHacknetServerHost } from 'hacknetplan.js'
 import { reporter, describe } from 'status.js'
 // Pure (no ns surface): act.js's action slot sized to the node, and the
 // residents go.js outranks in a Go-first node.
-import { actionSlotOf, stockHeldOf, GO_OUTRANKS } from 'raiseplace.js'
+import { actionSlotOf, stockHeldOf, GO_OUTRANKS, homeResidentRoomOf } from 'raiseplace.js'
 
 // ---------------------------------------------------------------------------
 // THE MANIFEST. Plain data — no functions, no ns, nothing that has to be
@@ -665,6 +665,46 @@ function placeOff(ns, hosts, need, script = null) {
   return null
 }
 
+/**
+ * Planned residents whose absence stops the stack rather than one channel:
+ * watchdog.js revives every other script and runs every job. Its failure to
+ * start is `critical` in /tel/boot.txt and health 'error', not one line among
+ * the failures ("the shape that froze BitNode 10 for 4.5h").
+ */
+const CRITICAL = ['watchdog.js']
+
+/**
+ * Seat a planned home resident the measured room refused (homeResidentRoomOf):
+ * wait for the one-shots to finish, stop seed.js's EVICTABLE workers on home
+ * through retire.js (ns.scriptKill stays out of this file), measure again.
+ * Three passes; from the second the one-shots are no longer waited for, so a
+ * one-shot that hangs cannot hold the resident out, and one that outlived a
+ * wait (`hung`, shared across residents) is not waited for again.
+ * Returns {ok, fits, why}.
+ */
+async function makeHomeRoom(ns, { need, action, transient, costOf, dry, evicted, hung }) {
+  let d = null
+  const did = []
+  for (let pass = 0; pass < 3; pass++) {
+    const procs = ns.ps('home').map((p) => ({ script: p.filename, gb: costOf(p.filename) * p.threads }))
+    d = homeResidentRoomOf({ need, free: spare(ns, 'home'), action, procs, transient: pass ? [] : transient.filter((s) => !hung.has(s)) })
+    if (d.fits) return { ok: true, fits: pass === 0, why: did.length ? did.join('; ') : 'fits' }
+    if (!d.ok) return { ok: false, fits: false, why: [...did, d.why].join('; ') }
+    if (dry) return { ok: true, fits: false, why: `DRY RUN — would ${d.why}` }
+    did.push(d.why)
+    if (d.stop.length) {
+      const pid = ns.exec('retire.js', 'home', 1, '--host', 'home', ...d.stop)
+      if (!pid) return { ok: false, fits: false, why: `${d.why}; but retire.js (${costOf('retire.js')}GB) could not start on home` }
+      evicted.push(...d.stop.map((s) => `${s} on home`))
+    }
+    const gone = [...d.wait, 'retire.js']
+    const until = Date.now() + 15e3
+    while (Date.now() < until && ns.ps('home').some((p) => gone.includes(p.filename))) await ns.sleep(200)
+    for (const p of ns.ps('home')) if (d.wait.includes(p.filename)) hung.add(p.filename)
+  }
+  return { ok: false, fits: false, why: `still short after 3 passes: ${[...did, d?.why].join('; ')}` }
+}
+
 export async function main(ns) {
   ns.disableLog('ALL')
 
@@ -738,6 +778,12 @@ export async function main(ns) {
   const started = []
   const stopped = []
   const failed = []
+  // seed.js's workers stopped on home to seat a planned resident, and the
+  // planned residents that still did not start whose absence stops the stack
+  // (watchdog.js: nothing else revives scripts or runs jobs). `critical`
+  // survives the exit record, which overwrites `health` with 'stopped'.
+  const evicted = []
+  const critical = []
   const wanted = new Set(plan.admit.map((e) => e.script))
 
   // Publish the plan on every path out of this script, including the ns.spawn
@@ -760,6 +806,8 @@ export async function main(ns) {
     started,
     stopped,
     failed,
+    evicted,
+    critical,
     admit: plan.admit.map((e) => ({ script: e.script, where: e.where, cost: e.cost, threads: e.threads })),
     nextTier: {
       fromHomeRam: homeRam,
@@ -804,6 +852,9 @@ export async function main(ns) {
   // The home worker is not exec'd — it is SPAWNED, last, after this loop. See
   // the block at the bottom of main() for why that is worth 2.00GB.
   const worker = plan.admit.find((e) => e.role === 'worker')
+  // What exits by itself on home: the plan's one-shots and retire.js.
+  const transient = [...plan.admit.filter((e) => e.kind === 'oneshot').map((e) => e.script), 'retire.js']
+  const hung = new Set()
 
   // Lazily filled on the first off-home placement and reused for the rest, so a
   // plan that places nothing off home never pays the ns.ls call at all. See the
@@ -850,13 +901,27 @@ export async function main(ns) {
       // home, and go.js (placed first in a Go-first node by seed.js) is not
       // in the plan. One-shots are transient and exempt, as in planStack.
       const homeRoom = spare(ns, 'home') - (entry.kind === 'oneshot' ? 0 : plan.action)
-      const host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need, entry.script)
+      let host = entry.where === 'home' ? (homeRoom >= need ? 'home' : null) : placeOff(ns, hosts, need, entry.script)
       if (!host && entry.where === 'home' && GO_OUTRANKS.includes(entry.script) && ns.ps('home').some((p) => p.filename === 'go.js')) {
         stopped.push(`${entry.script} not started: go.js holds home beside act.js's ${plan.action}GB slot (it outranks ${entry.script} in a Go-first node)`)
         continue
       }
+      // A PLANNED HOME RESIDENT THE MEASURED ROOM REFUSED. The plan fits it;
+      // what the plan does not carry is a one-shot still finishing
+      // (settings.js, started a moment ago in this loop) and seed.js's
+      // EVICTABLE workers on home. Wait for the one, evict the other, then
+      // place. Live BN9.2 entry 2026-10-07 13:21Z (and 01:30Z): 6.95GB
+      // measured for watchdog.js's 8.95GB, so it was reported and left down
+      // — nothing revived scripts or ran jobs; `run watchdog.js` by hand
+      // worked at once (raiseplace.homeResidentRoomOf).
+      let made = null
+      if (!host && entry.where === 'home' && entry.kind !== 'oneshot') {
+        made = await makeHomeRoom(ns, { need, action: plan.action, transient, costOf, dry, evicted, hung })
+        if (made.ok) host = 'home'
+      }
       if (!host) {
-        failed.push(`${entry.script}: planned ${need}GB but no host had it free`)
+        failed.push(`${entry.script}: planned ${need}GB but no host had it free${made ? ` (${made.why})` : ''}`)
+        if (CRITICAL.includes(entry.script)) critical.push(`${entry.script} NOT RUNNING: ${made?.why ?? `no host had ${need}GB free`}`)
         continue
       }
       if (dry) {
@@ -895,14 +960,18 @@ export async function main(ns) {
       // (ns.read, 0GB) so it cannot go stale the way a transcribed list would.
       if (host !== 'home') ns.scp(importClosureOf(ns, entry.script), host, 'home')
       const pid = ns.exec(entry.script, host, threads, ...(entry.args || []))
-      if (pid) started.push(`${entry.script} on ${host}${threads > 1 ? ` x${threads}` : ''}`)
-      else failed.push(`${entry.script}: exec refused on ${host}`)
+      if (pid) started.push(`${entry.script} on ${host}${threads > 1 ? ` x${threads}` : ''}${made && !made.fits ? ` (${made.why})` : ''}`)
+      else {
+        failed.push(`${entry.script}: exec refused on ${host}`)
+        if (CRITICAL.includes(entry.script)) critical.push(`${entry.script} NOT RUNNING: exec refused on ${host}`)
+      }
     } catch (err) {
       failed.push(`${entry.script}: ${describe(err)}`)
+      if (CRITICAL.includes(entry.script)) critical.push(`${entry.script} NOT RUNNING: ${describe(err)}`)
     }
   }
 
-  note(failed.length ? 'degraded' : 'ok', {
+  note(critical.length ? 'error' : failed.length ? 'degraded' : 'ok', {
     result: failed.length ? 'partial' : 'ok',
     detail: `tier ${plan.tier}: started ${started.length}, retired ${stopped.length}, deferred ${plan.defer.length}`,
   })
@@ -911,7 +980,9 @@ export async function main(ns) {
   if (rooted) ns.tprint(`boot: rooted ${rooted} host(s) with NUKE.exe`)
   if (started.length) ns.tprint(`boot: started ${started.join(', ')}`)
   if (stopped.length) ns.tprint(`boot: retired ${stopped.join(', ')}`)
+  if (evicted.length) ns.tprint(`boot: evicted ${evicted.join(', ')} to seat planned home residents`)
   if (failed.length) ns.tprint(`boot: FAILED ${failed.join(' | ')}`)
+  for (const c of critical) ns.tprint(`boot: CRITICAL ${c} — nothing revives dead scripts or runs jobs until it runs; start it by hand (run watchdog.js) and see ${TELEMETRY}`)
   if (plan.defer.length) {
     ns.tprint(`boot: ${plan.defer.length} entries deferred — see ${TELEMETRY} for each reason`)
   }

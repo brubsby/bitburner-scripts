@@ -666,6 +666,18 @@ if (now.homeRam !== null && now.homeRam >= WATCHDOG_TIER && (lifeMin === null ||
     note(`watchdog: publishing this life (health '${wdTel.health}')`);
   }
 }
+// BOOT.JS'S CRITICAL LIST: a planned resident boot.js could not seat even
+// after waiting for the one-shots and evicting early.js/hgw.js on home
+// (watchdog.js, live BN9.2 entry 2026-10-07 01:30Z and 13:21Z). Loud at once —
+// no grace — until watchdog.js has published since that boot.
+{
+  const boot = readTel("boot.txt");
+  const crit = Array.isArray(boot?.critical) ? boot.critical : [];
+  const wd = tel["watchdog.txt"];
+  const wdSince = wd && !staleFromLastLife.has("watchdog.txt") && wd.health !== "stopped" && Date.parse(wd.at) >= Date.parse(boot?.at ?? "");
+  if (crit.length && !wdSince)
+    fail(`BOOT CRITICAL: ${crit.join(" | ").slice(0, 300)}`, "boot.js could not seat it — run watchdog.js by hand, then read /tel/boot.txt (failed, evicted)");
+}
 
 /* --------------------------------------------------------- E. sleeves */
 //

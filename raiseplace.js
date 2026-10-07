@@ -441,6 +441,60 @@ export function goHomeRepairOf({ max, used, keep, procs = [] }) {
   return { stop: [...new Set(stop)], freeAfter: free, ok: true }
 }
 
+/**
+ * boot.js: room on home for a PLANNED home resident that the measured room
+ * refused. The plan fits the resident beside act.js's action slot against the
+ * plan's own home budget (boot.js, the residents, the worker slots); the
+ * measured room also carries what the plan does not: a one-shot still
+ * finishing (settings.js, retire.js) and seed.js's self-threaded workers.
+ *
+ * Live BN9.2 entry 2026-10-07 13:21Z (and 01:30Z): home 64GB, slot 19.4GB,
+ * settings.js (2.3GB, one-shot) still running and early.js x4 (9.6GB) on home
+ * -> 6.95GB measured for watchdog.js's 8.95GB, "planned 8.95GB but no host had
+ * it free", and NOTHING revived scripts or ran jobs. `run watchdog.js` by hand
+ * worked at once.
+ *
+ * need: the resident's GB; free: home's free GB now; action: the slot kept
+ * beside a resident; procs: [{script, gb}] on home (gb = RAM x threads);
+ * transient: scripts that exit by themselves (waited for, never killed).
+ * EVICTABLE workers are stopped whole (retire.js kills by name), largest
+ * first, only as many as the shortfall after the transients needs.
+ * Returns {fits, ok, wait: [script], stop: [script], room, after, why}:
+ * fits = room enough now; ok = enough once `wait` exit and `stop` are killed;
+ * neither = not even all of them would make room, and nothing is to be done.
+ */
+export function homeResidentRoomOf({ need, free, action = 0, procs = [], transient = [] }) {
+  const room = free - action
+  if (!num(need) || !num(room)) return { fits: false, ok: false, wait: [], stop: [], room: null, after: null, why: 'unpriced (need or free RAM unknown)' }
+  if (room >= need) return { fits: true, ok: true, wait: [], stop: [], room, after: room, why: 'fits' }
+  const by = (list) => {
+    const m = new Map()
+    for (const p of procs) if (list.includes(p.script) && num(p.gb)) m.set(p.script, (m.get(p.script) ?? 0) + p.gb)
+    return [...m.entries()].map(([script, gb]) => ({ script, gb }))
+  }
+  const tr = by(transient)
+  let after = room + tr.reduce((a, p) => a + p.gb, 0)
+  const stop = []
+  for (const p of by(EVICTABLE).sort((a, b) => b.gb - a.gb)) {
+    if (after >= need) break
+    stop.push(p.script)
+    after += p.gb
+  }
+  const r = (x) => Math.round(x * 100) / 100
+  if (after < need) {
+    return { fits: false, ok: false, wait: [], stop: [], room, after, why: `${r(room)}GB beside the ${r(action)}GB action slot; even with every one-shot finished and every evictable worker stopped it is ${r(after)}GB, short of ${r(need)}GB` }
+  }
+  return {
+    fits: false,
+    ok: true,
+    wait: tr.map((p) => p.script),
+    stop,
+    room,
+    after,
+    why: `${r(room)}GB beside the ${r(action)}GB action slot, short of ${r(need)}GB: ${[tr.length ? `wait for ${tr.map((p) => p.script).join('/')}` : null, stop.length ? `evict ${stop.join('/')} on home` : null].filter(Boolean).join(', ')} -> ${r(after)}GB`,
+  }
+}
+
 /** The reservation record: a host only while placing or reserving. */
 export function reserveRecordOf(d, info, now = Date.now(), script = null) {
   const holds = d?.action === 'reserve' || d?.action === 'place'
