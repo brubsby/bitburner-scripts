@@ -378,7 +378,7 @@ const SETTINGS = {
   // joint: the cheat as a JOINT two-stone action searched by the solver (see
   // tools/go-solver.mjs THE JOINT CHEAT and golib modelSession opts.pairs);
   // false: the greedy cheat (the solver's single, then a second-stone request).
-  cheat: { joint: true, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  cheat: { joint: false, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
