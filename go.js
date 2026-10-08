@@ -930,6 +930,49 @@ export function playtimeReader() {
   }
 }
 
+/**
+ * THE STARTUP INCUMBENT. When chooseOpponent refuses (no measured install
+ * window, no weights, ...) the incumbent stands — and on a fresh process the
+ * incumbent used to be the hard-coded SETTINGS.opponent. Every deploy restarts
+ * go.js, so a restart during a refusal silently threw away the priced arm:
+ * live 2026-10-08 20:04Z, BN9.2 with the exit held, Tetrads@5 with cheats at
+ * ~10.3 power/s fell to Daedalus@5 with none at ~7.8 power/s.
+ *
+ * So the incumbent is the arm THIS LIFE was last farming, read from the
+ * previous /tel/go.txt. Telemetry survives installs and BitNode entries
+ * (CLAUDE.md), so the record counts only when its lastAugReset AND bitNode
+ * match getResetInfo(); anything else is refused by name and the default
+ * stands.
+ *
+ * @param {string} text   the previous /tel/go.txt
+ * @param {{lastAugReset?: number, currentNode?: number}} reset  ns.getResetInfo()
+ * @param {{w0Eligible?: boolean, sizes?: number[]}} [o]
+ * @returns {{opponent: string, size: number, why: string} | {opponent: null, why: string}}
+ */
+export function carriedArmOf(text, reset, o = {}) {
+  const sizes = o.sizes ?? ARM_SIZES
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return { opponent: null, why: "this life's last go.txt is unreadable" }
+  }
+  if (!rec || typeof rec !== 'object') return { opponent: null, why: 'no last go.txt' }
+  if (typeof reset?.lastAugReset !== 'number' || rec.lastAugReset !== reset.lastAugReset) return { opponent: null, why: 'the last go.txt is from another life' }
+  if (rec.bitNode !== (reset?.currentNode ?? null)) return { opponent: null, why: `the last go.txt is from BitNode ${rec.bitNode}` }
+  // `arm` ('Name@size') is the arm; `opponent` + `boardSize` for an older record.
+  const m = typeof rec.arm === 'string' ? /^(.+)@(\d+)$/.exec(rec.arm) : null
+  const key = keyOfGame(m ? m[1] : rec.opponent)
+  const size = m ? Number(m[2]) : Number(rec.boardSize)
+  if (!key) return { opponent: null, why: `the last go.txt names no known opponent (${rec.arm ?? rec.opponent})` }
+  if (key === W0) {
+    if (!o.w0Eligible) return { opponent: null, why: 'the last go.txt was on the hidden opponent, which is not eligible now' }
+    return { opponent: W0, size: 19, why: `startup: carried over from this life's last go.txt (${W0}@19)` }
+  }
+  if (!sizes.includes(size)) return { opponent: null, why: `the last go.txt's board ${size} is not an arm size` }
+  return { opponent: key, size, why: `startup: carried over from this life's last go.txt (${key}@${size})` }
+}
+
 export async function main(ns) {
   const flags = ns.flags([
     ['size', SETTINGS.size],
@@ -1309,8 +1352,15 @@ export async function main(ns) {
     }
   }
   // Our key internally (goplan.OPPONENTS); the flag may carry either spelling.
-  let opponent = keyOfGame(flags.opponent) ?? 'Daedalus'
-  let opponentWhy = 'startup default'
+  // An explicit --opponent is the operator's; otherwise this life's last arm
+  // (carriedArmOf) — read before this process's first publish overwrites it.
+  const carried = (ns.args ?? []).includes('--opponent') ? { opponent: null, why: '--opponent given' } : carriedArmOf(readHome(SETTINGS.statusFile), reset, { w0Eligible: w0.eligible })
+  let opponent = carried.opponent ?? keyOfGame(flags.opponent) ?? 'Daedalus'
+  let opponentWhy = carried.opponent ? carried.why : `startup default (${carried.why})`
+  // Kept for the whole process: a refusal later replaces opponentWhy with its
+  // own reason, and this says where the incumbent it kept came from.
+  const opponentStartup = opponentWhy
+  if (carried.opponent && SETTINGS.arms.on) armSize = carried.size
   const canCheat = canUseGoCheat(reset) && ns.fileExists('go-cheat.js', 'home')
   // Cheats are switched off for the rest of the process if a played cheat's
   // stones are missing from the next board twice — the prediction would then
@@ -1438,6 +1488,8 @@ export async function main(ns) {
   const note = reporter(ns, SETTINGS.statusFile, () => ({
     opponent,
     opponentWhy,
+    // Where this process's starting incumbent came from (carriedArmOf).
+    opponentStartup,
     // Which weights priced the last choice: progress.js's goWeights for this
     // life, or the early-game weights (and the readings behind them).
     weightsSource,
