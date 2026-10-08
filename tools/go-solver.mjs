@@ -339,13 +339,17 @@ const JOINT_OPTS = JOINT ? { pairs: [6, 5], pairsOnly: true } : {};
 // THE SMALL NET (--smallnet FILE [--smallnet-depth D]): a distilled walls-KataGo
 // net (tools/katago/distill_train.py -> smallnet.mjs, plain JS in this process)
 // as the model search's move prior and leaf value at the B nodes within D of
-// our turns of the root (golib modelSession opts.nn, mix 0). OFF unless named.
+// our turns of the root (golib modelSession opts.nn, mix 0). ON by default (below).
 // MEASURED (go-w0, 5x5 Tetrads live config: book + pass-forcing book + greedy
 // cheats at crime 3.459, --work-rate 1.7, the net's time charged at this
 // laptop's speed): b4c32 depth 1 vs the live solver, paired deals,
 // +10.0% [+2.7, +17.8] (layouts 100-199) and +5.1% [-1.0, +11.7] (0-99).
 // Only a net of the request's board size is used.
-const SMALLNET_FILE = str("smallnet", null);
+// DEFAULT ON (2026-10-08): the b4c32 net at depth 1 measured +7.6% [+3.5, +11.7]
+// power/h over 300 paired 5x5 games at the live config (all won; 18c443d).
+// The daemon passes fixed args, so the default lives here; --no-smallnet turns it off.
+const SMALLNET_DEFAULT = path.join(path.dirname(fileURLToPath(import.meta.url)), "goai", "smallnet-5-b4c32.json");
+const SMALLNET_FILE = argv.includes("--no-smallnet") ? null : str("smallnet", fs.existsSync(SMALLNET_DEFAULT) ? SMALLNET_DEFAULT : null);
 const SMALLNET_DEPTH = flag("smallnet-depth", 1);
 let SMALLNET = null;
 if (SMALLNET_FILE) {
