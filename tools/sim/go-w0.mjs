@@ -338,7 +338,7 @@ if (str("smallnet", null)) {
   NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k, ctx) => { const t = performance.now(); const e = sn.eval(b, k, csOf(ctx)); ms += (performance.now() - t) * SN_SCALE; NNEV.stats.queries++; return e; } };
   if (!WORK_RATE) throw new Error("--smallnet needs --work-rate");
 }
-const NN_OPTS = NNEV ? { eval: (b, k, ctx) => NNEV.eval(b, k, ctx), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity) } : null;
+const NN_OPTS = NNEV ? { eval: (b, k, ctx) => NNEV.eval(b, k, ctx), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity), steer: argv.includes("--nn-steer") } : null;
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.

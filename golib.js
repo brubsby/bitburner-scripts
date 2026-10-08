@@ -1143,6 +1143,15 @@ export function modelSession(N, komi, model, opts = {}) {
   // a net) — an in-process net costs ~a model call per eval, so it is spent
   // where the tree is wide and shallow.
   const NN_DEPTH = NN && Number.isFinite(NN.maxDepth) ? NN.maxDepth : Infinity
+  // nn.steer: a playout leaf below a node the net valued with an outcome head
+  // (turnsLeft) is charged the time the net predicted is left there, less the
+  // turns already played since — so the power objective's time cost reaches
+  // every leaf, not only the net's own nodes (whose values already carry it).
+  const NN_STEER = !!(NN && NN.steer)
+  const turnsLeftFrom = (node) => {
+    for (let a = node.parent; a; a = a.parent) if (a.kind === 0 && a.nn && Number.isFinite(a.nn.turnsLeft)) return Math.max(0, a.nn.turnsLeft - (node.ply - a.ply))
+    return null
+  }
   // THE CHEAT AS A JOINT ACTION (opts.pairs, setCheat): where a playTwoMoves
   // cheat will be available (the caller knows from the roll's clock), a B node
   // also offers PAIRS of stones — the first among the top `pairs[0]` singles
@@ -1655,7 +1664,7 @@ export function modelSession(N, komi, model, opts = {}) {
             won = node.tw
           } else if (NN && nnOk(node)) {
             const e = await nnEvalNode(node)
-            v = nnVal(e, node.b, node.ply)
+            v = nnVal(e, node.b, node.ply + (node.cost ?? 0))
             won = lastWon
             if (NN_MIX < 1) {
               work.set(node.b)
@@ -1669,7 +1678,8 @@ export function modelSession(N, komi, model, opts = {}) {
           } else {
             work.set(node.b)
             won = playout(work, nbrs, N, komi, US, scratch, rand)
-            v = val(won, scratch.us, leafPly(node.b, node.ply + node.cost))
+            const tl = NN_STEER ? turnsLeftFrom(node) : null
+            v = val(won, scratch.us, tl !== null ? node.ply + node.cost + tl : leafPly(node.b, node.ply + node.cost))
           }
           break
         }

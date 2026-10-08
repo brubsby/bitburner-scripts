@@ -374,7 +374,33 @@ if (SMALLNET_FILE) {
 const SMALLNET_ON = new Set(str("smallnet-on", "Tetrads,Daedalus,Illuminati,SlumSnakes,Netburners").split(",").map((s) => s.trim().replace(/\s+/g, "")).filter(Boolean));
 const smallnetFor = (N, opponent) => !!SMALLNET && SMALLNET.size === N && (SMALLNET_ON.has("all") || SMALLNET_ON.has(String(opponent ?? "").replace(/\s+/g, "")));
 console.log(`go-solver: smallnet ${SMALLNET ? `${SMALLNET_FILE} (${SMALLNET.size}x${SMALLNET.size}, depth ${SMALLNET_DEPTH}) for ${[...SMALLNET_ON].join(",")}` : "off"}`);
-const sessOpts = (N, opponent, base = {}) => ({ ...base, ...JOINT_OPTS, ...(smallnetFor(N, opponent) ? { nn: { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 } } : {}) });
+// THE OUTCOME NET (--smallnet-outcome FILE, --smallnet-outcome-on A,B,...):
+// b4c32 fine-tuned with turns-left / final-area heads on 1,639 deployed-config
+// Tetrads games (tools/katago/distill_train.py --outcome), used with STEER
+// (golib nn.steer: every playout leaf is charged the time the net predicts
+// is left). MEASURED vs the b4c32 net, Tetrads live config, 400 paired:
+// +3.5% [+0.4, +6.7] power/h (37,000 -> 38,280), 400/400 vs 400/400 won.
+// Default for Tetrads only (the only opponent it was trained and measured on).
+const OUTCOME_DEFAULT = path.join(path.dirname(fileURLToPath(import.meta.url)), "goai", "smallnet-5-o2.json");
+const OUTCOME_FILE = argv.includes("--no-smallnet") || argv.includes("--no-smallnet-outcome") ? null : str("smallnet-outcome", fs.existsSync(OUTCOME_DEFAULT) ? OUTCOME_DEFAULT : null);
+const OUTCOME_ON = new Set(str("smallnet-outcome-on", "Tetrads").split(",").map((s) => s.trim().replace(/\s+/g, "")).filter(Boolean));
+let OUTCOME = null;
+if (OUTCOME_FILE) {
+  try {
+    const { loadSmallNet } = await import("./katago/smallnet.mjs");
+    OUTCOME = loadSmallNet(OUTCOME_FILE);
+  } catch (err) {
+    console.error(`go-solver: --smallnet-outcome ${OUTCOME_FILE} did not load (${String(err).slice(0, 160)}) — the b4c32 net plays those opponents`);
+  }
+}
+const outcomeFor = (N, opponent) => !!OUTCOME && OUTCOME.size === N && OUTCOME_ON.has(String(opponent ?? "").replace(/\s+/g, ""));
+console.log(`go-solver: outcome net ${OUTCOME ? `${OUTCOME_FILE} (steer) for ${[...OUTCOME_ON].join(",")}` : "off"}`);
+const sessOpts = (N, opponent, base = {}) => {
+  const out = { ...base, ...JOINT_OPTS };
+  if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true };
+  else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 };
+  return out;
+};
 /** fn(cheatsSoFar) -> available, for a play `lagMs` after req.T, `depth` of our turns ahead. */
 function cheatFnOf(req, lagMs, depth, margin) {
   const c = req?.cheat;
@@ -692,7 +718,8 @@ while (true) {
               if (fn0) jointStats.requests++;
               backend = "model";
               extra.mode = "session";
-              if (smallnetFor(N, req.opponent)) extra.nn = SMALLNET_DEPTH;
+              if (outcomeFor(N, req.opponent)) extra.nn = `o${SMALLNET_DEPTH}`;
+              else if (smallnetFor(N, req.opponent)) extra.nn = SMALLNET_DEPTH;
               // THE PASS-ONLY GUARD, solver side: with pairs on, a root that
               // reads 'PASS only' is re-set with NO pairs; if the plain search
               // has stones there, the pair path was wrong — counted and logged.
