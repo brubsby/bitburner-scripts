@@ -1138,6 +1138,11 @@ export function modelSession(N, komi, model, opts = {}) {
   const CPUCT = NN && Number.isFinite(NN.cpuct) ? NN.cpuct : 1.5
   const NN_PAR = NN && Number.isFinite(NN.parallel) ? Math.max(1, NN.parallel | 0) : 1
   const FPU = NN && Number.isFinite(NN.fpu) ? NN.fpu : 0.1
+  // nn.maxDepth: the net only at B nodes within this many of OUR turns of the
+  // search's start (deeper: heuristic order, UCB1 and the playout, as without
+  // a net) — an in-process net costs ~a model call per eval, so it is spent
+  // where the tree is wide and shallow.
+  const NN_DEPTH = NN && Number.isFinite(NN.maxDepth) ? NN.maxDepth : Infinity
   // THE CHEAT AS A JOINT ACTION (opts.pairs, setCheat): where a playTwoMoves
   // cheat will be available (the caller knows from the roll's clock), a B node
   // also offers PAIRS of stones — the first among the top `pairs[0]` singles
@@ -1302,10 +1307,14 @@ export function modelSession(N, komi, model, opts = {}) {
   // value over its win probability (won is fractional; lastWon carries it).
   const nnVal = (e, b, ply) => {
     const W = Math.min(1, Math.max(0, e.winB))
-    const us = e.areaB
+    // An outcome-trained net (smallnet's vo/area/turns heads: real games
+    // against the game's AIs under OUR policy) names black's final area and
+    // the game's remaining length directly; KataGo's ownership and the leafK
+    // guess are the fallback.
+    const us = Number.isFinite(e.areaOut) ? e.areaOut : e.areaB
     lastWon = W
     if (!obj) return (1 - areaW) * W + areaW * (us / points)
-    const lp = leafPly(b, ply)
+    const lp = Number.isFinite(e.turnsLeft) ? ply + e.turnsLeft : leafPly(b, ply)
     const P = W * (us * obj.diff * obj.winMult) + (1 - W) * (us * obj.diff * obj.lossMult - obj.lossFuture) - obj.turnCost * lp
     return (P + obj.lossFuture) / (obj.diff * obj.winMult * points + obj.lossFuture)
   }
@@ -1503,6 +1512,7 @@ export function modelSession(N, komi, model, opts = {}) {
   /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
   const iterate = async (start) => {
     let node = start
+    const nnOk = (n) => n.ply - start.ply <= NN_DEPTH
     const path = []
     // Virtual loss: every node on the path counts as in flight until the
     // backup (only read by the net's PUCT; vl is 0 between iterations).
@@ -1525,7 +1535,7 @@ export function modelSession(N, komi, model, opts = {}) {
         break
       }
       if (node.kind === 0) {
-        if (NN && !node.prior && !node.terminal) await nnEvalNode(node)
+        if (NN && !node.prior && !node.terminal && nnOk(node)) await nnEvalNode(node)
         // PUCT on the net's prior: an untried stone competes with the
         // searched ones at the first-play urgency (the node's mean - FPU);
         // virtual loss (vl: iterations in flight below a child) spreads the
@@ -1621,7 +1631,7 @@ export function modelSession(N, komi, model, opts = {}) {
           if (node.terminal) {
             v = node.tv
             won = node.tw
-          } else if (NN) {
+          } else if (NN && nnOk(node)) {
             const e = await nnEvalNode(node)
             v = nnVal(e, node.b, node.ply)
             won = lastWon

@@ -110,6 +110,48 @@ async function game(gi) {
   return written;
 }
 
+// --from-traces F1,F2,...: OUTCOME LABELS. go-w0.mjs runs at the live config
+// with --trace: every black-to-move position of every game, labelled with that
+// game's real outcome UNDER OUR POLICY against the game's AI — won, black's
+// final area (fraction of the playable points) and our turns left — plus the
+// teacher's p/w/o. The value the power objective needs (area, time), not
+// generic Go.
+const TRACES = str("from-traces", null);
+if (TRACES) {
+  let n = 0;
+  const q = [];
+  for (const f of TRACES.split(",")) {
+    let start = null;
+    for (const line of fs.readFileSync(f, "utf8").split("\n")) {
+      if (!line) continue;
+      const r = JSON.parse(line);
+      if (r.kind === "start") start = r;
+      if (r.kind !== "game" || !Array.isArray(r.trace)) continue;
+      const tr = r.trace;
+      const playable = tr[0].board.join("").replace(/#/g, "").length;
+      // Black to move: the start board, and every board right after a white entry.
+      const pos = [];
+      for (let k = 0; k < tr.length; k++) if (tr[k].who === "start" || (tr[k].who === "W" && k + 1 < tr.length)) pos.push(tr[k].board);
+      pos.forEach((board, i) => q.push({ board, komi: r.komi, opp: start?.opponent ?? null, won: r.won ? 1 : 0, area: r.black / playable, tl: pos.length - 1 - i }));
+    }
+  }
+  const outF = fs.createWriteStream(OUT, { flags: "a" });
+  let idx = 0;
+  const t0 = Date.now();
+  await Promise.all(Array.from({ length: CONC }, async () => {
+    while (idx < q.length) {
+      const it = q[idx++];
+      const t = await teacher(it.board, it.komi);
+      outF.write(JSON.stringify({ N, b: it.board.join(""), komi: it.komi, opp: it.opp, ...t, won: it.won, area: +it.area.toFixed(4), tl: it.tl }) + "\n");
+      if (++n % 20000 === 0) process.stderr.write(`label: ${n}/${q.length}\n`);
+    }
+  }));
+  outF.end();
+  kg.close();
+  process.stderr.write(`label done: ${n} positions in ${((Date.now() - t0) / 1000).toFixed(0)}s -> ${OUT}\n`);
+  process.exit(0);
+}
+
 let done = 0, positions = 0;
 const t0 = Date.now();
 const worker = async (w) => {

@@ -336,6 +336,28 @@ const ORACLE_MIN = flag("oracle-min", 0.6);
 // (see the commit).
 const JOINT = !argv.includes("--no-joint");
 const JOINT_OPTS = JOINT ? { pairs: [6, 5], pairsOnly: true } : {};
+// THE SMALL NET (--smallnet FILE [--smallnet-depth D]): a distilled walls-KataGo
+// net (tools/katago/distill_train.py -> smallnet.mjs, plain JS in this process)
+// as the model search's move prior and leaf value at the B nodes within D of
+// our turns of the root (golib modelSession opts.nn, mix 0). OFF unless named.
+// MEASURED (go-w0, 5x5 Tetrads live config: book + pass-forcing book + greedy
+// cheats at crime 3.459, --work-rate 1.7, the net's time charged at this
+// laptop's speed): b4c32 depth 1 vs the live solver, paired deals,
+// +10.0% [+2.7, +17.8] (layouts 100-199) and +5.1% [-1.0, +11.7] (0-99).
+// Only a net of the request's board size is used.
+const SMALLNET_FILE = str("smallnet", null);
+const SMALLNET_DEPTH = flag("smallnet-depth", 1);
+let SMALLNET = null;
+if (SMALLNET_FILE) {
+  try {
+    const { loadSmallNet } = await import("./katago/smallnet.mjs");
+    SMALLNET = loadSmallNet(SMALLNET_FILE);
+  } catch (err) {
+    console.error(`go-solver: --smallnet ${SMALLNET_FILE} did not load (${String(err).slice(0, 160)}) — the model search runs without a net`);
+  }
+}
+console.log(`go-solver: smallnet ${SMALLNET ? `${SMALLNET_FILE} (${SMALLNET.size}x${SMALLNET.size}, depth ${SMALLNET_DEPTH})` : "off"}`);
+const sessOpts = (N, base = {}) => ({ ...base, ...JOINT_OPTS, ...(SMALLNET && SMALLNET.size === N ? { nn: { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 } } : {}) });
 /** fn(cheatsSoFar) -> available, for a play `lagMs` after req.T, `depth` of our turns ahead. */
 function cheatFnOf(req, lagMs, depth, margin) {
   const c = req?.cheat;
@@ -581,7 +603,7 @@ while (true) {
             const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
             if (!sess || sessKey !== key) {
               const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-              sess = modelSession(N, req.komi ?? 5.5, { reply }, JOINT_OPTS);
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N));
               sessKey = key;
             }
             const history = Array.isArray(req.history) ? req.history : [];
@@ -605,7 +627,7 @@ while (true) {
             // search fresh.
             try {
               const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-              sess = modelSession(N, req.komi ?? 5.5, { reply }, JOINT_OPTS);
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N));
               sessKey = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
               const history = Array.isArray(req.history) ? req.history : [];
               sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
@@ -644,7 +666,7 @@ while (true) {
               const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
               if (!sess || sessKey !== key) {
                 const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-                sess = modelSession(N, req.komi ?? 5.5, { reply }, { ...opts, ...JOINT_OPTS });
+                sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N, opts));
                 sessKey = key;
               }
               if (FAULT && FAULT.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-session]");
@@ -653,6 +675,7 @@ while (true) {
               if (fn0) jointStats.requests++;
               backend = "model";
               extra.mode = "session";
+              if (SMALLNET && SMALLNET.size === N) extra.nn = SMALLNET_DEPTH;
               // THE PASS-ONLY GUARD, solver side: with pairs on, a root that
               // reads 'PASS only' is re-set with NO pairs; if the plain search
               // has stones there, the pair path was wrong — counted and logged.

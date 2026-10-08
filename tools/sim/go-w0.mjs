@@ -316,6 +316,7 @@ if (argv.includes("--nn")) {
 // search as if its evaluator were instant: the ceiling a fast net (a small
 // distilled one in the solver's own process) could reach.
 const NN_FREE = argv.includes("--nn-free");
+const SN_SCALE = num("smallnet-scale", 1.8);
 // --smallnet FILE: the DISTILLED net in this process (tools/katago/smallnet.mjs)
 // as the search's net — its CPU time is measured and charged like the GPU's
 // busy time (no batching: nn.parallel 1).
@@ -323,10 +324,12 @@ if (str("smallnet", null)) {
   const { loadSmallNet } = await import("../katago/smallnet.mjs");
   const sn = loadSmallNet(str("smallnet", null));
   let ms = 0;
-  NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k) => { const t = performance.now(); const e = sn.eval(b, k); ms += performance.now() - t; NNEV.stats.queries++; return e; } };
+  // Charged at the LIVE machine's speed: --smallnet-scale (default 1.8, the
+  // laptop's 8565U against bubtop's 12700K, the --cpu-scale note above).
+  NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k) => { const t = performance.now(); const e = sn.eval(b, k); ms += (performance.now() - t) * SN_SCALE; NNEV.stats.queries++; return e; } };
   if (!WORK_RATE) throw new Error("--smallnet needs --work-rate");
 }
-const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1) } : null;
+const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity) } : null;
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
@@ -1084,7 +1087,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, depth: NN_OPTS.maxDepth, smallnetScale: SN_SCALE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {
