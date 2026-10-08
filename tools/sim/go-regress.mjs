@@ -56,6 +56,30 @@ export async function regressEnv() {
   return env;
 }
 
+/**
+ * THE SOLVER'S NETS (a case with `nets: true`): the session's opts.nn exactly
+ * as tools/go-solver.mjs sessOpts builds it by default — the outcome net with
+ * steer for Tetrads (smallnet-5-o2), the b4c32 net at depth 1 for the other
+ * opponents it is on for, nothing elsewhere. Cases recorded before the nets
+ * shipped (2026-10-07/08) replay without them, as their checks were set.
+ */
+const NET_FILES = { outcome: "tools/goai/smallnet-5-o2.json", b4c32: "tools/goai/smallnet-5-b4c32.json" };
+const OUTCOME_ON = new Set(["Tetrads"]);
+const SMALLNET_ON = new Set(["Tetrads", "Daedalus", "Illuminati", "SlumSnakes", "Netburners"]);
+const nets = {};
+export async function solverNn(opponent, N) {
+  const key = planKey(opponent);
+  const which = OUTCOME_ON.has(key) ? "outcome" : SMALLNET_ON.has(key) ? "b4c32" : null;
+  if (!which) return null;
+  if (!nets[which]) {
+    const { loadSmallNet } = await import(pathToFileURL(path.join(REPO, "tools/katago/smallnet.mjs")).href);
+    nets[which] = loadSmallNet(path.join(REPO, NET_FILES[which]));
+  }
+  const net = nets[which];
+  if (net.size !== N) return null;
+  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}) };
+}
+
 /** go-games.txt / goplan opponent key -> the game's GoOpponent name. */
 export const gameOpponent = (o) => ({ TheBlackHand: "The Black Hand", SlumSnakes: "Slum Snakes" })[o] ?? o;
 /** The game's name -> goplan key. */
@@ -110,7 +134,7 @@ export function caseK(fx) {
  *   work: the search's model-calling iterations per move (default 1600)
  *   seed: the search stream and the AI's Math.random stream
  */
-export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false } = {}) {
+export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null } = {}) {
   const E = await regressEnv();
   const { golib, model, m } = E;
   const N = fx.size;
@@ -118,6 +142,19 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
   const oppName = gameOpponent(fx.opponent);
   const opp = model.opponentOf(oppName);
   const cfg = liveConfig(E, planKey(fx.opponent), N);
+  // THE CHEATS (a case with `cheat`: {crime, sf14}, the game's cheat inputs
+  // when it was lost): off the forced line the solver's moves are played
+  // through go.js's own cheat policy (SETTINGS.cheat, or `cheatPolicy` to
+  // compare one) wherever the roll's window is open at the move's playtime
+  // (golib.cheatRoll / cheatChance, the clock as for the AI's seed):
+  //   joint            the pair search (solver opts.pairs, pairsOnly) decides
+  //   hardBelow > 0    the pair search on a move whose single wins < hardBelow
+  //   else (greedy)    the single, then a second-stone search on the board
+  //                    after it at secondMs/maxms of the budget, its valid list
+  //                    the pre-cheat one (playTwoMoves validates both first)
+  // A case without `cheat` replays single stones only (as before).
+  const CH = fx.cheat ? { ...E.SETTINGS.cheat, ...(cheatPolicy ?? {}), crime: fx.cheat.crime, sf14: fx.cheat.sf14 ?? 0 } : null;
+  const nn = fx.nets ? await solverNn(fx.opponent, N) : null;
   return withSeededRandom(seed * 7919 + 17, async () => {
     const st = m.getNewBoardStateFromSimpleBoard(toSimple(fx.start, N), undefined, opp, m.GoColor.white);
     st.previousBoards = [];
@@ -169,7 +206,16 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
       return base + 200 * Math.round(((ply - bp) * 1200) / 200);
     };
     const kw = [[K, 0.6], [K + 1, 0.25], [K - 1, 0.1], [K + 2, 0.05]];
-    const sess = golib.modelSession(N, komi, { reply: (b, o) => model.reply(b, { ...o, opponent: oppName }) }, { seed });
+    // A cheat case's session carries the solver's pair options (go-solver JOINT_OPTS).
+    const sess = golib.modelSession(N, komi, { reply: (b, o) => model.reply(b, { ...o, opponent: oppName }) }, { seed, ...(CH ? { pairs: [6, 5], pairsOnly: true } : {}), ...(nn ? { nn } : {}) });
+    let cheats = 0;
+    const windowOpen = (ply) => !!CH && !oppPassed && cheats < CH.maxPerGame && ply + 1 >= CH.fromTurn && golib.cheatChance(cheats, CH.crime, CH.sf14) >= CH.minChance && golib.cheatRoll(tAt(ply)) <= golib.cheatChance(cheats, CH.crime, CH.sf14);
+    const secondWork = CH ? Math.max(50, Math.round((work * (CH.secondMs ?? cfg.maxms)) / cfg.maxms)) : 0;
+    const validList = (g) => {
+      const out = [];
+      for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (g[x][y]) out.push([x, y]);
+      return out;
+    };
     let oppPassed = false;
     let onLine = true;
     const line = [];
@@ -177,28 +223,70 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
     for (let ply = 0; ply < N * N * 4 && st.passCount < 2; ply++) {
       const logged = fx.moves[ply];
       let mv;
+      // The session is rooted on the board after a greedy cheat's first stone
+      // (the second-stone request's root): commit the second stone alone.
+      let greedySecond = false;
       if (ply < from && logged) {
         mv = logged.m;
+        if (mv.includes("+")) cheats++;
         // Keep the session's tree in step with the forced line (cheap: no search).
         sess.setRoot(simpleOf(), validOf(), { history: st.previousBoards.slice(), opponentPassed: oppPassed, ...(objective ? { objective } : {}) });
       } else {
         const clock = cfg.clock ? { T: tAt(ply), kw, turnTicks: 6, jitter: 5, eps: 0.1 } : undefined;
-        const r0 = sess.setRoot(simpleOf(), validOf(), { history: st.previousBoards.slice(), opponentPassed: oppPassed, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) });
+        const simple = simpleOf();
+        const valid = validOf();
+        const history = st.previousBoards.slice();
+        const rootOpts = { history, opponentPassed: oppPassed, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) };
+        const r0 = sess.setRoot(simple, valid, rootOpts);
         mv = "P";
         if (r0) {
           await sess.search({ maxms: 30000, untilWork: work, untilVisits: 40 * work });
           const b = sess.best();
           if (b && b.length) mv = `${b[0].x},${b[0].y}`;
-          decisions.push({ ply, mv, top: b?.[0]?.top ?? [] });
+          const d = { ply, mv, top: b?.[0]?.top ?? [] };
+          decisions.push(d);
+          if (mv !== "P" && windowOpen(ply)) {
+            const wr = d.top?.[0]?.[4];
+            if (CH.joint || (CH.hardBelow > 0 && typeof wr === "number" && wr < CH.hardBelow)) {
+              // The pair search (go-solver with a request's `cheat`: pairs at the root).
+              sess.setRoot(simple, valid, { ...rootOpts, cheat: { fns: [() => true], cheats } });
+              await sess.search({ maxms: 30000, untilWork: work, untilVisits: 40 * work });
+              const pb = sess.best();
+              const p0 = pb?.[0];
+              if (p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y]) {
+                mv = `${p0.x},${p0.y}+${p0.second.x},${p0.second.y}`;
+                d.pair = { mv, top: p0.top ?? [], hard: !CH.joint };
+              }
+            }
+            if (!mv.includes("+") && !CH.joint) {
+              // The greedy cheat: a second-stone request on the board after the first.
+              const [x1, y1] = mv.split(",").map(Number);
+              const board2 = golib.applyMove(simple, x1, y1);
+              if (board2) {
+                const v2 = valid.map((col, x) => col.map((ok, y) => ok && !(x === x1 && y === y1) && board2[x][y] === "."));
+                if (validList(v2).length && sess.setRoot(board2, v2, { history: [simple.join(""), ...history], opponentPassed: false, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) })) {
+                  await sess.search({ maxms: 30000, untilWork: secondWork, untilVisits: 40 * secondWork });
+                  const s2 = sess.best();
+                  if (s2 && s2.length) {
+                    mv = `${x1},${y1}+${s2[0].x},${s2[0].y}`;
+                    greedySecond = true;
+                    d.second = { mv, top: s2[0].top ?? [] };
+                  }
+                }
+              }
+            }
+            if (mv.includes("+")) cheats++;
+          }
         } else decisions.push({ ply, mv, top: [], passOnly: true });
         if (decideOnly) return { won: null, line, decisions };
       }
-      if (onLine && (!logged || mv !== logged.m.replace(/\+.*/, ""))) onLine = false;
+      if (onLine && (!logged || mv !== (CH ? logged.m : logged.m.replace(/\+.*/, "")))) onLine = false;
       if (!playMv(mv, m.GoColor.black)) {
         playMv("P", m.GoColor.black);
         mv = "P";
       }
       if (mv === "P") sess.commit(null);
+      else if (greedySecond) sess.commit(...mv.split("+")[1].split(",").map(Number));
       else if (mv.includes("+")) {
         // A logged cheat: both stones, committed as the pair.
         const [[x1, y1], [x2, y2]] = mv.split("+").map((p) => p.split(",").map(Number));

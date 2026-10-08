@@ -378,7 +378,24 @@ const SETTINGS = {
   // joint: the cheat as a JOINT two-stone action searched by the solver (see
   // tools/go-solver.mjs THE JOINT CHEAT and golib modelSession opts.pairs);
   // false: the greedy cheat (the solver's single, then a second-stone request).
-  cheat: { joint: false, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  // hardBelow: THE HARD-MOVE PAIR. With joint off, on a move whose single
+  // wins under hardBelow by the solver's own search (the request's top, or the
+  // pre-sent answer's wr) and a cheat window open, the pair is asked for
+  // JOINTLY (a request carrying `cheat`: the solver searches pairs, pairsOnly)
+  // and played whole; no pair -> the greedy cheat as before. 0 = off.
+  // WHY (the 2026-10-08 19:08:40Z loss, streak 9,693, 13-15.5): at ply 4 the
+  // single 4,2 won ~0.3 and the greedy second stone (a 100ms request, ~100
+  // iterations) chose 0,3 — every policy loses from the position after
+  // 4,2+0,3 (tools/sim/go-regress.mjs); the joint search there finds
+  // 1,1+1,0 / 3,1+1,1 at 0.75-0.88. The cost: one extra request on such
+  // moves only (the request says cheat.ponder false: the ponder after it
+  // searches singles, and a pre-sent pair is never played with joint off).
+  // MEASURED 2026-10-08 (go-w0 --cheat-hybrid 0.5 vs greedy, Tetrads 5x5 live
+  // config: book + pass-forcing book, outcome net + steer, cheats predicted
+  // at crime 2.5112 / SF14.3, --work-rate 1.7, layout seeds 1101-1108):
+  // 800 paired, power/h -0.1% [-2.2, +2.2], 800/800 won both; a hard pair
+  // on 106/800 games (13%). Corpus case live-2026-10-08T19:08:40.943Z.
+  cheat: { joint: false, hardBelow: 0.5, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -817,7 +834,8 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
       // A pair whose second stone is not playable here is no answer at all:
       // its first stone was chosen for the pair and is never played alone.
       if (a.second && !s2) return { answer: null, had: true }
-      return { answer: { x: a.x, y: a.y, ...(s2 ? { second: s2 } : {}) }, had: true }
+      // wr: the ponder's own win rate for it (SETTINGS.cheat.hardBelow reads it).
+      return { answer: { x: a.x, y: a.y, ...(s2 ? { second: s2 } : {}), ...(Number.isFinite(a.wr) ? { wr: a.wr } : {}) }, had: true }
     }
   }
   return { answer: null, had: true }
@@ -827,6 +845,14 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
 export function clockFor(opponent) {
   const on = SETTINGS.clock ?? {}
   return !!(on[opponent] ?? on.default)
+}
+
+/**
+ * Whether a cheat's pair is searched JOINTLY on this move (SETTINGS.cheat.hardBelow):
+ * the single the solver chose wins under hardBelow by its own search. Pure.
+ */
+export function hardPairWanted(wr, hardBelow = SETTINGS.cheat.hardBelow) {
+  return Number.isFinite(hardBelow) && hardBelow > 0 && typeof wr === 'number' && Number.isFinite(wr) && wr < hardBelow
 }
 
 /** Whether cheats are played against this opponent (SETTINGS.cheat.on). Pure. */
@@ -1819,21 +1845,25 @@ export async function main(ns) {
        * One two-move cheat, if the window allows; see CHEAT POLICY. Returns
        * {played, reply}. Never plays a cheat it cannot see succeed.
        */
+      /** Whether the next cheat's window is open (or opens within maxWaitMs). Pure read. */
+      const cheatWindowOk = () => {
+        const p = cheatChance(cheat.played, cheatCalib?.crime ?? 1, sf14)
+        if (p < SETTINGS.cheat.minChance) return false
+        // Playtime advances with the wall clock while the tab is live; a
+        // throttled tab only makes this optimistic, and go-cheat.js decides
+        // on the exact value anyway. No calibration yet: go-cheat.js decides.
+        if (!cheatCalib) return true
+        return cheatWaitS(cheatCalib.T + (Date.now() - cheatCalib.at), p) * 1000 <= SETTINGS.cheat.maxWaitMs + 200
+      }
       const tryCheat = async (board, validList, first, knownSecond = null) => {
         const k = cheat.played
         const p = cheatChance(k, cheatCalib?.crime ?? 1, sf14)
         if (p < SETTINGS.cheat.minChance) return { played: false }
-        if (cheatCalib) {
-          // Playtime advances with the wall clock while the tab is live; a
-          // throttled tab only makes this optimistic, and go-cheat.js decides
-          // on the exact value anyway.
-          const w = cheatWaitS(cheatCalib.T + (Date.now() - cheatCalib.at), p) * 1000
-          // No exec for a window go-cheat.js would only decline (its own wait
-          // cap is maxWaitMs): the exec + read costs ~150ms for nothing.
-          if (w > SETTINGS.cheat.maxWaitMs + 200) {
-            cheat.skipped++
-            return { played: false }
-          }
+        // No exec for a window go-cheat.js would only decline (its own wait
+        // cap is maxWaitMs): the exec + read costs ~150ms for nothing.
+        if (!cheatWindowOk()) {
+          cheat.skipped++
+          return { played: false }
         }
         const board2 = applyMove(board, first.x, first.y)
         if (!board2) return { played: false }
@@ -1956,11 +1986,20 @@ export async function main(ns) {
         // position while the AI was thinking — play it now, no round trip.
         let src = 'req'
         let ranked = null
+        let preWr = null
         lastTop = null
         if (SETTINGS.presend && useModel) {
           const pre = presentAnswer(readHome('/go/ponder.txt'), boardStrings, valid, oppPassed)
-          if (pre.answer) {
+          // A pre-sent PAIR with joint cheats off: the solver pondered pairs
+          // after a hard-move pair request (its `cheat` arms the ponder too).
+          // Its first stone was chosen for the pair and is never played alone
+          // or greedily chained: ask for this move instead.
+          if (pre.answer?.second && !SETTINGS.cheat.joint) {
+            cheat.prePairSkipped = (cheat.prePairSkipped ?? 0) + 1
+            preMisses++
+          } else if (pre.answer) {
             ranked = pre.answer.pass ? [] : [{ x: pre.answer.x, y: pre.answer.y, ...(pre.answer.second ? { second: pre.answer.second } : {}) }]
+            preWr = typeof pre.answer.wr === 'number' ? pre.answer.wr : null
             src = 'pre'
             preHits++
             presentGame++
@@ -1986,18 +2025,45 @@ export async function main(ns) {
         // priced for ONE stone, and the second-stone request would carry a
         // pass our first stone already wiped.
         const jointPair = SETTINGS.cheat.joint ? ranked?.[0]?.second ?? null : null
+        let hardDeclined = false
         if (cheatOn && cheatFor(opponent) && !oppPassed && !(src !== 'pre' && lastOracle) && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame && (!SETTINGS.cheat.joint || jointPair)) {
           // A pre-sent pair: the solver learns of it before the AI replies.
           if (jointPair && src === 'pre') notifySolver(boardStrings, validList, { x: ranked[0].x, y: ranked[0].y, second: jointPair })
-          const c = await tryCheat(boardStrings, validList, ranked[0], jointPair)
+          // THE HARD-MOVE PAIR (SETTINGS.cheat.hardBelow): the single wins too
+          // rarely to chain a 100ms second stone onto it — ask for the pair
+          // jointly, while a window is open (the solver offers pairs only where
+          // the roll at its play is inside the window, go-solver cheatFnOf).
+          let first = ranked[0]
+          let pairSecond = jointPair
+          let hardAsked = false
+          const singleWr = src === 'pre' ? preWr : lastTop?.[0]?.[4]
+          if (!jointPair && clockFor(opponent) && hardPairWanted(singleWr) && cheatWindowOk()) {
+            const crime = clockRead.crime() ?? cheatCalib?.crime ?? null
+            if (crime) {
+              hardAsked = true
+              cheat.hard = (cheat.hard ?? 0) + 1
+              const topBefore = lastTop
+              const pr = await askSolver(boardStrings, validList, { cheat: { crime, sf14, cheats: cheat.played, max: SETTINGS.cheat.maxPerGame, turn: guard, fromTurn: SETTINGS.cheat.fromTurn, minChance: SETTINGS.cheat.minChance, ponder: false } })
+              const p0 = pr?.[0]
+              if (p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y] && !(p0.x === p0.second.x && p0.y === p0.second.y)) {
+                first = { x: p0.x, y: p0.y }
+                pairSecond = p0.second
+                cheat.hardPairs = (cheat.hardPairs ?? 0) + 1
+              } else lastTop = topBefore
+            }
+          }
+          const c = await tryCheat(boardStrings, validList, first, pairSecond)
           if (c.played) {
             moves++
-            moveLog.push({ m: `${ranked[0].x},${ranked[0].y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}) })
+            moveLog.push({ m: `${first.x},${first.y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}), ...(hardAsked ? { h: singleWr } : {}) })
             oppPassed = c.reply === 'pass'
             if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)
             continue
           }
+          // A declined hard pair: the single is played (never the pair's first
+          // stone alone), and the solver, which committed the pair, is told.
+          hardDeclined = hardAsked
         }
         // A PAIR'S FIRST STONE IS NEVER PLAYED ALONE. The search chose it
         // knowing a second stone follows; alone it can be a self-atari (the
@@ -2029,11 +2095,11 @@ export async function main(ns) {
         // The solver learns of a pre-sent move here (it re-roots and ponders
         // on while the AI thinks); written while the move is pending, which
         // ns.go allows (see awaitMove).
-        if (src === 'pre') notifySolver(boardStrings, validList, stone ? { x: ranked[0].x, y: ranked[0].y } : { pass: true })
+        if (src === 'pre' || hardDeclined) notifySolver(boardStrings, validList, stone ? { x: ranked[0].x, y: ranked[0].y } : { pass: true })
         // Only to a solver that takes retimes (it counts them in `seed`): an
         // older one would read the retime's seq as a new request it cannot
         // parse, and stop pondering for the turn.
-        if (src === 'req' && useModel && clockFor(opponent) && Number.isFinite(seedLive?.retimes)) retimeSolver()
+        if (src === 'req' && !hardDeclined && useModel && clockFor(opponent) && Number.isFinite(seedLive?.retimes)) retimeSolver()
         if (oppPassed && passAhead) {
           if (stone) stonesAfterPass++
           else mirrorPasses++

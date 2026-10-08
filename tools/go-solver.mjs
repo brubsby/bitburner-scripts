@@ -898,7 +898,11 @@ while (true) {
         // in slices until the next request arrives (or PONDER_CAP_MS).
         if (backend === "model" && extra.mode === "session" && sess) {
           sess.commit(move.pass ? null : move.x, move.pass ? null : move.y, move.second ?? null);
-          sess.setCheat({ fns: [null, cheatFnOf(req, maxms + 100 + (Number.isFinite(req.turnS) ? req.turnS : 1.06) * 1000, 1, 0.02)], cheats: (req.cheat?.cheats ?? 0) + (move.second ? 1 : 0) });
+          // cheat.ponder false (go.js's hard-move pair, joint cheats off): pairs
+          // for THIS answer only — the ponder searches singles, so no pair is
+          // pre-sent to a go.js that plays pre-sent answers as singles.
+          const ponderFn = req.cheat?.ponder === false ? null : cheatFnOf(req, maxms + 100 + (Number.isFinite(req.turnS) ? req.turnS : 1.06) * 1000, 1, 0.02);
+          sess.setCheat({ fns: [null, ponderFn], cheats: (req.cheat?.cheats ?? 0) + (move.second ? 1 : 0) });
           rememberSeedCtx(req, "req", move.pass ? null : move.x, move.pass ? null : move.y);
           skipSleep = await ponderUntilNext(maxms);
         }

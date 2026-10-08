@@ -9,6 +9,11 @@
 //   node tools/sim/go-fixture.mjs --harness f.jsonl [--i 17]   a go-w0.mjs --trace loss (every loss, or game i)
 //   options: --file .telemetry/go-games.txt  --out <fixture json>  --work 1600
 //            --from P (the check's ply; default: the critical ply, below)  --note "..."  --dry
+//            --cheat CRIME:SF14  replay the solver's moves through go.js's cheat policy
+//                     (the game's crime_success and SF14 level when it was lost;
+//                     go-regress playCheck), for a game decided by a cheat
+//            --nets   the solver's nets as go-solver loads them by default (go-regress solverNn)
+//            --seeds 1,2,3  one check per seed (search + AI stream), default 1
 //
 // For each game it resolves the AI's seed lag at every reply the record has a
 // playtime for (go-regress.mjs caseFromRecord), finds the CRITICAL PLY — the
@@ -33,6 +38,9 @@ const OUT = str("out", path.join(REPO, "tools", "test", "fixture-go-losses.json"
 const WORK = Number(str("work", 1600));
 const DRY = argv.includes("--dry");
 const NOTE = str("note", "");
+const CHEAT = str("cheat", null) ? (([crime, sf14]) => ({ crime: Number(crime), sf14: Number(sf14 ?? 0) }))(str("cheat", "").split(":")) : null;
+const NETS = argv.includes("--nets");
+const SEEDS = str("seeds", "1").split(",").map(Number);
 
 /** Records to turn into cases: [{rec, id, source}]. */
 function pick() {
@@ -78,16 +86,24 @@ function harnessRecord(g, start) {
 const fixture = fs.existsSync(OUT) ? JSON.parse(fs.readFileSync(OUT, "utf8")) : { v: 1, cases: [] };
 for (const { rec, id, source } of pick()) {
   const fx = await caseFromRecord(rec, { id, source, note: NOTE });
+  if (CHEAT) fx.cheat = CHEAT;
+  if (NETS) fx.nets = true;
   // A harness trace carries the AI's exact seed: k relative to our T is exact.
   for (let i = 0; i < rec.moves.length; i++) if (rec.moves[i].seed && rec.moves[i].T) fx.moves[i].ks = [Math.round((rec.moves[i].seed - rec.moves[i].T) / 200)];
   const from = str("from", null) !== null ? Number(str("from", 0)) : await criticalPly(fx, { work: WORK });
   const probe = await probeAt(fx, from, { work: WORK });
-  const res = await playCheck(fx, { from, work: WORK });
-  fx.checks = [{ from, work: WORK, why: `critical ply: the last on the logged line where the solver found a line winning >= 50% (live played ${fx.moves[from]?.m}; replay picks ${probe?.mv} at win rate ${probe?.wr})` }];
-  fx.status = res.won ? "fixed" : "open";
+  const why = `${str("from", null) !== null ? "set by hand" : "critical ply: the last on the logged line where the solver found a line winning >= 50%"} (live played ${fx.moves[from]?.m}; replay picks ${probe?.mv} at win rate ${probe?.wr})`;
+  fx.checks = SEEDS.map((seed) => ({ from, work: WORK, ...(seed !== 1 ? { seed } : {}), why }));
   const ks = fx.moves.map((m) => (m.ks ? `[${m.ks.join(",")}]` : "-")).join(" ");
   console.log(`${fx.id}: ${fx.moves.length} plies, seed k per reply ${ks}`);
-  console.log(`  check from ply ${from}: replay ${res.won ? "WON" : "LOST"} ${res.black}-${res.white}  line ${res.line.map((l) => `${l.m}/${l.r}`).join(" ")}  -> status ${fx.status}`);
+  let allWon = true;
+  for (const seed of SEEDS) {
+    const res = await playCheck(fx, { from, work: WORK, seed });
+    allWon &&= res.won;
+    console.log(`  check from ply ${from} seed ${seed}: replay ${res.won ? "WON" : "LOST"} ${res.black}-${res.white}  line ${res.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
+  }
+  fx.status = allWon ? "fixed" : "open";
+  console.log(`  -> status ${fx.status}`);
   if (!DRY) {
     const i = fixture.cases.findIndex((c) => c.id === fx.id);
     if (i >= 0) fixture.cases[i] = fx;

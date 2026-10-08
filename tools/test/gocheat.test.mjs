@@ -388,5 +388,39 @@ export async function run() {
     }
     if (Math.abs(G.cheatChance(0, 1, 3) - 0.85) > 1e-12) c10.fail(`cheatChance(0, crime 1, SF14.3) must be 0.85, got ${G.cheatChance(0, 1, 3)}`);
   }
-  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10];
+  const c11 = new Check("GC11", "the hard-move pair (go.js SETTINGS.cheat.hardBelow, the 2026-10-08 19:08Z loss): a single winning under hardBelow asks for the pair jointly; the pre-sent answer carries its win rate; a declined pair never plays its first stone alone");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    await import("./gameresolve.mjs"); // root scripts import bare names ('golib.js')
+    const go = await import(path.join(REPO, "go.js"));
+    const hb = go.SETTINGS.cheat.hardBelow;
+    c11.examined(1);
+    if (!(hb > 0 && hb < 1)) c11.fail(`SETTINGS.cheat.hardBelow is ${hb}: the hard-move pair is off (the 19:08Z loss's greedy chain is back)`);
+    for (const [wr, thr, want] of [[0.28, 0.5, true], [0.5, 0.5, false], [0.9, 0.5, false], [null, 0.5, false], [undefined, 0.5, false], [NaN, 0.5, false], [0.1, 0, false]]) {
+      c11.examined(1);
+      if (go.hardPairWanted(wr, thr) !== want) c11.fail(`hardPairWanted(${wr}, ${thr}) = ${go.hardPairWanted(wr, thr)}, want ${want} (an unknown win rate never asks)`);
+    }
+    // The pre-sent path: the ponder's wr reaches go.js (the 19:08Z cheat's first stone was pre-sent).
+    const B = [".....", ".....", ".....", ".....", "....."];
+    const valid = B.map(() => [true, true, true, true, true]);
+    const text = JSON.stringify({ answers: [{ b: B.join(""), pc: 0, x: 4, y: 2, wr: 0.28 }] });
+    const a = go.presentAnswer(text, B, valid, false).answer;
+    c11.examined(1);
+    if (!(a && a.x === 4 && a.y === 2 && a.wr === 0.28)) c11.fail(`presentAnswer dropped the ponder's wr: ${JSON.stringify(a)}`);
+    // The loop: the cheat plays first+pairSecond; a cheat not played falls through to ranked[0] (the single).
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    for (const [what, re] of [
+      ["the hard request carries `cheat` (the solver searches pairs)", /hardPairWanted\(singleWr\)[\s\S]{0,600}askSolver\(boardStrings, validList, \{ cheat: \{/],
+      ["the cheat is played from the hard pair", /tryCheat\(boardStrings, validList, first, pairSecond\)/],
+      ["a declined hard pair plays the single (ranked[0]), never the pair's first stone", /ns\.go\.makeMove\(ranked\[0\]\.x, ranked\[0\]\.y\)/],
+      ["the solver, which committed the pair, is told the single played", /src === 'pre' \|\| hardDeclined\) notifySolver/],
+      ["a pre-sent PAIR (the ponder after a hard request searches pairs) is not played with joint off", /if \(pre\.answer\?\.second && !SETTINGS\.cheat\.joint\)/],
+    ]) {
+      c11.examined(1);
+      if (!re.test(src)) c11.fail(`go.js: ${what} — not found`);
+    }
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11];
 }
