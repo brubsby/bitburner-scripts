@@ -367,8 +367,11 @@ if (SMALLNET_FILE) {
 //   Daedalus    +7.9%  [+3.3, +12.7]  200 games, 200/200 vs 200/200 (29,613 -> 31,960 power/h)
 //   Illuminati  +10.5% [+5.5, +15.5]  200 games, 199/200 vs 200/200; +9.2% power/h at the
 //               stationary streak with the loss priced (185,156 -> 202,242)
-// Netburners and Slum Snakes: being measured (off until then).
-const SMALLNET_ON = new Set(str("smallnet-on", "Tetrads,Daedalus,Illuminati").split(",").map((s) => s.trim().replace(/\s+/g, "")).filter(Boolean));
+//   SlumSnakes  +6.9%  [+1.2, +13.1]  200 games, 200/200 vs 199/200 (20,638 -> 22,307 power/h)
+//   Netburners  +4.8%  [-2.1, +12.6]  200 games, 200/200 vs 198/200 (17,008 -> 18,237 power/h
+//               with the losses priced) — on: no measured downside, fewer losses
+// The Black Hand: not measured (off).
+const SMALLNET_ON = new Set(str("smallnet-on", "Tetrads,Daedalus,Illuminati,SlumSnakes,Netburners").split(",").map((s) => s.trim().replace(/\s+/g, "")).filter(Boolean));
 const smallnetFor = (N, opponent) => !!SMALLNET && SMALLNET.size === N && (SMALLNET_ON.has("all") || SMALLNET_ON.has(String(opponent ?? "").replace(/\s+/g, "")));
 console.log(`go-solver: smallnet ${SMALLNET ? `${SMALLNET_FILE} (${SMALLNET.size}x${SMALLNET.size}, depth ${SMALLNET_DEPTH}) for ${[...SMALLNET_ON].join(",")}` : "off"}`);
 const sessOpts = (N, opponent, base = {}) => ({ ...base, ...JOINT_OPTS, ...(smallnetFor(N, opponent) ? { nn: { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 } } : {}) });
