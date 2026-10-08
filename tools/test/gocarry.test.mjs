@@ -69,7 +69,7 @@ export async function run() {
   /* ------------------------------------------------------------------ GC2 */
   const c2 = new Check("GC2", "go.js main(): a restart in the refusal regime keeps this life's arm, not Daedalus@5");
   {
-    const runMain = async ({ prior = null, args = [], flagsOpp = "Daedalus", inProgress = null } = {}) => {
+    const runMain = async ({ prior = null, args = [], flagsOpp = "Daedalus", inProgress = null, games = 1 } = {}) => {
       const files = new Map();
       const published = [];
       const resets = [];
@@ -86,7 +86,7 @@ export async function run() {
       if (prior) files.set("/tel/go.txt", JSON.stringify(prior));
       const ns = {
         args,
-        flags: () => ({ size: 5, maxms: 5, idle: 1, topk: 8, remotems: 0, games: 1, opponent: flagsOpp, pin: false }),
+        flags: () => ({ size: 5, maxms: 5, idle: 1, topk: 8, remotems: 0, games, opponent: flagsOpp, pin: false }),
         disableLog() {},
         tprint() {},
         print() {},
@@ -177,6 +177,44 @@ export async function run() {
     } catch (err) {
       c2.fail(String(err?.stack ?? err).slice(0, 500));
     }
+
+    /* ---------------------------------------------------------------- GC3 */
+    // Live 2026-10-08 20:16Z on be11978: killed mid-game vs Daedalus, started
+    // `run go.js --opponent Tetrads`. The resume finished the Daedalus game and
+    // then kept Daedalus as the incumbent under every later refusal, and
+    // published it, so the next restart carried Daedalus too.
+    const c3 = new Check("GC3", "a resumed game is played for that game only; the next boundary returns to the preferred arm under a refusal");
+    try {
+      // --opponent Tetrads, restart lands mid-game vs Daedalus.
+      const f = await runMain({ args: ["--opponent", "Tetrads"], flagsOpp: "Tetrads", inProgress: "Daedalus", games: 2 });
+      c3.examined(2);
+      if (f.resets.length !== 1 || JSON.stringify(f.resets[0]) !== JSON.stringify(["Tetrads", 5])) c3.fail(`game 1 resumes Daedalus (no reset), game 2 must be Tetrads@5 (--opponent); resets were ${JSON.stringify(f.resets)}`);
+      if (f.last?.resumed !== 1) c3.fail(`the first game must be the resumed one, resumed=${f.last?.resumed}`);
+      // The carried arm, same shape.
+      const g = await runMain({ prior: sameLife, inProgress: "Daedalus", games: 2 });
+      c3.examined(2);
+      if (g.resets.length !== 1 || JSON.stringify(g.resets[0]) !== JSON.stringify(["Tetrads", 7])) c3.fail(`after the resumed Daedalus game the carried Tetrads@7 must come back; resets were ${JSON.stringify(g.resets)}`);
+      // While the resumed game is played, go.txt must still name the priced
+      // arm, so a restart in the middle of it does not carry Daedalus.
+      const during = g.published.find((p) => p.opponent === "Daedalus");
+      if (!during || during.preferredArm !== "Tetrads@7") c3.fail(`go.txt during the resumed game must publish preferredArm Tetrads@7, got ${JSON.stringify(during && { opponent: during.opponent, arm: during.arm, preferredArm: during.preferredArm })}`);
+      // ...and carriedArmOf prefers it over the resumed game's `arm`.
+      c3.examined(1);
+      if (typeof go.carriedArmOf === "function") {
+        const r = go.carriedArmOf(JSON.stringify({ opponent: "Daedalus", arm: "Daedalus@5", preferredArm: "Tetrads@7", lastAugReset: LIFE, bitNode: NODE }), { lastAugReset: LIFE, currentNode: NODE });
+        if (r.opponent !== "Tetrads" || r.size !== 7) c3.fail(`carriedArmOf must prefer preferredArm over a resumed game's arm, got ${JSON.stringify(r)}`);
+      } else c3.fail("go.js must export carriedArmOf");
+      // The restart chain: a go.txt written mid-resume carries Tetrads@7.
+      if (during) {
+        const h = await runMain({ prior: during, games: 1 });
+        c3.examined(1);
+        if (JSON.stringify(h.resets[0]) !== JSON.stringify(["Tetrads", 7])) c3.fail(`a restart from a go.txt written during the resumed game must stay on Tetrads@7, got ${JSON.stringify(h.resets[0])}`);
+      }
+      c3.note(`--opponent: resets ${JSON.stringify(f.resets)}; carried: resets ${JSON.stringify(g.resets)}, mid-resume preferredArm ${during?.preferredArm}`);
+    } catch (err) {
+      c3.fail(String(err?.stack ?? err).slice(0, 500));
+    }
+    checks.push(c3);
   }
   checks.push(c2);
   return checks;

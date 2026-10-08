@@ -960,11 +960,14 @@ export function carriedArmOf(text, reset, o = {}) {
   if (!rec || typeof rec !== 'object') return { opponent: null, why: 'no last go.txt' }
   if (typeof reset?.lastAugReset !== 'number' || rec.lastAugReset !== reset.lastAugReset) return { opponent: null, why: 'the last go.txt is from another life' }
   if (rec.bitNode !== (reset?.currentNode ?? null)) return { opponent: null, why: `the last go.txt is from BitNode ${rec.bitNode}` }
-  // `arm` ('Name@size') is the arm; `opponent` + `boardSize` for an older record.
-  const m = typeof rec.arm === 'string' ? /^(.+)@(\d+)$/.exec(rec.arm) : null
+  // `preferredArm` ('Name@size') is the priced incumbent — not a resumed
+  // game's opponent, which `arm`/`opponent` show while it is played. `arm`,
+  // then `opponent` + `boardSize`, for an older record.
+  const armText = typeof rec.preferredArm === 'string' ? rec.preferredArm : rec.arm
+  const m = typeof armText === 'string' ? /^(.+)@(\d+)$/.exec(armText) : null
   const key = keyOfGame(m ? m[1] : rec.opponent)
   const size = m ? Number(m[2]) : Number(rec.boardSize)
-  if (!key) return { opponent: null, why: `the last go.txt names no known opponent (${rec.arm ?? rec.opponent})` }
+  if (!key) return { opponent: null, why: `the last go.txt names no known opponent (${armText ?? rec.opponent})` }
   if (key === W0) {
     if (!o.w0Eligible) return { opponent: null, why: 'the last go.txt was on the hidden opponent, which is not eligible now' }
     return { opponent: W0, size: 19, why: `startup: carried over from this life's last go.txt (${W0}@19)` }
@@ -1361,6 +1364,14 @@ export async function main(ns) {
   // own reason, and this says where the incumbent it kept came from.
   const opponentStartup = opponentWhy
   if (carried.opponent && SETTINGS.arms.on) armSize = carried.size
+  // THE PREFERRED INCUMBENT (with armSize as its size): the arm the pricing
+  // keeps when it refuses. A resumed game plays ITS opponent for that game
+  // only; the next game boundary returns here. Without this, a restart that
+  // landed mid-game (most deploy restarts) made the resumed opponent the
+  // incumbent for good under a refusal — live 2026-10-08 20:16Z, --opponent
+  // Tetrads lost to a resumed Daedalus game — and published it, so the next
+  // restart carried it too. Published as `preferredArm`; carriedArmOf reads it.
+  let preferred = opponent
   const canCheat = canUseGoCheat(reset) && ns.fileExists('go-cheat.js', 'home')
   // Cheats are switched off for the rest of the process if a played cheat's
   // stones are missing from the next board twice — the prediction would then
@@ -1490,6 +1501,8 @@ export async function main(ns) {
     opponentWhy,
     // Where this process's starting incumbent came from (carriedArmOf).
     opponentStartup,
+    // The arm the pricing keeps on a refusal — NOT a resumed game's opponent.
+    preferredArm: `${preferred}@${preferred === W0 ? 19 : armSize}`,
     // Which weights priced the last choice: progress.js's goWeights for this
     // life, or the early-game weights (and the readings behind them).
     weightsSource,
@@ -1664,6 +1677,11 @@ export async function main(ns) {
       } else {
         if (inProgress) record(errors, new Error(`the game in progress vs ${inProgress.key} failed ${gameErrors} times in a row — resetting it (a forfeit)`))
         gameErrors = 0
+        // A resumed game is over: back to the preferred incumbent.
+        if (opponent !== preferred) {
+          opponentWhy = `back to ${preferred}@${preferred === W0 ? 19 : armSize} after the resumed game vs ${opponent}`
+          opponent = preferred
+        }
       }
       // Re-priced at the game boundary — never mid-game, which would abandon a
       // position — and only once the last switch's committed dwell is served.
@@ -1674,6 +1692,7 @@ export async function main(ns) {
         const pick = pickOpponent(opponent, ns.go.analysis.getStats(), SETTINGS.minDwellGames * gameH)
         const was = `${opponent}@${armSize}`
         opponent = pick.opponent
+        preferred = pick.opponent
         opponentWhy = pick.why
         armWhy = pick.why
         if (Number.isFinite(pick.size)) armSize = pick.size
