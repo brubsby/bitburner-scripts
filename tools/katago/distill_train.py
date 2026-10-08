@@ -110,7 +110,7 @@ if args.init:
     st0 = torch.load(args.init)["net"]
     w0 = st0["inp.weight"]
     if w0.shape[1] < CIN:  # a 6-plane net grown to the cheat planes: the new planes start at 0
-        st0["inp.weight"] = torch.cat([w0, torch.zeros(w0.shape[0], CIN - w0.shape[1], 3, 3)], 1)
+        st0["inp.weight"] = torch.cat([w0, torch.zeros(w0.shape[0], CIN - w0.shape[1], 3, 3, device=w0.device, dtype=w0.dtype)], 1)
     net.load_state_dict(st0, strict=False)
     print(f"initialised from {args.init}", flush=True)
 if args.resume and os.path.exists(ck):
