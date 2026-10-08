@@ -1323,22 +1323,36 @@ export function modelSession(N, komi, model, opts = {}) {
   const nnEvalNode = (node) => {
     if (!node.nnP) {
       node.nnP = NN.eval(toSimple(node.s), komi).then((e) => {
-        if (node.untried) {
-          let tot = 0
-          for (const a of node.untried) {
-            a.p = a.idx === PASS ? e.pass : e.policy[a.idx] || 0
-            tot += a.p
-          }
-          const n = node.untried.length
-          for (const a of node.untried) a.p = tot > 0 ? a.p / tot : 1 / n
-          node.untried.sort((a, z) => z.p - a.p || z.h - a.h)
-          node.prior = new Map(node.untried.map((a) => [a.idx, a.p]))
-        }
         node.nn = e
+        // The prior is read off the net per action (priorOf) — actions the
+        // cheat's pairs add or take away later (setCheat) get theirs then —
+        // normalised over the actions the node had when the net answered (as
+        // measured: b4c32 depth 1, +7.6% on Tetrads).
+        node.priorZ = 1
+        let z = 0
+        if (node.untried) for (const a of node.untried) z += priorOf(node, a.idx)
+        node.priorZ = z > 0 ? z : 1
+        node.prior = true
         return e
       })
     }
     return node.nnP
+  }
+  // A net's prior for one action: a stone its policy, PASS its pass share, a
+  // cheat PAIR (i1, i2) the policy of i1 times i2's share of the rest (the
+  // net never saw pairs; without this a pair's prior was 0 and PUCT never
+  // tried one — the joint cheat off whenever the net was on, GC5).
+  const priorOf = (node, idx) => {
+    const e = node.nn
+    if (!e) return 0
+    const z = node.priorZ || 1
+    if (idx === PASS) return e.pass / z
+    if (isPair(idx)) {
+      const [i1, i2] = pairOf(idx)
+      const p1 = e.policy[i1] || 0
+      return (p1 * (e.policy[i2] || 0)) / Math.max(1e-6, 1 - p1) / z
+    }
+    return (e.policy[idx] || 0) / z
   }
   const valueNow = (b, ply = 0) => {
     const m = scoreBoard(b, nbrs, N, komi, scratch)
@@ -1549,13 +1563,18 @@ export function modelSession(N, komi, model, opts = {}) {
           for (const [idx, child] of node.children) {
             const n = child.visits + child.vl
             const q = n ? child.sum / n : fpu
-            const u = q + CPUCT * (node.prior.get(idx) ?? 0) * sq / (1 + n)
+            const u = q + CPUCT * priorOf(node, idx) * sq / (1 + n)
             if (u > bestU) { bestU = u; bestChild = child; pick = -1 }
           }
-          if (node.untried.length) {
-            const a = node.untried[0]
-            const u = fpu + CPUCT * a.p * sq
-            if (u > bestU) { bestU = u; pick = 0 }
+          // The untried action the net likes best (heuristic order breaks ties).
+          let bestA = -1, bestP = -1
+          for (let j = 0; j < node.untried.length; j++) {
+            const pj = priorOf(node, node.untried[j].idx)
+            if (pj > bestP) { bestP = pj; bestA = j }
+          }
+          if (bestA >= 0) {
+            const u = fpu + CPUCT * bestP * sq
+            if (u > bestU) { bestU = u; pick = bestA }
           }
           if (pick < 0) {
             if (!bestChild) { v = valueNow(node.b, node.ply); won = lastWon; break }
@@ -1565,7 +1584,7 @@ export function modelSession(N, komi, model, opts = {}) {
           }
         }
         if (node.untried.length) {
-          const { idx } = node.untried.shift()
+          const { idx } = pick > 0 ? node.untried.splice(pick, 1)[0] : node.untried.shift()
           const b = node.b.slice()
           let moved = false
           if (isPair(idx)) {

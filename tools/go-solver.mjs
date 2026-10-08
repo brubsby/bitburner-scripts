@@ -360,8 +360,13 @@ if (SMALLNET_FILE) {
     console.error(`go-solver: --smallnet ${SMALLNET_FILE} did not load (${String(err).slice(0, 160)}) — the model search runs without a net`);
   }
 }
-console.log(`go-solver: smallnet ${SMALLNET ? `${SMALLNET_FILE} (${SMALLNET.size}x${SMALLNET.size}, depth ${SMALLNET_DEPTH})` : "off"}`);
-const sessOpts = (N, base = {}) => ({ ...base, ...JOINT_OPTS, ...(SMALLNET && SMALLNET.size === N ? { nn: { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 } } : {}) });
+// PER OPPONENT: only where it was measured positive at that opponent's live
+// config (--smallnet-on A,B,... game names, or "all"). MEASURED: Tetrads +7.6%
+// [+3.5, +11.7] (300 paired, 2026-10-08). The others are measured next.
+const SMALLNET_ON = new Set(str("smallnet-on", "Tetrads").split(",").map((s) => s.trim().replace(/\s+/g, "")).filter(Boolean));
+const smallnetFor = (N, opponent) => !!SMALLNET && SMALLNET.size === N && (SMALLNET_ON.has("all") || SMALLNET_ON.has(String(opponent ?? "").replace(/\s+/g, "")));
+console.log(`go-solver: smallnet ${SMALLNET ? `${SMALLNET_FILE} (${SMALLNET.size}x${SMALLNET.size}, depth ${SMALLNET_DEPTH}) for ${[...SMALLNET_ON].join(",")}` : "off"}`);
+const sessOpts = (N, opponent, base = {}) => ({ ...base, ...JOINT_OPTS, ...(smallnetFor(N, opponent) ? { nn: { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 } } : {}) });
 /** fn(cheatsSoFar) -> available, for a play `lagMs` after req.T, `depth` of our turns ahead. */
 function cheatFnOf(req, lagMs, depth, margin) {
   const c = req?.cheat;
@@ -607,7 +612,7 @@ while (true) {
             const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
             if (!sess || sessKey !== key) {
               const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-              sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N));
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N, req.opponent));
               sessKey = key;
             }
             const history = Array.isArray(req.history) ? req.history : [];
@@ -631,7 +636,7 @@ while (true) {
             // search fresh.
             try {
               const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-              sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N));
+              sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N, req.opponent));
               sessKey = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
               const history = Array.isArray(req.history) ? req.history : [];
               sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed: !!req.opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "pre") });
@@ -670,7 +675,7 @@ while (true) {
               const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
               if (!sess || sessKey !== key) {
                 const reply = (b, o) => model.reply(b, { ...o, opponent: req.opponent });
-                sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N, opts));
+                sess = modelSession(N, req.komi ?? 5.5, { reply }, sessOpts(N, req.opponent, opts));
                 sessKey = key;
               }
               if (FAULT && FAULT.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-session]");
@@ -679,7 +684,7 @@ while (true) {
               if (fn0) jointStats.requests++;
               backend = "model";
               extra.mode = "session";
-              if (SMALLNET && SMALLNET.size === N) extra.nn = SMALLNET_DEPTH;
+              if (smallnetFor(N, req.opponent)) extra.nn = SMALLNET_DEPTH;
               // THE PASS-ONLY GUARD, solver side: with pairs on, a root that
               // reads 'PASS only' is re-set with NO pairs; if the plain search
               // has stones there, the pair path was wrong — counted and logged.
