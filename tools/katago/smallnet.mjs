@@ -25,6 +25,9 @@ export function loadSmallNet(file) {
 
 export function makeSmallNet(J) {
   const N = J.size, C = J.ch, B = J.blocks, A = N * N;
+  // Input planes: 6 (board, komi), or 10 with the cheat outlook (present,
+  // cheats so far / 12, the next cheat's chance, the roll's phase).
+  const CIN = Array.isArray(J.inputs) ? J.inputs.length : 6;
   const W = {};
   for (const [k, v] of Object.entries(J.w)) W[k] = Float32Array.from(v);
   // The gather table: for output point p and tap t (dx, dy), the input point, or A (a zero slot).
@@ -42,13 +45,13 @@ export function makeSmallNet(J) {
     for (let o = 0; o < cout; o++) for (let c = 0; c < cin; c++) for (let t = 0; t < 9; t++) out[(o * 9 + t) * cin + c] = w[(o * cin + c) * 9 + t];
     return out;
   };
-  const convs = [{ w: relayout(W["inp.weight"], 6, C), b: W["inp.bias"], cin: 6 }];
+  const convs = [{ w: relayout(W["inp.weight"], CIN, C), b: W["inp.bias"], cin: CIN }];
   for (let k = 0; k < B; k++) {
     convs.push({ w: relayout(W[`blocks.${k}.a.weight`], C, C), b: W[`blocks.${k}.a.bias`], cin: C });
     convs.push({ w: relayout(W[`blocks.${k}.b.weight`], C, C), b: W[`blocks.${k}.b.bias`], cin: C });
   }
   // Activations are [point][channel] (channel-minor) with a zero row at index A.
-  const col = new Float32Array(A * 9 * Math.max(C, 6));
+  const col = new Float32Array(A * 9 * Math.max(C, CIN));
   const conv = (inp, cv, cout, out) => {
     const cin = cv.cin, K = 9 * cin, w = cv.w, b = cv.b;
     for (let p = 0; p < A; p++) {
@@ -75,20 +78,28 @@ export function makeSmallNet(J) {
       }
     }
   };
-  const inp = new Float32Array((A + 1) * 6), h = new Float32Array((A + 1) * C), t1 = new Float32Array((A + 1) * C), t2 = new Float32Array((A + 1) * C);
+  const inp = new Float32Array((A + 1) * CIN), h = new Float32Array((A + 1) * C), t1 = new Float32Array((A + 1) * C), t2 = new Float32Array((A + 1) * C);
   const pw = W["pol.weight"], ow = W["own.weight"];
   const hasVo = !!W["vo2.weight"];
   return {
     size: N,
     heldOut: J.heldOut ?? null,
-    eval(board, komi) {
+    cheatInputs: CIN > 6,
+    /** cs: { ch, pc, cr } — the cheat outlook (cheat-input nets only; absent: the planes stay 0, "no cheats"). */
+    eval(board, komi, cs = null) {
       inp.fill(0);
       for (let x = 0; x < N; x++)
         for (let y = 0; y < N; y++) {
           const p = x * N + y, c = board[x][y];
-          inp[p * 6 + "XO.#".indexOf(c)] = 1;
-          inp[p * 6 + 4] = 1;
-          inp[p * 6 + 5] = komi / 10;
+          inp[p * CIN + "XO.#".indexOf(c)] = 1;
+          inp[p * CIN + 4] = 1;
+          inp[p * CIN + 5] = komi / 10;
+          if (CIN > 6 && cs) {
+            inp[p * CIN + 6] = 1;
+            inp[p * CIN + 7] = cs.ch / 12;
+            inp[p * CIN + 8] = cs.pc;
+            inp[p * CIN + 9] = cs.cr;
+          }
         }
       conv(inp, convs[0], C, h);
       for (let i = 0; i < A * C; i++) if (h[i] < 0) h[i] = 0;

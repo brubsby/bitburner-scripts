@@ -1322,7 +1322,10 @@ export function modelSession(N, komi, model, opts = {}) {
   // its prior over its actions (normalised over them) and its value.
   const nnEvalNode = (node) => {
     if (!node.nnP) {
-      node.nnP = NN.eval(toSimple(node.s), komi).then((e) => {
+      // ctx: where the node sits — our turns below the search's root, and its
+      // cheats so far (the provider maps them to a cheat outlook for nets that take one).
+      const anchor = rootNode ?? ponderNode
+      node.nnP = Promise.resolve(NN.eval(toSimple(node.s), komi, { depth: anchor ? node.ply - anchor.ply : 0, cheats: node.cheats ?? 0 })).then((e) => {
         node.nn = e
         // The prior is read off the net per action (priorOf) — actions the
         // cheat's pairs add or take away later (setCheat) get theirs then —

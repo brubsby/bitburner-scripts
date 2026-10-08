@@ -305,6 +305,7 @@ if (argv.includes("--katago")) {
 // A ponder stops when work / WORK_RATE + the net's busy time reaches the AI's
 // live reply time.
 let NNEV = null;
+let nnGame = null; // the game in play: { cheats(), playtime(msFromNow) } (cheat-input nets)
 if (argv.includes("--nn")) {
   const { startEvaluator } = await import("../katago/evaluator.mjs");
   const host = str("nn", "self");
@@ -326,10 +327,18 @@ if (str("smallnet", null)) {
   let ms = 0;
   // Charged at the LIVE machine's speed: --smallnet-scale (default 1.8, the
   // laptop's 8565U against bubtop's 12700K, the --cpu-scale note above).
-  NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k) => { const t = performance.now(); const e = sn.eval(b, k); ms += (performance.now() - t) * SN_SCALE; NNEV.stats.queries++; return e; } };
+  // A cheat-input net is given the game's cheat outlook at the node (nnGame,
+  // set per game): cheats so far, the next one's chance at --crime, and the
+  // roll's phase `depth` of our turns (--turns s each) from now.
+  const csOf = (ctx) => {
+    if (!sn.cheatInputs || !CHEAT || !nnGame) return null;
+    const ch = nnGame.cheats();
+    return { ch, pc: pCheat(ch), cr: golib.cheatRoll(nnGame.playtime((ctx?.depth ?? 0) * TURN_S * 1000)) };
+  };
+  NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k, ctx) => { const t = performance.now(); const e = sn.eval(b, k, csOf(ctx)); ms += (performance.now() - t) * SN_SCALE; NNEV.stats.queries++; return e; } };
   if (!WORK_RATE) throw new Error("--smallnet needs --work-rate");
 }
-const NN_OPTS = NNEV ? { eval: (b, k) => NNEV.eval(b, k), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity) } : null;
+const NN_OPTS = NNEV ? { eval: (b, k, ctx) => NNEV.eval(b, k, ctx), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity) } : null;
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
@@ -435,6 +444,7 @@ async function playGame(stats, gameIndex) {
   let guard = 0;
   let oppPassed = false;
   let cheats = 0, cheatOk = 0, cheatWaitS = 0, ejected = false;
+  let cheatState = () => ({});
   let phase = Math.random();
   let turnLiveS = 0;
   const kWhere = { gpu: 0, cpu: 0, walls: 0 };
@@ -455,6 +465,8 @@ async function playGame(stats, gameIndex) {
   const T0 = 200 * Math.floor(5e6 + Math.random() * 5e6);
   const tickPhase = Math.random() * 200;
   const playtimeAt = (t) => T0 + 200 * Math.floor((t + tickPhase) / 200);
+  nnGame = { cheats: () => cheats, playtime: (ms) => playtimeAt(wall + ms) };
+  if (TRACE) cheatState = () => ({ ch: cheats, pc: +pCheat(cheats).toFixed(4), cr: +golib.cheatRoll(playtimeAt(wall)).toFixed(4), cheatOn: CHEAT ? 1 : 0 });
   let answers = [];
   let preMoves = 0, rtTotal = 0;
   const seedG = { informative: 0, predicted: 0, observed: 0 };
@@ -463,6 +475,11 @@ async function playGame(stats, gameIndex) {
   // adaptive budget extended.
   let v0 = null, minWr = 1, adaptiveMoves = 0, extendMoves = 0, bookMoves = 0;
   const trace = TRACE ? [{ who: "start", board: g.simpleBoardFromBoard(state.board) }] : null;
+  // The cheat outlook where black is to move (traces only, for the outcome
+  // heads' inputs — tools/sim/go-distill-gen.mjs --from-traces): cheats played
+  // so far, the next cheat's chance at this game's crime, and the roll's
+  // phase now (golib.cheatRoll of the playtime; the window is open when
+  // phase <= chance). Filled in once the game's clock exists (above).
   const note = (who, mv, extra) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board), ...(extra ?? {}) });
   const solve = async () => {
     const simple = g.simpleBoardFromBoard(state.board);
@@ -1008,9 +1025,9 @@ async function playGame(stats, gameIndex) {
     oppPassed = reply.type !== "move";
     if (reply.type === "move") {
       g.makeMove(state, reply.x, reply.y, GoColor.white);
-      note("W", [reply.x, reply.y], { seed: aiSeed });
+      note("W", [reply.x, reply.y], { seed: aiSeed, ...cheatState() });
     } else {
-      note("W", "pass", { seed: aiSeed });
+      note("W", "pass", { seed: aiSeed, ...cheatState() });
       g.passTurn(state, GoColor.white, false);
       const s = g.getScore(state);
       // --mirror search: the search decides (PASS ends the game; a stone

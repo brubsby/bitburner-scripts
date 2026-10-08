@@ -9,7 +9,7 @@ let maxErr = 0, n = 0;
 const rows = fs.readFileSync(refFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 for (const r of rows) {
   const board = Array.from({ length: N }, (_, x) => r.b.slice(x * N, x * N + N));
-  const e = sn.eval(board, r.komi);
+  const e = sn.eval(board, r.komi, r.cs ?? null);
   for (let i = 0; i <= N * N; i++) maxErr = Math.max(maxErr, Math.abs(e.logits[i] - r.logits[i]));
   maxErr = Math.max(maxErr, Math.abs(Math.log(e.winB / (1 - e.winB)) - r.v));
   n++;

@@ -28,9 +28,12 @@ for i, line in enumerate(open(a.data)):
     if i >= a.k: break
     r = json.loads(line)
     if r["N"] != N: continue
-    x = np.zeros((6, N * N), np.float32)
+    CIN = len(J["inputs"])
+    x = np.zeros((CIN, N * N), np.float32)
     for j, c in enumerate(r["b"]): x["XO.#".index(c), j] = 1
     x[4] = 1; x[5] = r["komi"] / 10
-    pol, v = net(torch.tensor(x.reshape(1, 6, N, N)))
-    out.write(json.dumps({"b": r["b"], "komi": r["komi"], "logits": pol[0].tolist(), "v": float(v[0])}) + "\n")
+    cs = r.get("cs")
+    if CIN > 6 and cs: x[6] = 1; x[7] = cs["ch"] / 12; x[8] = cs["pc"]; x[9] = cs["cr"]
+    pol, v = net(torch.tensor(x.reshape(1, CIN, N, N)))
+    out.write(json.dumps({"b": r["b"], "komi": r["komi"], "cs": cs if CIN > 6 else None, "logits": pol[0].tolist(), "v": float(v[0])}) + "\n")
 print("ok")

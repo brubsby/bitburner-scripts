@@ -39,8 +39,10 @@ ap.add_argument("--resume", action="store_true")
 ap.add_argument("--init", default=None, help="start from this checkpoint (.pt) — fine-tune")
 ap.add_argument("--outcome", type=float, default=0.0, help="weight of the outcome heads")
 ap.add_argument("--teacher", type=float, default=1.0, help="weight of the teacher losses")
+ap.add_argument("--cheat-inputs", action="store_true", help="4 more input planes: the cheat outlook (present, cheats so far / 12, the next cheat's chance, the roll's phase) — zero where a row has none")
 args = ap.parse_args()
 N = args.size
+CIN = 10 if args.cheat_inputs else 6
 dev = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_num_threads(4)
 
@@ -52,12 +54,15 @@ def load(paths):
                 r = json.loads(line)
                 if r["N"] != N: continue
                 b = r["b"]
-                x = np.zeros((6, N * N), np.float32)
+                x = np.zeros((CIN, N * N), np.float32)
                 for i, c in enumerate(b):
                     x["XO.#".index(c), i] = 1
                 x[4] = 1
                 x[5] = r["komi"] / 10
-                X.append(x.reshape(6, N, N)); P.append(r["p"]); W.append(r["w"]); O.append(r["o"])
+                cs = r.get("cs")
+                if CIN > 6 and cs and cs.get("on", 1):
+                    x[6] = 1; x[7] = cs["ch"] / 12; x[8] = cs["pc"]; x[9] = cs["cr"]
+                X.append(x.reshape(CIN, N, N)); P.append(r["p"]); W.append(r["w"]); O.append(r["o"])
                 Y.append([r.get("won", -1), r.get("area", -1), r["tl"] / (N * N) if "tl" in r else -1])
     return (torch.tensor(np.array(X)), torch.tensor(np.array(P, np.float32)), torch.tensor(np.array(W, np.float32)),
             torch.tensor(np.array(O, np.float32)), torch.tensor(np.array(Y, np.float32)))
@@ -71,7 +76,7 @@ class Block(nn.Module):
 class Net(nn.Module):
     def __init__(s, blocks, c):
         super().__init__()
-        s.inp = nn.Conv2d(6, c, 3, padding=1)
+        s.inp = nn.Conv2d(CIN, c, 3, padding=1)
         s.blocks = nn.ModuleList([Block(c) for _ in range(blocks)])
         s.pol = nn.Conv2d(c, 1, 1)
         s.own = nn.Conv2d(c, 1, 1)
@@ -102,7 +107,11 @@ opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
 start = 0
 ck = args.out + ".pt"
 if args.init:
-    net.load_state_dict(torch.load(args.init)["net"], strict=False)
+    st0 = torch.load(args.init)["net"]
+    w0 = st0["inp.weight"]
+    if w0.shape[1] < CIN:  # a 6-plane net grown to the cheat planes: the new planes start at 0
+        st0["inp.weight"] = torch.cat([w0, torch.zeros(w0.shape[0], CIN - w0.shape[1], 3, 3)], 1)
+    net.load_state_dict(st0, strict=False)
     print(f"initialised from {args.init}", flush=True)
 if args.resume and os.path.exists(ck):
     st = torch.load(ck); net.load_state_dict(st["net"]); opt.load_state_dict(st["opt"]); start = st["epoch"] + 1
@@ -156,7 +165,7 @@ for ep in range(start, args.epochs):
 sd = {k: v.detach().cpu().numpy() for k, v in net.state_dict().items()}
 if args.outcome <= 0:
     sd = {k: v for k, v in sd.items() if not k.startswith(("vo", "ar", "tl"))}
-J = {"size": N, "blocks": args.blocks, "ch": args.ch, "inputs": ["black", "white", "empty", "hole", "ones", "komi/10"], "heldOut": evaluate(),
+J = {"size": N, "blocks": args.blocks, "ch": args.ch, "inputs": ["black", "white", "empty", "hole", "ones", "komi/10"] + (["cheatPresent", "cheats/12", "cheatChance", "cheatPhase"] if CIN > 6 else []), "heldOut": evaluate(),
      "w": {k: [round(float(x), 6) for x in v.flatten()] for k, v in sd.items()}, "shapes": {k: list(v.shape) for k, v in sd.items()}}
 with open(args.out, "w") as f: json.dump(J, f)
 print(f"wrote {args.out}", flush=True)

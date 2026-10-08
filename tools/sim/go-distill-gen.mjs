@@ -131,8 +131,10 @@ if (TRACES) {
       const playable = tr[0].board.join("").replace(/#/g, "").length;
       // Black to move: the start board, and every board right after a white entry.
       const pos = [];
-      for (let k = 0; k < tr.length; k++) if (tr[k].who === "start" || (tr[k].who === "W" && k + 1 < tr.length)) pos.push(tr[k].board);
-      pos.forEach((board, i) => q.push({ board, komi: r.komi, opp: start?.opponent ?? null, won: r.won ? 1 : 0, area: r.black / playable, tl: pos.length - 1 - i }));
+      // With each, the cheat outlook go-w0 traced there (ch: cheats so far, pc:
+      // the next one's chance, cr: the roll's phase) — the start has none.
+      for (let k = 0; k < tr.length; k++) if (tr[k].who === "start" || (tr[k].who === "W" && k + 1 < tr.length)) pos.push({ board: tr[k].board, cs: Number.isFinite(tr[k].cr) ? { ch: tr[k].ch, pc: tr[k].pc, cr: tr[k].cr, on: tr[k].cheatOn ?? 1 } : null });
+      pos.forEach(({ board, cs }, i) => q.push({ board, cs, komi: r.komi, opp: start?.opponent ?? null, won: r.won ? 1 : 0, area: r.black / playable, tl: pos.length - 1 - i }));
     }
   }
   const outF = fs.createWriteStream(OUT, { flags: "a" });
@@ -142,7 +144,7 @@ if (TRACES) {
     while (idx < q.length) {
       const it = q[idx++];
       const t = await teacher(it.board, it.komi);
-      outF.write(JSON.stringify({ N, b: it.board.join(""), komi: it.komi, opp: it.opp, ...t, won: it.won, area: +it.area.toFixed(4), tl: it.tl }) + "\n");
+      outF.write(JSON.stringify({ N, b: it.board.join(""), komi: it.komi, opp: it.opp, ...t, won: it.won, area: +it.area.toFixed(4), tl: it.tl, ...(it.cs ? { cs: it.cs } : {}) }) + "\n");
       if (++n % 20000 === 0) process.stderr.write(`label: ${n}/${q.length}\n`);
     }
   }));
