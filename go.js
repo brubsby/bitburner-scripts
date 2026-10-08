@@ -146,7 +146,7 @@
 // and the win streak is worth up to 3x — more than the extra territory.
 // ---------------------------------------------------------------------------
 
-import { chooseMove, applyMove, cheatChance, cheatWaitS, powerObjective } from 'golib.js'
+import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective } from 'golib.js'
 import { canUseGoCheat, canJoinBladeburner, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
@@ -1308,6 +1308,8 @@ export async function main(ns) {
   let cheatsPlayed = 0
   let cheatUnverified = 0
   let cheatCaptured = 0
+  // Cheats whose next board matched neither the played nor the failed reading.
+  let cheatAmbiguous = 0
   const cheatLog = []
 
   // PER-PROCESS counters: they restart at 0 whenever go.js restarts (every
@@ -1450,6 +1452,7 @@ export async function main(ns) {
     cheatThisOpponent: cheatFor(opponent),
     cheatUnverified,
     cheatCaptured,
+    cheatAmbiguous,
     cheatLog: cheatLog.slice(-10),
     remoteMoves,
     localMoves,
@@ -1880,7 +1883,8 @@ export async function main(ns) {
         cheat.played++
         cheatsPlayed++
         cheat.waitedMs += st.waitedMs ?? 0
-        pendingVerify = [[first.x, first.y], [second[0].x, second[0].y]]
+        const rAt = typeof st.replyAt === 'string' ? st.replyAt.split(',').map(Number) : null
+        pendingVerify = { before: board, stones: [[first.x, first.y], [second[0].x, second[0].y]], reply: st.reply === 'move' && rAt && rAt.every(Number.isInteger) ? { x: rAt[0], y: rAt[1] } : st.reply === 'pass' ? null : undefined }
         return { played: true, reply: st.reply, replyAt: st.replyAt ?? null, second: `${second[0].x},${second[0].y}`, T: st.calib?.T ?? null }
       }
 
@@ -1906,17 +1910,34 @@ export async function main(ns) {
         // (2026-10-06) two such captures read as failures switched cheats off
         // for the process after 6 minutes, and the measured live hour played
         // 0.24 cheats a game instead of ~2.2.
+        // golib.cheatOutcome replays both readings — the cheat played (and the
+        // reply captured what it captured, ONE OR BOTH stones) or failed (our
+        // stones never placed) — against the board we got. Only a board that
+        // matches the FAILED reading is evidence against the roll prediction;
+        // live 20:40Z / 22:34Z (2026-10-07) a reply capturing both stones of a
+        // played cheat read as two failures and switched cheats off.
         if (pendingVerify) {
-          const present = pendingVerify.filter(([x, y]) => boardStrings[x]?.[y] === 'X').length
-          const ok = present > 0
-          if (present === 1) cheatCaptured++
+          const pv = pendingVerify
           pendingVerify = null
-          if (!ok) {
+          const present = pv.stones.filter(([x, y]) => boardStrings[x]?.[y] === 'X').length
+          let lastBefore = null
+          try {
+            lastBefore = ns.go.getMoveHistory()[0] ?? null
+          } catch {
+            /* unreadable: the readings decide alone */
+          }
+          const outcome = pv.reply === undefined ? 'unknown' : cheatOutcome(pv.before, pv.stones, pv.reply, boardStrings, lastBefore)
+          if (outcome === 'played' && present < 2) cheatCaptured++
+          if (outcome === 'unknown') {
+            cheatAmbiguous++
+            if (!present) record(errors, new Error(`a predicted cheat's stones are both gone and neither reading (played / failed) reproduces the board (${cheatAmbiguous} so far) — not counted against the roll prediction`))
+          }
+          if (outcome === 'failed') {
             cheatUnverified++
-            record(errors, new Error(`BOTH stones of a predicted cheat are missing from the next board (${cheatUnverified} so far) — the cheat failed: the roll prediction is wrong`))
+            record(errors, new Error(`a predicted cheat FAILED: the board is the pre-cheat board plus the AI's reply, our stones never placed (${cheatUnverified} so far) — the roll prediction is wrong`))
             if (cheatUnverified >= 2) {
               cheatOn = false
-              cheatOffWhy = 'two predicted cheats placed neither stone — the roll prediction no longer matches the game; cheats OFF for this process'
+              cheatOffWhy = 'two predicted cheats FAILED (the board shows the AI reply with neither of our stones) — the roll prediction no longer matches the game; cheats OFF for this process'
             }
           }
         }

@@ -574,17 +574,25 @@ export async function run() {
   const c8 = new Check("GR8", "cheats with release 3: second-stone request on the board after the first, no notice for a cheated pre-sent move, none after the AI's pass, per opponent, a stray go-cheat.js waited out");
   {
     const place = (b, x, y, c) => b.map((col, i) => (i === x ? col.slice(0, y) + c + col.slice(y + 1) : col));
-    const runCheat = async ({ on = true, pre = false, busy = 0, joint = false, badSecond = false } = {}) => {
+    // capture: 'both' | 'failed' — the 2026-10-07 20:40Z/22:34Z shape: the
+    // cheat's two stones (0,0)+(0,1) under white (1,0),(1,1); the AI answers
+    // 0,2. 'both': the cheat PLAYED and the reply captured both stones (the
+    // move history holds them); 'failed': the cheat did not place them.
+    const runCheat = async ({ on = true, pre = false, busy = 0, joint = false, badSecond = false, capture = null } = {}) => {
       const files = new Map();
       const reqs = [];
       const execs = [];
       const order = [];
-      let B = [".....", ".....", ".....", ".....", "....."];
+      let B = capture ? [".....", "OO...", ".....", ".....", "....."] : [".....", ".....", ".....", ".....", "....."];
+      let history = [];
+      const scripted = capture ? [[3, 3], [0, 0], [0, 1]] : null;
       let turn = 0;
       let left = busy;
       let asks1 = 0;
       const saved = go.SETTINGS.cheat.on;
       const savedJoint = go.SETTINGS.cheat.joint;
+      const savedMax = go.SETTINGS.cheat.maxPerGame;
+      if (capture) go.SETTINGS.cheat.maxPerGame = 1;
       go.SETTINGS.cheat.on = { default: false, Daedalus: on };
       go.SETTINGS.cheat.joint = joint;
       const ns = {
@@ -604,7 +612,7 @@ export async function run() {
             const q = JSON.parse(data);
             reqs.push({ ...q, turn });
             if (q.played) return;
-            const [x, y] = q.valid?.[0] ?? [0, 0];
+            const [x, y] = scripted && scripted.length ? scripted.shift() : q.valid?.[0] ?? [0, 0];
             // joint: the solver answers a PAIR (as go-solver does when the roll is in the window)
             // badSecond: the pair's second point is not legal on the board before
             // the first stone (playTwoMoves validates both there): go.js must
@@ -616,6 +624,15 @@ export async function run() {
         sleep: () => new Promise((r) => setTimeout(r, 0)),
         exec: (script, host, t, x1, y1, x2, y2) => {
           execs.push({ script, turn, first: [x1, y1], second: [x2, y2], board: B.slice() });
+          if (capture) {
+            const before = B.slice();
+            const placed = place(place(B, x1, y1, "X"), x2, y2, "X");
+            // the AI's 0,2: captures both stones of a played cheat
+            history = [capture === "both" ? placed : before];
+            B = place(place(place(before, 0, 2, "O"), x1, y1, "."), x2, y2, ".");
+            files.set("/tel/go-cheat.txt", JSON.stringify({ at: new Date().toISOString(), cheated: true, reply: "move", replyAt: "0,2", waitedMs: 0, calib: { T: 0, at: Date.now(), p: 0.6 } }));
+            return 7;
+          }
           B = place(place(B, x1, y1, "X"), x2, y2, "X");
           files.set("/tel/go-cheat.txt", JSON.stringify({ at: new Date().toISOString(), cheated: true, reply: "pass", waitedMs: 0, calib: { T: 0, at: Date.now(), p: 0.6 } }));
           return 7;
@@ -632,7 +649,7 @@ export async function run() {
           resetBoardState: () => order.push("reset"),
           getGameState: () => ({ komi: 5.5, blackScore: 20, whiteScore: 5.5, previousMove: [0, 0] }),
           getBoardState: () => B,
-          getMoveHistory: () => [],
+          getMoveHistory: () => history,
           makeMove: (x, y) => {
             turn++;
             B = place(B, x, y, "X");
@@ -652,6 +669,7 @@ export async function run() {
       } finally {
         go.SETTINGS.cheat.on = saved;
         go.SETTINGS.cheat.joint = savedJoint;
+        go.SETTINGS.cheat.maxPerGame = savedMax;
       }
       return { reqs, execs, order, tel: JSON.parse(files.get("/tel/go.txt") ?? "null") };
     };
@@ -711,6 +729,17 @@ export async function run() {
       if (jbp.execs.length) c8.fail("joint: an illegal pre-sent pair must not be exec'd", JSON.stringify(jbp.execs));
       if (jbp.reqs.some((q) => q.played && q.played.x === 2 && q.played.y === 2)) c8.fail("joint: an illegal pre-sent pair's first stone must never be played as a pre-sent move", JSON.stringify(jbp.reqs.filter((q) => q.played)));
       if (!jbp.reqs.some((q) => q.turn === 1 && !q.played && !q.opponentPassed)) c8.fail("joint: an illegal pre-sent pair is a miss — the position must be requested");
+
+      // A played cheat whose BOTH stones the AI's reply captured is a capture,
+      // not a failed prediction (live: two such read as failures switched
+      // cheats off for the process); a cheat that placed neither is a failure.
+      const cb = await runCheat({ capture: "both" });
+      c8.examined(2);
+      if (cb.execs.length !== 1) c8.fail(`capture: one cheat expected, ${cb.execs.length}`, JSON.stringify(cb.execs));
+      else if (cb.tel?.cheatUnverified !== 0 || cb.tel?.cheatCaptured !== 1) c8.fail("a played cheat whose reply captured BOTH stones must count as a capture, never as a failed cheat", JSON.stringify({ unverified: cb.tel?.cheatUnverified, captured: cb.tel?.cheatCaptured, ambiguous: cb.tel?.cheatAmbiguous }));
+      const cf = await runCheat({ capture: "failed" });
+      c8.examined(1);
+      if (cf.tel?.cheatUnverified !== 1) c8.fail("a cheat that placed neither stone must count as failed", JSON.stringify({ unverified: cf.tel?.cheatUnverified, captured: cf.tel?.cheatCaptured, ambiguous: cf.tel?.cheatAmbiguous }));
 
       const busy = await runCheat({ busy: 3 });
       c8.examined(1);

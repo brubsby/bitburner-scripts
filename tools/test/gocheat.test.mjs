@@ -352,5 +352,41 @@ export async function run() {
       }
     }
   }
-  return [c1, c2, c3, c4, c5, c6, c7, c8, c9];
+  const c10 = new Check("GC10", "a played cheat's outcome is read off the board: a reply capturing BOTH stones is a capture (move history), a cheat that placed neither is a failure; the chance at SF14.3 in a crime-1 node (BN9.2) carries the +0.25");
+  {
+    const path = await import("node:path");
+    const { REPO } = await import("./ram.mjs");
+    const G = await import(path.join(REPO, "golib.js"));
+    const place = (b, x, y, c) => b.map((col, i) => (i === x ? col.slice(0, y) + c + col.slice(y + 1) : col));
+    // The live 22:34Z shape (mirrored to a corner): our 4,3+4,4 under white
+    // 3,3 / 3,4, the AI answers 4,2 and takes both.
+    const before = [".....", ".....", ".....", "...OO", "....."];
+    const stones = [[4, 3], [4, 4]];
+    const placed = place(place(before, 4, 3, "X"), 4, 4, "X");
+    const after = place(before, 4, 2, "O"); // both readings give this board
+    const cases = [
+      ["both captured, history holds the stones", G.cheatOutcome(before, stones, { x: 4, y: 2 }, after, placed), "played"],
+      ["both captured, history without the stones", G.cheatOutcome(before, stones, { x: 4, y: 2 }, after, before), "failed"],
+      ["both captured, no history", G.cheatOutcome(before, stones, { x: 4, y: 2 }, after, null), "unknown"],
+      ["played, nothing captured", G.cheatOutcome(before, stones, { x: 0, y: 0 }, place(placed, 0, 0, "O"), null), "played"],
+      ["failed, reply elsewhere", G.cheatOutcome(before, stones, { x: 0, y: 0 }, place(before, 0, 0, "O"), null), "failed"],
+      ["played, the AI passed", G.cheatOutcome(before, stones, null, placed, null), "played"],
+      ["neither reading", G.cheatOutcome(before, stones, { x: 0, y: 0 }, place(before, 1, 1, "O"), null), "unknown"],
+    ];
+    for (const [what, got, want] of cases) {
+      c10.examined(1);
+      if (got !== want) c10.fail(`${what}: ${got}, want ${want}`);
+    }
+    // cheatSuccessChance (netscriptGoImplementation.ts:561-567) at SF14.3 and
+    // crime_success 1.0 (a fresh node, no Slum Snakes power): 0.6 + 0.25 at k=0,
+    // min(1, ...) capped, and the bonus present at every k.
+    const want = (k, crime, sf) => Math.max(Math.min(0.6 * (0.7 - 0.02 * k) ** k * crime + (sf === 3 ? 0.25 : 0), 1), 0);
+    for (const [k, crime, sf] of [[0, 1, 3], [1, 1, 3], [4, 1, 3], [11, 1, 3], [0, 2.5, 3], [2, 1, 2], [0, 1, 0]]) {
+      c10.examined(1);
+      const got = G.cheatChance(k, crime, sf);
+      if (Math.abs(got - want(k, crime, sf)) > 1e-12) c10.fail(`cheatChance(${k}, ${crime}, SF14.${sf}) = ${got}, game ${want(k, crime, sf)}`);
+    }
+    if (Math.abs(G.cheatChance(0, 1, 3) - 0.85) > 1e-12) c10.fail(`cheatChance(0, crime 1, SF14.3) must be 0.85, got ${G.cheatChance(0, 1, 3)}`);
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10];
 }

@@ -2153,6 +2153,51 @@ export async function oracleLineHolds(cand, board, history, T, lags, reply, { tt
   return { ok: true, mass, failAt: null }
 }
 
+/**
+ * WHAT A PLAYED CHEAT DID, read off the board the AI handed back. `before`:
+ * the board before the cheat; `stones`: its two points; `reply`: the AI's
+ * answer ({x, y}, or null for a pass); `after`: the board now.
+ *   'played'  after = before + both stones (+ their captures) + the reply
+ *             (+ ITS captures). The reply may capture one OR BOTH stones —
+ *             a two-stone group in atari (2026-10-07 20:40Z / 22:34Z: 4,3+4,4
+ *             taken by 4,2) is a played cheat, not a failed one.
+ *   'failed'  after = before + the reply: determineCheatSuccess skipped our
+ *             stones and passed our turn (netscriptGoImplementation.ts:518-531).
+ *   'unknown' neither reconstruction matches (an unparsed reply, a board we
+ *             cannot replay), or both do and `lastBefore` cannot tell them
+ *             apart: never evidence either way.
+ * When the reply captures BOTH stones (and they captured nothing), the two
+ * readings give the SAME board. `lastBefore` — the game's move history head
+ * (ns.go.getMoveHistory()[0], 0GB): the board just before the AI's stone,
+ * pushed by its makeMove (boardState.ts:131) — holds our stones iff the cheat
+ * placed them (a failed cheat's passTurn pushes no board, boardState.ts:146).
+ * Pure.
+ */
+export function cheatOutcome(before, stones, reply, after, lastBefore = null) {
+  const swap = (b) => b.map((c) => c.replace(/[XO]/g, (ch) => (ch === 'X' ? 'O' : 'X')))
+  const white = (b, r) => {
+    if (!b) return null
+    if (!r) return b
+    const w = applyMove(swap(b), r.x, r.y)
+    return w ? swap(w) : null
+  }
+  let played = before
+  for (const [x, y] of stones) played = played ? applyMove(played, x, y) : null
+  const key = after.join('')
+  const ifPlayed = white(played, reply)
+  const ifFailed = white(before, reply)
+  const p = !!ifPlayed && ifPlayed.join('') === key
+  const f = !!ifFailed && ifFailed.join('') === key
+  if (p && !f) return 'played'
+  if (f && !p) return 'failed'
+  if (p && f && reply && Array.isArray(lastBefore)) {
+    const n = stones.filter(([x, y]) => lastBefore[x]?.[y] === 'X').length
+    if (n === stones.length) return 'played'
+    if (n === 0) return 'failed'
+  }
+  return 'unknown'
+}
+
 export function applyMove(boardStrings, x, y) {
   const N = boardStrings.length
   const b = parseBoard(boardStrings)
