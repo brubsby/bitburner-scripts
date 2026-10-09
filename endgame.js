@@ -108,6 +108,7 @@ import { canUseSingularity, singularityRamMultiplier, sfLevel, canJoinBladeburne
 import { COVENANT_MANDATE, covenantMandated, sleevesFromCovenant } from 'sleeveplan.js'
 import { reporter } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
+import { ROUTE_PIN, routePinOf } from 'routepin.js'
 
 /**
  * Full static price as a function of the Singularity RAM multiplier, MEASURED
@@ -165,6 +166,12 @@ export async function main(ns) {
       blade = { joined: null, done: false, why: `could not raise to ${BLADE_PROBE}GB to read the black ops` }
     }
   }
+  // THE ROUTE PIN (routepin.js): /route-pin.txt 'hack' (for this node) means
+  // the user wants the exit BY HACKING — The Red Pill installed, the World
+  // Daemon at its level — so finished black ops do not take the exit; the
+  // hacking path below decides (and the hold still applies to it).
+  const routePin = routePinOf(ns.read(ROUTE_PIN), resetB?.currentNode ?? null)
+  if (blade?.done && routePin.pinned) blade = { ...blade, done: false, blackOpsDone: true, pinnedPast: `all 21 black ops done, but ${ROUTE_PIN} pins the hacking exit — not leaving by the black ops` }
   if (blade?.done) {
     const report = {
       at: new Date().toISOString(),

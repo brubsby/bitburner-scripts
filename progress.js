@@ -176,6 +176,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
+import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2610,7 +2611,7 @@ function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
  * trajectory of this pass is priced from (one builder).
  */
 const BLADE_TEL = '/tel/bladeburner.txt'
-async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0 } = {}) {
+async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null } = {}) {
   const mults = bitNodeMults(info?.currentNode)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
   const pc = planCtxOf(ns, info)
@@ -2679,7 +2680,10 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       pc.events = [...(pc.events ?? []), ...bev]
       pc.redecide = true
     }
-    return await planDecide(pc, 'bladeRoute', function* () {
+    // THE ROUTE PIN (routepin.js): the decision below is priced as always;
+    // the pin only changes the key the stack ACTS on (pinnedRouteOf), and the
+    // commitment rule runs on the priced record (unpinnedOf in `prev`).
+    const priced = await planDecide(pc, 'bladeRoute', function* () {
       const base = inputsFn()
       yield
       const prevInst = pc.prev?.decisions?.install ?? null
@@ -2708,7 +2712,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         rankCal = { ...rankCal, error: `rank calibration threw: ${String(e).slice(0, 120)}` }
       }
       const rankPost = rankRatePosterior(rankCal.samples)
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: pc.prev?.decisions?.bladeRoute ?? null, draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {
@@ -2759,6 +2763,9 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }
     })
+    const acted = pinnedRouteOf(priced, pin)
+    if (acted !== priced) pc.decisions.bladeRoute = acted
+    return acted
   } catch (e) {
     pc.decisions.bladeRoute = { key: null, error: true, why: `bladeRouteOf threw: ${String(e?.stack ?? e).slice(0, 240)}` }
     return pc.decisions.bladeRoute
@@ -7069,6 +7076,18 @@ async function act(ns, canJoin, info, note) {
   // Committed 'blade': the gym to combat >= BB_POLICY.gymTo (the join bar,
   // and the retrain after every install) takes the slot as a body leg, and
   // then bladeburner.js does — slot.owner 'bladeburner', below.
+  // THE ROUTE PIN (routepin.js, the user's 2026-10-09 decision): while
+  // /route-pin.txt on home reads 'hack' (optionally 'hack <node>'), the route
+  // acted on is the hacking exit — Daedalus, The Red Pill installed, the World
+  // Daemon by hacking — even where the black ops price faster. Read here
+  // (ns.read is 0GB), published every pass in /tel/progress.txt `route`.
+  const routePin = (() => {
+    try {
+      return routePinOf(ns.read(ROUTE_PIN), info?.currentNode ?? null)
+    } catch (e) {
+      return { pinned: false, file: ROUTE_PIN, warn: `the route pin could not be read: ${String(e).slice(0, 120)}`, why: 'pin unread' }
+    }
+  })()
   const bladeRoute = canJoin
     ? await bladeRouteOf(ns, info, player, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), {
         owned: installedCount,
@@ -7078,9 +7097,14 @@ async function act(ns, canJoin, info, note) {
         moneyPerSec: econNow?.lifePerSec ?? econNow?.incomePerSec ?? 0,
         // The retrain's cash stream (the exit inputs' flatIncomePerSec): contracts and the flat income.
         flatPerSec: (econNow?.flatPerSec ?? 0) + (contractMoneyPerSec > 0 ? contractMoneyPerSec : 0),
+        pin: routePin,
       })
     : null
   const bladeOn = bladeRoute?.key === 'blade'
+  // Published with the route it produced: acted, priced, pinned, forgone hours.
+  const routeOut = routeReportOf(routePin, bladeRoute)
+  if (routePin.pinned) did.push(`ROUTE PINNED to '${routeOut.route}' by ${ROUTE_PIN} (priced '${routeOut.priced ?? 'none'}', ${typeof routeOut.forgoneH === 'number' ? routeOut.forgoneH.toFixed(1) + 'h forgone' : 'forgone hours unpriced'}) — ${routePin.why}`.slice(0, 500))
+  if (routePin.warn) todo.push(`ROUTE PIN: ${routePin.warn}`)
   // THE BLADE'S SIMULACRUM (bladeRouteOf's verdict, priced on the black-op
   // exit): bought only when the verdict buys AND money and reputation are
   // there now; the install decision then prices its install (the queued
@@ -8984,7 +9008,7 @@ async function act(ns, canJoin, info, note) {
         bought.length = 0
       } else if (batchCheck && !batchCheck.same) did.push(`INSTALLING A TRIMMED BATCH: ${batchCheck.why}`)
       const installing = installRefused ? 0 : pending.length + bought.length
-      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, income: econNow }, null, 2), 'w')
+      ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, income: econNow, route: routeOut }, null, 2), 'w')
       did.push(`ordered ${bought.length} of ${plan ? plan.buy.length : 0} planned purchase(s); install ordered for ${installing} augmentation(s) if act.js completes the chain — ${gate.why}`)
       if (installRefused) {
         todo.push(`install refused: ${installRefused}`)
@@ -9130,7 +9154,7 @@ async function act(ns, canJoin, info, note) {
           if (batchCheck && batchCheck.same === false && typeof batchCheck.repricedH === 'number') return { ok: ie?.ok ?? null, why: `${ie?.why ?? 'not compared'}; the batch re-priced: ${batchCheck.why}`, actorH: batchCheck.repricedH, pricedActorH: typeof exitCompare?.nowH === 'number' ? +exitCompare.nowH.toFixed(3) : null, planKey: pi?.key ?? null, planH: null, planPointH: null, commitment: pi?.commitment ?? null, checks: ie?.checks ?? null }
           return { ok: ie?.ok ?? null, why: ie?.why ?? (pi ? `the plan's install decision is ${pi.key}: not compared` : 'no plan decision this pass'), actorH: typeof exitCompare?.nowH === 'number' ? +exitCompare.nowH.toFixed(3) : null, planKey: pi?.key ?? null, planH: pi?.meanH ?? null, planPointH: pi?.pointH ?? null, commitment: pi?.commitment ?? null, checks: ie?.checks ?? null }
         })()
-        ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow }, null, 2), 'w')
+        ns.write(STATUS, JSON.stringify({ at: new Date().toISOString(), did, bought, installing, gate, ordered: orders.length, income: econNow, route: routeOut }, null, 2), 'w')
         publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
         flushOrders()
         return // act.js installs; the game reloads; boot.js brings the stack back up
@@ -9149,7 +9173,7 @@ async function act(ns, canJoin, info, note) {
 
   publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction, route: routeOut }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 
