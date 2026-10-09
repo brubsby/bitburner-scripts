@@ -237,6 +237,13 @@ if (CLOCK && !SEEDED) throw new Error("--clock needs --seeded (an AI seeded by t
 // is then drawn from the exact play-time seed instead of the request's T plus
 // the search's uncertain length.
 const RETIME = argv.includes("--retime");
+// --clock-gaps: as go-solver live — the clocks carry the play cadence learned
+// online (golib gapCalib: ticks between our consecutive plays in a game), so a
+// reply d of our turns ahead is seeded d measured gaps later (clockSeed gaps)
+// instead of round(d x turnTicks) +- 5 ticks.
+const CLOCK_GAPS = argv.includes("--clock-gaps");
+const gapCal = golib.gapCalib();
+const gapsNow = () => (CLOCK_GAPS ? gapCal.weights() : null);
 const ORACLE_MISSES = str("oracle-misses", null);
 const ORACLE_FULL = argv.includes("--oracle-full");
 // --oracle-override-book (with --oracle-full): a candidate whose whole line holds may replace the book's move.
@@ -470,7 +477,7 @@ async function playGame(stats, gameIndex) {
   // Will cheat k be available if we play `lagMs` from now? (margin: the roll's own uncertainty)
   const cheatAvailIn = (lagMs, margin) => (k) => k < CHEAT_MAX && !oppPassed && ourTurns + 1 >= CHEAT_FROM && pCheat(k) >= MIN_P && golib.cheatRoll(playtimeAt(wall + lagMs)) <= pCheat(k) - margin;
   let steerTarget = undefined, seedSkew = 0, seedJit = 0, oracleHit = false, oracleMoves = 0, oracleMiss = 0, oracleLeft = false, oracleGuarded = 0, oracleCheats = 0, oracleLineFail = 0;
-  let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0;
+  let ourTurns = 0, ourMs = 0, iters = 0, oppTurns = 0, oppMs = 0, oppCycles = 0, oppRows = 0, mirror = 0, ourPasses = 0, openPasses = 0, openPrePasses = 0, lastPlayT = null;
   let guard = 0;
   let oppPassed = false;
   let cheats = 0, cheatOk = 0, cheatWaitS = 0, ejected = false;
@@ -553,7 +560,7 @@ async function playGame(stats, gameIndex) {
         })()
       : sess
       ? await (async () => {
-          const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
+          const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1, ...(gapsNow() ? { gaps: gapsNow() } : {}) } : undefined;
           const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : CHEAT_HYBRID ? { cheat: { fns: pairsNow ? [() => true] : null, cheats } } : {}), ...(secondStone && CHEAT_SECOND_NET_OFF ? { nnDepth: -1 } : {}) });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
@@ -745,7 +752,7 @@ async function playGame(stats, gameIndex) {
       wall += lag;
       rtTotal += lag;
       if (!bookHit) preMoves++;
-      const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
+      const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1, ...(gapsNow() ? { gaps: gapsNow() } : {}) } : undefined;
       const rr = sess.setRoot(g.simpleBoardFromBoard(state.board), validGrid(state, N), { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: [cheatAvailIn(0, 0.003)], cheats } } : {}) });
       sStats[rr?.reused ? "reused" : "fresh"]++;
       ranked = pre.pass ? [] : [{ x: pre.x, y: pre.y, ...(pre.second && !pre.book ? { second: pre.second } : {}) }];
@@ -770,6 +777,11 @@ async function playGame(stats, gameIndex) {
     const retime = RETIME && !pre && !!sess;
     const seedPath = pre || retime ? "pre" : "req";
     let seedRef = playtimeAt(pre || retime ? wall : tReq);
+    {
+      const tPlay = playtimeAt(wall);
+      if (lastPlayT !== null) gapCal.observe((tPlay - lastPlayT) / 200);
+      lastPlayT = tPlay;
+    }
     ourTurns++;
     if (SCAN) return { scan: true, v0, start: g.simpleBoardFromBoard(state.board).join("") };
     let hasMove = ranked && ranked.length;
@@ -906,7 +918,12 @@ async function playGame(stats, gameIndex) {
     } else if (!(hasMove && g.makeMove(state, ranked[0].x, ranked[0].y, GoColor.black))) {
       g.passTurn(state, GoColor.black, false);
       ourPasses++;
-      note("B", "pass", SEEDED ? { T: playtimeAt(wall) } : undefined);
+      // A pass while the AI has not passed (the game goes on): which path chose it.
+      if (!oppPassed) {
+        openPasses++;
+        if (pre) openPrePasses++;
+      }
+      note("B", "pass", { ...(SEEDED ? { T: playtimeAt(wall) } : {}), ...(pre ? { pre: true } : {}) });
       if (sess) sess.commit(null);
     } else {
       note("B", [ranked[0].x, ranked[0].y], SEEDED ? { T: playtimeAt(wall) } : undefined);
@@ -987,7 +1004,7 @@ async function playGame(stats, gameIndex) {
         rtTotal += 200 * best; // charged on the live clock with the round trips
       }
     }
-    if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 });
+    if (retime) sess.setClock({ T: seedRef, kw: calib.pre.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1, ...(gapsNow() ? { gaps: gapsNow() } : {}) });
     if (state.passCount >= 2) break;
     // What the AI's reply will be computed from, for the seed calibration.
     const seedCtx = SEEDED && MODEL ? { board: g.simpleBoardFromBoard(state.board), history: state.previousBoards.slice(), passCount: state.passCount } : null;
@@ -1110,6 +1127,9 @@ async function playGame(stats, gameIndex) {
     komi,
     ourTurns,
     ourPasses,
+    openPasses,
+    openPrePasses,
+    ...(CLOCK_GAPS ? { gaps: gapCal.stats } : {}),
     ourMsPerMove: +(ourMs / ourTurns).toFixed(1),
     ourMsTotal: Math.round(ourMs),
     itersPerMove: Math.round(iters / ourTurns),

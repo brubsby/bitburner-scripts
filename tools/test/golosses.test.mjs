@@ -13,6 +13,10 @@
 // A check may carry `pre` {x, y, wr}: the check ply's single as live had it
 // (a pre-sent answer and its win rate), so the cheat policy decides on live's
 // own inputs; and `pondered`: work the check ply's root already held.
+// `presend` W: the solver ponders W work under each of our moves (from ply
+// from-1) and plays its pre-sent answer to the AI's reply, as live does; `gaps`
+// true: the clock seeds replies a turn ahead by the case's own play cadence
+// (golib clockSeed gaps, measured negative live: off in go-solver).
 //
 //   GL1 every case marked `fixed` is still WON from each of its checks (FAIL
 //       if not: a regression); every `open` case is reported (WARN while
@@ -57,6 +61,7 @@ export async function run() {
     same("smallnet-on", list(dflt("smallnet-on")), [...R.SMALLNET_ON].sort().join(","));
     same("smallnet-outcome-on", list(dflt("smallnet-outcome-on")), [...R.OUTCOME_ON].sort().join(","));
     const floors = (v) => list(v).split(",").filter((s) => s && s !== "none").map((s) => s.split(":")).map(([o, e]) => `${o}:${Number(e)}`).sort().join(",");
+    same("open-pass-visits", list(dflt("open-pass-visits")).split(",").filter((s) => s && s !== "none").join(","), [...R.OPEN_PASS_VISITS].sort().join(","));
     same("prior-floor-on", floors(dflt("prior-floor-on")), [...R.PRIOR_FLOOR_ON].map(([o, e]) => `${o}:${e}`).sort().join(","));
     await R.regressEnv();
   } catch (e) {
@@ -78,7 +83,7 @@ export async function run() {
       const t0 = Date.now();
       let res;
       try {
-        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}) });
+        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}) });
       } catch (e) {
         c2.fail(`${fx.id} from ply ${ch.from}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
         continue;
@@ -114,6 +119,22 @@ export async function run() {
       if (off.won) c4.warn(`seed ${seed}: the floor-off replay now WINS ${off.black}-${off.white} — promote the case to fixed`);
       if (!on.won) c4.fail(`seed ${seed}: floor 0.1 LOST ${on.black}-${on.white}`, `line ${on.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
       else c4.note(`seed ${seed}: floor off ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}, floor 0.1 WON ${on.black}-${on.white}`);
+    }
+  // GL5: the 17:24:13Z Netburners case's ply-8 check, replayed under the
+  // OLD open-pass rule (openPass 'allow'): the ponder pre-sends a PASS on an
+  // open board and the game is lost 9-13.5 as live. Red before the fix, so
+  // GL1's green on this case is the fix's, not the replay's.
+  const c5 = new Check("GL5", "the 2026-10-09 17:24:13Z Netburners case: under the old open-pass rule the replayed ponder pre-sends an open-board PASS at ply 8 and loses (openPass 'visits' is what wins it)");
+  checks.push(c5);
+  const nb = fixture.cases.find((c) => c.id === "live-2026-10-09T17:24:13.315Z-Netburners");
+  if (!nb) c5.fail("the case is not in the corpus");
+  else
+    for (const ch of nb.checks.filter((x) => x.from === 8)) {
+      c5.examined(1);
+      const off = await R.playCheck(nb, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, openPass: "allow" });
+      const d = off.decisions.find((x) => x.ply === ch.from);
+      if (off.won || d?.mv !== "P") c5.warn(`seed ${ch.seed} presend ${ch.presend}: under 'allow' the replay no longer pre-sends PASS and loses (${d?.mv}, ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}) — the bug's reproduction drifted`);
+      else c5.note(`seed ${ch.seed} presend ${ch.presend}: 'allow' -> ${d.mv}${d.pre ? " (pre-sent)" : ""}, LOST ${off.black}-${off.white}`);
     }
   return checks;
 }

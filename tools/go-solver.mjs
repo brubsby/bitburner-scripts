@@ -68,7 +68,7 @@
 
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, applyMove, bookMove, oracleCandidates, oracleLineHolds, cheatRoll, cheatChance } from "../golib.js";
+import { chooseMoveUCT, chooseMoveModel, modelSession, seedCalib, gapCalib, applyMove, bookMove, oracleCandidates, oracleLineHolds, cheatRoll, cheatChance } from "../golib.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -296,11 +296,38 @@ function rememberSeedCtx(req, path, x, y) {
   const after = moved ? applyMove(req.board, x, y) : req.board;
   if (!after) return;
   const history = Array.isArray(req.history) ? req.history : [];
-  seedCtx = { path, T: req.T, opponent: req.opponent, size: req.size, board: after, history: moved ? [req.board.join(""), ...history] : history, passCount: moved ? 0 : req.opponentPassed ? 2 : 1 };
+  seedCtx = { path, T: req.T, opponent: req.opponent, size: req.size, board: after, history: moved ? [req.board.join(""), ...history] : history, passCount: moved ? 0 : req.opponentPassed ? 2 : 1, histLen: history.length };
 }
 
-const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats, retimes });
-const clockFor = (req, path) => (CLOCK && req.T > 0 ? { T: req.T, kw: calib[path].weights(), turnTicks: ((Number.isFinite(req.turnS) ? req.turnS : 1.2) * 1000) / 200, jitter: 5, eps: 0.1 } : undefined);
+// THE PLAY CADENCE (golib gapCalib -> clockSeed `gaps`), per opponent: engine
+// ticks between two of our consecutive plays in one game, from the playtime
+// of every play we learn of (a notice's T; a retime's T). The ponder seeds the
+// AI's reply to our NEXT move (d = 1) a measured gap after this play, not
+// round(turnS / 0.2) +- 5 ticks: live Netburners plays 2-4 ticks apart (92%),
+// which that blur spread over -1..9 — and a pre-sent PASS, a bet on the AI's
+// seeded reply, looked winning across ticks the AI is never drawn at (the
+// 2026-10-09 17:24:13Z loss). Learned always (published in `seed.gaps`), USED
+// only with --clock-gaps: MEASURED NEGATIVE (see golib clockSeed).
+const CLOCK_GAPS = argv.includes("--clock-gaps");
+const gapCals = new Map();
+let lastPlay = null;
+/** A play of ours at playtime T, the position's history `histLen` boards long. */
+function notePlay(opponent, T, histLen) {
+  if (!(T > 0) || !Number.isFinite(histLen)) return;
+  if (lastPlay && lastPlay.opponent === opponent && histLen > lastPlay.histLen && histLen <= lastPlay.histLen + 2) {
+    if (!gapCals.has(opponent)) gapCals.set(opponent, gapCalib());
+    gapCals.get(opponent).observe((T - lastPlay.T) / 200);
+  }
+  lastPlay = { opponent, T, histLen };
+}
+const gapsFor = (opponent) => (CLOCK_GAPS ? gapCals.get(opponent)?.weights() ?? null : null);
+
+const seedStats = () => ({ req: calib.req.stats, pre: calib.pre.stats, retimes, gaps: Object.fromEntries([...gapCals].map(([o, c]) => [o, c.stats])) });
+const clockFor = (req, path) => {
+  if (!(CLOCK && req.T > 0)) return undefined;
+  const gaps = gapsFor(req.opponent);
+  return { T: req.T, kw: calib[path].weights(), turnTicks: ((Number.isFinite(req.turnS) ? req.turnS : 1.2) * 1000) / 200, jitter: 5, eps: 0.1, ...(gaps ? { gaps } : {}) };
+};
 
 // THE OPENING BOOK (tools/sim/go-book.mjs; --no-book: off): tools/goai/book-<Opponent>.json,
 // deep offline searches of the first moves, keyed by position up to symmetry
@@ -418,8 +445,29 @@ const PRIOR_FLOOR_ON = new Map(
 );
 const priorFloorFor = (opponent) => PRIOR_FLOOR_ON.get(String(opponent ?? "").replace(/\s+/g, "")) ?? 0;
 console.log(`go-solver: prior floor ${PRIOR_FLOOR_ON.size ? [...PRIOR_FLOOR_ON].map(([o, e]) => `${o} ${e}`).join(", ") : "off"}`);
+// THE OPEN PASS RULE (golib opts.openPass 'visits', --open-pass-visits Opp,...;
+// "none" off): a PASS while the AI has not passed (the game goes on) must be
+// the most-visited child, not merely "clearly better" on a handful of visits
+// (golib.modelRootPasses' escape, kept for the exact game-ending pass). The
+// 2026-10-09 17:24:13Z Netburners loss (streak 88, 9-13.5) was two PRE-SENT
+// passes on an open board (ply 3: the AI took the vital 3,2, which wins 16/16
+// replays; ply 8: it took 0,3). A pass there is a bet on the AI's seeded
+// reply; on few visits it is noise. MEASURED (go-w0, live config + b4c32
+// depth 1, --work-rate 1.7, bubtop, paired vs the live solver):
+//   Netburners layouts 1701-1704  1200 paired  +2.6% [+0.4, +5.0]  black 16.28 -> 16.48, 5.39 -> 5.32 s/game, 0 vs 0 lost
+// (and, rejected: 'never' +0.9% [-1.3, +3.1] but wrong in principle — from
+// ply 9 of that game the only stone loses every line and the pass wins;
+// 'request' -0.1%; 'fresh' +1.4% [-0.8, +3.7]; clock gaps -0.5% / -3.2% / -4.7%).
+const OPEN_PASS_VISITS = new Set(
+  str("open-pass-visits", "Netburners")
+    .split(",")
+    .map((s) => s.trim().replace(/\s+/g, ""))
+    .filter((s) => s && s !== "none"),
+);
+console.log(`go-solver: open pass needs the most visits for ${OPEN_PASS_VISITS.size ? [...OPEN_PASS_VISITS].join(",") : "nobody"}`);
 const sessOpts = (N, opponent, base = {}) => {
   const out = { ...base, ...JOINT_OPTS };
+  if (OPEN_PASS_VISITS.has(String(opponent ?? "").replace(/\s+/g, ""))) out.openPass = "visits";
   const floor = priorFloorFor(opponent);
   if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true, ...(floor ? { priorFloor: floor } : {}) };
   else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, ...(floor ? { priorFloor: floor } : {}) };
@@ -648,6 +696,7 @@ while (true) {
       // (tools/sim/go-w0.mjs --retime): see go.js SETTINGS.clock.
       if (req.seq !== lastSeq && req.retime) {
         lastSeq = req.seq;
+        if (seedCtx?.path === "req" && seedCtx.opponent === req.opponent) notePlay(req.opponent, req.T, seedCtx.histLen);
         if (CLOCK && req.T > 0 && sess?.pondering && seedCtx?.path === "req" && seedCtx.opponent === req.opponent) {
           sess.setClock(clockFor(req, "pre"));
           seedCtx = { ...seedCtx, path: "pre", T: req.T };
@@ -669,6 +718,7 @@ while (true) {
         // A NOTICE (release 3): go.js already played a pre-sent answer on this
         // board — re-root the session there (a reuse), commit the move, ponder.
         if (req.played && typeof req.played === "object" && model && req.opponent && MODEL_PONDER === "session") {
+          notePlay(req.opponent, req.T, Array.isArray(req.history) ? req.history.length : NaN);
           try {
             const key = `${req.opponent}|${N}|${req.komi ?? 5.5}`;
             if (!sess || sessKey !== key) {

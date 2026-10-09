@@ -296,6 +296,21 @@ export async function run() {
     c5.examined(2);
     if (cal.weights()[0][0] !== 2) c5.fail(`seedCalib must learn k=2, weights ${JSON.stringify(cal.weights().slice(0, 3))}`);
     if (cal.observe([-1, 0, 1, 2, 3, 4, 5, 6])) c5.fail("a reply every k reproduces says nothing and must be skipped");
+    // THE PLAY CADENCE (gapCalib -> clockSeed gaps): a reply one turn ahead is
+    // seeded a measured gap after this play, not round(turnTicks) +- jitter.
+    // Live Netburners 2026-10-09: gaps 2-4 ticks, turnS 0.70 -> 4 +- 5.
+    const gc = golib.gapCalib();
+    c5.examined(3);
+    if (gc.weights() !== null) c5.fail("gapCalib must answer null before it has seen enough gaps");
+    for (const g of [2, 2, 2, 2, 3, 3, 4, 2, 2, 3, 2, 4, 2, 3, 2, 2, 4, 2, 3, 2, 40, 0]) gc.observe(g);
+    if (gc.stats.observed !== 20) c5.fail(`gapCalib must drop a stall / new-game gap (40) and a zero, observed ${gc.stats.observed}`);
+    let x = 0x9e3779b9;
+    const rnd = () => ((x = (x * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const ticks = (clock) => { const h = new Map(); for (let i = 0; i < 4000; i++) { const k = (golib.clockSeed(clock, 1, rnd) - 1e9) / 200; h.set(k, (h.get(k) ?? 0) + 1); } return h; };
+    const base = { T: 1e9, kw: [[1, 1]], turnTicks: 3.5, jitter: 5, eps: 0 };
+    const share = (h, lo, hi) => [...h].filter(([k]) => k >= lo && k <= hi).reduce((a, [, n]) => a + n, 0) / 4000;
+    const withGaps = share(ticks({ ...base, gaps: gc.weights() }), 3, 5), blur = share(ticks(base), 3, 5);
+    if (!(withGaps > 0.9 && blur < 0.4)) c5.fail(`clockSeed d=1 must put the reply's seed at k + a measured gap (ticks 3-5: ${withGaps.toFixed(2)} with gaps, ${blur.toFixed(2)} blurred)`);
     // NEVER RISK THE WIN: after the AI's pass, with PASS a certain win, a stone
     // whose line sometimes loses is refused even when its mean is higher.
     const N = 5;

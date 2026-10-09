@@ -958,9 +958,25 @@ export function powerObjective({ streak = 0, komi, size, eBlack = 16, rate = 0, 
  * nodes draw seeds jittered around the expected tick, which keeps isSmart
  * right and leaves the rest random.
  *
- *   clock = { T, kw: [[k, weight]...], turnTicks, jitter, eps }
+ *   clock = { T, kw: [[k, weight]...], turnTicks, jitter, eps, gaps? }
  * eps: the share of draws that ignore the clock (a free seed) — robustness
  * against a lag the calibration has not seen.
+ *
+ * gaps: [[ticks, weight]...], the MEASURED distribution of engine ticks
+ * between two of our consecutive plays (gapCalib). With it a reply d of our
+ * turns ahead is seeded d gap draws later; without it, round(d x turnTicks)
+ * +- a uniform `jitter`. The two differ where it matters: live Netburners
+ * 2026-10-09, 1729 pre-sent plays, gaps of 2 ticks 51%, 3 24%, 4 17%, 5-6 8%
+ * — while turnS 0.70 s modelled 4 +- 5 ticks (-1..9, ~1/11 each). So the
+ * ponder priced its answers (each one a reply of ours, d = 1) mostly at seeds
+ * the AI would never be drawn at: a PASS — a pure bet on the AI's seeded
+ * reply — looked winning across the blur and was pre-sent on an open board
+ * (the 2026-10-09 17:24:13Z Netburners loss: plies 3 and 8).
+ * MEASURED NEGATIVE as a default (go-w0 --clock-gaps vs the blur, live
+ * configs + b4c32, --work-rate 1.7, bubtop, 2026-10-09): Netburners -0.5%
+ * [-2.6, +1.8] (1200 paired), Daedalus -3.2% [-7.6, +1.0] (450, lost 4 vs 0),
+ * Illuminati -4.7% [-13.4, +3.8] (200, lost 5 vs 3) — the sharper seeds
+ * overfit the search to one predicted reply. Off (go-solver --clock-gaps).
  */
 export function clockSeed(clock, d, rand) {
   if (!clock || !(clock.T > 0) || d < 0 || rand() < (clock.eps ?? 0.1)) return 1 + Math.floor(rand() * 3e7)
@@ -971,10 +987,62 @@ export function clockSeed(clock, d, rand) {
     u -= w
   }
   if (d > 0) {
-    const J = clock.jitter ?? 5
-    k += Math.round(d * (clock.turnTicks ?? 6)) + Math.round((2 * rand() - 1) * J)
+    const G = clock.gaps
+    if (Array.isArray(G) && G.length) {
+      const tot = G.reduce((a, [, w]) => a + w, 0)
+      for (let i = 0; i < d; i++) {
+        let v = rand() * tot
+        let g = G[G.length - 1][0]
+        for (const [gg, w] of G) {
+          if (v < w) { g = gg; break }
+          v -= w
+        }
+        k += g
+      }
+    } else {
+      const J = clock.jitter ?? 5
+      k += Math.round(d * (clock.turnTicks ?? 6)) + Math.round((2 * rand() - 1) * J)
+    }
   }
   return clock.T + 200 * k
+}
+
+/**
+ * THE PLAY CADENCE (clockSeed's `gaps`): engine ticks between two of our
+ * consecutive plays in one game, kept over the last `keep` and smoothed by
+ * `smooth` pseudo-counts on each neighbouring tick. weights() is null until
+ * `min` gaps are seen (clockSeed then blurs by turnTicks +- jitter as before).
+ * observe(ticks) ignores gaps outside [1, maxTicks] (a stall, a new game).
+ */
+export function gapCalib({ keep = 400, min = 20, maxTicks = 15, smooth = 0.5 } = {}) {
+  const obs = []
+  let cached = null
+  return {
+    observe(ticks) {
+      const g = Math.round(ticks)
+      if (!(g >= 1 && g <= maxTicks)) return false
+      obs.push(g)
+      if (obs.length > keep) obs.shift()
+      cached = null
+      return true
+    },
+    weights() {
+      if (obs.length < min) return null
+      if (cached) return cached
+      const c = new Map()
+      for (const g of obs) {
+        c.set(g, (c.get(g) ?? 0) + 1)
+        for (const n of [g - 1, g + 1]) if (n >= 1) c.set(n, (c.get(n) ?? 0) + smooth / obs.length)
+      }
+      const tot = [...c.values()].reduce((a, b) => a + b, 0)
+      cached = [...c.entries()].sort((a, b) => a[0] - b[0]).map(([g, n]) => [g, n / tot])
+      return cached
+    },
+    get stats() {
+      const w = this.weights()
+      return { observed: obs.length, weights: w ? [...w].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([g, x]) => [g, Number(x.toFixed(3))]) : null }
+    },
+  }
 }
 
 /**
@@ -1126,6 +1194,24 @@ export function modelSession(N, komi, model, opts = {}) {
   const C = Number.isFinite(opts.c) ? opts.c : 0.6
   const SAMPLES = Number.isFinite(opts.samples) ? opts.samples : 6
   const PASS_FIRST = !!opts.passFirst
+  // THE OPEN PASS (opts.openPass): a PASS while the AI has not passed — the
+  // game goes on and the AI moves again, so the pass is a bet on the AI's
+  // seeded reply. 'allow' (as before): modelRootPasses decides, including its
+  // "clearly better" escape on a handful of visits. 'visits': such a pass must
+  // also be the most-visited child (the escape stays for the exact,
+  // game-ending pass). 'request': never PRE-SENT (ponderAnswers withholds it;
+  // go.js asks). 'fresh': as request, and the reused root drops the PASS's
+  // ponder stats so the request re-prices it. 'never': no decision passes
+  // while a stone other than an own-eye fill is on offer.
+  // MEASURED (go-w0, Netburners live config + b4c32 depth 1, --work-rate 1.7,
+  // bubtop, 1200 paired each, 2026-10-09; 1200/1200 won in every arm):
+  //   visits +2.6% [+0.4, +5.0]   fresh +1.4% [-0.8, +3.7]
+  //   never  +0.9% [-1.3, +3.1]   request -0.1% [-2.4, +2.2]
+  // 'never' is also WRONG in principle: in the 17:24:13Z case from ply 9 the
+  // only stone (3,0) loses every line and the pass wins 19-3.5 (forced stones
+  // wiped 0-22.5) — a pass on an open board is right when every stone hurts.
+  // Live: 'visits' where go-solver --open-pass-visits names the opponent.
+  const OPEN_PASS = ['never', 'request', 'visits', 'fresh'].includes(opts.openPass) ? opts.openPass : 'allow'
   // THE NET (opts.nn, tools/katago/evaluator.mjs): an injected async
   // evaluator — eval(simpleBoard, komi) -> { policy (by idx), pass, winB,
   // areaB } for black to move. With it every new B node is scored by the
@@ -1763,7 +1849,11 @@ export function modelSession(N, komi, model, opts = {}) {
     const meanOf = (c) => (c && c.visits ? c.sum / c.visits : null)
     const stone = bestIdx === null ? null : node.children.get(bestIdx)
     const passWin = obj && passNode && passNode.visits ? passNode.wins / passNode.visits : undefined
-    if (passNode && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits, passWin })) return []
+    const openNever = OPEN_PASS === 'never' && !!passNode && !passNode.terminal && !!stone && (isPair(bestIdx) || !isFill(node.b, bestIdx))
+    // 'visits': an open PASS must also be the most-visited child (no "clearly
+    // better" escape on a handful of visits).
+    const openFew = OPEN_PASS === 'visits' && !!passNode && !passNode.terminal && !!stone && passNode.visits < bestVisits
+    if (passNode && !openNever && !openFew && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits, passWin })) return []
     // NEVER RISK A WON GAME FOR AREA (release 3, the end-of-game rule): when
     // PASS ends the game WON (the AI passed; our pass is the second), a stone
     // is played only if its line also wins essentially always — the power
@@ -1829,6 +1919,17 @@ export function modelSession(N, komi, model, opts = {}) {
           reused.children.delete(idx)
         }
         reused.untried = reused.untried.filter((a) => ok(a.idx))
+        // 'fresh': an open PASS is re-evaluated at the request (its stats were
+        // gathered under the ponder's vaguer clock): dropped back to untried.
+        const pn = OPEN_PASS === 'fresh' && reused.passCount === 0 ? reused.children.get(PASS) : null
+        if (pn) {
+          reused.visits -= pn.visits
+          reused.work -= pn.work
+          reused.sum -= pn.sum
+          reused.wins -= pn.wins
+          reused.children.delete(PASS)
+          reused.untried.push({ idx: PASS, h: -1e6 })
+        }
         rootNode = reused
       } else {
         countPoints()
@@ -1919,6 +2020,7 @@ export function modelSession(N, komi, model, opts = {}) {
         // A PASS chosen among pairs is never pre-sent: the request decides it
         // (go-solver's pass guard checks it against the single search).
         if (!top && [...c.children.keys()].some(isPair)) continue
+        if (!top && (OPEN_PASS === 'request' || OPEN_PASS === 'fresh') && c.passCount === 0) continue
         out.push({ b: c.s, pc: c.passCount, ...(top ? { x: top.x, y: top.y, ...(top.second ? { second: top.second } : {}) } : { pass: true }), n: e.n, work: c.work, v: top?.value ?? null, wr: top?.top?.[0]?.[4] ?? null, gap: top?.top?.[1] ? top.top[0][4] - top.top[1][4] : null })
         if (out.length >= max) break
       }

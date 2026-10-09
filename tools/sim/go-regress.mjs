@@ -70,6 +70,9 @@ const NET_FILES = { outcome: "tools/goai/smallnet-5-o2.json", b4c32: "tools/goai
 export const OUTCOME_ON = new Set(["Tetrads"]);
 export const SMALLNET_ON = new Set(["Tetrads", "Daedalus", "Illuminati", "SlumSnakes", "Netburners"]);
 export const PRIOR_FLOOR_ON = new Map();
+// Mirror of go-solver.mjs --open-pass-visits (golib opts.openPass 'visits').
+export const OPEN_PASS_VISITS = new Set(["Netburners"]);
+export const openPassFor = (opponent) => (OPEN_PASS_VISITS.has(planKey(opponent)) ? "visits" : null);
 const nets = {};
 export async function solverNn(opponent, N) {
   const key = planKey(opponent);
@@ -133,6 +136,13 @@ export function caseK(fx) {
   return best;
 }
 
+/** The case's play cadence from its logged playtimes (golib.gapCalib over consecutive plays), or null. */
+export function caseGaps(fx, golib = env?.golib) {
+  const c = golib.gapCalib({ min: 3 });
+  for (let i = 1; i < fx.moves.length; i++) if (fx.moves[i].T > 0 && fx.moves[i - 1].T > 0) c.observe((fx.moves[i].T - fx.moves[i - 1].T) / 200);
+  return c.weights();
+}
+
 /**
  * Play check `from` of case `fx` (see the header). Returns
  * { won, black, white, line: [{ply, m, r, onLine}], decisions }.
@@ -141,8 +151,13 @@ export function caseK(fx) {
  *   pondered: work the check ply's root already holds (live: the ponder's)
  *   pre: {x, y, wr} the check ply's single and its win rate as live had them
  *        (a pre-sent answer: no search of ours chose it)
+ *   presend: W > 0 replays the PONDER: after each of our moves from ply
+ *        from-1, W work under it, and its pre-sent answer to the AI's reply
+ *        played when it has one (the path ~60-85% of live moves take)
+ *   gaps: the clock's play cadence (true: the case's own, caseGaps)
+ *   openPass: golib opts.openPass (default: go-solver's, openPassFor)
  */
-export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null } = {}) {
+export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null, presend = 0, openPass = undefined, gaps = null } = {}) {
   const E = await regressEnv();
   const { golib, model, m } = E;
   const N = fx.size;
@@ -222,8 +237,21 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
       return base + 200 * Math.round(((ply - bp) * 1200) / 200);
     };
     const kw = [[K, 0.6], [K + 1, 0.25], [K - 1, 0.1], [K + 2, 0.05]];
+    // gaps: the play cadence (golib clockSeed gaps) — true: the case's own,
+    // from its logged playtimes (caseGaps); an array: as given.
+    const G = gaps === true ? caseGaps(fx) : Array.isArray(gaps) ? gaps : null;
     // A cheat case's session carries the solver's pair options (go-solver JOINT_OPTS).
-    const sess = golib.modelSession(N, komi, { reply: (b, o) => model.reply(b, { ...o, opponent: oppName }) }, { seed, ...(CH ? { pairs: [6, 5], pairsOnly: true } : {}), ...(nn ? { nn } : {}) });
+    // openPass: the session's open-pass rule (golib opts.openPass) — by
+    // default go-solver's for this opponent (openPassFor; GL3 mirrors it).
+    const op = openPass === undefined ? openPassFor(fx.opponent) : openPass;
+    const sess = golib.modelSession(N, komi, { reply: (b, o) => model.reply(b, { ...o, opponent: oppName }) }, { seed, ...(CH ? { pairs: [6, 5], pairsOnly: true } : {}), ...(nn ? { nn } : {}), ...(op ? { openPass: op } : {}) });
+    // PRE-SENT (presend W > 0, as live: go-solver ponders under our move while
+    // the AI thinks and go.js plays a published answer the moment the AI's
+    // reply matches it, with no request): from ply from-1 on, after each of
+    // our moves the session ponders W work, clocked from that move's
+    // playtime, and the next ply plays the ponder's answer to the actual
+    // reply when it holds one (golib ponderAnswers, minWork = the budget).
+    let answers = [];
     let cheats = 0;
     const windowOpen = (ply) => !!CH && !oppPassed && cheats < CH.maxPerGame && ply + 1 >= CH.fromTurn && golib.cheatChance(cheats, CH.crime, CH.sf14) >= CH.minChance && golib.cheatRoll(tAt(ply)) <= golib.cheatChance(cheats, CH.crime, CH.sf14);
     const secondWork = CH ? Math.max(50, Math.round((work * (CH.secondMs ?? cfg.maxms)) / cfg.maxms)) : 0;
@@ -255,14 +283,22 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         // Keep the session's tree in step with the forced line (cheap: no search).
         sess.setRoot(simpleOf(), validOf(), { history: st.previousBoards.slice(), opponentPassed: oppPassed, ...(objective ? { objective } : {}) });
       } else {
-        const clock = cfg.clock ? { T: tAt(ply), kw, turnTicks: 6, jitter: 5, eps: 0.1 } : undefined;
+        const clock = cfg.clock ? { T: tAt(ply), kw, turnTicks: 6, jitter: 5, eps: 0.1, ...(G ? { gaps: G } : {}) } : undefined;
         const simple = simpleOf();
         const valid = validOf();
         const history = st.previousBoards.slice();
         const rootOpts = { history, opponentPassed: oppPassed, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) };
+        const key = simple.join("");
+        const preA = presend > 0 && !CH ? answers.find((a) => a.b === key && a.pc === (oppPassed ? 1 : 0) && (a.pass || valid[a.x]?.[a.y])) : null;
+        answers = [];
         const r0 = sess.setRoot(simple, valid, rootOpts);
         mv = "P";
-        if (r0) {
+        if (r0 && preA) {
+          // The pre-sent answer: played as live plays it, no search of ours.
+          mv = preA.pass ? "P" : `${preA.x},${preA.y}`;
+          decisions.push({ ply, mv, top: [], pre: true });
+          if (decideOnly) return { won: null, line, decisions };
+        } else if (r0) {
           // pondered: the check ply's root holds this much work already (live,
           // the ponder's), so the cheat searches after it start from a deep tree.
           const w0 = ply === from && pondered > work ? pondered : work;
@@ -345,6 +381,11 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         const [[x1, y1], [x2, y2]] = mv.split("+").map((p) => p.split(",").map(Number));
         sess.commit(x1, y1, { x: x2, y: y2 });
       } else sess.commit(...mv.split(",").map(Number));
+      if (presend > 0 && !CH && ply >= from - 1 && sess.pondering && st.passCount < 2) {
+        if (cfg.clock) sess.setClock({ T: tAt(ply), kw, turnTicks: 6, jitter: 5, eps: 0.1, ...(G ? { gaps: G } : {}) });
+        await sess.ponder(0, { work: presend });
+        answers = sess.ponderAnswers({ minWork: work, max: 4 });
+      }
       if (st.passCount >= 2) {
         line.push({ ply, m: mv, r: "G", onLine });
         break;
