@@ -81,7 +81,7 @@ import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
 // Pure: exp-per-GB-second scoring, wave sizing and the manip verdict
 // (expfarm.js), the node table, and the exit simulator the verdict runs.
-import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, moneyModelOf, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy } from 'exitplan.js'
 // Pure (stock.js's brain, read-only here): which servers move which symbol.
@@ -109,7 +109,23 @@ let stockServers = null
 // the exit simulation and publishes /tel/expfarm.txt, which switches the
 // farm on here. BitNode 8 (hacking pays nothing) farms regardless.
 let farmPreview = null
+// THE MIRROR, while the farm runs: what money batching would earn on this
+// fleet and its exp against the farm's (expfarm.moneyModelOf), so progress.js
+// re-prices the split every pass from the farm side too (expfarm.splitVerdict).
+// Before it the verdict latched: "the farm is running" was its whole why.
+let moneyPreview = null
 const FARM_VERDICT = '/tel/expfarm.txt'
+/** progress.js's verdict as published, for batch.txt: this life's, with its why. */
+function farmVerdictRecord(ns) {
+  try {
+    const v = JSON.parse(ns.read(FARM_VERDICT) || 'null')
+    if (!v) return { farm: null, why: `${FARM_VERDICT} absent: progress.js has not priced the split` }
+    if (v.lastAugReset !== ns.getResetInfo().lastAugReset) return { farm: null, why: `${FARM_VERDICT} is another life's`, at: v.at }
+    return { at: v.at, farm: v.farm, moneyShare: v.moneyShare ?? null, priced: v.priced ?? null, running: v.running ?? null, shareH: v.shareH ?? null, farmH: v.farmH ?? v.withH ?? null, moneyH: v.moneyH ?? v.withoutH ?? null, why: v.why, stale: !(Date.now() - Date.parse(v.at) < 15 * 60e3) }
+  } catch (e) {
+    return { farm: null, why: `${FARM_VERDICT} unreadable: ${String(e).slice(0, 80)}` }
+  }
+}
 /** A fresh, this-life verdict from progress.js that farming shortens the exit. */
 function farmVerdictOn(ns) {
   try {
@@ -117,6 +133,19 @@ function farmVerdictOn(ns) {
     return !!v && v.farm === true && v.lastAugReset === ns.getResetInfo().lastAugReset && Date.now() - Date.parse(v.at) < 15 * 60e3
   } catch {
     return false
+  }
+}
+/**
+ * The priced money share of a mixed split (progress.js moneyShare, 0 < s < 1)
+ * when the fresh verdict farms; 0 (the farm alone) otherwise.
+ */
+function farmMoneyShareOf(ns) {
+  try {
+    const v = JSON.parse(ns.read(FARM_VERDICT) || 'null')
+    const ok = !!v && v.farm === true && v.lastAugReset === ns.getResetInfo().lastAugReset && Date.now() - Date.parse(v.at) < 15 * 60e3
+    return ok && v.moneyShare > 0 && v.moneyShare < 1 ? v.moneyShare : 0
+  } catch {
+    return 0
   }
 }
 function refreshStockManip(ns) {
@@ -160,6 +189,10 @@ export const farm = {
   ranked: [],
   manip: null,
   why: null,
+  // A MIXED split (progress.js's priced moneyShare): the money targets beside
+  // the farm, and the fleet fraction they split between them.
+  moneyShare: 0,
+  moneyHosts: new Set(),
 }
 
 /** Launch `want` threads of `op` in processes of at most `chunk` threads; returns threads launched. */
@@ -221,6 +254,39 @@ function manipRateOf(ns, readT, ram, capacity, h) {
   const perSec = 1000 / (4 * SETTINGS.spacing)
   const held = (p.gb * (t.hackTime * 4)) / (4 * SETTINGS.spacing)
   return { nu: p.f * t.chance * perSec, gb: held, expGbms: batchedScore(t) * held }
+}
+
+/**
+ * The money targets the argmax chooses among: quality floors first (scale-free
+ * ratios, so neither goes stale as the fleet or level grows), at most
+ * maxTargets; and the hack ceiling, capacity-based to match the dispatcher's
+ * floor (the argmax is a question about steady state, not this instant's free
+ * list). Shared by money mode's target count and the farm's money preview.
+ */
+function moneyCandidates(ns, ranked, hosts, ram) {
+  const bestScore = ranked.length ? ranked[0].s : 0
+  const bestMoney = ranked.reduce((m, r) => Math.max(m, r.t.maxMoney), 0)
+  const worthwhile = ranked.filter((r) => r.s >= bestScore * SETTINGS.minScoreFrac && r.t.maxMoney >= bestMoney * SETTINGS.minMoneyFrac)
+  const cand = (worthwhile.length ? worthwhile : ranked).slice(0, SETTINGS.maxTargets)
+  const scoreCapacity = Math.max(0, ...hosts.map((h) => ns.getServerMaxRam(h)))
+  const scoreHackRam = Math.max(Math.min(SETTINGS.hackFloor * ram.hack, scoreCapacity), scoreCapacity)
+  return { cand, scoreHackRam }
+}
+
+/**
+ * planAt for expfarm.moneyModelOf: candidate i's batch on an even slice.
+ * SAME hack ceiling the dispatcher applies. Omitting it let maxHackRam default
+ * to Infinity here, so the target-count argmax scored batches far larger than
+ * place() could ever land — it was choosing n against plans that do not exist.
+ * The two call sites must agree or the choice is made on fiction. (`slice`,
+ * not `share`: a local named `share` is billed as ns.share() — 2.40GB.)
+ */
+function moneyPlanAt(cand, ram, hackRam) {
+  return (i, slice) => {
+    const t = cand[i].t
+    const p = planBatch(t, ram, slice / 4, hackRam)
+    return p ? { money: p.money, gb: p.gb, hackTimeMs: t.hackTime, score: batchedScore(t) } : null
+  }
 }
 
 function manipCost(ns, readT, ram, level, capacity) {
@@ -1674,6 +1740,10 @@ export async function main(ns) {
         // only on a priced verdict; the farm gets the rest of the fleet.
         const nodeMults = bitNodeMults(ns.getResetInfo())
         farm.on = !flags.nofarm && (expMode(nodeMults) || farmVerdictOn(ns))
+        // The share moves only at a retarget: the k below reads the farm's
+        // RAM at the share it was held under.
+        const prevShare = farm.moneyShare
+        farm.moneyShare = farm.on && !expMode(nodeMults) ? farmMoneyShareOf(ns) : 0
         // Money mode: what the farm WOULD earn, for progress.js to price.
         if (!farm.on) {
           farmPreview = (() => {
@@ -1705,6 +1775,7 @@ export async function main(ns) {
             }
           })()
         } else farmPreview = null
+        if (!farm.on) moneyPreview = null
         farm.weakenRate = nodeMults?.ServerWeakenRate > 0 ? nodeMults.ServerWeakenRate : 1
         if (farm.on) {
           const readT = (h) => readTarget(ns, h, yOf())
@@ -1716,6 +1787,36 @@ export async function main(ns) {
           }
           farm.target = best ? best.t : null
           farm.score = best ? best.s : 0
+          // Farm mode: what money batching WOULD earn, for progress.js to
+          // re-price the split from this side (expfarm.splitVerdict). BitNode 8
+          // (expMode) farms regardless and publishes none.
+          moneyPreview = expMode(nodeMults)
+            ? null
+            : (() => {
+                try {
+                  const { cand, scoreHackRam } = moneyCandidates(ns, ranked, hosts, ram)
+                  if (!cand.length) return { at: new Date(now).toISOString(), why: 'no rooted, hackable money target' }
+                  for (const r of cand) r.t.baseDifficulty = ns.getServer(r.t.host).baseDifficulty
+                  // The farm ALONE's RAM: what it holds, scaled up from the
+                  // split it was held under (k is whole fleet against whole fleet).
+                  const farmGB = farm.held.reduce((a, x) => a + x.gb, 0) / Math.max(0.05, 1 - prevShare)
+                  const m = moneyModelOf(cand.length, moneyPlanAt(cand, ram, scoreHackRam), { fleetGB: totalRam, spacingMs: SETTINGS.spacing, farmScore: farm.score, farmGB })
+                  return {
+                    at: new Date(now).toISOString(),
+                    targets: cand.slice(0, m.n).map((r) => r.t.host),
+                    modelIncomePerSec: Math.round(m.modelIncomePerSec),
+                    moneyGB: m.moneyGB,
+                    batchScorePerGBms: m.batchScorePerGBms,
+                    farmScorePerGBms: farm.score,
+                    farmGB: Math.round(farmGB),
+                    k: m.k,
+                    why: m.k === null ? (farmGB > 0 ? 'k unpriced: no batch plans or no farm score' : 'k unpriced: the farm holds no RAM yet') : null,
+                    calibration: 'NOT CALIBRATED: the target-count income model (over-predicted ~40% in BN1) and k (farm exp/GB-ms x farmGB over HWGW exp/GB-ms x moneyGB) — no live money-mode measurement while the farm runs',
+                  }
+                } catch (e) {
+                  return { at: new Date(now).toISOString(), why: `money preview threw: ${String(e).slice(0, 120)}` }
+                }
+              })()
           const mc = stockManip ? manipCost(ns, readT, ram, level, totalRam) : null
           try {
             stockServers = stockServersOf(ns, readT, ram, level, totalRam)
@@ -1744,6 +1845,16 @@ export async function main(ns) {
           }
           farm.manip = { ...v, hosts: mc?.hosts ?? [], blocked: mc?.blocked ?? [], nudgesPerSec: mc ? Math.round(mc.nu * 1e4) / 1e4 : null, gb: mc ? Math.round(mc.gb) : null }
           want = v.serve ? mc.hosts : []
+          // A MIXED split: money targets on the priced share of the fleet
+          // (the same target-count model, on that share), beside the manip
+          // hosts; the farm takes what their pipelines leave.
+          farm.moneyHosts = new Set()
+          if (farm.moneyShare > 0) {
+            const { cand, scoreHackRam } = moneyCandidates(ns, ranked.filter((r) => !want.includes(r.t.host) && r.t.host !== farm.target?.host), hosts, ram)
+            const n = cand.length ? moneyModelOf(cand.length, moneyPlanAt(cand, ram, scoreHackRam), { fleetGB: farm.moneyShare * totalRam, spacingMs: SETTINGS.spacing }).n : 0
+            for (const r of cand.slice(0, n)) farm.moneyHosts.add(r.t.host)
+            want = [...want, ...farm.moneyHosts]
+          }
         } else if (Number(flags.targets) > 0) {
           want = ranked.slice(0, Number(flags.targets)).map((r) => r.t.host)
         } else {
@@ -1767,12 +1878,7 @@ export async function main(ns) {
           // pointed at it: one target will happily absorb 390TB and still earn
           // a third of what eight targets earn on the same fleet. Idle RAM is
           // Quality floors first, both scale-free ratios so neither goes stale
-          // as the fleet or hacking level grows.
-          const bestScore = ranked.length ? ranked[0].s : 0
-          const bestMoney = ranked.reduce((m, r) => Math.max(m, r.t.maxMoney), 0)
-          const worthwhile = ranked.filter(
-            (r) => r.s >= bestScore * SETTINGS.minScoreFrac && r.t.maxMoney >= bestMoney * SETTINGS.minMoneyFrac,
-          )
+          // as the fleet or hacking level grows (moneyCandidates).
 
           // How many to run: argmax of a derived income model, not a constant.
           //
@@ -1803,40 +1909,10 @@ export async function main(ns) {
           // tools/sim/verify-argmax.mjs against this file's own planBatch —
           // including a target with phi ~ 1e-6 where hMax exceeds a million and
           // the exponential h-sweep still finishes in ~50 steps.
-          const cand = (worthwhile.length ? worthwhile : ranked).slice(0, SETTINGS.maxTargets)
-          // Capacity-based, matching the dispatcher's floor: the argmax is a
-          // question about steady state, not about this instant's free list.
-          const scoreCapacity = Math.max(0, ...hosts.map((h) => ns.getServerMaxRam(h)))
-          const scoreHackRam = Math.max(
-            Math.min(SETTINGS.hackFloor * ram.hack, scoreCapacity),
-            scoreCapacity,
-          )
-          let bestN = 1
-          let bestInc = -1
-          for (let n = 1; n <= cand.length; n++) {
-            // `slice`, not `share`: a local named `share` is billed as
-            // ns.share() — 2.40GB of batch.js's 11.20GB, for a variable.
-            const slice = totalRam / n
-            let inc = 0
-            for (let i = 0; i < n; i++) {
-              // SAME hack ceiling the dispatcher applies. Omitting it let
-              // maxHackRam default to Infinity here, so the target-count argmax
-              // scored batches far larger than place() could ever land — it was
-              // choosing n against plans that do not exist. It does not change
-              // the answer on this fleet (n=1 holds either way), but the two
-              // call sites must agree or the choice is made on fiction.
-              const p = planBatch(cand[i].t, ram, slice / 4, scoreHackRam)
-              if (!p) continue
-              inc += Math.min(
-                p.money / (4 * SETTINGS.spacing),
-                (slice * p.money) / (p.gb * cand[i].t.hackTime * 4),
-              )
-            }
-            if (inc > bestInc) {
-              bestInc = inc
-              bestN = n
-            }
-          }
+          const { cand, scoreHackRam } = moneyCandidates(ns, ranked, hosts, ram)
+          // The argmax itself is expfarm.moneyModelOf — the same model prices
+          // money batching against the exp farm while the farm runs.
+          const bestN = moneyModelOf(cand.length, moneyPlanAt(cand, ram, scoreHackRam), { fleetGB: totalRam, spacingMs: SETTINGS.spacing }).n
           want = cand.slice(0, Math.max(1, bestN)).map((r) => r.t.host)
         }
         // Never abandon a pipeline mid-flight: keep any dropped target that
@@ -1855,6 +1931,10 @@ export async function main(ns) {
 
       // --- serve each target ------------------------------------------------
       let reserved = 0
+      // A target's slice of the fleet: an even split, except the money targets
+      // of a MIXED split (progress.js's priced money share, farm mode), which
+      // split the money share between them — the farm takes what they leave.
+      const hostSlice = (h) => (farm.on && farm.moneyHosts.has(h) ? (farm.moneyShare * totalRam) / farm.moneyHosts.size : totalRam / Math.max(1, targets.length))
       let anyBatching = false
       let anyPrepping = false
 
@@ -1935,7 +2015,7 @@ export async function main(ns) {
 
           // --- phase 1: security to the floor, and nothing else -------------
           if (projSec > t.minSec + 0.01) {
-            const wShare = Math.floor(totalRam / Math.max(1, targets.length) / ram.weaken)
+            const wShare = Math.floor(hostSlice(host) / ram.weaken)
             const wNeed = Math.min(Math.ceil((projSec - t.minSec) / WEAKEN_PER_THREAD), wShare)
             const w = spread(ns, free, ram, 'weaken', host, wNeed, batchId++)
             if (w) {
@@ -1960,7 +2040,7 @@ export async function main(ns) {
           // startup into eight consecutive prep cycles.
           const budget = Math.min(
             [...free.values()].reduce((a, b) => a + b, 0),
-            totalRam / Math.max(1, targets.length),
+            hostSlice(host),
           )
           // One weaken thread cancels 0.05 of security; one grow thread adds
           // 2*0.002. So a grow needs 0.08 weaken threads alongside it.
@@ -2008,7 +2088,7 @@ export async function main(ns) {
         }
         anyBatching = true
 
-        const slice = totalRam / Math.max(1, targets.length)
+        const slice = hostSlice(host)
         // The largest single free block, which is the real ceiling on the hack
         // op — place() cannot split it. Recomputed every tick because blocks
         // shrink as batches launch.
@@ -2327,6 +2407,14 @@ export async function main(ns) {
           // `model.hackThreadsPerSec` x exp/thread is the prediction to hold
           // against tel.js's measured script exp rate — NOT CALIBRATED yet.
           expFarmPreview: farmPreview,
+          // The farm's mirror (farm mode): money batching's model income and
+          // k, for the verdict's money side.
+          moneyPreview,
+          // WHY THE FLEET FARMS OR BATCHES: progress.js's priced split
+          // (expfarm.splitVerdict, /tel/expfarm.txt) — farm vs money exit
+          // hours and the why, beside the side that runs. BitNode 8 farms on
+          // its table (expMode) whatever this says.
+          expFarmVerdict: { ...farmVerdictRecord(ns), byTable: expMode(bitNodeMults(ns.getResetInfo())) },
           expFarm: farm.on
             ? {
                 target: farm.target?.host ?? null,
@@ -2339,6 +2427,9 @@ export async function main(ns) {
                 launchedWaves: farm.launchedWaves,
                 skippedWaves: farm.skippedWaves,
                 heldGB: Math.round(farm.held.reduce((a, x) => a + x.gb, 0)),
+                // The mixed split this farm runs beside (progress.js moneyShare).
+                moneyShare: farm.moneyShare,
+                moneyHosts: [...farm.moneyHosts],
                 model: { hackThreadsPerSec: Math.round((farm.hackThreads / Math.max(1, (now - farm.hackThreadsWindowStart) / 1000)) * 10) / 10 },
                 runnersUp: farm.ranked.slice(1, 4).map((r) => ({ host: r.t.host, score: r.s })),
                 // What each further port opener would add (expfarm.portTiers):

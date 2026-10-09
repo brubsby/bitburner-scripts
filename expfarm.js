@@ -236,33 +236,120 @@ export function rateAt(curve, nu) {
 }
 
 /**
- * MONEY BATCHES OR THE FARM — two exits on one input set (progress.js
- * farmVerdictOf publishes it; batch.js farms on it in every node).
+ * THE FLEET'S SPLIT BETWEEN MONEY BATCHES AND THE EXP FARM — one exit per
+ * candidate split, on one input set (progress.js farmVerdictOf publishes it;
+ * batch.js runs it in every node). Priced every pass from WHEREVER the fleet
+ * is: the inputs are measured at the running split share0 and every other
+ * split is the counterfactual.
  *
- *   money  inputs as measured
- *   farm   expPerSec: the non-script exp + script exp x k, where
- *          k = perGB x totalGB / usedGB (the farm unit's exp per GB-ms over
- *          HWGW's, on the RAM the farm fills over the RAM the batches hold);
- *          incomePerSec less what the batcher earns
- *   mixed  f of the fleet farming, f in {0.25, 0.5, 0.75} (reported)
+ *   share  the fraction of the fleet batching money (1 = money mode, 0 = the
+ *          farm alone); candidates SHARES plus share0
+ *   exp    flat + X x (1 - s + s/k), X the farm-alone script exp recovered
+ *          from the measured one: X = script / (1 - s0 + s0/k)
+ *   income measured + (s - s0) x moneyPerSec, moneyPerSec = what batching
+ *          the whole fleet earns (money mode: the batcher's measured
+ *          earnings; farm mode: batch.txt moneyPreview.modelIncomePerSec,
+ *          the target-count model). LINEAR in s: a target's pipeline
+ *          saturates, so a part of the fleet earns more than its share of
+ *          the whole — linearity understates a small money share (a floor on
+ *          the mixed splits).
  *
- * { farm, withH, withoutH, k, batchMoney, mixed } or { farm: null, why }.
+ * k is the farm's script exp over money batching's on the whole fleet
+ * (money mode: perGB x totalGB / usedGB; farm mode: batch.txt
+ * moneyPreview.k). The SCRIPT exp is the input builder's exp rate less its
+ * flat part (exitInputsOf: expPerSec is the script-exp posterior + the
+ * sleeves' transfer, expFlatPerSec the transfer), so every split scales the
+ * same stream and the pricing from either end is the same set of exits.
+ *
+ * THE LATCH THIS REPLACES (live BN12 2026-10-09): progress.js published
+ * `farm: true, why: 'the farm is running ... its own record is the
+ * measurement now'` for as long as the farm ran — priced once, ~0.1h into the
+ * life (hacking 426, money batches ramping at ~$6m/s), never again; and it
+ * chose between the two ends only, while the exit priced a quarter of the
+ * fleet on money ~0.6h sooner than the farm alone (tools/test/farmsplit).
+ *
+ * A different split is chosen only when it beats the running one by more
+ * than a minute, so a tie keeps what runs.
+ * { frac (the chosen money share), farm (frac < 1), shareH, runH, farmH, moneyH, withH (= farmH),
+ *   withoutH (= moneyH), grid [{frac, hours}], mixed, k, share0 } — `frac`, never
+ * `share`: that name is billed as ns.share() (2.40GB) in every importer.
+ * or { farm: null, why }.
  */
+export const SHARES = [0, 0.1, 0.25, 0.5, 0.75, 1]
+export function splitVerdict(bestExitPolicy, inputs, { share0, scriptExpPerSec, k, moneyPerSec = null, shares = SHARES } = {}) {
+  if (typeof bestExitPolicy !== 'function' || !inputs) return { farm: null, why: 'no exit inputs' }
+  if (!(num(share0) && share0 >= 0 && share0 <= 1)) return { farm: null, why: `running split unknown (share0 ${share0})` }
+  if (!pos(scriptExpPerSec) || !pos(inputs.expPerSec)) return { farm: null, why: 'no measured script exp rate' }
+  if (!pos(k)) return { farm: null, why: 'the farm/money exp multiple k is unreadable' }
+  if (!(num(moneyPerSec) && moneyPerSec >= 0)) return { farm: null, why: 'what money batching earns is unpriced' }
+  const flat = pos(inputs.expFlatPerSec) ? Math.min(inputs.expFlatPerSec, inputs.expPerSec) : 0
+  const X = (inputs.expPerSec - flat) / (1 - share0 + share0 / k)
+  const at = (s) => (s === share0 ? inputs : { ...inputs, expPerSec: flat + X * (1 - s + s / k), incomePerSec: Math.max(0, (inputs.incomePerSec ?? 0) + (s - share0) * moneyPerSec) })
+  const H = (x) => bestExitPolicy(x)?.best?.hours ?? null
+  const grid = [...new Set([...shares, share0])].sort((a, b) => a - b).map((s) => ({ frac: s, hours: H(at(s)) }))
+  const hOf = (s) => grid.find((g) => g.frac === s)?.hours ?? null
+  const runH = hOf(share0)
+  const farmH = hOf(0)
+  const moneyH = hOf(1)
+  if (!num(runH) || !num(farmH) || !num(moneyH)) return { farm: null, why: 'an exit could not be priced' }
+  let best = { frac: share0, hours: runH }
+  for (const g of grid) if (num(g.hours) && g.hours < best.hours) best = g
+  const frac = best.hours < runH - 1 / 60 ? best.frac : share0
+  const shareH = hOf(frac)
+  return { frac, farm: frac < 1, shareH, runH, farmH, moneyH, withH: farmH, withoutH: moneyH, grid, mixed: grid.filter((g) => g.frac !== share0).map((g) => ({ f: Math.abs(g.frac - share0), frac: g.frac, hours: g.hours })), k, share0 }
+}
+
+/** The money-side call (batch.txt expFarmPreview): splitVerdict with k from the preview. */
 export function farmOrMoney(bestExitPolicy, inputs, { scriptExpPerSec, perGB, usedGB, totalGB, batchMoneyPerSec = 0 } = {}) {
   if (typeof bestExitPolicy !== 'function' || !inputs) return { farm: null, why: 'no exit inputs' }
   if (!pos(scriptExpPerSec) || !pos(inputs.expPerSec)) return { farm: null, why: 'no measured script exp rate' }
   if (!pos(perGB) || !pos(usedGB) || !pos(totalGB)) return { farm: null, why: 'farm preview unreadable' }
-  const k = (perGB * totalGB) / usedGB
   const batchMoney = pos(batchMoneyPerSec) ? batchMoneyPerSec : 0
-  const script = Math.min(scriptExpPerSec, inputs.expPerSec)
-  const other = inputs.expPerSec - script
-  const at = (f) => ({ ...inputs, expPerSec: other + script * (1 - f + f * k), incomePerSec: Math.max(0, (inputs.incomePerSec ?? 0) - f * batchMoney) })
-  const H = (x) => bestExitPolicy(x)?.best?.hours ?? null
-  const withoutH = H(inputs)
-  const mixed = [0.25, 0.5, 0.75, 1].map((f) => ({ f, hours: H(at(f)) }))
-  const withH = mixed[mixed.length - 1].hours
-  if (!num(withH) || !num(withoutH)) return { farm: null, why: 'an exit could not be priced' }
-  return { farm: withH < withoutH - 1 / 60, withH, withoutH, k, batchMoney, mixed }
+  const r = splitVerdict(bestExitPolicy, inputs, { share0: 1, scriptExpPerSec, k: (perGB * totalGB) / usedGB, moneyPerSec: batchMoney })
+  return r.farm === null ? r : { ...r, batchMoney }
+}
+
+/**
+ * THE TARGET COUNT AND WHAT MONEY BATCHING EARNS — batch.js's money-mode
+ * argmax (it picks n with this) and, while the farm runs, the money side of
+ * the farm verdict (batch.txt moneyPreview). One model for both. Pure.
+ *
+ *   count   candidate targets, best first
+ *   planAt(i, slice)  -> { money, gb, hackTimeMs, score } or null: batch.js
+ *           planBatch for candidate i on an even slice of the fleet, `score`
+ *           its batchedScore (exp per GB-ms)
+ *   fleetGB the fleet's RAM; spacingMs the batcher's landing gap
+ *   farmScore, farmGB  the farm's exp per GB-ms and the RAM it holds (for k)
+ *
+ * income(n) = sum_i min(money_i / (4 spacing), slice x money_i / (gb_i x 4
+ * hackTime_i)), slice = fleetGB / n — a target's pipeline saturates at
+ * gb_i x hackTime_i / spacing GB (the dispatcher's period floor 4 spacing).
+ * k = the farm's exp over the batches' on the RAM each would hold. NOT
+ * CALIBRATED: the model over-predicted live income by ~40% in BN1 (CLAUDE.md,
+ * target-count.mjs), and k's money side has no live measurement while the
+ * farm runs. Returns { n, inc (money/ms), modelIncomePerSec, moneyGB,
+ * batchScorePerGBms, k } — n = 1 when nothing plans.
+ */
+export function moneyModelOf(count, planAt, { fleetGB, spacingMs, farmScore = null, farmGB = null } = {}) {
+  let best = { n: 1, inc: -1, gb: 0, sw: 0 }
+  for (let n = 1; n <= count; n++) {
+    const slice = fleetGB / n
+    let inc = 0
+    let gb = 0
+    let sw = 0
+    for (let i = 0; i < n; i++) {
+      const p = planAt(i, slice)
+      if (!p) continue
+      inc += Math.min(p.money / (4 * spacingMs), (slice * p.money) / (p.gb * p.hackTimeMs * 4))
+      const held = Math.min(slice, (p.gb * p.hackTimeMs) / spacingMs)
+      gb += held
+      if (pos(p.score)) sw += p.score * held
+    }
+    if (inc > best.inc) best = { n, inc, gb, sw }
+  }
+  const batchScore = best.gb > 0 ? best.sw / best.gb : 0
+  const k = pos(farmScore) && pos(farmGB) && batchScore > 0 ? (farmScore * farmGB) / (batchScore * best.gb) : null
+  return { n: best.n, inc: best.inc, modelIncomePerSec: best.inc > 0 ? best.inc * 1000 : 0, moneyGB: Math.round(best.gb), batchScorePerGBms: batchScore, k }
 }
 
 /**

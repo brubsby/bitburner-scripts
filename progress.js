@@ -135,7 +135,7 @@ import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: the manipCurve interpolation (prices port openers' manipulation channel).
-import { rateAt, manipLostExp, farmOrMoney } from 'expfarm.js'
+import { rateAt, manipLostExp, farmOrMoney, splitVerdict } from 'expfarm.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -4423,22 +4423,24 @@ function installPointOf(ns, info, gate) {
  * (ServerMaxMoney 0.01 x ScriptHackMoney 0.1: the batcher earned $6.7k/s of a
  * $6.7m/s income) while the exit's binding legs are the climb to 6000 and
  * every rep leg, all paced by hacking exp at HackExpGain 0.05. So the fleet's
- * product is a choice, priced here on the exit inputs:
+ * product is a choice, priced here on the exit inputs EVERY PASS, from
+ * whichever side runs (expfarm.splitVerdict):
  *
- *   money  as measured
- *   farm   script exp x the farm's exp multiple (batch.txt expFarmPreview:
- *          exp per GB-ms of the farm unit over HWGW's, on the RAM the farm
- *          would hold over the RAM the batches hold), income less what the
- *          batcher earns (batch.txt earnedPerSec)
- *   mixed  a fraction f of the fleet farming (reported, not acted on: the
- *          batcher farms all-or-nothing)
+ *   money mode  money as measured; farm = script exp x the farm's exp
+ *               multiple (batch.txt expFarmPreview: exp per GB-ms of the farm
+ *               unit over HWGW's, on the RAM the farm would hold over the RAM
+ *               the batches hold), income less what the batcher earns
+ *   farm mode   farm as measured; money = script exp / k, income + the
+ *               target-count model's money income (batch.txt moneyPreview)
+ *   mixed       a fraction f moved to the other side (reported, not acted
+ *               on: the batcher switches all-or-nothing)
  *
- * The farm's exp multiple is NOT CALIBRATED (the farm has never run in this
- * node); the HWGW side is the measured script exp rate (tel.js). What the
- * exp is NOT simulated to buy: the higher level's reputation in earlier lives
- * (lifeplan holds the rep rate flat) — a floor on the farm's side.
- * Publishes /tel/expfarm.txt {farm, withH, withoutH, mixed, why}; batch.js
- * farms on a fresh farm: true.
+ * The side not running is NOT CALIBRATED (a model of what it would do); the
+ * running side is the measured rates. What the exp is NOT simulated to buy:
+ * the higher level's reputation in earlier lives (lifeplan holds the rep rate
+ * flat) — a floor on the farm's side. Publishes /tel/expfarm.txt {farm,
+ * running, priced, farmH, moneyH, mixed, why}; batch.js farms on a fresh
+ * farm: true and republishes it in batch.txt expFarmVerdict.
  */
 function farmVerdictOf(ns, info, inputs) {
   const out = (farm, why, extra = {}) => ({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, farm, why, ...extra })
@@ -4446,15 +4448,33 @@ function farmVerdictOf(ns, info, inputs) {
     const b = readJson(ns, '/tel/batch.txt')
     const t = readJson(ns, '/tel/status.txt')
     if (!b || !(Date.now() - Date.parse(b.at) < 5 * 60e3)) return out(false, 'no fresh batch.txt')
-    if (b.expFarm) return out(true, 'the farm is running (batch.txt expFarm): its own record is the measurement now', { running: true })
+    const scriptExp = t && Date.now() - Date.parse(t.at) < 5 * 60e3 && t.expPerSec > 0 ? t.expPerSec : null
+    // THE SPLIT, re-priced every pass from wherever the fleet is
+    // (expfarm.splitVerdict over SHARES): money mode on the farm preview, farm
+    // mode on batch.js's moneyPreview. It latched here — "the farm is
+    // running: its own record is the measurement now" — priced once at the
+    // switch and never again (live BN12 2026-10-09: switched 0.1h into the
+    // life, hacking 426), and only between the two ends. An unpriceable farm
+    // side keeps the running split and says so (priced: false); it does not
+    // encode as a fresh verdict.
+    const note = { notSimulated: "the higher level's reputation in lives before the final one (a floor on the farm)" }
+    const gridWhy = (r) => r.grid.map((g) => `${Math.round(g.frac * 100)}% ${g.hours.toFixed(2)}h`).join(', ')
+    if (b.expFarm) {
+      const mp = b.moneyPreview
+      const share0 = b.expFarm.moneyShare > 0 && b.expFarm.moneyShare < 1 ? b.expFarm.moneyShare : 0
+      const keep = (why) => out(true, `split UNPRICED this pass, the running one kept (${Math.round(share0 * 100)}% money): ${why}`, { running: 'farm', priced: false, moneyShare: share0 })
+      if (scriptExp === null || !(inputs?.expPerSec > 0)) return keep('no measured script exp rate')
+      if (!(mp?.k > 0) || !(mp?.modelIncomePerSec >= 0)) return keep(`no money preview to price (${mp?.why ?? 'batch.js published none'})`)
+      const r = splitVerdict(bestExitPolicy, inputs, { share0, scriptExpPerSec: scriptExp, k: mp.k, moneyPerSec: mp.modelIncomePerSec })
+      if (r.farm === null) return keep(r.why)
+      return out(r.farm, `money share ${Math.round(r.frac * 100)}%: exit ${r.shareH.toFixed(2)}h (running ${Math.round(share0 * 100)}% ${r.runH.toFixed(2)}h; farm alone ${r.farmH.toFixed(2)}h, money alone ${r.moneyH.toFixed(2)}h) — by share ${gridWhy(r)}; money side k ${mp.k.toFixed(1)}, $${Math.round(mp.modelIncomePerSec)}/s on ${(mp.targets ?? []).join(',')}`, { running: 'farm', priced: true, moneyShare: r.frac, share0, shareH: r.shareH, runH: r.runH, farmH: r.farmH, moneyH: r.moneyH, withH: r.farmH, withoutH: r.moneyH, grid: r.grid, expMultiple: mp.k, moneyPerSec: mp.modelIncomePerSec, scriptExpPerSec: scriptExp, calibration: `money side NOT CALIBRATED (${mp.calibration ?? 'batch.js target-count model'}); the running split = the inputs as measured`, ...note })
+    }
     const pv = b.expFarmPreview
     if (!pv?.perGB || !(pv.usedGB > 0) || !(pv.totalGB > 0)) return out(false, `no farm preview to price (${pv?.why ?? 'batch.js published none'})`)
-    const scriptExp = t && Date.now() - Date.parse(t.at) < 5 * 60e3 && t.expPerSec > 0 ? t.expPerSec : null
     if (scriptExp === null || !(inputs?.expPerSec > 0)) return out(false, 'no measured script exp rate')
     const r = farmOrMoney(bestExitPolicy, inputs, { scriptExpPerSec: scriptExp, perGB: pv.perGB, usedGB: pv.usedGB, totalGB: pv.totalGB, batchMoneyPerSec: b.totals?.earnedPerSec > 0 ? b.totals.earnedPerSec : 0 })
     if (r.farm === null) return out(false, r.why)
-    const { farm, withH, withoutH, k, batchMoney, mixed } = r
-    return out(farm, `exit ${withH.toFixed(2)}h farming exp (script exp x${k.toFixed(2)} on ${pv.target}, -$${Math.round(batchMoney)}/s) vs ${withoutH.toFixed(2)}h batching money`, { withH, withoutH, expMultiple: k, target: pv.target, batchMoneyPerSec: batchMoney, scriptExpPerSec: scriptExp, mixed, calibration: 'farm side NOT CALIBRATED (no farm run in this node); batched side = tel.js script exp', notSimulated: "the higher level's reputation in lives before the final one (a floor on the farm)" })
+    return out(r.farm, `money share ${Math.round(r.frac * 100)}%: exit ${r.shareH.toFixed(2)}h (running 100% ${r.runH.toFixed(2)}h; farm alone ${r.farmH.toFixed(2)}h on ${pv.target}, script exp x${r.k.toFixed(2)}, -$${Math.round(r.batchMoney)}/s) — by share ${gridWhy(r)}`, { running: 'money', priced: true, moneyShare: r.frac, share0: 1, shareH: r.shareH, runH: r.runH, farmH: r.farmH, moneyH: r.moneyH, withH: r.farmH, withoutH: r.moneyH, grid: r.grid, expMultiple: r.k, target: pv.target, batchMoneyPerSec: r.batchMoney, scriptExpPerSec: scriptExp, calibration: 'farm side NOT CALIBRATED (expfarm.js model); the money side = the batcher as measured', ...note })
   } catch (e) {
     return out(false, `farm verdict threw: ${String(e).slice(0, 100)}`)
   }
