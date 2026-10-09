@@ -1672,7 +1672,7 @@ export async function main(ns) {
         // EXP MODE (expfarm.js): where hacking pays nothing, money targets
         // are pointless. The batcher serves only the trader's manip hosts, and
         // only on a priced verdict; the farm gets the rest of the fleet.
-        const nodeMults = bitNodeMults(ns.getResetInfo().currentNode)
+        const nodeMults = bitNodeMults(ns.getResetInfo())
         farm.on = !flags.nofarm && (expMode(nodeMults) || farmVerdictOn(ns))
         // Money mode: what the farm WOULD earn, for progress.js to price.
         if (!farm.on) {

@@ -118,7 +118,7 @@ export async function main(ns) {
   // per tick would buy nothing.
   const resetInfo = ns.getResetInfo()
   const useSingularity = canUseSingularity(resetInfo)
-  const nodeMults = bitNodeMults(resetInfo.currentNode)
+  const nodeMults = bitNodeMults(resetInfo)
   ns.tprint(
     `autobuy.js: watching for affordable port programs (${useSingularity ? `singularity via ${SING_HELPER}` : 'terminal bridge'})`,
   )

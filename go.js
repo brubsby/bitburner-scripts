@@ -1091,7 +1091,7 @@ export async function main(ns) {
   const GATE_FILE = '/tel/installgate.txt'
   const PLAN_FILE = '/tel/plan.txt'
   const EXIT_FILE = '/tel/exitinputs.txt'
-  const goPower = bitNodeMults(reset?.currentNode)?.GoPower ?? 1
+  const goPower = bitNodeMults(reset)?.GoPower ?? 1
   // Home's /tel files from wherever this runs (C10): ns.read is local, so off
   // home a file is pulled first. Writes go back to home the same way, since the
   // daemon mirrors /tel only off home. scp/getHostname are already paid for.
@@ -1200,7 +1200,7 @@ export async function main(ns) {
     }
     const batchPerSec = fresh(bt, 10) ? bt?.totals?.earnedPerSec : null
     const node = reset?.currentNode
-    const mults = bitNodeMults(node)
+    const mults = bitNodeMults(reset)
     const joined = [bbFull, bbLite].some((b) => b?.bitNode === node && b?.joined === true)
     return {
       // The batcher's own figure when it runs; else all script income, which

@@ -280,7 +280,7 @@ export async function run() {
       [/^\s*exitJump,\s*$/m, "the plan record carries exitJump"],
     ];
     for (const [re, what] of want) if (!re.test(src)) c.fail(`progress.js: ${what}`);
-    if (/stockRows:\s*bitNodeMults\(info\?\.currentNode\)\?\.ScriptHackMoneyGain === 0 \|\| capitalFitOf/.test(src)) c.fail("the trader draws must not be gated on the realised fit");
+    if (/stockRows:\s*bitNodeMults\(info\)\?\.ScriptHackMoneyGain === 0 \|\| capitalFitOf/.test(src)) c.fail("the trader draws must not be gated on the realised fit");
     if (/capitalReturnPerSec:\s*capitalFitOf\(/.test(src)) c.fail("the exit's trader point must not be the realised fit");
     // The farm verdict on both paths: once with nothing planned, once planned.
     const unplanned = src.slice(src.indexOf("let unplannedExtras = null"), src.indexOf("if (total > 0) {"));

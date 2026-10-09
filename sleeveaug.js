@@ -87,7 +87,7 @@ function decideAndBuy(ns, flags, note) {
 
   // Budget: what the join, augmentation and home claims leave (budget.js).
   const home = (() => {
-    const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
+    const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info)?.HomeComputerRamCost)
     return up ? up.cost : 0
   })()
   const gate = ns.read(GATE_FILE)

@@ -264,7 +264,7 @@ function claimsOf(ns, info) {
     join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
     augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
     home: (() => {
-      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info)?.HomeComputerRamCost)
       if (!up) return 0
       const ram = ns.getServerMaxRam('home')
       return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }
@@ -382,7 +382,7 @@ export async function main(ns) {
   // Servers or nodes is a property of the save for the whole life (the
   // Source-File set and the node cannot change without killing this script).
   const servers = hasHacknetServers(info)
-  const nodeMoney = bitNodeMults(info.currentNode)?.HacknetNodeMoney
+  const nodeMoney = bitNodeMults(info)?.HacknetNodeMoney
   let bought = 0
   let lastBuy = null
 
@@ -488,7 +488,7 @@ export async function main(ns) {
         join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
         augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
         home: (() => {
-          const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
+          const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info)?.HomeComputerRamCost)
           if (!up) return 0
           const ram = ns.getServerMaxRam('home')
           return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }

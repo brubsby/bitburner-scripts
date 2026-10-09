@@ -306,7 +306,7 @@ async function once(ns, flags) {
   // take the global UI lock, walk to Sector-12 and yank the screen away from
   // whatever the player was doing — every 30 seconds, forever. It is a closed
   // form of (maxRam, cpuCores); see homecost.js.
-  const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
+  const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
   let nextCost = next ? next.cost : Infinity
   nextWanted = next ? { kind: next.kind, cost: next.cost } : null
 
@@ -407,7 +407,7 @@ async function once(ns, flags) {
       // the thing we cannot yet afford is exactly the one they refuse to show.
       // Filtering those out published `nextCost: null` = "fully maxed", which
       // is how this ended up gated on a number that meant the opposite.
-      const remaining = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
+      const remaining = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
       nextCost = remaining ? remaining.cost : Infinity
     }
   } catch (err) {

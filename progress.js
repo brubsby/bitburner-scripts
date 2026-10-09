@@ -548,7 +548,7 @@ function measuringTarget(sing, factions, offers, info) {
   try {
     // Fail-closed on an unknown BitNode: null threshold means nothing counts
     // as donatable, so every faction keeps work as its reputation channel.
-    const mult = bitNodeMults(info?.currentNode)?.FavorToDonateToFaction
+    const mult = bitNodeMults(info)?.FavorToDonateToFaction
     donateNeed = typeof mult === 'number' ? favorNeededToDonate(mult) : null
   } catch {
     /* unknown threshold -> nothing is treated as donatable, so work stands */
@@ -1466,7 +1466,7 @@ async function gangWorthNow(ns, info, player, inputsFn = null) {
       exitCmp = gangExitNow(ns, info, inputsFn(), grindHours)
       if (arms?.why) exitCmp = { ...exitCmp, why: `${exitCmp?.why ?? ''} (grind held constant: ${arms.why})` }
     }
-    const v = gangVerdict({ node: info?.currentNode, mults: bitNodeMults(info?.currentNode), inGang, grindHours: arms?.fleet ?? grindHours, gangExit: exitCmp, decision: decision ? { key: decision.key, meanH: decision.meanH ?? null, pWin: decision.pWin ?? null, held: decision.held === true, why: String(decision.why ?? '').slice(0, 200) } : null })
+    const v = gangVerdict({ node: info?.currentNode, mults: bitNodeMults(info), inGang, grindHours: arms?.fleet ?? grindHours, gangExit: exitCmp, decision: decision ? { key: decision.key, meanH: decision.meanH ?? null, pWin: decision.pWin ?? null, held: decision.held === true, why: String(decision.why ?? '').slice(0, 200) } : null })
     if (v && exitCmp?.grind) v.grind = { fleetH: arms.fleet, playerH: arms.player, fleetKarmaPerSecNow: exitCmp.grind.fleet?.karmaPerSecNow ?? null, fleetKarmaPerSecEnd: exitCmp.grind.fleet?.karmaPerSecEnd ?? null, crimes: exitCmp.grind.fleet?.crimes ?? null }
     return v
   } catch {
@@ -1494,7 +1494,7 @@ function* gangScheduleGen(ns, info) {
   const remembered = rememberedGangIncome(readJson(ns, '/tel/gang-last.txt'), node)
   if (remembered.perSec) return [{ atH: 0, perSec: remembered.perSec }]
   if (gangSchedMemo && gangSchedMemo.node === node && Date.now() - gangSchedMemo.at < 600e3) return gangSchedMemo.sched
-  const softcap = bitNodeMults(node)?.GangSoftcap
+  const softcap = bitNodeMults(info)?.GangSoftcap
   const opts = { softcap, horizonH: 100, stepSec: 300, mode: 'money', ascend: { minGain: 1.09 }, warfare: { fraction: 0, engageRatio: 1 } }
   const key = JSON.stringify([node, opts, 'trainRatio(4.2, false, 1)', 'v1'])
   const cached = readJson(ns, GANG_SCHED_FILE)
@@ -1638,7 +1638,7 @@ function contractRepOf(ns, info, player, inputs, streams) {
   const ct = readJson(ns, '/tel/ctauto.txt')
   if (!solverStateOf(ct).solving) return { rec: null, why: 'ctauto.js is not reporting: a generated contract would sit unsolved' }
   if (!HACKING_WORK_FACTIONS.has(EXIT_FACTION)) return { rec: null, why: `${EXIT_FACTION} offers no hacking work: contracts cannot pay it` }
-  const r = expectedReward({ totalSourceFileLevels: totalSfLevels(info), nodeContractMoney: bitNodeMults(info?.currentNode)?.CodingContractMoney, hasHackingFaction: true, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
+  const r = expectedReward({ totalSourceFileLevels: totalSfLevels(info), nodeContractMoney: bitNodeMults(info)?.CodingContractMoney, hasHackingFaction: true, hasJob: Object.keys(player.jobs ?? {}).length > 0 })
   // THE SHARE COUNT OF THE FINAL WINDOW'S CONTRACTS: when the final window is
   // now, the hacking-work factions joined (and the exit faction until it is);
   // a final window after an install starts with none and joins the exit
@@ -2015,7 +2015,7 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
       try {
         const sl = readJson(ns, '/tel/sleeve.txt')
         const sleeves = sl && sl.bitNode === info?.currentNode && Array.isArray(sl.assigned) ? sl.assigned : null
-        const pj = preJoinFleetObjectiveOf({ person: levelledPerson(player, info), node: bitNodeMults(info?.currentNode), sleeves, cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult() })
+        const pj = preJoinFleetObjectiveOf({ person: levelledPerson(player, info), node: bitNodeMults(info), sleeves, cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult() })
         if (pj?.objective) return out(pj.objective, pj.why, { blade: true, preJoin: { hours: pj.hours, fleet: pj.fleet } })
         return out('money', `${why0} — ${pj?.why ?? 'the pre-join fleet could not be priced'}; money (never karma: the gang is not this route)`, { blade: true })
       } catch (e) {
@@ -2295,7 +2295,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
         prereqs: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrereq(n))])),
         price: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrice(n))])),
         owned: new Set([...installed, ...pending, ...batchNow]),
-        augMoneyCost: bitNodeMults(info?.currentNode)?.AugmentationMoneyCost,
+        augMoneyCost: bitNodeMults(info)?.AugmentationMoneyCost,
         queuedNonSoA: pending.filter((n) => !isSoa(n)).length,
         sf11: sfLevel(info, 11),
       })
@@ -2535,7 +2535,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
  */
 const FOUR_S_API_BASE = 25e9 // StockMarket/data/Constants.ts MarketDataTixApi4SCost
 function fourSSpecOf(info, when = 'life1') {
-  const m = bitNodeMults(info?.currentNode)?.FourSigmaMarketDataApiCost
+  const m = bitNodeMults(info)?.FourSigmaMarketDataApiCost
   const pr = RW_PRIOR['4S-long']
   if (!(typeof m === 'number' && m > 0) || !pr) return null
   return { cost: FOUR_S_API_BASE * m, when, r0PerSec: pr.r0PerHour / 3600, Wstar: pr.Wstar, shape: pr.shape }
@@ -2612,7 +2612,7 @@ function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
  */
 const BLADE_TEL = '/tel/bladeburner.txt'
 async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null } = {}) {
-  const mults = bitNodeMults(info?.currentNode)
+  const mults = bitNodeMults(info)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
   const pc = planCtxOf(ns, info)
   try {
@@ -3088,7 +3088,7 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     // measured script exp x the tier's exp multiple (batch.txt
     // expFarm.portTiers). Every opener in the best prefix that shortens the
     // exit is licensed; autobuy.js and the program orders read this.
-    if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) out.programs = programVerdicts(ns, inputs, info)
+    if (bitNodeMults(info)?.ScriptHackMoneyGain === 0) out.programs = programVerdicts(ns, inputs, info)
     // Recorded in the one plan (what each spender may buy, and how sure).
     const pc = planCtxOf(ns, info)
     if (pc) pc.decisions.spends = Object.fromEntries(['home', 'hacknet', 'servers'].map((k) => [k, out[k] ? { buy: out[k].buy === true, pBuy: out[k].pBuy ?? null, deltaH: typeof out[k].deltaH === 'number' ? +out[k].deltaH.toFixed(3) : null } : null]))
@@ -3213,7 +3213,7 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
         // objective.goWeights) from node power 0 — the farm the tier starts;
         // go.txt does not publish node power (NOT priced: a farm already
         // running, whose banked power lowers its own marginal).
-        go: { opponent: readJson(ns, '/tel/go.txt')?.opponent ?? null, goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1, weights: goWeights?.weights ?? null, windowH: goWeights?.windowH ?? null },
+        go: { opponent: readJson(ns, '/tel/go.txt')?.opponent ?? null, goPower: bitNodeMults(info)?.GoPower ?? 1, weights: goWeights?.weights ?? null, windowH: goWeights?.windowH ?? null },
         batchAt,
         moneyAtInstall: fin1(installAtH) ? moneyAt(installAtH) : null,
         gainPerSec,
@@ -3509,7 +3509,7 @@ function capitalFitOf(ns, info) {
   // realised fit (return + per-install warm-up) is used wherever the history
   // measures it; the trader's modelled steady rate stands in for it only where
   // money IS capital (elsewhere nodeecon's live measured return stays).
-  const capitalNode = bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0
+  const capitalNode = bitNodeMults(info)?.ScriptHackMoneyGain === 0
   // Re-fit every 10 minutes: the history grows through the life.
   if (capitalFitMemo && capitalFitMemo.at === info?.lastAugReset && Date.now() - capitalFitMemo.t < 600e3) return capitalFitMemo.fit
   let fit = null
@@ -3624,7 +3624,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? tail('points', prev.points) : []
-    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer()), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null, calState, prevPlan: prev })
+    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer(), info), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null, calState, prevPlan: prev })
     // ONE MULTIPLIER ON THE PLAN'S SPREADS (exitcal recal.applied) and the
     // information rate: every decide() this pass reads them (plan.COMMIT).
     setCommitCalibration({ widthMult: post.calibration?.recal?.applied ?? 1, rho: post.calibration?.rho?.rho ?? null, source: post.calibration?.recal ? `${post.calibration.recal.why}; ${post.calibration.rho?.why ?? 'rho stated'}` : null })
@@ -4447,7 +4447,7 @@ function hacknetLifeIncome(ns, info) {
 function econIncomeNow(ns, info) {
   const since = info?.lastAugReset
   const lifeSec = typeof since === 'number' && since > 0 ? Math.max(0, (Date.now() - since) / 1000) : null
-  return incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info?.currentNode), stock: stockNow, hacknet: hacknetLifeIncome(ns, info), lifeSec })
+  return incomeOf({ scriptIncome: ns.getTotalScriptIncome(), mults: bitNodeMults(info), stock: stockNow, hacknet: hacknetLifeIncome(ns, info), lifeSec })
 }
 /**
  * CASH ARRIVING PER SECOND, all streams once, for linear money-at-W
@@ -4478,7 +4478,7 @@ function freshPriorOf(ns, info, player) {
   freshPriorMemo = null
   try {
     const node = info?.currentNode
-    const bn = bitNodeMults(node)
+    const bn = bitNodeMults(info)
     if (!bn || !player?.mults) return null
     const homeRam = Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0)
     const homeGB = Math.max(0, homeRam - homeReserveGb(singularityRamMultiplier(info)))
@@ -4551,7 +4551,7 @@ function freshErrOf(ns, info) {
     const todo = Object.entries(earnings?.lives ?? {}).find(([k, L]) => L?.complete === true && L.inputs && !cache.lives[k])
     if (todo) {
       const [k, L] = todo
-      const bnL = bitNodeMults(L.node)
+      const bnL = L.node === info?.currentNode ? bitNodeMults(info) : bitNodeMults(L.node) // BN12 is level-scaled: only this node's level is known
       const sc = bnL ? scoreRecordedLife(L, bnL, homeReserveGb(singularityRamMultiplier(info)), { windowFn: legacyHackingWindow, bounds: BAYES_PRIORS.legacyNonHack, lifeSd: BAYES_PRIORS.incomeLifeSdLn }) : null
       cache.lives[k] = { node: L.node, at: new Date().toISOString(), exp: sc?.exp ?? null, income: sc?.income ?? null, endH: sc?.endH ?? null, why: sc ? 'scored' : 'not scoreable (too few samples with inputs)' }
       ns.write(FRESH_CAL_FILE, JSON.stringify(cache), 'w')
@@ -4664,8 +4664,10 @@ function incomePostOf(ns, info, player) {
 // exitplan.installCadence): this life's raw hacking multiplier, so the last
 // finished life's gain counts, and the node covariate — the augmentation
 // price, ln(money cost x rep cost).
-function cadenceOptsOf(player) {
-  return { hackMultNow: player?.mults?.hacking ?? null, covOf: (n) => (bitNodeMults(n) ? Math.log(bitNodeMults(n).AugmentationMoneyCost * bitNodeMults(n).AugmentationRepCost) : 0) }
+function cadenceOptsOf(player, info) {
+  // BitNode 12 is level-scaled (bitNodeMults needs the level), so the current node is read off reset info.
+  const multsOf = (n) => (n === info?.currentNode ? bitNodeMults(info) : bitNodeMults(n))
+  return { hackMultNow: player?.mults?.hacking ?? null, covOf: (n) => { const m = multsOf(n); return m ? Math.log(m.AugmentationMoneyCost * m.AugmentationRepCost) : 0 } }
 }
 // WHAT A LIFE OF EACH LENGTH BUYS (lifeplan.lifeTableGen): reputation reset at
 // every install, favour banked, the 1.9x money escalation — per length, no
@@ -4853,7 +4855,7 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
     // median; the draws take it with their own z (plan.applyDraw).
     const modelPrior = { lnPerHour: row.lnMean / Lc, cycleHours: Lc, why: pc.why }
     cadenceModelNow = { lastAugReset: info?.lastAugReset, modelPrior }
-    const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player), modelPrior })
+    const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player, info), modelPrior })
     const post = cm?.posterior ?? null
     const catalogue = cadenceKeptWhy ?? "this life's offers"
     // The base the life length decision prices every length from: these
@@ -4886,7 +4888,7 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
   // node's lives dominate, other nodes only shrink toward the cross-node
   // mean, stall lives excluded — without a cadence a fresh node prices only
   // "never install", whose climb is ~1e26h, and every comparison ties.
-  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, cadenceOptsOf(player))
+  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, cadenceOptsOf(player, info))
   const cyc = cadence?.stats ?? null
   // THE GO FARM ON THE HACKING ROUTE (goplan.goExitInputsOf): w0r1d_d43m0n on
   // the post-Red-Pill climb, the exit faction's bonus and favor in the final
@@ -4898,13 +4900,13 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     try {
       const g = readJson(ns, '/tel/go.txt')
       const tel = g && g.lastAugReset === info?.lastAugReset && g.bitNode === info?.currentNode ? g : null
-      return goExitInputsOf({ goPower: bitNodeMults(info?.currentNode)?.GoPower ?? 1, sf14: sfLevel(info, 14), goTel: tel, ownWeight: cadence?.weight ?? 0, exitFaction: EXIT_FACTION, favorStreamOf: goFavorStreamOf, fleetGB: readJson(ns, '/tel/batch.txt')?.ram?.total ?? null })
+      return goExitInputsOf({ goPower: bitNodeMults(info)?.GoPower ?? 1, sf14: sfLevel(info, 14), goTel: tel, ownWeight: cadence?.weight ?? 0, exitFaction: EXIT_FACTION, favorStreamOf: goFavorStreamOf, fleetGB: readJson(ns, '/tel/batch.txt')?.ram?.total ?? null })
     } catch (e) {
       return { go: null, goCadenceMult: 1, goWhy: `goExitInputsOf threw: ${String(e).slice(0, 120)}` }
     }
   })()
   const rp = (offers ?? []).find((a) => a.name === TERMINAL_AUG)
-  const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+  const d = bitNodeMults(info)?.WorldDaemonDifficulty
   return {
     // Cash plus the trader's open positions at liquidation value: act.js
     // sells them (act-liquidate.js) before any purchase or install, so they
@@ -5064,14 +5066,14 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     terminalRep: rp ? rp.repReq ?? 0 : redPillRepReq ?? 0,
     donationCost: typeof rp?.donationCost === 'number'
       ? rp.donationCost
-      : !rp && redPillRepReq > 0 && favorToDonateOf(bitNodeMults(info?.currentNode)) === 0 && bitNodeMults(info?.currentNode)?.FactionWorkRepGain > 0
-        ? donationForRep(redPillRepReq, player.mults?.faction_rep ?? 1, bitNodeMults(info?.currentNode).FactionWorkRepGain)
+      : !rp && redPillRepReq > 0 && favorToDonateOf(bitNodeMults(info)) === 0 && bitNodeMults(info)?.FactionWorkRepGain > 0
+        ? donationForRep(redPillRepReq, player.mults?.faction_rep ?? 1, bitNodeMults(info).FactionWorkRepGain)
         : null,
     // floor(150 x FavorToDonateToFaction) (Faction/formulas/donation.ts:17),
     // read from the node rather than assumed. BitNode 8's 0 is a threshold
     // of zero — donations from the first join — which the old `f > 0` test
     // turned into "never" (nodeecon.favorToDonateOf).
-    favorToDonate: favorToDonateOf(bitNodeMults(info?.currentNode)),
+    favorToDonate: favorToDonateOf(bitNodeMults(info)),
     // WHERE THE MONEY COMES FROM (nodeecon.incomeOf, set this pass): the part
     // of incomePerSec that does not scale with the hacking level, and the
     // stock trader's compounding return. Zero/absent outside a node whose
@@ -5108,7 +5110,7 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // reputation is bought from the first join, and the work slot's faction
     // work shrinks what is owed while the money is saved — exitplan prices the
     // rep leg that way, and gangworth charges the karma grind the slot hours.
-    workWhileDonating: favorToDonateOf(bitNodeMults(info?.currentNode)) === 0,
+    workWhileDonating: favorToDonateOf(bitNodeMults(info)) === 0,
     // The install cadence's posterior (own lives, their weight, stalls excluded).
     cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, stalls: cadence.stalls, weight: cadence.weight, rateMedian: cadence.stats?.lnPerHour ?? null, why: cadence.why } : null,
     // THE COMMITTED GRAFTS (graftDecisionOf / carriedGraftsOf): legs of the
@@ -5234,7 +5236,7 @@ function bladeLedgerOf(pc, info) {
   return bladeInstallJumpsNext(prevLed, pc?.exitJumpNow ?? pc?.prev?.exitJump ?? null, { node, blade })
 }
 function levelledPerson(player, info) {
-  const n = bitNodeMults(info?.currentNode)
+  const n = bitNodeMults(info)
   const f = (k, key) => (typeof n?.[key] === 'number' && isFinite(n[key]) && n[key] > 0 ? (player?.mults?.[k] ?? 1) * n[key] : player?.mults?.[k])
   if (!player?.mults) return player
   return {
@@ -5251,7 +5253,7 @@ function levelledPerson(player, info) {
 }
 
 function effectiveHackingMult(player, info) {
-  return effectiveHackingMultOf(player?.mults?.hacking, bitNodeMults(info?.currentNode)?.HackingLevelMultiplier)
+  return effectiveHackingMultOf(player?.mults?.hacking, bitNodeMults(info)?.HackingLevelMultiplier)
 }
 
 /**
@@ -5268,7 +5270,7 @@ function effectiveHackingMult(player, info) {
 function karmaChannelCtx(ns, info, player, { reprice = false } = {}) {
   try {
     const fin = (v) => typeof v === 'number' && isFinite(v)
-    const node = bitNodeMults(info?.currentNode) ?? null
+    const node = bitNodeMults(info) ?? null
     // PENDING IS A VERDICT, NOT A CAPABILITY. This read "can this save have a
     // gang, and is it not in one" — so in a node that priced the gang as NOT
     // worth its karma gate, objective.karmaValue went on weighting combat
@@ -5282,7 +5284,7 @@ function karmaChannelCtx(ns, info, player, { reprice = false } = {}) {
       // even after a NOT-worth verdict, or the next pass reads it unpriced and
       // the verdict oscillates none -> null -> none (live 2026-09-28 02:3x).
       verdict: reprice ? null : readJson(ns, GATE)?.gangWorth ?? null,
-      mults: bitNodeMults(info?.currentNode),
+      mults: bitNodeMults(info),
     })
     if (!pend.pending) return { gangPending: false, gangPendingWhy: pend.why }
     if (pend.karmaWaived) return { gangPending: true, gangKarmaWaived: true, gangPendingWhy: pend.why }
@@ -5492,7 +5494,7 @@ async function act(ns, canJoin, info, note) {
       const since = Math.max(solver.lastRunMs ?? 0, life0)
       const s = contractStream({
         totalSourceFileLevels: sf,
-        nodeContractMoney: bitNodeMults(info?.currentNode)?.CodingContractMoney,
+        nodeContractMoney: bitNodeMults(info)?.CodingContractMoney,
         hasHackingFaction: k > 0,
         hasJob: Object.keys(player.jobs ?? {}).length > 0,
         factions: k > 0 ? k : undefined,
@@ -5527,7 +5529,7 @@ async function act(ns, canJoin, info, note) {
   // reads are 0.05GB each; getConstants is free.
   const stockForecast = (() => {
     try {
-      const nm = bitNodeMults(info?.currentNode)
+      const nm = bitNodeMults(info)
       const owned = { wse: ns.stock.hasWseAccount(), tix: ns.stock.hasTixApiAccess(), data4s: ns.stock.has4SData(), api4s: ns.stock.has4SDataTixApi() }
       const entry = stockEntryCost(owned, { FourSigmaMarketDataCost: nm?.FourSigmaMarketDataCost, FourSigmaMarketDataApiCost: nm?.FourSigmaMarketDataApiCost }, ns.stock.getConstants())
       // The edge is not read yet (no 4S forecast), so there is no income to
@@ -5721,7 +5723,7 @@ async function act(ns, canJoin, info, note) {
       // nothing. daedalusNeed/installedCount are already in scope here.
       // Self-contained here: the offers list and daedalusNeed are built later
       // in the file, so recompute the shortfall from data in scope now.
-      const cityDaedalusNeed = bitNodeMults(info?.currentNode)?.DaedalusAugsRequirement ?? 0
+      const cityDaedalusNeed = bitNodeMults(info)?.DaedalusAugsRequirement ?? 0
       const distinctHeld = [...cityOwned].filter((a) => a !== NFG).length + (cityOwned.has(NFG) ? 1 : 0)
       let availFromJoined = 0
       for (const f of player.factions) {
@@ -5945,8 +5947,8 @@ async function act(ns, canJoin, info, note) {
     // which in BitNode 8 (FavorToDonateToFaction 0, donations from favor 0)
     // left every reputation wall standing as a grind while the node sold it
     // for money, and in BitNode 3 (0.5) demanded 150 where 75 opens.
-    const donateNeed = favorToDonateOf(bitNodeMults(info?.currentNode))
-    const fwrg = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null
+    const donateNeed = favorToDonateOf(bitNodeMults(info))
+    const fwrg = bitNodeMults(info)?.FactionWorkRepGain ?? null
     // The gang we manage refuses donations whatever the favor (Singularity.ts:903).
     const gangFactionNow = ns.gang.inGang() ? readJson(ns, '/tel/gang.txt')?.faction ?? null : null
     for (const f of player.factions) {
@@ -6019,14 +6021,14 @@ async function act(ns, canJoin, info, note) {
     // Read from the BN1-verified table, with NO literal fallback: an unknown
     // node reads null, ticketsWanted goes 0, and the sweep simply stands down
     // — degrading to the pure-M objective beats guessing the count gate.
-    const daedalusNeed = bitNodeMults(info?.currentNode)?.DaedalusAugsRequirement
+    const daedalusNeed = bitNodeMults(info)?.DaedalusAugsRequirement
     ticketsWanted = daedalusNeed > 0 ? Math.max(0, daedalusNeed - installedCount.size) : 0
     // THE BATCH COMPOSITION, where money is capital: the count-aware simulated
     // exit's tickets for this install (the previous pass's installgate record,
     // same life). The rest of the budget goes where planPurchases puts it —
     // NeuroFlux and real multipliers. Absent or another life's: the full count
     // shortfall, as before.
-    if (bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0 && ticketsWanted > 0) {
+    if (bitNodeMults(info)?.ScriptHackMoneyGain === 0 && ticketsWanted > 0) {
       const g0 = readJson(ns, GATE)
       const c0 = g0?.lastAugReset === info?.lastAugReset ? g0?.countComposition?.firstBatch?.count : null
       if (typeof c0 === 'number' && c0 >= 1) ticketsWanted = Math.min(ticketsWanted, c0)
@@ -6163,7 +6165,7 @@ async function act(ns, canJoin, info, note) {
         const eRep = eRepObs.reduce((a, b) => a + b, 0) / eRepObs.length
 
         // Remaining windows to the exit condition, on the measured growth.
-        const wdd = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+        const wdd = bitNodeMults(info)?.WorldDaemonDifficulty
         const needMult = wdd > 0 ? multiplierNeeded(3000 * wdd, player.exp?.hacking ?? 0) : null
         // joinState is built AFTER this block (it needs the plan), so the
         // growth comes straight from the ledger — the same measurement
@@ -6484,9 +6486,9 @@ async function act(ns, canJoin, info, note) {
       // From the node (was favorNeededToDonate(1), i.e. 150 everywhere; BN8's
       // threshold is 0 and BN3's 75). Null when the table is unreadable,
       // which disarms the donation terminal rather than guessing.
-      donateAt: favorToDonateOf(bitNodeMults(info?.currentNode)),
+      donateAt: favorToDonateOf(bitNodeMults(info)),
       donateRepMult: player.mults?.faction_rep,
-      donateNodeMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
+      donateNodeMult: bitNodeMults(info)?.FactionWorkRepGain ?? null,
       donateIncome: (() => {
         // nodeecon.incomeOf, so BitNode 8's income (the trader's) is seen at
         // all. repLadder takes a FLAT rate, so the trader's compounding
@@ -6501,7 +6503,7 @@ async function act(ns, canJoin, info, note) {
         hacking: player.skills?.hacking,
         intelligence: player.skills?.intelligence ?? 0,
         factionRepMult: player.mults?.faction_rep,
-        nodeWorkRepMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
+        nodeWorkRepMult: bitNodeMults(info)?.FactionWorkRepGain ?? null,
         sharePower: ns.getSharePower(),
       }),
       // THE FACTION-WORK RATE'S STRUCTURE (bayes.repRatePosterior): the same
@@ -6512,7 +6514,7 @@ async function act(ns, canJoin, info, note) {
         hacking: player.skills?.hacking,
         intelligence: player.skills?.intelligence ?? 0,
         factionRepMult: player.mults?.faction_rep,
-        nodeWorkRepMult: bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? null,
+        nodeWorkRepMult: bitNodeMults(info)?.FactionWorkRepGain ?? null,
         sharePower: 1,
       }),
       // Cash plus the trader's book (BitNode 8: the book IS the money; a
@@ -6540,7 +6542,7 @@ async function act(ns, canJoin, info, note) {
         city: player.city,
         money: ns.getServerMoneyAvailable('home') + stockEquity,
       },
-      node: bitNodeMults(info?.currentNode) ?? null,
+      node: bitNodeMults(info) ?? null,
       trainingMult: ns.hacknet.getTrainingMult(),
       // The acting branch below commits crimes FOCUSED, so the model prices
       // the focused rate (CrimeWork.ts:65 focusPenalty = 1 when focused).
@@ -6576,11 +6578,11 @@ async function act(ns, canJoin, info, note) {
         // family that sat silently wrong for a whole BitNode. An unknown node
         // yields null, which makes joinplan refuse company forecasts rather
         // than price them against BitNode 1.
-        nodeCompanyRepMult: bitNodeMults(info?.currentNode)?.CompanyWorkRepGain ?? null,
+        nodeCompanyRepMult: bitNodeMults(info)?.CompanyWorkRepGain ?? null,
         // The EXP-side BitNode term is a different key with a different value
         // (0.5 in BN4 where the rep term is 1) — conflating them halves or
         // doubles the charisma trajectory silently.
-        nodeCompanyExpMult: bitNodeMults(info?.currentNode)?.CompanyWorkExpGain ?? null,
+        nodeCompanyExpMult: bitNodeMults(info)?.CompanyWorkExpGain ?? null,
         // What Netburners' hacknet requirements would cost to finish, read
         // from hacknet.js's own report rather than priced here — pricing the
         // upgrade curve would mean six ns.hacknet references in this file for
@@ -6662,7 +6664,7 @@ async function act(ns, canJoin, info, note) {
   // Where money is capital (the count-aware exit decides), the schedule
   // scores the count gate's tickets too; other nodes are unchanged.
   const countTickets = (() => {
-    const m = bitNodeMults(info?.currentNode)
+    const m = bitNodeMults(info)
     if (m?.ScriptHackMoneyGain !== 0 || !(m?.DaedalusAugsRequirement > 0)) return null
     const short = m.DaedalusAugsRequirement - allCount.size
     return short > 0 ? { short, owned: new Set(allCount.keys()) } : null
@@ -6680,7 +6682,7 @@ async function act(ns, canJoin, info, note) {
     try {
       const rec = readJson(ns, '/tel/exitinputs.txt')
       if (!rec?.inputs || rec.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(rec.at) < 15 * 60e3)) return { best: null, tried: [], why: 'no fresh same-life exit inputs' }
-      const mults = bitNodeMults(info?.currentNode)
+      const mults = bitNodeMults(info)
       const cc = countModelOf(mults, offers, allCount, player)
       if (!cc) return { best: null, tried: [], why: 'count model unpriced' }
       const prior = readJson(ns, SCHEDULE)
@@ -6803,7 +6805,7 @@ async function act(ns, canJoin, info, note) {
   })()
   const gangCancelled = gangPrev?.worth === false
   const inGangFaction = player.factions.some((f) => GANG_FACTIONS.includes(f))
-  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !gangCancelled && !(inGangFaction && gangPrev?.playerSlot === false)
+  const gangBootstrapPending = canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info)) && !gangCancelled && !(inGangFaction && gangPrev?.playerSlot === false)
   // WHO HOLDS THE WORK SLOT THIS PASS. null means nobody here does, and act.js
   // is free to use it. Declared here rather than inside the branch so that
   // every path out of this file publishes a definite answer — an absent field
@@ -6814,7 +6816,7 @@ async function act(ns, canJoin, info, note) {
   let bladeSlot = null
   // Not where the gang is structurally worthless: its factions are then ordinary
   // join candidates, not a bootstrap target (gangChannelsDead).
-  if (canJoin && canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info?.currentNode)) && !gangCancelled && !inGangFaction) {
+  if (canJoin && canUseGang(info) && !ns.gang.inGang() && !gangChannelsDead(bitNodeMults(info)) && !gangCancelled && !inGangFaction) {
     const pick = (schedule?.joinForecasts ?? [])
       .filter((f) => GANG_FACTIONS.includes(f.name) && typeof f.hours === 'number' && isFinite(f.hours))
       .sort((a, b) => a.hours - b.hours)[0]
@@ -6999,7 +7001,7 @@ async function act(ns, canJoin, info, note) {
   // pass's first inputs: every exit input built after it — the graft, 4S,
   // install, gang, sleeve and exit decisions' — prices the committed length.
   try {
-    await lifeLengthDecisionOf(ns, info, canBuyAug ? countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player) : null)
+    await lifeLengthDecisionOf(ns, info, canBuyAug ? countModelOf(bitNodeMults(info), offers, allCount, player) : null)
   } catch (e) {
     const pcl = planCtx
     if (pcl) pcl.decisions.lifeLength = { key: null, lifeH: null, error: true, why: `life length decision threw: ${String(e).slice(0, 160)}` }
@@ -7128,7 +7130,7 @@ async function act(ns, canJoin, info, note) {
     // refused it every pass and the player sat idle on a 'body' claim.
     const plan = (() => {
       try {
-        return combatBarPlanOf(short, person, bitNodeMults(info?.currentNode), { cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+        return combatBarPlanOf(short, person, bitNodeMults(info), { cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
       } catch {
         return null
       }
@@ -7186,9 +7188,9 @@ async function act(ns, canJoin, info, note) {
   // (exitinputs moneyAtW, same life) — a batch bought with more money buys a
   // superset, and a graft after the install cannot take any of it.
   if (canBuyAug) batchNamesNow = batchNamesOf(ns, info, plan, pending, replanAt)
-  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
+  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info), offers, allCount, player)) : null
   // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
-  const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)) : null
+  const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info), offers, allCount, player)) : null
   const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)
   if (fourSHold.why && !fourSHold.hold) todo.push(fourSHold.why)
   if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
@@ -7355,7 +7357,7 @@ async function act(ns, canJoin, info, note) {
         // every combat stat while it earns the fee.
         const fb = (() => {
           try {
-            return combatBarPlanOf({ [bodyStep.stat]: bodyStep.to }, levelledPerson(player, info), bitNodeMults(info?.currentNode), { cash: ns.getServerMoneyAvailable('home') + stockEquity, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+            return combatBarPlanOf({ [bodyStep.stat]: bodyStep.to }, levelledPerson(player, info), bitNodeMults(info), { cash: ns.getServerMoneyAvailable('home') + stockEquity, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
           } catch {
             return null
           }
@@ -7555,7 +7557,7 @@ async function act(ns, canJoin, info, note) {
   // a raise as soon as the balance and book cover them, not priced against exp.
   const exitRoot = exitRootRequired(info?.ownedAugs)
   if (!hasTor) {
-    const torOk = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), 'tor', info?.lastAugReset, Date.now(), { exitRoot })
+    const torOk = programSpendAllowed(bitNodeMults(info), readJson(ns, GATE), 'tor', info?.lastAugReset, Date.now(), { exitRoot })
     if (!torOk.allowed) todo.push(`TOR held: ${torOk.why}`)
     else if (canJoin && !flags.dry && ns.getServerMoneyAvailable('home') + stockEquity > 200e3) {
       if (order('tor', [], exitRoot ? 'required: the exit needs the port openers TOR gates' : 'gates every port program', 200e3)) did.push(exitRoot ? 'ordered TOR (required for the exit)' : 'ordered TOR')
@@ -7564,7 +7566,7 @@ async function act(ns, canJoin, info, note) {
   for (const [file, price] of PROGRAMS) {
     if (ns.fileExists(file, 'home')) continue
     // Where money is capital, only on a priced verdict (nodeecon.programSpendAllowed) — unless the exit requires it.
-    const okP = programSpendAllowed(bitNodeMults(info?.currentNode), readJson(ns, GATE), file, info?.lastAugReset, Date.now(), { exitRoot })
+    const okP = programSpendAllowed(bitNodeMults(info), readJson(ns, GATE), file, info?.lastAugReset, Date.now(), { exitRoot })
     if (!okP.allowed) {
       todo.push(`${file} held: ${okP.why}`)
       continue
@@ -7775,7 +7777,7 @@ async function act(ns, canJoin, info, note) {
             // families between passes.
             let decided = null
             try {
-              const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
+              const cc = countModelOf(bitNodeMults(info), offers, allCount, player)
               // THE PLAN'S EXIT where it decided a route this pass (nothing
               // is queued, so there is no install decision): the committed
               // route's median over the posterior draws.
@@ -7783,7 +7785,7 @@ async function act(ns, canJoin, info, note) {
               const brU = planCtx?.decisions?.bladeRoute
               if (brU?.key === 'blade' && typeof brU.q50 === 'number') decided = { exitH: brU.q50, ...(Number.isFinite(brU.bladeMembers?.sdH) && brU.bladeMembers.Q > 1 ? { seH: +(brU.bladeMembers.sdH / Math.sqrt(brU.bladeMembers.Q)).toFixed(3) } : {}), source: `plan: the Bladeburner route (21 black ops, bbplan.bladeExit), 80% interval ${brU.q10}-${brU.q90}h` }
               else if (pr?.key && typeof pr.q50 === 'number') decided = { exitH: pr.q50, source: `plan: median over the posterior via the committed route (${pr.name}), 80% interval ${pr.q10}-${pr.q90}h` }
-              else if (cc && bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0) decided = await countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
+              else if (cc && bitNodeMults(info)?.ScriptHackMoneyGain === 0) decided = await countExitNowOf(gangInputs0(), cc, countRoute?.best?.route ?? null)
               if (countRouteNow?.chosen && decided?.source?.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +decided.exitH.toFixed(2)
             } catch {
               decided = null
@@ -8203,7 +8205,7 @@ async function act(ns, canJoin, info, note) {
         // to the node's opening at each install. "Never" is not a candidate:
         // it cannot reach Daedalus. Unpriced -> the ordinary comparison below
         // and, in installgate, the floor as the named fallback.
-        const countCtx = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
+        const countCtx = countModelOf(bitNodeMults(info), offers, allCount, player)
         if (countCtx) {
           const nowC = await paced(bestCountExitGen(bestExitPolicyGen, inputs, countCtx, { firstInstallH: 0 }), 'count-exit-scan')
           if (nowC.best) {
@@ -8427,7 +8429,7 @@ async function act(ns, canJoin, info, note) {
       })(),
       // Money is the trader's compounding capital (BitNode 8): the count batch
       // installs on the count-aware simulated exit (installgate countBySim).
-      capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0,
+      capitalNode: bitNodeMults(info)?.ScriptHackMoneyGain === 0,
       ageMs: Date.now() - (info?.lastAugReset ?? 0),
       M,
       queued: total,
@@ -8492,7 +8494,7 @@ async function act(ns, canJoin, info, note) {
           return cost > have ? cost : 0
         })(),
         exitLevelReached: (() => {
-          const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+          const d = bitNodeMults(info)?.WorldDaemonDifficulty
           if (!(typeof d === 'number' && isFinite(d) && d > 0)) return false
           return (player.skills?.hacking ?? 0) >= WD_BASE_HACKING * d
         })(),
@@ -8522,7 +8524,7 @@ async function act(ns, canJoin, info, note) {
       // undefined, which leaves installgate.js's documented default standing
       // rather than inventing a number.
       target: (() => {
-        const d = bitNodeMults(info?.currentNode)?.WorldDaemonDifficulty
+        const d = bitNodeMults(info)?.WorldDaemonDifficulty
         return typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : undefined
       })(),
       // The experience term (installgate.js) needs live experience, not the
@@ -8602,7 +8604,7 @@ async function act(ns, canJoin, info, note) {
       if (b && typeof b.q50 === 'number') return { exitH: b.q50, ...(typeof b.pointSeH === 'number' && isFinite(b.pointSeH) ? { seH: b.pointSeH } : {}), source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h${planCtx?.incomeFromPrior ? ` — ${planCtx.incomeFromPrior}` : ''}${planCtx?.repFromEstimate ? ` — ${planCtx.repFromEstimate}` : ''}` }
       if (!exitCompare?.countAware && countTickets) {
         try {
-          const cc = countModelOf(bitNodeMults(info?.currentNode), offers, allCount, player)
+          const cc = countModelOf(bitNodeMults(info), offers, allCount, player)
           const viaCount = cc ? await countExitNowOf(exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), cc, countRoute?.best?.route ?? null) : null
           if (viaCount) {
             if (countRouteNow?.chosen && viaCount.source.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +viaCount.exitH.toFixed(2)
@@ -8920,7 +8922,7 @@ async function act(ns, canJoin, info, note) {
             // earlier donation for a same-faction item may already cover it.
             const short = item.donation && sing.augRepReq(item.name) - sing.factionRep(item.faction)
             if (short > 0) {
-              const fwrgExec = bitNodeMults(info?.currentNode)?.FactionWorkRepGain ?? 1
+              const fwrgExec = bitNodeMults(info)?.FactionWorkRepGain ?? 1
               const dollars = Math.ceil(donationForRep(short, player.mults?.faction_rep ?? 1, fwrgExec) * 1.01)
               if (!order('donate', [item.faction, dollars], `${Math.round(short).toLocaleString()} rep for ${item.name}`, dollars)) {
                 did.push(`DONATION REFUSED: $${ns.format.number(dollars)} to ${item.faction} for ${item.name} — favour or funds short at execution`)
@@ -8949,7 +8951,7 @@ async function act(ns, canJoin, info, note) {
       // when The Red Pill is in the ordered batch (its donation included) or
       // already queued; otherwise nothing in this batch is ordered at all —
       // money spent on lesser augmentations is money the Red Pill needs.
-      let installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.planDecision?.key ?? null, capitalNode: bitNodeMults(info?.currentNode)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
+      let installRefused = installOfOrderedBatch({ terminal: gate.terminal === true, ordered: bought, pending, planKey: gate.planDecision?.key ?? null, capitalNode: bitNodeMults(info)?.ScriptHackMoneyGain === 0, forced: !!forcedInstall, redPill: TERMINAL_AUG }).refused
       // THE BATCH ORDERED IS THE BATCH PRICED, or it is re-priced before it
       // installs (plan.installBatchVerdictOf). The gate priced 'now' on the
       // whole plan; a trimmed batch is another act. Live BN9 2026-09-30

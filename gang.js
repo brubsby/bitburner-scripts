@@ -147,7 +147,7 @@ export async function main(ns) {
   const note = reporter(ns, STATUS, {})
   ns.atExit(() => note.exit('stopped', { detail: 'gang.js exited — killed, threw, or an install took it' }), 'status')
   const info = ns.getResetInfo()
-  const softcap = bitNodeMults(info.currentNode)?.GangSoftcap
+  const softcap = bitNodeMults(info)?.GangSoftcap
   let bought = []
   let ascended = []
   // THE RESPECT FORECAST (gangplan.js simulateGang): the gang faction's
@@ -233,7 +233,7 @@ export async function main(ns) {
     join: joinClaim(ns.read(GATE_FILE), info.lastAugReset),
     augmentations: augClaim(ns.read(GATE_FILE), info.lastAugReset),
     home: (() => {
-      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(info)?.HomeComputerRamCost)
       if (!up) return 0
       const ram = ns.getServerMaxRam('home')
       return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }

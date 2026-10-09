@@ -127,5 +127,65 @@ export async function run() {
   }
 
   checks.push(c);
+  checks.push(await bn12(src, bitNodeMults));
   return checks;
+}
+
+// [BN2] BitNode 12 — level-dependent, so the constant-only parser above skips
+// it (its case opens with `const inc = ...`, not `return`). Live 2026-10-09
+// 03:27Z in BN12: bitNodeMults(12) was null, watchdog.js goPlace read GoPower
+// undefined, goplace.goScaleOf refused ("GoPower unknown (no BitNode table
+// entry)") and go.js sat DEFERRED behind progress.js's block until a human
+// launched it. This evaluates the source's own case 12 body at several levels
+// and diffs every key, then asserts the live call shape (reset info) prices Go.
+async function bn12(src, bitNodeMults) {
+  const c = new Check("BN2", "BitNode 12's level-scaled multipliers match game source at every level, and goPlace can price go.js in BN12");
+  const m = /case 12: \{\s*const inc = ([^;]+);\s*const dec = ([^;]+);\s*return new BitNodeMultipliers\(\{([\s\S]*?)\}\);/.exec(src);
+  c.examined(1);
+  if (!m) {
+    c.fail("could not find BitNode 12's `const inc / const dec / return new BitNodeMultipliers({...})` in BitNode.tsx",
+      "the case 12 shape changed upstream; this check is no longer looking at anything");
+    return c;
+  }
+  const body = m[3].replace(/\/\/[^\n]*/g, "");
+  // The body is game source: plain object literal of numbers and inc/dec
+  // arithmetic plus defaultMultipliers.DaedalusAugsRequirement (default 30,
+  // BitNodeMultipliers.ts). Evaluated as written so a changed formula shows.
+  const evalAt = new Function("lvl", "defaultMultipliers", `const inc = ${m[1]}; const dec = ${m[2]}; return {${body}};`);
+  const defaults = bitNodeMults(1);
+  for (const lvl of [1, 2, 3, 5, 10]) {
+    const truth = evalAt(lvl, defaults);
+    const mine = bitNodeMults(12, lvl);
+    c.examined(1);
+    if (!mine) { c.fail(`bitNodeMults(12, ${lvl}) is null`); continue; }
+    for (const [k, v] of Object.entries(truth)) {
+      c.examined(1);
+      if (Math.abs((mine[k] ?? NaN) - v) > 1e-12) c.fail(`BitNode 12.${lvl} ${k}: table ${mine[k]}, game source ${v}`);
+    }
+    if (Object.keys(truth).length < 40) c.fail(`only ${Object.keys(truth).length} keys evaluated from case 12`);
+  }
+  c.note(`case 12 evaluated from source at levels 1,2,3,5,10 and matched key for key`);
+
+  // The live call shape: reset info with ownedSF a Map (lvl = SF12 + 1,
+  // BitNode.tsx:1126), and with a sourceFileOverrides entry winning.
+  const info = { currentNode: 12, ownedSF: new Map([[1, 3], [12, 2]]), bitNodeOptions: { sourceFileOverrides: new Map() } };
+  const live = bitNodeMults(info);
+  c.examined(1);
+  if (live?.GoPower !== 1) c.fail(`bitNodeMults(BN12 reset info).GoPower is ${live?.GoPower}, game source has the default 1 (BitNodeMultipliers.ts:97)`,
+    "undefined here is exactly the 2026-10-09 stall: goPlace cannot price go.js and the home rule defers it");
+  if (Math.abs((live?.HomeComputerRamCost ?? NaN) - Math.pow(1.02, 3)) > 1e-12) c.fail(`BN12 at SF12.2 must run at level 3 (HomeComputerRamCost 1.02^3), got ${live?.HomeComputerRamCost}`);
+  c.examined(1);
+  if (bitNodeMults(12, info)?.GoPower !== 1) c.fail("bitNodeMults(12, info) does not answer BitNode 12");
+  c.examined(1);
+  const over = bitNodeMults({ ...info, bitNodeOptions: { sourceFileOverrides: new Map([[12, 0]]) } });
+  if (Math.abs((over?.HomeComputerRamCost ?? NaN) - 1.02) > 1e-12) c.fail(`a sourceFileOverrides entry must win over the owned level (got ${over?.HomeComputerRamCost})`);
+  c.examined(1);
+  if (bitNodeMults(12) !== null) c.fail("bitNodeMults(12) with no level must refuse (null), never guess a level");
+  // goplace.js's own refusal, fed what goPlace now feeds it.
+  const { goScaleOf } = await import("../../goplace.js");
+  c.examined(1);
+  const scale = goScaleOf({ goPower: live?.GoPower, sf14: 1 });
+  if (scale.effective !== 2) c.fail(`goScaleOf in BN12 with SF14 gives ${scale.effective} (${scale.why}), expected 2`);
+  else c.note(`BN12 goScaleOf: ${scale.why}`);
+  return c;
 }

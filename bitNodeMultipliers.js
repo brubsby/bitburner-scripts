@@ -28,7 +28,7 @@
 // (NetscriptFunctions.ts:875); prefer sfgate.js's canReadBitNodeMultipliers()
 // and the live call when it is available.
 
-import { canReadBitNodeMultipliers } from 'sfgate.js'
+import { canReadBitNodeMultipliers, bitNodeLevelOf } from 'sfgate.js'
 
 const bit_node_multipliers_key = 'BB_BITNODE_MULTIPLIERS'
 
@@ -147,15 +147,76 @@ const BITNODE_OVERRIDES = {
 }
 
 /**
+ * BitNode 12's overrides at Source-File level `lvl` — BitNode.tsx:918-989
+ * (`case 12`), transcribed: inc = 1.02^lvl, dec = 1/inc. It is the one node
+ * whose multipliers are a function of the level rather than constants, so it
+ * cannot live in BITNODE_OVERRIDES. Keys the case does not list (GoPower among
+ * them) are the BitNodeMultipliers.ts class defaults, as for every node —
+ * GoPower = 1 (BitNodeMultipliers.ts:97).
+ *
+ * `lvl` is the game's own argument, the SF12 level + 1
+ * (BitNode.tsx:1126, NetscriptFunctions.ts:882) — sfgate.bitNodeLevelOf.
+ *
+ * Until 2026-10-09 BitNode 12 had no entry at all, so bitNodeMults(12) was
+ * null: in BN12 watchdog.js's goPlace read GoPower undefined, goplace.js
+ * refused to price go.js ("GoPower unknown (no BitNode table entry)") and the
+ * generic home rule left go.js DEFERRED behind progress.js's block — Go
+ * stopped after a restart until a human launched it. [BN2] in
+ * tools/test/bnoverride.test.mjs evaluates the source's case 12 at several
+ * levels and diffs it against this, key by key.
+ */
+export function bn12Overrides(lvl) {
+  const inc = Math.pow(1.02, lvl)
+  const dec = 1 / inc
+  return {
+    DaedalusAugsRequirement: Math.floor(Math.min(defaultBitNodeMultipliers.DaedalusAugsRequirement + inc, 40)),
+    HackingLevelMultiplier: dec, StrengthLevelMultiplier: dec, DefenseLevelMultiplier: dec, DexterityLevelMultiplier: dec, AgilityLevelMultiplier: dec, CharismaLevelMultiplier: dec,
+    ServerGrowthRate: dec, ServerMaxMoney: dec * dec, ServerStartingMoney: dec, ServerWeakenRate: dec,
+    ServerStartingSecurity: 1.5,
+    HomeComputerRamCost: inc,
+    CloudServerCost: inc, CloudServerSoftcap: inc, CloudServerLimit: dec, CloudServerMaxRam: dec,
+    CompanyWorkMoney: dec, CrimeMoney: dec, HacknetNodeMoney: dec, ManualHackMoney: dec, ScriptHackMoney: dec, CodingContractMoney: dec, DarknetMoneyMultiplier: dec,
+    DarknetLabyrinthRewardsTheRedPill: 0,
+    ClassGymExpGain: dec, CompanyWorkExpGain: dec, CrimeExpGain: dec, FactionWorkExpGain: dec, HackExpGain: dec,
+    FactionPassiveRepGain: dec, FactionWorkRepGain: dec, FavorToDonateToFaction: inc,
+    AugmentationMoneyCost: inc, AugmentationRepCost: inc,
+    InfiltrationMoney: dec, InfiltrationRep: dec,
+    FourSigmaMarketDataCost: inc, FourSigmaMarketDataApiCost: inc,
+    CorporationValuation: dec, CorporationSoftcap: 0.8, CorporationDivisions: 0.5,
+    BladeburnerRank: dec, BladeburnerSkillCost: inc,
+    GangSoftcap: 0.8, GangUniqueAugs: dec,
+    StaneksGiftPowerMultiplier: inc, StaneksGiftExtraSize: inc,
+    WorldDaemonDifficulty: inc,
+  }
+}
+
+/**
  * Multipliers for a given BitNode, without needing SF5.
  *
- * Pass the node from `ns.getResetInfo().currentNode` (1GB, and already paid by
- * every caller that needs this). An UNKNOWN node returns `null` rather than the
- * BitNode 1 defaults — "I do not know this node" must not present as "no
- * multipliers apply", which is the bug this replaced.
+ * Pass `ns.getResetInfo()` (1GB, and already paid by every caller that needs
+ * this): `bitNodeMults(info)` for the current node, or `bitNodeMults(node,
+ * info)` for any node. A bare node number still answers every node whose
+ * multipliers are constants, but BitNode 12's depend on the SF12 level, so for
+ * 12 the second argument (reset info, or the level itself as a number) is
+ * required — without it the answer is null (unknown), never a guessed level.
+ *
+ * An UNKNOWN node returns `null` rather than the BitNode 1 defaults — "I do
+ * not know this node" must not present as "no multipliers apply", which is the
+ * bug this replaced.
  */
-export function bitNodeMults(node) {
+export function bitNodeMults(node, lvlOrInfo) {
+  let info = null
+  if (node !== null && typeof node === 'object') {
+    info = node
+    node = info.currentNode
+  }
   if (typeof node !== 'number' || !isFinite(node)) return null
+  if (node === 12) {
+    const src = lvlOrInfo ?? info
+    const lvl = typeof src === 'number' ? src : bitNodeLevelOf(src, 12)
+    if (typeof lvl !== 'number' || !isFinite(lvl) || lvl < 1) return null
+    return { ...defaultBitNodeMultipliers, ...bn12Overrides(lvl) }
+  }
   const over = BITNODE_OVERRIDES[node]
   // A node with no entry is only safe if it is BitNode 1, which by definition
   // has no overrides. Any other missing node is a gap in the table.

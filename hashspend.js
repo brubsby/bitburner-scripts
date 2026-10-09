@@ -205,7 +205,7 @@ function pass(ns, info) {
   else {
     const sfLevels = totalSfLevels(info)
     const k = contractFactionCount(player.factions) ?? 0
-    const r = expectedReward({ totalSourceFileLevels: sfLevels, nodeContractMoney: bitNodeMults(info.currentNode)?.CodingContractMoney, hasHackingFaction: k > 0, hasJob: Object.keys(player.jobs ?? {}).length > 0, successRate: solverStateOf(ct).successRate ?? undefined })
+    const r = expectedReward({ totalSourceFileLevels: sfLevels, nodeContractMoney: bitNodeMults(info)?.CodingContractMoney, hasHackingFaction: k > 0, hasJob: Object.keys(player.jobs ?? {}).length > 0, successRate: solverStateOf(ct).successRate ?? undefined })
     // The exit faction's expected share: 1/k of the faction reputation, once
     // it is joined (a contract solved before the join pays the others).
     const toExit = finalWindow && k > 0 && (player.factions ?? []).includes(EXIT_FACTION) && r?.factionRep > 0 ? r.factionRep / k : 0

@@ -91,7 +91,7 @@ export async function main(ns) {
     ['faction', ''],
   ])
   ns.disableLog('ALL')
-  MIN_FAVOR = favorToDonateOf(bitNodeMults(ns.getResetInfo().currentNode)) ?? 150
+  MIN_FAVOR = favorToDonateOf(bitNodeMults(ns.getResetInfo())) ?? 150
   const log = []
   // Cost of the next level in dollars of donation, for a human reading
   // /tel/nfg.txt: "how much more would it have taken?" is otherwise

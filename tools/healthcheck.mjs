@@ -929,7 +929,7 @@ if (!sleevesExpected) {
   // purchase was running (act.js bootstrapHome / nodeecon.bootstrapHomeStep).
   {
     const tier = now.homeRam !== null ? stackTierFromBoot(readTel("boot.txt"), now.homeRam) : null;
-    const nextCost = now.homeRam !== null ? ramUpgradeCost(now.homeRam, bitNodeMults(now.bitNode)?.HomeComputerRamCost) : null;
+    const nextCost = now.homeRam !== null ? ramUpgradeCost(now.homeRam, bitNodeMults(now.bitNode, Array.isArray(state?.sourceFiles?.data) ? { ownedSF: new Map(state.sourceFiles.data) } : undefined)?.HomeComputerRamCost) : null;
     const covered = num(now.wealth) && num(nextCost) && now.wealth >= nextCost;
     const stalled = tier !== null && now.homeRam < tier && covered;
     now.bootstrapSince = stalled ? (prev && sameNode ? (prev.bootstrapSince ?? now.at) : now.at) : null;

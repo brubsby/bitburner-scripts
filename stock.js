@@ -214,7 +214,7 @@ function claimsOf(ns, info) {
   // RAM upgrade only: the cores option needs ns.getServer (2GB) for the core
   // count. The RAM price is the larger claim whenever cores would have been
   // cheaper, so this errs toward holding MORE cash for home, never less.
-  const up = nextHomeUpgrade(ns.getServerMaxRam('home'), Infinity, bitNodeMults(info.currentNode)?.HomeComputerRamCost)
+  const up = nextHomeUpgrade(ns.getServerMaxRam('home'), Infinity, bitNodeMults(info)?.HomeComputerRamCost)
   return {
     join: joinClaim(gate, info.lastAugReset),
     augmentations: augClaim(gate, info.lastAugReset),
@@ -295,7 +295,7 @@ export async function main(ns) {
   const syms = ns.stock.getSymbols()
   const maxShares = Object.fromEntries(syms.map((s) => [s, ns.stock.getMaxShares(s)]))
   const consts = ns.stock.getConstants()
-  const nodeMults = bitNodeMults(info.currentNode)
+  const nodeMults = bitNodeMults(info)
   // Created at the first tick (below), so the phase prior from the last run
   // is mapped against the wall time of the priming read.
   let st = null

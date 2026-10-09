@@ -62,6 +62,25 @@ export function singularityKnown(ns, now = Date.now()) {
 /** Level of Source-File `n`, 0 if not owned. */
 export const sfLevel = (resetInfo, n) => resetInfo?.ownedSF?.get(n) ?? 0
 
+const mapGet = (m, k) => (m == null ? undefined : typeof m.get === 'function' ? m.get(k) : m[k])
+
+/**
+ * The level BitNode `node` runs (or would run) at — the `lvl` argument of the
+ * game's getBitNodeMultipliers(n, lvl): activeSourceFileLvl(node) + 1
+ * (BitNode.tsx:1126, NetscriptFunctions.ts:882), where a BitNode option's
+ * sourceFileOverrides entry wins over the owned level
+ * (PlayerObjectGeneralMethods.ts:615-620). Maps in game, plain objects in JSON
+ * fixtures. null when resetInfo carries no ownedSF — unknown, not level 1.
+ * Only BitNode 12's multipliers depend on it (bitNodeMultipliers.bn12Overrides).
+ */
+export function bitNodeLevelOf(resetInfo, node = resetInfo?.currentNode) {
+  const over = mapGet(resetInfo?.bitNodeOptions?.sourceFileOverrides, node)
+  if (typeof over === 'number') return over + 1
+  if (resetInfo?.ownedSF == null) return null
+  const owned = mapGet(resetInfo.ownedSF, node)
+  return (typeof owned === 'number' ? owned : 0) + 1
+}
+
 /** Sum of every owned Source-File's level — the game's own `totalSFs`
  *  (CodingContract/ContractGenerator.ts:80), which caps contract difficulty. */
 export const totalSfLevels = (resetInfo) => {

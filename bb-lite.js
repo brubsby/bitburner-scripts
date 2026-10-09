@@ -91,7 +91,7 @@ export async function main(ns) {
     say('waiting', { result: 'capability-absent', detail: 'No Bladeburner in this node (NetscriptFunctions/Bladeburner.ts:331-342): BitNode 6/7 or Source-File 6/7 needed.' })
     return
   }
-  const mults = bitNodeMults(info.currentNode)
+  const mults = bitNodeMults(info)
   if (!mults || !(mults.BladeburnerRank > 0)) {
     say('waiting', { result: 'disabled-in-node', detail: `BladeburnerRank ${mults?.BladeburnerRank} in BitNode ${info.currentNode}` })
     return

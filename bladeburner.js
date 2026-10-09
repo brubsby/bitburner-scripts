@@ -115,7 +115,7 @@ export async function main(ns) {
     })
     return
   }
-  const mults = bitNodeMults(info.currentNode)
+  const mults = bitNodeMults(info)
   if (!mults || !(mults.BladeburnerRank > 0)) {
     say('waiting', { result: 'disabled-in-node', bitNode: info.currentNode, lastAugReset: info.lastAugReset, detail: `BladeburnerRank ${mults?.BladeburnerRank} in BitNode ${info.currentNode}: the division is disabled here (Bladeburner.ts:339-342).` })
     return

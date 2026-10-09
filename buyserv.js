@@ -209,7 +209,7 @@ function reserveNow(ns) {
   // minutes. So only the exit verdict above may spend here — it prices the
   // spend against the trader's return as a trajectory — and until progress.js
   // publishes one, everything is held, and says why.
-  const bn = bitNodeMults(ns.getResetInfo().currentNode)
+  const bn = bitNodeMults(ns.getResetInfo())
   if (bn && bn.ScriptHackMoneyGain === 0) {
     holdWhy = 'scripted hacking pays nothing in this node (ScriptHackMoneyGain 0): cloud servers are bought only on a fresh exit verdict (installgate spendExit.servers), and none is published'
     return Infinity
@@ -250,7 +250,7 @@ function reserveNow(ns) {
     // upgrade was a $56.25b core — recreating, through the other door, the
     // exact starvation this exception exists to end.
     home: (() => {
-      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
+      const up = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
       if (!up) return 0
       const ram = ns.getServerMaxRam('home')
       return { amount: up.cost, deltaGB: up.kind === 'RAM' ? ram : ram / 16 }

@@ -285,7 +285,7 @@ const isAlreadyCommitting = (task, crimeName) =>
 // level x2.5 in BN10 (combat 0.4, hacking 0.35).
 const LEVEL_MULTS = { hacking: 'HackingLevelMultiplier', strength: 'StrengthLevelMultiplier', defense: 'DefenseLevelMultiplier', dexterity: 'DexterityLevelMultiplier', agility: 'AgilityLevelMultiplier', charisma: 'CharismaLevelMultiplier' }
 const getSleeves = (ns) => {
-	const node = bitNodeMults(ns.getResetInfo()?.currentNode) ?? null
+	const node = bitNodeMults(ns.getResetInfo()) ?? null
 	return [...Array(ns.sleeve.getNumSleeves()).keys()].map(index => {
 		const sl = ns.sleeve.getSleeve(index)
 		const mults = { ...sl.mults }
@@ -500,7 +500,7 @@ async function act(ns, note) {
 	// terminal full of the same line is how a real message gets missed.
 	const warned = new Set();
 
-	const node = bitNodeMults(ns.getResetInfo()?.currentNode) ?? null
+	const node = bitNodeMults(ns.getResetInfo()) ?? null
 
 	while (true) {
 		refusals = [];

@@ -886,8 +886,8 @@ export async function run() {
     if (!(drawn.q90 - drawn.q10 > 1.5 * (pointOnly.q90 - pointOnly.q10))) c15.fail("the cadence posterior must be drawn (its spread must reach the interval)");
     // (j) Wired (source guards).
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/const cadence = installCadence\(JSON\.parse\(ns\.read\('\/tel\/lifetimes\.txt'\) \|\| '\[\]'\), info\?\.currentNode, cadenceOptsOf\(player\)\)/.test(prog)) c15.fail("exitInputsOf must take the cadence posterior with this life's multiplier and the covariate (source guard)");
-    if (!/cadence: installCadence\(ledger, info\?\.currentNode, \{ \.\.\.cadenceOptsOf\(ns\.getPlayer\(\)\), modelPrior: cadenceModelPriorOf\(ns, info\) \}\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior, on the purchase model's prior where it priced (source guard)");
+    if (!/const cadence = installCadence\(JSON\.parse\(ns\.read\('\/tel\/lifetimes\.txt'\) \|\| '\[\]'\), info\?\.currentNode, cadenceOptsOf\(player, info\)\)/.test(prog)) c15.fail("exitInputsOf must take the cadence posterior with this life's multiplier and the covariate (source guard)");
+    if (!/cadence: installCadence\(ledger, info\?\.currentNode, \{ \.\.\.cadenceOptsOf\(ns\.getPlayer\(\), info\), modelPrior: cadenceModelPriorOf\(ns, info\) \}\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior, on the purchase model's prior where it priced (source guard)");
   }
   checks.push(c15);
 
@@ -921,7 +921,7 @@ export async function run() {
     // node where the history measures it, not only where money is capital.
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const fitSrc = prog.slice(prog.indexOf("function capitalFitOf(ns, info) {"), prog.indexOf("function capitalFitOf(ns, info) {") + 3500);
-    if (/^\s*if \(bitNodeMults\(info\?\.currentNode\)\?\.ScriptHackMoneyGain !== 0\) return null/m.test(fitSrc) || !/realisedCapital\(rows\) \?\? \(capitalNode &&/.test(fitSrc)) c16.fail("capitalFitOf must fit the trader wherever it has history (the steady-rate stand-in only where money is capital) — source guard");
+    if (/^\s*if \(bitNodeMults\(info\)\?\.ScriptHackMoneyGain !== 0\) return null/m.test(fitSrc) || !/realisedCapital\(rows\) \?\? \(capitalNode &&/.test(fitSrc)) c16.fail("capitalFitOf must fit the trader wherever it has history (the steady-rate stand-in only where money is capital) — source guard");
   }
   checks.push(c16);
 

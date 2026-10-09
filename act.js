@@ -221,7 +221,7 @@ async function spendDown(ns) {
   const bought = []
   try {
     for (let i = 0; i < 8; i++) {
-      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
+      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
       if (!next || ns.getServerMoneyAvailable('home') < next.cost) break
       const r = await runActor(ns, 'homeram', [next.kind])
       if (r.ok !== true) break
@@ -297,7 +297,7 @@ async function bootstrapHome(ns, info, stockRec) {
     lastAugReset: info.lastAugReset,
     cash: ns.getServerMoneyAvailable('home'),
     equity: stockRec?.ok ? stockRec.equity : 0,
-    ramCost: nextHomeUpgrade(homeRam, Infinity, bitNodeMults(info.currentNode)?.HomeComputerRamCost)?.cost ?? null,
+    ramCost: nextHomeUpgrade(homeRam, Infinity, bitNodeMults(info)?.HomeComputerRamCost)?.cost ?? null,
   })
   if (v.step === 'raise-buy') {
     const r = await runActor(ns, 'liquidate', ['raise', Math.ceil(v.cost * 1.02)])
@@ -445,7 +445,7 @@ export async function main(ns) {
     publish({ health: 'waiting', why: 'no Singularity access in this save; nothing here can act' })
     return
   }
-  const node = bitNodeMults(info.currentNode)
+  const node = bitNodeMults(info)
   const tried = {}
   let work = null
   let last = null
@@ -510,7 +510,7 @@ export async function main(ns) {
                 return null
               }
             })()
-            if (o.terminal !== true && planInstall === 'never' && bitNodeMults(info.currentNode)?.ScriptHackMoneyGain === 0 && !o.override) {
+            if (o.terminal !== true && planInstall === 'never' && bitNodeMults(info)?.ScriptHackMoneyGain === 0 && !o.override) {
               results.push({ id: o.id, kind: o.kind, skipped: `refused: the plan's install decision is 'never' (final window) and this install is not terminal — only The Red Pill's install may run` })
               break
             }

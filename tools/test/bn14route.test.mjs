@@ -171,7 +171,7 @@ export async function run() {
     const prog = fs.readFileSync(path.join(REPO_ROOT, 'progress.js'), 'utf8')
     const planSrc = fs.readFileSync(path.join(REPO_ROOT, 'plan.js'), 'utf8')
     for (const [src, re, what] of [
-      [prog, /goExitInputsOf\(\{ goPower: bitNodeMults\(info\?\.currentNode\)\?\.GoPower/, 'exitInputsBaseOf builds goExitInputsOf from the node GoPower'],
+      [prog, /goExitInputsOf\(\{ goPower: bitNodeMults\(info\)\?\.GoPower/, 'exitInputsBaseOf builds goExitInputsOf from the node GoPower'],
       [prog, /go: goNow\.go,\s*goCadenceMult: goNow\.goCadenceMult,/, 'the inputs carry go and goCadenceMult'],
       [prog, /multGainPerCycle: [^\n]*goNow\.goCadenceMult/, 'the point cadence carries the g factor'],
       [planSrc, /const gm = fin\(inputs\.goCadenceMult\)/, 'applyDraw reads goCadenceMult'],

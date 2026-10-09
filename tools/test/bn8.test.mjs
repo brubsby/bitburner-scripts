@@ -306,7 +306,7 @@ export async function run() {
     if (!econ.programSpendAllowed(bitNodeMults(8), gate({ "BruteSSH.exe": { buy: true } }), "BruteSSH.exe", life, now).allowed) k.fail("a buy verdict was not honoured");
     if (econ.programSpendAllowed(bitNodeMults(8), gate({ "BruteSSH.exe": { buy: true } }), "BruteSSH.exe", life - 1, now).allowed) k.fail("another life's verdict was honoured");
     if (!/mayBuy\(TOR_ITEM\)/.test(code("autobuy.js")) || !/if \(!mayBuy\(file\)\) continue/.test(code("autobuy.js"))) k.fail("autobuy.js buys TOR or openers without the verdict");
-    if (!/programSpendAllowed\(bitNodeMults\(info\?\.currentNode\), readJson\(ns, GATE\), file,/.test(code("progress.js"))) k.fail("progress.js orders openers without the verdict");
+    if (!/programSpendAllowed\(bitNodeMults\(info\), readJson\(ns, GATE\), file,/.test(code("progress.js"))) k.fail("progress.js orders openers without the verdict");
     if (!/ScriptHackMoneyGain === 0\) return false/.test(code("watchdog.js"))) k.fail("watchdog's homeup claims fallback still spends capital");
   }
   checks.push(k);

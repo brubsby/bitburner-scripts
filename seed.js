@@ -187,7 +187,7 @@ export async function pass(ns, flags) {
   const level = ns.getHackingLevel()
   // Exp mode where hacking pays nothing (expfarm.expMode); the floor drops so
   // early.js / hgw.js hack whenever the balance is positive.
-  const exp = expMode(bitNodeMults(ns.getResetInfo().currentNode))
+  const exp = expMode(bitNodeMults(ns.getResetInfo()))
   const floor = exp ? EXP_FLOOR : flags.floor
 
   // Root anything that has become reachable since the last pass.
@@ -453,7 +453,7 @@ const GOHOST = 'gohost.js'
  */
 export async function placeGo(ns, all) {
   const reset = ns.getResetInfo()
-  const mults = bitNodeMults(reset.currentNode)
+  const mults = bitNodeMults(reset)
   const goPower = mults?.GoPower
   const sf14 = sfLevel(reset, 14)
   const here = ns.getHostname()
@@ -636,7 +636,7 @@ export async function placeGo(ns, all) {
   // go.js there.
   let buy = null
   if (d.action === 'blocked') {
-    buy = goHostBuyOf({ d, cash: ns.getServerMoneyAvailable('home'), need: ns.getScriptRam(GO, 'home'), mults: bitNodeMults(reset.currentNode), exists: all.includes(GO_HOST), home: homeClaimOf(ns) })
+    buy = goHostBuyOf({ d, cash: ns.getServerMoneyAvailable('home'), need: ns.getScriptRam(GO, 'home'), mults: bitNodeMults(reset), exists: all.includes(GO_HOST), home: homeClaimOf(ns) })
     if (buy.buy) await launchHostBuy(ns, rooted, buy)
   }
   writeRec(pid ? { action: 'running', why: `${GO} placed on ${d.host}` } : d)
@@ -752,7 +752,7 @@ export async function placeLiteHost(ns, all) {
     claim,
     hosts: rooted.map((h) => ({ host: h, max: ns.getServerMaxRam(h), used: ns.getServerUsedRam(h), evictGb: evictOn(h), hacknet: isHacknetServerHost(h) })),
     cash: ns.getServerMoneyAvailable('home'),
-    mults: bitNodeMults(info.currentNode),
+    mults: bitNodeMults(info),
     exists: all.includes(BB_HOST),
     home: homeClaimOf(ns),
   })
@@ -859,7 +859,7 @@ async function placeTrader(ns, all, hosts, liteHold = null) {
   }
   // No book yet: the trader is not running, so cash is the whole wealth.
   const wealth = ns.getServerMoneyAvailable('home')
-  const target = ramUpgradeCost(ns.getServerMaxRam('home'), bitNodeMults(reset.currentNode)?.HomeComputerRamCost)
+  const target = ramUpgradeCost(ns.getServerMaxRam('home'), bitNodeMults(reset)?.HomeComputerRamCost)
   const v = traderPlacement({ wealth, tix, incomePerSec: income, fleetGB, traderGB, target })
   lastTrader = { ...v, traderGB, fleetGB, incomePerSec: income, wealth: Math.round(wealth), target: Math.round(target) }
   if (!v.place) return null

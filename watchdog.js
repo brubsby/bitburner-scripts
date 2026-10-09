@@ -403,7 +403,7 @@ const WATCHED = [
   // relaunched every cycle, and while it waited it held 9.6GB of home —
   // live BN9.2 2026-10-07 13:57Z, keeping watchdog.js itself out at boot.
   // An unknown node's table (null) is not a reason to stop buying.
-  { script: 'buyserv.js', host: 'home', args: [], invariant: (ns) => !(bitNodeMults(ns.getResetInfo().currentNode)?.CloudServerLimit <= 0) },
+  { script: 'buyserv.js', host: 'home', args: [], invariant: (ns) => !(bitNodeMults(ns.getResetInfo())?.CloudServerLimit <= 0) },
   { script: 'autobuy.js', host: 'home', args: [] },
   // The dashboard's fast lane. 2.6GB, writes /tel/fast.txt every 2s; tools/dash.mjs
   // is its only consumer and polls that file far more often than it pulls a save.
@@ -728,7 +728,7 @@ const WATCHED = [
     // yet and the fallback threshold is just a guess. nextHomeUpgrade is pure
     // arithmetic over state we already hold, so the answer is exact and free.
     trigger: (ns) => {
-      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo().currentNode)?.HomeComputerRamCost)
+      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
       // Published on the job record (jobs['homeup.js'].next) so the planner
       // prices the CURRENT upgrade: homeup.txt's `next` is only as fresh as
       // homeup's last run, and when the hold keeps homeup from running the
@@ -766,7 +766,7 @@ const WATCHED = [
       // claims fallback: cash is the trader's compounding book, and the
       // ln-per-dollar competition below prices home against hacking income
       // that does not exist there. Only the exit verdict above may buy.
-      if (bitNodeMults(ns.getResetInfo().currentNode)?.ScriptHackMoneyGain === 0) return false
+      if (bitNodeMults(ns.getResetInfo())?.ScriptHackMoneyGain === 0) return false
       // THE ln(M) COMPETITION (budget.js lnCompete): home's own ln per
       // dollar is the planner's figure (objective.homeLn, published as
       // homeLnPerDollar — the plan channel through the measured elasticity
@@ -1094,7 +1094,7 @@ function raisedPlace(ns, hosts, rec, script, opt = {}) {
  */
 function goPlace(ns, hosts, rec) {
   const info = ns.getResetInfo()
-  const mults = bitNodeMults(info.currentNode)
+  const mults = bitNodeMults(info)
   const goPower = mults?.GoPower
   const sf14 = sfLevel(info, 14)
   const homeMax = ns.getServerMaxRam('home')
