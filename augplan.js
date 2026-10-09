@@ -1023,6 +1023,14 @@ function walk(pt) {
  *                            returned instead of the most valuable affordable one.
  * @param {string[]} [o.owned] already-installed augmentation names, for prereqs.
  * @param {number} [o.soaOwned] SoA augmentations already owned OR queued.
+ * @param {number} [o.queued] non-SoA augmentations ALREADY QUEUED this life
+ *                            (NeuroFlux levels included) while `baseCost` is
+ *                            the price with nothing queued: every non-SoA
+ *                            purchase then starts at rank `queued`, as the game
+ *                            charges (AugmentationHelpers.ts:32-37).
+ *                            Live BN12 2026-10-09: 12 NeuroFlux queued, the
+ *                            plan priced from rank 0 — x2213 too cheap — and
+ *                            neither the purchase nor the install moved.
  * @param {number} [o.frontierCap] safety valve; hitting it sets `exact: false`.
  *
  * @returns {{buy: Array, totalCost: number, M: number, logM: number,
@@ -1131,7 +1139,12 @@ function* planPurchasesUncachedGen(o, work) {
   if (!(money > 0)) return { ...empty('no money'), skipped: norm0(o) }
   if (!o.offers || o.offers.length === 0) return empty('no offers')
 
-  const norm = normalise({ ...o, money })
+  // THE QUEUE ALREADY BOUGHT: every non-SoA price in this plan carries
+  // r^queued on top of its rank (SoA prices never do: AugmentationHelpers.ts
+  // :140-152). Folded into the money multiplier, which only non-SoA rows read.
+  const queued = num(o.queued) && o.queued > 0 ? Math.floor(o.queued) : 0
+  const moneyMult = nodeMoneyMultOf(o) * Math.pow(r, queued)
+  const norm = normalise({ ...o, money, nodeMoneyMult: moneyMult })
   yield
   const core = yield* runCoreGen({ singles: norm.singles, chains: norm.chains, r, money, frontierCap }, work)
   const soaRes = yield* runSoaGen(
@@ -1260,7 +1273,7 @@ function* planPurchasesUncachedGen(o, work) {
     // sweep that only took rep-affordable augs left dollars on the table
     // while the count sat one short. `ticketCost` folds the donation in;
     // ordering is by that true cost, cheapest first.
-    const ticketCost = (a) => a.baseCost * nodeMoneyMultOf(o) + (typeof a.donationCost === 'number' && isFinite(a.donationCost) && (a.factionRep ?? 0) < (a.repReq ?? 0) ? a.donationCost : 0)
+    const ticketCost = (a) => a.baseCost * moneyMult + (typeof a.donationCost === 'number' && isFinite(a.donationCost) && (a.factionRep ?? 0) < (a.repReq ?? 0) ? a.donationCost : 0)
     const reachable = (a) => (a.factionRep ?? 0) >= (a.repReq ?? Infinity) || (typeof a.donationCost === 'number' && isFinite(a.donationCost) && a.donationCost >= 0)
     const tickets = (o.offers ?? [])
       .filter(
@@ -1291,7 +1304,7 @@ function* planPurchasesUncachedGen(o, work) {
       // Neurotrainer IIs, $85.5M and $162M, in the very first swept plan).
       if (inPlan.has(t.name)) continue
       const donation = (t.factionRep ?? 0) < (t.repReq ?? 0) && typeof t.donationCost === 'number' && isFinite(t.donationCost) ? t.donationCost : 0
-      const price = t.baseCost * nodeMoneyMultOf(o) * Math.pow(r, rank) + donation
+      const price = t.baseCost * moneyMult * Math.pow(r, rank) + donation
       if (total + price > money + EPS) break
       total += price
       buy.push({ name: t.name, faction: t.faction, kind: 'ticket', rank, price, ...(donation > 0 ? { donation } : {}), m: 1, cumulative: total })
@@ -1325,6 +1338,7 @@ function* planPurchasesUncachedGen(o, work) {
       spent: total,
       left: money - total,
       targetM: o.targetM ?? null,
+      queued,
       stoppedAtTarget: stoppedAt !== null,
     },
   }

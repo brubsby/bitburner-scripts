@@ -3126,6 +3126,35 @@ function ramIncomePerGB(ns, inputs) {
  * homeup trigger holds no join money for a verdict that carries it.
  */
 /**
+ * THIS LIFE'S QUEUE, AS THE PURCHASE STEP PRICES IT. `held`: every copy
+ * bought this life and not yet installed (NeuroFlux levels included). The
+ * offers carry the price with NOTHING queued (live price / r^queued), so the
+ * plan's every purchase must start at rank `queued`, not 0.
+ */
+export function queuedPricingOf(held, sf11 = 0) {
+  const r = genericPriceMultiplier(sf11)
+  const queued = (held ?? []).filter((a) => !isSoa(a)).length
+  return { r, queued, unqueue: Math.pow(r, queued) }
+}
+
+/** The purchase step's planPurchases arguments (replanAt spreads them). */
+export function purchasePlanArgsOf({ offers, money, q, owned, soaOwned, ticketsWanted, oneoff }) {
+  return {
+    offers,
+    money,
+    r: q.r,
+    // The offers are priced with NOTHING queued (live / r^queued): the plan's
+    // ranks start at the queue (augplan o.queued).
+    queued: q.queued,
+    nodeMoneyMult: 1, // already in the live price
+    owned,
+    soaOwned,
+    ticketsWanted,
+    oneoff,
+  }
+}
+
+/**
  * A RE-PLANNER (replanAt): replanAt(m, offersAt) is the purchase step's plan
  * at money m, synchronous; replanAt.gen(m, offersAt) is the same plan as an
  * augplan.planPurchasesGen generator, for a caller running under the pass's
@@ -5939,8 +5968,8 @@ async function act(ns, canJoin, info, note) {
     for (const [name, n] of allCount) {
       for (let i = 0; i < n - (installedCount.get(name) ?? 0); i++) held.push(name)
     }
-    const r = BASE_PRICE_MULT // SF11 is not held; genericPriceMultiplier(lvl) when it is
-    const unqueue = Math.pow(r, held.filter((a) => !isSoa(a)).length)
+    const q = queuedPricingOf(held, sfLevel(info, 11))
+    const unqueue = q.unqueue
 
     // floor(150 x FavorToDonateToFaction), FROM THE NODE. This was
     // `favorNeededToDonate(1)` — "BN4 leaves it at 1" — i.e. 150 everywhere,
@@ -6078,16 +6107,15 @@ async function act(ns, canJoin, info, note) {
     // 08:19Z: 12 planned on $577.9b, 8 fitted). Money beyond the book (a
     // later balance) is cash; the book is capped at today's equity.
     const reachOf = (m) => batchReach(Math.max(0, m - stockEquity), Math.min(stockEquity, Math.max(0, m)))
-    const planArgs = {
+    const planArgs = purchasePlanArgsOf({
       offers,
       money: reachOf(liveMoney),
-      r,
-      nodeMoneyMult: 1, // already in the live price
+      q,
       owned: [...installedCount.keys()],
       soaOwned: [...allCount.keys()].filter(isSoa).length,
       ticketsWanted,
       oneoff: oneoffBase,
-    }
+    })
     plan = planPurchases(planArgs)
     replanAt = replanner((m, offersAt = null) => ({ ...planArgs, money: reachOf(m), ...(offersAt ? { offers: offersAt } : {}) }))
 
@@ -8898,7 +8926,12 @@ async function act(ns, canJoin, info, note) {
           const plannedAugPrice = item.price - (item.donation ?? 0)
           const drift = Math.abs(live - plannedAugPrice) / Math.max(plannedAugPrice, 1)
           if (drift > 0.01) {
-            did.push(`STOPPED executing the plan at ${item.name}: planned $${plannedAugPrice.toFixed(0)} (aug part), game says $${live.toFixed(0)} (${(drift * 100).toFixed(1)}% drift) — the plan is stale`)
+            // A drift that is a whole power of r is a QUEUE the plan did not
+            // price (live BN12 2026-10-09: x1.9^12, 12 NeuroFlux queued and
+            // planned from rank 0) — named, so it is never read as staleness.
+            const k = Math.log(live / Math.max(plannedAugPrice, 1)) / Math.log(rGeneric)
+            const queueMiss = Math.abs(k - Math.round(k)) < 0.01 && Math.round(k) !== 0 ? ` = x${rGeneric}^${Math.round(k)}: the plan priced ${Math.abs(Math.round(k))} ${k > 0 ? 'fewer' : 'more'} queued augmentation(s) than the game holds (${pending.length} queued) — a PLANNER BUG, not staleness` : ' — the plan is stale'
+            did.push(`STOPPED executing the plan at ${item.name}: planned $${plannedAugPrice.toFixed(0)} (aug part), game says $${live.toFixed(0)} (${(drift * 100).toFixed(1)}% drift)${queueMiss}`)
             break
           }
           // The affordability check covers the WHOLE step: the donation is
