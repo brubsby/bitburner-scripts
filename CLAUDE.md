@@ -327,6 +327,19 @@ a pass (`snapshots-missing`) when a family is absent, from another life
 (dynamic) or another node (static). The Source-File 4 multiplier now touches only
 the actors, one at a time; the whole loop runs from a 128GB home.
 
+**The money/exp split is closed-loop (`splitctl.js`).** batch.js meters what the
+running split yields from its own counters (`batch.txt` `splitMeasure`: money
+drained, farm and money exp units, RAM held, per minute after settle, with SE)
+and publishes the model curves (`splitModel`); progress.js's controller
+calibrates the model with the measurement (Bayesian, the model as prior,
+carried across installs), picks the split on the exit (dwell, 15% step limit,
+priced retarget, confidence margin, value-of-information probes) and publishes
+`/tel/expfarm.txt` `control` (estimates, error per stream, dwell, last switch).
+**Every exit input is conditioned on that split** (`splitConditioned`, the
+controller's own `inputsAt`): never price the future at whatever the batcher
+earned under the split it happened to run (16:43Z BN12: $1.70e5/s → a 46h exit).
+Healthcheck: SPLIT OSCILLATING / SPLIT MODEL OFF / SPLIT UNMEASURED.
+
 ## Driving the game without the browser
 
 `cmd.js` is a terminal bridge. It runs in-game, watches a file, and types

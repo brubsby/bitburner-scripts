@@ -68,7 +68,7 @@ export async function run() {
     if (!fv) c.fail("progress.js farmVerdictOf not found");
     else {
       if (/its own record is the measurement now/.test(fv)) c.fail("farmVerdictOf still latches: a running farm is published as farm: true without pricing the money side (live BN12 2026-10-09)");
-      if (!/splitVerdict\(\s*bestExitPolicy\s*,\s*inputs\s*,\s*\{\s*share0\s*,/.test(fv)) c.fail("farmVerdictOf must price the farm-mode split with expfarm.splitVerdict({share0, ...}) on the shared exit inputs");
+      if (!/splitVerdict\(\s*bestExitPolicy\s*,\s*(inputs|raw)\s*,\s*\{\s*share0\s*,/.test(fv)) c.fail("farmVerdictOf must price the farm-mode split with expfarm.splitVerdict({share0, ...}) on the shared exit inputs");
       if (!/b\.moneyPreview/.test(fv)) c.fail("farmVerdictOf must read batch.txt moneyPreview (what money batching would earn) in farm mode");
       if (!/priced:\s*false/.test(fv)) c.fail("an unpriceable farm side must be published as priced: false, not as a fresh verdict");
       if (!/moneyShare:\s*r\.frac/.test(fv)) c.fail("the verdict must publish the chosen money share (moneyShare)");

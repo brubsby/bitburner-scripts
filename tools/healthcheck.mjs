@@ -52,6 +52,7 @@ const { wealthNegativeCheck, stackTierFromBoot, graftHoldCauseOf } = await impor
 const { ramUpgradeCost } = await import("../homecost.js");
 const { bitNodeMults } = await import("../bitNodeMultipliers.js");
 const { gangActivity, wantedBindsCheck, whyContradictions } = await import("../gangplan.js");
+const { splitHealth } = await import("../splitctl.js");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEL = path.join(ROOT, ".telemetry");
@@ -230,6 +231,18 @@ for (const [name, budget] of Object.entries(FRESH)) {
 if (tel["watchdog.txt"]?.detail) note(`watchdog: ${String(tel["watchdog.txt"].detail).slice(0, 160)}`);
 // go.js warns when the solver is not answering — the check that was missing.
 if (tel["go.txt"]?.health === "warn") fail("go.js reports health 'warn'", String(tel["go.txt"].detail ?? "").slice(0, 200));
+// THE MONEY / EXP SPLIT, closed loop (splitctl.js): the controller must not
+// oscillate, the model it calibrates must stay within the BN1 tolerance of
+// what batch.js measures, and the farm must not run unmetered (open loop).
+{
+  // A verdict older than 30 min (another life's, or progress.js stopped —
+  // PLANNER checks cover that) is not judged as this controller's state.
+  const ef0 = readTel("expfarm.txt");
+  const ef = ef0 && ageMin(ef0.at) !== null && ageMin(ef0.at) < 30 ? ef0 : null;
+  for (const p of splitHealth(ef, tel["batch.txt"])) fail(p.what, p.detail);
+  const c = ef?.control;
+  if (c && c.calib) note(`split: ${Math.round((ef.moneyShare ?? 0) * 100)}% money [${String(ef.why ?? "").match(/\[(\w+)\]/)?.[1] ?? "?"}], money measured/model ${c.calib.money?.err === null || c.calib.money?.err === undefined ? "n/a" : `${(100 * (1 + c.calib.money.err)).toFixed(0)}%`}, farm exp ${c.calib.farmExp?.err === null || c.calib.farmExp?.err === undefined ? "n/a" : `${(100 * (1 + c.calib.farmExp.err)).toFixed(0)}%`}, ${c.switches3h ?? 0} switch(es)/3h, dwell ${c.dwellLeftMin ?? "?"} min`);
+}
 
 /* ------------------------------------------------- D. movement vs last */
 const prev = (() => {

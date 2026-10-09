@@ -422,7 +422,7 @@ export async function run() {
       if (!/const gc = yield\* gangCarriedGen\(ns, info\)/.test(pj) || !/const sched = yield\* gangScheduleGen\(ns, info\)/.test(pj) || !/yield\* simulateGangGen\(/.test(pj)) c.fail("progress.js must carry the gang through gangCarriedGen -> gangScheduleGen -> simulateGangGen");
       if (!/const fs9 = yield\* freshHacknetStreamsPassGen\(info, out\)/.test(pj) || !/yield\* freshHacknetStreamsGen\(inputs, 48\)/.test(pj)) c.fail("progress.js must build the final window's hacknet with freshHacknetStreamsGen");
       if (!/const ms = yield\* moneyScaleOfGen\(/.test(pj)) c.fail("progress.js purchaseCadenceGen must slice the money scale (moneyScaleOfGen)");
-      if (!/exitInputsBaseOf\(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet\)\n  yield\n/.test(pj)) c.fail("exitInputsGen must yield after the base inputs");
+      if (!/exitInputsBaseOf\(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet\)\)?\n  yield\n/.test(pj)) c.fail("exitInputsGen must yield after the base inputs");
       if (!(sL.cpuMs <= GRAFT_SEARCH_MS + 60)) c.fail(`the graft search must stop near its ${GRAFT_SEARCH_MS}ms budget (${sL.cpuMs.toFixed(0)}ms)`);
     }
     for (const [name, d] of Object.entries(decisions)) {

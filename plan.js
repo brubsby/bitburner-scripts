@@ -302,7 +302,10 @@ export function applyDraw(inputs, d) {
   else if (fin(inputs.repPerSec) && fin(d.repRate)) o.repPerSec = d.repRate
   // The hacking stream is a draw from its posterior (earlier lives, updated
   // by this life's measurement); the flat part measured beside it is kept.
-  if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = (fin(inputs.incomeFlatPerSec) && inputs.incomeFlatPerSec > 0 ? inputs.incomeFlatPerSec : 0) + Math.exp(d.incomeLn)
+  // Conditioned on the split the run will follow (splitctl.splitConditioned:
+  // inputs.incomeSplitDelta = the controller's hacking stream at its split
+  // less the one the posterior measured), the draw moves with it, floored at 0.
+  if (inputs.incomeFromPrior === true && fin(d.incomeLn)) o.incomePerSec = (fin(inputs.incomeFlatPerSec) && inputs.incomeFlatPerSec > 0 ? inputs.incomeFlatPerSec : 0) + Math.max(0, Math.exp(d.incomeLn) + (fin(inputs.incomeSplitDelta) ? inputs.incomeSplitDelta : 0))
   // THE CONTRACT STREAM IS COMPOUND POISSON (contractplan.contractStream):
   // its money over a life of H hours has variance contractMoneyVarPerSec x H
   // x 3600, so the life's mean rate moves by sqrt(var / (H x 3600)) z — never

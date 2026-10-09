@@ -1,0 +1,1131 @@
+{
+ "capturedAt": "2026-10-09T16:12:42.435Z",
+ "note": "live BN12 2026-10-09, farm mode at 10% money (phantasy, omega-net); batch.js 601eba2 (open loop: no splitMeasure yet). Read-only capture.",
+ "exitinputs": {
+  "at": "2026-10-09T16:12:10.357Z",
+  "lastAugReset": 1791554517803,
+  "inputs": {
+   "money": 138196231540.3582,
+   "incomePerSec": 70940386.33756857,
+   "contractMoneyPerSec": 32424.428104575167,
+   "contractMoneyVarPerSec": 4949768919005.51,
+   "incomeFlatPerSec": 32424.428104575167,
+   "incomeFromPrior": true,
+   "incomeSource": "income posterior (life 5): income posterior: prior $1.01e+8/s (x/÷ 5.8) updated by this life's $7.03e+7/s over 2.09h (the running scripts' hacking stream; weight 98%) -> median $7.09e+7/s, x/÷ 1.3 at 80% [income from the formula (freshlife.js) at age 2.17h: $1.94e+8/s x 0.52 (income formula error for BitNode 12: ln(realised/model) -0.65 (x0.52), one life x/÷ 5.77 at 80% (t, df 26); 1 own life carry 11% of the node's bias, 27 lives in 5 other node(s) the cross-node mean x0.42 (between nodes x/÷ 1.39, fitted); one life's scatter x/÷ 4.98; 6 lives down-weighted as unlike the rest; stated prior: unbiased, x/÷ 19.1) -> median $1.01e+8/s, x/÷ 5.8 at 80%]",
+   "lifeIncome": 1843330.9408875913,
+   "hacknet": {
+    "mults": {
+     "hacknet_node_money": 4.316468641338287,
+     "hacknet_node_purchase_cost": 0.4139155432546314,
+     "hacknet_node_level_cost": 0.4599061591718126,
+     "hacknet_node_ram_cost": 0.5410660696138972,
+     "hacknet_node_core_cost": 0.5410660696138972
+    },
+    "nodeMoney": 0.9803921568627451
+   },
+   "hacking": 832,
+   "hackingExp": 845189748.6882924,
+   "hackingMult": 1.8197016571968796,
+   "expPerSec": 336066.05427680985,
+   "expScalesWithLevel": true,
+   "expFlatPerSec": 0,
+   "expSource": "exp posterior: prior 3.41e+5/s (x/÷ 1.5) updated by this life's 1.65e+5/s over 1.92h (the running scripts' exp (tel.js getTotalScriptExpGain), hours after the 0.25h fresh-life ramp; weight 68%) -> median 2.08e+5/s, x/÷ 1.3 at 80% [exp carried by the install (2026-10-09T14:01:49.612Z): 2.49e+5/s at level 733 x 1.215 (this life's multiplier over the install's) x (832 + 50)/(733 + 50) -> 3.41e+5/s, x/÷ 1.50 at 80% (the install's own sd with one life's scatter)]",
+   "freshHackCum": [
+    [
+     0,
+     0
+    ],
+    [
+     0.1,
+     3996437086
+    ],
+    [
+     0.25,
+     15448571015
+    ],
+    [
+     0.5,
+     47588669032
+    ],
+    [
+     0.75,
+     56240016833
+    ],
+    [
+     1,
+     130258092737
+    ],
+    [
+     1.5,
+     288630015509
+    ],
+    [
+     2,
+     460847067813
+    ],
+    [
+     3,
+     825381074357
+    ],
+    [
+     4,
+     1206350531540
+    ],
+    [
+     6,
+     1997552283567
+    ],
+    [
+     8,
+     2817395466889
+    ],
+    [
+     12,
+     4530073443372
+    ],
+    [
+     16,
+     6311180255481
+    ],
+    [
+     20,
+     8127327630956
+    ],
+    [
+     24,
+     9974365975163
+    ]
+   ],
+   "repPerSec": 15.148062285239428,
+   "repSdLn": 0.3730482932502119,
+   "repSource": "faction-work reputation: formula 13.75/s x k 1.102 = 15.15/s [k carried from 2026-10-09T14:01:49.612Z: 1.102 x/÷ 1.33, one life's scatter added]; no faction work measured this life",
+   "exitRep": 0,
+   "exitFavor": 0,
+   "rejoinMoney": 100000000000,
+   "rejoinLevel": 2500,
+   "preInstallRepMult": 1.89081,
+   "favorStreamWhy": "go.js plays Illuminati, not Daedalus",
+   "go": {
+    "w0": {
+     "powerPerH": 30174,
+     "gamesPerH": 11.4,
+     "bonusPower": 2,
+     "goPower": 1,
+     "sf14": 3,
+     "source": "harness 30174/h (e64e111: walls KataGo + seeded ponder, 8/8 won; not yet measured live)"
+    },
+    "rep": {
+     "powerPerH": 27608,
+     "bonusPower": 1.1,
+     "goPower": 1,
+     "sf14": 3
+    },
+    "favorStream": {
+     "repPerH": 435499.54850431654,
+     "capRep": 400000
+    },
+    "farm": {
+     "goPower": 1,
+     "sf14": 3,
+     "arms": {
+      "Daedalus": {
+       "powerPerH": 27608,
+       "bonusPower": 1.1,
+       "channel": "faction_rep"
+      },
+      "Netburners": {
+       "powerPerH": 12230,
+       "bonusPower": 1.3,
+       "channel": "hacknet_node_money"
+      },
+      "TheBlackHand": {
+       "powerPerH": 15083,
+       "bonusPower": 0.9,
+       "channel": "hacking_money"
+      },
+      "Illuminati": {
+       "powerPerH": 125180,
+       "bonusPower": 0.7,
+       "channel": "hacking_speed"
+      }
+     },
+     "hackShare": 0.25,
+     "ramShare": 0.0001496466176258474,
+     "embedded": {
+      "goPower": 1,
+      "sf14": 0,
+      "rateScale": 0.5,
+      "ownShare": 0.813087224403544
+     }
+    },
+    "why": "the farm on the hacking route at GoPower 1 x2 (SF14): each life's best arm of Daedalus 27608/h, Netburners 12230/h, TheBlackHand 15083/h, Illuminati 125180/h from its install (go.js 20.75GB of 138660GB); g de-biased by the cadence lives' farm (GoPower 1, no SF14, the release-1 solver at ~0.5x POWER_PER_HOUR, its best arm: an upper bound) on the own lives' share 0.81; w0r1d_d43m0n on the climb at 30174/h (harness 30174/h (e64e111: walls KataGo + seeded ponder, 8/8 won; not yet measured live)), 11.4 games/h; Daedalus in the final window at 27608/h (faction_rep), favor 435500 rep-eq/h (441 games/h at 99.2% won: 0.494 favor steps a game of 2000 rep-equivalent each, 400000 of the node's 400000 left)"
+   },
+   "goCadenceMult": 1,
+   "cycleHours": 2,
+   "multGainPerCycle": 1.0389797899586812,
+   "nextInstallGain": 1.3728528000000004,
+   "installGains": {
+    "hacking": 1.3728528000000004,
+    "rep": 1.15,
+    "income": 1.6858045792500005,
+    "exp": 1.1770000000000003
+   },
+   "persistBaseline": {
+    "hacking": 1.3728528000000004,
+    "rep": 1.15,
+    "income": 1.6858045792500005,
+    "exp": 1.1770000000000003
+   },
+   "eRep": 0.1449,
+   "eBudget": 0.2356,
+   "exitLevel": 3060,
+   "joinMoney": 100000000000,
+   "joinLevel": 2500,
+   "finalRootCost": 287200000,
+   "freshExpLagH": 0.10168375914405914,
+   "terminalRep": 2550000,
+   "donationCost": null,
+   "favorToDonate": 153,
+   "flatIncomePerSec": 32424.428104575167,
+   "capitalReturnPerSec": 0.0002561679234522806,
+   "capitalWarmupH": 0,
+   "capitalFit": "trader r(W) posterior (the draws' own distribution, its means the point): r(W) = r0 s(W/W*): r0 92.2%/h +- 6.4, W* $1.29e+11 x/÷ 1.47 (prior 79.8%/h, $2.68e+11, the sim's) — $1m 0.0%/h, $1b 92.2%/h, $100b 70.0%/h, $10t 1.3%/h; 19 run(s), 2623 intervals over 43.7h past each life's first 1.00h, noise x0.97 the sim's",
+   "capitalCap": 5303041055396.309,
+   "capitalScaleW": 128673620812.40938,
+   "capitalShape": {
+    "Wmin": 2240000,
+    "hLo": 0.584,
+    "Wr": 17000000,
+    "k": 2.79,
+    "n": 1.91
+   },
+   "installCash": 1262,
+   "workWhileDonating": false,
+   "cadence": {
+    "source": "purchase model",
+    "node": 12,
+    "lives": 2,
+    "stalls": 0,
+    "weight": 0.813087224403544,
+    "rateMedian": 0.019119630246284155,
+    "why": "later lives of 2h: the plan's life length decision this pass (L2)",
+    "model": {
+     "lnPerHour": 0.01368383825403696,
+     "cycleHours": 2,
+     "multGainPerCycle": 1.027745611221108
+    },
+    "post": {
+     "mean": -3.9570397101293393,
+     "sd": 0.51110752927413,
+     "weight": 0.6402064326235694
+    },
+    "posterior": "cadence posterior for BitNode 12 on the purchase model's prior: model ln(M) 0.0137/h (x/÷ 2.98 at 80%, 7 lives in other nodes recorded with the model's prediction) -> 0.0191/h (x1.93 either way at 80%); 2 own gaining lives carry 64% of the rate; 9 Bladeburner-route lives excluded (not the hacking route's cadence); 5 re-recorded ledger entries merged",
+    "measured": "cadence posterior for BitNode 12: ln(M) 0.0243/h (x2.09 either way at 80%), 5.21h a life -> x1.135 a cycle; 2 own gaining lives carry 81% of the rate, BitNode 6 shrinks it toward the cross-node mean; 9 Bladeburner-route lives excluded (not the hacking route's cadence); 5 re-recorded ledger entries merged",
+    "table": [
+     {
+      "L": 0.5,
+      "lives": 96,
+      "money": 32812190917,
+      "gain": 1.0049,
+      "lnMean": 0.004899802302670219,
+      "perHour": 0.0098,
+      "first": 2,
+      "firstNfg": 10,
+      "seq": [
+       0.21598,
+       0.17575,
+       0.04879,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "L": 1,
+      "lives": 48,
+      "money": 99765293135,
+      "gain": 1.0127,
+      "lnMean": 0.012647075242660968,
+      "perHour": 0.0126,
+      "first": 3,
+      "firstNfg": 11,
+      "seq": [
+       0.31211,
+       0.12673,
+       0.0886,
+       0.04976,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "L": 2,
+      "lives": 24,
+      "money": 352043725467,
+      "gain": 1.0277,
+      "lnMean": 0.02736767650807392,
+      "perHour": 0.0137,
+      "first": 5,
+      "firstNfg": 10,
+      "seq": [
+       0.42791,
+       0.12939,
+       0.06967,
+       0.00995,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "L": 3,
+      "lives": 16,
+      "money": 628022325656,
+      "gain": 1.0439,
+      "lnMean": 0.04291768818258767,
+      "perHour": 0.0143,
+      "first": 5,
+      "firstNfg": 11,
+      "seq": [
+       0.43786,
+       0.13934,
+       0.08958,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "L": 4,
+      "lives": 12,
+      "money": 914002679133,
+      "gain": 1.0793,
+      "lnMean": 0.07626897715426252,
+      "perHour": 0.0191,
+      "first": 5,
+      "firstNfg": 12,
+      "seq": [
+       0.44781,
+       0.23465,
+       0.15314,
+       0.05972,
+       0.00995,
+       0,
+       0,
+       0,
+       0.00995,
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "L": 6,
+      "lives": 8,
+      "money": 1503368523220,
+      "gain": 1.1254,
+      "lnMean": 0.11813581257234733,
+      "perHour": 0.0197,
+      "first": 6,
+      "firstNfg": 12,
+      "seq": [
+       0.54312,
+       0.25267,
+       0.11944,
+       0.01991,
+       0,
+       0.00995,
+       0,
+       0
+      ]
+     },
+     {
+      "L": 8,
+      "lives": 6,
+      "money": 2109395673706,
+      "gain": 1.2177,
+      "lnMean": 0.1969525556514142,
+      "perHour": 0.0246,
+      "first": 7,
+      "firstNfg": 11,
+      "seq": [
+       0.6465,
+       0.28906,
+       0.1964,
+       0.03981,
+       0.00995,
+       0
+      ]
+     },
+     {
+      "L": 12,
+      "lives": 4,
+      "money": 3363128459392,
+      "gain": 1.3538,
+      "lnMean": 0.3028935271590283,
+      "perHour": 0.0252,
+      "first": 7,
+      "firstNfg": 12,
+      "seq": [
+       0.65645,
+       0.36602,
+       0.13934,
+       0.04976
+      ]
+     },
+     {
+      "L": 16,
+      "lives": 3,
+      "money": 4656189482622,
+      "gain": 1.4778,
+      "lnMean": 0.39058746966642505,
+      "perHour": 0.0244,
+      "first": 8,
+      "firstNfg": 12,
+      "seq": [
+       0.79621,
+       0.23621,
+       0.13934
+      ]
+     },
+     {
+      "L": 24,
+      "lives": 2,
+      "money": 7299782166340,
+      "gain": 1.684,
+      "lnMean": 0.5211871925897757,
+      "perHour": 0.0217,
+      "first": 9,
+      "firstNfg": 11,
+      "seq": [
+       0.86322,
+       0.17915
+      ]
+     }
+    ],
+    "moneyCalibration": "money model x0.569: 2 completed lives (earned/modelled 0.06, 1.12) carry 55% of the scale",
+    "catalogue": "this life's offers",
+    "afterBatch": {
+     "augs": 12,
+     "nfgLevels": 0
+    }
+   },
+   "finalGrafts": [
+    {
+     "name": "PC Direct-Neural Interface Optimization Submodule",
+     "cost": 13500000000,
+     "slotH": 0.925559241560544,
+     "hacking": 1.078,
+     "exp": 0.98,
+     "rep": 0.98,
+     "money": 0.98
+    }
+   ],
+   "lifeGrafts": [
+    {
+     "name": "SPTN-97 Gene Modification",
+     "cost": 14625000000,
+     "slotH": 1.6232343122811763,
+     "hacking": 1.127,
+     "exp": 0.98,
+     "rep": 0.98,
+     "money": 0.98,
+     "life": 2
+    }
+   ],
+   "graftStartMoney": 0,
+   "carriedIncome": {
+    "sleeves": [
+     {
+      "atH": 0,
+      "perSec": 44117.64705882353
+     }
+    ]
+   },
+   "freshHacknet": [
+    {
+     "atH": 0.25,
+     "perSec": 0
+    },
+    {
+     "atH": 0.375,
+     "perSec": 70169.25650623415
+    },
+    {
+     "atH": 0.5,
+     "perSec": 62115.68780305051
+    },
+    {
+     "atH": 0.625,
+     "perSec": 306468.84716537583
+    },
+    {
+     "atH": 0.75,
+     "perSec": 178423.19994295988
+    },
+    {
+     "atH": 0.875,
+     "perSec": 488777.1675468074
+    },
+    {
+     "atH": 1,
+     "perSec": 358479.6924922278
+    },
+    {
+     "atH": 1.125,
+     "perSec": 647435.058233226
+    },
+    {
+     "atH": 1.25,
+     "perSec": 472951.9567011305
+    },
+    {
+     "atH": 1.375,
+     "perSec": 812223.3004279393
+    },
+    {
+     "atH": 1.5,
+     "perSec": 502472.54257024743
+    },
+    {
+     "atH": 1.625,
+     "perSec": 984865.5528258255
+    },
+    {
+     "atH": 1.75,
+     "perSec": 173305.93922854928
+    },
+    {
+     "atH": 1.875,
+     "perSec": 1333676.132941926
+    },
+    {
+     "atH": 2,
+     "perSec": 0
+    },
+    {
+     "atH": 2.125,
+     "perSec": 1592457.4093593594
+    },
+    {
+     "atH": 2.25,
+     "perSec": 675938.2579080595
+    },
+    {
+     "atH": 2.375,
+     "perSec": 1886199.1023035813
+    },
+    {
+     "atH": 2.5,
+     "perSec": 0
+    },
+    {
+     "atH": 2.625,
+     "perSec": 909791.4734573402
+    },
+    {
+     "atH": 2.75,
+     "perSec": 0
+    },
+    {
+     "atH": 2.875,
+     "perSec": 1962461.3203060664
+    },
+    {
+     "atH": 3,
+     "perSec": 4103.097067188157
+    },
+    {
+     "atH": 3.125,
+     "perSec": 3061326.5463936254
+    },
+    {
+     "atH": 3.25,
+     "perSec": 0
+    },
+    {
+     "atH": 16.5,
+     "perSec": 11552276.686959177
+    },
+    {
+     "atH": 16.625,
+     "perSec": 15890387.088339971
+    }
+   ],
+   "contractRep": {
+    "perContract": 2057.87037037037,
+    "factions": 1,
+    "hashCum": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      3382
+     ],
+     [
+      2,
+      16984
+     ],
+     [
+      3,
+      47927
+     ],
+     [
+      4,
+      104913
+     ],
+     [
+      5,
+      199103
+     ],
+     [
+      6,
+      335943
+     ],
+     [
+      7,
+      523205
+     ],
+     [
+      8,
+      752026
+     ],
+     [
+      9,
+      980848
+     ],
+     [
+      10,
+      1209669
+     ],
+     [
+      11,
+      1438491
+     ],
+     [
+      12,
+      1667313
+     ],
+     [
+      13,
+      1896134
+     ],
+     [
+      14,
+      2124956
+     ],
+     [
+      15,
+      2353777
+     ],
+     [
+      16,
+      2582599
+     ],
+     [
+      17,
+      2811420
+     ],
+     [
+      18,
+      3040242
+     ],
+     [
+      19,
+      3269064
+     ],
+     [
+      20,
+      3497885
+     ],
+     [
+      21,
+      3726707
+     ],
+     [
+      22,
+      3955528
+     ],
+     [
+      23,
+      4184350
+     ],
+     [
+      24,
+      4413171
+     ],
+     [
+      25,
+      4641993
+     ],
+     [
+      26,
+      4870815
+     ],
+     [
+      27,
+      5099636
+     ],
+     [
+      28,
+      5328458
+     ],
+     [
+      29,
+      5557279
+     ],
+     [
+      30,
+      5786101
+     ],
+     [
+      31,
+      6014922
+     ],
+     [
+      32,
+      6243744
+     ],
+     [
+      33,
+      6472566
+     ],
+     [
+      34,
+      6701387
+     ],
+     [
+      35,
+      6930209
+     ],
+     [
+      36,
+      7159030
+     ],
+     [
+      37,
+      7387852
+     ],
+     [
+      38,
+      7616673
+     ],
+     [
+      39,
+      7845495
+     ],
+     [
+      40,
+      8074317
+     ],
+     [
+      41,
+      8303138
+     ],
+     [
+      42,
+      8531960
+     ],
+     [
+      43,
+      8760781
+     ],
+     [
+      44,
+      8989603
+     ],
+     [
+      45,
+      9218424
+     ],
+     [
+      46,
+      9447246
+     ],
+     [
+      47,
+      9676068
+     ],
+     [
+      48,
+      9904889
+     ]
+    ],
+    "hashPerSec": 7.373323763550365,
+    "level0": 4
+   },
+   "streams": {
+    "gang": "not in a gang this life (no fresh /tel/gang.txt)",
+    "sleeves": "the fleet on crime for money: $44.1k/s",
+    "hacknetFinalWindow": "the fleet a fresh life rebuilds (lifeplan.freshHacknetFlow): $0.00m/s to the balance at 8h, $15.89m/s at 24h (its purchases repaid from its own income first)",
+    "contractRep": "generated contracts from the Daedalus join: 2058 rep each over 1 hacking-work faction(s) (a later final window joins Daedalus alone), the live fleet 7.37 hashes/s from level 4"
+   },
+   "cadenceShape": {
+    "L": 2,
+    "ln": [
+     0.42791,
+     0.12939,
+     0.06967,
+     0.00995,
+     0,
+     0,
+     0.00995,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0.00995,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "cadenceFrom": "purchase model",
+   "cadenceRateMedian": 0.019119630246284155
+  }
+ },
+ "batch": {
+  "at": "2026-10-09T16:12:42.435Z",
+  "uptimeSec": 1801,
+  "hackingLevel": 833,
+  "ram": {
+   "total": 138660,
+   "used": 134377,
+   "utilPct": 96.9,
+   "reservedForPipelines": 6030
+  },
+  "totals": {
+   "batches": 1515,
+   "opsDispatched": 6116,
+   "threadsDispatched": 123123,
+   "earned": 127473644045,
+   "earnedPerSec": 70780588,
+   "loops": 8715
+  },
+  "moneyPreview": {
+   "at": "2026-10-09T16:12:21.755Z",
+   "targets": [
+    "phantasy",
+    "omega-net",
+    "rho-construction",
+    "the-hub",
+    "alpha-ent",
+    "computek"
+   ],
+   "modelIncomePerSec": 1825238905,
+   "moneyGB": 100820,
+   "batchScorePerGBms": 0.00011346726888935921,
+   "farmScorePerGBms": 0.005259441933084367,
+   "farmGB": 11161,
+   "k": 5.131326367059522,
+   "why": null,
+   "calibration": "NOT CALIBRATED: the target-count income model (over-predicted ~40% in BN1) and k (farm exp/GB-ms x farmGB over HWGW exp/GB-ms x moneyGB) — no live money-mode measurement while the farm runs"
+  },
+  "expFarmVerdict": {
+   "at": "2026-10-09T16:12:10.460Z",
+   "farm": true,
+   "moneyShare": 0.1,
+   "priced": true,
+   "running": "farm",
+   "shareH": 8.502818686260207,
+   "farmH": 18.49968354924868,
+   "moneyH": 10.66791025286406,
+   "why": "money share 10%: exit 8.50h (running 10% 8.50h; farm alone 18.50h, money alone 10.67h) — by share 0% 18.50h, 10% 8.50h, 25% 8.50h, 50% 8.56h, 75% 8.70h, 100% 10.67h; money side k 57.6, $1820113668/s on phantasy,omega-net,rho-construction,the-hub,alpha-ent,computek",
+   "stale": false,
+   "byTable": false
+  }
+ },
+ "expFarm": {
+  "target": "foodnstuff",
+  "scorePerGBms": 0.005259441933084367,
+  "expPerThread": 7.5,
+  "chance": 1,
+  "hackTimeSec": 0.7,
+  "heldGB": 114580,
+  "moneyShare": 0.1,
+  "moneyHosts": [
+   "phantasy",
+   "omega-net",
+   "rho-construction",
+   "the-hub"
+  ],
+  "model": {
+   "hackThreadsPerSec": 12943.2
+  },
+  "launchedWaves": 1050
+ },
+ "targets": [
+  {
+   "host": "phantasy",
+   "phase": "batch",
+   "earned": 67704576534,
+   "batches": 1093,
+   "plan": {
+    "h": 15,
+    "g": 54,
+    "w1": 2,
+    "w2": 6,
+    "gb": 134,
+    "fPct": 9.9
+   },
+   "periodSec": 0.8,
+   "hackTimeSec": 3.8
+  },
+  {
+   "host": "omega-net",
+   "phase": "batch",
+   "earned": 59769067511,
+   "batches": 422,
+   "plan": {
+    "h": 15,
+    "g": 54,
+    "w1": 2,
+    "w2": 6,
+    "gb": 134,
+    "fPct": 8
+   },
+   "periodSec": 1.683,
+   "hackTimeSec": 10.5
+  },
+  {
+   "host": "rho-construction",
+   "phase": "prep",
+   "earned": 0,
+   "batches": 0,
+   "plan": null,
+   "periodSec": null,
+   "hackTimeSec": 50.5
+  },
+  {
+   "host": "the-hub",
+   "phase": "prep",
+   "earned": 0,
+   "batches": 0,
+   "plan": null,
+   "periodSec": null,
+   "hackTimeSec": 23.4
+  }
+ ],
+ "status": {
+  "at": "2026-10-09T16:12:41.414Z",
+  "expPerSec": 170044.56,
+  "incomePerSec": 19683302.57
+ },
+ "expfarm": {
+  "at": "2026-10-09T16:12:10.460Z",
+  "lastAugReset": 1791554517803,
+  "farm": true,
+  "why": "money share 10%: exit 8.50h (running 10% 8.50h; farm alone 18.50h, money alone 10.67h) — by share 0% 18.50h, 10% 8.50h, 25% 8.50h, 50% 8.56h, 75% 8.70h, 100% 10.67h; money side k 57.6, $1820113668/s on phantasy,omega-net,rho-construction,the-hub,alpha-ent,computek",
+  "running": "farm",
+  "priced": true,
+  "moneyShare": 0.1,
+  "share0": 0.1,
+  "shareH": 8.502818686260207,
+  "runH": 8.502818686260207,
+  "farmH": 18.49968354924868,
+  "moneyH": 10.66791025286406,
+  "withH": 18.49968354924868,
+  "withoutH": 10.66791025286406,
+  "grid": [
+   {
+    "frac": 0,
+    "hours": 18.49968354924868
+   },
+   {
+    "frac": 0.1,
+    "hours": 8.502818686260207
+   },
+   {
+    "frac": 0.25,
+    "hours": 8.499842661444173
+   },
+   {
+    "frac": 0.5,
+    "hours": 8.563967541194637
+   },
+   {
+    "frac": 0.75,
+    "hours": 8.697207293115019
+   },
+   {
+    "frac": 1,
+    "hours": 10.66791025286406
+   }
+  ],
+  "expMultiple": 57.61464178030018,
+  "moneyPerSec": 1820113668,
+  "scriptExpPerSec": 165629.64,
+  "calibration": "money side NOT CALIBRATED (NOT CALIBRATED: the target-count income model (over-predicted ~40% in BN1) and k (farm exp/GB-ms x farmGB over HWGW exp/GB-ms x moneyGB) — no live money-mode measurement while the farm runs); the running split = the inputs as measured",
+  "notSimulated": "the higher level's reputation in lives before the final one (a floor on the farm)"
+ }
+}

@@ -81,7 +81,10 @@ import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
 // Pure: exp-per-GB-second scoring, wave sizing and the manip verdict
 // (expfarm.js), the node table, and the exit simulator the verdict runs.
-import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, moneyModelOf, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, moneyModelOf, farmHoldGB, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+// Pure: the split's METER (splitctl.js) — what the running money share
+// actually yields, from this file's own counters, for progress.js's closed loop.
+import { meterNew, meterAdd, meterTick, meterReport, SPLIT_GRID } from 'splitctl.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy } from 'exitplan.js'
 // Pure (stock.js's brain, read-only here): which servers move which symbol.
@@ -114,6 +117,16 @@ let farmPreview = null
 // re-prices the split every pass from the farm side too (expfarm.splitVerdict).
 // Before it the verdict latched: "the farm is running" was its whole why.
 let moneyPreview = null
+// THE CLOSED LOOP's two halves on this side (splitctl.js): the METER — money
+// drained from the money targets and exp units launched by the farm and by the
+// money targets, bucketed per minute once the running split has settled — and
+// the MODEL CURVES the measurement calibrates (money, its exp and the farm's
+// exp at every split on SPLIT_GRID). progress.js's controller reads both from
+// batch.txt (splitMeasure, splitModel). The meter restarts whenever the
+// running split changes: a measurement belongs to one split.
+let meter = null
+let splitModel = null
+let splitModelAt = 0
 const FARM_VERDICT = '/tel/expfarm.txt'
 /** progress.js's verdict as published, for batch.txt: this life's, with its why. */
 function farmVerdictRecord(ns) {
@@ -121,7 +134,13 @@ function farmVerdictRecord(ns) {
     const v = JSON.parse(ns.read(FARM_VERDICT) || 'null')
     if (!v) return { farm: null, why: `${FARM_VERDICT} absent: progress.js has not priced the split` }
     if (v.lastAugReset !== ns.getResetInfo().lastAugReset) return { farm: null, why: `${FARM_VERDICT} is another life's`, at: v.at }
-    return { at: v.at, farm: v.farm, moneyShare: v.moneyShare ?? null, priced: v.priced ?? null, running: v.running ?? null, shareH: v.shareH ?? null, farmH: v.farmH ?? v.withH ?? null, moneyH: v.moneyH ?? v.withoutH ?? null, why: v.why, stale: !(Date.now() - Date.parse(v.at) < 15 * 60e3) }
+    // THE CONTROLLER beside the verdict (splitctl.js, /tel/expfarm.txt
+    // control): what it did, its calibration and error per stream, dwell,
+    // last switch — the published state minus its observation log.
+    const c = v.control
+    const cal = (k) => (c?.calib?.[k] ? { scale: c.calib[k].scale, tilt: c.calib[k].tilt, n: c.calib[k].n, err: c.calib[k].err } : null)
+    const control = c && c.calib ? { kind: c.kind ?? null, calib: { money: cal('money'), farmExp: cal('farmExp'), moneyExp: cal('moneyExp') }, diverged: c.diverged ?? [], oscillating: c.oscillating ?? null, reversals3h: c.reversals3h ?? null, probes3h: c.probes3h ?? null, dwellLeftMin: c.dwellLeftMin ?? null, segment: c.segment ?? null, lastSwitch: c.lastSwitch ?? null, ramp: c.ramp ?? null } : c ? { why: c.why ?? 'carried' } : null
+    return { at: v.at, farm: v.farm, moneyShare: v.moneyShare ?? null, priced: v.priced ?? null, running: v.running ?? null, shareH: v.shareH ?? null, farmH: v.farmH ?? v.withH ?? null, moneyH: v.moneyH ?? v.withoutH ?? null, why: v.why, control, stale: !(Date.now() - Date.parse(v.at) < 15 * 60e3) }
   } catch (e) {
     return { farm: null, why: `${FARM_VERDICT} unreadable: ${String(e).slice(0, 80)}` }
   }
@@ -289,6 +308,42 @@ function moneyPlanAt(cand, ram, hackRam) {
   }
 }
 
+/**
+ * THE MODEL CURVES the closed loop calibrates (splitctl.js), in either mode:
+ * money and its exp from the same target-count model on s x the fleet (the
+ * targets a split of s would run: never the farm's target nor `exclude`), the
+ * farm's exp from its own wave sizing on the rest (expfarm.farmHoldGB — the
+ * farm saturates on its target, so its exp is NOT (1 - s) of the fleet's).
+ * Exp in units of expPerThread (the meter's). ~21 x moneyModelOf, so the
+ * callers run it every 2 min.
+ */
+function splitModelCurves(ns, ranked, hosts, ram, totalRam, ft, fScore, weakenRate, exclude, now) {
+  try {
+    const { cand, scoreHackRam } = moneyCandidates(ns, ranked.filter((r) => !exclude.has(r.t.host)), hosts, ram)
+    for (const r of cand) if (!(r.t.baseDifficulty > 0)) r.t.baseDifficulty = ns.getServer(r.t.host).baseDifficulty
+    const pa = moneyPlanAt(cand, ram, scoreHackRam)
+    const pts = SPLIT_GRID.map((f) => {
+      const m = f > 0 && cand.length ? moneyModelOf(cand.length, pa, { fleetGB: f * totalRam, spacingMs: SETTINGS.spacing }) : null
+      const fGB = farmHoldGB({ poolGB: (1 - f) * totalRam, T: ft.hackTime, phi: ft.phi, chance: ft.chance, weakenRate })
+      return { money: m ? m.modelIncomePerSec : 0, moneyExp: m ? m.batchScorePerGBms * m.moneyGB * 1000 : 0, farmExp: fScore * fGB * 1000, n: m ? m.n : 0, fGB }
+    })
+    return {
+      at: new Date(now).toISOString(),
+      shares: SPLIT_GRID,
+      money: pts.map((x) => Math.round(x.money)),
+      moneyExp: pts.map((x) => x.moneyExp),
+      farmExp: pts.map((x) => x.farmExp),
+      targetCount: pts.map((x) => x.n),
+      farmGB: pts.map((x) => Math.round(x.fGB)),
+      farmTarget: ft.host,
+      candidates: cand.map((r) => r.t.host),
+      calibration: 'the MODEL (target-count income, batchedScore exp, the farm wave sizing): NOT CALIBRATED here — progress.js calibrates it against splitMeasure every pass (/tel/expfarm.txt control.calib)',
+    }
+  } catch (e) {
+    return { at: new Date(now).toISOString(), why: `split model threw: ${String(e).slice(0, 120)}` }
+  }
+}
+
 function manipCost(ns, readT, ram, level, capacity) {
   let nu = 0
   let gb = 0
@@ -370,6 +425,10 @@ export function farmTick(ns, free, ram, now, nextId) {
   const freeGB = [...free.values()].reduce((a, b) => a + b, 0)
   const pool = heldGB + freeGB
   const tol = 0.05
+  // Exp units per thread on the farm target (splitctl.js meter): every op
+  // pays e; a hack e x (p + (1-p)/4) (expfarm.js header, from source).
+  const eF = expPerThread(tgt.baseDifficulty)
+  const pF = Math.min(1, Math.max(0, tgt.chance ?? 1))
 
   // PREP: security to the floor first (weaken pays full exp while it does).
   if (sec > minSec + tol && !farm.waves.length) {
@@ -380,6 +439,7 @@ export function farmTick(ns, free, ram, now, nextId) {
     const all = Math.floor(freeGB / ram.weaken)
     const n = spreadChunks(ns, free, ram, 'weaken', tgt.host, Math.max(need, all), 1e9, nextId)
     if (n > 0) farm.held.push({ gb: n * ram.weaken, until: now + hT * 4 })
+    meterAdd(meter, 'farmE', n * eF)
     return
   }
   farm.prepping = false
@@ -405,11 +465,13 @@ export function farmTick(ns, free, ram, now, nextId) {
       const w = spreadChunks(ns, free, ram, 'weaken', tgt.host, plan.weaken, 1e9, nextId)
       if (w > 0) {
         farm.held.push({ gb: w * ram.weaken, until: now + wT })
+        meterAdd(meter, 'farmE', w * eF)
         const gPad = Math.max(0, Math.round(L - FARM_GAP_MS - now - hT * 3.2))
         for (const [host, gb] of free) {
           if (gb < ram.grow) continue
           if (ns.exec(SETTINGS.workers.grow, host, { threads: 1, temporary: true }, tgt.host, gPad, nextId(), 0)) {
             free.set(host, gb - ram.grow)
+            meterAdd(meter, 'farmE', eF)
             break
           }
         }
@@ -437,6 +499,7 @@ export function farmTick(ns, free, ram, now, nextId) {
         if (n > 0) {
           farm.held.push({ gb: n * ram.hack, until: land })
           farm.hackThreads += n
+          meterAdd(meter, 'farmE', n * eF * (pF + (1 - pF) / 4))
           farm.launchedWaves++
           farm.lastLaunch = now
         } else {
@@ -1744,6 +1807,12 @@ export async function main(ns) {
         // RAM at the share it was held under.
         const prevShare = farm.moneyShare
         farm.moneyShare = farm.on && !expMode(nodeMults) ? farmMoneyShareOf(ns) : 0
+        // A new split is a new measurement (splitctl.js meter): money mode
+        // is the split at 1.
+        {
+          const frac = farm.on ? farm.moneyShare : 1
+          if (!meter || meter.frac !== frac) meter = meterNew(frac, now)
+        }
         // Money mode: what the farm WOULD earn, for progress.js to price.
         if (!farm.on) {
           farmPreview = (() => {
@@ -1752,6 +1821,12 @@ export async function main(ns) {
               const ex = rankExpTargets(ns, readT, level)
               const best = ex[0] ?? null
               if (!best) return { at: new Date(now).toISOString(), why: 'no rooted, hackable exp target' }
+              // Money mode is a split too (s = 1): the controller prices
+              // leaving it on the same curves (a life opens here).
+              if (!expMode(nodeMults) && now - splitModelAt >= 120e3) {
+                splitModelAt = now
+                splitModel = splitModelCurves(ns, ranked, hosts, ram, totalRam, best.t, best.s, nodeMults?.ServerWeakenRate > 0 ? nodeMults.ServerWeakenRate : 1, new Set([best.t.host]), now)
+              }
               const cur = targets.map((h) => {
                 const t = readT(h)
                 t.baseDifficulty = ns.getServer(h).baseDifficulty
@@ -1848,6 +1923,17 @@ export async function main(ns) {
           // A MIXED split: money targets on the priced share of the fleet
           // (the same target-count model, on that share), beside the manip
           // hosts; the farm takes what their pipelines leave.
+          // THE MODEL CURVES the closed loop calibrates (splitctl.js): money
+          // and its exp from the same target-count model on s x the fleet
+          // (the targets a split of s would run: not the manip hosts above,
+          // not the farm's target), the farm's exp from its own wave sizing
+          // on the rest (expfarm.farmHoldGB — the farm saturates on its
+          // target, so its exp is NOT (1 - s) of the fleet's). Exp in units
+          // of expPerThread (the meter's). Every 2 min (~21 x moneyModelOf).
+          if (!expMode(nodeMults) && farm.target && now - splitModelAt >= 120e3) {
+            splitModelAt = now
+            splitModel = splitModelCurves(ns, ranked, hosts, ram, totalRam, farm.target, farm.score, farm.weakenRate, new Set([...want, farm.target.host]), now)
+          }
           farm.moneyHosts = new Set()
           if (farm.moneyShare > 0) {
             const { cand, scoreHackRam } = moneyCandidates(ns, ranked.filter((r) => !want.includes(r.t.host) && r.t.host !== farm.target?.host), hosts, ram)
@@ -1927,10 +2013,25 @@ export async function main(ns) {
         // retention mean what it says.
         const keep = targets.filter((h) => !want.includes(h) && now < (S.get(h)?.lastLanding ?? 0))
         if (want.length || farm.on) targets = [...new Set([...keep, ...want])]
+        // A measurement describes ONE configuration: a changed set of money
+        // targets (the fleet grew, the argmax moved) is a new segment at the
+        // same split, so a target still prepping is never averaged into a
+        // settled one (live 16:11Z: rho-construction and the-hub joined the
+        // 10% split in prep after the fleet went 36TB -> 139TB).
+        {
+          const hk = (farm.on ? [...farm.moneyHosts] : [...want]).sort().join(',')
+          if (meter && meter.hostKey !== undefined && meter.hostKey !== hk) meter = meterNew(meter.frac, now)
+          if (meter) meter.hostKey = hk
+        }
       }
 
       // --- serve each target ------------------------------------------------
       let reserved = 0
+      // The money side's pipeline claims (the meter's RAM held), and which
+      // targets the meter counts: the mixed split's money targets in farm
+      // mode, every target in money mode.
+      let moneyHeld = 0
+      const metered = (h) => (farm.on ? farm.moneyHosts.has(h) : true)
       // A target's slice of the fleet: an even split, except the money targets
       // of a MIXED split (progress.js's priced money share, farm mode), which
       // split the money share between them — the farm takes what they leave.
@@ -1948,6 +2049,9 @@ export async function main(ns) {
         // lands, so the drops sum to what this controller earned from it.
         const dropped = s.lastMoney !== null && t.money < s.lastMoney ? s.lastMoney - t.money : 0
         if (dropped > 0) s.earned += dropped
+        const counted = metered(host)
+        if (counted && dropped > 0) meterAdd(meter, 'money', dropped)
+        if (counted && s.eUnit === undefined) s.eUnit = expPerThread(ns.getServer(host).baseDifficulty)
         // Same drop, read as a measurement rather than as income. Must run
         // BEFORE lastMoney is overwritten: the denominator is the balance the
         // hack actually landed against.
@@ -1956,6 +2060,7 @@ export async function main(ns) {
 
         const weakenTime = t.hackTime * 4
         const growTime = t.hackTime * 3.2
+        s.wT = weakenTime
 
         if (s.phase === 'drain') {
           if (now < s.quietUntil) continue
@@ -1970,6 +2075,7 @@ export async function main(ns) {
           if (now < (s.nextPrep || 0)) continue
           s.nextPrep = now + 1000
           if (t.sec <= t.minSec + 0.01 && t.money >= t.maxMoney * 0.999) {
+            s.batchSince = now
             s.phase = 'batch'
             s.pending = []
             s.nextLaunch = now
@@ -2019,6 +2125,7 @@ export async function main(ns) {
             const wNeed = Math.min(Math.ceil((projSec - t.minSec) / WEAKEN_PER_THREAD), wShare)
             const w = spread(ns, free, ram, 'weaken', host, wNeed, batchId++)
             if (w) {
+              if (counted) meterAdd(meter, 'moneyE', w * s.eUnit)
               s.pending.push({ at: now + weakenTimeNow, weaken: w * WEAKEN_PER_THREAD })
               opsDispatched++
               threadsDispatched += w
@@ -2052,6 +2159,7 @@ export async function main(ns) {
           const wLaunched = wCover >= 1 ? spread(ns, free, ram, 'weaken', host, wCover, batchId++) : 0
           const gLaunched = gWant >= 1 ? spread(ns, free, ram, 'grow', host, gWant, batchId++) : 0
 
+          if (counted) meterAdd(meter, 'moneyE', (gLaunched + wLaunched) * s.eUnit)
           if (gLaunched) s.pending.push({ at: now + growTimeNow, grow: gLaunched })
           if (wLaunched) s.pending.push({ at: now + weakenTimeNow, weaken: wLaunched * WEAKEN_PER_THREAD })
           opsDispatched += (gLaunched ? 1 : 0) + (wLaunched ? 1 : 0)
@@ -2133,6 +2241,7 @@ export async function main(ns) {
         // long a spill weaken holds its RAM — so it is the right thing to hold
         // back from spill.
         reserved += Math.min(slice, Math.ceil(weakenTime / period) * plan.gb)
+        if (counted) moneyHeld += Math.min(slice, Math.ceil(weakenTime / period) * plan.gb)
 
         if (now < s.nextLaunch) continue
         // Safe-window gate — with the pipeline's OWN transient tolerated.
@@ -2194,6 +2303,10 @@ export async function main(ns) {
         opsDispatched += placed.length
         threadsDispatched += placed.reduce((a, o) => a + o.threads, 0)
         s.batches++
+        if (counted) {
+          const pc = Math.min(1, Math.max(0, t.chance ?? 1))
+          meterAdd(meter, 'moneyE', s.eUnit * (plan.h * (pc + (1 - pc) / 4) + plan.w1 + plan.g + plan.w2))
+        }
         // The hack's pad is weakenTime - hackTime and its own duration is
         // hackTime, so it lands at exactly now + weakenTime. h and plan.money
         // are captured HERE because both move before it lands: the plan is
@@ -2244,13 +2357,25 @@ export async function main(ns) {
       if (!farm.on && anyBatching && targets.length) {
         const idle = [...free.values()].reduce((a, b) => a + b, 0) - reserved
         const threads = Math.floor(idle / ram.weaken)
-        if (threads >= 1) spread(ns, free, ram, 'weaken', targets[0], threads, batchId++)
+        if (threads >= 1) meterAdd(meter, 'moneyE', spread(ns, free, ram, 'weaken', targets[0], threads, batchId++) * (S.get(targets[0])?.eUnit ?? 0))
       }
 
       // --- the exp farm (exp mode only) --------------------------------------
       // After the manip batches have taken what they need: the farm is the
       // fleet's spill in a node where the spill is the product.
       if (farm.on) farmTick(ns, free, ram, now, () => batchId++)
+
+      // --- the split's meter (splitctl.js) -------------------------------------
+      // Settled = every counted money target batching for a full weaken time
+      // and the farm out of prep (the meter latches it once per split).
+      if (meter) {
+        const mh = farm.on ? [...farm.moneyHosts] : targets
+        const ready = mh.every((h) => {
+          const q = S.get(h)
+          return !!q && q.phase === 'batch' && q.wT > 0 && now - (q.batchSince ?? now) >= q.wT
+        }) && (!farm.on || (!!farm.target && !farm.prepping))
+        meterTick(meter, now, tickMs, { ready, moneyGB: moneyHeld, farmGB: farm.on ? farm.held.reduce((a, x) => a + x.gb, 0) : 0 })
+      }
 
       // --- status -----------------------------------------------------------
       if (now >= nextStatus) {
@@ -2410,6 +2535,12 @@ export async function main(ns) {
           // The farm's mirror (farm mode): money batching's model income and
           // k, for the verdict's money side.
           moneyPreview,
+          // THE CLOSED LOOP's inputs (splitctl.js): what the running split
+          // measured (splitMeasure: windowed rates, SE, RAM held, per GB —
+          // this file's counters, not a model) and the model curves the
+          // controller calibrates with it (splitModel).
+          splitMeasure: meter ? meterReport(meter, now) : null,
+          splitModel,
           // WHY THE FLEET FARMS OR BATCHES: progress.js's priced split
           // (expfarm.splitVerdict, /tel/expfarm.txt) — farm vs money exit
           // hours and the why, beside the side that runs. BitNode 8 farms on

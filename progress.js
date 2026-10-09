@@ -136,6 +136,8 @@ import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from '
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: the manipCurve interpolation (prices port openers' manipulation channel).
 import { rateAt, manipLostExp, farmOrMoney, splitVerdict } from 'expfarm.js'
+// Pure: the split's closed-loop controller (measure -> calibrate -> exit).
+import { splitControl, splitConditioned, splitRaw } from 'splitctl.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -4416,6 +4418,28 @@ function installPointOf(ns, info, gate) {
 }
 
 /**
+ * THE EXIT INPUTS AT THE SPLIT THE RUN WILL FOLLOW (splitctl.splitConditioned,
+ * the controller's own income/exp-at-share function and numbers): the hacking
+ * stream the inputs carry — the income posterior's hacking part, else the
+ * level stream — is replaced by the calibrated money curve at the split the
+ * controller chose; exp moves by the same curves' ratio. Live BN12 16:43Z the
+ * measured hacking stream fell $6.68e7/s -> $1.70e5/s with the exp farm
+ * holding the fleet, and the exit priced the whole future at it (46h, then
+ * 28.9h). Not modelled: the level's growth within the life (the measured rate
+ * did not carry it either). `split` says what was done, or why not; the
+ * controller undoes it (splitctl.splitRaw) to price from the running split.
+ */
+function splitConditionedOf(ns, info, base) {
+  try {
+    const hackRate = base?.incomeFromPrior === true && typeof base.incomeFlatPerSec === 'number' ? Math.max(0, base.incomePerSec - base.incomeFlatPerSec) : typeof econNow?.levelPerSec === 'number' ? econNow.levelPerSec : null
+    const x = splitConditioned(base, { rec: readJson(ns, '/tel/expfarm.txt'), batch: readJson(ns, '/tel/batch.txt'), lastAugReset: info?.lastAugReset ?? null, nowMs: Date.now(), hackPerSec: hackRate })
+    return x?.split?.conditioned ? x : { ...x, split: { ...(x?.split ?? {}), hackPerSec: hackRate } }
+  } catch (e) {
+    return { ...base, split: { conditioned: false, why: `splitConditioned threw: ${String(e).slice(0, 100)}` } }
+  }
+}
+
+/**
  * MONEY BATCHES OR THE EXP FARM — two simulated exits, in every node.
  *
  * batch.js ran the exp farm only where hacking pays nothing (BitNode 8's
@@ -4441,9 +4465,26 @@ function installPointOf(ns, info, gate) {
  * flat) — a floor on the farm's side. Publishes /tel/expfarm.txt {farm,
  * running, priced, farmH, moneyH, mixed, why}; batch.js farms on a fresh
  * farm: true and republishes it in batch.txt expFarmVerdict.
+ *
+ * CLOSED LOOP since 2026-10-09 (splitctl.js): wherever batch.js publishes
+ * its meter (splitMeasure) and model curves (splitModel), from either mode,
+ * the split is splitControl's — the open-loop paths below remain only for a
+ * batch.js without them, and say OPEN LOOP. `control` carries the
+ * controller's estimates, error, dwell, last switch and state.
  */
 function farmVerdictOf(ns, info, inputs) {
-  const out = (farm, why, extra = {}) => ({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, farm, why, ...extra })
+  // The controller's state (splitctl.js) rides on every record this writes —
+  // a pass that cannot run it carries it, so a stale batch.txt at a life's
+  // start does not erase the calibration earlier lives measured.
+  const prevState = (() => {
+    try {
+      return readJson(ns, '/tel/expfarm.txt')?.control?.state ?? null
+    } catch {
+      return null
+    }
+  })()
+  const prevCtl = prevState && (prevState.bitNode ?? null) === (info?.currentNode ?? null) ? prevState : null
+  const out = (farm, why, extra = {}) => ({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, farm, why, control: prevCtl ? { state: prevCtl, why: 'carried: the controller did not run this pass' } : null, ...extra })
   try {
     const b = readJson(ns, '/tel/batch.txt')
     const t = readJson(ns, '/tel/status.txt')
@@ -4459,20 +4500,42 @@ function farmVerdictOf(ns, info, inputs) {
     // encode as a fresh verdict.
     const note = { notSimulated: "the higher level's reputation in lives before the final one (a floor on the farm)" }
     const gridWhy = (r) => r.grid.map((g) => `${Math.round(g.frac * 100)}% ${g.hours.toFixed(2)}h`).join(', ')
+    // THE CLOSED LOOP (splitctl.js), from either mode — a life opens in money
+    // mode (s = 1): batch.js's measurement of the running split
+    // (splitMeasure) calibrates its model curves (splitModel) and the
+    // controller decides the next split on the exit — dwell, step limit,
+    // priced retarget, exploration only when knowing could move the optimum.
+    // It prices from the inputs AS MEASURED at the running split (splitRaw:
+    // exitInputsGen conditions them on the split this verdict chose last
+    // pass) with the hacking stream they carry (split.hackPerSec). Its state
+    // is this file's own last record, same node: the calibration carries over
+    // an install, the switches do not. Open-loop below only without a meter.
+    const raw = splitRaw(inputs)
+    const share0 = b.expFarm ? (b.expFarm.moneyShare > 0 && b.expFarm.moneyShare < 1 ? b.expFarm.moneyShare : 0) : 1
+    let loopWhy = null
+    if (b.splitModel?.shares && b.splitMeasure && scriptExp !== null && raw?.expPerSec > 0) {
+      const r = splitControl({ bestExitPolicy, inputs: raw, share0, measure: b.splitMeasure, model: b.splitModel, state: prevCtl, nowMs: Date.now(), lastAugReset: info?.lastAugReset ?? null, bitNode: info?.currentNode ?? null, scriptExpPerSec: scriptExp, hackPerSec: inputs?.split?.hackPerSec ?? null })
+      if (r.frac !== null) {
+        const { state, grid, ...pub } = r
+        const cm = r.calib.money
+        return out(r.frac < 1, `money share ${Math.round(r.frac * 100)}% [${r.kind}] ${r.why} — by share ${grid.filter((g) => Math.round(g.frac * 100) % 10 === 0 || g.frac === share0).map((g) => `${Math.round(g.frac * 100)}% ${g.hours === null ? '?' : g.hours.toFixed(2)}h`).join(', ')}; money measured ${cm.measuredAtS0 === null ? 'n/a' : `$${Math.round(cm.measuredAtS0)}/s`} vs model $${Math.round(cm.modelAtS0 ?? 0)}/s`, { running: b.expFarm ? 'farm' : 'money', priced: true, moneyShare: r.frac, share0, shareH: r.shareH, runH: r.runH, farmH: r.farmH, moneyH: r.moneyH, withH: r.farmH, withoutH: r.moneyH, grid, scriptExpPerSec: scriptExp, calibration: 'CLOSED LOOP: each stream = model x exp(a + b(s - 0.5)), posterior on batch.js splitMeasure (control.calib: scale, tilt, model vs measured err)', control: { ...pub, state }, ...note })
+      }
+      loopWhy = `closed loop unpriced: ${r.why}`
+    }
+    const carried = prevCtl ? { state: prevCtl, why: `${loopWhy ?? 'no meter or model from batch.js'}: state carried` } : null
     if (b.expFarm) {
       const mp = b.moneyPreview
-      const share0 = b.expFarm.moneyShare > 0 && b.expFarm.moneyShare < 1 ? b.expFarm.moneyShare : 0
-      const keep = (why) => out(true, `split UNPRICED this pass, the running one kept (${Math.round(share0 * 100)}% money): ${why}`, { running: 'farm', priced: false, moneyShare: share0 })
-      if (scriptExp === null || !(inputs?.expPerSec > 0)) return keep('no measured script exp rate')
+      const keep = (why) => out(true, `split UNPRICED this pass, the running one kept (${Math.round(share0 * 100)}% money): ${loopWhy ? `${loopWhy}; ` : ''}${why}`, { running: 'farm', priced: false, moneyShare: share0, control: carried })
+      if (scriptExp === null || !(raw?.expPerSec > 0)) return keep('no measured script exp rate')
       if (!(mp?.k > 0) || !(mp?.modelIncomePerSec >= 0)) return keep(`no money preview to price (${mp?.why ?? 'batch.js published none'})`)
-      const r = splitVerdict(bestExitPolicy, inputs, { share0, scriptExpPerSec: scriptExp, k: mp.k, moneyPerSec: mp.modelIncomePerSec })
+      const r = splitVerdict(bestExitPolicy, raw, { share0, scriptExpPerSec: scriptExp, k: mp.k, moneyPerSec: mp.modelIncomePerSec })
       if (r.farm === null) return keep(r.why)
-      return out(r.farm, `money share ${Math.round(r.frac * 100)}%: exit ${r.shareH.toFixed(2)}h (running ${Math.round(share0 * 100)}% ${r.runH.toFixed(2)}h; farm alone ${r.farmH.toFixed(2)}h, money alone ${r.moneyH.toFixed(2)}h) — by share ${gridWhy(r)}; money side k ${mp.k.toFixed(1)}, $${Math.round(mp.modelIncomePerSec)}/s on ${(mp.targets ?? []).join(',')}`, { running: 'farm', priced: true, moneyShare: r.frac, share0, shareH: r.shareH, runH: r.runH, farmH: r.farmH, moneyH: r.moneyH, withH: r.farmH, withoutH: r.moneyH, grid: r.grid, expMultiple: mp.k, moneyPerSec: mp.modelIncomePerSec, scriptExpPerSec: scriptExp, calibration: `money side NOT CALIBRATED (${mp.calibration ?? 'batch.js target-count model'}); the running split = the inputs as measured`, ...note })
+      return out(r.farm, `money share ${Math.round(r.frac * 100)}%: exit ${r.shareH.toFixed(2)}h (running ${Math.round(share0 * 100)}% ${r.runH.toFixed(2)}h; farm alone ${r.farmH.toFixed(2)}h, money alone ${r.moneyH.toFixed(2)}h) — by share ${gridWhy(r)}; money side k ${mp.k.toFixed(1)}, $${Math.round(mp.modelIncomePerSec)}/s on ${(mp.targets ?? []).join(',')}`, { running: 'farm', priced: true, moneyShare: r.frac, share0, shareH: r.shareH, runH: r.runH, farmH: r.farmH, moneyH: r.moneyH, withH: r.farmH, withoutH: r.moneyH, grid: r.grid, expMultiple: mp.k, moneyPerSec: mp.modelIncomePerSec, scriptExpPerSec: scriptExp, calibration: `OPEN LOOP (${loopWhy ?? 'batch.js publishes no splitMeasure/splitModel'}): money side NOT CALIBRATED (${mp.calibration ?? 'batch.js target-count model'}); the running split = the inputs as measured`, control: carried, ...note })
     }
     const pv = b.expFarmPreview
     if (!pv?.perGB || !(pv.usedGB > 0) || !(pv.totalGB > 0)) return out(false, `no farm preview to price (${pv?.why ?? 'batch.js published none'})`)
-    if (scriptExp === null || !(inputs?.expPerSec > 0)) return out(false, 'no measured script exp rate')
-    const r = farmOrMoney(bestExitPolicy, inputs, { scriptExpPerSec: scriptExp, perGB: pv.perGB, usedGB: pv.usedGB, totalGB: pv.totalGB, batchMoneyPerSec: b.totals?.earnedPerSec > 0 ? b.totals.earnedPerSec : 0 })
+    if (scriptExp === null || !(raw?.expPerSec > 0)) return out(false, 'no measured script exp rate', { control: carried })
+    const r = farmOrMoney(bestExitPolicy, raw, { scriptExpPerSec: scriptExp, perGB: pv.perGB, usedGB: pv.usedGB, totalGB: pv.totalGB, batchMoneyPerSec: b.totals?.earnedPerSec > 0 ? b.totals.earnedPerSec : 0 })
     if (r.farm === null) return out(false, r.why)
     return out(r.farm, `money share ${Math.round(r.frac * 100)}%: exit ${r.shareH.toFixed(2)}h (running 100% ${r.runH.toFixed(2)}h; farm alone ${r.farmH.toFixed(2)}h on ${pv.target}, script exp x${r.k.toFixed(2)}, -$${Math.round(r.batchMoney)}/s) — by share ${gridWhy(r)}`, { running: 'money', priced: true, moneyShare: r.frac, share0: 1, shareH: r.shareH, runH: r.runH, farmH: r.farmH, moneyH: r.moneyH, withH: r.farmH, withoutH: r.moneyH, grid: r.grid, expMultiple: r.k, target: pv.target, batchMoneyPerSec: r.batchMoney, scriptExpPerSec: scriptExp, calibration: 'farm side NOT CALIBRATED (expfarm.js model); the money side = the batcher as measured', ...note })
   } catch (e) {
@@ -4855,7 +4918,10 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   incomePostOf(ns, info, player)
   expPostOf(ns, info, player)
   yield
-  const out = exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+  // THE SPLIT THE RUN WILL FOLLOW (splitConditionedOf): every exit of the
+  // pass prices income and exp at the controller's split, not at whatever
+  // the batcher earned under the split it ran.
+  const out = splitConditionedOf(ns, info, exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet))
   yield
   // EVERY MONEY STREAM ONCE, with its own growth driver (the final window's
   // money leg is the binding one on the trader's curve): the committed gang

@@ -142,6 +142,24 @@ export function wavePeriod({ poolGB, T, phi, chance = 1, weakenRate = 1 }) {
 }
 
 /**
+ * THE RAM THE FARM HOLDS IN STEADY STATE on a pool of poolGB — batch.js
+ * farmTick's own sizing (wavePeriod, waveSize with its 3 x gap + 300ms
+ * floor): a wave every period holds its hacks for T, its weaken for 4T and
+ * one grow for 3.2T. Capped at the pool. The farm is TARGET-limited past
+ * floor(500/phi) hack threads a wave, so this saturates — live BN12
+ * 2026-10-09 16:00Z the farm held ~4.5TB of a 36TB fleet. The split's
+ * farm-side model (splitctl.js) is expScore x this, not x the pool.
+ */
+export function farmHoldGB({ poolGB, T, phi, chance = 1, weakenRate = 1, gapMs = 400 }) {
+  if (!pos(poolGB) || !pos(T) || !pos(phi)) return 0
+  const period = wavePeriod({ poolGB, T, phi, chance, weakenRate }) ?? 1000
+  const p = Math.max(period, 3 * gapMs + 300)
+  const w = waveSize({ poolGB, T, periodMs: p, phi, chance, weakenRate })
+  if (!w) return 0
+  return Math.min(poolGB, (w.hack * RAM_HACK * T + w.weaken * RAM_WEAKEN * 4 * T + 1.75 * 3.2 * T) / p)
+}
+
+/**
  * THE MANIPULATION VERDICT — trajectory against trajectory.
  *
  * Serving the trader's manip hosts (batch.js HWGW with {stock: true} on one
