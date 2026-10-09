@@ -16,7 +16,10 @@
 // `presend` W: the solver ponders W work under each of our moves (from ply
 // from-1) and plays its pre-sent answer to the AI's reply, as live does; `gaps`
 // true: the clock seeds replies a turn ahead by the case's own play cadence
-// (golib clockSeed gaps, measured negative live: off in go-solver).
+// (golib clockSeed gaps, measured negative live: off in go-solver);
+// `liveTree` true: the forced plies before `from` grow the tree as live did
+// (searched or pre-sent, the ponder from ply 0), so the check ply sees live's
+// stale nodes (go-regress playCheck liveTree).
 //
 //   GL1 every case marked `fixed` is still WON from each of its checks (FAIL
 //       if not: a regression); every `open` case is reported (WARN while
@@ -63,6 +66,7 @@ export async function run() {
     const floors = (v) => list(v).split(",").filter((s) => s && s !== "none").map((s) => s.split(":")).map(([o, e]) => `${o}:${Number(e)}`).sort().join(",");
     same("open-pass-visits", list(dflt("open-pass-visits")).split(",").filter((s) => s && s !== "none").join(","), [...R.OPEN_PASS_VISITS].sort().join(","));
     same("prior-floor-on", floors(dflt("prior-floor-on")), [...R.PRIOR_FLOOR_ON].map(([o, e]) => `${o}:${e}`).sort().join(","));
+    same("late-cap-on", floors(dflt("late-cap-on")), [...R.LATE_CAP_ON].map(([o, e]) => `${o}:${e}`).sort().join(","));
     await R.regressEnv();
   } catch (e) {
     c1.warn("the opponent model could not load — the corpus did NOT run", String(e?.message ?? e).slice(0, 200));
@@ -83,7 +87,7 @@ export async function run() {
       const t0 = Date.now();
       let res;
       try {
-        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}) });
+        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}), ...(ch.liveTree ? { liveTree: true } : {}) });
       } catch (e) {
         c2.fail(`${fx.id} from ply ${ch.from}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
         continue;
@@ -135,6 +139,26 @@ export async function run() {
       const d = off.decisions.find((x) => x.ply === ch.from);
       if (off.won || d?.mv !== "P") c5.warn(`seed ${ch.seed} presend ${ch.presend}: under 'allow' the replay no longer pre-sends PASS and loses (${d?.mv}, ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}) — the bug's reproduction drifted`);
       else c5.note(`seed ${ch.seed} presend ${ch.presend}: 'allow' -> ${d.mv}${d.pre ? " (pre-sent)" : ""}, LOST ${off.black}-${off.white}`);
+    }
+  // GL6: the 20:52:10Z Daedalus case (open): its ply-2 checks still reproduce
+  // live — without the late-prior cap the ponder pre-sends the stale 4,3 and
+  // the game is lost 0-27.5 — and the cap (golib nn.lateCap 16, measured
+  // neutral and off) still wins them, so the option keeps doing what it was
+  // built for.
+  const c6 = new Check("GL6", "the 2026-10-09 20:52:10Z Daedalus case: without the late-prior cap the replayed ponder pre-sends the stale 4,3 at ply 2 and loses; nn.lateCap 16 wins it");
+  checks.push(c6);
+  const dl = fixture.cases.find((c) => c.id === "live-2026-10-09T20:52:10.371Z-Daedalus");
+  if (!dl) c6.fail("the case is not in the corpus");
+  else
+    for (const ch of dl.checks.filter((x) => x.liveTree)) {
+      c6.examined(1);
+      const off = await R.playCheck(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: -1 } });
+      const d = off.decisions.find((x) => x.ply === ch.from);
+      if (off.won || d?.mv !== "4,3") c6.warn(`seed ${ch.seed} presend ${ch.presend}: with the cap off the replay no longer pre-sends 4,3 and loses (${d?.mv}, ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}) — the bug's reproduction drifted`);
+      else c6.note(`seed ${ch.seed} presend ${ch.presend}: cap off -> ${d.mv}${d.pre ? " (pre-sent)" : ""}, LOST ${off.black}-${off.white}`);
+      const on = await R.playCheck(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: 16 } });
+      if (!on.won) c6.fail(`seed ${ch.seed} presend ${ch.presend}: lateCap 16 LOST ${on.black}-${on.white}`, `line ${on.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
+      else c6.note(`seed ${ch.seed} presend ${ch.presend}: lateCap 16 WON ${on.black}-${on.white}`);
     }
   return checks;
 }

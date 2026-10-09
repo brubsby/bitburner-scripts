@@ -70,6 +70,8 @@ const NET_FILES = { outcome: "tools/goai/smallnet-5-o2.json", b4c32: "tools/goai
 export const OUTCOME_ON = new Set(["Tetrads"]);
 export const SMALLNET_ON = new Set(["Tetrads", "Daedalus", "Illuminati", "SlumSnakes", "Netburners"]);
 export const PRIOR_FLOOR_ON = new Map();
+// Mirror of go-solver.mjs --late-cap-on (golib nn.lateCap, THE LATE PRIOR).
+export const LATE_CAP_ON = new Map();
 // Mirror of go-solver.mjs --open-pass-visits (golib opts.openPass 'visits').
 export const OPEN_PASS_VISITS = new Set(["Netburners"]);
 export const openPassFor = (opponent) => (OPEN_PASS_VISITS.has(planKey(opponent)) ? "visits" : null);
@@ -85,7 +87,8 @@ export async function solverNn(opponent, N) {
   const net = nets[which];
   if (net.size !== N) return null;
   const floor = PRIOR_FLOOR_ON.get(key) ?? 0;
-  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}), ...(floor ? { priorFloor: floor } : {}) };
+  const lateCap = LATE_CAP_ON.get(key);
+  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}), ...(floor ? { priorFloor: floor } : {}), ...(Number.isFinite(lateCap) ? { lateCap } : {}) };
 }
 
 /** go-games.txt / goplan opponent key -> the game's GoOpponent name. */
@@ -156,8 +159,14 @@ export function caseGaps(fx, golib = env?.golib) {
  *        played when it has one (the path ~60-85% of live moves take)
  *   gaps: the clock's play cadence (true: the case's own, caseGaps)
  *   openPass: golib opts.openPass (default: go-solver's, openPassFor)
+ *   liveTree: the forced plies grow the session's tree as live grew it — each
+ *        is searched `work` (or, with presend, answered from the ponder when
+ *        it holds the board) and the ponder runs from ply 0 — before the
+ *        logged move is played. Without it a forced ply only re-roots (no
+ *        search), so a check ply's tree holds none of the earlier searches'
+ *        stale, deeper nodes (the 2026-10-09 20:52:10Z Daedalus case).
  */
-export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null, presend = 0, openPass = undefined, gaps = null } = {}) {
+export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null, presend = 0, openPass = undefined, gaps = null, liveTree = false } = {}) {
   const E = await regressEnv();
   const { golib, model, m } = E;
   const N = fx.size;
@@ -277,7 +286,19 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
       // The session is rooted on the board after a greedy cheat's first stone
       // (the second-stone request's root): commit the second stone alone.
       let greedySecond = false;
-      if (ply < from && logged) {
+      if (ply < from && logged && liveTree && !CH) {
+        // liveTree: grow the tree as live did (a search, or the ponder's
+        // pre-sent answer), then play the logged move regardless.
+        const key = simpleOf().join("");
+        const valid = validOf();
+        const preA = presend > 0 ? answers.find((a) => a.b === key && a.pc === (oppPassed ? 1 : 0) && (a.pass || valid[a.x]?.[a.y])) : null;
+        answers = [];
+        const clock = cfg.clock ? { T: tAt(ply), kw, turnTicks: 6, jitter: 5, eps: 0.1, ...(G ? { gaps: G } : {}) } : undefined;
+        const r0 = sess.setRoot(simpleOf(), valid, { history: st.previousBoards.slice(), opponentPassed: oppPassed, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) });
+        if (r0 && !preA) await sess.search({ maxms: 60000, untilWork: work, untilVisits: 40 * work });
+        decisions.push({ ply, mv: logged.m, forced: true, ...(preA ? { pre: `${preA.pass ? "P" : `${preA.x},${preA.y}`}` } : {}), top: !preA && r0 ? sess.best()?.[0]?.top ?? [] : [] });
+        mv = logged.m;
+      } else if (ply < from && logged) {
         mv = logged.m;
         if (mv.includes("+")) cheats++;
         // Keep the session's tree in step with the forced line (cheap: no search).
@@ -381,7 +402,7 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         const [[x1, y1], [x2, y2]] = mv.split("+").map((p) => p.split(",").map(Number));
         sess.commit(x1, y1, { x: x2, y: y2 });
       } else sess.commit(...mv.split(",").map(Number));
-      if (presend > 0 && !CH && ply >= from - 1 && sess.pondering && st.passCount < 2) {
+      if (presend > 0 && !CH && (liveTree || ply >= from - 1) && sess.pondering && st.passCount < 2) {
         if (cfg.clock) sess.setClock({ T: tAt(ply), kw, turnTicks: 6, jitter: 5, eps: 0.1, ...(G ? { gaps: G } : {}) });
         await sess.ponder(0, { work: presend });
         answers = sess.ponderAnswers({ minWork: work, max: 4 });

@@ -1235,6 +1235,30 @@ export function modelSession(N, komi, model, opts = {}) {
   // net: there the net's depth-1 values misread positions the single's reused
   // tree had valued by playout (go.js SETTINGS.cheat.secondNet).
   let nnDepth = NN_DEPTH
+  // nn.lateCap K (see nnEvalNode, THE LATE PRIOR): -1 / absent = off.
+  const LATE_CAP = NN && Number.isFinite(NN.lateCap) && NN.lateCap >= 0 ? NN.lateCap : -1
+  let lateCaps = 0
+  // A node's statistics scaled by f (means kept): visits and work rounded down.
+  const scaleStats = (n, f) => {
+    const v = n.visits
+    n.visits = Math.floor(v * f)
+    const g = v > 0 ? n.visits / v : 0
+    n.sum *= g
+    n.wins *= g
+    n.work = Math.floor(n.work * f)
+  }
+  // A B node searched without the net that the net will now reach: capped
+  // to LATE_CAP visits over its children (see nnEvalNode).
+  const capStale = (n) => {
+    if (LATE_CAP < 0 || !n || n.kind !== 0 || n.prior || n.terminal || !n.children.size) return
+    let tot = 0
+    for (const c of n.children.values()) tot += c.visits
+    if (tot <= LATE_CAP) return
+    const f = LATE_CAP / tot
+    for (const c of n.children.values()) scaleStats(c, f)
+    scaleStats(n, f)
+    lateCaps++
+  }
   // nn.priorFloor (see priorOf): 0 = the net's prior as it is.
   const PRIOR_FLOOR = NN && Number.isFinite(NN.priorFloor) ? Math.min(1, Math.max(0, NN.priorFloor)) : 0
   // nn.priorFloorRoot: the floor only at DECISION nodes — the search's root,
@@ -1444,8 +1468,26 @@ export function modelSession(N, komi, model, opts = {}) {
         node.priorN = 0
         let z = 0
         if (node.untried) for (const a of node.untried) z += priorOf(node, a.idx)
+        // THE LATE PRIOR (nn.lateCap K): a node that was SEARCHED before the
+        // net reached it — grown beyond nn.maxDepth under an earlier root or
+        // ponder, and now within it (a reply of a later ponder, a reused
+        // root) — keeps its children's subtrees, but their visit counts are
+        // scaled so they total at most K (means kept; K 0 drops them), and its
+        // prior is normalised over every action as on a fresh node. Without
+        // it the playout-only statistics outvote the net: the 2026-10-09
+        // 20:52:10Z Daedalus loss pre-sent 4,3 at ply 2 (from ply 3 every line
+        // loses), which a fresh search with the net never picks (0/96 replays)
+        // — the node had ~1000 work of playout-only visits from the ponder a
+        // move earlier, and the answer was published at once.
+        // MEASURED NEUTRAL as a default (go-solver --late-cap-on, 2160 paired
+        // Daedalus games: K 0 -0.5%, K 16 +0.2%, more losses in both): off.
+        const late = LATE_CAP >= 0 && node.children.size > 0
+        if (late) {
+          for (const idx of node.children.keys()) z += priorOf(node, idx)
+          capStale(node)
+        }
         node.priorZ = z > 0 ? z : 1
-        node.priorN = node.untried ? node.untried.length : 0
+        node.priorN = (node.untried ? node.untried.length : 0) + (late ? node.children.size : 0)
         node.prior = true
         return e
       })
@@ -1931,6 +1973,10 @@ export function modelSession(N, komi, model, opts = {}) {
           reused.untried.push({ idx: PASS, h: -1e6 })
         }
         rootNode = reused
+        // THE LATE PRIOR: a reused root searched before the net reached it
+        // answers nothing at once (a request answers a root already holding
+        // the budget's work without searching).
+        if (nnDepth >= 0) capStale(reused)
       } else {
         countPoints()
         rootNode = mkB(b, null, passCount, valid, Number.isFinite(ply) ? ply : Math.floor(rootHistory.length / 2))
@@ -2046,6 +2092,10 @@ export function modelSession(N, komi, model, opts = {}) {
       }
       ponderNode = w && !w.terminal ? w : null
       if (ponderNode) {
+        // THE LATE PRIOR: the AI's replies already drawn under this move are
+        // decision nodes now (their answers are pre-sent): a reply searched
+        // before the net reached it is capped before it can be published.
+        if (nnDepth >= 1) for (const e of ponderNode.samples.values()) capStale(e.child)
         // The history at the W node is the root's plus the root board.
         if (ponderNode.moved) rootHistory = [rootNode.s, ...rootHistory]
         ponderNode.parent = null
@@ -2144,6 +2194,10 @@ export function modelSession(N, komi, model, opts = {}) {
     },
     get rootVisits() {
       return rootNode ? rootNode.visits : 0
+    },
+    /** Nodes whose net prior came after they were searched (nn.lateCap on). */
+    get lateCaps() {
+      return lateCaps
     },
     /** THE PASS-ONLY GUARD's count and last hit (0 = the pair filters never emptied a node). */
     get jointGuard() {

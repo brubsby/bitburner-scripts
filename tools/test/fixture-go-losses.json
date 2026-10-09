@@ -7252,7 +7252,7 @@
      "s": "pre"
     }
    ],
-   "note": "Daedalus 5x5, BN12, no cheats; KNOWN LOST (open). Not lost from the start: from ply 0/1 the current solver wins 8/8 seeds; the 1,3 at ply 1 (pre-sent) is fine (4,2 next wins 16-5.5). Lost at ply 2: the pre-sent 2,1 \u2014 what an 800-work request plays too (0/8 seeds win). b4c32 gives the winning 4,2 (16-5.5) / 0,1 (13-7.5) priors < 0.003 and 2,1 0.64, and values 2,1/4,2 at 0.95; PUCT never tries 4,2 (no-net search finds it at 200 work). From ply 3 every legal move loses (1600-3200 work); the final pre-sent pass had only own-eye fills (0,1 0,3 1,2 1,4): 9-12.5 on every line. A prior floor (golib nn.priorFloor 0.05-0.2) wins it 8/8 but measured -2.0% to -6.2% power/h on Daedalus (go-solver PRIOR FLOOR), so it is off.",
+   "note": "Daedalus 5x5, BN12, no cheats; KNOWN LOST (open). Not lost from the start: from ply 0/1 the current solver wins 8/8 seeds; the 1,3 at ply 1 (pre-sent) is fine (4,2 next wins 16-5.5). Lost at ply 2: the pre-sent 2,1 — what an 800-work request plays too (0/8 seeds win). b4c32 gives the winning 4,2 (16-5.5) / 0,1 (13-7.5) priors < 0.003 and 2,1 0.64, and values 2,1/4,2 at 0.95; PUCT never tries 4,2 (no-net search finds it at 200 work). From ply 3 every legal move loses (1600-3200 work); the final pre-sent pass had only own-eye fills (0,1 0,3 1,2 1,4): 9-12.5 on every line. A prior floor (golib nn.priorFloor 0.05-0.2) wins it 8/8 but measured -2.0% to -6.2% power/h on Daedalus (go-solver PRIOR FLOOR), so it is off.",
    "nets": true,
    "checks": [
     {
@@ -7504,6 +7504,578 @@
    ],
    "status": "fixed",
    "note": "Netburners 5x5, BN12, streak 88, no cheats, 9-13.5. Lost to two PRE-SENT PASSES on an open board: ply 3 (the AI took the vital 3,2; 3,2 there wins 16/16 replays) and ply 8 (the AI took 0,3). Not the 200ms budget (ply 0's 55-visit 2,2 is what 1600 work plays too) and not a missing objective (Netburners is mirror 'always' with power.on false: objective null by design). A PASS while the AI has not passed is a bet on the AI's seeded reply (golib clockSeed); the ponder prices it at d=1, where the seed is blurred (turnS 0.70 -> 4 +- 5 ticks vs a live cadence of 2-4), and golib.modelRootPasses let it through on a handful of visits ('clearly better', +0.02). 97% of open passes (harness 223/230) are pre-sent. FIX: openPass 'visits' for Netburners (go-solver --open-pass-visits): an open PASS must be the most-visited child; +2.6% [+0.4, +5.0] power/s, 1200 paired. PARTIAL: in some ply-8 reproductions (ponder seeds 4/6) the PASS was the most-visited child (1406/1527 visits, wr 0.57 vs 0,3 at 0.10) and 'visits' would not refuse it. Rejected: 'never' (from ply 9 the only stone 3,0 loses every line and the pass wins 19-3.5), the clock's measured cadence (clockSeed gaps; negative on Daedalus/Illuminati), 'request', 'fresh'."
+  },
+  {
+   "id": "live-2026-10-09T20:52:10.371Z-Daedalus",
+   "source": "live",
+   "at": "2026-10-09T20:52:10.371Z",
+   "opponent": "Daedalus",
+   "size": 5,
+   "komi": 5.5,
+   "start": "..#.#................#...",
+   "streakBefore": 179,
+   "live": {
+    "black": 0,
+    "white": 27.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "2,3",
+     "T": 2428538000,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.229,
+       498,
+       0.319
+      ],
+      [
+       1,
+       3,
+       0.229,
+       35,
+       0.286
+      ],
+      [
+       3,
+       2,
+       -0.032,
+       6,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,3",
+     "T": 2428539000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "3,3",
+     "T": 2428540200,
+     "s": "pre",
+     "ks": [
+      1
+     ]
+    },
+    {
+     "m": "1,2",
+     "r": "2,4",
+     "T": 2428540800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "3,4",
+     "T": 2428541600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "4,4",
+     "T": 2428542800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "4,2",
+     "T": 2428543600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "4,3",
+     "T": 2428544600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0",
+     "r": "P",
+     "T": 2428545600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,0",
+     "r": "P",
+     "T": 2428546600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,0",
+     "r": "P",
+     "T": 2428547400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "4,0",
+     "T": 2428548400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "2,2",
+     "T": 2428549000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "3,0",
+     "T": 2428549800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "2,0",
+     "T": 2428550800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0",
+     "r": "1,2",
+     "T": 2428551600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "P",
+     "T": 2428552600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "P",
+     "T": 2428553600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "P",
+     "T": 2428554800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,0",
+     "r": "P",
+     "T": 2428555600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,0",
+     "r": "0,0",
+     "T": 2428556600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "2,1",
+     "T": 2428557400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "1,0",
+     "T": 2428558000,
+     "s": "pre",
+     "ks": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,0",
+     "r": "3,0",
+     "T": 2428558800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "1,1",
+     "T": 2428560000,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.557,
+       1300873,
+       0
+      ],
+      [
+       0,
+       1,
+       -0.586,
+       7752,
+       0
+      ],
+      [
+       3,
+       1,
+       -0.586,
+       7325,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "3,2",
+     "T": 2428561200,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.58,
+       1330124,
+       0
+      ],
+      [
+       3,
+       1,
+       -0.602,
+       14679,
+       0
+      ],
+      [
+       3,
+       2,
+       -0.602,
+       12687,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2428562000,
+     "s": "req"
+    }
+   ],
+   "nets": true,
+   "checks": [
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 37,
+     "presend": 1200,
+     "liveTree": true,
+     "why": "ply 2 as live grew it (liveTree: ply 0 searched 800 work, the ponder 1200/1500 work under each move, ply 1 pre-sent 3,2): the 1,3 reply node was searched a move earlier BEYOND the net depth (playout-only visits), so the ponder pre-sends its stale 4,3 at once and the game is lost 0-27.5 exactly as live; nn.lateCap 0/16 pre-sends 3,3 and wins 14-13.5 (GL6), but measured neutral and off"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 37,
+     "presend": 1500,
+     "liveTree": true,
+     "why": "ply 2 as live grew it (liveTree: ply 0 searched 800 work, the ponder 1200/1500 work under each move, ply 1 pre-sent 3,2): the 1,3 reply node was searched a move earlier BEYOND the net depth (playout-only visits), so the ponder pre-sends its stale 4,3 at once and the game is lost 0-27.5 exactly as live; nn.lateCap 0/16 pre-sends 3,3 and wins 14-13.5 (GL6), but measured neutral and off"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 31,
+     "presend": 1500,
+     "liveTree": true,
+     "why": "ply 2 as live grew it (liveTree: ply 0 searched 800 work, the ponder 1200/1500 work under each move, ply 1 pre-sent 3,2): the 1,3 reply node was searched a move earlier BEYOND the net depth (playout-only visits), so the ponder pre-sends its stale 4,3 at once and the game is lost 0-27.5 exactly as live; nn.lateCap 0/16 pre-sends 3,3 and wins 14-13.5 (GL6), but measured neutral and off"
+    }
+   ],
+   "status": "open",
+   "note": "Daedalus 5x5, BN12, streak 179, no cheats, 0-27.5. NOT lost from move 1 (root 0.229 is the objective value, not a win rate: from ply 0 and ply 1 the current solver wins 8/8 seeds). LOST AT PLY 2 by the PRE-SENT 4,3 (from ply 3 every replay loses, 0/8; 3,3 wins 14-13.5). No fresh search with the net picks 4,3 (0/96 replays at 400-3200 work, ponder or request); the search WITHOUT the net does (2/6 at 800 work). The 1,3 reply node had been grown by the ply-0 ponder at depth 3 (beyond nn.maxDepth 1: playout-only UCB1 visits, ~1000 work), and when the ponder under 3,2 made it a decision node its stale most-visited child was published at once (golib ponderAnswers: node.work >= minWork) and outlived ~1000 more work of net search. KNOWN LOST (open): golib nn.lateCap K (cap a node the net reaches after it was searched to K child visits before it can answer) wins it, but MEASURED NEUTRAL on Daedalus (go-w0 live config, 2160 paired: K 0 -0.5% [-2.2,+1.1] lost 8 vs 2; K 16 +0.2% [-1.3,+1.7] lost 5 vs 2), so it is off (go-solver --late-cap-on none). From ply 0/1 a fresh request wins 8/8. After the AI first passed (ply 8) black was BEHIND 12-15.5, so passing would have lost too; the play-on stones (own-eye fills, then 1,1 = self-atari of the whole group) cost the loss area (12 x 0.75 = 9 power) and ~15 s, no swindle existed (white two-eyed)."
   }
  ]
 }

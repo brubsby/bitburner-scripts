@@ -465,12 +465,40 @@ const OPEN_PASS_VISITS = new Set(
     .filter((s) => s && s !== "none"),
 );
 console.log(`go-solver: open pass needs the most visits for ${OPEN_PASS_VISITS.size ? [...OPEN_PASS_VISITS].join(",") : "nobody"}`);
+// THE LATE PRIOR (golib nn.lateCap K, --late-cap-on Opp:K,... ; "none" off):
+// a node the net reaches only after it was searched without it (grown beyond
+// nn.maxDepth under an earlier root or ponder; now a ponder reply or a reused
+// root — a decision node) has its children capped to K visits (means kept)
+// and its prior normalised over every action, before it can answer. The
+// 2026-10-09 20:52:10Z Daedalus loss (streak 179, 0-27.5): the ply-0 ponder
+// grew the 1,3 reply node playout-only (~1000 work), and when the ponder
+// under 3,2 made it a decision node its stale most-visited 4,3 was pre-sent
+// at once (from ply 3 every line loses; no net search ever picks 4,3, 0/96).
+// MEASURED NEUTRAL-TO-NEGATIVE (go-w0, Daedalus live config + b4c32 depth 1,
+// --work-rate 1.7, bubtop, layouts 2101-2112, 2160 paired vs the live solver):
+//   lateCap 0   -0.5% [-2.2, +1.1]  lost 8 vs 2   9.46 vs 9.65 s/game
+//   lateCap 16  +0.2% [-1.3, +1.7]  lost 5 vs 2   9.52 vs 9.65 s/game
+// The cap fires ~15-35 times a game (every ponder reply grown a move earlier)
+// and the playout-only statistics it discards are as often right as the net
+// (the 14:56:31Z case is the net's blind spot the other way), so it is OFF;
+// the corpus case stays open. Kept for the next net / budget.
+const LATE_CAP_ON = new Map(
+  str("late-cap-on", "none")
+    .split(",")
+    .map((s) => s.trim().replace(/\s+/g, "").split(":"))
+    .filter(([o, e]) => o && o !== "none" && Number.isFinite(Number(e)))
+    .map(([o, e]) => [o, Number(e)]),
+);
+const lateCapFor = (opponent) => LATE_CAP_ON.get(String(opponent ?? "").replace(/\s+/g, ""));
+console.log(`go-solver: late-prior cap ${LATE_CAP_ON.size ? [...LATE_CAP_ON].map(([o, e]) => `${o} ${e}`).join(", ") : "off"}`);
 const sessOpts = (N, opponent, base = {}) => {
   const out = { ...base, ...JOINT_OPTS };
   if (OPEN_PASS_VISITS.has(String(opponent ?? "").replace(/\s+/g, ""))) out.openPass = "visits";
   const floor = priorFloorFor(opponent);
-  if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true, ...(floor ? { priorFloor: floor } : {}) };
-  else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, ...(floor ? { priorFloor: floor } : {}) };
+  const lc = lateCapFor(opponent);
+  const extra = { ...(floor ? { priorFloor: floor } : {}), ...(Number.isFinite(lc) ? { lateCap: lc } : {}) };
+  if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true, ...extra };
+  else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, ...extra };
   return out;
 };
 /** fn(cheatsSoFar) -> available, for a play `lagMs` after req.T, `depth` of our turns ahead. */
