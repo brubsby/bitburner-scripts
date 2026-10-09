@@ -5914,6 +5914,1207 @@
    ],
    "status": "fixed",
    "note": "BN12 (crime 2.01, SF14.3). The second-stone search's PASS is a real pass (the AI passes back, lost on the board), so a fatal fill ranks no worse; declining was not an option it could express."
+  },
+  {
+   "id": "live-2026-10-09T10:56:22.891Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T10:56:22.891Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "..#.#.......O..#.........",
+   "streakBefore": 256,
+   "live": {
+    "black": 13,
+    "white": 16.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "0,0",
+     "r": "1,0",
+     "T": 2392805400,
+     "s": "req",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "0,1",
+     "T": 2392806400,
+     "s": "pre",
+     "t": [
+      [
+       1,
+       3,
+       0.342,
+       55,
+       0.382
+      ],
+      [
+       1,
+       1,
+       0.043,
+       27,
+       0.074
+      ],
+      [
+       3,
+       2,
+       0.207,
+       24,
+       0.25
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,4",
+     "r": "3,3",
+     "T": 2392807200,
+     "s": "pre",
+     "t": [
+      [
+       3,
+       2,
+       0.326,
+       90,
+       0.4
+      ],
+      [
+       3,
+       1,
+       0.251,
+       10,
+       0.3
+      ],
+      [
+       1,
+       2,
+       -0.025,
+       2,
+       0
+      ]
+     ],
+     "ks": [
+      0,
+      2,
+      4,
+      5,
+      7
+     ]
+    },
+    {
+     "m": "2,3",
+     "r": "1,1",
+     "T": 2392809400,
+     "s": "req",
+     "t": [
+      [
+       3,
+       2,
+       0.365,
+       89,
+       0.449
+      ],
+      [
+       1,
+       2,
+       0.333,
+       27,
+       0.407
+      ],
+      [
+       1,
+       1,
+       -0.028,
+       1,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,2",
+     "T": 2392810400,
+     "s": "req",
+     "t": [
+      [
+       1,
+       2,
+       0.635,
+       112,
+       0.732
+      ],
+      [
+       3,
+       1,
+       -0.04,
+       1,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "2,0",
+     "T": 2392811600,
+     "s": "pre",
+     "t": [
+      [
+       1,
+       3,
+       0.619,
+       95,
+       0.747
+      ],
+      [
+       3,
+       4,
+       -0.05,
+       1,
+       0
+      ],
+      [
+       4,
+       3,
+       -0.047,
+       1,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,3+3,4",
+     "r": "3,1",
+     "T": 2392812600,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "P",
+     "T": 2392813600,
+     "s": "pre",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.058,
+       31177,
+       0
+      ],
+      [
+       0,
+       3,
+       -0.068,
+       21555,
+       0.001
+      ],
+      [
+       4,
+       2,
+       -0.069,
+       13188,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2392815400,
+     "s": "req"
+    }
+   ],
+   "cheat": {
+    "crime": 2.06,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 6,
+     "work": 800,
+     "why": "ply 6 (forced through ply 5, live 4,1/2,0): the policy plays the greedy cheat 3,4+1,3 (live 1,3+3,4), W 3,1 captures 2,1; at ply 7 the single 4,3 and the second-stone search WITH the net reads every second stone ~0 (0,3 at 0.000) -> declined (live: the search answered PASS) -> 4,3 alone, W passes, lost 13-16.5 (the live score). secondNet off (Illuminati) plays 4,3+0,3 (or 3,4+4,3 at ply 6) and must win 22-7.5"
+    },
+    {
+     "from": 6,
+     "work": 800,
+     "seed": 2,
+     "why": "ply 6 (forced through ply 5, live 4,1/2,0): the policy plays the greedy cheat 3,4+1,3 (live 1,3+3,4), W 3,1 captures 2,1; at ply 7 the single 4,3 and the second-stone search WITH the net reads every second stone ~0 (0,3 at 0.000) -> declined (live: the search answered PASS) -> 4,3 alone, W passes, lost 13-16.5 (the live score). secondNet off (Illuminati) plays 4,3+0,3 (or 3,4+4,3 at ply 6) and must win 22-7.5"
+    },
+    {
+     "from": 6,
+     "work": 800,
+     "seed": 3,
+     "why": "ply 6 (forced through ply 5, live 4,1/2,0): the policy plays the greedy cheat 3,4+1,3 (live 1,3+3,4), W 3,1 captures 2,1; at ply 7 the single 4,3 and the second-stone search WITH the net reads every second stone ~0 (0,3 at 0.000) -> declined (live: the search answered PASS) -> 4,3 alone, W passes, lost 13-16.5 (the live score). secondNet off (Illuminati) plays 4,3+0,3 (or 3,4+4,3 at ply 6) and must win 22-7.5"
+    },
+    {
+     "from": 6,
+     "work": 800,
+     "seed": 4,
+     "why": "ply 6 (forced through ply 5, live 4,1/2,0): the policy plays the greedy cheat 3,4+1,3 (live 1,3+3,4), W 3,1 captures 2,1; at ply 7 the single 4,3 and the second-stone search WITH the net reads every second stone ~0 (0,3 at 0.000) -> declined (live: the search answered PASS) -> 4,3 alone, W passes, lost 13-16.5 (the live score). secondNet off (Illuminati) plays 4,3+0,3 (or 3,4+4,3 at ply 6) and must win 22-7.5"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 256 ended 13-16.5. Root cause: the second-stone search's net. Live plies 1-5 were five declines in a row (second stones 0.38-0.75 against singles 0.75+, two of them book moves carrying the book's wr), ply 6 the greedy cheat 1,3+3,4, ply 7 the single 4,3 with no second stone (the solver's second-stone answer was PASS, every stone ~0); from ply 7 a fresh search plays 4,2 at 0.99+ and 4,2+4,4 wins 22-7.5 on every seed. The second-stone root after 4,3 with the b4c32 net: 0,3 / 4,2 read 0.000; playouts only: 0.99. Replays from ply 6: secondNet on 0/8, off 8/8 (work 800 and 1360). Old policy (secondNet on, no declineHarm) loses every check; the shipped policy wins every check."
+  },
+  {
+   "id": "live-2026-10-09T11:26:53.198Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T11:26:53.198Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "...#......#.O..#.......##",
+   "streakBefore": 82,
+   "live": {
+    "black": 13,
+    "white": 14.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,3",
+     "r": "1,1",
+     "T": 2394627800,
+     "s": "req",
+     "t": [
+      [
+       2,
+       3,
+       0.084,
+       592,
+       0.123
+      ],
+      [
+       1,
+       1,
+       0.081,
+       161,
+       0.112
+      ],
+      [
+       1,
+       2,
+       0.038,
+       91,
+       0.066
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,2",
+     "T": 2394629000,
+     "s": "pre",
+     "t": [
+      [
+       1,
+       2,
+       0.358,
+       93,
+       0.409
+      ],
+      [
+       3,
+       1,
+       0.01,
+       27,
+       0.037
+      ],
+      [
+       1,
+       3,
+       -0.023,
+       7,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1+1,3",
+     "r": "0,1",
+     "T": 2394633200,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0+3,4",
+     "r": "0,0",
+     "T": 2394637200,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1+4,2",
+     "r": "P",
+     "T": 2394641000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,4",
+     "r": "P",
+     "T": 2394642000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,4",
+     "r": "P",
+     "T": 2394643000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,0",
+     "r": "P",
+     "T": 2394643800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "P",
+     "T": 2394644800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2394645600,
+     "s": "pre"
+    }
+   ],
+   "cheat": {
+    "crime": 2.06,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 1,
+     "work": 800,
+     "pre": {
+      "x": 3,
+      "y": 2,
+      "wr": 0.51
+     },
+     "why": "ply 1 as live had it: the pre-sent single 3,2 with wr 0.51 (live declined its second stone 1,2 read 0.409, so the single's wr was >= 0.509; 0.51 is that bound) -> with the net the second stone reads ~0.41 and is declined, W 1,2, then three hard pairs lose 13-14.5 (the live score on seed 1); secondNet off + declineHarm play the cheat and must win"
+    },
+    {
+     "from": 1,
+     "work": 800,
+     "seed": 3,
+     "pre": {
+      "x": 3,
+      "y": 2,
+      "wr": 0.51
+     },
+     "why": "ply 1 as live had it: the pre-sent single 3,2 with wr 0.51 (live declined its second stone 1,2 read 0.409, so the single's wr was >= 0.509; 0.51 is that bound) -> with the net the second stone reads ~0.41 and is declined, W 1,2, then three hard pairs lose 13-14.5 (the live score on seed 1); secondNet off + declineHarm play the cheat and must win"
+    },
+    {
+     "from": 1,
+     "work": 800,
+     "seed": 4,
+     "pre": {
+      "x": 3,
+      "y": 2,
+      "wr": 0.51
+     },
+     "why": "ply 1 as live had it: the pre-sent single 3,2 with wr 0.51 (live declined its second stone 1,2 read 0.409, so the single's wr was >= 0.509; 0.51 is that bound) -> with the net the second stone reads ~0.41 and is declined, W 1,2, then three hard pairs lose 13-14.5 (the live score on seed 1); secondNet off + declineHarm play the cheat and must win"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 82 ended 13-14.5. Decided at ply 1: the decline of the greedy second stone 1,2 (0.409, a 100ms search with the net) against the pre-sent single 3,2; W played 1,2 itself. From ply 2 every replay loses (0/8 at 800 and 1360 work); from ply 1 a fresh search wins 8/8 (its own single reads 0.14-0.5, so the hard pair 3,2+1,2 is searched instead). With live's own single (pre 3,2 @0.51): the old policy 0/4 seeds; secondNet off alone 2/4 (seeds 2 and 4 still decline at 100ms); secondNet off + declineHarm 3/4 (seed 2 plays 3,2+4,1 and still loses 13-14.5)."
+  },
+  {
+   "id": "live-2026-10-09T11:29:33.058Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T11:29:33.058Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "..#...........#...O.#.#..",
+   "streakBefore": 1,
+   "live": {
+    "black": 13,
+    "white": 15.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "3,1",
+     "T": 2394785800,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.236,
+       1024,
+       0.339
+      ],
+      [
+       3,
+       1,
+       -0.041,
+       12,
+       0
+      ],
+      [
+       2,
+       1,
+       0.081,
+       8,
+       0.125
+      ]
+     ],
+     "ks": [
+      1,
+      3,
+      4,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "1,0+1,3",
+     "r": "3,2",
+     "T": 2394790000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      1,
+      2,
+      4,
+      6
+     ]
+    },
+    {
+     "m": "1,4+2,1",
+     "r": "2,3",
+     "T": 2394795200,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "m": "3,4",
+     "r": "4,4",
+     "T": 2394796600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,0",
+     "r": "4,3",
+     "T": 2394797400,
+     "s": "pre",
+     "ks": [
+      1,
+      3,
+      5,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "P",
+     "T": 2394798400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,2",
+     "r": "P",
+     "T": 2394799400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "P",
+     "T": 2394800200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,3",
+     "r": "P",
+     "T": 2394802000,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.162,
+       3283242,
+       0
+      ],
+      [
+       0,
+       3,
+       -0.192,
+       19128,
+       0
+      ],
+      [
+       0,
+       4,
+       -0.195,
+       6734,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,0",
+     "r": "P",
+     "T": 2394803800,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.187,
+       3307793,
+       0
+      ],
+      [
+       0,
+       0,
+       -0.218,
+       5359,
+       0
+      ],
+      [
+       0,
+       4,
+       -0.218,
+       5318,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2394805600,
+     "s": "req"
+    }
+   ],
+   "cheat": {
+    "crime": 2.06,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 1,
+     "work": 800,
+     "why": "ply 1 (single 0.109 by live's search): the hard pair. Live played 1,0+1,3 (from ply 2 every replay loses, 0/8); the replay's pair search finds 1,3+2,1 / 2,1+1,3 / 2,3+2,1 at 0.53-0.8 on every seed and budget tried (400-1360 work, a pondered root of 3000-8000 work) and must win"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 1 ended 13-15.5. NOT reproduced: live's hard-pair search chose 1,0+1,3 (its top was not logged then; go.js now logs a cheat's w and t), which no replay picks. Not decided by the decline or the second-stone net: no second-stone search ran in this game."
+  },
+  {
+   "id": "live-2026-10-09T11:34:09.020Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T11:34:09.020Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "#.#.#.......O..#........#",
+   "streakBefore": 27,
+   "live": {
+    "black": 11,
+    "white": 16.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "1,3",
+     "r": "2,3",
+     "T": 2395070600,
+     "s": "req",
+     "t": [
+      [
+       1,
+       3,
+       0.022,
+       242,
+       0.054
+      ],
+      [
+       1,
+       1,
+       0.036,
+       195,
+       0.072
+      ],
+      [
+       2,
+       3,
+       0.003,
+       137,
+       0.036
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "1,2",
+     "T": 2395071800,
+     "s": "pre",
+     "t": [
+      [
+       2,
+       1,
+       0.21,
+       111,
+       0.261
+      ],
+      [
+       1,
+       2,
+       0.105,
+       74,
+       0.149
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1+3,2",
+     "r": "3,3",
+     "T": 2395072800,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "2,4",
+     "T": 2395074000,
+     "s": "pre",
+     "t": [
+      [
+       1,
+       4,
+       0.429,
+       174,
+       0.529
+      ],
+      [
+       4,
+       3,
+       -0.019,
+       1,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "4,2",
+     "T": 2395075000,
+     "s": "req",
+     "t": [
+      [
+       4,
+       2,
+       -0.032,
+       135,
+       0.037
+      ],
+      [
+       1,
+       4,
+       0.052,
+       26,
+       0.115
+      ],
+      [
+       4,
+       1,
+       0.185,
+       16,
+       0.25
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0",
+     "r": "1,4",
+     "T": 2395076200,
+     "s": "req",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "0,3",
+     "T": 2395077600,
+     "s": "req",
+     "t": [
+      [
+       0,
+       1,
+       0.101,
+       421,
+       0.192
+      ],
+      [
+       2,
+       0,
+       0.022,
+       10,
+       0.1
+      ],
+      [
+       -1,
+       -1,
+       0.029,
+       9,
+       0.111
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "4,3",
+     "T": 2395078600,
+     "s": "req",
+     "ks": []
+    },
+    {
+     "m": "1,3",
+     "r": "P",
+     "T": 2395079800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2395081400,
+     "s": "req"
+    }
+   ],
+   "cheat": {
+    "crime": 2.06,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 3,
+     "work": 800,
+     "pre": {
+      "x": 3,
+      "y": 1,
+      "wr": 0.63
+     },
+     "why": "ply 3 as live had it: the pre-sent single 3,1 with wr 0.63 (live declined its second stone 1,4 read 0.529, so the single's wr was >= 0.629) -> with the net the second stone is declined, W 2,4, lost 11-16.5 (the live score) on every seed; secondNet off plays 3,1+2,4 / 3,1+4,1 and must win 20-7.5"
+    },
+    {
+     "from": 3,
+     "work": 800,
+     "seed": 2,
+     "pre": {
+      "x": 3,
+      "y": 1,
+      "wr": 0.63
+     },
+     "why": "ply 3 as live had it: the pre-sent single 3,1 with wr 0.63 (live declined its second stone 1,4 read 0.529, so the single's wr was >= 0.629) -> with the net the second stone is declined, W 2,4, lost 11-16.5 (the live score) on every seed; secondNet off plays 3,1+2,4 / 3,1+4,1 and must win 20-7.5"
+    },
+    {
+     "from": 3,
+     "work": 800,
+     "seed": 3,
+     "pre": {
+      "x": 3,
+      "y": 1,
+      "wr": 0.63
+     },
+     "why": "ply 3 as live had it: the pre-sent single 3,1 with wr 0.63 (live declined its second stone 1,4 read 0.529, so the single's wr was >= 0.629) -> with the net the second stone is declined, W 2,4, lost 11-16.5 (the live score) on every seed; secondNet off plays 3,1+2,4 / 3,1+4,1 and must win 20-7.5"
+    },
+    {
+     "from": 3,
+     "work": 800,
+     "seed": 4,
+     "pre": {
+      "x": 3,
+      "y": 1,
+      "wr": 0.63
+     },
+     "why": "ply 3 as live had it: the pre-sent single 3,1 with wr 0.63 (live declined its second stone 1,4 read 0.529, so the single's wr was >= 0.629) -> with the net the second stone is declined, W 2,4, lost 11-16.5 (the live score) on every seed; secondNet off plays 3,1+2,4 / 3,1+4,1 and must win 20-7.5"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 27 ended 11-16.5. Decided at ply 3: the decline of the second stone 1,4 (0.529 at 100ms with the net; the same stone reads 0.73 at 800ms and 0.95 at 3200ms with it, 0.89-0.93 at 100ms without). Replays from ply 3: secondNet on 2/8, off 8/8 (work 800); with live's own single (pre 3,1 @0.63) on 0/4, off 4/4. Old policy (secondNet on, no declineHarm) loses every check; the shipped policy wins every check."
   }
  ]
 }

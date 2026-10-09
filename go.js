@@ -146,7 +146,7 @@
 // and the win streak is worth up to 3x — more than the extra territory.
 // ---------------------------------------------------------------------------
 
-import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective } from 'golib.js'
+import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective, stoneHarm } from 'golib.js'
 import { canUseGoCheat, canJoinBladeburner, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
@@ -415,7 +415,30 @@ const SETTINGS = {
   // seeds 1201-1206): 662 paired, power/h -0.6% [-4.7, +3.9], lost 2 vs 4;
   // decline alone +1.2% [-2.4, +5.4] (671), lost 2. Declines 0.12/game,
   // extensions 0.06/game. Corpus cases live-2026-10-09T02:21:48.282Z / 02:32:31.956Z.
-  cheat: { joint: false, hardBelow: 0.5, decline: 0.1, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  // secondNet: per opponent, false = the greedy cheat's SECOND-STONE search runs
+  // without the net (go-solver req.secondNet, golib setRoot nnDepth -1).
+  // WHY (the 2026-10-09 Illuminati losses 10:56:22Z streak 256, 11:26:53Z
+  // streak 82, 11:34:09Z streak 27): the second-stone root is fresh, so its
+  // depth-1 nodes are valued by the b4c32 net, while the single it is compared
+  // with (a pre-sent answer, a book move, a reused tree) was valued by
+  // playouts. The net misreads these positions: at 10:56 ply 7 every second
+  // stone after 4,3 read 0.000 with the net and 0.99 without (the game, from
+  // there: 4,3+0,3 wins 22-7.5), and at 11:34 ply 3 the same second stone
+  // read 0.37 at 100ms, 0.73 at 800ms, 0.95 at 3200ms. So the decline (0.1)
+  // fired on good cheats — live 1.36 declines a game against the harness's
+  // 0.14 (the harness never carried a book move's wr; 435 of 523 live
+  // declines were on book moves) — and the cheat was not played where it won.
+  // declineHarm: the decline above applies only to a second stone that harms
+  // itself (golib.stoneHarm: an own-eye fill or a self-atari — the 02:32:31Z
+  // stone 3,1 was both); a plain stone reading low on a 100ms search is played.
+  // MEASURED 2026-10-09 (go-w0 Illuminati 5x5 live config: book WITH its wr
+  // as live pre-sends it, b4c32 net, cheats predicted at crime 2.0623 /
+  // SF14.3, hybrid 0.5 + adaptive 0.5:4, decline 0.1, --work-rate 1.7,
+  // bubtop, layout seeds 1301-1308; flags --cheat-second-net off
+  // --cheat-decline-harm): 1082 paired, power/h +7.2% [+3.2, +11.4], lost 3
+  // vs 6 (unpaired 3/1084 = 0.28% vs 7/1284 = 0.55%; live was 4/384); declines
+  // 0.02 vs 1.30 a game, 9.5 vs 10.3 live s a game.
+  cheat: { joint: false, hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -882,6 +905,12 @@ export function hardPairWanted(wr, hardBelow = SETTINGS.cheat.hardBelow) {
  */
 export function cheatDeclined(wr1, wr2, margin = SETTINGS.cheat.decline) {
   return Number.isFinite(margin) && typeof wr1 === 'number' && Number.isFinite(wr1) && typeof wr2 === 'number' && Number.isFinite(wr2) && wr2 < wr1 - margin
+}
+
+/** Whether a cheat's second-stone search uses the net against this opponent (SETTINGS.cheat.secondNet). Pure. */
+export function secondNetFor(opponent) {
+  const on = SETTINGS.cheat.secondNet ?? {}
+  return (on[opponent] ?? on.default ?? true) !== false
 }
 
 /** Whether cheats are played against this opponent (SETTINGS.cheat.on). Pure. */
@@ -1958,12 +1987,12 @@ export async function main(ns) {
       const tryCheat = async (board, validList, first, knownSecond = null, singleWr = null) => {
         const k = cheat.played
         const p = cheatChance(k, cheatCalib?.crime ?? 1, sf14)
-        if (p < SETTINGS.cheat.minChance) return { played: false }
+        if (p < SETTINGS.cheat.minChance) return { played: false, why: 'chance' }
         // No exec for a window go-cheat.js would only decline (its own wait
         // cap is maxWaitMs): the exec + read costs ~150ms for nothing.
         if (!cheatWindowOk()) {
           cheat.skipped++
-          return { played: false }
+          return { played: false, why: 'skipped' }
         }
         const board2 = applyMove(board, first.x, first.y)
         if (!board2) return { played: false }
@@ -1971,25 +2000,27 @@ export async function main(ns) {
         const valid2 = validList.filter(([x, y]) => !(x === first.x && y === first.y) && board2[x][y] === '.')
         if (!valid2.length) return { played: false }
         // The second stone searches SETTINGS.cheat.secondMs, not the move budget.
-        const second = knownSecond && valid2.some(([x, y]) => x === knownSecond.x && y === knownSecond.y) ? [knownSecond] : knownSecond ? null : await askSolver(board2, valid2, Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : null)
+        const second = knownSecond && valid2.some(([x, y]) => x === knownSecond.x && y === knownSecond.y) ? [knownSecond] : knownSecond ? null : await askSolver(board2, valid2, { ...(Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : {}), ...(secondNetFor(opponent) ? {} : { secondNet: false }) })
         // asked: the solver answered (and committed) a second-stone request on
         // board2 — a cheat not played after it leaves the solver a stone ahead
         // of the game, so the caller tells it of the single (notifySolver).
         const asked = !knownSecond
-        if (!second || !second.length) return { played: false, asked }
+        if (!second || !second.length) return { played: false, asked, why: 'no-second' }
         // THE DECLINE (SETTINGS.cheat.decline): a second stone whose own line
         // wins less than the single alone is no gain — the single is played
         // and the cheat kept for later.
-        if (asked && cheatDeclined(singleWr, lastTop?.[0]?.[4])) {
+        // declineHarm: only a second stone that harms itself (an own-eye
+        // fill or a self-atari, golib.stoneHarm) is declined on the win rates.
+        if (asked && cheatDeclined(singleWr, lastTop?.[0]?.[4]) && (!SETTINGS.cheat.declineHarm || stoneHarm(board2, second[0].x, second[0].y))) {
           cheat.declinedLow = (cheat.declinedLow ?? 0) + 1
-          return { played: false, asked }
+          return { played: false, asked, declined: { x: second[0].x, y: second[0].y, wr: lastTop?.[0]?.[4] } }
         }
         const execAt = Date.now()
         const pid = ns.exec('go-cheat.js', 'home', 1, first.x, first.y, second[0].x, second[0].y, SETTINGS.cheat.maxWaitMs)
         if (!pid) {
           record(errors, new Error('go-cheat.js did not start (pid 0): no room on home for its 11.1GB — no more cheats this game'))
           cheat.noRam = true
-          return { played: false, asked }
+          return { played: false, asked, why: 'no-ram' }
         }
         cheatsTried++
         while (ns.isRunning(pid)) {
@@ -2005,7 +2036,7 @@ export async function main(ns) {
         }
         if (!st || !(Date.parse(st.at) >= execAt - 2000)) {
           record(errors, new Error('go-cheat.js left no result for this run'))
-          return { played: false, asked }
+          return { played: false, asked, why: 'no-result' }
         }
         if (st.calib && Number.isFinite(st.calib.T)) {
           const base = 0.6 * (0.7 - 0.02 * k) ** k
@@ -2015,11 +2046,11 @@ export async function main(ns) {
         }
         if (st.error) {
           record(errors, new Error(`go-cheat.js: ${st.error}`))
-          return { played: false, asked }
+          return { played: false, asked, why: 'error' }
         }
         if (!st.cheated) {
           cheat.declined++
-          return { played: false, asked }
+          return { played: false, asked, why: 'window' }
         }
         cheat.played++
         cheatsPlayed++
@@ -2137,6 +2168,7 @@ export async function main(ns) {
         // pass our first stone already wiped.
         const jointPair = SETTINGS.cheat.joint ? ranked?.[0]?.second ?? null : null
         let hardDeclined = false
+        let cheatNote = null
         if (cheatOn && cheatFor(opponent) && !oppPassed && !(src !== 'pre' && lastOracle) && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame && (!SETTINGS.cheat.joint || jointPair)) {
           // A pre-sent pair: the solver learns of it before the AI replies.
           if (jointPair && src === 'pre') notifySolver(boardStrings, validList, { x: ranked[0].x, y: ranked[0].y, second: jointPair })
@@ -2169,7 +2201,10 @@ export async function main(ns) {
           const c = await tryCheat(boardStrings, validList, first, pairSecond, singleWr)
           if (c.played) {
             moves++
-            moveLog.push({ m: `${first.x},${first.y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}), ...(hardAsked ? { h: singleWr } : {}) })
+            // w: the single's own win rate (pre-sent answer, book or request);
+            // t: the second-stone (or pair) search's top 3 — the per-game log
+            // needs both to replay a cheat decision (tools/sim/go-fixture.mjs).
+            moveLog.push({ m: `${first.x},${first.y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}), ...(hardAsked ? { h: singleWr } : {}), ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(lastTop ? { t: lastTop } : {}) })
             oppPassed = c.reply === 'pass'
             if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)
@@ -2179,6 +2214,10 @@ export async function main(ns) {
           // stone alone), and the solver, which committed the pair, is told.
           // So is a solver that answered a second-stone request (c.asked).
           hardDeclined = hardAsked || !!c.asked
+          // The per-game log: why this turn played no cheat (w: the single's
+          // win rate; d: a declined second stone and its own win rate; hp: the
+          // hard pair was asked and not played; why: what else stopped it).
+          cheatNote = { ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(c.declined ? { d: c.declined } : {}), ...(hardAsked ? { hp: 1 } : {}), ...(c.why ? { why: c.why } : {}) }
         }
         // A PAIR'S FIRST STONE IS NEVER PLAYED ALONE. The search chose it
         // knowing a second stone follows; alone it can be a self-atari (the
@@ -2227,7 +2266,7 @@ export async function main(ns) {
         const res = played.value
         const playMs = Date.now() - play0
         if (stone) moves++
-        moveLog.push({ m: stone ? `${ranked[0].x},${ranked[0].y}` : 'P', s: src, a: askMs, p: playMs, r: !res || res.type === 'gameOver' ? 'G' : res.type === 'pass' ? 'P' : `${res.x},${res.y}`, ...(Tplay ? { T: Tplay } : {}), ...(lastTop ? { t: lastTop } : {}) })
+        moveLog.push({ m: stone ? `${ranked[0].x},${ranked[0].y}` : 'P', s: src, a: askMs, p: playMs, r: !res || res.type === 'gameOver' ? 'G' : res.type === 'pass' ? 'P' : `${res.x},${res.y}`, ...(Tplay ? { T: Tplay } : {}), ...(lastTop ? { t: lastTop } : {}), ...(cheatNote && Object.keys(cheatNote).length ? { c: cheatNote } : {}) })
         gameErrors = 0
 
         if (!res || res.type === 'gameOver') done = true

@@ -443,7 +443,7 @@ export async function run() {
     const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
     const sol = fs.readFileSync(path.join(REPO, "tools", "go-solver.mjs"), "utf8");
     for (const [what, re, text] of [
-      ["the greedy second stone is checked against the single's win rate", /if \(asked && cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\)\)/, src],
+      ["the greedy second stone is checked against the single's win rate", /if \(asked && cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\)/, src],
       ["tryCheat is given the single's win rate", /tryCheat\(boardStrings, validList, first, pairSecond, singleWr\)/, src],
       ["a hard pair is checked against the single's win rate", /cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\)[\s\S]{0,200}if \(!pairDeclined && p0\?\.second/, src],
       ["the hard request carries hardAdaptive (pair-only)", /adaptive: ha, adaptivePairOnly: true/, src],
@@ -454,5 +454,78 @@ export async function run() {
       if (!re.test(text)) c12.fail(`${what} — not found`);
     }
   }
-  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12];
+  const c13 = new Check("GC13", "THE SECOND STONE WITHOUT THE NET (go.js SETTINGS.cheat.secondNet, the 2026-10-09 10:56/11:26/11:34Z Illuminati losses): Illuminati's second-stone request says secondNet false, the solver roots it at nnDepth -1, and golib then never asks the net");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    await import("./gameresolve.mjs");
+    const go = await import(path.join(REPO, "go.js"));
+    for (const [opp, want] of [["Illuminati", false], ["Tetrads", true], ["Daedalus", true]]) {
+      c13.examined(1);
+      if (go.secondNetFor(opp) !== want) c13.fail(`secondNetFor(${opp}) = ${go.secondNetFor(opp)}, want ${want}${opp === "Illuminati" ? " (the net's second-stone search is back: every second stone read ~0 at 10:56Z)" : " (measured only on Illuminati)"}`);
+    }
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    const sol = fs.readFileSync(path.join(REPO, "tools", "go-solver.mjs"), "utf8");
+    for (const [what, re, text] of [
+      ["the second-stone request carries secondNet false where secondNetFor says so", /askSolver\(board2, valid2, [^\n]*secondNetFor\(opponent\) \? \{\} : \{ secondNet: false \}/, src],
+      ["the solver roots a secondNet:false request at nnDepth -1", /req\.secondNet === false \? \{ nnDepth: -1 \}/, sol],
+      ["the per-game log keeps the cheat decision's inputs (w, d, t)", /cheatNote = \{[^\n]*d: c\.declined/, src],
+    ]) {
+      c13.examined(1);
+      if (!re.test(text)) c13.fail(`${what} — not found`);
+    }
+    // golib: a session with a counting net; nnDepth -1 asks it nothing, the default asks it.
+    const golib = await import(path.join(REPO, "golib.js"));
+    const N = 5;
+    const board = [".....", ".....", "..O..", ".....", "....."];
+    const valid = board.map((col) => [...col].map((c) => c === "."));
+    let evals = 0;
+    const nn = { eval: async () => { evals++; return { policy: new Float32Array(N * N).fill(1 / (N * N)), pass: 0.01, winB: 0.5, areaB: 12 }; }, mix: 0, maxDepth: 1 };
+    const reply = () => null; // the AI passes
+    for (const [nnDepth, wantAsked] of [[-1, false], [undefined, true]]) {
+      evals = 0;
+      const sess = golib.modelSession(N, 7.5, { reply }, { seed: 1, nn });
+      sess.setRoot(board, valid, { history: [], opponentPassed: false, ...(nnDepth !== undefined ? { nnDepth } : {}) });
+      await sess.search({ maxms: 2000, untilWork: 50, untilVisits: 2000 });
+      c13.examined(1);
+      if ((evals > 0) !== wantAsked) c13.fail(`setRoot nnDepth ${nnDepth}: the net was asked ${evals} times, want ${wantAsked ? "> 0" : "0"}`);
+      // commit restores the session's own depth for the ponder.
+      if (nnDepth === -1) {
+        const b = sess.best();
+        evals = 0;
+        sess.commit(b?.[0]?.x ?? null, b?.[0]?.y ?? null);
+        await sess.ponder?.(300);
+        c13.examined(1);
+        if (sess.ponder && evals === 0) c13.warn("after a no-net second stone the ponder never asked the net (commit did not restore nnDepth?)");
+      }
+    }
+  }
+  const c14 = new Check("GC14", "THE DECLINE ONLY FOR A HARMFUL SECOND STONE (go.js SETTINGS.cheat.declineHarm): the win rates decline a second stone only when it fills our own eye or self-ataris (golib.stoneHarm) — live declined 1.36 good cheats a game on a 100ms search's win rate");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    const go = await import(path.join(REPO, "go.js"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    c14.examined(1);
+    if (go.SETTINGS.cheat.declineHarm !== true) c14.fail(`SETTINGS.cheat.declineHarm is ${go.SETTINGS.cheat.declineHarm}: every second stone reading under the single is declined again (1.36 a game live, most of them good cheats)`);
+    // board strings are columns (board[x][y]).
+    for (const [what, board, x, y, want] of [
+      ["the 02:32:31Z second stone 3,1 (after 4,4): an own-eye fill", [".OOOO", "OXOO.", "XXXX#", "#.XXX", "##X.X"], 3, 1, "eye"],
+      ["the 11:34:09Z second stone 1,4 (after 3,1): a plain stone", ["#.#.#", ".XOX.", ".XOO.", "#XXO.", "....#"], 1, 4, null],
+      ["the 11:26:53Z second stone 1,2 (after 3,2): a plain stone", ["...#.", ".O...", "#.OX.", "#.X..", "...##"], 1, 2, null],
+      ["a lone stone pushed into white's mouth: self-atari", [".O...", "O....", ".....", ".....", "....."], 0, 0, "atari"],
+      ["a stone that captures is never harm", ["XO...", ".X...", ".....", ".....", "....."], 0, 2, null],
+      ["an occupied point is no stone at all", ["XO...", ".....", ".....", ".....", "....."], 0, 1, null],
+    ]) {
+      c14.examined(1);
+      const got = golib.stoneHarm(board, x, y);
+      if (got !== want) c14.fail(`${what}: stoneHarm = ${got}, want ${want}`);
+    }
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    c14.examined(1);
+    if (!/cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\) && \(!SETTINGS\.cheat\.declineHarm \|\| stoneHarm\(board2, second\[0\]\.x, second\[0\]\.y\)\)/.test(src)) c14.fail("tryCheat's decline is not gated on stoneHarm(board2, second) — not found");
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14];
 }

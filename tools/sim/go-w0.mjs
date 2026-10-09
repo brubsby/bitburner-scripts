@@ -84,6 +84,12 @@ const OPENING = (() => {
 // the move budget (go.js passes it as the request's maxms).
 const CHEAT_SECOND_MS = Number(process.argv.includes("--cheat-second-ms") ? process.argv[process.argv.indexOf("--cheat-second-ms") + 1] : NaN);
 let secondStone = false;
+// --cheat-second-net off: the second stone's search runs WITHOUT the net
+// (golib setRoot nnDepth -1, go.js SETTINGS.cheat.secondNet): its depth-1
+// B nodes are net-valued, and the b4c32 net misreads positions the single's
+// reused tree had valued by playout (the 2026-10-09 10:56Z Illuminati loss:
+// every second stone after 4,3 read 0, the playout reads them 0.99).
+const CHEAT_SECOND_NET_OFF = str("cheat-second-net", "on") === "off";
 // --cheat-joint: a re-ask for a SINGLE move (the pair was declined): no pairs searched.
 let noPairs = false;
 const budgetFor = (turn) => (secondStone && Number.isFinite(CHEAT_SECOND_MS) ? CHEAT_SECOND_MS : OPENING && turn < OPENING.k ? OPENING.ms : MAXMS);
@@ -163,6 +169,7 @@ const ADAPTIVE_STEPS = argv.includes("--adaptive-steps");
 // --book FILE: the opening book (tools/sim/go-book.mjs --merge) played where it has the position.
 // --book-pass: also play the book's after-the-AI's-pass entries (passEntries).
 const BOOK_PASS = argv.includes("--book-pass");
+const NO_BOOK_WR = argv.includes("--no-book-wr");
 let BOOK = str("book", null) ? JSON.parse(fs.readFileSync(str("book", null), "utf8")) : null;
 // --book-b FILE|none --out-b F: A/B IN ONE PROCESS. Every game is played twice,
 // back to back on the same deal: arm A with --book (or none), arm B with
@@ -400,6 +407,10 @@ const CHEAT_HYBRID_AD = (() => {
 // search's PASS there is a real pass, which the AI passes back, lost on the
 // board), and the fill 3,1 left one liberty: the AI captured everything.
 const CHEAT_DECLINE = str("cheat-decline", null) !== null ? num("cheat-decline", 0) : null;
+// --cheat-decline-harm: the decline only for a second stone that harms
+// itself (golib.stoneHarm: an own-eye fill or a self-atari; go.js
+// SETTINGS.cheat.declineHarm) — the 02:32:31Z stone 3,1 was both.
+const CHEAT_DECLINE_HARM = argv.includes("--cheat-decline-harm");
 const declineOf = (wr1, wr2) => CHEAT_DECLINE !== null && typeof wr1 === "number" && typeof wr2 === "number" && wr2 < wr1 - CHEAT_DECLINE;
 if (CHEAT_HYBRID && !CHEAT_JOINT) {
   OPTS.pairs = [6, 5];
@@ -539,7 +550,7 @@ async function playGame(stats, gameIndex) {
       : sess
       ? await (async () => {
           const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1 } : undefined;
-          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : CHEAT_HYBRID ? { cheat: { fns: pairsNow ? [() => true] : null, cheats } } : {}) });
+          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : CHEAT_HYBRID ? { cheat: { fns: pairsNow ? [() => true] : null, cheats } } : {}), ...(secondStone && CHEAT_SECOND_NET_OFF ? { nnDepth: -1 } : {}) });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
           const target = WORK_RATE ? Math.round(WORK_RATE * budget) : sessRate ? Math.round(sessRate * budget) : Infinity;
@@ -707,7 +718,12 @@ async function playGame(stats, gameIndex) {
     if (!oracleHit && BOOK && sess && (!oppPassed || BOOK_PASS)) {
       const bm = golib.bookMove(BOOK, g.simpleBoardFromBoard(state.board), { passed: oppPassed });
       if (bm && validGrid(state, N)[bm.x]?.[bm.y]) {
-        pre = { x: bm.x, y: bm.y, book: true };
+        // The book's own win rate rides along, as go-solver pre-sends it
+        // (publishAnswers: wr: bm.wr) and go.js reads it as the single's wr
+        // (hard pair, decline). Before 2026-10-09 this carried none, so the
+        // harness never declined or hard-paired a book move while live did
+        // (1.1 book declines a game, 435 of 523). --no-book-wr: the old way.
+        pre = { x: bm.x, y: bm.y, book: true, ...(!NO_BOOK_WR && typeof bm.wr === "number" ? { wr: bm.wr } : {}) };
         if (bm.reply !== undefined) steerTarget = bm.reply;
         bookHit = true;
         bookMoves++;
@@ -853,7 +869,7 @@ async function playGame(stats, gameIndex) {
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
         wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
         turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS) / 1000;
-        if (before && second && second.length && declineOf(before.wr, second[0].top?.[0]?.[4])) {
+        if (before && second && second.length && declineOf(before.wr, second[0].top?.[0]?.[4]) && (!CHEAT_DECLINE_HARM || golib.stoneHarm(g.simpleBoardFromBoard(state.board), second[0].x, second[0].y))) {
           // DECLINED: the single stands (already placed); the cheat is not
           // played (k unchanged); the solver is told of the single (go.js
           // notifies it) — its session re-roots before the first stone.

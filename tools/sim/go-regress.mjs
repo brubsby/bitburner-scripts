@@ -133,8 +133,11 @@ export function caseK(fx) {
  * { won, black, white, line: [{ply, m, r, onLine}], decisions }.
  *   work: the search's model-calling iterations per move (default 1600)
  *   seed: the search stream and the AI's Math.random stream
+ *   pondered: work the check ply's root already holds (live: the ponder's)
+ *   pre: {x, y, wr} the check ply's single and its win rate as live had them
+ *        (a pre-sent answer: no search of ours chose it)
  */
-export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null } = {}) {
+export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null } = {}) {
   const E = await regressEnv();
   const { golib, model, m } = E;
   const N = fx.size;
@@ -154,6 +157,7 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
   //   else (greedy)    the single, then a second-stone search on the board
   //                    after it at secondMs/maxms of the budget, its valid list
   //                    the pre-cheat one (playTwoMoves validates both first)
+  //   secondNet false  the second-stone search runs without the net
   //   decline          a second stone (or hard pair) whose line wins under the
   //                    single's by more than it is not played: the single
   //                    (go.js cheatDeclined)
@@ -218,6 +222,10 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
     const secondWork = CH ? Math.max(50, Math.round((work * (CH.secondMs ?? cfg.maxms)) / cfg.maxms)) : 0;
     // SETTINGS.cheat.decline (go.js cheatDeclined): a cheat's second stone (or
     // a hard pair) whose own line wins under the single's by more than it.
+    // SETTINGS.cheat.secondNet (false, or per opponent): the second stone is
+    // searched without the net (golib nnDepth -1; go-solver req.secondNet).
+    const sn = CH?.secondNet;
+    const secondNetOff = sn === false || (!!sn && typeof sn === "object" && (sn[planKey(fx.opponent)] ?? sn.default) === false);
     const declineOf = (wr1, wr2) => Number.isFinite(CH?.decline) && typeof wr1 === "number" && typeof wr2 === "number" && wr2 < wr1 - CH.decline;
     const validList = (g) => {
       const out = [];
@@ -248,8 +256,15 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         const r0 = sess.setRoot(simple, valid, rootOpts);
         mv = "P";
         if (r0) {
-          await sess.search({ maxms: 30000, untilWork: work, untilVisits: 40 * work });
-          const b = sess.best();
+          // pondered: the check ply's root holds this much work already (live,
+          // the ponder's), so the cheat searches after it start from a deep tree.
+          const w0 = ply === from && pondered > work ? pondered : work;
+          await sess.search({ maxms: 60000, untilWork: w0, untilVisits: 40 * w0 });
+          let b = sess.best();
+          // pre: the check ply's single as live had it — a pre-sent answer
+          // (or a book move) and the win rate it came with — instead of this
+          // search's: the cheat policy then decides on live's own inputs.
+          if (ply === from && pre && valid[pre.x]?.[pre.y]) b = [{ x: pre.x, y: pre.y, top: [[pre.x, pre.y, 0, 0, pre.wr]] }];
           if (b && b.length) mv = `${b[0].x},${b[0].y}`;
           const d = { ply, mv, top: b?.[0]?.top ?? [] };
           decisions.push(d);
@@ -286,11 +301,14 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
               const board2 = golib.applyMove(simple, x1, y1);
               if (board2) {
                 const v2 = valid.map((col, x) => col.map((ok, y) => ok && !(x === x1 && y === y1) && board2[x][y] === "."));
-                if (validList(v2).length && sess.setRoot(board2, v2, { history: [simple.join(""), ...history], opponentPassed: false, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) })) {
+                if (validList(v2).length && sess.setRoot(board2, v2, { history: [simple.join(""), ...history], opponentPassed: false, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}), ...(secondNetOff ? { nnDepth: -1 } : {}) })) {
                   await sess.search({ maxms: 30000, untilWork: secondWork, untilVisits: 40 * secondWork });
                   const s2 = sess.best();
                   const wr2 = s2?.[0]?.top?.[0]?.[4];
-                  if (s2 && s2.length && !declineOf(d.top?.[0]?.[4], wr2)) {
+                  // declineHarm (go.js): the win rates decline only a second stone
+                  // that harms itself (golib.stoneHarm: own-eye fill, self-atari).
+                  const harmOk = !CH.declineHarm || (s2 && s2.length && !!golib.stoneHarm(board2, s2[0].x, s2[0].y));
+                  if (s2 && s2.length && !(declineOf(d.top?.[0]?.[4], wr2) && harmOk)) {
                     mv = `${x1},${y1}+${s2[0].x},${s2[0].y}`;
                     greedySecond = true;
                     d.second = { mv, top: s2[0].top ?? [] };

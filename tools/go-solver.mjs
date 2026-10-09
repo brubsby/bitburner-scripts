@@ -717,8 +717,13 @@ while (true) {
               }
               if (FAULT && FAULT.left-- > 0) throw new TypeError("Cannot read properties of undefined (reading 'length') [injected: --fault-session]");
               const fn0 = cheatFnOf(req, maxms + 100, 0, 0.003);
-              let r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: fn0 ? [fn0] : null, cheats: req.cheat?.cheats ?? 0 } });
+              // A cheat's SECOND-STONE request (go.js SETTINGS.cheat.secondNet):
+              // searched without the net (golib nnDepth -1) — its depth-1 nodes
+              // would be net-valued where the single's reused tree had playouts.
+              const nnRoot = req.secondNet === false ? { nnDepth: -1 } : {};
+              let r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: fn0 ? [fn0] : null, cheats: req.cheat?.cheats ?? 0 }, ...nnRoot });
               if (fn0) jointStats.requests++;
+              if (req.secondNet === false) jointStats.secondNoNet = (jointStats.secondNoNet ?? 0) + 1;
               backend = "model";
               extra.mode = "session";
               if (outcomeFor(N, req.opponent)) extra.nn = `o${SMALLNET_DEPTH}`;

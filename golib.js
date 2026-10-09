@@ -1096,7 +1096,7 @@ export async function chooseMoveModel(boardStrings, valid, N, komi, maxms, opts 
  * THE MODEL SEARCH AS A SESSION: one tree kept across moves (release 2).
  *
  *   const s = modelSession(N, komi, model, opts)
- *   s.setRoot(board, valid, { history, opponentPassed }) -> { reused, visits } | null (PASS only)
+ *   s.setRoot(board, valid, { history, opponentPassed, nnDepth? }) -> { reused, visits } | null (PASS only)
  *   await s.search({ maxms, untilVisits })   // grow the tree at the root
  *   s.best()                                 // as chooseMoveModel
  *   s.commit(x, y)                           // we played (x, y): its W node becomes the PONDER root
@@ -1143,6 +1143,12 @@ export function modelSession(N, komi, model, opts = {}) {
   // a net) — an in-process net costs ~a model call per eval, so it is spent
   // where the tree is wide and shallow.
   const NN_DEPTH = NN && Number.isFinite(NN.maxDepth) ? NN.maxDepth : Infinity
+  // setRoot({ nnDepth }) overrides it for the searches from that root until
+  // the next setRoot or commit: -1 = no net at all (playouts only). A cheat's
+  // SECOND-STONE root (go-solver req.secondNet false) is searched without the
+  // net: there the net's depth-1 values misread positions the single's reused
+  // tree had valued by playout (go.js SETTINGS.cheat.secondNet).
+  let nnDepth = NN_DEPTH
   // nn.steer: a playout leaf below a node the net valued with an outcome head
   // (turnsLeft) is charged the time the net predicted is left there, less the
   // turns already played since — so the power objective's time cost reaches
@@ -1538,7 +1544,7 @@ export function modelSession(N, komi, model, opts = {}) {
   /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
   const iterate = async (start) => {
     let node = start
-    const nnOk = (n) => n.ply - start.ply <= NN_DEPTH
+    const nnOk = (n) => n.ply - start.ply <= nnDepth
     const path = []
     // Virtual loss: every node on the path counts as in flight until the
     // backup (only read by the net's PUCT; vl is 0 between iterations).
@@ -1773,7 +1779,8 @@ export function modelSession(N, komi, model, opts = {}) {
      * The position to decide. Reuses the ponder tree when this board is one of
      * the replies drawn there. Returns null when PASS is black's only action.
      */
-    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined, cheat = undefined } = {}) {
+    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined, cheat = undefined, nnDepth: nd = undefined } = {}) {
+      nnDepth = Number.isFinite(nd) ? nd : NN_DEPTH
       const b = parseBoard(boardStrings)
       rootValid = valid ?? null
       // A fresh root may be a new game (a new offline-node layout): recount.
@@ -1901,6 +1908,8 @@ export function modelSession(N, komi, model, opts = {}) {
     },
     /** We played (x, y) (or passed: x null): keep its W node to ponder and reuse. */
     commit(x, y, second = null) {
+      // The ponder under our move uses the session's own net depth again.
+      nnDepth = NN_DEPTH
       const idx = x === null || x === undefined ? PASS : second ? pairId(x * N + y, second.x * N + second.y) : x * N + y
       let w = rootNode?.children.get(idx) ?? null
       // A move the root never expanded (a pre-sent answer played on a root
@@ -2238,6 +2247,27 @@ export function cheatOutcome(before, stones, reply, after, lastBefore = null) {
     if (n === 0) return 'failed'
   }
   return 'unknown'
+}
+
+/**
+ * Whether OUR stone at (x, y) on this board (black to move) does itself harm:
+ * 'eye' — it fills our own eye (isOwnEye: the playouts' own test), 'atari' —
+ * its group is left one liberty and it captured nothing (self-atari), or null.
+ * The decline's structural test (go.js SETTINGS.cheat.declineHarm): the
+ * 02:32:31Z cheat's second stone 3,1 was both. Pure.
+ */
+export function stoneHarm(boardStrings, x, y) {
+  const N = boardStrings.length
+  const b = parseBoard(boardStrings)
+  const nbrs = makeGeometry(N)
+  const idx = x * N + y
+  if (b[idx] !== EMPTY) return null
+  if (isOwnEye(b, nbrs, idx, US, N)) return 'eye'
+  const sc = makeScratch(N)
+  const captured = play(b, nbrs, idx, US, sc)
+  if (captured < 0) return 'atari' // suicide: worse than atari
+  if (captured > 0) return null
+  return libsAtLeast(b, nbrs, idx, 2, sc.out, sc.seen, ++sc.mark) ? null : 'atari'
 }
 
 export function applyMove(boardStrings, x, y) {

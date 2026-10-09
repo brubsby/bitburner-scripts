@@ -10,6 +10,9 @@
 // rest (tools/sim/go-regress.mjs playCheck: live per-opponent config, fixed
 // search stream and work budget, the AI off the logged line seeded from the
 // clock). Deterministic on any machine.
+// A check may carry `pre` {x, y, wr}: the check ply's single as live had it
+// (a pre-sent answer and its win rate), so the cheat policy decides on live's
+// own inputs; and `pondered`: work the check ply's root already held.
 //
 //   GL1 every case marked `fixed` is still WON from each of its checks (FAIL
 //       if not: a regression); every `open` case is reported (WARN while
@@ -55,7 +58,7 @@ export async function run() {
       const t0 = Date.now();
       let res;
       try {
-        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1 });
+        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}) });
       } catch (e) {
         c2.fail(`${fx.id} from ply ${ch.from}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
         continue;
