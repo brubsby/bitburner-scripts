@@ -38,6 +38,7 @@ import { autoPushVerdict } from "./pushwatch.mjs";
 import { bladeburnerHealth, installLoopOf } from "./bbhealth.mjs";
 import { raisedHealth } from "./raisehealth.mjs";
 import { goNodeHealth, goVerdictOf } from "./gohealth.mjs";
+import { orderHeldVerdict, exitUnpricedVerdict } from "./lifehealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -580,12 +581,12 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
     else if (fresh && !bb?.running?.name) fail("ORDER NOT HELD: progress.js gives the work slot to Bladeburner, but no Bladeburner action is running", `bladeburner.js: ${String(bb?.result ?? "?")} — ${String(bb?.detail ?? "").slice(0, 160)}`);
   }
   if (want && ageMin !== null && ageMin < 15) {
-    if (!want.includes(actual)) {
-      // A graft's usual cause is its money (the book, its raise): name it.
-      const cause = owner === "graft" ? graftHoldCauseOf({ orders: readTel("orders.txt"), act: tel["act.txt"], progress: pr }) : null;
-      fail(`ORDER NOT HELD: progress.js claims the work slot for '${owner}' work, but the game is running ${actual ?? "nothing"}`, cause ?? "something else took the slot (act.js? a stale order?) — the plan is not happening");
-    }
-    else note(`work slot: '${owner}' claimed and the game is running ${actual}`);
+    // A graft's usual cause is its money (the book, its raise): name it.
+    const cause = !want.includes(actual) && owner === "graft" ? graftHoldCauseOf({ orders: readTel("orders.txt"), act: tel["act.txt"], progress: pr }) : null;
+    // A work order act.js has not run yet is pending, not a failure (tools/lifehealth.mjs).
+    const v = orderHeldVerdict({ owner, want, actual, orders: readTel("orders.txt"), act: tel["act.txt"] ?? readTel("act.txt"), nowMs: Date.now(), cause });
+    if (v.fail) fail(v.fail.what, v.fail.detail);
+    else note(v.note);
   }
 }
 // THE BLADEBURNER ROUTE (tools/bbhealth.mjs): the daemon reporting, the slot
@@ -875,7 +876,12 @@ if (!sleevesExpected) {
 
   const inBootstrap = (() => { const t = now.homeRam !== null ? stackTierFromBoot(readTel("boot.txt"), now.homeRam) : null; return t !== null && now.homeRam < t; })();
   if (now.exitH === null && inBootstrap) note(`exit not priced yet: home ${now.homeRam}GB is below the stack tier, progress.js is not placed`);
-  else if (now.exitH === null) fail("EXIT UNPRICED: installgate.txt carries no exitH", "the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind");
+  else if (now.exitH === null) {
+    // A new life's first pass comes minutes after the install (tools/lifehealth.mjs).
+    const v = exitUnpricedVerdict({ lifeMs: state.playtimeSinceLastAug });
+    if (v.fail) fail(v.fail.what, v.fail.detail);
+    else note(v.note);
+  }
   else note(`exit ETA ${now.exitH.toFixed(1)}h`);
 
   // F1: the exit must approach. Over at least an hour of samples in this node,
