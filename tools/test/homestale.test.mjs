@@ -60,6 +60,8 @@ export async function run() {
     if (!(a?.next?.kind === "cores" && a.next.cost === 3164062500000)) c2.fail(`the watchdog's priced next must win: ${JSON.stringify(a)}`);
     const b = L.homeNextOf?.({ homeup: stale, watchdog: null, home });
     if (!(b && b.next === null && /128GB/.test(b.why))) c2.fail(`a homeup.txt for a 128GB home against a 65536GB one is rejected, named: ${JSON.stringify(b)}`);
+    if (L.homeNextOf?.({ homeup: { ...stale, cores: 4 }, watchdog: null, home })?.next !== null) c2.fail("the RAM alone differing rejects it too");
+    if (L.homeNextOf?.({ homeup: { ...stale, homeRam: 65536 }, watchdog: null, home })?.next !== null) c2.fail("the cores alone differing rejects it too");
     const c = L.homeNextOf?.({ homeup: { ...stale, homeRam: 65536, cores: 4 }, watchdog: null, home });
     if (!(c?.next?.kind === "RAM")) c2.fail(`a homeup.txt for the live home stands: ${JSON.stringify(c)}`);
     if (L.homeNextOf?.({ homeup: null, watchdog: null, home })?.next !== null) c2.fail("nothing to read is no next");
