@@ -176,7 +176,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
+import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
@@ -6261,21 +6261,17 @@ async function act(ns, canJoin, info, note) {
         // lives' growth, exitplan persistLift) moved ~18h of ~100h with it —
         // on passes that re-decided nothing (EXIT UNSTABLE). The exit reads the
         // mean of this life's last 12 measurements (one per pass): the
-        // elasticity over the balances the life has passed through.
+        // elasticity over the balances the life has passed through — and the
+        // node's lives before it (plan.elasticityObsOf: carried across
+        // installs; per life, the new life's first zero was the whole mean,
+        // EXIT JUMP AT INSTALL BN12 2026-10-09).
+        const eObsCtx = { lastAugReset: info?.lastAugReset ?? null, node: info?.currentNode ?? null }
         const eBudgetRaw = Math.max(0, (richer.logM - probePlan.logM) / Math.log(K))
-        const eBudgetObs = (() => {
-          const g = readJson(ns, GATE)
-          const prevObs = g?.lastAugReset === info?.lastAugReset && Array.isArray(g?.eBudgetObs) ? g.eBudgetObs.filter((x) => typeof x === 'number' && isFinite(x)) : []
-          return [...prevObs, +eBudgetRaw.toFixed(4)].slice(-12)
-        })()
+        const eBudgetObs = elasticityObsOf(readJson(ns, GATE), eBudgetRaw, 'eBudgetObs', eObsCtx)
         const eBudget = eBudgetObs.reduce((a, b) => a + b, 0) / eBudgetObs.length
         // eRep the same way (live 20:22 -> 20:27Z: 0.197 -> 0.334 on one pass).
         const eRepRaw = Math.max(0, (faster.logM - probePlan.logM) / Math.log(K))
-        const eRepObs = (() => {
-          const g = readJson(ns, GATE)
-          const prevObs = g?.lastAugReset === info?.lastAugReset && Array.isArray(g?.eRepObs) ? g.eRepObs.filter((x) => typeof x === 'number' && isFinite(x)) : []
-          return [...prevObs, +eRepRaw.toFixed(4)].slice(-12)
-        })()
+        const eRepObs = elasticityObsOf(readJson(ns, GATE), eRepRaw, 'eRepObs', eObsCtx)
         const eRep = eRepObs.reduce((a, b) => a + b, 0) / eRepObs.length
 
         // Remaining windows to the exit condition, on the measured growth.
@@ -6528,7 +6524,7 @@ async function act(ns, canJoin, info, note) {
         // dollars home's extra income brings in before the join.
         join,
       })
-      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, eBudgetObs: weightsMeta?.eBudgetObs ?? null, eRepObs: weightsMeta?.eRepObs ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
+      return { homeLnPerDollar: h.lnPerDollar, homeValueLn: h.ln, homeValueWhy: h.reason, homeLnJoin: h.lnJoin ?? null, homeLnPlan: h.lnPlan ?? null, eBudget: weightsMeta?.eBudget ?? null, eBudgetObs: weightsMeta?.eBudgetObs ?? null, eRepObs: weightsMeta?.eRepObs ?? null, eObsNode: info?.currentNode ?? null, remainingWindows: weightsMeta?.remainingWindows ?? null, probeMoney: weightsMeta?.probeMoney ?? null }
     } catch {
       return { homeLnPerDollar: null, homeValueLn: null, homeValueWhy: 'home valuation threw', homeLnJoin: null, homeLnPlan: null, eBudget: null, remainingWindows: null, probeMoney: null }
     }

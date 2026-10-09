@@ -321,5 +321,37 @@ export async function run() {
     if (!/if \(pc\.prev && \(setSwitch \|\| \(d\.switched === true/.test(prog) || !/pc\.events = \[\.\.\.\(pc\.events \?\? \[\]\), setSwitch \? `the committed graft set switched/.test(prog)) c.fail("progress.js must record a switched graft set as an event of its pass (and re-decide)");
     checks.push(c);
   }
+  {
+    // EXIT JUMP AT INSTALL, BN12 2026-10-09 (18:24:11Z and 18:49:24Z, ~15-min
+    // lives): the new life's mean +2.13h / +1.48h over the install's at
+    // 0.17h, both times on the pass where the new life's installgate first
+    // wrote eBudget/eRep. The buffer was per LIFE, so the new life's first
+    // measurement (rep 0 after the install, the money of minute ten: x1.5 of
+    // either buys nothing) was the whole mean: eBudget 0.2687 -> 0, eRep
+    // 0.3003 -> 0. Replayed (scratch attrmean.mjs, same seed, CHECK 0.6%/1.4%
+    // on the two passes' published lifeLength means): eBudget/eRep +0.73h of
+    // the +0.89h mean move (+0.30h of +0.46h point); income/split, carried
+    // streams (the gang) and cadence ~0. These elasticities price LATER
+    // lives' growth (exitplan persistLift) — the node's, carried across
+    // installs like every other node-level estimate.
+    const c = new Check("ES10", "the purchase elasticities (eBudget/eRep) are a node-level buffer carried across installs: the new life's first zero does not replace the node's mean");
+    c.examined(4);
+    const gate = { lastAugReset: 1791570252088, eObsNode: 12, eBudgetObs: [0, 0, 0.6177, 0.5785, 0.1473], eRepObs: [0, 0, 0.7649, 0.4312, 0.3052] };
+    const ctx = { lastAugReset: 1791571764703, node: 12 };
+    const b = P.elasticityObsOf?.(gate, 0, "eBudgetObs", ctx);
+    const r = P.elasticityObsOf?.(gate, 0, "eRepObs", ctx);
+    const mean = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    if (!Array.isArray(b) || !(mean(b) > 0.2) || b.length !== 6) c.fail(`the new life's first eBudget must extend the node's buffer (mean ~0.22), not restart it at 0: ${JSON.stringify(b)}`);
+    if (!Array.isArray(r) || !(mean(r) > 0.2)) c.fail(`eRep the same: ${JSON.stringify(r)}`);
+    const other = P.elasticityObsOf?.({ ...gate, eObsNode: 9 }, 0.4, "eBudgetObs", ctx);
+    if (!(Array.isArray(other) && other.length === 1 && other[0] === 0.4)) c.fail(`another node's buffer is not this node's: ${JSON.stringify(other)}`);
+    const capped = P.elasticityObsOf?.({ ...gate, eBudgetObs: Array(12).fill(0.5) }, 0.1, "eBudgetObs", ctx);
+    if (!(Array.isArray(capped) && capped.length === 12 && capped[11] === 0.1)) c.fail(`the buffer keeps the last 12: ${JSON.stringify(capped)}`);
+    const prog = code("progress.js");
+    c.examined(1);
+    if (!/const eBudgetObs = elasticityObsOf\(readJson\(ns, GATE\), eBudgetRaw, 'eBudgetObs', /.test(prog) || !/const eRepObs = elasticityObsOf\(readJson\(ns, GATE\), eRepRaw, 'eRepObs', /.test(prog)) c.fail("progress.js must build both buffers with plan.elasticityObsOf");
+    if (!/eObsNode: info\?\.currentNode/.test(prog)) c.fail("the gate record must stamp its elasticity buffers with the node (eObsNode)");
+    checks.push(c);
+  }
   return checks;
 }

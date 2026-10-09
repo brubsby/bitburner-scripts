@@ -2229,6 +2229,26 @@ export function installBeganLife(rec, lastAugReset) {
  *   gang  {steps [{atH, perSec}], at}       the gang's carried stream, node
  *         hours from `at`
  */
+/**
+ * THE PURCHASE ELASTICITIES' BUFFER (progress.js eBudget / eRep: what x1.5
+ * money / reputation buys in the purchase plan, averaged over the last
+ * `max` passes), carried ACROSS INSTALLS within the node. The exit prices
+ * LATER lives' growth through them (exitplan persistLift) — a property of
+ * the node's lives, not of this life's first minutes. Per-life, the new
+ * life's first measurement (reputation 0 after the install, minute ten's
+ * money: x1.5 of either buys nothing) was the whole mean: live BN12
+ * 2026-10-09 eBudget 0.2687 -> 0 and eRep 0.3003 -> 0 at 0.17h into the
+ * 18:24Z and 18:49Z lives, +0.73h of the new life's +0.89h mean move —
+ * EXIT JUMP AT INSTALL (+2.13h, +1.48h). `gate`: the last /tel/installgate.txt;
+ * `field`: 'eBudgetObs' | 'eRepObs'; the gate's `eObsNode` stamps its node
+ * (a record without one is kept only for its own life). Pure.
+ */
+export function elasticityObsOf(gate, raw, field, { lastAugReset = null, node = null, max = 12 } = {}) {
+  const same = gate && ((node != null && gate.eObsNode === node) || (gate.eObsNode == null && lastAugReset != null && gate.lastAugReset === lastAugReset))
+  const prev = same && Array.isArray(gate[field]) ? gate[field].filter((x) => fin(x)) : []
+  return [...prev, +(+raw).toFixed(4)].slice(-max)
+}
+
 export function installCarryOf(rec, lastAugReset) {
   if (!rec?.carry || typeof rec.carry !== 'object' || !installBeganLife(rec, lastAugReset)) return null
   return rec.carry
