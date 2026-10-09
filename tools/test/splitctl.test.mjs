@@ -142,7 +142,7 @@ const SCEN = [
   // earlier law ping-ponged 55 <-> 60 and re-probed a measured 40% every
   // 35 min (seed 11): it must settle — no more than 3 probes, never
   // oscillating.
-  { name: "A, seed 11: money x0.6 falling x0.86 per +10% (a flat optimum)", plant: PA, discriminates: false, seed: 11, T: { money: (s) => 0.6 * PA.at("money")(s) * Math.exp(-1.5 * (s - 0.1)), farmExp: PA.at("farmExp"), moneyExp: PA.at("moneyExp") } },
+  { name: "A, seed 11: money x0.6 falling x0.86 per +10% (a flat optimum, from a chosen 35%)", plant: PA, discriminates: false, seed: 11, s0: 0.35, own: true, T: { money: (s) => 0.6 * PA.at("money")(s) * Math.exp(-1.5 * (s - 0.1)), farmExp: PA.at("farmExp"), moneyExp: PA.at("moneyExp") } },
   { name: "L: live 16:12Z, money x0.71 (+40% over-prediction), farm x0.5", plant: PL, discriminates: false, T: { money: (s) => PL.at("money")(s) / 1.4, farmExp: (s) => 0.5 * PL.at("farmExp")(s), moneyExp: PL.at("moneyExp") } },
 ];
 
@@ -178,7 +178,7 @@ function liveMeter(P, T, s, now, noise = () => 0) {
  * prep of new targets; 3 min down) at half rate, measurements carry 5% noise
  * per one-minute bucket. Returns the trajectory.
  */
-function simulate(P, T, { learn = true, hours = 8, s0 = 0.1, seed = 7, trace = false } = {}) {
+function simulate(P, T, { learn = true, hours = 8, s0 = 0.1, seed = 7, trace = false, own = false } = {}) {
   const tr = truthOf(P, T);
   let rng = seed;
   const noise = () => {
@@ -195,7 +195,8 @@ function simulate(P, T, { learn = true, hours = 8, s0 = 0.1, seed = 7, trace = f
   let applyAt = null;
   let pendingS = null;
   let rampUntil = now;
-  let state = null;
+  // `own`: the running split is one the controller chose (not a start).
+  let state = own ? { ...C.ctlNew(1, null), switches: [{ at: now - 30 * 60e3, from: s0 - 0.05, to: s0, kind: "exploit" }] } : null;
   const moves = [];
   const passes = [];
   for (let minute = 0; minute < hours * 60; minute++) {
@@ -252,9 +253,9 @@ export async function run() {
     const c = new Check("SC1", "closed loop: a plant whose true rates differ from the model converges to the TRUE optimum split without oscillating; the open loop does not");
     let openWrong = 0;
     const t0 = Date.now();
-    for (const { name, plant: P, T, discriminates, s0 = 0.1, seed = 7 } of SCEN) {
+    for (const { name, plant: P, T, discriminates, s0 = 0.1, seed = 7, own = false } of SCEN) {
       c.examined(1);
-      const cl = simulate(P, T, { learn: true, hours: 4, s0, seed });
+      const cl = simulate(P, T, { learn: true, hours: 4, s0, seed, own });
       const ol = discriminates ? simulate(P, T, { learn: false, hours: 2, s0 }) : null;
       const { opt, H } = cl.tr;
       // A run that ends mid-probe (an explore not yet returned from) rests
@@ -266,7 +267,9 @@ export async function run() {
       const hOl = ol ? H(ol.s) : null;
       const { reversals: rev, probes: done } = C.reversalsOf(probing ? sw.slice(0, -1) : sw, Infinity, Infinity);
       const probes = done + (probing ? 1 : 0);
-      const maxStep = cl.moves.reduce((a, m) => Math.max(a, Math.abs(m.to - m.from)), 0);
+      // A START (the running split is not one the controller chose) goes
+      // straight to the estimate by design; every later move is step-limited.
+      const maxStep = cl.moves.filter((m) => m.kind !== "start").reduce((a, m) => Math.max(a, Math.abs(m.to - m.from)), 0);
       c.note(`${name}: TRUE optimum ${Math.round(opt.frac * 100)}% ${opt.hours.toFixed(2)}h | closed loop -> ${Math.round(rest * 100)}%${probing ? ` (probing ${Math.round(cl.s * 100)}%)` : ""} ${hCl.toFixed(2)}h in ${cl.moves.length} moves [${cl.moves.map((m) => `${m.minute}m ${Math.round(m.from * 100)}->${Math.round(m.to * 100)} ${m.kind}`).join(", ")}] | open loop -> ${ol ? `${Math.round(ol.s * 100)}% ${hOl.toFixed(2)}h` : "not run (not a discriminating scenario)"}`);
       if (!(hCl - opt.hours <= TOL_H)) c.fail(`${name}: the closed loop ended at ${Math.round(rest * 100)}% (${hCl.toFixed(3)}h), ${((hCl - opt.hours) * 60).toFixed(1)} min of exit from the true optimum ${Math.round(opt.frac * 100)}% (${opt.hours.toFixed(3)}h)`);
       if (maxStep > C.SPLIT.stepMax + 1e-9) c.fail(`${name}: a move of ${(maxStep * 100).toFixed(0)}% exceeds the step limit ${C.SPLIT.stepMax * 100}%`);
@@ -438,8 +441,10 @@ export async function run() {
     const base = (s) => ({ incomePerSec: 2e7 * s + 1e5, expPerSec: 1e5 * (1 - s) + 1e3 * s + 1, expFlatPerSec: 0 });
     const now = 3e12;
     const seg = (s, { settled = true, ageMin = 30 } = {}) => ({ segId: `seg:${s}:${ageMin}`, frac: s, ageSec: ageMin * 60, settled, settleSec: 300, forced: false, n: settled ? 10 : 0, money: settled ? { perSec: 2e7 * s, se: 2e5 * s } : null, farmExp: settled ? { perSec: 1e5 * (1 - s), se: 1e3 * (1 - s) } : null, moneyExp: settled ? { perSec: 1e3 * s, se: 10 * s + 1e-9 } : null });
+    const snap2 = (x) => Math.round(x * 1e6) / 1e6;
     const st = (extra = {}) => ({ v: 1, bitNode: 12, lastAugReset: 5, obs: [], switches: [{ at: now - 3600e3, from: 0.05, to: 0.1, kind: "exploit" }], target: null, targetAt: null, s0: null, s0Since: null, ...extra });
-    const settledAt = (s0, extra = {}) => st({ s0, s0Since: now - 40 * 60e3, ...extra });
+    // The running split is one the controller chose (else it is a START).
+    const settledAt = (s0, extra = {}) => st({ s0, s0Since: now - 40 * 60e3, switches: [{ at: now - 3600e3, from: snap2(s0 - 0.05), to: s0, kind: "exploit" }], ...extra });
     const obsOf = (fs, settleSec = 300) => fs.map((f, i) => ({ segId: `t${i}`, frac: f, at: now, n: 20, settleSec, forced: false, money: { meas: 2e7 * f, se: 2e4 * f, model: 2e7 * f }, farmExp: { meas: 1e5 * (1 - f), se: 100 * (1 - f), model: 1e5 * (1 - f) }, moneyExp: { meas: 1e3 * f, se: f, model: 1e3 * f } }));
     const run = (s0, { state = null, meter = {}, lastAugReset = 5 } = {}) => C.splitControl({ bestExitPolicy: exitOf, inputs: base(s0), share0: s0, measure: seg(s0, meter), model: MODEL, state, nowMs: now, lastAugReset, bitNode: 12, hackPerSec: 2e7 * s0 });
     const say = (name, r) => c.note(`${name}: [${r.kind}] ${Math.round(r.frac * 100)}% — ${r.why.slice(0, 150)}`);
@@ -447,9 +452,16 @@ export async function run() {
     const a = run(0.1, { meter: { settled: false, ageMin: 2 } });
     say("start", a);
     if (a.kind !== "start" || a.frac !== 0.3) c.fail(`a life's opening split must go straight to the posterior's optimum 30%: [${a.kind}] ${a.frac}`);
-    // DWELL: the same, once the life has switched, waits for the measurement.
-    const b = run(0.1, { meter: { settled: false, ageMin: 2 }, state: st() });
-    if (b.kind !== "dwell" || b.frac !== 0.1) c.fail(`an unsettled split must dwell: [${b.kind}] ${b.frac}`);
+    // DWELL: a split the controller just chose, unsettled, whose gain to the optimum lies inside the
+    // posterior's band, waits for its measurement (25% -> 30%: minutes at the mean, +- tens).
+    const b = run(0.25, { meter: { settled: false, ageMin: 2 }, state: st({ switches: [{ at: now - 2 * 60e3, from: 0.1, to: 0.25, kind: "exploit" }] }) });
+    say("just moved, unsettled", b);
+    if (b.kind !== "dwell" || b.frac !== 0.25) c.fail(`an unsettled split whose gain is inside the uncertainty band must dwell: [${b.kind}] ${b.frac}`);
+    // PRICED DWELL: the same unsettled split 4.4h from the optimum — waiting costs more than the
+    // measurement could change, so the step is taken now (live 17:53Z held 0% for "41.1 min").
+    const pd = run(0.1, { meter: { settled: false, ageMin: 2 }, state: st() });
+    say("unsettled, 4.4h from the optimum", pd);
+    if (pd.kind !== "exploit" || Math.abs(pd.frac - 0.25) > 1e-9 || !pd.dwell?.overridden) c.fail(`a dwell priced above its measurement's value must give way to a step-limited move: [${pd.kind}] ${pd.frac} ${JSON.stringify(pd.dwell)}`);
     // STEP LIMIT: settled and well past dwell, 10% -> the 30% optimum moves 15%, not 20%.
     const d = run(0.1, { state: settledAt(0.1) });
     say("step", d);
@@ -481,8 +493,8 @@ export async function run() {
     say("flat path", walk);
     if (walk.kind !== "exploit" || Math.abs(walk.frac - 0.25) > 1e-9) c.fail(`a path worth ${(0.085 * 60).toFixed(1)} min in 0.9-min steps must be walked: [${walk.kind}] ${walk.frac}`);
     // OSCILLATION: three direction reversals inside 3h are published and damp the law (dwell x3).
-    const flip = (i) => ({ at: now - (100 - 20 * i) * 60e3, from: i % 2 ? 0.25 : 0.1, to: i % 2 ? 0.1 : 0.25, kind: "exploit" });
-    const osc = run(0.1, { state: st({ switches: [0, 1, 2, 3].map(flip), s0: 0.1, s0Since: now - 15 * 60e3 }) });
+    const flip = (i) => ({ at: now - (100 - 20 * i) * 60e3, from: i % 2 ? 0.1 : 0.25, to: i % 2 ? 0.25 : 0.1, kind: "exploit" });
+    const osc = run(0.25, { state: st({ switches: [0, 1, 2, 3].map(flip), s0: 0.25, s0Since: now - 15 * 60e3 }) });
     say("after 3 reversals", osc);
     if (!osc.oscillating || osc.reversals3h !== 3) c.fail(`3 reversals in 3h must publish oscillating: ${osc.oscillating}, ${osc.reversals3h}`);
     if (osc.kind !== "dwell") c.fail(`an oscillating controller must damp (dwell x${C.SPLIT.oscDamp}): [${osc.kind}] after 15 min`);
@@ -491,6 +503,49 @@ export async function run() {
     if (carried.state.obs.length < 2 || carried.state.switches.some((w) => w.at < now - 60e3) || carried.state.lastAugReset !== 5) c.fail(`a new life must keep the calibration and drop the switches: ${carried.state.obs.length} obs, ${carried.state.switches.length} switches, life ${carried.state.lastAugReset}`);
     const otherNode = C.splitControl({ bestExitPolicy: exitOf, inputs: base(0.1), share0: 0.1, measure: seg(0.1), model: MODEL, state: settledAt(0.1, { obs: obsOf([0.2, 0.4]) }), nowMs: now, lastAugReset: 5, bitNode: 9 });
     if (otherNode.state.obs.some((o) => o.segId.startsWith("t"))) c.fail("another node's calibration must not carry");
+    checks.push(c);
+  }
+
+  // -------------------------------------------------------------------
+  {
+    const c = new Check("SC7", "the live 17:53:52Z state: a restart's 0% priced 4.1h worse is left now — the dwell is priced against the gap, a restart is a start, the wait published is the real one");
+    c.examined(6);
+    // batch.js restarted ~17:49Z and came back at 0% (no verdict yet); the
+    // first controller pass (62e2718) published [dwell] "41.1 min left on 0%
+    // (settled, 3/5 buckets, 4 min on this split); best now 20% 4.14h vs
+    // 8.23h". The fixture is that pass's own exit inputs, batch.js's model and
+    // the segment as published (n 3, the farm's measured rate).
+    const L = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools/test/fixture-bn12-splitdwell-1753.json"), "utf8"));
+    const ef = L.expfarm;
+    const now = Date.parse(ef.at);
+    const segP = ef.control.segment;
+    const ob = ef.control.state.obs.find((o) => o.segId === segP.segId);
+    const measure = { segId: segP.segId, frac: 0, ageSec: segP.ageMin * 60, settled: true, settleSec: 0, forced: false, n: segP.n, money: { perSec: 0, se: 0 }, farmExp: { perSec: ob.farmExp.meas, se: ob.farmExp.se }, moneyExp: { perSec: 0, se: 0 } };
+    const raw = C.splitRaw(L.exitinputs.inputs);
+    const hack = L.exitinputs.inputs.split?.hackPerSec ?? null;
+    const call = (state) => C.splitControl({ bestExitPolicy: X.bestExitPolicy, inputs: raw, share0: 0, measure, model: L.batch.splitModel, state, nowMs: now, lastAugReset: ef.lastAugReset, bitNode: 12, hackPerSec: hack });
+    const r = call(null);
+    c.note(`17:53Z replayed: [${r.kind}] ${Math.round(r.frac * 100)}% — ${String(r.why).slice(0, 220)}`);
+    if (!r.grid) {
+      c.fail(`the controller refused: ${r.why}`);
+      checks.push(c);
+      return checks;
+    }
+    // The replay reproduces the published pricing (calibration of the fixture, printed either way).
+    const pub20 = ef.grid.find((g) => g.frac === 0.2)?.hours;
+    c.note(`replay vs published: 0% ${r.runH.toFixed(3)}h vs ${ef.runH.toFixed(3)}h; 20% ${r.grid.find((g) => g.frac === 0.2)?.hours.toFixed(3)}h vs ${pub20.toFixed(3)}h`);
+    // 0.1h: batch.js's model curves in the fixture are 6s newer than the pass's; the decision's gap is 4.1h.
+    if (!(Math.abs(r.runH - ef.runH) < 0.1 && Math.abs(r.grid.find((g) => g.frac === 0.2).hours - pub20) < 0.1)) c.fail("the replay does not reproduce the published 17:53Z pricing — the fixture is not the live state");
+    if (r.frac === 0 || r.kind === "dwell") c.fail(`a split the controller prices ${(r.runH - r.best.hours).toFixed(2)}h worse must not be held for a measurement: [${r.kind}] ${r.frac}`);
+    if (r.kind !== "start") c.fail(`a running split this controller did not choose (batch.js restarted at 0%) is a start: [${r.kind}]`);
+    // Not a start (the controller chose 0% itself): the priced dwell must still let it go.
+    const own = call({ ...C.ctlNew(ef.lastAugReset, 12), switches: [{ at: now - 5 * 60e3, from: 0.1, to: 0, kind: "exploit" }], s0: 0, s0Since: now - segP.ageMin * 60e3 });
+    c.note(`chosen by the controller itself: [${own.kind}] ${Math.round(own.frac * 100)}% — dwell ${JSON.stringify(own.dwell)}`);
+    if (own.kind !== "exploit" || !(Math.abs(own.frac - C.SPLIT.stepMax) < 1e-9)) c.fail(`a dwell priced at more than the measurement is worth must give way to the step: [${own.kind}] ${own.frac}`);
+    if (!own.dwell?.overridden) c.fail("the override must be published (control.dwell.overridden)");
+    // The wait published is the real one: 2 buckets to go, not maxDwell - age (41.1 min), and no damping on a fresh process.
+    if (!(own.dwell?.waitMin <= C.SPLIT.dwellMs / 6e4)) c.fail(`the published wait must be the buckets or the dwell left, not maxDwell - age: ${own.dwell?.waitMin ?? `unpublished (dwellLeftMin ${own.dwellLeftMin})`} min`);
+    if (own.oscillating || r.oscillating) c.fail("a restart is not a reversal: oscillating must stay false");
     checks.push(c);
   }
 

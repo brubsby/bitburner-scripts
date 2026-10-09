@@ -64,12 +64,17 @@
 // held the fleet.
 //
 // THE CONTROL LAW (converge without oscillating):
-//   start     the first decision of a life (money mode, nothing settled):
-//             straight to the posterior's optimum, on the exploit's
-//             confidence rule — there is no measured state to protect
-//   dwell     no decision until the running segment has settled and holds
-//             minBuckets of measurement, and at least dwellMs since the split
-//             began (x3 while oscillating); maxDwellMs bounds an unsettled one
+//   start     whenever the running split is not one this controller chose
+//             this life (a life's opening, batch.js restarted at 0% — live
+//             17:49Z): straight to the posterior's optimum, on the exploit's
+//             confidence rule — there is no decided state to protect
+//   dwell     a wait for the measurement (minBuckets after settle, at least
+//             dwellMs on the split, x3 while oscillating; maxDwellMs bounds
+//             an unsettled one) — PRICED: waiting costs waitH x (1 - H(best)/
+//             H(s0)) of exit, the measurement is worth at most the gain's
+//             posterior sd; when the gain is clear of that band, or waiting
+//             costs more than the band, the step-limited move is taken now
+//             (live 17:53Z held 0% for a published 41 min at a 4.1h gap)
 //   step      a move is at most stepMax (3 grid steps) toward the optimum
 //   cost      a retarget is priced: for the ramp time tau (MEASURED: each
 //             segment's settle time, prior 10 min) the moved RAM produces
@@ -537,14 +542,23 @@ export function splitControl(o) {
   const segAgeMs = seg ? seg.ageSec * 1000 : 0
   const splitAgeMs = num(state.s0Since) ? nowMs - state.s0Since : segAgeMs
   const settledEnough = !!(seg && seg.settled && seg.n >= P.minBuckets)
-  const dwellLeftMs = seg ? Math.max(0, P.dwellMs * damp - splitAgeMs, settledEnough ? 0 : Math.max(0, P.maxDwellMs - splitAgeMs)) : null
+  // THE WAIT the dwell would impose: until the segment holds minBuckets
+  // (bucketsLeft one-minute buckets after it settles, at most maxDwellMs on
+  // the split), then at least dwellMs (x damp) on the split. 62e2718 PUBLISHED
+  // maxDwellMs - age as the wait whenever the buckets were short — live
+  // 17:53Z "41.1 min left" with 2 buckets to go — and held it unpriced.
+  const bucketsLeft = seg && seg.settled ? Math.max(0, P.minBuckets - seg.n) : null
+  const waitBucketsMs = settledEnough ? 0 : bucketsLeft !== null ? bucketsLeft * P.bucketMs : Math.max(0, P.maxDwellMs - splitAgeMs)
+  const dwellLeftMs = seg ? Math.max(Math.max(0, P.dwellMs * damp - splitAgeMs), Math.min(waitBucketsMs, Math.max(0, P.maxDwellMs - splitAgeMs))) : null
   const pending = state.target !== null && snap(state.target) !== s0 && num(state.targetAt) && nowMs - state.targetAt < P.pendingMs
-  // THE LIFE'S START: nothing switched yet this life and the running segment
-  // not settled — the running split is batch.js's opening default (money mode
-  // until a verdict), not a measured steady state, so there is nothing for a
-  // dwell or a step limit to protect.
-  const starting = !pending && !state.switches.length && !(seg && seg.settled)
-  const deciding = starting || (!pending && !!seg && !(dwellLeftMs > 0))
+  // THE START: the running split is not one this controller chose this life —
+  // a life's opening split, or batch.js restarted mid-life (it comes back at
+  // 0% until it reads a verdict: live 17:49Z), or an open-loop leftover. Its
+  // measurement is of a split nobody decided, so there is nothing for a dwell
+  // or a step limit to protect. (62e2718 required the segment UNSETTLED too;
+  // 0% has no money targets and settles at once, so the start never fired.)
+  const starting = !pending && !state.switches.some((w) => snap(w.to) === s0)
+  const deciding = true
 
   // ---- 4. price the grid at the posterior mean (10% steps while nothing
   // will be decided — publication only; 5% when deciding) -----------------
@@ -604,29 +618,6 @@ export function splitControl(o) {
     return { frac: snap(frac), priced: true, kind, why, grid, best, runH, shareH: hOf(frac) ?? runH, farmH: hOf(0), moneyH: hOf(1), state, ...published, ...extra }
   }
 
-  // A switch published but not yet applied by batch.js: hold it, do not re-decide.
-  // The start goes straight to the posterior's optimum — calibrated by the
-  // earlier lives' measurements, the model where there are none — on the
-  // exploit's confidence rule (gain clear of the posterior's sd), so a model
-  // the plant has not delivered yet cannot move it far (live BN12 16:52Z: the
-  // open loop went 25% -> 100% on a fresh life's model at k 0.9 while
-  // batch.txt still read $0/s).
-  if (starting && best.frac !== s0) {
-    const ds = []
-    for (const [key] of [STREAMS[0], STREAMS[1]]) for (const p of sigmaPoints(fit[key]).slice(0, 2)) ds.push({ ...th, [key]: p })
-    const gs = ds.map((t) => {
-      const a = H(t, s0)
-      const z = H(t, best.frac)
-      return num(a) && num(z) ? a - z : null
-    }).filter(num)
-    const g0 = runH - best.hours
-    const sd = gs.length ? Math.sqrt(gs.reduce((acc, g) => acc + (g - g0) ** 2, 0) / gs.length) : 0
-    if (g0 - P.zGain * sd > hyst) return done(best.frac, 'start', `start: ${Math.round(s0 * 100)}% -> ${Math.round(best.frac * 100)}% — the life's opening split is not a measured steady state; the posterior's optimum (${state.obs.length} measured segment(s) carried) ${best.hours.toFixed(2)}h vs ${runH.toFixed(2)}h, +-${(sd * 60).toFixed(1)} min`, { gainH: g0, sdGainH: sd })
-  }
-  if (pending) return done(state.target, 'pending', `waiting for batch.js to apply ${Math.round(state.target * 100)}% (published ${((nowMs - state.targetAt) / 6e4).toFixed(1)} min ago)`)
-  if (!seg) return done(s0, 'dwell', `no measurement segment on the running ${Math.round(s0 * 100)}% yet (batch.js splitMeasure on ${measure?.frac ?? 'none'})`)
-  if (dwellLeftMs > 0) return done(s0, 'dwell', `dwell: ${(dwellLeftMs / 6e4).toFixed(1)} min left on ${Math.round(s0 * 100)}% (${seg.settled ? `settled, ${seg.n}/${P.minBuckets} buckets` : `ramping ${Math.round(segAgeMs / 6e4)} min`}, ${Math.round(splitAgeMs / 6e4)} min on this split${oscillating ? `, x${damp} oscillation damping` : ''}); best now ${Math.round(best.frac * 100)}% ${best.hours.toFixed(2)}h vs ${runH.toFixed(2)}h`)
-
   // ---- 6. the posterior's draws: the money and farm streams' principal
   // axes, two sigma points each ------------------------------------------
   const draws = []
@@ -660,6 +651,36 @@ export function splitControl(o) {
     sdGain = gs.length ? Math.sqrt(gs.reduce((acc, g) => acc + (g - g0) ** 2, 0) / gs.length) : 0
   }
   const sure = pathGain - P.zGain * sdGain
+
+  // THE DWELL IS PRICED, not a fixed wait (live 17:53Z: it held 0% for a
+  // published 41 min while the controller priced 20% 4.1h sooner). Waiting
+  // the rest of the dwell at s0 instead of moving costs that wait's share of
+  // progress at the gap — waitH x (1 - H(best)/H(s0)), the same progress-
+  // fraction composition as the retarget cost (an approximation, NOT
+  // simulated); the measurement it waits for is worth at most what it could
+  // change, the gain's posterior sd. The dwell stands only while that value
+  // exceeds its cost and the gain is not already clear of the uncertainty
+  // band; otherwise the exploit below acts now (step limit and all).
+  const waitH = num(dwellLeftMs) ? dwellLeftMs / 3.6e6 : 0
+  const dwellCostH = s1 !== s0 && num(best.hours) && runH > 0 ? waitH * Math.max(0, 1 - best.hours / runH) : 0
+  const dwellPriced = { waitMin: Math.round(waitH * 600) / 10, bucketsLeft, costMin: Math.round(dwellCostH * 600) / 10, valueMin: Math.round(sdGain * 600) / 10, gainMin: Math.round(pathGain * 600) / 10, sureMin: Math.round(sure * 600) / 10 }
+  const dwellOverride = s1 !== s0 && pathGain > hyst && num(h1) && h1 < runH && (sure > hyst || dwellCostH > sdGain)
+  published.dwell = { ...dwellPriced, overridden: dwellOverride && dwellLeftMs > 0 }
+  // The start goes straight to the posterior's optimum — calibrated by the
+  // earlier lives' measurements, the model where there are none — on the
+  // exploit's confidence rule (gain clear of the posterior's sd), so a model
+  // the plant has not delivered yet cannot move it far (live BN12 16:52Z: the
+  // open loop went 25% -> 100% on a fresh life's model at k 0.9 while
+  // batch.txt still read $0/s).
+  if (starting && best.frac !== s0) {
+    const g0 = runH - best.hours
+    if (g0 - P.zGain * sdGain > hyst) return done(best.frac, 'start', `start: ${Math.round(s0 * 100)}% -> ${Math.round(best.frac * 100)}% — the running split is not one this controller chose this life (a life's opening, or batch.js restarted); the posterior's optimum (${state.obs.length} measured segment(s) carried) ${best.hours.toFixed(2)}h vs ${runH.toFixed(2)}h, +-${(sdGain * 60).toFixed(1)} min`, { gainH: g0, sdGainH: sdGain })
+  }
+  if (pending) return done(state.target, 'pending', `waiting for batch.js to apply ${Math.round(state.target * 100)}% (published ${((nowMs - state.targetAt) / 6e4).toFixed(1)} min ago)`)
+  if (!seg) return done(s0, 'dwell', `no measurement segment on the running ${Math.round(s0 * 100)}% yet (batch.js splitMeasure on ${measure?.frac ?? 'none'})`)
+  if (dwellLeftMs > 0 && !dwellOverride) return done(s0, 'dwell', `dwell: ${(dwellLeftMs / 6e4).toFixed(1)} min left on ${Math.round(s0 * 100)}% (${seg.settled ? `settled, ${seg.n}/${P.minBuckets} buckets` : `ramping ${Math.round(segAgeMs / 6e4)} min`}, ${Math.round(splitAgeMs / 6e4)} min on this split${oscillating ? `, x${damp} oscillation damping` : ''}); best now ${Math.round(best.frac * 100)}% ${best.hours.toFixed(2)}h vs ${runH.toFixed(2)}h — waiting costs ${(dwellCostH * 60).toFixed(1)} min, the measurement could move the gain ${(sdGain * 60).toFixed(1)} min`)
+  if (dwellLeftMs > 0 && dwellOverride) return done(s1, 'exploit', `exploit (dwell priced out): ${Math.round(s0 * 100)}% -> ${Math.round(s1 * 100)}% toward ${Math.round(best.frac * 100)}% (${best.hours.toFixed(2)}h vs ${runH.toFixed(2)}h here); ${(dwellLeftMs / 6e4).toFixed(1)} min more dwell would cost ${(dwellCostH * 60).toFixed(1)} min of exit against a measurement worth <= ${(sdGain * 60).toFixed(1)} min (gain ${(pathGain * 60).toFixed(1)} min, ${sure > hyst ? 'clear of the uncertainty band' : 'waiting costs more than the band'})`, { gainH: pathGain, sdGainH: sdGain, costH: c1 })
+
   // A TRIAL RETURNS unless it proved better: an explore move was made for
   // information, not because the mean preferred it, so once its dwell is
   // over the controller goes back to where it came from whenever the mean
