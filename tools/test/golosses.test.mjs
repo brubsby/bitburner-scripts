@@ -29,10 +29,21 @@
 //
 // Adding a live loss:  node tools/sim/go-fixture.mjs --at <its `at`>
 // (or --loss 1 for the latest; --harness f.jsonl for a go-w0 --trace loss).
+//
+// COST (2026-10-09: ~200s of CPU, the suite's second most expensive module).
+// The replays run on worker threads (tools/sim/go-regress-pool.mjs, each one
+// deterministic and independent; BB_TEST_JOBS=1 runs them in this thread).
+// THE SLOW TIER: a check marked `"tier": "slow"` in the fixture, every check
+// of an `open` case (a WARN either way), and GL5/GL6 are skipped by
+// `run.mjs --quick` and printed as SKIPPED; `npm test` runs them all. A
+// fixed case must keep at least one check outside the slow tier (GL2), and
+// that check must be one that goes RED on the bug the case was fixed for —
+// the seeds that stayed green under the old behaviour are the slow ones
+// (measured 2026-10-09 by replaying every check with each fix turned off).
 
 import fs from "node:fs";
 import path from "node:path";
-import { Check } from "./harness.mjs";
+import { Check, QUICK } from "./harness.mjs";
 import { REPO } from "./ram.mjs";
 
 const FIXTURE = path.join(REPO, "tools", "test", "fixture-go-losses.json");
@@ -74,7 +85,13 @@ export async function run() {
   }
   const fixture = JSON.parse(fs.readFileSync(FIXTURE, "utf8"));
   if (!Array.isArray(fixture.cases) || !fixture.cases.length) c2.fail("the corpus is empty", FIXTURE);
-  let won = 0, lost = 0, open = 0;
+  const { makePool } = await import("../sim/go-regress-pool.mjs");
+  const pool = makePool();
+  const optsOf = (ch) => ({ from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}), ...(ch.liveTree ? { liveTree: true } : {}) });
+  // Every replay is queued first (the pool runs them in parallel), then
+  // reported in fixture order, so the output reads the same at any job count.
+  const jobs = [];
+  let skipped = 0;
   for (const fx of fixture.cases) {
     c2.examined(1);
     for (const k of ["id", "opponent", "size", "komi", "start", "moves", "checks", "status"]) if (fx[k] === undefined) c2.fail(`${fx.id ?? "?"}: missing ${k}`);
@@ -82,60 +99,67 @@ export async function run() {
     const withT = fx.moves.filter((m) => m.T > 0 && m.r !== "G");
     const resolved = withT.filter((m) => Array.isArray(m.ks) && m.ks.length);
     if (withT.length && resolved.length < withT.length * 0.5) c2.fail(`${fx.id}: only ${resolved.length}/${withT.length} AI replies reproduce from T + 200k — the seed model or the record is wrong`);
+    for (const ch of fx.checks ?? []) if (ch.tier !== undefined && ch.tier !== "slow") c2.fail(`${fx.id} from ply ${ch.from}: unknown tier ${JSON.stringify(ch.tier)} (only "slow")`);
+    // The quick dev loop guards a fixed case only through a check outside the slow tier.
+    if (fx.status === "fixed" && !(fx.checks ?? []).some((ch) => ch.tier !== "slow")) c2.fail(`${fx.id}: every check is in the slow tier — keep at least one (one that is red on the old behaviour) in the quick tier`);
     for (const ch of fx.checks ?? []) {
-      c1.examined(1);
-      const t0 = Date.now();
-      let res;
-      try {
-        res = await R.playCheck(fx, { from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}), ...(ch.liveTree ? { liveTree: true } : {}) });
-      } catch (e) {
-        c2.fail(`${fx.id} from ply ${ch.from}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
+      if (QUICK && (ch.tier === "slow" || fx.status !== "fixed")) {
+        skipped++;
         continue;
       }
-      const ms = Date.now() - t0;
-      const line = res.line.map((l) => `${l.m}/${l.r}`).join(" ");
-      const desc = `${fx.id} [${fx.status}] from ply ${ch.from}: ${res.won ? "WON" : "LOST"} ${res.black}-${res.white} (${ms}ms)`;
-      if (res.won) won++;
-      else lost++;
-      if (fx.status === "fixed") {
-        if (!res.won) c1.fail(`REGRESSION ${desc}`, `line ${line}${ch.why ? `\n      check: ${ch.why}` : ""}`);
-        else c1.note(desc);
-      } else {
-        open++;
-        if (res.won) c1.note(`${desc} — an OPEN case now wins: set its status to "fixed"`);
-        else c1.warn(`open (known) loss: ${desc}`, `line ${line}`);
-      }
+      c1.examined(1);
+      jobs.push({ fx, ch, p: pool.run(fx, optsOf(ch)).then((res) => ({ res, ms: res.ms }), (e) => ({ e })) });
     }
   }
-  c1.note(`${fixture.cases.length} cases: ${won} checks won, ${lost} lost (${open} checks on open cases)`);
-  // GL4: the prior floor (golib nn.priorFloor, measured negative as a default
-  // and off) still does what it was built for: the 14:56:31Z Daedalus case,
-  // lost by the live solver at ply 2, is won with the floor at 0.1.
-  const c4 = new Check("GL4", "golib nn.priorFloor 0.1 wins the 2026-10-09 14:56:31Z Daedalus case from ply 2 (the live solver, floor off, loses it)");
-  checks.push(c4);
-  const fl = fixture.cases.find((c) => c.id === "live-2026-10-09T14:56:31.081Z-Daedalus");
-  if (!fl) c4.fail("the case is not in the corpus");
-  else
-    for (const seed of [1, 2]) {
-      c4.examined(1);
-      const off = await R.playCheck(fl, { from: 2, work: 800, seed, nnOver: { priorFloor: 0 } });
-      const on = await R.playCheck(fl, { from: 2, work: 800, seed, nnOver: { priorFloor: 0.1 } });
-      if (off.won) c4.warn(`seed ${seed}: the floor-off replay now WINS ${off.black}-${off.white} — promote the case to fixed`);
-      if (!on.won) c4.fail(`seed ${seed}: floor 0.1 LOST ${on.black}-${on.white}`, `line ${on.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
-      else c4.note(`seed ${seed}: floor off ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}, floor 0.1 WON ${on.black}-${on.white}`);
+  if (skipped) c1.skip(skipped, "corpus checks marked slow, or on open cases");
+  // GL5/GL6 (slow tier): their replays are queued now, beside GL1's.
+  const settle = (p) => p.then((res) => ({ res }), (e) => ({ e }));
+  const nb = fixture.cases.find((c) => c.id === "live-2026-10-09T17:24:13.315Z-Netburners");
+  const gl5 = QUICK || !nb ? [] : nb.checks.filter((x) => x.from === 8).map((ch) => ({ ch, off: settle(pool.run(nb, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, openPass: "allow" })) }));
+  const dl = fixture.cases.find((c) => c.id === "live-2026-10-09T20:52:10.371Z-Daedalus");
+  const gl6 = QUICK || !dl ? [] : dl.checks.filter((x) => x.liveTree).map((ch) => ({ ch, off: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: -1 } })), on: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: 16 } })) }));
+  let won = 0, lost = 0, open = 0;
+  for (const { fx, ch, p } of jobs) {
+    const { res, ms, e } = await p;
+    if (e) {
+      c2.fail(`${fx.id} from ply ${ch.from}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
+      continue;
     }
+    const line = res.line.map((l) => `${l.m}/${l.r}`).join(" ");
+    const desc = `${fx.id} [${fx.status}] from ply ${ch.from}${ch.seed ? ` seed ${ch.seed}` : ""}${ch.tier ? " (slow)" : ""}: ${res.won ? "WON" : "LOST"} ${res.black}-${res.white} (${ms}ms)`;
+    if (res.won) won++;
+    else lost++;
+    if (fx.status === "fixed") {
+      if (!res.won) c1.fail(`REGRESSION ${desc}`, `line ${line}${ch.why ? `\n      check: ${ch.why}` : ""}`);
+      else c1.note(desc);
+    } else {
+      open++;
+      if (res.won) c1.note(`${desc} — an OPEN case now wins: set its status to "fixed"`);
+      else c1.warn(`open (known) loss: ${desc}`, `line ${line}`);
+    }
+  }
+  c1.note(`replayed on ${pool.jobs} worker thread(s)`);
+  c1.note(`${fixture.cases.length} cases: ${won} checks won, ${lost} lost (${open} checks on open cases)`);
+  // (GL4, golib nn.priorFloor 0.1 winning the 14:56:31Z Daedalus case, was
+  // removed 2026-10-09: the floor is off live — go-solver --prior-floor-on
+  // "none", GL3 holds go-regress to it — so it guarded code no game runs.
+  // Turning the floor on brings that case back under GL1 through the nets.)
   // GL5: the 17:24:13Z Netburners case's ply-8 check, replayed under the
   // OLD open-pass rule (openPass 'allow'): the ponder pre-sends a PASS on an
   // open board and the game is lost 9-13.5 as live. Red before the fix, so
   // GL1's green on this case is the fix's, not the replay's.
   const c5 = new Check("GL5", "the 2026-10-09 17:24:13Z Netburners case: under the old open-pass rule the replayed ponder pre-sends an open-board PASS at ply 8 and loses (openPass 'visits' is what wins it)");
   checks.push(c5);
-  const nb = fixture.cases.find((c) => c.id === "live-2026-10-09T17:24:13.315Z-Netburners");
   if (!nb) c5.fail("the case is not in the corpus");
+  else if (QUICK) c5.skip(nb.checks.filter((x) => x.from === 8).length, "the old-rule ('allow') replay of the ply-8 check");
   else
-    for (const ch of nb.checks.filter((x) => x.from === 8)) {
+    for (const { ch, off: p } of gl5) {
       c5.examined(1);
-      const off = await R.playCheck(nb, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, openPass: "allow" });
+      const { res: off, e } = await p;
+      if (e) {
+        c5.fail(`seed ${ch.seed}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
+        continue;
+      }
       const d = off.decisions.find((x) => x.ply === ch.from);
       if (off.won || d?.mv !== "P") c5.warn(`seed ${ch.seed} presend ${ch.presend}: under 'allow' the replay no longer pre-sends PASS and loses (${d?.mv}, ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}) — the bug's reproduction drifted`);
       else c5.note(`seed ${ch.seed} presend ${ch.presend}: 'allow' -> ${d.mv}${d.pre ? " (pre-sent)" : ""}, LOST ${off.black}-${off.white}`);
@@ -144,21 +168,27 @@ export async function run() {
   // live — without the late-prior cap the ponder pre-sends the stale 4,3 and
   // the game is lost 0-27.5 — and the cap (golib nn.lateCap 16, measured
   // neutral and off) still wins them, so the option keeps doing what it was
-  // built for.
+  // built for. (Slow tier. Like the removed GL4 it guards an option that is
+  // off live; kept while the late-cap work is current.)
   const c6 = new Check("GL6", "the 2026-10-09 20:52:10Z Daedalus case: without the late-prior cap the replayed ponder pre-sends the stale 4,3 at ply 2 and loses; nn.lateCap 16 wins it");
   checks.push(c6);
-  const dl = fixture.cases.find((c) => c.id === "live-2026-10-09T20:52:10.371Z-Daedalus");
   if (!dl) c6.fail("the case is not in the corpus");
+  else if (QUICK) c6.skip(2 * dl.checks.filter((x) => x.liveTree).length, "the cap off/on replays of the liveTree checks");
   else
-    for (const ch of dl.checks.filter((x) => x.liveTree)) {
+    for (const { ch, off: pOff, on: pOn } of gl6) {
       c6.examined(1);
-      const off = await R.playCheck(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: -1 } });
+      const { res: off, e: e1 } = await pOff;
+      const { res: on, e: e2 } = await pOn;
+      if (e1 || e2) {
+        c6.fail(`seed ${ch.seed} presend ${ch.presend}: the replay threw`, String((e1 ?? e2)?.stack ?? e1 ?? e2).slice(0, 300));
+        continue;
+      }
       const d = off.decisions.find((x) => x.ply === ch.from);
       if (off.won || d?.mv !== "4,3") c6.warn(`seed ${ch.seed} presend ${ch.presend}: with the cap off the replay no longer pre-sends 4,3 and loses (${d?.mv}, ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}) — the bug's reproduction drifted`);
       else c6.note(`seed ${ch.seed} presend ${ch.presend}: cap off -> ${d.mv}${d.pre ? " (pre-sent)" : ""}, LOST ${off.black}-${off.white}`);
-      const on = await R.playCheck(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: 16 } });
       if (!on.won) c6.fail(`seed ${ch.seed} presend ${ch.presend}: lateCap 16 LOST ${on.black}-${on.white}`, `line ${on.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
       else c6.note(`seed ${ch.seed} presend ${ch.presend}: lateCap 16 WON ${on.black}-${on.white}`);
     }
+  await pool.close();
   return checks;
 }

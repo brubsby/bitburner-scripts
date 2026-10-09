@@ -484,13 +484,17 @@ export async function run() {
       },
     };
     const root = [".....", ".....", ".....", ".....", "....."];
-    const s = golib.modelSession(N, 5.5, ai, {});
+    // Budgets in VISITS / WORK on a seeded stream, never milliseconds: a 3ms
+    // search ran 3-57 iterations by machine load and sometimes chose PASS
+    // (2 of 30 runs, 2026-10-09), and `mv.x` then threw the whole module.
+    const s = golib.modelSession(N, 5.5, ai, { seed: 1 });
     const r0 = s.setRoot(root, validAll(root), { history: [] });
-    await s.search({ maxms: 3 }); // short, so the reply's subtree keeps untried moves
-    const [mv] = s.best();
+    await s.search({ maxms: 60000, untilVisits: 20 }); // short, so the reply's subtree keeps untried moves
+    const [mv] = s.best() ?? [];
+    if (!mv) throw new Error("GM8: the 20-visit search on the empty board chose PASS (seed 1)");
     s.commit(mv.x, mv.y);
     seen.length = 0;
-    await s.ponder(2); // short: the reused root keeps unexpanded (untried) moves
+    await s.ponder(60000, { work: 20 }); // short: the reused root keeps unexpanded (untried) moves
     const after = root.map((c, x) => (x === mv.x ? c.slice(0, mv.y) + "X" + c.slice(mv.y + 1) : c));
     c8.examined(2);
     if (r0?.reused !== false) c8.fail("the first root must be fresh", JSON.stringify(r0));
@@ -512,8 +516,9 @@ export async function run() {
     if (!r1?.reused || !(r1.visits > 0)) c8.fail("the position after the AI's pondered reply must reuse its subtree, with visits", JSON.stringify(r1));
     c8.examined(1)
     if (s.rootMoves.some(([x, y]) => !valid[x][y])) c8.fail("a reused root must drop every point the game's valid list forbids (searched or not)", JSON.stringify(s.rootMoves))
-    await s.search({ maxms: 40 });
+    await s.search({ maxms: 60000, untilVisits: s.rootVisits + 200 });
     const b1 = s.best();
+    if (!b1?.[0]) throw new Error("GM8: the reused root's search chose PASS (seed 1)");
     if (b1?.[0] && b1[0].x === banned[0] && b1[0].y === banned[1]) c8.fail("a reused root must not offer a point the game's valid list forbids");
     // A position not in the tree is searched fresh.
     s.commit(b1[0].x, b1[0].y);

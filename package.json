@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node tools/test/run.mjs",
     "test:warn-fatal": "node tools/test/run.mjs --warn-fatal",
+    "test:quick": "node tools/test/run.mjs --quick",
     "daemon": "systemd-inhibit --what=sleep --who=bitburner-daemon --why='Remote File API socket does not survive a suspend; the game keeps running and telemetry freezes' --mode=block node tools/rfa-daemon.mjs",
     "gosolver": "node tools/go-solver.mjs --maxms 800 --poll 150",
     "verify": "node tools/verify-deploy.mjs",

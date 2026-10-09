@@ -135,6 +135,17 @@ into a scratch directory outside the daemon's watch, mutates the copy, and
 reports CAUGHT (exit 0), SURVIVED (1) or COULD NOT RUN (2). A module that
 throws counts as "could not run", never as caught.
 
+**The suite's cost.** `npm test` runs everything (~25 min on this laptop,
+2026-10-09; `--times` prints wall/CPU per module). `npm run test:quick`
+skips the SLOW TIER — expensive replays a check marks with `Check.skip`, e.g.
+the Go loss corpus's extra seeds (`"tier": "slow"` in
+`fixture-go-losses.json`) — and prints every skip, so a quick run never reads
+as the whole suite. A fixed loss case keeps at least one quick seed, the one
+that goes red on the bug it was fixed for (its `red` field records what was
+measured). Mutation-test with `BB_TEST_QUICK=1` to prove the quick tier
+bites. CPU guards use thread CPU time (`harness.threadCpuMs`) and
+`retryOnce`: other agents' suites load this 4-core machine to 12+.
+
 `docs/`, `backups/` and `cw/` are *walked*. They look safe only because the
 extension filter is `.js .jsx .ts .tsx .txt .script` and they happen to contain
 `.md` and `.json` — so **a `.js` or `.txt` dropped into `docs/` hot-deploys into
