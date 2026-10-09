@@ -1560,6 +1560,22 @@ export function wantedBindsCheck(tel, prevPenalty = null) {
   const act = gangActivity(tel.assignments)
   const detail = `penalty ${pen.toFixed(4)} = respect ${Number(tel.respect).toFixed(1)} / (respect + wanted ${Number(tel.wantedLevel).toFixed(1)}) multiplies every respect and money gain; ${act.justice} on justice, ${act.earning} earning, ${act.training} training, ${act.warfare} on warfare; mode ${tel.mode}`
   if (num(prevPenalty) && pen > prevPenalty + 0.005) return { fail: false, note: `gang wanted penalty recovering ${prevPenalty.toFixed(3)} -> ${pen.toFixed(3)} (${act.justice} on justice, ${act.earning} earning)` }
+  // THE DIRECTION FROM THE GAME'S OWN RATES, no history needed. pen = R/(R+W)
+  // so d(pen)/dt = (r W - R w) / (R + W)^2, with r and w the game's
+  // respectGainRate and wantedLevelGainRate (per cycle; the wanted rate is
+  // net of justice's decay, Gang.ts:157-163). Live BN12 18:39Z a brand-new
+  // gang (no previous sample) failed here while these rates lifted the
+  // penalty ~+0.2/h on its priced 1-on-justice plan. A lift under 0.01/h
+  // is an equilibrium below the floor, not a recovery.
+  const R = Number(tel.respect)
+  const W = Number(tel.wantedLevel)
+  const r = tel.rates?.gameRespectPerCycle
+  const w = tel.rates?.gameWantedPerCycle
+  if (num(R) && num(W) && num(r) && num(w) && R + W > 0) {
+    const perH = ((r * W - R * w) / Math.pow(R + W, 2)) * (3600 / CYCLE_SEC)
+    if (perH >= 0.01) return { fail: false, note: `gang wanted penalty ${pen.toFixed(3)} recovering at +${perH.toFixed(3)}/h by the game's rates (respect +${r.toExponential(2)}, wanted +${w.toExponential(2)} per cycle; ${act.justice} on justice, ${act.earning} earning)` }
+    return { fail: true, what: `WANTED PENALTY BINDS: gang penalty ${pen.toFixed(3)} below ${MIN_PENALTY} and not recovering (${perH >= 0 ? '+' : ''}${perH.toFixed(3)}/h by the game's rates${num(prevPenalty) ? `, was ${prevPenalty.toFixed(3)}` : ''})`, detail }
+  }
   return { fail: true, what: `WANTED PENALTY BINDS: gang penalty ${pen.toFixed(3)} below ${MIN_PENALTY}${num(prevPenalty) ? ` and not recovering (was ${prevPenalty.toFixed(3)})` : ''}`, detail }
 }
 

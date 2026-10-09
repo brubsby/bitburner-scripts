@@ -266,5 +266,39 @@ export async function run() {
   }
   checks.push(c7);
 
+  // LIVE BN12 2026-10-09 18:39Z: a brand-new gang (4 members, Slum Snakes)
+  // at respect 14.2 / wanted 44.7 (penalty 0.241), 1 on Vigilante Justice
+  // and 3 on Strongarm Civilians — justicePlan's priced optimum over 2h, 6h
+  // and 24h alike. The healthcheck had no previous penalty for a gang that
+  // did not exist at the last sample, so it FAILED "not recovering" while
+  // the game's own rates (gang.txt 18:41Z: respect +0.01101/cycle, wanted
+  // +0.03098/cycle at respect 17.43 / wanted 54.23) were lifting the
+  // penalty by ~+0.2/h — and the next samples read 0.2417, 0.2432.
+  // d(pen)/dt = (r W - R w) / (R + W)^2 needs no history: the game's net
+  // wanted rate already includes justice's decay (Gang.ts:157-163).
+  const c8 = new Check("GV8", "WANTED PENALTY BINDS reads the penalty's direction from the game's own respect/wanted rates, so a new gang recovering under the floor is not failed for having no previous sample");
+  {
+    c8.examined(1);
+    const live = { phase: "running", respect: 17.429877383625676, wantedLevel: 54.234414776263534, wantedPenalty: 0.24321564977908547, mode: "money",
+      assignments: { dov: "Vigilante Justice", ash: "Strongarm Civilians", bex: "Strongarm Civilians", cid: "Strongarm Civilians" },
+      rates: { gameRespectPerCycle: 0.011013484829619963, gameMoneyPerCycle: 60.94, gameWantedPerCycle: 0.03098215343640831 } };
+    const rec = GP.wantedBindsCheck(live, null);
+    if (rec?.fail || !/recovering/.test(rec?.note ?? "")) c8.fail(`the live 18:41Z gang is recovering by the game's rates and must be noted, not failed: ${JSON.stringify(rec)}`);
+    // Wanted outrunning respect (the same gang with justice dropped): falling.
+    const falling = GP.wantedBindsCheck({ ...live, rates: { ...live.rates, gameWantedPerCycle: 0.05 } }, null);
+    if (!falling?.fail) c8.fail(`wanted outrunning respect lowers the penalty and must FAIL: ${JSON.stringify(falling)}`);
+    // Flat (respect and wanted frozen, the BN9 incident): fail.
+    const frozen = GP.wantedBindsCheck({ ...live, rates: { ...live.rates, gameRespectPerCycle: 0, gameWantedPerCycle: 0 } }, live.wantedPenalty);
+    if (!frozen?.fail) c8.fail(`a frozen penalty is not a recovery: ${JSON.stringify(frozen)}`);
+    // A measured fall since the last sample with the rates now lifting it: the trough has passed — recovering.
+    const trough = GP.wantedBindsCheck(live, 0.25);
+    if (trough?.fail) c8.fail(`past the trough the rates lift the penalty: ${JSON.stringify(trough)}`);
+    // Unreadable rates fall back to the sample comparison (the BN9 fixture has none): unchanged behaviour.
+    const noRates = GP.wantedBindsCheck({ ...live, rates: { gameRespectPerCycle: 0.011 } }, null);
+    if (!noRates?.fail) c8.fail(`without a readable wanted rate and no previous sample the check cannot see a recovery and must FAIL: ${JSON.stringify(noRates)}`);
+    c8.note(`live 18:41Z: ${rec?.note ?? rec?.what}`);
+  }
+  checks.push(c8);
+
   return checks;
 }
