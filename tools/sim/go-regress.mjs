@@ -149,9 +149,14 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
   // (golib.cheatRoll / cheatChance, the clock as for the AI's seed):
   //   joint            the pair search (solver opts.pairs, pairsOnly) decides
   //   hardBelow > 0    the pair search on a move whose single wins < hardBelow
+  //                    (hardAdaptive[opponent] {thr, mult}: a pair under thr
+  //                    searched on (mult - 1) x the work, go-solver's adaptive)
   //   else (greedy)    the single, then a second-stone search on the board
   //                    after it at secondMs/maxms of the budget, its valid list
   //                    the pre-cheat one (playTwoMoves validates both first)
+  //   decline          a second stone (or hard pair) whose line wins under the
+  //                    single's by more than it is not played: the single
+  //                    (go.js cheatDeclined)
   // A case without `cheat` replays single stones only (as before).
   const CH = fx.cheat ? { ...E.SETTINGS.cheat, ...(cheatPolicy ?? {}), crime: fx.cheat.crime, sf14: fx.cheat.sf14 ?? 0 } : null;
   const nn = fx.nets ? await solverNn(fx.opponent, N) : null;
@@ -211,6 +216,9 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
     let cheats = 0;
     const windowOpen = (ply) => !!CH && !oppPassed && cheats < CH.maxPerGame && ply + 1 >= CH.fromTurn && golib.cheatChance(cheats, CH.crime, CH.sf14) >= CH.minChance && golib.cheatRoll(tAt(ply)) <= golib.cheatChance(cheats, CH.crime, CH.sf14);
     const secondWork = CH ? Math.max(50, Math.round((work * (CH.secondMs ?? cfg.maxms)) / cfg.maxms)) : 0;
+    // SETTINGS.cheat.decline (go.js cheatDeclined): a cheat's second stone (or
+    // a hard pair) whose own line wins under the single's by more than it.
+    const declineOf = (wr1, wr2) => Number.isFinite(CH?.decline) && typeof wr1 === "number" && typeof wr2 === "number" && wr2 < wr1 - CH.decline;
     const validList = (g) => {
       const out = [];
       for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (g[x][y]) out.push([x, y]);
@@ -251,12 +259,26 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
               // The pair search (go-solver with a request's `cheat`: pairs at the root).
               sess.setRoot(simple, valid, { ...rootOpts, cheat: { fns: [() => true], cheats } });
               await sess.search({ maxms: 30000, untilWork: work, untilVisits: 40 * work });
-              const pb = sess.best();
+              let pb = sess.best();
+              // THE HARD PAIR'S EXTENSION (SETTINGS.cheat.hardAdaptive {thr, mult}:
+              // go-solver's adaptive budget on the hard-move pair request): a
+              // pair whose own line wins under thr is searched on (mult - 1) x.
+              const ha = CH.joint ? null : Number.isFinite(CH.hardAdaptive?.thr) ? CH.hardAdaptive : CH.hardAdaptive?.[planKey(fx.opponent)] ?? null;
+              const pwr0 = pb?.[0]?.top?.[0]?.[4];
+              if (ha && ha.mult > 1 && pb?.[0]?.second && typeof pwr0 === "number" && pwr0 < ha.thr) {
+                const more = Math.round((ha.mult - 1) * work);
+                await sess.search({ maxms: 60000, untilWork: sess.rootWork + more, untilVisits: sess.rootVisits + 40 * more });
+                pb = sess.best();
+              }
               const p0 = pb?.[0];
-              if (p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y]) {
+              const pwr = p0?.top?.[0]?.[4];
+              // THE DECLINE (SETTINGS.cheat.decline): a pair whose own line wins
+              // less than the single's (by more than the margin) is not played.
+              const declined = !CH.joint && declineOf(wr, pwr);
+              if (p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y] && !declined) {
                 mv = `${p0.x},${p0.y}+${p0.second.x},${p0.second.y}`;
                 d.pair = { mv, top: p0.top ?? [], hard: !CH.joint };
-              }
+              } else if (declined) d.pairDeclined = { wr, pwr };
             }
             if (!mv.includes("+") && !CH.joint) {
               // The greedy cheat: a second-stone request on the board after the first.
@@ -267,10 +289,16 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
                 if (validList(v2).length && sess.setRoot(board2, v2, { history: [simple.join(""), ...history], opponentPassed: false, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}) })) {
                   await sess.search({ maxms: 30000, untilWork: secondWork, untilVisits: 40 * secondWork });
                   const s2 = sess.best();
-                  if (s2 && s2.length) {
+                  const wr2 = s2?.[0]?.top?.[0]?.[4];
+                  if (s2 && s2.length && !declineOf(d.top?.[0]?.[4], wr2)) {
                     mv = `${x1},${y1}+${s2[0].x},${s2[0].y}`;
                     greedySecond = true;
                     d.second = { mv, top: s2[0].top ?? [] };
+                  } else {
+                    if (s2 && s2.length) d.secondDeclined = { wr: d.top?.[0]?.[4], wr2, second: `${s2[0].x},${s2[0].y}` };
+                    // The single is played: the session goes back to its root
+                    // (live, go.js notifies the solver of the single).
+                    sess.setRoot(simple, valid, rootOpts);
                   }
                 }
               }

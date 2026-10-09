@@ -386,6 +386,21 @@ if (CHEAT_JOINT) {
 // searched jointly (pairsOnly, a full budget and a round trip charged) and
 // played whole; if the pair search finds no pair, the greedy cheat as before.
 const CHEAT_HYBRID = num("cheat-hybrid", 0);
+const CHEAT_HYBRID_AD = (() => {
+  const v = str("cheat-hybrid-adaptive", null);
+  if (!v) return null;
+  const [thr, mult] = v.split(":").map(Number);
+  return { thr, mult };
+})();
+// --cheat-decline M: THE DECLINE (go.js SETTINGS.cheat.decline). A greedy
+// cheat's second stone, or a hard-move pair, whose own line wins less than
+// the single's by more than M is not played: the single stone instead, the
+// cheat kept for later. WHY: the 2026-10-09 02:32:31Z Illuminati loss —
+// the single 4,4 won 0.999, the only second stones were own-eye fills (the
+// search's PASS there is a real pass, which the AI passes back, lost on the
+// board), and the fill 3,1 left one liberty: the AI captured everything.
+const CHEAT_DECLINE = str("cheat-decline", null) !== null ? num("cheat-decline", 0) : null;
+const declineOf = (wr1, wr2) => CHEAT_DECLINE !== null && typeof wr1 === "number" && typeof wr2 === "number" && wr2 < wr1 - CHEAT_DECLINE;
 if (CHEAT_HYBRID && !CHEAT_JOINT) {
   OPTS.pairs = [6, 5];
   OPTS.pairsOnly = true;
@@ -572,6 +587,14 @@ async function playGame(stats, gameIndex) {
               b = sess.best();
               extendMoves++;
             }
+          }
+          // --cheat-hybrid-adaptive THR:MULT: the hard-move pair request's own
+          // adaptive budget (go.js SETTINGS.cheat.hardAdaptive): a chosen pair
+          // whose line wins under THR is searched on for (MULT-1) x the budget.
+          if (pairsNow && CHEAT_HYBRID_AD && b?.[0]?.second && typeof b[0].top?.[0]?.[4] === "number" && b[0].top[0][4] < CHEAT_HYBRID_AD.thr) {
+            await moreSearch((CHEAT_HYBRID_AD.mult - 1) * budget);
+            b = sess.best();
+            jointStats.hardExt = (jointStats.hardExt ?? 0) + 1;
           }
           solveWork = sess.rootWork - work0;
           return b;
@@ -772,7 +795,9 @@ async function playGame(stats, gameIndex) {
         turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS) / 1000;
         jointStats.hard = (jointStats.hard ?? 0) + 1;
         const vg = validGrid(state, N);
-        if (pr?.[0]?.second && vg[pr[0].x]?.[pr[0].y] && vg[pr[0].second.x]?.[pr[0].second.y] && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) {
+        const pairDeclined = declineOf(wr, pr?.[0]?.top?.[0]?.[4]);
+        if (pairDeclined) jointStats.pairDeclined = (jointStats.pairDeclined ?? 0) + 1;
+        if (!pairDeclined && pr?.[0]?.second && vg[pr[0].x]?.[pr[0].y] && vg[pr[0].second.x]?.[pr[0].second.y] && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) {
           ranked = pr;
           jointSecond = pr[0].second;
           jointStats.pairs++;
@@ -812,6 +837,8 @@ async function playGame(stats, gameIndex) {
       cheats++;
       if (cheatSucceeds) {
         cheatOk++;
+        const greedy = !jointSecond && !pre?.second;
+        const before = greedy && CHEAT_DECLINE !== null && sess ? { b: g.simpleBoardFromBoard(state.board), v: validGrid(state, N), h: state.previousBoards.slice(), wr: pre ? pre.wr : ranked[0].top?.[0]?.[4] } : null;
         g.makeMove(state, ranked[0].x, ranked[0].y, GoColor.black);
         // The second stone, chosen on the board after the first. The game
         // validates both against the board BEFORE either (Go.ts cheat
@@ -826,7 +853,20 @@ async function playGame(stats, gameIndex) {
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
         wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
         turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS) / 1000;
-        if (second && second.length) {
+        if (before && second && second.length && declineOf(before.wr, second[0].top?.[0]?.[4])) {
+          // DECLINED: the single stands (already placed); the cheat is not
+          // played (k unchanged); the solver is told of the single (go.js
+          // notifies it) — its session re-roots before the first stone.
+          cheats--;
+          cheatOk--;
+          jointStats.declined = (jointStats.declined ?? 0) + 1;
+          // No go-cheat.js exec for a declined cheat.
+          wall -= CHEAT_EXEC_MS;
+          turnLiveS -= CHEAT_EXEC_MS / 1000;
+          note("B", [ranked[0].x, ranked[0].y], SEEDED ? { T: playtimeAt(wall) } : undefined);
+          sess.setRoot(before.b, before.v, { history: before.h, opponentPassed: oppPassed, objective });
+          sess.commit(ranked[0].x, ranked[0].y);
+        } else if (second && second.length) {
           g.makeMove(state, second[0].x, second[0].y, GoColor.black);
           note("B", [second[0].x, second[0].y]);
           // Live, the solver commits its answer to the second-stone request

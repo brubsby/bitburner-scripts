@@ -395,7 +395,27 @@ const SETTINGS = {
   // at crime 2.5112 / SF14.3, --work-rate 1.7, layout seeds 1101-1108):
   // 800 paired, power/h -0.1% [-2.2, +2.2], 800/800 won both; a hard pair
   // on 106/800 games (13%). Corpus case live-2026-10-08T19:08:40.943Z.
-  cheat: { joint: false, hardBelow: 0.5, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  // decline: THE DECLINE — a greedy cheat's second stone (or a hard-move
+  // pair) whose own line wins under the single's by more than `decline` is
+  // not played: the single, the cheat kept (go.js cheatDeclined). null = off.
+  // WHY (the 2026-10-09 02:32:31Z Illuminati loss, streak 67, 0-28.5): at
+  // ply 6 the single 4,4 won 0.999; the only second stones left were
+  // own-eye fills (the second-stone search's PASS is a real pass, which the
+  // AI passes back: lost on the board, so a fill ranks no worse), and the
+  // fill 3,1 left the whole group one liberty — the AI took all of it.
+  // hardAdaptive: per opponent {thr, mult}, the hard-move pair request's own
+  // adaptive budget (go-solver: a chosen pair whose line wins under thr is
+  // searched on (mult - 1) x maxms). WHY (the 02:21:48Z loss, streak 18,
+  // 8-20.5): at ply 1 (single 0.03) the 800ms pair search chose 3,2+2,1 —
+  // every replay from there loses, at 6400 work too; at 2400-6400 work the
+  // same search finds 3,1+1,0 / 1,0+3,1 at 0.92-0.99.
+  // MEASURED 2026-10-09 (go-w0 --cheat-decline 0.1 --cheat-hybrid-adaptive
+  // 0.5:4 vs the hard pair alone, Illuminati 5x5 live config: book, b4c32
+  // net, cheats predicted at crime 2.0124 / SF14.3, --work-rate 1.7, layout
+  // seeds 1201-1206): 662 paired, power/h -0.6% [-4.7, +3.9], lost 2 vs 4;
+  // decline alone +1.2% [-2.4, +5.4] (671), lost 2. Declines 0.12/game,
+  // extensions 0.06/game. Corpus cases live-2026-10-09T02:21:48.282Z / 02:32:31.956Z.
+  cheat: { joint: false, hardBelow: 0.5, decline: 0.1, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -853,6 +873,15 @@ export function clockFor(opponent) {
  */
 export function hardPairWanted(wr, hardBelow = SETTINGS.cheat.hardBelow) {
   return Number.isFinite(hardBelow) && hardBelow > 0 && typeof wr === 'number' && Number.isFinite(wr) && wr < hardBelow
+}
+
+/**
+ * THE DECLINE (SETTINGS.cheat.decline): whether a cheat's second stone (or a
+ * hard-move pair), whose own line wins wr2 by the solver's search, is worse
+ * than the single alone (wr1) by more than the margin. Unknown either -> no. Pure.
+ */
+export function cheatDeclined(wr1, wr2, margin = SETTINGS.cheat.decline) {
+  return Number.isFinite(margin) && typeof wr1 === 'number' && Number.isFinite(wr1) && typeof wr2 === 'number' && Number.isFinite(wr2) && wr2 < wr1 - margin
 }
 
 /** Whether cheats are played against this opponent (SETTINGS.cheat.on). Pure. */
@@ -1926,7 +1955,7 @@ export async function main(ns) {
         if (!cheatCalib) return true
         return cheatWaitS(cheatCalib.T + (Date.now() - cheatCalib.at), p) * 1000 <= SETTINGS.cheat.maxWaitMs + 200
       }
-      const tryCheat = async (board, validList, first, knownSecond = null) => {
+      const tryCheat = async (board, validList, first, knownSecond = null, singleWr = null) => {
         const k = cheat.played
         const p = cheatChance(k, cheatCalib?.crime ?? 1, sf14)
         if (p < SETTINGS.cheat.minChance) return { played: false }
@@ -1943,13 +1972,24 @@ export async function main(ns) {
         if (!valid2.length) return { played: false }
         // The second stone searches SETTINGS.cheat.secondMs, not the move budget.
         const second = knownSecond && valid2.some(([x, y]) => x === knownSecond.x && y === knownSecond.y) ? [knownSecond] : knownSecond ? null : await askSolver(board2, valid2, Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : null)
-        if (!second || !second.length) return { played: false }
+        // asked: the solver answered (and committed) a second-stone request on
+        // board2 — a cheat not played after it leaves the solver a stone ahead
+        // of the game, so the caller tells it of the single (notifySolver).
+        const asked = !knownSecond
+        if (!second || !second.length) return { played: false, asked }
+        // THE DECLINE (SETTINGS.cheat.decline): a second stone whose own line
+        // wins less than the single alone is no gain — the single is played
+        // and the cheat kept for later.
+        if (asked && cheatDeclined(singleWr, lastTop?.[0]?.[4])) {
+          cheat.declinedLow = (cheat.declinedLow ?? 0) + 1
+          return { played: false, asked }
+        }
         const execAt = Date.now()
         const pid = ns.exec('go-cheat.js', 'home', 1, first.x, first.y, second[0].x, second[0].y, SETTINGS.cheat.maxWaitMs)
         if (!pid) {
           record(errors, new Error('go-cheat.js did not start (pid 0): no room on home for its 11.1GB — no more cheats this game'))
           cheat.noRam = true
-          return { played: false }
+          return { played: false, asked }
         }
         cheatsTried++
         while (ns.isRunning(pid)) {
@@ -1965,7 +2005,7 @@ export async function main(ns) {
         }
         if (!st || !(Date.parse(st.at) >= execAt - 2000)) {
           record(errors, new Error('go-cheat.js left no result for this run'))
-          return { played: false }
+          return { played: false, asked }
         }
         if (st.calib && Number.isFinite(st.calib.T)) {
           const base = 0.6 * (0.7 - 0.02 * k) ** k
@@ -1975,11 +2015,11 @@ export async function main(ns) {
         }
         if (st.error) {
           record(errors, new Error(`go-cheat.js: ${st.error}`))
-          return { played: false }
+          return { played: false, asked }
         }
         if (!st.cheated) {
           cheat.declined++
-          return { played: false }
+          return { played: false, asked }
         }
         cheat.played++
         cheatsPlayed++
@@ -2114,16 +2154,19 @@ export async function main(ns) {
               hardAsked = true
               cheat.hard = (cheat.hard ?? 0) + 1
               const topBefore = lastTop
-              const pr = await askSolver(boardStrings, validList, { cheat: { crime, sf14, cheats: cheat.played, max: SETTINGS.cheat.maxPerGame, turn: guard, fromTurn: SETTINGS.cheat.fromTurn, minChance: SETTINGS.cheat.minChance, ponder: false } })
+              const ha = SETTINGS.cheat.hardAdaptive?.[opponent] ?? null
+              const pr = await askSolver(boardStrings, validList, { cheat: { crime, sf14, cheats: cheat.played, max: SETTINGS.cheat.maxPerGame, turn: guard, fromTurn: SETTINGS.cheat.fromTurn, minChance: SETTINGS.cheat.minChance, ponder: false }, ...(ha ? { adaptive: ha, adaptivePairOnly: true } : {}) })
               const p0 = pr?.[0]
-              if (p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y] && !(p0.x === p0.second.x && p0.y === p0.second.y)) {
+              const pairDeclined = !!p0?.second && cheatDeclined(singleWr, lastTop?.[0]?.[4])
+              if (pairDeclined) cheat.hardPairDeclined = (cheat.hardPairDeclined ?? 0) + 1
+              if (!pairDeclined && p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y] && !(p0.x === p0.second.x && p0.y === p0.second.y)) {
                 first = { x: p0.x, y: p0.y }
                 pairSecond = p0.second
                 cheat.hardPairs = (cheat.hardPairs ?? 0) + 1
               } else lastTop = topBefore
             }
           }
-          const c = await tryCheat(boardStrings, validList, first, pairSecond)
+          const c = await tryCheat(boardStrings, validList, first, pairSecond, singleWr)
           if (c.played) {
             moves++
             moveLog.push({ m: `${first.x},${first.y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}), ...(hardAsked ? { h: singleWr } : {}) })
@@ -2134,7 +2177,8 @@ export async function main(ns) {
           }
           // A declined hard pair: the single is played (never the pair's first
           // stone alone), and the solver, which committed the pair, is told.
-          hardDeclined = hardAsked
+          // So is a solver that answered a second-stone request (c.asked).
+          hardDeclined = hardAsked || !!c.asked
         }
         // A PAIR'S FIRST STONE IS NEVER PLAYED ALONE. The search chose it
         // knowing a second stone follows; alone it can be a self-atari (the

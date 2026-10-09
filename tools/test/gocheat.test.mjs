@@ -413,7 +413,7 @@ export async function run() {
     const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
     for (const [what, re] of [
       ["the hard request carries `cheat` (the solver searches pairs)", /hardPairWanted\(singleWr\)[\s\S]{0,600}askSolver\(boardStrings, validList, \{ cheat: \{/],
-      ["the cheat is played from the hard pair", /tryCheat\(boardStrings, validList, first, pairSecond\)/],
+      ["the cheat is played from the hard pair", /tryCheat\(boardStrings, validList, first, pairSecond[,)]/],
       ["a declined hard pair plays the single (ranked[0]), never the pair's first stone", /ns\.go\.makeMove\(ranked\[0\]\.x, ranked\[0\]\.y\)/],
       ["the solver, which committed the pair, is told the single played", /src === 'pre' \|\| hardDeclined\) notifySolver/],
       ["a pre-sent PAIR (the ponder after a hard request searches pairs) is not played with joint off", /if \(pre\.answer\?\.second && !SETTINGS\.cheat\.joint\)/],
@@ -422,5 +422,37 @@ export async function run() {
       if (!re.test(src)) c11.fail(`go.js: ${what} — not found`);
     }
   }
-  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11];
+  const c12 = new Check("GC12", "THE DECLINE and the hard pair's extension (go.js SETTINGS.cheat.decline / hardAdaptive, the 2026-10-09 02:21:48Z and 02:32:31Z Illuminati losses): a second stone or hard pair winning under the single is not played; the hard request carries its own adaptive budget");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    await import("./gameresolve.mjs");
+    const go = await import(path.join(REPO, "go.js"));
+    const S = go.SETTINGS.cheat;
+    c12.examined(1);
+    if (!(S.decline >= 0 && S.decline < 0.5)) c12.fail(`SETTINGS.cheat.decline is ${S.decline}: the decline is off (the 02:32:31Z eye-fill cheat 4,4+3,1 is back)`);
+    c12.examined(1);
+    const ha = S.hardAdaptive?.Illuminati;
+    if (!(ha && ha.thr > 0 && ha.mult > 1)) c12.fail(`SETTINGS.cheat.hardAdaptive.Illuminati is ${JSON.stringify(ha)}: the 800ms hard-pair search is back (the 02:21:48Z loss)`);
+    // 02:32:31Z ply 6: single 0.998, the fill's line ~0 -> declined.
+    for (const [w1, w2, m, want] of [[0.998, 0, 0.1, true], [0.6, 0.55, 0.1, false], [0.6, 0.49, 0.1, true], [0.3, 0.9, 0.1, false], [null, 0, 0.1, false], [0.9, undefined, 0.1, false], [0.9, NaN, 0.1, false], [0.9, 0, null, false]]) {
+      c12.examined(1);
+      if (go.cheatDeclined(w1, w2, m) !== want) c12.fail(`cheatDeclined(${w1}, ${w2}, ${m}) = ${go.cheatDeclined(w1, w2, m)}, want ${want} (an unknown win rate never declines)`);
+    }
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    const sol = fs.readFileSync(path.join(REPO, "tools", "go-solver.mjs"), "utf8");
+    for (const [what, re, text] of [
+      ["the greedy second stone is checked against the single's win rate", /if \(asked && cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\)\)/, src],
+      ["tryCheat is given the single's win rate", /tryCheat\(boardStrings, validList, first, pairSecond, singleWr\)/, src],
+      ["a hard pair is checked against the single's win rate", /cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\)[\s\S]{0,200}if \(!pairDeclined && p0\?\.second/, src],
+      ["the hard request carries hardAdaptive (pair-only)", /adaptive: ha, adaptivePairOnly: true/, src],
+      ["a solver that answered a second-stone request is told the single played", /hardDeclined = hardAsked \|\| !!c\.asked/, src],
+      ["the solver keeps the pre-send filter across a pair-only adaptive request", /if \(!req\.adaptivePairOnly\) lastAdaptive =/, sol],
+    ]) {
+      c12.examined(1);
+      if (!re.test(text)) c12.fail(`${what} — not found`);
+    }
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12];
 }

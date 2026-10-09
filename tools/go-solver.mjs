@@ -636,7 +636,10 @@ while (true) {
         lastSeq = req.seq;
         lastReqAt = Date.now();
         const N = req.size;
-        lastAdaptive = req.adaptive && typeof req.adaptive === "object" ? req.adaptive : null;
+        // adaptivePairOnly (go.js SETTINGS.cheat.hardAdaptive): the budget is
+        // this hard-move pair request's alone — the ponder's pre-send filter
+        // keeps what the opponent's own requests set.
+        if (!req.adaptivePairOnly) lastAdaptive = req.adaptive && typeof req.adaptive === "object" ? req.adaptive : null;
         await calibrateSeed(req);
 
         // A NOTICE (release 3): go.js already played a pre-sent answer on this

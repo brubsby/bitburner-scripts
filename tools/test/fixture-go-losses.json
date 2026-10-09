@@ -5245,6 +5245,675 @@
    ],
    "status": "fixed",
    "note": "Streak 9,693 ended 13-15.5. Decided by the ply-4 GREEDY cheat 4,2+0,3: the single 4,2 won ~0.3 by the solver's own search and the 100ms second-stone request added 0,3, which white captured two turns later (W 0,4 took the earlier cheat stone 1,4, W 0,2 then 0,3). From the position after 4,2+0,3 / 2,4 every policy (greedy, hard-move pair, joint) loses 13-15.5, the live score. NOT the final pass: at ply 8 only own-eye fills were legal and every line scores 13-15.5. Checks replay from ply 4 through go.js's cheat policy (cheat: the game's crime_success 2.5112 and SF14.3, as /tel/go-cheat.txt read it; nets: go-solver's outcome net). Seed 7 is the greedy chain's 0-28.5 wipe (1,1+0,3, 0,3 captured again); with SETTINGS.cheat.hardBelow 0.5 the pair is searched jointly (1,1+1,0 / 4,1+1,1, 0.75-0.88) and every seed wins (work 800: greedy 11/12 seeds won, hard-move pair 12/12)."
+  },
+  {
+   "id": "live-2026-10-09T02:21:48.282Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T02:21:48.282Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": ".#.....O...........##.#..",
+   "streakBefore": 18,
+   "live": {
+    "black": 8,
+    "white": 20.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "2,3",
+     "T": 2361924600,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.05,
+       274,
+       0.069
+      ],
+      [
+       2,
+       3,
+       0.048,
+       178,
+       0.067
+      ],
+      [
+       0,
+       4,
+       0.085,
+       153,
+       0.105
+      ]
+     ],
+     "ks": [
+      -1,
+      1,
+      4,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "3,2+2,1",
+     "r": "1,3",
+     "T": 2361926000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    },
+    {
+     "m": "3,3+1,1",
+     "r": "1,4",
+     "T": 2361927600,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1+4,3",
+     "r": "P",
+     "T": 2361929000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,2",
+     "r": "0,3",
+     "T": 2361929800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,0+3,0",
+     "r": "P",
+     "T": 2361931200,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0",
+     "r": "P",
+     "T": 2361932000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "P",
+     "T": 2361933000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,0",
+     "r": "4,4",
+     "T": 2361934000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2+3,1",
+     "r": "1,1",
+     "T": 2361935600,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "1,0",
+     "T": 2361936800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "2,0",
+     "T": 2361937800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "2,2",
+     "T": 2361939000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "P",
+     "T": 2361939800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2361940800,
+     "s": "pre"
+    }
+   ],
+   "cheat": {
+    "crime": 2.0124,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 1,
+     "work": 800,
+     "seed": 10,
+     "why": "ply 1, the hard-move pair (single 0.03; live 3,2+2,1, from ply 2 every replay loses, 6400 work too): at 800 work this seed's pair search picks 3,1+2,1 and loses 2-26.5 (hardAdaptive off); the pair's extension (hardAdaptive Illuminati 0.5:4) finds 3,1+0,3 and must win"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN12 (crime 2.01, SF14.3). The 800ms pair search on a hard move is high-variance: 0.01-0.38 at 800-1600 work, 0.92-0.99 (3,1+1,0 / 1,0+3,1) at 2400-6400."
+  },
+  {
+   "id": "live-2026-10-09T02:32:31.956Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T02:32:31.956Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": ".......O......##....##...",
+   "streakBefore": 67,
+   "live": {
+    "black": 0,
+    "white": 28.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "3,2",
+     "r": "1,3",
+     "T": 2362567200,
+     "s": "req",
+     "t": [
+      [
+       3,
+       2,
+       0.194,
+       922,
+       0.218
+      ],
+      [
+       2,
+       2,
+       0.105,
+       72,
+       0.125
+      ],
+      [
+       2,
+       1,
+       0.022,
+       25,
+       0.04
+      ]
+     ],
+     "ks": [
+      -1,
+      1,
+      4,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "2,1+1,1",
+     "r": "0,2",
+     "T": 2362569000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3+2,2",
+     "r": "0,1",
+     "T": 2362570000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      1,
+      3,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "1,4+2,3",
+     "r": "0,4",
+     "T": 2362571200,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,2+2,0",
+     "r": "0,3",
+     "T": 2362572200,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      0,
+      1,
+      3,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,0+3,4",
+     "r": "1,0",
+     "T": 2362573400,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,4+3,1",
+     "r": "4,3",
+     "T": 2362574400,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1+3,2",
+     "r": "1,1",
+     "T": 2362575600,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      7
+     ]
+    },
+    {
+     "m": "2,0+3,3",
+     "r": "2,2",
+     "T": 2362577000,
+     "s": "cheat",
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,2",
+     "r": "3,1",
+     "T": 2362577800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,3",
+     "r": "3,4",
+     "T": 2362578600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,0",
+     "r": "2,1",
+     "T": 2362579400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,2",
+     "r": "3,2",
+     "T": 2362581200,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.079,
+       1784538,
+       0
+      ],
+      [
+       4,
+       2,
+       -0.089,
+       25785,
+       0
+      ],
+      [
+       2,
+       3,
+       -0.089,
+       23720,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "2,3",
+     "T": 2362582800,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.087,
+       2005008,
+       0
+      ],
+      [
+       3,
+       3,
+       -0.094,
+       53339,
+       0
+      ],
+      [
+       2,
+       3,
+       -0.094,
+       53090,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2362583600,
+     "s": "req"
+    }
+   ],
+   "cheat": {
+    "crime": 2.0124,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 6,
+     "work": 800,
+     "why": "ply 6, the greedy cheat 4,4+3,1 (single 4,4 wins 0.998): every second stone is an own-eye fill, 3,1 leaves one liberty and the AI captures all (0-28.5 with decline off); the decline (0.1) plays 4,4 alone and must win 21-7.5"
+    },
+    {
+     "from": 6,
+     "work": 800,
+     "seed": 3,
+     "why": "ply 6, the greedy cheat 4,4+3,1 (single 4,4 wins 0.998): every second stone is an own-eye fill, 3,1 leaves one liberty and the AI captures all (0-28.5 with decline off); the decline (0.1) plays 4,4 alone and must win 21-7.5"
+    },
+    {
+     "from": 6,
+     "work": 800,
+     "seed": 4,
+     "why": "ply 6, the greedy cheat 4,4+3,1 (single 4,4 wins 0.998): every second stone is an own-eye fill, 3,1 leaves one liberty and the AI captures all (0-28.5 with decline off); the decline (0.1) plays 4,4 alone and must win 21-7.5"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN12 (crime 2.01, SF14.3). The second-stone search's PASS is a real pass (the AI passes back, lost on the board), so a fatal fill ranks no worse; declining was not an option it could express."
   }
  ]
 }
