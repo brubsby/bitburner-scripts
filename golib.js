@@ -1149,6 +1149,14 @@ export function modelSession(N, komi, model, opts = {}) {
   // net: there the net's depth-1 values misread positions the single's reused
   // tree had valued by playout (go.js SETTINGS.cheat.secondNet).
   let nnDepth = NN_DEPTH
+  // nn.priorFloor (see priorOf): 0 = the net's prior as it is.
+  const PRIOR_FLOOR = NN && Number.isFinite(NN.priorFloor) ? Math.min(1, Math.max(0, NN.priorFloor)) : 0
+  // nn.priorFloorRoot: the floor only at DECISION nodes — the search's root,
+  // and under a ponder the AI's replies (their answers are pre-sent).
+  const PRIOR_FLOOR_ROOT = !!(NN && NN.priorFloorRoot)
+  // nn.priorFloorBelow W: the floor only at a node whose lines win under W
+  // so far (wins / visits) — a position the net's search already calls lost.
+  const PRIOR_FLOOR_BELOW = NN && Number.isFinite(NN.priorFloorBelow) ? NN.priorFloorBelow : Infinity
   // nn.steer: a playout leaf below a node the net valued with an outcome head
   // (turnsLeft) is charged the time the net predicted is left there, less the
   // turns already played since — so the power objective's time cost reaches
@@ -1347,9 +1355,11 @@ export function modelSession(N, komi, model, opts = {}) {
         // normalised over the actions the node had when the net answered (as
         // measured: b4c32 depth 1, +7.6% on Tetrads).
         node.priorZ = 1
+        node.priorN = 0
         let z = 0
         if (node.untried) for (const a of node.untried) z += priorOf(node, a.idx)
         node.priorZ = z > 0 ? z : 1
+        node.priorN = node.untried ? node.untried.length : 0
         node.prior = true
         return e
       })
@@ -1364,13 +1374,21 @@ export function modelSession(N, komi, model, opts = {}) {
     const e = node.nn
     if (!e) return 0
     const z = node.priorZ || 1
-    if (idx === PASS) return e.pass / z
-    if (isPair(idx)) {
+    let p
+    if (idx === PASS) p = e.pass / z
+    else if (isPair(idx)) {
       const [i1, i2] = pairOf(idx)
       const p1 = e.policy[i1] || 0
-      return (p1 * (e.policy[i2] || 0)) / Math.max(1e-6, 1 - p1) / z
-    }
-    return (e.policy[idx] || 0) / z
+      p = (p1 * (e.policy[i2] || 0)) / Math.max(1e-6, 1 - p1) / z
+    } else p = (e.policy[idx] || 0) / z
+    // nn.priorFloor eps: a share eps of the prior spread evenly over the
+    // node's actions, so a stone the policy all but rules out is still tried
+    // within the budget. The 2026-10-09 14:56:31Z Daedalus loss: b4c32 gave
+    // the only winning stones 4,2 / 0,1 a prior < 0.003 and the losing 2,1
+    // 0.64 (valued 0.95 a ply later); PUCT never tried 4,2 at 800 work.
+    // MEASURED NEGATIVE as a default (go-solver --prior-floor-on): off.
+    if (PRIOR_FLOOR > 0 && node.priorN > 0 && !isPair(idx) && (!PRIOR_FLOOR_ROOT || node === rootNode || (!!ponderNode && node.parent === ponderNode)) && (PRIOR_FLOOR_BELOW === Infinity || (node.visits > 0 && node.wins / node.visits < PRIOR_FLOOR_BELOW))) p = (1 - PRIOR_FLOOR) * p + PRIOR_FLOOR / node.priorN
+    return p
   }
   const valueNow = (b, ply = 0) => {
     const m = scoreBoard(b, nbrs, N, komi, scratch)

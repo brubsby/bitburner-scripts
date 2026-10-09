@@ -34,10 +34,30 @@ export async function run() {
   const checks = [];
   const c1 = new Check("GL1", "the lost-game corpus: every fixed case is still won from its critical ply by the current solver");
   const c2 = new Check("GL2", "the corpus replays legally and its live cases carry the AI's seed where the record had a playtime");
-  checks.push(c1, c2);
+  const c3 = new Check("GL3", "the corpus replays with the solver's nets as go-solver.mjs configures them (go-regress mirrors its defaults)");
+  checks.push(c1, c2, c3);
   let R;
   try {
     R = await import("../sim/go-regress.mjs");
+    // GL3: go-solver.mjs is a running process, not a module to import, so its
+    // defaults are read off its source; a drift replays the corpus under a
+    // configuration live never plays (a case green here, red live).
+    const src = fs.readFileSync(path.join(REPO, "tools", "go-solver.mjs"), "utf8");
+    const dflt = (flag) => {
+      const m = src.match(new RegExp(`str\\("${flag}", "([^"]*)"\\)`));
+      if (!m) c3.fail(`go-solver.mjs: no default found for --${flag}`);
+      return m ? m[1] : "";
+    };
+    const list = (v) => v.split(",").map((s) => s.trim().replace(/\s+/g, "")).filter(Boolean).sort().join(",");
+    const same = (name, solver, mirror) => {
+      c3.examined(1);
+      if (solver !== mirror) c3.fail(`${name}: go-solver.mjs default "${solver}" but go-regress.mjs mirrors "${mirror}"`);
+      else c3.note(`${name}: ${solver || "(none)"}`);
+    };
+    same("smallnet-on", list(dflt("smallnet-on")), [...R.SMALLNET_ON].sort().join(","));
+    same("smallnet-outcome-on", list(dflt("smallnet-outcome-on")), [...R.OUTCOME_ON].sort().join(","));
+    const floors = (v) => list(v).split(",").filter((s) => s && s !== "none").map((s) => s.split(":")).map(([o, e]) => `${o}:${Number(e)}`).sort().join(",");
+    same("prior-floor-on", floors(dflt("prior-floor-on")), [...R.PRIOR_FLOOR_ON].map(([o, e]) => `${o}:${e}`).sort().join(","));
     await R.regressEnv();
   } catch (e) {
     c1.warn("the opponent model could not load — the corpus did NOT run", String(e?.message ?? e).slice(0, 200));
@@ -79,5 +99,21 @@ export async function run() {
     }
   }
   c1.note(`${fixture.cases.length} cases: ${won} checks won, ${lost} lost (${open} checks on open cases)`);
+  // GL4: the prior floor (golib nn.priorFloor, measured negative as a default
+  // and off) still does what it was built for: the 14:56:31Z Daedalus case,
+  // lost by the live solver at ply 2, is won with the floor at 0.1.
+  const c4 = new Check("GL4", "golib nn.priorFloor 0.1 wins the 2026-10-09 14:56:31Z Daedalus case from ply 2 (the live solver, floor off, loses it)");
+  checks.push(c4);
+  const fl = fixture.cases.find((c) => c.id === "live-2026-10-09T14:56:31.081Z-Daedalus");
+  if (!fl) c4.fail("the case is not in the corpus");
+  else
+    for (const seed of [1, 2]) {
+      c4.examined(1);
+      const off = await R.playCheck(fl, { from: 2, work: 800, seed, nnOver: { priorFloor: 0 } });
+      const on = await R.playCheck(fl, { from: 2, work: 800, seed, nnOver: { priorFloor: 0.1 } });
+      if (off.won) c4.warn(`seed ${seed}: the floor-off replay now WINS ${off.black}-${off.white} — promote the case to fixed`);
+      if (!on.won) c4.fail(`seed ${seed}: floor 0.1 LOST ${on.black}-${on.white}`, `line ${on.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
+      else c4.note(`seed ${seed}: floor off ${off.won ? "WON" : "LOST"} ${off.black}-${off.white}, floor 0.1 WON ${on.black}-${on.white}`);
+    }
   return checks;
 }

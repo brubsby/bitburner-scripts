@@ -305,7 +305,11 @@ if (argv.includes("--katago")) {
 // harness on the GPU host) scores the session's new B nodes and gives its
 // stones a PUCT prior (golib.modelSession opts.nn). --nn-mix W (net share of a
 // leaf's value, 1), --nn-cpuct C (1.5), --nn-par K (iterations in flight, 16),
-// --nn-fpu F (0.1), --nn-conc Q (the engine's batch, 64).
+// --nn-fpu F (0.1), --nn-conc Q (the engine's batch, 64), --nn-prior-floor E
+// (a share E of each prior spread evenly over the node's actions, 0),
+// --nn-prior-floor-root (the floor only at decision nodes: the root, and the
+// AI's replies under a ponder), --nn-prior-floor-below W (the floor only at a
+// node whose lines win under W so far).
 // CHARGING: our time is work / WORK_RATE (the CPU side, --work-rate) PLUS the
 // wall time the evaluator had a query in flight (the GPU side, as live waits
 // for it on the same card) — summed, not overlapped: pessimistic for the net.
@@ -345,7 +349,7 @@ if (str("smallnet", null)) {
   NNEV = { stats: { queries: 0, cacheHits: 0 }, get busyMs() { return ms; }, close() {}, eval: async (b, k, ctx) => { const t = performance.now(); const e = sn.eval(b, k, csOf(ctx)); ms += (performance.now() - t) * SN_SCALE; NNEV.stats.queries++; return e; } };
   if (!WORK_RATE) throw new Error("--smallnet needs --work-rate");
 }
-const NN_OPTS = NNEV ? { eval: (b, k, ctx) => NNEV.eval(b, k, ctx), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity), steer: argv.includes("--nn-steer") } : null;
+const NN_OPTS = NNEV ? { eval: (b, k, ctx) => NNEV.eval(b, k, ctx), mix: num("nn-mix", 1), cpuct: num("nn-cpuct", 1.5), parallel: str("smallnet", null) ? 1 : num("nn-par", 16), fpu: num("nn-fpu", 0.1), maxDepth: num("nn-depth", Infinity), steer: argv.includes("--nn-steer"), priorFloor: num("nn-prior-floor", 0), priorFloorRoot: argv.includes("--nn-prior-floor-root"), priorFloorBelow: num("nn-prior-floor-below", Infinity) } : null;
 
 // ---------------------------------------------------------------------------
 // CHEATS (netscriptGoImplementation.ts:500-567). Only playTwoMoves is modelled.
@@ -1160,7 +1164,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, depth: NN_OPTS.maxDepth, smallnetScale: SN_SCALE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu } : null, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, depth: NN_OPTS.maxDepth, smallnetScale: SN_SCALE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu, priorFloor: NN_OPTS.priorFloor, priorFloorRoot: NN_OPTS.priorFloorRoot, priorFloorBelow: NN_OPTS.priorFloorBelow } : null, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {

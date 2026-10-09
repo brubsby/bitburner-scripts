@@ -395,10 +395,34 @@ if (OUTCOME_FILE) {
 }
 const outcomeFor = (N, opponent) => !!OUTCOME && OUTCOME.size === N && OUTCOME_ON.has(String(opponent ?? "").replace(/\s+/g, ""));
 console.log(`go-solver: outcome net ${OUTCOME ? `${OUTCOME_FILE} (steer) for ${[...OUTCOME_ON].join(",")}` : "off"}`);
+// THE PRIOR FLOOR (golib nn.priorFloor, --prior-floor-on Opp:E,... ; "none"
+// off): a share E of the net's prior spread evenly over a node's actions, so a
+// stone the policy all but rules out is still tried within the budget.
+// The 2026-10-09 14:56:31Z Daedalus loss: b4c32 gave the only winning stones
+// (4,2 16-5.5, 0,1 13-7.5) priors < 0.003 and the losing 2,1 0.64; at 800
+// work every seed played 2,1 (lost), floored at 0.1 every seed played 4,2.
+// MEASURED NEGATIVE (go-w0, Daedalus live config, b4c32 depth 1, --work-rate
+// 1.7, bubtop, layouts 1401-1408, paired vs the live solver):
+//   floor 0.1 everywhere             -2.0% [-4.8, +1.0]  529 games, lost 0 vs 1
+//   0.1 at decision nodes only       -3.6% [-7.2, +0.2]  524 games, lost 2 vs 1
+//   0.1 where lines win < 0.3        -5.9% [-10.4, -1.4] 253 games, lost 1 vs 0
+//   0.2 where lines win < 0.3        -6.2% [-10.9, -1.5] 248 games, lost 1 vs 0
+// Every arm plays longer games (9.7-9.95 s vs 9.3 s) for no fewer losses, so
+// it stays OFF (the corpus case stays open). Kept for the next net / budget.
+const PRIOR_FLOOR_ON = new Map(
+  str("prior-floor-on", "none")
+    .split(",")
+    .map((s) => s.trim().replace(/\s+/g, "").split(":"))
+    .filter(([o, e]) => o && o !== "none" && Number.isFinite(Number(e)))
+    .map(([o, e]) => [o, Number(e)]),
+);
+const priorFloorFor = (opponent) => PRIOR_FLOOR_ON.get(String(opponent ?? "").replace(/\s+/g, "")) ?? 0;
+console.log(`go-solver: prior floor ${PRIOR_FLOOR_ON.size ? [...PRIOR_FLOOR_ON].map(([o, e]) => `${o} ${e}`).join(", ") : "off"}`);
 const sessOpts = (N, opponent, base = {}) => {
   const out = { ...base, ...JOINT_OPTS };
-  if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true };
-  else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1 };
+  const floor = priorFloorFor(opponent);
+  if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true, ...(floor ? { priorFloor: floor } : {}) };
+  else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, ...(floor ? { priorFloor: floor } : {}) };
   return out;
 };
 /** fn(cheatsSoFar) -> available, for a play `lagMs` after req.T, `depth` of our turns ahead. */

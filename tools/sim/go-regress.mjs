@@ -60,12 +60,16 @@ export async function regressEnv() {
  * THE SOLVER'S NETS (a case with `nets: true`): the session's opts.nn exactly
  * as tools/go-solver.mjs sessOpts builds it by default — the outcome net with
  * steer for Tetrads (smallnet-5-o2), the b4c32 net at depth 1 for the other
- * opponents it is on for, nothing elsewhere. Cases recorded before the nets
- * shipped (2026-10-07/08) replay without them, as their checks were set.
+ * opponents it is on for, nothing elsewhere; the prior floor where it is on.
+ * Cases recorded before the nets shipped (2026-10-07/08) replay without them,
+ * as their checks were set.
  */
 const NET_FILES = { outcome: "tools/goai/smallnet-5-o2.json", b4c32: "tools/goai/smallnet-5-b4c32.json" };
-const OUTCOME_ON = new Set(["Tetrads"]);
-const SMALLNET_ON = new Set(["Tetrads", "Daedalus", "Illuminati", "SlumSnakes", "Netburners"]);
+// Mirrors of go-solver.mjs's defaults (--smallnet-outcome-on, --smallnet-on,
+// --prior-floor-on); golosses GL3 fails when they drift apart.
+export const OUTCOME_ON = new Set(["Tetrads"]);
+export const SMALLNET_ON = new Set(["Tetrads", "Daedalus", "Illuminati", "SlumSnakes", "Netburners"]);
+export const PRIOR_FLOOR_ON = new Map();
 const nets = {};
 export async function solverNn(opponent, N) {
   const key = planKey(opponent);
@@ -77,7 +81,8 @@ export async function solverNn(opponent, N) {
   }
   const net = nets[which];
   if (net.size !== N) return null;
-  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}) };
+  const floor = PRIOR_FLOOR_ON.get(key) ?? 0;
+  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}), ...(floor ? { priorFloor: floor } : {}) };
 }
 
 /** go-games.txt / goplan opponent key -> the game's GoOpponent name. */
@@ -137,7 +142,7 @@ export function caseK(fx) {
  *   pre: {x, y, wr} the check ply's single and its win rate as live had them
  *        (a pre-sent answer: no search of ours chose it)
  */
-export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null } = {}) {
+export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null } = {}) {
   const E = await regressEnv();
   const { golib, model, m } = E;
   const N = fx.size;
@@ -163,7 +168,9 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
   //                    (go.js cheatDeclined)
   // A case without `cheat` replays single stones only (as before).
   const CH = fx.cheat ? { ...E.SETTINGS.cheat, ...(cheatPolicy ?? {}), crime: fx.cheat.crime, sf14: fx.cheat.sf14 ?? 0 } : null;
-  const nn = fx.nets ? await solverNn(fx.opponent, N) : null;
+  // nnOver: options merged over the solver's net (an experiment's arm).
+  const nn0 = fx.nets ? await solverNn(fx.opponent, N) : null;
+  const nn = nn0 && nnOver ? { ...nn0, ...nnOver } : nn0;
   return withSeededRandom(seed * 7919 + 17, async () => {
     const st = m.getNewBoardStateFromSimpleBoard(toSimple(fx.start, N), undefined, opp, m.GoColor.white);
     st.previousBoards = [];

@@ -7115,6 +7115,171 @@
    ],
    "status": "fixed",
    "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 27 ended 11-16.5. Decided at ply 3: the decline of the second stone 1,4 (0.529 at 100ms with the net; the same stone reads 0.73 at 800ms and 0.95 at 3200ms with it, 0.89-0.93 at 100ms without). Replays from ply 3: secondNet on 2/8, off 8/8 (work 800); with live's own single (pre 3,1 @0.63) on 0/4, off 4/4. Old policy (secondNet on, no declineHarm) loses every check; the shipped policy wins every check."
+  },
+  {
+   "id": "live-2026-10-09T14:56:31.081Z-Daedalus",
+   "source": "live",
+   "at": "2026-10-09T14:56:31.081Z",
+   "opponent": "Daedalus",
+   "size": 5,
+   "komi": 5.5,
+   "start": "#.#.##....#...##....#...#",
+   "streakBefore": 209,
+   "live": {
+    "black": 9,
+    "white": 12.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "3,2",
+     "T": 2407218800,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.543,
+       1003,
+       0.707
+      ],
+      [
+       3,
+       2,
+       0.23,
+       31,
+       0.29
+      ],
+      [
+       2,
+       3,
+       0.143,
+       10,
+       0.2
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,3",
+     "r": "3,3",
+     "T": 2407220000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "4,2",
+     "T": 2407220600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,3",
+     "r": "3,1",
+     "T": 2407221600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "P",
+     "T": 2407222600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2407223600,
+     "s": "pre"
+    }
+   ],
+   "note": "Daedalus 5x5, BN12, no cheats; KNOWN LOST (open). Not lost from the start: from ply 0/1 the current solver wins 8/8 seeds; the 1,3 at ply 1 (pre-sent) is fine (4,2 next wins 16-5.5). Lost at ply 2: the pre-sent 2,1 — what an 800-work request plays too (0/8 seeds win). b4c32 gives the winning 4,2 (16-5.5) / 0,1 (13-7.5) priors < 0.003 and 2,1 0.64, and values 2,1/4,2 at 0.95; PUCT never tries 4,2 (no-net search finds it at 200 work). From ply 3 every legal move loses (1600-3200 work); the final pre-sent pass had only own-eye fills (0,1 0,3 1,2 1,4): 9-12.5 on every line. A prior floor (golib nn.priorFloor 0.05-0.2) wins it 8/8 but measured -2.0% to -6.2% power/h on Daedalus (go-solver PRIOR FLOOR), so it is off.",
+   "nets": true,
+   "checks": [
+    {
+     "from": 2,
+     "work": 800,
+     "why": "set by hand (live played 2,1; replay picks 2,1 at win rate 0.003)"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 2,
+     "why": "set by hand (live played 2,1; replay picks 2,1 at win rate 0.003)"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 3,
+     "why": "set by hand (live played 2,1; replay picks 2,1 at win rate 0.003)"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 4,
+     "why": "set by hand (live played 2,1; replay picks 2,1 at win rate 0.003)"
+    }
+   ],
+   "status": "open"
   }
  ]
 }
