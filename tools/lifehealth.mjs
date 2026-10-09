@@ -63,3 +63,21 @@ export function exitUnpricedVerdict({ lifeMs }) {
   if (lifeMin !== null && lifeMin >= 0 && lifeMin < EXIT_UNPRICED_GRACE_MIN) return { note: `exit not priced yet: the life is ${lifeMin.toFixed(1)} min old (progress.js's first pass of a life; grace ${EXIT_UNPRICED_GRACE_MIN} min)` }
   return { fail: { what: 'EXIT UNPRICED: installgate.txt carries no exitH', detail: `${lifeMin === null ? 'the life age is unreadable; ' : `the life is ${lifeMin.toFixed(1)} min old; `}the run cannot say how far it is from the end — every decision that prices a trajectory is flying blind` } }
 }
+
+/**
+ * THE NEXT HOME UPGRADE for HOME UNPRICED / HOME APPROVED NOT BOUGHT: the
+ * watchdog's own priced record (jobs['homeup.js'].next, every cycle) first;
+ * else /tel/homeup.txt only when the home it describes is the live one
+ * (`home`: the save's {ram, cores}). That file is only as fresh as homeup.js's
+ * last run — live BN12 2026-10-09 it was BitNode 9's (2026-10-07: 128GB,
+ * 1 core, next RAM $503m) against a 65536GB/4-core home, and HOME UNPRICED
+ * named an upgrade that did not exist. Returns {next, why}.
+ */
+export function homeNextOf({ homeup = null, watchdog = null, home = null } = {}) {
+  const w = watchdog?.jobs?.['homeup.js']?.next ?? null
+  if (w && num(w.cost)) return { next: w, why: "the watchdog's priced record" }
+  if (!homeup?.next) return { next: null, why: 'no priced next home upgrade (no watchdog record, no homeup.txt)' }
+  const live = num(home?.ram) && num(home?.cores)
+  if (live && homeup.homeRam === home.ram && homeup.cores === home.cores) return { next: homeup.next, why: `homeup.txt (${homeup.at})` }
+  return { next: null, why: `homeup.txt (${homeup.at}) describes a ${homeup.homeRam}GB/${homeup.cores}-core home${live ? `, not the live ${home.ram}GB/${home.cores}-core one` : ' and the live home is unreadable'} — another node's or life's record, rejected` }
+}

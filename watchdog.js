@@ -104,7 +104,7 @@ import { STORY_SERVERS } from 'storyservers.js'
 // Free to import: status.js references only ns.write (0GB). See its header.
 import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
-import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar } from 'budget.js'
+import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar, gateNewLifeWait } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
 import { canUseGang, singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, canUseGrafting, hasHacknetServers, sfLevel, SF_FILE } from 'sfgate.js'
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
@@ -728,14 +728,17 @@ const WATCHED = [
     // yet and the fallback threshold is just a guess. nextHomeUpgrade is pure
     // arithmetic over state we already hold, so the answer is exact and free.
     trigger: (ns) => {
-      const next = nextHomeUpgrade(ns.getServerMaxRam('home'), ns.getServer('home').cpuCores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
+      const ram = ns.getServerMaxRam('home')
+      const cores = ns.getServer('home').cpuCores
+      const next = nextHomeUpgrade(ram, cores, bitNodeMults(ns.getResetInfo())?.HomeComputerRamCost)
       // Published on the job record (jobs['homeup.js'].next) so the planner
       // prices the CURRENT upgrade: homeup.txt's `next` is only as fresh as
       // homeup's last run, and when the hold keeps homeup from running the
       // planner read a stale kind, priced home as unreadable, and the hold
       // stood on that — circular (2026-09-20 10:30, cores from 06:37 while
-      // the next block was RAM).
-      homeNext = next
+      // the next block was RAM). With the home it priced: homeup.txt's
+      // homeRam/cores were BitNode 9's 128GB/1 core in BN12 (2026-10-09).
+      homeNext = next ? { ...next, homeRam: ram, cores } : null
       if (!next) return false
       // Hold back only what a HIGHER-priority spender has claimed. ns.read is
       // 0GB and an unreadable claim blocks rather than reading as zero
@@ -743,6 +746,12 @@ const WATCHED = [
       // spending money that is already promised to augmentations.
       const claimSrc = ns.read('/tel/installgate.txt')
       const claimLife = ns.getResetInfo().lastAugReset
+      // A NEW LIFE BEFORE progress.js's FIRST PASS: the gate is the previous
+      // life's, so hold (no spend) without reporting BLOCKED — live BN12
+      // 2026-10-09 19:34-19:39Z read "blocked 11 cycles" -> health 'error'
+      // every install (budget.gateNewLifeWait; past its grace the readers block).
+      const wait = gateNewLifeWait(claimSrc, claimLife, Date.now())
+      if (wait) return false
       // THE EXIT VERDICT (installgate spendExit.home): the node's exit with this
       // upgrade against without, from progress.js, when it is this life's,
       // fresh and priced the same upgrade. It keeps only the join claim. The
@@ -1351,6 +1360,8 @@ export async function main(ns) {
           // going healthy CLEARS the count on the path that does not take it.
           if (blocked) blockedFor[script] = (blockedFor[script] ?? 0) + 1
           else delete blockedFor[script]
+          // ...and from the record (live 19:41Z: 'idle: trigger false' still carried blockedFor 11).
+          if (!blocked) delete rec.blockedFor
           if (predicate && (blocked || !verdict)) {
             if (kind === DAEMON) {
               for (const h of hosts) {

@@ -3047,11 +3047,15 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       return { buy: pd ? pd.buy : r.deltaH < 0, pBuy: pd?.pBuy ?? null, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)${pd ? ` — plan: ${pd.why}` : ''}`, ...extra }
     }
     // Home: the next upgrade homeup.js / the watchdog priced.
-    const hu = readJson(ns, '/tel/homeup.txt')
-    const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
-    const homeRam = hu?.homeRam > 0 ? hu.homeRam : null
-    if (next?.cost > 0 && perGB !== null && homeRam) {
-      const gain = next.kind === 'RAM' ? perGB * homeRam : perGB * homeRam * (1 / (15 + (hu?.cores ?? 1)))
+    // The watchdog's priced record, with the home it priced: /tel/homeup.txt
+    // is only as fresh as homeup.js's last run — BitNode 9's 128GB/1 core
+    // priced BN12's 65536GB home (2026-10-09), and its `next` too.
+    const wdNext = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? null
+    const next = wdNext
+    const homeRam = wdNext?.homeRam > 0 ? wdNext.homeRam : null
+    const homeCores = wdNext?.cores > 0 ? wdNext.cores : null
+    if (next?.cost > 0 && perGB !== null && homeRam && homeCores) {
+      const gain = next.kind === 'RAM' ? perGB * homeRam : perGB * homeRam * (1 / (15 + homeCores))
       out.home = verdict(next.cost, gain, true, { kind: next.kind })
     } else if (next?.cost > 0 && expPerGB !== null && homeRam) {
       // Cores: hack exp is per thread and cores only speed grow/weaken

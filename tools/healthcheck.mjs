@@ -38,7 +38,7 @@ import { autoPushVerdict } from "./pushwatch.mjs";
 import { bladeburnerHealth, installLoopOf } from "./bbhealth.mjs";
 import { raisedHealth } from "./raisehealth.mjs";
 import { goNodeHealth, goVerdictOf } from "./gohealth.mjs";
-import { orderHeldVerdict, exitUnpricedVerdict } from "./lifehealth.mjs";
+import { orderHeldVerdict, exitUnpricedVerdict, homeNextOf } from "./lifehealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -968,7 +968,8 @@ if (!sleevesExpected) {
   // a $100b join claim held one at $32m in the watchdog trigger.
   {
     const sp = planDecisions?.spends?.home ?? null;
-    const huNext = readTel("homeup.txt")?.next ?? null;
+    // The watchdog's priced next, never a homeup.txt for another home (tools/lifehealth.mjs).
+    const huNext = homeNextOf({ homeup: readTel("homeup.txt"), watchdog: tel["watchdog.txt"] ?? readTel("watchdog.txt"), home: state.home }).next;
     const gh = gate?.spendExit?.home ?? null;
     const unpriced = !!(huNext && sp && sp.deltaH === null && now.exitH !== null); // exitH priced = progress.js runs (boot may still call it deferred)
     now.homeUnpricedSince = unpriced ? (prev && sameNode ? (prev.homeUnpricedSince ?? now.at) : now.at) : null;

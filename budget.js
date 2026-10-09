@@ -367,6 +367,34 @@ export function augClaim(text, lastAugReset) {
  * BLOCKS rather than reading as zero, exactly as augClaim does — the spender
  * that guesses zero here is the spender that empties the account.
  */
+/**
+ * A NEW LIFE'S GATE IS NOT WRITTEN YET. After an install /tel/installgate.txt
+ * is the previous life's until progress.js's first pass of the new one
+ * rewrites it (5.1 min after the BN12 19:34:44Z install, 2026-10-09). The
+ * claim readers rightly refuse it (augClaim/joinClaim: a stale life is
+ * unknown), but that is not the self-sustaining block the watchdog escalates —
+ * progress.js resolves it. Within GATE_NEW_LIFE_MIN of the life's start
+ * (`lastAugReset`, the game's own stamp), a gate that parses and belongs to
+ * an EARLIER life returns {why}: hold the money, do not report blocked.
+ * Anything else — this life's gate missing a field, an absent or malformed
+ * file, a gate from no life, or the grace spent — returns null and the
+ * readers decide (fail closed). Pure.
+ */
+export const GATE_NEW_LIFE_MIN = 10
+export function gateNewLifeWait(text, lastAugReset, nowMs = Date.now()) {
+  if (!text || typeof lastAugReset !== 'number' || !isFinite(lastAugReset)) return null
+  let d
+  try {
+    d = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!d || typeof d !== 'object' || typeof d.lastAugReset !== 'number' || !(d.lastAugReset < lastAugReset)) return null
+  const ageMin = (nowMs - lastAugReset) / 60e3
+  if (!(ageMin >= 0 && ageMin < GATE_NEW_LIFE_MIN)) return null
+  return { why: `installgate.txt is the previous life's (${d.lastAugReset}); progress.js's first pass of this life (${ageMin.toFixed(1)} min old, grace ${GATE_NEW_LIFE_MIN} min) rewrites it — holding, not blocked` }
+}
+
 export function joinClaim(text, lastAugReset) {
   if (!text) return null
   let d
