@@ -506,7 +506,11 @@ export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, mo
     const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 })
     yield
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
-    rows.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +Math.exp(mean).toFixed(4), lnMean: mean, perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0 })
+    // `seq`: each life's own ln gain, in order — the catalogue DEPLETES, so
+    // the first lives after an install buy most of it (live BN12 2026-10-09
+    // at 4h: 0.695, 0.129, 0.020, then ~0 — a mean of 0.072). The exit prices
+    // the lives by it (exitplan cadenceShapeOf), not every life at the mean.
+    rows.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +Math.exp(mean).toFixed(4), lnMean: mean, perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0, seq: seq.map((s) => +Math.max(0, s.lnGain).toFixed(5)) })
   }
   return rows
 }
@@ -566,6 +570,11 @@ export function lifeInputsOf(base, rec, L, post, { lifeLength = null, catalogue 
     cycleHours: L,
     // The Go rate bonus on g (base.goCadenceMult, goplan.goExitInputsOf), as on the measured cadence.
     multGainPerCycle: num(base?.goCadenceMult) && base.goCadenceMult > 0 && c.gain > 0 ? Math.exp(Math.log(c.gain) * base.goCadenceMult) : c.gain,
+    // THE LIVES ONE BY ONE (exitplan cadenceShapeOf): the purchase sequence's
+    // per-life ln gains at L, which the exit scales by the posterior (the
+    // multGainPerCycle above over the model's mean) — the first life after
+    // an install buys what the catalogue's front holds, not the 48h mean.
+    cadenceShape: Array.isArray(row.seq) && row.seq.length ? { L, ln: row.seq } : null,
     cadenceFrom: 'purchase model',
     cadenceRateMedian: c.r,
     cadence: {

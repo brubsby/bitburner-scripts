@@ -951,6 +951,57 @@ function stepsOf(extra, carried) {
  * {mL, gL, lnGainAt(m), lnGainRatio(K)} or null (no table, not the purchase
  * model's cadence, or nothing bought at any length).
  */
+/**
+ * THE LIVES ONE BY ONE. The purchase model's table row at L carries each
+ * life's own ln gain (lifeplan.lifeTableGen `seq`): the catalogue depletes,
+ * so the first lives after an install buy most of what it holds. The exit's
+ * cycle gain (multGainPerCycle) is the cadence posterior at L — the model's
+ * MEAN life scaled by this node's own lives — so life j is priced at
+ *   ln g_j = (ln multGainPerCycle / mean) x seq_j
+ * — the same total over the sequence, in the order the purchases happen.
+ * `skipLn`: the first install's batch beyond the batch the table was built
+ * after (installGains / persistBaseline, hacking): those augmentations are
+ * gone from the front of the catalogue, so the sequence starts that far in
+ * (fractional lives, in the model's ln). Past the sequence's horizon, the
+ * mean, as every life was priced before (the table prices no further).
+ * Returns {at(i): the factor on install i's cycle gain (i >= 1; 1 past the
+ * sequence), end: the first install index at the mean} or null (no shape,
+ * another L, or a cadence that buys nothing).
+ */
+export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0 } = {}) {
+  if (!shape || !Array.isArray(shape.ln) || !shape.ln.length || !pos(cycleHours) || !num(shape.L) || Math.abs(shape.L - cycleHours) > 1e-9) return null
+  if (!pos(multGainPerCycle) || multGainPerCycle <= 1) return null
+  const seq = shape.ln.map((v) => (num(v) && v > 0 ? v : 0))
+  const n = seq.length
+  const total = seq.reduce((a, b) => a + b, 0)
+  if (!(total > 0)) return null
+  const mean = total / n
+  const lnG = Math.log(multGainPerCycle)
+  const scale = lnG / mean
+  const S = [0]
+  for (const v of seq) S.push(S[S.length - 1] + v)
+  // Cumulative model ln at fractional life x (the mean past the horizon).
+  const Sat = (x) => {
+    if (x <= 0) return 0
+    if (x >= n) return total + (x - n) * mean
+    const k = Math.floor(x)
+    return S[k] + (x - k) * seq[k]
+  }
+  // Where the sequence starts: the fractional life at which the cumulative reaches skipLn.
+  let x0 = 0
+  const skip = num(skipLn) && skipLn > 0 ? skipLn : 0
+  if (skip >= total) x0 = n + (skip - total) / mean
+  else if (skip > 0) {
+    let k = 0
+    while (k < n && S[k + 1] < skip) k++
+    x0 = k + (seq[k] > 0 ? (skip - S[k]) / seq[k] : 0)
+  }
+  const lives = Math.max(0, Math.ceil(n - x0 - 1e-9))
+  const f = []
+  for (let j = 1; j <= lives; j++) f.push(Math.exp(scale * (Sat(x0 + j) - Sat(x0 + j - 1)) - lnG))
+  return { at: (i) => (i >= 1 && i <= f.length ? f[i - 1] : 1), end: f.length + 1, x0, scale, lives: f.length }
+}
+
 export function purchaseGainOf(cadence, L, from = null) {
   if (from !== 'purchase model' && cadence?.source !== 'purchase model') return null
   const rows = (Array.isArray(cadence?.table) ? cadence.table : []).filter((r) => pos(r?.L) && pos(r?.money) && pos(r?.gain))
@@ -1581,6 +1632,17 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       goLifeOut = { ln, now, then, ownShare, lives: installsFirst - 1 }
     }
     const gCyc = multGainPerCycle * goGain
+    // THE CATALOGUE DEPLETES (o.cadenceShape, lifeplan.lifeInputsOf): later
+    // life j buys the purchase sequence's j-th life, scaled by the posterior,
+    // after whatever the first install's batch took beyond the table's own
+    // baseline batch — not the 48h mean every life. Live BN12 2026-10-09: the
+    // install at 14:01:56Z priced its next life at the 6h mean (x1.13) where
+    // the sequence's first 6h life buys x2.0, and the new life priced that
+    // life by its own planned batch (x1.43 at 2h): 18.1h against 13.7h, EXIT
+    // JUMP AT INSTALL. Past the sequence, the mean as before.
+    const shape = cadenceShapeOf(o.cadenceShape, { cycleHours, multGainPerCycle, skipLn: pos(installGains?.hacking) && pos(persistBaseline?.hacking) ? Math.log(installGains.hacking / persistBaseline.hacking) : 0 })
+    const shapeAt = shape ? shape.at : () => 1
+    const shapeEnd = shape ? shape.end : 0
     // A GRAFT PERSISTS THROUGH EVERY LATER INSTALL (it is pushed onto
     // Player.augmentations, AugmentationHelpers.ts:65, which Prestige.ts:122
     // re-applies; its entropy stack too, Prestige.ts:128). So a graft in life
@@ -1614,14 +1676,14 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // k = 1..400 and the loop made it quadratic (live BN9 2026-09-29, 0.5h
     // cycles, the optimum at ~325 installs). Lives that graft are walked one
     // by one up to the last of them, and the power covers the rest.
-    const cycleAt = (i, t) => gCyc * lifeLift(t, graftRepK, graftMoneyK) * cycleExtraAt(i)
+    const cycleAt = (i, t) => gCyc * lifeLift(t, graftRepK, graftMoneyK) * cycleExtraAt(i) * shapeAt(i)
     // ...and past the last hour at which anything varies (the last income
     // step, where it moves the growth; the rep lift's start; a per-cycle
     // extra's first install) every later cycle is the same: one power again.
     // Exact — the loop multiplied the same factor.
     const lastStepH = growOn && liftSteps.length ? liftSteps[liftSteps.length - 1].atH : 0
     const cycleFrom = perCycleExtra && !Array.isArray(perCycleExtra.byInstall) ? (num(perCycleExtra.fromInstall) && perCycleExtra.fromInstall >= 1 ? perCycleExtra.fromInstall : 2) : 0
-    const stableAt = (i, t) => !Array.isArray(perCycleExtra?.byInstall) && i + 1 >= cycleFrom && t >= repFrom && t >= lastStepH
+    const stableAt = (i, t) => !Array.isArray(perCycleExtra?.byInstall) && i + 1 >= cycleFrom && i >= shapeEnd && t >= repFrom && t >= lastStepH
     const lastGraftLife = lifeSched.lastLife
     let t = firstH
     let i = 1
@@ -1642,7 +1704,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       // the product the one-by-one walk took (a gang's income schedule has
       // ~100 steps, each hours long: a 0.5h cadence walked ~200 lives per
       // exit simulation).
-      if (i >= lastGraftLife && !Array.isArray(perCycleExtra?.byInstall) && i + 1 >= cycleFrom) {
+      if (i >= lastGraftLife && !Array.isArray(perCycleExtra?.byInstall) && i + 1 >= cycleFrom && i >= shapeEnd) {
         const nb = nextBreak(t)
         const n = Math.min(installsFirst - i, Math.max(1, Math.ceil((nb - t) / cycleHours - 1e-12)))
         if (n > 1) {
@@ -1666,7 +1728,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
         if (pos(leg.g.hacking)) graftHackLater *= leg.g.hacking
         lifeLegs.push({ life, ...leg })
       }
-      mult *= gCyc * liftBefore * cycleExtraAt(i)
+      mult *= gCyc * liftBefore * cycleExtraAt(i) * shapeAt(i)
       t += len
     }
     if (i < installsFirst) mult *= Math.pow(cycleAt(i, t), installsFirst - i)
@@ -1719,7 +1781,11 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       const ks = lifeStreamMultiples(steps, incomePerSec, firstH, cycleHours, lives)
       const kAll = ks.mean
       const lnBought = (k) => buyer.lnGainAt(buyer.mL * k * ratioInc * graftMoneyK)
-      const boughtFixed = buyer ? Math.log(gCyc / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) : null
+      // The sequence's shape over exactly these lives is what the purchase
+      // model buys on them (cadenceShapeOf): in the bound as in the price.
+      let shapeLn = 0
+      for (let j = 1; j < installsFirst; j++) shapeLn += Math.log(shapeAt(j))
+      const boughtFixed = buyer ? Math.log(gCyc / buyer.gL) + liftShare * (lnRepPart(graftRepK) + Math.log(repLift)) + Math.log(perCycleExtraMax) + shapeLn / lives : null
       const boughtMoney = buyer ? ks.runs.reduce((a, r) => a + r.n * lnBought(r.k), 0) / lives : null
       perLifeOut = { lives, cycleHours, pricedLn: Math.log(mult / multAfterFirst / graftHackLater) / lives, boughtLn: buyer ? boughtMoney + boughtFixed : null, moneyL: buyer ? buyer.mL : null, kAll, kFirst: ks.first, kLast: ks.last, kPeak: ks.peak }
     }
