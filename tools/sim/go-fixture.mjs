@@ -73,7 +73,8 @@ function harnessRecord(g, start) {
   for (let i = 1; i < tr.length; i++) {
     const e = tr[i];
     const mv = (x) => (x === "pass" ? "P" : `${x[0]},${x[1]}`);
-    if (e.who === "B") moves.push({ m: mv(e.mv), r: "G", ...(e.T ? { T: e.T } : {}) });
+    // A cheat is one note carrying its second stone (go-w0 since 2026-10-09).
+    if (e.who === "B") moves.push({ m: e.second ? `${mv(e.mv)}+${e.second[0]},${e.second[1]}` : mv(e.mv), r: "G", ...(e.T ? { T: e.T } : {}) });
     else if (e.who === "W" && moves.length) {
       moves[moves.length - 1].r = mv(e.mv);
       if (e.seed) moves[moves.length - 1].seed = e.seed;

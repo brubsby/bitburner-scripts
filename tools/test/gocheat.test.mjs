@@ -136,7 +136,17 @@ export async function run() {
       }
     }
   }
-  const c6 = new Check("GC6", "joint pairs are legal for playTwoMoves: both stones legal on the board BEFORE either (the 2026-10-07 05:25Z wipe position)");
+  // THE GAME'S PAIR RULE (Go.ts playTwoMoves: validateMove x2 with { repeat:
+  // false, suicide: false }, both stones set at once, then captures): each
+  // point need only be EMPTY before the cheat. Ours: the first stone is in the
+  // game's valid list (a legal single), the second empty before and not a
+  // suicide after the first (golib secondOk, go.js pairSecondPoints).
+  const pairLegal = (golib, board, valid, x1, y1, x2, y2) => {
+    if (!valid[x1]?.[y1] || (x1 === x2 && y1 === y2) || board[x2]?.[y2] !== ".") return false;
+    const b1 = golib.applyMove(board, x1, y1);
+    return !!b1 && b1[x2][y2] === "." && !!golib.applyMove(b1, x2, y2);
+  };
+  const c6 = new Check("GC6", "joint pairs are legal for playTwoMoves as the game rules it: the first stone a legal single, the second EMPTY before the cheat and no suicide after the first (the 2026-10-07 05:25Z position: 1,4+0,1 is legal — 0,1 is a suicide alone, a capture after 1,4)");
   {
     const path = await import("node:path");
     const { REPO } = await import("./ram.mjs");
@@ -164,7 +174,7 @@ export async function run() {
           if (t.length < 6) continue;
           pairs++;
           const sx = (t[5] / 5) | 0, sy = t[5] % 5;
-          if (!valid[sx][sy] || !valid[t[0]][t[1]]) { bad++; c6.fail(`pair ${t[0]},${t[1]}+${sx},${sy}: a stone not legal on the board before the first`); }
+          if (!pairLegal(golib, board, valid, t[0], t[1], sx, sy)) { bad++; c6.fail(`pair ${t[0]},${t[1]}+${sx},${sy}: not legal under the game's pair rule`); }
         }
       }
       if (!pairs) c6.fail("no pairs searched where a cheat is available — the check examined nothing");
@@ -181,21 +191,25 @@ export async function run() {
     if (!model) c7.warn("the opponent model could not load — GC7 did NOT run");
     else {
       // After our cheat 1,4+3,4 and the AI's 0,1: the only stone that is not an
-      // own-eye fill is 3,2 (white in atari with no escape) — no pair exists.
+      // own-eye fill is 3,2 (white in atari with no escape). Under the old
+      // valid-list rule (opts.pairSecond 'valid') no pair exists — the case
+      // this check was written for. Under the game's rule 3,2+4,1 is a pair
+      // (4,1 a suicide alone, a capture of 4,2 after 3,2): 3,2 first either way.
       const board = ["#OO#.", "#OXXX", "#OOX.", "#O.XX", "#.O#."];
       const validList = model.validMoves(board, []);
       const valid = board.map((col, x) => [...col].map((_, y) => validList.some(([vx, vy]) => vx === x && vy === y)));
       const reply = (b, o) => model.reply(b, { ...o, opponent: "Tetrads" });
-      const sess = golib.modelSession(5, 5.5, { reply }, { pairs: [6, 5], pairsOnly: true, seed: 7 });
-      const r0 = sess.setRoot(board, valid, { cheat: { fns: [() => true, () => true], cheats: 1 } });
-      c7.examined(1);
-      if (!r0) c7.fail("setRoot returned null (PASS only) where 3,2 is legal and winning");
-      else {
+      for (const rule of ["valid", "game"]) {
+        const sess = golib.modelSession(5, 5.5, { reply }, { pairs: [6, 5], pairsOnly: true, seed: 7, ...(rule === "game" ? { pairSecond: "game" } : {}) });
+        const r0 = sess.setRoot(board, valid, { cheat: { fns: [() => true, () => true], cheats: 1 } });
+        c7.examined(1);
+        if (!r0) { c7.fail(`rule ${rule}: setRoot returned null (PASS only) where 3,2 is legal and winning`); continue; }
         await sess.search({ maxms: 400 });
         const b = sess.best();
         c7.examined(1);
-        if (!b?.length || b[0].x !== 3 || b[0].y !== 2 || b[0].second) c7.fail("the single 3,2 must be chosen", JSON.stringify(b?.[0] ?? null));
-        else c7.note(`3,2 chosen, win rate ${b[0].top?.[0]?.[4]}`);
+        if (rule === "valid" && (!b?.length || b[0].x !== 3 || b[0].y !== 2 || b[0].second)) c7.fail("rule valid (no pair exists): the single 3,2 must be chosen", JSON.stringify(b?.[0] ?? null));
+        else if (rule === "game" && (!b?.length || b[0].x !== 3 || b[0].y !== 2 || (b[0].second && !pairLegal(golib, board, valid, 3, 2, b[0].second.x, b[0].second.y)))) c7.fail("rule game: 3,2 (alone or with a legal second stone) must be chosen", JSON.stringify(b?.[0] ?? null));
+        else c7.note(`rule ${rule}: 3,2${b[0].second ? `+${b[0].second.x},${b[0].second.y}` : ""} chosen, win rate ${b[0].top?.[0]?.[4]}`);
         if (sess.jointGuard.hits) c7.fail(`the pass-only guard fired ${sess.jointGuard.hits}x: a pair filter emptied a node (the guard hides it, the fix must not need it)`, JSON.stringify(sess.jointGuard.last));
       }
     }
@@ -262,12 +276,12 @@ export async function run() {
           for (const e of t?.top ?? []) {
             if (e.length < 6) continue;
             const sx = (e[5] / 5) | 0, sy = e[5] % 5;
-            if (!valid[e[0]]?.[e[1]] || !valid[sx]?.[sy]) c8.fail(`an illegal pair searched: ${e[0]},${e[1]}+${sx},${sy}`, board.join("/"));
+            if (!pairLegal(golib, board, valid, e[0], e[1], sx, sy)) c8.fail(`an illegal pair searched: ${e[0]},${e[1]}+${sx},${sy}`, board.join("/"));
           }
           if (t?.second) {
             pairsSeen++;
             if (!open) c8.fail("a pair where the cheat window is closed", board.join("/"));
-            if (!valid[t.x]?.[t.y] || !valid[t.second.x]?.[t.second.y] || (t.x === t.second.x && t.y === t.second.y)) c8.fail(`an illegal pair ${t.x},${t.y}+${t.second.x},${t.second.y} (both must be in the game's valid list before either stone)`, board.join("/"));
+            if (!pairLegal(golib, board, valid, t.x, t.y, t.second.x, t.second.y)) c8.fail(`an illegal pair ${t.x},${t.y}+${t.second.x},${t.second.y} (the first a legal single, the second empty before and no suicide after the first)`, board.join("/"));
           } else if (!t && rs) {
             // a pass where stones exist: must also be the plain search's answer
             await ss.search({ maxms: 5000, untilWork: 120, untilVisits: 6100 });
@@ -527,5 +541,127 @@ export async function run() {
     c14.examined(1);
     if (!/cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\) && \(!SETTINGS\.cheat\.declineHarm \|\| stoneHarm\(board2, second\[0\]\.x, second\[0\]\.y\)\)/.test(src)) c14.fail("tryCheat's decline is not gated on stoneHarm(board2, second) — not found");
   }
-  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14];
+  const c15 = new Check("GC15", "THE GAME'S SECOND-STONE RULE (go.js SETTINGS.cheat.secondRule 'game', the 2026-10-09 22:10:40Z Illuminati loss): a cheat's second stone may be a suicide ALONE that captures after the first — 2,1+1,0 takes white's six stones; the old valid-list rule never offered 1,0");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    await import("./gameresolve.mjs");
+    const go = await import(path.join(REPO, "go.js"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const model = await loadModel();
+    // Live, before our 7th move (ply 6): white's 0,1/1,1/0,2/1,2/2,2/2,3 on two
+    // liberties, 1,0 (a suicide for black alone) and 2,1; black's 0,3/1,3 in
+    // atari at 0,4. Board strings are columns (board[x][y]).
+    const board = ["#OOX.", ".OOX#", "#.OOX", ".XXXX", "#.#X."];
+    const first = { x: 2, y: 1 };
+    const board2 = golib.applyMove(board, first.x, first.y);
+    const has10 = (list) => list.some(([x, y]) => x === 1 && y === 0);
+    c15.examined(1);
+    // Live stays 'valid' (the game's rule measured, not paid: go.js SETTINGS.cheat.secondRule).
+    if (!["game", "valid"].includes(go.SETTINGS.cheat.secondRule)) c15.fail(`SETTINGS.cheat.secondRule is ${go.SETTINGS.cheat.secondRule}: neither 'game' nor 'valid'`);
+    else c15.note(`live secondRule: ${go.SETTINGS.cheat.secondRule}`);
+    c15.examined(1);
+    const pts = go.pairSecondPoints(board, board2, first);
+    if (!has10(pts)) c15.fail(`pairSecondPoints after 2,1 lacks 1,0: ${JSON.stringify(pts)}`);
+    if (pts.some(([x, y]) => board[x][y] !== "." || (x === first.x && y === first.y))) c15.fail("pairSecondPoints offered a point not empty before the cheat (or the first stone)");
+    // A point the first stone's capture empties is NOT a legal second stone (not empty before).
+    c15.examined(1);
+    const capB = ["XO...", ".X...", ".....", ".....", "....."];
+    const capB2 = golib.applyMove(capB, 0, 2);
+    if (go.pairSecondPoints(capB, capB2, { x: 0, y: 2 }).some(([x, y]) => x === 0 && y === 1)) c15.fail("pairSecondPoints offered 0,1, emptied only by the first stone's capture (the game: not empty before)");
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    c15.examined(1);
+    if (!/const valid2 = SETTINGS\.cheat\.secondRule === 'valid' \? [^\n]*: pairSecondPoints\(board, board2, first\)/.test(src)) c15.fail("tryCheat's second-stone list is not pairSecondPoints under secondRule 'game' — not found");
+    if (!model) c15.warn("the opponent model could not load — the search half of GC15 did NOT run");
+    else {
+      const validList = model.validMoves(board, []);
+      c15.examined(1);
+      if (has10(validList)) c15.fail("the game's valid list now offers 1,0 before the cheat — the position no longer shows the rule");
+      const reply = (b, o) => model.reply(b, { ...o, opponent: "Illuminati" });
+      const grid = (list) => board.map((col, x) => [...col].map((_, y) => list.some(([a, b]) => a === x && b === y)));
+      // The greedy second stone: a 100-work search on board2 over each rule's list.
+      for (const [rule, list] of [["game", pts], ["valid", validList.filter(([x, y]) => !(x === 2 && y === 1) && board2[x][y] === ".")]]) {
+        const sess = golib.modelSession(5, 7.5, { reply }, { seed: 3 });
+        sess.setRoot(board2, grid(list), { history: [board.join("")], opponentPassed: false, nnDepth: -1 });
+        await sess.search({ maxms: 20000, untilWork: 100, untilVisits: 4000 });
+        const b = sess.best();
+        const mv = b && b.length ? `${b[0].x},${b[0].y}` : "PASS";
+        c15.examined(1);
+        if (rule === "game" && mv !== "1,0") c15.fail(`the second-stone search under the game's rule chose ${mv}, not the capture 1,0`);
+        if (rule === "valid" && mv === "1,0") c15.fail("the old rule's search chose 1,0 — the list was not the valid list");
+        c15.note(`second stone after 2,1, rule ${rule}: ${mv} (${b?.[0]?.top?.[0]?.[4] ?? "-"})`);
+      }
+      // The pair search (the hard pair): a pair taking 1,0 under the game's
+      // rule; none with second stone 1,0 under opts.pairSecond 'valid'.
+      for (const [rule, opts] of [["game", { pairSecond: "game" }], ["valid", {}]]) {
+        const sess = golib.modelSession(5, 7.5, { reply }, { pairs: [6, 5], pairsOnly: true, seed: 5, ...opts });
+        sess.setRoot(board, grid(validList), { history: [], cheat: { fns: [() => true], cheats: 2 } });
+        await sess.search({ maxms: 20000, untilWork: 400, untilVisits: 16000 });
+        const t = sess.best()?.[0];
+        const second10 = (t?.top ?? []).some((e) => e.length >= 6 && e[5] === 1 * 5 + 0);
+        c15.examined(1);
+        if (rule === "game" && !(t?.second?.x === 1 && t?.second?.y === 0)) c15.fail(`the pair search under the game's rule chose ${t ? `${t.x},${t.y}+${t.second?.x},${t.second?.y}` : "PASS"}, not a pair taking 1,0`);
+        if (rule === "valid" && second10) c15.fail("the pair search under pairSecond 'valid' searched a pair with second stone 1,0");
+        c15.note(`pair search, rule ${rule}: ${t ? `${t.x},${t.y}+${t.second?.x},${t.second?.y} (${t.top?.[0]?.[4]})` : "PASS"}`);
+      }
+    }
+  }
+  const c16 = new Check("GC16", "THE SECOND-STONE ROOT (golib setRoot cheatSecond, go.js secondStone): its board stays out of the AI's history (playTwoMoves records none) and its PASS is 'no second stone'; a root whose PASS ends the game lost expands its stones (the 02:32:31Z ko retake, the 10:56:22Z ply-8 pass)");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    await import("./gameresolve.mjs");
+    const go = await import(path.join(REPO, "go.js"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    const R = await import(path.join(REPO, "tools/sim/go-regress.mjs"));
+    const { loadModel } = await import(path.join(REPO, "tools/goai/model.mjs"));
+    const model = await loadModel();
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    const sol = fs.readFileSync(path.join(REPO, "tools", "go-solver.mjs"), "utf8");
+    for (const [what, re, text] of [
+      ["go.js's second-stone request says secondStone under secondRoot 'game'", /askSolver\(board2, valid2, \{ \.\.\.\(SETTINGS\.cheat\.secondRoot === 'game' \? \{ secondStone: true \} : \{\}\),/, src],
+      ["go-solver roots a secondStone request with cheatSecond", /req\.secondStone \? \{ cheatSecond: true \}/, sol],
+    ]) {
+      c16.examined(1);
+      if (!re.test(text)) c16.fail(`${what} — not found`);
+    }
+    if (!model) c16.warn("the opponent model could not load — the search half of GC16 did NOT run");
+    else {
+      const reply = (b, o) => model.reply(b, { ...o, opponent: "Illuminati" });
+      const grid = (board, list) => board.map((col, x) => [...col].map((_, y) => list.some(([a, b]) => a === x && b === y)));
+      // 02:32:31Z, ply 6, after the single 4,4: 0,0 retakes the ko (1,0's last
+      // liberty). The game lets white retake at once — the board it makes is
+      // the board after 4,4, which no game history holds — so 4,4+0,0 only
+      // hands white the ko; the single alone wins (21-7.5 replayed).
+      const P = [".OOOO", "OXOO.", "XXXX#", "#.XXX", "##X.."];
+      const B2 = golib.applyMove(P, 4, 4);
+      const pts = go.pairSecondPoints(P, B2, { x: 4, y: 4 });
+      for (const cs of [true, false]) {
+        const sess = golib.modelSession(5, 7.5, { reply }, { seed: 1 });
+        sess.setRoot(B2, grid(B2, pts), { history: [], opponentPassed: false, nnDepth: -1, cheatSecond: cs });
+        await sess.search({ maxms: 20000, untilWork: 100, untilVisits: 4000 });
+        const b = sess.best();
+        const mv = b && b.length ? `${b[0].x},${b[0].y}` : "none";
+        c16.examined(1);
+        if (cs && mv !== "none") c16.fail(`cheatSecond: the second-stone search chose ${mv}, not 'no second stone' (the ko retake 0,0 reads won only if white cannot retake)`, JSON.stringify(sess.rootStats()));
+        else if (!cs && mv !== "0,0") c16.warn(`without cheatSecond the search no longer chooses the retake 0,0 (${mv}) — the contrast drifted`);
+        else c16.note(`02:32:31Z second stone after 4,4, cheatSecond ${cs}: ${mv}`);
+      }
+      // 10:56:22Z, ply 8 on the line the game's rule plays: white passed and
+      // black's PASS ends the game lost; the net gives every stone ~0 prior.
+      const L = [".O#.#", "OOOX.", "O.OXX", "#OX.X", ".X.X."];
+      const nn = await R.solverNn("Illuminati", 5);
+      const sess = golib.modelSession(5, 7.5, { reply }, { seed: 1, nn });
+      sess.setRoot(L, grid(L, model.validMoves(L, [])), { history: [], opponentPassed: true });
+      await sess.search({ maxms: 20000, untilWork: 400, untilVisits: 16000 });
+      const b = sess.best();
+      c16.examined(1);
+      if (!b || !b.length) c16.fail("the root whose PASS ends the game lost passed — its stones were never expanded (the 10:56:22Z ply-8 loss)", JSON.stringify(sess.rootStats()));
+      else c16.note(`10:56:22Z ply 8 after the AI's pass: ${b[0].x},${b[0].y}`);
+    }
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16];
 }

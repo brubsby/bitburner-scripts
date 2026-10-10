@@ -6514,18 +6514,6 @@
      "why": "ply 1 as live had it: the pre-sent single 3,2 with wr 0.51 (live declined its second stone 1,2 read 0.409, so the single's wr was >= 0.509; 0.51 is that bound) -> with the net the second stone reads ~0.41 and is declined, W 1,2, then three hard pairs lose 13-14.5 (the live score on seed 1); secondNet off + declineHarm play the cheat and must win"
     },
     {
-     "red": "2026-10-09, replayed with each fix off: red under hardAdaptive off 13-14.5; decline off 9-18.5; pre-5ffeaba (secondNet on + declineHarm off) 9-18.5",
-     "from": 1,
-     "work": 800,
-     "seed": 3,
-     "pre": {
-      "x": 3,
-      "y": 2,
-      "wr": 0.51
-     },
-     "why": "ply 1 as live had it: the pre-sent single 3,2 with wr 0.51 (live declined its second stone 1,2 read 0.409, so the single's wr was >= 0.509; 0.51 is that bound) -> with the net the second stone reads ~0.41 and is declined, W 1,2, then three hard pairs lose 13-14.5 (the live score on seed 1); secondNet off + declineHarm play the cheat and must win"
-    },
-    {
      "red": "2026-10-09, replayed with each fix off: red under declineHarm off 13-14.5; pre-5ffeaba (secondNet on + declineHarm off) 9-18.5",
      "from": 1,
      "work": 800,
@@ -6539,7 +6527,7 @@
     }
    ],
    "status": "fixed",
-   "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 82 ended 13-14.5. Decided at ply 1: the decline of the greedy second stone 1,2 (0.409, a 100ms search with the net) against the pre-sent single 3,2; W played 1,2 itself. From ply 2 every replay loses (0/8 at 800 and 1360 work); from ply 1 a fresh search wins 8/8 (its own single reads 0.14-0.5, so the hard pair 3,2+1,2 is searched instead). With live's own single (pre 3,2 @0.51): the old policy 0/4 seeds; secondNet off alone 2/4 (seeds 2 and 4 still decline at 100ms); secondNet off + declineHarm 3/4 (seed 2 plays 3,2+4,1 and still loses 13-14.5)."
+   "note": "BN12 (cheats replayed at crime_success 2.06 / SF14.3: /tel/go-cheat.txt read 2.0623 at 11:39Z). Streak 82 ended 13-14.5. Decided at ply 1: the decline of the greedy second stone 1,2 (0.409, a 100ms search with the net) against the pre-sent single 3,2; W played 1,2 itself. From ply 2 every replay loses (0/8 at 800 and 1360 work); from ply 1 a fresh search wins 8/8 (its own single reads 0.14-0.5, so the hard pair 3,2+1,2 is searched instead). With live's own single (pre 3,2 @0.51): the old policy 0/4 seeds; secondNet off alone 2/4 (seeds 2 and 4 still decline at 100ms); secondNet off + declineHarm 3/4 (seed 2 plays 3,2+4,1 and still loses 13-14.5). 2026-10-10: the seed-3 check REMOVED. go-regress now replays a cheat as playTwoMoves does (both stones at once, no board added to the AI history; two makeMove calls added two), and on seed 3 the ply-2 hard pair 3,1+1,3 then reads 0.048 against the decline bar 0.148-0.1 = 0.048 (0.044 under the old replay, declined) — a knife edge two plies past the decision, lost 13-14.5. Seeds 1 and 4 (quick, red) stand; seeds 5-7 win."
   },
   {
    "id": "live-2026-10-09T11:29:33.058Z-Illuminati",
@@ -8112,6 +8100,819 @@
    ],
    "status": "open",
    "note": "Daedalus 5x5, BN12, streak 179, no cheats, 0-27.5. NOT lost from move 1 (root 0.229 is the objective value, not a win rate: from ply 0 and ply 1 the current solver wins 8/8 seeds). LOST AT PLY 2 by the PRE-SENT 4,3 (from ply 3 every replay loses, 0/8; 3,3 wins 14-13.5). No fresh search with the net picks 4,3 (0/96 replays at 400-3200 work, ponder or request); the search WITHOUT the net does (2/6 at 800 work). The 1,3 reply node had been grown by the ply-0 ponder at depth 3 (beyond nn.maxDepth 1: playout-only UCB1 visits, ~1000 work), and when the ponder under 3,2 made it a decision node its stale most-visited child was published at once (golib ponderAnswers: node.work >= minWork) and outlived ~1000 more work of net search. KNOWN LOST (open): golib nn.lateCap K (cap a node the net reaches after it was searched to K child visits before it can answer) wins it, but MEASURED NEUTRAL on Daedalus (go-w0 live config, 2160 paired: K 0 -0.5% [-2.2,+1.1] lost 8 vs 2; K 16 +0.2% [-1.3,+1.7] lost 5 vs 2), so it is off (go-solver --late-cap-on none). From ply 0/1 a fresh request wins 8/8. After the AI first passed (ply 8) black was BEHIND 12-15.5, so passing would have lost too; the play-on stones (own-eye fills, then 1,1 = self-atari of the whole group) cost the loss area (12 x 0.75 = 9 power) and ~15 s, no swindle existed (white two-eyed)."
+  },
+  {
+   "id": "live-2026-10-09T22:10:40.965Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-09T22:10:40.965Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "#........##.O.......#.#..",
+   "streakBefore": 36,
+   "live": {
+    "black": 12,
+    "white": 14.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "3,1",
+     "r": "1,1",
+     "T": 2433261800,
+     "s": "req",
+     "t": [
+      [
+       3,
+       1,
+       0.077,
+       443,
+       0.108
+      ],
+      [
+       3,
+       3,
+       0.044,
+       134,
+       0.067
+      ],
+      [
+       -1,
+       -1,
+       -0.023,
+       81,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      1,
+      3,
+      4,
+      6
+     ]
+    },
+    {
+     "m": "3,3+1,3",
+     "r": "2,3",
+     "T": 2433263200,
+     "s": "cheat",
+     "t": [
+      [
+       1,
+       3,
+       0.185,
+       19,
+       0.211
+      ],
+      [
+       4,
+       3,
+       0.193,
+       18,
+       0.222
+      ],
+      [
+       2,
+       3,
+       0.163,
+       16,
+       0.188
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      1,
+      4,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "3,2+0,2",
+     "r": "1,2",
+     "T": 2433267000,
+     "s": "cheat",
+     "t": [
+      [
+       3,
+       2,
+       0.808,
+       6465,
+       0.956,
+       2
+      ],
+      [
+       3,
+       2,
+       -0.07,
+       359,
+       0,
+       11
+      ],
+      [
+       2,
+       1,
+       -0.034,
+       173,
+       0.029,
+       17
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,3+3,4",
+     "r": "0,1",
+     "T": 2433268000,
+     "s": "cheat",
+     "t": [
+      [
+       3,
+       4,
+       0.205,
+       73,
+       0.26
+      ],
+      [
+       2,
+       4,
+       0.133,
+       38,
+       0.184
+      ],
+      [
+       -1,
+       -1,
+       0.098,
+       29,
+       0.138
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,4+4,3",
+     "r": "0,4",
+     "T": 2433269000,
+     "s": "cheat",
+     "t": [
+      [
+       -1,
+       -1,
+       0.083,
+       53,
+       0.132
+      ],
+      [
+       4,
+       3,
+       0.074,
+       47,
+       0.128
+      ],
+      [
+       2,
+       1,
+       0.026,
+       31,
+       0.065
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,3+1,3",
+     "r": "0,2",
+     "T": 2433270000,
+     "s": "cheat",
+     "t": [
+      [
+       1,
+       3,
+       0.544,
+       89,
+       0.652
+      ],
+      [
+       -1,
+       -1,
+       0.189,
+       45,
+       0.267
+      ],
+      [
+       0,
+       2,
+       0.067,
+       16,
+       0.125
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "0,4",
+     "T": 2433270800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,3",
+     "r": "P",
+     "T": 2433271800,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.036,
+       1861,
+       0
+      ],
+      [
+       1,
+       3,
+       -0.076,
+       453,
+       0.002
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2433273400,
+     "s": "req"
+    }
+   ],
+   "note": "BN12 (cheats replayed at crime_success 3.3332 / SF14.3: /tel/go-cheat.txt read 3.3331726772490247 at 22:11:02Z). Streak 36 ended 12-14.5; 1 loss in 72 Illuminati games since 5ffeaba (12:45Z). Ply 6: the pre-sent single 2,1 (0.991) left white's six stones (0,1/1,1/0,2/1,2/2,2/2,3) on ONE liberty, 1,0 — a suicide for black alone, a capture after 2,1 — while black's 0,3/1,3 (played as the ply-5 cheat 0,3+1,3) sat in atari at 0,4. playTwoMoves checks neither suicide nor superko (Go.ts:163-182 validateMove {repeat:false, suicide:false}), so 2,1+1,0 was a legal cheat taking six stones; go.js offered the second-stone search only the game's valid list (no 1,0), the search answered PASS (log c.why 'no-second'), the single was played, white took 0,3/1,3 at 0,4, and from ply 7 every replay loses. Not the 11:29Z class: the ply-2 hard pair 3,2+0,2 read 0.956 (6465 visits) and was played as searched. OPEN: the fix (go.js SETTINGS.cheat.secondRule 'game' + secondRoot 'game') measured NOT PAID on the paired harness (1800 paired, +0.6% [-0.7, +2.8], lost 7 vs 5), so live keeps the valid-list rule and loses this check; GL7 holds the option to winning it.",
+   "cheat": {
+    "crime": 3.3332,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 6,
+     "work": 80,
+     "seed": 2,
+     "pre": {
+      "x": 2,
+      "y": 1,
+      "wr": 0.991
+     },
+     "why": "ply 6 as live had it: the pre-sent single 2,1 (0.991) left white's six stones on one liberty, 1,0 (a suicide alone, a capture after 2,1), black's 0,3/1,3 in atari. Live's valid-list second stone has no 1,0: the search answers PASS or 3,0, the single is played and lost (12-14.5 on these seeds, as live). The game's rule (secondRule/secondRoot 'game', off live, measured not paid) plays 2,1+1,0 and wins 20-7.5 — GL7."
+    },
+    {
+     "from": 6,
+     "work": 80,
+     "seed": 5,
+     "pre": {
+      "x": 2,
+      "y": 1,
+      "wr": 0.991
+     },
+     "why": "ply 6 as live had it: the pre-sent single 2,1 (0.991) left white's six stones on one liberty, 1,0 (a suicide alone, a capture after 2,1), black's 0,3/1,3 in atari. Live's valid-list second stone has no 1,0: the search answers PASS or 3,0, the single is played and lost (12-14.5 on these seeds, as live). The game's rule (secondRule/secondRoot 'game', off live, measured not paid) plays 2,1+1,0 and wins 20-7.5 — GL7."
+    },
+    {
+     "from": 6,
+     "work": 160,
+     "seed": 1,
+     "pre": {
+      "x": 2,
+      "y": 1,
+      "wr": 0.991
+     },
+     "why": "ply 6 as live had it: the pre-sent single 2,1 (0.991) left white's six stones on one liberty, 1,0 (a suicide alone, a capture after 2,1), black's 0,3/1,3 in atari. Live's valid-list second stone has no 1,0: the search answers PASS or 3,0, the single is played and lost (12-14.5 on these seeds, as live). The game's rule (secondRule/secondRoot 'game', off live, measured not paid) plays 2,1+1,0 and wins 20-7.5 — GL7."
+    },
+    {
+     "from": 6,
+     "work": 400,
+     "seed": 4,
+     "pre": {
+      "x": 2,
+      "y": 1,
+      "wr": 0.991
+     },
+     "why": "ply 6 as live had it: the pre-sent single 2,1 (0.991) left white's six stones on one liberty, 1,0 (a suicide alone, a capture after 2,1), black's 0,3/1,3 in atari. Live's valid-list second stone has no 1,0: the search answers PASS or 3,0, the single is played and lost (12-14.5 on these seeds, as live). The game's rule (secondRule/secondRoot 'game', off live, measured not paid) plays 2,1+1,0 and wins 20-7.5 — GL7."
+    },
+    {
+     "from": 6,
+     "work": 800,
+     "pre": {
+      "x": 2,
+      "y": 1,
+      "wr": 0.991
+     },
+     "why": "ply 6 as live had it: the pre-sent single 2,1 (0.991) left white's six stones on one liberty, 1,0 (a suicide alone, a capture after 2,1), black's 0,3/1,3 in atari. Live's valid-list second stone has no 1,0: the search answers PASS or 3,0, the single is played and lost (12-14.5 on these seeds, as live). The game's rule (secondRule/secondRoot 'game', off live, measured not paid) plays 2,1+1,0 and wins 20-7.5 — GL7."
+    }
+   ],
+   "status": "open"
+  },
+  {
+   "id": "live-2026-10-10T09:07:10.812Z-Daedalus",
+   "source": "live",
+   "at": "2026-10-10T09:07:10.812Z",
+   "opponent": "Daedalus",
+   "size": 5,
+   "komi": 5.5,
+   "start": "#...#....##.............#",
+   "streakBefore": 187,
+   "live": {
+    "black": 0,
+    "white": 25.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "2,3",
+     "T": 2472645200,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.235,
+       548,
+       0.314
+      ],
+      [
+       2,
+       3,
+       0.267,
+       33,
+       0.333
+      ],
+      [
+       1,
+       2,
+       0.215,
+       29,
+       0.276
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "1,2",
+     "T": 2472646800,
+     "s": "pre",
+     "ks": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "1,1",
+     "T": 2472648600,
+     "s": "pre",
+     "ks": [
+      1,
+      3,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "1,3",
+     "r": "0,3",
+     "T": 2472649800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,4",
+     "r": "3,4",
+     "T": 2472650600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "0,2",
+     "T": 2472651400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,4",
+     "r": "1,3",
+     "T": 2472652200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "3,4",
+     "T": 2472653200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,0",
+     "r": "2,4",
+     "T": 2472654000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "P",
+     "T": 2472655000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "P",
+     "T": 2472655400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "4,2",
+     "T": 2472656400,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.249,
+       1473058,
+       0
+      ],
+      [
+       3,
+       0,
+       -0.298,
+       236,
+       0.034
+      ],
+      [
+       4,
+       2,
+       -0.321,
+       135,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "3,2",
+     "T": 2472657200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "2,1",
+     "T": 2472658200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "3,3",
+     "T": 2472659200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "4,0",
+     "T": 2472660400,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.355,
+       1445166,
+       0
+      ],
+      [
+       3,
+       0,
+       -0.396,
+       9480,
+       0
+      ],
+      [
+       4,
+       0,
+       -0.396,
+       9000,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,0",
+     "r": "3,1",
+     "T": 2472661600,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.388,
+       1369864,
+       0
+      ],
+      [
+       3,
+       0,
+       -0.411,
+       10231,
+       0
+      ],
+      [
+       4,
+       1,
+       -0.411,
+       8303,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2472662400,
+     "s": "req"
+    }
+   ],
+   "note": "BN7.1, streak 187, 0-25.5 (no cheats: Daedalus). Added as open, not diagnosed (2026-10-10 token budget); not the 22:10:40Z cheat class. NOT REPRODUCED: at the critical ply 1 live played 3,3; the replay (800 work, seeds 1-2) plays 3,2 and wins 20-5.5. No change explains the difference (search noise or live conditions the replay does not model), so it stays open until a check reproduces the loss.",
+   "nets": true,
+   "checks": [
+    {
+     "from": 1,
+     "work": 800,
+     "why": "critical ply: the last on the logged line where the solver found a line winning >= 50% (live played 3,3; replay picks 3,2 at win rate 0.505)"
+    },
+    {
+     "from": 1,
+     "work": 800,
+     "seed": 2,
+     "why": "critical ply: the last on the logged line where the solver found a line winning >= 50% (live played 3,3; replay picks 3,2 at win rate 0.505)"
+    }
+   ],
+   "status": "open"
   }
  ]
 }

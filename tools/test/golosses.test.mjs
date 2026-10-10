@@ -34,7 +34,7 @@
 // The replays run on worker threads (tools/sim/go-regress-pool.mjs, each one
 // deterministic and independent; BB_TEST_JOBS=1 runs them in this thread).
 // THE SLOW TIER: a check marked `"tier": "slow"` in the fixture, every check
-// of an `open` case (a WARN either way), and GL5/GL6 are skipped by
+// of an `open` case (a WARN either way), and GL5/GL6/GL7 are skipped by
 // `run.mjs --quick` and printed as SKIPPED; `npm test` runs them all. A
 // fixed case must keep at least one check outside the slow tier (GL2), and
 // that check must be one that goes RED on the bug the case was fixed for —
@@ -112,12 +112,15 @@ export async function run() {
     }
   }
   if (skipped) c1.skip(skipped, "corpus checks marked slow, or on open cases");
-  // GL5/GL6 (slow tier): their replays are queued now, beside GL1's.
+  // GL5/GL6/GL7 (slow tier): their replays are queued now, beside GL1's.
   const settle = (p) => p.then((res) => ({ res }), (e) => ({ e }));
   const nb = fixture.cases.find((c) => c.id === "live-2026-10-09T17:24:13.315Z-Netburners");
   const gl5 = QUICK || !nb ? [] : nb.checks.filter((x) => x.from === 8).map((ch) => ({ ch, off: settle(pool.run(nb, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, openPass: "allow" })) }));
   const dl = fixture.cases.find((c) => c.id === "live-2026-10-09T20:52:10.371Z-Daedalus");
   const gl6 = QUICK || !dl ? [] : dl.checks.filter((x) => x.liveTree).map((ch) => ({ ch, off: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: -1 } })), on: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: 16 } })) }));
+  const il = fixture.cases.find((c) => c.id === "live-2026-10-09T22:10:40.965Z-Illuminati");
+  const GAME_RULE = { secondRule: "game", secondRoot: "game" };
+  const gl7 = QUICK || !il ? [] : il.checks.map((ch) => ({ ch, on: settle(pool.run(il, { ...optsOf(ch), cheatPolicy: GAME_RULE })) }));
   let won = 0, lost = 0, open = 0;
   for (const { fx, ch, p } of jobs) {
     const { res, ms, e } = await p;
@@ -188,6 +191,23 @@ export async function run() {
       else c6.note(`seed ${ch.seed} presend ${ch.presend}: cap off -> ${d.mv}${d.pre ? " (pre-sent)" : ""}, LOST ${off.black}-${off.white}`);
       if (!on.won) c6.fail(`seed ${ch.seed} presend ${ch.presend}: lateCap 16 LOST ${on.black}-${on.white}`, `line ${on.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
       else c6.note(`seed ${ch.seed} presend ${ch.presend}: lateCap 16 WON ${on.black}-${on.white}`);
+    }
+  // GL7: the 22:10:40Z Illuminati case (open): live's valid-list second
+  // stone has no 2,1+1,0 at ply 6 and GL1 loses it as live did; the game's
+  // own pair rule (go.js SETTINGS.cheat.secondRule 'game' + secondRoot
+  // 'game', measured not paid and off) wins every check. (Slow tier: it
+  // guards an option that is off live, kept while the cheat work is current.)
+  const c7 = new Check("GL7", "the 2026-10-09 22:10:40Z Illuminati case: the game's second-stone rule (secondRule/secondRoot 'game', off live) plays 2,1+1,0 at ply 6 and wins every check");
+  checks.push(c7);
+  if (!il) c7.fail("the case is not in the corpus");
+  else if (QUICK) c7.skip(il.checks.length, "the game-rule replays of its checks");
+  else
+    for (const { ch, on: p } of gl7) {
+      c7.examined(1);
+      const { res, e } = await p;
+      if (e) c7.fail(`seed ${ch.seed ?? 1} work ${ch.work}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
+      else if (!res.won) c7.fail(`seed ${ch.seed ?? 1} work ${ch.work}: the game's rule LOST ${res.black}-${res.white}`, `line ${res.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
+      else c7.note(`seed ${ch.seed ?? 1} work ${ch.work}: game rule WON ${res.black}-${res.white}`);
     }
   await pool.close();
   return checks;

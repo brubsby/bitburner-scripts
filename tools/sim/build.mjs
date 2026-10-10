@@ -69,7 +69,7 @@ export { calculateCurrentShareBonus } from "${GAME}/src/NetworkShare/Share";
 // harness was measuring a strawman. See the fidelity rule above — offline
 // tooling has no RAM budget and therefore no excuse for not using game source.
 export { getMove } from "${GAME}/src/Go/boardAnalysis/goAI";
-export { getNewBoardState, makeMove, passTurn } from "${GAME}/src/Go/boardState/boardState";
+export { getNewBoardState, makeMove, passTurn, updateCaptures } from "${GAME}/src/Go/boardState/boardState";
 export { getAllValidMoves, simpleBoardFromBoard } from "${GAME}/src/Go/boardAnalysis/boardAnalysis";
 export { getScore, getOpponentStats, endGoGame } from "${GAME}/src/Go/boardAnalysis/scoring";
 export { CalculateEffect, getWinstreakMultiplier, getDifficultyMultiplier, getMaxRep } from "${GAME}/src/Go/effects/effect";

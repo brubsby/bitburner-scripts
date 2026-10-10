@@ -184,9 +184,16 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
   //                    (hardAdaptive[opponent] {thr, mult}: a pair under thr
   //                    searched on (mult - 1) x the work, go-solver's adaptive)
   //   else (greedy)    the single, then a second-stone search on the board
-  //                    after it at secondMs/maxms of the budget, its valid list
-  //                    the pre-cheat one (playTwoMoves validates both first)
+  //                    after it at secondMs/maxms of the budget, its points
+  //                    the game's pair rule allows (secondRule, below)
   //   secondNet false  the second-stone search runs without the net
+  //   secondRoot       'game': the second-stone root kept out of the AI's
+  //                    history, its PASS "no second stone" (golib cheatSecond);
+  //                    else (live, 'old') the pre-cheat board and the root's own
+  //                    in the history, its PASS a real pass
+  //   secondRule       'game': a second stone may be any point empty before
+  //                    the cheat (go.js pairSecondPoints, golib pairSecond
+  //                    'game'); else (live, 'valid') the valid list before it
   //   decline          a second stone (or hard pair) whose line wins under the
   //                    single's by more than it is not played: the single
   //                    (go.js cheatDeclined)
@@ -216,17 +223,10 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
         m.passTurn(st, colour, false);
         return true;
       }
-      // A two-move cheat ("x,y+x2,y2"): both stones (Go.ts playTwoMoves).
-      // makeMove refuses a second move of one colour in a row (notYourTurn),
-      // which silently dropped a cheat's second stone: hand the turn back.
-      let ok = true;
-      const other = colour === m.GoColor.black ? m.GoColor.white : m.GoColor.black;
-      for (const p of mv.split("+").filter(Boolean)) {
-        const [x, y] = p.split(",").map(Number);
-        if (mv.includes("+")) st.previousPlayer = other;
-        ok = m.makeMove(st, x, y, colour) && ok;
-      }
-      return ok;
+      // A two-move cheat ("x,y+x2,y2"): the game's playTwoMoves (playTwoMovesOn).
+      if (mv.includes("+")) return playTwoMovesOn(m, st, ...mv.split("+").map((p) => p.split(",").map(Number)), colour);
+      const [x, y] = mv.split(",").map(Number);
+      return m.makeMove(st, x, y, colour);
     };
     let points = 0;
     for (const c of fx.start) if (c !== "#") points++;
@@ -253,7 +253,7 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
     // openPass: the session's open-pass rule (golib opts.openPass) — by
     // default go-solver's for this opponent (openPassFor; GL3 mirrors it).
     const op = openPass === undefined ? openPassFor(fx.opponent) : openPass;
-    const sess = golib.modelSession(N, komi, { reply: (b, o) => model.reply(b, { ...o, opponent: oppName }) }, { seed, ...(CH ? { pairs: [6, 5], pairsOnly: true } : {}), ...(nn ? { nn } : {}), ...(op ? { openPass: op } : {}) });
+    const sess = golib.modelSession(N, komi, { reply: (b, o) => model.reply(b, { ...o, opponent: oppName }) }, { seed, ...(CH ? { pairs: [6, 5], pairsOnly: true, ...(CH.secondRule === "game" ? { pairSecond: "game" } : {}) } : {}), ...(nn ? { nn } : {}), ...(op ? { openPass: op } : {}) });
     // PRE-SENT (presend W > 0, as live: go-solver ponders under our move while
     // the AI thinks and go.js plays a published answer the moment the AI's
     // reply matches it, with no request): from ply from-1 on, after each of
@@ -354,7 +354,7 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
               // THE DECLINE (SETTINGS.cheat.decline): a pair whose own line wins
               // less than the single's (by more than the margin) is not played.
               const declined = !CH.joint && declineOf(wr, pwr);
-              if (p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y] && !declined) {
+              if (p0?.second && valid[p0.x]?.[p0.y] && (CH.secondRule !== "game" ? valid[p0.second.x]?.[p0.second.y] : simple[p0.second.x]?.[p0.second.y] === ".") && !declined) {
                 mv = `${p0.x},${p0.y}+${p0.second.x},${p0.second.y}`;
                 d.pair = { mv, top: p0.top ?? [], hard: !CH.joint };
               } else if (declined) d.pairDeclined = { wr, pwr };
@@ -364,8 +364,11 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
               const [x1, y1] = mv.split(",").map(Number);
               const board2 = golib.applyMove(simple, x1, y1);
               if (board2) {
-                const v2 = valid.map((col, x) => col.map((ok, y) => ok && !(x === x1 && y === y1) && board2[x][y] === "."));
-                if (validList(v2).length && sess.setRoot(board2, v2, { history: [simple.join(""), ...history], opponentPassed: false, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}), ...(secondNetOff ? { nnDepth: -1 } : {}) })) {
+                // The game's pair rule (go.js pairSecondPoints): every point
+                // empty before the cheat and after the first stone.
+                // secondRule 'valid' (the old rule): the valid list before the cheat.
+                const v2 = valid.map((col, x) => col.map((ok, y) => (CH.secondRule !== "game" ? ok : simple[x][y] === ".") && !(x === x1 && y === y1) && board2[x][y] === "."));
+                if (validList(v2).length && sess.setRoot(board2, v2, { ...(CH.secondRoot !== "game" ? { history: [simple.join(""), ...history] } : { history, cheatSecond: true }), opponentPassed: false, ...(objective ? { objective } : {}), ...(clock ? { clock } : {}), ...(secondNetOff ? { nnDepth: -1 } : {}) })) {
                   await sess.search({ maxms: 30000, untilWork: secondWork, untilVisits: 40 * secondWork });
                   const s2 = sess.best();
                   const wr2 = s2?.[0]?.top?.[0]?.[4];
@@ -437,6 +440,29 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
 }
 
 /**
+ * THE GAME'S TWO-MOVE CHEAT on a bundle board state, as playTwoMoves plays it
+ * (NetscriptFunctions/Go.ts:163-182, netscriptGoImplementation.ts:504-629):
+ * each point need only be EMPTY and online on the board before (validateMove
+ * with { repeat: false, suicide: false }); both stones are set at once, then
+ * updateCaptures (the enemy's zero-liberty chains, else our own); no board is
+ * added to previousBoards. Two makeMove calls are NOT this: they refused a
+ * second stone that repeats an earlier board (superko is not checked for a
+ * cheat) and recorded two history boards the game never had. Returns false
+ * (the state untouched) when a point is not empty.
+ */
+export function playTwoMovesOn(m, st, [x1, y1], [x2, y2], colour) {
+  const p1 = st.board[x1]?.[y1];
+  const p2 = st.board[x2]?.[y2];
+  if (!p1 || !p2 || p1 === p2 || p1.color !== m.GoColor.empty || p2.color !== m.GoColor.empty) return false;
+  st.passCount = 0;
+  p1.color = colour;
+  p2.color = colour;
+  st.previousPlayer = colour;
+  m.updateCaptures(st.board, colour, true);
+  return true;
+}
+
+/**
  * Turn a game record (go-games.txt shape: start, komi, opponent, size, moves
  * [{m, r, T?}], streakBefore) into a corpus case: resolve each AI reply's seed
  * lag k through the AI's own code where the record carries T.
@@ -456,14 +482,7 @@ export async function caseFromRecord(rec, { id, source = "live", note = "" } = {
     if (t.m === "P") m.passTurn(st, m.GoColor.black, false);
     else if (t.m.includes("+")) {
       mv.note = "a two-move cheat";
-      for (const p of t.m.split("+").filter(Boolean)) {
-        const [x, y] = p.split(",").map(Number);
-        // Both stones are black's (playTwoMoves): makeMove refuses a second
-        // black move in a row, which silently dropped the second stone.
-        st.previousPlayer = m.GoColor.white;
-        if (!m.makeMove(st, x, y, m.GoColor.black)) throw new Error(`record ${rec.at}: our logged cheat stone ${p} is illegal on the reconstructed board`);
-      }
-      st.previousPlayer = m.GoColor.black;
+      if (!playTwoMovesOn(m, st, ...t.m.split("+").map((p) => p.split(",").map(Number)), m.GoColor.black)) throw new Error(`record ${rec.at}: our logged cheat ${t.m} is not playable on the reconstructed board`);
     } else {
       const [x, y] = t.m.split(",").map(Number);
       if (!m.makeMove(st, x, y, m.GoColor.black)) throw new Error(`record ${rec.at}: our logged move ${t.m} is illegal on the reconstructed board`);

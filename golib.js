@@ -902,6 +902,12 @@ export function modelRootPasses({ passMean, passVisits, stoneMean, stoneVisits, 
 
 /** A stone instead of a game-ending winning PASS needs at least this win rate in its own line. */
 export const SAFE_CONTINUE = 0.99
+// A second-stone root's "no second stone" (bestOf, setRoot cheatSecond): chosen
+// when its line's win share beats the most-visited stone's by more than this
+// (the decline's margin, go.js SETTINGS.cheat.decline), on at least
+// SECOND_PASS_MIN visits.
+export const SECOND_PASS_MARGIN = 0.1
+export const SECOND_PASS_MIN = 10
 
 /** effect.ts:119-130 — the multiplier a game is paid at, from the streak after it and before it. */
 export function streakMultiplier(s, old) {
@@ -1288,6 +1294,13 @@ export function modelSession(N, komi, model, opts = {}) {
   // the search picks the best pair instead of weighing pairs against singles
   // on thin subtrees (a cheat is worth playing whenever its window is open).
   const PAIRS_ONLY = !!opts.pairsOnly
+  // opts.pairSecond 'game': the game's second-stone rule (secondOk: empty
+  // before, no suicide after the first). Default (anything else): the
+  // valid-list rule — legal alone on the board before, in the game's valid
+  // list there, no superko repeat. MEASURED 2026-10-09 (go-w0
+  // --cheat-pair-second / --cheat-second-rule, Illuminati live config, crime
+  // 3.3332): the game's rule does not pay (see go.js SETTINGS.cheat.secondRule).
+  const PAIR_SECOND_VALID = opts.pairSecond !== 'game'
   // No legal pair (e.g. one stone left that is not an eye fill): the singles
   // STAY — pairsOnly with no pairs left PASS alone, and setRoot's 'PASS only'
   // answered a pass in 50ms on a won board (the 2026-10-07 07:39Z loss).
@@ -1307,10 +1320,31 @@ export function modelSession(N, komi, model, opts = {}) {
     const f = cheatFns[node.ply - cheatAnchor]
     return typeof f === 'function' && !!f(node.cheats ?? 0)
   }
-  // THE GAME'S PAIR RULE (NetscriptFunctions/Go.ts playTwoMoves): BOTH points
-  // are validated (no suicide) on the board BEFORE either stone. A second
-  // stone legal only because the first one captures is NOT a legal pair —
-  // go.js drops it, and its first stone alone was the 2026-10-07 05:25Z wipe.
+  // THE GAME'S PAIR RULE (NetscriptFunctions/Go.ts:163-182 playTwoMoves):
+  // each point is validated on the board BEFORE either stone with
+  // { repeat: false, suicide: false } — ONLY that it is empty and online.
+  // Neither suicide nor superko is checked for a cheat's stones; both are set
+  // at once and then captures resolve (netscriptGoImplementation.ts:599-629,
+  // determineCheatSuccess -> updateCaptures: the enemy's zero-liberty chains,
+  // else our own). So a SECOND stone that is a suicide on the board before
+  // the cheat is legal whenever it is not one after the first stone: 2,1+1,0
+  // takes a two-liberty group whose last point is a suicide alone (the
+  // 2026-10-09 22:10:40Z Illuminati loss, ply 6: go.js offered only the
+  // game's valid list, so the cheat had no second stone and the race was
+  // lost by a tempo). The first stone stays a legal single (legalAlone):
+  // sequential play from a legal first stone is the game's simultaneous
+  // placement (a capture by the first stone frees no point for the second —
+  // that point was not empty BEFORE — and gives no other enemy chain a
+  // liberty). A point emptied only by the first stone's capture is NOT a
+  // legal second stone (not empty before): `secondOk` takes the pre-board.
+  // The 2026-10-07 05:25Z wipe (1,4+0,1, 0,1 a suicide until 1,4 captured)
+  // was go.js dropping the pair on its own valid list, not the game.
+  const secondOk = (b0, b1, i, valid = null) => {
+    if (b0[i] !== EMPTY || b1[i] !== EMPTY) return false
+    if (PAIR_SECOND_VALID && (!legalAlone(b0, i) || !inValid(valid, i))) return false
+    const t = b1.slice()
+    return play(t, nbrs, i, US, scratch) >= 0
+  }
   const legalAlone = (b, i) => {
     if (b[i] !== EMPTY) return false
     const t = b.slice()
@@ -1327,7 +1361,7 @@ export function modelSession(N, komi, model, opts = {}) {
       if (play(b1, nbrs, i1, US, scratch) < 0) continue
       const sec = []
       for (let i = 0; i < NSQ; i++) {
-        if (b1[i] !== EMPTY || i === i1 || isFill(b1, i) || !legalAlone(b, i) || !inValid(valid, i)) continue
+        if (i === i1 || !secondOk(b, b1, i, valid) || isFill(b1, i)) continue
         const h = heuristic(b1, nbrs, i, scratch, US)
         if (h > -1e9) sec.push({ i, h })
       }
@@ -1598,8 +1632,18 @@ export function modelSession(N, komi, model, opts = {}) {
     }
     return node
   }
+  // hist: the board before this move enters the AI's previousBoards. Not for
+  // a CHEAT: playTwoMoves records no board (netscriptGoImplementation.ts:
+  // 504-542 sets the stones and resolves captures; only makeMove unshifts
+  // previousBoards, boardState.ts:131) — neither a pair's board before it nor
+  // a second-stone root's board after the first stone (setRoot cheatSecond),
+  // which is never a game state. Recording it barred the AI, in the model,
+  // from a ko retake the game allows (the 02:32:31Z case under the game's
+  // second-stone rule: 4,4+0,0 retakes the ko and read 0.993; the AI retook).
+  // A pair's board stays out only under opts.pairSecond 'game' (the live
+  // search is unchanged: that rule measured not paid).
   const mkW = (b, parent, passCount, moved, pair = false) => {
-    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, ply: parent.ply, cost: (parent.cost ?? 0) + (pair ? CHEAT_COST_PLY : 0), cheats: (parent.cheats ?? 0) + (pair ? 1 : 0), visits: 0, vl: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
+    const node = { kind: 1, b, s: moved ? toStr(b) : parent.s, parent, passCount, moved, hist: moved && (PAIR_SECOND_VALID || !pair) && !parent.cheatRoot, ply: parent.ply, cost: (parent.cost ?? 0) + (pair ? CHEAT_COST_PLY : 0), cheats: (parent.cheats ?? 0) + (pair ? 1 : 0), visits: 0, vl: 0, work: 0, sum: 0, wins: 0, samples: new Map(), draws: 0, terminal: passCount >= 2, tv: 0, tw: 0 }
     if (node.terminal) {
       node.tv = valueNow(b, node.ply + 1 + node.cost)
       node.tw = lastWon
@@ -1613,7 +1657,7 @@ export function modelSession(N, komi, model, opts = {}) {
     const h = []
     let n = w
     while (n.parent) {
-      if (n.moved) h.push(n.parent.s)
+      if (n.hist) h.push(n.parent.s)
       n = n.parent
     }
     return h.concat(rootHistory)
@@ -1722,6 +1766,13 @@ export function modelSession(N, komi, model, opts = {}) {
         if (node.prior) {
           const sq = Math.sqrt(node.visits + node.vl + 1)
           const fpu = (node.visits ? node.sum / node.visits : 0.5) - FPU
+          // A PASS that ENDS THE GAME LOST (the AI passed; ours is the second)
+          // is a known loss: every untried stone that is not an own-eye fill
+          // is expanded before it is revisited. Else a net prior of ~0 on every stone left the losing
+          // PASS absorbing a root's whole search — the 10:56:22Z case, ply 8:
+          // 32000 visits on PASS, the winning capture 2,1 never expanded.
+          const pn = node.children.get(PASS)
+          const passLost = !!pn && pn.terminal && pn.tw === 0
           let bestU = -Infinity
           let bestChild = null
           for (const [idx, child] of node.children) {
@@ -1731,12 +1782,17 @@ export function modelSession(N, komi, model, opts = {}) {
             if (u > bestU) { bestU = u; bestChild = child; pick = -1 }
           }
           // The untried action the net likes best (heuristic order breaks ties).
-          let bestA = -1, bestP = -1
+          let bestA = -1, bestP = -1, lostA = -1, lostP = -1
           for (let j = 0; j < node.untried.length; j++) {
-            const pj = priorOf(node, node.untried[j].idx)
+            const ix = node.untried[j].idx
+            const pj = priorOf(node, ix)
             if (pj > bestP) { bestP = pj; bestA = j }
+            // Not an own-eye fill: a fill after the AI's pass only bleeds a
+            // lost game's area (bestOf plays one only into a line that wins).
+            if (passLost && pj > lostP && (isPair(ix) || !isFill(node.b, ix))) { lostP = pj; lostA = j }
           }
-          if (bestA >= 0) {
+          if (lostA >= 0) { bestU = Infinity; pick = lostA }
+          else if (bestA >= 0) {
             const u = fpu + CPUCT * bestP * sq
             if (u > bestU) { bestU = u; pick = bestA }
           }
@@ -1753,10 +1809,14 @@ export function modelSession(N, komi, model, opts = {}) {
           let moved = false
           if (isPair(idx)) {
             const [i1, i2] = pairOf(idx)
-            if (!legalAlone(node.b, i2) || (node === rootNode && !inValid(rootValid, i2))) continue
+            // The game checks neither suicide (on the board before) nor
+            // superko for a cheat's stones: the second need only be empty
+            // before and legal after the first (secondOk).
+            if (node.b[i2] !== EMPTY) continue
+            if (PAIR_SECOND_VALID && (!legalAlone(node.b, i2) || (node === rootNode && !inValid(rootValid, i2)))) continue
             if (b[i1] !== EMPTY || play(b, nbrs, i1, US, scratch) < 0) continue
             if (b[i2] !== EMPTY || play(b, nbrs, i2, US, scratch) < 0) continue
-            if (repeats(toStr(b), node)) continue
+            if (PAIR_SECOND_VALID && repeats(toStr(b), node)) continue
             const w = mkW(b, node, 0, true, true)
             node.children.set(idx, w)
             node = w
@@ -1773,7 +1833,10 @@ export function modelSession(N, komi, model, opts = {}) {
             if (cap === 1 && node.parent && repeats(toStr(b), node)) continue
             moved = true
           }
-          const w = mkW(b, node, moved ? 0 : node.passCount + 1, moved)
+          // A second-stone root's PASS is NO SECOND STONE — the single, with
+          // the AI to move — not a pass by black: the AI's pass after it is
+          // the first of two, never the game's end (cheatPass).
+          const w = mkW(b, node, moved ? 0 : node.cheatRoot ? node.passCount : node.passCount + 1, moved)
           node.children.set(idx, w)
           node = w
           push(w)
@@ -1895,7 +1958,23 @@ export function modelSession(N, komi, model, opts = {}) {
     // 'visits': an open PASS must also be the most-visited child (no "clearly
     // better" escape on a handful of visits).
     const openFew = OPEN_PASS === 'visits' && !!passNode && !passNode.terminal && !!stone && passNode.visits < bestVisits
-    if (passNode && !openNever && !openFew && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits, passWin })) return []
+    // A SECOND-STONE root (setRoot cheatSecond): PASS is "no second stone" —
+    // the single alone, the cheat kept. It was a real pass here (the AI passed
+    // back and the game ended lost on the board), so every second stone, a
+    // fatal one included, outranked it: the 02:32:31Z own-eye fill, and under
+    // the game's second-stone rule the 4,4+0,0 ko retake (0.001 against the
+    // single's 0.998). Now it is THE DECLINE inside one search (go.js
+    // SETTINGS.cheat.decline compared two searches' win rates, biased against
+    // the 100ms one): no second stone when its line wins more than the
+    // most-visited stone's by SECOND_PASS_MARGIN. A margin, not "the most
+    // visited": an unused cheat is unpriced here, and on near-equal lines the
+    // stone is the policy (the 10:56:22Z case: 4,4 at 0.98 against the single's
+    // 1.00 — the single's line then passed into a net blind spot and lost).
+    if (node.cheatRoot) {
+      const passW = passNode?.visits ? passNode.wins / passNode.visits : null
+      const stoneW = stone?.visits ? stone.wins / stone.visits : null
+      if (passNode && (!stone || (passW !== null && passNode.visits >= SECOND_PASS_MIN && passW - (stoneW ?? 0) > SECOND_PASS_MARGIN))) return []
+    } else if (passNode && !openNever && !openFew && modelRootPasses({ passMean: meanOf(passNode), passVisits: passNode.visits, stoneMean: stone ? meanOf(stone) : null, stoneVisits: bestVisits, passWin })) return []
     // NEVER RISK A WON GAME FOR AREA (release 3, the end-of-game rule): when
     // PASS ends the game WON (the AI passed; our pass is the second), a stone
     // is played only if its line also wins essentially always — the power
@@ -1929,7 +2008,7 @@ export function modelSession(N, komi, model, opts = {}) {
      * The position to decide. Reuses the ponder tree when this board is one of
      * the replies drawn there. Returns null when PASS is black's only action.
      */
-    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined, cheat = undefined, nnDepth: nd = undefined } = {}) {
+    setRoot(boardStrings, valid, { history = [], opponentPassed = false, ply = null, clock: clk = undefined, objective = undefined, cheat = undefined, nnDepth: nd = undefined, cheatSecond = false } = {}) {
       nnDepth = Number.isFinite(nd) ? nd : NN_DEPTH
       const b = parseBoard(boardStrings)
       rootValid = valid ?? null
@@ -1951,7 +2030,8 @@ export function modelSession(N, komi, model, opts = {}) {
         reused.parent = null
         // Re-filter to the game's valid list (superko against the real history).
         const okOne = (idx) => valid && valid[(idx / N) | 0] && valid[(idx / N) | 0][idx % N]
-        const ok = (idx) => idx === PASS || (isPair(idx) ? okOne(pairOf(idx)[0]) && okOne(pairOf(idx)[1]) : okOne(idx))
+        // A pair's second stone needs only to be empty (the game's pair rule, secondOk).
+        const ok = (idx) => idx === PASS || (isPair(idx) ? okOne(pairOf(idx)[0]) && (PAIR_SECOND_VALID ? okOne(pairOf(idx)[1]) : reused.b[pairOf(idx)[1]] === EMPTY) : okOne(idx))
         for (const idx of [...reused.children.keys()]) if (!ok(idx)) {
           const c = reused.children.get(idx)
           reused.visits -= c.visits
@@ -1981,6 +2061,10 @@ export function modelSession(N, komi, model, opts = {}) {
         countPoints()
         rootNode = mkB(b, null, passCount, valid, Number.isFinite(ply) ? ply : Math.floor(rootHistory.length / 2))
       }
+      // cheatSecond: this root is a cheat's board after its FIRST stone (a
+      // second-stone request): no game state, so its board never enters the
+      // AI's history (mkW hist); `history` is the game's, without it.
+      rootNode.cheatRoot = !!cheatSecond
       if (clk !== undefined) setClockFn(clk)
       // cheat: { fns: [fn(k) -> bool, ...] by depth below this root, cheats: so far this game }
       if (cheat !== undefined) {
@@ -2085,7 +2169,7 @@ export function modelSession(N, komi, model, opts = {}) {
         const moved = idx !== PASS
         const placed = !moved || (isPair(idx) ? play(b, nbrs, pairOf(idx)[0], US, scratch) >= 0 && play(b, nbrs, pairOf(idx)[1], US, scratch) >= 0 : play(b, nbrs, idx, US, scratch) >= 0)
         if (placed) {
-          w = mkW(b, rootNode, moved ? 0 : rootNode.passCount + 1, moved, isPair(idx))
+          w = mkW(b, rootNode, moved ? 0 : rootNode.cheatRoot ? rootNode.passCount : rootNode.passCount + 1, moved, isPair(idx))
           rootNode.children.set(idx, w)
           rootNode.untried = (rootNode.untried ?? []).filter((a) => a.idx !== idx)
         }
@@ -2097,9 +2181,10 @@ export function modelSession(N, komi, model, opts = {}) {
         // before the net reached it is capped before it can be published.
         if (nnDepth >= 1) for (const e of ponderNode.samples.values()) capStale(e.child)
         // The history at the W node is the root's plus the root board.
-        if (ponderNode.moved) rootHistory = [rootNode.s, ...rootHistory]
+        if (ponderNode.hist) rootHistory = [rootNode.s, ...rootHistory]
         ponderNode.parent = null
         ponderNode.moved = false
+        ponderNode.hist = false
       }
       rootNode = null
       return !!ponderNode
@@ -2218,10 +2303,11 @@ export function modelSession(N, komi, model, opts = {}) {
 /**
  * The board strings after OUR stone at (x, y), captures resolved — or null if
  * the move is suicide. For choosing the second stone of a two-move cheat on the
- * position the first one leaves (go.js). ns.go.cheat.playTwoMoves validates
- * BOTH points against the board before either is placed (NetscriptFunctions/
- * Go.ts playTwoMoves), so the caller also keeps the second inside the original
- * valid set.
+ * position the first one leaves (go.js). ns.go.cheat.playTwoMoves checks only
+ * that each point is EMPTY on the board before either is placed (Go.ts
+ * playTwoMoves: validateMove with { repeat: false, suicide: false }), so the
+ * caller keeps the second among the points empty before (go.js
+ * pairSecondPoints), not the original valid set.
  */
 // ---------------------------------------------------------------------------
 // THE OPENING BOOK (tools/sim/go-book.mjs builds it, go-solver.mjs serves it).

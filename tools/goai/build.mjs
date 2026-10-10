@@ -52,7 +52,7 @@ export const SOURCES = [
 
 const ENTRY = `
 export { getMove } from "${GAME}/src/Go/boardAnalysis/goAI";
-export { getNewBoardStateFromSimpleBoard, makeMove, passTurn, updateChains, applyHandicap, getHandicap } from "${GAME}/src/Go/boardState/boardState";
+export { getNewBoardStateFromSimpleBoard, makeMove, passTurn, updateChains, updateCaptures, applyHandicap, getHandicap } from "${GAME}/src/Go/boardState/boardState";
 export { getAllValidMoves, simpleBoardFromBoard, evaluateIfMoveIsValid } from "${GAME}/src/Go/boardAnalysis/boardAnalysis";
 export { opponentDetails } from "${GAME}/src/Go/Constants";
 export { GoColor, GoOpponent, GoValidity, GoPlayType } from "${GAME}/src/Go/Enums";

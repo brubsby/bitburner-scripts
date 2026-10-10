@@ -438,7 +438,29 @@ const SETTINGS = {
   // --cheat-decline-harm): 1082 paired, power/h +7.2% [+3.2, +11.4], lost 3
   // vs 6 (unpaired 3/1084 = 0.28% vs 7/1284 = 0.55%; live was 4/384); declines
   // 0.02 vs 1.30 a game, 9.5 vs 10.3 live s a game.
-  cheat: { joint: false, hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  // secondRule: which points a greedy cheat's second stone may take. 'game'
+  // (pairSecondPoints): the game's own rule — any point empty before the
+  // cheat (playTwoMoves checks neither suicide nor superko) that is not a
+  // suicide after the first stone. 'valid': the old rule — the game's valid
+  // list before the cheat, which drops a point that is a suicide alone.
+  // WHY (the 2026-10-09 22:10:40Z Illuminati loss, streak 36, 12-14.5): at
+  // ply 6, 2,1 left white's six stones one liberty, 1,0 — a suicide alone,
+  // a capture after 2,1 — while black's 0,3/1,3 sat in atari; the valid list
+  // had no such second stone, the second-stone search answered PASS, the
+  // single 2,1 was played and white took 0,3/1,3 first. Every replay from
+  // ply 7 loses; with 'game' every replay from ply 6 plays 2,1+1,0, 20-7.5.
+  // MEASURED 2026-10-09 (go-w0 Illuminati 5x5 live config, crime 3.3332 /
+  // SF14.3, --work-rate 1.7, layout seeds 2201/2205-2209, paired against the
+  // valid-list rule with the old second-stone root): 'game' + the game's pair
+  // rule + secondRoot 'game', 1800 paired, power/h +0.6% [-0.7, +2.8], lost 7
+  // vs 5; 'game' greedy only (pairs on the valid list), 1200 paired, -1.3%
+  // [-3.2, +0.9], lost 6 vs 3. NOT PAID: the 2,1+1,0 shape is rare and the
+  // wider second-stone list costs elsewhere. 'valid' stays.
+  // secondRoot: 'game' sends the second-stone request as secondStone (golib
+  // setRoot cheatSecond: the root's board kept out of the AI's history, as
+  // playTwoMoves records none, and its PASS read as "no second stone");
+  // 'old': as before. Measured only inside the 'game' arm above: 'old' stays.
+  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -873,7 +895,8 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
     if (a?.b !== key || a.pc !== pc) continue
     if (a.pass) return { answer: { pass: true }, had: true }
     if (Number.isInteger(a.x) && Number.isInteger(a.y) && valid?.[a.x]?.[a.y] === true) {
-      const s2 = a.second && Number.isInteger(a.second.x) && Number.isInteger(a.second.y) && !(a.second.x === a.x && a.second.y === a.y) && valid?.[a.second.x]?.[a.second.y] === true ? { x: a.second.x, y: a.second.y } : null
+      // The second stone need only be empty (the game's pair rule, pairSecondPoints).
+      const s2 = a.second && Number.isInteger(a.second.x) && Number.isInteger(a.second.y) && !(a.second.x === a.x && a.second.y === a.y) && boardStrings[a.second.x]?.[a.second.y] === '.' ? { x: a.second.x, y: a.second.y } : null
       // A pair whose second stone is not playable here is no answer at all:
       // its first stone was chosen for the pair and is never played alone.
       if (a.second && !s2) return { answer: null, had: true }
@@ -905,6 +928,23 @@ export function hardPairWanted(wr, hardBelow = SETTINGS.cheat.hardBelow) {
  */
 export function cheatDeclined(wr1, wr2, margin = SETTINGS.cheat.decline) {
   return Number.isFinite(margin) && typeof wr1 === 'number' && Number.isFinite(wr1) && typeof wr2 === 'number' && Number.isFinite(wr2) && wr2 < wr1 - margin
+}
+
+/**
+ * A two-move cheat's legal SECOND stones after `first`, as the game rules them
+ * (NetscriptFunctions/Go.ts playTwoMoves -> validateMove with { repeat: false,
+ * suicide: false }; both stones set at once, then captures): every point EMPTY
+ * on the board before the cheat (`board`) other than the first, still empty
+ * after it (`board2`). Not the game's valid list: a suicide before the cheat
+ * is a legal second stone, and a capture after the first (2,1+1,0, the
+ * 2026-10-09 22:10:40Z loss). The search drops a point that is a suicide on
+ * board2. A point the first stone's capture emptied is NOT legal (not empty
+ * before). Pure: [[x, y], ...].
+ */
+export function pairSecondPoints(board, board2, first) {
+  const out = []
+  for (let x = 0; x < board.length; x++) for (let y = 0; y < board[x].length; y++) if (board[x][y] === '.' && board2[x][y] === '.' && !(x === first.x && y === first.y)) out.push([x, y])
+  return out
 }
 
 /** Whether a cheat's second-stone search uses the net against this opponent (SETTINGS.cheat.secondNet). Pure. */
@@ -1996,11 +2036,18 @@ export async function main(ns) {
         }
         const board2 = applyMove(board, first.x, first.y)
         if (!board2) return { played: false }
-        // playTwoMoves validates BOTH points on the board before either stone.
-        const valid2 = validList.filter(([x, y]) => !(x === first.x && y === first.y) && board2[x][y] === '.')
+        // THE GAME'S PAIR RULE (Go.ts playTwoMoves: validateMove x2 with
+        // { repeat: false, suicide: false }): the second point need only be
+        // EMPTY on the board before the cheat — not in the game's valid list,
+        // which drops suicides and superko repeats. The solver plays each
+        // candidate on board2 and drops what is suicide there (golib.play).
+        // The 2026-10-09 22:10:40Z Illuminati loss, ply 6: 2,1 put white's
+        // six stones on one liberty, 1,0 — a suicide alone, a capture after
+        // 2,1 — and the valid list had no such second stone (pairSecondPoints).
+        const valid2 = SETTINGS.cheat.secondRule === 'valid' ? validList.filter(([x, y]) => !(x === first.x && y === first.y) && board2[x][y] === '.') : pairSecondPoints(board, board2, first)
         if (!valid2.length) return { played: false }
         // The second stone searches SETTINGS.cheat.secondMs, not the move budget.
-        const second = knownSecond && valid2.some(([x, y]) => x === knownSecond.x && y === knownSecond.y) ? [knownSecond] : knownSecond ? null : await askSolver(board2, valid2, { ...(Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : {}), ...(secondNetFor(opponent) ? {} : { secondNet: false }) })
+        const second = knownSecond && valid2.some(([x, y]) => x === knownSecond.x && y === knownSecond.y) ? [knownSecond] : knownSecond ? null : await askSolver(board2, valid2, { ...(SETTINGS.cheat.secondRoot === 'game' ? { secondStone: true } : {}), ...(Number.isFinite(SETTINGS.cheat.secondMs) ? { maxms: SETTINGS.cheat.secondMs } : {}), ...(secondNetFor(opponent) ? {} : { secondNet: false }) })
         // asked: the solver answered (and committed) a second-stone request on
         // board2 — a cheat not played after it leaves the solver a stone ahead
         // of the game, so the caller tells it of the single (notifySolver).
@@ -2191,7 +2238,7 @@ export async function main(ns) {
               const p0 = pr?.[0]
               const pairDeclined = !!p0?.second && cheatDeclined(singleWr, lastTop?.[0]?.[4])
               if (pairDeclined) cheat.hardPairDeclined = (cheat.hardPairDeclined ?? 0) + 1
-              if (!pairDeclined && p0?.second && valid[p0.x]?.[p0.y] && valid[p0.second.x]?.[p0.second.y] && !(p0.x === p0.second.x && p0.y === p0.second.y)) {
+              if (!pairDeclined && p0?.second && valid[p0.x]?.[p0.y] && boardStrings[p0.second.x]?.[p0.second.y] === '.' && !(p0.x === p0.second.x && p0.y === p0.second.y)) {
                 first = { x: p0.x, y: p0.y }
                 pairSecond = p0.second
                 cheat.hardPairs = (cheat.hardPairs ?? 0) + 1
@@ -2217,7 +2264,9 @@ export async function main(ns) {
           // The per-game log: why this turn played no cheat (w: the single's
           // win rate; d: a declined second stone and its own win rate; hp: the
           // hard pair was asked and not played; why: what else stopped it).
-          cheatNote = { ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(c.declined ? { d: c.declined } : {}), ...(hardAsked ? { hp: 1 } : {}), ...(c.why ? { why: c.why } : {}) }
+          // t: the second-stone search's top when one answered — the
+          // 22:10:40Z ply-6 'no-second' (a PASS answer) logged none.
+          cheatNote = { ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(c.declined ? { d: c.declined } : {}), ...(hardAsked ? { hp: 1 } : {}), ...(c.why ? { why: c.why } : {}), ...(c.asked && lastTop ? { t: lastTop } : {}) }
         }
         // A PAIR'S FIRST STONE IS NEVER PLAYED ALONE. The search chose it
         // knowing a second stone follows; alone it can be a self-atari (the

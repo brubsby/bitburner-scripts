@@ -90,6 +90,26 @@ let secondStone = false;
 // reused tree had valued by playout (the 2026-10-09 10:56Z Illuminati loss:
 // every second stone after 4,3 read 0, the playout reads them 0.99).
 const CHEAT_SECOND_NET_OFF = str("cheat-second-net", "on") === "off";
+// --cheat-second-rule game|valid: which points a cheat's second stone may
+// take. 'game': the game's rule —
+// any point empty before the cheat (playTwoMoves checks neither suicide nor
+// superko), the search dropping one that is a suicide after the first stone.
+// 'valid' (default, go.js SETTINGS.cheat.secondRule): the game's valid list BEFORE the cheat (no
+// suicide-alone point, e.g. 1,0 of the 2026-10-09 22:10:40Z loss), for the
+// greedy second stone and the pair search (golib opts.pairSecond). Before
+// this flag the harness offered the valid list AFTER the first stone — a
+// rule neither the game nor go.js used.
+const CHEAT_SECOND_RULE = str("cheat-second-rule", "valid");
+if (!["game", "valid"].includes(CHEAT_SECOND_RULE)) throw new Error(`--cheat-second-rule ${CHEAT_SECOND_RULE}: game or valid`);
+// --cheat-pair-second game|valid: the PAIR search's (hard pair, joint) second
+// stone rule alone (golib opts.pairSecond); default: --cheat-second-rule's.
+const CHEAT_PAIR_SECOND = str("cheat-pair-second", CHEAT_SECOND_RULE);
+// --cheat-second-root old|game (default old, go.js SETTINGS.cheat.secondRoot):
+// 'old' the second-stone root's board (and the pre-cheat board) in the AI's
+// history and its PASS a real pass; 'game' golib setRoot cheatSecond.
+const CHEAT_SECOND_ROOT_OLD = str("cheat-second-root", "old") === "old";
+// The board before a greedy cheat's first stone (the second stone's legality is judged there).
+let secondPre = null;
 // --cheat-joint: a re-ask for a SINGLE move (the pair was declined): no pairs searched.
 let noPairs = false;
 const budgetFor = (turn) => (secondStone && Number.isFinite(CHEAT_SECOND_MS) ? CHEAT_SECOND_MS : OPENING && turn < OPENING.k ? OPENING.ms : MAXMS);
@@ -453,6 +473,10 @@ function validGrid(state, N) {
   for (const p of g.getAllValidMoves(state, GoColor.black)) grid[p.x][p.y] = true;
   return grid;
 }
+/** A pair's second stone is legal before the cheat (--cheat-second-rule): empty ('game') or in the valid list ('valid'). */
+function secondLegal(state, vg, p) {
+  return CHEAT_PAIR_SECOND === "valid" ? !!vg[p.x]?.[p.y] : state.board[p.x]?.[p.y]?.color === GoColor.empty;
+}
 const rngSeed = () => Math.floor(Math.random() * 30000 * 1000) + 1;
 
 // The streak multipliers this game would be credited at (effect.ts:119-130),
@@ -491,7 +515,8 @@ async function playGame(stats, gameIndex) {
   let mPonder = null;
   let ponderCarry = 0;
   const mStats = { hit: 0, miss: 0, none: 0, carryMs: 0 };
-  const sess = MODEL && SESSION ? golib.modelSession(N, komi, MODEL, NN_OPTS ? { ...OPTS, nn: NN_OPTS } : OPTS) : null;
+  const SOPTS = CHEAT_PAIR_SECOND === "game" ? { ...OPTS, pairSecond: "game" } : OPTS;
+  const sess = MODEL && SESSION ? golib.modelSession(N, komi, MODEL, NN_OPTS ? { ...SOPTS, nn: NN_OPTS } : SOPTS) : null;
   let nnMs = 0;
   const sStats = { reused: 0, fresh: 0, early: 0, ponderIters: 0, rootVisits: 0 };
   // RELEASE 3 per-game state (see the flags above).
@@ -520,7 +545,11 @@ async function playGame(stats, gameIndex) {
   const note = (who, mv, extra) => trace && trace.push({ who, mv, board: g.simpleBoardFromBoard(state.board), ...(extra ?? {}) });
   const solve = async () => {
     const simple = g.simpleBoardFromBoard(state.board);
-    const valid = validGrid(state, N);
+    // A cheat's second stone: the points the game's pair rule allows (see
+    // --cheat-second-rule), judged on the board before the first stone.
+    const valid = secondStone && secondPre
+      ? Array.from({ length: N }, (_, x) => Array.from({ length: N }, (_, y) => (CHEAT_SECOND_RULE === "valid" ? !!secondPre.valid[x][y] : secondPre.simple[x][y] === ".") && simple[x][y] === "." && !(x === secondPre.first.x && y === secondPre.first.y)))
+      : validGrid(state, N);
     if (MODEL && PONDER) {
       const p = mPonder;
       mPonder = null;
@@ -561,7 +590,11 @@ async function playGame(stats, gameIndex) {
       : sess
       ? await (async () => {
           const clock = CLOCK ? { T: playtimeAt(wall), kw: calib.req.weights(), turnTicks: (TURN_S * 1000) / 200, jitter: 5, eps: 0.1, ...(gapsNow() ? { gaps: gapsNow() } : {}) } : undefined;
-          const r = sess.setRoot(simple, valid, { history: state.previousBoards.slice(), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : CHEAT_HYBRID ? { cheat: { fns: pairsNow ? [() => true] : null, cheats } } : {}), ...(secondStone && CHEAT_SECOND_NET_OFF ? { nnDepth: -1 } : {}) });
+          // A cheat's second stone: the root is the board after the first
+          // stone, no game state — the history is the game's before the cheat
+          // (the first stone's makeMove recorded the pre-cheat board, which
+          // playTwoMoves never does) and the root stays out of it (cheatSecond).
+          const r = sess.setRoot(simple, valid, { history: secondStone && !CHEAT_SECOND_ROOT_OLD ? state.previousBoards.slice(1) : state.previousBoards.slice(), ...(secondStone && !CHEAT_SECOND_ROOT_OLD ? { cheatSecond: true } : {}), opponentPassed: oppPassed, objective, clock, ...(CHEAT_JOINT ? { cheat: { fns: noPairs ? null : [cheatAvailIn(ROUND_TRIP_MS + budgetFor(ourTurns), 0.003)], cheats } } : CHEAT_HYBRID ? { cheat: { fns: pairsNow ? [() => true] : null, cheats } } : {}), ...(secondStone && CHEAT_SECOND_NET_OFF ? { nnDepth: -1 } : {}) });
           if (!r) return null;
           const budget = budgetFor(ourTurns);
           const target = WORK_RATE ? Math.round(WORK_RATE * budget) : sessRate ? Math.round(sessRate * budget) : Infinity;
@@ -675,8 +708,8 @@ async function playGame(stats, gameIndex) {
         // success, as go-cheat.js plays it — and never after the AI's pass.
         if (c.second) {
           if (!CHEAT || CHEAT === "blind" || oppPassed || cheats >= CHEAT_MAX) continue;
-          // Both points legal on the board before either stone (playTwoMoves).
-          if (!vg[c.second.x]?.[c.second.y] || (c.second.x === c.x && c.second.y === c.y)) continue;
+          // The first a legal single, the second empty before the cheat (secondLegal).
+          if (!secondLegal(state, vg, c.second) || (c.second.x === c.x && c.second.y === c.y)) continue;
           if (golib.cheatRoll(playtimeAt(wall + ROUND_TRIP_MS)) > pCheat(cheats)) continue;
         }
         // THE GUARD (--oracle-guard V:D): a candidate the pondered tree has
@@ -791,10 +824,11 @@ async function playGame(stats, gameIndex) {
     // roll at the actual play allows it (else its first stone alone).
     let jointSecond = null;
     if (CHEAT_JOINT && hasMove && ranked[0].second) {
-      // THE GAME'S PAIR RULE (Go.ts playTwoMoves -> validateMove x2): both
-      // points legal on the board BEFORE either stone; go.js drops any other.
+      // THE GAME'S PAIR RULE (Go.ts playTwoMoves -> validateMove x2 with
+      // { repeat: false, suicide: false }): each point empty before the cheat;
+      // ours: the first a legal single too (secondLegal, --cheat-second-rule).
       const vg = validGrid(state, N);
-      const legal = !!vg[ranked[0].x]?.[ranked[0].y] && !!vg[ranked[0].second.x]?.[ranked[0].second.y];
+      const legal = !!vg[ranked[0].x]?.[ranked[0].y] && secondLegal(state, vg, ranked[0].second);
       if (!legal) jointStats.illegal = (jointStats.illegal ?? 0) + 1;
       else if (!oppPassed && cheats < CHEAT_MAX && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) jointSecond = ranked[0].second;
       else jointStats.rollMiss++;
@@ -829,7 +863,7 @@ async function playGame(stats, gameIndex) {
         const vg = validGrid(state, N);
         const pairDeclined = declineOf(wr, pr?.[0]?.top?.[0]?.[4]);
         if (pairDeclined) jointStats.pairDeclined = (jointStats.pairDeclined ?? 0) + 1;
-        if (!pairDeclined && pr?.[0]?.second && vg[pr[0].x]?.[pr[0].y] && vg[pr[0].second.x]?.[pr[0].second.y] && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) {
+        if (!pairDeclined && pr?.[0]?.second && vg[pr[0].x]?.[pr[0].y] && secondLegal(state, vg, pr[0].second) && golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) {
           ranked = pr;
           jointSecond = pr[0].second;
           jointStats.pairs++;
@@ -871,16 +905,16 @@ async function playGame(stats, gameIndex) {
         cheatOk++;
         const greedy = !jointSecond && !pre?.second;
         const before = greedy && CHEAT_DECLINE !== null && sess ? { b: g.simpleBoardFromBoard(state.board), v: validGrid(state, N), h: state.previousBoards.slice(), wr: pre ? pre.wr : ranked[0].top?.[0]?.[4] } : null;
+        secondPre = { simple: g.simpleBoardFromBoard(state.board), valid: validGrid(state, N), first: { x: ranked[0].x, y: ranked[0].y } };
         g.makeMove(state, ranked[0].x, ranked[0].y, GoColor.black);
-        // The second stone, chosen on the board after the first. The game
-        // validates both against the board BEFORE either (Go.ts cheat
-        // playTwoMoves -> validateMove x2); the difference is a capture by the
-        // first stone freeing the second point, which this ignores.
+        // The second stone, chosen on the board after the first among the
+        // points the game's pair rule allows (secondPre, --cheat-second-rule).
         state.previousPlayer = GoColor.white;
         const ms0 = ourMs;
         secondStone = true;
         const second = jointSecond ? [jointSecond] : pre?.second ? [pre.second] : await solve();
         secondStone = false;
+        secondPre = null;
         // The second stone's request (its search is in ourMs) and the
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
         wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
@@ -899,8 +933,19 @@ async function playGame(stats, gameIndex) {
           sess.setRoot(before.b, before.v, { history: before.h, opponentPassed: oppPassed, objective });
           sess.commit(ranked[0].x, ranked[0].y);
         } else if (second && second.length) {
-          g.makeMove(state, second[0].x, second[0].y, GoColor.black);
-          note("B", [second[0].x, second[0].y]);
+          // THE GAME'S CHEAT (playTwoMoves): the second stone is set without a
+          // suicide or superko check, captures resolve (updateCaptures), and
+          // no board enters the history — makeMove would refuse a repeat and
+          // the first stone's makeMove recorded the pre-cheat board.
+          const pt = state.board[second[0].x]?.[second[0].y];
+          if (pt && pt.color === GoColor.empty) {
+            pt.color = GoColor.black;
+            g.updateCaptures(state.board, GoColor.black, true);
+          }
+          state.previousBoards.shift();
+          // The cheat as ONE note, both stones (the first was never noted, so
+          // a cheat's trace was unreplayable: go-fixture --harness).
+          note("B", [ranked[0].x, ranked[0].y], { second: [second[0].x, second[0].y], ...(SEEDED ? { T: playtimeAt(wall) } : {}) });
           // Live, the solver commits its answer to the second-stone request
           // and ponders under it — the actual post-cheat position.
           if (sess) {

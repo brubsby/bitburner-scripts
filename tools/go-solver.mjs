@@ -822,7 +822,10 @@ while (true) {
               // A cheat's SECOND-STONE request (go.js SETTINGS.cheat.secondNet):
               // searched without the net (golib nnDepth -1) — its depth-1 nodes
               // would be net-valued where the single's reused tree had playouts.
-              const nnRoot = req.secondNet === false ? { nnDepth: -1 } : {};
+              // secondStone (go.js tryCheat): the root is the board after the
+              // cheat's first stone — never a game state, so it stays out of
+              // the AI's history (golib setRoot cheatSecond).
+              const nnRoot = { ...(req.secondNet === false ? { nnDepth: -1 } : {}), ...(req.secondStone ? { cheatSecond: true } : {}) };
               let r = sess.setRoot(req.board, validGrid(N, req.valid), { history, opponentPassed, objective: req.objective ?? null, clock: clockFor(req, "req"), cheat: { fns: fn0 ? [fn0] : null, cheats: req.cheat?.cheats ?? 0 }, ...nnRoot });
               if (fn0) jointStats.requests++;
               if (req.secondNet === false) jointStats.secondNoNet = (jointStats.secondNoNet ?? 0) + 1;

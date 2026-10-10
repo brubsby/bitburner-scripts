@@ -64,8 +64,11 @@ if (!G.document.adoptedStyleSheets) G.document.adoptedStyleSheets = [];
 // make this module async, and ES modules do not guarantee that an async
 // sibling finishes before its siblings evaluate — the game bundle would start
 // running before the environment above exists.
+// build.mjs's ENTRY (what the bundle exports) is a source too.
 const stale =
-  !fs.existsSync(OUT) || fs.statSync(path.join(GAME, "src/Hacking.ts")).mtimeMs > fs.statSync(OUT).mtimeMs;
+  !fs.existsSync(OUT) ||
+  fs.statSync(path.join(GAME, "src/Hacking.ts")).mtimeMs > fs.statSync(OUT).mtimeMs ||
+  fs.statSync(path.join(HERE, "build.mjs")).mtimeMs > fs.statSync(OUT).mtimeMs;
 if (stale) execFileSync(process.execPath, [path.join(HERE, "build.mjs")], { stdio: "inherit" });
 
 export const jsdom = dom;
