@@ -1225,6 +1225,107 @@ export function drawCityEvent(cities, rng) {
 }
 
 /** The exit model, drained synchronously (the tests, bb6.mjs, bbsim checks). */
+// --- sleeves on contracts (the train-then-contract fleet) -----------------
+//
+// A sleeve may take CONTRACTS (never operations: SleeveBladeburnerWork's
+// actionId is General | Contract) and its successes pay the SHARED division:
+// completeAction(sleeve, id, isPlayer=false) -> changeRank (Bladeburner.ts
+// :951, :1266), so they buy rank, skill points, max levels and deplete the
+// shared counts like the player's. It rolls the game's own chance with the
+// SLEEVE as the person (Action.ts getSuccessChance: its stats, its
+// intelligence, its bladeburner_success_chance) in the PLAYER's city
+// (getCurrentCity) at the division's stamina penalty, and costs no stamina
+// (isPlayer false). Its exp is paid x its shockBonus and shared out
+// (Work.ts applySleeveGains): to the player x its sync, to every other
+// sleeve x its sync x the receiver's shockBonus. Before contracts a sleeve
+// may RECOVER shock (SleeveRecoveryWork 0.0002/cycle on top of the passive
+// 0.0001, x intBonus — Sleeve.ts:270) and TRAIN at the gym
+// (calculateClassEarnings: expMult x the stat's exp mult per second, x
+// shockBonus; a shock-100 sleeve gains nothing). Augmentations need shock 0
+// (Sleeve.ts:357) and are not priced here.
+// NOT SIMULATED, named: a failed contract's HP damage (a sleeve at 0 HP is
+// shocked +0.5 — optimistic), gym fees and the travel to Sector-12 (~$12k/s
+// for five, $200k each — negligible against any Bladeburner node's money).
+export const SLEEVE_BB = { gymExpPerSec: 10, passiveShockPerS: 0.0005, recoveryShockPerS: 0.001, fresh: { shock: 100, sync: 100, int: 0 } }
+const COMBAT = ['strength', 'defense', 'dexterity', 'agility']
+const CONTRACT_LIST = Object.values(CONTRACTS)
+// The weight a stat carries over the three contracts (the gym's greedy target).
+const CONTRACT_W = Object.fromEntries(COMBAT.map((c) => [c, CONTRACT_LIST.reduce((a, d) => a + d.weights[STATS.indexOf(c)], 0)]))
+/** A sleeve body for the exit model from ns.sleeve.getSleeve (or a fresh node's: shock 100, skills 1). */
+export function sleeveBodyOf(s = null) {
+  const f = SLEEVE_BB.fresh
+  const skills = { hacking: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, intelligence: f.int, ...(s?.skills ?? {}) }
+  return {
+    ...(Number.isFinite(s?.i) ? { i: s.i } : {}),
+    shock: Number.isFinite(s?.shock) ? s.shock : f.shock,
+    sync: Number.isFinite(s?.sync) ? s.sync : f.sync,
+    skills,
+    exp: { strength: 0, defense: 0, dexterity: 0, agility: 0, charisma: 0, ...(s?.exp ?? {}) },
+    mults: { ...(s?.mults ?? {}) },
+  }
+}
+const sbOf = (b) => Math.max(0, (100 - b.shock) / 100)
+const relevelBody = (b) => {
+  for (const c of [...COMBAT, 'charisma']) b.skills[c] = levelFromExp(b.exp[c] ?? 0, b.mults[c] ?? 1)
+}
+/** The stat a training sleeve takes next: the largest gain in the contracts' weighted competence per exp. */
+export function sleeveGymStatOf(b) {
+  let best = 'dexterity', bv = -1
+  for (const c of COMBAT) {
+    const m = b.mults[c] ?? 1
+    const L = Math.max(1, b.skills[c] ?? 1)
+    // dLevel/dExp = 32 m / (exp + 534.6); d(L^0.91)/dL = 0.91 L^-0.09
+    const v = (CONTRACT_W[c] * 0.91 * Math.pow(L, -0.09) * 32 * m * (b.mults[`${c}_exp`] ?? 1)) / ((b.exp[c] ?? 0) + 534.6)
+    if (v > bv) { bv = v; best = c }
+  }
+  return best
+}
+/** The contracts' weighted combat level of a sleeve body (the gym's target measure). */
+export function sleeveContractLevelOf(b) {
+  let a = 0, w = 0
+  for (const c of COMBAT) {
+    a += CONTRACT_W[c] * (b.skills[c] ?? 1)
+    w += CONTRACT_W[c]
+  }
+  return a / w
+}
+/**
+ * What a contract sleeve does now, by its state: 'recover' while its shock is
+ * above cfg.recoverTo (absent: never), 'train' while its contract-weighted
+ * combat level is below cfg.trainTo (absent: never), else 'contract'.
+ */
+export function sleevePhaseOf(b, cfg = {}) {
+  if (Number.isFinite(cfg.recoverTo) && b.shock > cfg.recoverTo) return 'recover'
+  if (Number.isFinite(cfg.trainTo) && sleeveContractLevelOf(b) < cfg.trainTo && sbOf(b) > 0) return 'train'
+  return 'contract'
+}
+/**
+ * The best contract for a sleeve now: max p x rank / time over the counts
+ * left. THE LEVEL IS THE ACTION'S, shared with the player (LevelableAction
+ * .level; a sleeve has no level of its own), and bladeburner.js sets every
+ * contract to its MAX level on each read pass (bladeburner.js
+ * setActionLevel(maxLevel), autolevel off) — so a sleeve rolls at the max
+ * level (atMax, the default) unless the daemon is changed to hold a
+ * sleeve's level; atMax false: the best level up to the max.
+ */
+export function sleeveContractOf(b, sm, { int, augMult = 1, cityF = 1, counts, maxL, bnRank = 1, atMax = true }) {
+  const e = { int, stamina: 1, maxStamina: 1, augMult }
+  let best = null
+  const sf = statFacOf(b, sm)
+  for (const d of CONTRACT_LIST) {
+    if (!((counts[d.name] ?? 0) >= 1)) continue
+    const K = envOf(d, e) * cityF
+    for (let L = Math.max(1, maxL[d.name] ?? 1); L >= 1; L--) {
+      const p = pFrom(K, d, L, b, sm)
+      const tt = actionTime(d, L, b, sm, sf)
+      const r = (p * rankGainOf(d, L, bnRank) - (1 - p) * rankLossOf(d, L)) / tt
+      if (!best || r > best.r) best = { d, L, p, tt, r }
+      if (atMax || p >= 1) break // atMax: the action's level; p 1: every lower level is surer but pays less
+    }
+  }
+  return best
+}
+
 export function bladeExit(s0, pol = POLICY) {
   return drain(bladeExitGen(s0, pol))
 }
@@ -1283,8 +1384,26 @@ export function* bladeExitGen(s0, pol = POLICY) {
   let inf = sl.infiltrate ?? 0
   let sup = sl.support ?? 0
   let fa = sl.fa ?? 0
+  // SLEEVES ON CONTRACTS (sleeveContractOf; sl.contracts of them, the
+  // bodies of s0.sleeveBodies at the positions sleeveTasksOf gives them —
+  // after the infiltrators, supporters and analysts, in sleeve index order;
+  // a fresh node's body where none is given), each by its own STATE (sleevePhaseOf — the rule sleeve.js runs,
+  // so a re-decision every pass does not restart a clock): recover shock
+  // above sl.recoverTo, train at the gym below sl.trainTo, else the best contract.
+  let csN = Math.max(0, Math.floor(sl.contracts ?? 0))
+  let csCfg = { recoverTo: sl.recoverTo, trainTo: sl.trainTo }
+  const allBodies = (Array.isArray(s0.sleeveBodies) ? s0.sleeveBodies : []).map((b) => sleeveBodyOf(b)).sort((a, b) => (a.i ?? 0) - (b.i ?? 0))
+  let bodies = []
+  const pickBodies = () => {
+    const off = inf + sup + fa
+    while (allBodies.length < off + csN) allBodies.push(sleeveBodyOf(null))
+    bodies = allBodies.slice(off, off + csN)
+    for (const b of bodies) relevelBody(b)
+  }
+  const csRank = { rank: 0, contracts: 0, trainS: 0 }
   // SleeveInfiltrateWork: each of n sleeves adds n^-0.5/2 to every count per 60s (Bladeburner.ts:1252-1264).
   let infPerSec = inf > 0 ? (inf * (Math.pow(inf, -0.5) / 2)) / 60 : 0
+  pickBodies()
   const growthPerSec = (d) => (d.growth[0] + d.growth[1]) / 2 / BBC.ActionCountGrowthPeriod
   // ENV measured in a reference city of population 1e9 and no chaos; each real city scales it (cityFactor).
   // CALIBRATION (bladeStartOf rankScale / successScale): the posteriors the
@@ -1505,7 +1624,61 @@ export function* bladeExitGen(s0, pol = POLICY) {
       c.pop *= 1 + ev * (0.05 * 0.15 + 0.2 * 0.16 - 0.2 * 0.14) // new community / new synthoids / fewer synthoids
     }
   }
+  // The contract sleeves over `secs` from the model's t, in `city` (the player's; null: the best for the chance).
+  const shareOut = (from, x, k) => {
+    // applySleeveGains: `x` already shocked; to the player x sync (no exp mults), to the others x sync x their shockBonus.
+    const sync = from.sync / 100
+    for (const c of COMBAT) {
+      const g = (x[c] ?? 0) * k
+      if (!(g > 0)) continue
+      person.exp[c] = (person.exp[c] ?? 0) + g * sync
+      for (let j = 0; j < csN; j++) if (bodies[j] !== from) bodies[j].exp[c] += g * sync * sbOf(bodies[j])
+    }
+  }
+  const sleeveStep = (secs, city) => {
+    if (!(csN > 0) || !(secs > 0)) return
+    const sm = smNow ?? skillMultsOf(st.levels)
+    let anyExp = false
+    for (let j = 0; j < csN; j++) {
+      const b = bodies[j]
+      const ib = intBonus(b.skills.intelligence ?? 0)
+      const phase = sleevePhaseOf(b, csCfg)
+      b.shock = Math.max(0, b.shock - (SLEEVE_BB.passiveShockPerS + (phase === 'recover' ? SLEEVE_BB.recoveryShockPerS : 0)) * ib * secs)
+      if (phase === 'recover') continue
+      if (phase === 'train') {
+        const c = sleeveGymStatOf(b)
+        const g = SLEEVE_BB.gymExpPerSec * (b.mults[`${c}_exp`] ?? 1) * sbOf(b) * secs
+        b.exp[c] += g
+        shareOut(b, { [c]: g }, 1)
+        csRank.trainS += secs
+        anyExp = true
+        continue
+      }
+      const cs = city ?? cities.reduce((a, x) => (cityFactor(x, refOf({})) > cityFactor(a, refOf({})) ? x : a), cities[0])
+      const best = sleeveContractOf(b, sm, { int: b.skills.intelligence ?? 0, augMult: (b.mults.bladeburner_success_chance ?? 1) * successScale, cityF: cs ? cityFactor(cs, refOf({})) : 1, counts: st.counts, maxL: st.maxL, bnRank })
+      if (!best || !(best.r > 0)) continue
+      const n = Math.min(secs / best.tt, Math.max(0, st.counts[best.d.name]))
+      const p = best.p
+      st.counts[best.d.name] -= n
+      st.succ[best.d.name] += n * p
+      while (st.succ[best.d.name] >= successesNeeded(st.maxL[best.d.name], perLevelOf(best.d))) st.maxL[best.d.name]++
+      csRank.rank += gainRank(n * p * rankGainOf(best.d, best.L, bnRank))
+      gainRank(-n * (1 - p) * rankLossOf(best.d, best.L))
+      csRank.contracts += n
+      if (cs) cityEffect(cs, best.d.name, n, n * p)
+      const x = actionExpOf(best.d, best.L, b, sm, true)
+      const k = n * (p + (1 - p) * 0.5) * sbOf(b)
+      for (const c of COMBAT) b.exp[c] += (x[c] ?? 0) * k * (b.mults[`${c}_exp`] ?? 1)
+      shareOut(b, x, k)
+      anyExp = true
+    }
+    if (anyExp) {
+      for (let j = 0; j < csN; j++) relevelBody(bodies[j])
+      relevel()
+    }
+  }
   const idle = (secs) => {
+    sleeveStep(secs, null)
     for (const d of LEVELED) st.counts[d.name] += (growthPerSec(d) + infPerSec) * secs
     if (fa > 0) gainRank(fa * fieldAnalysisRank(bnRank) * (secs / 30))
     cityTick(secs)
@@ -1572,6 +1745,9 @@ export function* bladeExitGen(s0, pol = POLICY) {
         inf = x.sleeves.infiltrate ?? 0
         sup = x.sleeves.support ?? 0
         fa = x.sleeves.fa ?? 0
+        csN = Math.max(0, Math.floor(x.sleeves.contracts ?? 0))
+        csCfg = { recoverTo: x.sleeves.recoverTo, trainTo: x.sleeves.trainTo }
+        pickBodies()
         infPerSec = inf > 0 ? (inf * (Math.pow(inf, -0.5) / 2)) / 60 : 0
         env.teamCount = sup
       }
@@ -1648,6 +1824,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       const tt = actionTime(d, 1, person, v.sm)
       // Expected attempts 1/p, each a full action time; failures cost rank (the stamina is rested between).
       const f = dutyOf(staminaCostOf(d, 1), tt, v.staminaGain, v.maxStamina)
+      sleeveStep(tt / p / f, null)
       t += tt / p / f
       // The black op's own rank (its expected failures' losses and its reward) is kept apart on the path (bo): the rank windows measure the rest.
       st.boRank += gainRank(-((1 - p) / p) * rankLossOf(d, 1))
@@ -1700,6 +1877,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       relevel()
       left -= Math.max(used, 1e-6)
     }
+    sleeveStep(dt, cities.find((x) => x.name === pick.city) ?? null)
     t += dt
     const tEvery = s0.traceEveryS ?? 36000
     if (trace.length < 400 && Math.floor(t / tEvery) !== Math.floor((t - dt) / tEvery)) trace.push({ h: +(t / 3600).toFixed(1), rank: Math.round(st.rank), bo: st.bo, str: person.skills.strength, agi: person.skills.agility })
@@ -1721,6 +1899,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     trace,
     path: pathEvery ? path : undefined,
     staminaOffsetH: +(staminaOffsetS / 3600).toFixed(3),
+    ...(csN > 0 ? { sleeveContracts: { rank: +csRank.rank.toFixed(1), contracts: +csRank.contracts.toFixed(1), trainH: +(csRank.trainS / 3600).toFixed(2), stats: bodies.slice(0, csN).map((b) => ({ shock: +b.shock.toFixed(1), str: b.skills.strength, def: b.skills.defense, dex: b.skills.dexterity, agi: b.skills.agility })) } } : {}),
     scales: { success: successScale, rank: rankScale },
     ...(goC ? { goEffect: +goE.toFixed(4) } : {}),
     ...(retrainWhy ? { retrainWhy } : {}),
@@ -1879,6 +2058,36 @@ export function sleeveConfigs(n) {
 }
 
 /**
+ * THE CONTRACT FLEETS (sleeves taking contracts, bladeExitGen sleeveStep),
+ * compared beside sleeveConfigs(n). A small set: each configuration is six
+ * exit members in sleeve.js's pass. Priced 2026-10-10 on the live BN7.1
+ * state (13:09Z, rank 13.7k, sleeves shock 73-77 at stats 1; the mean of
+ * the plan's six members, paired; tools/test/bladecontracts.test.mjs SC5
+ * re-prices it on the fixture): against the incumbent five support
+ * (11.2-11.3h) the best were one infiltrate with one or two sleeves on
+ * contracts trained to 100: -0.13 to -0.37h (+/- 0.12-0.15) — inside the
+ * fleet's keep tolerance (sleeveplan.FLEET_KEEP, 3% / 1.645 se); untrained
+ * -0.13..-0.19h, four on contracts +0.1..+0.17h (they exhaust the contract
+ * counts, ~3.1k over 11h), recovering to shock 50 first +0.01..+0.05h. In a
+ * FRESH division (shock 100, rank 0) none beat one infiltrate / four
+ * support (+0.08..+1.2h): the player's own early contracts compete for the
+ * counts, and a shocked sleeve gains a quarter of its exp. Augmentations need shock
+ * 0 (Sleeve.ts:357): 12.9h of recovery from 73, past this node's exit.
+ * Kept in the search so a node where they pay (a long one, sleeves already
+ * recovered) prices them from the start.
+ */
+export function sleeveContractConfigs(n) {
+  if (n < 3) return []
+  return [
+    { infiltrate: 1, support: n - 2, fa: 0, contracts: 1, trainTo: 100 },
+    { infiltrate: 1, support: n - 3, fa: 0, contracts: 2, trainTo: 100 },
+    { infiltrate: 1, support: n - 2, fa: 0, contracts: 1, recoverTo: 50, trainTo: 100 },
+  ]
+}
+/** A configuration's key (fleet events, the incumbent match): i/s/f, and c with its schedule where it has contracts. */
+export const sleeveConfigKey = (c) => (c ? `i${c.infiltrate ?? 0}s${c.support ?? 0}f${c.fa ?? 0}${c.contracts > 0 ? `c${c.contracts}${Number.isFinite(c.recoverTo) ? `r${c.recoverTo}` : ''}${Number.isFinite(c.trainTo) ? `t${c.trainTo}` : ''}` : ''}` : null)
+
+/**
  * The sleeves' Bladeburner assignment, priced as exits: every configuration
  * simulated to the 21st black op from the same state, the fastest kept
  * (CLAUDE.md "Decisions compare simulated trajectories"). Returns
@@ -1894,9 +2103,9 @@ export function chooseSleeveConfig(s0, n, pol = POLICY, opts = {}) {
  * a single exit each picked whichever the pass's clock favoured. Q 1: one
  * exit each (the tests' cheap path).
  */
-export function* chooseSleeveConfigGen(s0, n, pol = POLICY, { Q = 1 } = {}) {
+export function* chooseSleeveConfigGen(s0, n, pol = POLICY, { Q = 1, contracts = true } = {}) {
   const byConfig = []
-  for (const config of sleeveConfigs(n)) {
+  for (const config of [...sleeveConfigs(n), ...(contracts ? sleeveContractConfigs(n) : [])]) {
     if (Q > 1) {
       let why = null
       const e = yield* bladeExitMeanGen({ ...s0, sleeves: config }, { Q, pol, hoursOfMember: function* (m) {
@@ -1941,7 +2150,9 @@ export function bladeFleetOf(fleet, { lifeStart = null } = {}) {
   const at = Date.parse(fleet.staleSince ?? fleet.at ?? '')
   if (Number.isFinite(lifeStart) && (!Number.isFinite(at) || at < lifeStart)) return { sleeves: zero, source: 'stale', why: `/tel/sleeve.txt is from before this life's install (${fleet.staleSince ?? fleet.at ?? 'undated'}): the install stopped every sleeve, and sleeve.js has not assigned them since — none on Bladeburner` }
   const c = fleet.blade?.config
-  if (c && typeof c === 'object') return { sleeves: { infiltrate: c.infiltrate ?? 0, support: c.support ?? 0, fa: c.fa ?? 0 }, source: 'committed', why: `sleeve.js's committed fleet (${fleet.blade?.why ?? 'blade.config'})` }
+  // The bodies (sleeve.txt persons): what a contract sleeve trains and rolls with (bladeStartOf sleeveBodies).
+  const bodies = Array.isArray(fleet.persons) ? fleet.persons.map((x) => sleeveBodyOf(x)) : null
+  if (c && typeof c === 'object') return { sleeves: { infiltrate: c.infiltrate ?? 0, support: c.support ?? 0, fa: c.fa ?? 0, ...(c.contracts > 0 ? { contracts: c.contracts, ...(Number.isFinite(c.recoverTo) ? { recoverTo: c.recoverTo } : {}), ...(Number.isFinite(c.trainTo) ? { trainTo: c.trainTo } : {}) } : {}) }, bodies, source: 'committed', why: `sleeve.js's committed fleet (${fleet.blade?.why ?? 'blade.config'})` }
   const out = { ...zero }
   const other = []
   for (const a of Array.isArray(fleet.assigned) ? fleet.assigned : []) {
@@ -2133,7 +2344,7 @@ export function bladeStateOf({ tel = null, sleeves = null, cal = null } = {}) {
   const cities = Array.isArray(tel?.cities) ? tel.cities.map((c) => ({ name: c.name, pop: num(c.pop) ? c.pop : c.popEst, chaos: c.chaos ?? 0, comms: c.comms ?? 0 })) : []
   const best = cities.length ? bestCity(cities) : null
   return {
-    fleet: sleeves ? `i${sleeves.infiltrate ?? 0}s${sleeves.support ?? 0}f${sleeves.fa ?? 0}` : null,
+    fleet: sleeveConfigKey(sleeves),
     blackOps: num(tel?.blackOps?.done) ? tel.blackOps.done : null,
     best: best ? { name: best.name, pop: Math.round(best.pop), comms: best.comms } : null,
     kRank: cal?.rank ? { lnK: cal.rank.lnK, sdLn: cal.rank.sdLn } : null,
@@ -2165,6 +2376,8 @@ export function sleeveTasksOf(config, n) {
     if (i < config.infiltrate) out.push({ kind: 'bladeburner', action: SLEEVE_ACTION.infiltrate })
     else if (i < config.infiltrate + config.support) out.push({ kind: 'bladeburner', action: SLEEVE_ACTION.support })
     else if (i < config.infiltrate + config.support + config.fa) out.push({ kind: 'bladeburner', action: GENERAL.fieldAnalysis })
+    // A contract sleeve: sleeve.js runs sleevePhaseOf on its body each pass (recover / gym / the best contract).
+    else if (i < config.infiltrate + config.support + config.fa + (config.contracts ?? 0)) out.push({ kind: 'bladeContract', recoverTo: config.recoverTo ?? null, trainTo: config.trainTo ?? null })
     else out.push(null)
   }
   return out
@@ -2181,7 +2394,7 @@ export function sleeveTasksOf(config, n) {
  *   install  {firstH, everyH?, combatGain?, gains?, simulacrum?} | null — an install of the plan's (bladeExitGen header)
  *   simulacrum  The Blade's Simulacrum already installed
  */
-export function bladeStartOf({ tel = null, person, sleeves = {}, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, goCombat = null, policy = null, now = Date.now() }) {
+export function bladeStartOf({ tel = null, person, sleeves = {}, sleeveBodies = null, install = null, gymExpPerSec, bnRank = 1, skillCostMult = 1, simulacrum = false, maxH = 400, dt = 300, rankScale = 1, successScale = 1, rankSdLn = 0, successSdLn = 0, leanUntilH = null, retrainSecsOf = null, goCombat = null, policy = null, now = Date.now() }) {
   const joined = tel?.joined === true
   const num = (x) => typeof x === 'number' && isFinite(x)
   // The daemon's skill clock (bladeburner.js skillsAt: its last spend; null: none since it started).
@@ -2222,6 +2435,8 @@ export function bladeStartOf({ tel = null, person, sleeves = {}, install = null,
     bnRank,
     skillCostMult,
     sleeves,
+    // The sleeves' bodies (sleeveBodyOf of ns.sleeve.getSleeve): what a contract sleeve trains and rolls with.
+    ...(Array.isArray(sleeveBodies) && sleeveBodies.length ? { sleeveBodies: sleeveBodies.map((b) => sleeveBodyOf(b)) } : {}),
     gymExpPerSec,
     // The retrain's money and travel (bladeExitGen gymTo): the caller's priced combat-bar plan, or none.
     ...(typeof retrainSecsOf === 'function' ? { retrainSecsOf } : {}),
