@@ -119,6 +119,8 @@ export async function run() {
     const spendSrc = code("hashspend.js");
     for (const name of names) {
       if (name === "Sell for Money" || hs.NOT_SIMULATED[name]) continue;
+      // The Bladeburner exchanges: priced on the black-op exit (hashplan.BLADE_EXCHANGE, decideBladeHashSpend).
+      if (Object.values(hs.BLADE_EXCHANGE).some((x) => x.name === name) && /\bdecideBladeHashSpend\s*\(/.test(spendSrc)) continue;
       if (!spendSrc.includes(`'${name}'`)) c.fail(`${name} is neither priced by hashspend.js nor listed in hashplan.NOT_SIMULATED — a silent gap in the search`);
     }
     // HashManager's multiplier: 1 + value x level / 100.

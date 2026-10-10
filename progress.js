@@ -107,7 +107,8 @@ const SCHEDULE = '/tel/factionplan.txt'
  */
 const WD_BASE_HACKING = 3000
 
-import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting, canJoinBladeburner } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting, canJoinBladeburner, hasHacknetServers } from 'sfgate.js'
+import { bladeExchangeGen } from 'hashplan.js'
 import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, sameGraftSchedule, graftsOfLifeNow, graftsOffBatch, graftBatchCheckOf, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGangGen, trainRatio } from 'gangplan.js'
 
@@ -2742,6 +2743,17 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
           simulacrum = { buy: false, why: `the Simulacrum verdict threw: ${String(e).slice(0, 160)}` }
         }
       }
+      // THE HASH EXCHANGES ON THIS EXIT (hashplan.bladeExchangeGen): +100 rank
+      // and +10 skill points per purchase, priced on the route's own start —
+      // hashspend.js and hacknet.js price hashes with them on this route.
+      let hashExchange = null
+      if (d?.key === 'blade' && tel?.joined === true && hasHacknetServers(info)) {
+        try {
+          hashExchange = { at: new Date().toISOString(), ...(yield* bladeExchangeGen(startFor(bladeBasis), bladeExitGen)) }
+        } catch (e) {
+          hashExchange = { at: new Date().toISOString(), why: `the exchange pricing threw: ${String(e).slice(0, 160)}` }
+        }
+      }
       return {
         ...d,
         joined: tel?.joined === true,
@@ -2762,6 +2774,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         // The start's inputs a reader re-prices with (sleeve.js's fleet search): one state model.
         start: { gymExpPerSec, gym: gym?.name ?? null, trainingMult: ns.hacknet.getTrainingMult(), ...(gymWhy ? { gymWhy } : {}), goCombat: goCombat.effect === null ? { effect: null, why: goCombat.why } : { effect: +goCombat.effect.toFixed(5), nodes: Math.round(goCombat.nodes), perHour: Math.round(goCombat.perHour), rateSource: goCombat.rateSource, goPower: goCombat.goPower, sf14: goCombat.sf14, why: goCombat.why } },
         simulacrum,
+        hashExchange,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }
     })

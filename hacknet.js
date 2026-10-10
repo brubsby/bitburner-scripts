@@ -61,6 +61,9 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { hasHacknetServers } from 'sfgate.js'
 // Pure: runs the batch planner in slices so a big batch never holds the page.
 import { makePacer } from 'coop.js'
+// Pure: the committed route, and the hashes' trajectory on the Bladeburner route's exit.
+import { committedRouteOf } from 'splitctl.js'
+import { exchangeOf, bladeHashHorizonH, planRouteHacknetBatch } from 'hashplan.js'
 
 const NEED = { levels: 100, ram: 8, cores: 4 }
 const STATUS = '/tel/hacknet.txt'
@@ -190,7 +193,7 @@ function buy(ns, best) {
     case 'core':
       return ns.hacknet.upgradeCore(best.index, 1)
     case 'cache':
-      return ns.hacknet.upgradeCache(best.index, 1)
+      return ns.hacknet.upgradeCache(best.index, best.count ?? 1)
     default:
       return false
   }
@@ -286,6 +289,18 @@ function claimsOf(ns, info) {
  * augmentation claim and never the book.
  */
 async function serverBatchPass(ns, { info, t, mults, nodeMoney, money, base, state }) {
+  // THE COMMITTED ROUTE: on the Bladeburner route the hashes buy rank and
+  // skill points on the black-op exit, not money at an install — priced there.
+  fetchFromHome(ns, PLAN_FILE)
+  let plan = null
+  let route = null
+  try {
+    plan = JSON.parse(ns.read(PLAN_FILE) || 'null')
+    route = committedRouteOf(plan, { node: info.currentNode })
+  } catch {
+    route = null
+  }
+  if (route?.key === 'blade') return routeBatchPass(ns, { info, t, mults, nodeMoney, money, base, state, plan, route })
   const life = remainingLifeH(ns, info.lastAugReset)
   fetchFromHome(ns, EXIT_INPUTS)
   const capital = (() => {
@@ -371,6 +386,89 @@ async function serverBatchPass(ns, { info, t, mults, nodeMoney, money, base, sta
     claims: { join: claims.join, augmentations: claims.augmentations, home: typeof claims.home === 'object' ? claims.home.amount : claims.home },
   })
   return { again: n < prefix.length && exitV?.buy === true }
+}
+
+/**
+ * ONE SERVER-MODE PASS ON THE BLADEBURNER ROUTE (committedRouteOf 'blade').
+ *
+ * The money-at-install batch above values a hash at the $250k sell floor and
+ * an upgrade by the money it adds before the install — on this route the
+ * hashes buy rank and skill points on the black-op exit, and live BN7.1
+ * 2026-10-10 it refused every purchase ("no purchase adds money at the
+ * install") while the 256-hash cache could never bank the second rank
+ * exchange (500 hashes). Here each purchase — server, level, RAM, cores and
+ * CACHE — is priced as the joint trajectory (hashplan.planRouteHacknetBatch:
+ * capacity -> hash rate -> the escalating exchanges -> exit hours) with it
+ * minus without it, from the exchange prices progress.js published on the
+ * route's own start. The money's alternative use on the route: with a money
+ * leg on the exit (committedRouteOf moneyLegs) it is unpriced here, and
+ * nothing is bought; with none, the money moves the black-op exit only
+ * through these purchases. The claims budget.js keeps stand (the route's
+ * exit-sim approval waives the augmentation and home claims, never the join's).
+ *
+ * Publishes `route` with the best purchase's exit-hours per dollar, unbudgeted
+ * (an upper bound): hashspend.js prices a hash SALE's money with it.
+ */
+async function routeBatchPass(ns, { info, t, mults, nodeMoney, money, base, state, plan, route }) {
+  const br = plan?.decisions?.bladeRoute ?? null
+  const exchange = exchangeOf(plan, { node: info.currentNode })
+  fetchFromHome(ns, HASHSPEND_FILE)
+  let hs = null
+  try {
+    hs = JSON.parse(ns.read(HASHSPEND_FILE) || 'null')
+  } catch {
+    hs = null
+  }
+  const hsOk = !!hs && hs.lastAugReset === info.lastAugReset && Date.now() - Date.parse(hs.at) < 10 * 60e3
+  const levels = hsOk && hs.exchangeLevels && typeof hs.exchangeLevels.rank === 'number' && typeof hs.exchangeLevels.sp === 'number' ? hs.exchangeLevels : null
+  const hashes = hsOk && typeof hs.hashes === 'number' ? hs.hashes : 0
+  const horizonH = bladeHashHorizonH(br)
+  const claims = claimsOf(ns, info)
+  const free = spendable('hacknet', money, claims, { exitApproved: true })
+  const legs = Array.isArray(route.moneyLegs) ? route.moneyLegs.filter(Boolean) : []
+  const servers = t.list.map((x) => ({ level: x.level, ram: x.ram, cores: x.cores, ramUsed: x.ramUsed, cache: x.cache }))
+  const refuse = typeof exchange.baseH !== 'number' ? `the exchanges are unpriced: ${exchange.why}` : !levels ? 'no fresh exchange levels from hashspend.js' : !(horizonH > 0) ? 'no exit horizon on the route' : legs.length ? `the black-op exit reads money (${legs.join('; ')}): the money's alternative use is unpriced here, so no hacknet purchase is priced against it` : null
+  const plan1 = (budget, maxItems) => planRouteHacknetBatch({ servers, mults, nodeMoney, hashes, exchange, levels, horizonH, budget, maxItems })
+  const batch = refuse ? { items: [], cost: 0, deltaH: 0, baseGainH: null, stoppedBy: refuse } : plan1(free, 200)
+  // THE MARGINAL DOLLAR (what a hash sale's money buys here, for hashspend.js):
+  // the best purchase the budget left unbought, priced on the fleet after the
+  // batch — and only when the claims leave money at all (free > 0); below the
+  // reserve a sale's money fills the claims and buys nothing on this exit.
+  const top = refuse ? null : planRouteHacknetBatch({ servers: batch.servers ?? servers, mults, nodeMoney, hashes, exchange, levels, horizonH, budget: Infinity, maxItems: 1 })
+  const best = top?.items?.[0] ?? null
+  const perDollarH = best && free > 0 ? best.deltaH / best.cost : 0
+  // No book is sold for a route purchase (no raise): the cash the claims leave pays.
+  ns.write(raiseFileOf('hacknet'), JSON.stringify({ at: new Date().toISOString(), by: 'hacknet', target: 0, why: 'no raise needed (Bladeburner route: purchases from free cash only)' }), 'w')
+  if (ns.getHostname() !== 'home') ns.scp(raiseFileOf('hacknet'), 'home', ns.getHostname())
+  let spent = 0
+  let n = 0
+  for (const it of batch.items) {
+    if (spent + it.cost > free) break
+    if (!buy(ns, it)) break
+    spent += it.cost
+    n++
+    state.bought++
+    state.lastBuy = { at: new Date().toISOString(), ...it, route: 'blade' }
+    if (n % 50 === 0) await ns.sleep(0)
+  }
+  const v = refuse ? { buy: false, why: refuse, decidedBy: 'route-unpriced' } : batch.items.length ? { buy: true, approvedCost: batch.cost, why: `${batch.items.length} purchase(s), $${Math.round(batch.cost)}: the black-op exit ${(batch.deltaH * 60).toFixed(2)} min through the hashes they add (rank/SP exchanges over ${horizonH.toFixed(2)}h)`, decidedBy: 'route-exit-sim' } : { buy: false, why: `${batch.stoppedBy}${best ? ` within the $${Math.round(free)} the claims leave (next unbought: ${best.kind} $${Math.round(best.cost)}, ${(best.deltaH * 60).toFixed(2)} min)` : ''}`, decidedBy: 'route-exit-sim' }
+  publish(ns, {
+    ...base,
+    bought: state.bought,
+    lastBuy: state.lastBuy,
+    phase: 'claimant',
+    route: { key: route.key, exitH: route.exitH, horizonH, why: route.why, moneyLegs: legs, exchange: typeof exchange.baseH === 'number' ? { at: exchange.at, rankPerPurchaseH: exchange.rank.perPurchaseH, spPerPurchaseH: exchange.sp.perPurchaseH } : { why: exchange.why }, levels, hashes, baseGainH: batch.baseGainH, best, perDollarH, perDollarWhy: !best ? 'no unbought purchase shortens the exit' : free > 0 ? 'the best purchase the budget left unbought' : 'the claims leave no money: a sale fills them and buys nothing here' },
+    best: batch.items[0] ?? null,
+    batch: { n: batch.items.length, cost: batch.cost, deltaH: batch.deltaH, stoppedBy: batch.stoppedBy, first: batch.items.slice(0, 8) },
+    pass: { planned: batch.items.length, approved: batch.items.length, boughtNow: n, spentNow: spent },
+    remainingLifeH: horizonH,
+    verdict: v,
+    spendable: free,
+    affordable: batch.cost <= free,
+    cache: { buy: false, why: 'Bladeburner route: cache is priced in the route batch' },
+    claims: { join: claims.join, augmentations: claims.augmentations, home: typeof claims.home === 'object' ? claims.home.amount : claims.home },
+  })
+  return { again: false }
 }
 
 export async function main(ns) {

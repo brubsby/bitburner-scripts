@@ -79,17 +79,24 @@
 //
 // WHAT IS NOT SIMULATED, and is therefore never bought (named in `skipped`):
 // company favor (persists to the next BitNode, and company reputation is not
-// on the exit trajectory), corporation funds/research and Bladeburner rank/SP
-// (no corporation / Bladeburner in the trajectory), gym and study boosts
-// outside the final window (their effect before an install is on joins and
-// levels this simulator does not model).
+// on the exit trajectory), corporation funds/research (no corporation in the
+// trajectory), gym and study boosts outside the final window (their effect
+// before an install is on joins and levels this simulator does not model).
+//
+// THE BLADEBURNER ROUTE (plan.txt decisions.bladeRoute.key 'blade',
+// splitctl.committedRouteOf) exits by the black ops, not the World Daemon:
+// everything above prices the wrong exit there (live BN7.1 2026-10-10:
+// withH = sellH = 2.87e65h for every option). On that route the spend is
+// decideBladeHashSpend below: the two Bladeburner exchanges priced on the
+// black-op exit progress.js simulates (bladeRoute.hashExchange), against the
+// sale's money priced at what money buys on that route.
 //
 // CALIBRATION: the formulas are the game's, pinned by [HS1..HS3] against the
 // game bundle. The DECISION inherits exitplan's calibration and nothing more:
 // no live measurement of "hashes spent on X shortened the exit by Y" exists.
 
 
-import { capitalFV } from 'hacknetplan.js'
+import { capitalFV, serverCandidates, applyServerPurchase, cacheCost, hashCapacityOf, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -117,8 +124,6 @@ export const UPGRADES = {
 export const NOT_SIMULATED = {
   'Sell for Corporation Funds': 'no corporation on the exit trajectory',
   'Exchange for Corporation Research': 'no corporation on the exit trajectory',
-  'Exchange for Bladeburner Rank': 'no Bladeburner on the exit trajectory',
-  'Exchange for Bladeburner SP': 'no Bladeburner on the exit trajectory',
   'Company Favor': 'company favor persists into the next BitNode and company reputation is not on the exit trajectory',
 }
 
@@ -379,15 +384,286 @@ export function decideHashSpend(ctx) {
     }
     exits.push({ name: o.name, target: o.target ?? null, cost: o.cost, withH: withX, sellH: withSell, deltaH: withX - withSell, perHash, ...(marginalH !== null ? { policy: o.policy, marginalH } : {}), note: o.why ?? null })
   }
+  return chooseSpend(exits, { hashes, capacity, skipped, sellAll })
+}
+
+/**
+ * The tail every spend decision shares: the winners (deltaH under -1s) by
+ * exit-hours per hash; buy the best affordable now, else save for it when
+ * the cache can hold it, else sell and name the capacity-bound choice.
+ */
+function chooseSpend(exits, { hashes, capacity, skipped, sellAll, decidedBy = 'exit-sim' }) {
   const TIE_H = 1 / 3600
   const winners = exits.filter((x) => num(x.deltaH) && x.deltaH < -TIE_H).sort((a, b) => a.perHash - b.perHash)
-  if (!winners.length) return sellAll(`no upgrade shortens the exit against selling the same hashes (${exits.length} simulated)`, 'exit-sim', { exits })
+  if (!winners.length) return sellAll(`no upgrade shortens the exit against selling the same hashes (${exits.length} simulated)`, decidedBy, { exits })
   for (const w of winners) {
-    if (w.cost <= hashes) return { action: 'buy', name: w.name, target: w.target, cost: w.cost, why: `exit ${w.withH.toFixed(3)}h with ${w.name}${w.target ? ` on ${w.target}` : ''} vs ${w.sellH.toFixed(3)}h selling the same ${w.cost} hashes`, decidedBy: 'exit-sim', exits, skipped }
-    if (num(capacity) && w.cost <= capacity) return { action: 'save', name: w.name, target: w.target, cost: w.cost, why: `saving for ${w.name} (${w.cost} of ${Math.floor(hashes)} hashes): it beats selling by ${(-w.deltaH * 60).toFixed(1)} min of exit; overflow would sell itself at the same rate, so holding loses nothing but time`, decidedBy: 'exit-sim', exits, skipped }
+    if (w.cost <= hashes) return { action: 'buy', name: w.name, target: w.target, cost: w.cost, why: `exit ${w.withH.toFixed(3)}h with ${w.name}${w.target ? ` on ${w.target}` : ''} vs ${w.sellH.toFixed(3)}h selling the same ${w.cost} hashes`, decidedBy, exits, skipped }
+    if (num(capacity) && w.cost <= capacity) return { action: 'save', name: w.name, target: w.target, cost: w.cost, why: `saving for ${w.name} (${w.cost} of ${Math.floor(hashes)} hashes): it beats selling by ${(-w.deltaH * 60).toFixed(1)} min of exit; overflow would sell itself at the same rate, so holding loses nothing but time`, decidedBy, exits, skipped }
   }
   // Every winner costs more than the hashes can hold: sell, and say which
   // upgrade a larger cache would have bought (hacknet.js reads this).
   const w = winners[0]
-  return sellAll(`the best upgrade (${w.name}, ${w.cost} hashes) exceeds the hash capacity ${capacity}`, 'exit-sim', { exits, capacityBound: { name: w.name, target: w.target, cost: w.cost, capacity, deltaH: w.deltaH } })
+  return sellAll(`the best upgrade (${w.name}, ${w.cost} hashes) exceeds the hash capacity ${capacity}`, decidedBy, { exits, capacityBound: { name: w.name, target: w.target, cost: w.cost, capacity, deltaH: w.deltaH } })
+}
+
+// ---------------------------------------------------------------------------
+// THE BLADEBURNER ROUTE: hashes priced on the black-op exit
+// ---------------------------------------------------------------------------
+//
+// On the committed Bladeburner route (splitctl.committedRouteOf) the exit is
+// bbplan.bladeExitGen's last black op. Two hash upgrades act on it directly
+// (Hacknet/HacknetHelpers.tsx:539-555):
+//   Exchange for Bladeburner Rank  Bladeburner.changeRank(+100): rank feeds
+//                                  the black-op rank gates; maxRank rises with
+//                                  it, so it also pays floor(maxRank/3) skill
+//                                  points (Bladeburner.ts:1283-1291) — ~+33 SP
+//   Exchange for Bladeburner SP    skillPoints += 10: the skill plan
+//                                  (bbplan.planSkills) spends them
+// both 250 x (level + 1) hashes (HashUpgrade.getCost; HashUpgradesMetadata
+// costPerLevel 250), the levels reset with the hashes and the servers at an
+// install (HashManager.prestige).
+//
+// PRICED BY THE EXIT, from ONE start (progress.js's startFor, the route's
+// own): bladeExchangeGen runs the exit with EXCHANGE_FD_N purchases of each
+// and divides. The exit is simulated in 5-minute steps (dt 300) and one
+// purchase moves it by about one step (live BN7.1 2026-10-10: +100 rank alone
+// read -8.4 min, +1000 -23.7 min — a gate crossed or not), so the
+// per-purchase effect is the finite difference over ten. Published on
+// plan.txt (decisions.bladeRoute.hashExchange) for hashspend.js and hacknet.js.
+//
+// THE JOINT TRAJECTORY (exchangeTrajectory): hashes arrive at the servers'
+// rate, are spent greedily on whichever exchange gives the most exit-hours
+// per hash at its escalating cost, bank only to the cache's capacity (an
+// exchange costing more than the capacity is unreachable), until the exit
+// (moved earlier by the purchases themselves) or the route's install. A
+// capacity purchase (hacknet.js: a server, level, RAM, cores, or CACHE) is
+// worth the trajectory with it minus without it — the hacknet claimant priced
+// on the committed exit, not on money at the install.
+//
+// NOT SIMULATED (named): a purchase's effect is taken as the same at every
+// time before the exit (rank bought later crosses the same gates later); the
+// finite difference averages the first ten purchases' effects; the exit's
+// own sampling spread (bladeMembers) is not carried — one start, paired.
+
+export const BLADE_EXCHANGE = { rank: { name: 'Exchange for Bladeburner Rank', value: 100 }, sp: { name: 'Exchange for Bladeburner SP', value: 10 } }
+/** Purchases bladeExchangeGen's finite difference spans (see above). */
+export const EXCHANGE_FD_N = 10
+/** BladeburnerConstants.RanksPerSkillPoint (bbplan BBC.RanksPerSkillPoint; not imported: hashplan.js is in hashspend.js's RAM graph). */
+const RANKS_PER_SP = 3
+/** How old a published exchange price may be (progress.js re-prices every pass, ~5 min). */
+export const EXCHANGE_FRESH_MS = 30 * 60e3
+
+/** The Bladeburner start after `n` purchases of an exchange, as the game applies it. */
+export function bladeExchangeStart(s0, kind, n = 1) {
+  if (!s0 || !(n > 0)) return s0
+  if (kind === 'sp') return { ...s0, skillPoints: (s0.skillPoints ?? 0) + BLADE_EXCHANGE.sp.value * n }
+  if (kind !== 'rank') return s0
+  const rank = (s0.rank ?? 0) + BLADE_EXCHANGE.rank.value * n
+  const max0 = s0.maxRank ?? s0.rank ?? 0
+  const maxRank = Math.max(max0, rank)
+  return { ...s0, rank, maxRank, skillPoints: (s0.skillPoints ?? 0) + Math.floor(maxRank / RANKS_PER_SP) - Math.floor(max0 / RANKS_PER_SP) }
+}
+
+/**
+ * The two exchanges on the black-op exit: {baseH, n, rank, sp}, each
+ * {value, withH, perPurchaseH} (perPurchaseH < 0 shortens the exit), or {why}.
+ * `exitGen` is bbplan.bladeExitGen (injected: this module stays light).
+ */
+export function* bladeExchangeGen(s0, exitGen, { n = EXCHANGE_FD_N } = {}) {
+  if (!s0 || s0.joined !== true) return { why: 'not in the Bladeburner division: neither exchange can be bought (HacknetHelpers: "You have not joined Bladeburner")' }
+  const hoursOf = function* (s) {
+    const r = yield* exitGen(s)
+    return num(r?.hours) ? r.hours : null
+  }
+  const baseH = yield* hoursOf(s0)
+  if (baseH === null) return { why: 'the black-op exit is unpriced from this start' }
+  const out = { baseH, n }
+  for (const kind of ['rank', 'sp']) {
+    const withH = yield* hoursOf(bladeExchangeStart(s0, kind, n))
+    out[kind] = { value: BLADE_EXCHANGE[kind].value, withH, perPurchaseH: withH === null ? null : (withH - baseH) / n }
+  }
+  return out
+}
+
+/** The published exchange prices when usable for this node now, else {why}. */
+export function exchangeOf(plan, { node = null, now = Date.now() } = {}) {
+  const x = plan?.decisions?.bladeRoute?.hashExchange
+  if (!x) return { why: 'progress.js published no exchange prices (plan.txt decisions.bladeRoute.hashExchange)' }
+  if (num(plan.node) && num(node) && plan.node !== node) return { why: "the exchange prices are another node's" }
+  if (!num(x.baseH)) return { why: `no exchange prices: ${x.why ?? 'unpriced'}` }
+  if (!(now - Date.parse(x.at) < EXCHANGE_FRESH_MS)) return { why: 'the exchange prices are stale (>30 min)' }
+  if (!num(x.rank?.perPurchaseH) || !num(x.sp?.perPurchaseH)) return { why: 'the exchange prices are unreadable' }
+  return x
+}
+
+/** Hours the hashes have on this route: the black-op exit, or the route's own install before it (HashManager.prestige). */
+export function bladeHashHorizonH(br, now = Date.now()) {
+  const exitH = num(br?.bladeH) ? br.bladeH : null
+  const b = br?.installBasis
+  const inst = num(b?.installAt) ? Math.max(0, (b.installAt - now) / 3.6e6) : num(b?.waitH) ? Math.max(0, b.waitH) : null
+  if (exitH === null) return inst
+  return inst === null ? exitH : Math.min(exitH, inst)
+}
+
+/** The exchanges' levels this life, read off the game's next price (HashUpgrade.getCost: 250 x (level + 1)). */
+export const exchangeLevelOf = (nextCost) => (pos(nextCost) ? Math.max(0, Math.round(nextCost / 250) - 1) : null)
+
+/**
+ * THE JOINT TRAJECTORY of hashes into the exchanges, from now to the horizon.
+ *   hashes0, capacity, ratePerSec  the cache now, its size, the servers' rate
+ *   horizonH   the exit (or install) with no purchase; the purchases move it
+ *   levels     {rank, sp} upgrade levels bought this life
+ *   gainH      {rank, sp} exit hours per purchase (exchangeOf perPurchaseH)
+ * Greedy by exit-hours per hash at each exchange's NEXT cost, among those the
+ * capacity can hold; hashes bank until the choice is affordable (saving never
+ * overflows: cost <= capacity). The purchase in progress at the horizon is
+ * credited by the fraction of its cost banked, so the value moves smoothly
+ * with the rate (a level upgrade is worth its share, not 0 or 1 purchase).
+ * Returns {gainH (<= 0), buys: {rank, sp}, endH, partial}.
+ */
+export function exchangeTrajectory({ hashes0 = 0, capacity, ratePerSec, horizonH, levels = {}, gainH = {}, maxBuys = 20000 }) {
+  const out = { gainH: 0, buys: { rank: 0, sp: 0 }, endH: 0, partial: 0 }
+  if (!pos(capacity) || !num(ratePerSec) || ratePerSec < 0 || !num(horizonH) || !(horizonH > 0)) return { ...out, why: 'capacity, rate or horizon unreadable' }
+  const lv = { rank: num(levels.rank) ? levels.rank : 0, sp: num(levels.sp) ? levels.sp : 0 }
+  let h = Math.min(Math.max(0, num(hashes0) ? hashes0 : 0), capacity)
+  let t = 0
+  for (let i = 0; i < maxBuys; i++) {
+    let best = null
+    for (const k of ['rank', 'sp']) {
+      const g = gainH[k]
+      if (!num(g) || !(g < 0)) continue
+      const c = upgradeCost(BLADE_EXCHANGE[k].name, lv[k])
+      if (!(c <= capacity)) continue
+      if (!best || -g / c > -best.g / best.c) best = { k, g, c }
+    }
+    if (!best) break
+    const endH = horizonH + out.gainH
+    const waitH = h >= best.c ? 0 : ratePerSec > 0 ? (best.c - h) / ratePerSec / 3600 : Infinity
+    if (t + waitH >= endH) {
+      const banked = Math.min(best.c, h + (ratePerSec > 0 ? Math.max(0, endH - t) * 3600 * ratePerSec : 0))
+      out.partial = banked / best.c
+      out.gainH += best.g * out.partial
+      t = Math.max(t, endH)
+      break
+    }
+    t += waitH
+    h = Math.max(h, best.c) - best.c
+    lv[best.k]++
+    out.buys[best.k]++
+    out.gainH += best.g
+  }
+  out.endH = t
+  return out
+}
+
+/** Total hash rate and capacity of a server fleet, on the game's model (hacknetplan.hashRate, HacknetServer.updateHashCapacity). */
+export function fleetHashState(servers, mults, nodeMoney) {
+  let rate = 0
+  let capacity = 0
+  for (const s of servers ?? []) {
+    const r = hashRate(s.level, num(s.ramUsed) ? s.ramUsed : 0, s.ram, s.cores, mults?.hacknet_node_money, nodeMoney)
+    if (!num(r)) return null
+    rate += r
+    capacity += hashCapacityOf(num(s.cache) ? s.cache : 1) ?? 0
+  }
+  return { rate, capacity }
+}
+
+/**
+ * THE HACKNET CLAIMANT ON THE BLADEBURNER ROUTE: every capacity purchase
+ * (server, level, RAM, cores — and CACHE, whose capacity decides which
+ * escalating exchange can be banked for) priced as exchangeTrajectory with
+ * it minus without it, greedy by exit-hours per dollar, inside `budget`.
+ * `servers` carry `cache`. Returns {items:[{kind, index, cost, hashGainPerSec,
+ * capGain, deltaH}], cost, deltaH, baseGainH, servers (the fleet after), stoppedBy}.
+ */
+/** Cache steps a server offers in one candidate (planRouteHacknetBatch). */
+const CACHE_RUN = 8
+/** applyServerPurchase, `count` times (a cache run). */
+function applyCount(fleet, c) {
+  let f = fleet
+  for (let i = 0; i < (c.count ?? 1); i++) f = applyServerPurchase(f, c)
+  return f
+}
+
+export function planRouteHacknetBatch({ servers, mults, nodeMoney, hashes = 0, exchange, levels, horizonH, budget = Infinity, maxItems = 200 }) {
+  const out = { items: [], cost: 0, deltaH: 0, baseGainH: null, stoppedBy: null }
+  if (!exchange || !num(exchange.rank?.perPurchaseH) || !num(exchange.sp?.perPurchaseH)) return { ...out, stoppedBy: 'no exchange prices' }
+  const gainH = { rank: exchange.rank.perPurchaseH, sp: exchange.sp.perPurchaseH }
+  let fleet = (servers ?? []).map((s) => ({ ...s, cache: num(s.cache) ? s.cache : 1 }))
+  const stateOf = (f) => fleetHashState(f, mults, nodeMoney)
+  const trajOf = (st) => exchangeTrajectory({ hashes0: hashes, capacity: st.capacity, ratePerSec: st.rate, horizonH, levels, gainH }).gainH
+  let st = stateOf(fleet)
+  if (!st) return { ...out, stoppedBy: "the fleet's hash rate is unreadable" }
+  let g0 = trajOf(st)
+  out.baseGainH = g0
+  let left = num(budget) ? budget : Infinity
+  while (out.items.length < maxItems) {
+    const cands = serverCandidates(fleet, mults, nodeMoney, DOLLARS_PER_HASH)
+    if (!Array.isArray(cands)) return { ...out, stoppedBy: cands.why }
+    // CACHE IN RUNS: one step is often worth nothing alone (live BN7.1: 256
+    // -> 320 hashes still cannot bank the 500-hash second rank exchange; three
+    // steps on one server can), so each server offers 1..CACHE_RUN steps.
+    fleet.forEach((s, i) => {
+      for (let k = 1; k <= CACHE_RUN; k++) {
+        const c = cacheCost(s.cache, k)
+        if (isFinite(c) && c > 0) cands.push({ kind: 'cache', index: i, count: k, cost: c, hashGainPerSec: 0 })
+      }
+    })
+    let best = null
+    for (const c of cands) {
+      if (!(c.cost <= left)) continue
+      const after = applyCount(fleet, c)
+      const s1 = stateOf(after)
+      if (!s1) continue
+      const d = trajOf(s1) - g0
+      if (!(d < -1e-9)) continue
+      if (!best || -d / c.cost > -best.d / best.c.cost) best = { c, d, s1, after }
+    }
+    if (!best) return { ...out, servers: fleet, stoppedBy: out.items.length ? 'nothing else shortens the black-op exit' : 'no purchase shortens the black-op exit' }
+    out.items.push({ kind: best.c.kind, index: best.c.index, ...(best.c.count ? { count: best.c.count } : {}), cost: best.c.cost, hashGainPerSec: best.c.hashGainPerSec, capGain: best.s1.capacity - st.capacity, deltaH: best.d })
+    out.cost += best.c.cost
+    out.deltaH += best.d
+    left -= best.c.cost
+    fleet = best.after
+    st = best.s1
+    g0 += best.d
+  }
+  return { ...out, servers: fleet, stoppedBy: `maxItems ${maxItems}` }
+}
+
+/**
+ * THE SPENDER'S DECISION ON THE BLADEBURNER ROUTE: each exchange's next
+ * purchase on the black-op exit (exchange.perPurchaseH) against SELLING the
+ * same hashes, the sale's money priced at what money buys on this route:
+ *   route.moneyLegs (committedRouteOf: the exit reads income through a route
+ *                purchase) — the sale is unpriced here, so no exchange is
+ *                bought against it: the floor (sell), named
+ *   none       — the money moves the exit only through the hacknet claimant's
+ *                route-priced purchases (sale.perDollarH: hacknet.js's best
+ *                exit-hours per dollar, <= 0; 0 when it buys nothing)
+ * Same tail as decideHashSpend (buy / save / capacity-bound).
+ */
+export function decideBladeHashSpend({ hashes, capacity, exchange, levels = {}, route = null, sale = null, skipped = [] }) {
+  const sellAll = (why, decidedBy, extra = {}) => ({ action: 'sell', count: pos(hashes) ? Math.floor(hashes / 4) : 0, why, decidedBy, skipped, ...extra })
+  if (!num(hashes) || hashes < 0) return { action: 'none', why: 'hash count unreadable', decidedBy: 'refused', skipped }
+  if (!exchange || !num(exchange.baseH)) return sellAll(`the Bladeburner route's exchanges are unpriced (${exchange?.why ?? 'no prices'}): every hash is sold (the floor)`, 'floor')
+  const legs = Array.isArray(route?.moneyLegs) ? route.moneyLegs.filter(Boolean) : []
+  if (legs.length) return sellAll(`the black-op exit reads money (${legs.join('; ')}): a sale is not priced here, so no exchange is bought against it — the floor (sell)`, 'route-unpriced')
+  const perDollarH = num(sale?.perDollarH) && sale.perDollarH < 0 ? sale.perDollarH : 0
+  const exits = []
+  for (const k of ['rank', 'sp']) {
+    const name = BLADE_EXCHANGE[k].name
+    const cost = upgradeCost(name, num(levels[k]) ? levels[k] : 0)
+    const g = exchange[k]?.perPurchaseH
+    if (!pos(cost) || !num(g)) {
+      exits.push({ name, target: null, cost: cost ?? null, why: 'an exit could not be priced' })
+      continue
+    }
+    const money = (cost / 4) * 1e6
+    const withH = exchange.baseH + g
+    const sellH = exchange.baseH + money * perDollarH
+    exits.push({ name, target: null, cost, withH, sellH, deltaH: withH - sellH, perHash: (withH - sellH) / cost, note: `+${BLADE_EXCHANGE[k].value} ${k === 'rank' ? 'rank' : 'skill points'} on the black-op exit (${(g * 60).toFixed(2)} min per purchase); the sale's $${money.toExponential(2)} ${perDollarH < 0 ? `funds the hacknet claimant's route purchases (${(money * perDollarH * 60).toFixed(2)} min)` : 'buys nothing the black-op exit reads (no route money leg, and the hacknet claimant buys nothing that shortens it)'}` })
+  }
+  return chooseSpend(exits, { hashes, capacity, skipped, sellAll, decidedBy: 'route-exit-sim' })
 }

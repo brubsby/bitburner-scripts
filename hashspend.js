@@ -15,6 +15,12 @@
 // where each upgrade's effect sits in the trajectory and what is not
 // simulated (and therefore never bought).
 //
+// ON THE COMMITTED BLADEBURNER ROUTE (splitctl.committedRouteOf, plan.txt)
+// the exit is the black ops: bladePass prices the rank / SP exchanges on it
+// (progress.js's bladeRoute.hashExchange) against selling, the sale's money
+// at what hacknet.js's route-priced purchases make of it
+// (hashplan.decideBladeHashSpend), and publishes the hashes' joint trajectory.
+//
 // WHAT THIS READS, all telemetry files written on home and PULLED here first
 // (it runs anywhere; ns.read is local — invariant C10):
 //   /tel/exitinputs.txt   the trajectory (progress.js)
@@ -37,12 +43,17 @@ import { raiseRam } from 'ramgrow.js'
 import { hasHacknetServers, totalSfLevels } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { bestExitPolicy, spendRuns } from 'exitplan.js'
-import { decideHashSpend, batchIncomeRatio, minSecAfter, maxMoneyAfter, NOT_SIMULATED } from 'hashplan.js'
+import { decideHashSpend, batchIncomeRatio, minSecAfter, maxMoneyAfter, NOT_SIMULATED, BLADE_EXCHANGE, exchangeLevelOf, exchangeOf, bladeHashHorizonH, exchangeTrajectory, decideBladeHashSpend } from 'hashplan.js'
+import { committedRouteOf } from 'splitctl.js'
 import { expectedReward, contractFactionCount, solverStateOf } from 'contractplan.js'
 import { incomeModel } from 'trajectory.js'
 import { covenantActive, COVENANT } from 'sleeveplan.js'
 
 const STATUS = '/tel/hashspend.txt'
+/** progress.js's committed plan: the route (committedRouteOf) and the exchanges' prices on its exit. */
+const PLAN_FILE = '/tel/plan.txt'
+/** hacknet.js's report: the hash rate, and its route-priced purchases (what a sale's money buys there). */
+const HACKNET_FILE = '/tel/hacknet.txt'
 const LOOP_MS = 30000
 /** How many of the batcher's targets are priced for the two server upgrades. */
 const TARGETS = 2
@@ -128,7 +139,22 @@ const freshWithin = (rec, ms) => !!rec && Date.now() - Date.parse(rec.at) < ms
 
 /** One pass: build the options, decide, act, and return the published body. */
 function pass(ns, info) {
-  for (const f of ['/tel/exitinputs.txt', '/tel/batch.txt', '/tel/installgate.txt', '/tel/sleeve.txt', '/tel/ctauto.txt']) pull(ns, f)
+  for (const f of ['/tel/exitinputs.txt', '/tel/batch.txt', '/tel/installgate.txt', '/tel/sleeve.txt', '/tel/ctauto.txt', PLAN_FILE, HACKNET_FILE]) pull(ns, f)
+  // THE COMMITTED ROUTE (splitctl.committedRouteOf, as splitctl uses it): on
+  // the Bladeburner route the exit is the black ops, and every upgrade below
+  // was priced on the World Daemon exit instead (live BN7.1 2026-10-10:
+  // withH = sellH = 2.87e65h for every option, the exchanges refused as
+  // "no Bladeburner on the exit trajectory").
+  const plan = readJson(ns, PLAN_FILE)
+  let route = null
+  try {
+    route = committedRouteOf(plan, { node: info.currentNode })
+  } catch {
+    route = null
+  }
+  // The exchanges' levels this life (the next price, HashUpgrade.getCost), published for hacknet.js's trajectory.
+  const exchangeLevels = { rank: exchangeLevelOf(ns.hacknet.hashCost(BLADE_EXCHANGE.rank.name, 1)), sp: exchangeLevelOf(ns.hacknet.hashCost(BLADE_EXCHANGE.sp.name, 1)) }
+  if (route?.key === 'blade') return bladePass(ns, info, { plan, route, exchangeLevels })
   const record0 = readJson(ns, '/tel/exitinputs.txt')
   const batch = readJson(ns, '/tel/batch.txt')
   const gate = readJson(ns, '/tel/installgate.txt')
@@ -139,6 +165,7 @@ function pass(ns, info) {
   const player = ns.getPlayer()
   const options = []
   const skipped = Object.entries(NOT_SIMULATED).map(([name, why]) => ({ name, why }))
+  for (const x of Object.values(BLADE_EXCHANGE)) skipped.push({ name: x.name, why: `the committed route is not Bladeburner (${plan?.decisions?.bladeRoute?.key ?? 'no route decided'}): rank and skill points move only the black-op exit` })
   const finalWindow = record0?.finalWindow === true
 
   // --- the batcher's targets: Increase Maximum Money / Reduce Minimum Security
@@ -225,7 +252,37 @@ function pass(ns, info) {
 
   const decision = decideHashSpend({ hashes, capacity, record: record0, lastAugReset: info.lastAugReset, fns: { bestExitPolicy, spendRuns, incomeModel }, options, skipped, covenant, baseEffect })
   const did = act(ns, decision, hashes)
-  return { result: 'decided', lastAugReset: info.lastAugReset, bitNode: info.currentNode, hashes, capacity, studyMult, trainingMult, contractLevel, decision, did }
+  return { result: 'decided', lastAugReset: info.lastAugReset, bitNode: info.currentNode, hashes, capacity, studyMult, trainingMult, exchangeLevels, route: { key: route?.key ?? 'hack' }, contractLevel, decision, did }
+}
+
+/**
+ * ONE PASS ON THE BLADEBURNER ROUTE: the exchanges on the black-op exit
+ * (progress.js's bladeRoute.hashExchange) against selling, the sale priced at
+ * what money buys on the route (hacknet.js's route-priced purchases); and the
+ * joint trajectory of the hashes still to come (hashplan.exchangeTrajectory),
+ * published as what this node's hashes are worth on the exit.
+ */
+function bladePass(ns, info, { plan, route, exchangeLevels }) {
+  const hashes = ns.hacknet.numHashes()
+  const capacity = ns.hacknet.hashCapacity()
+  const br = plan?.decisions?.bladeRoute ?? null
+  const exchange = exchangeOf(plan, { node: info.currentNode })
+  const skipped = Object.entries(NOT_SIMULATED).map(([name, why]) => ({ name, why }))
+  skipped.push({ name: 'Increase Maximum Money / Reduce Minimum Security / Improve Studying / Generate Coding Contract', why: `the committed route is Bladeburner (${route.why}): its exit reads no batcher income${route.moneyLegs?.length ? ' beyond its money legs' : ''}, hacking exp or faction reputation` })
+  skipped.push({ name: 'Improve Gym Training', why: "not simulated on the black-op exit: its gym leg is the retrain after an install (the route start's gymExpPerSec)" })
+  const hn = readJson(ns, HACKNET_FILE)
+  const hnOk = !!hn && hn.lastAugReset === info.lastAugReset && freshWithin(hn, 10 * 60e3)
+  const perDollarH = hnOk && fin(hn.route?.perDollarH) ? hn.route.perDollarH : 0
+  const sale = { perDollarH, why: hnOk && hn.route ? `hacknet.js's best route purchase per dollar (${hn.route.best?.kind ?? 'none'})` : 'no fresh route record from hacknet.js: the sale funds nothing priced on this exit' }
+  const ratePerSec = hnOk && fin(hn.hashesPerSec) ? hn.hashesPerSec : null
+  const horizonH = bladeHashHorizonH(br)
+  const trajectory = fin(exchange.baseH) && fin(ratePerSec) && fin(horizonH) && exchangeLevels.rank !== null && exchangeLevels.sp !== null ? exchangeTrajectory({ hashes0: hashes, capacity, ratePerSec, horizonH, levels: exchangeLevels, gainH: { rank: exchange.rank.perPurchaseH, sp: exchange.sp.perPurchaseH } }) : { why: !fin(exchange.baseH) ? exchange.why : !fin(ratePerSec) ? 'no fresh hash rate from hacknet.js' : !fin(horizonH) ? 'no exit horizon on the route' : 'exchange levels unreadable' }
+  const decision = decideBladeHashSpend({ hashes, capacity, exchange, levels: exchangeLevels, route, sale, skipped })
+  const did = act(ns, decision, hashes)
+  // The contract level, as the hacking route publishes it (progress.js's contract stream reads it).
+  const cc = ns.hacknet.hashCost('Generate Coding Contract', 1)
+  const contractLevel = fin(cc) && cc > 0 ? Math.round(cc / 25) - 1 : null
+  return { result: 'decided', lastAugReset: info.lastAugReset, bitNode: info.currentNode, hashes, capacity, exchangeLevels, contractLevel, route: { key: route.key, exitH: route.exitH, why: route.why, moneyLegs: route.moneyLegs, horizonH, ratePerSec, sale, exchange: fin(exchange.baseH) ? { at: exchange.at, baseH: exchange.baseH, n: exchange.n, rankPerPurchaseH: exchange.rank.perPurchaseH, spPerPurchaseH: exchange.sp.perPurchaseH } : { why: exchange.why } }, trajectory, decision, did }
 }
 
 /** Carry the decision out, and read the hash count back — the signal the call itself did not produce. */
