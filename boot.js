@@ -563,6 +563,17 @@ const STACK = [
     why: 'watchdog-triggered every 10 min where sleeves exist. Buys sleeve augmentations (baseCost, no x1.9, kept for the whole node) when a batch saves more hours on the sleeve\'s channel than its price takes to earn; ~37GB only while it runs (also Covenant sleeves and memory)',
   },
   {
+    // STANEK'S GIFT. Tier 128: SF9.2 opens every node at 128GB, so this is
+    // admitted from a BN13 entry's first boot; act.js's gate holds every
+    // forfeiting order until the accept, whenever this first runs.
+    script: 'stanek.js',
+    where: 'home',
+    kind: 'job',
+    tier: 128,
+    rank: 35,
+    why: 'watchdog-triggered every 5 min where the Church is reachable (BN13 / SF13). Accepts Stanek\'s Gift at the node\'s start (before any non-NeuroFlux augmentation — act.js refuses those until then), places the layout and keeps charge.js (2.0GB/thread, f x home RAM, the plan\'s priced allocation) running; ~19.5GB only while it runs',
+  },
+  {
     script: 'share.js',
     where: 'anywhere',
     tier: 128,

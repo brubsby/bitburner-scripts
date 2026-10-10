@@ -273,6 +273,19 @@ with reasons, rates, ascensions, purchases, refusals). Nothing can start until
 home reaches the Singularity allocation (~1.3TB at SF4.1, ~9h in BN5) — the
 join needs it. Exit bar in BN2 is hacking 15,000; faction rep is halved.
 
+**BitNode 13 plan (Stanek's Gift).** The accept is per node, at its start:
+`canAcceptStaneksGift` needs nothing but NeuroFlux installed OR queued, so the
+first non-NFG purchase blocks it and the first such install forfeits it.
+`stanek.js` (watchdog job, home, 19.5GB transient, `canAccessFeature(13)`)
+accepts, places `stanekplan.LAYOUTS` (BN13 grids tabled), launches `charge.js`
+(2.0GB/thread) at f x home RAM and publishes `/tel/stanek.txt`. act.js's
+`runActor` and order loop refuse every non-NFG buyaug / graft / install while
+the gift is unaccepted (`stanekplan.giftOrderGate`, fresh getResetInfo).
+progress.js prices f by the exit (`decisions.stanek`, `chargeInputsOf` per
+option) and the accepted gift pins the hacking route (`routepin.giftPinOf`).
+batch.js keeps the charger's shortfall free on home (`stanekHoldGb`). Health:
+GIFT NOT ACCEPTED / FRAGMENTS NOT CHARGING / STANEK STALE. Tests: SG1-SG7.
+
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with
 `actplan.js` and runs ONE single-call actor at a time — `act-join/work/crime/gym/

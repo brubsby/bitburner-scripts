@@ -107,7 +107,7 @@ const SCHEDULE = '/tel/factionplan.txt'
  */
 const WD_BASE_HACKING = 3000
 
-import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting, canJoinBladeburner, hasHacknetServers } from 'sfgate.js'
+import { canUseSingularity, singularityRamMultiplier, totalSfLevels, canUseGang, sfLevel, canUseGrafting, canJoinBladeburner, hasHacknetServers, canAccessCotMG } from 'sfgate.js'
 import { bladeExchangeGen } from 'hashplan.js'
 import { chooseGraftsGen, graftCandidatesOf, committedGraftsOf, graftInputsOf, inProgressSpecsOf, sameGraftSet, sameGraftSchedule, graftsOfLifeNow, graftsOffBatch, graftBatchCheckOf, GRAFT_CITY } from 'graftplan.js'
 import { GANG_FACTIONS, gangRepAt, hoursToGangRep, KARMA_FOR_GANG, simulateGangGen, trainRatio } from 'gangplan.js'
@@ -179,7 +179,8 @@ import { enter, leave, pageBoot } from 'trace.js'
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
-import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
+import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, progressBlockGb, STANEK_FILE } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2984,6 +2985,85 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
 }
 
 /**
+ * STANEK'S CHARGING ALLOCATION, DECIDED BY THE EXIT. Where the gift is
+ * accepted (BN13 at the node's start, stanek.js), charge.js holds a fraction
+ * f of home RAM that the batcher then cannot use. Each option f in
+ * stanekplan.ALLOC_GRID that home can hold beside progress.js's block is a
+ * trajectory: the SAME exit inputs (exitInputsOf, one builder) scaled by what
+ * f does to them — the gift's life-average multipliers at f's threads (the
+ * charges clear at every install and regrow, so every life repeats them) and
+ * the batcher's RAM lost — relative to the f the inputs were measured under,
+ * then the exit simulator (trajectoryGenOf on the committed install basis).
+ * The decision is the fastest exit (stanekplan.chooseAlloc: the incumbent kept
+ * within 0.1h); stanek.js sizes the charger from decisions.stanek.f.
+ * Re-priced at most every STANEK_REPRICE_MS within a life (each option is a
+ * policy search). NOT SIMULATED (published): home growing within the node,
+ * the Church's rep -> Awakening/Serenity, bonus time, batcher income not
+ * linear in its RAM. Never throws (planDecide records a throw).
+ */
+const STANEK_REPRICE_MS = 15 * 60e3
+async function stanekDecisionOf(ns, info, inputsFn) {
+  const pc = planCtxOf(ns, info)
+  const gift = giftStateOf(info, canAccessCotMG(info))
+  if (!gift.accepted) {
+    pc.decisions.stanek = { key: null, f: null, why: `no charging to price: ${gift.why}`, held: false }
+    return pc.decisions.stanek
+  }
+  const prev = pc.prev?.lastAugReset === info?.lastAugReset ? pc.prev?.decisions?.stanek ?? null : null
+  if (typeof prev?.f === 'number' && Date.now() - Date.parse(prev.decidedAt ?? '') < STANEK_REPRICE_MS) {
+    pc.decisions.stanek = prev
+    return prev
+  }
+  const st = readJson(ns, STANEK_FILE)
+  const homeGB = st?.charger?.homeMax
+  const cores = st?.charger?.cores
+  if (!st || st.node !== info?.currentNode || !Array.isArray(st.layout?.placed) || !st.layout.placed.length || !(homeGB > 0) || !(cores >= 1)) {
+    pc.decisions.stanek = { key: null, f: null, why: `${STANEK_FILE} has no placed layout and charger of this node — stanek.js has not run since the accept (the charger runs at its default meanwhile)`, held: false }
+    return pc.decisions.stanek
+  }
+  const fleetGB = readJson(ns, '/tel/batch.txt')?.ram?.total
+  if (!(fleetGB > 0)) {
+    pc.decisions.stanek = { key: null, f: null, why: "the batcher's fleet RAM (/tel/batch.txt ram.total) is unknown — the RAM side of the trade cannot be priced", held: false }
+    return pc.decisions.stanek
+  }
+  const live = st.lastAugReset === info?.lastAugReset
+  const fNow = live && st.charger.gb > 0 ? st.charger.gb / homeGB : 0
+  const reserveGb = progressBlockGb(singularityRamMultiplier(info))
+  return planDecide(pc, 'stanek', function* () {
+    const t0 = Date.now()
+    const base = { ...inputsFn() }
+    yield
+    const cycleH = base.cycleHours
+    if (!(cycleH > 0)) return { key: null, f: null, why: 'cycleHours unknown in the exit inputs — the life the charge regrows over is unpriced' }
+    const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, homeGB, cores, fleetGB, fNow, cycleH }
+    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const tg = trajectoryGenOf(basis, { count: null, repPoint: pc.repPoint ?? null })
+    const priced = []
+    for (const f of allocOptionsOf(homeGB, reserveGb)) {
+      const h = yield* tg(chargeInputsOf(base, ctx, f))
+      priced.push({ f, hours: typeof h === 'number' && isFinite(h) ? +h.toFixed(3) : null })
+      yield
+    }
+    const c = chooseAlloc(priced, typeof prev?.f === 'number' ? prev.f : null)
+    const without = priced.find((p) => p.f === 0)?.hours ?? null
+    return {
+      key: c.f === null ? null : `f=${c.f}`,
+      f: c.f,
+      why: c.why,
+      withH: c.hours,
+      withoutH: without,
+      deltaH: typeof c.hours === 'number' && typeof without === 'number' ? +(c.hours - without).toFixed(3) : null,
+      priced,
+      ctx: { homeGB, cores, fleetGB, fNow: +fNow.toFixed(4), cycleH: +cycleH.toFixed(3), nodePower: ctx.nodePower, reserveGb },
+      basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
+      decidedAt: new Date().toISOString(),
+      notSimulated: 'home RAM growing within the node (more threads later), the Church rep -> Awakening/Serenity, bonus time, batcher income not linear in its RAM — the first two favour charging',
+      ms: Date.now() - t0,
+    }
+  })
+}
+
+/**
  * The committed grafts as exit inputs for EVERY decision this pass (the plan
  * is one trajectory: an install decision that did not know the node will be
  * finished by grafting would keep installing past the window grafting makes
@@ -4119,6 +4199,8 @@ function publishPlan(ns, info, extra = {}) {
         grafts: pc.decisions.grafts ?? pc.prev?.decisions?.grafts ?? null,
         // The 4S TIX API (fourSDecisionOf): stock.js buys on 'now'. Carried when this pass did not reach it.
         fourS: pc.decisions.fourS ?? pc.prev?.decisions?.fourS ?? null,
+        // STANEK'S CHARGING ALLOCATION (stanekDecisionOf): stanek.js sizes charge.js from f. Carried when not re-priced.
+        stanek: pc.decisions.stanek ?? pc.prev?.decisions?.stanek ?? null,
         // THE LATER LIVES' LENGTH (lifeLengthDecisionOf): every decision
         // above prices it. The node's commitment — carried across installs
         // and through a pass that did not reach it.
@@ -7240,7 +7322,10 @@ async function act(ns, canJoin, info, note) {
   // (ns.read is 0GB), published every pass in /tel/progress.txt `route`.
   const routePin = (() => {
     try {
-      return routePinOf(ns.read(ROUTE_PIN), info?.currentNode ?? null)
+      // STANEK'S GIFT ACCEPTED: the gameplan's 'stanek' route is the hacking
+      // route + gift (the Bladeburner route with the gift is NOT PRICED,
+      // tools/sim/gameplan/routes.mjs), so the gift pins 'hack' where no file does.
+      return giftPinOf(routePinOf(ns.read(ROUTE_PIN), info?.currentNode ?? null), giftStateOf(info, canAccessCotMG(info)))
     } catch (e) {
       return { pinned: false, file: ROUTE_PIN, warn: `the route pin could not be read: ${String(e).slice(0, 120)}`, why: 'pin unread' }
     }
@@ -7347,6 +7432,8 @@ async function act(ns, canJoin, info, note) {
   // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
   const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info), offers, allCount, player)) : null
   const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)
+  // STANEK'S CHARGING ALLOCATION, on the same inputs (stanekDecisionOf): only where the gift is accepted.
+  if (giftStateOf(info, canAccessCotMG(info)).accepted) await stanekDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))
   if (fourSHold.why && !fourSHold.hold) todo.push(fourSHold.why)
   if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
   const graftStep = (() => {

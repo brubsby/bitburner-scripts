@@ -234,6 +234,13 @@ export const canBuy4SData = (resetInfo) => optionOff(resetInfo, 'disable4SData')
 export const STANEKS_GIFT = "Stanek's Gift - Genesis" // Augmentation/Enums.ts:126
 export const hasStaneksGift = (resetInfo) => !!resetInfo?.ownedAugs?.has(STANEKS_GIFT)
 
+/**
+ * The Church of the Machine God can be reached at all — the gift ACQUIRED:
+ * Player.canAccessCotMG = canAccessBitNodeFeature(13) (PlayerObjectGeneralMethods.ts:603,
+ * CotMG/Helper.tsx canAcceptStaneksGift). In BN13, or SF13 held.
+ */
+export const canAccessCotMG = (resetInfo) => canAccessFeature(resetInfo, 13)
+
 /** ns.getBitNodeMultipliers() — lets a script read what it otherwise hardcodes. */
 export const canReadBitNodeMultipliers = (resetInfo) => canAccessFeature(resetInfo, 5)
 

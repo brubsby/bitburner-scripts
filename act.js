@@ -34,7 +34,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // hashes (Hacknet/formulas/HacknetServers.ts:14), so an actor lands there only
 // when no other rooted host has the room.
 import { hacknetLast } from 'hacknetplan.js'
-import { canUseSingularity, canUseGang, canJoinBladeburner } from 'sfgate.js'
+import { canUseSingularity, canUseGang, canJoinBladeburner, canAccessCotMG } from 'sfgate.js'
 import { SNAPSHOTS, SNAPSHOT_ORDER, readSnapshot } from 'snapshot.js'
 import { nextHomeUpgrade } from 'homecost.js'
 import { enter, leave } from 'trace.js'
@@ -44,6 +44,7 @@ import { bootstrapHomeStep, stockRecordFromText, raiseToServe, raiseFileOf, RAIS
 // Pure: can the Bladeburner claim be exercised (actplan's lend), and the server that unblocks it.
 import { bladeSlotStallOf, LITE_FILE, BB_FILE, LITE_COORD_GB, LITE_ACTOR_GB } from 'bbliteplan.js'
 import { BB_HOST, cloudCostOf } from 'raiseplace.js'
+import { giftStateOf, giftOrderGate } from 'stanekplan.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -191,6 +192,15 @@ function fetchFromHome(ns, file) {
 async function runActor(ns, kind, args) {
   const actor = ACTORS[kind]
   if (!actor) return { ran: false, why: `no actor for ${kind}` }
+  // THE STANEK GATE AT THE CHOKE POINT: every buyaug / graft / install this
+  // process runs — the planner's orders, the softlock escape, the bootstrap —
+  // passes here, so none can block or forfeit Stanek's Gift before it is
+  // accepted (stanekplan.giftOrderGate; the gift read fresh from the game).
+  if (kind === 'buyaug' || kind === 'graft' || kind === 'install') {
+    const ri = ns.getResetInfo()
+    const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri)), { kind, args })
+    if (!gate.allow) return { ran: false, ok: false, why: gate.why, stanekGate: 'refused' }
+  }
   const actorArgs = kind === 'tor' ? ['tor'] : kind === 'program' ? ['program', ...args] : args
   const price = ns.getScriptRam(actor, 'home')
   const hosts = rootedHosts(ns)
@@ -488,6 +498,28 @@ export async function main(ns) {
             results.push({ id: o.id, kind: o.kind, args: o.args, skipped: `an earlier purchase in the chain failed (${chainFailed})` })
             continue
           }
+          // THE STANEK GATE (stanekplan.giftOrderGate), before ANY augmentation
+          // enters the queue or the installed set: in a node the stack accepts
+          // Stanek's Gift in, while it is not accepted and still can be, a
+          // non-NeuroFlux buyaug, a graft or an install would block or forfeit
+          // it for the whole node (canAcceptStaneksGift: nothing but NFG
+          // installed or queued). Refused here whoever wrote the order; the
+          // gift's state is read FRESH from the game (acceptGift installs
+          // Genesis at once), never from stanek.js's record. A refused purchase
+          // breaks the chain like any failed one; an install stops the batch.
+          // Forfeited already: not blocked (nothing left to save), flagged on
+          // the result — /tel/stanek.txt and the health check fail loud.
+          if (o.kind === 'buyaug' || o.kind === 'graft' || o.kind === 'install') {
+            const ri = ns.getResetInfo()
+            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri)), o)
+            if (!gate.allow) {
+              results.push({ id: o.id, kind: o.kind, args: o.args, skipped: gate.why, stanekGate: 'refused' })
+              if (CHAIN.has(o.kind)) chainFailed = gate.why.slice(0, 160)
+              if (o.kind === 'install') break
+              continue
+            }
+            if (gate.forfeited) o.stanekGate = gate.why
+          }
           if (o.kind === 'install') {
             // THE MANUAL HOLD (progress.js's gate honours it too; this catches
             // a batch written before the file appeared).
@@ -592,7 +624,7 @@ export async function main(ns) {
           if (o.kind === 'join' && results.some((x) => (x.kind === 'liquidate' || x.kind === 'travel') && x.ok === true)) await ns.sleep(INVITE_WAIT_MS)
           const r = await runActor(ns, o.kind, o.args)
           if (r.ok === true && STARTS_WORK.has(o.kind)) workState.startedAt = Date.now()
-          results.push({ id: o.id, kind: o.kind, args: o.args, why: o.why, ...r })
+          results.push({ id: o.id, kind: o.kind, args: o.args, why: o.why, ...r, ...(o.stanekGate ? { stanekGate: o.stanekGate } : {}) })
           if (CHAIN.has(o.kind) && r.ok !== true) chainFailed = `${o.kind}${o.kind === 'liquidate' ? ' ' + (o.args ?? []).join(' ') : ''}: ${String(r.result?.error ?? r.result?.refused ?? r.why ?? 'not ok').slice(0, 160)}`
           if (o.kind === 'buyaug' && r.ok === true) bought++
           if (r.ok === true && ['gym', 'crime', 'work', 'company'].includes(o.kind)) lastWork = { kind: o.kind, args: o.args, at: r.result?.at ?? new Date().toISOString(), batchAt: batch.at }

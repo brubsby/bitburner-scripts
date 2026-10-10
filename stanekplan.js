@@ -633,3 +633,294 @@ export function bestNodeModel(o) {
   }
   return best
 }
+
+// ===========================================================================
+// THE IN-GAME SURFACE: what stanek.js (accept, place, launch the charger),
+// charge.js (the 2.0GB worker), act.js (the purchase gate), progress.js (the
+// charging allocation, priced by the exit), batch.js (the home hold) and
+// tools/healthcheck.mjs read. Still pure: no ns.
+// ===========================================================================
+export const STANEK_FILE = '/tel/stanek.txt'
+export const CHARGE_FILE = '/tel/charge.txt'
+export const NFG = 'NeuroFlux Governor'
+export const GENESIS = "Stanek's Gift - Genesis" // Augmentation/Enums.ts (sfgate.STANEKS_GIFT)
+
+/**
+ * WHERE THE STACK ACCEPTS THE GIFT (policy, stated): BitNode 13 — the user's
+ * choice (2026-10-10, BN13 after BN7.1) and the gameplan's 'stanek' route there
+ * (hacking route + gift, tools/sim/gameplan/routes.mjs). Elsewhere with SF13 the
+ * gameplan prices the gift per node and nothing in-game reads that pricing yet:
+ * stanek.js publishes `want: false` with that reason and never accepts there.
+ */
+export const GIFT_NODES = new Set([13])
+
+const namesOf = (owned) => (owned == null ? [] : typeof owned.keys === 'function' ? [...owned.keys()] : Array.isArray(owned) ? owned.map((x) => x?.name ?? x) : Object.keys(owned))
+
+/**
+ * The gift's state from ns.getResetInfo() (ownedAugs = the INSTALLED set; acceptGift
+ * applies Genesis as installed at once — NetscriptFunctions/Stanek.ts acceptGift ->
+ * applyAugmentation — so a fresh getResetInfo after the accept reads it).
+ *   available  Player.canAccessCotMG: in BN13 or SF13 held (BitNodeUtils.ts:17) — the caller
+ *              passes sfgate.canAccessCotMG(resetInfo)
+ *   want       available AND this node is one the stack accepts in (GIFT_NODES)
+ *   accepted   Genesis installed
+ *   forfeited  not accepted and a non-NeuroFlux augmentation INSTALLED: canAcceptStaneksGift
+ *              (CotMG/Helper.tsx) can never pass again in this node. A QUEUED non-NFG aug
+ *              blocks it too — invisible here (getResetInfo has no queue); stanek.js reads
+ *              it from acceptGift's refusal.
+ */
+export function giftStateOf(resetInfo, available) {
+  // The capability rule lives in sfgate.js (canAccessCotMG); the caller passes it. A
+  // missing answer throws: "could not tell" must never read as "no Church here".
+  if (typeof available !== 'boolean') throw new Error('giftStateOf(resetInfo, available): pass sfgate.canAccessCotMG(resetInfo)')
+  const node = resetInfo?.currentNode ?? null
+  const names = namesOf(resetInfo?.ownedAugs)
+  const accepted = names.includes(GENESIS)
+  const blocking = accepted ? [] : names.filter((n) => n !== NFG)
+  const want = available && GIFT_NODES.has(node)
+  return {
+    node,
+    available,
+    want,
+    accepted,
+    forfeited: !accepted && blocking.length > 0,
+    blocking,
+    why: !available
+      ? 'no access to the Church (not BitNode 13, no Source-File 13)'
+      : !want
+        ? `BitNode ${node} is not one the stack accepts the gift in (stanekplan.GIFT_NODES: ${[...GIFT_NODES].join(', ')}) — the gameplan prices it per node and nothing in-game reads that yet`
+        : accepted
+          ? `accepted (${GENESIS} installed)`
+          : blocking.length
+            ? `FORFEITED: ${blocking.length} non-NeuroFlux augmentation(s) installed (${blocking.slice(0, 3).join(', ')}) — canAcceptStaneksGift can never pass in this node`
+            : 'not accepted yet — acceptable (nothing but NeuroFlux installed)',
+  }
+}
+
+/**
+ * THE PURCHASE GATE (act.js runs it on every buyaug / graft / install order). In a
+ * node the stack accepts the gift in, while the gift is not accepted and can still
+ * be, every order that would put a non-NeuroFlux augmentation into the installed or
+ * queued set is REFUSED: a queued one blocks acceptGift (canAcceptStaneksGift reads
+ * installed + queued), an installed one forfeits it for the node, a graft installs
+ * at once. The install is refused too: with nothing but NFG queued it buys nothing
+ * the accept could not wait for; with anything else queued it IS the forfeit.
+ * Forfeited already: NOT blocked (a block can no longer save the gift and would
+ * stall the node) but flagged — act.js publishes it and the health check fails.
+ * Returns { allow, why, forfeited }.
+ */
+export function giftOrderGate(state, order) {
+  const kind = order?.kind
+  if (!['buyaug', 'graft', 'install'].includes(kind)) return { allow: true, why: null, forfeited: false }
+  if (!state?.want || state.accepted) return { allow: true, why: null, forfeited: false }
+  if (state.forfeited) return { allow: true, forfeited: true, why: `GIFT FORFEITED (${state.why}) — the ${kind} order is not blocked: the gift can no longer be accepted in this node` }
+  const aug = kind === 'buyaug' ? String(order?.args?.[1] ?? '') : kind === 'graft' ? String(order?.args?.[0] ?? '') : null
+  if (kind === 'buyaug' && aug === NFG) return { allow: true, why: 'NeuroFlux Governor never blocks the gift', forfeited: false }
+  return {
+    allow: false,
+    forfeited: false,
+    why: `STANEK GATE: Stanek's Gift is not accepted yet in BitNode ${state.node} — ${kind}${aug ? ` '${aug}'` : ''} refused: ${kind === 'install' ? 'an install before the accept forfeits the gift for the node (or buys nothing)' : 'a non-NeuroFlux augmentation queued or grafted blocks acceptGift (canAcceptStaneksGift) and, installed, forfeits it for the node'}; stanek.js accepts it (${STANEK_FILE})`,
+  }
+}
+
+/**
+ * THE LAYOUTS SHIPPED: optimiseLayout at the gameplan's design point (stanek.mjs
+ * layoutFor: LAYOUT_HG 2.5, LAYOUT_F 0.2, LAYOUT_N 1000, mid world, budget 4e5 — best
+ * found, not proved optimal past 5x5), keyed `${width}x${height}|${nodePower}`.
+ * Precomputed because the search takes ~0.5s, which in-game would block the page.
+ * BitNode 13 (extra size 1, power 2) at SF13 0..3. tools/test/stanekgame.test.mjs
+ * (SG2) re-derives every entry from layoutFor and places each legally.
+ */
+export const LAYOUTS = {
+  '6x5|2': [{ id: 5, x: 0, y: 0, rot: 0 }, { id: 105, x: 2, y: 0, rot: 2 }, { id: 1, x: 4, y: 0, rot: 1 }, { id: 0, x: 0, y: 1, rot: 1 }, { id: 107, x: 2, y: 2, rot: 0 }, { id: 25, x: 4, y: 2, rot: 3 }, { id: 7, x: 0, y: 3, rot: 0 }],
+  '6x6|2': [{ id: 0, x: 0, y: 0, rot: 1 }, { id: 103, x: 1, y: 0, rot: 2 }, { id: 25, x: 3, y: 0, rot: 2 }, { id: 100, x: 0, y: 2, rot: 3 }, { id: 1, x: 2, y: 2, rot: 0 }, { id: 101, x: 4, y: 2, rot: 1 }, { id: 7, x: 0, y: 4, rot: 0 }, { id: 5, x: 2, y: 4, rot: 0 }],
+  '7x6|2': [{ id: 0, x: 0, y: 0, rot: 1 }, { id: 1, x: 1, y: 0, rot: 0 }, { id: 103, x: 3, y: 0, rot: 0 }, { id: 5, x: 3, y: 1, rot: 1 }, { id: 101, x: 0, y: 2, rot: 3 }, { id: 105, x: 2, y: 2, rot: 1 }, { id: 25, x: 5, y: 2, rot: 1 }, { id: 105, x: 1, y: 3, rot: 1 }, { id: 7, x: 5, y: 3, rot: 3 }],
+  '7x7|2': [{ id: 0, x: 0, y: 0, rot: 1 }, { id: 5, x: 1, y: 0, rot: 0 }, { id: 25, x: 4, y: 0, rot: 2 }, { id: 102, x: 2, y: 1, rot: 0 }, { id: 100, x: 0, y: 2, rot: 3 }, { id: 1, x: 3, y: 2, rot: 1 }, { id: 101, x: 5, y: 2, rot: 1 }, { id: 101, x: 5, y: 3, rot: 3 }, { id: 105, x: 0, y: 4, rot: 0 }, { id: 105, x: 2, y: 4, rot: 0 }],
+}
+/** The design point (stanek.mjs layoutFor at the mid world): weights' inputs and the charge factor c. FIXED, stated. */
+export const LAYOUT_DESIGN = { Hg: 2.5, epsM: 0.09, epsR: 0.12, c: 0.30363672076297643 }
+/** In-game fallback search budget for a grid not tabled (~20ms; the result says best-found). */
+export const LAYOUT_FALLBACK_BUDGET = 2e4
+
+/** The layout for a grid: the shipped table, else a bounded search (`source` says which). */
+export function layoutForGrid(width, height, nodePower) {
+  const key = `${width}x${height}|${nodePower}`
+  if (LAYOUTS[key]) return { placed: LAYOUTS[key], key, source: 'tabled (stanekplan.LAYOUTS)' }
+  const o = optimiseLayout({ width, height, weights: hackWeights(LAYOUT_DESIGN), c: LAYOUT_DESIGN.c, nodePower, budget: LAYOUT_FALLBACK_BUDGET })
+  return { placed: o.placed, key, source: `searched in-game (${o.nodes} nodes, ${o.exact ? 'exact' : 'best found within the budget'}) — not tabled` }
+}
+
+/** Is the gift's active set exactly this layout? active: ns.stanek.activeFragments() ({id, x, y, rotation}). */
+export function sameLayout(active, placed) {
+  if (!Array.isArray(active) || active.length !== placed.length) return false
+  const k = (id, x, y, r) => `${id}@${x},${y},${r}`
+  const a = new Set(active.map((f) => k(f.id, f.x, f.y, f.rotation ?? f.rot)))
+  return placed.every((p) => a.has(k(p.id, p.x, p.y, p.rot)))
+}
+
+/** The fragments the charger charges: every placed non-booster's root [x, y]. */
+export const chargeRootsOf = (placed) => placed.filter((p) => fragmentById(p.id)?.type !== TYPE.Booster).map((p) => [p.x, p.y])
+
+// ---------------------------------------------------------------------------
+// THE CHARGING ALLOCATION, PRICED BY THE EXIT (progress.js stanekDecisionOf)
+// ---------------------------------------------------------------------------
+/**
+ * The two trajectories of each comparison: the exit with the charger holding a
+ * fraction f of home RAM vs the exit at another f (f = 0: no charging) — each the
+ * SAME exit inputs (progress.js exitInputsOf) scaled by what f does to them, then the
+ * exit simulator (plan.trajectoryGenOf). What f does, per life (charges clear at every
+ * install and regrow, so every life repeats it):
+ *   the gift   life-average multipliers at T = threadsOf(f x homeGB, cores) threads and
+ *              numCharge growing tau/k per fragment (round robin, one 1s call each) over
+ *              the life's quadrature (nodeModel's), duty ALLOC_DUTY
+ *   the RAM    the batcher loses f x homeGB of fleetGB: income and exp x (1 - f homeGB/fleetGB)
+ *   channels   income x speed x hacking (chance) / (a/money + (1-a)/grow);  exp x hacking_exp
+ *              x speed;  rep x faction_rep x hacking (hacking work rep is linear in the
+ *              level, reputation.ts);  hackingMult x hacking (the exit level)
+ * Relative to the f the inputs were MEASURED under (fNow), so the option f = fNow
+ * prices the measured inputs exactly.
+ * NOT SIMULATED (stated, published): home RAM growing within the node (more threads
+ * later: favours charging), the Church's rep -> Awakening/Serenity (favours charging),
+ * bonus time, the batcher's income not being linear in its RAM.
+ */
+export const ALLOC_GRID = [0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5]
+/** The charger's duty in the live pricing (stated: restarts and the first minutes of a life). */
+export const ALLOC_DUTY = 0.9
+
+export function chargeLnOf({ layout, nodePower, homeGB, cores, fleetGB, f, cycleH, duty = ALLOC_DUTY, a = HACK_SHARE }) {
+  const cl = compileLayout(layout)
+  const ff = Math.max(0, f)
+  const T = threadsOf(ff * homeGB, cores)
+  const tau = Math.max(0, cycleH) * 3600 * duty
+  const batchLoss = fleetGB > 0 ? Math.min(0.99, (ff * homeGB) / fleetGB) : 0
+  const quad = [0.125, 0.375, 0.625, 0.875]
+  let inc = 0
+  let exp = 0
+  let rep = 0
+  let lnH = 0
+  for (const q of quad) {
+    const m = multsAt(cl, chargeFactor(T, (q * tau) / cl.k), nodePower)
+    inc += (Math.log(m.hacking_speed) + Math.log(m.hacking) - Math.log(a / m.hacking_money + (1 - a) / m.hacking_grow)) / quad.length
+    exp += (Math.log(m.hacking_exp) + Math.log(m.hacking_speed)) / quad.length
+    rep += (Math.log(m.faction_rep) + Math.log(m.hacking)) / quad.length
+    lnH += Math.log(m.hacking) / quad.length
+  }
+  const lnRam = Math.log(1 - batchLoss)
+  return { threads: T, gb: Math.floor((ff * homeGB) / STANEK.ramPerThread) * STANEK.ramPerThread, batchLoss, lnIncome: inc + lnRam, lnExp: exp + lnRam, lnRep: rep, lnHack: lnH }
+}
+
+/** The exit inputs at charging fraction f, from inputs measured at ctx.fNow (see above). */
+export function chargeInputsOf(base, ctx, f) {
+  const at = chargeLnOf({ ...ctx, f })
+  const now = chargeLnOf({ ...ctx, f: ctx.fNow ?? 0 })
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  const sc = (x, d) => (fin(x) ? x * Math.exp(d) : x)
+  const dI = at.lnIncome - now.lnIncome
+  const dE = at.lnExp - now.lnExp
+  const out = {
+    ...base,
+    incomePerSec: sc(base.incomePerSec, dI),
+    expPerSec: sc(base.expPerSec, dE),
+    repPerSec: sc(base.repPerSec, at.lnRep - now.lnRep),
+    hackingMult: sc(base.hackingMult, at.lnHack - now.lnHack),
+  }
+  // The flat (non-hacking) parts are not the batcher's: kept as measured.
+  if (fin(base.flatIncomePerSec) && base.flatIncomePerSec > 0 && fin(base.incomePerSec)) out.incomePerSec = base.flatIncomePerSec + (base.incomePerSec - base.flatIncomePerSec) * Math.exp(dI)
+  if (fin(base.expFlatPerSec) && base.expFlatPerSec > 0 && fin(base.expPerSec)) out.expPerSec = base.expFlatPerSec + (base.expPerSec - base.expFlatPerSec) * Math.exp(dE)
+  return out
+}
+
+/** The options a home can hold: f x homeGB within what is left after the reserve (f = 0 always). */
+export const allocOptionsOf = (homeGB, reserveGb, grid = ALLOC_GRID) => grid.filter((f) => f === 0 || f * homeGB <= Math.max(0, homeGB - reserveGb))
+
+/**
+ * Pick among priced options {f, hours}: the fastest exit; the incumbent kept unless
+ * the best beats it by at least `tolH` (a charger restart is free, a flip-flop on
+ * noise is not information). Returns { f, hours, why }.
+ */
+export function chooseAlloc(priced, incumbentF = null, tolH = 0.1) {
+  const ok = priced.filter((p) => typeof p.hours === 'number' && isFinite(p.hours))
+  if (!ok.length) return { f: null, hours: null, why: 'no option priced (the exit is unpriced at every f)' }
+  const best = ok.reduce((b, p) => (p.hours < b.hours ? p : b))
+  const inc = ok.find((p) => p.f === incumbentF)
+  const table = ok.map((p) => `${p.f}:${p.hours.toFixed(2)}h`).join(' ')
+  if (inc && inc !== best && inc.hours - best.hours < tolH) return { f: inc.f, hours: inc.hours, why: `incumbent f=${inc.f} kept: the best (f=${best.f}) saves ${(inc.hours - best.hours).toFixed(3)}h < ${tolH}h (${table})` }
+  return { f: best.f, hours: best.hours, why: `f=${best.f}: the fastest exit, ${best.hours.toFixed(2)}h (${table})` }
+}
+
+/** The fraction used while no priced decision of this life exists (the layout's design point, LAYOUT_F; stated). */
+export const DEFAULT_F = 0.2
+
+/** The plan's allocation for this life (/tel/plan.txt decisions.stanek), or null. */
+export function planAllocOf(text, lastAugReset, now = Date.now(), maxAgeMin = 45) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  const d = rec?.decisions?.stanek
+  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  if (typeof d?.f !== 'number' || !isFinite(d.f) || d.f < 0 || d.f > 1) return null
+  return { f: d.f, why: String(d.why ?? '').slice(0, 240), at: rec.at }
+}
+
+/** progress.js's Singularity block on home — batch.js SETTINGS.homeReserve (SG5 keeps this copy honest). */
+export const progressBlockGb = (singMult) => 13 + 6.25 * singMult
+
+/**
+ * The charger's thread count: f x homeMax, within what home has free beyond the
+ * reserve (the running charger's own RAM counts as free: it is replaced).
+ * Returns { want, can, threads, short }.
+ */
+export function chargerThreadsOf({ f, homeMax, homeUsed, reserveGb, runningGb = 0 }) {
+  const want = Math.floor((Math.max(0, f) * homeMax) / STANEK.ramPerThread)
+  const free = Math.max(0, homeMax - homeUsed + runningGb - reserveGb)
+  const can = Math.floor(free / STANEK.ramPerThread)
+  const threads = Math.min(want, can)
+  return { want, can, threads, short: Math.max(0, want - threads) }
+}
+
+/**
+ * The block batch.js keeps free on home for the charger: the wanted GB not yet held,
+ * from a fresh record of this life. Unknown or stale: 0 (the charger takes what is
+ * free and the shortfall is published as charger.short).
+ */
+export function stanekHoldGb(rec, lastAugReset, now = Date.now(), maxAgeMs = 15 * 60e3) {
+  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMs)) return 0
+  const c = rec.charger
+  if (!c || typeof c.wantGb !== 'number' || typeof c.gb !== 'number') return 0
+  return Math.max(0, c.wantGb - c.gb)
+}
+
+/**
+ * The gift's health from /tel/stanek.txt and /tel/charge.txt (tools/healthcheck.mjs).
+ * Returns [{ key, problem, detail }]:
+ *   GIFT NOT ACCEPTED       wanted and not accepted past `graceMin` into the node, or
+ *                           forfeited / refused at all
+ *   FRAGMENTS NOT CHARGING  accepted with a layout placed, and the charger wanted but
+ *                           not running, its heartbeat stale/absent, or erroring
+ *   STANEK STALE            the record is old (stanek.js is not being run)
+ */
+export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs = null, graceMin = 15, staleMin = 12 }) {
+  const out = []
+  if (!stanek) return [{ key: 'STANEK UNREPORTED', problem: 'STANEK UNREPORTED', detail: `${STANEK_FILE} missing — stanek.js has not run in a node with the Church` }]
+  const age = (now - Date.parse(stanek.at ?? '')) / 60e3
+  if (!(age < staleMin)) out.push({ key: 'STANEK STALE', problem: 'STANEK STALE', detail: `${STANEK_FILE} is ${isFinite(age) ? age.toFixed(0) + ' min' : 'undated'} old — stanek.js is not being run` })
+  const g = stanek.gift ?? {}
+  if (g.want && !g.accepted) {
+    const inNode = typeof nodeStartMs === 'number' ? (now - nodeStartMs) / 60e3 : null
+    if (g.forfeited) out.push({ key: 'GIFT FORFEITED', problem: 'GIFT NOT ACCEPTED', detail: g.why })
+    else if (stanek.refused) out.push({ key: 'GIFT REFUSED', problem: 'GIFT NOT ACCEPTED', detail: `acceptGift refused: ${stanek.refused}` })
+    else if (inNode === null || inNode >= graceMin) out.push({ key: 'GIFT NOT ACCEPTED', problem: 'GIFT NOT ACCEPTED', detail: `BitNode ${g.node}: ${inNode === null ? 'node age unknown' : inNode.toFixed(0) + ' min'} in and the gift is not accepted (${g.why})` })
+  }
+  if (g.accepted && Array.isArray(stanek.layout?.placed) && stanek.layout.placed.length) {
+    const c = charge && charge.lastAugReset === stanek.lastAugReset ? charge : null
+    const cAge = c ? (now - Date.parse(c.at ?? '')) / 60e3 : null
+    const want = stanek.charger?.want ?? 0
+    if (want > 0 && !((stanek.charger?.threads ?? 0) > 0)) out.push({ key: 'FRAGMENTS NOT CHARGING', problem: 'FRAGMENTS NOT CHARGING', detail: `charger not running: ${stanek.charger?.why ?? 'no threads'}` })
+    else if (want > 0 && !(cAge !== null && cAge < 5)) out.push({ key: 'FRAGMENTS NOT CHARGING', problem: 'FRAGMENTS NOT CHARGING', detail: c ? `${CHARGE_FILE} heartbeat ${cAge.toFixed(1)} min old` : `${CHARGE_FILE} missing or from another life` })
+    else if (c?.error) out.push({ key: 'FRAGMENTS NOT CHARGING', problem: 'FRAGMENTS NOT CHARGING', detail: `charge.js: ${c.error}` })
+  }
+  return out
+}

@@ -638,6 +638,9 @@ function runB711() {
     // The one-shot that buys go.js a server, exec'd BY seed.js (placeGo) when
     // no rooted host can hold go.js in a Go-first node ([GF12]).
     "gohost.js",
+    // Stanek's Gift's charging worker, exec'd BY stanek.js (a watchdog job) on
+    // home at the plan's thread count — a worker like h/g/w, not a daemon.
+    "charge.js",
     // SOURCE-FILE GATED, and unmanaged here for that reason rather than by
     // oversight. Each needs a Source-File this save does not hold, so a
     // standing job would be a guaranteed no-op: bladeburner.js SF6/7,

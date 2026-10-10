@@ -74,6 +74,7 @@ import { reporter, describe, record } from 'status.js'
 import { singularityRamMultiplier, canJoinBladeburner } from 'sfgate.js'
 import { liteReserveOf } from 'bbliteplan.js'
 import { reservesOf, heldOn } from 'raiseplace.js'
+import { stanekHoldGb, STANEK_FILE } from 'stanekplan.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure: the stock trader's record and which side of a batch it wants to move
@@ -1338,6 +1339,8 @@ export async function main(ns) {
   // The raise-sized daemons' reserved blocks this tick (raiseplace.reservesOf: bladeburner.js,
   // sleeve.js, hashspend.js — published as `raiseReserves`).
   let fullRes = []
+  // Stanek's charger's block on home this tick (stanekplan.stanekHoldGb — published as `stanekReserve`).
+  let stanekRes = 0
 
   const flags = ns.flags([
     ['hosts', ''],
@@ -1374,7 +1377,7 @@ export async function main(ns) {
   // writes. No new ns surface: ns.write and ns.atExit are both 0GB
   // (RamCostGenerator.ts:632,605), and ns.scp/ns.getHostname were already here.
   const errors = []
-  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, liteReserve: liteRes, raiseReserves: fullRes, errors: errors.slice(-5) }))
+  const note = reporter(ns, SETTINGS.statusFile, () => ({ controller: self, liteReserve: liteRes, raiseReserves: fullRes, stanekReserve: stanekRes, errors: errors.slice(-5) }))
   // The daemon only mirrors /tel/* off home, so a controller running anywhere
   // else has to ship its status there. This was already inline at both write
   // sites; hoisting it into a closure lets the exit path use it too, and
@@ -1724,9 +1727,22 @@ export async function main(ns) {
           return []
         }
       })()
+      // STANEK'S CHARGER (stanek.js -> charge.js on home): the GB the plan's
+      // allocation wants that the charger does not hold yet (stanekplan.
+      // stanekHoldGb, a fresh /tel/stanek.txt of this life; 0 otherwise). Kept
+      // free of NEW workers on home, as the raise reserves are; the running
+      // h/g/w finish within a batch cycle and stanek.js's next pass launches
+      // the charger at the full count. ns.read is 0GB.
+      stanekRes = (() => {
+        try {
+          return stanekHoldGb(JSON.parse(ns.read(STANEK_FILE) || 'null'), resetInfo.lastAugReset)
+        } catch {
+          return 0
+        }
+      })()
       const reserveFor = (h) =>
         (h === self ? SETTINGS.selfReserve : 0) +
-        (h === 'home' ? homeReserveGb : 0) +
+        (h === 'home' ? homeReserveGb + stanekRes : 0) +
         (h === shareHost ? shareGb : 0) +
         (h === liteRes?.host ? liteRes.gb : 0) +
         heldOn(fullRes, h)

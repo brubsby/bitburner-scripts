@@ -609,6 +609,29 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   for (const n of r.notes) note(n);
   now.raised = r.snap;
 }
+// STANEK'S GIFT (stanekplan.stanekHealthOf): where the Church is reachable
+// (BN13, or SF13 held), GIFT NOT ACCEPTED once the node is past its grace (or
+// at once when forfeited / refused — act.js's gate blocks every forfeiting
+// purchase until the accept, so a gift never accepted is a stalled node, not
+// a choice), FRAGMENTS NOT CHARGING when the charger is wanted and its own
+// heartbeat (/tel/charge.txt) is absent, stale or erroring, STANEK STALE /
+// UNREPORTED when stanek.js is not being run.
+{
+  const sf = Array.isArray(state?.sourceFiles?.data) ? new Map(state.sourceFiles.data) : null;
+  const churchHere = now.bitNode === 13 || (sf?.get(13) ?? 0) > 0;
+  if (churchHere) {
+    const { stanekHealthOf } = await import("../stanekplan.js");
+    const stRec = readTel("stanek.txt");
+    const st = stRec && stRec.node === now.bitNode ? stRec : null;
+    const early = !st && num(now.lifeMs) && now.lifeMs < 15 * 60e3;
+    if (early) note(`stanek: no /tel/stanek.txt of BitNode ${now.bitNode} yet (${(now.lifeMs / 60e3).toFixed(0)} min into the life)`);
+    else {
+      const probs = stanekHealthOf({ stanek: st, charge: readTel("charge.txt"), now: Date.now(), nodeStartMs: num(st?.lastNodeReset) ? st.lastNodeReset : null });
+      for (const p of probs) fail(`${p.problem}: ${p.detail}`, `stanek.txt ${st?.at ?? "absent"}: ${String(st?.why ?? "").slice(0, 160)}`);
+      if (!probs.length && st) note(`stanek: ${String(st.why ?? st.health).slice(0, 160)}`);
+    }
+  }
+}
 // GO NOT PLAYING IN A GO NODE (tools/gohealth.mjs): where the placers'
 // priced verdict (goplace.js) places go.js, absent or idle for > 10 min of the
 // life. Live BN14.1 2026-10-03: nothing ran it for the node's first 17 minutes.

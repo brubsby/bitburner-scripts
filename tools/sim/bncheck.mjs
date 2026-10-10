@@ -374,6 +374,7 @@ const STRUCTURAL = [
     "Prestige.ts:166-170 re-initialises the market. act.js runs act-liquidate.js before every install (and progress.js prefixes it to any batch that spends stock equity); the install is skipped when the trader reports equity and the book cannot be confirmed flat. Shorts and limit/stop orders are available in BitNode 8 itself or with SF8.2/8.3 (NetscriptFunctions/StockMarket.ts:47, StockTicker.tsx:274-279).",
   ],
   ["Purchased servers are single-core", "batch.js reads getServer(h).cpuCores per host rather than assuming, so this adapts. Informational."],
+  ["Stanek's Gift: accepted only in BitNode 13; layouts tabled for BN13's grid", "stanekplan.GIFT_NODES = {13}: stanek.js accepts the gift there at the node's start and act.js refuses every non-NeuroFlux buyaug/graft/install until it has (stanekplan.giftOrderGate) — outside BN13 nothing accepts, and an install with a non-NFG aug and no gift BANS the Church for that node (Prestige.ts:184-190), which the stack does without asking. stanekplan.LAYOUTS is keyed by grid and StaneksGiftPowerMultiplier (BN13: extra size 1, power 2, SF13 0..3); any other grid is searched in-game with a bounded budget (best found, published as such). StaneksGiftExtraSize / PowerMultiplier are read at run time (the game's giftWidth/Height, bitNodeMults), so they adapt."],
 
   // --- ns.ramOverride floors (invariant C5) --------------------------------
   // These are NOT BitNodeMultipliers, which is why they live here rather than in

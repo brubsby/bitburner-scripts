@@ -90,3 +90,28 @@ export function routeReportOf(pin, d) {
     why: d ? null : 'no Bladeburner route in this node (no division): the hacking route is the only one',
   }
 }
+
+/**
+ * STANEK'S GIFT PINS THE HACKING ROUTE. The gameplan's 'stanek' route is the
+ * hacking route with the gift accepted at the node's start
+ * (tools/sim/gameplan/routes.mjs); the Bladeburner route with the gift is NOT
+ * PRICED there (bbsim has no Stanek multipliers), and the layout is chosen for
+ * the hacking channels (stanekplan.hackWeights). So where the gift is accepted
+ * (stanekplan.giftStateOf(resetInfo, sfgate.canAccessCotMG(resetInfo)).accepted) and no file pins anything, the
+ * route acted on is 'hack' — through pinnedRouteOf like the file pin, so the
+ * priced route and the hours forgone are published beside it. A file pin, or a
+ * file pin's warning, is kept as it is.
+ */
+export function giftPinOf(pin, gift) {
+  if (pin?.pinned || !gift?.accepted) return pin
+  return {
+    ...(pin ?? {}),
+    pinned: true,
+    route: 'hack',
+    node: gift.node ?? null,
+    file: '/tel/stanek.txt',
+    text: "Stanek's Gift accepted",
+    warn: pin?.warn ?? null,
+    why: `Stanek's Gift is accepted in BitNode ${gift.node}: the gameplan's 'stanek' route is the hacking route + gift (the Bladeburner route with the gift is not priced) — pinned to 'hack'`,
+  }
+}
