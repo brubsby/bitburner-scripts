@@ -1349,6 +1349,41 @@ export function afterCombatInstall(player, batch) {
 /** A committed fleet is kept unless another is faster by more than this (hours, or this share of the exit). */
 /** z: with members (Q > 1) the incumbent also stands while the challenger's lead is inside z standard errors of the pair (each point's seH). */
 export const FLEET_KEEP = { h: 0.1, rel: 0.03, z: 1.645 }
+/**
+ * THE RUNNING FLEET, READ FROM THE SLEEVES THEMSELVES (ns.sleeve.getTask per
+ * sleeve) — the incumbent of a FRESH sleeve.js process, which has no last
+ * answer in memory. Without it a restart had no incumbent, so the keep
+ * tolerance never applied and the model's best of the pass won outright:
+ * live 2026-10-10 ~14:00Z a restart switched five Support to i1s2f0c2t100
+ * (a contract fleet inside the tolerance — bladecontracts SC5).
+ *
+ * Counts: INFILTRATE, SUPPORT, BLADEBURNER 'Field Analysis', BLADEBURNER
+ * contracts. A contract sleeve in its recover or train phase reads as
+ * RECOVERY / CLASS, which an ordinary plan runs too — so `committed` (the
+ * last published blade.config, sleeve.txt) supplies the contract schedule
+ * only when its infiltrate/support/field-analysis counts match the tasks and
+ * its contract sleeves fit the contract/recovery/class sleeves seen. The
+ * tasks are the authority; a committed config they contradict is ignored.
+ * Returns {config, source, why}; config null when no sleeve works for the division.
+ */
+export function bladeIncumbentOf(tasks, committed = null) {
+  let infiltrate = 0, support = 0, fa = 0, contracts = 0, phase = 0
+  for (const t of Array.isArray(tasks) ? tasks : []) {
+    if (t?.type === 'INFILTRATE') infiltrate++
+    else if (t?.type === 'SUPPORT') support++
+    else if (t?.type === 'BLADEBURNER' && t.actionName === 'Field Analysis') fa++
+    else if (t?.type === 'BLADEBURNER' && t.actionType === 'Contracts') contracts++
+    else if (t?.type === 'RECOVERY' || t?.type === 'CLASS') phase++
+  }
+  const c = committed && typeof committed === 'object' ? committed : null
+  const cc = c ? Math.max(0, Math.floor(c.contracts ?? 0)) : 0
+  if (c && (c.infiltrate ?? 0) === infiltrate && (c.support ?? 0) === support && (c.fa ?? 0) === fa && cc >= contracts && cc <= contracts + phase) {
+    return { config: c, source: 'committed', why: `the sleeves run the last committed fleet ${sleeveConfigKey(c)}` }
+  }
+  if (infiltrate + support + fa + contracts === 0) return { config: null, source: 'tasks', why: 'no sleeve works for the division' }
+  const config = { infiltrate, support, fa, ...(contracts > 0 ? { contracts } : {}) }
+  return { config, source: 'tasks', why: `the sleeves' tasks: ${sleeveConfigKey(config)}${c ? ` (the committed ${sleeveConfigKey(c)} does not match them)` : ''}` }
+}
 export function* bladeFleetGen(s0, n, incumbent = null, { Q = 1 } = {}) {
   if (!(n > 0)) return { tasks: [], config: null, hours: null, byConfig: [], why: 'no sleeves' }
   const pick = yield* chooseSleeveConfigGen(s0, n, undefined, { Q })

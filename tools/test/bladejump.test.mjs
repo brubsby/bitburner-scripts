@@ -213,7 +213,7 @@ export async function run() {
   if (!/installBasis: bladeBasis \? \{[^\n]*blade: bladeBasis\.blade \?\? null/.test(pj)) c9.fail('progress.js must publish the basis\'s batch content (installBasis.blade)')
   if (!/bladeRoute\?\.start\?\.gymExpPerSec/.test(sj)) c9.fail('sleeve.js must take the plan\'s gym rate')
   if (!/city: p\.city, money: p\.money/.test(sj)) c9.fail('sleeve.js\'s fallback person must carry city and money (bestGym)')
-  if (!/bladeFleetGen\(s0, n, bladeMemo\?\.result\?\.config/.test(sj)) c9.fail('sleeve.js must pass its committed fleet as the incumbent')
+  if (!/bladeMemo\?\.result\?\.config \? \{ config: bladeMemo\.result\.config[\s\S]*bladeFleetGen\(s0, n, incumbent\.config/.test(sj)) c9.fail('sleeve.js must pass its committed fleet as the incumbent')
   if (!/sl: readTel\("sleeve\.txt"\)/.test(SRC('tools/healthcheck.mjs'))) c9.fail('healthcheck.mjs must pass sleeve.txt to bladeburnerHealth (BLADE FLEET UNPRICED)')
   const ib = BB.bladeInstallOfBasis({ kind: 'wait', installAt: Date.now() + 3.6e6, blade: { gains: { strength: 1.5 }, simulacrum: false } })
   c9.examined(1)

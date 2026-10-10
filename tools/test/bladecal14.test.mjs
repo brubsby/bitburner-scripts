@@ -206,7 +206,7 @@ export async function run() {
     const sl = SRC('sleeve.js')
     c.examined(2)
     if (/Math\.round\(basis\.installAt \/ 900e3\)/.test(sl)) c.fail("sleeve.js's memo key still reads the install's installAt (a held 'now' changes it every pass)")
-    if (!/bladeFleetGen\(s0, n, bladeMemo\?\.result\?\.config \?\? null, \{ Q: BLADE_ENSEMBLE\.Q \}\)/.test(sl)) c.fail('sleeve.js must choose the fleet on the members')
+    if (!/bladeFleetGen\(s0, n, incumbent\.config, \{ Q: BLADE_ENSEMBLE\.Q \}\)/.test(sl)) c.fail('sleeve.js must choose the fleet on the members')
   }
 
   // ---- B14-7 -----------------------------------------------------------------

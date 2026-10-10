@@ -102,8 +102,8 @@ import { killOtherInstances, getItem, setItem } from 'common.js'
 import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen } from 'sleeveplan.js'
-import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION, BLADE_ENSEMBLE, sleeveBodyOf, sleevePhaseOf, sleeveGymStatOf, sleeveContractOf, skillMultsOf, cityFactor } from 'bbplan.js'
+import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen, bladeIncumbentOf } from 'sleeveplan.js'
+import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION, BLADE_ENSEMBLE, sleeveConfigKey, sleeveBodyOf, sleevePhaseOf, sleeveGymStatOf, sleeveContractOf, skillMultsOf, cityFactor } from 'bbplan.js'
 import { makePacer, LoopCapError } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES, GYMS, gymRate, bestGym, retrainGymOf } from 'bodyplan.js'
@@ -139,6 +139,10 @@ const RAISE_CEILING = (mult) => 49.75 + 0 * mult
 export async function main(ns) {
   ns.ramOverride(3.25)
 
+  // The last process's committed Bladeburner fleet (sleeve.txt blade.config), read before this
+  // process's first write replaces it: a fresh process's incumbent (sleeveplan.bladeIncumbentOf).
+  let prevBlade = null
+  try { prevBlade = JSON.parse(ns.read(RAMOVERRIDE_STATUS) || 'null')?.blade?.config ?? null } catch { prevBlade = null }
   const rerrors = []
   const note = reporter(ns, RAMOVERRIDE_STATUS, () => ({ errors: rerrors.slice(-5) }))
   // THE DAEMON ONLY MIRRORS /tel/* FROM HOME, and boot.js places this script
@@ -196,7 +200,7 @@ export async function main(ns) {
 
   try {
     say('ok', { result: 'running', bitNode: info.currentNode, allocation: want, detail: 'allocation raised; running the original body' })
-    await act(ns, say)
+    await act(ns, say, prevBlade)
     say('ok', { result: 'finished', detail: 'sleeve.js returned normally' })
   } catch (err) {
     ns.print(record(rerrors, err))
@@ -359,7 +363,7 @@ function bladeContractPickOf(tel, body, node) {
   const cityF = c ? cityFactor({ pop: Number.isFinite(c.pop) ? c.pop : c.popEst, chaos: c.chaos ?? 0 }, { pop: 1e9, chaos: 0 }) : 1
   return sleeveContractOf(body, skillMultsOf(tel.levels ?? {}), { int: body.skills.intelligence ?? 0, augMult: body.mults.bladeburner_success_chance ?? 1, cityF, counts: tel.counts, maxL: tel.maxLevels, bnRank: node?.BladeburnerRank ?? 1 })
 }
-async function bladeFleetNow(ns, n, node, sleeves = []) {
+async function bladeFleetNow(ns, n, node, sleeves = [], prevCommitted = null) {
   const info = ns.getResetInfo()
   if (ns.getHostname() !== 'home') {
     try { ns.scp(BLADE_TEL, ns.getHostname(), 'home') } catch { /* the copy here decides by its stamp */ }
@@ -430,12 +434,15 @@ async function bladeFleetNow(ns, n, node, sleeves = []) {
   // Sliced with page yields, the trace section closed across each yield, and
   // HARD-CAPPED (BLADE_FLEET_CAP: steps and work ms); past the cap the last
   // answer stands (or none), said so.
+  const incumbent = bladeMemo?.result?.config ? { config: bladeMemo.result.config, source: 'memo', why: 'the last answer of this process' } : bladeIncumbentOf(sleeves.map((x) => x.task), prevCommitted)
   const py = pageYield(ns)
   const pacer = makePacer({ sliceMs: BLADE_SLICE_MS, yieldFn: async () => { leave('sleeve'); try { await py() } finally { enter('sleeve') } } })
   let fleet = null
   try {
-    // The committed fleet (the last answer's) stands on a near tie (sleeveplan.FLEET_KEEP).
-    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, bladeMemo?.result?.config ?? null, { Q: BLADE_ENSEMBLE.Q }), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
+    // The committed fleet (the last answer's) stands on a near tie (sleeveplan.FLEET_KEEP). A fresh
+    // process has no last answer: the fleet the sleeves are RUNNING is the incumbent
+    // (sleeveplan.bladeIncumbentOf) — live 10-10 a restart switched 5 Support to a contract fleet inside the tolerance.
+    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, incumbent.config, { Q: BLADE_ENSEMBLE.Q }), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
   } catch (e) {
     if (!(e instanceof LoopCapError)) throw e
     const last = bladeMemo?.result ?? null
@@ -443,7 +450,7 @@ async function bladeFleetNow(ns, n, node, sleeves = []) {
     bladeMemo = { key, at: Date.now(), result, capped: true }
     return result
   }
-  const result = { on: !!fleet.tasks, ...fleet, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), install: install ? { firstH: +install.firstH.toFixed(2), from: basis?.kind ?? null } : null, installBasis: basis?.kind ?? 'none' }
+  const result = { on: !!fleet.tasks, ...fleet, incumbent: { key: sleeveConfigKey(incumbent.config), source: incumbent.source, why: incumbent.why }, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), install: install ? { firstH: +install.firstH.toFixed(2), from: basis?.kind ?? null } : null, installBasis: basis?.kind ?? 'none' }
   bladeMemo = { key, at: Date.now(), result }
   return result
 }
@@ -453,7 +460,7 @@ async function bladeFleetNow(ns, n, node, sleeves = []) {
 let print_tasks = false;
 let sleeveTasks = [];
 
-async function act(ns, note) {
+async function act(ns, note, prevBlade = null) {
   // Black-box recorder (trace.js): the synchronous work between sleeps is an
   // open section; a page that hangs inside it leaves the mark behind.
   enter('sleeve')
@@ -597,7 +604,7 @@ async function act(ns, note) {
 		// published and leaves the ordinary plan standing.
 		let blade = null
 		try {
-			blade = await bladeFleetNow(ns, sleeves.length, node, sleeves)
+			blade = await bladeFleetNow(ns, sleeves.length, node, sleeves, prevBlade)
 		} catch (err) {
 			blade = { on: false, error: true, why: `bladeFleetNow threw: ${describe(err)}` }
 			refusals.push(blade.why)

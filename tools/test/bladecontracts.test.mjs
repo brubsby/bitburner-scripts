@@ -22,9 +22,18 @@
 //        than the fleet's keep tolerance; a fresh division picks none either.
 //   SC6  wiring: sleeve.js passes the bodies and runs the phase rule with the
 //        three ns.sleeve calls; progress.js prices the plan's route with the bodies.
+//   SC7  A FRESH PROCESS'S INCUMBENT IS THE RUNNING FLEET (sleeveplan.bladeIncumbentOf
+//        on ns.sleeve.getTask): live ~14:00Z a restart had no incumbent and switched
+//        five Support to i1s2f0c2t100 inside the keep tolerance. Five SUPPORT tasks
+//        keep i0s5f0 on the fixture; the committed schedule is used only where the
+//        tasks agree; sleeve.js falls back to it when it has no last answer.
+//   SC8  CPU GUARD (thread CPU, retried once): sleeve.js's fleet pass on the live
+//        inputs (cappedFleetGen over bladeFleetGen, Q members, maxH 200, the three
+//        contract fleets) — every synchronous step < 10ms, the pass < 4s of work.
+//        Measured 2026-10-10: ~118k steps, longest ~1ms warm (5ms cold), ~1.3s per pass.
 
 import './gameresolve.mjs'
-import { Check } from './harness.mjs'
+import { Check, threadCpuMs, retryOnce } from './harness.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { REPO_ROOT } from './gameresolve.mjs'
@@ -162,5 +171,63 @@ export async function run() {
       if (!re.test(src)) c.fail(`missing: ${what}`)
     }
   }
+  // ---- SC7 -----------------------------------------------------------------
+  {
+    const c = add('SC7', "A FRESH PROCESS'S INCUMBENT IS THE RUNNING FLEET: a restart does not switch fleets inside the keep tolerance")
+    const sup = { type: 'SUPPORT' }
+    const inc = SP.bladeIncumbentOf([sup, sup, sup, sup, sup])
+    c.examined(1)
+    if (BB.sleeveConfigKey(inc.config) !== 'i0s5f0') c.fail(`five SUPPORT tasks read as ${BB.sleeveConfigKey(inc.config)}, not i0s5f0`)
+    const fresh = drain(SP.bladeFleetGen(s0, 5, null, { Q }))
+    const kept = drain(SP.bladeFleetGen(s0, 5, inc.config, { Q }))
+    c.examined(2)
+    c.note(`no incumbent -> ${BB.sleeveConfigKey(fresh.config)} ${f2(fresh.hours)}h; incumbent from the tasks (${inc.why}) -> ${BB.sleeveConfigKey(kept.config)} ${f2(kept.hours)}h`)
+    if (BB.sleeveConfigKey(kept.config) !== 'i0s5f0') c.fail(`a restart with five sleeves on Support switched to ${BB.sleeveConfigKey(kept.config)} (inside the keep tolerance on this fixture, SC5)`)
+    // The committed contract schedule, where the tasks agree (a contract sleeve training reads CLASS).
+    const cc = { infiltrate: 1, support: 2, fa: 0, contracts: 2, trainTo: 100 }
+    const t = [{ type: 'INFILTRATE' }, sup, sup, { type: 'CLASS' }, { type: 'BLADEBURNER', actionType: 'Contracts', actionName: 'Tracking' }]
+    const a = SP.bladeIncumbentOf(t, cc)
+    const b = SP.bladeIncumbentOf([sup, sup, sup, sup, sup], cc)
+    const d = SP.bladeIncumbentOf([{ type: 'CRIME' }, null, { type: 'FACTION' }])
+    const e = SP.bladeIncumbentOf([{ type: 'BLADEBURNER', actionType: 'General', actionName: 'Field Analysis' }, { type: 'INFILTRATE' }])
+    c.examined(4)
+    if (BB.sleeveConfigKey(a.config) !== 'i1s2f0c2t100') c.fail(`the committed contract fleet the tasks agree with read as ${BB.sleeveConfigKey(a.config)}`)
+    if (BB.sleeveConfigKey(b.config) !== 'i0s5f0' || b.source !== 'tasks') c.fail(`a committed config the tasks contradict was used: ${BB.sleeveConfigKey(b.config)} (${b.source})`)
+    if (d.config !== null) c.fail('sleeves off the division read as a Bladeburner fleet')
+    if (BB.sleeveConfigKey(e.config) !== 'i1s0f1') c.fail(`Field Analysis / Infiltrate read as ${BB.sleeveConfigKey(e.config)}`)
+    const sl = SRC('sleeve.js')
+    c.examined(2)
+    if (!/bladeMemo\?\.result\?\.config \? \{[^}]*\} : bladeIncumbentOf\(sleeves\.map\(\(x\) => x\.task\), prevCommitted\)/.test(sl)) c.fail('sleeve.js: a process with no last answer must take the running fleet as the incumbent')
+    if (!/bladeFleetGen\(s0, n, incumbent\.config,/.test(sl)) c.fail('sleeve.js: the fleet search must be given that incumbent')
+    if (!/prevBlade = JSON\.parse\(ns\.read\(RAMOVERRIDE_STATUS\)[^\n]*\n\s*const rerrors = \[\]\n\s*const note = reporter\(/.test(sl)) c.fail("sleeve.js: the last committed fleet must be read before this process's first write replaces it")
+  }
+
+  // ---- SC8 -----------------------------------------------------------------
+  checks.push(await retryOnce(async () => {
+    const c = new Check('SC8', "CPU GUARD: sleeve.js's fleet pass on the live inputs (three contract fleets, Q members, maxH 200): every synchronous step < 10ms, the pass < 4s of work")
+    const SJ = await import('sleeve.js')
+    const live = startOf({ maxH: 200 })
+    const one = () => {
+      let worst = 0, total = 0, steps = 0, r
+      const gen = SJ.cappedFleetGen(SP.bladeFleetGen(live, 5, { infiltrate: 0, support: 5, fa: 0 }, { Q }), { steps: 1e7, ms: 1e9 })
+      for (;;) {
+        const t0 = threadCpuMs()
+        r = gen.next()
+        const dt = threadCpuMs() - t0
+        if (dt > worst) worst = dt
+        total += dt
+        steps++
+        if (r.done) break
+      }
+      return { worst, total, steps, value: r.value }
+    }
+    one() // warm (the page's JIT is warm after its first pass)
+    const r = one()
+    c.examined(r.steps)
+    c.note(`${r.steps} steps, longest ${r.worst.toFixed(2)}ms, ${r.total.toFixed(0)}ms of work -> ${BB.sleeveConfigKey(r.value.config)} ${r.value.hours}h`)
+    if (!(r.worst < 10)) c.fail(`a ${r.worst.toFixed(1)}ms synchronous step (limit 10ms)`)
+    if (!(r.total < 4000)) c.fail(`${r.total.toFixed(0)}ms of work per pass (limit 4000ms)`)
+    return c
+  }))
   return checks
 }
