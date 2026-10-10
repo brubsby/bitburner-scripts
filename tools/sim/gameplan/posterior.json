@@ -1,7 +1,7 @@
 {
  "schema": "gameplan-posterior",
  "version": 1,
- "updatedAt": "2026-10-07T13:16:41.513Z",
+ "updatedAt": "2026-10-09T22:39:33.133Z",
  "model": {
   "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
   "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
@@ -39,6 +39,19 @@
    "clear": "BN10.1",
    "inBase": true,
    "note": "82.76h"
+  },
+  {
+   "key": "g|BN12.1|2026-10-09T22:22:34.729Z",
+   "param": "g12",
+   "value": 0.07529163864702754,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-10-09T22:22:34.729Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 12,
+   "clear": "BN12.1",
+   "inBase": false,
+   "note": "21.12h"
   },
   {
    "key": "g|BN2.1|2026-09-20T14:57:31.448Z",
@@ -115,6 +128,17 @@
    "node": 14
   },
   {
+   "key": "ir9|2026-10-07T13:13:26.359Z|2026-10-09T01:12:38.818Z",
+   "param": "ir9",
+   "value": 209638717313773.94,
+   "sd": 0.8524,
+   "space": "log",
+   "at": "2026-10-09T01:12:38.818Z",
+   "source": "history.jsonl: BN9 in progress since 2026-10-07T13:13:26.359Z, 45 windows to level 222 (income a_n at the pooled slope 3.77)",
+   "stream": "ir9|history.jsonl|2026-10-07T13:13:26.359Z",
+   "node": 9
+  },
+  {
    "key": "k|BN14.1|2026-10-05T08:27:24.667Z",
    "param": "k",
    "value": 0.8738583649617447,
@@ -148,7 +172,6 @@
    "source": "history.jsonl: Bladeburner clear, (hours - voided - opening) / bbsim leg (its own Go farm)",
    "node": 14,
    "clear": "BN14.3",
-   "inBase": false,
    "note": "22.48h, opening 1.21h, leg 19.25h (Go farm 29200/h x8)"
   },
   {
@@ -199,7 +222,6 @@
    "source": "history.jsonl: entry -> combat 100, first life, less the gym scale",
    "node": 14,
    "clear": "BN14.3",
-   "inBase": false,
    "note": "combat 100 at 0.51h"
   },
   {
@@ -248,6 +270,17 @@
    "source": "history.jsonl: BN14 in progress since 2026-10-05T08:32:35.028Z, 107 windows to level 193 (exp a_n at the pooled slope 3.41)",
    "stream": "xr14|history.jsonl|2026-10-05T08:32:35.028Z",
    "node": 14
+  },
+  {
+   "key": "xr9|2026-10-07T13:13:26.359Z|2026-10-09T01:12:38.818Z",
+   "param": "xr9",
+   "value": 358145.37292803294,
+   "sd": 0.4239,
+   "space": "log",
+   "at": "2026-10-09T01:12:38.818Z",
+   "source": "history.jsonl: BN9 in progress since 2026-10-07T13:13:26.359Z, 144 windows to level 222 (exp a_n at the pooled slope 3.45)",
+   "stream": "xr9|history.jsonl|2026-10-07T13:13:26.359Z",
+   "node": 9
   }
  ],
  "posterior": {
@@ -474,14 +507,14 @@
   },
   "g3": {
    "prior": [
-    0.02624,
-    0.04367,
-    0.08842
+    0.02625,
+    0.04364,
+    0.08856
    ],
    "post": [
-    0.02217,
-    0.03947,
-    0.07028
+    0.02342,
+    0.03789,
+    0.06132
    ],
    "n": 0,
    "what": "g /h of unplayed BN3: hand latent (prior) vs the full model (post)"
@@ -489,41 +522,41 @@
   "g5": {
    "prior": [
     0.03098,
-    0.05156,
-    0.1044
+    0.0515,
+    0.1045
    ],
    "post": [
-    0.03231,
-    0.05297,
-    0.08683
+    0.03579,
+    0.05316,
+    0.07897
    ],
    "n": 0,
    "what": "g /h of unplayed BN5: hand latent (prior) vs the full model (post)"
   },
   "g6": {
    "prior": [
-    0.04115,
-    0.0685,
+    0.04113,
+    0.06836,
     0.1387
    ],
    "post": [
-    0.038,
-    0.07046,
-    0.1307
+    0.0434,
+    0.07299,
+    0.1227
    ],
    "n": 0,
    "what": "g /h of unplayed BN6: hand latent (prior) vs the full model (post)"
   },
   "g7": {
    "prior": [
-    0.02624,
-    0.04367,
-    0.08842
+    0.02625,
+    0.04364,
+    0.08856
    ],
    "post": [
-    0.02585,
-    0.04238,
-    0.06947
+    0.02828,
+    0.04187,
+    0.06199
    ],
    "n": 0,
    "what": "g /h of unplayed BN7: hand latent (prior) vs the full model (post)"
@@ -531,27 +564,27 @@
   "g11": {
    "prior": [
     0.03098,
-    0.05156,
-    0.1044
+    0.0515,
+    0.1045
    ],
    "post": [
-    0.02575,
-    0.04064,
-    0.06415
+    0.02781,
+    0.03979,
+    0.05693
    ],
    "n": 0,
    "what": "g /h of unplayed BN11: hand latent (prior) vs the full model (post)"
   },
   "g13": {
    "prior": [
-    0.04115,
-    0.0685,
+    0.04113,
+    0.06836,
     0.1387
    ],
    "post": [
-    0.03709,
-    0.07579,
-    0.1549
+    0.04187,
+    0.07796,
+    0.1452
    ],
    "n": 0,
    "what": "g /h of unplayed BN13: hand latent (prior) vs the full model (post)"
@@ -559,42 +592,53 @@
   "g14": {
    "prior": [
     0.03485,
-    0.05801,
-    0.1175
+    0.05792,
+    0.1176
    ],
    "post": [
-    0.05297,
-    0.09169,
-    0.1587
+    0.05985,
+    0.09365,
+    0.1465
    ],
    "n": 0,
    "what": "g /h of unplayed BN14: hand latent (prior) vs the full model (post)"
+  },
+  "g12": {
+   "prior": [
+    0.07154,
+    0.15
+   ],
+   "post": [
+    0.07446,
+    0.1407
+   ],
+   "what": "g /h and its log sd"
   },
   "gModel": {
    "chosen": "full",
    "what": "hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon) + v_n",
    "elpd": {
-    "hand": -9.955,
-    "exch": -5.906,
-    "amc": -6.102,
-    "full": -3.733,
-    "exchG": -4.219,
-    "amcG": -4.267,
-    "fullG": -4.412
+    "hand": -9.866,
+    "exch": -5.917,
+    "amc": -6.11,
+    "full": -3.734,
+    "exchG": -4.236,
+    "amcG": -4.301,
+    "fullG": -4.385
    },
    "beta": [
-    -2.827,
-    -0.2294,
-    0.1561,
-    0.06541,
-    0.2198
+    -2.82,
+    -0.2502,
+    0.1777,
+    0.06335,
+    0.2193
    ],
    "betaSd": [
-    0.1438,
-    0.1559,
-    0.1099,
-    0.1786,
-    0.1087
+    0.1139,
+    0.1374,
+    0.08454,
+    0.1645,
+    0.08669
    ],
    "feats": [
     "lnAMC",
@@ -603,8 +647,8 @@
     "lnWDD"
    ],
    "tau": [
-    0.2338,
-    0.1827
+    0.1723,
+    0.1454
    ]
   }
  }
