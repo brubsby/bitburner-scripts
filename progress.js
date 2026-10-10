@@ -137,7 +137,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: the manipCurve interpolation (prices port openers' manipulation channel).
 import { rateAt, manipLostExp, farmOrMoney, splitVerdict } from 'expfarm.js'
 // Pure: the split's closed-loop controller (measure -> calibrate -> exit).
-import { splitControl, splitConditioned, splitRaw } from 'splitctl.js'
+import { splitControl, splitConditioned, splitRaw, committedRouteOf } from 'splitctl.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -4041,8 +4041,8 @@ function publishPlan(ns, info, extra = {}) {
     let exitJump = pc.prev?.exitJump ?? null
     try {
       const pointH = ex === inst ? inst?.pointH : ex === br ? br?.bladeH ?? null : ex?.pointH ?? null
-      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === br ? 'the Bladeburner route' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION })
-      if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, ...exitJump }), 'w')
+      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === br ? 'the Bladeburner route' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null })
+      if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null, ...exitJump }), 'w')
     } catch (e) {
       exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }
     }
@@ -4518,7 +4518,15 @@ function farmVerdictOf(ns, info, inputs) {
     const share0 = b.expFarm ? (b.expFarm.moneyShare > 0 && b.expFarm.moneyShare < 1 ? b.expFarm.moneyShare : 0) : 1
     let loopWhy = null
     if (b.splitModel?.shares && b.splitMeasure && scriptExp !== null && raw?.expPerSec > 0) {
-      const r = splitControl({ bestExitPolicy, inputs: raw, share0, measure: b.splitMeasure, model: b.splitModel, state: prevCtl, nowMs: Date.now(), lastAugReset: info?.lastAugReset ?? null, bitNode: info?.currentNode ?? null, scriptExpPerSec: scriptExp, hackPerSec: inputs?.split?.hackPerSec ?? null })
+      // THE COMMITTED ROUTE (splitctl.committedRouteOf, the last plan record):
+      // on the Bladeburner route the split is not priced on the World Daemon.
+      let route = null
+      try {
+        route = committedRouteOf(readJson(ns, PLAN_FILE), { node: info?.currentNode ?? null })
+      } catch {
+        route = null
+      }
+      const r = splitControl({ bestExitPolicy, inputs: raw, share0, measure: b.splitMeasure, model: b.splitModel, state: prevCtl, nowMs: Date.now(), lastAugReset: info?.lastAugReset ?? null, bitNode: info?.currentNode ?? null, scriptExpPerSec: scriptExp, hackPerSec: inputs?.split?.hackPerSec ?? null, route })
       if (r.frac !== null) {
         const { state, grid, ...pub } = r
         const cm = r.calib.money

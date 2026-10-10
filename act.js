@@ -539,7 +539,7 @@ export async function main(ns) {
             // THE INSTALL IS RECORDED BEFORE IT RUNS (nothing runs after a
             // prestige): the batch, the reason, and what act-install will check.
             try {
-              ns.write('/tel/install-last.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: info.lastAugReset, batchAt: batch.at, why: o.why ?? null, terminal: o.terminal === true, planInstall, batch: o.batch ?? null, pricedBatch: o.pricedBatch ?? null, batchCheck: o.batchCheck ?? null, batchChoice: o.batchChoice ?? null, exits: o.exits ?? null, carry: o.carry ?? null, bought, results: results.map((x) => ({ kind: x.kind, ok: x.ok ?? null, skipped: x.skipped ?? null })) }), 'w')
+              ns.write('/tel/install-last.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: info.lastAugReset, node: info.currentNode ?? null, lastNodeReset: info.lastNodeReset ?? null, batchAt: batch.at, why: o.why ?? null, terminal: o.terminal === true, planInstall, batch: o.batch ?? null, pricedBatch: o.pricedBatch ?? null, batchCheck: o.batchCheck ?? null, batchChoice: o.batchChoice ?? null, exits: o.exits ?? null, carry: o.carry ?? null, bought, results: results.map((x) => ({ kind: x.kind, ok: x.ok ?? null, skipped: x.skipped ?? null })) }), 'w')
               if (ns.getHostname() !== 'home') ns.scp('/tel/install-last.txt', 'home', ns.getHostname())
             } catch {
               /* the record must not block the install; act-install writes its own */

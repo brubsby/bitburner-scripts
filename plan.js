@@ -2284,7 +2284,36 @@ export function gangBridgeOf(live, carry, { now = Date.now(), lifeStart = null, 
   return { steps, why: `the install's carried gang stream (built ${carry.at}, ${dH.toFixed(2)}h ago; $${(steps[0].perSec / 1e6).toFixed(1)}m/s now): gang.js's forecast has no money ${ageH.toFixed(2)}h into the life, inside the ${graceH}h post-install grace` }
 }
 
-export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), prev = null, si = 0.02, ver = null } = {}) {
+/**
+ * A NODE ENTRY IS NOT AN INSTALL. The install record (act.js
+ * /tel/install-last.txt) against a life in another BitNode, or another
+ * instance of the same one: nothing to compare. Live 2026-10-09: The Red
+ * Pill's install at 22:21:20Z in BN12.1, the node destroyed 22:25Z into BN12.2
+ * (4 minutes: inside EXIT_JUMP.matchMin), and the BN12.2 life's exit was
+ * "EXIT JUMP AT INSTALL +15.183h" against the BN12.1 install's 0.50h — still
+ * failing the healthcheck after the bit-flume into BN7.
+ *   node, lastNodeReset   the life's (ns.getResetInfo currentNode,
+ *                         lastNodeReset), against the record's stamps
+ *   a node reset after the install: the life began at a node entry
+ *   rec.terminal (The Red Pill's install, the only stamp a record before
+ *                 2026-10-09 carries): the node ends after it
+ * Returns the reason (a string) or null (the same node instance).
+ */
+export function nodeChangeOf(rec, { node = null, lastNodeReset = null } = {}) {
+  if (!rec?.at) return null
+  const installAt = Date.parse(rec.at)
+  if (fin(rec.node) && fin(node) && rec.node !== node) return `the install (${rec.at}) was in BitNode ${rec.node}, this life is in BitNode ${node}`
+  if (fin(rec.lastNodeReset) && fin(lastNodeReset) && rec.lastNodeReset !== lastNodeReset) return `the install (${rec.at}) was in the BitNode entered ${new Date(rec.lastNodeReset).toISOString()}, this life is in the one entered ${new Date(lastNodeReset).toISOString()}`
+  if (fin(lastNodeReset) && fin(installAt) && lastNodeReset > installAt) return `this life's BitNode was entered ${new Date(lastNodeReset).toISOString()}, after the install (${rec.at})`
+  if (rec.terminal === true) return `the install (${rec.at}) was The Red Pill's: the node ends after it, and the life priced next is a node entry`
+  return null
+}
+
+export function exitJumpOf(rec, exit, { lastAugReset = null, now = Date.now(), prev = null, si = 0.02, ver = null, node = null, lastNodeReset = null } = {}) {
+  // Before everything, the carried record included: a node entry is not an
+  // install, and a verdict carried from it is not this life's.
+  const nc = nodeChangeOf(rec, { node, lastNodeReset })
+  if (nc) return { ok: null, nodeChanged: true, why: `not compared: node changed — ${nc}` }
   const carry = (why) => (prev && prev.install ? prev : { ok: null, why })
   // A DEPLOY INSIDE THE WINDOW re-prices the exit on another model: a
   // correction, not a jump. Keep the verdict the install's own model reached
@@ -2944,7 +2973,12 @@ export function installRecordCheck(rec, { now = Date.now(), holdH = 12, jump = n
   // A VOIDED INSTALL (installgate.BLADE_JUMP_VOIDS): both comparisons
   // measured its lost inputs — notes naming the void, never failures.
   const voided = installVoidOf(rec.at)
-  if (jump?.install?.at === rec.at && plan?.exitJump?.install?.at !== rec.at) {
+  // THE JUMP RECORD'S LIFE in another node from the install (nodeChangeOf, on
+  // the life stamps exitjump.txt carries; a record from before the stamps
+  // existed is judged by the install's own — The Red Pill's ends the node).
+  const jumpNode = jump?.install?.at === rec.at ? nodeChangeOf(rec, { node: jump.node ?? null, lastNodeReset: jump.lastNodeReset ?? null }) : null
+  if (jumpNode) notes.push(`last install's exit across the install: not compared: node changed — ${jumpNode}`)
+  else if (jump?.install?.at === rec.at && plan?.exitJump?.install?.at !== rec.at) {
     if (jump.ok === false && voided) notes.push(`${voidNoteOf(voided)}: ${String(jump.why ?? '').replace(/^EXIT JUMP AT INSTALL:? ?/, 'EXIT JUMP AT INSTALL ')}`)
     else if (jump.ok === false) fails.push({ what: String(jump.why).startsWith('EXIT JUMP AT INSTALL') ? jump.why : `EXIT JUMP AT INSTALL: ${jump.why}`, detail: 'the install priced the next life on one model and the life priced itself on another — plan.exitJumpOf, /tel/exitjump.txt' })
     else if (jump.why) notes.push(`last install's exit across the install: ${jump.why}`)

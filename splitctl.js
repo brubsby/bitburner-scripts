@@ -470,10 +470,12 @@ export const ctlNew = (lastAugReset, bitNode = null) => ({ v: 1, bitNode, lastAu
  *   state           the previous pass's control.state (same life) or null
  *   nowMs, lastAugReset, scriptExpPerSec (tel.js, for expUnitScale)
  *   learn           false = OPEN LOOP (measurements ignored) — the test's baseline only
+ *   route           committedRouteOf(plan.txt): on a committed route other than
+ *                   'hack' the split is not priced on exitplan's exit (5b)
  * Returns { frac, priced, kind, why, grid, best, runH, farmH, moneyH, shareH, state, ...published fields }.
  */
 export function splitControl(o) {
-  const { bestExitPolicy, inputs, share0, measure, model, nowMs, lastAugReset = null, bitNode = null, scriptExpPerSec = null, hackPerSec = null, learn = true } = o
+  const { bestExitPolicy, inputs, share0, measure, model, nowMs, lastAugReset = null, bitNode = null, scriptExpPerSec = null, hackPerSec = null, learn = true, route = null } = o
   const P = { ...SPLIT, ...(o.params ?? {}) }
   // THE CALIBRATION OUTLIVES AN INSTALL (same node): each observation is a
   // ratio measured/model, and the model is recomputed at the new life's level
@@ -616,6 +618,32 @@ export function splitControl(o) {
       state.targetAt = null
     }
     return { frac: snap(frac), priced: true, kind, why, grid, best, runH, shareH: hOf(frac) ?? runH, farmH: hOf(0), moneyH: hOf(1), state, ...published, ...extra }
+  }
+
+  // ---- 5b. THE COMMITTED ROUTE is not the exit priced above ---------------
+  // Everything above prices the split on exitplan's exit — the World Daemon,
+  // the hacking route. On the committed Bladeburner route (plan.txt
+  // decisions.bladeRoute.key 'blade', committedRouteOf) that is not the exit
+  // the run takes: live BN7.1 2026-10-10 the controller walked 15 -> 30 -> 60
+  // -> 45 (5 reversals, 11 switches in 3h: SPLIT OSCILLATING) on a 153-vs-155h
+  // World Daemon surface (+-52 min) while the committed exit was 13.3h by the
+  // black ops. The black-op exit (bbplan.bladeExitGen) reads no hacking exp
+  // and no batcher stream; it reads income only through the legs the route
+  // record names (committedRouteOf moneyLegs). With none, no split moves the
+  // committed exit: HOLD the running split (measurements still calibrate).
+  // With one, the exit is non-increasing in money and blind to exp, so the
+  // money end dominates: step toward it — never back, so never a reversal.
+  if (route && route.key && route.key !== 'hack') {
+    const routeH = num(route.exitH) ? `${route.exitH.toFixed(2)}h` : '?h'
+    const head = `the committed route is '${route.key}' (exit ${routeH}${route.why ? `; ${String(route.why).slice(0, 80)}` : ''}), not the World Daemon exit the split is priced on (${runH.toFixed(2)}h here, best ${Math.round(best.frac * 100)}% ${best.hours.toFixed(2)}h)`
+    const legs = Array.isArray(route.moneyLegs) ? route.moneyLegs.filter(Boolean) : []
+    if (!legs.length) return done(s0, 'route-hold', `route hold ${Math.round(s0 * 100)}%: ${head} — its exit reads no batcher stream, so no split moves it; not switching`, { route })
+    if (pending) return done(state.target, 'pending', `waiting for batch.js to apply ${Math.round(state.target * 100)}% (published ${((nowMs - state.targetAt) / 6e4).toFixed(1)} min ago; route money)`)
+    const top = snap(P.maxFrac)
+    const to = snap(Math.min(top, s0 + P.stepMax))
+    if (s0 >= top - 1e-9) return done(s0, 'route-hold', `route hold ${Math.round(s0 * 100)}%: ${head} — it reads income (${legs.join('; ')}) and no exp: at the money end`, { route })
+    if (seg && dwellLeftMs > 0) return done(s0, 'route-hold', `route hold ${Math.round(s0 * 100)}% for the dwell (${(dwellLeftMs / 6e4).toFixed(1)} min): ${head} — it reads income (${legs.join('; ')}) and no exp, so money dominates; stepping to ${Math.round(to * 100)}% after the dwell`, { route })
+    return done(to, 'route-money', `route money: ${Math.round(s0 * 100)}% -> ${Math.round(to * 100)}%: ${head} — it reads income (${legs.join('; ')}) and no exp: the money end dominates (not priced: monotone)`, { route })
   }
 
   // ---- 6. the posterior's draws: the money and farm streams' principal
@@ -764,12 +792,39 @@ export function splitControl(o) {
  * tools/healthcheck.mjs. Returns [{what, detail}] problems (empty = fine).
  * `batch` is batch.txt (for the meter's presence while the farm runs).
  */
+/**
+ * THE COMMITTED ROUTE the split serves, from the plan record (/tel/plan.txt,
+ * the previous pass; decisions.bladeRoute is the ACTED key, the route pin
+ * applied). Same node only. Returns null on the hacking route (or unread),
+ * else {key, exitH, hackH, why, moneyLegs}: the legs through which the
+ * route's exit reads income, each a reason —
+ *   lean.routeBuy     the full daemon's home purchase, paid from income
+ *                     (homeplan.routeFullAtOf: buyAtH moves with the income)
+ *   simulacrum        The Blade's Simulacrum within reach of a 20x income
+ *                     (its money leg / 20 inside the exit): the split moves
+ *                     the income by far less, so beyond that it cannot matter
+ */
+export function committedRouteOf(plan, { node = null } = {}) {
+  const br = plan?.decisions?.bladeRoute ?? null
+  if (!br || br.key !== 'blade') return null
+  if (num(plan.node) && num(node) && plan.node !== node) return null
+  const exitH = num(br.bladeH) ? br.bladeH : null
+  const legs = []
+  const rb = br.lean?.routeBuy ?? null
+  if (rb && (num(rb.buyAtH) || num(rb.cost))) legs.push(`the full daemon's home purchase (${num(rb.cost) ? `$${(rb.cost / 1e9).toFixed(2)}b` : '?'}, at ${num(rb.buyAtH) ? `${rb.buyAtH.toFixed(2)}h` : '?'})`)
+  const sim = br.simulacrum ?? null
+  if (sim && sim.buy !== true && num(sim.moneyH) && sim.moneyH > 0 && num(sim.withoutH) && sim.moneyH / 20 < sim.withoutH) legs.push(`The Blade's Simulacrum's money (${sim.moneyH.toFixed(1)}h at this income, exit ${sim.withoutH.toFixed(1)}h)`)
+  return { key: 'blade', exitH, hackH: num(br.hackH) ? br.hackH : null, why: `black ops ${exitH === null ? '?' : exitH.toFixed(2)}h vs the World Daemon ${num(br.hackH) ? br.hackH.toFixed(2) : '?'}h`, moneyLegs: legs }
+}
+
 export function splitHealth(rec, batch) {
   const out = []
   if (batch?.expFarm && !batch.splitMeasure) out.push({ what: 'SPLIT UNMEASURED: batch.js runs the farm but publishes no splitMeasure', detail: 'the money/exp split runs open-loop — batch.js predates the closed loop (restart it)' })
   const c = rec?.control
   if (!c) return out
-  if (c.oscillating) out.push({ what: `SPLIT OSCILLATING: ${c.reversals3h} direction reversals and ${c.probes3h ?? 0} probe(s) in ${c.switches3h} switches over 3h`, detail: `last: ${JSON.stringify(c.lastSwitch ?? null).slice(0, 200)}` })
+  // A route hold makes no switches: the reversals still in the window are
+  // the pricing on the wrong exit before it, ageing out — not oscillation now.
+  if (c.oscillating && !String(c.kind ?? '').startsWith('route-')) out.push({ what: `SPLIT OSCILLATING: ${c.reversals3h} direction reversals and ${c.probes3h ?? 0} probe(s) in ${c.switches3h} switches over 3h`, detail: `last: ${JSON.stringify(c.lastSwitch ?? null).slice(0, 200)}` })
   if (Array.isArray(c.diverged) && c.diverged.length) out.push({ what: `SPLIT MODEL OFF: ${c.diverged.join('; ')}`, detail: 'the controller prices on the measurement, but the model (expfarm.moneyModelOf / farmHoldGB) is beyond the BN1 tolerance — fix the model, every other consumer of it is wrong by as much' })
   return out
 }
