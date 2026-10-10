@@ -817,6 +817,52 @@ export function committedRouteOf(plan, { node = null } = {}) {
   return { key: 'blade', exitH, hackH: num(br.hackH) ? br.hackH : null, why: `black ops ${exitH === null ? '?' : exitH.toFixed(2)}h vs the World Daemon ${num(br.hackH) ? br.hackH.toFixed(2) : '?'}h`, moneyLegs: legs }
 }
 
+/**
+ * THE JOIN CLAIM ON THE COMMITTED ROUTE (/tel/installgate.txt joinClaim).
+ * The hacking exit joins Daedalus, whose $100b-in-hand requirement is money a
+ * spender can destroy — that claim (`hackClaim`, progress.joinMoneyClaim) is
+ * held as published. The Bladeburner exit is the 21 black ops: no faction
+ * join is on it, so Daedalus's money is not this route's (live BN7.1
+ * 2026-10-10: joinClaim $1e11 on the blade route held every discretionary
+ * dollar — hacknet priced capacity and bought nothing). What that route DOES
+ * hold is The Blade's Simulacrum once its verdict buys it (bbplan
+ * simulacrumVerdictGen buy: money accumulating for an order act() places
+ * when it is reachable). The route's home purchase is the home claimant's
+ * (homeup's next cost), not held twice here.
+ * Returns {claim, why, route}. claim null = unknown (holds everything): an
+ * unreadable hacking claim, or a buying Simulacrum with no price.
+ */
+export function routeJoinClaimOf(plan, { node = null, hackClaim = null } = {}) {
+  const route = committedRouteOf(plan, { node })
+  if (!route) {
+    const known = num(hackClaim) && hackClaim >= 0
+    return { route: 'hack', claim: known ? hackClaim : null, why: known ? (hackClaim > 0 ? `the hacking exit: the exit faction's money requirement ($${(hackClaim / 1e9).toFixed(2)}b) is held until joined` : "the hacking exit: the exit faction's money requirement is met or none") : "unknown: the exit faction's requirements or the balance are unreadable" }
+  }
+  const sim = plan?.decisions?.bladeRoute?.simulacrum ?? null
+  if (sim?.buy === true) {
+    if (!(num(sim.cost) && sim.cost > 0)) return { route: 'blade', claim: null, why: "the Bladeburner route buys The Blade's Simulacrum but its price is unread: unknown" }
+    return { route: 'blade', claim: sim.cost, why: `the Bladeburner route (${route.why}): no faction join; The Blade's Simulacrum is bought on it ($${(sim.cost / 1e9).toFixed(2)}b held: ${String(sim.why ?? '').slice(0, 160)})` }
+  }
+  return { route: 'blade', claim: 0, why: `the Bladeburner route (${route.why}): the exit is the 21 black ops, no faction join (Daedalus's money is not on it) and no Simulacrum buy (${String(sim?.why ?? 'no verdict').slice(0, 120)})` }
+}
+
+/**
+ * THE AUGMENTATION HOLD ON A NEVER-INSTALL BLADEBURNER ROUTE. A batch bought
+ * and never installed is lost at the black-op exit, so while the committed
+ * install decision (this life, this node) is 'never' on that route the
+ * plan's money is not held (budgetClaim 0). The hacking route's 'never' is
+ * the final window — its batch carries The Red Pill — and keeps its hold.
+ * Returns {zero: bool, why}.
+ */
+export function routeAugHoldOf(plan, { node = null, lastAugReset = null } = {}) {
+  const route = committedRouteOf(plan, { node })
+  const inst = plan?.decisions?.install ?? null
+  if (!route) return { zero: false, why: 'the hacking route (or no committed route): the plan is held' }
+  if (!(num(lastAugReset) && plan?.lastAugReset === lastAugReset)) return { zero: false, why: "the Bladeburner route, but the plan record is another life's: the plan is held" }
+  if (inst?.key !== 'never') return { zero: false, why: `the Bladeburner route installs (${inst?.key ?? 'undecided'}): the plan is held` }
+  return { zero: true, why: `the Bladeburner route never installs (${route.why}): a batch bought now is lost at the black-op exit, so none of it is held` }
+}
+
 export function splitHealth(rec, batch) {
   const out = []
   if (batch?.expFarm && !batch.splitMeasure) out.push({ what: 'SPLIT UNMEASURED: batch.js runs the farm but publishes no splitMeasure', detail: 'the money/exp split runs open-loop — batch.js predates the closed loop (restart it)' })

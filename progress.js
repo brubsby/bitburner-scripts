@@ -138,7 +138,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: the manipCurve interpolation (prices port openers' manipulation channel).
 import { rateAt, manipLostExp, farmOrMoney, splitVerdict } from 'expfarm.js'
 // Pure: the split's closed-loop controller (measure -> calibrate -> exit).
-import { splitControl, splitConditioned, splitRaw, committedRouteOf } from 'splitctl.js'
+import { splitControl, splitConditioned, splitRaw, committedRouteOf, routeJoinClaimOf, routeAugHoldOf } from 'splitctl.js'
 // Pure: which instrument measures income in this node, what an install leaves,
 // and who accepts donations (BitNode 8 changes all three).
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
@@ -1126,6 +1126,26 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
  */
 /** The faction whose augmentation ends the BitNode. */
 const EXIT_FACTION = 'Daedalus'
+
+/**
+ * THE GATE'S JOIN CLAIM ON THE COMMITTED ROUTE (splitctl.routeJoinClaimOf):
+ * the hacking exit holds Daedalus's money (joinMoneyClaim); the Bladeburner
+ * exit joins nothing and holds only a Simulacrum it buys. `valueLn` is the
+ * exit faction's on the hacking route, null for a blade claim > 0 (the
+ * Simulacrum's value is not Daedalus's: the rival reads unknown, home holds).
+ * Read from the plan file (last pass), as committedRouteOf's other readers.
+ */
+function gateJoinOf(ns, info, candidates, player, weights) {
+  let plan = null
+  try {
+    plan = readJson(ns, PLAN_FILE)
+  } catch {
+    plan = null
+  }
+  const r = routeJoinClaimOf(plan, { node: info?.currentNode ?? null, hackClaim: joinMoneyClaim(candidates, player) })
+  const valueLn = r.route === 'blade' ? (r.claim === 0 ? 0 : null) : joinValueLn(candidates, weights)
+  return { joinClaim: r.claim, joinValueLn: valueLn, joinClaimWhy: r.why, joinRoute: r.route }
+}
 
 function joinMoneyClaim(candidates, player) {
   if (!Array.isArray(candidates)) return null
@@ -7874,6 +7894,7 @@ async function act(ns, canJoin, info, note) {
     // exit's in the published objective, and price go.js in the home verdict.
     const goBlade0 = await bladeGoWeightsOf(ns, info, { liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n), eRep: weightsMeta?.eRep ?? null })
     if (goBlade0) weightsMeta = { ...weightsMeta, goWeights: goBlade0 }
+    const gateJoin0 = gateJoinOf(ns, info, candidates, player, channelWeights)
     const homeBlade0 = await bladeHomeVerdictOf(ns, info, { inputs: gangInputs0(), liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n), goWeights: goBlade0 })
     ns.write(
       GATE,
@@ -7886,9 +7907,12 @@ async function act(ns, canJoin, info, note) {
           plan: null,
           // Explicit zero, not absence: nothing planned holds nothing ([C9]).
           budgetClaim: 0,
-          joinClaim: joinMoneyClaim(candidates, player),
-          joinValueLn: joinValueLn(candidates, channelWeights),
-          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: wealthOf(player.money, stockNow) }),
+          // On the COMMITTED ROUTE (gateJoinOf): Daedalus's money only on the hacking exit.
+          joinClaim: gateJoin0.joinClaim,
+          joinValueLn: gateJoin0.joinValueLn,
+          joinClaimWhy: gateJoin0.joinClaimWhy,
+          joinRoute: gateJoin0.joinRoute,
+          ...homeCompete({ claim: gateJoin0.joinClaim, valueLn: gateJoin0.joinValueLn, money: wealthOf(player.money, stockNow) }),
           // THE GANG VERDICT RIDES THIS WRITE TOO, for exactly the reason the
           // objective record below does — and it was missing, which cost ten
           // hours of work slot. A pass with nothing affordable ends here, so a
@@ -8844,6 +8868,15 @@ async function act(ns, canJoin, info, note) {
     const spendMoneyBy = (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600)
     const goBlade1 = await bladeGoWeightsOf(ns, info, { liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n), eRep: weightsMeta?.eRep ?? null })
     if (goBlade1) weightsMeta = { ...weightsMeta, goWeights: goBlade1 }
+    const gateJoin1 = gateJoinOf(ns, info, candidates, player, channelWeights)
+    // THE AUG HOLD ON THE COMMITTED ROUTE (splitctl.routeAugHoldOf): a
+    // never-install Bladeburner route loses any batch at the black-op exit.
+    let augHold1
+    try {
+      augHold1 = routeAugHoldOf(readJson(ns, PLAN_FILE), { node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null })
+    } catch {
+      augHold1 = { zero: false, why: 'the plan record is unreadable: the plan is held' }
+    }
     const homeBlade1 = await bladeHomeVerdictOf(ns, info, { inputs: exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n), goWeights: goBlade1 })
     // Persist BEFORE acting. An install never returns, so a write afterwards
     // would never happen and the next life would start with no history — and
@@ -8866,9 +8899,12 @@ async function act(ns, canJoin, info, note) {
           // carried on exactly as before while every test passed. The value
           // existed; nothing could see it.
           gangWorth: gangWorthVerdict,
-          joinClaim: joinMoneyClaim(candidates, player),
-          joinValueLn: joinValueLn(candidates, channelWeights),
-          ...homeCompete({ claim: joinMoneyClaim(candidates, player), valueLn: joinValueLn(candidates, channelWeights), money: wealthOf(player.money, stockNow) }),
+          // On the COMMITTED ROUTE (gateJoinOf): Daedalus's money only on the hacking exit.
+          joinClaim: gateJoin1.joinClaim,
+          joinValueLn: gateJoin1.joinValueLn,
+          joinClaimWhy: gateJoin1.joinClaimWhy,
+          joinRoute: gateJoin1.joinRoute,
+          ...homeCompete({ claim: gateJoin1.joinClaim, valueLn: gateJoin1.joinValueLn, money: wealthOf(player.money, stockNow) }),
           pending,
           heldM,
           // The income model's inputs, persisted so the NEXT pass can score
@@ -8897,6 +8933,7 @@ async function act(ns, canJoin, info, note) {
           exitSource: decidedExit?.source ?? (weightsMeta?.exitSensitivity ? 'exit sensitivity base (the ordinary model)' : null),
           exitCalibration: withExitSample(exitCal0, info, decidedExit?.exitH ?? weightsMeta?.exitSensitivity?.exitH, decidedExit?.source ?? 'sensitivity base', decidedExit?.exitH != null ? decidedExit?.seH : null),
           countRoute: countRouteNow,
+          budgetClaimWhy: augHold1.why,
           // WHAT THE BUDGET MUST ACTUALLY HOLD: the plan's cost NET of what
           // income will deliver before the install happens anyway. Money is
           // only needed AT the install; holding the gross figure starved the
@@ -8905,8 +8942,9 @@ async function act(ns, canJoin, info, note) {
           // conservative horizon — the gate can fire early, and an over-hold
           // costs minutes of fleet compounding while an under-hold costs an
           // augmentation. Unreadable income keeps the gross hold.
-          budgetClaim:
-            plan && incomePerSec > 0 && joinState?.windowH > 0
+          budgetClaim: augHold1.zero
+            ? 0
+            : plan && incomePerSec > 0 && joinState?.windowH > 0
               ? Math.max(
                   0,
                   plan.totalCost -
