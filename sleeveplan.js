@@ -82,7 +82,7 @@ import { skillFromExp } from 'installgate.js'
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
 import { HACKING_WORK_FACTIONS } from 'contractplan.js'
 // Pure: the Bladeburner exit model, for the fleet on the Bladeburner route (bladeFleetGen).
-import { chooseSleeveConfigGen, sleeveTasksOf } from 'bbplan.js'
+import { chooseSleeveConfigGen, sleeveTasksOf, sleeveConfigKey } from 'bbplan.js'
 
 const num = (v) => typeof v === 'number' && isFinite(v)
 /**
@@ -1356,7 +1356,7 @@ export function* bladeFleetGen(s0, n, incumbent = null, { Q = 1 } = {}) {
   // the model flipped the committed fleet between passes (re-tasking five
   // sleeves, and a fleet change is an exit event): live-state replay
   // 2026-10-02 10:28 -> 10:33Z i5s0 -> i3s2 for 0.1h.
-  const same = (a, b) => !!a && !!b && a.infiltrate === b.infiltrate && a.support === b.support && a.fa === b.fa
+  const same = (a, b) => !!a && !!b && sleeveConfigKey(a) === sleeveConfigKey(b)
   const inc = incumbent && pick.config ? pick.byConfig.find((x) => same(x.config, incumbent) && Number.isFinite(x.hours)) : null
   let kept = false
   const best = inc ? pick.byConfig.find((x) => same(x.config, pick.config)) : null
@@ -1376,8 +1376,15 @@ export function* bladeFleetGen(s0, n, incumbent = null, { Q = 1 } = {}) {
     config: pick.config,
     hours: +pick.hours.toFixed(2),
     byConfig: ranked.slice(0, 6).map((x) => ({ ...x.config, hours: +x.hours.toFixed(2), ...(Number.isFinite(x.seH) ? { seH: +x.seH.toFixed(2) } : {}) })),
+    // THE CONTRACT FLEETS' PRICE (bbplan.sleeveContractConfigs), published whether or not one won: the best of them against the fleet run.
+    contracts: (() => {
+      const c = ranked.find((x) => x.config.contracts > 0)
+      if (!c) return { why: 'no contract fleet finishes in the model (or fewer than 3 sleeves)' }
+      const d = c.hours - pick.hours
+      return { best: sleeveConfigKey(c.config), hours: +c.hours.toFixed(2), vsH: +d.toFixed(2), why: d < 0 ? `${sleeveConfigKey(c.config)} ${(-d).toFixed(2)}h sooner than the fleet run, inside the keep tolerance ${keepTol.toFixed(2)}h: the incumbent stands` : d === 0 ? `${sleeveConfigKey(c.config)} is the fleet run` : `${sleeveConfigKey(c.config)} ${d.toFixed(2)}h later than the fleet run` }
+    })(),
     ...(Q > 1 ? { members: Q } : {}),
-    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis: exit ${pick.hours.toFixed(1)}h (model${Q > 1 ? `, mean of ${Q} members` : ''})${kept ? ` — the incumbent, within ${keepTol.toFixed(2)}h of the best (${ranked[0].config.infiltrate}/${ranked[0].config.support}/${ranked[0].config.fa} ${ranked[0].hours.toFixed(2)}h)` : ''} vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
+    why: `${pick.config.infiltrate} infiltrate / ${pick.config.support} support / ${pick.config.fa} field analysis${pick.config.contracts > 0 ? ` / ${pick.config.contracts} on contracts (${sleeveConfigKey(pick.config)})` : ''}: exit ${pick.hours.toFixed(1)}h (model${Q > 1 ? `, mean of ${Q} members` : ''})${kept ? ` — the incumbent, within ${keepTol.toFixed(2)}h of the best (${sleeveConfigKey(ranked[0].config)} ${ranked[0].hours.toFixed(2)}h)` : ''} vs ${worst ? `${worst.hours.toFixed(1)}h for the worst of ${ranked.length}` : 'nothing else finishing'}`,
   }
 }
 
