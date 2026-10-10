@@ -2530,6 +2530,43 @@ export function stoneHarm(boardStrings, x, y) {
   return libsAtLeast(b, nbrs, idx, 2, sc.out, sc.seen, ++sc.mark) ? null : 'atari'
 }
 
+/**
+ * THE KO A SECOND STONE UNLOCKS: the cheat's first stone (fx, fy) on `board`
+ * (before the cheat; `board2` after it) took exactly one stone at p and is left
+ * a lone stone whose only liberty is p — a ko. After the single the AI cannot
+ * retake (p recreates `board`, a superko repeat); a second stone anywhere but p
+ * makes the board new, so the retake is legal (playTwoMoves records no history
+ * board). The 2026-10-10 22:44:01Z Tetrads loss, ply 9: 1,0 took 2,0, the
+ * second stone 3,1 (read 0.001 against the single's 1.0) let white retake at
+ * 2,0, and the game was lost 12-16.5; the single wins 23-5.5. Returns 'ko' or
+ * null. Pure.
+ */
+export function koUnlock(board, board2, fx, fy, sx, sy) {
+  const N = board.length
+  const at = (b, x, y) => (x < 0 || y < 0 || x >= N || y >= N ? '#' : b[x][y])
+  const caps = []
+  for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (board[x][y] === 'O' && board2[x][y] === '.') caps.push([x, y])
+  if (caps.length !== 1) return null
+  const [px, py] = caps[0]
+  // At p, or touching the first stone or p, the second stone changes the ko itself (fills, connects, captures): not this harm.
+  if (Math.abs(sx - px) + Math.abs(sy - py) <= 1 || Math.abs(sx - fx) + Math.abs(sy - fy) <= 1) return null
+  const b3 = applyMove(board2, sx, sy)
+  if (!b3) return null
+  for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) if (board2[x][y] === 'O' && b3[x][y] === '.') return null // it captures: a new shape
+  const libs = []
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const v = at(board2, fx + dx, fy + dy)
+    if (v === 'X') return null // not a lone stone
+    if (v === '.') libs.push([fx + dx, fy + dy])
+  }
+  return libs.length === 1 && libs[0][0] === px && libs[0][1] === py ? 'ko' : null
+}
+
+/** A cheat's second stone's harm (the decline's structural test): stoneHarm on the board after the first, else the ko it unlocks (koUnlock). Pure. */
+export function cheatHarm(board, board2, fx, fy, sx, sy, { ko = true } = {}) {
+  return stoneHarm(board2, sx, sy) ?? (ko ? koUnlock(board, board2, fx, fy, sx, sy) : null)
+}
+
 export function applyMove(boardStrings, x, y) {
   const N = boardStrings.length
   const b = parseBoard(boardStrings)

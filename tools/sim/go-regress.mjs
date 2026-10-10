@@ -270,6 +270,9 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
     // searched without the net (golib nnDepth -1; go-solver req.secondNet).
     const sn = CH?.secondNet;
     const secondNetOff = sn === false || (!!sn && typeof sn === "object" && (sn[planKey(fx.opponent)] ?? sn.default) === false);
+    // declineHarm: true/false, or per opponent ({ default, Tetrads }) as go.js declineHarmFor.
+    const dh = CH?.declineHarm;
+    const declineHarmOn = typeof dh === "object" && dh !== null ? (dh[planKey(fx.opponent)] ?? dh.default ?? true) !== false : !!dh;
     const declineOf = (wr1, wr2) => Number.isFinite(CH?.decline) && typeof wr1 === "number" && typeof wr2 === "number" && wr2 < wr1 - CH.decline;
     const validList = (g) => {
       const out = [];
@@ -374,7 +377,7 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
                   const wr2 = s2?.[0]?.top?.[0]?.[4];
                   // declineHarm (go.js): the win rates decline only a second stone
                   // that harms itself (golib.stoneHarm: own-eye fill, self-atari).
-                  const harmOk = !CH.declineHarm || (s2 && s2.length && !!golib.stoneHarm(board2, s2[0].x, s2[0].y));
+                  const harmOk = !declineHarmOn || (s2 && s2.length && !!golib.cheatHarm(simple, board2, x1, y1, s2[0].x, s2[0].y, { ko: CH.harmKo !== false }));
                   if (s2 && s2.length && !(declineOf(d.top?.[0]?.[4], wr2) && harmOk)) {
                     mv = `${x1},${y1}+${s2[0].x},${s2[0].y}`;
                     greedySecond = true;

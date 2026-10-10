@@ -523,7 +523,7 @@ export async function run() {
     const go = await import(path.join(REPO, "go.js"));
     const golib = await import(path.join(REPO, "golib.js"));
     c14.examined(1);
-    if (go.SETTINGS.cheat.declineHarm !== true) c14.fail(`SETTINGS.cheat.declineHarm is ${go.SETTINGS.cheat.declineHarm}: every second stone reading under the single is declined again (1.36 a game live, most of them good cheats)`);
+    if (go.declineHarmFor("Illuminati") !== true) c14.fail(`declineHarmFor('Illuminati') is ${go.declineHarmFor("Illuminati")}: every second stone reading under the single is declined again (1.36 a game live, most of them good cheats)`);
     // board strings are columns (board[x][y]).
     for (const [what, board, x, y, want] of [
       ["the 02:32:31Z second stone 3,1 (after 4,4): an own-eye fill", [".OOOO", "OXOO.", "XXXX#", "#.XXX", "##X.X"], 3, 1, "eye"],
@@ -537,9 +537,22 @@ export async function run() {
       const got = golib.stoneHarm(board, x, y);
       if (got !== want) c14.fail(`${what}: stoneHarm = ${got}, want ${want}`);
     }
+    // THE KO A SECOND STONE UNLOCKS (golib.koUnlock via cheatHarm, the 2026-10-10 22:44:01Z Tetrads loss, ply 9):
+    // 1,0 takes 2,0 in a ko; any distant second stone makes the AI's retake legal.
+    {
+      const pre = ["O.O.#", ".OOOO", "OXOXX", "#.X.X", ".X.X."];
+      const b2 = golib.applyMove(pre, 1, 0);
+      for (const [what, sx, sy, want] of [["3,1 (live's second stone)", 3, 1, "ko"], ["4,0", 4, 0, "ko"], ["0,1 captures 0,0: a new shape", 0, 1, null]]) {
+        c14.examined(1);
+        const got = golib.cheatHarm(pre, b2, 1, 0, sx, sy);
+        if (got !== want) c14.fail(`22:44:01Z second stone ${what} after 1,0: cheatHarm = ${got}, want ${want}`);
+      }
+      c14.examined(1);
+      if (go.SETTINGS.cheat.harmKo !== true) c14.fail(`SETTINGS.cheat.harmKo is ${go.SETTINGS.cheat.harmKo}: a ko-unlocking second stone is played again (the 22:44:01Z loss)`);
+    }
     const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
     c14.examined(1);
-    if (!/cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\) && \(!SETTINGS\.cheat\.declineHarm \|\| stoneHarm\(board2, second\[0\]\.x, second\[0\]\.y\)\)/.test(src)) c14.fail("tryCheat's decline is not gated on stoneHarm(board2, second) — not found");
+    if (!/cheatDeclined\(singleWr, lastTop\?\.\[0\]\?\.\[4\]\) && \(!declineHarmFor\(opponent\) \|\| cheatHarm\(board, board2, first\.x, first\.y, second\[0\]\.x, second\[0\]\.y/.test(src)) c14.fail("tryCheat's decline is not gated on stoneHarm(board2, second) — not found");
   }
   const c15 = new Check("GC15", "THE GAME'S SECOND-STONE RULE (go.js SETTINGS.cheat.secondRule 'game', the 2026-10-09 22:10:40Z Illuminati loss): a cheat's second stone may be a suicide ALONE that captures after the first — 2,1+1,0 takes white's six stones; the old valid-list rule never offered 1,0");
   {

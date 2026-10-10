@@ -442,6 +442,9 @@ const CHEAT_DECLINE = str("cheat-decline", null) !== null ? num("cheat-decline",
 // itself (golib.stoneHarm: an own-eye fill or a self-atari; go.js
 // SETTINGS.cheat.declineHarm) — the 02:32:31Z stone 3,1 was both.
 const CHEAT_DECLINE_HARM = argv.includes("--cheat-decline-harm");
+// --cheat-harm-ko: a second stone that unlocks the AI's ko retake (golib.koUnlock,
+// go.js SETTINGS.cheat.harmKo) is harm too.
+const CHEAT_HARM_KO = argv.includes("--cheat-harm-ko");
 const declineOf = (wr1, wr2) => CHEAT_DECLINE !== null && typeof wr1 === "number" && typeof wr2 === "number" && wr2 < wr1 - CHEAT_DECLINE;
 if (CHEAT_HYBRID && !CHEAT_JOINT) {
   OPTS.pairs = [6, 5];
@@ -914,12 +917,13 @@ async function playGame(stats, gameIndex) {
         secondStone = true;
         const second = jointSecond ? [jointSecond] : pre?.second ? [pre.second] : await solve();
         secondStone = false;
+        const secondFirst = secondPre.first;
         secondPre = null;
         // The second stone's request (its search is in ourMs) and the
         // go-cheat.js exec + result read (CHEAT_EXEC_MS), on the live clock.
         wall += ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS;
         turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS + CHEAT_EXEC_MS) / 1000;
-        if (before && second && second.length && declineOf(before.wr, second[0].top?.[0]?.[4]) && (!CHEAT_DECLINE_HARM || golib.stoneHarm(g.simpleBoardFromBoard(state.board), second[0].x, second[0].y))) {
+        if (before && second && second.length && declineOf(before.wr, second[0].top?.[0]?.[4]) && (!CHEAT_DECLINE_HARM || golib.cheatHarm(before.b, g.simpleBoardFromBoard(state.board), secondFirst.x, secondFirst.y, second[0].x, second[0].y, { ko: CHEAT_HARM_KO }))) {
           // DECLINED: the single stands (already placed); the cheat is not
           // played (k unchanged); the solver is told of the single (go.js
           // notifies it) — its session re-roots before the first stone.

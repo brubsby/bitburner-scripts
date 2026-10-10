@@ -8913,6 +8913,351 @@
     }
    ],
    "status": "open"
+  },
+  {
+   "id": "live-2026-10-10T22:44:01.968Z-Tetrads",
+   "source": "live",
+   "at": "2026-10-10T22:44:01.968Z",
+   "opponent": "Tetrads",
+   "size": 5,
+   "komi": 5.5,
+   "start": "....#..........#.........",
+   "streakBefore": 8520,
+   "live": {
+    "black": 12,
+    "white": 16.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,1",
+     "r": "2,2",
+     "T": 2521661200,
+     "s": "req",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,3",
+     "r": "1,1",
+     "T": 2521662600,
+     "s": "req",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,2",
+     "T": 2521663600,
+     "s": "req",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1+2,3",
+     "r": "1,3",
+     "T": 2521665000,
+     "s": "cheat",
+     "t": [
+      [
+       2,
+       3,
+       0.036,
+       276,
+       0.196
+      ],
+      [
+       1,
+       0,
+       0.109,
+       193,
+       0.254
+      ],
+      [
+       3,
+       4,
+       -0.053,
+       1,
+       0
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0+3,4",
+     "r": "1,4",
+     "T": 2521666000,
+     "s": "cheat",
+     "t": [
+      [
+       3,
+       4,
+       0.358,
+       40,
+       0.5
+      ],
+      [
+       3,
+       3,
+       0.426,
+       37,
+       0.568
+      ],
+      [
+       1,
+       4,
+       -0.13,
+       14,
+       0
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      2,
+      4,
+      6,
+      7
+     ]
+    },
+    {
+     "m": "0,3+2,4",
+     "r": "0,2",
+     "T": 2521667400,
+     "s": "cheat",
+     "t": [
+      [
+       2,
+       4,
+       0.738,
+       2517,
+       0.989
+      ],
+      [
+       0,
+       2,
+       0.7,
+       657,
+       0.983
+      ],
+      [
+       0,
+       1,
+       -0.111,
+       38,
+       0.053
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,0",
+     "r": "P",
+     "T": 2521668400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "2,0",
+     "T": 2521669600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "0,0",
+     "T": 2521670600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0+3,1",
+     "r": "2,0",
+     "T": 2521671800,
+     "s": "cheat",
+     "t": [
+      [
+       3,
+       1,
+       -0.195,
+       1660,
+       0.001
+      ],
+      [
+       4,
+       0,
+       -0.247,
+       74,
+       0
+      ],
+      [
+       4,
+       2,
+       -0.216,
+       43,
+       0
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "1,0",
+     "T": 2521672600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2521673600,
+     "s": "pre"
+    }
+   ],
+   "cheat": {
+    "crime": 3.416,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 9,
+     "work": 1600,
+     "seed": 2,
+     "why": "ply 9, the greedy cheat: the single 1,0 takes 2,0 in a ko (the AI cannot retake: superko); the second-stone search (100ms, valid-list rule) read every stone ~0 (3,1 0.001 against the single's 1.0) because any second stone makes the board new and the retake at 2,0 legal. declineHarm (5ffeaba) declined only own-eye fills and self-ataris, so 1,0+3,1 was played, white retook 2,0 and won 16.5-12 exactly as live; with the ko-unlock harm (golib.koUnlock, SETTINGS.cheat.harmKo) the decline keeps the single, the AI passes and 1,0/0,1/0,3 win 23-5.5",
+     "red": "2026-10-10, replayed with the fix off: red under harmKo false (SETTINGS.cheat.harmKo, 12-16.5 as live)"
+    },
+    {
+     "from": 9,
+     "work": 1600,
+     "seed": 3,
+     "why": "ply 9, the greedy cheat: the single 1,0 takes 2,0 in a ko (the AI cannot retake: superko); the second-stone search (100ms, valid-list rule) read every stone ~0 (3,1 0.001 against the single's 1.0) because any second stone makes the board new and the retake at 2,0 legal. declineHarm (5ffeaba) declined only own-eye fills and self-ataris, so 1,0+3,1 was played, white retook 2,0 and won 16.5-12 exactly as live; with the ko-unlock harm (golib.koUnlock, SETTINGS.cheat.harmKo) the decline keeps the single, the AI passes and 1,0/0,1/0,3 win 23-5.5",
+     "red": "2026-10-10, replayed with the fix off: red under harmKo false (SETTINGS.cheat.harmKo, 12-16.5 as live)",
+     "tier": "slow"
+    },
+    {
+     "from": 9,
+     "work": 1600,
+     "seed": 4,
+     "why": "ply 9, the greedy cheat: the single 1,0 takes 2,0 in a ko (the AI cannot retake: superko); the second-stone search (100ms, valid-list rule) read every stone ~0 (3,1 0.001 against the single's 1.0) because any second stone makes the board new and the retake at 2,0 legal. declineHarm (5ffeaba) declined only own-eye fills and self-ataris, so 1,0+3,1 was played, white retook 2,0 and won 16.5-12 exactly as live; with the ko-unlock harm (golib.koUnlock, SETTINGS.cheat.harmKo) the decline keeps the single, the AI passes and 1,0/0,1/0,3 win 23-5.5",
+     "red": "2026-10-10, replayed with the fix off: red under harmKo false (SETTINGS.cheat.harmKo, 12-16.5 as live)",
+     "tier": "slow"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN7.1, streak 8520 ended 12-16.5 (cheats replayed at crime_success 3.416 / SF14.3: /tel/go-cheat.txt 22:44:31Z). Turning decision ply 9 (from ply 8 the replays still win; from ply 10 every replay loses): the greedy cheat 1,0+3,1 — the second stone unlocked the AI's ko retake at 2,0 (playTwoMoves adds no history board, so superko no longer forbids it). Ply 7's pre-sent 0,1 after the AI's pass (passing won 15-12.5) was a play-on the search still wins (0,1 lines 0.85-0.99, from ply 8/9 the single wins), and ply 10's open PASS came after the game was lost. Seed 1 opens no cheat window at ply 9 and wins on both policies, so it is not a check. FIX: the decline's harm test counts a second stone that unlocks a ko the first stone took (golib.koUnlock via cheatHarm). REJECTED: declineHarm off for Tetrads (the plain decline, 5ffeaba's other half) wins this case but measured -2.7% [-4.5, -0.7] power/h on 1200 paired Tetrads games."
   }
  ]
 }

@@ -146,7 +146,7 @@
 // and the win streak is worth up to 3x — more than the extra territory.
 // ---------------------------------------------------------------------------
 
-import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective, stoneHarm } from 'golib.js'
+import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective, cheatHarm } from 'golib.js'
 import { canUseGoCheat, canJoinBladeburner, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
@@ -438,6 +438,19 @@ const SETTINGS = {
   // --cheat-decline-harm): 1082 paired, power/h +7.2% [+3.2, +11.4], lost 3
   // vs 6 (unpaired 3/1084 = 0.28% vs 7/1284 = 0.55%; live was 4/384); declines
   // 0.02 vs 1.30 a game, 9.5 vs 10.3 live s a game.
+  // declineHarm is per opponent ({ default, <Opponent> }, declineHarmFor).
+  // REJECTED for Tetrads 2026-10-10 (declineHarm off = the plain decline; go-w0
+  // Tetrads live config, o2 net + steer, book + oracle, crime 3.416 / SF14.3,
+  // hybrid 0.5, decline 0.1, --work-rate 1.7, bubtop, layout seeds 2301-2308):
+  // 1200 paired, power/h -2.7% [-4.5, -0.7], lost 0 vs 0.
+  // harmKo: a second stone that UNLOCKS A KO the first stone took is harm too
+  // (golib.koUnlock via cheatHarm): after the single the AI's retake repeats
+  // the pre-cheat board (superko), after any distant second stone it does not
+  // (playTwoMoves records no history board). WHY (the 2026-10-10 22:44:01Z
+  // Tetrads loss, streak 8520, 12-16.5): ply 9, 1,0 took 2,0 in a ko; the
+  // second stone 3,1 read 0.001 against the single's 1.0 but is neither an
+  // eye fill nor a self-atari, so it was played and white retook 2,0. The
+  // single wins 23-5.5 in every replay.
   // secondRule: which points a greedy cheat's second stone may take. 'game'
   // (pairSecondPoints): the game's own rule — any point empty before the
   // cheat (playTwoMoves checks neither suicide nor superko) that is not a
@@ -460,7 +473,7 @@ const SETTINGS = {
   // setRoot cheatSecond: the root's board kept out of the AI's history, as
   // playTwoMoves records none, and its PASS read as "no second stone");
   // 'old': as before. Measured only inside the 'game' arm above: 'old' stays.
-  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: { default: true }, harmKo: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -950,6 +963,13 @@ export function pairSecondPoints(board, board2, first) {
 /** Whether a cheat's second-stone search uses the net against this opponent (SETTINGS.cheat.secondNet). Pure. */
 export function secondNetFor(opponent) {
   const on = SETTINGS.cheat.secondNet ?? {}
+  return (on[opponent] ?? on.default ?? true) !== false
+}
+
+/** Whether the decline applies only to a harmful second stone against this opponent (SETTINGS.cheat.declineHarm). Pure. */
+export function declineHarmFor(opponent) {
+  const on = SETTINGS.cheat.declineHarm ?? {}
+  if (typeof on === 'boolean') return on
   return (on[opponent] ?? on.default ?? true) !== false
 }
 
@@ -2058,7 +2078,7 @@ export async function main(ns) {
         // and the cheat kept for later.
         // declineHarm: only a second stone that harms itself (an own-eye
         // fill or a self-atari, golib.stoneHarm) is declined on the win rates.
-        if (asked && cheatDeclined(singleWr, lastTop?.[0]?.[4]) && (!SETTINGS.cheat.declineHarm || stoneHarm(board2, second[0].x, second[0].y))) {
+        if (asked && cheatDeclined(singleWr, lastTop?.[0]?.[4]) && (!declineHarmFor(opponent) || cheatHarm(board, board2, first.x, first.y, second[0].x, second[0].y, { ko: SETTINGS.cheat.harmKo !== false }))) {
           cheat.declinedLow = (cheat.declinedLow ?? 0) + 1
           return { played: false, asked, declined: { x: second[0].x, y: second[0].y, wr: lastTop?.[0]?.[4] } }
         }
