@@ -2691,7 +2691,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // not measured yet is the previous life's (the plan record carries it).
     const prevGo = pc.prevAny?.decisions?.bladeRoute?.start?.goCombat ?? null
     const goCombat = bladeGoCombatOf(readJson(ns, '/tel/go.txt'), { node: info.currentNode, lastAugReset: info.lastAugReset, now: Date.now(), carried: prevGo && prevGo.perHour > 0 && typeof prevGo.rateSource === 'string' && !prevGo.rateSource.startsWith('prior') ? { perHour: prevGo.perHour, source: `${prevGo.rateSource} (the plan record of ${pc.prevAny?.at ?? '?'})` } : null })
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, sleeveBodies: fl.bodies, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration

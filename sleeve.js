@@ -103,7 +103,7 @@ import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen } from 'sleeveplan.js'
-import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION, BLADE_ENSEMBLE, sleeveBodyOf, sleevePhaseOf, sleeveGymStatOf, sleeveContractOf, skillMultsOf, cityFactor } from 'bbplan.js'
+import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION, BLADE_ENSEMBLE } from 'bbplan.js'
 import { makePacer, LoopCapError } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
 import { CRIMES, GYMS, gymRate, bestGym, retrainGymOf } from 'bodyplan.js'
@@ -346,20 +346,7 @@ function pageYield(ns) {
       ch.port2.postMessage(0)
     })
 }
-/** A sleeve as the exit model's body (bbplan.sleeveBodyOf): what sleeve.txt persons carry. */
-const bodyOfSleeve = (x) => sleeveBodyOf({ i: x.index, shock: x.shock, sync: x.sync, skills: x.skills, exp: x.exp, mults: x.mults })
-/** /tel/bladeburner.txt as this host reads it (null: unread). */
-function bladeTelOf(ns) {
-  try { return JSON.parse(ns.read(BLADE_TEL) || 'null') } catch { return null }
-}
-/** The contract a contract sleeve takes now (bbplan.sleeveContractOf on the daemon's levels, counts and city). */
-function bladeContractPickOf(tel, body, node) {
-  if (!tel?.joined || !tel.counts || !tel.maxLevels) return null
-  const c = Array.isArray(tel.cities) ? tel.cities.find((x) => x.name === tel.city) : null
-  const cityF = c ? cityFactor({ pop: Number.isFinite(c.pop) ? c.pop : c.popEst, chaos: c.chaos ?? 0 }, { pop: 1e9, chaos: 0 }) : 1
-  return sleeveContractOf(body, skillMultsOf(tel.levels ?? {}), { int: body.skills.intelligence ?? 0, augMult: body.mults.bladeburner_success_chance ?? 1, cityF, counts: tel.counts, maxL: tel.maxLevels, bnRank: node?.BladeburnerRank ?? 1 })
-}
-async function bladeFleetNow(ns, n, node, sleeves = []) {
+async function bladeFleetNow(ns, n, node) {
   const info = ns.getResetInfo()
   if (ns.getHostname() !== 'home') {
     try { ns.scp(BLADE_TEL, ns.getHostname(), 'home') } catch { /* the copy here decides by its stamp */ }
@@ -414,8 +401,6 @@ async function bladeFleetNow(ns, n, node, sleeves = []) {
   const gym = retrainGymOf(person).gym
   const s0 = bladeStartOf({
     tel, person,
-    // The sleeves' bodies: what a contract fleet's sleeves train and roll with (bbplan.sleeveContractConfigs).
-    sleeveBodies: sleeves.map(bodyOfSleeve),
     gymExpPerSec: typeof planGym === 'number' && planGym > 0 ? planGym : gym ? gymRate(gym, 'strength', person, 1) : null,
     bnRank: node?.BladeburnerRank ?? 1, skillCostMult: node?.BladeburnerSkillCost ?? 1,
     install,
@@ -597,15 +582,13 @@ async function act(ns, note) {
 		// published and leaves the ordinary plan standing.
 		let blade = null
 		try {
-			blade = await bladeFleetNow(ns, sleeves.length, node, sleeves)
+			blade = await bladeFleetNow(ns, sleeves.length, node)
 		} catch (err) {
 			blade = { on: false, error: true, why: `bladeFleetNow threw: ${describe(err)}` }
 			refusals.push(blade.why)
 		}
 		if (blade?.on && Array.isArray(blade.tasks) && auto) auto.tasks = blade.tasks
 
-		// What each contract sleeve did this pass (published under blade.acts).
-		const bladeActs = [];
 		sleeves.forEach((sleeve, index) => {
 			let sleeveTask = sleeveTasks[index] ?
 				sleeveTasks[index].toLowerCase() : undefined;
@@ -620,34 +603,6 @@ async function act(ns, note) {
 			if (typeof sleeveTask === 'object') {
 				// BLADEBURNER (sleeveplan.bladeFleetGen). Re-issuing restarts the
 				// work (Sleeve.startWork finishes the current one), so only on a change.
-				// A CONTRACT SLEEVE (bbplan.sleeveContractConfigs): its phase by its
-				// own state, the rule the exit model priced (bbplan.sleevePhaseOf) —
-				// recover shock, train at Powerhouse (the stat sleeveGymStatOf
-				// names), else the contract sleeveContractOf picks at the level
-				// the action is at. Re-issued only on a change.
-				if (sleeveTask.kind === 'bladeContract') {
-					const body = bodyOfSleeve(sleeve)
-					const phase = sleevePhaseOf(body, sleeveTask)
-					const t = sleeve.task
-					if (phase === 'recover') {
-						if (t?.type !== 'RECOVERY') doTask(`sleeve ${sleeve.index} contract fleet: recover shock ${sleeve.shock.toFixed(1)} > ${sleeveTask.recoverTo}`, () => ns.sleeve.setToShockRecovery(sleeve.index))
-						bladeActs.push({ i: sleeve.index, phase, shock: +sleeve.shock.toFixed(1) })
-						return
-					}
-					if (phase === 'train') {
-						const stat = GYM_STAT[sleeveGymStatOf(body)]
-						bladeActs.push({ i: sleeve.index, phase, stat, to: sleeveTask.trainTo })
-						if (t?.type === 'CLASS' && t?.classType === stat && t?.location === POWERHOUSE) return
-						if (sleeve.city !== SECTOR12 && !doTask(`sleeve ${sleeve.index} travel ${SECTOR12}`, () => ns.sleeve.travel(sleeve.index, SECTOR12))) return
-						doTask(`sleeve ${sleeve.index} contract fleet: gym ${POWERHOUSE}/${stat}`, () => ns.sleeve.setToGymWorkout(sleeve.index, POWERHOUSE, stat))
-						return
-					}
-					const pick = bladeContractPickOf(bladeTelOf(ns), body, node)
-					bladeActs.push({ i: sleeve.index, phase, contract: pick?.d?.name ?? null, level: pick?.L ?? null, p: pick ? +pick.p.toFixed(3) : null })
-					if (!pick) return
-					if (!(t?.type === 'BLADEBURNER' && t?.actionName === pick.d.name)) doTask(`sleeve ${sleeve.index} contract ${pick.d.name}`, () => ns.sleeve.setToBladeburnerAction(sleeve.index, SLEEVE_ACTION.contracts, pick.d.name))
-					return
-				}
 				if (sleeveTask.kind === 'bladeburner' && sleeveTask.action) {
 					const t = sleeve.task
 					const already =
@@ -931,7 +886,7 @@ async function act(ns, note) {
 			})),
 			tasks: sleeveTasks,
 			// The Bladeburner fleet (config, model hours, the ranked configs) or why not.
-			blade: blade ? { ...blade, ...(bladeActs.length ? { acts: bladeActs } : {}) } : blade,
+			blade,
 			unknownTasks: [...warned],
 			refusals,
 			detail: refusals.length
