@@ -486,7 +486,7 @@ const SETTINGS = {
   // setRoot cheatSecond: the root's board kept out of the AI's history, as
   // playTwoMoves records none, and its PASS read as "no second stone");
   // 'old': as before. Measured only inside the 'game' arm above: 'old' stays.
-  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: { default: true }, harmKo: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, pricedWait: { default: false }, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: { default: true }, harmKo: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, pricedWait: { default: false, Illuminati: true }, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
