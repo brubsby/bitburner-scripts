@@ -289,7 +289,10 @@ the gift is unaccepted (`stanekplan.giftOrderGate`, fresh getResetInfo).
 progress.js prices f by the exit (`decisions.stanek`, basis `fleet`,
 `chargeInputsOf` per option on stanek.js's measured fleet; DEFAULT_F labelled
 UNPRICED until then) and the accepted gift pins the hacking route
-(`routepin.giftPinOf`). batch.js keeps the charger's shortfall free per host
+(`routepin.giftPinOf`). Charges clear at every install and regrow, so the
+life length decision prices each option L at the gift's life-average over L
+(`giftLifeInputsOf`, carried as `inputs.giftLife` from the committed length;
+lifeInputsOf and lifeTableGen; tests GL1-GL5). batch.js keeps the charger's shortfall free per host
 (`stanekHoldsOf`). Health: GIFT NOT ACCEPTED / FRAGMENTS NOT CHARGING (the
 binding cause named, or the gift's own charge mass flat) / STANEK STALE.
 Tests: SG1-SG8.

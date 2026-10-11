@@ -961,8 +961,11 @@ export function chargeLnOf({ layout, nodePower, homeGB, cores, fleetGB, hosts = 
 
 /** The exit inputs at charging fraction f, from inputs measured at ctx.fNow (see above). */
 export function chargeInputsOf(base, ctx, f) {
-  const at = chargeLnOf({ ...ctx, f })
-  const now = chargeLnOf({ ...ctx, f: ctx.fNow ?? 0 })
+  return scaleByGift(base, chargeLnOf({ ...ctx, f }), chargeLnOf({ ...ctx, f: ctx.fNow ?? 0 }))
+}
+
+/** `base` with its batcher channels moved from the gift state `now` to `at` (chargeLnOf records). */
+function scaleByGift(base, at, now) {
   const fin = (x) => typeof x === 'number' && isFinite(x)
   const sc = (x, d) => (fin(x) ? x * Math.exp(d) : x)
   const dI = at.lnIncome - now.lnIncome
@@ -978,6 +981,43 @@ export function chargeInputsOf(base, ctx, f) {
   if (fin(base.flatIncomePerSec) && base.flatIncomePerSec > 0 && fin(base.incomePerSec)) out.incomePerSec = base.flatIncomePerSec + (base.incomePerSec - base.flatIncomePerSec) * Math.exp(dI)
   if (fin(base.expFlatPerSec) && base.expFlatPerSec > 0 && fin(base.expPerSec)) out.expPerSec = base.expFlatPerSec + (base.expPerSec - base.expFlatPerSec) * Math.exp(dE)
   return out
+}
+
+/**
+ * THE GIFT OVER A LIFE OF LENGTH L. The charges clear at every install and
+ * regrow, so a life's gift multipliers are their AVERAGE over the life
+ * (chargeLnOf's quadrature of charge(t) for the charger's placement): a longer
+ * life spends more of itself at a higher charge. The life length decision
+ * prices each option L on the base inputs moved from the life-average at the
+ * length they were measured over (refL: the committed later-lives length —
+ * the lives the measured rates came from; the committed option is the
+ * measured inputs exactly, as stanek's own decision prices them) to the
+ * life-average at L, at the allocation the charger runs (f). Live BN13
+ * 2026-10-11 the gift factor was one constant across L0.5..L24: longer lives
+ * got no credit for a more-charged gift.
+ * `ctx` {layout, nodePower, fleetGB, hosts, f, refL} (giftLifeCtxOf), carried
+ * on the exit inputs as `giftLife`; L-independent channels untouched.
+ */
+export function giftLifeCtxOf(st, { node, f, refL } = {}) {
+  if (!st || st.node !== node || !Array.isArray(st.layout?.placed) || !st.layout.placed.length) return null
+  const fleetGB = st.fleet?.gb
+  const hosts = Array.isArray(st.fleet?.hosts) ? st.fleet.hosts : null
+  if (!(fleetGB > 0) || !hosts?.length || !(f > 0) || !(refL > 0)) return null
+  return { layout: st.layout.placed, nodePower: st.layout.nodePower, fleetGB, hosts, f, refL }
+}
+const giftLnMemo = new WeakMap()
+/** chargeLnOf at the context's f over a life of L (memoised per context). */
+export function giftLifeLnOf(ctx, L) {
+  let m = giftLnMemo.get(ctx)
+  if (!m) giftLnMemo.set(ctx, (m = new Map()))
+  if (!m.has(L)) m.set(L, chargeLnOf({ ...ctx, cycleH: L }))
+  return m.get(L)
+}
+/** The inputs with later lives of L: the gift's life-average at L in place of the one at ctx.refL. */
+export function giftLifeInputsOf(base, L) {
+  const ctx = base?.giftLife
+  if (!ctx || !(L > 0) || !(ctx.refL > 0) || L === ctx.refL) return base
+  return scaleByGift(base, giftLifeLnOf(ctx, L), giftLifeLnOf(ctx, ctx.refL))
 }
 
 /** The options the fleet can hold: f x fleetGB within its room once the batcher yields (f = 0 always). */

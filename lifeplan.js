@@ -51,6 +51,7 @@ import { planHacknetBatch, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { formulaErrorPosterior } from 'bayes.js'
 import { capitalOf, capitalGain } from 'traderw.js'
 import { drain } from 'coop.js'
+import { giftLifeInputsOf } from 'stanekplan.js'
 
 /** Hacknet purchase decisions per simulated fresh life (freshLifeMoney). */
 export const HACKNET_DECISIONS = 12
@@ -560,26 +561,36 @@ export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, mo
   if (!catalogue || !pos(repPerHour0)) return null
   // Memoised per length: lifeSequence and the table row both ask, and with a
   // hacknet rebuild each answer is a small simulation.
+  // THE GIFT'S LIFE-AVERAGE AT EACH L (stanekplan.giftLifeInputsOf, where
+  // the inputs carry `giftLife`): a life of L earns its money and reputation
+  // under the charge it regrows to over L, not under one constant gift.
+  const inputsAt = (L) => giftLifeInputsOf(inputs, L)
+  const repAt = (L) => {
+    const IL = inputsAt(L)
+    return pos(IL?.repPerSec) && pos(inputs?.repPerSec) ? (repPerHour0 * IL.repPerSec) / inputs.repPerSec : repPerHour0
+  }
   const moneyMemo = new Map()
   const moneyAt = (L) => {
-    if (!moneyMemo.has(L)) moneyMemo.set(L, freshLifeMoney(inputs, L, moneyScale) ?? 0)
+    if (!moneyMemo.has(L)) moneyMemo.set(L, freshLifeMoney(inputsAt(L), L, moneyScale) ?? 0)
     return moneyMemo.get(L)
   }
   const rows = []
   for (const L of grid) {
     const n = Math.max(1, Math.min(maxLives, Math.round(horizonH / L)))
-    if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(inputs, L, moneyScale)) ?? 0)
+    const IL = inputsAt(L)
+    const rph = repAt(L)
+    if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(IL, L, moneyScale)) ?? 0)
     yield
     // The sequence runs past the mean's horizon (shapeH: the exit walks its
     // later lives one by one by it), each life buying at the multiplier the
     // sequence has reached from the next install's batch on (lifeGrowthOf).
     // The mean (the cadence posterior's prior) stays the first `n` lives'.
     const N = Math.max(n, Math.min(maxShapeLives, Math.round(shapeH / L)))
-    const growth = withGrowth ? lifeGrowthOf(inputs, L, moneyAt(L), moneyScale) : null
+    const growth = withGrowth ? lifeGrowthOf(IL, L, moneyAt(L), moneyScale) : null
     const lnM0 = pos(inputs?.installGains?.hacking) && inputs.installGains.hacking > 1 ? Math.log(inputs.installGains.hacking) : 0
-    const seqAll = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: N, moneyAt, repPerHour0, nfgLevel0, growth, lnM0 })
+    const seqAll = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: N, moneyAt, repPerHour0: rph, nfgLevel0, growth, lnM0 })
     yield
-    const seq = growth ? lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 }) : seqAll.slice(0, n)
+    const seq = growth ? lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0: rph, nfgLevel0 }) : seqAll.slice(0, n)
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
     const last = seqAll[seqAll.length - 1]
     // `seq`: each life's own ln gain, in order — the catalogue DEPLETES, so
@@ -644,8 +655,10 @@ export function lifeInputsOf(base, rec, L, post, { lifeLength = null, catalogue 
   const c = row ? lifeCadenceAt(row, post) : null
   if (!c) return null
   const measured = base?.cadence ?? null
+  // The gift's life-average at L (stanekplan.giftLifeInputsOf; base unchanged without `giftLife` or at its refL).
+  const gb = giftLifeInputsOf(base, L)
   return {
-    ...base,
+    ...gb,
     cycleHours: L,
     // The Go rate bonus on g (base.goCadenceMult, goplan.goExitInputsOf), as on the measured cadence.
     multGainPerCycle: num(base?.goCadenceMult) && base.goCadenceMult > 0 && c.gain > 0 ? Math.exp(Math.log(c.gain) * base.goCadenceMult) : c.gain,

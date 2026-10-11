@@ -180,7 +180,7 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, STANEK_FILE, ALLOC_BASIS } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -4920,7 +4920,7 @@ let purchaseCadenceMemo = null
 // life the model prices (lifeplan.ownedAfterBatch), never bought twice.
 function* purchaseCadenceGen(ns, info, base, offers, owned0, batch = []) {
   const { owned, nfgLevel0 } = ownedAfterBatch(owned0, batch)
-  const key = `${info?.lastAugReset}|${Math.floor(Date.now() / 300e3)}|${owned.size}+${nfgLevel0}|${base.repPerSec}`
+  const key = `${info?.lastAugReset}|${Math.floor(Date.now() / 300e3)}|${owned.size}+${nfgLevel0}|${base.repPerSec}|${base.giftLife ? `${base.giftLife.f}@${base.giftLife.refL}` : '-'}`
   if (purchaseCadenceMemo?.key === key) return purchaseCadenceMemo.value
   let value = null
   try {
@@ -5080,6 +5080,12 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   // theirs already (lifeplan.ownedAfterBatch) — it is priced once, as the
   // first install's gains, not again as every later life's purchases.
   const nextBatch = [...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])].filter((n) => typeof n === 'string')
+  // THE GIFT'S CHARGE REGROWS EVERY LIFE (stanekplan.giftLifeInputsOf): each
+  // later-lives length L is priced at the gift's life-average over L — the
+  // purchase table's money and reputation per L and lifeInputsOf's channels —
+  // from the measured rates, taken as the life-average at the committed length.
+  const gl = giftLifeNow(ns, info, committedLifeL(ns, info)?.L ?? out.cycleHours)
+  if (gl) out.giftLife = gl
   const pc = Array.isArray(cOffers) && cOffers.length ? yield* purchaseCadenceGen(ns, info, out, cOffers, ownedAugsNow, nextBatch) : null
   const buys = (L) => (pc?.table ?? []).some((r) => r.L === L && typeof r.lnMean === 'number' && r.lnMean > 0)
   if (pc && !pc.error && pc.table?.some((r) => r.lnMean > 0)) {
@@ -5108,6 +5114,22 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
     if (x) return c && buys(c.L) ? x : { ...x, cadence: { ...x.cadence, provisional: true } }
   }
   return pc?.error ? { ...out, cadence: { ...(out.cadence ?? {}), purchaseModelError: pc.error } } : out
+}
+/**
+ * The gift's life-average context (stanekplan.giftLifeCtxOf) where the gift is
+ * accepted and stanek.js published this node's layout and fleet: at the
+ * charger's allocation (the plan's last fleet-basis decisions.stanek.f, else
+ * DEFAULT_F — what stanek.js runs), relative to `refL`. Null otherwise.
+ */
+function giftLifeNow(ns, info, refL) {
+  try {
+    if (!giftStateOf(info, canAccessCotMG(info)).accepted) return null
+    const d = planCtx?.prevAny?.decisions?.stanek
+    const f = d?.basis === ALLOC_BASIS && typeof d.f === 'number' ? d.f : DEFAULT_F
+    return giftLifeCtxOf(readJson(ns, STANEK_FILE), { node: info?.currentNode, f, refL })
+  } catch {
+    return null
+  }
 }
 // The last purchase-model build's base inputs, table and cadence posterior
 // (exitInputsGen), for the life length decision's options.
