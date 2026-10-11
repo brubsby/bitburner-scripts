@@ -506,7 +506,14 @@ export function heuristic(b, nbrs, idx, scratch, colour = US) {
 export function makeScratch(N) {
   return {
     out: new Int32Array(N * N),
-    seen: new Int32Array(N * N),
+    // seen holds `mark`, which every walk bumps and nothing resets: a
+    // long-lived session passes 2^31 marks in hours, an Int32Array then
+    // stores the wrapped value, `seen[p] === mark` never holds, the walk
+    // revisits points past `out`'s end and reads nbrs[undefined] — the
+    // recurring go-solver throw "TypeError ... reading 'length'" at
+    // libsAtLeast/group (/tmp/go-solver-throw-*.json, 2026-10-10/11).
+    // A Float64Array holds every integer mark exactly to 2^53.
+    seen: new Float64Array(N * N),
     empties: new Int32Array(N * N),
     scan2: new Uint8Array(N * N),
     undo: new Uint8Array(N * N),
@@ -2630,4 +2637,30 @@ export function cheatWaitS(T, p) {
   const r = cheatRoll(T)
   if (r <= p) return 0
   return (1 - r) / CHEAT_ROLL_RATE
+}
+
+/** What losing this game costs over winning it, in node power: the win's pay over the loss's, plus the streak ramp a loss resets (powerObjective). Pure. */
+export function lossCostOf(objective, eBlack) {
+  return eBlack * objective.diff * (objective.winMult - objective.lossMult) + objective.lossFuture
+}
+
+/** One full period of the cheat roll's sawtooth, seconds (CHEAT_ROLL_RATE). */
+export const CHEAT_CYCLE_S = 1 / CHEAT_ROLL_RATE
+
+/**
+ * THE PRICED CHEAT WAIT (go.js SETTINGS.cheat.pricedWait): whether to wait `waitS`
+ * seconds for the cheat window rather than play the single now. The pair's
+ * line wins wr2, the single's wr1 (each by its own search); the win-rate gain
+ * is worth (wr2 - wr1) x lossCost (lossCostOf), the wait costs the farm's
+ * rate x (waitS + searchS) — searchS the pair search it takes to know wr2
+ * (pass wr2 = 1 to ask whether even a sure win could pay for the search).
+ * Never past one sawtooth period (capS): the window has opened by then.
+ * Returns { wait, gain, cost, why }. Pure.
+ */
+export function cheatWaitWorth({ wr1, wr2, waitS, searchS = 0, lossCost, ratePerS, capS = CHEAT_CYCLE_S }) {
+  if (![wr1, wr2, waitS, searchS, lossCost, ratePerS].every(Number.isFinite) || !(ratePerS > 0) || !(lossCost > 0)) return { wait: false, gain: null, cost: null, why: 'unpriced' }
+  const gain = (wr2 - wr1) * lossCost
+  const cost = (waitS + searchS) * ratePerS
+  if (!(waitS >= 0) || waitS > capS) return { wait: false, gain, cost, why: 'cycle' }
+  return { wait: gain > cost, gain, cost, why: gain > cost ? 'priced' : 'cost' }
 }

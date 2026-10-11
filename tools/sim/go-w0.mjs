@@ -451,6 +451,18 @@ if (CHEAT_HYBRID && !CHEAT_JOINT) {
   OPTS.pairsOnly = true;
 }
 let pairsNow = false;
+// --hybrid-window: go.js's gate on the hard pair — asked only while the window
+// is open or opens within --cheatwait (go.js cheatWindowOk); without it the
+// harness searched the pair on every hard move and the roll gated only its play.
+const HYBRID_WINDOW = argv.includes("--hybrid-window");
+// --cheat-wait-priced (with --cheat-hybrid, --hybrid-window, --objective
+// power): THE PRICED WAIT (go.js SETTINGS.cheat.pricedWait, golib
+// cheatWaitWorth). A hard move with the window closed: screened (could a sure
+// win pay for the pair search and the wait?), then the pair searched, then
+// the window waited for iff (wr_pair - wr_single) x lossCostOf beats the rate
+// x the wait still left; the wait is charged to the live clock.
+const CHEAT_WAIT_PRICED = argv.includes("--cheat-wait-priced");
+if (CHEAT_WAIT_PRICED && !(CHEAT_HYBRID > 0 && HYBRID_WINDOW)) throw new Error("--cheat-wait-priced needs --cheat-hybrid and --hybrid-window");
 // --cheat-skip-below THR: no greedy cheat on a move whose chosen single wins
 // under THR (its own win rate): the single stone instead.
 const CHEAT_SKIP = num("cheat-skip-below", 0);
@@ -854,7 +866,48 @@ async function playGame(stats, gameIndex) {
     // --cheat-hybrid: a hard move with the window open -> the joint pair.
     if (CHEAT_HYBRID && sess && hasMove && !oppPassed && cheats < CHEAT_MAX && ourTurns >= CHEAT_FROM && !(oracleHit && CHEAT_KEEP_LINES) && pCheat(cheats) >= MIN_P) {
       const wr = pre ? pre.wr : ranked[0].top?.[0]?.[4];
-      if (typeof wr === "number" && wr < CHEAT_HYBRID) {
+      const winWaitS = () => {
+        const r = golib.cheatRoll(playtimeAt(wall));
+        return r <= pCheat(cheats) ? 0 : (1 - r) / RATE;
+      };
+      const windowOk = !HYBRID_WINDOW || winWaitS() * 1000 <= CHEAT_WAIT * 1000 + 200;
+      if (typeof wr === "number" && wr < CHEAT_HYBRID && !windowOk && CHEAT_WAIT_PRICED && objective) {
+        jointStats.pwEval = (jointStats.pwEval ?? 0) + 1;
+        const eB = stats.meanBlack ?? 0.68 * N * N;
+        const lossCost = golib.lossCostOf(objective, eB);
+        const R = rateFor(OPP) / 3600;
+        const w0 = winWaitS() + 0.3;
+        const screen = golib.cheatWaitWorth({ wr1: wr, wr2: 1, waitS: w0, searchS: MAXMS / 1000, lossCost, ratePerS: R });
+        if (screen.wait) {
+          jointStats.pwSearched = (jointStats.pwSearched ?? 0) + 1;
+          const ms0 = ourMs;
+          pairsNow = true;
+          const pr = await solve();
+          pairsNow = false;
+          wall += ourMs - ms0 + ROUND_TRIP_MS;
+          rtTotal += ROUND_TRIP_MS;
+          turnLiveS += (ourMs - ms0 + ROUND_TRIP_MS) / 1000;
+          const vg = validGrid(state, N);
+          const wr2 = pr?.[0]?.top?.[0]?.[4];
+          const legal = !!pr?.[0]?.second && !!vg[pr[0].x]?.[pr[0].y] && secondLegal(state, vg, pr[0].second);
+          const w1r = winWaitS();
+          const w1 = w1r > 0 ? w1r + 0.3 : 0;
+          const d = legal ? golib.cheatWaitWorth({ wr1: wr, wr2, waitS: w1, lossCost, ratePerS: R }) : { wait: false };
+          if (d.wait) {
+            jointStats.pwWaits = (jointStats.pwWaits ?? 0) + 1;
+            jointStats.pwWaitS = (jointStats.pwWaitS ?? 0) + w1;
+            cheatWaitS += w1;
+            turnLiveS += w1;
+            wall += w1 * 1000;
+            if (golib.cheatRoll(playtimeAt(wall)) <= pCheat(cheats)) {
+              ranked = pr;
+              jointSecond = pr[0].second;
+              jointStats.pairs++;
+              jointStats.pwPlayed = (jointStats.pwPlayed ?? 0) + 1;
+            }
+          }
+        }
+      } else if (typeof wr === "number" && wr < CHEAT_HYBRID && windowOk) {
         const ms0 = ourMs;
         pairsNow = true;
         const pr = await solve();

@@ -146,7 +146,7 @@
 // and the win streak is worth up to 3x — more than the extra territory.
 // ---------------------------------------------------------------------------
 
-import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective, cheatHarm } from 'golib.js'
+import { chooseMove, applyMove, cheatChance, cheatWaitS, cheatOutcome, powerObjective, cheatHarm, lossCostOf, cheatWaitWorth } from 'golib.js'
 import { canUseGoCheat, canJoinBladeburner, sfLevel } from 'sfgate.js'
 import {
   chooseOpponent,
@@ -375,6 +375,19 @@ const SETTINGS = {
   // is almost always seconds away while a cheat is worth ~1s: play the cheat
   // when its window is open NOW, never wait for one. (The 10000 was release
   // 3's, and the earlier harness tables here did not charge the wait.)
+  // pricedWait: per opponent, THE PRICED WAIT (golib cheatWaitWorth) — the
+  // exception to maxWaitMs. On a HARD move (the single wins under hardBelow)
+  // with the window CLOSED, the pair is searched at the playtime the window
+  // opens (a request whose T is shifted by the wait) and the window is
+  // waited for iff (wr_pair - wr_single) x lossCostOf (the win's pay over the
+  // loss's plus the streak ramp a loss resets) beats the farm's rate x the
+  // wait; a pair search is spent only if even a sure win could pay for it
+  // (wr_pair = 1). Never past one 59s sawtooth. Each evaluation is in the
+  // per-game log (`pw` on the turn) and counted in cheat.pw*.
+  // WHY (user idea 2026-10-11): in BN13 crime_success 1.72 (vs 3.33 when the
+  // Illuminati settings were measured) leaves the 3rd/4th cheats' windows
+  // narrower, and Illuminati lost 3 of 121 (~2.5%) — a loss there costs
+  // ~2,300 power of streak ramp, ~65s of the farm's 125k/h.
   // joint: the cheat as a JOINT two-stone action searched by the solver (see
   // tools/go-solver.mjs THE JOINT CHEAT and golib modelSession opts.pairs);
   // false: the greedy cheat (the solver's single, then a second-stone request).
@@ -473,7 +486,7 @@ const SETTINGS = {
   // setRoot cheatSecond: the root's board kept out of the AI's history, as
   // playTwoMoves records none, and its PASS read as "no second stone");
   // 'old': as before. Measured only inside the 'game' arm above: 'old' stays.
-  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: { default: true }, harmKo: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
+  cheat: { joint: false, secondRule: 'valid', secondRoot: 'old', hardBelow: 0.5, decline: 0.1, secondNet: { default: true, Illuminati: false }, declineHarm: { default: true }, harmKo: true, hardAdaptive: { Illuminati: { thr: 0.5, mult: 4 } }, maxPerGame: 12, fromTurn: 2, maxWaitMs: 500, pricedWait: { default: false }, minChance: 0.0034, maxSize: 9, secondMs: 100, on: { default: false, Tetrads: true, Illuminati: true }, channel: true },
   // THE BIG BOARD (the hidden opponent's 19x19; any size >= 13). Sent to the
   // solver per request; 5x5 requests carry nothing and search exactly as
   // measured. Measured headless against the game's own AI on the bitverse
@@ -973,6 +986,13 @@ export function declineHarmFor(opponent) {
   return (on[opponent] ?? on.default ?? true) !== false
 }
 
+/** Whether a closed cheat window may be WAITED for on a hard move, priced (SETTINGS.cheat.pricedWait). Pure. */
+export function pricedWaitFor(opponent) {
+  const on = SETTINGS.cheat.pricedWait ?? {}
+  if (typeof on === 'boolean') return on
+  return !!(on[opponent] ?? on.default)
+}
+
 /** Whether cheats are played against this opponent (SETTINGS.cheat.on). Pure. */
 export function cheatFor(opponent) {
   const on = SETTINGS.cheat.on ?? {}
@@ -988,7 +1008,7 @@ export function cheatFor(opponent) {
  */
 export function solverWaitBudgetMs({ objective, eBlack, ratePerS, localLoss, capMs, waitedMs = 0 }) {
   if (!objective || !(ratePerS > 0) || !(localLoss > 0)) return 0
-  const lossCost = eBlack * objective.diff * (objective.winMult - objective.lossMult) + objective.lossFuture
+  const lossCost = lossCostOf(objective, eBlack)
   const budget = Math.min(capMs, (1000 * localLoss * lossCost) / ratePerS)
   return Math.max(0, budget - waitedMs)
 }
@@ -1866,7 +1886,7 @@ export async function main(ns) {
       // This game's cheats: played (all succeed by construction), declined
       // (go-cheat.js saw the window too far off), skipped (estimated too far
       // to exec at all), waitedMs (playtime waited for windows).
-      const cheat = { played: 0, declined: 0, skipped: 0, waitedMs: 0, noRam: false }
+      const cheat = { played: 0, declined: 0, skipped: 0, waitedMs: 0, noRam: false, pwEval: 0, pwSearched: 0, pwWaits: 0, pwWaitMs: 0, pwPlayed: 0 }
       let pendingVerify = null
       // What the solver is told beyond the position (SETTINGS.bigBoard): on
       // 19x19 a time budget and search options, including the NODE POWER
@@ -2038,11 +2058,14 @@ export async function main(ns) {
       const cheatWindowOk = () => {
         const p = cheatChance(cheat.played, cheatCalib?.crime ?? 1, sf14)
         if (p < SETTINGS.cheat.minChance) return false
-        // Playtime advances with the wall clock while the tab is live; a
-        // throttled tab only makes this optimistic, and go-cheat.js decides
-        // on the exact value anyway. No calibration yet: go-cheat.js decides.
-        if (!cheatCalib) return true
-        return cheatWaitS(cheatCalib.T + (Date.now() - cheatCalib.at), p) * 1000 <= SETTINGS.cheat.maxWaitMs + 200
+        // The playtime itself when the webpack read works (clockRead, 0GB);
+        // else extrapolated from go-cheat.js's last read — playtime advances
+        // with the wall clock while the tab is live; a throttled tab only
+        // makes that optimistic, and go-cheat.js decides on the exact value
+        // anyway. Neither: go-cheat.js decides.
+        const Tn = clockRead.now() ?? (cheatCalib ? cheatCalib.T + (Date.now() - cheatCalib.at) : null)
+        if (Tn === null) return true
+        return cheatWaitS(Tn, p) * 1000 <= SETTINGS.cheat.maxWaitMs + 200
       }
       const tryCheat = async (board, validList, first, knownSecond = null, singleWr = null) => {
         const k = cheat.played
@@ -2236,6 +2259,10 @@ export async function main(ns) {
         const jointPair = SETTINGS.cheat.joint ? ranked?.[0]?.second ?? null : null
         let hardDeclined = false
         let cheatNote = null
+        // The priced wait's evaluation this turn (per-game log `pw`) and the
+        // wall ms it waited (kept out of the turn timing that prices turnS).
+        let pwNote = null
+        let pwWaitedMs = 0
         if (cheatOn && cheatFor(opponent) && !oppPassed && !(src !== 'pre' && lastOracle) && size <= SETTINGS.cheat.maxSize && !cheat.noRam && ranked && ranked.length && guard >= SETTINGS.cheat.fromTurn && cheat.played < SETTINGS.cheat.maxPerGame && (!SETTINGS.cheat.joint || jointPair)) {
           // A pre-sent pair: the solver learns of it before the AI replies.
           if (jointPair && src === 'pre') notifySolver(boardStrings, validList, { x: ranked[0].x, y: ranked[0].y, second: jointPair })
@@ -2265,13 +2292,81 @@ export async function main(ns) {
               } else lastTop = topBefore
             }
           }
+          // THE PRICED WAIT (SETTINGS.cheat.pricedWait, cheatWaitWorth): a hard
+          // move with the window CLOSED. Screen first — could even a sure-win
+          // pair pay for its search and the wait? — then search the pair AT
+          // the playtime the window opens (T shifted: the solver's roll check
+          // and the AI's seeds are both read there), and wait for the window
+          // iff the pair's win-rate gain, priced, beats the rate x the wait.
+          if (!jointPair && !hardAsked && pricedWaitFor(opponent) && clockFor(opponent) && hardPairWanted(singleWr) && !cheatWindowOk()) {
+            const crime = clockRead.crime() ?? cheatCalib?.crime ?? null
+            const T0 = clockRead.now()
+            const pk = cheatChance(cheat.played, crime ?? 1, sf14)
+            const lossCost = lossCostOf(priced, eBlack)
+            cheat.pwEval++
+            if (!crime || !T0) pwNote = { why: 'no-clock' }
+            else {
+              // + one engine tick and a little: the window opens at the wrap.
+              const w0 = cheatWaitS(T0, pk) + 0.3
+              const pairS = (SETTINGS.model.maxmsBy[opponent] ?? SETTINGS.model.maxms) / 1000
+              const screen = cheatWaitWorth({ wr1: singleWr, wr2: 1, waitS: w0, searchS: pairS, lossCost, ratePerS })
+              pwNote = { w: +w0.toFixed(1), k: cheat.played, p: +pk.toFixed(3), L: Math.round(lossCost), R: +ratePerS.toFixed(2), why: screen.why === 'cost' ? 'screen' : screen.why }
+              if (screen.wait) {
+                hardAsked = true
+                cheat.pwSearched++
+                const topBefore = lastTop
+                const ha = SETTINGS.cheat.hardAdaptive?.[opponent] ?? null
+                const s0 = Date.now()
+                const pr = await askSolver(boardStrings, validList, { T: Math.round(T0 + w0 * 1000), cheat: { crime, sf14, cheats: cheat.played, max: SETTINGS.cheat.maxPerGame, turn: guard, fromTurn: SETTINGS.cheat.fromTurn, minChance: SETTINGS.cheat.minChance, ponder: false }, ...(ha ? { adaptive: ha, adaptivePairOnly: true } : {}) })
+                const p0 = pr?.[0]
+                const wr2 = lastTop?.[0]?.[4]
+                const legal = !!p0?.second && !!valid[p0.x]?.[p0.y] && boardStrings[p0.second.x]?.[p0.second.y] === '.' && !(p0.x === p0.second.x && p0.y === p0.second.y)
+                // The search is spent: only the wait still left is priced.
+                const T1 = clockRead.now() ?? T0 + (Date.now() - s0)
+                const w1raw = cheatWaitS(T1, pk)
+                const w1 = w1raw > 0 ? w1raw + 0.3 : 0
+                const d = legal ? cheatWaitWorth({ wr1: singleWr, wr2, waitS: w1, lossCost, ratePerS }) : { wait: false, why: 'no-pair' }
+                Object.assign(pwNote, { s: Date.now() - s0, ...(legal ? { pair: `${p0.x},${p0.y}+${p0.second.x},${p0.second.y}` } : {}), wr2: typeof wr2 === 'number' ? +wr2.toFixed(3) : null, w1: +w1.toFixed(1), gain: d.gain === null || d.gain === undefined ? null : Math.round(d.gain), cost: d.cost === null || d.cost === undefined ? null : Math.round(d.cost), why: d.why })
+                if (d.wait) {
+                  // Wait on the PLAYTIME, not the wall clock: a hidden tab's
+                  // throttled timers and catch-up cycles move it unevenly, so
+                  // it is re-read every sleep (each <= 1s, the heartbeat kept).
+                  const t0 = Date.now()
+                  let open = false
+                  while (Date.now() - t0 < w1 * 2000 + 3000) {
+                    const T = clockRead.now()
+                    if (!T) break
+                    const left = cheatWaitS(T, pk)
+                    if (left === 0) {
+                      open = true
+                      break
+                    }
+                    await ns.sleep(Math.max(20, Math.min(left * 1000 - 50, 1000)))
+                    heartbeat()
+                  }
+                  pwWaitedMs = Date.now() - t0
+                  cheat.pwWaits++
+                  cheat.pwWaitMs += pwWaitedMs
+                  Object.assign(pwNote, { waited: pwWaitedMs, open })
+                  if (open) {
+                    first = { x: p0.x, y: p0.y }
+                    pairSecond = p0.second
+                  } else {
+                    pwNote.why = 'wait-timeout'
+                    lastTop = topBefore
+                  }
+                } else lastTop = topBefore
+              }
+            }
+          }
           const c = await tryCheat(boardStrings, validList, first, pairSecond, singleWr)
           if (c.played) {
+            if (pwNote?.open) cheat.pwPlayed++
             moves++
             // w: the single's own win rate (pre-sent answer, book or request);
             // t: the second-stone (or pair) search's top 3 — the per-game log
             // needs both to replay a cheat decision (tools/sim/go-fixture.mjs).
-            moveLog.push({ m: `${first.x},${first.y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}), ...(hardAsked ? { h: singleWr } : {}), ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(lastTop ? { t: lastTop } : {}) })
+            moveLog.push({ m: `${first.x},${first.y}+${c.second ?? ''}`, s: 'cheat', a: askMs, r: c.replyAt ?? (c.reply === 'pass' ? 'P' : c.reply ?? 'G'), ...(c.T ? { T: c.T } : {}), ...(hardAsked ? { h: singleWr } : {}), ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(lastTop ? { t: lastTop } : {}), ...(pwNote ? { pw: pwNote } : {}) })
             oppPassed = c.reply === 'pass'
             if (!c.reply || c.reply === 'gameOver') done = true
             await ns.sleep(flags.idle)
@@ -2286,7 +2381,7 @@ export async function main(ns) {
           // hard pair was asked and not played; why: what else stopped it).
           // t: the second-stone search's top when one answered — the
           // 22:10:40Z ply-6 'no-second' (a PASS answer) logged none.
-          cheatNote = { ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(c.declined ? { d: c.declined } : {}), ...(hardAsked ? { hp: 1 } : {}), ...(c.why ? { why: c.why } : {}), ...(c.asked && lastTop ? { t: lastTop } : {}) }
+          cheatNote = { ...(pwNote ? { pw: pwNote } : {}), ...(typeof singleWr === 'number' ? { w: singleWr } : {}), ...(c.declined ? { d: c.declined } : {}), ...(hardAsked ? { hp: 1 } : {}), ...(c.why ? { why: c.why } : {}), ...(c.asked && lastTop ? { t: lastTop } : {}) }
         }
         // A PAIR'S FIRST STONE IS NEVER PLAYED ALONE. The search chose it
         // knowing a second stone follows; alone it can be a self-atari (the
@@ -2421,7 +2516,7 @@ export async function main(ns) {
         timing.moves++
         timing.ask += askMs
         timing.play += playMs
-        timing.loop += Date.now() - loop0
+        timing.loop += Date.now() - loop0 - pwWaitedMs
         heartbeat()
       }
 

@@ -676,5 +676,71 @@ export async function run() {
       else c16.note(`10:56:22Z ply 8 after the AI's pass: ${b[0].x},${b[0].y}`);
     }
   }
-  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16];
+  const c17 = new Check("GC17", "THE PRICED CHEAT WAIT (golib cheatWaitWorth, go.js SETTINGS.cheat.pricedWait): a closed window is waited for iff the pair's win-rate gain x the loss's cost beats the farm's rate x the wait, never past one sawtooth; the screen spends a pair search only if a sure win could pay for it");
+  {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { REPO } = await import("./ram.mjs");
+    await import("./gameresolve.mjs");
+    const go = await import(path.join(REPO, "go.js"));
+    const golib = await import(path.join(REPO, "golib.js"));
+    // Illuminati at the plateau (streak 8+), eBlack 19 (live black 19.2), rate 125,180/h.
+    const obj = golib.powerObjective({ streak: 20, komi: 7.5, size: 5, eBlack: 19, rate: 125180 / 3600, lossScale: 2 });
+    const L = golib.lossCostOf(obj, 19);
+    const R = 125180 / 3600;
+    c17.examined(1);
+    if (!(L > 2000 && L < 3000)) c17.fail(`lossCostOf at Illuminati's plateau = ${L}: expected the win's pay over the loss's plus the doubled ramp (~2,400 live)`);
+    for (const [what, a, want] of [
+      ["a hopeless single, a sure pair, 10s away: wait", { wr1: 0.2, wr2: 0.95, waitS: 10 }, true],
+      ["the same gain 58s away: still under one cycle and priced", { wr1: 0.0, wr2: 1.0, waitS: 58 }, L * 1 > 58 * R],
+      ["a small gain, 30s away: no", { wr1: 0.45, wr2: 0.5, waitS: 30 }, false],
+      ["a pair no better than the single: never", { wr1: 0.3, wr2: 0.3, waitS: 0.5 }, false],
+      ["past one sawtooth: never", { wr1: 0, wr2: 1, waitS: golib.CHEAT_CYCLE_S + 1 }, false],
+      ["an unknown pair win rate: never", { wr1: 0.2, wr2: null, waitS: 1 }, false],
+      ["the screen: a 1s search for a 1s wait, sure-win bound", { wr1: 0.4, wr2: 1, waitS: 1, searchS: 0.8 }, true],
+    ]) {
+      const d = golib.cheatWaitWorth({ ...a, lossCost: L, ratePerS: R });
+      c17.examined(1);
+      if (d.wait !== want) c17.fail(`${what}: cheatWaitWorth(${JSON.stringify(a)}) = ${JSON.stringify(d)}, want wait ${want}`);
+    }
+    // The boundary is the price: gain just above / below cost.
+    const w = 20, need = (w * R) / L;
+    c17.examined(2);
+    if (!golib.cheatWaitWorth({ wr1: 0.1, wr2: 0.1 + need * 1.01, waitS: w, lossCost: L, ratePerS: R }).wait) c17.fail("a gain 1% above the wait's cost must wait");
+    if (golib.cheatWaitWorth({ wr1: 0.1, wr2: 0.1 + need * 0.99, waitS: w, lossCost: L, ratePerS: R }).wait) c17.fail("a gain 1% below the wait's cost must not wait");
+    c17.examined(1);
+    if (Math.abs(golib.CHEAT_CYCLE_S - 59.06) > 0.05) c17.fail(`CHEAT_CYCLE_S ${golib.CHEAT_CYCLE_S}: the roll's period is ~59.06s`);
+    // The loop: the pair is searched at the window's playtime, the wait reads the playtime, the turn logs it.
+    const src = fs.readFileSync(path.join(REPO, "go.js"), "utf8");
+    for (const [what, re] of [
+      ["only on a hard move with the window closed", /pricedWaitFor\(opponent\) && clockFor\(opponent\) && hardPairWanted\(singleWr\) && !cheatWindowOk\(\)/],
+      ["the pair search is asked at the playtime the window opens", /askSolver\(boardStrings, validList, \{ T: Math\.round\(T0 \+ w0 \* 1000\), cheat: \{/],
+      ["the wait re-reads the playtime each sleep and keeps the heartbeat", /const left = cheatWaitS\(T, pk\)[\s\S]{0,300}await ns\.sleep\([\s\S]{0,80}heartbeat\(\)/],
+      ["the per-game log carries the evaluation", /pwNote \? \{ pw: pwNote \}/],
+      ["the wait stays out of the turn timing", /timing\.loop \+= Date\.now\(\) - loop0 - pwWaitedMs/],
+    ]) {
+      c17.examined(1);
+      if (!re.test(src)) c17.fail(`go.js: ${what} — not found`);
+    }
+  }
+  const c18 = new Check("GC18", "the scratch's walk mark survives 2^31 (the recurring go-solver throw: TypeError reading 'length' at libsAtLeast/group after hours of one session)");
+  {
+    const path = await import("node:path");
+    const { REPO } = await import("./ram.mjs");
+    const golib = await import(path.join(REPO, "golib.js"));
+    const N = 5, nbrs = golib.makeGeometry(N), b = golib.parseBoard(["XX...", "XX...", ".....", ".....", "....."]);
+    const sc = golib.makeScratch(N);
+    sc.mark = 2 ** 31 - 3;
+    c18.examined(1);
+    try {
+      for (let i = 0; i < 6; i++) {
+        const g = golib.group(b, nbrs, 0, sc.out, sc.seen, ++sc.mark);
+        if (g.size !== 4 || g.libs !== 4) c18.fail(`group past mark ${sc.mark}: ${JSON.stringify(g)}, want size 4 libs 4`);
+        if (golib.libsAtLeast(b, nbrs, 0, 5, sc.out, sc.seen, ++sc.mark)) c18.fail(`libsAtLeast past mark ${sc.mark} counted a 5th liberty`);
+      }
+    } catch (e) {
+      c18.fail(`the walk threw past mark 2^31: ${e.message}`);
+    }
+  }
+  return [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18];
 }
