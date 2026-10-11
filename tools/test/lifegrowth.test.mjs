@@ -183,7 +183,13 @@ export async function run() {
       const hOld = o05 ? E.bestExitPolicy(o05.inputs).best?.hours ?? null : null;
       c.examined(1);
       c.note(`the old belief on ${p0.at}: L0.5 ${f2(hOld)}h (cadence ${Math.exp(old.post.rate.mean).toFixed(4)}/h, the model alone)`);
-      if (Number.isFinite(hOld) && hOld < 1000) c.fail(`the old model must reproduce the unpriceable L0.5 (> 1000h): ${hOld}h`);
+      // 2026-10-11 (policysearch [PS]): the old belief's L0.5 read unpriceable
+      // partly because the policy search stopped at 400 installs (200h of 0.5h
+      // lives); run to the horizon it prices — still far behind the new belief.
+      const n05 = build(p0).opts.find((o) => o.L === 0.5);
+      const hNew = n05 ? E.bestExitPolicy(n05.inputs).best?.hours ?? null : null;
+      c.note(`   (the new belief's L0.5 on the same pass: ${f2(hNew)}h)`);
+      if (Number.isFinite(hOld) && !(Number.isFinite(hNew) && hOld > 3 * hNew)) c.fail(`the old model must reproduce the bad L0.5 (unpriced, or > 3x the new belief's ${hNew}h): ${hOld}h`);
     } catch (e) {
       c.fail(`threw: ${String(e?.stack ?? e).slice(0, 240)}`);
     }

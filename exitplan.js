@@ -2581,11 +2581,22 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
  * as before (an optimum inside the head, or one the 15-worse rule ends near,
  * is found by the same steps). Only while the exit is STILL IMPROVING at the
  * head's end does it gallop (doubling strides), bisect the bracket the gallop
- * closes, and then scan POLICY_WORSE installs either side of the best, again
- * until that scan stops moving it. The exit over k is unimodal (a linear
- * cycle cost plus a tail convex in ln M — every live and fixture inputs set
- * checked, [XP-S]); the closing scan absorbs the level floor's plateaus.
- * `tried` lists every policy priced, in install order.
+ * closes, and then scan POLICY_CLOSE installs either side of the best, again
+ * until that scan stops moving it; the closing scan absorbs the level floor's
+ * plateaus.
+ *
+ * THE EXIT OVER k IS NOT UNIMODAL, AND 400 IS NOT A HORIZON (live BN13.1
+ * 2026-10-11: exits swinging 45h -> 98h -> 1686h between passes, SWITCH
+ * ARTEFACT on a 9356.5h L0.5 incumbent). Lives that buy nothing leave flat or
+ * rising runs that end in a drop (the 19:27Z inputs: flat 17..32 at 5.68e8h,
+ * 1623h at 249; a gang's income: 337h at 24, 176h at 270), which the 15-worse
+ * rule stopped inside; and at 0.5h lives 400 installs are 200h, so slow draws
+ * priced their 400-install edge (1.8e6h against 388h at 709). So: the search
+ * runs to the HORIZON — (k - 1) cycleHours reaching the best exit, past which
+ * nothing can win — and probes past every optimum it settles on at doubling
+ * distances to it (policysearch.test.mjs [PS]; PP2: identical to every policy
+ * to the horizon on every fixture's inputs). `tried` lists every policy
+ * priced, in install order.
  */
 // Memo: many callers in one pass simulate identical inputs. Keyed on the
 // inputs' JSON (functions excluded, as JSON drops them); bounded.
@@ -2598,9 +2609,20 @@ export const POLICY_HEAD = 24
 export const POLICY_WORSE = 15
 // The closing scan's half-width around a galloped optimum. It was
 // POLICY_WORSE (15): 31 policies a search, half the policies priced at a 0.5h
-// cadence; at 6 every fixture's search [PP2] is still identical to the
-// one-by-one walk (336 of 336) and the plan pass's exits move < 0.5%.
+// cadence; at 6 every fixture's search [PP2] is identical to every policy
+// to the horizon (1332 of 1332; at 3, 1330).
 export const POLICY_CLOSE = 6
+// The standard install bound callers pass (bestExitPolicy's default): with it
+// the search runs to the horizon — no policy whose lives alone outlast the best
+// exit — up to POLICY_FAR installs (2000h of 0.5h lives).
+export const POLICY_MAX = 400
+export const POLICY_FAR = 4000
+// The head gallops early after POLICY_STEEP_RUN improvements in a row on a degenerate best.
+export const POLICY_STEEP_RUN = 4
+// The escape probes' ratio past the best: kb + 32, 64, 128, ... to the horizon (x4 missed 6 of PP2's 1332 optima).
+export const POLICY_PROBE = 2
+// An improvement under this fraction of the best does not reset the 15-worse walk (a flat, noisy run is not progress); the best still moves to it.
+export const POLICY_TIE = 1e-3
 
 export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
   return drain(bestExitPolicyGen(o, maxInstalls, minInstalls))
@@ -2669,75 +2691,126 @@ export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
     fresh = true
     return row
   }
+  // THE HORIZON (kMax): no policy past it can win. Every install before the
+  // exit is a whole life (exitHours: h += firstH + (k - 1) cycleHours, every
+  // later leg >= 0), so k installs cost at least (k - 1) x cycleHours, and
+  // once that reaches the best exit nothing further can beat it. A search
+  // given the standard bound (maxInstalls >= POLICY_MAX) runs to that
+  // horizon, up to POLICY_FAR — the fixed 400 was 200h of 0.5h lives, and
+  // live BN13.1 2026-10-11 a slow draw at L0.5 priced 1.8e6h at the 400 edge
+  // against 388h at 709 installs (the L0.5 incumbent's mean 9356.5h, SWITCH
+  // ARTEFACT). An explicit smaller bound (the never policy's 0) is kept.
+  const far = maxInstalls >= POLICY_MAX ? Math.max(maxInstalls, POLICY_FAR) : maxInstalls
+  const L = num(o.cycleHours) && o.cycleHours > 0 ? o.cycleHours : null
+  const kMax = () => (best === null || L === null ? maxInstalls : Math.max(minInstalls, Math.min(far, Math.floor(best.hours / L) + 1)))
   // The head: one by one, the 15-worse rule.
   let worse = 0
   let k = minInstalls
-  let stopped = false
   const headEnd = Math.min(maxInstalls, minInstalls + POLICY_HEAD - 1)
-  const linearFrom = function* (from, to) {
-    for (k = from; k <= to; k++) {
+  // `steep`: the head hands over to the gallop once POLICY_STEEP_RUN policies
+  // in a row each improved the best while it is still DEGENERATE (past
+  // DEGENERATE_H: no node is played that long) — far from any optimum (the
+  // BN9 fixture's draws: 1e83h at 1 install, 1e79h at 24, the optimum 766h at
+  // 1450), where the one-by-one head was 24 of a search's ~55 policies.
+  const linearFrom = function* (from, to, steep = false) {
+    let streak = 0
+    for (k = from; k <= to() && k <= far; k++) {
       const before = best
       const row = at(k)
       if (fresh) yield
-      if (best !== before) worse = 0
-      else if (best !== null && num(row.hours)) {
+      if (best !== before && (before === null || best.hours < before.hours * (1 - POLICY_TIE))) {
+        worse = 0
+        streak = best.hours > DEGENERATE_H ? streak + 1 : 0
+        if (steep && streak >= POLICY_STEEP_RUN) return 'steep'
+      } else if (best !== null && num(row.hours)) {
+        streak = 0
         if (++worse >= POLICY_WORSE) return true
       }
     }
     return false
   }
-  stopped = yield* linearFrom(minInstalls, headEnd)
-  if (!stopped && headEnd < maxInstalls) {
-    if (best === null || worse > 0) {
-      // Nothing priced yet, or past the best already: the one-by-one rule
-      // to its end, as it always ran.
-      yield* linearFrom(headEnd + 1, maxInstalls)
-    } else {
-      // Still improving at the head's end: gallop.
-      let prev = headEnd
-      let lo = headEnd - 1
-      let hi = null
-      // At most log2(maxInstalls / POLICY_HEAD) + 1 strides reach the cap; 64 bounds it.
-      for (let step = POLICY_HEAD, g = 0; g < 64; step *= 2, g++) {
-        const kk = Math.min(maxInstalls, prev + step)
-        at(kk)
+  // Gallop from the best by doubling strides while each stride improves it,
+  // bisect the bracket (lo, hi) around it, then scan POLICY_CLOSE either side
+  // until that holds. `lo`: the last policy known not to be the best below it.
+  const refine = function* (lo) {
+    let prev = best.installsFirst
+    let hi = null
+    for (let step = POLICY_HEAD, g = 0; g < 64; step *= 2, g++) {
+      const kk = Math.min(kMax(), prev + step)
+      if (kk <= prev) break
+      at(kk)
+      if (fresh) yield
+      if (best.installsFirst === kk) {
+        lo = prev
+        prev = kk
+      } else {
+        hi = kk
+        break
+      }
+    }
+    // No stride past the best: the horizon closes the bracket (nothing past it can win).
+    if (hi === null) hi = kMax() + 1
+    // Bisect (lo, hi) around the best: the minimum of a unimodal exit lies
+    // strictly inside.
+    let a = lo
+    let b = hi
+    for (let it = 0; it < 64 && b - a > 3; it++) {
+      const kb = best.installsFirst
+      const m = kb - a > b - kb ? Math.floor((a + kb) / 2) : Math.ceil((kb + b) / 2)
+      if (m === kb || m <= a || m >= b) break
+      at(m)
+      if (fresh) yield
+      if (best.installsFirst === m) {
+        if (m < kb) b = kb
+        else a = kb
+      } else if (m < kb) a = m
+      else b = m
+    }
+    // The closing scan: POLICY_CLOSE either side of the best, until it holds.
+    for (let round = 0; round < 20; round++) {
+      const kb = best.installsFirst
+      for (let j = Math.max(minInstalls, kb - POLICY_CLOSE); j <= Math.min(kMax(), kb + POLICY_CLOSE); j++) {
+        at(j)
         if (fresh) yield
-        if (best.installsFirst === kk) {
-          lo = prev
-          prev = kk
-          if (kk === maxInstalls) break
-        } else {
-          hi = kk
-          break
-        }
       }
-      // Bisect (lo, hi) around the best: the minimum of a unimodal exit lies
-      // strictly inside.
-      if (hi !== null) {
-        let a = lo
-        let b = hi
-        for (let it = 0; it < 64 && b - a > 3; it++) {
-          const kb = best.installsFirst
-          const m = kb - a > b - kb ? Math.floor((a + kb) / 2) : Math.ceil((kb + b) / 2)
-          if (m === kb || m <= a || m >= b) break
-          at(m)
-          if (fresh) yield
-          if (best.installsFirst === m) {
-            if (m < kb) b = kb
-            else a = kb
-          } else if (m < kb) a = m
-          else b = m
-        }
+      if (best.installsFirst === kb) break
+    }
+  }
+  let stopped = yield* linearFrom(minInstalls, () => headEnd, true)
+  if (stopped === 'steep') {
+    stopped = false
+    yield* refine(best.installsFirst - 1)
+  } else if (!stopped && headEnd < maxInstalls) {
+    // Nothing priced yet, or past the best already: the one-by-one rule to
+    // its end; still improving at the head's end: gallop.
+    if (best === null || worse > 0) stopped = yield* linearFrom(headEnd + 1, kMax)
+    else yield* refine(headEnd - 1)
+  }
+  // THE EXIT OVER k IS NOT UNIMODAL. Lives that buy nothing (the purchase
+  // sequence's empty lives before an unlock) leave runs of equal or rising
+  // exits followed by a drop: on the 19:27Z BN13 inputs the exit is flat on
+  // 17..32 installs (5.68e8h) and falls to 1623h at 249 — the 15-worse rule
+  // stopped at 32 and returned the 5.68e8h exit at 17 (a gang arm: rising
+  // from 1 install, 176h at 270 against 337h at 24). Probe past the best at
+  // kb + 32, 64, 128, ... to the horizon; a probe that beats it is refined
+  // like the head's gallop, then probed past again. ~log2(kMax / 32) policies
+  // a search when nothing is found. A tooth narrower than its distance can
+  // still slip between two probes (the 21:03Z L0.5 draw 14: 90.2h at 96, the
+  // exhaustive 82.8h at 129 — 1 of 240 searches, [PS3]); a sqrt(2) ladder
+  // found it, at +15% policies on the gang's searches.
+  if (best !== null && maxInstalls > minInstalls) {
+    for (let round = 0; round < 16; round++) {
+      const kb = best.installsFirst
+      // The bracket's left end: the last probe that did not beat the best.
+      let lo = null
+      for (let d = 2 * (POLICY_WORSE + 1); kb + d <= kMax(); d *= POLICY_PROBE) {
+        at(kb + d)
+        if (fresh) yield
+        if (best.installsFirst !== kb) break
+        lo = kb + d
       }
-      // The closing scan: POLICY_CLOSE either side of the best, until it holds.
-      for (let round = 0; round < 20; round++) {
-        const kb = best.installsFirst
-        for (let j = Math.max(minInstalls, kb - POLICY_CLOSE); j <= Math.min(maxInstalls, kb + POLICY_CLOSE); j++) {
-          at(j)
-          if (fresh) yield
-        }
-        if (best.installsFirst === kb) break
-      }
+      if (best.installsFirst === kb) break
+      yield* refine(lo ?? kb)
     }
   }
   const tried = [...seen.values()].sort((x, y) => x.installsFirst - y.installsFirst)
@@ -2748,7 +2821,7 @@ export function* bestExitPolicyGen(o = {}, maxInstalls = 400, minInstalls = 0) {
     : {
         best,
         tried,
-        atSearchEdge: best.installsFirst === maxInstalls,
+        atSearchEdge: best.installsFirst >= far,
         searchedTo: tried[tried.length - 1]?.installsFirst ?? maxInstalls,
         // DEGENERATE: the best exit is longer than any node is played (1e5h,
         // eleven years). Live in BitNode 8 every policy priced ~1.5e26h — no

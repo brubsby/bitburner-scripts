@@ -57,7 +57,12 @@ export async function run() {
     c1.examined(hs.length)
     c1.note(`as published: ${nulls} of ${hs.length} hack draws unpriced (degenerate), max priced ${Math.max(...hs.filter(fin)).toFixed(1)}h`)
     if (big.length) c1.fail(`${big.length} hack draws priced past DEGENERATE_H (${big[0].toExponential(2)}h) — passed on as durations`)
-    if (!nulls) c1.fail('fixture: no degenerate draw any more (draw 7, ln(M) 0.006/h, was 3.4e78h)')
+    // Draw 7 (ln(M) 0.006/h, 3.4e78h) was degenerate only at the 400-install
+    // edge: the policy search now runs to the horizon (policysearch [PS]) and
+    // prices it. The unpriced path is still exercised by 'never' below.
+    const d7 = hs[7]
+    c1.note(`draw 7 (was 3.4e78h at the 400-install edge): ${fin(d7) ? d7.toFixed(1) + 'h' : 'unpriced'}`)
+    if (!(nulls || (fin(d7) && d7 < X.DEGENERATE_H))) c1.fail('fixture: draw 7 must be unpriced or priced below DEGENERATE_H')
     const never = P.trajectoryOf({ kind: 'never' }, {})
     c1.examined(1)
     if (never(base) !== null) c1.fail(`'never' on BN14 (hacking 15000 at mult 0.55 with no install) priced ${never(base)}h — must be unpriced`)

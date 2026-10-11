@@ -96,7 +96,12 @@ export async function run() {
       const none = t(I);
       const with28 = t({ ...I, finalGrafts: G28, graftStartMoney: GS28 });
       c.note(`${name}: committed basis (wait ${basis.waitH.toFixed(2)}h, the inputs' batch) — none ${none}, with the 28 ${with28?.toFixed?.(1)}h`);
-      if (none !== null && Number.isFinite(none) && none < 1e4) c.fail(`${name}: the no-graft baseline must be unpriceable on the committed basis (that is the trigger): ${none}`);
+      // 2026-10-11 (policysearch [PS]): the 1.5e35h baseline was the policy
+      // search's 400-install edge; run to the horizon it prices ~760h. Either
+      // way grafting nothing must be dominated by the 28 — unpriced, or priced
+      // far above them (the unpriced path is kept below with synthetic exits).
+      const nonePriced = none !== null && Number.isFinite(none) && none < 1e4;
+      if (nonePriced && !(Number.isFinite(with28) && none > 5 * with28)) c.fail(`${name}: the no-graft baseline must be dominated by the 28 (unpriced, or > 5x their exit): ${none} vs ${with28}`);
       if (!(Number.isFinite(with28) && with28 < 150)) c.fail(`${name}: the 28 must price finite on the same basis: ${with28}`);
       const r = GP.chooseGrafts({ candidates: FC.candidates, priceExit: (x) => t(x), base: I, intelligence: FC.intelligence, ownedNames: FC.owned, seeds: [MEM], budgetMs: 0, now: () => 1 });
       c.note(`${name}: chooseGrafts -> ${r.grafts ? `${r.grafts.length} grafts, withH ${r.withH?.toFixed(1)}h, withoutH ${r.withoutH}, unpricedNone ${r.unpricedNone}` : `REFUSED: ${r.why}`}`);
@@ -109,9 +114,10 @@ export async function run() {
         const lost = MEM.filter((n) => !got.has(n) && !(r.pruned ?? []).includes(n));
         if (r.seededFrom !== 0 || lost.length) c.fail(`${name}: the seeded 28 must be the start (seededFrom ${r.seededFrom}; lost without a prune: ${lost.join(", ") || "none"})`);
         if ((r.pruned ?? []).length) c.note(`${name}: pruned ${r.pruned.join(", ")}`);
-        if (r.withoutH !== null || r.unpricedNone !== true) c.fail(`${name}: grafting nothing must be published unpriced (withoutH null, unpricedNone): ${r.withoutH} ${r.unpricedNone}`);
+        if (!nonePriced && (r.withoutH !== null || r.unpricedNone !== true)) c.fail(`${name}: grafting nothing must be published unpriced (withoutH null, unpricedNone): ${r.withoutH} ${r.unpricedNone}`);
+        if (nonePriced && !(r.withoutH === none && r.unpricedNone !== true)) c.fail(`${name}: a priced baseline must be published as priced: ${r.withoutH} ${r.unpricedNone}`);
         if (!(Number.isFinite(r.withH) && r.withH < 150)) c.fail(`${name}: withH must be the 28's finite exit: ${r.withH}`);
-        if (JSON.stringify(r).includes("Infinity") || !/unpriceable/.test(r.why)) c.fail(`${name}: the record must carry no Infinity and say 'unpriceable': ${r.why}`);
+        if (JSON.stringify(r).includes("Infinity") || (!nonePriced && !/unpriceable/.test(r.why))) c.fail(`${name}: the record must carry no Infinity${nonePriced ? "" : " and say 'unpriceable'"}: ${r.why}`);
       }
     }
     // Infinity (a number past any horizon) is the same as null.
@@ -184,7 +190,10 @@ export async function run() {
     // liftShare, 2026-09-29 19:32Z): priced now, no option is feasible without
     // the grafts and nothing is switched to. Either way a switch made without
     // the grafts must be flagged, never taken silently.
-    if (bug.switched && (bug.switchSanity?.ok !== false || !/^SWITCH ARTEFACT/.test(bug.why))) c.fail(`a switch without the grafts must be flagged as a pricing artefact: ${bug.key} ${JSON.stringify(bug.switchSanity)}`);
+    // 2026-10-11 (policysearch [PS]): without the grafts the incumbent is no
+    // longer the search's 400-install edge but a priced ~280h, so the switch
+    // is a real margin, not >10x — flagged only when it is one.
+    if (bug.switched && bug.gainH > 10 * bug.meanH && (bug.switchSanity?.ok !== false || !/^SWITCH ARTEFACT/.test(bug.why))) c.fail(`a switch without the grafts must be flagged as a pricing artefact: ${bug.key} ${JSON.stringify(bug.switchSanity)}`);
     if (!bug.switched && bug.key !== null) c.fail(`without the grafts the replay must not hold a priced incumbent: ${bug.key} ${bug.why}`);
     const art = P.switchSanityOf({ from: "committed", to: "w4", gainH: 26581.67, exitH: 66.236, fromH: 26647.957, prevH: F14.committedPrev.meanH });
     if (art?.ok !== false) c.fail("the live 14:51 switch must read as a SWITCH ARTEFACT");
