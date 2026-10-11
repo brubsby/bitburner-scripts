@@ -380,6 +380,19 @@ function sg5() {
   const sd = pr.slice(pr.indexOf('async function stanekDecisionOf('), pr.indexOf('\n}\n', pr.indexOf('async function stanekDecisionOf(')))
   if (!/allocOptionsOf\(fleetGB, hosts\)/.test(sd) || !/st\?\.fleet\?\.gb/.test(sd) || /batch\.txt/.test(sd)) c.fail("progress.js stanekDecisionOf must price fractions of stanek.js's measured FLEET (st.fleet), not home and not /tel/batch.txt")
   if (!/basis: ALLOC_BASIS/.test(sd)) c.fail('progress.js stanekDecisionOf must stamp basis "fleet" on the decision (stanek.js follows only that basis)')
+  // (2026-10-11 BN13) the returned decision carried a SECOND `basis:` key (the install
+  // basis {kind}) after `basis: ALLOC_BASIS`; the later key won, planAllocOf refused every
+  // decision and stanek.js charged at DEFAULT_F 'UNPRICED' while plan.txt showed a priced f.
+  const ret = sd.slice(sd.indexOf('return {\n      key: c.f'), sd.indexOf('\n    }\n', sd.indexOf('return {\n      key: c.f')))
+  const basisKeys = ret.match(/\n\s+basis:/g)?.length ?? 0
+  if (!ret || basisKeys !== 1) c.fail(`progress.js stanekDecisionOf's priced decision must carry exactly ONE basis key (basis: ALLOC_BASIS), has ${basisKeys} — a later duplicate overrides 'fleet' and stanek.js never follows the plan`)
+  else {
+    const lit = Function('ALLOC_BASIS', 'c', 'without', 'priced', 'fleetGB', 'hosts', 'fNow', 'cycleH', 'ctx', 'basis', 't0', `${ret.replace('return {', 'return ({')}\n    })`)
+    const d = lit(sp.ALLOC_BASIS, { f: 0.1, hours: 100, why: 'w' }, 110, [], 756, [{}], 0, 0.5, { nodePower: 2 }, null, Date.now())
+    const plan = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 7, decisions: { stanek: d } })
+    const got = sp.planAllocOf(plan, 7)
+    if (got?.f !== 0.1) c.fail(`stanek.js does not follow progress.js's own priced decision: planAllocOf -> ${JSON.stringify(got)} (decision basis ${JSON.stringify(d.basis)})`)
+  }
   if (!/stanek: pc\.decisions\.stanek \?\? pc\.prev\?\.decisions\?\.stanek \?\? null/.test(pr)) c.fail('progress.js must publish decisions.stanek in /tel/plan.txt')
   if (!/giftPinOf\(routePinOf\(/.test(pr)) c.fail("progress.js must pin the hacking route where the gift is accepted (routepin.giftPinOf)")
   // charge.js stays 2.0GB: only chargeFragment among the priced calls

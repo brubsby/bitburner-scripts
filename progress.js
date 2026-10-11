@@ -3053,7 +3053,7 @@ async function stanekDecisionOf(ns, info, inputsFn) {
       deltaH: typeof c.hours === 'number' && typeof without === 'number' ? +(c.hours - without).toFixed(3) : null,
       priced,
       ctx: { fleetGB, hosts: hosts.length, roomGb: +hosts.reduce((s, h) => s + (h.capGb ?? 0), 0).toFixed(2), fNow: +fNow.toFixed(4), cycleH: +cycleH.toFixed(3), nodePower: ctx.nodePower },
-      basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
+      installBasis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
       decidedAt: new Date().toISOString(),
       notSimulated: 'the fleet growing within the node (more threads later), the Church rep -> Awakening/Serenity, bonus time, batcher income not linear in its RAM — the first two favour charging',
       ms: Date.now() - t0,
