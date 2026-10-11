@@ -584,6 +584,88 @@ export function bootstrapHomeStep({ homeRam, boot, gate, lastAugReset, now = Dat
 }
 
 /**
+ * THE BATCH'S CASH NEED, IN SEQUENCE: the largest balance any point of the
+ * batch needs in hand — what earlier orders spent plus this order's own need.
+ * A travel spends its fare (TRAVEL_FARE, or its `cost`); a join's `cost` is
+ * the faction's money REQUIREMENT, held, never spent (FactionJoinCondition
+ * money: Player.money >= n); every other `cost` is spent. Summing join
+ * requirements as spends priced the BN13.1 17:02Z batch at $71m for $30.6m
+ * of real need.
+ */
+export function batchCashNeedOf(orders) {
+  let spent = 0
+  let peak = 0
+  for (const o of Array.isArray(orders) ? orders : []) {
+    const c = fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0
+    if (o?.kind === 'join') peak = Math.max(peak, spent + c)
+    else {
+      spent += c
+      peak = Math.max(peak, spent)
+    }
+  }
+  return peak
+}
+
+/**
+ * THE BATCH'S CASH LEDGER: the balance each order of a batch will meet, in
+ * order — what progress.js prices every fare and join against as it builds
+ * the batch, so it never orders travel the game must refuse (Player.canAfford:
+ * travel needs the fare IN CASH; a negative balance is a price only for
+ * classes, which bill with no check). Live BN13.1 2026-10-11 17:02Z: three
+ * city fares, three $20m-$30m joins and a gym fare were ordered on per-order
+ * checks against the same cash; the second fare was refused, the player sat
+ * in Chongqing (no gym) and the gym order failed with the slot claimed.
+ *
+ * Start: cash, or what a raise reaches (batchReach: equity after the sale
+ * haircut and margin) when larger. Plus the flat income over the batch's own
+ * time — ORDER_SECS per order, measured on that batch (a join waits
+ * INVITE_WAIT_MS for the invitation check: ~10.7s; the rest well under 1s).
+ * admit(kind, cost) -> {ok, why, balance}: a travel needs balance >= fare and
+ * spends it; a join needs balance >= its requirement; every other cost is
+ * spent (its affordability priced elsewhere — the gym on credit, purchases
+ * on batchFits) and never refused here. reserve(x) holds x out of what
+ * later admits see. balance() is the cash the next order meets.
+ */
+export const ORDER_SECS = { join: 11, travel: 0.3 }
+export function batchLedgerOf({ cash = 0, equity = 0, incomePerSec = 0 } = {}) {
+  const c0 = fin(cash) ? cash : 0
+  const start = Math.max(c0, batchReach(c0, equity))
+  const inc = fin(incomePerSec) && incomePerSec > 0 ? incomePerSec : 0
+  let spent = 0
+  let held = 0
+  let secs = 0
+  const balance = () => start + inc * secs - spent - held
+  const $ = (x) => `$${Math.round(x).toLocaleString()}`
+  return {
+    start,
+    balance,
+    reserve(x) {
+      if (fin(x) && x > 0) held += x
+    },
+    release(x) {
+      if (fin(x) && x > 0) held = Math.max(0, held - x)
+    },
+    fits(...needs) {
+      let b = balance()
+      for (const n of needs) {
+        if (!fin(n?.need) || b < n.need) return false
+        b -= fin(n.spend) ? n.spend : 0
+      }
+      return true
+    },
+    admit(kind, cost = 0) {
+      const b = balance()
+      const c = fin(cost) && cost > 0 ? cost : kind === 'travel' ? TRAVEL_FARE : 0
+      if (kind === 'travel' && b < c) return { ok: false, balance: b, why: `the ${$(c)} fare is not in cash at this point of the batch (${$(b)} after the orders before it; travel needs cash up front — Player.canAfford)` }
+      if (kind === 'join' && c > 0 && b < c) return { ok: false, balance: b, why: `the ${$(c)} invitation requirement is not in hand at this point of the batch (${$(b)} after the orders before it)` }
+      if (kind !== 'join') spent += c
+      secs += ORDER_SECS[kind] ?? 0.5
+      return { ok: true, balance: balance(), why: null }
+    },
+  }
+}
+
+/**
  * THE BATCH'S CASH, raised from the book in front of its first costed order:
  * a liquidate('raise', target) whose target is the absolute cash balance the
  * batch needs (its costs plus `margin` for the sale's spread).
@@ -606,8 +688,18 @@ export function withCashRaise(orders, cash, equity, { margin = 0.02, trader = eq
   const costOf = (o) => (fin(o?.cost) && o.cost > 0 ? o.cost : o?.kind === 'travel' ? TRAVEL_FARE : 0)
   const first = orders.findIndex((o) => costOf(o) > 0)
   if (first < 0 || orders.some((o) => o.kind === 'liquidate')) return orders
-  const total = orders.reduce((a, o) => a + costOf(o), 0)
+  // THE BATCH'S PEAK NEED, in sequence (batchCashNeedOf): a join's `cost` is
+  // the invitation's money requirement — cash IN HAND, never spent.
+  const total = batchCashNeedOf(orders)
   const covered = fin(cash) && cash >= total
+  // AN UNCOVERED BATCH WITH THE BOOK IN CASH STILL HOLDS THAT CASH. Live
+  // BN13.1 2026-10-11 17:02Z: the city joins' $20m/$20m/$30m requirements
+  // summed to a $71m "total" over ~$24m of cash with equity reading 0, so no
+  // raise was ordered; the trader re-invested the cash before act.js ran and
+  // every fare after the first was refused.
+  if (!covered && trader && !(equity > 0) && fin(cash) && cash > 0) {
+    return [...orders.slice(0, first), { id: 0, kind: 'liquidate', args: ['raise', Math.floor(cash)], why: `hold the $${Math.floor(cash)} in hand for this batch ($${Math.round(total)} of need in sequence; the book is in cash and the trader re-invests it between this pass and act.js)` }, ...orders.slice(first)]
+  }
   if (covered ? !trader : !(equity > 0)) return orders
   // Covered: never ask above the cash in hand for the margin alone — with no
   // book behind it act-liquidate would refuse an unreachable target.

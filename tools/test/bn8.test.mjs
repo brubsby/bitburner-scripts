@@ -338,7 +338,8 @@ export async function run() {
     if (econ.withCashRaise(orders, 0, 0).some((o) => o.kind === "liquidate")) l.fail("raised from an empty book");
     const src = code("progress.js");
     if (!/const liveMoney = ns\.getServerMoneyAvailable\('home'\) \+ stockEquity/.test(src)) l.fail("the aug plan budgets on cash alone");
-    if (!/\(player\.money \?\? 0\) \+ stockEquity >= moneyReq \+ 200e3/.test(src)) l.fail("city joins wait on cash alone");
+    // Cash + the book, in sequence (nodeecon.batchLedgerOf; [BL4] pins the wiring).
+    if (!/const ledger = batchLedgerOf\(\{ cash: ns\.getServerMoneyAvailable\('home'\), equity: stockEquity/.test(src) || !/ledger\.fits\(\{ need: fare, spend: fare \}, \{ need: moneyReq \}\)/.test(src)) l.fail("city joins wait on cash alone");
     if (/args: \['all'\], why: `\$\$\{Math\.round\(stockEquity\)\}/.test(src)) l.fail("the whole-book liquidation prefix is back");
     if (!/String\(ns\.args\[0\] \?\? ''\) === 'raise'/.test(code("act-liquidate.js"))) l.fail("act-liquidate cannot raise a sized amount");
   }
@@ -449,7 +450,7 @@ export async function run() {
     if (econ.joinReadyButCash([{ type: "karma", karma: -90 }], { karma: -10 }).ready !== false) o.fail("karma short is not ready");
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
     const act = fs.readFileSync(path.join(REPO_ROOT, "act.js"), "utf8");
-    const chase = prog.slice(prog.indexOf("for (const f of pick.chosen)"), prog.indexOf("order('join', [f], `chosen city set"));
+    const chase = prog.slice(prog.indexOf("for (const f of chase)"), prog.indexOf("order('join', [f], `chosen city set"));
     if (!/joinReadyButCash\(reqs, player\)/.test(chase) || !/if \(!ready\.ready\)[\s\S]{0,200}continue/.test(chase)) o.fail("the city-faction chase must refuse to order (and so raise for) a join that is not otherwise ready");
     // The hold is released as soon as the batch that raised has run.
     const loopEnd = act.indexOf("ordersReport = { at: batch.at");

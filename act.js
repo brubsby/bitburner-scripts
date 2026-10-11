@@ -27,7 +27,7 @@
 //
 // Everything it does is published to /tel/act.txt with the reason.
 
-import { decide, gangKarmaTarget, reissueWorkOf, bodyCreditOf } from 'actplan.js'
+import { decide, gangKarmaTarget, reissueWorkOf, bodyCreditOf, failedWorkFallbackOf } from 'actplan.js'
 import { GYMS, bestCrimeFor } from 'bodyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: hacknet servers sort last — a GB used there costs that share of its
@@ -347,6 +347,14 @@ const raiseState = { servedAt: 0, holdUntil: 0, negAt: 0, softSamples: [], softT
 // read (the rep snapshot, up to a minute old) must postdate it to stop
 // anything (nodeecon.softlockStep workAt/startedAt).
 const workState = { startedAt: 0 }
+// The best money crime at the player's stats (actplan's fallback for an unpaid or unreachable gym).
+function fundCrimeOf(player, node) {
+  try {
+    return bestCrimeFor('money', levelledOf(player, node), node, { focus: 1 })?.crime ?? null
+  } catch {
+    return null
+  }
+}
 const STARTS_WORK = new Set(['gym', 'crime', 'work', 'company', 'course', 'focus', 'graft'])
 
 /**
@@ -641,6 +649,45 @@ export async function main(ns) {
           }
           if (o.kind === 'join') tried[o.args[0]] = Date.now()
         }
+        // ---- 1'. A FAILED WORK ORDER DOES NOT IDLE THE SLOT -----------------
+        // (actplan.failedWorkFallbackOf: live BN13.1 17:02Z the gym order
+        // failed in Chongqing and the claimed 'body' slot sat empty.) The
+        // next-best priced work, in this loop.
+        let fallback = null
+        {
+          const pNow = ns.getPlayer()
+          const fb = failedWorkFallbackOf({
+            now: Date.now(),
+            lastAugReset: info.lastAugReset,
+            progress: readJson(ns, '/tel/progress.txt'),
+            results,
+            city: pNow.city ?? null,
+            cash: ns.getServerMoneyAvailable('home'),
+            gymCostMult: (name) => GYMS.find((g) => g.name === name)?.costMult ?? null,
+            gymCityOf: (name) => GYMS.find((g) => g.name === name)?.city ?? null,
+            fundCrime: fundCrimeOf(pNow, node),
+          })
+          if (fb?.steps) {
+            const ran = []
+            let flew = null
+            for (const st of fb.steps) {
+              if (st.afterTravel && flew !== true) continue
+              const r = await runActor(ns, st.kind, st.args)
+              ran.push({ kind: st.kind, args: st.args, why: st.why, ok: r.ok === true, error: r.result?.error ?? r.why ?? null })
+              if (st.kind === 'travel') {
+                flew = r.ok === true
+                continue
+              }
+              if (r.ok === true) {
+                if (STARTS_WORK.has(st.kind)) workState.startedAt = Date.now()
+                lastWork = { kind: st.kind, args: st.args, at: r.result?.at ?? new Date().toISOString(), batchAt: batch.at }
+                work = st.kind === 'gym' ? { kind: 'gym', gym: st.args[0], cls: st.args[1], since: r.result?.at ?? null } : { kind: 'crime', type: st.args[0], since: r.result?.at ?? null }
+                break
+              }
+            }
+            fallback = { at: new Date().toISOString(), ran, held: ran.some((x) => x.ok && x.kind !== 'travel') }
+          } else if (fb?.skip) fallback = { at: new Date().toISOString(), skipped: fb.skip }
+        }
         // The batch has run: a cash raise's hold has done its job.
         if (results.some((x) => x.kind === 'liquidate')) {
           try {
@@ -650,7 +697,7 @@ export async function main(ns) {
             results.push({ kind: 'release-hold', ok: false, error: String(e) })
           }
         }
-        ordersReport = { at: batch.at, count: batch.orders.length, results }
+        ordersReport = { at: batch.at, count: batch.orders.length, results, ...(fallback ? { fallback } : {}) }
         // Every batch's results, appended: the per-batch report is overwritten
         // by the next one, and an install's chain is exactly the thing that
         // must be auditable afterwards.
@@ -698,13 +745,7 @@ export async function main(ns) {
           gymCityOf: (name) => GYMS.find((g) => g.name === name)?.city ?? null,
           reissued,
           // An unpaid gym falls back to the best money crime (it trains every combat stat and earns the fee).
-          fundCrime: (() => {
-            try {
-              return bestCrimeFor('money', levelledOf(player, node), node, { focus: 1 })?.crime ?? null
-            } catch {
-              return null
-            }
-          })(),
+          fundCrime: fundCrimeOf(player, node),
         })
         if (ri?.kind) {
           const r = await runActor(ns, ri.kind, ri.args)

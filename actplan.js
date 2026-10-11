@@ -498,3 +498,56 @@ export function reissueWorkOf(s) {
   }
   return { kind: lw.kind, args: lw.args, why: `progress.js holds the slot for ${owner} (${Math.round((s.now - at) / 60000)} min ago) and its ${lw.kind} order (batch ${lw.batchAt}, ran ${lw.at}) is no longer running — the game shows no work (snapshot ${s.workAt}): re-issued` }
 }
+
+/**
+ * A FAILED WORK ORDER NEVER IDLES THE CLAIMED SLOT. reissueWorkOf covers a
+ * work order that RAN and was stopped; this covers one the game refused.
+ * Live BN13.1 2026-10-11 17:02Z: the batch flew the player to Chongqing (no
+ * gym), the next fare was refused (no cash), the gym order at Powerhouse
+ * failed, and the 'body' slot sat idle (healthcheck ORDER NOT HELD) until a
+ * later pass. act.js runs this in the same loop, right after the batch.
+ *
+ * When the batch held a work order, none of its work orders started, and
+ * progress.txt (fresh, this life, not in error) claims the slot for an owner
+ * act.js serves (OWNER_KINDS — never Bladeburner or a graft): the next-best
+ * priced work where the player stands —
+ *   a failed gym in another city: the flight when the fare is in cash and the
+ *     fee is paid for FEE_FLOOR_S or runs on the priced credit
+ *     (bodyCreditOf), then the gym again; else / after that
+ *   the best money crime (`fundCrime`): it trains every combat stat and earns
+ *     the fare and the fee (bodyplan.combatBarPlanOf prices the same
+ *     fallback) — unless it is the very crime that failed.
+ * s: { now, lastAugReset, progress, results (the batch's), city, cash,
+ *      gymCostMult, gymCityOf, fundCrime }
+ * Returns null (nothing to do), {skip: why}, or {steps: [{kind, args, why,
+ * afterTravel?}]} — run in order; a step marked afterTravel runs only when
+ * the travel before it succeeded; stop at the first work that starts.
+ */
+const FALLBACK_WORK = ['gym', 'crime', 'work', 'company', 'course']
+export function failedWorkFallbackOf(s) {
+  const res = (Array.isArray(s.results) ? s.results : []).filter((r) => FALLBACK_WORK.includes(r?.kind))
+  if (!res.length || res.some((r) => r.ok === true)) return null
+  const failed = res[res.length - 1]
+  const at = Date.parse(s.progress?.at ?? '')
+  const owner = s.progress?.slot?.owner ?? null
+  if (!(num(at) && s.now - at < PROGRESS_FRESH_MS) || s.progress?.health === 'error') return { skip: `the ${failed.kind} order failed, but progress.txt is not fresh — no claim to serve` }
+  if (!OWNER_KINDS[owner]) return { skip: `the ${failed.kind} order failed; the slot is ${owner ? `'${owner}''s, whose own actor runs it` : 'unclaimed (the bootstrap decides)'}` }
+  const what = `the ${failed.kind} order (${(failed.args ?? []).join(', ')}) failed`
+  const crime = s.fundCrime && !(failed.kind === 'crime' && failed.args?.[0] === s.fundCrime) ? { kind: 'crime', args: [s.fundCrime], why: `progress.js holds the slot for ${owner} and ${what}: ${s.fundCrime}, the best money crime where the player stands, holds it (trains every combat stat, earns the fare and the fee)` } : null
+  const steps = []
+  if (failed.kind === 'gym') {
+    const gym = failed.args?.[0]
+    const gymCity = s.gymCityOf?.(gym) ?? null
+    const cm = s.gymCostMult?.(gym)
+    const fee = CLASS_BASE_FEE.gym * (num(cm) ? cm : 20)
+    const cr = bodyCreditOf(s.progress, s.lastAugReset, s.now)
+    const paid = (cr && cr.gym === gym) || feeFundable((s.cash ?? 0) - TRAVEL_COST, fee)
+    if (gymCity && typeof s.city === 'string' && s.city !== gymCity && num(s.cash) && s.cash >= TRAVEL_COST && paid) {
+      steps.push({ kind: 'travel', args: [gymCity], why: `${what} in ${s.city}; ${gym} is in ${gymCity}: the $${TRAVEL_COST} flight is in cash now ($${Math.round(s.cash)})` })
+      steps.push({ kind: 'gym', args: failed.args, afterTravel: true, why: `${what}; re-issued in ${gymCity}` })
+    }
+  }
+  if (crime) steps.push(crime)
+  if (!steps.length) return { skip: `${what} and no fallback work is priced (no money crime read) — the slot idles until the next batch` }
+  return { steps }
+}

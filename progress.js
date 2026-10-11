@@ -144,7 +144,7 @@ import { splitControl, splitConditioned, splitRaw, committedRouteOf, routeJoinCl
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
-import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
+import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, batchLedgerOf, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangExitGen, gangArms, gangArmsGen, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -5941,9 +5941,24 @@ async function act(ns, canJoin, info, note) {
   // step once ordered "travel to Chongqing for Tetrads" and then "gym at
   // Powerhouse" (Sector-12) in the same batch, and the gym refused.
   let cityAfterOrders = player.city
+  // THE BATCH'S CASH, IN SEQUENCE (nodeecon.batchLedgerOf): every order meets
+  // the balance the orders before it leave — cash or what the raise reaches,
+  // plus the flat income over the batch's own seconds. A travel the game
+  // would refuse (the fare not in cash at that point; Player.canAfford) is
+  // NOT ordered: live BN13.1 2026-10-11 17:02Z three city fares and a gym
+  // fare were each checked against the same cash, the second fare was
+  // refused, and the gym order failed in Chongqing with the slot claimed.
+  const ledger = batchLedgerOf({ cash: ns.getServerMoneyAvailable('home'), equity: stockEquity, incomePerSec: (econNow?.incomePerSec ?? 0) + (econNow?.lifePerSec ?? 0) + contractMoneyPerSec })
   // `cost`: dollars the order needs IN CASH (nodeecon.withCashRaise raises
-  // them from the trader's book before the first costed order).
+  // them from the trader's book before the first costed order); a join's is
+  // its money requirement, held rather than spent. Returns false — nothing
+  // ordered, the reason in todo — when the ledger refuses it.
   const order = (kind, args, why, cost = 0) => {
+    const led = ledger.admit(kind, cost)
+    if (!led.ok) {
+      todo.push(`${kind} ${(args ?? []).join(' ')} not ordered: ${led.why}`)
+      return false
+    }
     orders.push({ id: orders.length + 1, kind, args, why, ...(cost > 0 ? { cost } : {}) })
     if (kind === 'travel') cityAfterOrders = args[0]
     return true
@@ -6108,7 +6123,22 @@ async function act(ns, canJoin, info, note) {
           }
           if (order('join', [f], 'best compatible city set')) did.push(`ordered join ${f} (city set [${pick.chosen.join(', ')}], ${pick.value.toFixed(4)} ln(M))`)
         }
-        for (const f of pick.chosen) {
+        // THE INVITE-IN-PLACE FACTIONS FIRST (no fare), then the flights. And
+        // the work slot's fare is kept: when the last pass gave the slot to a
+        // body leg (progress.txt slot.owner), one fare stays out of the city
+        // chase — a gym the player cannot fly back to leaves the claimed slot
+        // idle (BN13.1 17:02Z), and a city join waits a pass for nothing.
+        const bodyFare = readJson(ns, '/tel/progress.txt')?.slot?.owner === 'body' ? TRAVEL_FARE : 0
+        ledger.reserve(bodyFare)
+        const cityOf = (f) => {
+          try {
+            return sing.inviteReqs(f)?.find((r) => r?.type === 'city')?.city ?? null
+          } catch {
+            return null
+          }
+        }
+        const chase = [...pick.chosen].sort((a, b) => (cityOf(a) === cityAfterOrders ? 0 : 1) - (cityOf(b) === cityAfterOrders ? 0 : 1))
+        for (const f of chase) {
           if (player.factions.includes(f) || cityInvites.includes(f)) continue
           if (!joinAllowed(ns, info, f, todo)) continue
           let reqs = []
@@ -6128,16 +6158,19 @@ async function act(ns, canJoin, info, note) {
             todo.push(`${f}: chosen, not chased yet — ${ready.why} (no cash raised for an invitation that cannot arrive)`)
             continue
           }
-          // Cash plus the book: the money is raised into hand before the travel
-          // (the join order carries the requirement as its cash cost).
-          if (!((player.money ?? 0) + stockEquity >= moneyReq + 200e3)) {
-            todo.push(`${f}: chosen, needs ${(moneyReq / 1e6).toFixed(0)}m in hand plus the fare (cash + stock equity $${Math.round((player.money ?? 0) + stockEquity)})`)
+          // Cash plus the book, IN SEQUENCE (the ledger): the money is raised
+          // into hand before the travel (the join order carries the
+          // requirement as its cash cost), and this faction's fare and
+          // requirement must fit what the orders before it leave.
+          const fare = cityAfterOrders !== city ? TRAVEL_FARE : 0
+          if (!ledger.fits({ need: fare, spend: fare }, { need: moneyReq })) {
+            todo.push(`${f}: chosen, needs ${(moneyReq / 1e6).toFixed(0)}m in hand${fare ? ' plus the fare' : ''} after the batch's earlier orders ($${Math.round(ledger.balance())} left of cash + the book${bodyFare ? `, a $${bodyFare} fare kept for the body leg` : ''})`)
             continue
           }
-          if (cityAfterOrders !== city) order('travel', [city], `${f} invites only in ${city}`)
-          order('join', [f], `chosen city set [${pick.chosen.join(', ')}]; invitation follows presence`, moneyReq)
-          did.push(`ordered travel to ${city} and join ${f} (chosen city set)`)
+          if (fare && !order('travel', [city], `${f} invites only in ${city}`)) continue
+          if (order('join', [f], `chosen city set [${pick.chosen.join(', ')}]; invitation follows presence`, moneyReq)) did.push(`ordered ${fare ? `travel to ${city} and ` : ''}join ${f} (chosen city set)`)
         }
+        ledger.release(bodyFare)
       }
     }
   }
@@ -7545,7 +7578,7 @@ async function act(ns, canJoin, info, note) {
     if (!st || st.kind !== 'gym' || st.priced) return st
     const plan = (() => {
       try {
-        return combatBarPlanOf({ [st.stat]: st.to }, { ...levelledPerson(player, info), city: cityAfterOrders ?? player.city }, bitNodeMults(info), { cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+        return combatBarPlanOf({ [st.stat]: st.to }, { ...levelledPerson(player, info), city: cityAfterOrders ?? player.city }, bitNodeMults(info), { cash: ledger.balance(), incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
       } catch {
         return null
       }
@@ -7653,7 +7686,7 @@ async function act(ns, canJoin, info, note) {
       else {
         const city = reqs.find((r) => r?.type === 'city')?.city
         const moneyReq = reqs.find((r) => r?.type === 'money')?.money ?? 0
-        if (city && cityAfterOrders !== city) order('travel', [city], `${scheduleTarget} invites only in ${city}`)
+        if (city && cityAfterOrders !== city && !order('travel', [city], `${scheduleTarget} invites only in ${city}`)) return
         if (order('join', [scheduleTarget], `the schedule's target: every requirement but cash${city ? ' and the city' : ''} is met`, moneyReq)) did.push(`ordered join ${scheduleTarget} (cash ${moneyReq > 0 ? '$' + moneyReq : 'none'} raised for the invitation)`)
       }
     } catch (e) {
@@ -7694,9 +7727,9 @@ async function act(ns, canJoin, info, note) {
     if (joinTargetDue) joinTargetStep()
     if (graftStep.running) did.push(`grafting ${graftStep.name} holds the work slot (committed graft plan)`)
     else {
-      if (cityAfterOrders !== GRAFT_CITY) order('travel', [GRAFT_CITY], `grafting happens only in ${GRAFT_CITY} (Grafting.ts:58)`, TRAVEL_FARE)
-      order('graft', [graftStep.name, true], `committed graft plan: ${graftDecision?.why ?? ''}`.slice(0, 300), graftStep.cost)
-      did.push(`ordered graft ${graftStep.name} ($${Math.round(graftStep.cost).toLocaleString()}, ${graftStep.slotH.toFixed(2)}h of work slot)`)
+      if (cityAfterOrders !== GRAFT_CITY && !order('travel', [GRAFT_CITY], `grafting happens only in ${GRAFT_CITY} (Grafting.ts:58)`, TRAVEL_FARE)) todo.push(`graft ${graftStep.name} waits: the flight to ${GRAFT_CITY} is not in cash at this point of the batch`)
+      else if (order('graft', [graftStep.name, true], `committed graft plan: ${graftDecision?.why ?? ''}`.slice(0, 300), graftStep.cost))
+        did.push(`ordered graft ${graftStep.name} ($${Math.round(graftStep.cost).toLocaleString()}, ${graftStep.slotH.toFixed(2)}h of work slot)`)
     }
   } else if (bodyStep && canWork && !flags.dry) {
     workedFaction = null
@@ -7756,12 +7789,29 @@ async function act(ns, canJoin, info, note) {
         else if (!crime) todo.push(`gym at ${bodyStep.gym} costs $${gymFee}/s and cash does not cover ${FEE_FLOOR_S}s of it — not starting it (our spending must not take cash below zero); no priced fallback: ${fb?.why ?? 'the combat plan could not be read'}`)
       } else if (!already) {
         try {
-          if (cityAfterOrders !== bodyStep.city) order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`, TRAVEL_FARE)
+          // A FARE THE BATCH CANNOT PAY (the ledger refused it) is a gym the
+          // game refuses: the priced plan's money crime instead, never a gym
+          // order bound to fail and leave the claimed slot idle.
+          const flown = cityAfterOrders === bodyStep.city || order('travel', [bodyStep.city], `${bodyStep.gym} is in ${bodyStep.city}`, TRAVEL_FARE)
+          if (!flown) {
+            const fb = (() => {
+              try {
+                return combatBarPlanOf({ [bodyStep.stat]: bodyStep.to }, { ...levelledPerson(player, info), city: cityAfterOrders ?? player.city }, bitNodeMults(info), { cash: Math.min(ledger.balance(), TRAVEL_FARE - 1), incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+              } catch {
+                return null
+              }
+            })()
+            const crime = fb?.now?.kind === 'crime' ? fb.now.crime : null
+            if (crime && order('crime', [crime], `the ${bodyStep.gym} fare is not in cash at this point of the batch: ${fb.why}`.slice(0, 300))) did.push(`ordered ${crime} — the flight to ${bodyStep.gym} is not affordable in this batch; ${fb.why}`.slice(0, 300))
+            else todo.push(`gym at ${bodyStep.gym} (${bodyStep.city}) not ordered: the fare is not in cash in this batch and no priced crime was read (${fb?.why ?? 'plan unreadable'})`)
+          }
           // The session's fees as the order's cash cost (withCashRaise raises
           // them from the book): the leg's hours plus the floor, so cash does
           // not run below zero mid-leg once the trader reinvests.
           const gymCost = Math.ceil(gymFee * ((bodyStep.hours ?? 0) * 3600 + FEE_FLOOR_S))
-          if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`, gymCost)) {
+          if (!flown) {
+            // the money crime above holds the slot this batch
+          } else if (order('gym', [bodyStep.gym, cls], `${bodyStep.stat} to ${bodyStep.to} for ${bodyStep.forFaction ?? scheduleTarget}`, gymCost)) {
             did.push(`ordered training ${bodyStep.stat} to ${bodyStep.to} at ${bodyStep.gym} (~${bodyStep.hours.toFixed(2)}h) for the ${bodyStep.forFaction ?? scheduleTarget} invitation${bodyStep.forFaction ? ' — the install gate is holding for the Covenant sleeve campaign' : ''}`)
           } else {
             todo.push(`gymWorkout(${bodyStep.gym}, ${cls}) refused — in ${player.city}, needs ${bodyStep.city}`)
@@ -7801,8 +7851,8 @@ async function act(ns, canJoin, info, note) {
         // Player.city per campus). Travel is instant and $200k — seconds of
         // income against the hours the better campus saves.
         try {
-          if (cityAfterOrders !== 'Volhaven') order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')
-          if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`, Math.ceil(courseFee * ((train.hours ?? 0) * 3600 + FEE_FLOOR_S)))) {
+          if (cityAfterOrders !== 'Volhaven' && !order('travel', ['Volhaven'], 'ZB Institute is in Volhaven')) todo.push('Leadership at ZB waits: the Volhaven fare is not in cash at this point of the batch')
+          else if (order('course', ['ZB Institute of Technology', 'Leadership'], `charisma to ${train.toCha} before the ${wantCompany} desk`, Math.ceil(courseFee * ((train.hours ?? 0) * 3600 + FEE_FLOOR_S)))) {
             did.push(`ordered Leadership at ZB to charisma ${train.toCha} (~${train.hours.toFixed(1)}h) before the ${wantCompany} desk — training beat the plain stint on total hours`)
           } else {
             todo.push(`Could not start the Leadership course at ZB — start it manually (Volhaven > ZB Institute).`)
