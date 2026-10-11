@@ -836,7 +836,7 @@ export async function run() {
     if (!/const useB = !!pathB && pathB\.hours < withC\.best\.hours/.test(fn)) c19.fail("path B is chosen only when its exit beats path A's");
     if (!/base\.installsFirst !== 0 \|\| withC\.best\.installsFirst !== 0\) return out\(false/.test(fn)) c19.fail("active only in the final window");
     if ((src.match(/covenantExitOf\(ns, info, player, schedule,/g) || []).length < 3) c19.fail("both the planned and the nothing-to-buy path must publish the comparison");
-    if (!/const cv = covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\s*if \(!cv\) return null[\s\S]{0,700}const bodyStep = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the campaign is on, ahead of the schedule's own body step");
+    if (!/const cv = covenantActive\(readJson\(ns, '\/tel\/installgate\.txt'\), info\?\.lastAugReset\)\s*if \(!cv\) return null[\s\S]{0,700}const bodyStepRaw = covenantStep \?\?/.test(src)) c19.fail("the Covenant gym legs must run only while the campaign is on, ahead of the schedule's own body step");
     const rf = src.slice(src.indexOf("function readFleet"), src.indexOf("function readFleet") + 3200);
     if (!/sleeves: Number\.isInteger\(f\.sleeves\) \? f\.sleeves : null/.test(rf)) c19.fail("readFleet must return the fleet size the comparison counts from");
   }

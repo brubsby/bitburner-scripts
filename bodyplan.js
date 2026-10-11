@@ -501,7 +501,23 @@ export function gymLegs(targets, person, trainingMult) {
  *   crime  the best single crime, all four combat stats at once
  *          (simulateCrime), earning as it trains;
  *   mixed  the gym while cash covers `holdS` of the fee, else the best MONEY
- *          crime at the current stats — which also trains every combat stat.
+ *          crime at the current stats — which also trains every combat stat;
+ *   credit the gym every step, cash or not: the game lets the balance go
+ *          negative (ClassWork bills with no balance check; the only things a
+ *          negative balance blocks are purchases and travel — Player.canAfford,
+ *          PlayerObjectGeneralMethods.ts:236 — and nothing charges interest),
+ *          the fare still paid in cash (a money crime earns it when short).
+ *
+ * PRICED AS TRAJECTORIES, NOT GATED: every policy is scored by its hours to
+ * the bar plus the hours the flat income needs to repay the balance it ends
+ * below zero — while the balance is negative nothing can be bought (every
+ * other spender is delayed that long). With no flat income a debt is never
+ * repaid (Infinity): only then is going negative ruled out. The chosen
+ * credit trajectory publishes its planned floor (`credit.floor`, the lowest
+ * balance it runs to) so act.js's negative-cash escape stops the class only
+ * past what was priced (nodeecon.softlockStep). Live BN12 2026-10-09 01:45Z
+ * and BN13 2026-10-11 02:56Z: a gym ordered on a 120s fee floor ran cash
+ * negative, the escape stopped it on the sign alone, and the slot sat idle.
  *
  * `holdS` is the decision's hold: progress.js re-decides each ~5-min pass
  * (POLICY.retrainLegS 300s), so a gym session must be paid for that long.
@@ -540,17 +556,20 @@ export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec 
     let fare = at?.fare ?? 0
     let sec = 0
     let first = null
+    let floor = p.money
+    const done = (hours) => ({ hours, first, floor, end: p.money })
     while (sec < maxS) {
       const left = short(p)
-      if (!left.length) return { hours: sec / 3600, first }
+      if (!left.length) return done(sec / 3600)
       const secBefore = sec
-      const canGym = gym && p.money >= fee * stepS + fare
+      // On credit only the fare needs cash (travel is a canAfford purchase).
+      const canGym = gym && (policy === 'credit' ? !(fare > 0) || p.money >= fare : p.money >= fee * stepS + fare)
       let step = null
-      if (policy === 'gym' || (policy === 'mixed' && canGym)) {
+      if (policy === 'gym' || ((policy === 'mixed' || policy === 'credit') && canGym)) {
         if (canGym) {
           const [stat, to] = left[0]
           const r = gymRate(gym, stat, p, tm)
-          if (!num(r) || r <= 0) return { hours: Infinity, first }
+          if (!num(r) || r <= 0) return done(Infinity)
           const flies = fare > 0
           if (flies) {
             p.money -= fare
@@ -565,17 +584,18 @@ export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec 
           step = { kind: 'gym', gym: gym.name, city: gym.city, stat, to, ...(flies ? { flight: true, fare: TRAVEL_COST } : {}) }
         } else {
           // gym only and not fundable: wait on the flat income.
-          if (!gym || !(inc > 0)) return { hours: Infinity, first }
+          if (!gym || !(inc > 0)) return done(Infinity)
           const dt = Math.max(stepS, Math.ceil((fee * stepS + fare - p.money) / inc))
           p.money += inc * dt
           sec += dt
           step = { kind: 'wait' }
         }
       } else {
-        const c = policy === 'mixed' ? bestCrimeFor('money', p, node) : null
-        const name = policy === 'mixed' ? c?.crime : policy
+        const fund = policy === 'mixed' || policy === 'credit'
+        const c = fund ? bestCrimeFor('money', p, node) : null
+        const name = fund ? c?.crime : policy
         const r = name ? crimeRates(name, p, node, 1) : null
-        if (!r) return { hours: Infinity, first }
+        if (!r) return done(Infinity)
         for (const s of SKILLS) p.exp[s] += r.exp[s] * stepS
         p.money += (r.money + inc) * stepS
         sec += stepS
@@ -585,35 +605,50 @@ export function combatBarPlanOf(targets, person, node, { cash = 0, incomePerSec 
       if (expAssist) for (const [st, r] of Object.entries(expAssist)) if (num(r) && r > 0 && st in p.exp) p.exp[st] += r * (sec - secBefore)
       if (num(feeExtra) && feeExtra > 0) p.money -= feeExtra * (sec - secBefore)
       relevel(p)
+      if (p.money < floor) floor = p.money
       if (!first) first = step
     }
-    return { hours: Infinity, first }
+    return done(Infinity)
   }
-  const fastest = (policy) => gyms.map((at) => ({ at, r: trajOf(policy, at) })).reduce((a, b) => (b.r.hours < a.r.hours ? b : a), { at: gyms[0] ?? null, r: { hours: Infinity, first: null } })
+  // THE DEBT'S PRICE: hours the flat income needs to bring the end balance
+  // back to zero (nothing is bought meanwhile); never repaid without income.
+  const debtH = (r) => (!(r.end < 0) ? 0 : inc > 0 ? -r.end / inc / 3600 : Infinity)
+  const scoreOf = (r) => r.hours + debtH(r)
+  const NONE = { hours: Infinity, first: null, floor: p0.money, end: p0.money }
+  const fastest = (policy) => gyms.map((at) => ({ at, r: trajOf(policy, at) })).reduce((a, b) => (scoreOf(b.r) < scoreOf(a.r) ? b : a), { at: gyms[0] ?? null, r: NONE })
   const gBest = fastest('gym')
   const mBest = fastest('mixed')
+  const kBest = fastest('credit')
   const g = gBest.r
   const m = mBest.r
+  const k = kBest.r
   // Crime alone: the best of the crimes that train every short stat.
-  let c = { hours: Infinity, first: null }
+  let c = NONE
   for (const name of Object.keys(CRIMES)) {
     if (!short(p0).every(([s]) => (CRIMES[name].exp[s] ?? 0) > 0)) continue
     const r = trajOf(name)
-    if (r.hours < c.hours) c = r
+    if (scoreOf(r) < scoreOf(c)) c = r
   }
-  const hours = { gym: g.hours, crime: c.hours, mixed: m.hours }
-  const best = [['mixed', m], ['gym', g], ['crime', c]].reduce((a, b) => (b[1].hours < a[1].hours ? b : a))
+  const hours = { gym: g.hours, crime: c.hours, mixed: m.hours, credit: k.hours }
+  const score = { gym: scoreOf(g), crime: scoreOf(c), mixed: scoreOf(m), credit: scoreOf(k) }
+  // Ties keep the earlier policy: credit wins only strictly.
+  const best = [['mixed', m], ['gym', g], ['crime', c], ['credit', k]].reduce((a, b) => (scoreOf(b[1]) < scoreOf(a[1]) ? b : a))
   const fmt = (h) => (num(h) ? `${h.toFixed(2)}h` : 'never')
   const now = best[1].first?.kind === 'wait' ? null : best[1].first
-  const gAt = (best[0] === 'gym' ? gBest : mBest).at
+  const gAt = (best[0] === 'gym' ? gBest : best[0] === 'credit' ? kBest : mBest).at
   const gym = gAt?.gym ?? null
   const fee = gym ? GYM_BASE_COST * gym.costMult : null
+  // The debt the chosen trajectory runs (null when it never goes below zero).
+  const credit = best[1].floor < 0 && num(best[1].floor) && now?.kind === 'gym' ? { floor: Math.floor(best[1].floor), end: Math.floor(best[1].end), debtH: +debtH(best[1]).toFixed(3), feePerSec: fee, incomePerSec: inc } : null
+  const debtTxt = (r) => (r.end < 0 ? ` + ${fmt(debtH(r))} repaying $${Math.round(-r.end)}` : '')
   return {
     hours,
+    score,
     best: best[0],
     now,
+    credit,
     gym: gym ? { name: gym.name, city: gym.city, feePerSec: fee, fare: gAt.fare } : null,
-    why: `combat to the bar: ${best[0]} ${fmt(best[1].hours)} (gym only ${fmt(g.hours)}, crime only ${fmt(c.hours)}, gym when cash covers ${stepS}s of $${fee ?? '?'}/s${gAt?.fare ? ` and the $${gAt.fare} flight to ${gym.city}` : ''} else money crime ${fmt(m.hours)}; cash $${Math.round(p0.money)}, flat income $${Math.round(inc)}/s${known ? `, in ${person.city}` : ''})`,
+    why: `combat to the bar: ${best[0]} ${fmt(best[1].hours)}${debtTxt(best[1])} (gym only ${fmt(g.hours)}, crime only ${fmt(c.hours)}, gym when cash covers ${stepS}s of $${fee ?? '?'}/s${gAt?.fare ? ` and the $${gAt.fare} flight to ${gym.city}` : ''} else money crime ${fmt(m.hours)}, gym on credit ${fmt(k.hours)}${debtTxt(k)}${num(k.floor) && k.floor < 0 ? ` (floor $${Math.round(k.floor)})` : ''}; cash $${Math.round(p0.money)}, flat income $${Math.round(inc)}/s${known ? `, in ${person.city}` : ''})`,
   }
 }
 

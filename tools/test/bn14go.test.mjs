@@ -97,7 +97,10 @@ export async function run() {
   c3.note(`no install: goCombat with no growth ${flat?.toFixed(3)}h = none ${flatNone?.toFixed(3)}h; an install: goCombat zeroing ${viaGo?.toFixed(3)}h = gains/effect ${viaGains?.toFixed(3)}h (carried: ${base0?.toFixed(3)}h); regrowth 2000/h ${slow?.toFixed(2)}h vs 8000/h ${fast?.toFixed(2)}h`)
   if (flat !== flatNone) c3.fail('a farm that does not grow changes nothing without an install', `${flat} vs ${flatNone}`)
   if (!(Math.abs(viaGo - viaGains) < 1e-9)) c3.fail('the install must divide the Go effect out of the combat level multipliers, exactly', `${viaGo} vs ${viaGains}`)
-  if (!(slow - fast > 5)) c3.fail('the regrowth must move the exit (2000/h vs 8000/h, > 5h apart)', `${fast} vs ${slow}`)
+  // > 5h when the post-install retrain waited on cash for the gym fee; with
+  // the gym priced on credit (bodyplan.combatBarPlanOf, gymcredit GC1) the
+  // retrain is shorter and the farm's regrowth moves the exit ~1.1h.
+  if (!(slow - fast > 0.5)) c3.fail('the regrowth must move the exit (2000/h vs 8000/h, > 0.5h apart)', `${fast} vs ${slow}`)
   const st = BB.bladeStartOf({ person: R.personPre, gymExpPerSec: 10, goCombat: null })
   const stBad = BB.bladeStartOf({ person: R.personPre, gymExpPerSec: 10, goCombat: { effect: null } })
   if ('goCombat' in st || 'goCombat' in stBad) c3.fail('an unread goCombat must leave the start without one (the old model)')

@@ -27,7 +27,7 @@
 //
 // Everything it does is published to /tel/act.txt with the reason.
 
-import { decide, gangKarmaTarget, reissueWorkOf } from 'actplan.js'
+import { decide, gangKarmaTarget, reissueWorkOf, bodyCreditOf } from 'actplan.js'
 import { GYMS, bestCrimeFor } from 'bodyplan.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 // Pure: hacknet servers sort last — a GB used there costs that share of its
@@ -342,7 +342,7 @@ async function homeUpgradeIfBlocked(ns) {
 // Raises this process served (a spender's request, the negative-cash escape,
 // a bootstrap decision): when, and when their hold is released. In memory: a
 // restart forgets them, which only makes the next raise possible sooner.
-const raiseState = { servedAt: 0, holdUntil: 0, negAt: 0, softSamples: [] }
+const raiseState = { servedAt: 0, holdUntil: 0, negAt: 0, softSamples: [], softTrend: [] }
 // When this process last started work (ms). The negative-cash escape's work
 // read (the rep snapshot, up to a minute old) must postdate it to stop
 // anything (nodeecon.softlockStep workAt/startedAt).
@@ -399,10 +399,15 @@ async function softlockGuard(ns, info, node, cash, stock) {
     hold: cash < 0 ? readHomeFile(ns, SOFTLOCK_HOLD_FILE) : '',
     samples: raiseState.softSamples,
     lastRaiseAt: raiseState.negAt,
+    // The body leg's priced debt (progress.js slot.credit, this life, fresh):
+    // a class runs on to that floor; a negative balance alone stops nothing.
+    credit: bodyCreditOf(readJson(ns, '/tel/progress.txt'), info.lastAugReset, now),
+    trend: raiseState.softTrend,
     now,
   })
   raiseState.softSamples = step.samples
-  const record = { at: new Date(now).toISOString(), lastAugReset: info.lastAugReset, level: step.level, why: step.why, cash, equity: stock.ok ? stock.equity : null, stock: stock.ok ? 'ok' : stock.why, queued, samples: step.samples, actions: step.actions }
+  raiseState.softTrend = step.trend ?? []
+  const record = { at: new Date(now).toISOString(), lastAugReset: info.lastAugReset, level: step.level, why: step.why, trend: step.trend ?? [], cash, equity: stock.ok ? stock.equity : null, stock: stock.ok ? 'ok' : stock.why, queued, samples: step.samples, actions: step.actions }
   const put = () => {
     ns.write(SOFTLOCK_FILE, JSON.stringify(record, null, 2), 'w')
     if (ns.getHostname() !== 'home') ns.scp(SOFTLOCK_FILE, 'home', ns.getHostname())
@@ -431,7 +436,7 @@ async function softlockGuard(ns, info, node, cash, stock) {
     record.results = results.map((r) => ({ kind: r.kind, ok: r.ok ?? null, why: r.why ?? r.result?.error ?? null }))
     put()
   }
-  return { level: step.level, why: step.why, results: record.results ?? [] }
+  return { level: step.level, why: step.why, results: record.results ?? [], stopped: results.some((r) => r.kind === 'stop' && r.ok === true) }
 }
 
 export async function main(ns) {
@@ -679,10 +684,14 @@ export async function main(ns) {
           now: Date.now(),
           progress: readJson(ns, '/tel/progress.txt'),
           lastWork,
+          lastAugReset: info.lastAugReset,
           batchAt: lastOrdersAt,
           batchWork,
-          work: repSnap.data ? repSnap.data.work ?? null : { unread: true },
-          workAt: repSnap.at ?? null,
+          // THE ESCAPE JUST STOPPED THE CLASS (this loop): the game shows no
+          // work now, whatever the minute-old snapshot says — the claimed slot
+          // is re-assigned in this pass, not after the next snapshot.
+          work: softlock.stopped ? null : repSnap.data ? repSnap.data.work ?? null : { unread: true },
+          workAt: softlock.stopped ? new Date().toISOString() : repSnap.at ?? null,
           cash: ns.getServerMoneyAvailable('home'),
           city: player.city ?? null,
           gymCostMult: (name) => GYMS.find((g) => g.name === name)?.costMult ?? null,

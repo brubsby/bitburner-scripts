@@ -21,7 +21,8 @@
 //        while CASH covers FEE_FLOOR_S of its fee (it read `cash >= 0`)
 //   SL3  act.js end to end on a mock game (BN14, SF4.3, RAM from the game's calculator): the live
 //        world — home 32GB with go.js + act.js, bb-lite starved, a paid class running at -$13k —
-//        stops the class and execs act-crime.js with the best money crime, publishes `lent` and
+//        execs act-crime.js with the best money crime (the class is not stopped on the sign of
+//        the balance alone — gymcredit GC2 — the crime replaces it), publishes `lent` and
 //        the stall; the next pass does NOT stop the crime on the minute-old snapshot that still
 //        shows the class (softlockStep workAt/startedAt); bb-host on the network or bb-lite acting:
 //        no crime
@@ -244,8 +245,10 @@ export async function run() {
       const stops = w.execs.filter((e) => e.s === 'act-stop.js')
       if (!crime) c.fail('SL3 live world: act.js must exec act-crime.js under the stalled claim', JSON.stringify({ execs, decisions: pub.map((p) => p.decision) }))
       else c.note(`pass 1: ${execs.filter((s) => !/^snap-/.test(s)).join(', ')} — crime ${JSON.stringify(crime.args)} on ${crime.h}`)
-      if (stops.length !== 1) c.fail(`SL3 the paid class at -$13k is stopped exactly once (the escape); the second pass must not stop the crime on the snapshot read before it started — ${stops.length} stops`, JSON.stringify(execs))
-      if (execs.indexOf('act-stop.js') > execs.indexOf('act-crime.js')) c.fail('SL3 the stop must precede the crime', JSON.stringify(execs))
+      // A negative balance alone stops nothing (nodeecon.classDebtVerdict:
+      // an unpriced debt is stopped only once its trend shows it growing,
+      // gymcredit GC2); the lend's crime replaces the class itself.
+      if (stops.length !== 0) c.fail(`SL3 the paid class at -$13k on its first negative sample is not stopped on the sign alone (the lend's crime replaces it); nor is the crime on the snapshot read before it started — ${stops.length} stops`, JSON.stringify(execs))
       const last = pub[pub.length - 1]
       if (!last?.lent || last.lent.owner !== 'bladeburner' || last.lent.to !== crime?.args?.[0] || last.slot?.owner !== 'bladeburner') c.fail('SL3 act.txt must publish the lend and keep the Bladeburner claim', JSON.stringify({ lent: last?.lent, slot: last?.slot }))
       if (last?.bladeStall?.stalled !== true) c.fail('SL3 act.txt must publish the stall verdict', JSON.stringify(last?.bladeStall))
@@ -272,8 +275,11 @@ export async function run() {
       const rec = { ok: false, why: 'stale' }
       const cls = { type: 'CLASS', classType: 'agi' }
       const a = NE.softlockStep({ cash: -13213, stock: rec, work: cls, workAt: NOW - 30e3, startedAt: NOW - 5e3, now: NOW })
-      const b = NE.softlockStep({ cash: -13213, stock: rec, work: cls, workAt: NOW - 1e3, startedAt: NOW - 5e3, now: NOW })
-      const legacy = NE.softlockStep({ cash: -13213, stock: rec, work: cls, now: NOW })
+      // A class past its priced floor (nodeecon.classDebtVerdict) or on an
+      // unpriced debt that grows is stopped; a negative balance alone is not.
+      const past = { floor: 0, feePerSec: 10 }
+      const b = NE.softlockStep({ cash: -13213, stock: rec, work: cls, workAt: NOW - 1e3, startedAt: NOW - 5e3, credit: past, now: NOW })
+      const legacy = NE.softlockStep({ cash: -13213, stock: rec, work: cls, trend: [{ at: new Date(NOW - 180e3).toISOString(), cash: -1000 }], now: NOW })
       c.examined(3)
       if (a.actions.some((x) => x.kind === 'stop')) c.fail('SL3 softlockStep: a class read BEFORE act.js last started work stops nothing', JSON.stringify(a))
       if (!b.actions.some((x) => x.kind === 'stop')) c.fail('SL3 softlockStep: a class read AFTER the last start is stopped', JSON.stringify(b))

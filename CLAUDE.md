@@ -350,7 +350,15 @@ a measured fee reserve (`feeReserveOf`) so a raised class fee is not
 reinvested. act.js also runs the negative-cash escape every pass
 (`softlockStep`: stop a paid class → one raise → install/soft reset only on
 two samples of wealth ≤ 0 with no book in a capital node; `/softlock-hold.txt`
-disables the last step; evidence in `/tel/softlock.txt`). `[W1]` fails on any
+disables the last step; evidence in `/tel/softlock.txt`). **A negative balance
+is a price, not a wall**: the game only refuses purchases and travel below
+zero (`Player.canAfford`), so every gym leg is priced by
+`bodyplan.combatBarPlanOf` (gym on cash / on credit / money crime, scored on
+hours to the bar + hours the flat income needs to repay the debt), progress.js
+publishes the chosen debt floor as `progress.txt` `slot.credit`, and the escape
+stops a class only past that floor, when nothing earns, or on an unpriced debt
+that grows (`classDebtVerdict`); a stop re-assigns the claimed slot in the same
+act.js loop (GC1-GC4). `[W1]` fails on any
 new cash read that is neither combined with the book nor allow-listed with a
 reason in `tools/test/wealth.test.mjs`.
 

@@ -894,10 +894,20 @@ export function raiseToServe(reqs, { cash, equity, lastAugReset, lastServedAt = 
 // earning is not: 2026-09-25, sleeves at ZB drained a liquidated book to
 // -$2.4m and the life had to be soft-reset by hand. Escalating:
 //
-//   1 'stop'   cash < 0: fee-charging work stops — the player's class or gym
-//              (act-stop.js); sleeves refuse fees on their own cash floor
-//              (sleeveplan feeFundable on cash) — until cash is back above the
-//              floor. Every node.
+//   1 'stop'   cash < 0 AND the class's debt is not one the planner priced
+//              and income repays: the player's class or gym stops
+//              (act-stop.js) when (a) it runs past the floor progress.js
+//              priced for it (`credit`, bodyplan.combatBarPlanOf's credit
+//              trajectory) by more than FEE_FLOOR_S of its fee, (b) nothing
+//              earns — the balance's slope plus the fee is <= 0 over
+//              SOFTLOCK_GAP_MS — or (c) no priced credit and the debt grows
+//              over SOFTLOCK_GAP_MS. A NEGATIVE BALANCE ALONE IS NOT A
+//              SOFTLOCK: the game only refuses purchases and travel below
+//              zero (Player.canAfford, PlayerObjectGeneralMethods.ts:236; no
+//              interest), and stopping a priced gym on the sign left the body
+//              slot idle (BN12 2026-10-09 01:45Z, BN13 2026-10-11 02:56Z).
+//              Sleeves refuse fees on their own cash floor (sleeveplan
+//              feeFundable on cash). Every node.
 //   2 'raise'  cash < 0 and equity > 0: ONE raise to NEG_CASH_TARGET, at most
 //              once per NEG_RAISE_COOLDOWN_MS (the trader deliberately does
 //              not chase negative cash). Every node.
@@ -931,37 +941,72 @@ export const SOFTLOCK_HOLD_FILE = '/softlock-hold.txt'
  * Returns {level, actions: [{kind: 'stop'|'raise'|'install'|'softreset', why,
  *   target?}], samples (carry to the next pass), why}.
  */
-export function softlockStep({ cash, stock, work = null, workAt = null, startedAt = null, queued = null, hackPays = null, hold = '', samples = [], lastRaiseAt = 0, now = Date.now() }) {
-  if (!fin(cash)) return { level: null, actions: [], samples: [], why: 'cash unreadable — nothing decided' }
-  if (cash >= 0) return { level: 0, actions: [], samples: [], why: null }
+export function softlockStep({ cash, stock, work = null, workAt = null, startedAt = null, queued = null, hackPays = null, hold = '', samples = [], lastRaiseAt = 0, credit = null, trend = [], now = Date.now() }) {
+  if (!fin(cash)) return { level: null, actions: [], samples: [], trend: [], why: 'cash unreadable — nothing decided' }
+  if (cash >= 0) return { level: 0, actions: [], samples: [], trend: [], why: null }
   const equity = stock?.ok && fin(stock.equity) ? stock.equity : 0
   const wealth = cash + equity
   const actions = []
   const why = [`cash $${Math.round(cash)} < 0`]
+  // THE DEBT'S TREND while cash is negative: the first sample since the
+  // balance went below zero (or since act.js last started work) and now.
+  const t0 = (trend ?? []).find((x) => fin(x?.cash) && fin(Date.parse(x?.at)) && !(fin(startedAt) && Date.parse(x.at) < startedAt)) ?? null
+  const trendOut = t0 ? [t0, { at: new Date(now).toISOString(), cash }] : [{ at: new Date(now).toISOString(), cash }]
+  const dt = t0 ? (now - Date.parse(t0.at)) / 1000 : 0
+  const slope = t0 && dt * 1000 >= SOFTLOCK_GAP_MS ? (cash - t0.cash) / dt : null
+  const res = (o) => ({ ...o, trend: trendOut })
+  let classRuns = false
   if (work && String(work.type ?? '').toUpperCase() === 'CLASS') {
+    const v = classDebtVerdict({ cash, credit, slope })
     if (fin(workAt) && fin(startedAt) && workAt < startedAt) why.push(`the paid class (${work.classType ?? '?'}) was read before act.js last started work (${new Date(startedAt).toISOString()}) — not stopping what replaced it`)
-    else actions.push({ kind: 'stop', why: `cash $${Math.round(cash)} < 0 and the player is in a paid class (${work.classType ?? '?'}): its fee is charged with no balance check` })
+    else if (v.stop) actions.push({ kind: 'stop', why: `cash $${Math.round(cash)} < 0 in a paid class (${work.classType ?? '?'}): ${v.why}` })
+    else {
+      classRuns = true
+      why.push(`the paid class (${work.classType ?? '?'}) runs on: ${v.why}`)
+    }
   }
   if (equity > 0) {
     if (now - lastRaiseAt >= NEG_RAISE_COOLDOWN_MS) actions.push({ kind: 'raise', target: NEG_CASH_TARGET, why: `cash $${Math.round(cash)} < 0 with $${Math.round(equity)} of equity: raise to $${NEG_CASH_TARGET}` })
     else why.push(`a negative-cash raise was served ${Math.round((now - lastRaiseAt) / 1000)}s ago (cooldown ${NEG_RAISE_COOLDOWN_MS / 1000}s)`)
-    return { level: 2, actions, samples: [], why: why.join('; ') }
+    return res({ level: 2, actions, samples: [], why: why.join('; ') })
   }
   // Level 3 needs POSITIVE evidence of no book: a stale or absent record is
   // unknown, and unknown never licenses an irreversible act.
-  if (!(stock?.ok && equity === 0)) return { level: 1, actions, samples: [], why: `${why.join('; ')}; no fresh trader record (${stock?.why ?? 'none'}) — a reset needs positive evidence that no book exists` }
-  if (!(wealth <= 0)) return { level: 1, actions, samples: [], why: why.join('; ') }
+  if (!(stock?.ok && equity === 0)) return res({ level: 1, actions, samples: [], why: `${why.join('; ')}; no fresh trader record (${stock?.why ?? 'none'}) — a reset needs positive evidence that no book exists` })
+  if (!(wealth <= 0)) return res({ level: 1, actions, samples: [], why: why.join('; ') })
+  // A debt the class runs on purpose (priced, or repaid) is not a softlock.
+  if (classRuns) return res({ level: 1, actions, samples: [], why: `${why.join('; ')} — no reset while it runs` })
   const prev = (samples ?? []).filter((s) => fin(s?.cash) && fin(Date.parse(s?.at)))
-  if (prev.length && cash > prev[0].cash) return { level: 1, actions, samples: [], why: `${why.join('; ')}; cash rising ($${Math.round(prev[0].cash)} -> $${Math.round(cash)}) — something earns, no reset` }
+  if (prev.length && cash > prev[0].cash) return res({ level: 1, actions, samples: [], why: `${why.join('; ')}; cash rising ($${Math.round(prev[0].cash)} -> $${Math.round(cash)}) — something earns, no reset` })
   const last = prev[prev.length - 1]
   const kept = (last && now - Date.parse(last.at) < SOFTLOCK_GAP_MS ? prev : [...prev, { at: new Date(now).toISOString(), cash, wealth }]).slice(-4)
   const base = `${why.join('; ')}; wealth $${Math.round(wealth)} <= 0, no book, cash not rising`
-  if (hackPays !== 0) return { level: 1, actions, samples: kept, why: `${base} — but money is not capital here (ScriptHackMoneyGain ${hackPays}): no reset` }
-  if (hold) return { level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, held by ${SOFTLOCK_HOLD_FILE}: ${String(hold).slice(0, 120)}` }
-  if (kept.length < SOFTLOCK_MIN_SAMPLES) return { level: 3, actions, samples: kept, why: `${base} — sample ${kept.length} of ${SOFTLOCK_MIN_SAMPLES} (>= ${SOFTLOCK_GAP_MS / 1000}s apart) before acting` }
-  if (!fin(queued)) return { level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, but the queued-augmentation count is unreadable: not choosing install vs reset blind` }
+  if (hackPays !== 0) return res({ level: 1, actions, samples: kept, why: `${base} — but money is not capital here (ScriptHackMoneyGain ${hackPays}): no reset` })
+  if (hold) return res({ level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, held by ${SOFTLOCK_HOLD_FILE}: ${String(hold).slice(0, 120)}` })
+  if (kept.length < SOFTLOCK_MIN_SAMPLES) return res({ level: 3, actions, samples: kept, why: `${base} — sample ${kept.length} of ${SOFTLOCK_MIN_SAMPLES} (>= ${SOFTLOCK_GAP_MS / 1000}s apart) before acting` })
+  if (!fin(queued)) return res({ level: 3, actions, samples: kept, why: `${base} — SOFTLOCK, but the queued-augmentation count is unreadable: not choosing install vs reset blind` })
   actions.push(queued > 0 ? { kind: 'install', why: `softlock over ${kept.length} samples: ${base}; ${queued} augmentation(s) queued — install` } : { kind: 'softreset', why: `softlock over ${kept.length} samples: ${base}; nothing queued — soft reset` })
-  return { level: 3, actions, samples: kept, why: base }
+  return res({ level: 3, actions, samples: kept, why: base })
+}
+
+/**
+ * WHETHER A PAID CLASS RUNNING ON A NEGATIVE BALANCE IS STOPPED (softlockStep
+ * level 1). cash < 0; credit: progress.js's priced debt for the body leg
+ * ({floor, feePerSec}, slot.credit, this life) or null; slope: $/s of the
+ * balance over >= SOFTLOCK_GAP_MS, or null while unmeasured. {stop, why}.
+ */
+export function classDebtVerdict({ cash, credit = null, slope = null }) {
+  const $ = (x) => `$${Math.round(x)}`
+  const priced = credit && fin(credit.floor) && fin(credit.feePerSec)
+  if (priced) {
+    const limit = credit.floor - credit.feePerSec * FEE_FLOOR_S
+    if (cash < limit) return { stop: true, why: `past the priced floor (${$(credit.floor)}, less ${FEE_FLOOR_S}s of the ${$(credit.feePerSec)}/s fee = ${$(limit)}) — the plan's income did not arrive` }
+    if (fin(slope) && slope + credit.feePerSec <= 0) return { stop: true, why: `nothing earns: the balance moves ${$(slope)}/s against a ${$(credit.feePerSec)}/s fee — the debt is never repaid` }
+    return { stop: false, why: `a debt progress.js priced (floor ${$(credit.floor)}${fin(credit.debtH) ? `, ${credit.debtH}h to repay` : ''})${fin(slope) ? `; balance ${$(slope)}/s` : ''}` }
+  }
+  if (!fin(slope)) return { stop: false, why: `no priced credit; measuring the debt's trend for ${SOFTLOCK_GAP_MS / 1000}s first (a negative balance only blocks purchases and travel)` }
+  if (slope < 0) return { stop: true, why: `an unpriced debt growing ${$(-slope)}/s — no plan repays it` }
+  return { stop: false, why: `no priced credit, but income repays the debt (${$(slope)}/s)` }
 }
 
 /**

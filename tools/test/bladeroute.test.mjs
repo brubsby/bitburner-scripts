@@ -146,7 +146,7 @@ export async function run() {
     [/yield\* decideBladeRouteGen\(\{/, 'bladeRouteOf decides through plan.decideBladeRouteGen'],
     [/planDecide\(pc, 'bladeRoute'/, "the decision is recorded as decisions.bladeRoute (planDecide)"],
     [/if \(bladeOn && bladeJoined && !bodyStep && !graftStep\?\.running && canWork && !flags\.dry\) \{\s*workedFaction = null\s*slotOwner = 'bladeburner'/, "slot.owner 'bladeburner' only on the committed route, joined, no body leg, no running graft"],
-    [/const bodyStep = covenantStep \?\? bladeGymStep \?\?/, 'the combat-100 gym is a body leg'],
+    [/const bodyStepRaw = covenantStep \?\? bladeGymStep \?\?[\s\S]*const bodyStep = \(\(\) => \{\s*const st = bodyStepRaw/, 'the combat-100 gym is a body leg (priced by gymcredit GC4)'],
     [/bladeRoute: pc\.decisions\.bladeRoute \?\? pc\.prev\?\.decisions\?\.bladeRoute \?\? null/, 'plan.txt publishes decisions.bladeRoute (carried)'],
     [/br\?\.key === 'blade' && typeof br\.q50 === 'number' \? br :/, "the published exit is the Bladeburner route's when it is committed"],
     [/else if \(graftStep && \(graftStep\.running \|\| !bladeOn\)/, 'no NEW graft on the Bladeburner route'],

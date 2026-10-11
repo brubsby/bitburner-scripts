@@ -431,6 +431,21 @@ function bladeLend(s, p, cash, by, slot) {
  *      (gym name -> costMult), gymCityOf (gym name -> city), reissued {n, at} }
  * Returns {kind, args, why} to run, or {skip: why} / null (nothing to say).
  */
+/**
+ * THE BODY LEG'S PRICED DEBT from /tel/progress.txt (slot.credit): {floor,
+ * feePerSec, gym, ...} when progress.js's last pass priced the gym on credit,
+ * in this life (lastAugReset; undefined skips the check) and within
+ * PROGRESS_FRESH_MS; else null — an unpriced debt (nodeecon.classDebtVerdict).
+ */
+export function bodyCreditOf(progress, lastAugReset, now = Date.now()) {
+  const c = progress?.slot?.owner === 'body' ? progress.slot.credit : null
+  if (!c || !num(c.floor) || !num(c.feePerSec)) return null
+  if (lastAugReset !== undefined && c.lastAugReset !== lastAugReset) return null
+  const at = Date.parse(c.at ?? progress.at ?? '')
+  if (!(num(at) && now - at < PROGRESS_FRESH_MS)) return null
+  return c
+}
+
 export const REISSUE = { max: 3, gapMs: 90e3, snapMaxAgeMs: 120e3, settleMs: 5e3 }
 const OWNER_KINDS = { body: ['gym', 'crime'], faction: ['work'], crime: ['crime'], company: ['company'] }
 export function reissueWorkOf(s) {
@@ -467,7 +482,13 @@ export function reissueWorkOf(s) {
       if (s.fundCrime) return { kind: 'crime', args: [s.fundCrime], why: `progress.js holds the slot for ${owner}; its gym (${lw.args?.[0]}) is in ${gymCity} and the player in ${s.city} with $${Math.round(s.cash ?? 0)} — under the $${TRAVEL_COST} flight plus ${FEE_FLOOR_S}s of the $${fee}/s fee: ${s.fundCrime} earns it and trains combat meanwhile` }
       return { skip: `the gym (${lw.args?.[0]}) is in ${gymCity}, the player in ${s.city}, and the flight plus a pass of the fee are not in cash` }
     }
-    if (!feeFundable(s.cash, fee)) {
+    // ON PRICED CREDIT (progress.js slot.credit, bodyplan.combatBarPlanOf):
+    // the gym re-issues on a negative balance above the floor the plan priced
+    // (the escape stops it FEE_FLOOR_S of fee below that); past the floor the
+    // money crime takes over.
+    const cr = bodyCreditOf(s.progress, s.lastAugReset, s.now)
+    const onCredit = cr && cr.gym === lw.args?.[0] && num(s.cash) && s.cash >= cr.floor
+    if (!onCredit && !feeFundable(s.cash, fee)) {
       // NOT IDLE (live 2026-10-02 17:42Z: the body slot sat empty on an
       // unpaid gym): the best money crime trains every combat stat and earns
       // the fee (bodyplan.combatBarPlanOf prices the same fallback).

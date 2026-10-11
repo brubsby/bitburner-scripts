@@ -7069,6 +7069,7 @@ async function act(ns, canJoin, info, note) {
   // would read as "no claim" to act.js, which is the permissive direction and
   // must therefore be deliberate rather than accidental.
   let slotOwner = null
+  let bodyCredit = null
   // The Bladeburner claim's honesty (set where slotOwner becomes 'bladeburner'): {stalled, why, lent}.
   let bladeSlot = null
   // Not where the gang is structurally worthless: its factions are then ordinary
@@ -7403,7 +7404,7 @@ async function act(ns, canJoin, info, note) {
       const g = GYMS.find((x) => x.name === plan.now.gym)
       const r = g ? gymRate(g, plan.now.stat, person, ns.hacknet.getTrainingMult()) : null
       const h = typeof r === 'number' && r > 0 ? hoursToStat(plan.now.stat, plan.now.to, person, r) : null
-      return { kind: 'gym', gym: plan.now.gym, city: plan.now.city, forFaction: 'Bladeburners', stat: plan.now.stat, to: plan.now.to, hours: typeof h === 'number' && isFinite(h) ? h : leg?.hours ?? 0, plan: plan.why }
+      return { kind: 'gym', gym: plan.now.gym, city: plan.now.city, forFaction: 'Bladeburners', stat: plan.now.stat, to: plan.now.to, hours: typeof h === 'number' && isFinite(h) ? h : leg?.hours ?? 0, plan: plan.why, priced: true, credit: plan.credit ?? null }
     }
     if (!legs || !leg) return null
     return { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: 'Bladeburners', stat: leg.stat, to: leg.to, hours: leg.hours, plan: plan?.why ?? null }
@@ -7418,7 +7419,7 @@ async function act(ns, canJoin, info, note) {
     const leg = legs?.legs?.[0]
     return leg ? { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: COVENANT.faction, stat: leg.stat, to: COVENANT.skill, hours: leg.hours } : null
   })()
-  const bodyStep = covenantStep ?? bladeGymStep ?? (() => {
+  const bodyStepRaw = covenantStep ?? bladeGymStep ?? (() => {
     if (!scheduleTarget || wantCompany || !(schedule?.current?.workH > 0 || routeLead)) return null
     if (player.factions.includes(scheduleTarget)) return null
     const f = schedule?.joinForecasts?.find((x) => x.name === scheduleTarget)
@@ -7432,6 +7433,30 @@ async function act(ns, canJoin, info, note) {
     const leg = nextGymLeg(f?.blockers, player.skills)
     if (leg) return { kind: 'gym', ...leg }
     return null
+  })()
+  // EVERY GYM LEG IS PRICED AS A TRAJECTORY (bodyplan.combatBarPlanOf): the
+  // gym on cash, on credit (the balance may go negative — the game bills a
+  // class with no balance check and only purchases and travel need cash), or
+  // the money crime, scored on hours to the bar plus the hours the flat
+  // income needs to repay any debt. Re-decided every pass, also while the
+  // class runs: a leg whose debt the income no longer repays turns into the
+  // crime here, not into a stop that idles the slot. Live BN12 2026-10-09
+  // 01:45Z and BN13 2026-10-11 02:56Z: the schedule's gym leg started on a
+  // 120s fee floor alone, ran cash negative, the escape stopped it and the
+  // claimed slot sat idle.
+  const bodyStep = (() => {
+    const st = bodyStepRaw
+    if (!st || st.kind !== 'gym' || st.priced) return st
+    const plan = (() => {
+      try {
+        return combatBarPlanOf({ [st.stat]: st.to }, { ...levelledPerson(player, info), city: cityAfterOrders ?? player.city }, bitNodeMults(info), { cash: wealthOf(player.money, stockNow) ?? player.money ?? 0, incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
+      } catch {
+        return null
+      }
+    })()
+    if (plan?.now?.kind === 'crime') return { kind: 'crime', type: plan.now.crime, hours: plan.hours[plan.best], forFaction: st.forFaction ?? scheduleTarget, fund: true, why: plan.why }
+    if (plan?.now?.kind === 'gym') return { ...st, gym: plan.now.gym, city: plan.now.city, stat: plan.now.stat, to: plan.now.to, plan: plan.why, priced: true, credit: plan.credit ?? null }
+    return st
   })()
 
   // THE GRAFT STEP (graftDecisionOf): the committed grafts, performed only
@@ -7601,6 +7626,9 @@ async function act(ns, canJoin, info, note) {
         }
       }
     } else {
+      // THE PRICED DEBT, for act.js's negative-cash escape (slot.credit):
+      // the floor this pass's trajectory runs the balance to.
+      if (bodyStep.priced && bodyStep.credit) bodyCredit = { ...bodyStep.credit, gym: bodyStep.gym, stat: bodyStep.stat, lastAugReset: info?.lastAugReset ?? null, at: new Date().toISOString(), why: String(bodyStep.plan ?? '').slice(0, 300) }
       const cls = GYM_CLASS[bodyStep.stat]
       const already = work?.type === 'CLASS' && String(work.classType ?? '') === cls && work.location === bodyStep.gym
       // THE FEE FLOOR (nodeecon.feeFundable): a gym session is charged every
@@ -7612,7 +7640,9 @@ async function act(ns, canJoin, info, note) {
       // player stood in Ishima on a Powerhouse order). Charged with the fee
       // floor; short of both, the money crime earns them.
       const fare = !already && bodyStep.city && cityAfterOrders !== bodyStep.city ? TRAVEL_FARE : 0
-      if (!already && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity - fare, gymFee)) {
+      // The priced step's plan already weighed the fee against cash, credit
+      // and income; the fee floor is the fallback where no plan was read.
+      if (!bodyStep.priced && !already && !feeFundable(ns.getServerMoneyAvailable('home') + stockEquity - fare, gymFee)) {
         // NOT IDLE: the slot is claimed, so an unpaid gym left the player
         // doing nothing (live 2026-10-02 17:42Z). The priced fallback
         // (bodyplan.combatBarPlanOf): the best money crime, which trains
@@ -9460,7 +9490,7 @@ async function act(ns, canJoin, info, note) {
 
   publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction, route: routeOut }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, credit: slotOwner === 'body' ? bodyCredit : null, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction, route: routeOut }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 

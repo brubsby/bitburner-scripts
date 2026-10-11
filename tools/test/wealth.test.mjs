@@ -229,8 +229,8 @@ export async function run() {
     const kinds = (s) => s.actions.map((a) => a.kind).join(",");
     const ok = econ.softlockStep({ cash: 5, stock: rec(0), now: t0 });
     if (ok.level !== 0 || ok.actions.length) w5.fail("cash >= 0: nothing", JSON.stringify(ok));
-    const l1 = econ.softlockStep({ cash: -100, stock: rec(0, t0), work: { type: "CLASS", classType: "Algorithms" }, hackPays: 1, now: t0 });
-    if (kinds(l1) !== "stop") w5.fail("cash < 0 in a class: stop it", JSON.stringify(l1));
+    const l1 = econ.softlockStep({ cash: -100, stock: rec(0, t0), work: { type: "CLASS", classType: "Algorithms" }, hackPays: 1, trend: [{ at: new Date(t0 - 180e3).toISOString(), cash: -10 }], now: t0 });
+    if (kinds(l1) !== "stop") w5.fail("cash < 0 in a class on an unpriced, growing debt: stop it", JSON.stringify(l1));
     const l2 = econ.softlockStep({ cash: -2.4e6, stock: rec(5e9), work: null, now: t0 });
     if (!(l2.level === 2 && kinds(l2) === "raise" && l2.actions[0].target === econ.NEG_CASH_TARGET)) w5.fail("cash < 0 with equity: one raise", JSON.stringify(l2));
     const l2b = econ.softlockStep({ cash: -2.4e6, stock: rec(5e9), lastRaiseAt: t0 - 60e3, now: t0 });
