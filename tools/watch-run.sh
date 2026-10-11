@@ -7,7 +7,8 @@
 # run's set. A known problem does not re-wake; a new one always does.
 #   bash tools/watch-run.sh [intervalSeconds=900] [maxHours=12] [baseline]
 # "baseline": problems present at start are taken as known (already being
-# fixed) — only NEW ones wake the session.
+# fixed) — only NEW ones wake the session. WATCH_IGNORE='PLAN BLOCKED|…' (ERE)
+# names problem classes that never wake it.
 cd "$(dirname "$0")/.." || exit 2
 INTERVAL=${1:-900}; MAX=$(( ${2:-12} * 3600 )); seen=""; first=${3:-}
 while [ $SECONDS -lt $MAX ]; do
@@ -16,7 +17,9 @@ while [ $SECONDS -lt $MAX ]; do
 try: d=json.load(sys.stdin); import re; print('\n'.join(sorted(set(re.sub(r'[-+]?[0-9][0-9.e+-]*','#',p['what'].split(':')[0]) for p in d['problems']))))
 except Exception: print('HEALTHCHECK DID NOT ANSWER')")
   if [ "$first" = baseline ]; then seen="$cur"; first=""; echo "baseline: ${cur:-none}"; sleep "$INTERVAL"; continue; fi
-  new=$(comm -13 <(printf '%s\n' "$seen" | sort -u) <(printf '%s\n' "$cur" | sort -u) | grep -v '^$')
+  # WATCH_IGNORE (an ERE): problem classes that never wake the session — e.g. the
+  # recurring GC-pause 'PLAN BLOCKED THE PAGE'. Still printed in the full list.
+  new=$(comm -13 <(printf '%s\n' "$seen" | sort -u) <(printf '%s\n' "$cur" | sort -u) | grep -v '^$' | { if [ -n "${WATCH_IGNORE:-}" ]; then grep -Ev "$WATCH_IGNORE"; else cat; fi; })
   if [ -n "$new" ]; then echo "$(date -u +%FT%TZ) NEW PROBLEM(S):"; printf '%s\n' "$new"; echo "--- full:"; printf '%s' "$out" | python3 -c "import json,sys;d=json.load(sys.stdin);[print(' !',p['what'],'|',p.get('detail')) for p in d['problems']]" 2>/dev/null; exit 1; fi
   # Union, not replace: a known problem that flickers off and on (EXIT UNPRICED
   # around installs) must not re-wake the session.
