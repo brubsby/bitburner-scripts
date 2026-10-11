@@ -74,7 +74,7 @@ import { reporter, describe, record } from 'status.js'
 import { singularityRamMultiplier, canJoinBladeburner } from 'sfgate.js'
 import { liteReserveOf } from 'bbliteplan.js'
 import { reservesOf, heldOn } from 'raiseplace.js'
-import { stanekHoldGb, STANEK_FILE } from 'stanekplan.js'
+import { stanekHoldsOf, STANEK_FILE } from 'stanekplan.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 // Pure: the stock trader's record and which side of a batch it wants to move
@@ -1339,8 +1339,8 @@ export async function main(ns) {
   // The raise-sized daemons' reserved blocks this tick (raiseplace.reservesOf: bladeburner.js,
   // sleeve.js, hashspend.js — published as `raiseReserves`).
   let fullRes = []
-  // Stanek's charger's block on home this tick (stanekplan.stanekHoldGb — published as `stanekReserve`).
-  let stanekRes = 0
+  // Stanek's charger's blocks per host this tick (stanekplan.stanekHoldsOf — published as `stanekReserve`).
+  let stanekRes = []
 
   const flags = ns.flags([
     ['hosts', ''],
@@ -1727,22 +1727,23 @@ export async function main(ns) {
           return []
         }
       })()
-      // STANEK'S CHARGER (stanek.js -> charge.js on home): the GB the plan's
-      // allocation wants that the charger does not hold yet (stanekplan.
-      // stanekHoldGb, a fresh /tel/stanek.txt of this life; 0 otherwise). Kept
-      // free of NEW workers on home, as the raise reserves are; the running
-      // h/g/w finish within a batch cycle and stanek.js's next pass launches
-      // the charger at the full count. ns.read is 0GB.
+      // STANEK'S CHARGER (stanek.js -> charge.js on the fleet's hosts): per
+      // host, the GB the plan's placement targets there that the charger does
+      // not hold yet (stanekplan.stanekHoldsOf, a fresh /tel/stanek.txt of
+      // this life; none otherwise). Kept free of NEW workers, as the raise
+      // reserves are; the running h/g/w finish within a batch cycle and
+      // stanek.js's next pass launches the charger at the full count. ns.read is 0GB.
       stanekRes = (() => {
         try {
-          return stanekHoldGb(JSON.parse(ns.read(STANEK_FILE) || 'null'), resetInfo.lastAugReset)
+          return stanekHoldsOf(JSON.parse(ns.read(STANEK_FILE) || 'null'), resetInfo.lastAugReset)
         } catch {
-          return 0
+          return []
         }
       })()
       const reserveFor = (h) =>
         (h === self ? SETTINGS.selfReserve : 0) +
-        (h === 'home' ? homeReserveGb + stanekRes : 0) +
+        (h === 'home' ? homeReserveGb : 0) +
+        heldOn(stanekRes, h) +
         (h === shareHost ? shareGb : 0) +
         (h === liteRes?.host ? liteRes.gb : 0) +
         heldOn(fullRes, h)

@@ -611,10 +611,10 @@ const WATCHED = [
     minIntervalMs: 600000,
     trigger: (ns) => canAccessFeature(ns.getResetInfo(), 10),
   },
-  // STANEK'S GIFT (stanek.js, ~19.5GB while it runs): accepts the gift at the
+  // STANEK'S GIFT (stanek.js, ~20.5GB while it runs): accepts the gift at the
   // node's start where the stack accepts it (stanekplan.GIFT_NODES: BN13),
-  // places the layout, (re)launches charge.js on home at the plan's thread
-  // count, publishes /tel/stanek.txt, exits. Every 5 min (JOB_MIN_INTERVAL)
+  // places the layout, (re)launches charge.js on the FLEET's rooted hosts at
+  // the plan's thread count (chargeFragment charges from any server), publishes /tel/stanek.txt, exits. Every 5 min (JOB_MIN_INTERVAL)
   // where the Church is reachable at all — BN13 or SF13 held, the getResetInfo
   // this list already pays. act.js refuses any augmentation order that would
   // forfeit the gift until the accept is read back from the game, so nothing

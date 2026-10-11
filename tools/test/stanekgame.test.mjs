@@ -19,19 +19,22 @@
 //   SG4 THE BAN PATH IS NEVER SILENT: a hand-installed non-NFG aug (forfeited) -> stanek.js
 //       health 'fail' and GIFT NOT ACCEPTED from stanekHealthOf; a hand-QUEUED one ->
 //       acceptGift refused, health 'fail', GIFT NOT ACCEPTED (refused), and the gate refuses
-//       the install that would make it permanent. A charger with no heartbeat ->
-//       FRAGMENTS NOT CHARGING.
+//       the install that would make it permanent. A running charger whose gift charge mass
+//       stays flat pass to pass, or a gathered charge.js error -> FRAGMENTS NOT CHARGING.
 //   SG5 THE CHOKE POINTS (static): act.js's runActor gates buyaug/graft/install before its
 //       exec, the order loop gates before the install branch; no root script but the three
 //       actors calls purchaseAugmentation / installAugmentations / graftAugmentation;
-//       progressBlockGb equals batch.js SETTINGS.homeReserve; batch.js holds stanekHoldGb on
-//       home; the watchdog JOB and the boot manifest declare stanek.js; progress.js prices
+//       progressBlockGb equals batch.js SETTINGS.homeReserve; batch.js holds stanekHoldsOf on
+//       every host; progress.js prices fractions of stanek.js's measured fleet (basis 'fleet'); the watchdog JOB and the boot manifest declare stanek.js; progress.js prices
 //       every option through chargeInputsOf and the trajectory.
 //   SG6 THE ALLOCATION IS A COMPARISON OF EXITS: at f = the measured fraction the inputs are
 //       the measured ones (same exit hours); chooseAlloc returns the min of the priced exits
-//       (and keeps an incumbent within tolerance); the RAM side is priced (the same f costs
-//       more exit hours when home is the whole fleet). exitplan.bestExitPolicy on a fixture.
+//       (and keeps an incumbent within tolerance); the RAM side is priced (the same GB costs
+//       more of a smaller fleet); the placement concentrates (highestCharge = one script). exitplan.bestExitPolicy on a fixture.
 //       NOT CALIBRATED: no node of this playthrough has run the gift (stanekplan header).
+//   SG8 THE LIVE SHAPE: a full 1-core home, rooted hosts free or full of h/g/w, no decision ->
+//       the charger runs on the fleet at DEFAULT_F (UNPRICED), batch.js holds the rest per
+//       host, heartbeats gathered home, the fragments charge. RED: home only -> named cause.
 //   SG7 THE GIFT PINS THE HACKING ROUTE (routepin.giftPinOf): accepted and no file pin -> 'hack',
 //       a priced 'blade' acted on as 'hack' with the hours forgone; a file pin is kept.
 
@@ -126,8 +129,21 @@ async function sg2() {
 }
 
 /** The game, as far as the gift is concerned: Helper.tsx canAcceptStaneksGift, Stanek.ts, the aug queue. */
-function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 1024, homeUsed = 100 } = {}) {
-  const g = { installed: new Map(installed.map((n) => [n, 1])), queued: [...queued], frags: [], log: [], files: {}, procs: [], nextPid: 10, atExit: null }
+function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 1024, homeUsed = 100, homeCores = 4, others = [] } = {}) {
+  const g = { installed: new Map(installed.map((n) => [n, 1])), queued: [...queued], frags: [], charge: new Map(), log: [], files: {}, remote: {}, procs: [], nextPid: 10, atExit: null }
+  // The fleet: home + `others` [{ host, max, used (non-charger use), cores, workers: [{filename, threads}] }].
+  g.hosts = new Map([['home', { max: homeMax, used: homeUsed, cores: homeCores, workers: [] }], ...others.map((o) => [o.host, { max: o.max, used: o.used, cores: o.cores ?? 1, workers: o.workers ?? [] }])])
+  const usedOn = (h) => g.hosts.get(h).used + g.procs.filter((p) => p.host === h).reduce((s, p) => s + p.threads * 2, 0)
+  // One second of every running charge.js (StaneksGift.charge at its threads x core bonus, round robin).
+  g.tick = (rounds = 1) => {
+    for (let r = 0; r < rounds; r++)
+      for (const p of g.procs.filter((q) => q.filename === 'charge.js'))
+        for (const [x, y] of JSON.parse(p.args[0])) {
+          const key = `${x},${y}`
+          const af = g.charge.get(key) ?? { highestCharge: 0, numCharge: 0 }
+          g.charge.set(key, sp.chargeOnce(af, p.threads * sp.coreBonus(g.hosts.get(p.host).cores)))
+        }
+  }
   const grid = sp.giftSize(1, sf13)
   const canAccept = () => (node === 13 || sf13 > 0) && [...g.installed.keys(), ...g.queued].filter((a) => a !== NFG).length === 0
   const need = () => {
@@ -150,7 +166,7 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
       },
       giftWidth: () => (need(), grid.width),
       giftHeight: () => (need(), grid.height),
-      activeFragments: () => (need(), g.frags.map((p) => ({ id: p.id, x: p.x, y: p.y, rotation: p.rot, type: sp.fragmentById(p.id).type, highestCharge: 0, numCharge: 0, chargedEffect: 1 }))),
+      activeFragments: () => (need(), g.frags.map((p) => ({ id: p.id, x: p.x, y: p.y, rotation: p.rot, type: sp.fragmentById(p.id).type, highestCharge: g.charge.get(`${p.x},${p.y}`)?.highestCharge ?? 0, numCharge: g.charge.get(`${p.x},${p.y}`)?.numCharge ?? 0, chargedEffect: 1 }))),
       clearGift() {
         need()
         g.frags = []
@@ -168,17 +184,26 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
     write: (f, d) => {
       g.files[f] = d
     },
-    getServerMaxRam: () => homeMax,
-    getServerUsedRam: () => homeUsed + g.procs.reduce((s, p) => s + p.threads * 2, 0),
-    getServer: () => ({ cpuCores: 4 }),
-    ps: () => g.procs.map((p) => ({ ...p })),
+    scan: (h) => (h === 'home' ? [...g.hosts.keys()].filter((x) => x !== 'home') : ['home']),
+    hasRootAccess: (h) => g.hosts.has(h),
+    getServerMaxRam: (h) => g.hosts.get(h).max,
+    getServerUsedRam: (h) => usedOn(h),
+    getServer: (h) => ({ cpuCores: g.hosts.get(h).cores }),
+    getScriptRam: () => 1.75,
+    ps: (h) => [...g.hosts.get(h).workers.map((w, i) => ({ pid: 1000 + i, filename: w.filename, threads: w.threads, args: [] })), ...g.procs.filter((p) => p.host === h).map((p) => ({ ...p }))],
+    scp: (file, dest, src) => {
+      if (dest === 'home' && g.remote[`${src}:${file}`] !== undefined) g.files[file] = g.remote[`${src}:${file}`]
+      return true
+    },
     kill(pid) {
       g.procs = g.procs.filter((p) => p.pid !== pid)
       return true
     },
     exec(script, host, threads, ...args) {
+      // The game refuses a launch that does not fit (no RAM is taken).
+      if (usedOn(host) + threads * 2 > g.hosts.get(host).max + 1e-9) return 0
       const pid = g.nextPid++
-      g.procs.push({ pid, filename: script, threads, args })
+      g.procs.push({ pid, host, filename: script, threads, args })
       g.event('exec', script)
       return pid
     },
@@ -234,11 +259,11 @@ async function sg3() {
   if (!rec?.layout?.ok) c.fail('the layout was not placed', JSON.stringify(rec?.layout)?.slice(0, 300))
   if (JSON.stringify(rec?.layout?.placed) !== JSON.stringify(sp.LAYOUTS['6x5|2'])) c.fail('BN13 at SF13 0 must place the 6x5|2 table')
   const wantThreads = Math.floor((sp.DEFAULT_F * 1024) / 2)
-  if (rec?.charger?.threads !== wantThreads) c.fail(`charger threads ${rec?.charger?.threads}, expected ${wantThreads} (DEFAULT_F x home / 2.0GB)`, rec?.charger?.why)
+  if (rec?.charger?.threads !== wantThreads) c.fail(`charger threads ${rec?.charger?.threads}, expected ${wantThreads} (DEFAULT_F x the fleet (= home here) / 2.0GB)`, rec?.charger?.why)
   const ch = g.procs.find((p) => p.filename === 'charge.js')
   if (!ch || JSON.stringify(JSON.parse(ch.args[0])) !== JSON.stringify(sp.chargeRootsOf(sp.LAYOUTS['6x5|2']))) c.fail('charge.js not launched with the non-booster roots', JSON.stringify(ch))
   if (rec?.health !== 'ok') c.fail(`stanek.js health ${rec?.health}`, rec?.why)
-  if (!/DEFAULT_F/.test(rec?.alloc?.source ?? '')) c.fail('with no plan decision the allocation must say it is the default', rec?.alloc?.source)
+  if (!/DEFAULT_F.*UNPRICED/.test(rec?.alloc?.source ?? '')) c.fail('with no plan decision the allocation must say it is the default, UNPRICED', rec?.alloc?.source)
   const second = BATCH.map((o) => g.dispatch(o))
   if (!second.every((r) => r.ok)) c.fail('after the accept every order must pass', JSON.stringify(second))
   const acceptAt = g.log.findIndex((e) => e.ev === 'accept')
@@ -252,9 +277,13 @@ async function sg3() {
   if (g.log.slice(nLog).some((e) => e.ev === 'clear' || e.ev === 'exec')) c.fail('a second stanek.js run re-placed or relaunched with nothing changed')
   if (rec2?.health !== 'ok') c.fail(`second run health ${rec2?.health}`, rec2?.why)
   // with a priced plan decision of this life, the charger follows it
-  g.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, decisions: { stanek: { f: 0.05, why: 'test' } } })
+  g.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, decisions: { stanek: { f: 0.05, basis: 'fleet', why: 'test' } } })
   const rec3 = await g.run()
   if (rec3?.charger?.threads !== Math.floor((0.05 * 1024) / 2) || !/the plan/.test(rec3?.alloc?.source ?? '')) c.fail(`the plan's f=0.05 not followed: ${rec3?.charger?.threads} threads, ${rec3?.alloc?.source}`)
+  // a decision of the OLD basis (a fraction of home, no basis field) is not followed
+  g.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, decisions: { stanek: { f: 0.05, why: 'old home-fraction decision' } } })
+  const rec4 = await g.run()
+  if (!/UNPRICED/.test(rec4?.alloc?.source ?? '')) c.fail('a decision without basis "fleet" must not be followed (it priced a fraction of home)', rec4?.alloc?.source)
   // RED: the same scenario with no gate is caught by the detector
   const r = mockGame()
   for (const o of BATCH) r.dispatch(o, () => ({ allow: true }))
@@ -288,14 +317,22 @@ async function sg4() {
   const late = { at: new Date(now).toISOString(), node: 13, lastAugReset: 1000, gift: { want: true, accepted: false, forfeited: false, node: 13, why: 'not accepted yet' } }
   if (!sp.stanekHealthOf({ stanek: late, charge: null, now, nodeStartMs: now - 30 * 60e3 }).some((p) => p.problem === 'GIFT NOT ACCEPTED')) c.fail('30 min into BN13 and not accepted: no GIFT NOT ACCEPTED')
   if (sp.stanekHealthOf({ stanek: late, charge: null, now, nodeStartMs: now - 5 * 60e3 }).some((p) => p.problem === 'GIFT NOT ACCEPTED')) c.fail('5 min into BN13: inside the grace, must not fail yet')
-  // not charging
+  // not charging: judged by the gift's OWN charge (highestCharge x numCharge), pass to pass
   const ok = mockGame()
   const ro = await ok.run()
-  const noBeat = sp.stanekHealthOf({ stanek: ro, charge: null, now: Date.now() })
-  if (!noBeat.some((p) => p.problem === 'FRAGMENTS NOT CHARGING')) c.fail('accepted with a charger wanted and no /tel/charge.txt: no FRAGMENTS NOT CHARGING', JSON.stringify(noBeat))
-  const beat = { at: new Date().toISOString(), lastAugReset: 1000, charges: 10, error: null }
-  if (sp.stanekHealthOf({ stanek: ro, charge: beat, now: Date.now() }).length) c.fail('a fresh heartbeat of this life must be healthy', JSON.stringify(sp.stanekHealthOf({ stanek: ro, charge: beat, now: Date.now() })))
-  if (!sp.stanekHealthOf({ stanek: ro, charge: { ...beat, at: new Date(Date.now() - 10 * 60e3).toISOString() }, now: Date.now() }).some((p) => p.problem === 'FRAGMENTS NOT CHARGING')) c.fail('a 10-min-old heartbeat: no FRAGMENTS NOT CHARGING')
+  if (sp.stanekHealthOf({ stanek: ro, charge: null, now: Date.now() }).length) c.fail('a charger just launched (no previous pass to compare) must be healthy', JSON.stringify(sp.stanekHealthOf({ stanek: ro, charge: null, now: Date.now() })))
+  const back = (r, min) => ({ ...r, at: new Date(Date.now() - min * 60e3).toISOString() })
+  ok.files[sp.STANEK_FILE] = JSON.stringify(back(ro, 5))
+  const flat = await ok.run() // no tick: charge.js held threads and nothing charged
+  const hFlat = sp.stanekHealthOf({ stanek: flat, charge: null, now: Date.now() })
+  if (!hFlat.some((p) => p.problem === 'FRAGMENTS NOT CHARGING' && /did not grow/.test(p.detail))) c.fail('a running charger with a flat charge mass for 5 min: no FRAGMENTS NOT CHARGING naming it', JSON.stringify(hFlat))
+  if (flat?.health !== 'fail') c.fail(`stanek.js must publish fail on a flat charge mass, got ${flat?.health}`, flat?.why)
+  ok.files[sp.STANEK_FILE] = JSON.stringify(back(flat, 5))
+  ok.tick(30)
+  const grew = await ok.run()
+  if (sp.stanekHealthOf({ stanek: grew, charge: null, now: Date.now() }).length) c.fail('a growing charge mass must be healthy', JSON.stringify(sp.stanekHealthOf({ stanek: grew, charge: null, now: Date.now() })))
+  const errBeat = { at: new Date().toISOString(), lastAugReset: 1000, hosts: { home: { at: new Date().toISOString(), error: 'chargeFragment(0, 0) threw: x' } } }
+  if (!sp.stanekHealthOf({ stanek: grew, charge: errBeat, now: Date.now() }).some((p) => /chargeFragment/.test(p.detail))) c.fail('a fresh charge.js error in the gathered heartbeats: not reported')
   if (sp.stanekHealthOf({ stanek: null }).length !== 1) c.fail('no stanek.txt must be reported (STANEK UNREPORTED)')
   return c
 }
@@ -334,12 +371,15 @@ function sg5() {
   const m = batch.match(/homeReserve: \(mult\) => ([^,\n]+),/)
   const ref = m ? Function('mult', `return ${m[1]}`) : null
   for (const k of [1, 4, 16]) if (!ref || ref(k) !== sp.progressBlockGb(k)) c.fail(`progressBlockGb(${k}) = ${sp.progressBlockGb(k)} vs batch.js SETTINGS.homeReserve ${ref?.(k)}`)
-  if (!/h === 'home' \? homeReserveGb \+ stanekRes : 0/.test(batch) || !/stanekHoldGb\(JSON\.parse\(ns\.read\(STANEK_FILE\)/.test(batch)) c.fail("batch.js must hold stanekHoldGb on home in reserveFor")
+  if (!/\n\s*heldOn\(stanekRes, h\) \+/.test(batch) || !/stanekHoldsOf\(JSON\.parse\(ns\.read\(STANEK_FILE\)/.test(batch)) c.fail("batch.js must hold stanekHoldsOf on EVERY host in reserveFor (heldOn(stanekRes, h))")
   const wd = rd('watchdog.js')
   if (!/script: 'stanek\.js',\s*host: 'home',\s*args: \[\],\s*trigger: \(ns\) => canAccessFeature\(ns\.getResetInfo\(\), 13\)/.test(wd)) c.fail('watchdog.js must run stanek.js as a JOB on home triggered by canAccessFeature(13)')
   if (!/script: 'stanek\.js',\s*where: 'home',\s*kind: 'job'/.test(rd('boot.js'))) c.fail('boot.js must declare stanek.js (kind job) — the watchdog watches only what boot declares (B7.9)')
   const pr = rd('progress.js')
   if (!/const h = yield\* tg\(chargeInputsOf\(base, ctx, f\)\)/.test(pr)) c.fail('progress.js stanekDecisionOf must price every option through chargeInputsOf and the trajectory simulator')
+  const sd = pr.slice(pr.indexOf('async function stanekDecisionOf('), pr.indexOf('\n}\n', pr.indexOf('async function stanekDecisionOf(')))
+  if (!/allocOptionsOf\(fleetGB, hosts\)/.test(sd) || !/st\?\.fleet\?\.gb/.test(sd) || /batch\.txt/.test(sd)) c.fail("progress.js stanekDecisionOf must price fractions of stanek.js's measured FLEET (st.fleet), not home and not /tel/batch.txt")
+  if (!/basis: ALLOC_BASIS/.test(sd)) c.fail('progress.js stanekDecisionOf must stamp basis "fleet" on the decision (stanek.js follows only that basis)')
   if (!/stanek: pc\.decisions\.stanek \?\? pc\.prev\?\.decisions\?\.stanek \?\? null/.test(pr)) c.fail('progress.js must publish decisions.stanek in /tel/plan.txt')
   if (!/giftPinOf\(routePinOf\(/.test(pr)) c.fail("progress.js must pin the hacking route where the gift is accepted (routepin.giftPinOf)")
   // charge.js stays 2.0GB: only chargeFragment among the priced calls
@@ -355,26 +395,106 @@ async function sg6() {
   const base = { money: 8.85e9, incomePerSec: 39e6, hacking: 4051, hackingExp: expForLevel(4051, 9.25), hackingMult: 9.25, expPerSec: 190000, repPerSec: 200, exitRep: 0, exitFavor: 78, cycleHours: 0.625, multGainPerCycle: 1.34, exitLevel: 4500, joinMoney: 100e9, terminalRep: 2.5e6, donationCost: 791e9 }
   const H = (inp) => bestExitPolicy(inp, 6).best?.hours ?? null
   const layout = sp.LAYOUTS['6x5|2']
-  const ctx = { layout, nodePower: 2, homeGB: 2 ** 14, cores: 4, fleetGB: 2 ** 17, fNow: 0.1, cycleH: base.cycleHours }
+  const fleetHosts = [{ host: 'home', cores: 4, capGb: 2 ** 14 - 100 }, ...Array.from({ length: 25 }, (_, i) => ({ host: `p${i}`, cores: 1, capGb: 2 ** 12 }))]
+  const ctx = { layout, nodePower: 2, fleetGB: 2 ** 14 + 25 * 2 ** 12, hosts: fleetHosts, fNow: 0.1, cycleH: base.cycleHours }
   const same = sp.chargeInputsOf(base, ctx, 0.1)
   c.examined(1)
   for (const k of ['incomePerSec', 'expPerSec', 'repPerSec', 'hackingMult']) if (Math.abs(same[k] / base[k] - 1) > 1e-12) c.fail(`f = fNow must reproduce the measured ${k}`, `${same[k]} vs ${base[k]}`)
-  const priced = sp.allocOptionsOf(ctx.homeGB, sp.progressBlockGb(1)).map((f) => ({ f, hours: H(sp.chargeInputsOf(base, ctx, f)) }))
+  const priced = sp.allocOptionsOf(ctx.fleetGB, ctx.hosts).map((f) => ({ f, hours: H(sp.chargeInputsOf(base, ctx, f)) }))
   c.examined(priced.length)
   const ch = sp.chooseAlloc(priced, null)
   const min = Math.min(...priced.map((p) => p.hours))
   if (ch.hours !== min) c.fail(`chooseAlloc did not pick the fastest exit: ${ch.hours} vs ${min}`)
-  c.note(`exits by f (home 16TB, 4 cores, fleet 128TB, fNow 0.1): ${priced.map((p) => `${p.f}:${p.hours?.toFixed(2)}h`).join(' ')} -> ${ch.why}`)
+  c.note(`exits by f (home 16TB 4 cores + 25 x 4TB, fNow 0.1): ${priced.map((p) => `${p.f}:${p.hours?.toFixed(2)}h`).join(' ')} -> ${ch.why}`)
   const inc = sp.chooseAlloc([{ f: 0.1, hours: 10.05 }, { f: 0.2, hours: 10.0 }], 0.1)
   if (inc.f !== 0.1) c.fail('an incumbent within 0.1h must be kept', inc.why)
-  const allHome = H(sp.chargeInputsOf(base, { ...ctx, fleetGB: ctx.homeGB, fNow: 0 }, 0.5))
-  const tinyHome = H(sp.chargeInputsOf(base, { ...ctx, fNow: 0 }, 0.5))
-  if (!(allHome > tinyHome)) c.fail(`the RAM side is not priced: f=0.5 with home = the fleet ${allHome}h vs home 1/8 of it ${tinyHome}h`)
-  if (sp.stanekHoldGb({ at: new Date().toISOString(), lastAugReset: 1, charger: { wantGb: 100, gb: 40 } }, 1) !== 60) c.fail('stanekHoldGb must hold the wanted GB not yet held')
-  if (sp.stanekHoldGb({ at: new Date().toISOString(), lastAugReset: 2, charger: { wantGb: 100, gb: 40 } }, 1) !== 0) c.fail('stanekHoldGb must ignore another life')
+  // The RAM side: the same GB costs the batcher more when the fleet is smaller.
+  const small = { ...ctx, hosts: [{ host: 'home', cores: 4, capGb: 2 ** 14 }], fleetGB: 2 ** 14, fNow: 0 }
+  const big = { ...ctx, hosts: [{ host: 'home', cores: 4, capGb: 2 ** 14 }, { host: 'x', cores: 1, capGb: 0, maxRam: 7 * 2 ** 14 }], fleetGB: 8 * 2 ** 14, fNow: 0 }
+  const lnS = sp.chargeLnOf({ ...small, f: 0.5 })
+  const lnB = sp.chargeLnOf({ ...big, f: 1 / 16 })
+  if (!(lnS.gb === lnB.gb && lnS.lnIncome < lnB.lnIncome)) c.fail(`the RAM side is not priced: ${lnS.gb}GB of a ${small.fleetGB}GB fleet lnIncome ${lnS.lnIncome} vs of ${big.fleetGB}GB ${lnB.lnIncome}`)
+  // highestCharge is ONE script's power: the same GB in one script beats it split (the placement concentrates)
+  const one = sp.chargerPlaceOf(64, [{ host: 'a', cores: 1, capGb: 64 }, { host: 'b', cores: 1, capGb: 32 }, { host: 'c', cores: 1, capGb: 32 }])
+  if (one.H !== 32 || one.hosts.length !== 1 || one.hosts[0].host !== 'a') c.fail('chargerPlaceOf must fill the largest host first (H = one script)', JSON.stringify(one))
+  const cored = sp.chargerPlaceOf(32, [{ host: 'a', cores: 1, capGb: 32 }, { host: 'b', cores: 8, capGb: 32 }])
+  if (cored.hosts[0].host !== 'b') c.fail('chargerPlaceOf must weigh the core bonus (same GB, more cores first)', JSON.stringify(cored))
+  const split = sp.chargeLnOf({ layout, nodePower: 2, fleetGB: 128, hosts: [{ host: 'a', cores: 1, capGb: 32 }, { host: 'b', cores: 1, capGb: 32 }], f: 0.5, cycleH: 1 })
+  const whole = sp.chargeLnOf({ layout, nodePower: 2, fleetGB: 128, hosts: [{ host: 'a', cores: 1, capGb: 64 }], f: 0.5, cycleH: 1 })
+  if (!(whole.lnHack > split.lnHack)) c.fail(`one 32-thread script must out-charge two 16-thread ones: ${whole.lnHack} vs ${split.lnHack}`)
+  const hold = { at: new Date().toISOString(), lastAugReset: 1, charger: { hosts: [{ host: 'a', target: 50, now: 20 }, { host: 'b', target: 8, now: 8 }] } }
+  if (JSON.stringify(sp.stanekHoldsOf(hold, 1)) !== JSON.stringify([{ host: 'a', gb: 60 }])) c.fail('stanekHoldsOf must hold each host\'s target GB not yet held', JSON.stringify(sp.stanekHoldsOf(hold, 1)))
+  if (sp.stanekHoldsOf({ ...hold, lastAugReset: 2 }, 1).length) c.fail('stanekHoldsOf must ignore another life')
+  return c
+}
+
+/**
+ * SG8 THE LIVE SHAPE (BN13.1 2026-10-11 00:14Z): a 128GB 1-core home with residents and
+ * progress.js's 19.25GB block leaving no 2GB thread, rooted 32GB/16GB hosts — one with
+ * free RAM, the rest full of batch h/g/w — and no plan decision yet. The charger must
+ * run on the fleet at DEFAULT_F (labelled UNPRICED), batch.js must hold the rest on the
+ * worker-filled targets, the heartbeats must be gathered home, and the fragments charge.
+ * RED: the same shape with home the only rooted host -> no thread anywhere and
+ * FRAGMENTS NOT CHARGING naming the binding cause (residents and reserves fill it).
+ */
+async function sg8() {
+  const c = new Check('SG8', 'the live BN13.1 shape: home full, rooted hosts free or full of h/g/w, no decision -> the charger runs on the fleet')
+  const w = (n) => [{ filename: 'w.js', threads: n }]
+  const others = [
+    { host: 'iron-gym', max: 32, used: 5.25, workers: w(3) },
+    ...['max-hardware', 'zer0', 'neo-net'].map((host) => ({ host, max: 32, used: 31.5, workers: w(18) })),
+    ...['harakiri-sushi', 'nectar-net', 'foodnstuff'].map((host) => ({ host, max: 16, used: 15.75, workers: w(9) })),
+    { host: 'sigma-cosmetics', max: 16, used: 15.2, workers: [] }, // residents (buyserv, bb-lite)
+    { host: 'n00dles', max: 4, used: 4, workers: [] },
+  ]
+  const g = mockGame({ homeMax: 128, homeUsed: 110, homeCores: 1, others })
+  const rec = await g.run()
+  c.examined(1)
+  const ch = rec?.charger ?? {}
+  const onFleet = g.procs.filter((p) => p.filename === 'charge.js')
+  if (!(ch.threads > 0) || !onFleet.length) c.fail(`no charger thread anywhere: ${ch.why}`, JSON.stringify(ch).slice(0, 400))
+  if (onFleet.some((p) => p.host === 'home')) c.fail('a charger on home, which has no 2GB thread beyond progress.js\'s block')
+  if (!onFleet.every((p) => p.args[2] === p.host)) c.fail('charge.js must be told its host (args[2]) for its heartbeat file', JSON.stringify(onFleet.map((p) => p.args)))
+  if (!/UNPRICED/.test(rec?.alloc?.source ?? '')) c.fail('no decision yet: the allocation must say DEFAULT_F, UNPRICED', rec?.alloc?.source)
+  const fleetGB = 128 + 4 * 32 + 4 * 16 + 4
+  if (ch.want !== Math.floor((sp.DEFAULT_F * fleetGB) / 2) || rec?.fleet?.gb !== fleetGB) c.fail(`want ${ch.want} / fleet ${rec?.fleet?.gb}: expected DEFAULT_F x ${fleetGB}GB fleet`)
+  const holds = sp.stanekHoldsOf(rec, 1000)
+  if (ch.threads < ch.want && !holds.length) c.fail('short of its target on worker-filled hosts and batch.js holds nothing there', JSON.stringify(ch.hosts))
+  if (holds.some((h) => h.host === 'home')) c.fail('a hold on home, which the placement never targets here', JSON.stringify(holds))
+  const ig = ch.hosts?.find((h) => h.host === 'iron-gym')
+  if (!(ig?.now > 0)) c.fail('iron-gym (32GB, 26.75GB free) must charge at once', JSON.stringify(ch.hosts))
+  if (rec?.health === 'fail') c.fail(`stanek.js health fail on the live shape: ${rec?.why}`)
+  c.note(`live shape: ${ch.threads}/${ch.want} threads on ${onFleet.map((p) => `${p.host}:${p.threads}`).join(' ')}, H ${ch.H} (target ${ch.Htarget}); holds ${holds.map((h) => `${h.host}:${h.gb}GB`).join(' ') || 'none'}; ${rec?.why}`)
+  // heartbeats: charge.js writes on its host; stanek.js gathers them home
+  for (const p of onFleet) g.remote[`${p.host}:/tel/charge-${p.host}.txt`] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, host: p.host, error: null })
+  g.tick(20)
+  g.files[sp.STANEK_FILE] = JSON.stringify({ ...rec, at: new Date(Date.now() - 5 * 60e3).toISOString() })
+  const rec2 = await g.run()
+  const beats = JSON.parse(g.files[sp.CHARGE_FILE] ?? 'null')
+  if (!onFleet.every((p) => beats?.hosts?.[p.host]?.host === p.host)) c.fail('the fleet heartbeats were not gathered into /tel/charge.txt', JSON.stringify(beats).slice(0, 300))
+  if (!(rec2?.progress?.gained > 0)) c.fail('the gift charged (20 rounds) and the record shows no gain', JSON.stringify(rec2?.progress))
+  if (rec2?.fragments?.every((f) => !(f.highestCharge > 0))) c.fail('every fragment still at 0 charge after the charger ran')
+  const h2 = sp.stanekHealthOf({ stanek: rec2, charge: beats, now: Date.now() })
+  if (h2.some((p) => p.problem === 'FRAGMENTS NOT CHARGING')) c.fail('charging on the fleet must be healthy', JSON.stringify(h2))
+  // the batcher yields: the held hosts' workers finish -> the next pass reaches the target
+  for (const h of holds) {
+    const o = g.hosts.get(h.host)
+    const wGb = o.workers.reduce((s, x) => s + x.threads * 1.75, 0)
+    o.used -= wGb
+    o.workers = []
+  }
+  const rec3 = await g.run()
+  if (holds.length && !(rec3?.charger?.threads > ch.threads)) c.fail(`the batcher yielded and the charger did not grow: ${ch.threads} -> ${rec3?.charger?.threads}`, rec3?.charger?.why)
+  // RED: home the only rooted host (the old home-only charger's world)
+  const r = mockGame({ homeMax: 128, homeUsed: 110, homeCores: 1 })
+  const rr = await r.run()
+  const hr = sp.stanekHealthOf({ stanek: rr, charge: null, now: Date.now() })
+  const nc = hr.find((p) => p.problem === 'FRAGMENTS NOT CHARGING')
+  if (!nc || !/no rooted host has a 2GB thread of room/.test(nc.detail) || !/GB room beyond a [\d.]+GB reserve/.test(nc.detail)) c.fail('RED RUN NOT CAUGHT: home-only and full must fail FRAGMENTS NOT CHARGING naming the binding cause (residents and the reserve)', JSON.stringify(hr))
+  else c.note(`red run (home only, full): ${nc.detail}`)
   return c
 }
 
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8()]
 }

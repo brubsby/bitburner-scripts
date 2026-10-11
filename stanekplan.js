@@ -61,7 +61,8 @@
 //     charger's duty (the share of each life it holds its threads).
 //   NOT PRICED  bonus time (offline cycles: 5x charge rate, ^0.07 term only); charging
 //     from purchased servers (numCharge and rep only, never highestCharge, which is one
-//     script's threads); sleeves with ZOE (CotMG on sleeves); the Bladeburner route with
+//     script's threads — the in-game allocation, chargeLnOf, does price the fleet placement);
+//     sleeves with ZOE (CotMG on sleeves); the Bladeburner route with
 //     the gift (bbsim has no Stanek multipliers: a Bladeburner clear never accepts).
 
 // ---------------------------------------------------------------------------
@@ -762,24 +763,172 @@ export function sameLayout(active, placed) {
 export const chargeRootsOf = (placed) => placed.filter((p) => fragmentById(p.id)?.type !== TYPE.Booster).map((p) => [p.x, p.y])
 
 // ---------------------------------------------------------------------------
+// WHERE THE CHARGER RUNS: THE FLEET (stanek.js places it, batch.js holds it)
+// ---------------------------------------------------------------------------
+/**
+ * chargeFragment works from ANY server: the gift is global, and the call charges at
+ * the calling script's threads x getCoreBonus(cpuCores of the server it RUNS ON)
+ * (NetscriptFunctions/Stanek.ts chargeFragment). So the charger's RAM is a share of
+ * the FLEET, never of home alone — home-only starved it at every node's start (BN13.1
+ * 2026-10-11 00:14Z: 128GB 1-core home full of residents + progress.js's block, every
+ * fragment at 0 charge while rooted 32GB hosts ran batch workers).
+ *
+ * Per call (StaneksGift.charge) at power p: p > highestCharge H -> H = p and numCharge
+ * rescaled so H x numCharge grows by p; else numCharge += p / H. The effect is
+ * ln(H+1) x ((n+1)/5)^0.07, so H — ONE script's power — dominates and every further
+ * instance only adds numCharge (power/H per round robin). The placement therefore
+ * CONCENTRATES: the host with the most chargeable power (GB x core bonus) first.
+ *
+ * hosts: [{ host, cores, capGb }], capGb = what the charger can hold there once the
+ * batcher's h/g/w (FREEABLE) have finished: max - non-worker use - reserves, the
+ * charger's own RAM counted free. Returns { gb, threads, H, power, hosts: [{host, cores, threads}] }.
+ */
+export function chargerPlaceOf(budgetGb, hosts) {
+  const rpt = STANEK.ramPerThread
+  let left = Math.floor(Math.max(0, budgetGb) / rpt + 1e-9)
+  const order = (hosts ?? []).filter((h) => h.capGb >= rpt).sort((a, b) => b.capGb * coreBonus(b.cores) - a.capGb * coreBonus(a.cores) || (a.host < b.host ? -1 : a.host > b.host ? 1 : 0))
+  const out = []
+  let H = 0
+  let power = 0
+  let threads = 0
+  for (const h of order) {
+    if (left <= 0) break
+    const t = Math.min(left, Math.floor(h.capGb / rpt + 1e-9))
+    if (t <= 0) continue
+    left -= t
+    threads += t
+    const p = t * coreBonus(h.cores)
+    power += p
+    H = Math.max(H, p)
+    out.push({ host: h.host, cores: h.cores, threads: t })
+  }
+  return { gb: threads * rpt, threads, H, power, hosts: out }
+}
+
+/**
+ * Each rooted host's room for the charger, from what stanek.js reads:
+ * raw [{ host, maxRam, used, cores, workerGb, chargerGb, reserveGb }] (workerGb = the
+ * batcher's h/g/w, which finish within a cycle; chargerGb = charge.js already there;
+ * reserveGb = progress.js's block on home + the raise daemons' blocks batch.js keeps).
+ *   capNow  = max - used + chargerGb - reserve        (launchable this pass)
+ *   capGb   = capNow + workerGb                        (once the batcher yields)
+ */
+export function chargerFleetOf(raw) {
+  const r2 = (x) => Math.round(x * 100) / 100
+  return (raw ?? []).map((h) => {
+    const capNow = Math.max(0, h.maxRam - h.used + (h.chargerGb ?? 0) - (h.reserveGb ?? 0))
+    return { host: h.host, cores: h.cores ?? 1, maxRam: h.maxRam, capNow: r2(capNow), capGb: r2(Math.max(0, Math.min(h.maxRam - (h.reserveGb ?? 0), capNow + (h.workerGb ?? 0)))), workerGb: r2(h.workerGb ?? 0), reserveGb: r2(h.reserveGb ?? 0) }
+  })
+}
+
+/**
+ * The charger this pass: f x the fleet's RAM (f = the plan's decision, a fraction of
+ * the FLEET), placed by chargerPlaceOf on the room once the batcher yields (the
+ * target), launched now within what is free (per host min(target, capNow)). The
+ * difference is what batch.js holds per host (stanekHoldsOf). Returns
+ * { fleetGB, want, placeable, threads, can, H, Htarget, hosts: [{host, cores, target, now}] }.
+ */
+export function chargerPlanOf({ f, fleet }) {
+  const rpt = STANEK.ramPerThread
+  const fleetGB = (fleet ?? []).reduce((s, h) => s + (h.maxRam ?? 0), 0)
+  const budget = Math.max(0, f) * fleetGB
+  const want = Math.floor(budget / rpt + 1e-9)
+  const target = chargerPlaceOf(budget, fleet)
+  const byHost = new Map((fleet ?? []).map((h) => [h.host, h]))
+  const hosts = target.hosts.map((t) => ({ host: t.host, cores: t.cores, target: t.threads, now: Math.min(t.threads, Math.floor((byHost.get(t.host)?.capNow ?? 0) / rpt + 1e-9)) }))
+  const threads = hosts.reduce((s, h) => s + h.now, 0)
+  const can = (fleet ?? []).reduce((s, h) => s + Math.floor(h.capNow / rpt + 1e-9), 0)
+  const H = hosts.reduce((m, h) => Math.max(m, h.now * coreBonus(h.cores)), 0)
+  return { fleetGB, want, placeable: target.threads, threads, can, H, Htarget: target.H, hosts }
+}
+
+/**
+ * Kill/exec per host to reach plan.hosts' `now` counts. running: [{host, pid, threads,
+ * args}] (every charge.js in the fleet). A host keeps its one charger when its args
+ * match and its threads are within 10% (a restart costs a few charge seconds, a
+ * flip-flop on a few GB is not information); chargers on hosts outside the plan stop.
+ */
+export function chargerActionsOf(plan, running, rootsArg, life) {
+  const stops = []
+  const starts = []
+  const keep = []
+  const want = new Map(plan.hosts.filter((h) => h.now > 0).map((h) => [h.host, h.now]))
+  for (const host of new Set([...want.keys(), ...running.map((p) => p.host)])) {
+    const procs = running.filter((p) => p.host === host)
+    const n = want.get(host) ?? 0
+    const have = procs.reduce((s, p) => s + p.threads, 0)
+    const same = procs.length === 1 && procs[0].args?.[0] === rootsArg && procs[0].args?.[1] === life
+    if (n > 0 && same && Math.abs(have - n) <= Math.max(1, 0.1 * n)) {
+      keep.push({ host, threads: have, pid: procs[0].pid })
+      continue
+    }
+    for (const p of procs) stops.push(p.pid)
+    if (n > 0) starts.push({ host, threads: n })
+  }
+  return { stops, starts, keep }
+}
+
+/**
+ * Why nothing (or less than wanted) is charging — the BINDING cause, named. Null when
+ * the charger holds what it wants.
+ */
+export function chargerWhyOf({ roots, f, plan, fleet, execFails = [] }) {
+  if (!roots) return 'no chargeable fragment placed'
+  if (plan.want <= 0) return `f=${f}: ${f > 0 ? `${(f * plan.fleetGB).toFixed(1)}GB of the ${plan.fleetGB}GB fleet is under one ${STANEK.ramPerThread}GB thread` : 'no charging'}`
+  const fails = execFails.length ? `; exec refused on ${execFails.map((e) => `${e.host} (${e.threads}t${e.why ? ': ' + e.why : ''})`).join(', ')}` : ''
+  if (plan.placeable <= 0) {
+    const top = [...(fleet ?? [])].sort((a, b) => b.maxRam - a.maxRam).slice(0, 3).map((h) => `${h.host} ${h.maxRam}GB: ${h.capGb}GB room${h.reserveGb ? ` beyond a ${h.reserveGb}GB reserve` : ''}`).join('; ')
+    return `no rooted host has a ${STANEK.ramPerThread}GB thread of room even after the batcher yields — residents and reserves fill the fleet (${(fleet ?? []).length} hosts, ${plan.fleetGB}GB: ${top})${fails}`
+  }
+  if (plan.threads <= 0) {
+    const held = plan.hosts.map((h) => `${h.host} ${h.target}t`).join(', ')
+    return `waiting on the batcher: the targets (${held}) are full of h/g/w now; batch.js holds that RAM free of new workers (stanekReserve) and it frees within a batch cycle${fails}`
+  }
+  const parts = []
+  if (plan.placeable < plan.want) parts.push(`the fleet has room for ${plan.placeable} of ${plan.want} threads even after the batcher yields`)
+  if (plan.threads < plan.placeable) parts.push(`${plan.placeable - plan.threads} threads wait on the batcher's h/g/w (held by batch.js)`)
+  if (parts.length) return parts.join('; ') + fails
+  return fails ? fails.slice(2) : null
+}
+
+/**
+ * The gift's own record of charging: the sum over fragments of highestCharge x
+ * numCharge, which every charge call raises by its power (StaneksGift.charge, both
+ * branches) — so it grows iff something charged. Compared with the previous stanek.js
+ * record of the same life: { mass, prevAt, prevMass, gained, minutes, chargerWas, flat }.
+ */
+export const chargeMassOf = (frags) => (frags ?? []).reduce((s, f) => s + (f.highestCharge ?? 0) * (f.numCharge ?? 0), 0)
+export function chargeProgressOf(prev, frags, lastAugReset, now = Date.now()) {
+  const mass = chargeMassOf(frags)
+  if (!prev || prev.lastAugReset !== lastAugReset || !Array.isArray(prev.fragments)) return { mass, prevAt: null, prevMass: null, gained: null, minutes: null, chargerWas: null, flat: false }
+  const prevMass = chargeMassOf(prev.fragments)
+  const minutes = (now - Date.parse(prev.at ?? '')) / 60e3
+  const chargerWas = prev.charger?.threads ?? 0
+  const gained = mass - prevMass
+  return { mass, prevAt: prev.at ?? null, prevMass, gained, minutes: isFinite(minutes) ? +minutes.toFixed(2) : null, chargerWas, flat: chargerWas > 0 && minutes >= 1 && !(gained > 0) }
+}
+
+// ---------------------------------------------------------------------------
 // THE CHARGING ALLOCATION, PRICED BY THE EXIT (progress.js stanekDecisionOf)
 // ---------------------------------------------------------------------------
 /**
  * The two trajectories of each comparison: the exit with the charger holding a
- * fraction f of home RAM vs the exit at another f (f = 0: no charging) — each the
- * SAME exit inputs (progress.js exitInputsOf) scaled by what f does to them, then the
- * exit simulator (plan.trajectoryGenOf). What f does, per life (charges clear at every
- * install and regrow, so every life repeats it):
- *   the gift   life-average multipliers at T = threadsOf(f x homeGB, cores) threads and
- *              numCharge growing tau/k per fragment (round robin, one 1s call each) over
- *              the life's quadrature (nodeModel's), duty ALLOC_DUTY
- *   the RAM    the batcher loses f x homeGB of fleetGB: income and exp x (1 - f homeGB/fleetGB)
+ * fraction f of the FLEET's RAM vs the exit at another f (f = 0: no charging) — each
+ * the SAME exit inputs (progress.js exitInputsOf) scaled by what f does to them, then
+ * the exit simulator (plan.trajectoryGenOf). What f does, per life (charges clear at
+ * every install and regrow, so every life repeats it):
+ *   the gift   the placement of f x fleetGB on the fleet's room (chargerPlaceOf, the one
+ *              stanek.js launches): highestCharge = its largest instance's power H, and
+ *              numCharge growing (power/H) x tau/k per fragment (round robin, one 1s call
+ *              per instance each) over the life's quadrature (nodeModel's), duty ALLOC_DUTY
+ *   the RAM    the batcher loses the placed GB of fleetGB: income and exp x (1 - gb/fleetGB)
  *   channels   income x speed x hacking (chance) / (a/money + (1-a)/grow);  exp x hacking_exp
  *              x speed;  rep x faction_rep x hacking (hacking work rep is linear in the
  *              level, reputation.ts);  hackingMult x hacking (the exit level)
  * Relative to the f the inputs were MEASURED under (fNow), so the option f = fNow
  * prices the measured inputs exactly.
- * NOT SIMULATED (stated, published): home RAM growing within the node (more threads
+ * Without ctx.hosts (no fleet record) the charger is one script of f x homeGB on home.
+ * NOT SIMULATED (stated, published): the fleet growing within the node (more threads
  * later: favours charging), the Church's rep -> Awakening/Serenity (favours charging),
  * bonus time, the batcher's income not being linear in its RAM.
  */
@@ -787,26 +936,27 @@ export const ALLOC_GRID = [0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5]
 /** The charger's duty in the live pricing (stated: restarts and the first minutes of a life). */
 export const ALLOC_DUTY = 0.9
 
-export function chargeLnOf({ layout, nodePower, homeGB, cores, fleetGB, f, cycleH, duty = ALLOC_DUTY, a = HACK_SHARE }) {
+export function chargeLnOf({ layout, nodePower, homeGB, cores, fleetGB, hosts = null, f, cycleH, duty = ALLOC_DUTY, a = HACK_SHARE }) {
   const cl = compileLayout(layout)
   const ff = Math.max(0, f)
-  const T = threadsOf(ff * homeGB, cores)
+  const place = Array.isArray(hosts) ? chargerPlaceOf(ff * fleetGB, hosts) : chargerPlaceOf(ff * homeGB, [{ host: 'home', cores, capGb: ff * homeGB }])
+  const rate = place.H > 0 ? place.power / place.H : 0
   const tau = Math.max(0, cycleH) * 3600 * duty
-  const batchLoss = fleetGB > 0 ? Math.min(0.99, (ff * homeGB) / fleetGB) : 0
+  const batchLoss = fleetGB > 0 ? Math.min(0.99, place.gb / fleetGB) : 0
   const quad = [0.125, 0.375, 0.625, 0.875]
   let inc = 0
   let exp = 0
   let rep = 0
   let lnH = 0
   for (const q of quad) {
-    const m = multsAt(cl, chargeFactor(T, (q * tau) / cl.k), nodePower)
+    const m = multsAt(cl, chargeFactor(place.H, (rate * q * tau) / cl.k), nodePower)
     inc += (Math.log(m.hacking_speed) + Math.log(m.hacking) - Math.log(a / m.hacking_money + (1 - a) / m.hacking_grow)) / quad.length
     exp += (Math.log(m.hacking_exp) + Math.log(m.hacking_speed)) / quad.length
     rep += (Math.log(m.faction_rep) + Math.log(m.hacking)) / quad.length
     lnH += Math.log(m.hacking) / quad.length
   }
   const lnRam = Math.log(1 - batchLoss)
-  return { threads: T, gb: Math.floor((ff * homeGB) / STANEK.ramPerThread) * STANEK.ramPerThread, batchLoss, lnIncome: inc + lnRam, lnExp: exp + lnRam, lnRep: rep, lnHack: lnH }
+  return { threads: place.threads, H: place.H, power: place.power, gb: place.gb, batchLoss, lnIncome: inc + lnRam, lnExp: exp + lnRam, lnRep: rep, lnHack: lnH }
 }
 
 /** The exit inputs at charging fraction f, from inputs measured at ctx.fNow (see above). */
@@ -830,8 +980,12 @@ export function chargeInputsOf(base, ctx, f) {
   return out
 }
 
-/** The options a home can hold: f x homeGB within what is left after the reserve (f = 0 always). */
-export const allocOptionsOf = (homeGB, reserveGb, grid = ALLOC_GRID) => grid.filter((f) => f === 0 || f * homeGB <= Math.max(0, homeGB - reserveGb))
+/** The options the fleet can hold: f x fleetGB within its room once the batcher yields (f = 0 always). */
+export function allocOptionsOf(fleetGB, hosts, grid = ALLOC_GRID) {
+  const rpt = STANEK.ramPerThread
+  const room = (hosts ?? []).reduce((s, h) => s + Math.floor(h.capGb / rpt + 1e-9) * rpt, 0)
+  return grid.filter((f) => f === 0 || f * fleetGB <= room + rpt)
+}
 
 /**
  * Pick among priced options {f, hours}: the fastest exit; the incumbent kept unless
@@ -848,10 +1002,12 @@ export function chooseAlloc(priced, incumbentF = null, tolH = 0.1) {
   return { f: best.f, hours: best.hours, why: `f=${best.f}: the fastest exit, ${best.hours.toFixed(2)}h (${table})` }
 }
 
-/** The fraction used while no priced decision of this life exists (the layout's design point, LAYOUT_F; stated). */
+/** The fraction (of the FLEET's RAM) used while no priced decision of this life exists (stated, labelled). */
 export const DEFAULT_F = 0.2
+/** What f is a fraction of: a decision of another basis (the old fraction of home) is not followed. */
+export const ALLOC_BASIS = 'fleet'
 
-/** The plan's allocation for this life (/tel/plan.txt decisions.stanek), or null. */
+/** The plan's allocation for this life (/tel/plan.txt decisions.stanek, basis 'fleet'), or null. */
 export function planAllocOf(text, lastAugReset, now = Date.now(), maxAgeMin = 45) {
   let rec = null
   try {
@@ -861,6 +1017,7 @@ export function planAllocOf(text, lastAugReset, now = Date.now(), maxAgeMin = 45
   }
   const d = rec?.decisions?.stanek
   if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  if (d?.basis !== ALLOC_BASIS) return null
   if (typeof d?.f !== 'number' || !isFinite(d.f) || d.f < 0 || d.f > 1) return null
   return { f: d.f, why: String(d.why ?? '').slice(0, 240), at: rec.at }
 }
@@ -869,28 +1026,15 @@ export function planAllocOf(text, lastAugReset, now = Date.now(), maxAgeMin = 45
 export const progressBlockGb = (singMult) => 13 + 6.25 * singMult
 
 /**
- * The charger's thread count: f x homeMax, within what home has free beyond the
- * reserve (the running charger's own RAM counts as free: it is replaced).
- * Returns { want, can, threads, short }.
+ * What batch.js keeps free of NEW workers for the charger, per host: the target GB not
+ * yet held, from a fresh record of this life ([{host, gb}], raiseplace.heldOn reads it).
+ * Unknown or stale: none (the charger takes what is free; the shortfall is published).
  */
-export function chargerThreadsOf({ f, homeMax, homeUsed, reserveGb, runningGb = 0 }) {
-  const want = Math.floor((Math.max(0, f) * homeMax) / STANEK.ramPerThread)
-  const free = Math.max(0, homeMax - homeUsed + runningGb - reserveGb)
-  const can = Math.floor(free / STANEK.ramPerThread)
-  const threads = Math.min(want, can)
-  return { want, can, threads, short: Math.max(0, want - threads) }
-}
-
-/**
- * The block batch.js keeps free on home for the charger: the wanted GB not yet held,
- * from a fresh record of this life. Unknown or stale: 0 (the charger takes what is
- * free and the shortfall is published as charger.short).
- */
-export function stanekHoldGb(rec, lastAugReset, now = Date.now(), maxAgeMs = 15 * 60e3) {
-  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMs)) return 0
-  const c = rec.charger
-  if (!c || typeof c.wantGb !== 'number' || typeof c.gb !== 'number') return 0
-  return Math.max(0, c.wantGb - c.gb)
+export function stanekHoldsOf(rec, lastAugReset, now = Date.now(), maxAgeMs = 15 * 60e3) {
+  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMs)) return []
+  const hs = rec.charger?.hosts
+  if (!Array.isArray(hs)) return []
+  return hs.map((h) => ({ host: h.host, gb: Math.max(0, ((h.target ?? 0) - (h.now ?? 0)) * STANEK.ramPerThread) })).filter((h) => typeof h.host === 'string' && h.gb > 0)
 }
 
 /**
@@ -898,11 +1042,16 @@ export function stanekHoldGb(rec, lastAugReset, now = Date.now(), maxAgeMs = 15 
  * Returns [{ key, problem, detail }]:
  *   GIFT NOT ACCEPTED       wanted and not accepted past `graceMin` into the node, or
  *                           forfeited / refused at all
- *   FRAGMENTS NOT CHARGING  accepted with a layout placed, and the charger wanted but
- *                           not running, its heartbeat stale/absent, or erroring
+ *   FRAGMENTS NOT CHARGING  accepted with a layout placed and the charger wanted, and:
+ *                           no charger thread anywhere in the fleet (the detail is the
+ *                           binding cause stanek.js named: no room / waiting on the
+ *                           batcher past `waitMin` / exec refused / f=0), or charge.js
+ *                           running and the gift's own charge mass flat since the last
+ *                           pass, or a fresh charge.js error (stanek.js gathers every
+ *                           host's heartbeat into /tel/charge.txt)
  *   STANEK STALE            the record is old (stanek.js is not being run)
  */
-export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs = null, graceMin = 15, staleMin = 12 }) {
+export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs = null, graceMin = 15, staleMin = 12, waitMin = 10 }) {
   const out = []
   if (!stanek) return [{ key: 'STANEK UNREPORTED', problem: 'STANEK UNREPORTED', detail: `${STANEK_FILE} missing — stanek.js has not run in a node with the Church` }]
   const age = (now - Date.parse(stanek.at ?? '')) / 60e3
@@ -915,12 +1064,19 @@ export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs =
     else if (inNode === null || inNode >= graceMin) out.push({ key: 'GIFT NOT ACCEPTED', problem: 'GIFT NOT ACCEPTED', detail: `BitNode ${g.node}: ${inNode === null ? 'node age unknown' : inNode.toFixed(0) + ' min'} in and the gift is not accepted (${g.why})` })
   }
   if (g.accepted && Array.isArray(stanek.layout?.placed) && stanek.layout.placed.length) {
-    const c = charge && charge.lastAugReset === stanek.lastAugReset ? charge : null
-    const cAge = c ? (now - Date.parse(c.at ?? '')) / 60e3 : null
-    const want = stanek.charger?.want ?? 0
-    if (want > 0 && !((stanek.charger?.threads ?? 0) > 0)) out.push({ key: 'FRAGMENTS NOT CHARGING', problem: 'FRAGMENTS NOT CHARGING', detail: `charger not running: ${stanek.charger?.why ?? 'no threads'}` })
-    else if (want > 0 && !(cAge !== null && cAge < 5)) out.push({ key: 'FRAGMENTS NOT CHARGING', problem: 'FRAGMENTS NOT CHARGING', detail: c ? `${CHARGE_FILE} heartbeat ${cAge.toFixed(1)} min old` : `${CHARGE_FILE} missing or from another life` })
-    else if (c?.error) out.push({ key: 'FRAGMENTS NOT CHARGING', problem: 'FRAGMENTS NOT CHARGING', detail: `charge.js: ${c.error}` })
+    const ch = stanek.charger ?? {}
+    const want = ch.want ?? 0
+    const NC = 'FRAGMENTS NOT CHARGING'
+    const life = charge && charge.lastAugReset === stanek.lastAugReset ? charge : null
+    const errs = Object.entries(life?.hosts ?? {}).filter(([, r]) => r?.error && !r?.stopped && now - Date.parse(r.at ?? '') < 10 * 60e3)
+    const errText = errs.map(([h, r]) => `${h}: ${r.error}`).join('; ')
+    if (want > 0 && !((ch.threads ?? 0) > 0)) {
+      const waited = ch.waitingSince ? (now - Date.parse(ch.waitingSince)) / 60e3 : null
+      if (!(ch.waiting && waited !== null && waited < waitMin)) out.push({ key: NC, problem: NC, detail: `charger not running anywhere in the fleet: ${ch.why ?? 'no threads'}${ch.waiting && waited !== null ? ` (waiting ${waited.toFixed(0)} min)` : ''}` })
+    } else if (want > 0 && stanek.progress?.flat) {
+      const p = stanek.progress
+      out.push({ key: NC, problem: NC, detail: `charge.js held ${p.chargerWas} threads but the gift's charge did not grow in ${p.minutes} min (mass ${p.prevMass} -> ${p.mass})${errText ? ` — ${errText}` : ' — no charge.js error reported'}` })
+    } else if (errs.length) out.push({ key: NC, problem: NC, detail: `charge.js: ${errText}` })
   }
   return out
 }

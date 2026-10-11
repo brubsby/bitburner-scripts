@@ -276,15 +276,23 @@ join needs it. Exit bar in BN2 is hacking 15,000; faction rep is halved.
 **BitNode 13 plan (Stanek's Gift).** The accept is per node, at its start:
 `canAcceptStaneksGift` needs nothing but NeuroFlux installed OR queued, so the
 first non-NFG purchase blocks it and the first such install forfeits it.
-`stanek.js` (watchdog job, home, 19.5GB transient, `canAccessFeature(13)`)
+`stanek.js` (watchdog job, home, 20.5GB transient, `canAccessFeature(13)`)
 accepts, places `stanekplan.LAYOUTS` (BN13 grids tabled), launches `charge.js`
-(2.0GB/thread) at f x home RAM and publishes `/tel/stanek.txt`. act.js's
+(2.0GB/thread) at f x the FLEET's RAM on any rooted hosts — chargeFragment
+charges from whatever server runs it, at that server's cores, so home-only
+starved it (BN13.1 opened with 0 charge: home full) — concentrated on the
+biggest host (highestCharge is one script's power; `chargerPlanOf`), and
+publishes `/tel/stanek.txt` (+ every host's heartbeat gathered into
+`/tel/charge.txt`). act.js's
 `runActor` and order loop refuse every non-NFG buyaug / graft / install while
 the gift is unaccepted (`stanekplan.giftOrderGate`, fresh getResetInfo).
-progress.js prices f by the exit (`decisions.stanek`, `chargeInputsOf` per
-option) and the accepted gift pins the hacking route (`routepin.giftPinOf`).
-batch.js keeps the charger's shortfall free on home (`stanekHoldGb`). Health:
-GIFT NOT ACCEPTED / FRAGMENTS NOT CHARGING / STANEK STALE. Tests: SG1-SG7.
+progress.js prices f by the exit (`decisions.stanek`, basis `fleet`,
+`chargeInputsOf` per option on stanek.js's measured fleet; DEFAULT_F labelled
+UNPRICED until then) and the accepted gift pins the hacking route
+(`routepin.giftPinOf`). batch.js keeps the charger's shortfall free per host
+(`stanekHoldsOf`). Health: GIFT NOT ACCEPTED / FRAGMENTS NOT CHARGING (the
+binding cause named, or the gift's own charge mass flat) / STANEK STALE.
+Tests: SG1-SG8.
 
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with

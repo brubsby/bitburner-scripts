@@ -613,8 +613,10 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
 // (BN13, or SF13 held), GIFT NOT ACCEPTED once the node is past its grace (or
 // at once when forfeited / refused — act.js's gate blocks every forfeiting
 // purchase until the accept, so a gift never accepted is a stalled node, not
-// a choice), FRAGMENTS NOT CHARGING when the charger is wanted and its own
-// heartbeat (/tel/charge.txt) is absent, stale or erroring, STANEK STALE /
+// a choice), FRAGMENTS NOT CHARGING when the charger is wanted and holds no
+// thread anywhere in the fleet (the binding cause named), or the gift's own
+// charge mass did not grow while it ran, or a charge.js heartbeat (gathered
+// into /tel/charge.txt by stanek.js) reports an error, STANEK STALE /
 // UNREPORTED when stanek.js is not being run.
 {
   const sf = Array.isArray(state?.sourceFiles?.data) ? new Map(state.sourceFiles.data) : null;

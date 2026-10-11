@@ -1,6 +1,8 @@
-// THE CHARGER: Stanek's Gift's charging worker, launched by stanek.js on home
-// with the thread count the plan priced (stanekplan.chargerThreadsOf, the
-// allocation decided by the exit in progress.js stanekDecisionOf).
+// THE CHARGER: Stanek's Gift's charging worker, launched by stanek.js on any
+// rooted host(s) with the thread counts the plan priced (stanekplan.chargerPlanOf,
+// the fleet allocation decided by the exit in progress.js stanekDecisionOf).
+// chargeFragment charges from whatever server this runs on (the gift is global)
+// at this script's threads x that server's core bonus.
 //
 // RAM: 1.6 (script base) + 0.4 (stanek.chargeFragment) = 2.0GB per thread
 // (Netscript/RamCostGenerator.ts:11,65) — stanekplan.STANEK.ramPerThread. Keep it
@@ -14,9 +16,11 @@
 // (stanekplan.nodeModel's policy). Charges clear at every install (the layout
 // stays: StaneksGift.prestigeAugmentation); stanek.js relaunches this.
 //
-// args: [0] JSON [[x, y], ...] the non-booster roots; [1] lastAugReset (the life).
-// Publishes /tel/charge.txt every 30s and on exit (the health check's
-// FRAGMENTS NOT CHARGING reads the heartbeat, never this script's own claim).
+// args: [0] JSON [[x, y], ...] the non-booster roots; [1] lastAugReset (the life);
+// [2] the host it runs on (ns.getHostname would cost RAM per thread).
+// Publishes /tel/charge-<host>.txt on ITS host every 30s and on exit (ns.write is
+// local); stanek.js copies each home into /tel/charge.txt. The health check's
+// FRAGMENTS NOT CHARGING reads the gift's own charge, never this script's claim.
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog('ALL')
@@ -28,10 +32,11 @@ export async function main(ns) {
     error = `bad roots argument: ${String(e).slice(0, 120)}`
   }
   const life = ns.args[1] ?? null
+  const host = String(ns.args[2] ?? 'home')
   let charges = 0
   let fails = 0
   let lastPut = 0
-  const put = (extra = {}) => ns.write('/tel/charge.txt', JSON.stringify({ at: new Date().toISOString(), lastAugReset: life, pid: ns.pid, roots, charges, fails, error, ...extra }), 'w')
+  const put = (extra = {}) => ns.write(`/tel/charge-${host}.txt`, JSON.stringify({ at: new Date().toISOString(), lastAugReset: life, host, pid: ns.pid, roots, charges, fails, error, ...extra }), 'w')
   ns.atExit(() => put({ stopped: true }))
   if (!Array.isArray(roots) || !roots.length) {
     error = error ?? 'no fragment roots to charge'

@@ -180,7 +180,7 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, progressBlockGb, STANEK_FILE } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, STANEK_FILE, ALLOC_BASIS } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2987,9 +2987,10 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
 /**
  * STANEK'S CHARGING ALLOCATION, DECIDED BY THE EXIT. Where the gift is
  * accepted (BN13 at the node's start, stanek.js), charge.js holds a fraction
- * f of home RAM that the batcher then cannot use. Each option f in
- * stanekplan.ALLOC_GRID that home can hold beside progress.js's block is a
- * trajectory: the SAME exit inputs (exitInputsOf, one builder) scaled by what
+ * f of the FLEET's RAM (chargeFragment charges from any server; stanek.js
+ * places it on the rooted hosts, stanekplan.chargerPlanOf) that the batcher
+ * then cannot use. Each option f in stanekplan.ALLOC_GRID that the fleet's
+ * room (stanek.js's /tel/stanek.txt `fleet`) can hold is a trajectory: the SAME exit inputs (exitInputsOf, one builder) scaled by what
  * f does to them — the gift's life-average multipliers at f's threads (the
  * charges clear at every install and regrow, so every life repeats them) and
  * the batcher's RAM lost — relative to the f the inputs were measured under,
@@ -3009,37 +3010,33 @@ async function stanekDecisionOf(ns, info, inputsFn) {
     pc.decisions.stanek = { key: null, f: null, why: `no charging to price: ${gift.why}`, held: false }
     return pc.decisions.stanek
   }
-  const prev = pc.prev?.lastAugReset === info?.lastAugReset ? pc.prev?.decisions?.stanek ?? null : null
+  const prev = pc.prev?.lastAugReset === info?.lastAugReset && pc.prev?.decisions?.stanek?.basis === ALLOC_BASIS ? pc.prev.decisions.stanek : null
   if (typeof prev?.f === 'number' && Date.now() - Date.parse(prev.decidedAt ?? '') < STANEK_REPRICE_MS) {
     pc.decisions.stanek = prev
     return prev
   }
   const st = readJson(ns, STANEK_FILE)
-  const homeGB = st?.charger?.homeMax
-  const cores = st?.charger?.cores
-  if (!st || st.node !== info?.currentNode || !Array.isArray(st.layout?.placed) || !st.layout.placed.length || !(homeGB > 0) || !(cores >= 1)) {
-    pc.decisions.stanek = { key: null, f: null, why: `${STANEK_FILE} has no placed layout and charger of this node — stanek.js has not run since the accept (the charger runs at its default meanwhile)`, held: false }
-    return pc.decisions.stanek
-  }
-  const fleetGB = readJson(ns, '/tel/batch.txt')?.ram?.total
-  if (!(fleetGB > 0)) {
-    pc.decisions.stanek = { key: null, f: null, why: "the batcher's fleet RAM (/tel/batch.txt ram.total) is unknown — the RAM side of the trade cannot be priced", held: false }
+  // The fleet stanek.js measured (every rooted host's room for the charger, its cores):
+  // the RAM side of the trade, from the node's first stanek.js pass on.
+  const fleetGB = st?.fleet?.gb
+  const hosts = Array.isArray(st?.fleet?.hosts) ? st.fleet.hosts : null
+  if (!st || st.node !== info?.currentNode || !Array.isArray(st.layout?.placed) || !st.layout.placed.length || !(fleetGB > 0) || !hosts?.length) {
+    pc.decisions.stanek = { key: null, f: null, basis: ALLOC_BASIS, why: `${STANEK_FILE} has no placed layout and fleet of this node — stanek.js has not run since the accept, or predates the fleet charger (the charger runs at DEFAULT_F, labelled UNPRICED, meanwhile)`, held: false }
     return pc.decisions.stanek
   }
   const live = st.lastAugReset === info?.lastAugReset
-  const fNow = live && st.charger.gb > 0 ? st.charger.gb / homeGB : 0
-  const reserveGb = progressBlockGb(singularityRamMultiplier(info))
+  const fNow = live && st.charger?.gb > 0 ? st.charger.gb / fleetGB : 0
   return planDecide(pc, 'stanek', function* () {
     const t0 = Date.now()
     const base = { ...inputsFn() }
     yield
     const cycleH = base.cycleHours
-    if (!(cycleH > 0)) return { key: null, f: null, why: 'cycleHours unknown in the exit inputs — the life the charge regrows over is unpriced' }
-    const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, homeGB, cores, fleetGB, fNow, cycleH }
+    if (!(cycleH > 0)) return { key: null, f: null, basis: ALLOC_BASIS, why: 'cycleHours unknown in the exit inputs — the life the charge regrows over is unpriced' }
+    const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, fleetGB, hosts, fNow, cycleH }
     const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
     const tg = trajectoryGenOf(basis, { count: null, repPoint: pc.repPoint ?? null })
     const priced = []
-    for (const f of allocOptionsOf(homeGB, reserveGb)) {
+    for (const f of allocOptionsOf(fleetGB, hosts)) {
       const h = yield* tg(chargeInputsOf(base, ctx, f))
       priced.push({ f, hours: typeof h === 'number' && isFinite(h) ? +h.toFixed(3) : null })
       yield
@@ -3049,15 +3046,16 @@ async function stanekDecisionOf(ns, info, inputsFn) {
     return {
       key: c.f === null ? null : `f=${c.f}`,
       f: c.f,
+      basis: ALLOC_BASIS,
       why: c.why,
       withH: c.hours,
       withoutH: without,
       deltaH: typeof c.hours === 'number' && typeof without === 'number' ? +(c.hours - without).toFixed(3) : null,
       priced,
-      ctx: { homeGB, cores, fleetGB, fNow: +fNow.toFixed(4), cycleH: +cycleH.toFixed(3), nodePower: ctx.nodePower, reserveGb },
+      ctx: { fleetGB, hosts: hosts.length, roomGb: +hosts.reduce((s, h) => s + (h.capGb ?? 0), 0).toFixed(2), fNow: +fNow.toFixed(4), cycleH: +cycleH.toFixed(3), nodePower: ctx.nodePower },
       basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
       decidedAt: new Date().toISOString(),
-      notSimulated: 'home RAM growing within the node (more threads later), the Church rep -> Awakening/Serenity, bonus time, batcher income not linear in its RAM — the first two favour charging',
+      notSimulated: 'the fleet growing within the node (more threads later), the Church rep -> Awakening/Serenity, bonus time, batcher income not linear in its RAM — the first two favour charging',
       ms: Date.now() - t0,
     }
   })
