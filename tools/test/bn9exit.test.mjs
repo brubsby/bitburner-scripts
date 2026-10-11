@@ -129,7 +129,15 @@ export async function run() {
     c.examined(4);
     c.note(`point ${point.toFixed(1)}h (model ln(M) ${modelRate.toFixed(4)}/h at ${I.cycleHours}h lives); posterior with no own life: ${noOwn.why}`);
     c.note(`drawn on the model prior: mean ${mdl.mean.toFixed(1)}h q10 ${mdl.q10.toFixed(1)} q50 ${mdl.q50.toFixed(1)} q90 ${mdl.q90.toFixed(1)}; on the cross-node spread (old): mean ${old.mean.toFixed(1)}h q10 ${old.q10.toFixed(1)} q90 ${old.q90.toFixed(1)}`);
-    if (!(Math.abs(noOwn.rate.mean - Math.log(modelRate)) < 1e-9 && Math.abs(noOwn.rate.sd - 0.5) < 0.05)) c.fail("with no own life (and no other node recorded against the model) the rate posterior is the model, sd 0.5 stated", JSON.stringify(noOwn.rate));
+    // THE MODEL BLENDED WITH THE CROSS-NODE PRIOR by precision (bayes
+    // cadencePosterior, live BN13 2026-10-11): the model at its stated sd 0.5
+    // carries most of it here, the cross-node prior the rest.
+    const pr = noOwn.rate.prior ?? {};
+    const wM = 1 / (0.5 * 0.5);
+    const wC = pr.cross ? 1 / (pr.cross.sd * pr.cross.sd) : NaN;
+    const blendMean = (Math.log(modelRate) * wM + (pr.cross?.mean ?? NaN) * wC) / (wM + wC);
+    c.note(`no own life: model ${modelRate.toFixed(4)}/h (sd 0.5) x cross-node ${pr.cross ? Math.exp(pr.cross.mean).toFixed(4) : "?"}/h (sd ${pr.cross?.sd?.toFixed(2)}) -> ${Math.exp(noOwn.rate.mean).toFixed(4)}/h, model share ${noOwn.rate.modelShare?.toFixed(3)}`);
+    if (!(Math.abs(pr.model?.sd - 0.5) < 0.05 && Math.abs(noOwn.rate.mean - blendMean) < 1e-9 && Math.abs(noOwn.rate.sd - 1 / Math.sqrt(wM + wC)) < 1e-9)) c.fail("with no own life (and no other node recorded against the model) the rate posterior is the model (sd 0.5 stated) and the cross-node prior by precision", JSON.stringify(noOwn.rate));
     if (!(Math.abs(mdl.q50 - point) < 0.1 * point)) c.fail(`the draws' median must sit on the point (the model): ${mdl.q50} vs ${point}`);
     if (!(noOwn.rate.sd < cp.rateSdLn && (mdl.q90 - mdl.q10) / mdl.q50 < (old.q90 - old.q10) / old.q50 + 0.5)) c.fail(`the model prior's spread must be narrower than the cross-node spread (the regression EX4 guards): sd ${noOwn.rate.sd.toFixed(2)} vs ${cp.rateSdLn.toFixed(2)}`);
     // One own gaining life SLOWER than the model pulls the rate down by its precision, not all the way.

@@ -963,10 +963,12 @@ function stepsOf(extra, carried) {
  * after (installGains / persistBaseline, hacking): those augmentations are
  * gone from the front of the catalogue, so the sequence starts that far in
  * (fractional lives, in the model's ln). Past the sequence's horizon, the
- * mean, as every life was priced before (the table prices no further).
- * Returns {at(i): the factor on install i's cycle gain (i >= 1; 1 past the
- * sequence), end: the first install index at the mean} or null (no shape,
- * another L, or a cadence that buys nothing).
+ * mean, as every life was priced before (the table prices no further) — or,
+ * for a sequence grown past its mean's horizon (shape.n), the rate its last
+ * quarter reached. Returns {at(i): the factor on install i's cycle gain
+ * (i >= 1; past the sequence, 1 or the reached rate's), end: the first install
+ * index past the sequence} or null (no shape, another L, or a cadence that
+ * buys nothing).
  */
 export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0 } = {}) {
   if (!shape || !Array.isArray(shape.ln) || !shape.ln.length || !pos(cycleHours) || !num(shape.L) || Math.abs(shape.L - cycleHours) > 1e-9) return null
@@ -977,20 +979,39 @@ export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0
   if (!(total > 0)) return null
   const mean = total / n
   const lnG = Math.log(multGainPerCycle)
-  const scale = lnG / mean
+  // THE SEQUENCE AT THE MULTIPLIER REACHED (lifeplan.lifeGrowthOf): the
+  // row's sequence runs past its mean's horizon (shape.n lives), each life
+  // buying with the money and reputation of the multiplier the sequence has
+  // reached, and shape.mean is the row's lnMean — the model at TODAY's money
+  // over those n lives, the quantity the cadence posterior's prior and the
+  // ledger's recorded predictions are (lifetimes cadenceModel). So the scale
+  // is the posterior over that model, and what the growth adds on top of it
+  // is priced on top (where measured lives drive the posterior, part of the
+  // growth they measured is in g already: the shape errs high there, stated).
+  // Without them (a row before the growth): the mean of the whole sequence.
+  const nMean = Number.isInteger(shape.n) && shape.n > 0 && shape.n < n ? shape.n : n
+  const meanN = pos(shape.mean) ? shape.mean : nMean === n ? mean : seq.slice(0, nMean).reduce((a, b) => a + b, 0) / nMean
+  if (!(meanN > 0)) return null
+  const scale = lnG / meanN
   const S = [0]
   for (const v of seq) S.push(S[S.length - 1] + v)
-  // Cumulative model ln at fractional life x (the mean past the horizon).
+  // Past the sequence: its mean — or, where it runs past the mean's horizon
+  // (shape.n), the rate its last quarter reached (the lives there buy at the
+  // multiplier reached, not at the first lives').
+  const tail = nMean === n ? mean : seq.slice(n - Math.max(1, Math.floor(n / 4))).reduce((a, b) => a + b, 0) / Math.max(1, Math.floor(n / 4))
+  const past = tail > 0 ? tail : mean
+  const pastF = nMean === n ? 1 : Math.exp(scale * past - lnG)
+  // Cumulative model ln at fractional life x (the rate past the horizon).
   const Sat = (x) => {
     if (x <= 0) return 0
-    if (x >= n) return total + (x - n) * mean
+    if (x >= n) return total + (x - n) * past
     const k = Math.floor(x)
     return S[k] + (x - k) * seq[k]
   }
   // Where the sequence starts: the fractional life at which the cumulative reaches skipLn.
   let x0 = 0
   const skip = num(skipLn) && skipLn > 0 ? skipLn : 0
-  if (skip >= total) x0 = n + (skip - total) / mean
+  if (skip >= total) x0 = n + (skip - total) / past
   else if (skip > 0) {
     let k = 0
     while (k < n && S[k + 1] < skip) k++
@@ -999,7 +1020,7 @@ export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0
   const lives = Math.max(0, Math.ceil(n - x0 - 1e-9))
   const f = []
   for (let j = 1; j <= lives; j++) f.push(Math.exp(scale * (Sat(x0 + j) - Sat(x0 + j - 1)) - lnG))
-  return { at: (i) => (i >= 1 && i <= f.length ? f[i - 1] : 1), end: f.length + 1, x0, scale, lives: f.length }
+  return { at: (i) => (i >= 1 && i <= f.length ? f[i - 1] : i > f.length ? pastF : 1), end: f.length + 1, x0, scale, lives: f.length, pastF }
 }
 
 export function purchaseGainOf(cadence, L, from = null) {

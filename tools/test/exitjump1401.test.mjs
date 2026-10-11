@@ -171,7 +171,7 @@ export async function run() {
     const lp = code("lifeplan.js");
     const ep = code("exitplan.js");
     const need = [
-      [lp, /seq: seq\.map\(\(s\) => \+Math\.max\(0, s\.lnGain\)/, "lifeplan.js: lifeTableGen rows carry seq"],
+      [lp, /seq: seq(All)?\.map\(\(s\) => \+Math\.max\(0, s\.lnGain\)/, "lifeplan.js: lifeTableGen rows carry seq"],
       [lp, /cadenceShape: Array\.isArray\(row\.seq\)/, "lifeplan.js: lifeInputsOf carries cadenceShape"],
       [ep, /const shape = cadenceShapeOf\(o\.cadenceShape,/, "exitplan.js: exitHours reads the shape"],
       [ep, /cycleExtraAt\(i\) \* shapeAt\(i\)/, "exitplan.js: each later cycle carries the shape"],

@@ -36,7 +36,8 @@
  *
  * NOT MODELLED, and named in the result: donations (favour >= 150 buys
  * reputation with money — no faction here is there yet), the player's
- * faction_rep multiplier rising across lives (the rate is today's — a
+ * faction_rep multiplier rising across lives (the rate rises with the level
+ * each life's multiplier reaches, lifeGrowthOf, not with faction_rep — a
  * floor), sleeves working factions, joining new factions, the count gate's
  * value of a distinct augmentation (only hacking is valued), augmentations
  * other than hacking-multiplier ones beyond their count.
@@ -398,18 +399,81 @@ export function lifeBatch({ items, nfg, state, L, money, repPerHour0 }) {
 }
 
 /**
+ * A LATER LIFE AT THE MULTIPLIER IT HAS REACHED. Every life restarts at level
+ * 1 with the hacking multiplier its installs have raised, and the level is
+ * mult x (32 ln(exp + 534.6) - 200) (skill.ts calculateSkill, exitplan
+ * levelAt): the same exp buys a proportionally higher level, the scripts'
+ * income rises with (level + 50) (exitplan.hoursToMoney's shape) and their
+ * exp with the level (expRateShape, when the inputs say so), and faction work
+ * earns reputation in proportion to the level (getHackingWorkRepGain,
+ * PersonObjects/formulas/reputation.ts:16-24). The purchase model bought every
+ * life with TODAY's money and reputation: live BN13 2026-10-11 a 0.5h life's
+ * $17.7m held for all 399 lives to the exit, at x1.0013 a life.
+ *
+ * Integrated as freshLifeMoney integrates the level (the same steps, exp from
+ * 0), at multiplier M = hackingMult x e^lnM against M at lnM = 0 (today's: the
+ * money model's own): the hacking stream's money scales by the ratio of
+ * (level + 50)-hours, the reputation rate by the ratio of level-hours. The
+ * hacking stream is the money model's own (freshHackCum where supplied, x the
+ * calibration `scale`); the hacknet rebuild, the trader's return on the larger
+ * balance and the flat streams are held at today's (a floor), as are the
+ * batch's hacking_money, faction_rep and hacking_exp. Returns
+ * (lnM) => {money: the life's money, repK: its reputation multiple} or null.
+ */
+export function lifeGrowthOf(inputs, L, money0, scale = 1, { steps = 200 } = {}) {
+  if (!pos(L) || !pos(inputs?.hackingMult) || !num(money0)) return null
+  const xps = pos(inputs.expPerSec) ? inputs.expPerSec : 0
+  const xpsAt = expRateShape(xps, { scales: inputs.expScalesWithLevel === true, ref: inputs.hacking, flat: inputs.expFlatPerSec ?? 0 })
+  const dt = (L * 3600) / steps
+  const at = (M) => {
+    let exp = 0
+    let inc = 0
+    let lv = 0
+    for (let i = 0; i < steps; i++) {
+      const lvl = levelAt(exp, M)
+      inc += (lvl + 50) * dt
+      lv += lvl * dt
+      exp += xpsAt(lvl) * dt
+    }
+    return { inc, lv }
+  }
+  const ref = at(inputs.hackingMult)
+  if (!(ref.inc > 0) || !(ref.lv > 0)) return null
+  // The hacking stream alone, as the money model integrates it (calibrated).
+  const hackOnly = freshLifeMoney({ ...inputs, hacknet: null, flatIncomePerSec: 0, capitalReturnPerSec: 0, installCash: 0 }, L, scale)
+  const hackRef = pos(hackOnly) ? hackOnly : 0
+  const memo = new Map()
+  return (lnM) => {
+    const q = Math.round((num(lnM) ? lnM : 0) * 1000)
+    if (!memo.has(q)) {
+      const r = at(inputs.hackingMult * Math.exp(q / 1000))
+      memo.set(q, { money: Math.max(0, money0 + hackRef * (r.inc / ref.inc - 1)), repK: r.lv / ref.lv })
+    }
+    return memo.get(q)
+  }
+}
+
+/**
  * Lives of length L in a row: the catalogue depleting, favour accruing.
  * `nfgLevel0`: NeuroFlux levels bought before the first of these lives and
  * not in the catalogue's price (the next install's batch: the lives start
  * after it).
  */
-export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repPerHour0, nfgLevel0 = 0 }) {
+export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repPerHour0, nfgLevel0 = 0, growth = null, lnM0 = 0 }) {
   const state = { owned: new Set(owned ?? []), favor: { ...(favor ?? {}) }, nfgLevel: Number.isInteger(nfgLevel0) && nfgLevel0 > 0 ? nfgLevel0 : 0 }
   const out = []
-  const money = moneyAt(L)
+  const money0 = moneyAt(L)
+  // THE LIFE BUYS AT THE MULTIPLIER IT HAS REACHED (growth, lifeGrowthOf):
+  // lnM the multiplier over the one the money model is built at, raised by
+  // every earlier life's batch — its money and reputation at that level.
+  let lnM = num(lnM0) ? lnM0 : 0
   for (let i = 0; i < lives; i++) {
-    const b = lifeBatch({ items, nfg, state, L, money, repPerHour0 })
-    out.push({ lnGain: b.lnGain, chosen: b.chosen, nfgLevels: b.nfgLevels })
+    const k = typeof growth === 'function' ? growth(lnM) : null
+    const money = k && pos(k.money) ? k.money : money0
+    const rate = k && pos(k.repK) ? repPerHour0 * k.repK : repPerHour0
+    const b = lifeBatch({ items, nfg, state, L, money, repPerHour0: rate })
+    lnM += Math.max(0, b.lnGain)
+    out.push({ lnGain: b.lnGain, chosen: b.chosen, nfgLevels: b.nfgLevels, lnM, money: Math.round(money), repK: k ? +k.repK.toFixed(4) : 1 })
     for (const n of b.chosen) state.owned.add(n)
     state.nfgLevel += b.nfgLevels
     for (const [f, r] of Object.entries(b.rep)) state.favor[f] = repToFavor(favorToRep(state.favor[f] ?? 0) + r)
@@ -438,6 +502,9 @@ export function cadenceByPurchases(o = {}) {
  * the dev machine), PLAN BLOCKED THE PAGE.
  */
 export const LIFE_GRID = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24]
+/** The purchase sequence's reach (lifeTableGen `seq`): the exit's later lives, one by one, out to here. */
+export const SHAPE_H = 240
+export const SHAPE_LIVES = 480
 export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
   if (!catalogue || !pos(repPerHour0) || (typeof bestExitPolicy !== 'function' && typeof bestExitPolicyGen !== 'function')) return null
   // eslint-disable-next-line require-yield
@@ -489,7 +556,7 @@ export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPer
 export function lifeTable(o = {}) {
   return drain(lifeTableGen(o))
 }
-export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
+export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0, shapeH = SHAPE_H, maxShapeLives = SHAPE_LIVES, withGrowth = true }) {
   if (!catalogue || !pos(repPerHour0)) return null
   // Memoised per length: lifeSequence and the table row both ask, and with a
   // hacknet rebuild each answer is a small simulation.
@@ -503,14 +570,23 @@ export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, mo
     const n = Math.max(1, Math.min(maxLives, Math.round(horizonH / L)))
     if (!moneyMemo.has(L)) moneyMemo.set(L, (yield* freshLifeMoneyGen(inputs, L, moneyScale)) ?? 0)
     yield
-    const seq = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 })
+    // The sequence runs past the mean's horizon (shapeH: the exit walks its
+    // later lives one by one by it), each life buying at the multiplier the
+    // sequence has reached from the next install's batch on (lifeGrowthOf).
+    // The mean (the cadence posterior's prior) stays the first `n` lives'.
+    const N = Math.max(n, Math.min(maxShapeLives, Math.round(shapeH / L)))
+    const growth = withGrowth ? lifeGrowthOf(inputs, L, moneyAt(L), moneyScale) : null
+    const lnM0 = pos(inputs?.installGains?.hacking) && inputs.installGains.hacking > 1 ? Math.log(inputs.installGains.hacking) : 0
+    const seqAll = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: N, moneyAt, repPerHour0, nfgLevel0, growth, lnM0 })
     yield
+    const seq = growth ? lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0, nfgLevel0 }) : seqAll.slice(0, n)
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
+    const last = seqAll[seqAll.length - 1]
     // `seq`: each life's own ln gain, in order — the catalogue DEPLETES, so
     // the first lives after an install buy most of it (live BN12 2026-10-09
     // at 4h: 0.695, 0.129, 0.020, then ~0 — a mean of 0.072). The exit prices
     // the lives by it (exitplan cadenceShapeOf), not every life at the mean.
-    rows.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +Math.exp(mean).toFixed(4), lnMean: mean, perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0, seq: seq.map((s) => +Math.max(0, s.lnGain).toFixed(5)) })
+    rows.push({ L, lives: n, money: Math.round(moneyAt(L)), gain: +Math.exp(mean).toFixed(4), lnMean: mean, perHour: +(mean / L).toFixed(4), first: seq[0]?.chosen?.length ?? 0, firstNfg: seq[0]?.nfgLevels ?? 0, seq: seqAll.map((s) => +Math.max(0, s.lnGain).toFixed(5)), grown: growth ? { lives: N, moneyLast: last?.money ?? null, repKLast: last?.repK ?? null, lnMLast: last ? +last.lnM.toFixed(4) : null } : null })
   }
   return rows
 }
@@ -522,8 +598,10 @@ export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, mo
  * The update is Gaussian in ln(rate) with a precision that does not depend on
  * L (the model's structural error, the lives' scatter), so the posterior at
  * any L follows exactly from the one computed at `post.modelPrior` (L0):
- *   mean_L = mean_L0 + (1 - w) (ln m_L - ln m_L0),   sd_L = sd_L0
- * (w: the own lives' share of the rate's precision). `row`: the table row at L
+ *   mean_L = mean_L0 + (1 - w) s (ln m_L - ln m_L0),   sd_L = sd_L0
+ * (w: the own lives' share of the rate's precision; s: the model's share of
+ * the prior's, rate.modelShare — the cross-node prior it is blended with does
+ * not depend on L; 1 where the posterior carries none). `row`: the table row at L
  * (lnMean, the model's mean ln gain a life; `gain` where the row is rounded).
  * Returns {L, model (ln(M)/h), mean, sd, r (the median ln(M)/h), gain (the
  * point's per-life gain exp(r L)), weight} or null (nothing bought at L).
@@ -540,7 +618,8 @@ export function lifeCadenceAt(row, post) {
   let w = 0
   if (rate && num(rate.mean) && num(rate.sd) && pos(m0)) {
     w = num(rate.weight) ? rate.weight : 0
-    mean = rate.mean + (1 - w) * (Math.log(model) - Math.log(m0))
+    const mShare = num(rate.modelShare) ? rate.modelShare : 1
+    mean = rate.mean + (1 - w) * mShare * (Math.log(model) - Math.log(m0))
     sd = rate.sd
   }
   const r = Math.exp(mean)
@@ -574,7 +653,11 @@ export function lifeInputsOf(base, rec, L, post, { lifeLength = null, catalogue 
     // per-life ln gains at L, which the exit scales by the posterior (the
     // multGainPerCycle above over the model's mean) — the first life after
     // an install buys what the catalogue's front holds, not the 48h mean.
-    cadenceShape: Array.isArray(row.seq) && row.seq.length ? { L, ln: row.seq } : null,
+    // `n`: the lives the row's mean (the posterior's prior) is over — the
+    // sequence runs past them (lifeTableGen shapeH), at the multiplier reached.
+    // `share`: the model's share of the posterior's prior (the depletion is
+    // the model's; the cross-node part of the rate does not deplete).
+    cadenceShape: Array.isArray(row.seq) && row.seq.length ? { L, ln: row.seq, ...(Number.isInteger(row.lives) && row.lives > 0 && row.lives < row.seq.length ? { n: row.lives } : {}), ...(row.grown && pos(row.lnMean) ? { mean: row.lnMean } : {}) } : null,
     cadenceFrom: 'purchase model',
     cadenceRateMedian: c.r,
     cadence: {

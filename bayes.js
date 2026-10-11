@@ -1053,14 +1053,30 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     const ig = robustIG(C.model, xs, PRIORS.driftNu)
     const sm2 = ig.b / (ig.a - 1)
     modelErr = { sd: Math.sqrt(sm2), residuals: xs.length, source: xs.length ? `${xs.length} li${xs.length === 1 ? 'fe' : 'ves'} in other nodes recorded with the model's prediction` : 'stated (no life recorded with the model\'s prediction in another node)' }
-    const pm = Math.log(mp.lnPerHour)
-    const pv = sm2
-    const prior = { mean: pm, sd: Math.sqrt(pv), source: 'purchase model' }
+    const pmM = Math.log(mp.lnPerHour)
+    const pvM = sm2
+    // ...BLENDED WITH THE CROSS-NODE PRIOR (the hierarchy over the other
+    // nodes' measured rates at this node's covariate — what `one` gives the
+    // node before its own lives), by precision. The model's error above is
+    // only a variance: other nodes' lives sit far above it (live 2026-10-11,
+    // 12 recorded residuals mostly +2..+4 — no new joins, no rising
+    // faction_rep), so the model alone held BN13 at 0.0027/h x/÷ 21 with no
+    // own life to move it, against 0.061/h x/÷ 5.8 across nodes. Both are
+    // read from the same ledger (the residuals and the rates), so the blend
+    // counts those lives twice at most — stated. The node's own lives then
+    // update the blend as before.
+    const cross = one(C.rate, 'yR', vOf).prior
+    const wM = 1 / pvM
+    const wC = 1 / (cross.sd * cross.sd)
+    const pv = 1 / (wM + wC)
+    const pm = (pmM * wM + cross.mean * wC) * pv
+    const modelShare = wM * pv
+    const prior = { mean: pm, sd: Math.sqrt(pv), source: 'purchase model + cross-node', model: { mean: pmM, sd: Math.sqrt(pvM) }, cross: { mean: cross.mean, sd: cross.sd }, modelShare }
     const own = stats.get(node)
-    if (!own) return { mean: pm, sd: Math.sqrt(pv), prior, weight: 0 }
+    if (!own) return { mean: pm, sd: Math.sqrt(pv), prior, weight: 0, modelShare }
     const v = vOf(own)
     const prec = 1 / pv + 1 / v
-    return { mean: (pm / pv + own.yR / v) / prec, sd: Math.sqrt(1 / prec), prior, weight: 1 / v / prec }
+    return { mean: (pm / pv + own.yR / v) / prec, sd: Math.sqrt(1 / prec), prior, weight: 1 / v / prec, modelShare }
   }
   const rate = mp ? oneModel((st) => s2R / st.nEff) : one(C.rate, 'yR', (st) => s2R / st.nEff)
   // The life's LENGTH under the model is the model's decision (kept by the
@@ -1091,9 +1107,12 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = nul
     dups: lives.dups,
     sigma: { rate: Math.sqrt(s2R), life: Math.sqrt(s2L) },
     source: mp ? 'posterior (purchase-model prior)' : 'posterior',
-    modelPrior: mp ? { lnPerHour: mp.lnPerHour, cycleHours: mp.cycleHours ?? null, err: modelErr } : null,
+    modelPrior: mp ? { lnPerHour: mp.lnPerHour, cycleHours: mp.cycleHours ?? null, err: modelErr, modelShare: rate.modelShare, cross: rate.prior.cross } : null,
+    // WHICH DRIVES THE RATE THIS PASS: the node's own lives (>= half the
+    // precision), else the larger share of the prior.
+    drives: rate.weight >= 0.5 ? 'own lives' : mp ? (rate.modelShare >= 0.5 ? 'purchase model' : 'cross-node prior') : 'cross-node prior',
     why: mp
-      ? `cadence posterior for BitNode ${node} on the purchase model's prior: model ln(M) ${mp.lnPerHour.toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * modelErr.sd).toFixed(2)} at 80%, ${modelErr.source}) -> ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%); ` +
+      ? `cadence posterior for BitNode ${node} on the purchase model's prior: model ln(M) ${mp.lnPerHour.toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * modelErr.sd).toFixed(2)} at 80%, ${modelErr.source}) ${pct(rate.modelShare)}, blended with the cross-node ${Math.exp(rate.prior.cross.mean).toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * rate.prior.cross.sd).toFixed(2)}) ${pct(1 - rate.modelShare)} -> prior ${Math.exp(rate.prior.mean).toFixed(4)}/h -> ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%); DRIVEN BY ${rate.weight >= 0.5 ? "this node's own lives" : rate.modelShare >= 0.5 ? 'the purchase model' : 'the cross-node prior'}; ` +
         `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded)` : ''} carry ${pct(rate.weight)} of the rate` +
         (bladeAll ? `; ${bladeAll} Bladeburner-route li${bladeAll === 1 ? 'fe' : 'ves'} excluded (not the hacking route's cadence)` : '') +
         (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : '')
