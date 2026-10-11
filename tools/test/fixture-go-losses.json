@@ -9601,6 +9601,644 @@
      "why": "ply 7 as live grew it (liveTree, presend 1300, work 400 = Netburners' 200ms): the live config pre-sends 4,4 from a reply node valued by playouts below the net's depth and loses 0-22.5 (seed 252); nn.ponderDepth pre-sends 0,1 and wins (GL8)"
     }
    ]
+  },
+  {
+   "id": "live-2026-10-11T14:40:38.968Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-11T14:40:38.968Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "#...#.....#...#.O...#.#..",
+   "streakBefore": 174,
+   "live": {
+    "black": 13,
+    "white": 13.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "3,3",
+     "r": "2,2",
+     "T": 2579055600,
+     "s": "req",
+     "t": [
+      [
+       3,
+       3,
+       0.02,
+       257,
+       0.051
+      ],
+      [
+       2,
+       2,
+       0.023,
+       257,
+       0.054
+      ],
+      [
+       1,
+       3,
+       0.018,
+       160,
+       0.05
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1+1,3",
+     "r": "1,2",
+     "T": 2579059800,
+     "s": "cheat",
+     "t": [
+      [
+       1,
+       1,
+       0.038,
+       947,
+       0.096,
+       8
+      ],
+      [
+       1,
+       3,
+       0.042,
+       855,
+       0.103,
+       6
+      ],
+      [
+       1,
+       3,
+       0.03,
+       471,
+       0.085,
+       7
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      0,
+      1,
+      3
+     ]
+    },
+    {
+     "m": "2,3+3,2",
+     "r": "2,1",
+     "T": 2579063800,
+     "s": "cheat",
+     "t": [
+      [
+       2,
+       3,
+       -0.043,
+       1621,
+       0.023,
+       17
+      ],
+      [
+       -1,
+       -1,
+       -0.024,
+       1319,
+       0.045
+      ],
+      [
+       2,
+       3,
+       -0.034,
+       1139,
+       0.034,
+       3
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,3+0,2",
+     "r": "P",
+     "T": 2579067800,
+     "s": "cheat",
+     "t": [
+      [
+       0,
+       3,
+       -0.046,
+       101265,
+       0.001,
+       2
+      ],
+      [
+       0,
+       1,
+       -0.061,
+       1403,
+       0.006,
+       2
+      ],
+      [
+       0,
+       2,
+       -0.064,
+       650,
+       0.022,
+       24
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,4",
+     "r": "P",
+     "T": 2579068600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "P",
+     "T": 2579069600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,0",
+     "r": "P",
+     "T": 2579070400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2579071400,
+     "s": "pre"
+    }
+   ],
+   "note": "Lost 13-13.5 at streak 174 (komi 7.5, crime_success 1.7643 / SF14.3, the BN13 value; it was 3.33 at the 2026-10-09 measurements). A hard layout (6 offline nodes + a handicap stone): our first search read 0.05. Lost by DECISION at ply 1, the hard-move pair: live played 1,1+1,3 (pair top 1,1+1,3 947 visits 0.096, 1,3+1,1 855, 1,3+1,2 471 0.085; single 0.028) and the AI took the vital 1,2. The replay from ply 1 plays a pair whose second stone is 1,2 (1,1+1,2 or 1,3+1,2) in 56/56 decisions (work 200/400/800/1600, pondered 8000, liveTree + ponder 3000/8000 with cheats, seeds 1-8) and wins 15/15 (13-12.5, work 800/1600, seeds 1-6); from ply 2 (the live pair forced) it loses 11/12 (13-13.5 as live). Known class: the hard pair's second stone. OPEN because the replay does not reproduce the live pair choice: what live's pair search had that the replay lacks is unidentified (go-solver flags at the 11:45:26Z start match the 10:03:20Z start's). The checks pin the loss to ply 1 (from ply 2 = lost earlier).",
+   "cheat": {
+    "crime": 1.7643,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 2,
+     "work": 800,
+     "why": "ply 2, the live pair 1,1+1,3 forced: the AI's 1,2 decides it (13-13.5 as live); ply 1's replay plays a 1,2 second stone and wins"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "seed": 2,
+     "why": "ply 2, the live pair 1,1+1,3 forced: the AI's 1,2 decides it (13-13.5 as live); ply 1's replay plays a 1,2 second stone and wins"
+    }
+   ],
+   "status": "open"
+  },
+  {
+   "id": "live-2026-10-11T14:46:11.840Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-11T14:46:11.840Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "#..#.#....#....#..O.#.#.#",
+   "streakBefore": 31,
+   "live": {
+    "black": 0,
+    "white": 24.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "2,3",
+     "T": 2579383600,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.046,
+       470,
+       0.083
+      ],
+      [
+       0,
+       1,
+       0.105,
+       468,
+       0.141
+      ],
+      [
+       1,
+       3,
+       0.067,
+       85,
+       0.094
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,2+3,2",
+     "r": "2,4",
+     "T": 2579387800,
+     "s": "cheat",
+     "t": [
+      [
+       -1,
+       -1,
+       0.006,
+       1810,
+       0.061
+      ],
+      [
+       1,
+       2,
+       -0.011,
+       1139,
+       0.038,
+       17
+      ],
+      [
+       3,
+       2,
+       -0.01,
+       895,
+       0.038,
+       7
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,3+3,1",
+     "r": "1,4",
+     "T": 2579391800,
+     "s": "cheat",
+     "t": [
+      [
+       1,
+       3,
+       -0.05,
+       1869,
+       0.012,
+       16
+      ],
+      [
+       -1,
+       -1,
+       -0.038,
+       1091,
+       0.025
+      ],
+      [
+       3,
+       1,
+       -0.054,
+       890,
+       0.006,
+       8
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1+0,1",
+     "r": "P",
+     "T": 2579395800,
+     "s": "cheat",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.033,
+       717076,
+       0
+      ],
+      [
+       1,
+       1,
+       -0.071,
+       1466,
+       0.003,
+       1
+      ],
+      [
+       0,
+       1,
+       -0.072,
+       1446,
+       0.002,
+       6
+      ]
+     ],
+     "note": "a two-move cheat",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "P",
+     "T": 2579396800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,2",
+     "r": "2,1",
+     "T": 2579397800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "3,1",
+     "T": 2579398600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "2,2",
+     "T": 2579399400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,3",
+     "r": "1,2",
+     "T": 2579401000,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.103,
+       1694708,
+       0
+      ],
+      [
+       1,
+       3,
+       -0.118,
+       13896,
+       0
+      ],
+      [
+       1,
+       1,
+       -0.126,
+       8438,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,2",
+     "r": "0,1",
+     "T": 2579402600,
+     "s": "req",
+     "t": [
+      [
+       -1,
+       -1,
+       -0.114,
+       1932817,
+       0
+      ],
+      [
+       0,
+       2,
+       -0.125,
+       20946,
+       0
+      ],
+      [
+       1,
+       1,
+       -0.125,
+       19093,
+       0
+      ]
+     ],
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2579403600,
+     "s": "req"
+    }
+   ],
+   "note": "Lost 0-24.5 at streak 31 (komi 7.5, crime_success 1.7643 / SF14.3). A hard layout (8 offline nodes + a handicap stone). Lost by DECISION at ply 0, an unpondered request: live played 2,2 at 470 visits 0.083 over 0,1 at 468 visits 0.141 (most visits wins). Replay ply-0 picks: work 300 2,2 7/8; 800 2,2 5/8, 0,1 3/8; 1600 0,1 4/8, 2,2 2/8, 1,4 1, 3,1 1. Every replay that plays 2,2 loses (5/5 at work 800, and from ply 1 with 2,2 forced 11/12 at work 800/1600); every replay that plays 0,1 or 1,4 wins (6/6, 17-7.5 / 12-10.5). Class: opening search strength on a hard layout (a near-tie at the root), not a cheat-policy bug; the levers (an opening budget, a book entry for the layout) are unmeasured (no paired harness: bubtop unreachable 2026-10-11).",
+   "cheat": {
+    "crime": 1.7643,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 0,
+     "work": 800,
+     "seed": 4,
+     "why": "ply 0 at work 800: this seed's search plays 2,2 as live and loses; seeds that play 0,1 win"
+    },
+    {
+     "from": 0,
+     "work": 800,
+     "seed": 5,
+     "why": "ply 0 at work 800: this seed's search plays 2,2 as live and loses; seeds that play 0,1 win"
+    }
+   ],
+   "status": "open"
   }
  ]
 }
