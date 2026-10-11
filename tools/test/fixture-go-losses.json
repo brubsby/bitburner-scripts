@@ -10239,6 +10239,532 @@
     }
    ],
    "status": "open"
+  },
+  {
+   "id": "live-2026-10-11T21:26:29.356Z-Daedalus",
+   "source": "live",
+   "at": "2026-10-11T21:26:29.356Z",
+   "opponent": "Daedalus",
+   "size": 5,
+   "komi": 5.5,
+   "start": "#.#.##....#....#....#..#.",
+   "streakBefore": 426,
+   "live": {
+    "black": 7,
+    "white": 15.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "2,3",
+     "T": 2603407200,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.098,
+       422,
+       0.175
+      ],
+      [
+       3,
+       2,
+       0.135,
+       93,
+       0.204
+      ],
+      [
+       2,
+       3,
+       0.085,
+       22,
+       0.136
+      ]
+     ],
+     "ks": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,3",
+     "T": 2603408400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,4",
+     "r": "2,4",
+     "T": 2603410000,
+     "s": "pre",
+     "ks": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "1,2",
+     "T": 2603410800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "P",
+     "T": 2603412000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "P",
+     "T": 2603412800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,1",
+     "r": "P",
+     "T": 2603413800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "P",
+     "T": 2603414600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,1",
+     "r": "P",
+     "T": 2603415600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,4",
+     "r": "4,2",
+     "T": 2603416400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "3,3",
+     "T": 2603417200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,4",
+     "r": "4,4",
+     "T": 2603418400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,1",
+     "r": "3,4",
+     "T": 2603419000,
+     "s": "pre",
+     "ks": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "2,2",
+     "T": 2603420000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,1",
+     "r": "P",
+     "T": 2603420800,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2603421800,
+     "s": "pre"
+    }
+   ],
+   "nets": true,
+   "checks": [
+    {
+     "red": "2026-10-11, replayed with the fix off: red under nn.ponderDepth off (go-solver --ponder-depth-on none) 7-15.5 (live's score)",
+     "from": 1,
+     "work": 800,
+     "seed": 2,
+     "presend": 1200,
+     "liveTree": true,
+     "why": "ply 1 as live grew it (liveTree, presend 1200, work 800 = Daedalus' 400ms): without nn.ponderDepth the ponder under 2,2 pre-sends 3,2 to the AI's 2,3 and the game is lost (the AI passes five times while black fills, then 7-15.5); nn.ponderDepth (on for Daedalus) pre-sends 1,3 and wins 17-5.5"
+    },
+    {
+     "tier": "slow",
+     "red": "2026-10-11, replayed with the fix off: red under nn.ponderDepth off 0-22.5",
+     "from": 1,
+     "work": 800,
+     "seed": 6,
+     "presend": 1200,
+     "liveTree": true,
+     "why": "ply 1 as live grew it (liveTree, presend 1200, work 800 = Daedalus' 400ms): without nn.ponderDepth the ponder under 2,2 pre-sends 3,2 to the AI's 2,3 and the game is lost (the AI passes five times while black fills, then 7-15.5); nn.ponderDepth (on for Daedalus) pre-sends 1,3 and wins 17-5.5"
+    },
+    {
+     "tier": "slow",
+     "red": "2026-10-11, replayed with the fix off: red under nn.ponderDepth off 0-22.5",
+     "from": 1,
+     "work": 800,
+     "seed": 12,
+     "presend": 1200,
+     "liveTree": true,
+     "why": "ply 1 as live grew it (liveTree, presend 1200, work 800 = Daedalus' 400ms): without nn.ponderDepth the ponder under 2,2 pre-sends 3,2 to the AI's 2,3 and the game is lost (the AI passes five times while black fills, then 7-15.5); nn.ponderDepth (on for Daedalus) pre-sends 1,3 and wins 17-5.5"
+    }
+   ],
+   "status": "fixed",
+   "note": "BN13.1, streak 426, no cheats, 7-15.5. Lost at ply 1 by the PRE-SENT 3,2 (the ponder under 2,2 answering the AI's 2,3); live's ply-0 request read 0.175 (2,2 at 422 visits). A request search at 800 work plays 1,3 on most seeds (go-fixture probe: 1,3 at 0.335) and 1,3 wins 17-5.5. Replayed as live grew it (go-regress liveTree, presend 1200, work 800): the live config (b4c32 depth 1, counted from our committed move) pre-sends 3,2 in 9/15 seeds (1-15) and loses all 9; seed 2 is live's exact line (the AI passes at plies 4-8 while black fills its own area, then 7-15.5). Same class as the 2026-10-11 12:36:32Z Netburners case: a pre-sent answer whose children lie beyond the net's depth, priced by playouts. golib nn.ponderDepth pre-sends 1,3 (or 1,2) in 14/15 and wins 14/15 (seed 3 pre-sends 3,2 and loses either way: not a check). MEASURED on the paired harness (bubtop, Daedalus live config + b4c32 depth 1, --work-rate 1.7, 9 layout seeds x 75): +4.4% [+1.8, +7.2] power/s, 675 paired, lost 1 -> 0 — ON for Daedalus (go-solver --ponder-depth-on default). On the 2026-10-09 20:52:10Z Daedalus case (also a stale pre-send) it is neutral: ply 2 seeds 30-44 (liveTree, presend 1500) win 12/15 with it vs 13/15 without (fixes 31 and 37, loses 34, 38, 39)."
+  },
+  {
+   "id": "live-2026-10-11T15:21:42.164Z-Illuminati",
+   "source": "live",
+   "at": "2026-10-11T15:21:42.164Z",
+   "opponent": "Illuminati",
+   "size": 5,
+   "komi": 7.5,
+   "start": "#.....O..##...#.....#...#",
+   "streakBefore": 69,
+   "live": {
+    "black": 0,
+    "white": 26.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "1,2"
+    },
+    {
+     "m": "3,3+2,3",
+     "r": "1,3",
+     "note": "a two-move cheat"
+    },
+    {
+     "m": "2,1+3,1",
+     "r": "P",
+     "note": "a two-move cheat"
+    },
+    {
+     "m": "4,1",
+     "r": "P"
+    },
+    {
+     "m": "0,3",
+     "r": "0,2"
+    },
+    {
+     "m": "3,2",
+     "r": "0,4"
+    },
+    {
+     "m": "4,2",
+     "r": "0,3"
+    },
+    {
+     "m": "3,4",
+     "r": "P"
+    },
+    {
+     "m": "3,0",
+     "r": "4,3"
+    },
+    {
+     "m": "3,1",
+     "r": "3,2"
+    },
+    {
+     "m": "4,1",
+     "r": "2,1"
+    },
+    {
+     "m": "4,2",
+     "r": "3,0"
+    },
+    {
+     "m": "2,3",
+     "r": "3,1"
+    },
+    {
+     "m": "2,2",
+     "r": "3,3"
+    },
+    {
+     "m": "2,3",
+     "r": "2,2"
+    },
+    {
+     "m": "4,1",
+     "r": "4,2"
+    },
+    {
+     "m": "P",
+     "r": "G"
+    }
+   ],
+   "cheat": {
+    "crime": 1.7643,
+    "sf14": 3
+   },
+   "nets": true,
+   "checks": [
+    {
+     "from": 1,
+     "work": 800,
+     "seed": 2,
+     "why": "ply 1, the hard pair on a hard layout (6 offline nodes + a handicap stone): this seed's pair search plays 2,1+3,3, the AI takes 1,3 and the game is lost 11-15.5; seeds 1, 3-8 play 0,3+1,3 / 0,3+3,1 / 0,3+0,2 and win"
+    },
+    {
+     "from": 2,
+     "work": 800,
+     "why": "ply 2, live's pair 3,3+2,3 forced: the AI's 1,3 decides it (every replay from ply 2 loses, seeds 1-6: 11-15.5 x5, 0-26.5)"
+    }
+   ],
+   "status": "open",
+   "note": "BN13.1 (crime_success 1.7643 / SF14.3; priced cheat wait ON since a640f92), streak 69, 0-26.5. The full record had rolled out of go-games.txt (keep 500) before diagnosis; only the loss watcher's line survives (moves, score, streak: no playtimes, search tops or pre/req flags). START RECONSTRUCTED (tools: enumerate every unplayed point as empty/offline/handicap, keep the layouts on which every logged move is legal, the final score is the logged one and every AI reply is one the game's AI produces at some playtime): #.....O..##...#.....#...# is the ONLY one of 19,683 candidates (one handicap stone) consistent with the line and the 0-26.5 score, every AI reply reproduced. Lost by a DECISION at ply 1: the hard pair 3,3+2,3 (live), after which the AI took the vital 1,3. From ply 1 the replay (cheat policy at 1.7643, nets, work 800) wins 7/8 seeds by pairing at 0,3 (0,3+1,3 / 0,3+3,1); from ply 2 (live's pair forced) it loses 6/6. Same class as the 14:40:38Z Illuminati case (a hard layout's ply-1 pair leaving the vital point to the AI; the live pair choice does not reproduce at the replay's budget): open. The live pair's own search was not logged in the surviving line, so whether the pair search or the priced cheat wait chose it is unknown."
+  },
+  {
+   "id": "live-2026-10-11T17:16:53.779Z-Daedalus",
+   "source": "live",
+   "at": "2026-10-11T17:16:53.779Z",
+   "opponent": "Daedalus",
+   "size": 5,
+   "komi": 5.5,
+   "start": "....#.....#...##.........",
+   "streakBefore": 113,
+   "live": {
+    "black": 12,
+    "white": 14.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "1,3"
+    },
+    {
+     "m": "1,2",
+     "r": "3,3"
+    },
+    {
+     "m": "3,2",
+     "r": "1,1"
+    },
+    {
+     "m": "4,4",
+     "r": "3,4"
+    },
+    {
+     "m": "2,3",
+     "r": "0,2"
+    },
+    {
+     "m": "4,3",
+     "r": "2,1"
+    },
+    {
+     "m": "3,1",
+     "r": "0,1"
+    },
+    {
+     "m": "1,0",
+     "r": "0,0"
+    },
+    {
+     "m": "3,4",
+     "r": "0,3"
+    },
+    {
+     "m": "4,2",
+     "r": "P"
+    },
+    {
+     "m": "4,0",
+     "r": "P"
+    },
+    {
+     "m": "P",
+     "r": "G"
+    }
+   ],
+   "nets": true,
+   "checks": [],
+   "status": "open",
+   "note": "BN13.1, streak 113, no cheats, 12-14.5. The full record had rolled out of go-games.txt (keep 500) before diagnosis; only the loss watcher's line survives (moves, score, streak: no playtimes, search tops or pre/req flags). START RECONSTRUCTED (tools: enumerate every unplayed point as empty/offline/handicap, keep the layouts on which every logged move is legal, the final score is the logged one and every AI reply is one the game's AI produces at some playtime): the line is NOT uniquely determined: 9 of 64 candidates are legal with at most 3 AI replies unexplained; two match the score with 2 unexplained replies, ....#.....#...##......... (stored) and ....#.....#...#......#... . They disagree on the turning decision (go-fixture critical ply: ply 5, live 4,3, replay 0,0 wins 16-9.5, on the stored layout; ply 4, live 2,3, replay 0,1 wins 21-5.5, on the other), and both layouts carry fewer offline nodes than this node's boards usually do. No checks: a regression check on a layout that may not be the game's would test nothing. Unclassified; plausibly the stale pre-send class (Daedalus, mid-game, as 21:26:29Z), unprovable without the s/t fields."
   }
  ]
 }

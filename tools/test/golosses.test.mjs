@@ -118,7 +118,7 @@ export async function run() {
   const nb = fixture.cases.find((c) => c.id === "live-2026-10-09T17:24:13.315Z-Netburners");
   const gl5 = QUICK || !nb ? [] : nb.checks.filter((x) => x.from === 8).map((ch) => ({ ch, off: settle(pool.run(nb, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, openPass: "allow" })) }));
   const dl = fixture.cases.find((c) => c.id === "live-2026-10-09T20:52:10.371Z-Daedalus");
-  const gl6 = QUICK || !dl ? [] : dl.checks.filter((x) => x.liveTree).map((ch) => ({ ch, off: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: -1 } })), on: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: 16 } })) }));
+  const gl6 = QUICK || !dl ? [] : dl.checks.filter((x) => x.liveTree).map((ch) => ({ ch, off: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: -1, ponderDepth: false } })), on: settle(pool.run(dl, { from: ch.from, work: ch.work, seed: ch.seed, presend: ch.presend, liveTree: true, nnOver: { lateCap: 16, ponderDepth: false } })) }));
   const il = fixture.cases.find((c) => c.id === "live-2026-10-09T22:10:40.965Z-Illuminati");
   const GAME_RULE = { secondRule: "game", secondRoot: "game" };
   const gl7 = QUICK || !il ? [] : il.checks.map((ch) => ({ ch, on: settle(pool.run(il, { ...optsOf(ch), cheatPolicy: GAME_RULE })) }));
@@ -175,7 +175,9 @@ export async function run() {
   // the game is lost 0-27.5 — and the cap (golib nn.lateCap 16, measured
   // neutral and off) still wins them, so the option keeps doing what it was
   // built for. (Slow tier. Like the removed GL4 it guards an option that is
-  // off live; kept while the late-cap work is current.)
+  // off live; kept while the late-cap work is current.) Both arms pin
+  // nn.ponderDepth off (on for Daedalus since 2026-10-11): they measure the
+  // cap alone, on the tree the bug was found on.
   const c6 = new Check("GL6", "the 2026-10-09 20:52:10Z Daedalus case: without the late-prior cap the replayed ponder pre-sends the stale 4,3 at ply 2 and loses; nn.lateCap 16 wins it");
   checks.push(c6);
   if (!dl) c6.fail("the case is not in the corpus");

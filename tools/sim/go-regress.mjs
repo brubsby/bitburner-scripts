@@ -73,7 +73,7 @@ export const PRIOR_FLOOR_ON = new Map();
 // Mirror of go-solver.mjs --late-cap-on (golib nn.lateCap, THE LATE PRIOR).
 export const LATE_CAP_ON = new Map();
 // Mirror of go-solver.mjs --ponder-depth-on (golib nn.ponderDepth).
-export const PONDER_DEPTH_ON = new Set();
+export const PONDER_DEPTH_ON = new Set(["Daedalus"]);
 // Mirror of go-solver.mjs --open-pass-visits (golib opts.openPass 'visits').
 export const OPEN_PASS_VISITS = new Set(["Netburners"]);
 export const openPassFor = (opponent) => (OPEN_PASS_VISITS.has(planKey(opponent)) ? "visits" : null);

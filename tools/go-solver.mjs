@@ -503,9 +503,16 @@ console.log(`go-solver: late-prior cap ${LATE_CAP_ON.size ? [...LATE_CAP_ON].map
 // Replayed (go-regress liveTree, presend 1300, work 400): the live config
 // pre-sends 4,4 in 12/244 seeds (0,1 210) and loses 4 of those 10 replayed;
 // ponderDepth pre-sends 0,1 in 44/44 (seeds 17-60) and wins those 4 (GL8).
-// NOT MEASURED on the paired harness (bubtop unreachable 2026-10-11): off.
+// The 2026-10-11 21:26:29Z Daedalus loss (streak 426, 7-15.5) is the same
+// class: ply 1's pre-sent 3,2 (liveTree, presend 1200, work 800: 9/15 seeds
+// pre-send 3,2 and lose, seed 2 exactly as live) — ponderDepth pre-sends 1,3
+// and wins 14/15.
+// MEASURED, paired, live config + b4c32 depth 1, --work-rate 1.7 (bubtop):
+//   Daedalus    +4.4% [+1.8, +7.2] power/s, 675 paired, lost 1 -> 0    ON
+//   Netburners  -3.9% [-6.8, -0.9] power/s, 675 paired (+ openPass visits), lost 1 -> 0;
+//               games 5.36 -> 5.61 s (the net evaluations at the 200ms budget)  OFF
 const PONDER_DEPTH_ON = new Set(
-  str("ponder-depth-on", "none")
+  str("ponder-depth-on", "Daedalus")
     .split(",")
     .map((s) => s.trim().replace(/\s+/g, ""))
     .filter((s) => s && s !== "none"),
