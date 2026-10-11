@@ -128,9 +128,11 @@ export async function run() {
       if (Math.abs(s.at(6) - 1) > 1e-12 || s.end !== 6) c.fail(`past the sequence the mean (factor 1): ${s.at(6)}, end ${s.end}`);
       const k = E.cadenceShapeOf({ L: 6, ln: seq }, { cycleHours: 6, multGainPerCycle: g, skipLn: 0.35 });
       c.note(`skip 0.35: ${[1, 2, 3, 4, 5].map((i) => Math.log(g * k.at(i)).toFixed(3)).join(" ")}`);
-      // 0.35 of model ln skipped = half of life 1: the next life is the
-      // second half of life 1 and the first half of life 2 (0.35 + 0.1).
-      if (Math.abs(Math.log(g * k.at(1)) - 0.225) > 1e-9 || Math.abs(Math.log(g * k.at(2)) - 0.075) > 1e-9) c.fail("a batch beyond the baseline takes the catalogue's front: life 1 starts half way into the sequence's first life");
+      // A batch of ln 0.35 takes 0.35 of the PRICED ln (scale 0.5: 0.7 of
+      // the model's) — all of life 1 as priced: the next life is the
+      // sequence's second (samebuilder.test.mjs SB1: the batch's ln comes
+      // off the later lives once; it took 0.35 of the model's, half of it).
+      if (Math.abs(Math.log(g * k.at(1)) - 0.1) > 1e-9 || Math.abs(Math.log(g * k.at(2)) - 0.05) > 1e-9) c.fail("a batch beyond the baseline takes the catalogue's front at the priced ln: a 0.35 batch is all of life 1 as priced (0.35)");
       if (E.cadenceShapeOf({ L: 4, ln: seq }, { cycleHours: 6, multGainPerCycle: g }) !== null) c.fail("a shape for another L must not apply");
       // In the exit: the same total over the sequence's lives as the mean's.
       const base = { ...POST, firstInstallH: 1, installGains: POST.installGains, persistBaseline: POST.installGains };

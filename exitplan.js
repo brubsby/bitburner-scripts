@@ -962,7 +962,8 @@ function stepsOf(extra, carried) {
  * `skipLn`: the first install's batch beyond the batch the table was built
  * after (installGains / persistBaseline, hacking): those augmentations are
  * gone from the front of the catalogue, so the sequence starts that far in
- * (fractional lives, in the model's ln). Past the sequence's horizon, the
+ * (fractional lives, at the ln the lives are PRICED at: skipLn / scale of
+ * the model's — the batch's ln is taken off the later lives once). Past the sequence's horizon, the
  * mean, as every life was priced before (the table prices no further) — or,
  * for a sequence grown past its mean's horizon (shape.n), the rate its last
  * quarter reached. Returns {at(i): the factor on install i's cycle gain
@@ -1008,9 +1009,19 @@ export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0
     const k = Math.floor(x)
     return S[k] + (x - k) * seq[k]
   }
-  // Where the sequence starts: the fractional life at which the cumulative reaches skipLn.
+  // Where the sequence starts: the fractional life at which the cumulative
+  // AS PRICED (scale x the model's) reaches skipLn. skipLn is a real batch's
+  // ln — what this life buys, priced at x1 as the first install's gain — so
+  // it takes exactly that much off the lives after it: the model's cumulative
+  // at skipLn / scale. It took skipLn of the MODEL's ln, which the lives are
+  // priced at `scale` times: live BN13.1 2026-10-11 (scale 3.31) every ln a
+  // batch bought now cost 3.31 of the next lives' — a lone NeuroFlux level
+  // (ln 0.014) priced a 15-minute wait 3.7h worse than installing now, and
+  // faction work's richer batch lost the work slot to crime (19:27Z,
+  // tools/test/samebuilder.test.mjs). One trajectory of ln bought: a batch
+  // bought earlier is bought earlier, not bought 3.31 times over.
   let x0 = 0
-  const skip = num(skipLn) && skipLn > 0 ? skipLn : 0
+  const skip = (num(skipLn) && skipLn > 0 ? skipLn : 0) / scale
   if (skip >= total) x0 = n + (skip - total) / past
   else if (skip > 0) {
     let k = 0

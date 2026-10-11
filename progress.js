@@ -8509,7 +8509,12 @@ async function act(ns, canJoin, info, note) {
         const { hold = null } = cand
         if (typeof replanAt !== 'function' || !(typeof waitH === 'number' && isFinite(waitH) && waitH >= 0)) return null
         const repGain = ftraj ? ftraj.repBetween(0, waitH, favMult) : 0
-        const moneyGain = itraj ? itraj.moneyBy(waitH) : incomePerSec * waitH * 3600
+        // THE SLOT THIS PASS RUNS (slotOwner): faction work advances its
+        // faction above (workingFaction is the faction ordered this pass);
+        // crime earns the crime's money, as crimeAlt priced the slot — a
+        // wait is credited what the slot policy actually does with it.
+        const crimeGain = slotOwner === 'crime' && crimeAlt?.perHour > 0 ? crimeAlt.perHour * waitH : 0
+        const moneyGain = (itraj ? itraj.moneyBy(waitH) : incomePerSec * waitH * 3600) + crimeGain
         const gangRep = gangRepIn(waitH)
         // One slot: a hold elsewhere moves it, the worked faction stops (factionplan.advancedOffersOf).
         const advanced = advancedOffersOf(offers, { workingF, repGain, hold, gangFaction: gangCtx?.faction ?? null, gangRep })
