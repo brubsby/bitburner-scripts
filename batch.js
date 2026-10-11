@@ -82,7 +82,7 @@ import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
 import { stockRecordOf, stockFlagFor, STOCK_FILE } from 'nodeecon.js'
 // Pure: exp-per-GB-second scoring, wave sizing and the manip verdict
 // (expfarm.js), the node table, and the exit simulator the verdict runs.
-import { portTiers, expMode, expScore, batchedScore, expPerThread, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, moneyModelOf, farmHoldGB, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
+import { portTiers, expMode, expScore, batchedScore, expPerThread, prepGrowPlan, waveSize, wavePeriod, manipVerdict, manipBlocker, manipUnservableWhy, moneyModelOf, farmHoldGB, FORTIFY as EXP_FORTIFY, WEAKEN_AMOUNT as EXP_WEAKEN } from 'expfarm.js'
 // Pure: the split's METER (splitctl.js) — what the running money share
 // actually yields, from this file's own counters, for progress.js's closed loop.
 import { meterNew, meterAdd, meterTick, meterReport, SPLIT_GRID } from 'splitctl.js'
@@ -2167,12 +2167,14 @@ export async function main(ns) {
             hostSlice(host),
           )
           // One weaken thread cancels 0.05 of security; one grow thread adds
-          // 2*0.002. So a grow needs 0.08 weaken threads alongside it.
-          const perGrow = ram.grow + 0.08 * ram.weaken
-          let gWant = Math.min(gNeed, Math.floor(budget / perGrow))
-          if (!isFinite(gWant) || gWant < 0) gWant = 0
-
-          const wCover = gWant >= 1 ? Math.ceil(0.08 * gWant) + 1 : 0
+          // 2*0.002. So a grow needs 0.08 weaken threads alongside it — and
+          // the tick launches only when the grow AND its cover fit, in a
+          // chunk (expfarm.prepGrowPlan): a cover launched each second for a
+          // grow that did not fit held ~140GB of BN13.1's pool on weakens at
+          // minimum security.
+          const pg = prepGrowPlan({ gNeed: isFinite(gNeed) ? gNeed : 1e9, budgetGB: budget, sliceGB: hostSlice(host), freeGBs: [...free.values()], perThreadGB: Math.max(ram.grow, ram.weaken), cover: 0.08 })
+          const gWant = pg.g
+          const wCover = pg.w
           const wLaunched = wCover >= 1 ? spread(ns, free, ram, 'weaken', host, wCover, batchId++) : 0
           const gLaunched = gWant >= 1 ? spread(ns, free, ram, 'grow', host, gWant, batchId++) : 0
 

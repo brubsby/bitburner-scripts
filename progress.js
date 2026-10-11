@@ -3133,10 +3133,15 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     // WHERE HACKING PAYS NOTHING (BitNode 8) RAM's only return is hacking exp,
     // and home RAM keeps it across installs — so home's verdict carries the
     // exp its RAM adds to the climb (exitplan.spendExit expGainPerSec). The
-    // script exp rate is tel.js's; per GB against the batcher's RAM. Elsewhere
-    // this stays null and home prices by income alone, as it always has.
+    // script exp rate is tel.js's; per GB against the batcher's RAM.
+    // EVERYWHERE, NOT ONLY WHERE HACKING PAYS NOTHING: the fleet's RAM earns
+    // money AND exp at the running split (both are its averages per GB), and
+    // home keeps the exp's channel across installs. Live BN13.1 the exit's
+    // hours per ln were hacking 82 vs income ~0 (HackExpGain 0.1, the gift's
+    // hacking route): priced by income alone, home's one real return — the
+    // exp its RAM adds to the climb — was left out of its verdict.
     const expPerGB = (() => {
-      if (econNow?.hackPays !== false || !(ramTotal > 0)) return null
+      if (!(ramTotal > 0)) return null
       const t = readJson(ns, '/tel/status.txt')
       const age = Date.now() - Date.parse(t?.at ?? '')
       return age >= 0 && age < 5 * 60e3 && t?.expPerSec > 0 ? t.expPerSec / ramTotal : null
@@ -3145,6 +3150,14 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       if (!(gainPerSec >= 0)) return { buy: false, cost, why: 'income response unreadable', ...extra }
       const r = spendExit({ ...common, cost, gainPerSec, persists, expGainPerSec })
       if (r.deltaH === null) return { buy: false, cost, why: r.why, ...extra }
+      // SAVED FOR, NOT BOUGHT NOW (exitplan saveForSpend): the with-arm holds
+      // the install to r.save.atH. Priced and published; `buy` stays false —
+      // no install hold acts on this verdict yet, so approving a purchase
+      // the money cannot reach before W would claim what it does not do.
+      if (r.save) {
+        const pSave = decideSpend({ deltaH: r.deltaH, withoutH: r.withoutH, si: planCtxOf(ns, info)?.post?.jitter?.si ?? null })
+        return { buy: false, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, save: { ...r.save, wins: pSave ? pSave.buy : r.deltaH < 0, pBuy: pSave?.pBuy ?? null }, notSimulated: r.notSimulated, why: `SAVE FOR IT: exit ${r.withH.toFixed(2)}h holding the install to ${r.save.atH.toFixed(2)}h and buying vs ${r.withoutH.toFixed(2)}h installing at ${W.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)${pSave ? ` — plan: ${pSave.why}` : ''} — not acted: no install hold follows this verdict`, ...extra }
+      }
       // THE PLAN'S RULE FOR A PURCHASE (plan.decideSpend): buy only when the
       // saving beats the simulator's measured option-specific error with
       // P >= PLAN.theta — a 0.01h "saving" is a tie, not a verdict.
@@ -3167,7 +3180,10 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     const homeCores = wdNext?.cores > 0 ? wdNext.cores : null
     if (next?.cost > 0 && perGB !== null && homeRam && homeCores) {
       const gain = next.kind === 'RAM' ? perGB * homeRam : perGB * homeRam * (1 / (15 + homeCores))
-      out.home = verdict(next.cost, gain, true, { kind: next.kind })
+      // A RAM block adds the fleet's average exp per GB too (cores speed only
+      // grow/weaken: no hack exp, ServerHelpers core bonus).
+      const expGain = next.kind === 'RAM' && expPerGB !== null ? expPerGB * homeRam : 0
+      out.home = verdict(next.cost, gain, true, { kind: next.kind, ...(expGain > 0 ? { channel: 'money+exp', expGainPerSec: expGain } : {}) }, expGain)
     } else if (next?.cost > 0 && expPerGB !== null && homeRam) {
       // Cores: hack exp is per thread and cores only speed grow/weaken
       // (ServerHelpers core bonus), so only a RAM block is priced this way.
@@ -4527,11 +4543,14 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
  * hours: a $1.22m hacknet upgrade paying back in 3 minutes read "exit 156.54h
  * with vs 156.54h without".
  */
-function installPointOf(ns, info, gate) {
+function installPointOf(ns, info, gate, trajectory = null) {
+  // `trajectory`: the exit inputs the caller prices on — with nothing queued
+  // and no gate wait, the install is the committed trajectory's own first
+  // (hacknetplan.trajectoryFirstInstallH), never a second estimate of it.
   const inPass = planCtx?.decisions?.install ?? null
-  if (inPass) return installPointH({ gate, planInstall: inPass, planOpts: { lastAugReset: info?.lastAugReset } })
+  if (inPass) return installPointH({ gate, planInstall: inPass, planOpts: { lastAugReset: info?.lastAugReset }, trajectory })
   const rec = readJson(ns, PLAN_FILE)
-  return installPointH({ gate, planInstall: rec?.decisions?.install ?? null, planOpts: { lastAugReset: info?.lastAugReset, planLastAugReset: rec?.lastAugReset, at: rec?.at ?? '' } })
+  return installPointH({ gate, planInstall: rec?.decisions?.install ?? null, planOpts: { lastAugReset: info?.lastAugReset, planLastAugReset: rec?.lastAugReset, at: rec?.at ?? '' }, trajectory })
 }
 
 /**
@@ -7291,15 +7310,19 @@ async function act(ns, canJoin, info, note) {
       const e0 = econIncomeNow(ns, info)
       const incomeNow = e0.incomePerSec
       const g = readJson(ns, GATE)
-      const W = g && g.lastAugReset === info?.lastAugReset && g.planned !== false
-        ? (g.install ? 0 : g.holdForever ? null : g.bestWait?.waitMs > 0 ? g.bestWait.waitMs / 3600000 : 0)
-        : schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
-      if (W === null) return { crime: c.crime, perHour, wins: false, why: 'no install point to price the rest of this life against — faction work keeps the slot' }
+      // THE INSTALL POINT IS THE COMMITTED TRAJECTORY'S (installPointOf on
+      // these very inputs: the plan's install, the gate's wait, else the
+      // trajectory's own first install at the committed life length) — it
+      // was the gate's wait or the ledger's window: 0.4h live BN13.1 against
+      // the plan's 8h lives, so 0.4h of Homicide bought nothing and tied.
+      const inputs = exitInputsOf(ns, info, player, schedule, incomeNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
+      const ip = installPointOf(ns, info, g && g.lastAugReset === info?.lastAugReset && g.planned !== false ? g : null, inputs)
+      const W = ip.source === 'fallback' ? null : ip.W
+      if (W === null) return { crime: c.crime, perHour, wins: false, why: `no install point to price the rest of this life against (${ip.why}) — faction work keeps the slot` }
       const faction = schedule?.current?.faction
       const baseRep = schedule?.estimated ? schedule?.estimatedBaseRepPerSec : schedule?.measuredBaseRepPerSec
       const fav = faction && canJoin ? 1 + Math.max(0, sing.factionFavor(faction)) / 100 : 1
       const repGain = faction && baseRep > 0 ? baseRep * fav * W * 3600 : 0
-      const inputs = exitInputsOf(ns, info, player, schedule, incomeNow, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info))
       const m = ns.getServerMoneyAvailable('home') + stockEquity + cashPerSecOf(e0, ns.getServerMoneyAvailable('home') + stockEquity) * W * 3600
       const gainsOf = (p2) => installGainsOf([...(p2?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers)
       const exitAt = (p2) => {
@@ -7310,7 +7333,7 @@ async function act(ns, canJoin, info, note) {
       const cH = exitAt(replanAt(m + perHour * W))
       if (fH === null || cH === null) return { crime: c.crime, perHour, wins: false, why: 'an exit could not be priced — faction work keeps the slot' }
       const wins = cH < fH
-      return { crime: c.crime, perHour, wins, exitCrimeH: cH, exitFactionH: fH, decidedBy: 'exit-sim', why: `${wins ? 'crime' : 'faction work'}: exit ${Math.min(cH, fH).toFixed(2)}h vs ${Math.max(cH, fH).toFixed(2)}h (${W.toFixed(1)}h to the install)` }
+      return { crime: c.crime, perHour, wins, exitCrimeH: cH, exitFactionH: fH, decidedBy: 'exit-sim', Wsource: ip.source, why: `${wins ? 'crime' : 'faction work'}: exit ${Math.min(cH, fH).toFixed(2)}h vs ${Math.max(cH, fH).toFixed(2)}h (${W.toFixed(1)}h to the install, ${ip.source})` }
     } catch (e) {
       return { crime: c.crime, perHour, wins: false, why: `crime vs faction comparison threw: ${String(e).slice(0, 80)} — faction work keeps the slot` }
     }
@@ -8009,8 +8032,13 @@ async function act(ns, canJoin, info, note) {
       const expOff = readFleet(ns, info)?.expDisabled === true
       const byExit = await sleeveObjectiveByExit(ns, info, player, (pf) => exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, pf), repF, expOff)
       {
-        const W0 = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
-        publishExitInputs(ns, info, exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 }), W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + cashNow * W0 * 3600, replanAt, pending, offers })
+        // The install point the record's spenders price against: the
+        // committed trajectory's (installPointOf on these inputs), as the
+        // spend verdicts below — not the ledger's window minus this life's age.
+        const pubInp = exitInputsOf(ns, info, player, schedule, incNow, contractMoneyPerSec, offers, candidates, plan, pending, { expToPlayerHacking: 0, factionRepPerSec: 0 })
+        const ip0 = installPointOf(ns, info, null, pubInp)
+        const W0 = ip0.source === 'fallback' ? null : ip0.W
+        publishExitInputs(ns, info, pubInp, W0 === null ? null : { W: W0, finalWindow: false, moneyAtW: ns.getServerMoneyAvailable('home') + stockEquity + cashNow * W0 * 3600, replanAt, pending, offers })
         // THE FLEET'S PRODUCT on this path too (farmVerdictOf). It was priced
         // only with something planned, so every life opened in money mode
         // until its first batch: live BN9 2026-09-29 the 16:17Z install
@@ -8112,10 +8140,14 @@ async function act(ns, canJoin, info, note) {
                       pointH = null
                     }
                     yield
-                    return yield* decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr), simGen: (dr) => tg(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, pointOf: () => pointH })
+                    return yield* decideAmongGen({ options: [{ key: 'plan', noiseKey: noiseKeyOf(basis, inp), sim: (dr) => traj(applyDraw(inp, dr), dr), simGen: (dr) => tg(applyDraw(inp, dr), dr) }], draws: pc.draws, redecide: true, budgetMs: Math.max(planBudgetLeft(pc), PLAN.exitFloorMs), clock: pc.pacer.cpuNow, pointOf: () => pointH })
                   })
                   if (d && typeof pointH === 'number' && isFinite(pointH)) d.pointH = +pointH.toFixed(3)
-                  if (d?.key && typeof d.q50 === 'number') decided = { exitH: d.q50, source: `plan: median over the posterior (${basis ? `committed install ${basis.kind}` : 'default policy'}, nothing queued), 80% interval ${d.q10}-${d.q90}h${inp?.incomeFromPrior ? ` — ${inp.incomeSource}` : ''}${inp?.repFromEstimate ? ` — ${inp.repSource}` : ''}` }
+                  // A median over a PREFIX of the draws is not the posterior's:
+                  // said in the source whenever the budget stopped it short.
+                  const nOf = Array.isArray(pc.draws) ? pc.draws.length : null
+                  const short = d?.overBudget === true && Number.isInteger(d?.n) && nOf !== null && d.n < nOf ? ` — UNDER-SAMPLED: ${d.n} of ${nOf} draws (budget)` : ''
+                  if (d?.key && typeof d.q50 === 'number') decided = { exitH: d.q50, source: `plan: median over the posterior (${basis ? `committed install ${basis.kind}` : 'default policy'}, nothing queued), 80% interval ${d.q10}-${d.q90}h${short}${inp?.incomeFromPrior ? ` — ${inp.incomeSource}` : ''}${inp?.repFromEstimate ? ` — ${inp.repSource}` : ''}` }
                 }
               } catch {
                 /* the sensitivity base below, named */
@@ -8140,11 +8172,17 @@ async function act(ns, canJoin, info, note) {
             } catch {
               base = null
             }
-            // No gate on this path: the install point is the life's expected
-            // remainder — the median window minus this life's age — stated.
-            const winLeft = schedule?.windowH > 0 ? Math.max(0.25, schedule.windowH - (schedule.lifeAgeH ?? 0)) : null
+            // No gate on this path: the install point is the COMMITTED
+            // trajectory's (installPointOf on the very inputs the verdicts
+            // price — the plan's install decision, else the trajectory's own
+            // first install at the committed life length). It was the
+            // ledger's median window minus this life's age: 0.31h live
+            // BN13.1 against the plan's 8h lives (hacknetplan.installPointH).
+            const inp0 = inputs()
+            const ip = installPointOf(ns, info, null, inp0)
+            const winLeft = ip.source === 'fallback' ? null : ip.W
             return {
-              spendExit: winLeft === null && !homeBlade0 ? { buy: false, why: 'no measured window — no install point to price spends against' } : spendVerdictsOf(ns, info, inputs(), winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => cashNow * h * 3600, replanAt, pending, offers, homeBlade0),
+              spendExit: winLeft === null && !homeBlade0 ? { buy: false, why: `no install point to price spends against (${ip.why})` } : { ...spendVerdictsOf(ns, info, inp0, winLeft, false, ns.getServerMoneyAvailable('home') + stockEquity, (h) => cashNow * h * 3600, replanAt, pending, offers, homeBlade0), Wsource: ip.source, Wwhy: ip.why },
               covenantExit: covenantExitOf(ns, info, player, schedule, base, inputs, pf, offers, [...allCount.keys()]),
               sleeveAugExit: sleeveAugExitOf(ns, info, schedule, inputs, pf, null, pending, offers, ns.getServerMoneyAvailable('home') + stockEquity),
             }

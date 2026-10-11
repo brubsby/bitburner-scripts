@@ -2938,6 +2938,59 @@ export function capitalFutureValue(inputs, W) {
   return capitalFV(inputs, W)
 }
 
+/**
+ * The first hour in [0, W] at which moneyAt(h) reaches `cost` (0 when it is
+ * in hand), by bisection on the caller's money trajectory; null when the
+ * stream does not reach it by W. moneyAt is non-decreasing on every caller
+ * (balance + income x hours), which bisection assumes.
+ */
+export function spendBuyAtH(moneyAt, cost, W) {
+  const m0 = moneyAt(0)
+  if (num(m0) && m0 >= cost) return 0
+  const mW = moneyAt(W)
+  if (!num(mW) || mW < cost) return null
+  let lo = 0
+  let hi = W
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2
+    if (moneyAt(mid) >= cost) hi = mid
+    else lo = mid
+  }
+  return hi
+}
+
+/**
+ * SAVE FOR A PERSISTING PURCHASE (spendExit, when it is not affordable by the
+ * install W): the life is held until the stream reaches the price at tb
+ * (searched up to o.saveMaxH, default the without-exit), the purchase made
+ * and the install taken there — the batch then buys with what is left
+ * (gainsAt(moneyAt(tb) - cost)); against installing at W without it. The
+ * income and exp the purchase adds are carried from now in the with-arm (as
+ * buy-now does): in [0, tb) they reach only this life, which ends at tb —
+ * stated, not simulated. Returns spendExit's shape plus `save`.
+ */
+function saveForSpend(o, { inputs, cost, gainPerSec, W, m0, withExp }) {
+  const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
+  const g0 = m0 >= 0 ? gainsAt(m0) : null
+  const without = bestExitPolicy({ ...inputs, firstInstallH: W, ...(g0 ? { installGains: g0, nextInstallGain: g0.hacking } : {}) }, 400, 1)
+  if (!without.best) return { deltaH: null, why: `unpriced: ${without.why}`, moneyAtW: { m0, m1: null } }
+  const maxH = num(o.saveMaxH) && o.saveMaxH > W ? o.saveMaxH : without.best.hours
+  const tb = spendBuyAtH(o.moneyAt, cost, maxH)
+  if (tb === null) return { deltaH: null, why: `unpriced: not affordable by the install at ${W.toFixed(2)}h ($${(m0 / 1e6).toFixed(2)}m of $${(cost / 1e6).toFixed(2)}m), and the stream does not reach it by ${maxH.toFixed(1)}h either`, moneyAtW: { m0, m1: null } }
+  const left = Math.max(0, o.moneyAt(tb) - cost)
+  const g1 = gainsAt(left)
+  const withS = bestExitPolicy(withExp({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, firstInstallH: tb, ...(g1 ? { installGains: g1, nextInstallGain: g1.hacking } : {}) }), 400, 1)
+  if (!withS.best) return { deltaH: null, why: `unpriced: ${withS.why}`, moneyAtW: { m0, m1: null } }
+  return {
+    deltaH: withS.best.hours - without.best.hours,
+    withH: withS.best.hours,
+    withoutH: without.best.hours,
+    moneyAtW: { m0, m1: null },
+    save: { atH: tb, holdH: tb - W, left, why: `save for it: hold the install ${(tb - W).toFixed(2)}h past ${W.toFixed(2)}h, buy at ${tb.toFixed(2)}h, install with $${(left / 1e6).toFixed(2)}m left` },
+    notSimulated: "the purchase's income and exp over [0, tb) in this life (it ends at tb)",
+  }
+}
+
 export function spendExit(o = {}) {
   const { inputs, cost, gainPerSec, persists = false, finalWindow = false } = o
   if (!inputs || !pos(cost) || !num(gainPerSec) || gainPerSec < 0) return { deltaH: null, why: 'spend unreadable (cost or gain)' }
@@ -2958,6 +3011,25 @@ export function spendExit(o = {}) {
   const W = o.W
   if (!num(W) || W < 0 || typeof o.moneyAt !== 'function') return { deltaH: null, why: 'install point or money trajectory unreadable' }
   const m0 = o.moneyAt(W)
+  // THE PURCHASE HAPPENS WHEN THE MONEY IS THERE (spendBuyAtH): now if it is
+  // in hand, else the first hour the stream reaches the price. A purchase
+  // saved for inside the life is bought at tb, so its cost leaves the book
+  // and its income starts THEN — over W - tb, not W (the trader's curve is
+  // time-shifted to tb: its cap and warm-up are read from now, a stated
+  // approximation; with no trader both are exact).
+  const tb = spendBuyAtH(o.moneyAt, cost, W)
+  if (tb === null) {
+    // NOT AFFORDABLE BY THE INSTALL: SAVE FOR IT, trajectory against
+    // trajectory. A purchase that survives installs (home) can still be had
+    // by holding this life until the stream reaches its price, buying, and
+    // installing then: exit(hold to tb, buy, install) against exit(install
+    // at W without it), both from these inputs. A purchase the install
+    // destroys has no such arm (its own install would end it). Live BN13.1
+    // 2026-10-11: $100.68m home at $2.6m in hand was "unpriced: not
+    // affordable by the install" on every pass, so home was never priced.
+    if (!persists) return { deltaH: null, why: 'unpriced: the spend is not affordable by the install', moneyAtW: { m0, m1: null } }
+    return saveForSpend(o, { inputs, cost, gainPerSec, W, m0, withExp })
+  }
   // THE TRADER'S RETURN ON BOTH SIDES (capitalFutureValue): dollars spent now
   // stop compounding until W — and the spend's income, reinvested as it
   // arrives, compounds from when it arrives. Both only until the book reaches
@@ -2967,9 +3039,9 @@ export function spendExit(o = {}) {
   // upgrade was charged e^19 = 1.6e8 times its price over a 21h life, while
   // the book reaches its $5.3t cap in ~9h. With r = 0 (every node without a
   // trader) both factors are exactly 1 and m1 is unchanged.
-  const fv = capitalFutureValue(inputs, W)
+  const fv = capitalFutureValue(inputs, W - tb)
   const m1 = m0 - cost * fv.lump + gainPerSec * fv.stream
-  const moneyAtW = { m0, m1, lumpFactor: fv.lump, streamSec: fv.stream }
+  const moneyAtW = { m0, m1, lumpFactor: fv.lump, streamSec: fv.stream, buyAtH: tb }
   const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
   const exitWith = (m, extraIncome, exp = false) => {
     const g = m >= 0 ? gainsAt(m) : null

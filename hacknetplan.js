@@ -204,17 +204,44 @@ export function committedInstallH(install, { lastAugReset, planLastAugReset, at 
 /**
  * The install point every "until the install" pricing uses, in hours: the
  * committed plan first; else the gate's own answer (install now -> 0, hold
- * forever -> null = the final window, a positive best wait); else 0 with the
+ * forever -> null = the final window, a positive best wait); else THE
+ * COMMITTED TRAJECTORY'S OWN FIRST INSTALL (`trajectory`: the exit inputs
+ * every decision prices — exitplan's firstInstallH, default one cadence, the
+ * committed life length L through lifeplan.lifeInputsOf); else 0 with the
  * reason. { W, source, why }.
+ *
+ * ONE BUILDER. With nothing queued (no install decision, no gate wait) the
+ * spends and the work slot each priced W on their own: the lifetimes
+ * ledger's median window minus this life's age. Live BN13.1 2026-10-11
+ * 03:54Z the plan had committed later lives of 8h (decisions.lifeLength L8,
+ * the exit 218h priced on them) while home, hacknet and the slot priced an
+ * install 0.31-0.39h away (a 1.72h ledger window): home's $100.68m "not
+ * affordable by the install", and Homicide's $27.7m/h tied faction work at
+ * 210.69h vs 210.69h (0.4h of crime buys nothing) — the slot went to a
+ * faction leg that earns no money.
  */
-export function installPointH({ gate, planInstall, planOpts } = {}) {
+export function installPointH({ gate, planInstall, planOpts, trajectory = null } = {}) {
   if (gate?.install === true) return { W: 0, source: 'gate', why: 'the gate installs now' }
   if (gate?.holdForever === true) return { W: null, source: 'gate', why: 'the gate holds to the exit: the final window' }
   const c = committedInstallH(planInstall, planOpts)
   if (c !== null) return { W: c, source: 'plan', why: `the committed plan installs at ${planInstall?.key ?? '?'}` }
   const w = gate?.bestWait?.waitMs
   if (num(w) && w > 0) return { W: w / 3600000, source: 'gate', why: 'the gate best wait' }
+  const t = trajectoryFirstInstallH(trajectory)
+  if (t !== null) return { W: t.W, source: 'trajectory', why: t.why }
   return { W: 0, source: 'fallback', why: 'no committed install time and no gate wait: priced as an install now' }
+}
+
+/**
+ * The first install of the trajectory the exit inputs price (exitplan
+ * exitHours: firstInstallH, else one cadence — cycleHours, which the
+ * committed life length sets). Null when the inputs carry neither.
+ */
+export function trajectoryFirstInstallH(inputs) {
+  if (!inputs || typeof inputs !== 'object') return null
+  if (num(inputs.firstInstallH) && inputs.firstInstallH >= 0) return { W: inputs.firstInstallH, why: `the committed trajectory's first install (${inputs.firstInstallH.toFixed(2)}h)` }
+  if (num(inputs.cycleHours) && inputs.cycleHours > 0) return { W: inputs.cycleHours, why: `the committed trajectory's first install: one cadence, ${inputs.cycleHours.toFixed(2)}h${inputs.cadenceFrom ? ` (${inputs.cadenceFrom})` : ''}` }
+  return null
 }
 
 // ===========================================================================

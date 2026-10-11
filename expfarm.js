@@ -109,6 +109,42 @@ export function batchedScore(t) {
  * Steady state holds T/period waves of hacks and 4T/period waves of weakens,
  * so hack x 1.7 x T/period + weaken x 1.75 x 4T/period = poolGB.
  */
+/**
+ * ONE PREP TICK'S GROW AND ITS WEAKEN COVER (batch.js prep phase 2, money at
+ * minimum security): g grow threads and w = ceil(cover x g) + 1 weaken
+ * threads, launched only when BOTH fit the free thread slots and g is at
+ * least a chunk — else nothing this tick (RAM frees as in-flight ops land).
+ *
+ * WHY. The tick runs every second and launched its cover FIRST, then the
+ * grow into whatever was left: on a pool held full by its own in-flight ops
+ * it placed a 1-2 thread cover each second and a 0-1 thread grow, and the
+ * cover holds its RAM for 4 x hackTime. Live BN13.1 2026-10-11 04:14Z
+ * sigma-cosmetics prepped with 89 weaken threads beside 154 grow (0.58 per
+ * grow, 0.08 needed) at minimum security — ~140GB of a ~260GB pool on
+ * weakens that weakened nothing, while the target crawled 8.9% -> 34% in
+ * ~2h and the exp farm got no RAM at all (income 0, "pool too small for one
+ * hack thread per wave").
+ *
+ *   gNeed       grow threads still wanted (to max money, after in-flight)
+ *   budgetGB    the target's prep budget (min(free, its slice))
+ *   sliceGB     the target's slice of the fleet (sets the chunk floor)
+ *   freeGBs     free GB per host (each thread is placed whole on one host)
+ *   perThreadGB the larger of the grow and weaken worker's RAM
+ * Returns { g, w, why }.
+ */
+export function prepGrowPlan({ gNeed, budgetGB, sliceGB, freeGBs, perThreadGB, cover = 0.08, minChunk = 13 }) {
+  if (!(gNeed >= 1) || !pos(perThreadGB)) return { g: 0, w: 0, why: 'no grow needed' }
+  const slots = (freeGBs ?? []).reduce((a, f) => a + (pos(f) ? Math.floor(f / perThreadGB) : 0), 0)
+  const wOf = (g) => (g >= 1 ? Math.ceil(cover * g) + 1 : 0)
+  let g = Math.min(Math.ceil(gNeed), Math.floor((pos(budgetGB) ? budgetGB : 0) / (perThreadGB * (1 + cover))), Math.floor(Math.max(0, slots - 1) / (1 + cover)))
+  while (g > 0 && g + wOf(g) > slots) g--
+  // The chunk floor: a cover of ~one weaken thread per tick needs ~1/cover
+  // grows under it; a slice too small for that takes a quarter of itself.
+  const floor = Math.max(1, Math.min(Math.ceil(gNeed), minChunk, Math.floor((pos(sliceGB) ? sliceGB : 0) / perThreadGB / 4)))
+  if (g < floor) return { g: 0, w: 0, why: `wait: ${g} grow thread(s) fit beside their cover (${slots} slots), under the ${floor}-thread chunk` }
+  return { g, w: wOf(g), why: null }
+}
+
 export function waveSize({ poolGB, T, periodMs, phi, chance = 1, weakenRate = 1, margin = 1.1, chunkFrac = 0.5 }) {
   if (!pos(poolGB) || !pos(T) || !pos(periodMs) || !pos(phi)) return null
   const k = (FORTIFY * chance * margin) / (WEAKEN_AMOUNT * weakenRate)

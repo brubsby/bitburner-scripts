@@ -63,6 +63,14 @@ export const PLAN = {
   installTopK: 3,
   installReach: 3,
   installFloorMs: 1000,
+  // THE PUBLISHED EXIT (progress.js, nothing queued: planDecide 'exit', the
+  // committed trajectory over the draws) is read by the gate, the objective
+  // and the healthcheck as THE exit, so it gets its draws too. Live BN13.1
+  // 2026-10-11 03:54Z the route decision spent ~1.4s, the exit got the 20ms
+  // left and stopped at 8 of 24 draws: its median 61.7h (two draws
+  // infeasible) beside the same trajectory's 212.6h on all 24 and the split
+  // controller's point 218.3h — read as two builders disagreeing.
+  exitFloorMs: 600,
   // THE LIFE LENGTH (decideLifeLengthGen): the incumbent and the best
   // lifeTopK other lengths by point within lifeReach structural errors enter
   // the draws; a switch pays lifeSwitchCostH (stated: re-planning the later
