@@ -720,6 +720,22 @@ export function runTail(buf, cur, { maxGapH = PAIR_MAX_GAP_H } = {}) {
 }
 
 /**
+ * AN EXIT SAMPLE IS A FORECAST ONLY WHEN IT IS A DURATION: finite, positive
+ * and below EXIT_UNPRICED_H (= exitplan.DEGENERATE_H: past 1e5h no node is
+ * played, and the policy search calls that exit unpriced; bayes.js cannot
+ * import exitplan.js, which imports it — tools/test/unpricedwait.test.mjs
+ * pins the two equal). Live BN13.1 2026-10-11 13:56Z the exit calibration
+ * recorded 'exit sensitivity base (the ordinary model)' at 7.2e24h; the drift
+ * posterior read it as a relative forecast error of 1e9 (s = 105786243951.8%),
+ * every draw's structural noise exp(s z - s^2/2) underflowed to 0, and from
+ * 14:11Z every option of every plan decision priced 0h in every draw — the
+ * install decision a tie that 'now' won by listing order (five installs, the
+ * 19:28Z one a lone NutriGen Implant).
+ */
+export const EXIT_UNPRICED_H = 1e5
+export const pricedExitH = (h) => fin(h) && h > 0 && h < EXIT_UNPRICED_H
+
+/**
  * Same-life pairs of exit samples: relative residual against the predicted
  * -1h/h. A pair counts only when BOTH ends were produced by the same model in
  * the same run (runBreak): the same life (an install legitimately re-plans),
@@ -731,9 +747,12 @@ export function runTail(buf, cur, { maxGapH = PAIR_MAX_GAP_H } = {}) {
  * maxGapH).
  */
 export function driftPairs(samples, { minGapH = 0.2, maxGapH = PAIR_MAX_GAP_H } = {}) {
-  const S = (samples ?? []).filter((x) => fin(x?.exitH) && x.exitH > 0 && fin(Date.parse(x?.at)))
+  const dated = (samples ?? []).filter((x) => fin(Date.parse(x?.at)))
+  const S = dated.filter((x) => pricedExitH(x?.exitH))
   const out = []
-  const excluded = { life: 0, version: 0, boot: 0, stale: 0, untagged: 0, gap: 0 }
+  // `unpriced`: samples whose exit is not a duration (0, non-finite, or past
+  // EXIT_UNPRICED_H) — never a forecast, so never a forecast error.
+  const excluded = { life: 0, version: 0, boot: 0, stale: 0, untagged: 0, gap: 0, unpriced: dated.length - S.length }
   for (let i = 1; i < S.length; i++) {
     const a = S[i - 1]
     const b = S[i]
@@ -794,9 +813,9 @@ export function driftPosterior(samples, prior = PRIORS.drift, nu = PRIORS.driftN
   const r = robustIG(prior, pairs.map((x) => x.r / Math.SQRT2), nu)
   const s = Math.sqrt(r.b / (r.a - 1))
   const ex = pairs.excluded
-  const nEx = ex.version + ex.boot + (ex.stale ?? 0) + ex.untagged
+  const nEx = ex.version + ex.boot + (ex.stale ?? 0) + ex.untagged + (ex.unpriced ?? 0)
   const outliers = r.weights.filter((w) => w < 0.3).length
-  return { a: r.a, b: r.b, s, nu, pairs: pairs.length, excluded: ex, outliers, why: `${pairs.length} same-life, same-model pair(s): relative forecast error s = ${(100 * s).toFixed(1)}% (t, nu ${nu}; ${outliers} outlier pair(s) down-weighted; excluded ${nEx}: ${ex.version} across a model version, ${ex.boot} across a page reload, ${ex.stale ?? 0} across a telemetry gap > ${PAIR_MAX_GAP_H}h, ${ex.untagged} untagged; IG prior a=${prior.a}, E[s^2] = (${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(0)}%)^2)` }
+  return { a: r.a, b: r.b, s, nu, pairs: pairs.length, excluded: ex, outliers, why: `${pairs.length} same-life, same-model pair(s): relative forecast error s = ${(100 * s).toFixed(1)}% (t, nu ${nu}; ${outliers} outlier pair(s) down-weighted; excluded ${nEx}: ${ex.version} across a model version, ${ex.boot} across a page reload, ${ex.stale ?? 0} across a telemetry gap > ${PAIR_MAX_GAP_H}h, ${ex.untagged} untagged, ${ex.unpriced ?? 0} unpriced exit(s); IG prior a=${prior.a}, E[s^2] = (${(100 * Math.sqrt(prior.b / (prior.a - 1))).toFixed(0)}%)^2)` }
 }
 
 /**

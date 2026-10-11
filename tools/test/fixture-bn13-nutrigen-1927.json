@@ -1,0 +1,660 @@
+{
+ "source": "live BN13.1 2026-10-11 19:27:45Z: /tel/installgate.txt and /tel/plan.txt decisions.install - the pass that installed a lone NutriGen Implant at 19:28:02Z",
+ "exitCalibrationSamples": [
+  {
+   "at": "2026-10-11T02:18:50.399Z",
+   "exitH": 25,
+   "life": 1791675842569,
+   "source": "plan: median over the posterior (w0.25), 80% interval 10.594-97.235h",
+   "ver": "8zj2ws.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T02:33:50.203Z",
+   "exitH": 24.38,
+   "life": 1791675842569,
+   "source": "plan: median over the posterior (now), 80% interval 10.061-102.272h \u2014 income posterior (life 1): income posterior: prior $1.78e+7/s (x/\u00f7 8.2) updated by this life's $1.98e+3/s over 1.40h (the running scripts' hacking stream; weight 98%) -> median $2.45e+3/s, x/\u00f7 1.4 at 80% [income from the formula (freshlife.js) at age 2.83h: $2.47e+7/s x 0.72 (income formula error for BitNode 13: ln(realised/model) -0.33 (x0.72), one life x/\u00f7 8.23 at 80% (t, df 32); 0 own lives carry 0% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.78e+7/s, x/\u00f7 8.2 at 80%]",
+   "ver": "8zj2ws.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T02:44:05.641Z",
+   "exitH": 87.29,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 46.266-366.609h",
+   "ver": "8zj2ws.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T02:59:04.960Z",
+   "exitH": 73.73,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 41.763-291.648h",
+   "ver": "8zj2ws.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T03:14:09.674Z",
+   "exitH": 61.87,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 53.615-202.416h",
+   "ver": "i25oho.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T03:29:04.347Z",
+   "exitH": 79.04,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 49.453-242.251h",
+   "ver": "i25oho.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T03:44:04.753Z",
+   "exitH": 267.76,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 30.679-1231.75h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T03:59:03.270Z",
+   "exitH": 322.32,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 33.196-1242.75h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T04:14:03.366Z",
+   "exitH": 46.68,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 29.476-786.948h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T04:29:05.199Z",
+   "exitH": 49.42,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 40.398-58.502h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T04:44:06.802Z",
+   "exitH": 31.88,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (w3.917, held), 80% interval 23.63-48.314h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T04:59:04.993Z",
+   "exitH": 35.85,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (now), 80% interval 24.11-68.522h \u2014 income posterior (life 2): income posterior: prior $1.89e+7/s (x/\u00f7 8.2) updated by this life's $2.28e+3/s over 0.82h (the running scripts' hacking stream; weight 96%) -> median $3.24e+3/s, x/\u00f7 1.5 at 80% [income from the formula (freshlife.js) at age 2.41h: $2.62e+7/s x 0.72 (income formula error for BitNode 13: ln(realised/model) -0.33 (x0.72), one life x/\u00f7 8.23 at 80% (t, df 32); 0 own lives carry 0% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.89e+7/s, x/\u00f7 8.2 at 80%]",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T05:14:07.773Z",
+   "exitH": 34.19,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (w0.765706406573856), 80% interval 20.632-61.745h \u2014 income posterior (life 2): income posterior: prior $1.86e+7/s (x/\u00f7 8.2) updated by this life's $3.72e+3/s over 1.07h (the running scripts' hacking stream; weight 97%) -> median $4.81e+3/s, x/\u00f7 1.4 at 80% [income from the formula (freshlife.js) at age 2.66h: $2.58e+7/s x 0.72 (income formula error for BitNode 13: ln(realised/model) -0.33 (x0.72), one life x/\u00f7 8.23 at 80% (t, df 32); 0 own lives carry 0% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.86e+7/s, x/\u00f7 8.2 at 80%]",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T10:56:22.118Z",
+   "exitH": 34.88,
+   "life": 1791686062855,
+   "source": "plan: median over the posterior (w0.9034968256392423), 80% interval 24.546-58.364h \u2014 income posterior (life 2): income posterior: prior $2.25e+5/s (x/\u00f7 8.2) updated by this life's $2.47e+3/s over 6.77h (the running scripts' hacking stream; weight 100%) -> median $2.53e+3/s, x/\u00f7 1.2 at 80% [income from the formula (freshlife.js) at age 8.36h: $3.12e+5/s x 0.72 (income formula error for BitNode 13: ln(realised/model) -0.33 (x0.72), one life x/\u00f7 8.23 at 80% (t, df 32); 0 own lives carry 0% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.25e+5/s, x/\u00f7 8.2 at 80%]",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T11:11:49.467Z",
+   "exitH": 26.11,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 21.933-30.288h \u2014 income posterior (life 3): income from the formula (freshlife.js) at age 2.00h: $1.04e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $5.83e+4/s, x/\u00f7 7.2 at 80%; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T11:26:50.626Z",
+   "exitH": 145.19,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 58.062-232.314h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T11:41:48.803Z",
+   "exitH": 40.59,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 29.949-243.235h",
+   "ver": "1td28b8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T11:56:49.808Z",
+   "exitH": 325.12,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 32.638-581.681h \u2014 UNDER-SAMPLED: 20 of 24 draws (budget) \u2014 income posterior (life 3): income from the formula (freshlife.js) at age 3.08h: $4.72e+4/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.65e+4/s, x/\u00f7 7.2 at 80%; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone",
+   "ver": "g73roc.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T12:11:49.034Z",
+   "exitH": 38.58,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 27.589-378.509h \u2014 income posterior (life 3): income posterior: prior $1.95e+4/s (x/\u00f7 7.2) updated by this life's $2.49e+2/s over 0.08h (the running scripts' hacking stream; weight 68%) -> median $9.90e+2/s, x/\u00f7 3.0 at 80% [income from the formula (freshlife.js) at age 1.75h: $3.47e+4/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.95e+4/s, x/\u00f7 7.2 at 80%]",
+   "ver": "g73roc.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T12:26:49.823Z",
+   "exitH": 38.79,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 27.086-981.679h \u2014 income posterior (life 3): income posterior: prior $2.14e+4/s (x/\u00f7 7.2) updated by this life's $2.15e+3/s over 0.33h (the running scripts' hacking stream; weight 90%) -> median $2.72e+3/s, x/\u00f7 1.9 at 80% [income from the formula (freshlife.js) at age 1.58h: $3.81e+4/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.14e+4/s, x/\u00f7 7.2 at 80%]",
+   "ver": "g73roc.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T12:41:50.200Z",
+   "exitH": 38.36,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 27.438-950.802h \u2014 income posterior (life 3): income posterior: prior $2.45e+4/s (x/\u00f7 7.2) updated by this life's $9.23e+3/s over 0.58h (the running scripts' hacking stream; weight 94%) -> median $9.80e+3/s, x/\u00f7 1.6 at 80% [income from the formula (freshlife.js) at age 1.58h: $4.36e+4/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.45e+4/s, x/\u00f7 7.2 at 80%]",
+   "ver": "g73roc.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T12:56:51.309Z",
+   "exitH": 37.02,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 26.483-364.207h \u2014 income posterior (life 3): income posterior: prior $4.46e+4/s (x/\u00f7 7.2) updated by this life's $1.39e+4/s over 0.83h (the running scripts' hacking stream; weight 96%) -> median $1.46e+4/s, x/\u00f7 1.5 at 80% [income from the formula (freshlife.js) at age 2.00h: $7.95e+4/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $4.46e+4/s, x/\u00f7 7.2 at 80%]",
+   "ver": "g73roc.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T13:11:54.360Z",
+   "exitH": 5299.14,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 220.912-38636.758h \u2014 income posterior (life 3): income posterior: prior $4.61e+4/s (x/\u00f7 7.2) updated by this life's $1.85e+4/s over 1.08h (the running scripts' hacking stream; weight 97%) -> median $1.90e+4/s, x/\u00f7 1.4 at 80% [income from the formula (freshlife.js) at age 2.09h: $8.20e+4/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $4.61e+4/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T13:26:52.423Z",
+   "exitH": 871.24,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 302.793-2441.497h \u2014 income posterior (life 3): income posterior: prior $1.46e+5/s (x/\u00f7 7.2) updated by this life's $2.44e+4/s over 1.33h (the running scripts' hacking stream; weight 97%) -> median $2.57e+4/s, x/\u00f7 1.4 at 80% [income from the formula (freshlife.js) at age 2.34h: $2.60e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.46e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T13:41:53.617Z",
+   "exitH": 873.76,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 277.497-2461.917h \u2014 income posterior (life 3): income posterior: prior $1.75e+5/s (x/\u00f7 7.2) updated by this life's $2.63e+4/s over 1.58h (the running scripts' hacking stream; weight 98%) -> median $2.75e+4/s, x/\u00f7 1.4 at 80% [income from the formula (freshlife.js) at age 2.59h: $3.12e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.75e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T13:56:54.402Z",
+   "exitH": 7.23406405065173e+24,
+   "life": 1791716799893,
+   "source": "exit sensitivity base (the ordinary model)",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T14:11:56.001Z",
+   "exitH": 0,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 3): income posterior: prior $2.07e+5/s (x/\u00f7 7.2) updated by this life's $3.04e+4/s over 2.08h (the running scripts' hacking stream; weight 98%) -> median $3.14e+4/s, x/\u00f7 1.3 at 80% [income from the formula (freshlife.js) at age 3.09h: $3.68e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.07e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T14:26:53.852Z",
+   "exitH": 0,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (now), 80% interval 0-0h \u2014 income posterior (life 3): income posterior: prior $2.16e+5/s (x/\u00f7 7.2) updated by this life's $4.43e+4/s over 2.33h (the running scripts' hacking stream; weight 98%) -> median $4.54e+4/s, x/\u00f7 1.3 at 80% [income from the formula (freshlife.js) at age 3.34h: $3.85e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.16e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T14:41:53.440Z",
+   "exitH": 0,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 3): income posterior: prior $3.09e+5/s (x/\u00f7 7.2) updated by this life's $5.97e+4/s over 2.58h (the running scripts' hacking stream; weight 99%) -> median $6.11e+4/s, x/\u00f7 1.3 at 80% [income from the formula (freshlife.js) at age 3.59h: $5.50e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $3.09e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T14:56:57.001Z",
+   "exitH": 0,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 3): income posterior: prior $2.89e+5/s (x/\u00f7 7.2) updated by this life's $7.65e+4/s over 2.83h (the running scripts' hacking stream; weight 99%) -> median $7.78e+4/s, x/\u00f7 1.3 at 80% [income from the formula (freshlife.js) at age 3.84h: $5.14e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.89e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T15:11:54.082Z",
+   "exitH": 0,
+   "life": 1791716799893,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 3): income posterior: prior $2.48e+5/s (x/\u00f7 7.2) updated by this life's $9.31e+4/s over 3.08h (the running scripts' hacking stream; weight 99%) -> median $9.42e+4/s, x/\u00f7 1.2 at 80% [income from the formula (freshlife.js) at age 4.09h: $4.42e+5/s x 0.56 (income formula error for BitNode 13: ln(realised/model) -0.58 (x0.56), one life x/\u00f7 7.23 at 80% (t, df 32); 1 own life carry 35% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.24; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.48e+5/s, x/\u00f7 7.2 at 80%]",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T15:26:51.910Z",
+   "exitH": 0,
+   "life": 1791732136481,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 4): income from the formula (freshlife.js) at age 0.62h: $8.41e+4/s x 0.67 (income formula error for BitNode 13: ln(realised/model) -0.40 (x0.67), one life x/\u00f7 7.03 at 80% (t, df 33); 2 own lives carry 40% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.19; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $5.62e+4/s, x/\u00f7 7.0 at 80%; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T15:41:54.645Z",
+   "exitH": 0,
+   "life": 1791732136481,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h",
+   "ver": "qbhamy.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T15:56:52.257Z",
+   "exitH": 0,
+   "life": 1791732136481,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 4): income posterior: prior $3.36e+4/s (x/\u00f7 7.0) updated by this life's $1.09e+4/s over 0.16h (the running scripts' hacking stream; weight 80%) -> median $1.36e+4/s, x/\u00f7 2.4 at 80% [income from the formula (freshlife.js) at age 0.75h: $5.03e+4/s x 0.67 (income formula error for BitNode 13: ln(realised/model) -0.40 (x0.67), one life x/\u00f7 7.03 at 80% (t, df 33); 2 own lives carry 40% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.19; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $3.36e+4/s, x/\u00f7 7.0 at 80%]",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T16:11:52.892Z",
+   "exitH": 0,
+   "life": 1791732136481,
+   "source": "plan: median over the posterior (w0.25), 80% interval 0-0h \u2014 income posterior (life 4): income posterior: prior $6.11e+4/s (x/\u00f7 7.0) updated by this life's $1.59e+4/s over 0.41h (the running scripts' hacking stream; weight 91%) -> median $1.79e+4/s, x/\u00f7 1.8 at 80% [income from the formula (freshlife.js) at age 0.83h: $9.14e+4/s x 0.67 (income formula error for BitNode 13: ln(realised/model) -0.40 (x0.67), one life x/\u00f7 7.03 at 80% (t, df 33); 2 own lives carry 40% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.19; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $6.11e+4/s, x/\u00f7 7.0 at 80%]",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T16:26:52.534Z",
+   "exitH": 0,
+   "life": 1791732136481,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 4): income posterior: prior $1.09e+5/s (x/\u00f7 7.0) updated by this life's $2.26e+4/s over 0.66h (the running scripts' hacking stream; weight 94%) -> median $2.47e+4/s, x/\u00f7 1.6 at 80% [income from the formula (freshlife.js) at age 1.08h: $1.63e+5/s x 0.67 (income formula error for BitNode 13: ln(realised/model) -0.40 (x0.67), one life x/\u00f7 7.03 at 80% (t, df 33); 2 own lives carry 40% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.19; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.09e+5/s, x/\u00f7 7.0 at 80%]",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T16:41:51.962Z",
+   "exitH": 0,
+   "life": 1791732136481,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 4): income posterior: prior $1.89e+5/s (x/\u00f7 7.0) updated by this life's $4.46e+4/s over 0.91h (the running scripts' hacking stream; weight 96%) -> median $4.73e+4/s, x/\u00f7 1.5 at 80% [income from the formula (freshlife.js) at age 1.33h: $2.83e+5/s x 0.67 (income formula error for BitNode 13: ln(realised/model) -0.40 (x0.67), one life x/\u00f7 7.03 at 80% (t, df 33); 2 own lives carry 40% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.72 (between nodes x/\u00f7 2.88, fitted); one life's scatter x/\u00f7 5.19; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $1.89e+5/s, x/\u00f7 7.0 at 80%]",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T16:52:19.070Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 5): income from the formula (freshlife.js) at age 0.55h: $9.54e+4/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.57 at 80% (t, df 34); 3 own lives carry 48% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.91, fitted); one life's scatter x/\u00f7 4.99; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $6.93e+4/s, x/\u00f7 6.6 at 80%; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T17:07:18.579Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T17:22:19.400Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 5): income posterior: prior $2.73e+4/s (x/\u00f7 6.6) updated by this life's $1.51e+4/s over 0.17h (the running scripts' hacking stream; weight 80%) -> median $1.70e+4/s, x/\u00f7 2.3 at 80% [income from the formula (freshlife.js) at age 0.58h: $3.76e+4/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.57 at 80% (t, df 34); 3 own lives carry 48% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.91, fitted); one life's scatter x/\u00f7 4.99; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.73e+4/s, x/\u00f7 6.6 at 80%]",
+   "ver": "j3zse8.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T17:37:21.500Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (w0.167), 80% interval 0-0h \u2014 income posterior (life 5): income posterior: prior $6.48e+4/s (x/\u00f7 6.6) updated by this life's $3.19e+4/s over 0.42h (the running scripts' hacking stream; weight 91%) -> median $3.40e+4/s, x/\u00f7 1.8 at 80% [income from the formula (freshlife.js) at age 0.83h: $8.91e+4/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.57 at 80% (t, df 34); 3 own lives carry 48% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.91, fitted); one life's scatter x/\u00f7 4.99; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $6.48e+4/s, x/\u00f7 6.6 at 80%]",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T17:52:20.634Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 5): income posterior: prior $6.85e+4/s (x/\u00f7 6.6) updated by this life's $5.29e+4/s over 0.67h (the running scripts' hacking stream; weight 94%) -> median $5.37e+4/s, x/\u00f7 1.6 at 80% [income from the formula (freshlife.js) at age 1.08h: $9.43e+4/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.57 at 80% (t, df 34); 3 own lives carry 48% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.91, fitted); one life's scatter x/\u00f7 4.99; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $6.85e+4/s, x/\u00f7 6.6 at 80%]",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T18:07:20.663Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T18:22:39.136Z",
+   "exitH": 0,
+   "life": 1791737234310,
+   "source": "plan: median over the posterior (now, held), 80% interval 0-0h \u2014 income posterior (life 5): income posterior: prior $2.01e+5/s (x/\u00f7 6.6) updated by this life's $6.50e+4/s over 1.17h (the running scripts' hacking stream; weight 97%) -> median $6.75e+4/s, x/\u00f7 1.4 at 80% [income from the formula (freshlife.js) at age 1.59h: $2.77e+5/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.57 at 80% (t, df 34); 3 own lives carry 48% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.91, fitted); one life's scatter x/\u00f7 4.99; 9 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.01e+5/s, x/\u00f7 6.6 at 80%]",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T18:37:44.388Z",
+   "exitH": 0,
+   "life": 1791743588042,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 6): income from the formula (freshlife.js) at age 0.48h: $1.05e+5/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.07 at 80% (t, df 35); 4 own lives carry 57% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.94, fitted); one life's scatter x/\u00f7 4.77; 10 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $7.69e+4/s, x/\u00f7 6.1 at 80%; nothing measured this life yet (a prepping batcher earns $0/s by design): the prior alone",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T18:52:42.455Z",
+   "exitH": 0,
+   "life": 1791743588042,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T19:07:42.752Z",
+   "exitH": 0,
+   "life": 1791743588042,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 6): income posterior: prior $2.82e+5/s (x/\u00f7 6.1) updated by this life's $2.89e+4/s over 0.24h (the running scripts' hacking stream; weight 84%) -> median $4.14e+4/s, x/\u00f7 2.0 at 80% [income from the formula (freshlife.js) at age 1.75h: $3.86e+5/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.07 at 80% (t, df 35); 4 own lives carry 57% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.94, fitted); one life's scatter x/\u00f7 4.77; 10 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $2.82e+5/s, x/\u00f7 6.1 at 80%]",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  },
+  {
+   "at": "2026-10-11T19:22:42.746Z",
+   "exitH": 0,
+   "life": 1791743588042,
+   "source": "plan: median over the posterior (default policy, nothing queued), 80% interval 0-0h \u2014 income posterior (life 6): income posterior: prior $3.21e+5/s (x/\u00f7 6.1) updated by this life's $2.72e+4/s over 0.49h (the running scripts' hacking stream; weight 92%) -> median $3.35e+4/s, x/\u00f7 1.7 at 80% [income from the formula (freshlife.js) at age 1.33h: $4.40e+5/s x 0.73 (income formula error for BitNode 13: ln(realised/model) -0.32 (x0.73), one life x/\u00f7 6.07 at 80% (t, df 35); 4 own lives carry 57% of the node's bias, 35 lives in 7 other node(s) the cross-node mean x0.73 (between nodes x/\u00f7 2.94, fitted); one life's scatter x/\u00f7 4.77; 10 lives down-weighted as unlike the rest; stated prior: unbiased, x/\u00f7 19.1) -> median $3.21e+5/s, x/\u00f7 6.1 at 80%]",
+   "ver": "gga8is.52",
+   "boot": 1791132238005
+  }
+ ],
+ "planInstall": {
+  "key": "now",
+  "install": true,
+  "meanH": 0,
+  "q10": 0,
+  "q50": 0,
+  "q90": 0,
+  "pBest": 1,
+  "pointH": 426.772,
+  "options": [
+   {
+    "key": "now",
+    "pointH": 426.772,
+    "pFeasible": 1,
+    "meanH": 0,
+    "q10": 0,
+    "q50": 0,
+    "q90": 0,
+    "pBest": 1,
+    "noiseKey": "at:29862448|L6|g0",
+    "pricedAt": "2026-10-11T19:27:43.330Z"
+   },
+   {
+    "key": "w0.25",
+    "pointH": 430.724,
+    "pFeasible": 1,
+    "meanH": 0,
+    "q10": 0,
+    "q50": 0,
+    "q90": 0,
+    "pBest": 0,
+    "meanOwnH": 0,
+    "nDraws": 8,
+    "noiseKey": "at:29862463|L6|g0",
+    "pricedAt": "2026-10-11T19:27:43.330Z"
+   },
+   {
+    "key": "w0.597915484418365",
+    "pointH": 430.838,
+    "pFeasible": 1,
+    "meanH": 0,
+    "q10": 0,
+    "q50": 0,
+    "q90": 0,
+    "pBest": 0,
+    "meanOwnH": 0,
+    "nDraws": 8,
+    "noiseKey": "at:29862484|L6|g0",
+    "pricedAt": "2026-10-11T19:27:43.330Z"
+   }
+  ],
+  "screened": [
+   {
+    "key": "w0.5",
+    "pointH": 430.974
+   },
+   {
+    "key": "w1",
+    "pointH": 431.474
+   },
+   {
+    "key": "w2",
+    "pointH": 432.474
+   },
+   {
+    "key": "w4",
+    "pointH": 434.474
+   },
+   {
+    "key": "w2.8124668560015595",
+    "pointH": 433.287
+   },
+   {
+    "key": "w5.09",
+    "pointH": 435.564
+   },
+   {
+    "key": "never",
+    "pointH": 2.1963511156357773e+39
+   }
+  ],
+  "screen": "3 of 10 options in the draws: the best 3 by point within 317358731855% of the best (426.77h)",
+  "why": "no committed option: the least expected exit (0h, P(best) 1)",
+  "n": 24,
+  "noiseKey": "at:29862448|L6|g0"
+ },
+ "points": {
+  "now": 426.772,
+  "w0.25": 430.724,
+  "w0.597915484418365": 430.838,
+  "w0.5": 430.974,
+  "w1": 431.474,
+  "w2": 432.474,
+  "w4": 434.474,
+  "w2.8124668560015595": 433.287,
+  "w5.09": 435.564,
+  "never": 2.1963511156357773e+39
+ },
+ "gate": {
+  "M": 1,
+  "queued": 1,
+  "ageMs": 3275793,
+  "exp": 325029.4266320031,
+  "target": 9000,
+  "futures": [
+   {
+    "waitMs": 900000,
+    "M": 1.0140868626307427,
+    "moneyProjected": 285578496,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 1800000,
+    "M": 1.0140868626307427,
+    "moneyProjected": 572716025,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 3600000,
+    "M": 1.0140868626307427,
+    "moneyProjected": 1150593928,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 7200000,
+    "M": 1.0140868626307427,
+    "moneyProjected": 2319207059,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 14400000,
+    "M": 1.0140868626307427,
+    "moneyProjected": 4728956708,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 2152495.743906114,
+    "M": 1.0146371856559933,
+    "holdFor": "Tian Di Hui",
+    "holdRepTarget": 6028,
+    "moneyProjected": 685526979,
+    "buy": [
+     "ADR-V1 Pheromone Gene",
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 10124880.681605615,
+    "M": 1.0140868626307427,
+    "holdFor": "NiteSec",
+    "holdRepTarget": 18750,
+    "moneyProjected": 3283260761,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   },
+   {
+    "waitMs": 18324000,
+    "M": 1.0140868626307427,
+    "lifeTarget": 6,
+    "moneyProjected": 6124265415,
+    "buy": [
+     "NeuroFlux Governor",
+     "NutriGen Implant"
+    ]
+   }
+  ],
+  "countShort": 14,
+  "countGain": 1,
+  "countFloor": 3,
+  "binding": {
+   "gate": "multiplier",
+   "destroyedByInstall": false,
+   "source": "simulated",
+   "why": "simulated: installing 68 more time(s) then finishing takes 432.77h against 2.1963511156357773e+39h for holding \u2014 the multiplier is still worth more than the cash"
+  },
+  "homeSave": {
+   "wins": false,
+   "atH": 0.8659225598723277,
+   "deltaH": 0.2742195827275964,
+   "pBuy": 0.491,
+   "why": "SAVE FOR IT: exit 427.05h holding the install to 0.87h and buying vs 426.77h installing at 0.00h without (+0.274h) \u2014 plan: hold: the exit lengthens by 0.274h against a 12.07h option-specific error \u2014 P(better) 49% (needs 80%; parameter uncertainty not propagated for spends) \u2014 not acted: no install hold follows this verdict"
+  },
+  "rho": 0.10002112294306272,
+  "favorGain": 1.0384162579354952,
+  "goBonusPct": 0,
+  "planDecision": {
+   "key": "now",
+   "install": true,
+   "meanH": 0,
+   "q10": 0,
+   "q50": 0,
+   "q90": 0,
+   "held": false,
+   "why": "no committed option: the least expected exit (0h, P(best) 1)"
+  },
+  "why": "install: 1 aug(s) \u2014 the simulated exit installing now is 426.8h, the best wait unpriced, never installing 2.1963511156357773e+39h",
+  "install": true
+ },
+ "exitCompare": {
+  "nowH": 426.7718630774148,
+  "neverH": 2.1963511156357773e+39,
+  "waits": [
+   {
+    "waitMs": 900000,
+    "H": 430.724
+   },
+   {
+    "waitMs": 1800000,
+    "H": 430.974
+   },
+   {
+    "waitMs": 3600000,
+    "H": 431.474
+   },
+   {
+    "waitMs": 7200000,
+    "H": 432.474
+   },
+   {
+    "waitMs": 14400000,
+    "H": 434.474
+   },
+   {
+    "waitMs": 2152495.743906114,
+    "H": 430.838
+   },
+   {
+    "waitMs": 10124880.681605615,
+    "H": 433.287
+   },
+   {
+    "waitMs": 18324000,
+    "H": 435.564
+   }
+  ],
+  "joinModelled": false
+ },
+ "oldBayes": {
+  "install": true,
+  "key": "now",
+  "waitMs": 0,
+  "H": 0,
+  "q10": 0,
+  "q50": 0,
+  "q90": 0,
+  "pBest": 1,
+  "held": false,
+  "why": "no committed option: the least expected exit (0h, P(best) 1)"
+ },
+ "lifeTargetH": 6,
+ "installedBatch": [
+  "NutriGen Implant"
+ ]
+}

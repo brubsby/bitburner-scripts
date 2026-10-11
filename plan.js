@@ -420,7 +420,13 @@ function* simInto(o, d, samples, raw) {
   // The structural noise belongs to the TRAJECTORY (o.noiseKey), not the
   // option's label: the same trajectory priced by two decisions gets the
   // same draws of it, so their exits agree exactly (consistencyOf).
-  samples[o.key].push(fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null)
+  // A DRAW THAT IS NOT A DURATION IS UNPRICED, never 0h: the structural
+  // noise exp(s z - s^2/2) underflows to 0 (or overflows) once the drift
+  // posterior's s is absurd, and 0h won every comparison it entered — live
+  // BN13.1 2026-10-11 14:11Z-19:28Z every option of every decision priced 0h
+  // in every draw, and 'now' won the install ties by listing order.
+  const x = fin(h) ? h * discrepancyOf(d, o.noiseKey ?? o.key) : null
+  samples[o.key].push(fin(x) && x > 0 ? x : null)
   yield
 }
 
@@ -1396,6 +1402,13 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const { stats } = summarize(ev.samples)
   const pricedAt = new Date(now).toISOString()
   const rows = optionRows(use, stats, (o) => o.pointH, pricedAt)
+  // NO OPTION PRICED IN THE DRAWS: the comparison is unknown, not a verdict.
+  // Returned as `unpriced` with no key, so the install gate holds on it
+  // (installgate: UNPRICED INSTALL COMPARISON) rather than act on a tie.
+  if (!use.some((o) => fin(stats[o.key]?.meanH) && stats[o.key].meanH > 0)) {
+    const pts = use.map((o) => `${o.key} ${fin(o.pointH) ? `${o.pointH.toFixed(2)}h` : 'unpriced'}`).join(', ')
+    return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, unpriced: true, why: `UNPRICED DRAWS: no install option priced a positive exit in any of ${ev.n} draws (points: ${pts}) — the structural noise or every simulation failed; no decision`, decidedAt: prev?.decidedAt ?? null, options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
+  }
   const record = (key, extra) => {
     const o = opts.find((x) => x.key === key)
     const sp = o.spec
@@ -1435,6 +1448,19 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   screenedWhyOf(d, screen)
   if (d.choice === null) return { key: null, ...(onRoute ? { route: onRoute } : {}), install: false, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc, ...screened }
   return record(d.choice, { held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, regretH: d.regretH ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...screened })
+}
+
+/**
+ * THE PLAN'S BEST PRICED WAIT, for the gate's line: the wait option with the
+ * least mean exit in the draws, else the least point among those screened
+ * out of the draws. null when the plan priced no wait at all.
+ */
+export function bestWaitOfOptions(d) {
+  const isWait = (k) => typeof k === 'string' && /^(w|r|committed)/.test(k)
+  const drawn = (d?.options ?? []).filter((o) => isWait(o?.key) && fin(o.meanH) && o.meanH > 0).sort((a, b) => a.meanH - b.meanH)[0]
+  if (drawn) return { key: drawn.key, H: drawn.meanH, pointH: fin(drawn.pointH) ? drawn.pointH : null, by: 'draws' }
+  const pt = (d?.screened ?? []).filter((o) => isWait(o?.key) && fin(o.pointH) && o.pointH > 0).sort((a, b) => a.pointH - b.pointH)[0]
+  return pt ? { key: pt.key, H: null, pointH: pt.pointH, by: 'point (screened out of the draws)' } : null
 }
 
 /**
@@ -2813,7 +2839,16 @@ export function planCheck(plan, { gate = null, progress = null, now = Date.now()
   else if (worst) notes.push(`plan longest step: ${worst[1].maxStepMs}ms in '${worst[0]}'`)
   else if (cpu && !('maxBlockMs' in cpu) && cpu.overBudget) fail(`PLAN OVER CPU BUDGET: ${cpu.ms}ms against ${cpu.budgetMs}ms`, 'the Monte Carlo runs on the game\'s main thread (the page has frozen before) — lower PLAN.N or PLAN.topK')
   if (cpu && cpu.truncated) notes.push(`plan Monte Carlo truncated at its ${cpu.budgetMs}ms work budget (${cpu.draws} of ${cpu.N} draws)`)
-  if (cpu && fin(cpu.draws) && cpu.draws < 8 && fin(cpu.N)) fail(`PLAN UNDER-SAMPLED: ${cpu.draws} of ${cpu.N} draws`, 'the work budget stopped the Monte Carlo before its probabilities mean anything — the decision rests on too few paired draws')
+  if (cpu && fin(cpu.draws) && cpu.draws < 8 && fin(cpu.N)) fail(`PLAN UNDER-SAMPLED: ${cpu.draws} of ${cpu.N} draws`,'the work budget stopped the Monte Carlo before its probabilities mean anything — the decision rests on too few paired draws')
+  // THE DRAWS PRICE NO EXIT (live BN13.1 2026-10-11 14:11Z-19:28Z: every
+  // option 0h in every draw, the drift posterior's s = 1e9 from a 7.2e24h
+  // calibration sample) — the install decision is unpriced, or its
+  // committed exit is not a duration while its point is. The gate holds on
+  // it (installgate UNPRICED INSTALL COMPARISON); this says it is happening.
+  const di = plan.decisions?.install ?? null
+  if (di?.unpriced === true) fail(`INSTALL COMPARISON UNPRICED: ${String(di.why ?? '').slice(0, 220)}`, 'the plan priced no install option in its draws — the gate holds every install until it prices (or the life reaches its committed length); look at posteriors.drift (an absurd s) and the options\' points')
+  else if (di?.key && fin(di.pointH) && di.pointH > 0 && fin(di.meanH) && !(di.meanH > 0)) fail(`PLAN DRAWS DEGENERATE: the install decision '${di.key}' has a ${di.pointH}h point and a ${di.meanH}h mean over its draws`, 'the draws\' structural noise collapsed the exit to 0h (posteriors.drift s) — every comparison is a tie')
+  if (fin(plan.posteriors?.s) && plan.posteriors.s > 10) fail(`DRIFT POSTERIOR ABSURD: relative exit forecast error s = ${plan.posteriors.s.toPrecision(3)}`, `${plan.posteriors.driftWhy ?? ''} — an unpriced exit sample (bayes.pricedExitH) or a broken run reached the calibration`)
   // TWO EXITS AT INSTALL (plan.installExitsOf) and the graft decision's
   // basis (graftConsistencyOf) are separate failures with separate causes.
   const cons = plan.consistency ?? null

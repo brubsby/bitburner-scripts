@@ -59,7 +59,7 @@
 // LEVEL interval's shrinkage and applied to the paired difference D; the
 // value of waiting assumes waiting itself costs no exit hours.
 
-import { PRIORS, PAIR_MAX_GAP_H, runBreak, robustIG, igUpdate, tCdf, lgamma } from 'bayes.js'
+import { PRIORS, PAIR_MAX_GAP_H, runBreak, robustIG, igUpdate, tCdf, lgamma, pricedExitH } from 'bayes.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -156,7 +156,7 @@ export function levelOf(s) {
  * dropped (as driftPairs). `run`: same life and no break — what driftPairs keeps.
  */
 export function revisionsOf(samples, { minGapH = EXITCAL.minGapH, maxGapH = PAIR_MAX_GAP_H } = {}) {
-  const S = (samples ?? []).filter((x) => fin(x?.exitH) && x.exitH > 0 && fin(Date.parse(x?.at)))
+  const S = (samples ?? []).filter((x) => pricedExitH(x?.exitH) && fin(Date.parse(x?.at)))
   const out = []
   for (let i = 1; i < S.length; i++) {
     const a = S[i - 1]
@@ -291,7 +291,7 @@ const meanOf = (xs) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 
  * Windows overlap (n_eff ~ n / k).
  */
 export function horizonsOf(samples, legacyScale, legacyDf, m = 1) {
-  const S = (samples ?? []).filter((x) => fin(x?.exitH) && x.exitH > 0 && fin(Date.parse(x?.at)))
+  const S = (samples ?? []).filter((x) => pricedExitH(x?.exitH) && fin(Date.parse(x?.at)))
   const rows = []
   for (const k of EXITCAL.horizons) {
     const cell = { k, within: { n: 0, mHit: 0, mN: 0, lHit: 0 }, install: { n: 0, mHit: 0, mN: 0, lHit: 0 } }

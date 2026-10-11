@@ -839,7 +839,9 @@ export function realisedCapital(rows, { maxStartTicks = 150, minPoints = 8 } = {
  * Returns {predictedPerH, realisedPerH, errPerH, pairs, why}.
  */
 export function exitDrift(samples, { minGapH = 0.2, minPairs = 3 } = {}) {
-  const S = (samples ?? []).filter((x) => fin(x?.exitH) && fin(Date.parse(x?.at)))
+  // An unpriced exit (0, or past 1e5h = exitplan.DEGENERATE_H) is not a
+  // forecast: its drift would set the tolerance (bayes.pricedExitH).
+  const S = (samples ?? []).filter((x) => fin(x?.exitH) && x.exitH > 0 && x.exitH < 1e5 && fin(Date.parse(x?.at)))
   const pairs = []
   for (let i = 1; i < S.length; i++) {
     const a = S[i - 1]

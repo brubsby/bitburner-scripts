@@ -177,11 +177,11 @@ import { enter, leave, pageBoot } from 'trace.js'
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
-import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
+import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
-import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, PRIORS as BAYES_PRIORS } from 'bayes.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
@@ -3965,8 +3965,16 @@ async function planInstallOf(ns, info, inputs, count, point, { route = null, tra
   // (one trajectory from one state), and consistencyOf compares the keys.
   pc.installInputs = inputs
   if (d && typeof d === 'object') d.inputsKey = inputsKeyOf(inputs)
-  if (!d?.key || typeof d.meanH !== 'number') return null
-  return { install: d.install === true, key: d.key, ...(route ? { route } : {}), waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why }
+  // THE PLAN RAN AND COULD NOT PRICE THE COMPARISON (no key, or an exit that
+  // is not a positive duration): UNPRICED, never 'no plan'. It was null —
+  // which sent the gate to its point argmin — and a mean of 0h passed as a
+  // decision (live BN13.1 2026-10-11 19:28Z: every option 0h in every draw,
+  // 'now' by listing order, a lone NutriGen Implant installed). installgate
+  // holds on it (UNPRICED INSTALL COMPARISON).
+  if (!d?.key || typeof d.meanH !== 'number' || !isFinite(d.meanH) || !(d.meanH > 0)) {
+    return { unpriced: true, install: false, key: null, ...(route ? { route } : {}), H: null, why: d?.unpriced ? d.why : `UNPRICED: the plan's install decision ${d?.key ? `'${d.key}' priced its exit at ${d.meanH}h` : 'named no option'} (${String(d?.why ?? 'no reason given').slice(0, 200)})` }
+  }
+  return { install: d.install === true, key: d.key, ...(route ? { route } : {}), waitMs: typeof d.waitH === 'number' ? d.waitH * 3600000 : null, H: d.meanH, q10: d.q10, q50: d.q50, q90: d.q90, pBest: d.pBest, held: d.held === true, why: d.why, bestWait: bestWaitOfOptions(d) }
 }
 /**
  * The decisions DERIVED from the committed route, recorded in the plan so a
@@ -4395,7 +4403,10 @@ function exitCalibrationOf(ns, info) {
 // seH: the published point's own Monte Carlo error (a mean over members, bbplan.BLADE_ENSEMBLE) — exitcal adds it to the revision's predictive.
 function withExitSample(cal, info, exitH, source, seH = null) {
   const last = cal.samples[cal.samples.length - 1]
-  const due = typeof exitH === 'number' && isFinite(exitH) && (!last || Date.now() - Date.parse(last.at) >= EXIT_CAL_GAP_MS || last.life !== info?.lastAugReset)
+  // An unpriced exit (0h, or past bayes.EXIT_UNPRICED_H) is not a forecast:
+  // recorded, it set the node's drift posterior to s = 1e9 (live BN13.1
+  // 2026-10-11 13:56Z, 7.2e24h) and zeroed every plan draw after it.
+  const due = pricedExitH(exitH) && (!last || Date.now() - Date.parse(last.at) >= EXIT_CAL_GAP_MS || last.life !== info?.lastAugReset)
   const samples = due ? [...cal.samples, { at: new Date().toISOString(), exitH: +exitH.toFixed(2), ...(typeof seH === 'number' && isFinite(seH) && seH > 0 ? { seH: +seH.toFixed(3) } : {}), life: info?.lastAugReset ?? null, source, ver: MODEL_VERSION, boot: PAGE_BOOT }].slice(-EXIT_CAL_MAX) : cal.samples
   const d = exitDrift(samples)
   return { node: cal.node, samples, ...d, tolPerH: d.errPerH ?? EXIT_TOL_PRIOR_PER_H, tolSource: d.errPerH != null ? `measured: ${d.why}` : `prior ${EXIT_TOL_PRIOR_PER_H}h per hour (${d.why})` }
@@ -8900,6 +8911,15 @@ async function act(ns, canJoin, info, note) {
     const gate = shouldInstall({
       homeSave: homeSaveNow,
       exitCompare,
+      // THE PRICED SOFTLOCK ESCAPE of an unpriced install comparison: the
+      // plan's committed life length (installgate unpricedHold).
+      lifeTargetH: (() => {
+        try {
+          return committedLifeL(ns, info)?.L ?? null
+        } catch {
+          return null
+        }
+      })(),
       // The committed Bladeburner route: the exit needs no Daedalus count and
       // no hacking multiplier — the install decision priced on the black ops decides.
       bladeRoute: exitCompare?.route === 'blade',

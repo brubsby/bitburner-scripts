@@ -129,6 +129,8 @@ export const RATE_CHANNELS = ['hacking', 'hacking_money', 'hacking_speed', 'hack
  *  than this remain to be banked. See shouldInstall's COUNT BATCH block: it is
  *  an anti-thrash floor, stated as a policy rather than derived. */
 export const COUNT_MIN_BATCH = 3
+/** exitplan.DEGENERATE_H (= bayes.EXIT_UNPRICED_H): past it an exit is unpriced, not a duration. Pinned equal by tools/test/unpricedwait.test.mjs. */
+export const UNPRICED_EXIT_H = 1e5
 
 /**
  * Combine per-augmentation multiplier objects into one progress factor.
@@ -705,7 +707,39 @@ export function shouldInstall(o) {
   // the committed install time kept unless an alternative is better with
   // P >= theta. It replaces both the exact argmin and the tolerance above;
   // those remain only when the plan could not decide (ex.bayes null).
-  const bayes = exitDecides && ex.bayes && typeof ex.bayes.install === 'boolean' ? ex.bayes : null
+  // A decision whose exit is not a positive duration (H 0 — the 19:28Z
+  // record) is unpriced whoever produced it.
+  const bayesUnpriced = exitDecides && !!ex.bayes && (ex.bayes.unpriced === true || (typeof ex.bayes.install === 'boolean' && !(typeof ex.bayes.H === 'number' && isFinite(ex.bayes.H) && ex.bayes.H > 0)))
+  const bayes = exitDecides && ex.bayes && typeof ex.bayes.install === 'boolean' && !bayesUnpriced ? ex.bayes : null
+  // --- AN UNPRICED COMPARISON FAILS CLOSED ----------------------------------
+  // The plan ran and could not price its options (ex.bayes.unpriced:
+  // progress.js planInstallOf — no option a positive exit in any draw), or,
+  // with no plan, the waits that buy something (o.futures) priced no exit
+  // (ex.waits all unpriced). Either way "install now" has nothing to beat, so
+  // it won by default: live BN13.1 2026-10-11 19:28Z the plan priced every
+  // option 0h in every draw (the drift posterior's s = 1e9), 'now' won the tie
+  // by listing order, and a lone NutriGen Implant (M = 1) reset the life.
+  // Unknown is not a verdict: HOLD, loudly — except the PRICED SOFTLOCK
+  // ESCAPE: the life has reached the committed life length (o.lifeTargetH,
+  // the plan's priced life-length decision), where installing is what the
+  // committed trajectory does anyway. Installing now past DEGENERATE_H on the
+  // point is unpriced too (nowUnpriced).
+  const planUnpriced = bayesUnpriced
+  const pricedWait = (w) => typeof w?.H === 'number' && isFinite(w.H) && w.H > 0 && w.H < UNPRICED_EXIT_H
+  const buyingWaits = (o.futures ?? []).filter((f) => num(f?.waitMs) && f.waitMs > 0 && num(f?.M) && f.M > 1)
+  const waitsUnpriced = exitDecides && !ex.countAware && !planUnpriced && !bayes && buyingWaits.length > 0 && (ex.waits ?? []).length > 0 && !(ex.waits ?? []).some(pricedWait)
+  const nowUnpriced = exitDecides && !(ex.nowH < UNPRICED_EXIT_H)
+  const unpricedWhy = nowUnpriced
+    ? `installing now is itself unpriced (${ex.nowH.toExponential(2)}h is past ${UNPRICED_EXIT_H}h: a degenerate exit, not a duration)`
+    : planUnpriced
+    ? `the plan's install comparison is UNPRICED (${ex.bayes.unpriced === true ? ex.bayes.why ?? 'no reason given' : `'${ex.bayes.key}' with an expected exit of ${ex.bayes.H}h: ${ex.bayes.why ?? ''}`})`
+    : waitsUnpriced
+      ? `${buyingWaits.length} wait(s) buy a bigger batch (the best M=${Math.max(...buyingWaits.map((f) => f.M)).toFixed(4)}) and none priced an exit`
+      : null
+  const ageH = num(ageMs) ? ageMs / 3.6e6 : null
+  const lifeTargetH = num(o.lifeTargetH) && o.lifeTargetH > 0 ? o.lifeTargetH : null
+  const softlockEscape = !!unpricedWhy && lifeTargetH !== null && ageH !== null && ageH >= lifeTargetH
+  const unpricedHold = !!unpricedWhy && !softlockEscape
   if (bayes) {
     tieWait = null
     exitWait = bayes.install || bayes.key === 'never' ? null : { waitMs: typeof bayes.waitMs === 'number' ? bayes.waitMs : 0, H: bayes.H, key: bayes.key }
@@ -849,7 +883,7 @@ export function shouldInstall(o) {
   const homeSaveHold = !blade && !terminal && !mandateHold && o.homeSave?.wins === true
   const install = blade
     ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true && bladeGuard?.ok !== false))
-    : !mandateHold && !homeSaveHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
+    : !mandateHold && !homeSaveHold && (terminal || (!unpricedHold && (countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))))
   // THE PLAN AND THIS GATE AGREE, or the gate names why it overrode it.
   const planOverride =
     bayes && bayes.install !== install
@@ -898,6 +932,11 @@ export function shouldInstall(o) {
     countTimingWants: countWants,
     countTimingWhy: timing?.why ?? null,
     decidedBy,
+    // AN UNPRICED COMPARISON (fail closed): the plan's or the waits', and the escape.
+    unpricedHold: unpricedHold || undefined,
+    unpricedWhy: unpricedWhy ?? undefined,
+    softlockEscape: softlockEscape || undefined,
+    lifeTargetH,
     exitNowH: exitDecides ? ex.nowH : null,
     exitBestWaitH: exitWait?.H ?? null,
     exitNeverH: exitDecides && typeof ex.neverH === 'number' ? ex.neverH : null,
@@ -931,6 +970,10 @@ export function shouldInstall(o) {
         : install
           ? `install: ${queued} aug(s) on the Bladeburner route — the black-op exit installing now ${ex.nowH.toFixed(1)}h, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'} (plan ${bayes.key}: ${bayes.why ?? ''})`
           : `hold: the Bladeburner route — the plan's install decision is ${bayes.key} (black-op exit installing now ${ex.nowH.toFixed(1)}h, never ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}, the best wait ${exitWait?.H != null ? exitWait.H.toFixed(1) + 'h' : '-'}): ${bayes.why ?? ''}`
+      : unpricedHold && !homeSaveHold && !mandateHold && !terminal
+      ? `hold: UNPRICED INSTALL COMPARISON — ${unpricedWhy}; installing now (${ex.nowH < UNPRICED_EXIT_H ? `${ex.nowH.toFixed(1)}h on the point` : 'unpriced'}) has no priced comparison, so it is not a decision. Held until the comparison prices${lifeTargetH !== null ? `, or until the life reaches the committed ${lifeTargetH}h length (${ageH !== null ? ageH.toFixed(2) : '?'}h now)` : ' (no committed life length: no escape)'}`
+      : softlockEscape && install && !terminal
+      ? `install: ${queued} aug(s) — SOFTLOCK ESCAPE: ${unpricedWhy}, but the life has reached the committed ${lifeTargetH}h length (${ageH.toFixed(2)}h), where the committed trajectory installs (installing now ${ex.nowH < UNPRICED_EXIT_H ? `${ex.nowH.toFixed(1)}h on the point` : 'unpriced on the point'})`
       : homeSaveHold
       ? `hold: SAVE FOR HOME — ${o.homeSave?.why ?? 'the save verdict wins'} (the install waits until home is bought, ${typeof o.homeSave?.atH === 'number' ? `~${o.homeSave.atH.toFixed(2)}h` : 'its hour unstated'})`
       : mandateHold
@@ -951,7 +994,7 @@ export function shouldInstall(o) {
           ? `the priced timing says a bigger batch is faster: ${timing?.why ?? ''}`
           : `below the floor of ${countFloor}, and the timing is not yet priced (${timing?.why ?? 'no timing supplied'})`)
       : install && exitDecides
-      ? `install: ${queued} aug(s) — the simulated exit installing now is ${ex.nowH.toFixed(1)}h, the best wait ${exitWait ? exitWait.H.toFixed(1) + 'h (' + (exitWait.waitMs / 3600000).toFixed(1) + 'h wait)' : tieWait ? `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting: ${ex.waitTolWhy ?? 'stated'})` : 'unpriced'}, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}`
+      ? `install: ${queued} aug(s) — the simulated exit installing now is ${ex.nowH.toFixed(1)}h, the best wait ${bestWaitText()}, never installing ${pricedWait({ H: ex.neverH }) ? ex.neverH.toFixed(1) + 'h' : typeof ex.neverH === 'number' ? `unpriced (${ex.neverH.toExponential(2)}h is past ${UNPRICED_EXIT_H}h)` : 'unpriced'}`
       : !install && exitDecides && waitBeats && !destructive && !countStalls
       ? neverBest
         ? `hold: never installing again exits sooner (${ex.neverH.toFixed(1)}h) than installing now (${ex.nowH.toFixed(1)}h) — this is the final window`
@@ -977,6 +1020,17 @@ export function shouldInstall(o) {
 
   function base() {
     return { M, queued, ageMs, exp, target, rateNow, rho, rhoSource, sample: { ageMs, M } }
+  }
+  // The best wait the decision compared against, as priced: the plan's (its
+  // draws' mean, else its point), else the exact comparison's, else why none.
+  function bestWaitText() {
+    const bw = bayes?.bestWait ?? null
+    if (bw && (typeof bw.H === 'number' || typeof bw.pointH === 'number')) return `${bw.key} ${typeof bw.H === 'number' ? `${bw.H.toFixed(1)}h (plan mean${typeof bw.pointH === 'number' ? `, point ${bw.pointH.toFixed(1)}h` : ''})` : `${bw.pointH.toFixed(1)}h by ${bw.by}`}`
+    if (exitWait) return `${exitWait.H.toFixed(1)}h (${(exitWait.waitMs / 3600000).toFixed(1)}h wait)`
+    if (tieWait) return `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting: ${ex.waitTolWhy ?? 'stated'})`
+    const pts = (ex.waits ?? []).filter(pricedWait)
+    if (pts.length) return `${Math.min(...pts.map((w) => w.H)).toFixed(1)}h (point; no wait beats installing now)`
+    return buyingWaits.length ? 'UNPRICED' : 'none (no wait buys a bigger batch)'
   }
   // `extra` so an early refusal can still publish the state that explains it.
   // The M<=1 return used to fire before the count was read, so /tel showed
