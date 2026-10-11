@@ -78,6 +78,7 @@ export async function run() {
     same("open-pass-visits", list(dflt("open-pass-visits")).split(",").filter((s) => s && s !== "none").join(","), [...R.OPEN_PASS_VISITS].sort().join(","));
     same("prior-floor-on", floors(dflt("prior-floor-on")), [...R.PRIOR_FLOOR_ON].map(([o, e]) => `${o}:${e}`).sort().join(","));
     same("late-cap-on", floors(dflt("late-cap-on")), [...R.LATE_CAP_ON].map(([o, e]) => `${o}:${e}`).sort().join(","));
+    same("ponder-depth-on", list(dflt("ponder-depth-on")).split(",").filter((s) => s && s !== "none").join(","), [...R.PONDER_DEPTH_ON].sort().join(","));
     await R.regressEnv();
   } catch (e) {
     c1.warn("the opponent model could not load — the corpus did NOT run", String(e?.message ?? e).slice(0, 200));
@@ -121,6 +122,8 @@ export async function run() {
   const il = fixture.cases.find((c) => c.id === "live-2026-10-09T22:10:40.965Z-Illuminati");
   const GAME_RULE = { secondRule: "game", secondRoot: "game" };
   const gl7 = QUICK || !il ? [] : il.checks.map((ch) => ({ ch, on: settle(pool.run(il, { ...optsOf(ch), cheatPolicy: GAME_RULE })) }));
+  const nb2 = fixture.cases.find((c) => c.id === "live-2026-10-11T12:36:32.308Z-Netburners");
+  const gl8 = QUICK || !nb2 ? [] : nb2.checks.map((ch) => ({ ch, on: settle(pool.run(nb2, { ...optsOf(ch), nnOver: { ponderDepth: true } })) }));
   let won = 0, lost = 0, open = 0;
   for (const { fx, ch, p } of jobs) {
     const { res, ms, e } = await p;
@@ -208,6 +211,25 @@ export async function run() {
       if (e) c7.fail(`seed ${ch.seed ?? 1} work ${ch.work}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
       else if (!res.won) c7.fail(`seed ${ch.seed ?? 1} work ${ch.work}: the game's rule LOST ${res.black}-${res.white}`, `line ${res.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
       else c7.note(`seed ${ch.seed ?? 1} work ${ch.work}: game rule WON ${res.black}-${res.white}`);
+    }
+  // GL8: the 12:36:32Z Netburners case (open): the ponder's net depth counted
+  // from our committed move leaves a pre-sent answer's children to playouts,
+  // and at ply 7 it pre-sends 4,4 (GL1 loses it as live did); golib
+  // nn.ponderDepth (the depth counted from the AI's replies, off live until
+  // measured) pre-sends 0,1 and wins every check. (Slow tier: it guards an
+  // option that is off live.)
+  const c8 = new Check("GL8", "the 2026-10-11 12:36:32Z Netburners case: nn.ponderDepth (off live) pre-sends 0,1 at ply 7 instead of the playout-valued 4,4 and wins every check");
+  checks.push(c8);
+  if (!nb2) c8.fail("the case is not in the corpus");
+  else if (QUICK) c8.skip(nb2.checks.length, "the ponderDepth replays of its checks");
+  else
+    for (const { ch, on: p } of gl8) {
+      c8.examined(1);
+      const { res, e } = await p;
+      const d = res?.decisions.find((x) => x.ply === ch.from);
+      if (e) c8.fail(`seed ${ch.seed}: the replay threw`, String(e?.stack ?? e).slice(0, 300));
+      else if (!res.won || d?.mv === "4,4") c8.fail(`seed ${ch.seed}: ponderDepth ${d?.mv} ${res.won ? "WON" : "LOST"} ${res.black}-${res.white}`, `line ${res.line.map((l) => `${l.m}/${l.r}`).join(" ")}`);
+      else c8.note(`seed ${ch.seed}: ponderDepth ${d?.mv}${d?.pre ? " (pre-sent)" : ""} WON ${res.black}-${res.white}`);
     }
   await pool.close();
   return checks;

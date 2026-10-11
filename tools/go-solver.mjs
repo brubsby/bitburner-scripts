@@ -491,12 +491,32 @@ const LATE_CAP_ON = new Map(
 );
 const lateCapFor = (opponent) => LATE_CAP_ON.get(String(opponent ?? "").replace(/\s+/g, ""));
 console.log(`go-solver: late-prior cap ${LATE_CAP_ON.size ? [...LATE_CAP_ON].map(([o, e]) => `${o} ${e}`).join(", ") : "off"}`);
+// THE PONDER'S NET DEPTH (golib nn.ponderDepth, --ponder-depth-on Opp,... ;
+// "none" off): the ponder counts the net's depth from the AI's replies (the
+// nodes whose answers are PRE-SENT), not from our committed move, so a
+// pre-sent answer is priced with the same net depth below it as a requested
+// one. Without it (b4c32 at depth 1) a pre-sent answer's children are valued
+// by playouts alone. The 2026-10-11 12:36:32Z Netburners loss (streak 265,
+// 0-22.5): ply 7 pre-sent 4,4, which its reply node held at 5411 visits 0.964
+// (playouts) while every request search gives it 1-2 visits at ~0 and plays
+// 0,1 (0.64-0.83); after 4,4/3,0 the position is lost 9/12 at the live budget.
+// Replayed (go-regress liveTree, presend 1300, work 400): the live config
+// pre-sends 4,4 in 12/244 seeds (0,1 210) and loses 4 of those 10 replayed;
+// ponderDepth pre-sends 0,1 in 44/44 (seeds 17-60) and wins those 4 (GL8).
+// NOT MEASURED on the paired harness (bubtop unreachable 2026-10-11): off.
+const PONDER_DEPTH_ON = new Set(
+  str("ponder-depth-on", "none")
+    .split(",")
+    .map((s) => s.trim().replace(/\s+/g, ""))
+    .filter((s) => s && s !== "none"),
+);
+console.log(`go-solver: ponder net depth from the replies for ${PONDER_DEPTH_ON.size ? [...PONDER_DEPTH_ON].join(",") : "nobody"}`);
 const sessOpts = (N, opponent, base = {}) => {
   const out = { ...base, ...JOINT_OPTS };
   if (OPEN_PASS_VISITS.has(String(opponent ?? "").replace(/\s+/g, ""))) out.openPass = "visits";
   const floor = priorFloorFor(opponent);
   const lc = lateCapFor(opponent);
-  const extra = { ...(floor ? { priorFloor: floor } : {}), ...(Number.isFinite(lc) ? { lateCap: lc } : {}) };
+  const extra = { ...(floor ? { priorFloor: floor } : {}), ...(Number.isFinite(lc) ? { lateCap: lc } : {}), ...(PONDER_DEPTH_ON.has(String(opponent ?? "").replace(/\s+/g, "")) ? { ponderDepth: true } : {}) };
   if (outcomeFor(N, opponent)) out.nn = { eval: async (b, k) => OUTCOME.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, steer: true, ...extra };
   else if (smallnetFor(N, opponent)) out.nn = { eval: async (b, k) => SMALLNET.eval(b, k), mix: 0, maxDepth: SMALLNET_DEPTH, parallel: 1, ...extra };
   return out;

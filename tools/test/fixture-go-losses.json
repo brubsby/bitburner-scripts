@@ -9258,6 +9258,349 @@
    ],
    "status": "fixed",
    "note": "BN7.1, streak 8520 ended 12-16.5 (cheats replayed at crime_success 3.416 / SF14.3: /tel/go-cheat.txt 22:44:31Z). Turning decision ply 9 (from ply 8 the replays still win; from ply 10 every replay loses): the greedy cheat 1,0+3,1 — the second stone unlocked the AI's ko retake at 2,0 (playTwoMoves adds no history board, so superko no longer forbids it). Ply 7's pre-sent 0,1 after the AI's pass (passing won 15-12.5) was a play-on the search still wins (0,1 lines 0.85-0.99, from ply 8/9 the single wins), and ply 10's open PASS came after the game was lost. Seed 1 opens no cheat window at ply 9 and wins on both policies, so it is not a check. FIX: the decline's harm test counts a second stone that unlocks a ko the first stone took (golib.koUnlock via cheatHarm). REJECTED: declineHarm off for Tetrads (the plain decline, 5ffeaba's other half) wins this case but measured -2.7% [-4.5, -0.7] power/h on 1200 paired Tetrads games."
+  },
+  {
+   "id": "live-2026-10-11T12:36:32.308Z-Netburners",
+   "source": "live",
+   "at": "2026-10-11T12:36:32.308Z",
+   "opponent": "Netburners",
+   "size": 5,
+   "komi": 1.5,
+   "start": "..#...........#.....#.#..",
+   "streakBefore": 265,
+   "live": {
+    "black": 0,
+    "white": 22.5,
+    "ver": "model-session-r3",
+    "resumed": false
+   },
+   "moves": [
+    {
+     "m": "2,2",
+     "r": "1,3",
+     "T": 2571613600,
+     "s": "req",
+     "t": [
+      [
+       2,
+       2,
+       0.449,
+       290,
+       0.448
+      ],
+      [
+       2,
+       3,
+       0.26,
+       4,
+       0.25
+      ],
+      [
+       1,
+       2,
+       0.322,
+       3,
+       0.333
+      ]
+     ],
+     "ks": [
+      -1,
+      1,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "3,3",
+     "r": "3,1",
+     "T": 2571614400,
+     "s": "pre",
+     "ks": [
+      -1,
+      1,
+      3,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "2,1",
+     "r": "2,3",
+     "T": 2571615000,
+     "s": "pre",
+     "ks": [
+      -1,
+      1,
+      2,
+      4,
+      6
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,1",
+     "T": 2571615600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "1,2",
+     "r": "2,0",
+     "T": 2571616400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ]
+    },
+    {
+     "m": "0,3",
+     "r": "0,4",
+     "T": 2571617400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2
+     ]
+    },
+    {
+     "m": "3,4",
+     "r": "1,0",
+     "T": 2571618200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "4,4",
+     "r": "3,0",
+     "T": 2571618600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "0,0",
+     "r": "0,1",
+     "T": 2571619000,
+     "s": "pre",
+     "ks": [
+      1,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "4,3",
+     "T": 2571619400,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "2,2",
+     "r": "3,3",
+     "T": 2571620200,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "1,2",
+     "T": 2571620600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4
+     ]
+    },
+    {
+     "m": "3,4",
+     "r": "0,3",
+     "T": 2571621000,
+     "s": "pre",
+     "ks": [
+      0,
+      1,
+      2,
+      5
+     ]
+    },
+    {
+     "m": "P",
+     "r": "0,0",
+     "T": 2571621400,
+     "s": "pre",
+     "ks": [
+      1,
+      3
+     ]
+    },
+    {
+     "m": "P",
+     "r": "1,4",
+     "T": 2571621800,
+     "s": "req",
+     "ks": [
+      -1,
+      1
+     ]
+    },
+    {
+     "m": "P",
+     "r": "4,1",
+     "T": 2571622200,
+     "s": "pre",
+     "ks": [
+      1,
+      3
+     ]
+    },
+    {
+     "m": "P",
+     "r": "2,1",
+     "T": 2571622600,
+     "s": "pre",
+     "ks": [
+      -1,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "3,2",
+     "r": "2,2",
+     "T": 2571623000,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "4,4",
+     "T": 2571623600,
+     "s": "pre",
+     "ks": [
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+     ]
+    },
+    {
+     "m": "P",
+     "r": "G",
+     "T": 2571624400,
+     "s": "req"
+    }
+   ],
+   "note": "Lost 0-22.5 at streak 265. Every PASS (plies 9, 13-16, 18, 19) was PASS-ONLY: black had no legal stone (probe passOnly at each; the 12:36:29 request logged 0 iters) — not the open-pass class; openPass 'visits' was live (solver log 11:45:26). The game turned at ply 7: the ponder under 3,4 pre-sent 4,4 to the AI's 1,0, its reply node holding 4,4 at 5411 visits 0.964 and 0,1 at 153 visits 0.297 — values from playouts, the node's children lying beyond the net's depth 1 counted from our committed move. Every request search at that board plays 0,1 (0.64-0.83 at 1600-6400 work; 4,4 gets 1-2 visits at ~0). After 4,4/3,0 the replay loses 9/12 at the live budget (work 400); ply 8's 0,0 drew the AI's 0,1 (its reply at k=1,8 of -1..8) and from ply 9 black is pass-only. golib nn.ponderDepth (the ponder counts the net's depth from the AI's replies) pre-sends 0,1 in 44/44 seeds (17-60) and wins the 4 seeds where the live config pre-sends 4,4 and loses (100, 185, 246, 252; the live config pre-sends 4,4 in 12/244 seeds, 0,1 210); off live (go-solver --ponder-depth-on none) until measured on the paired harness (bubtop unreachable 2026-10-11).",
+   "nets": true,
+   "status": "open",
+   "checks": [
+    {
+     "from": 7,
+     "work": 400,
+     "seed": 100,
+     "presend": 1300,
+     "liveTree": true,
+     "why": "ply 7 as live grew it (liveTree, presend 1300, work 400 = Netburners' 200ms): the live config pre-sends 4,4 from a reply node valued by playouts below the net's depth and loses 0-22.5 (seed 100); nn.ponderDepth pre-sends 0,1 and wins (GL8)"
+    },
+    {
+     "from": 7,
+     "work": 400,
+     "seed": 252,
+     "presend": 1300,
+     "liveTree": true,
+     "why": "ply 7 as live grew it (liveTree, presend 1300, work 400 = Netburners' 200ms): the live config pre-sends 4,4 from a reply node valued by playouts below the net's depth and loses 0-22.5 (seed 252); nn.ponderDepth pre-sends 0,1 and wins (GL8)"
+    }
+   ]
   }
  ]
 }

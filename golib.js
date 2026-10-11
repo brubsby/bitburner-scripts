@@ -1241,6 +1241,14 @@ export function modelSession(N, komi, model, opts = {}) {
   // net: there the net's depth-1 values misread positions the single's reused
   // tree had valued by playout (go.js SETTINGS.cheat.secondNet).
   let nnDepth = NN_DEPTH
+  // nn.ponderDepth (THE PONDER'S NET DEPTH): a search from a W node (the
+  // ponder, under our committed move) counts depth from that W node's ply, so
+  // the AI's replies (the B nodes whose answers are PRE-SENT) are at depth 1
+  // and their children at 2: with maxDepth 1 a pre-sent answer was priced on
+  // playouts one net level shallower than a request's at the same board.
+  // true: the ponder's depth counts from the reply nodes instead (the same
+  // net depth below a pre-sent answer as below a requested one).
+  const PONDER_DEPTH = !!(NN && NN.ponderDepth)
   // nn.lateCap K (see nnEvalNode, THE LATE PRIOR): -1 / absent = off.
   const LATE_CAP = NN && Number.isFinite(NN.lateCap) && NN.lateCap >= 0 ? NN.lateCap : -1
   let lateCaps = 0
@@ -1734,7 +1742,7 @@ export function modelSession(N, komi, model, opts = {}) {
   /** One iteration from `start` (a B or W node); returns false if nothing could be grown. */
   const iterate = async (start) => {
     let node = start
-    const nnOk = (n) => n.ply - start.ply <= nnDepth
+    const nnOk = PONDER_DEPTH && start.kind === 1 ? (n) => n.ply - start.ply - 1 <= nnDepth : (n) => n.ply - start.ply <= nnDepth
     const path = []
     // Virtual loss: every node on the path counts as in flight until the
     // backup (only read by the net's PUCT; vl is 0 between iterations).

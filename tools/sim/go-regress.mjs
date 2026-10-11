@@ -72,6 +72,8 @@ export const SMALLNET_ON = new Set(["Tetrads", "Daedalus", "Illuminati", "SlumSn
 export const PRIOR_FLOOR_ON = new Map();
 // Mirror of go-solver.mjs --late-cap-on (golib nn.lateCap, THE LATE PRIOR).
 export const LATE_CAP_ON = new Map();
+// Mirror of go-solver.mjs --ponder-depth-on (golib nn.ponderDepth).
+export const PONDER_DEPTH_ON = new Set();
 // Mirror of go-solver.mjs --open-pass-visits (golib opts.openPass 'visits').
 export const OPEN_PASS_VISITS = new Set(["Netburners"]);
 export const openPassFor = (opponent) => (OPEN_PASS_VISITS.has(planKey(opponent)) ? "visits" : null);
@@ -88,7 +90,7 @@ export async function solverNn(opponent, N) {
   if (net.size !== N) return null;
   const floor = PRIOR_FLOOR_ON.get(key) ?? 0;
   const lateCap = LATE_CAP_ON.get(key);
-  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}), ...(floor ? { priorFloor: floor } : {}), ...(Number.isFinite(lateCap) ? { lateCap } : {}) };
+  return { eval: async (b, k) => net.eval(b, k), mix: 0, maxDepth: 1, parallel: 1, ...(which === "outcome" ? { steer: true } : {}), ...(floor ? { priorFloor: floor } : {}), ...(Number.isFinite(lateCap) ? { lateCap } : {}), ...(PONDER_DEPTH_ON.has(key) ? { ponderDepth: true } : {}) };
 }
 
 /** go-games.txt / goplan opponent key -> the game's GoOpponent name. */
