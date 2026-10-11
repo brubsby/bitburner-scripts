@@ -1,7 +1,7 @@
 {
  "schema": "gameplan-posterior",
  "version": 1,
- "updatedAt": "2026-10-09T22:39:33.133Z",
+ "updatedAt": "2026-10-11T00:02:39.331Z",
  "model": {
   "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
   "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
@@ -50,7 +50,6 @@
    "source": "history.jsonl: hacking-route clear, g backed out of its hours",
    "node": 12,
    "clear": "BN12.1",
-   "inBase": false,
    "note": "21.12h"
   },
   {
@@ -250,6 +249,19 @@
    "note": "combat 100 at 2.38h"
   },
   {
+   "key": "open|BN7.1|start 2026-10-09T23:13:09.700Z",
+   "param": "open",
+   "value": 2.0166666666666666,
+   "sd": 0.25,
+   "space": "log",
+   "at": "2026-10-09T23:13:09.700Z",
+   "source": "history.jsonl: entry -> combat 100, first life, less the gym scale",
+   "node": 7,
+   "clear": "BN7.1",
+   "inBase": false,
+   "note": "combat 100 at 0.62h"
+  },
+  {
    "key": "xr14|2026-10-03T18:47:58.191Z|2026-10-05T08:57:35.014Z",
    "param": "xr14",
    "value": 1078467.4263360947,
@@ -304,11 +316,11 @@
     4
    ],
    "post": [
-    2.122,
-    2.48,
-    2.999
+    2.065,
+    2.379,
+    2.775
    ],
-   "n": 3
+   "n": 4
   },
   "phi11": {
    "prior": [
@@ -508,13 +520,13 @@
   "g3": {
    "prior": [
     0.02625,
-    0.04364,
-    0.08856
+    0.04362,
+    0.08842
    ],
    "post": [
-    0.02342,
-    0.03789,
-    0.06132
+    0.02341,
+    0.03787,
+    0.06126
    ],
    "n": 0,
    "what": "g /h of unplayed BN3: hand latent (prior) vs the full model (post)"
@@ -522,27 +534,27 @@
   "g5": {
    "prior": [
     0.03098,
-    0.0515,
-    0.1045
+    0.05148,
+    0.1043
    ],
    "post": [
     0.03579,
-    0.05316,
-    0.07897
+    0.05314,
+    0.0789
    ],
    "n": 0,
    "what": "g /h of unplayed BN5: hand latent (prior) vs the full model (post)"
   },
   "g6": {
    "prior": [
-    0.04113,
-    0.06836,
-    0.1387
+    0.04111,
+    0.06831,
+    0.1385
    ],
    "post": [
     0.0434,
-    0.07299,
-    0.1227
+    0.07296,
+    0.1226
    ],
    "n": 0,
    "what": "g /h of unplayed BN6: hand latent (prior) vs the full model (post)"
@@ -550,13 +562,13 @@
   "g7": {
    "prior": [
     0.02625,
-    0.04364,
-    0.08856
+    0.04362,
+    0.08842
    ],
    "post": [
     0.02828,
-    0.04187,
-    0.06199
+    0.04185,
+    0.06195
    ],
    "n": 0,
    "what": "g /h of unplayed BN7: hand latent (prior) vs the full model (post)"
@@ -564,52 +576,52 @@
   "g11": {
    "prior": [
     0.03098,
-    0.0515,
-    0.1045
+    0.05148,
+    0.1043
    ],
    "post": [
-    0.02781,
-    0.03979,
-    0.05693
+    0.02782,
+    0.03978,
+    0.05689
    ],
    "n": 0,
    "what": "g /h of unplayed BN11: hand latent (prior) vs the full model (post)"
   },
   "g13": {
    "prior": [
-    0.04113,
-    0.06836,
-    0.1387
+    0.04111,
+    0.06831,
+    0.1385
    ],
    "post": [
-    0.04187,
-    0.07796,
-    0.1452
+    0.04186,
+    0.07791,
+    0.145
    ],
    "n": 0,
    "what": "g /h of unplayed BN13: hand latent (prior) vs the full model (post)"
   },
   "g14": {
    "prior": [
-    0.03485,
-    0.05792,
-    0.1176
+    0.03484,
+    0.05789,
+    0.1173
    ],
    "post": [
-    0.05985,
-    0.09365,
-    0.1465
+    0.05982,
+    0.09355,
+    0.1463
    ],
    "n": 0,
    "what": "g /h of unplayed BN14: hand latent (prior) vs the full model (post)"
   },
   "g12": {
    "prior": [
-    0.07154,
+    0.0715,
     0.15
    ],
    "post": [
-    0.07446,
+    0.07445,
     0.1407
    ],
    "what": "g /h and its log sd"
@@ -618,27 +630,27 @@
    "chosen": "full",
    "what": "hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon) + v_n",
    "elpd": {
-    "hand": -9.866,
-    "exch": -5.917,
-    "amc": -6.11,
-    "full": -3.734,
-    "exchG": -4.236,
-    "amcG": -4.301,
+    "hand": -9.842,
+    "exch": -5.909,
+    "amc": -6.102,
+    "full": -3.724,
+    "exchG": -4.233,
+    "amcG": -4.299,
     "fullG": -4.385
    },
    "beta": [
-    -2.82,
-    -0.2502,
+    -2.821,
+    -0.2501,
     0.1777,
-    0.06335,
-    0.2193
+    0.06323,
+    0.2189
    ],
    "betaSd": [
-    0.1139,
+    0.1138,
     0.1374,
-    0.08454,
-    0.1645,
-    0.08669
+    0.08447,
+    0.1644,
+    0.08661
    ],
    "feats": [
     "lnAMC",
@@ -647,8 +659,8 @@
     "lnWDD"
    ],
    "tau": [
-    0.1723,
-    0.1454
+    0.172,
+    0.1453
    ]
   }
  }
