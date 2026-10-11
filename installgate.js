@@ -839,9 +839,17 @@ export function shouldInstall(o) {
   // 3.1h, and the 15:18Z install priced +0.27h while each new life priced
   // itself +0.89-1.04h (EXIT JUMP AT INSTALL).
   const bladeGuard = blade && !terminal && exitDecides && !!bayes && bayes.install === true ? bladeLoopGuardOf({ nowH: ex.nowH, neverH: ex.neverH, biasH: o.bladeInstallBiasH, biasWhy: o.bladeInstallBiasWhy, spreadH: o.bladeInstallSpreadH, scatterH: ex.neverScatterH, lifeH: num(ageMs) ? ageMs / 3.6e6 : null }) : null
+  // SAVING FOR HOME OUTRANKS INSTALLING NOW (o.homeSave: progress.js's home
+  // verdict at W = 0, exitplan.spendExit's save arm — exit(hold the life to
+  // the hour the stream reaches home's price, buy, install) against
+  // exit(install now without it), on the install decision's own inputs).
+  // When it wins, the install waits for home: home is the one purchase every
+  // later life keeps, and an install now resets the money that buys it.
+  // Not on the terminal install, a mandated hold or the Bladeburner route.
+  const homeSaveHold = !blade && !terminal && !mandateHold && o.homeSave?.wins === true
   const install = blade
     ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true && bladeGuard?.ok !== false))
-    : !mandateHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
+    : !mandateHold && !homeSaveHold && (terminal || countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))
   // THE PLAN AND THIS GATE AGREE, or the gate names why it overrode it.
   const planOverride =
     bayes && bayes.install !== install
@@ -849,6 +857,8 @@ export function shouldInstall(o) {
         ? mandateHold ? 'a mandated campaign' : destructive ? `the ${o.binding?.gate ?? '?'} gate the plan's trajectory does not carry (${o.binding?.why ?? ''})` : bladeGuard?.ok === false ? `INSTALL LOOP GUARD: ${bladeGuard.why}` : null
       : mandateHold
         ? 'a mandated campaign'
+        : homeSaveHold
+          ? `saving for home (${o.homeSave?.why ?? 'the save verdict wins'})`
         : terminal
           ? 'the terminal install'
           : destructive
@@ -909,6 +919,8 @@ export function shouldInstall(o) {
     binding: o.binding ?? null,
     destructive,
     mandateHold: mandateHold || undefined,
+    homeSave: o.homeSave ?? null,
+    homeSaveHold: homeSaveHold || undefined,
     bladeRoute: blade || undefined,
     bladeLoopGuard: bladeGuard || undefined,
     why: blade && !mandateHold && !terminal && !destructive
@@ -919,6 +931,8 @@ export function shouldInstall(o) {
         : install
           ? `install: ${queued} aug(s) on the Bladeburner route — the black-op exit installing now ${ex.nowH.toFixed(1)}h, never installing ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'} (plan ${bayes.key}: ${bayes.why ?? ''})`
           : `hold: the Bladeburner route — the plan's install decision is ${bayes.key} (black-op exit installing now ${ex.nowH.toFixed(1)}h, never ${typeof ex.neverH === 'number' ? ex.neverH.toFixed(1) + 'h' : 'unpriced'}, the best wait ${exitWait?.H != null ? exitWait.H.toFixed(1) + 'h' : '-'}): ${bayes.why ?? ''}`
+      : homeSaveHold
+      ? `hold: SAVE FOR HOME — ${o.homeSave?.why ?? 'the save verdict wins'} (the install waits until home is bought, ${typeof o.homeSave?.atH === 'number' ? `~${o.homeSave.atH.toFixed(2)}h` : 'its hour unstated'})`
       : mandateHold
       ? `hold: ${o.binding?.why ?? 'a mandated campaign is running'} — held even though ${terminal ? 'The Red Pill is queued' : 'the gate would install'}; it installs once the campaign completes`
       : terminal

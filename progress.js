@@ -181,7 +181,7 @@ import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, p
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
-import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
+import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
@@ -4932,12 +4932,16 @@ function incomePostOf(ns, info, player) {
 // exitplan.installCadence): this life's raw hacking multiplier, so the last
 // finished life's gain counts, the gift's hacking factor in it (giftHackNow:
 // the charge clears at every install, so it is not a gain — bayes.ledgerLives),
-// and the node covariate — the augmentation price, ln(money cost x rep cost).
+// the batch's own hacking gain where a gift node's entry lacks that factor
+// (batchHackOf: the catalogue's stats, snap-augstats — an augmentation's
+// multipliers do not depend on the node), and the node covariate — the
+// augmentation price, ln(money cost x rep cost).
 function cadenceOptsOf(player, info, ns = null) {
   // BitNode 12 is level-scaled (bitNodeMults needs the level), so the current node is read off reset info.
   const multsOf = (n) => (n === info?.currentNode ? bitNodeMults(info) : bitNodeMults(n))
   const giftHackNow = ns ? giftHackOf(readJson(ns, STANEK_FILE), info?.lastAugReset) : null
-  return { hackMultNow: player?.mults?.hacking ?? null, giftHackNow, covOf: (n) => { const m = multsOf(n); return m ? Math.log(m.AugmentationMoneyCost * m.AugmentationRepCost) : 0 } }
+  const batchHackOf = ns ? batchHackOfStats(readJson(ns, '/tel/snap-augstats.txt')?.data?.stats ?? null) : null
+  return { hackMultNow: player?.mults?.hacking ?? null, giftHackNow, batchHackOf, covOf: (n) => { const m = multsOf(n); return m ? Math.log(m.AugmentationMoneyCost * m.AugmentationRepCost) : 0 } }
 }
 // WHAT A LIFE OF EACH LENGTH BUYS (lifeplan.lifeTableGen): reputation reset at
 // every install, favour banked, the 1.9x money escalation — per length, no
@@ -8760,7 +8764,26 @@ async function act(ns, canJoin, info, note) {
       // (one exit, one model).
       if (exitCompare.bayes) countRouteNow.chosen.gateExitH = exitCompare.bayes.key?.startsWith('r') && typeof exitCompare.bayes.q50 === 'number' ? +exitCompare.bayes.q50.toFixed(2) : null
     }
+    // THE HOME SAVE AT AN INSTALL NOW (installgate homeSave): where the plan
+    // installs now, home's verdict priced at W = 0 on the install decision's
+    // own inputs (spendVerdictsOf -> exitplan.spendExit: not in hand, so the
+    // save arm — hold to the hour the stream reaches its price, buy, install
+    // — against installing now without it). 580f9b0 published the save arm
+    // but nothing held for it: the verdict at the trajectory's W was the only
+    // one priced, and an install now reset the money that would buy home.
+    const homeSaveNow = (() => {
+      if (exitCompare?.route === 'blade' || exitCompare?.bayes?.install !== true || !gateExitInputs) return null
+      try {
+        const mb = (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600)
+        const v = spendVerdictsOf(ns, info, gateExitInputs, 0, false, liveCapital, mb, replanAt, pending, offers)?.home ?? null
+        if (!v?.save) return v ? { wins: false, why: `home at an install now: ${v.why ?? 'no save arm'}` } : null
+        return { wins: v.save.wins === true, atH: v.save.atH, deltaH: v.deltaH ?? null, pBuy: v.save.pBuy ?? null, why: v.why }
+      } catch (e) {
+        return { wins: false, why: `the home save verdict threw: ${String(e).slice(0, 80)}` }
+      }
+    })()
     const gate = shouldInstall({
+      homeSave: homeSaveNow,
       exitCompare,
       // The committed Bladeburner route: the exit needs no Daedalus count and
       // no hacking multiplier — the install decision priced on the black ops decides.
@@ -9409,6 +9432,11 @@ async function act(ns, canJoin, info, note) {
                 // fragments at their charge now, which this install clears):
                 // the cadence divides it out (bayes.ledgerLives).
                 giftHack: giftHackOf(readJson(ns, STANEK_FILE), info?.lastAugReset),
+                // WHAT THIS LIFE'S BATCH BOUGHT on the hacking channel (the
+                // queued and this pass's purchases, their catalogue stats):
+                // a gift node's gain when either end lacks the gift factor
+                // (bayes.ledgerLives). undefined when any name has no stats.
+                batchHack: batchHackOfStats(readJson(ns, '/tel/snap-augstats.txt')?.data?.stats ?? null)?.([...(pending ?? []), ...bought]) ?? undefined,
                 // THE REWARD THIS LIFE CASHED IN, and the node it was earned in
                 // — the two fields scorecard.achievableRate needs to compute
                 // rho. `lnM` is ln(Meff), the SAME quantity the stopping rule

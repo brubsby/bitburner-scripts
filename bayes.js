@@ -874,11 +874,45 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
  * rest was the gift at two moments. An entry's `giftHack` (and `giftHackNow`
  * for the open life) is the gift's hacking factor at that read
  * (stanekplan.giftHackOf); when BOTH ends of a pair carry one, the gain is the
- * ratio of the aug parts (hackMult / giftHack). When either is missing, both
- * ends stay raw, so a pair is never in mixed units.
- * [{node, at, start, lifeH, hackMult, giftHack, records, next, nextGift, g}] (g
- * null without a successor), `.dups` the merged re-records.
+ * ratio of the aug parts (hackMult / giftHack).
+ * IN A GIFT NODE A RAW PAIR IS NOT A MEASUREMENT: when either end lacks the
+ * factor, the gain is what the life's batch bought — the product of its
+ * augmentations' hacking multipliers (the entry's `batchHack`, recorded at
+ * the install, else `batchHackOf(installBatch)` from the catalogue's stats) —
+ * and with neither the life is unmeasured (g null, `giftUnmeasured`), never
+ * the raw ratio. Live BN13.1 2026-10-11: life 1 (no giftHack: recorded before
+ * the field existed) read raw ln(2.3106 / 1.8935) = 0.199 (0.070/h) against
+ * the ln 1.0201 its 2 NFG bought — life 1's charger was starved, life 2's
+ * read carried 8.5h of charge — and that one life drove the node's cadence to
+ * 0.054/h (x1.9 a 12h life): every later life priced ~x10 too rich, so
+ * installing at once beat every wait (11:06Z: 7 augs, ln(hacking) 0.01, the
+ * exit 27.7h at the install against ~50h the new life priced itself at).
+ * A node is a gift node when the open life's factor is known (`giftHackNow`)
+ * or any of its entries carries one. Elsewhere both ends stay raw.
+ * [{node, at, start, lifeH, hackMult, giftHack, batchHack, records, next, nextGift, g, gBy}]
+ * (g null without a successor), `.dups` the merged re-records.
  */
+/**
+ * The batch's hacking gain from the catalogue's stats ({name: {hacking}}, the
+ * snapshot getAugmentationStats): the product over the names, a repeated name
+ * (NeuroFlux levels) once per level; null when any name has no stats.
+ */
+export function batchHackOfStats(stats) {
+  if (!stats || typeof stats !== 'object') return null
+  return (names) => {
+    if (!Array.isArray(names) || !names.length) return null
+    let p = 1
+    for (const n of names) {
+      const s = stats[n]
+      if (!s || typeof s !== 'object') return null
+      const h = s.hacking
+      if (h === undefined) continue
+      if (!fin(h) || !(h > 0)) return null
+      p *= h
+    }
+    return p
+  }
+}
 // A life the COUNT RULE ended (installgate's "install: COUNT BATCH" — a
 // ticket batch installed for the Daedalus count, its length the rule's
 // choice, not the economics') is its own regime.
@@ -900,22 +934,26 @@ const regimeOf = (e) =>
     : typeof e?.installWhy === 'string' && /^install: COUNT BATCH/.test(e.installWhy)
       ? 'count'
       : 'multiplier'
-export function ledgerLives(ledger, { node = null, hackMultNow = null, giftHackNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
+export function ledgerLives(ledger, { node = null, hackMultNow = null, giftHackNow = null, batchHackOf = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
   const gh = (x) => (fin(x) && x > 0 ? x : null)
   const rows = (Array.isArray(ledger) ? ledger : []).filter((e) => e && fin(e.bitNode) && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
   const lives = []
   let dups = 0
+  const batchOf = (e) => gh(e.batchHack) ?? (typeof batchHackOf === 'function' ? gh(batchHackOf(e.installBatch)) : null)
   for (const e of rows) {
     // No timestamp (a hand-built ledger): no start, so never merged.
     const start = fin(Date.parse(e.at)) ? Date.parse(e.at) / 3.6e6 - e.lifeH : null
     const prev = lives[lives.length - 1]
     if (prev && prev.node === e.bitNode && start !== null && prev.start !== null && Math.abs(prev.start - start) <= dupTolH) {
-      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, giftHack: gh(e.giftHack), records: prev.records + 1, regime: regimeOf(e), model: modelOf(e) ?? prev.model })
+      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, giftHack: gh(e.giftHack), batchHack: batchOf(e), lnM: fin(e.lnM) ? e.lnM : null, records: prev.records + 1, regime: regimeOf(e), model: modelOf(e) ?? prev.model })
       dups++
       continue
     }
-    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, giftHack: gh(e.giftHack), records: 1, regime: regimeOf(e), model: modelOf(e) })
+    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, giftHack: gh(e.giftHack), batchHack: batchOf(e), lnM: fin(e.lnM) ? e.lnM : null, records: 1, regime: regimeOf(e), model: modelOf(e) })
   }
+  // The gift nodes: the open life's factor known, or any entry carrying one.
+  const giftNodes = new Set(lives.filter((l) => l.giftHack !== null).map((l) => l.node))
+  if (gh(giftHackNow) !== null && node !== null) giftNodes.add(node)
   for (let i = 0; i < lives.length; i++) {
     const nx = lives[i + 1]
     const open = !nx && lives[i].node === node && fin(hackMultNow) && hackMultNow > 0
@@ -923,9 +961,13 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, giftHackN
     const nextGift = nx ? (nx.node === lives[i].node ? nx.giftHack : null) : open ? gh(giftHackNow) : null
     lives[i].next = next
     lives[i].nextGift = nextGift
-    // Both ends' gift known: the aug parts; else raw at both ends.
+    // Both ends' gift known: the aug parts. In a gift node otherwise: the
+    // batch's own gain, else unmeasured. Elsewhere: raw at both ends.
     const both = lives[i].giftHack !== null && nextGift !== null
-    lives[i].g = next === null ? null : both ? Math.log(next / nextGift / (lives[i].hackMult / lives[i].giftHack)) : Math.log(next / lives[i].hackMult)
+    const gift = giftNodes.has(lives[i].node)
+    lives[i].g = next === null ? null : both ? Math.log(next / nextGift / (lives[i].hackMult / lives[i].giftHack)) : !gift ? Math.log(next / lives[i].hackMult) : lives[i].batchHack !== null ? Math.log(lives[i].batchHack) : null
+    lives[i].gBy = next === null ? null : both ? 'gift-divided' : !gift ? 'raw' : lives[i].batchHack !== null ? 'batch' : 'unmeasured'
+    if (lives[i].gBy === 'unmeasured') lives[i].giftUnmeasured = true
   }
   lives.dups = dups
   return lives
@@ -979,17 +1021,26 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, giftHackN
  * rate's precision)}, nodes: {n: {...}}, dups, sigma, source: 'posterior', why }
  * or null when no node has a life with a measured gain.
  */
-export function cadencePosterior(ledger, node, { hackMultNow = null, giftHackNow = null, covOf = null, modelPrior = null } = {}) {
+export function cadencePosterior(ledger, node, { hackMultNow = null, giftHackNow = null, batchHackOf = null, covOf = null, modelPrior = null } = {}) {
   const C = PRIORS.cadence
-  const lives = ledgerLives(ledger, { node, hackMultNow, giftHackNow })
+  const lives = ledgerLives(ledger, { node, hackMultNow, giftHackNow, batchHackOf })
   const byNode = new Map()
   for (const l of lives) {
-    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0, count: 0, blade: 0 })
+    if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0, count: 0, blade: 0, giftless: 0 })
     const b = byNode.get(l.node)
     if (l.regime === 'blade') b.blade++
-    else if (l.g === null) b.open++
+    else if (l.g === null) {
+      b.open++
+      if (l.giftUnmeasured) b.giftless++
+    }
     else if (l.regime === 'count') b.count++
-    else if (!(l.g >= C.stallLn)) b.stalls++
+    // A MULTIPLIER CYCLE THAT BOUGHT LITTLE HACKING IS A SLOW CYCLE, NOT A
+    // STALL: its install was taken for the gate's M (lnM >= stallLn: rep,
+    // exp, charisma augmentations) and the hacking it bought is what this
+    // node's lives buy. Live BN13.1 life 2: 8.53h, lnM 0.095, one NeuroFlux
+    // (ln 0.00995) — excluded as a stall it left life 1's 2.83h as the
+    // node's only evidence.
+    else if (!(l.g >= C.stallLn) && !(l.g > 0 && fin(l.lnM) && l.lnM >= C.stallLn)) b.stalls++
     else b.gained.push(l)
   }
   const stats = new Map()
@@ -1105,8 +1156,10 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, giftHackNow
   const stalls = b?.stalls ?? 0
   const countLives = b?.count ?? 0
   const bladeLives = b?.blade ?? 0
+  const giftless = b?.giftless ?? 0
+  const giftlessText = giftless ? `; ${giftless} li${giftless === 1 ? 'fe' : 'ves'} unmeasured (the gift's charge unrecorded at an end and no batch to read: never the raw ratio)` : ''
   const bladeAll = [...byNode.values()].reduce((t, x) => t + x.blade, 0)
-  const own = { lives: st?.lives ?? (b ? b.stalls + b.open + b.count + b.blade : 0), gained, stalls, countLives, bladeLives, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
+  const own = { lives: st?.lives ?? (b ? b.stalls + b.open + b.count + b.blade : 0), gained, stalls, countLives, bladeLives, giftless, stallShare: stalls + gained > 0 ? stalls / (stalls + gained) : null, weight: rate.weight }
   const nodes = Object.fromEntries([...stats].map(([n, x]) => [n, { lives: x.lives, gained: x.gained, stalls: x.stalls, perHour: Math.exp(x.yR), cycleHours: Math.exp(x.yL), sdRate: Math.sqrt(s2R / x.nEff) }]))
   const others = [...stats.keys()].filter((n) => n !== node)
   const pct = (x) => `${Math.round(100 * x)}%`
@@ -1130,11 +1183,13 @@ export function cadencePosterior(ledger, node, { hackMultNow = null, giftHackNow
       ? `cadence posterior for BitNode ${node} on the purchase model's prior: model ln(M) ${mp.lnPerHour.toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * modelErr.sd).toFixed(2)} at 80%, ${modelErr.source}) ${pct(rate.modelShare)}, blended with the cross-node ${Math.exp(rate.prior.cross.mean).toFixed(4)}/h (x/÷ ${Math.exp(C.z90 * rate.prior.cross.sd).toFixed(2)}) ${pct(1 - rate.modelShare)} -> prior ${Math.exp(rate.prior.mean).toFixed(4)}/h -> ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%); DRIVEN BY ${rate.weight >= 0.5 ? "this node's own lives" : rate.modelShare >= 0.5 ? 'the purchase model' : 'the cross-node prior'}; ` +
         `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded)` : ''} carry ${pct(rate.weight)} of the rate` +
         (bladeAll ? `; ${bladeAll} Bladeburner-route li${bladeAll === 1 ? 'fe' : 'ves'} excluded (not the hacking route's cadence)` : '') +
+        giftlessText +
         (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : '')
       : `cadence posterior for BitNode ${node}: ln(M) ${lnPerHour.toFixed(4)}/h (x${Math.exp(C.z90 * rate.sd).toFixed(2)} either way at 80%), ${cycleHours.toFixed(2)}h a life -> x${Math.exp(lnPerHour * cycleHours).toFixed(3)} a cycle; ` +
       `${gained} own gaining li${gained === 1 ? 'fe' : 'ves'}${stalls ? ` (+${stalls} stall excluded)` : ''}${countLives ? ` (+${countLives} count-rule li${countLives === 1 ? 'fe' : 'ves'} excluded: their length was the rule's)` : ''} carry ${pct(rate.weight)} of the rate` +
       (others.length ? `, BitNode ${others.join(', ')} shrink${others.length === 1 ? 's' : ''} it toward the cross-node mean` : ', no other node') +
       (bladeAll ? `; ${bladeAll} Bladeburner-route li${bladeAll === 1 ? 'fe' : 'ves'} excluded (not the hacking route's cadence)` : '') +
+      giftlessText +
       (lives.dups ? `; ${lives.dups} re-recorded ledger entr${lives.dups === 1 ? 'y' : 'ies'} merged` : ''),
   }
 }

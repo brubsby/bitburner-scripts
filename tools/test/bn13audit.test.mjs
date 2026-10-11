@@ -82,9 +82,15 @@ export async function run() {
     const g = lives[0]?.g;
     c2.note(`life 1's gain: ln ${g?.toFixed(4)} (${(g / 2.83).toFixed(4)}/h) with both ends' gift divided out; raw ${Math.log(1.9864400909267244 / 1.8934710318857293).toFixed(4)}; its batch bought ln ${Math.log(1.0201).toFixed(4)} (2 NFG)`);
     if (!(Math.abs(g - Math.log(1.0201)) < 0.002)) c2.fail(`the aug part of the gain is ln 1.0201 = 0.0199: got ${g}`);
-    // A record without the field keeps the raw pairing (units consistent at both ends).
+    // A record without the field in a gift node is NOT read raw (bn13loop IL1:
+    // the raw pair credited the charge as a gain): its batch, else unmeasured.
     const old = B.ledgerLives([{ ...ledger[0], giftHack: undefined }], { node: 13, hackMultNow: 1.9864400909267244, giftHackNow: 1.5503 });
-    if (!(Math.abs(old[0].g - Math.log(1.9864400909267244 / 1.8934710318857293)) < 1e-9)) c2.fail(`a record without giftHack pairs raw with raw: ${old[0].g}`);
+    if (old[0].g !== null) c2.fail(`a gift node's record without giftHack and no batch is unmeasured: ${old[0].g}`);
+    const oldB = B.ledgerLives([{ ...ledger[0], giftHack: undefined, batchHack: 1.0201 }], { node: 13, hackMultNow: 1.9864400909267244, giftHackNow: 1.5503 });
+    if (!(Math.abs(oldB[0].g - Math.log(1.0201)) < 1e-9)) c2.fail(`... and with its batch recorded, the batch: ${oldB[0].g}`);
+    // Outside a gift node both ends stay raw.
+    const plain = B.ledgerLives([{ ...ledger[0], giftHack: undefined, bitNode: 12 }], { node: 12, hackMultNow: 1.9864400909267244 });
+    if (!(Math.abs(plain[0].g - Math.log(1.9864400909267244 / 1.8934710318857293)) < 1e-9)) c2.fail(`no gift: raw with raw: ${plain[0].g}`);
     // Two finished lives, both with the field.
     const two = B.ledgerLives([{ ...ledger[0] }, { at: "2026-10-11T07:00:00Z", lifeH: 3, hackMult: 2.2, giftHack: 1.6, bitNode: 13 }], { node: 13 });
     const want = Math.log(2.2 / 1.6 / (1.8934710318857293 / 1.5075));

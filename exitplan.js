@@ -3040,8 +3040,23 @@ export function spendExit(o = {}) {
   // the book reaches its $5.3t cap in ~9h. With r = 0 (every node without a
   // trader) both factors are exactly 1 and m1 is unchanged.
   const fv = capitalFutureValue(inputs, W - tb)
-  const m1 = m0 - cost * fv.lump + gainPerSec * fv.stream
-  const moneyAtW = { m0, m1, lumpFactor: fv.lump, streamSec: fv.stream, buyAtH: tb }
+  const m1Lin = m0 - cost * fv.lump + gainPerSec * fv.stream
+  // A COST THE LINEAR CHARGE CANNOT CARRY: cost x lump is the MARGINAL
+  // dollar's compounding from today's book, so for a purchase that takes
+  // most of the book at tb it can charge more than everything held at W —
+  // live BN13.1 2026-10-11: $100.68m home, lump x3152 over 12h (r(W) 92%/h
+  // at the knee), m1 = $1.53b - $317b, and home read "not affordable by the
+  // install" for hours though the stream reaches its price at ~2h. Money
+  // never goes below what is left at tb plus the stream after it, earned
+  // without any trader return (the scripts' income and the purchase's own):
+  // m1 is floored there — a floor on the with-arm, so the verdict is priced
+  // and errs against buying.
+  const m1Floor = Math.max(0, o.moneyAt(tb) - cost) + (Math.max(0, num(inputs.incomePerSec) ? inputs.incomePerSec : 0) + gainPerSec) * (W - tb) * 3600
+  // Only where the trader compounds (lump > 1): without one the linear
+  // charge is exact (lump 1, stream W - tb) and stays as it was.
+  const floored = fv.lump > 1 && !(m1Lin >= m1Floor)
+  const m1 = floored ? m1Floor : m1Lin
+  const moneyAtW = { m0, m1, lumpFactor: fv.lump, streamSec: fv.stream, buyAtH: tb, ...(floored ? { m1Linear: m1Lin, floored: 'the linear trader charge exceeds the book: money at W floored at what is left at tb plus the stream after it, uncompounded' } : {}) }
   const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
   const exitWith = (m, extraIncome, exp = false) => {
     const g = m >= 0 ? gainsAt(m) : null
@@ -3159,8 +3174,8 @@ export function spendExitFromRecord(record, lastAugReset, cost, gainPerSec, now 
  * node, lives, weight, posterior, why } or null when no life in any node has
  * a measured gain.
  */
-export function installCadence(ledger, node, { hackMultNow = null, giftHackNow = null, covOf = null, modelPrior = null } = {}) {
-  const c = cadencePosterior(ledger, node, { hackMultNow, giftHackNow, covOf, modelPrior })
+export function installCadence(ledger, node, { hackMultNow = null, giftHackNow = null, batchHackOf = null, covOf = null, modelPrior = null } = {}) {
+  const c = cadencePosterior(ledger, node, { hackMultNow, giftHackNow, batchHackOf, covOf, modelPrior })
   if (!c) return null
   return {
     stats: { cycleHours: c.cycleHours, multGainPerCycle: c.multGainPerCycle, lnPerHour: c.lnPerHour, n: c.own.lives },
