@@ -165,7 +165,7 @@ import { goExitInputsOf } from 'goplan.js'
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
 import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
-import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf } from 'homeplan.js'
+import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf, hackHomeArmOf, waitingResidentsOf, fleetForUnlockOf } from 'homeplan.js'
 import { leanUntilOf, FULL_TIER, LEAN_PLACE_H, bladeSlotStallOf, LITE_FILE, BB_FILE } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
@@ -1145,16 +1145,31 @@ const EXIT_FACTION = 'Daedalus'
  * Simulacrum's value is not Daedalus's: the rival reads unknown, home holds).
  * Read from the plan file (last pass), as committedRouteOf's other readers.
  */
-function gateJoinOf(ns, info, candidates, player, weights) {
+function gateJoinOf(ns, info, candidates, player, weights, exitSched = {}) {
   let plan = null
   try {
     plan = readJson(ns, PLAN_FILE)
   } catch {
     plan = null
   }
-  const r = routeJoinClaimOf(plan, { node: info?.currentNode ?? null, hackClaim: joinMoneyClaim(candidates, player) })
+  // THE HOARD ON THE SIMULATOR'S SCHEDULE (splitctl.joinHoardPhaseOf): the
+  // best exit policy on this pass's inputs — the claim is 0 in a life the
+  // schedule installs out of, and only what the final window's stream cannot
+  // bring by the join otherwise. An unpriced schedule (best null) holds the
+  // full requirement.
+  const r = routeJoinClaimOf(plan, { node: info?.currentNode ?? null, hackClaim: joinMoneyClaim(candidates, player), exitBest: exitSched.best ?? null, incomePerSec: exitSched.incomePerSec ?? null })
   const valueLn = r.route === 'blade' ? (r.claim === 0 ? 0 : null) : joinValueLn(candidates, weights)
-  return { joinClaim: r.claim, joinValueLn: valueLn, joinClaimWhy: r.why, joinRoute: r.route }
+  return { joinClaim: r.claim, joinValueLn: valueLn, joinClaimWhy: r.why, joinRoute: r.route, joinPhase: r.phase ?? null }
+}
+
+/** {best, incomePerSec} of the exit schedule gateJoinOf phases the hoard on: bestExitPolicy on `inputs` (null best when unpriced). */
+function exitSchedOf(inputs, best = undefined) {
+  try {
+    const b = best !== undefined ? best : inputs ? bestExitPolicy(inputs)?.best ?? null : null
+    return { best: b, incomePerSec: inputs?.incomePerSec ?? null }
+  } catch {
+    return { best: null, incomePerSec: null }
+  }
 }
 
 function joinMoneyClaim(candidates, player) {
@@ -3155,9 +3170,9 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       const age = Date.now() - Date.parse(t?.at ?? '')
       return age >= 0 && age < 5 * 60e3 && t?.expPerSec > 0 ? t.expPerSec / ramTotal : null
     })()
-    const verdict = (cost, gainPerSec, persists, extra = {}, expGainPerSec = 0) => {
+    const verdict = (cost, gainPerSec, persists, extra = {}, expGainPerSec = 0, withInputs = null) => {
       if (!(gainPerSec >= 0)) return { buy: false, cost, why: 'income response unreadable', ...extra }
-      const r = spendExit({ ...common, cost, gainPerSec, persists, expGainPerSec })
+      const r = spendExit({ ...common, cost, gainPerSec, persists, expGainPerSec, ...(withInputs ? { withInputs } : {}) })
       if (r.deltaH === null) return { buy: false, cost, why: r.why, ...extra }
       // SAVED FOR, NOT BOUGHT NOW (exitplan saveForSpend): the with-arm holds
       // the install to r.save.atH. Priced and published; `buy` stays false —
@@ -3177,7 +3192,7 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       const mw = r.moneyAtW
       const dominant = !finalWindow && W > 0 && gainPerSec > 0 && mw && mw.m1 > mw.m0 ? { paybackH: cost / gainPerSec / 3600, W } : null
       const pd = decideSpend({ deltaH: r.deltaH, withoutH: r.withoutH, si: planCtxOf(ns, info)?.post?.jitter?.si ?? null, dominant })
-      return { buy: pd ? pd.buy : r.deltaH < 0, pBuy: pd?.pBuy ?? null, cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)${pd ? ` — plan: ${pd.why}` : ''}`, ...extra }
+      return { buy: pd ? pd.buy : r.deltaH < 0, pBuy: pd?.pBuy ?? null, ...(pd?.dominant ? { dominant: true } : {}), cost, gainPerSec, deltaH: r.deltaH, withH: r.withH, withoutH: r.withoutH, ...(Number.isFinite(mw?.m1) ? { moneyAtW: mw.m1 } : {}), why: `exit ${r.withH.toFixed(2)}h with vs ${r.withoutH.toFixed(2)}h without (${r.deltaH >= 0 ? '+' : ''}${r.deltaH.toFixed(3)}h)${pd ? ` — plan: ${pd.why}` : ''}`, ...extra }
     }
     // Home: the next upgrade homeup.js / the watchdog priced.
     // The watchdog's priced record, with the home it priced: /tel/homeup.txt
@@ -3187,16 +3202,48 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
     const next = wdNext
     const homeRam = wdNext?.homeRam > 0 ? wdNext.homeRam : null
     const homeCores = wdNext?.cores > 0 ? wdNext.cores : null
+    // WHAT THE BLOCK UNLOCKS (homeplan.hackHomeArmOf): the residents waiting
+    // for home room (sleeve.js's fleet, priced from this node's sleeve.txt),
+    // the gift's charger on the grown fleet, and the batcher on what is left
+    // less the charger's share — the with-arm's inputs, not perGB x homeRam
+    // alone. Live BN13.1 at 128GB the $/s-only verdict read -0.07h.
+    const homeArm = (() => {
+      if (!(next?.cost > 0 && homeRam)) return null
+      try {
+        const waiting = waitingResidentsOf(readJson(ns, '/tel/watchdog.txt'), readJson(ns, '/tel/boot.txt'))
+        const fleet = fleetForUnlockOf(readJson(ns, '/tel/sleeve.txt'), info?.currentNode)
+        return hackHomeArmOf({ inputs, addGB: next.kind === 'RAM' ? homeRam : 0, addCores: next.kind === 'RAM' ? 0 : 1, waiting, fleet })
+      } catch (e) {
+        return { inputs, moneyGB: next.kind === 'RAM' ? homeRam : 0, unlocked: [], credited: [], notSimulated: [`the unlock pricing threw: ${String(e).slice(0, 80)}`], why: 'unlocks unpriced' }
+      }
+    })()
+    const armExtra = homeArm ? { unlocks: { unlocked: homeArm.unlocked, credited: homeArm.credited, notSimulated: homeArm.notSimulated, why: homeArm.why } } : {}
+    const armInputs = homeArm && homeArm.inputs !== inputs ? homeArm.inputs : null
     if (next?.cost > 0 && perGB !== null && homeRam && homeCores) {
-      const gain = next.kind === 'RAM' ? perGB * homeRam : perGB * homeRam * (1 / (15 + homeCores))
+      const ramGB = homeArm ? homeArm.moneyGB : homeRam
+      const gain = next.kind === 'RAM' ? perGB * ramGB : perGB * homeRam * (1 / (15 + homeCores))
       // A RAM block adds the fleet's average exp per GB too (cores speed only
       // grow/weaken: no hack exp, ServerHelpers core bonus).
-      const expGain = next.kind === 'RAM' && expPerGB !== null ? expPerGB * homeRam : 0
-      out.home = verdict(next.cost, gain, true, { kind: next.kind, ...(expGain > 0 ? { channel: 'money+exp', expGainPerSec: expGain } : {}) }, expGain)
+      const expGain = next.kind === 'RAM' && expPerGB !== null ? expPerGB * ramGB : 0
+      out.home = verdict(next.cost, gain, true, { kind: next.kind, ...(expGain > 0 ? { channel: 'money+exp', expGainPerSec: expGain } : {}), ...armExtra }, expGain, armInputs)
+      // THE BLOCK'S MONEY-ONLY USE as well: every new GB to the batcher (the
+      // old pricing). Where that arm is bought — money-dominant (repaid
+      // before W, more money there: ordered in every draw) or past the error
+      // bar — the purchase is right whatever the RAM then runs; giving it to
+      // a waiting resident instead is the placement's choice, which the
+      // unlock arm prices (and here prices no worse). Without it, admitting
+      // sleeve.js (49.75GB off the batcher) could cost the block its money
+      // dominance and leave it unbought for being MORE useful.
+      if (next.kind === 'RAM' && homeArm && out.home.buy !== true && homeArm.moneyGB < homeRam) {
+        const mo = verdict(next.cost, perGB * homeRam, true, { kind: next.kind }, expPerGB !== null ? expPerGB * homeRam : 0)
+        if (mo.buy === true && (typeof out.home.deltaH !== 'number' || out.home.deltaH <= (mo.deltaH ?? 0) + 1e-9)) out.home = { ...out.home, buy: true, pBuy: mo.pBuy, moneyArm: { deltaH: mo.deltaH, dominant: mo.dominant === true, why: mo.why }, why: `${out.home.why} — bought on the block's money-only use (${mo.why})` }
+        else out.home.moneyArm = { buy: mo.buy === true, deltaH: mo.deltaH ?? null, why: mo.why }
+      }
     } else if (next?.cost > 0 && expPerGB !== null && homeRam) {
       // Cores: hack exp is per thread and cores only speed grow/weaken
       // (ServerHelpers core bonus), so only a RAM block is priced this way.
-      if (next.kind === 'RAM') out.home = verdict(next.cost, 0, true, { kind: next.kind, channel: 'exp' }, expPerGB * homeRam)
+      if (next.kind === 'RAM') out.home = verdict(next.cost, 0, true, { kind: next.kind, channel: 'exp', ...armExtra }, expPerGB * (homeArm ? homeArm.moneyGB : homeRam), armInputs)
+      else if (armInputs) out.home = verdict(next.cost, 0, true, { kind: next.kind, channel: 'gift', ...armExtra }, 0, armInputs)
       else out.home = { buy: false, why: 'cores add no hacking exp and hacking pays no money in this node' }
     } else out.home = { buy: false, why: 'next home upgrade, home RAM or income per GB unreadable' }
     // ON THE COMMITTED BLADEBURNER ROUTE the exit is the black ops, and the
@@ -3220,9 +3267,17 @@ function spendVerdictsOf(ns, info, inputs, W, finalWindow, liveMoney, moneyBy, r
       for (const f of [0.1, 0.25, 0.5, 1]) {
         const x = liveMoney * f
         const v = verdict(x, (x / bs.fleetDollarPerGB) * perGB, false)
-        if (v.buy && (!best || v.deltaH < best.deltaH)) best = { ...v, maxSpend: x }
+        // Ties on the exit (a money-dominant spend often moves no draw: the
+        // batch at W is rep-bound) go to the MORE money at W — the larger
+        // spend that still repays; the first fraction that tied used to win.
+        const tie = best && Math.abs(v.deltaH - best.deltaH) < 1e-9
+        if (v.buy && (!best || v.deltaH < best.deltaH - 1e-9 || (tie && (v.moneyAtW ?? -Infinity) > (best.moneyAtW ?? -Infinity)))) best = { ...v, maxSpend: x }
       }
       out.servers = best ?? { buy: false, maxSpend: 0, why: 'no fleet spend shortens the exit' }
+      // Named, not folded in: the fleet's RAM is priced at the batcher's
+      // average $/GB (all of it), while the charger takes f of it for the
+      // gift's in-life charge (cleared at the install, as the servers are).
+      if (inputs?.giftLife) out.servers.notSimulated = "the gift charger's in-life share of the new RAM (priced as batcher RAM)"
     } else out.servers = { buy: false, maxSpend: 0, why: "buyserv's $/GB or income per GB unreadable" }
     // PORT OPENERS (and TOR), where money is capital (BitNode 8): each prefix
     // of the unowned openers, bought now and every later life, against not —
@@ -8077,7 +8132,13 @@ async function act(ns, canJoin, info, note) {
     // exit's in the published objective, and price go.js in the home verdict.
     const goBlade0 = await bladeGoWeightsOf(ns, info, { liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n), eRep: weightsMeta?.eRep ?? null })
     if (goBlade0) weightsMeta = { ...weightsMeta, goWeights: goBlade0 }
-    const gateJoin0 = gateJoinOf(ns, info, candidates, player, channelWeights)
+    const gateJoin0 = gateJoinOf(ns, info, candidates, player, channelWeights, exitSchedOf((() => {
+      try {
+        return gangInputs0()
+      } catch {
+        return null
+      }
+    })()))
     const homeBlade0 = await bladeHomeVerdictOf(ns, info, { inputs: gangInputs0(), liveMoney: ns.getServerMoneyAvailable('home') + stockEquity, moneyBy: (h) => cashNow * h * 3600, replanAt, pending, statsOf: (n) => sing.augStats(n), goWeights: goBlade0 })
     ns.write(
       GATE,
@@ -8095,6 +8156,7 @@ async function act(ns, canJoin, info, note) {
           joinValueLn: gateJoin0.joinValueLn,
           joinClaimWhy: gateJoin0.joinClaimWhy,
           joinRoute: gateJoin0.joinRoute,
+          joinPhase: gateJoin0.joinPhase,
           ...homeCompete({ claim: gateJoin0.joinClaim, valueLn: gateJoin0.joinValueLn, money: wealthOf(player.money, stockNow) }),
           // THE GANG VERDICT RIDES THIS WRITE TOO, for exactly the reason the
           // objective record below does — and it was missing, which cost ten
@@ -8458,9 +8520,12 @@ async function act(ns, canJoin, info, note) {
     // is 2h and the node has 40h left.
     // The fleet, read once for both the exit trajectory and the sleeve plan.
     const planFleet = readFleet(ns, info)
+    // The inputs kept: the join hoard is phased on this same schedule (gateJoinOf).
+    let exitPolicyInputs = null
     const exitPolicy = (() => {
       try {
-        return bestExitPolicy(exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet))
+        exitPolicyInputs = exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet)
+        return bestExitPolicy(exitPolicyInputs)
       } catch {
         return null
       }
@@ -9080,7 +9145,7 @@ async function act(ns, canJoin, info, note) {
     const spendMoneyBy = (h) => (incomeTraj ? incomeTraj.moneyBy(h) : (incomePerSec + hacknetLifeIncome(ns, info).perSec) * h * 3600)
     const goBlade1 = await bladeGoWeightsOf(ns, info, { liveMoney: liveCapital, moneyBy: spendMoneyBy, replanAt, pending, statsOf: (n) => sing.augStats(n), eRep: weightsMeta?.eRep ?? null })
     if (goBlade1) weightsMeta = { ...weightsMeta, goWeights: goBlade1 }
-    const gateJoin1 = gateJoinOf(ns, info, candidates, player, channelWeights)
+    const gateJoin1 = gateJoinOf(ns, info, candidates, player, channelWeights, exitSchedOf(exitPolicyInputs, exitPolicy?.best ?? null))
     // THE AUG HOLD ON THE COMMITTED ROUTE (splitctl.routeAugHoldOf): a
     // never-install Bladeburner route loses any batch at the black-op exit.
     let augHold1
@@ -9116,6 +9181,7 @@ async function act(ns, canJoin, info, note) {
           joinValueLn: gateJoin1.joinValueLn,
           joinClaimWhy: gateJoin1.joinClaimWhy,
           joinRoute: gateJoin1.joinRoute,
+          joinPhase: gateJoin1.joinPhase,
           ...homeCompete({ claim: gateJoin1.joinClaim, valueLn: gateJoin1.joinValueLn, money: wealthOf(player.money, stockNow) }),
           pending,
           heldM,

@@ -2629,7 +2629,9 @@ export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, 
   // each side would compare a mean with a single member's roughness.
   const bound = yield* bladeExitMeanGen({ ...s0, install: { firstH: 0, gains: null, simulacrum: true } })
   const boundH = bound.hours
-  const out = { ...base, moneyH: r2(moneyH), repH: r2(repH), reachH: r2(reachH), boundH: r2(boundH), boundGainH: Number.isFinite(boundH) ? r2(withoutH - boundH) : null }
+  // moneyPerH rides the verdict: splitctl.routeJoinClaimOf phases the hold on
+  // this schedule (only cost - moneyPerH x repH must be in hand now).
+  const out = { ...base, moneyPerH: Number.isFinite(moneyPerH) && moneyPerH > 0 ? moneyPerH : null, moneyH: r2(moneyH), repH: r2(repH), reachH: r2(reachH), boundH: r2(boundH), boundGainH: Number.isFinite(boundH) ? r2(withoutH - boundH) : null }
   const money = !Number.isFinite(cost) ? 'money: the price is unread (snap-augprice)' : Number.isFinite(moneyH) ? `money in ${moneyH.toFixed(1)}h ($${(cost / 1e9).toFixed(1)}b against $${(wealth / 1e9).toFixed(3)}b at $${(moneyPerH / 1e6).toFixed(1)}m/h)` : `money never ($${(cost / 1e9).toFixed(1)}b, no income)`
   const repTxt = !Number.isFinite(repReq) ? 'reputation: the requirement is unread' : `reputation in ${Number.isFinite(repH) ? repH.toFixed(1) + 'h' : 'never'} (${Math.round(rep)} of ${Math.round(repReq)} at ${(repPerRank * rankPerH).toFixed(1)}/h)`
   if (!(reachH < withoutH)) return { ...out, buy: false, withH: null, gainH: null, why: `unreachable before the exit: ${money}, ${repTxt} — the exit is ${withoutH.toFixed(1)}h away; installed now at no cost it would be worth ${out.boundGainH ?? '?'}h` }

@@ -86,7 +86,16 @@ const SETTINGS = {
   // foregone at $55k/GB, which is real but bounded, and income here is ~$3b per
   // ten minutes — the reserve refills far faster than reputation accrues, so it
   // is never the binding constraint.
-  floorReserve: 2e9,
+  //
+  // 0 SINCE 2026-10-11: that window is budget.js's augmentation claim now —
+  // the plan's own priced total (augClaim / budgetClaim), held whenever a
+  // plan exists — and the exit verdict (spendExit.servers) re-plans the
+  // batch on what a fleet spend leaves. A constant $2b on top was the same
+  // "hold the endgame money from day one" shape as the unphased join claim:
+  // live BN13.1 a fresh life at $19m cash could never clear it, so even an
+  // approved fleet spend (reserve = max(join, money - spend, $2b)) bought
+  // nothing.
+  floorReserve: 0,
   interval: 15000,
   statusFile: '/tel/buyserv.txt',
   configFile: '/tel/buyserv-config.txt',

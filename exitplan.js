@@ -2969,7 +2969,7 @@ export function spendBuyAtH(moneyAt, cost, W) {
  * buy-now does): in [0, tb) they reach only this life, which ends at tb —
  * stated, not simulated. Returns spendExit's shape plus `save`.
  */
-function saveForSpend(o, { inputs, cost, gainPerSec, W, m0, withExp }) {
+function saveForSpend(o, { inputs, wi = inputs, cost, gainPerSec, W, m0, withExp }) {
   const gainsAt = typeof o.gainsAt === 'function' ? o.gainsAt : () => null
   const g0 = m0 >= 0 ? gainsAt(m0) : null
   const without = bestExitPolicy({ ...inputs, firstInstallH: W, ...(g0 ? { installGains: g0, nextInstallGain: g0.hacking } : {}) }, 400, 1)
@@ -2979,7 +2979,7 @@ function saveForSpend(o, { inputs, cost, gainPerSec, W, m0, withExp }) {
   if (tb === null) return { deltaH: null, why: `unpriced: not affordable by the install at ${W.toFixed(2)}h ($${(m0 / 1e6).toFixed(2)}m of $${(cost / 1e6).toFixed(2)}m), and the stream does not reach it by ${maxH.toFixed(1)}h either`, moneyAtW: { m0, m1: null } }
   const left = Math.max(0, o.moneyAt(tb) - cost)
   const g1 = gainsAt(left)
-  const withS = bestExitPolicy(withExp({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, firstInstallH: tb, ...(g1 ? { installGains: g1, nextInstallGain: g1.hacking } : {}) }), 400, 1)
+  const withS = bestExitPolicy(withExp({ ...wi, incomePerSec: wi.incomePerSec + gainPerSec, firstInstallH: tb, ...(g1 ? { installGains: g1, nextInstallGain: g1.hacking } : {}) }), 400, 1)
   if (!withS.best) return { deltaH: null, why: `unpriced: ${withS.why}`, moneyAtW: { m0, m1: null } }
   return {
     deltaH: withS.best.hours - without.best.hours,
@@ -3000,11 +3000,18 @@ export function spendExit(o = {}) {
   // spend carries it: exp earned before an install is reset by it
   // (Prestige.ts), so a destroyed purchase's exp never reaches the climb.
   // Absent (0) everywhere else, so no other verdict changes.
-  const expGain = persists && num(o.expGainPerSec) && o.expGainPerSec > 0 && num(inputs.expPerSec) ? o.expGainPerSec : 0
-  const withExp = (x) => (expGain > 0 ? { ...x, expPerSec: inputs.expPerSec + expGain } : x)
+  // WHAT THE PURCHASE UNLOCKS (o.withInputs): the with-arm's own inputs,
+  // built by the caller from the SAME inputs with the unlocked channels
+  // moved (homeplan.hackHomeArmOf: a home block admits a resident that was
+  // waiting for room — the sleeve fleet's transfer — and grows the gift
+  // charger's fleet). Only a PERSISTING purchase carries it into every
+  // later life; the without-arm is `inputs` untouched. Absent: `inputs`.
+  const wi = persists && o.withInputs && typeof o.withInputs === 'object' && num(o.withInputs.incomePerSec) ? o.withInputs : inputs
+  const expGain = persists && num(o.expGainPerSec) && o.expGainPerSec > 0 && num(wi.expPerSec) ? o.expGainPerSec : 0
+  const withExp = (x) => (expGain > 0 ? { ...x, expPerSec: wi.expPerSec + expGain } : x)
   if (finalWindow) {
     const without = bestExitPolicy(inputs, 0, 0)
-    const withS = bestExitPolicy(withExp({ ...inputs, money: Math.max(0, (inputs.money ?? 0) - cost), incomePerSec: inputs.incomePerSec + gainPerSec }), 0, 0)
+    const withS = bestExitPolicy(withExp({ ...wi, money: Math.max(0, (inputs.money ?? 0) - cost), incomePerSec: wi.incomePerSec + gainPerSec }), 0, 0)
     if (!without.best || !withS.best) return { deltaH: null, why: `final window unpriced: ${without.why ?? withS.why}` }
     return { deltaH: withS.best.hours - without.best.hours, withH: withS.best.hours, withoutH: without.best.hours }
   }
@@ -3028,7 +3035,7 @@ export function spendExit(o = {}) {
     // 2026-10-11: $100.68m home at $2.6m in hand was "unpriced: not
     // affordable by the install" on every pass, so home was never priced.
     if (!persists) return { deltaH: null, why: 'unpriced: the spend is not affordable by the install', moneyAtW: { m0, m1: null } }
-    return saveForSpend(o, { inputs, cost, gainPerSec, W, m0, withExp })
+    return saveForSpend(o, { inputs, wi, cost, gainPerSec, W, m0, withExp })
   }
   // THE TRADER'S RETURN ON BOTH SIDES (capitalFutureValue): dollars spent now
   // stop compounding until W — and the spend's income, reinvested as it
@@ -3051,7 +3058,17 @@ export function spendExit(o = {}) {
   // without any trader return (the scripts' income and the purchase's own):
   // m1 is floored there — a floor on the with-arm, so the verdict is priced
   // and errs against buying.
-  const m1Floor = Math.max(0, o.moneyAt(tb) - cost) + (Math.max(0, num(inputs.incomePerSec) ? inputs.incomePerSec : 0) + gainPerSec) * (W - tb) * 3600
+  // The streams the purchase leaves running: the scripts' income, this
+  // life's hacknet money (lifeIncome — the fleet earns whatever home or the
+  // cloud does; omitting it charged a spend for income it never touches:
+  // live BN13.1 12:46Z a $100.68m home block repaying $131m by W read m1
+  // $1.65b < m0 $1.73b), and the purchase's own.
+  const lifeInc = num(inputs.lifeIncome) && inputs.lifeIncome > 0 ? inputs.lifeIncome : 0
+  // Capped at the without-arm's own money less the cost plus the purchase's
+  // stream, uncompounded on both sides: where the caller's trajectory
+  // (moneyAt) runs below the inputs' streams, the floor must not credit the
+  // spend with money the without-arm never had.
+  const m1Floor = Math.min(Math.max(0, o.moneyAt(tb) - cost) + (Math.max(0, num(inputs.incomePerSec) ? inputs.incomePerSec : 0) + lifeInc + gainPerSec) * (W - tb) * 3600, m0 - cost + gainPerSec * (W - tb) * 3600)
   // Only where the trader compounds (lump > 1): without one the linear
   // charge is exact (lump 1, stream W - tb) and stays as it was.
   const floored = fv.lump > 1 && !(m1Lin >= m1Floor)
@@ -3061,7 +3078,8 @@ export function spendExit(o = {}) {
   const exitWith = (m, extraIncome, exp = false) => {
     const g = m >= 0 ? gainsAt(m) : null
     if (m < 0) return { best: null, why: 'the spend is not affordable by the install' }
-    const x = { ...inputs, incomePerSec: inputs.incomePerSec + extraIncome, firstInstallH: W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) }
+    const base = exp ? wi : inputs
+    const x = { ...base, incomePerSec: base.incomePerSec + extraIncome, firstInstallH: W, ...(g ? { installGains: g, nextInstallGain: g.hacking } : {}) }
     return bestExitPolicy(exp ? withExp(x) : x, 400, 1)
   }
   // Income that persists also buys more augmentations in EVERY later life:
@@ -3071,15 +3089,15 @@ export function spendExit(o = {}) {
   // verdict is then a floor, and says so.
   // (incomePerSec 0 is a real input in BitNode 8, where the income is the
   // trader's return: a ratio against it is undefined, not infinite.)
-  const K = persists && gainPerSec > 0 && pos(inputs.incomePerSec) ? (inputs.incomePerSec + gainPerSec) / inputs.incomePerSec : 1
+  const K = persists && pos(inputs.incomePerSec) && wi.incomePerSec + gainPerSec > inputs.incomePerSec ? (wi.incomePerSec + gainPerSec) / inputs.incomePerSec : 1
   const e = num(o.eBudget) && o.eBudget >= 0 ? o.eBudget : null
   const without = exitWith(m0, 0)
   const withS = (() => {
     const r = exitWith(m1, persists ? gainPerSec : 0, true)
-    if (!(K > 1) || e === null || !pos(inputs.multGainPerCycle)) return r
-    const g = inputs.multGainPerCycle * Math.pow(K, e)
+    if (!(K > 1) || e === null || !pos(wi.multGainPerCycle)) return r
+    const g = wi.multGainPerCycle * Math.pow(K, e)
     const gAt = m1 >= 0 ? gainsAt(m1) : null
-    return m1 < 0 ? r : bestExitPolicy(withExp({ ...inputs, incomePerSec: inputs.incomePerSec + gainPerSec, multGainPerCycle: g, firstInstallH: W, ...(gAt ? { installGains: gAt, nextInstallGain: gAt.hacking } : {}) }), 400, 1)
+    return m1 < 0 ? r : bestExitPolicy(withExp({ ...wi, incomePerSec: wi.incomePerSec + gainPerSec, multGainPerCycle: g, firstInstallH: W, ...(gAt ? { installGains: gAt, nextInstallGain: gAt.hacking } : {}) }), 400, 1)
   })()
   if (!without.best || !withS.best) return { deltaH: null, why: `unpriced: ${without.why ?? withS.why}`, moneyAtW }
   return {

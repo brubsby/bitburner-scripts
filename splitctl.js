@@ -832,18 +832,93 @@ export function committedRouteOf(plan, { node = null } = {}) {
  * Returns {claim, why, route}. claim null = unknown (holds everything): an
  * unreadable hacking claim, or a buying Simulacrum with no price.
  */
-export function routeJoinClaimOf(plan, { node = null, hackClaim = null } = {}) {
+export function routeJoinClaimOf(plan, { node = null, hackClaim = null, exitBest, incomePerSec = null } = {}) {
   const route = committedRouteOf(plan, { node })
   if (!route) {
     const known = num(hackClaim) && hackClaim >= 0
-    return { route: 'hack', claim: known ? hackClaim : null, why: known ? (hackClaim > 0 ? `the hacking exit: the exit faction's money requirement ($${(hackClaim / 1e9).toFixed(2)}b) is held until joined` : "the hacking exit: the exit faction's money requirement is met or none") : "unknown: the exit faction's requirements or the balance are unreadable" }
+    if (!known) return { route: 'hack', claim: null, why: "unknown: the exit faction's requirements or the balance are unreadable" }
+    if (hackClaim === 0) return { route: 'hack', claim: 0, why: "the hacking exit: the exit faction's money requirement is met or none" }
+    // exitBest undefined: a caller that passes no schedule holds the full
+    // requirement, as before. Passed (null included): phased on it
+    // (joinHoardPhaseOf), an unpriced schedule holding the full requirement.
+    if (exitBest === undefined) return { route: 'hack', claim: hackClaim, why: `the hacking exit: the exit faction's money requirement ($${(hackClaim / 1e9).toFixed(2)}b) is held until joined` }
+    const ph = joinHoardPhaseOf(hackClaim, { best: exitBest, incomePerSec })
+    return { route: 'hack', claim: ph.claim, why: `the hacking exit: ${ph.why}`, phase: ph.phase }
   }
   const sim = plan?.decisions?.bladeRoute?.simulacrum ?? null
   if (sim?.buy === true) {
     if (!(num(sim.cost) && sim.cost > 0)) return { route: 'blade', claim: null, why: "the Bladeburner route buys The Blade's Simulacrum but its price is unread: unknown" }
+    // THE SAME TIME-PHASING as the join (joinHoardPhaseOf), on the verdict's
+    // own schedule (bbplan.simulacrumVerdictGen): reached at max(moneyH,
+    // repH) on the linear stream moneyPerH. Where the reputation binds
+    // (repH > 0) the money need only be complete at repH, so what must be in
+    // hand NOW is cost - moneyPerH x repH; the stream until then is free for
+    // the spends that shorten the road. Every input read, or the full price.
+    const pH = num(sim.moneyPerH) && sim.moneyPerH > 0 ? sim.moneyPerH : null
+    if (pH !== null && num(sim.repH) && sim.repH > 0) {
+      const hold = Math.max(0, sim.cost - pH * sim.repH)
+      return { route: 'blade', claim: hold, why: `the Bladeburner route (${route.why}): no faction join; The Blade's Simulacrum ($${(sim.cost / 1e9).toFixed(2)}b) is reached at its reputation in ${sim.repH.toFixed(1)}h and the stream ($${(pH * 1e-6).toFixed(1)}m/h) brings $${((pH * sim.repH) / 1e9).toFixed(2)}b by then: $${(hold / 1e9).toFixed(2)}b held now (${String(sim.why ?? '').slice(0, 120)})` }
+    }
     return { route: 'blade', claim: sim.cost, why: `the Bladeburner route (${route.why}): no faction join; The Blade's Simulacrum is bought on it ($${(sim.cost / 1e9).toFixed(2)}b held: ${String(sim.why ?? '').slice(0, 160)})` }
   }
   return { route: 'blade', claim: 0, why: `the Bladeburner route (${route.why}): the exit is the 21 black ops, no faction join (Daedalus's money is not on it) and no Simulacrum buy (${String(sim?.why ?? 'no verdict').slice(0, 120)})` }
+}
+
+/**
+ * THE JOIN HOARD, TIME-PHASED ON THE EXIT SIMULATOR'S OWN SCHEDULE.
+ *
+ * The hacking exit joins Daedalus on $100b IN HAND plus hacking 2500. The
+ * simulator (exitplan.exitHours) puts that hoard in the FINAL window — its
+ * 'hoard join money' leg and the 'climb to join level' beside it — after
+ * `installsFirst` installs. Every install resets money, so a dollar held in
+ * a life the schedule installs out of is never the dollar the invitation
+ * sees. Live BN13.1 2026-10-11: the $1e11 claim was held from the node's
+ * start at hacking 156 (the best policy: 21 installs first), so buyserv
+ * held reserve $1e11 with 0 servers and homeup needed $100b + the block's
+ * price: the near-term spends that shorten the road to the join starved.
+ *
+ *   installsFirst > 0  -> 0: the hoard is a later life's leg (the schedule
+ *                         prices its money there).
+ *   final window now   -> need - incomePerSec x 3600 x tJoin, floored at 0:
+ *                         tJoin is the hour the schedule joins (the end of
+ *                         its last join leg, from now), so this is what must
+ *                         be in hand NOW for the stream to complete the
+ *                         requirement by then; the rest is free until the
+ *                         join. `incomePerSec` is the scripts' linear stream
+ *                         — at most the sim's money legs (which add the
+ *                         trader's return and income growing with the
+ *                         level), so the hold is at least the exact one: it
+ *                         errs toward holding.
+ *   anything unread    -> the full requirement (fail closed: the old hold).
+ *
+ * `best` is bestExitPolicy(inputs).best (null = unpriced). Pure.
+ * Returns {claim, why, phase}.
+ */
+export function joinHoardPhaseOf(need, { best = null, incomePerSec = null } = {}) {
+  const usd = (x) => `$${(x / 1e9).toFixed(2)}b`
+  if (!(num(need) && need > 0)) return { claim: need, why: 'no requirement to phase', phase: null }
+  const full = (why) => ({ claim: need, why: `the exit faction's money requirement (${usd(need)}) is held in full: ${why}`, phase: { kind: 'full', why } })
+  if (!best || !num(best.hours)) return full("the exit simulator's schedule is unpriced")
+  const k = best.installsFirst
+  if (!(Number.isInteger(k) && k >= 0)) return full("the schedule's install count is unread")
+  if (k > 0) {
+    const at = num(best.finalStartH) ? best.finalStartH : null
+    return { claim: 0, why: `the exit simulator's best policy installs ${k} more time(s) before the final window${at !== null ? ` (+${at.toFixed(1)}h)` : ''}: the ${usd(need)} hoard is that life's leg, and every install before it resets money held now — nothing is held this life`, phase: { kind: 'later-life', installsFirst: k, finalStartH: at } }
+  }
+  const legs = Array.isArray(best.legs) ? best.legs : null
+  if (!legs) return full("the schedule's legs are unread")
+  let t = 0
+  let tJoin = null
+  for (const l of legs) {
+    if (!num(l?.hours)) return full(`leg ${l?.leg ?? '?'} is unpriced`)
+    t += l.hours
+    if (l.leg === 'hoard join money' || l.leg === 'climb to join level') tJoin = t
+  }
+  if (tJoin === null) return full('the schedule has no join leg')
+  if (!(num(incomePerSec) && incomePerSec > 0)) return full('the income stream is unread')
+  const stream = incomePerSec * 3600 * tJoin
+  const hold = Math.max(0, need - stream)
+  return { claim: hold, why: `final window: the schedule joins at +${tJoin.toFixed(2)}h; the stream ($${(incomePerSec * 3.6e-3).toFixed(2)}m/h) brings ${usd(stream)} by then, so ${usd(hold)} of the ${usd(need)} must be in hand now`, phase: { kind: 'final-window', tJoinH: tJoin, streamUsd: stream } }
 }
 
 /**

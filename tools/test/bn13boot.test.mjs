@@ -130,7 +130,7 @@ export async function run() {
     const pr = src("progress.js");
     const sv = pr.slice(pr.indexOf("function spendVerdictsOf"), pr.indexOf("function ramIncomePerGB"));
     if (/hackPays !== false \|\| !\(ramTotal > 0\)/.test(sv)) c5.fail("expPerGB is still gated to nodes where hacking pays nothing");
-    if (!/out\.home = verdict\(next\.cost, gain, true, \{[^\n]*\}, expGain\)/.test(sv)) c5.fail("the home RAM verdict must pass its exp gain to spendExit");
+    if (!/out\.home = verdict\(next\.cost, gain, true, \{[^\n]*\}, expGain(, armInputs)?\)/.test(sv)) c5.fail("the home RAM verdict must pass its exp gain to spendExit");
   }
   checks.push(c5);
 

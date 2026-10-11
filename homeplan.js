@@ -56,6 +56,8 @@ import { bladeExitGen } from 'bbplan.js'
 import { LITE_OVER_FULL } from 'bbliteplan.js'
 import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame, chooseOpponent } from 'goplan.js'
 import { ramUpgradeCost } from 'homecost.js'
+import { giftFleetInputsOf } from 'stanekplan.js'
+import { bestExitPolicy } from 'exitplan.js'
 
 /** batchAt may return a generator (progress.js re-plans through augplan.planPurchasesGen): run it in this generator's steps. */
 function* callOut(x) {
@@ -354,4 +356,151 @@ export function goOpponentOnBlade(go) {
   const r = chooseOpponent({ weights: go.weights, windowH: go.windowH, incumbent: keyOfGame(go.opponent) ?? undefined, nodePower, goPower: fin(go.goPower) ? go.goPower : 1 })
   if (r.refused || !r.opponent) return fallback(`the blade weights refused: ${r.why}`)
   return { opponent: r.opponent, source: 'priced on the black-op exit', why: r.why }
+}
+
+// ---------------------------------------------------------------------------
+// THE NEXT HOME BLOCK ON THE HACKING ROUTE: what it UNLOCKS, not $/s alone.
+//
+// exitplan.spendExit priced home as perGB x homeRam of batcher income (and
+// exp): every new GB a batcher GB. At a small home that is the wrong
+// trajectory — home is where the residents wait for room. Live BN13.1
+// 2026-10-11 at 128GB: progress.js's block, sleeve.js (49.75GB, not running:
+// five idle sleeves), the gift's charger and the batcher all competed for
+// it, and the verdict read deltaH -0.07h on 3031 $/s, buy false. The
+// with-arm here is the exit WITH the block as it would be used:
+//
+//   the residents waiting for room (watchdog.txt daemons absent and
+//   blocked/reserving), admitted in order while the block holds them, each
+//   priced on its channel (UNLOCK_ON_HACK) — sleeve.js: the fleet's
+//   transfer from the node's last sleeve.txt (sleeves and their stats
+//   persist through installs: `byObjective`), the better of the exp and rep
+//   objectives on the exit (the sleeve plan chooses by the exit too);
+//   the gift's charger on the grown fleet (stanekplan.giftFleetInputsOf:
+//   f x the fleet's RAM charges, so each life's gift averages higher);
+//   the batcher on what is left, less the charger's share f.
+//
+// What the exit cannot see is named in `notSimulated`, never folded in.
+// ---------------------------------------------------------------------------
+
+/** What each resident that waits for home room does to the HACKING exit. */
+export const UNLOCK_ON_HACK = {
+  'sleeve.js': { channel: 'fleet', why: "the sleeve fleet: its exp transfer / faction reputation join the climb (exitInputsOf's planFleet terms)" },
+  'go.js': { channel: null, why: 'the Go farm: priced by its own placement verdict (goplace.goPlaceValueOf), not here' },
+  'bladeburner.js': { channel: null, why: 'acts only on the Bladeburner route' },
+  'bb-lite.js': { channel: null, why: 'acts only on the Bladeburner route' },
+  'stock.js': { channel: null, why: "the trader: its return is in the inputs' capital stream already" },
+  'gang.js': { channel: null, why: 'the gang: priced by gangWorth' },
+  'hashspend.js': { channel: null, why: 'hash spending: priced by hashplan' },
+}
+
+/**
+ * The residents waiting for home room, from the watchdog record (daemons
+ * admitted and absent — `absentSince` — whose placement is blocked or
+ * reserving a block) with their RAM from boot.txt's plan (raisesTo, else
+ * cost). [{script, gb, why}] in the watchdog's order; [] when none or
+ * unreadable (the verdict then credits no unlock — a floor).
+ */
+export function waitingResidentsOf(watchdog, boot) {
+  const d = watchdog?.daemons
+  if (!d || typeof d !== 'object') return []
+  const gbOf = new Map()
+  for (const e of [...(Array.isArray(boot?.admit) ? boot.admit : []), ...(Array.isArray(boot?.nextTier?.admit) ? boot.nextTier.admit : [])]) {
+    const gb = fin(e?.raisesTo) && e.raisesTo > 0 ? e.raisesTo : fin(e?.cost) && e.cost > 0 ? e.cost : null
+    if (e?.script && gb !== null && !gbOf.has(e.script)) gbOf.set(e.script, gb)
+  }
+  const out = []
+  for (const [script, rec] of Object.entries(d)) {
+    const a = rec?.placement?.action
+    if (!rec?.absentSince || !(a === 'blocked' || a === 'reserve')) continue
+    const gb = gbOf.get(script)
+    if (!fin(gb)) continue
+    out.push({ script, gb, why: String(rec.placement?.why ?? '').slice(0, 160) })
+  }
+  return out
+}
+
+/** The fleet's figures for the unlock, from /tel/sleeve.txt of THIS node (any age: sleeves persist through installs). */
+export function fleetForUnlockOf(sleeveRec, node) {
+  if (!sleeveRec || sleeveRec.bitNode !== node || sleeveRec.disableSleeveExp === true) return null
+  const b = sleeveRec.byObjective
+  const exp = fin(b?.exp) && b.exp > 0 ? b.exp : null
+  const rep = fin(b?.rep) && b.rep > 0 ? b.rep : null
+  if (exp === null && rep === null) return null
+  return { exp, rep, at: sleeveRec.at ?? null }
+}
+
+/** `inputs` with a fleet transfer added (exitInputsOf's additive planFleet terms: sleeveplan expPerSecWithFleet / repPerSecWithFleet). */
+function withFleet(inputs, { exp = 0, rep = 0 }) {
+  const out = { ...inputs }
+  if (exp > 0 && fin(inputs.expPerSec) && inputs.expPerSec > 0) {
+    out.expPerSec = inputs.expPerSec + exp
+    if (inputs.expScalesWithLevel) out.expFlatPerSec = (fin(inputs.expFlatPerSec) ? inputs.expFlatPerSec : 0) + exp
+  }
+  if (rep > 0 && fin(inputs.repPerSec) && inputs.repPerSec > 0) out.repPerSec = inputs.repPerSec + rep
+  return out
+}
+
+/**
+ * THE WITH-ARM'S INPUTS for the next home block on the hacking route.
+ *   inputs    the shared exit inputs (the without-arm's)
+ *   addGB     the block's RAM (0 for a cores upgrade); addCores (1 for cores)
+ *   waiting   waitingResidentsOf(...)
+ *   fleet     fleetForUnlockOf(...) (null: the fleet is unmeasured here)
+ *   choose    (inputs) => exit hours (default bestExitPolicy), for the fleet's objective
+ * Returns {inputs, unlocked, batcherGB, moneyGB, gift, credited, notSimulated, why}:
+ * moneyGB is the GB the caller prices at the batcher's per-GB income and exp.
+ */
+export function hackHomeArmOf({ inputs, addGB = 0, addCores = 0, waiting = [], fleet = null, choose = null } = {}) {
+  const credited = []
+  const notSimulated = []
+  const gb = fin(addGB) && addGB > 0 ? addGB : 0
+  let left = gb
+  const unlocked = []
+  for (const w of Array.isArray(waiting) ? waiting : []) {
+    if (!fin(w?.gb) || w.gb <= 0 || w.gb > left) continue
+    left -= w.gb
+    unlocked.push(w)
+  }
+  let arm = inputs
+  for (const u of unlocked) {
+    const ch = UNLOCK_ON_HACK[u.script]
+    if (ch?.channel === 'fleet') {
+      if (!fleet) {
+        notSimulated.push(`${u.script} (${u.gb}GB) runs with the block, but the fleet has no measurement in this node (no /tel/sleeve.txt of it): its transfer is not priced`)
+        continue
+      }
+      const hoursOf = typeof choose === 'function' ? choose : (x) => bestExitPolicy(x)?.best?.hours ?? null
+      const opts = [fleet.exp ? { key: 'exp', x: withFleet(arm, { exp: fleet.exp }) } : null, fleet.rep ? { key: 'rep', x: withFleet(arm, { rep: fleet.rep }) } : null].filter(Boolean)
+      let best = null
+      for (const o of opts) {
+        const h = hoursOf(o.x)
+        if (fin(h) && (best === null || h < best.h)) best = { ...o, h }
+      }
+      if (!best) {
+        notSimulated.push(`${u.script}: the exit with the fleet is unpriced`)
+        continue
+      }
+      arm = best.x
+      credited.push(`${u.script} (${u.gb}GB): the fleet on ${best.key} (${best.key === 'exp' ? `${fleet.exp.toFixed(2)} exp/s` : `${fleet.rep.toFixed(3)} rep/s base`}, sleeve.txt ${fleet.at ?? '?'})`)
+    } else notSimulated.push(`${u.script} (${u.gb}GB): ${ch?.why ?? 'no channel on the hacking exit is modelled'}`)
+  }
+  // The gift's charger on the grown fleet: the block's RAM the residents do
+  // not take (theirs is theirs), and a core on home.
+  const g = giftFleetInputsOf(arm, { addGB: left, addCores, host: 'home' })
+  const f = g.dLn && fin(g.f) && g.f > 0 && g.f < 1 ? g.f : 0
+  if (g.dLn && (left > 0 || addCores > 0)) {
+    arm = g.inputs
+    credited.push(g.why)
+  } else if (!g.dLn) notSimulated.push(g.why)
+  const moneyGB = left * (1 - f)
+  return {
+    inputs: arm,
+    unlocked: unlocked.map((u) => u.script),
+    batcherGB: left,
+    moneyGB,
+    gift: g.dLn,
+    credited,
+    notSimulated,
+    why: `+${gb}GB${addCores ? ` +${addCores} core` : ''}: ${unlocked.length ? `admits ${unlocked.map((u) => `${u.script} ${u.gb}GB`).join(', ')}; ` : ''}batcher ${moneyGB.toFixed(1)}GB${f ? ` (charger f=${f} of ${left}GB)` : ''}`,
+  }
 }

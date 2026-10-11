@@ -1039,6 +1039,37 @@ export function giftLifeInputsOf(base, L) {
   return scaleByGift(base, giftLifeLnOf(ctx, L), giftLifeLnOf(ctx, ctx.refL))
 }
 
+/**
+ * THE GIFT ON A GROWN FLEET: `base` (carrying giftLife, the life-average at
+ * ctx.refL on the measured fleet) moved to the same allocation f on a fleet
+ * with `addGB` more on `host` (home's next RAM block; a new cloud server with
+ * newHost) and `addCores` more cores there. The charger runs f x the FLEET's
+ * RAM (chargerPlaceOf), so a bigger fleet charges faster and each life's gift
+ * averages higher — the channel a home block or a server buys besides the
+ * batcher's money. Returns {inputs, dLn: {income, exp, rep, hack}, f, why};
+ * inputs = base (dLn null) when there is no gift context to grow. Pure.
+ */
+export function giftFleetInputsOf(base, { addGB = 0, addCores = 0, host = 'home', newHost = false } = {}) {
+  const ctx = base?.giftLife
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  if (!ctx || !Array.isArray(ctx.hosts) || !(ctx.fleetGB > 0) || !(ctx.refL > 0)) return { inputs: base, dLn: null, f: null, why: 'no gift context on the inputs (giftLife): the charger channel is not priced' }
+  const gb = fin(addGB) && addGB > 0 ? addGB : 0
+  const cores = fin(addCores) && addCores > 0 ? addCores : 0
+  if (!(gb > 0 || cores > 0)) return { inputs: base, dLn: { income: 0, exp: 0, rep: 0, hacking: 0 }, f: ctx.f, why: 'nothing added' }
+  let hosts = ctx.hosts.map((h) => ({ ...h }))
+  if (newHost) hosts.push({ host, cores: 1 + cores, maxRam: gb, capGb: gb, capNow: gb })
+  else {
+    const h = hosts.find((x) => x.host === host)
+    if (!h) hosts.push({ host, cores: 1 + cores, maxRam: gb, capGb: gb, capNow: gb })
+    else Object.assign(h, { maxRam: (h.maxRam ?? 0) + gb, capGb: (h.capGb ?? 0) + gb, capNow: (h.capNow ?? 0) + gb, cores: (h.cores ?? 1) + cores })
+  }
+  const grown = { ...ctx, fleetGB: ctx.fleetGB + gb, hosts }
+  const at = giftLifeLnOf(grown, ctx.refL)
+  const now = giftLifeLnOf(ctx, ctx.refL)
+  const dLn = { income: at.lnIncome - now.lnIncome, exp: at.lnExp - now.lnExp, rep: at.lnRep - now.lnRep, hacking: at.lnHack - now.lnHack }
+  return { inputs: { ...scaleByGift(base, at, now), giftLife: grown }, dLn, f: ctx.f, why: `the charger at f=${ctx.f} on ${(ctx.fleetGB + gb).toFixed(0)}GB (+${gb}GB${cores ? `, +${cores} core(s)` : ''} on ${host}): a life's gift ln(hacking) ${dLn.hacking >= 0 ? '+' : ''}${dLn.hacking.toFixed(4)}` }
+}
+
 /** The options the fleet can hold: f x fleetGB within its room once the batcher yields (f = 0 always). */
 export function allocOptionsOf(fleetGB, hosts, grid = ALLOC_GRID) {
   const rpt = STANEK.ramPerThread
