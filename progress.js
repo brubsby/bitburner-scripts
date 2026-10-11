@@ -180,7 +180,7 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -282,10 +282,19 @@ const RAISE_CEILING = (mult) => 8.45 + 0 * mult
  * when an upgrade is affordable, so its homeRam goes stale the moment
  * something else buys RAM (live 2026-10-03: 64 for 8h after the 128GB buy,
  * which priced the 64->128 step against boot's 128->256 tier — HOME UNPRICED).
+ *
+ * `sinceMs` (the node's start, getResetInfo().lastNodeReset): a record stamped
+ * before it is ANOTHER node's home — a node's entry resets home RAM, and
+ * /tel files survive it. Live BN13.1 2026-10-11: homeup.txt was BitNode 12's
+ * (2026-10-09, 1048576GB) beside boot.txt's 128GB, and two call sites took
+ * the MAX of the two, so the fresh-life formula priced this node's income on
+ * a 1PB home ($8.19e6/s at age 0.08h against ~$5e3/s measured), and that
+ * prior drove the 02:33Z install. Undefined when nothing of this node remains.
  */
-export function homeRamOf(hu, boot) {
+export function homeRamOf(hu, boot, sinceMs = null) {
   const t = (r) => (r && Date.parse(r.at)) || 0
-  const cands = [hu, boot].filter((r) => r?.homeRam > 0).sort((a, b) => t(b) - t(a))
+  const live = (r) => !(typeof sinceMs === 'number' && sinceMs > 0 && t(r) < sinceMs)
+  const cands = [hu, boot].filter((r) => r?.homeRam > 0 && live(r)).sort((a, b) => t(b) - t(a))
   return cands.length ? cands[0].homeRam : undefined
 }
 
@@ -2669,7 +2678,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     const successScale = sCal.k > 0 ? sCal.k : 1
     const rankScale = rankPost0.k > 0 ? rankPost0.k : 1
     // bb-lite acting: its lean policy until the full daemon is expected (bbliteplan.leanUntilOf: placed at the 128GB tier, else a home upgrade).
-    const homeRamNow = Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0)
+    const homeRamNow = homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset) ?? 0
     let leanUntilH = leanUntilOf(tel, homeRamNow, { spendHome: readJson(ns, '/tel/installgate.txt')?.spendExit?.home ?? null, lastAugReset: info.lastAugReset })
     // No purchase approved under the tier: the route's own purchase
     // (homeplan.routeFullAtOf), never bb-lite forever — that priced every
@@ -3314,7 +3323,7 @@ async function bladeHomeVerdictOf(ns, info, { inputs, liveMoney, moneyBy, replan
     const hu = readJson(ns, '/tel/homeup.txt')
     const boot = readJson(ns, '/tel/boot.txt')
     const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
-    const homeRam = homeRamOf(hu, boot)
+    const homeRam = homeRamOf(hu, boot, info?.lastNodeReset)
     if (!(next?.cost > 0) || !(homeRam > 0)) return { ...base, buy: false, deltaH: null, why: 'the next home upgrade or home RAM is unreadable' }
     Object.assign(base, { kind: next.kind, cost: next.cost })
     // Cores admit nothing (boot's tiers are RAM): only the money term.
@@ -3786,7 +3795,7 @@ function planCtxOf(ns, info) {
     // The ranking's own pass-to-pass jitter (bayes.jitterPosterior): the
     // point exits of the top routes each pass, this life.
     const points = sameLife && Array.isArray(prev.points) ? tail('points', prev.points) : []
-    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer(), info), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null, calState, prevPlan: prev })
+    const post = posteriorsOf({ traderBelief: tb ?? { post: null }, exitSamples: cal.samples, obs, optionPoints: points, income: incomePostOf(ns, info, ns.getPlayer()), expPost: expPostOf(ns, info, ns.getPlayer()), cadence: installCadence(ledger, info?.currentNode, { ...cadenceOptsOf(ns.getPlayer(), info, ns), modelPrior: cadenceModelPriorOf(ns, info) })?.posterior ?? null, calState, prevPlan: prev })
     // ONE MULTIPLIER ON THE PLAN'S SPREADS (exitcal recal.applied) and the
     // information rate: every decide() this pass reads them (plan.COMMIT).
     setCommitCalibration({ widthMult: post.calibration?.recal?.applied ?? 1, rho: post.calibration?.rho?.rho ?? null, source: post.calibration?.recal ? `${post.calibration.recal.why}; ${post.calibration.rho?.why ?? 'rho stated'}` : null })
@@ -4736,7 +4745,10 @@ function freshPriorOf(ns, info, player) {
     const node = info?.currentNode
     const bn = bitNodeMults(info)
     if (!bn || !player?.mults) return null
-    const homeRam = Math.max(readJson(ns, '/tel/homeup.txt')?.homeRam ?? 0, readJson(ns, '/tel/boot.txt')?.homeRam ?? 0)
+    // This node's home only (homeRamOf: never another node's record, never the
+    // max of two — live BN13.1 priced a 1PB home here against 128GB).
+    const homeRam = homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset)
+    if (!(homeRam > 0)) return null
     const homeGB = Math.max(0, homeRam - homeReserveGb(singularityRamMultiplier(info)))
     const b = readJson(ns, '/tel/batch.txt')
     const bFresh = b && Date.now() - Date.parse(b.at) < 10 * 60e3
@@ -4918,12 +4930,14 @@ function incomePostOf(ns, info, player) {
 }
 // THE INSTALL CADENCE's inputs (bayes.cadencePosterior via
 // exitplan.installCadence): this life's raw hacking multiplier, so the last
-// finished life's gain counts, and the node covariate — the augmentation
-// price, ln(money cost x rep cost).
-function cadenceOptsOf(player, info) {
+// finished life's gain counts, the gift's hacking factor in it (giftHackNow:
+// the charge clears at every install, so it is not a gain — bayes.ledgerLives),
+// and the node covariate — the augmentation price, ln(money cost x rep cost).
+function cadenceOptsOf(player, info, ns = null) {
   // BitNode 12 is level-scaled (bitNodeMults needs the level), so the current node is read off reset info.
   const multsOf = (n) => (n === info?.currentNode ? bitNodeMults(info) : bitNodeMults(n))
-  return { hackMultNow: player?.mults?.hacking ?? null, covOf: (n) => { const m = multsOf(n); return m ? Math.log(m.AugmentationMoneyCost * m.AugmentationRepCost) : 0 } }
+  const giftHackNow = ns ? giftHackOf(readJson(ns, STANEK_FILE), info?.lastAugReset) : null
+  return { hackMultNow: player?.mults?.hacking ?? null, giftHackNow, covOf: (n) => { const m = multsOf(n); return m ? Math.log(m.AugmentationMoneyCost * m.AugmentationRepCost) : 0 } }
 }
 // WHAT A LIFE OF EACH LENGTH BUYS (lifeplan.lifeTableGen): reputation reset at
 // every install, favour banked, the 1.9x money escalation — per length, no
@@ -5120,7 +5134,7 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
     // median; the draws take it with their own z (plan.applyDraw).
     const modelPrior = { lnPerHour: row.lnMean / Lc, cycleHours: Lc, why: pc.why }
     cadenceModelNow = { lastAugReset: info?.lastAugReset, modelPrior }
-    const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player, info), modelPrior })
+    const cm = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, { ...cadenceOptsOf(player, info, ns), modelPrior })
     const post = cm?.posterior ?? null
     const catalogue = cadenceKeptWhy ?? "this life's offers"
     // The base the life length decision prices every length from: these
@@ -5169,7 +5183,7 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
   // node's lives dominate, other nodes only shrink toward the cross-node
   // mean, stall lives excluded — without a cadence a fresh node prices only
   // "never install", whose climb is ~1e26h, and every comparison ties.
-  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, cadenceOptsOf(player, info))
+  const cadence = installCadence(JSON.parse(ns.read('/tel/lifetimes.txt') || '[]'), info?.currentNode, cadenceOptsOf(player, info, ns))
   const cyc = cadence?.stats ?? null
   // THE GO FARM ON THE HACKING ROUTE (goplan.goExitInputsOf): w0r1d_d43m0n on
   // the post-Red-Pill climb, the exit faction's bonus and favor in the final
@@ -6674,7 +6688,7 @@ async function act(ns, canJoin, info, note) {
       const next = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? hu?.next
       // homeup.js publishes homeRam when it runs; between runs boot.txt's
       // figure (written at every boot, i.e. after every install) stands in.
-      const homeRam = homeRamOf(hu, readJson(ns, '/tel/boot.txt'))
+      const homeRam = homeRamOf(hu, readJson(ns, '/tel/boot.txt'), info?.lastNodeReset)
       const deltaGB = next?.kind === 'RAM' && homeRam > 0 ? homeRam : null
       const h = homeLn({
         incomePerSec: hackInc > 0 ? hackInc : null,
@@ -9391,6 +9405,10 @@ async function act(ns, canJoin, info, note) {
                 at: new Date().toISOString(),
                 lifeH: Math.round(((Date.now() - (info?.lastAugReset ?? Date.now())) / 3600000) * 100) / 100,
                 hackMult: player.mults?.hacking,
+                // THE GIFT'S PART OF IT (stanekplan.giftHackOf: the Hacking
+                // fragments at their charge now, which this install clears):
+                // the cadence divides it out (bayes.ledgerLives).
+                giftHack: giftHackOf(readJson(ns, STANEK_FILE), info?.lastAugReset),
                 // THE REWARD THIS LIFE CASHED IN, and the node it was earned in
                 // — the two fields scorecard.achievableRate needs to compute
                 // rho. `lnM` is ln(Meff), the SAME quantity the stopping rule

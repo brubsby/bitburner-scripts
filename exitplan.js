@@ -3153,13 +3153,14 @@ export function spendExitFromRecord(record, lastAugReset, cost, gainPerSec, now 
  * dominate within one or two, other nodes only shrink toward the mean. The
  * point inputs are its medians; plan.makeDraws draws both in every Monte
  * Carlo draw. `hackMultNow` (this life's multiplier, raw) lets the last
- * finished life's gain count; `covOf(node)` the covariate.
+ * finished life's gain count, `giftHackNow` the gift's hacking factor in it
+ * (bayes.ledgerLives: the gain is the augmentations', not the charge); `covOf(node)` the covariate.
  * { stats: {cycleHours, multGainPerCycle, lnPerHour, n}, source: 'posterior',
  * node, lives, weight, posterior, why } or null when no life in any node has
  * a measured gain.
  */
-export function installCadence(ledger, node, { hackMultNow = null, covOf = null, modelPrior = null } = {}) {
-  const c = cadencePosterior(ledger, node, { hackMultNow, covOf, modelPrior })
+export function installCadence(ledger, node, { hackMultNow = null, giftHackNow = null, covOf = null, modelPrior = null } = {}) {
+  const c = cadencePosterior(ledger, node, { hackMultNow, giftHackNow, covOf, modelPrior })
   if (!c) return null
   return {
     stats: { cycleHours: c.cycleHours, multGainPerCycle: c.multGainPerCycle, lnPerHour: c.lnPerHour, n: c.own.lives },

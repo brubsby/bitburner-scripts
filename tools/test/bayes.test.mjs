@@ -886,8 +886,8 @@ export async function run() {
     if (!(drawn.q90 - drawn.q10 > 1.5 * (pointOnly.q90 - pointOnly.q10))) c15.fail("the cadence posterior must be drawn (its spread must reach the interval)");
     // (j) Wired (source guards).
     const prog = fs.readFileSync(path.join(REPO_ROOT, "progress.js"), "utf8");
-    if (!/const cadence = installCadence\(JSON\.parse\(ns\.read\('\/tel\/lifetimes\.txt'\) \|\| '\[\]'\), info\?\.currentNode, cadenceOptsOf\(player, info\)\)/.test(prog)) c15.fail("exitInputsOf must take the cadence posterior with this life's multiplier and the covariate (source guard)");
-    if (!/cadence: installCadence\(ledger, info\?\.currentNode, \{ \.\.\.cadenceOptsOf\(ns\.getPlayer\(\), info\), modelPrior: cadenceModelPriorOf\(ns, info\) \}\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior, on the purchase model's prior where it priced (source guard)");
+    if (!/const cadence = installCadence\(JSON\.parse\(ns\.read\('\/tel\/lifetimes\.txt'\) \|\| '\[\]'\), info\?\.currentNode, cadenceOptsOf\(player, info, ns\)\)/.test(prog)) c15.fail("exitInputsOf must take the cadence posterior with this life's multiplier and the covariate (source guard)");
+    if (!/cadence: installCadence\(ledger, info\?\.currentNode, \{ \.\.\.cadenceOptsOf\(ns\.getPlayer\(\), info, ns\), modelPrior: cadenceModelPriorOf\(ns, info\) \}\)\?\.posterior \?\? null/.test(prog)) c15.fail("the plan's posteriors must carry the cadence posterior, on the purchase model's prior where it priced (source guard)");
   }
   checks.push(c15);
 

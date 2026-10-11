@@ -867,8 +867,17 @@ export function jitterPosterior(points, prior = PRIORS.jitter) {
  * NEXT life's entry, and are credited to the life that bought them. The last
  * life in the current node takes `hackMultNow` as its successor; a life whose
  * next entry is another node (the node's terminal life) has none.
- * [{node, at, start, lifeH, hackMult, records, next, g}] (g null without a
- * successor), `.dups` the merged re-records.
+ * THE GIFT'S CHARGE IS NOT A GAIN. With Stanek's Gift accepted the raw
+ * multiplier carries its Hacking fragments at whatever charge they held when
+ * it was read, and the charge clears at every install: BN13.1's life 1 read
+ * ln(1.9864 / 1.8935) = 0.048 where its batch bought ln 1.0201 (2 NFG) — the
+ * rest was the gift at two moments. An entry's `giftHack` (and `giftHackNow`
+ * for the open life) is the gift's hacking factor at that read
+ * (stanekplan.giftHackOf); when BOTH ends of a pair carry one, the gain is the
+ * ratio of the aug parts (hackMult / giftHack). When either is missing, both
+ * ends stay raw, so a pair is never in mixed units.
+ * [{node, at, start, lifeH, hackMult, giftHack, records, next, nextGift, g}] (g
+ * null without a successor), `.dups` the merged re-records.
  */
 // A life the COUNT RULE ended (installgate's "install: COUNT BATCH" — a
 // ticket batch installed for the Daedalus count, its length the rule's
@@ -891,7 +900,8 @@ const regimeOf = (e) =>
     : typeof e?.installWhy === 'string' && /^install: COUNT BATCH/.test(e.installWhy)
       ? 'count'
       : 'multiplier'
-export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
+export function ledgerLives(ledger, { node = null, hackMultNow = null, giftHackNow = null, dupTolH = PRIORS.cadence.dupTolH } = {}) {
+  const gh = (x) => (fin(x) && x > 0 ? x : null)
   const rows = (Array.isArray(ledger) ? ledger : []).filter((e) => e && fin(e.bitNode) && fin(e.lifeH) && e.lifeH > 0 && fin(e.hackMult) && e.hackMult > 0)
   const lives = []
   let dups = 0
@@ -900,17 +910,22 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH =
     const start = fin(Date.parse(e.at)) ? Date.parse(e.at) / 3.6e6 - e.lifeH : null
     const prev = lives[lives.length - 1]
     if (prev && prev.node === e.bitNode && start !== null && prev.start !== null && Math.abs(prev.start - start) <= dupTolH) {
-      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, records: prev.records + 1, regime: regimeOf(e), model: modelOf(e) ?? prev.model })
+      Object.assign(prev, { at: e.at, lifeH: e.lifeH, hackMult: e.hackMult, giftHack: gh(e.giftHack), records: prev.records + 1, regime: regimeOf(e), model: modelOf(e) ?? prev.model })
       dups++
       continue
     }
-    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, records: 1, regime: regimeOf(e), model: modelOf(e) })
+    lives.push({ node: e.bitNode, at: e.at, start, lifeH: e.lifeH, hackMult: e.hackMult, giftHack: gh(e.giftHack), records: 1, regime: regimeOf(e), model: modelOf(e) })
   }
   for (let i = 0; i < lives.length; i++) {
     const nx = lives[i + 1]
-    const next = nx ? (nx.node === lives[i].node ? nx.hackMult : null) : lives[i].node === node && fin(hackMultNow) && hackMultNow > 0 ? hackMultNow : null
+    const open = !nx && lives[i].node === node && fin(hackMultNow) && hackMultNow > 0
+    const next = nx ? (nx.node === lives[i].node ? nx.hackMult : null) : open ? hackMultNow : null
+    const nextGift = nx ? (nx.node === lives[i].node ? nx.giftHack : null) : open ? gh(giftHackNow) : null
     lives[i].next = next
-    lives[i].g = next === null ? null : Math.log(next / lives[i].hackMult)
+    lives[i].nextGift = nextGift
+    // Both ends' gift known: the aug parts; else raw at both ends.
+    const both = lives[i].giftHack !== null && nextGift !== null
+    lives[i].g = next === null ? null : both ? Math.log(next / nextGift / (lives[i].hackMult / lives[i].giftHack)) : Math.log(next / lives[i].hackMult)
   }
   lives.dups = dups
   return lives
@@ -964,9 +979,9 @@ export function ledgerLives(ledger, { node = null, hackMultNow = null, dupTolH =
  * rate's precision)}, nodes: {n: {...}}, dups, sigma, source: 'posterior', why }
  * or null when no node has a life with a measured gain.
  */
-export function cadencePosterior(ledger, node, { hackMultNow = null, covOf = null, modelPrior = null } = {}) {
+export function cadencePosterior(ledger, node, { hackMultNow = null, giftHackNow = null, covOf = null, modelPrior = null } = {}) {
   const C = PRIORS.cadence
-  const lives = ledgerLives(ledger, { node, hackMultNow })
+  const lives = ledgerLives(ledger, { node, hackMultNow, giftHackNow })
   const byNode = new Map()
   for (const l of lives) {
     if (!byNode.has(l.node)) byNode.set(l.node, { gained: [], stalls: 0, open: 0, count: 0, blade: 0 })

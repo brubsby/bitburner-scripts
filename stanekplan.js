@@ -897,6 +897,25 @@ export function chargerWhyOf({ roots, f, plan, fleet, execFails = [] }) {
  * branches) — so it grows iff something charged. Compared with the previous stanek.js
  * record of the same life: { mass, prevAt, prevMass, gained, minutes, chargerWas, flat }.
  */
+/**
+ * THE GIFT'S FACTOR ON mults.hacking at the record (/tel/stanek.txt `fragments`):
+ * the product of the Hacking fragments' effects (StaneksGift.calculateMults,
+ * StaneksGift.ts:150-152 — hacking and hacking_exp x effect), which the player's
+ * raw multiplier carries and every install clears. The lifetimes ledger records
+ * it beside hackMult so a life's gain is the augmentations' (bayes.ledgerLives).
+ * 1 when the record has no Hacking fragment; null when the record is not this
+ * life's (or absent): no reading, never a guess.
+ */
+export function giftHackOf(rec, lastAugReset) {
+  if (!rec || !Array.isArray(rec.fragments) || rec.lastAugReset !== lastAugReset) return null
+  let p = 1
+  for (const f of rec.fragments) {
+    if (f?.type !== 'Hacking' && f?.type !== TYPE.Hacking) continue
+    if (!(typeof f.effect === 'number' && isFinite(f.effect) && f.effect > 0)) return null
+    p *= f.effect
+  }
+  return p
+}
 export const chargeMassOf = (frags) => (frags ?? []).reduce((s, f) => s + (f.highestCharge ?? 0) * (f.numCharge ?? 0), 0)
 export function chargeProgressOf(prev, frags, lastAugReset, now = Date.now()) {
   const mass = chargeMassOf(frags)
