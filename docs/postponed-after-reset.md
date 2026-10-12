@@ -53,6 +53,10 @@ before starting each subagent.
     a crime-conditioned prior for node entry.
 
 ## Tooling
+0. **Game socket auto-reconnect** (high priority for unattended play): the daemon is now the
+   systemd service `bitburner-daemon` (077a2ee), but after any service restart the game's RFA
+   socket sits at "Reconnecting" until someone calls newRemoteFileApiConnection() from the page.
+   Make the game reconnect itself (an in-game watcher, e.g. rfalink.js, retrying via the module).
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
