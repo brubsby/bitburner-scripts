@@ -24,6 +24,12 @@ cd ~/Repos/bitburner && npm run start:dev     # game at http://localhost:8000
 cd ~/Repos/bitburner-scripts && npm run daemon # RFA + control HTTP + the Go solver
 ```
 
+**The daemon runs as a systemd user service** (`~/.config/systemd/user/bitburner-daemon.service`,
+since 2026-10-12): it must never live inside a Claude session, whose memory reaper and
+usage limits killed it twice. `systemctl --user status|restart bitburner-daemon`; log
+`~/.cache/bitburner-daemon.log`. After a restart the game's socket drops — reconnect it
+(below).
+
 **The daemon starts the Go solver itself** — `npm run gosolver` is for running
 one by hand with different flags, and needs `GO_SOLVER=0` on the daemon so the
 two do not race each other on `/go/req.txt`.
