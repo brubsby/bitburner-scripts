@@ -271,12 +271,8 @@ export function expectedReward(o = {}) {
  * random or split evenly. The gang-only factions (Slum Snakes, Tetrads) and
  * the special ones are not among them. [CP3] re-parses FactionInfo.tsx.
  */
-export const HACKING_WORK_FACTIONS = new Set([
-  'Illuminati', 'Daedalus', 'The Covenant', 'ECorp', 'MegaCorp', 'Bachman & Associates', 'Blade Industries', 'NWO',
-  'Clarke Incorporated', 'OmniTek Incorporated', 'Four Sigma', 'KuaiGong International', 'Fulcrum Secret Technologies',
-  'BitRunners', 'The Black Hand', 'NiteSec', 'CyberSec', 'Aevum', 'Chongqing', 'Ishima', 'New Tokyo', 'Sector-12',
-  'Volhaven', 'Speakers for the Dead', 'The Dark Army', 'The Syndicate', 'Silhouette', 'Netburners', 'Tian Di Hui',
-])
+import { HACKING_WORK_FACTIONS } from 'factionwork.js'
+export { HACKING_WORK_FACTIONS }
 
 /** How many of `factions` (joined faction names) a contract's reputation is shared over. */
 export const contractFactionCount = (factions) => (Array.isArray(factions) ? factions.filter((f) => HACKING_WORK_FACTIONS.has(f)).length : null)

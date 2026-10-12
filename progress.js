@@ -131,6 +131,8 @@ import { snapshotView } from 'snapshot.js'
 // Pure: the expected contract stream, which is NOT script income and so is
 // invisible to getTotalScriptIncome (contractplan.js has the derivation).
 import { contractStream, expectedReward, contractFactionCount, HACKING_WORK_FACTIONS, finalWindowJoinOf, finalWindowContractFactions, solverStateOf } from 'contractplan.js'
+// Pure: the faction work the game offers (FactionInfo.tsx offer*Work). [FW1]
+import { workableOf, workTargetOf, offersFactionWork } from 'factionwork.js'
 // Pure: the stock-market entry as an investment decision (stockplan.js).
 import { entryCost as stockEntryCost, verdict as stockVerdict } from 'stockplan.js'
 import { MEGACORPS, SOFTWARE_TRACK, companyRepPerSec, hoursToCompanyRep } from 'companyplan.js'
@@ -720,7 +722,9 @@ function planFactionWork(ns, sing, factions, offers, info, joinCtx = null) {
     if (w.known && !isFinite(w.hours)) {
       unpriceable.push({ name: c.name, blockers: w.blockers, why: 'unreachable in one install window' })
     } else if (w.known) {
-      byFaction.set(c.name, {
+      // Forecast, but never ranked as work: a faction offering none (the
+      // Church) cannot be a schedule segment (factionwork.js). [FW1]
+      if (offersFactionWork(c.name)) byFaction.set(c.name, {
         name: c.name,
         rep: c.rep,
         favor: c.favor,
@@ -6220,7 +6224,11 @@ async function act(ns, canJoin, info, note) {
     const g = readJson(ns, '/tel/gang.txt')
     return g?.faction ?? factions.find((f) => GANG_FACTIONS.includes(f)) ?? null
   })()
-  const workable = gangFaction ? factions.filter((f) => f !== gangFaction) : factions
+  // NOR A FACTION THAT OFFERS NO WORK (factionwork.js): the Church of the
+  // Machine God's rep comes only from Stanek charging, Bladeburners' from
+  // rank, Shadows of Anarchy's from infiltration. Live BN13.1 2026-10-12
+  // 12:52Z the schedule ordered work at the Church; every type was refused.
+  const workable = workableOf(factions, gangFaction)
   // THE GANG CHANNEL: the gang faction's reputation arrives passively as
   // gross respect x faction_rep x (1 + favor/100) / 75 (Gang.ts:152-155),
   // along the trajectory gang.js publishes from gangplan.simulateGang. This
@@ -7289,6 +7297,12 @@ async function act(ns, canJoin, info, note) {
     scheduleTarget = holdLead.faction
     did.push(`install hold: ${holdLead.why}`)
   } else if (holdLead?.why) todo.push(`install hold not worked: ${holdLead.why}`)
+  // A route or hold at a faction offering no work (the Church: rep by
+  // charging only) cannot be worked: the schedule's own current goes instead.
+  if (scheduleTarget && workTargetOf([scheduleTarget]) === null) {
+    todo.push(`${scheduleTarget} offers no faction work — its reputation is not the work slot's (FactionInfo.tsx); slot follows the schedule`)
+    scheduleTarget = workTargetOf([schedule?.current?.faction])
+  }
   const wantCompany = routeLead
     ? routeLead.company
     : holdLead?.faction ? null : schedule?.current?.workH > 0 ? (MEGACORPS.find((m) => m.faction === schedule.current.faction)?.company ?? null) : null

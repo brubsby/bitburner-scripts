@@ -80,21 +80,10 @@ import { CRIMES, GYMS, crimeChance, crimeRates, gymRate, hoursToStat, intelligen
 import { skillFromExp } from 'installgate.js'
 // Pure: the floor against our own unchecked fee spending.
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
-import { HACKING_WORK_FACTIONS } from 'contractplan.js'
-// FIELD and SECURITY work offers (FactionInfo.tsx offerFieldWork /
-// offerSecurityWork); hacking is HACKING_WORK_FACTIONS. Sleeve.workForFaction
-// returns false for an unoffered type (Sleeve.ts:419-431). [SP31]
-export const FIELD_WORK_FACTIONS = new Set([
-  'Illuminati', 'Daedalus', 'The Covenant', 'ECorp', 'MegaCorp', 'Bachman & Associates', 'Blade Industries', 'NWO',
-  'Clarke Incorporated', 'OmniTek Incorporated', 'Four Sigma', 'KuaiGong International', 'The Black Hand', 'Aevum',
-  'Chongqing', 'Ishima', 'New Tokyo', 'Sector-12', 'Volhaven', 'Speakers for the Dead', 'The Dark Army', 'The Syndicate',
-  'Silhouette', 'Tetrads', 'Slum Snakes',
-])
-export const SECURITY_WORK_FACTIONS = new Set([
-  'ECorp', 'MegaCorp', 'Bachman & Associates', 'Blade Industries', 'NWO', 'Clarke Incorporated', 'OmniTek Incorporated',
-  'Four Sigma', 'KuaiGong International', 'Fulcrum Secret Technologies', 'Aevum', 'Chongqing', 'Ishima', 'New Tokyo',
-  'Sector-12', 'Volhaven', 'Speakers for the Dead', 'The Syndicate', 'Tetrads', 'Slum Snakes', 'Tian Di Hui',
-])
+// The offered work types (FactionInfo.tsx offer*Work), shared with progress.js.
+// Sleeve.workForFaction returns false for an unoffered type (Sleeve.ts:419-431). [SP31]
+import { HACKING_WORK_FACTIONS, FIELD_WORK_FACTIONS, SECURITY_WORK_FACTIONS } from 'factionwork.js'
+export { FIELD_WORK_FACTIONS, SECURITY_WORK_FACTIONS }
 // Pure: the Bladeburner exit model, for the fleet on the Bladeburner route (bladeFleetGen).
 import { chooseSleeveConfigGen, sleeveTasksOf, sleeveConfigKey } from 'bbplan.js'
 
