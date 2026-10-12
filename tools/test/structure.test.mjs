@@ -1174,7 +1174,7 @@ function c11() {
       // publication, so it belongs to that contract, not this one. Listing it
       // would make this check pass on a shared helper rather than on sleeve.js.
       fields: ["bitNode", "karmaPerSec", "killsPerSec", "contributing", "sleeves", "expToPlayerHacking", "factionRepPerSec", "disableSleeveExp"],
-      scope: /note\(refusals\.length \? 'error' : 'ok', \{[\s\S]*?\n\t\t\}\)/,
+      scope: /note\(refusals\.length \? 'error' : [^{]*'ok', \{[\s\S]*?\n\t\t\}\)/,
     },
     {
       // And the other direction: sleeve.js reads its objective and horizon off

@@ -1089,10 +1089,31 @@ export async function run() {
     if (n < 30) cOffer2.fail(`parsed only ${n} factions out of FactionInfo.tsx`);
     // sleeve.js must try the offered list and then the fallback.
     const src = fs.readFileSync(path.join(REPO_ROOT, "sleeve.js"), "utf8");
-    if (!/sleeveTask\.workTypes/.test(src) || !/sleeveTask = sleeveTask\.fallback/.test(src)) cOffer2.fail("sleeve.js must try each offered work type, then fall back to the planner's crime in the same tick");
+    if (!/sleeveTask\.workTypes/.test(src) || !/assignOne\(sleeve, index, sleeveTask\.fallback\)/.test(src)) cOffer2.fail("sleeve.js must try each offered work type, then fall back to the planner's crime in the same tick");
     cOffer2.examined(n + 5);
   }
   checks.push(cOffer2);
+
+  // [SP32] Membership is live, not the plan's: an install clears it, and the
+  // planned Netburners task threw every tick for a non-member (BN13.1 07:52Z,
+  // watchdog "sleeve.js failing 5 cycles"). A throw is a refusal: the next
+  // priced type, then the fallback crime, runs in the same tick.
+  const cMember = new Check("SP32", "faction work only for a CURRENT member; a throwing setter falls through to the fallback crime");
+  {
+    const fighter = sleeve({ sync: 100, skills: { hacking: 300, strength: 600, defense: 600, dexterity: 600, agility: 600, charisma: 200, intelligence: 0 } });
+    const opts = { objective: "rep", repFaction: "Netburners", horizonHours: 200, playerIntelligence: 0, nodeWorkRepMult: 1 };
+    const out = sp.sleeveAssignments([fighter], NODE1, { ...opts, memberFactions: ["CyberSec"] });
+    if (out.tasks[0]?.kind === "faction") cMember.fail(`a non-member must get no faction task, got ${JSON.stringify(out.tasks[0])}`);
+    if (!out.why.some((w) => /not a member of Netburners/.test(w))) cMember.fail("the plan must say it skipped faction work for a non-member");
+    const inn = sp.sleeveAssignments([fighter], NODE1, { ...opts, memberFactions: ["Netburners"] });
+    if (inn.tasks[0]?.kind !== "faction") cMember.fail(`a member gets the faction task, got ${JSON.stringify(inn.tasks[0])}`);
+    const src = fs.readFileSync(path.join(REPO_ROOT, "sleeve.js"), "utf8");
+    if (!/memberFactions:\s*ns\.getPlayer\?\.\(\)\.factions/.test(src)) cMember.fail("sleeve.js must pass the LIVE membership (getPlayer().factions) every pass");
+    if (!/assignOne\(sleeve, index, sleeveTask\.fallback\)/.test(src)) cMember.fail("sleeve.js must run the fallback crime in the same tick after every offered type refuses or throws");
+    if (!/catch \(err\) \{\s*refusals\.push/.test(src)) cMember.fail("doTask must turn a throw into a refusal, not kill the cycle");
+    cMember.examined(5);
+  }
+  checks.push(cMember);
 
   return checks;
 }

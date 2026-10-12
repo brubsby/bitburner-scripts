@@ -463,6 +463,8 @@ export function sleeveAssignments(sleeves, node, o = {}) {
   const tasks = []
   const why = []
   let repTaken = false
+  if (objective === 'rep' && typeof o.repFaction === 'string' && Array.isArray(o.memberFactions) && !o.memberFactions.includes(o.repFaction))
+    why.push(`fleet: not a member of ${o.repFaction} now (an install resets membership) — no faction work planned`)
   // CASH vs WEALTH (nodeecon.wealthOf). `o.money` is CASH — what a class or
   // gym fee is charged against, every second, with no balance check.
   // `o.wealth` is cash + the stock trader's equity (absent: no trader, and it
@@ -708,7 +710,11 @@ export function sleeveAssignments(sleeves, node, o = {}) {
     // THROWS otherwise), so the first sleeve to be assigned it takes it and the
     // rest fall through to the crime objective. Reputation is not sync-scaled,
     // so the sleeve picked is the one with the best stats, not the best sync.
-    const wantRep = objective === 'rep' && typeof o.repFaction === 'string' && o.repFaction && !repTaken && (repHolder === null || repHolder === s)
+    // LIVE membership, when the caller passes it: /tel/sleeveplan.txt's
+    // repFaction can outlive an install (isMember = false at prestige), and
+    // setToFactionWork throws for a non-member (live BN13.1 07:52Z). [SP32]
+    const member = !Array.isArray(o.memberFactions) || o.memberFactions.includes(o.repFaction)
+    const wantRep = objective === 'rep' && typeof o.repFaction === 'string' && o.repFaction && member && !repTaken && (repHolder === null || repHolder === s)
     const policy = horizonHours === null ? null : sleevePolicy(s, node, { ...o, objective: wantRep ? 'rep' : objective === 'rep' ? 'money' : objective })
     if (policy && policy.task === 'train') {
       // Gym fees are the same unchecked sink (ClassWork.tsx:57-72, 120 x

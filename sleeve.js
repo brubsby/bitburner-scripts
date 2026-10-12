@@ -576,6 +576,9 @@ async function act(ns, note, prevBlade = null) {
 			// the player is already a MEMBER — setToFactionWork throws
 			// otherwise, and a throw per sleeve per tick is not a plan.
 			repFaction: typeof plan?.repFaction === 'string' ? plan.repFaction : null,
+			// ...and the LIVE membership, read every pass: the plan's faction
+			// can outlive an install, which clears membership. [SP32]
+			memberFactions: ns.getPlayer?.().factions ?? null,
 			// The Covenant campaign's stat (objective 'covenant').
 			trainStat: typeof plan?.trainStat === 'string' ? plan.trainStat : null,
 			// The gang decision's grind: each sleeve on its best karma crime now.
@@ -613,9 +616,10 @@ async function act(ns, note, prevBlade = null) {
 
 		// What each contract sleeve did this pass (published under blade.acts).
 		const bladeActs = [];
-		sleeves.forEach((sleeve, index) => {
-			let sleeveTask = sleeveTasks[index] ?
-				sleeveTasks[index].toLowerCase() : undefined;
+		const recovered = [];
+		const assignOne = (sleeve, index, override) => {
+			let sleeveTask = override ?? (sleeveTasks[index] ?
+				sleeveTasks[index].toLowerCase() : undefined);
 			// No hand-written word for this sleeve: take the plan's answer.
 			if (!sleeveTask) sleeveTask = auto?.tasks?.[index] ?? undefined;
 			if (!sleeveTask) return;
@@ -674,9 +678,17 @@ async function act(ns, note, prevBlade = null) {
 					// then the planner's fallback crime — never an idle tick. [SP31]
 					const types = Array.isArray(sleeveTask.workTypes) && sleeveTask.workTypes.length ? sleeveTask.workTypes : [sleeveTask.workType];
 					const fac = sleeveTask.faction;
-					if (types.some((w) => doTask(`sleeve ${sleeve.index} faction ${fac}/${w}`, () => ns.sleeve.setToFactionWork(sleeve.index, fac, w)))) return;
+					// A throw counts as a refusal (doTask catches it). One the
+					// next type or the fallback crime recovers in this tick is
+					// moved to `recovered` (health warn), not left as an error.
+					const mark = refusals.length;
+					const tried = () => refusals.splice(mark).forEach((r) => recovered.push(r));
+					if (types.some((w) => doTask(`sleeve ${sleeve.index} faction ${fac}/${w}`, () => ns.sleeve.setToFactionWork(sleeve.index, fac, w)))) return tried();
 					if (typeof sleeveTask.fallback !== 'string') return;
-					sleeveTask = sleeveTask.fallback;
+					const before = refusals.length;
+					assignOne(sleeve, index, sleeveTask.fallback);
+					if (refusals.length === before) tried();
+					return;
 				} else return;
 			}
 			switch (sleeveTask) {
@@ -801,7 +813,8 @@ async function act(ns, note, prevBlade = null) {
 					}
 				}
 			}
-		});
+		};
+		sleeves.forEach((sleeve, index) => assignOne(sleeve, index));
 
 		if (print_tasks) ns.print(JSON.stringify(sleeves.map(s => ({ index: s.index, city: s.city, sync: s.sync, shock: s.shock, task: s.task })), null, 2));
 
@@ -861,8 +874,8 @@ async function act(ns, note, prevBlade = null) {
 			sharePower: typeof plan?.sharePower === 'number' && isFinite(plan.sharePower) && plan.sharePower > 0 ? plan.sharePower : 1,
 			favor: 0,
 		})
-		note(refusals.length ? 'error' : 'ok', {
-			result: refusals.length ? 'refusals' : 'assigned',
+		note(refusals.length ? 'error' : recovered.length ? 'warn' : 'ok', {
+			result: refusals.length ? 'refusals' : recovered.length ? 'recovered' : 'assigned',
 			sleeves: sleeves.length,
 			bitNode: ns.getResetInfo()?.currentNode ?? null,
 			// The fleet as a trajectory term. C11 checks progress.js's reads
@@ -944,6 +957,8 @@ async function act(ns, note, prevBlade = null) {
 			blade: blade ? { ...blade, ...(bladeActs.length ? { acts: bladeActs } : {}) } : blade,
 			unknownTasks: [...warned],
 			refusals,
+			// Refusals a next-priced type or the fallback crime fixed this tick.
+			recovered,
 			detail: refusals.length
 				? `${refusals.length} sleeve assignment(s) were refused by the game this tick`
 				: `${sleeves.length} sleeve(s) assigned`,
