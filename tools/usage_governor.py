@@ -171,7 +171,9 @@ def main():
         if new != level:
             for pat in WATCHERS.get(new, []):
                 subprocess.run(['pkill', '-f', pat])
-            print(f"USAGE LEVEL {level} -> {new}: {why}. u={u:.0f}% resets {out['resetsAt']} ({H:.1f}h). DIRECTIVE: {DIRECTIVES[new]}. Apply it, then restart: python3 tools/usage_governor.py")
+            backlog = (' BUDGET RAISED: work the postponed backlog in docs/postponed-after-reset.md'
+                       ' (highest value first; strike items with their commits).') if LEVELS.index(new) > LEVELS.index(level) else ''
+            print(f"USAGE LEVEL {level} -> {new}: {why}. u={u:.0f}% resets {out['resetsAt']} ({H:.1f}h). DIRECTIVE: {DIRECTIVES[new]}.{backlog} Apply it, then restart: python3 tools/usage_governor.py")
             return
         time.sleep(POLL)
 
