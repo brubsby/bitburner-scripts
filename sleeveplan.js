@@ -81,6 +81,20 @@ import { skillFromExp } from 'installgate.js'
 // Pure: the floor against our own unchecked fee spending.
 import { feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE } from 'nodeecon.js'
 import { HACKING_WORK_FACTIONS } from 'contractplan.js'
+// FIELD and SECURITY work offers (FactionInfo.tsx offerFieldWork /
+// offerSecurityWork); hacking is HACKING_WORK_FACTIONS. Sleeve.workForFaction
+// returns false for an unoffered type (Sleeve.ts:419-431). [SP31]
+export const FIELD_WORK_FACTIONS = new Set([
+  'Illuminati', 'Daedalus', 'The Covenant', 'ECorp', 'MegaCorp', 'Bachman & Associates', 'Blade Industries', 'NWO',
+  'Clarke Incorporated', 'OmniTek Incorporated', 'Four Sigma', 'KuaiGong International', 'The Black Hand', 'Aevum',
+  'Chongqing', 'Ishima', 'New Tokyo', 'Sector-12', 'Volhaven', 'Speakers for the Dead', 'The Dark Army', 'The Syndicate',
+  'Silhouette', 'Tetrads', 'Slum Snakes',
+])
+export const SECURITY_WORK_FACTIONS = new Set([
+  'ECorp', 'MegaCorp', 'Bachman & Associates', 'Blade Industries', 'NWO', 'Clarke Incorporated', 'OmniTek Incorporated',
+  'Four Sigma', 'KuaiGong International', 'Fulcrum Secret Technologies', 'Aevum', 'Chongqing', 'Ishima', 'New Tokyo',
+  'Sector-12', 'Volhaven', 'Speakers for the Dead', 'The Syndicate', 'Tetrads', 'Slum Snakes', 'Tian Di Hui',
+])
 // Pure: the Bladeburner exit model, for the fleet on the Bladeburner route (bladeFleetGen).
 import { chooseSleeveConfigGen, sleeveTasksOf, sleeveConfigKey } from 'bbplan.js'
 
@@ -713,10 +727,12 @@ export function sleeveAssignments(sleeves, node, o = {}) {
       continue
       }
     }
-    if (wantRep && policy && policy.task === 'faction') {
-      const r = sleeveFactionRepPerSec(s, o)
+    const r = wantRep && policy && policy.task === 'faction' ? sleeveFactionRepPerSec(s, o) : null
+    if (r) {
       repTaken = true
-      tasks.push({ kind: 'faction', faction: o.repFaction, workType: r?.workType ?? 'hacking' })
+      // fallback: the crime this sleeve would otherwise take, so a refusal of
+      // every offered work type still assigns it in the same tick.
+      tasks.push({ kind: 'faction', faction: o.repFaction, workType: r.workType, workTypes: r.workTypes, fallback: bestSleeveCrime(s, node, 'money')?.crime ?? null })
       why.push(`sleeve ${i}: faction work for ${o.repFaction} (${r?.workType ?? '?'}) at ${(r?.base ?? 0).toFixed(3)} rep/s — reputation ignores sync, and only one sleeve may hold a faction`)
       continue
     }
@@ -1023,17 +1039,32 @@ export function sleeveFactionRepPerSec(sleeve, o = {}) {
     frep *
     nodeRepMult *
     intB
+  // reputation.ts getFactionSecurityWorkRepGain: field's sum without
+  // charisma, divisor 4.5.
+  const security =
+    ((0.9 * (k.strength + k.defense + k.dexterity + k.agility + (k.hacking + k.intelligence) * shareBonus)) / MAX_SKILL_LEVEL / 4.5) *
+    frep *
+    nodeRepMult *
+    intB
   // Per CYCLE above; 5 cycles per second.
-  // ONLY WORK THE FACTION OFFERS. Tetrads and Slum Snakes offer no hacking
-  // work (FactionInfo.tsx offerHackingWork), and setToFactionWork returns
-  // false for it: live 2026-09-30 05:02Z "sleeve 0 faction Tetrads/hacking:
-  // returned false". An unknown faction (o.repFaction absent) keeps the old
-  // choice. [SP30]
-  const hackOffered = typeof o.repFaction !== 'string' || HACKING_WORK_FACTIONS.has(o.repFaction)
-  const best = hackOffered && hacking >= field ? { type: 'hacking', base: hacking } : { type: 'field', base: field }
+  // ONLY WORK THE FACTION OFFERS (FactionInfo.tsx offer*Work);
+  // setToFactionWork returns false for anything else: live 2026-09-30
+  // "Tetrads/hacking" [SP30], 2026-10-12 "Netburners/field" [SP31]. An unknown
+  // faction (o.repFaction absent) keeps the old hacking/field choice.
+  const known = typeof o.repFaction === 'string'
+  const offered = [
+    { type: 'hacking', base: hacking, on: !known || HACKING_WORK_FACTIONS.has(o.repFaction) },
+    { type: 'field', base: field, on: !known || FIELD_WORK_FACTIONS.has(o.repFaction) },
+    { type: 'security', base: security, on: known && SECURITY_WORK_FACTIONS.has(o.repFaction) },
+  ].filter((w) => w.on)
+  if (offered.length === 0) return null
+  // Best first; the rest are sleeve.js's same-tick fallbacks on a refusal.
+  offered.sort((a, b) => b.base - a.base)
+  const best = offered[0]
   const favorMult = num(o.favor) && o.favor > 0 ? 1 + o.favor / 100 : 1
   return {
     workType: best.type,
+    workTypes: offered.map((w) => w.type),
     base: best.base * CYCLES_PER_SEC * shockBonus,
     perSec: best.base * CYCLES_PER_SEC * shockBonus * favorMult,
     why: `${best.type} work, shock ${(num(sleeve.shock) ? sleeve.shock : 0).toFixed(0)} — reputation is NOT sync-scaled, so this is the full rate at any sync`,

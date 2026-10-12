@@ -20,6 +20,7 @@ import { REPO_ROOT } from "./gameresolve.mjs";
 import { GAME } from "./build-ram.mjs";
 
 const sp = await import("../../sleeveplan.js");
+const { HACKING_WORK_FACTIONS } = await import("../../contractplan.js");
 const { CRIMES, crimeRates, intelligenceBonus, simulateCrime, karmaGrindAcrossCycles } = await import("../../bodyplan.js");
 
 const NODE1 = { CrimeSuccessRate: 1, CrimeMoney: 1, CrimeExpGain: 1 };
@@ -1043,7 +1044,7 @@ export async function run() {
     if (free?.workType !== "hacking") cOffer.fail(`a hacking-skewed sleeve with no faction named should pick hacking, got ${free?.workType}`);
     for (const f of ["Tetrads", "Slum Snakes"]) {
       const r = sp.sleeveFactionRepPerSec(hackish, { nodeWorkRepMult: 1, repFaction: f });
-      if (r?.workType !== "field") cOffer.fail(`${f} offers no hacking work: must pick field, got ${r?.workType}`);
+      if (!r || r.workType === "hacking") cOffer.fail(`${f} offers no hacking work: must pick field or security, got ${r?.workType}`);
     }
     const ns = sp.sleeveFactionRepPerSec(hackish, { nodeWorkRepMult: 1, repFaction: "NiteSec" });
     if (ns?.workType !== "hacking") cOffer.fail(`NiteSec offers hacking work, got ${ns?.workType}`);
@@ -1053,6 +1054,45 @@ export async function run() {
     cOffer.examined(4);
   }
   checks.push(cOffer);
+
+  // [SP31] Field is not universal either: Netburners offers hacking only, and
+  // a combat-skewed sleeve was sent to Netburners/field every tick (live BN13
+  // 2026-10-12 06:52Z, "sleeve 3 faction Netburners/field: returned false").
+  // The task carries every OFFERED type, best-priced first, plus a fallback
+  // crime so sleeve.js never leaves a refused sleeve idle.
+  const cOffer2 = new Check("SP31", "every faction work type the plan names is one FactionInfo.tsx offers; a refusal has a fallback");
+  {
+    const fighter = sleeve({ sync: 100, skills: { hacking: 1, strength: 600, defense: 600, dexterity: 600, agility: 600, charisma: 200, intelligence: 0 } });
+    const nb = sp.sleeveFactionRepPerSec(fighter, { nodeWorkRepMult: 1, repFaction: "Netburners" });
+    if (nb?.workType !== "hacking") cOffer2.fail(`Netburners offers hacking only: must pick hacking, got ${nb?.workType}`);
+    if (JSON.stringify(nb?.workTypes) !== '["hacking"]') cOffer2.fail(`Netburners' offered list must be ["hacking"], got ${JSON.stringify(nb?.workTypes)}`);
+    const tdh = sp.sleeveFactionRepPerSec(fighter, { nodeWorkRepMult: 1, repFaction: "Tian Di Hui" });
+    if (tdh?.workType !== "security") cOffer2.fail(`Tian Di Hui offers hacking+security: a fighter takes security, got ${tdh?.workType}`);
+    if (sp.sleeveFactionRepPerSec(fighter, { nodeWorkRepMult: 1, repFaction: "Bladeburners" }) !== null) cOffer2.fail("Bladeburners offers no work: no faction rate");
+    const t = sp.sleeveAssignments([fighter], NODE1, { objective: "rep", repFaction: "Netburners", horizonHours: 200, playerIntelligence: 0, nodeWorkRepMult: 1 }).tasks[0];
+    if (t?.kind !== "faction" || t.workType !== "hacking") cOffer2.fail(`the plan must send the fighter to Netburners/hacking, got ${JSON.stringify(t)}`);
+    else if (typeof t.fallback !== "string") cOffer2.fail(`the faction task must carry a fallback crime, got ${JSON.stringify(t.fallback)}`);
+    // Parity with the game: every faction's three offer flags.
+    const info = game("src/Faction/FactionInfo.tsx");
+    const names = game("src/Faction/Enums.ts");
+    const sets = { offerHackingWork: HACKING_WORK_FACTIONS, offerFieldWork: sp.FIELD_WORK_FACTIONS, offerSecurityWork: sp.SECURITY_WORK_FACTIONS };
+    let n = 0;
+    for (const m of info.matchAll(/\[FactionName\.(\w+)\]: new FactionInfo\(\{([\s\S]*?)\n  \}\),/g)) {
+      const display = names.match(new RegExp(`\\b${m[1]} = "([^"]+)"`))?.[1];
+      if (!display) { cOffer2.fail(`no display name for FactionName.${m[1]}`); continue; }
+      for (const [flag, set] of Object.entries(sets)) {
+        const on = new RegExp(`${flag}:\\s*true`).test(m[2]);
+        if (on !== set.has(display)) cOffer2.fail(`${display} ${flag} is ${on} in FactionInfo.tsx but ${set.has(display)} here`);
+      }
+      n++;
+    }
+    if (n < 30) cOffer2.fail(`parsed only ${n} factions out of FactionInfo.tsx`);
+    // sleeve.js must try the offered list and then the fallback.
+    const src = fs.readFileSync(path.join(REPO_ROOT, "sleeve.js"), "utf8");
+    if (!/sleeveTask\.workTypes/.test(src) || !/sleeveTask = sleeveTask\.fallback/.test(src)) cOffer2.fail("sleeve.js must try each offered work type, then fall back to the planner's crime in the same tick");
+    cOffer2.examined(n + 5);
+  }
+  checks.push(cOffer2);
 
   return checks;
 }

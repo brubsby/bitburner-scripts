@@ -669,12 +669,15 @@ async function act(ns, note, prevBlade = null) {
 				}
 				if (sleeveTask.kind === 'faction' && sleeveTask.faction) {
 					const already = sleeve.task?.type === 'FACTION' && sleeve.task?.factionName === sleeveTask.faction
-					if (!already) {
-						doTask(`sleeve ${sleeve.index} faction ${sleeveTask.faction}/${sleeveTask.workType}`,
-							() => ns.sleeve.setToFactionWork(sleeve.index, sleeveTask.faction, sleeveTask.workType));
-					}
-				}
-				return;
+					if (already) return;
+					// Best-priced offered type first; on a refusal the next one,
+					// then the planner's fallback crime — never an idle tick. [SP31]
+					const types = Array.isArray(sleeveTask.workTypes) && sleeveTask.workTypes.length ? sleeveTask.workTypes : [sleeveTask.workType];
+					const fac = sleeveTask.faction;
+					if (types.some((w) => doTask(`sleeve ${sleeve.index} faction ${fac}/${w}`, () => ns.sleeve.setToFactionWork(sleeve.index, fac, w)))) return;
+					if (typeof sleeveTask.fallback !== 'string') return;
+					sleeveTask = sleeveTask.fallback;
+				} else return;
 			}
 			switch (sleeveTask) {
 				case 'strength':
