@@ -186,6 +186,9 @@ const LOCAL = argv.includes("--local");
 //                     streak costs ~8 games of multiplier ramp).
 // --adaptive-steps: extend one budget at a time, stopping once the chosen line wins >= THR.
 const ADAPTIVE_STEPS = argv.includes("--adaptive-steps");
+// --adaptive-first: the adaptive budget on our FIRST move only (go.js
+// SETTINGS.adaptiveFirst: the hard layout's opening search).
+const ADAPTIVE_FIRST = argv.includes("--adaptive-first");
 // --book FILE: the opening book (tools/sim/go-book.mjs --merge) played where it has the position.
 // --book-pass: also play the book's after-the-AI's-pass entries (passEntries).
 const BOOK_PASS = argv.includes("--book-pass");
@@ -630,7 +633,7 @@ async function playGame(stats, gameIndex) {
             if (v0 === null) v0 = wr;
             minWr = Math.min(minWr, wr);
           }
-          if (ADAPTIVE && b && b.length && typeof wr === "number" && wr < ADAPTIVE.thr) {
+          if (ADAPTIVE && (!ADAPTIVE_FIRST || (ourTurns === 0 && !secondStone)) && b && b.length && typeof wr === "number" && wr < ADAPTIVE.thr) {
             if (ADAPTIVE_STEPS) {
               // PROGRESSIVE: one budget at a time while the chosen line still
               // wins under thr, up to mult budgets in all.
@@ -1288,7 +1291,7 @@ if (arms) {
   emit({ kind: "start", arm: "b", book: BOOK ? Object.keys(BOOK.entries).length : 0, opponent: OPP, size: SIZE, maxms: MAXMS, pid: process.pid });
   useArm(0);
 }
-emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, depth: NN_OPTS.maxDepth, smallnetScale: SN_SCALE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu, priorFloor: NN_OPTS.priorFloor, priorFloorRoot: NN_OPTS.priorFloorRoot, priorFloorBelow: NN_OPTS.priorFloorBelow, lateCap: NN_OPTS.lateCap, ponderDepth: NN_OPTS.ponderDepth } : null, pid: process.pid });
+emit({ kind: "start", cpuScale: CPU_SCALE, workRate: WORK_RATE, adaptiveSteps: ADAPTIVE_STEPS, adaptiveFirst: ADAPTIVE_FIRST, extend: EXTEND, book: BOOK ? { file: str("book", null), positions: Object.keys(BOOK.entries).length } : null, games: GAMES, adaptive: ADAPTIVE, layouts: LAYOUTS, local: LOCAL, objective: OBJECTIVE, turnS: OBJECTIVE ? TURN_S : undefined, lossScale: OBJECTIVE ? LOSS_SCALE : undefined, leafK: OBJECTIVE ? LEAF_K : undefined, mirrorMode: MIRROR, presend: PRESEND, seeded: SEEDED, clock: CLOCK, retime: RETIME, steer: STEER, steerBook: STEER_BOOK, bookPass: BOOK_PASS, oracleBook: ORACLE, oracleGuard: ORACLE_GUARD, oracleFull: ORACLE_FULL, katago: KATAGO ? `${KVISITS}${str("katago-remote", null) ? "gpu" : ""}${PONDER ? "p" : ""}` : null, ponder: PONDER, session: SESSION, rtMs: ROUND_TRIP_MS, katagoOverride: str("katago-override", null), katagoSettings: JSON.parse(str("katago-settings", "null")), katagoOldPass: argv.includes("--katago-old-pass"), katagoRemoteNet: str("katago-remote-net", null), katagoHoles: str("katago-holes", null), katagoWalls: !argv.includes("--katago-stock"), maxms: MAXMS, opening: OPENING, opts: OPTS, model: !!MODEL, opponent: OPP, size: SIZE, cheat: CHEAT, cheatMax: CHEAT_MAX, crime: CRIME, nn: NN_OPTS ? { free: NN_FREE, depth: NN_OPTS.maxDepth, smallnetScale: SN_SCALE, mix: NN_OPTS.mix, cpuct: NN_OPTS.cpuct, parallel: NN_OPTS.parallel, fpu: NN_OPTS.fpu, priorFloor: NN_OPTS.priorFloor, priorFloorRoot: NN_OPTS.priorFloorRoot, priorFloorBelow: NN_OPTS.priorFloorBelow, lateCap: NN_OPTS.lateCap, ponderDepth: NN_OPTS.ponderDepth } : null, pid: process.pid });
 // --start K: begin at game K (with --layoutseed, replays a given deal).
 const START = num("start", 0);
 for (let i = START; i < GAMES; i++) for (let arm = 0; arm < (arms ? 2 : 1); arm++) {
