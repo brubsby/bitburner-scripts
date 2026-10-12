@@ -37,7 +37,10 @@ case "${1:-}" in
     [ "$reset" = NA ] && { echo "USAGE FILE UNREADABLE ($F) — cannot time the reset"; exit 2; }
     now=$(date +%s); wait=$(( reset + MARGIN - now ))
     [ "$wait" -gt 0 ] && sleep "$wait"
-    echo "WEEKLY USAGE RESET at $(date -u -d @"$reset" +%FT%TZ) (now $(date -u +%FT%TZ)) — re-arm the wake watchers (Go loss, healthcheck, thermal) and restart: bash tools/usage-governor.sh threshold"
+    # The file only refreshes when a session renders, so it may still show the old
+    # week here: the woken session must confirm used_percentage dropped (and a new
+    # resets_at) before re-arming, and run `reset` again if not (gtnh's check).
+    echo "WEEKLY USAGE RESET (confirm on wake: used_percentage dropped / resets_at moved; if not, run reset again) at $(date -u -d @"$reset" +%FT%TZ) (now $(date -u +%FT%TZ)) — re-arm the wake watchers (Go loss, healthcheck, thermal) and restart: bash tools/usage-governor.sh threshold"
     exit 0 ;;
   *) echo "usage: $0 threshold|reset"; exit 2 ;;
 esac
