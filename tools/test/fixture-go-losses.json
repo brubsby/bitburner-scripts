@@ -10218,7 +10218,7 @@
      "s": "req"
     }
    ],
-   "note": "Lost 0-24.5 at streak 31 (komi 7.5, crime_success 1.7643 / SF14.3). A hard layout (8 offline nodes + a handicap stone). Lost by DECISION at ply 0, an unpondered request: live played 2,2 at 470 visits 0.083 over 0,1 at 468 visits 0.141 (most visits wins). Replay ply-0 picks: work 300 2,2 7/8; 800 2,2 5/8, 0,1 3/8; 1600 0,1 4/8, 2,2 2/8, 1,4 1, 3,1 1. Every replay that plays 2,2 loses (5/5 at work 800, and from ply 1 with 2,2 forced 11/12 at work 800/1600); every replay that plays 0,1 or 1,4 wins (6/6, 17-7.5 / 12-10.5). Class: opening search strength on a hard layout (a near-tie at the root), not a cheat-policy bug; the levers (an opening budget, a book entry for the layout) are unmeasured (no paired harness: bubtop unreachable 2026-10-11).",
+   "note": "Lost 0-24.5 at streak 31 (komi 7.5, crime_success 1.7643 / SF14.3). A hard layout (8 offline nodes + a handicap stone). Lost by DECISION at ply 0, an unpondered request: live played 2,2 at 470 visits 0.083 over 0,1 at 468 visits 0.141 (most visits wins). Replay ply-0 picks: work 300 2,2 7/8; 800 2,2 5/8, 0,1 3/8; 1600 0,1 4/8, 2,2 2/8, 1,4 1, 3,1 1. Every replay that plays 2,2 loses (5/5 at work 800, and from ply 1 with 2,2 forced 11/12 at work 800/1600); every replay that plays 0,1 or 1,4 wins (6/6, 17-7.5 / 12-10.5). Class: opening search strength on a hard layout (a near-tie at the root), not a cheat-policy bug; the levers (an opening budget, a book entry for the layout) are unmeasured (no paired harness: bubtop unreachable 2026-10-11). FIXED 2026-10-12 by the hard-layout opening book (tools/sim/go-hardbook.mjs): the start's book entry is the move measured best by playouts against the game's AI from ply 1 (live cheat policy and nets, work 1360, 48 clock seeds: 0,1 48/48 vs 2,2 1/48); the checks replay ply 0 through the book (playCheck book).",
    "cheat": {
     "crime": 1.7643,
     "sf14": 3
@@ -10227,18 +10227,30 @@
    "checks": [
     {
      "from": 0,
+     "work": 1600,
+     "seed": 4,
+     "book": true,
+     "red": "2026-10-12, replayed with the book before the hard-layout entries (tools/goai/book-Illuminati.json at cec58da): the search plays 2,2 and loses 0-24.5",
+     "why": "ply 0 with the opening book: the hard-layout entry plays 0,1 (playouts from ply 1: 0,1 48/48, 2,2 1/48) and must win; without it this seed's search plays 2,2 as live and loses"
+    },
+    {
+     "from": 0,
      "work": 800,
      "seed": 4,
-     "why": "ply 0 at work 800: this seed's search plays 2,2 as live and loses; seeds that play 0,1 win"
+     "book": true,
+     "tier": "slow",
+     "why": "the original work-800 seed (live's 2,2), now through the book"
     },
     {
      "from": 0,
      "work": 800,
      "seed": 5,
-     "why": "ply 0 at work 800: this seed's search plays 2,2 as live and loses; seeds that play 0,1 win"
+     "book": true,
+     "tier": "slow",
+     "why": "the original work-800 seed (live's 2,2), now through the book"
     }
    ],
-   "status": "open"
+   "status": "fixed"
   },
   {
    "id": "live-2026-10-11T21:26:29.356Z-Daedalus",
@@ -12249,17 +12261,22 @@
     {
      "from": 0,
      "work": 1600,
-     "why": "set by hand (live played 2,2; replay picks 2,2 at win rate 0.126)"
+     "book": true,
+     "red": "2026-10-12, replayed with the book before the hard-layout entries (tools/goai/book-Illuminati.json at cec58da): the search plays 2,2 and loses 8-16.5",
+     "why": "ply 0 with the opening book: the hard-layout entry plays 0,4 (playouts from ply 1: 0,4 48/48, 2,2 2/48) and must win 17-7.5; without it the search plays 2,2 as live and loses"
     },
     {
      "from": 0,
      "work": 1600,
      "seed": 2,
-     "why": "set by hand (live played 2,2; replay picks 2,2 at win rate 0.126)"
+     "book": true,
+     "tier": "slow",
+     "red": "2026-10-12, replayed with the book before the hard-layout entries (tools/goai/book-Illuminati.json at cec58da): 2,2, lost 9-15.5",
+     "why": "as seed 1"
     }
    ],
-   "status": "open",
-   "note": "BN13.1, crime_success 1.7643 / SF14.3, streak 30, 0-24.5. A hard off-book layout (9 offline nodes + a handicap stone): live's first search read 0.114 (2,2 1073 visits). Lost by DECISION at ply 0: the replay at work 1600 plays 2,2 in 4/4 seeds and loses all 4; with 2,2 replaced (forced 1,3 / 0,4 / 2,1 / 3,2) every replay wins (12/12, 17-7.5 / 14-9.5). At 2x the budget (3200) it plays 1,3 / 0,4 in 2/4 and wins those; at 4x (6400) 1,3 / 3,1 / 0,4 in 3/3, all won. Class: opening search strength on a hard layout — the 14:46:11Z case's class (now 3 instances with 04:24:04Z)."
+   "status": "fixed",
+   "note": "BN13.1, crime_success 1.7643 / SF14.3, streak 30, 0-24.5. A hard off-book layout (9 offline nodes + a handicap stone): live's first search read 0.114 (2,2 1073 visits). Lost by DECISION at ply 0: the replay at work 1600 plays 2,2 in 4/4 seeds and loses all 4; with 2,2 replaced (forced 1,3 / 0,4 / 2,1 / 3,2) every replay wins (12/12, 17-7.5 / 14-9.5). At 2x the budget (3200) it plays 1,3 / 0,4 in 2/4 and wins those; at 4x (6400) 1,3 / 3,1 / 0,4 in 3/3, all won. Class: opening search strength on a hard layout — the 14:46:11Z case's class (now 3 instances with 04:24:04Z). FIXED 2026-10-12 by the hard-layout opening book (tools/sim/go-hardbook.mjs): the start's book entry is the move measured best by playouts against the game's AI from ply 1 (live cheat policy and nets, work 1360, 48 clock seeds: 0,4 48/48 vs 2,2 2/48); the checks replay ply 0 through the book (playCheck book)."
   },
   {
    "id": "live-2026-10-12T04:24:04.173Z-Illuminati",
@@ -13066,17 +13083,22 @@
     {
      "from": 0,
      "work": 1600,
-     "why": "set by hand (live played 2,2; replay picks 2,2 at win rate 0.125)"
+     "book": true,
+     "red": "2026-10-12, replayed with the book before the hard-layout entries (tools/goai/book-Illuminati.json at cec58da): the search plays 2,2 and loses 0-26.5",
+     "why": "ply 0 with the opening book: the hard-layout entry plays 3,2 (playouts from ply 1: 3,2 48/48, 2,3 48/48, 2,2 37/48) and must win 13-12.5; without it the search plays 2,2 at every budget and loses"
     },
     {
      "from": 0,
      "work": 1600,
      "seed": 2,
-     "why": "set by hand (live played 2,2; replay picks 2,2 at win rate 0.125)"
+     "book": true,
+     "tier": "slow",
+     "red": "2026-10-12, replayed with the book before the hard-layout entries (tools/goai/book-Illuminati.json at cec58da): 2,2, lost 0-26.5",
+     "why": "as seed 1"
     }
    ],
-   "status": "open",
-   "note": "BN13.1, crime_success 1.7643 / SF14.3, streak 30, 0-26.5, seven minutes after 04:17:26Z. A hard off-book layout (6 offline nodes + a handicap stone): live's first search read 0.14 (2,2 357 visits). The replay plays 2,2 at ply 0 at every budget (work 1600 4/4, 3200 4/4, 6400 4/4) and loses 11/12 (0-26.5). Unlike 04:17:26Z a larger opening budget does not change the pick here. Class: opening search strength on a hard layout (with 14:46:11Z and 04:17:26Z)."
+   "status": "fixed",
+   "note": "BN13.1, crime_success 1.7643 / SF14.3, streak 30, 0-26.5, seven minutes after 04:17:26Z. A hard off-book layout (6 offline nodes + a handicap stone): live's first search read 0.14 (2,2 357 visits). The replay plays 2,2 at ply 0 at every budget (work 1600 4/4, 3200 4/4, 6400 4/4) and loses 11/12 (0-26.5). Unlike 04:17:26Z a larger opening budget does not change the pick here. Class: opening search strength on a hard layout (with 14:46:11Z and 04:17:26Z). FIXED 2026-10-12 by the hard-layout opening book (tools/sim/go-hardbook.mjs): the start's book entry is the move measured best by playouts against the game's AI from ply 1 (live cheat policy and nets, work 1360, 48 clock seeds: 3,2 48/48 vs 2,2 37/48); the checks replay ply 0 through the book (playCheck book)."
   }
  ]
 }

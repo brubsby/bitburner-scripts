@@ -20,6 +20,10 @@
 // `liveTree` true: the forced plies before `from` grow the tree as live did
 // (searched or pre-sent, the ponder from ply 0), so the check ply sees live's
 // stale nodes (go-regress playCheck liveTree).
+// `book` true: the opening book is played where it holds the position, as
+// go-solver serves it (tools/goai/book-<Opponent>.json; go-regress playCheck
+// book) — the check of a case fixed BY a book entry (the hard-layout book,
+// tools/sim/go-hardbook.mjs).
 //
 //   GL1 every case marked `fixed` is still WON from each of its checks (FAIL
 //       if not: a regression); every `open` case is reported (WARN while
@@ -88,7 +92,7 @@ export async function run() {
   if (!Array.isArray(fixture.cases) || !fixture.cases.length) c2.fail("the corpus is empty", FIXTURE);
   const { makePool } = await import("../sim/go-regress-pool.mjs");
   const pool = makePool();
-  const optsOf = (ch) => ({ from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}), ...(ch.liveTree ? { liveTree: true } : {}) });
+  const optsOf = (ch) => ({ from: ch.from, work: ch.work ?? 1600, seed: ch.seed ?? 1, ...(ch.pre ? { pre: ch.pre } : {}), ...(ch.pondered ? { pondered: ch.pondered } : {}), ...(ch.presend ? { presend: ch.presend } : {}), ...(ch.gaps ? { gaps: ch.gaps } : {}), ...(ch.liveTree ? { liveTree: true } : {}), ...(ch.book ? { book: ch.book } : {}) });
   // Every replay is queued first (the pool runs them in parallel), then
   // reported in fixture order, so the output reads the same at any job count.
   const jobs = [];

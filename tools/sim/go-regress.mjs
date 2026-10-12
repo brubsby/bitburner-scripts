@@ -33,6 +33,7 @@
 // a fixed work budget, with the AI's seeds approximated off the logged line.
 // It answers "does the solver still lose THIS position", nothing about rates.
 
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -167,10 +168,25 @@ export function caseGaps(fx, golib = env?.golib) {
  *        logged move is played. Without it a forced ply only re-roots (no
  *        search), so a check ply's tree holds none of the earlier searches'
  *        stale, deeper nodes (the 2026-10-09 20:52:10Z Daedalus case).
+ *   book: the OPENING BOOK as go-solver serves it — true: tools/goai/book-<Opponent>.json,
+ *        a string: that file. Off the forced line, a position the book holds
+ *        (not after the AI's pass) is played from it with no search, its
+ *        entry's wr as the single's win rate (go-solver pre-sends bm.wr; the
+ *        cheat policy decides on it). Without it the search plays every ply,
+ *        as every check recorded before 2026-10-12 was set.
  */
-export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null, presend = 0, openPass = undefined, gaps = null, liveTree = false } = {}) {
+const books = new Map();
+function bookOf(book, opponent) {
+  if (!book) return null;
+  const file = typeof book === "string" ? book : path.join(REPO, "tools", "goai", `book-${planKey(opponent)}.json`);
+  if (!books.has(file)) books.set(file, JSON.parse(fs.readFileSync(file, "utf8")));
+  return books.get(file);
+}
+
+export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnly = false, cheatPolicy = null, pondered = 0, pre = null, nnOver = null, presend = 0, openPass = undefined, gaps = null, liveTree = false, book = null } = {}) {
   const E = await regressEnv();
   const { golib, model, m } = E;
+  const BOOK = bookOf(book, fx.opponent);
   const N = fx.size;
   const komi = fx.komi;
   const oppName = gameOpponent(fx.opponent);
@@ -328,14 +344,19 @@ export async function playCheck(fx, { from = 0, work = 1600, seed = 1, decideOnl
           // pondered: the check ply's root holds this much work already (live,
           // the ponder's), so the cheat searches after it start from a deep tree.
           const w0 = ply === from && pondered > work ? pondered : work;
-          await sess.search({ maxms: 60000, untilWork: w0, untilVisits: 40 * w0 });
-          let b = sess.best();
+          const bm = BOOK && !oppPassed ? golib.bookMove(BOOK, simple) : null;
+          let b;
+          if (bm && valid[bm.x]?.[bm.y]) b = [{ x: bm.x, y: bm.y, book: true, top: [[bm.x, bm.y, 0, 0, bm.wr]] }];
+          else {
+            await sess.search({ maxms: 60000, untilWork: w0, untilVisits: 40 * w0 });
+            b = sess.best();
+          }
           // pre: the check ply's single as live had it — a pre-sent answer
           // (or a book move) and the win rate it came with — instead of this
           // search's: the cheat policy then decides on live's own inputs.
           if (ply === from && pre && valid[pre.x]?.[pre.y]) b = [{ x: pre.x, y: pre.y, top: [[pre.x, pre.y, 0, 0, pre.wr]] }];
           if (b && b.length) mv = `${b[0].x},${b[0].y}`;
-          const d = { ply, mv, top: b?.[0]?.top ?? [] };
+          const d = { ply, mv, top: b?.[0]?.top ?? [], ...(b?.[0]?.book ? { book: true } : {}) };
           decisions.push(d);
           if (mv !== "P" && windowOpen(ply)) {
             const wr = d.top?.[0]?.[4];
