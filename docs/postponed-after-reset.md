@@ -58,6 +58,11 @@ before starting each subagent.
    systemd service `bitburner-daemon` (077a2ee), but after any service restart the game's RFA
    socket sits at "Reconnecting" until someone calls newRemoteFileApiConnection() from the page.
    Make the game reconnect itself (an in-game watcher, e.g. rfalink.js, retrying via the module).
+   **2026-10-13 finding:** rfalink.js already does exactly this (245cc6b; watchdog job, retries
+   every 60s) and is running, `/tel/rfalink.txt` Online, reconnects 0. The daemon log shows one
+   connect (10-12 18:29) and no restart since, so the reconnect-after-restart path is UNTESTED live.
+   Remaining work: one deliberate `systemctl --user restart bitburner-daemon` (needs the user's ok)
+   and confirm reconnects -> 1 within ~70s without a hand reconnect.
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
