@@ -36,6 +36,7 @@ before starting each subagent.
 14. **PLAN MISCALIBRATED** e-process has been failing since 2026-10-04.
 
 ## Game play
+15a. **Home on the Bladeburner route prices at exactly 0** (BN9.3 2026-10-13: withH = withoutH = 13.20h, buy false at $503m with $34b wealth in the trader's book). The black-op exit model credits no RAM effect, yet RAM gates bladeburner.js (92GB vs bb-lite) and sleeve.js (50GB); and on that route money has no other use, so a tie should buy (with a priced raise from the book). Price the RAM-gated scripts into the blade exit.
 15. **Gang wanted penalty** drifting below 0.9 with 5 of 9 on justice (BN13); a watch fires
     below 0.8. Check the justice plan's forecast against the measured drift.
 16. **Stanek layout for Bladeburner routes** (fragments are all hacking; no combat layout).
