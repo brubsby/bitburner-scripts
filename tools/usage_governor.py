@@ -101,11 +101,14 @@ def rates(samples, reset, current, now):
         if meas.get(lv) is not None:
             base = meas[lv] / FACTOR[lv]
             break
-    if base is None:  # fall back to the week's average burn
-        u, _ = read_src()
-        week_start = reset - 7 * 86400
-        elapsed = max(1.0, (now - week_start) / 3600)
-        base = (u or 0) / elapsed
+    # The week's average burn (u / hours elapsed) is a FLOOR on the full-level base:
+    # an idle stretch measures ~0 at a low level, and 0 / factor says nothing about what
+    # running fuller costs (2026-10-13: idle conserve projected full at 84% -> stepped to
+    # full). Idle time may lift the level slowly, never make full look free.
+    u_now, _ = read_src()
+    week_start = reset - 7 * 86400
+    avg = (u_now or 0) / max(1.0, (now - week_start) / 3600)
+    base = max(base if base is not None else 0.0, avg)
     return {lv: (meas[lv] if meas.get(lv) is not None else base * FACTOR[lv]) for lv in LEVELS}, meas
 
 
