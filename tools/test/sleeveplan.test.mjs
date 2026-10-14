@@ -931,11 +931,16 @@ export async function run() {
   }
   checks.push(c24);
 
-  const c25 = new Check("SP25", "the Covenant mandate: binds in BN10 below 4 bought; combat legs stack the fleet's gym exp on the player's stat");
+  const c25 = new Check("SP25", "the Covenant mandate: binds in BN10 below 4 bought (5 in BN10.3); combat legs stack the fleet's gym exp on the player's stat");
   {
     c25.examined(6);
     if (sp.COVENANT_MANDATE.target !== 4 || sp.COVENANT_MANDATE.opportunistic !== 5 || sp.COVENANT_MANDATE.node !== 10) c25.fail(`the user's decision is #1-#4 in BN10, #5 opportunistic: ${JSON.stringify(sp.COVENANT_MANDATE)}`);
-    if (!sp.covenantMandated(10, 0) || !sp.covenantMandated(10, 3) || sp.covenantMandated(10, 4) || sp.covenantMandated(4, 0) || sp.covenantMandated(10, null)) c25.fail("binds in BN10 while fewer than 4 are bought, nowhere else, never on an unknown count");
+    if (!sp.covenantMandated(10, 0, 1) || !sp.covenantMandated(10, 3, 1) || sp.covenantMandated(10, 4, 1) || sp.covenantMandated(4, 0, 1) || sp.covenantMandated(10, null, 1)) c25.fail("binds in BN10.2 while fewer than 4 are bought, nowhere else, never on an unknown count");
+    // the 5th (2026-10-14 invariant): BN10.3 is played at SF10.2 -> 5 mandated there; an unknown SF10 level throws
+    if (sp.covenantTarget(2) !== 5 || sp.covenantTarget(1) !== 4 || !sp.covenantMandated(10, 4, 2) || sp.covenantMandated(10, 5, 2)) c25.fail(`BN10.3 (SF10.2) mandates the 5th: target ${sp.covenantTarget(2)}, at 4 bought ${sp.covenantMandated(10, 4, 2)}`);
+    let threw25 = false;
+    try { sp.covenantMandated(10, 4); } catch { threw25 = true; }
+    if (!threw25) c25.fail("covenantMandated without the SF10 level must throw, not fall back to the 4-sleeve target");
     const player = { exp: { strength: 0, defense: 0, dexterity: 0, agility: 0 }, mults: { strength: 1, defense: 1, dexterity: 1, agility: 1, strength_exp: 1, defense_exp: 1, dexterity_exp: 1, agility_exp: 1 } };
     const alone = sp.covenantCombatHours(player, null, 1);
     const P = alone.legs[0].playerRate;

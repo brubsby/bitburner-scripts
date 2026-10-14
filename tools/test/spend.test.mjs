@@ -127,7 +127,8 @@ export async function run() {
     if (gateAt < 0 || !(gateAt < readyAt && gateAt < destroyAt)) c9.fail("the mandate check must come before the ready report and the destroy call");
     const blk = eg.slice(gateAt, readyAt);
     // `return true` since the leaving path became leave() (shared with the Bladeburner exit): still a refusal.
-    if (!/if \(from === null \|\| covenantMandated\(reset\.currentNode, from\)\) \{[\s\S]*?return(?:\s+true)?\s*\}/.test(blk)) c9.fail("an unknown count or an unmet mandate must RETURN (refuse), not continue");
+    // the SF10 level picks the target (5 in BN10.3: sleeveplan covenantTarget, the 2026-10-14 invariant)
+    if (!/if \(from === null \|\| covenantMandated\(reset\.currentNode, from, sfLevel\(reset, 10\)\)\) \{[\s\S]*?return(?:\s+true)?\s*\}/.test(blk)) c9.fail("an unknown count or an unmet mandate must RETURN (refuse), not continue");
     if (/singularity|destroyW0r1dD43m0n|connect|installBackdoor/.test(blk)) c9.fail("the precondition must never act — only refuse");
     if (!/\['waive-covenant', false\]/.test(eg)) c9.fail("the override must be an explicit flag, off by default");
   }
@@ -138,7 +139,7 @@ export async function run() {
     const pr = src("progress.js");
     const fn = pr.slice(pr.indexOf("function covenantExitOf"), pr.indexOf("function exitInputsOf"));
     c10.examined(3);
-    if (!/for \(let n = from; n < COVENANT_MANDATE\.target; n\+\+\) need \+= covenantSleeveCost\(n\)/.test(fn) || !/if \(\(wealthOf\(ns\.getServerMoneyAvailable\('home'\), stockNow\) \?\? 0\) >= need \+ COVENANT\.joinMoney\) \{\s*return out\(true,/.test(fn)) c10.fail("with the mandated sleeves' money in hand, the campaign must be active now");
+    if (!/const target = covenantTarget\(sfLevel\(info, 10\)\)\s*for \(let n = from; n < target; n\+\+\) need \+= covenantSleeveCost\(n\)/.test(fn) || !/if \(\(wealthOf\(ns\.getServerMoneyAvailable\('home'\), stockNow\) \?\? 0\) >= need \+ COVENANT\.joinMoney\) \{\s*return out\(true,/.test(fn)) c10.fail("with the mandated sleeves' money in hand, the campaign must be active now");
     const mIdx = fn.indexOf("need += covenantSleeveCost(n)"), sIdx = fn.indexOf("return withC.best.installsFirst === 0");
     if (!(mIdx > 0 && mIdx < sIdx)) c10.fail("the money-in-hand rule must come before the final-window schedule");
     if (!/binding: covenantExit\?\.active && covenantExit\?\.mandated \? \{ destroyedByInstall: true,/.test(pr)) c10.fail("the gate must hold (destroyedByInstall) while the mandated campaign runs");

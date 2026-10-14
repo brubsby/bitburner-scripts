@@ -105,7 +105,7 @@
 // a decision someone made on purpose.
 
 import { canUseSingularity, singularityRamMultiplier, sfLevel, canJoinBladeburner } from 'sfgate.js'
-import { COVENANT_MANDATE, covenantMandated, sleevesFromCovenant } from 'sleeveplan.js'
+import { COVENANT_MANDATE, covenantMandated, covenantTarget, sleevesFromCovenant } from 'sleeveplan.js'
 import { reporter } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { ROUTE_PIN, routePinOf } from 'routepin.js'
@@ -338,12 +338,14 @@ async function leave(ns, flags, report, reset, note, level, need) {
     }
     const fresh = fleet && fleet.bitNode === reset.currentNode && Date.now() - Date.parse(fleet.at) < 15 * 60e3 && Number.isInteger(fleet.sleeves)
     const from = fresh ? sleevesFromCovenant(fleet.sleeves, sfLevel(reset, 10), reset.currentNode) : null
-    if (from === null || covenantMandated(reset.currentNode, from)) {
+    // the target depends on which BN10 this is (covenantTarget: 5 in BN10.3 = SF10.2 on entry, the 2026-10-14 invariant)
+    const target = covenantTarget(sfLevel(reset, 10))
+    if (from === null || covenantMandated(reset.currentNode, from, sfLevel(reset, 10))) {
       report.result = 'held'
       report.detail =
         from === null
           ? `ready, but the Covenant sleeve count is unreadable (sleeve.txt ${fleet ? 'stale or foreign' : 'missing'}) — not leaving BitNode ${reset.currentNode} on an unknown (mandate ${COVENANT_MANDATE.decided}; --waive-covenant to override)`
-          : `ready, but only ${from} of the ${COVENANT_MANDATE.target} mandated Covenant sleeves are bought — BitNode ${reset.currentNode} is the only place to buy them (mandate ${COVENANT_MANDATE.decided}; --waive-covenant to override)`
+          : `ready, but only ${from} of the ${target} mandated Covenant sleeves are bought — BitNode ${reset.currentNode} is the only place to buy them (mandate ${target > COVENANT_MANDATE.target ? COVENANT_MANDATE.decided5 : COVENANT_MANDATE.decided}; --waive-covenant to override)`
       note('ok', report)
       ns.tprint(`endgame: ${report.detail}`)
       return true

@@ -18,7 +18,7 @@
 // unreadable refuses (a guessed share or leg would buy on a stand-in).
 
 import { canUseSleeve, sfLevel } from 'sfgate.js'
-import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, covenantSleeveCost, COVENANT, COVENANT_MANDATE } from 'sleeveplan.js'
+import { sleeveStudyExpPerSec, sleevesFromCovenant, covenantActive, covenantSleeveCost, COVENANT, COVENANT_MANDATE, covenantTarget } from 'sleeveplan.js'
 import { spendable, augClaim, joinClaim } from 'budget.js'
 import { nextHomeUpgrade } from 'homecost.js'
 // Pure table (0GB): the node's HomeComputerRamCost, which the price carries.
@@ -139,7 +139,8 @@ function decideAndBuy(ns, flags, note) {
     if (info.currentNode === COVENANT_MANDATE.node && from < COVENANT_MANDATE.opportunistic) {
       const room = num(join) ? money - join : null
       if (room === null) return { buy: false, why: 'join claim unreadable — not spending' }
-      const why = from < COVENANT_MANDATE.target ? `mandated: sleeve #${from + 1} of ${COVENANT_MANDATE.target} (${COVENANT_MANDATE.decided})` : `opportunistic: sleeve #${from + 1} affordable now without holding`
+      const target = covenantTarget(sfLevel(info, 10))
+      const why = from < target ? `mandated: sleeve #${from + 1} of ${target} (${target > COVENANT_MANDATE.target ? COVENANT_MANDATE.decided5 : COVENANT_MANDATE.decided})` : `opportunistic: sleeve #${from + 1} affordable now without holding`
       if (!(room >= cost)) return { buy: false, why: `${why} — $${ns.format.number(room)} of $${ns.format.number(cost)} free (cash + equity)` }
       return cashFor(join + cost, why) ? { buy: true, cost, why, more: true } : { buy: false, why: `${why} — affordable on cash + equity; raising $${ns.format.number(join + cost)} cash from the stock book first` }
     }
@@ -185,7 +186,7 @@ function decideAndBuy(ns, flags, note) {
     if (info.currentNode !== COVENANT_MANDATE.node) return { buy: [], why: 'memory is sold only inside BitNode 10' }
     if (!ns.getPlayer().factions.includes(COVENANT.faction)) return { buy: [], why: `not a ${COVENANT.faction} member` }
     const from = sleevesFromCovenant(ns.sleeve.getNumSleeves(), sfLevel(info, 10), info.currentNode)
-    if (from === null || from < COVENANT_MANDATE.target) return { buy: [], why: 'the mandated sleeves come first' }
+    if (from === null || from < covenantTarget(sfLevel(info, 10))) return { buy: [], why: 'the mandated sleeves come first' }
     const wants = []
     for (let i = 0; i < ns.sleeve.getNumSleeves(); i++) {
       const m = ns.sleeve.getSleeve(i).memory

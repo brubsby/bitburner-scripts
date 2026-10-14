@@ -148,7 +148,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
 import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, batchLedgerOf, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangExitGen, gangArms, gangArmsGen, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantTarget, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -2130,11 +2130,13 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
     // STUDY PAYS A FEE (ClassWork.tsx:42, 320 x ZB's costMult 5 per second per
     // sleeve, charged unchecked): the exp candidate carries it as a money
     // outflow on the same trajectory (exitplan spendPerSec).
-    const studyFee = CLASSES.Algorithms.cost * Math.max(...UNIVERSITIES.map((u) => u.costMult)) * (Number.isInteger(fleet.sleeves) ? fleet.sleeves : 1)
+    // x the game's own fleet size (sleeve.js: ns.sleeve.getNumSleeves); unread, the exp candidate is
+    // left unpriced rather than charged for a guessed fleet (it was 1 here: 1/8 of the fee at 8 sleeves)
+    const studyFee = Number.isInteger(fleet.sleeves) ? CLASSES.Algorithms.cost * Math.max(...UNIVERSITIES.map((u) => u.costMult)) * fleet.sleeves : null
     // The fleet's study exp reaches the player at a rate that does not rise
     // with the player's level: FLAT beside a level-shaped script rate
     // (exitplan expFlatPerSec), as exitInputsOf carries the fleet's transfer.
-    if (!expDisabled && by.exp > 0) fns.push(['exp', (b, fin = finish) => fin({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, ...(b.expScalesWithLevel ? { expFlatPerSec: (b.expFlatPerSec ?? 0) + by.exp } : {}), spendPerSec: studyFee }, null)])
+    if (!expDisabled && by.exp > 0 && studyFee !== null) fns.push(['exp', (b, fin = finish) => fin({ ...b, expPerSec: (b.expPerSec ?? 0) + by.exp, ...(b.expScalesWithLevel ? { expFlatPerSec: (b.expFlatPerSec ?? 0) + by.exp } : {}), spendPerSec: studyFee }, null)])
     if (by.money > 0) fns.push(['money', (b, fin = finish) => fin({ ...b, extraIncome: [{ atH: 0, perSec: by.money }], eBudget: eB }, null)])
     // The points too, in slices (each a whole policy search, two with the gang).
     // Capped: SLEEVE_OBJECTIVE_CAP steps and wall ms over all the points (coop
@@ -4535,7 +4537,7 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     const legs = member ? null : covenantCombatHours(levelledPerson(player, info), planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
     const combatH = member ? 0 : legs ? legs.hours : null
     if (combatH === null) return out(false, 'Covenant combat legs unpriced (player or fleet gym rates unreadable)')
-    const mandated = covenantMandated(info?.currentNode, from)
+    const mandated = covenantMandated(info?.currentNode, from, sfLevel(info, 10))
     const base = basePolicy?.best
     if (!base) return out(false, `no base trajectory to compare against: ${basePolicy?.why ?? 'exit unpriced'}`)
     // The new sleeve's exp transfer, at the fleet's per-sleeve study rate.
@@ -4577,11 +4579,12 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
       // so deferring to the final window only delays that; with the money
       // leg at zero, the campaign's cost is just the combat legs.
       let need = 0
-      for (let n = from; n < COVENANT_MANDATE.target; n++) need += covenantSleeveCost(n)
+      const target = covenantTarget(sfLevel(info, 10))
+      for (let n = from; n < target; n++) need += covenantSleeveCost(n)
       // Cash + the trader's book (nodeecon.wealthOf): sleeveaug.js raises the
       // purchase from it (a raise request) — cash alone is ~$0 where it trades.
       if ((wealthOf(ns.getServerMoneyAvailable('home'), stockNow) ?? 0) >= need + COVENANT.joinMoney) {
-        return out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}) and the $${need.toExponential(2)} for sleeves #${from + 1}-#${COVENANT_MANDATE.target} is already in hand: run it now (${combatH.toFixed(1)}h of combat)`, extra)
+        return out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}) and the $${need.toExponential(2)} for sleeves #${from + 1}-#${target} is already in hand: run it now (${combatH.toFixed(1)}h of combat)`, extra)
       }
       return withC.best.installsFirst === 0
         ? out(true, `${summary} — MANDATED (${COVENANT_MANDATE.decided}): this is the window the simulation places it in; run it now`, extra)

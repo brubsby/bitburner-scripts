@@ -1257,11 +1257,37 @@ export function sleeveExitOf(record, lastAugReset, bestExitPolicy, now = Date.no
  * simulates. So the campaign is MANDATORY, and what the simulation still
  * decides is WHEN: it runs in the window the exit simulation finds cheapest.
  */
-export const COVENANT_MANDATE = { node: 10, target: 4, opportunistic: 5, decided: '2026-09-24 (user)' }
+export const COVENANT_MANDATE = {
+  node: 10,
+  target: 4,
+  opportunistic: 5,
+  decided: '2026-09-24 (user)',
+  // THE 5TH SLEEVE (2026-10-14, the user's invariant: it WILL be bought, in BN10.2 or BN10.3,
+  // whichever makes the whole remaining game shortest). tools/sim/gameplan/plan.mjs --covenant5
+  // solved both: buy in BN10.3 (E[T] 326.6h vs 327.0h in BN10.2 over 100 draws; mid world 330.2h vs
+  // 330.1h — a tie, and BN10.3 keeps BN10.2 a ~20h Bladeburner clear). BN10.3 is played at SF10
+  // level 2, so the target there is 5: endgame.js holds the exit until it lands, progress.js runs
+  // the campaign (combat legs + the $1e17 money leg in the final window), sleeveaug.js buys it.
+  // Every other SF10 level keeps `target`. plan.mjs prints a CHECK that this matches its pick.
+  targetBySf10: { 2: 5 },
+  decided5: '2026-10-14 (user invariant; gameplan --covenant5 picks BN10.3)',
+}
 
-/** Whether the mandate still binds: in its node, fewer than `target` bought. */
-export function covenantMandated(bitNode, fromCovenant) {
-  return bitNode === COVENANT_MANDATE.node && Number.isInteger(fromCovenant) && fromCovenant < COVENANT_MANDATE.target
+/** The mandated Covenant purchase count in BitNode 10 at SF10 level `sf10Level` (the level held on entry). */
+export function covenantTarget(sf10Level) {
+  return COVENANT_MANDATE.targetBySf10[sf10Level] ?? COVENANT_MANDATE.target
+}
+
+/**
+ * Whether the mandate still binds: in its node, fewer than covenantTarget(sf10Level) bought.
+ * An unknown count never binds here (endgame.js refuses on it separately); an unknown SF10
+ * level THROWS — the target depends on it, and a caller that cannot say which BN10 it is in
+ * must not silently get the 4-sleeve answer in BN10.3.
+ */
+export function covenantMandated(bitNode, fromCovenant, sf10Level) {
+  if (bitNode !== COVENANT_MANDATE.node || !Number.isInteger(fromCovenant)) return false
+  if (!Number.isInteger(sf10Level)) throw new Error(`covenantMandated: SF10 level ${sf10Level} unknown in BitNode ${bitNode} — the mandated count depends on it`)
+  return fromCovenant < covenantTarget(sf10Level)
 }
 
 /**
